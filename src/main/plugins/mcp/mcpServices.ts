@@ -39,6 +39,12 @@ export class McpServices {
     return this.getConfigSyncService().syncConfig();
   }
 
+  syncConfigAfterExclusiveMutation(
+    syncOpenClawConfig: McpServicesDeps['syncOpenClawConfig'],
+  ): Promise<{ tools: number; error?: string }> {
+    return this.getConfigSyncService().syncConfigAfterExclusiveMutation(syncOpenClawConfig);
+  }
+
   async probeServer(id: string): Promise<McpProbeResult> {
     if (id.startsWith('extension:')) {
       return runExtensionMcpOperation(this.deps.getManager(), 'probe', id);

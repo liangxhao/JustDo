@@ -116,6 +116,17 @@ test('failed catalog reads preserve the mutation result and do not invent an ena
   warn.mockRestore();
 });
 
+test('a partially installed extension still invalidates attached capabilities when its reload fails', async () => {
+  const f = fixture();
+  f.service.importPath.mockResolvedValue({ success: false, extensionId: 'feature-plugin', error: 'restart failed' });
+  f.service.listCatalog.mockResolvedValue([{ id: 'feature-plugin', enabled: true }]);
+  const installer = f.installation.registerInstaller.mock.calls[0][0];
+
+  await expect(installer.install({ payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' }, origin: 'custom' }))
+    .resolves.toMatchObject({ success: false, pluginId: 'feature-plugin', error: 'restart failed' });
+  expect(f.peer.send).toHaveBeenCalledWith(ExtensionIpc.Changed, { extensionId: 'feature-plugin', enabled: true });
+});
+
 test('serialized notifications prevent an older catalog response from arriving after a newer one', async () => {
   const f = fixture();
   let resolve!: (catalog: Array<{ id: string; enabled: boolean }>) => void;

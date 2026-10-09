@@ -1184,6 +1184,33 @@ describe('OpenClawExtensionImportService', () => {
     },
   );
 
+  it.each(['failure result', 'exception'])(
+    'retains the installed extension identity when Gateway application fails: %s', async failure => {
+      const sourceDir = path.join(fixtureRoot, 'partial-extension');
+      const stateDir = path.join(fixtureRoot, 'state');
+      fs.mkdirSync(sourceDir);
+      fs.mkdirSync(stateDir);
+      fs.writeFileSync(path.join(sourceDir, 'openclaw.plugin.json'),
+        JSON.stringify({ id: 'partial-extension', configSchema: { type: 'object' } }));
+      const restartGatewayAfterMutation = vi.fn();
+      if (failure === 'exception') restartGatewayAfterMutation.mockRejectedValue(new Error('restart failed'));
+      else restartGatewayAfterMutation.mockResolvedValue({ phase: 'error', message: 'restart failed' });
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () => ({
+          getStatus: () => ({ phase: 'running' }), getBaseDir: () => fixtureRoot,
+          buildCliEnvironment: async () => ({ env: { OPENCLAW_STATE_DIR: stateDir },
+            runtimeRoot: fixtureRoot, openclawEntry: path.join(fixtureRoot, 'openclaw.mjs') }),
+        }) as unknown as OpenClawEngineManager,
+        requestGateway: vi.fn().mockResolvedValue({ ok: true, restartRequired: true }),
+        restartGatewayAfterMutation,
+        runCommand: vi.fn().mockResolvedValue({ exitCode: 0, stdout: 'Installed plugin: partial-extension\nSaved for the next Gateway start.', stderr: '' }),
+      });
+
+      await expect(service.importPath(sourceDir, undefined, undefined, { trustMarketplaceSource: true }))
+        .resolves.toMatchObject({ success: false, extensionId: 'partial-extension', error: 'restart failed' });
+    },
+  );
+
   it.each(['Applied in Gateway generation 4.', 'Saved for the next Gateway start.'])(
     'waits for the final installer receipt even if the CLI keeps handles open: %s',
     async receipt => {
@@ -2676,6 +2703,7 @@ describe('OpenClawExtensionImportService', () => {
     const onProgress = vi.fn();
     await expect(service.importPath(sourceDir, onProgress)).resolves.toEqual({
       success: false,
+      extensionId: 'network-extension',
       error: 'npm error code E404: package is missing from the configured registry',
       failedStage: 'installing_dependencies',
     });
@@ -2731,6 +2759,7 @@ describe('OpenClawExtensionImportService', () => {
 
     await expect(service.importPath(sourceDir)).resolves.toEqual({
       success: false,
+      extensionId: 'typescript-only-extension',
       error:
         'package install requires compiled runtime output for TypeScript entry ./index.ts: expected ./dist/index.js. This is a plugin packaging issue.',
       failedStage: 'validating',

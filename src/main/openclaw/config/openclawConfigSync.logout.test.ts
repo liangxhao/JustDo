@@ -414,6 +414,34 @@ test.each([true, false])('preserves cold storage through minimal startup and sub
   }
 });
 
+test('removes stale independent Hook entries from no-model config while retaining webhook settings', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-empty-hook-config-'));
+  temporaryDirectories.push(directory);
+  const configPath = path.join(directory, 'openclaw.json');
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      gateway: { mode: 'local' },
+      hooks: {
+        enabled: true,
+        path: '/webhooks',
+        token: 'fixture-webhook-token',
+        internal: { enabled: true, entries: { removed: { enabled: true } } },
+      },
+    }),
+  );
+
+  expect(writeMinimalConfig(configPath, 'hook-config-changed')).toMatchObject({
+    ok: true,
+    configChanged: true,
+  });
+  expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).hooks).toEqual({
+    enabled: true,
+    path: '/webhooks',
+    token: 'fixture-webhook-token',
+  });
+});
+
 describe('OpenClaw auth logout config sync', () => {
   test.each(['startup', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout])(
     '%s sync preserves the original config when restricting file permissions fails',

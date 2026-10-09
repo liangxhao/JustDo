@@ -1847,6 +1847,8 @@ export class OpenClawExtensionImportService {
     options?: { trustMarketplaceSource?: boolean },
   ): Promise<ExtensionImportResult> {
     let temporaryDirectory: string | null = null;
+    let extensionId: string | undefined;
+    let installationAttempted = false;
     let currentStage: ExtensionImportStage = 'preparing';
     const reportProgress = (stage: ExtensionImportStage, percent: number): void => {
       currentStage = stage;
@@ -1856,7 +1858,6 @@ export class OpenClawExtensionImportService {
       reportProgress('preparing', 5);
       const normalizedSourcePath = path.resolve(sourcePath);
       const stats = fs.statSync(normalizedSourcePath);
-      let extensionId: string | undefined;
       let pluginDirectory: string;
 
       if (stats.isDirectory()) {
@@ -1981,6 +1982,7 @@ export class OpenClawExtensionImportService {
           ? manager.getConfigPath()
           : path.join(stateDir, 'openclaw.json');
       let allowlistError = '';
+      installationAttempted = true;
       const command = await this.runDirectoryCommand(targetPath, async () => {
         const result = await this.runCommand(process.execPath, installArgs, {
           cwd: cli.runtimeRoot,
@@ -2021,6 +2023,7 @@ export class OpenClawExtensionImportService {
         );
         return {
           success: false,
+          extensionId,
           error: command.error ?? formatCommandError(result),
           failedStage,
         };
@@ -2072,6 +2075,7 @@ export class OpenClawExtensionImportService {
           if (status.phase !== 'running') {
             return {
               success: false,
+              extensionId,
               error:
                 status.message ||
                 'Extension installed, but the OpenClaw Gateway failed to restart.',
@@ -2095,6 +2099,7 @@ export class OpenClawExtensionImportService {
     } catch (error) {
       return {
         success: false,
+        ...(installationAttempted ? { extensionId } : {}),
         error: error instanceof Error ? error.message : 'Failed to import extension',
         failedStage: currentStage,
       };

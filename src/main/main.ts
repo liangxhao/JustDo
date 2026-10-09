@@ -1029,10 +1029,6 @@ const getHookStore = () => {
   return getOpenClawHookServices().getStore();
 };
 
-const syncMcpConfig = (): Promise<{ tools: number; error?: string }> => {
-  return getMcpServices().syncConfig();
-};
-
 const syncHookConfig = (): Promise<{ hooks: number; error?: string }> => {
   return getOpenClawHookServices().syncConfig();
 };
@@ -1474,6 +1470,10 @@ if (multicaBridgeArgv) {
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
     syncConfig: syncHookConfig,
+    runConfigMutationExclusive: operation =>
+      getOpenClawConfigSyncService().runConfigMutationExclusive(({ syncConfig }) =>
+        operation(() => getOpenClawHookServices().syncConfigAfterExclusiveMutation(syncConfig)),
+      ),
     installationService: pluginInstallationService,
   });
 
@@ -1489,7 +1489,10 @@ if (multicaBridgeArgv) {
 
   registerMcpHandlers({
     getStore: getMcpStore,
-    syncConfig: syncMcpConfig,
+    runConfigMutationExclusive: operation =>
+      getOpenClawConfigSyncService().runConfigMutationExclusive(({ syncConfig }) =>
+        operation(() => getMcpServices().syncConfigAfterExclusiveMutation(syncConfig)),
+      ),
     probeServer: probeMcpServer,
     readResource: readMcpResource,
     listExtensionServers: () => discoverExtensionMcpServers(getOpenClawEngineManager()),

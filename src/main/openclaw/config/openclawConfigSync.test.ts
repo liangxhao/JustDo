@@ -20,7 +20,7 @@ import {
   setActiveBuiltinModelDevelopmentApiKey,
 } from '../../providers/builtinModelCredential';
 import type { ProviderRawConfig } from '../../providers/providerApiConfig';
-import { buildManagedSwarmPluginEntries, listKnownOpenClawWorkspaceDirs } from './openclawConfigBuilders';
+import { buildManagedSwarmPluginEntries, buildOpenClawHookConfig, listKnownOpenClawWorkspaceDirs } from './openclawConfigBuilders';
 import {
   applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,
@@ -62,6 +62,17 @@ import {
   resolveOpenClawExecHost,
   sanitizeOpenClawV2026_9_8Config,
 } from './openclawConfigSync';
+
+test('keeps extension Hook dispatch available when every independent Hook is disabled', () => {
+  expect(
+    buildOpenClawHookConfig([
+      { id: 'independent', enabled: false, config: {}, createdAt: 1, updatedAt: 2 },
+    ]),
+  ).toEqual({
+    hooks: { internal: { enabled: true, entries: { independent: { enabled: false } } } },
+  });
+  expect(buildOpenClawHookConfig([])).toEqual({});
+});
 
 test('projects only product-available agents into Swarm without re-enabling the plugin', () => {
   const entries = buildManagedSwarmPluginEntries([

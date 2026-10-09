@@ -23,28 +23,41 @@ type McpConfigSyncResult = {
 
 export class McpConfigSyncService {
   private readonly deps: McpConfigSyncServiceDeps;
-  private syncPromise: Promise<McpConfigSyncResult> | null = null;
+  private syncTail: Promise<void> = Promise.resolve();
 
   constructor(deps: McpConfigSyncServiceDeps) {
     this.deps = deps;
   }
 
   syncConfig(): Promise<McpConfigSyncResult> {
-    if (this.syncPromise) {
-      return this.syncPromise;
-    }
+    const result = this.syncTail.then(() => this.syncConfigExclusive());
+    this.syncTail = result.then(
+      (): void => undefined,
+      (): void => undefined,
+    );
+    return result;
+  }
 
-    this.syncPromise = (async () => {
+  syncConfigAfterExclusiveMutation(
+    syncOpenClawConfig: McpConfigSyncServiceDeps['syncOpenClawConfig'],
+  ): Promise<McpConfigSyncResult> {
+    return this.syncConfigExclusive(syncOpenClawConfig);
+  }
+
+  private syncConfigExclusive(
+    syncOpenClawConfig = this.deps.syncOpenClawConfig,
+  ): Promise<McpConfigSyncResult> {
+    return (async () => {
       try {
         console.log('[OpenClawMcp] syncing configuration...');
         this.broadcast('mcp:config:syncStart');
-        const syncResult = await this.deps.syncOpenClawConfig({
+        const syncResult = await syncOpenClawConfig({
           reason: 'mcp-server-changed',
           discoverExternalMcpServers: false,
         });
         if (!syncResult.success) {
           console.error('[OpenClawMcp] config sync failed:', syncResult.error);
-          return { tools: 0, error: syncResult.error };
+          return { tools: 0, error: syncResult.error || 'Failed to synchronize MCP configuration' };
         }
         console.log(`[OpenClawMcp] sync complete, changed=${syncResult.changed}`);
         return { tools: this.deps.getMcpStore().getEnabledServers().length };
@@ -62,12 +75,7 @@ export class McpConfigSyncService {
         const error = err instanceof Error ? err.message : String(err);
         this.broadcast('mcp:config:syncDone', { tools: 0, error });
         return { tools: 0, error };
-      })
-      .finally(() => {
-        this.syncPromise = null;
       });
-
-    return this.syncPromise;
   }
 
   private broadcast(channel: string, data?: Record<string, unknown>): void {

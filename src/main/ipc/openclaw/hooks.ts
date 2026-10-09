@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import path from 'path';
 
 import { HookIpc } from '../../../shared/openclaw/hooks';
 import {
@@ -16,6 +17,9 @@ interface HookHandlerDependencies {
   getStore: () => OpenClawHookStore;
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
   syncConfig: () => Promise<{ hooks: number; error?: string }>;
+  runConfigMutationExclusive?: <T>(
+    operation: (syncConfig: HookHandlerDependencies['syncConfig']) => Promise<T>,
+  ) => Promise<T>;
   installationService: PluginInstallationService;
 }
 
@@ -31,16 +35,21 @@ const findHookByAuthoritativeId = (
 ): Record<string, unknown> | undefined =>
   hooks.find(entry => entry.hookKey === id) ||
   hooks.find(
-    entry =>
-      (typeof entry.hookKey !== 'string' || !entry.hookKey.trim()) && entry.name === id,
+    entry => (typeof entry.hookKey !== 'string' || !entry.hookKey.trim()) && entry.name === id,
   );
 
-const syncHookConfigInBackground = (
+const syncHookConfigForRollback = async (
   syncConfig: HookHandlerDependencies['syncConfig'],
-): void => {
-  void syncConfig().catch(error => {
-    console.error('[OpenClawHooks] background configuration sync error:', error);
-  });
+): Promise<string[]> => {
+  try {
+    const result = await syncConfig();
+    if (result.error) throw new Error(result.error);
+    return [];
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[OpenClawHooks] rollback configuration sync error:', message);
+    return [message];
+  }
 };
 
 const restoreHookState = (
@@ -70,10 +79,13 @@ export const registerHookHandlers = ({
   getStore,
   requestGateway,
   syncConfig,
+  runConfigMutationExclusive,
   installationService,
 }: HookHandlerDependencies): void => {
   let hookMutationTail: Promise<void> = Promise.resolve();
-  const runHookMutationExclusive = async <T>(operation: () => Promise<T>): Promise<T> => {
+  const runHookMutationExclusive = async <T>(
+    operation: (syncConfig: HookHandlerDependencies['syncConfig']) => Promise<T>,
+  ): Promise<T> => {
     const previous = hookMutationTail;
     let release!: () => void;
     hookMutationTail = new Promise<void>(resolve => {
@@ -81,9 +93,20 @@ export const registerHookHandlers = ({
     });
     await previous;
     try {
-      return await operation();
+      return await (runConfigMutationExclusive
+        ? runConfigMutationExclusive(operation)
+        : operation(syncConfig));
     } finally {
       release();
+    }
+  };
+  const refreshHookRuntime = async (): Promise<void> => {
+    const refreshed = await requestGateway<{ ok?: boolean; restartRequired?: boolean }>(
+      'plugins.refresh',
+      {},
+    );
+    if (refreshed.ok !== true || refreshed.restartRequired !== false) {
+      throw new Error('Imported Hook runtime refresh did not complete');
     }
   };
   const buildAuthoritativeHookReport = async (): Promise<HookReport> => {
@@ -91,7 +114,9 @@ export const registerHookHandlers = ({
       agentId: DEFAULT_MANAGED_AGENT_ID,
     });
     const pluginScopes = new Map<string, PluginHubScope>();
-    if (report.hooks.some(hook => hook.managedByPlugin === true && typeof hook.pluginId === 'string')) {
+    if (
+      report.hooks.some(hook => hook.managedByPlugin === true && typeof hook.pluginId === 'string')
+    ) {
       try {
         const inventory = await requestGateway<{
           plugins: Array<{ id: string; origin?: string }>;
@@ -114,7 +139,8 @@ export const registerHookHandlers = ({
           source: typeof hook.source === 'string' ? hook.source : undefined,
           managedByPlugin: hook.managedByPlugin === true,
           pluginId: typeof hook.pluginId === 'string' ? hook.pluginId : undefined,
-          pluginScope: typeof hook.pluginId === 'string' ? pluginScopes.get(hook.pluginId) : undefined,
+          pluginScope:
+            typeof hook.pluginId === 'string' ? pluginScopes.get(hook.pluginId) : undefined,
           requirementsSatisfied: hook.requirementsSatisfied !== false,
           filePath: typeof hook.filePath === 'string' ? hook.filePath : undefined,
         }),
@@ -123,23 +149,97 @@ export const registerHookHandlers = ({
   };
   installationService.registerInstaller({
     kind: PluginKind.HOOK,
-    install: async request => {
-      if (request.payload.kind !== PluginKind.HOOK) {
-        return { success: false, error: 'Invalid Hook installation payload' };
-      }
-      const currentReport = await buildAuthoritativeHookReport();
-      const bundledHookIds = new Set(
-        currentReport.hooks
-          .filter(hook => hook.source === 'openclaw-bundled')
-          .map(hook => String(hook.hookKey || hook.name || '').toLowerCase())
-          .filter(Boolean),
-      );
-      const result = await new OpenClawHookFiles(
-        currentReport.managedHooksDir,
-        bundledHookIds,
-      ).importPath(request.payload.sourcePath);
-      return { success: result.success, pluginId: result.hookId, error: result.error };
-    },
+    install: request =>
+      runHookMutationExclusive(async syncConfig => {
+        if (request.payload.kind !== PluginKind.HOOK) {
+          return { success: false, error: 'Invalid Hook installation payload' };
+        }
+        const currentReport = await buildAuthoritativeHookReport();
+        const bundledHookIds = new Set(
+          currentReport.hooks
+            .filter(hook => hook.source === 'openclaw-bundled')
+            .map(hook => String(hook.hookKey || hook.name || '').toLowerCase())
+            .filter(Boolean),
+        );
+        const hookStore = getStore();
+        const files = new OpenClawHookFiles(currentReport.managedHooksDir, bundledHookIds);
+        const result = await files.importPath(request.payload.sourcePath);
+        if (!result.success || !result.hookId) {
+          return { success: false, error: result.error || 'Failed to import Hook' };
+        }
+
+        const installedPath = path.resolve(currentReport.managedHooksDir, result.hookId);
+        let hookId = result.hookId;
+        let previousState: ReturnType<OpenClawHookStore['getHook']> = null;
+        let stateChanged = false;
+        try {
+          const importedReport = await buildAuthoritativeHookReport();
+          const hook = importedReport.hooks.find(
+            entry =>
+              entry.source === 'openclaw-managed' &&
+              entry.managedByPlugin !== true &&
+              typeof entry.baseDir === 'string' &&
+              path.resolve(entry.baseDir) === installedPath,
+          );
+          if (!hook) throw new Error('Imported Hook is unavailable in the Gateway inventory');
+          hookId =
+            typeof hook.hookKey === 'string' && hook.hookKey.trim() ? hook.hookKey : result.hookId;
+          previousState = hookStore.getHook(hookId);
+          stateChanged = true;
+          // Native discovery reports managed Hooks enabled by default, but the
+          // execution loader selects only explicitly configured Hooks.
+          hookStore.setEnabled(hookId, true);
+          const syncResult = await syncConfig();
+          if (syncResult.error) throw new Error(syncResult.error);
+          // Reimported files can leave the parsed config unchanged. The native
+          // metadata lifecycle refresh also republishes internal Hook handlers.
+          await refreshHookRuntime();
+          return { success: true, pluginId: hookId, restartRequired: false };
+        } catch (error) {
+          const rollbackErrors: string[] = [];
+          if (stateChanged) {
+            try {
+              restoreHookState(hookStore, hookId, previousState);
+            } catch (rollbackError) {
+              rollbackErrors.push(
+                rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+              );
+            }
+          }
+          try {
+            files.deleteDirectory(installedPath);
+          } catch (rollbackError) {
+            rollbackErrors.push(
+              rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+            );
+          }
+          if (stateChanged) {
+            try {
+              const rollbackSync = await syncConfig();
+              if (rollbackSync.error) throw new Error(rollbackSync.error);
+              // A timed-out refresh may already have published handlers even
+              // when restoring an enabled orphan leaves the config unchanged.
+              await refreshHookRuntime();
+            } catch (rollbackError) {
+              rollbackErrors.push(
+                rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+              );
+            }
+          }
+          if (rollbackErrors.length > 0) {
+            console.error('[OpenClawHooks] Hook import rollback incomplete:', rollbackErrors);
+          }
+          return {
+            success: false,
+            error: [
+              error instanceof Error ? error.message : 'Failed to activate imported Hook',
+              ...(rollbackErrors.length > 0
+                ? [`Rollback incomplete: ${rollbackErrors.join('; ')}`]
+                : []),
+            ].join(' '),
+          };
+        }
+      }),
   });
 
   ipcMain.handle(HookIpc.List, async () => {
@@ -176,7 +276,8 @@ export const registerHookHandlers = ({
       return {
         success: true,
         hookId: result.pluginId,
-        ...(await buildAuthoritativeHookReport()),
+        restartRequired: false,
+        ...(await refreshHookReportAfterMutation(buildAuthoritativeHookReport)),
       };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to import Hook';
@@ -186,155 +287,158 @@ export const registerHookHandlers = ({
   });
 
   ipcMain.handle(HookIpc.Delete, (_event, hookId: string) =>
-    runHookMutationExclusive(async () => {
-    try {
-      if (typeof hookId !== 'string' || !hookId.trim()) {
-        return { success: false, error: 'Hook id is required' };
-      }
-
-      const id = hookId.trim();
-      const hookStore = getStore();
-      const currentReport = await buildAuthoritativeHookReport();
-      const hook = findHookByAuthoritativeId(currentReport.hooks, id);
-      if (!hook) {
-        return { success: false, error: 'Only custom Hooks can be deleted' };
-      }
-      if (hook.source !== 'openclaw-managed' || hook.managedByPlugin === true) {
-        return { success: false, error: 'Only custom Hooks can be deleted' };
-      }
-      if (typeof hook.baseDir !== 'string' || !hook.baseDir) {
-        return { success: false, error: 'Hook directory is unavailable' };
-      }
-
-      const previousState = hookStore.getHook(id);
-      const stagedDeletion = new OpenClawHookFiles(
-        currentReport.managedHooksDir,
-      ).stageDeleteDirectory(hook.baseDir);
+    runHookMutationExclusive(async syncConfig => {
       try {
-        hookStore.deleteHook(id);
-        const syncResult = await syncConfig();
-        if (syncResult.error) {
-          throw new Error(syncResult.error);
+        if (typeof hookId !== 'string' || !hookId.trim()) {
+          return { success: false, error: 'Hook id is required' };
         }
-      } catch (error) {
-        const rollbackErrors: string[] = [];
+
+        const id = hookId.trim();
+        const hookStore = getStore();
+        const currentReport = await buildAuthoritativeHookReport();
+        const hook = findHookByAuthoritativeId(currentReport.hooks, id);
+        if (!hook) {
+          return { success: false, error: 'Only custom Hooks can be deleted' };
+        }
+        if (hook.source !== 'openclaw-managed' || hook.managedByPlugin === true) {
+          return { success: false, error: 'Only custom Hooks can be deleted' };
+        }
+        if (typeof hook.baseDir !== 'string' || !hook.baseDir) {
+          return { success: false, error: 'Hook directory is unavailable' };
+        }
+
+        const previousState = hookStore.getHook(id);
+        const stagedDeletion = new OpenClawHookFiles(
+          currentReport.managedHooksDir,
+        ).stageDeleteDirectory(hook.baseDir);
         try {
-          restoreHookState(hookStore, id, previousState);
-        } catch (rollbackError) {
-          rollbackErrors.push(
-            rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
-          );
+          hookStore.deleteHook(id);
+          const syncResult = await syncConfig();
+          if (syncResult.error) {
+            throw new Error(syncResult.error);
+          }
+        } catch (error) {
+          const rollbackErrors: string[] = [];
+          try {
+            restoreHookState(hookStore, id, previousState);
+          } catch (rollbackError) {
+            rollbackErrors.push(
+              rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+            );
+          }
+          try {
+            stagedDeletion.rollback();
+          } catch (rollbackError) {
+            rollbackErrors.push(
+              rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+            );
+          }
+          rollbackErrors.push(...(await syncHookConfigForRollback(syncConfig)));
+          if (rollbackErrors.length > 0) {
+            console.error('[OpenClawHooks] Hook deletion rollback incomplete:', rollbackErrors);
+          }
+          return {
+            success: false,
+            error: [
+              error instanceof Error ? error.message : 'Failed to synchronize Hook deletion',
+              ...(rollbackErrors.length > 0
+                ? [`Rollback incomplete: ${rollbackErrors.join('; ')}`]
+                : []),
+            ].join(' '),
+          };
         }
         try {
-          stagedDeletion.rollback();
-        } catch (rollbackError) {
-          rollbackErrors.push(
-            rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+          stagedDeletion.commit();
+        } catch (error) {
+          console.warn(
+            '[OpenClawHooks] Hook removed but quarantine cleanup failed:',
+            error instanceof Error ? error.message : String(error),
           );
-        }
-        syncHookConfigInBackground(syncConfig);
-        if (rollbackErrors.length > 0) {
-          console.error('[OpenClawHooks] Hook deletion rollback incomplete:', rollbackErrors);
         }
         return {
-          success: false,
-          error: [
-            error instanceof Error ? error.message : 'Failed to synchronize Hook deletion',
-            ...(rollbackErrors.length > 0
-              ? [`Rollback incomplete: ${rollbackErrors.join('; ')}`]
-              : []),
-          ].join(' '),
+          success: true,
+          restartRequired: false,
+          ...(await refreshHookReportAfterMutation(buildAuthoritativeHookReport)),
         };
-      }
-      try {
-        stagedDeletion.commit();
       } catch (error) {
-        console.warn(
-          '[OpenClawHooks] Hook removed but quarantine cleanup failed:',
-          error instanceof Error ? error.message : String(error),
-        );
+        const errorMsg = error instanceof Error ? error.message : 'Failed to delete Hook';
+        console.error('[OpenClawHooks] hooks:delete error:', errorMsg);
+        return { success: false, error: errorMsg };
       }
-      return {
-        success: true,
-        restartRequired: false,
-        ...(await refreshHookReportAfterMutation(buildAuthoritativeHookReport)),
-      };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to delete Hook';
-      console.error('[OpenClawHooks] hooks:delete error:', errorMsg);
-      return { success: false, error: errorMsg };
-    }
     }),
   );
 
   ipcMain.handle(HookIpc.SetEnabled, (_event, options: unknown) =>
-    runHookMutationExclusive(async () => {
-    try {
-      if (
-        !options ||
-        typeof options !== 'object' ||
-        Array.isArray(options) ||
-        typeof (options as { id?: unknown }).id !== 'string' ||
-        !(options as { id: string }).id.trim() ||
-        typeof (options as { enabled?: unknown }).enabled !== 'boolean'
-      ) {
-        return { success: false, error: 'Hook id and enabled state are required' };
-      }
-      const { enabled } = options as { id: string; enabled: boolean };
-      const hookId = (options as { id: string }).id.trim();
-
-      const hookStore = getStore();
-      const currentReport = await buildAuthoritativeHookReport();
-      const hook = findHookByAuthoritativeId(currentReport.hooks, hookId);
-      if (!hook) {
-        return { success: false, error: `Hook "${hookId}" not found` };
-      }
-      if (hook.managedByPlugin === true) {
-        return { success: false, error: 'Plugin-managed Hooks cannot be changed here' };
-      }
-      if (enabled && hook.requirementsSatisfied === false) {
-        return { success: false, error: 'Hook requirements are not satisfied' };
-      }
-
-      const previousState = hookStore.getHook(hookId);
+    runHookMutationExclusive(async syncConfig => {
       try {
-        hookStore.setEnabled(hookId, enabled);
-        const syncResult = await syncConfig();
-        if (syncResult.error) {
-          throw new Error(syncResult.error);
+        if (
+          !options ||
+          typeof options !== 'object' ||
+          Array.isArray(options) ||
+          typeof (options as { id?: unknown }).id !== 'string' ||
+          !(options as { id: string }).id.trim() ||
+          typeof (options as { enabled?: unknown }).enabled !== 'boolean'
+        ) {
+          return { success: false, error: 'Hook id and enabled state are required' };
         }
-      } catch (error) {
-        let rollbackErrorMessage = '';
+        const { enabled } = options as { id: string; enabled: boolean };
+        const hookId = (options as { id: string }).id.trim();
+
+        const hookStore = getStore();
+        const currentReport = await buildAuthoritativeHookReport();
+        const hook = findHookByAuthoritativeId(currentReport.hooks, hookId);
+        if (!hook) {
+          return { success: false, error: `Hook "${hookId}" not found` };
+        }
+        if (hook.managedByPlugin === true) {
+          return { success: false, error: 'Plugin-managed Hooks cannot be changed here' };
+        }
+        if (enabled && hook.requirementsSatisfied === false) {
+          return { success: false, error: 'Hook requirements are not satisfied' };
+        }
+
+        const previousState = hookStore.getHook(hookId);
         try {
-          restoreHookState(hookStore, hookId, previousState);
-        } catch (rollbackError) {
-          rollbackErrorMessage =
-            rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
-          console.error('[OpenClawHooks] Hook status rollback failed:', rollbackErrorMessage);
+          hookStore.setEnabled(hookId, enabled);
+          const syncResult = await syncConfig();
+          if (syncResult.error) {
+            throw new Error(syncResult.error);
+          }
+        } catch (error) {
+          let rollbackErrorMessage = '';
+          try {
+            restoreHookState(hookStore, hookId, previousState);
+          } catch (rollbackError) {
+            rollbackErrorMessage =
+              rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+            console.error('[OpenClawHooks] Hook status rollback failed:', rollbackErrorMessage);
+          }
+          const recoveryErrors = await syncHookConfigForRollback(syncConfig);
+          return {
+            success: false,
+            error: [
+              error instanceof Error ? error.message : 'Failed to synchronize Hook status',
+              ...(rollbackErrorMessage ? [`Rollback failed: ${rollbackErrorMessage}`] : []),
+              ...(recoveryErrors.length > 0
+                ? [`Rollback incomplete: ${recoveryErrors.join('; ')}`]
+                : []),
+            ].join(' '),
+          };
         }
-        syncHookConfigInBackground(syncConfig);
+        return {
+          success: true,
+          restartRequired: false,
+          ...(await refreshHookReportAfterMutation(buildAuthoritativeHookReport)),
+        };
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : 'Failed to update hook';
+        console.error('[Hooks] hooks:setEnabled error:', errorMsg);
         return {
           success: false,
-          error: [
-            error instanceof Error ? error.message : 'Failed to synchronize Hook status',
-            ...(rollbackErrorMessage ? [`Rollback failed: ${rollbackErrorMessage}`] : []),
-          ].join(' '),
+          error: errorMsg,
+          gatewayOffline: /not connected|unavailable|timed out|ECONNREFUSED/i.test(errorMsg),
         };
       }
-      return {
-        success: true,
-        restartRequired: false,
-        ...(await refreshHookReportAfterMutation(buildAuthoritativeHookReport)),
-      };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to update hook';
-      console.error('[Hooks] hooks:setEnabled error:', errorMsg);
-      return {
-        success: false,
-        error: errorMsg,
-        gatewayOffline: /not connected|unavailable|timed out|ECONNREFUSED/i.test(errorMsg),
-      };
-    }
     }),
   );
 };

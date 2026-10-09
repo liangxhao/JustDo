@@ -1,8 +1,10 @@
 'use strict';
 
 // Capability: expose the resolved native attempt budget to prompt-build hooks.
+// Target: pristine openclaw@2026.9.8 prepareEmbeddedAttemptPromptAssembly prompt hook context.
 // Scope: read-only metadata; do not change model resolution or context guards.
-// Remove when upstream populates PluginHookAgentContext.contextTokenBudget.
+// Safety: report the existing resolved attempt budget without altering admission or model policy.
+// Remove when: upstream populates PluginHookAgentContext.contextTokenBudget.
 const fs = require('node:fs');
 const path = require('node:path');
 const ts = require('typescript');

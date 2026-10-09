@@ -60,6 +60,10 @@ type SyncOpenClawConfigResult = {
   error?: string;
 };
 
+export type OpenClawConfigMutationContext = {
+  syncConfig: (options: SyncOpenClawConfigOptions) => Promise<SyncOpenClawConfigResult>;
+};
+
 type ExecApprovalsFile = {
   version?: number;
   defaults?: Record<string, unknown>;
@@ -220,8 +224,14 @@ export class OpenClawConfigSyncService {
     return this.enqueueSyncOperation(() => this.syncConfigExclusive(options));
   }
 
-  runConfigMutationExclusive<T>(operation: () => Promise<T>): Promise<T> {
-    return this.enqueueSyncOperation(operation);
+  runConfigMutationExclusive<T>(
+    operation: (context: OpenClawConfigMutationContext) => Promise<T>,
+  ): Promise<T> {
+    return this.enqueueSyncOperation(() =>
+      operation({
+        syncConfig: options => this.syncConfigExclusive(options),
+      }),
+    );
   }
 
   restartGatewayWhenIdle(reason: string): Promise<OpenClawEngineStatus> {

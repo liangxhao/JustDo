@@ -1114,6 +1114,12 @@ export class OpenClawConfigSync {
             const existingPlugins = isRecord(canonicalExisting.plugins)
               ? canonicalExisting.plugins
               : {};
+            const existingHooks = isRecord(canonicalExisting.hooks)
+              ? { ...canonicalExisting.hooks }
+              : {};
+            // Internal Hook selection is owned by the product Store, including
+            // its empty state. Preserve unrelated native webhook settings.
+            delete existingHooks.internal;
             const availableExtensionIds = listAvailableOpenClawExtensionIds(
               this.engineManager.getStateDir(),
               existingPlugins,
@@ -1165,7 +1171,10 @@ export class OpenClawConfigSync {
                   },
                   update: connectivityConfig.update,
                   browser: connectivityConfig.browser,
-                  ...hookConfig,
+                  hooks: {
+                    ...existingHooks,
+                    ...(isRecord(hookConfig.hooks) ? hookConfig.hooks : {}),
+                  },
                   tools: {
                     ...existingTools,
                     ...mergeManagedOptionalToolPolicy(existingTools),

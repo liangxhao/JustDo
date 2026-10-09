@@ -30,6 +30,12 @@ export class OpenClawHookServices {
     return this.getConfigSyncService().syncConfig();
   }
 
+  syncConfigAfterExclusiveMutation(
+    syncOpenClawConfig: OpenClawHookServicesDeps['syncOpenClawConfig'],
+  ): Promise<{ hooks: number; error?: string }> {
+    return this.getConfigSyncService().syncConfigAfterExclusiveMutation(syncOpenClawConfig);
+  }
+
   private getConfigSyncService(): OpenClawHookConfigSyncService {
     if (!this.configSyncService) {
       this.configSyncService = new OpenClawHookConfigSyncService({

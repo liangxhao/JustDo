@@ -18,9 +18,13 @@ import type {
   McpStore,
 } from '../../plugins/mcp';
 
+type SyncMcpConfig = () => Promise<{ tools: number; error?: string }>;
+
 interface McpHandlerDependencies {
   getStore: () => McpStore;
-  syncConfig: () => Promise<{ tools: number; error?: string }>;
+  runConfigMutationExclusive: <T>(
+    operation: (syncConfig: SyncMcpConfig) => Promise<T>,
+  ) => Promise<T>;
   probeServer: (id: string) => Promise<McpProbeResult>;
   readResource: (id: string, uri: string) => Promise<McpReadResourceResult>;
   installationService: PluginInstallationService;
@@ -29,15 +33,9 @@ interface McpHandlerDependencies {
   onMarketplacePluginDeleted?: (kind: typeof PluginKind.MCP, runtimeId: string) => void;
 }
 
-const syncMcpConfigInBackground = (syncConfig: McpHandlerDependencies['syncConfig']): void => {
-  void syncConfig().catch(error => {
-    console.error('[OpenClawMcp] background configuration sync error:', error);
-  });
-};
-
 export const registerMcpHandlers = ({
   getStore,
-  syncConfig,
+  runConfigMutationExclusive,
   probeServer,
   readResource,
   installationService,
@@ -45,93 +43,149 @@ export const registerMcpHandlers = ({
   discoverExternalServers,
   onMarketplacePluginDeleted,
 }: McpHandlerDependencies): void => {
+  let mutationTail: Promise<void> = Promise.resolve();
+  const runMcpOperationExclusive = <T>(
+    operation: (syncConfig: SyncMcpConfig) => Promise<T>,
+  ): Promise<T> => {
+    const result = mutationTail.then(() => runConfigMutationExclusive(operation));
+    mutationTail = result.then(
+      (): void => undefined,
+      (): void => undefined,
+    );
+    return result;
+  };
+  const syncMcpMutation = async (
+    syncConfig: SyncMcpConfig,
+    rollback: () => void,
+  ): Promise<void> => {
+    try {
+      const result = await syncConfig();
+      if (result.error) throw new Error(result.error);
+    } catch (error) {
+      const rollbackErrors: string[] = [];
+      try {
+        rollback();
+      } catch (rollbackError) {
+        rollbackErrors.push(
+          rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+        );
+      }
+      try {
+        const result = await syncConfig();
+        if (result.error) throw new Error(result.error);
+      } catch (rollbackError) {
+        rollbackErrors.push(
+          rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+        );
+      }
+      if (rollbackErrors.length > 0) {
+        console.error('[OpenClawMcp] MCP mutation rollback incomplete:', rollbackErrors);
+      }
+      throw new Error(
+        [
+          error instanceof Error ? error.message : 'Failed to synchronize MCP configuration',
+          ...(rollbackErrors.length > 0
+            ? [`Rollback incomplete: ${rollbackErrors.join('; ')}`]
+            : []),
+        ].join(' '),
+      );
+    }
+  };
   const listServers = () =>
     getStore()
       .listServers()
       .map(server => ({ ...server, ...getUserMcpManagement() }));
   installationService.registerInstaller({
     kind: PluginKind.MCP,
-    install: async request => {
-      if (request.payload.kind !== PluginKind.MCP) {
-        return { success: false, error: 'Invalid MCP installation payload' };
-      }
-      const requestTimeoutSeconds = request.payload.config.requestTimeoutSeconds;
-      if (
-        requestTimeoutSeconds !== undefined &&
-        requestTimeoutSeconds !== null &&
-        !isValidMcpRequestTimeoutSeconds(requestTimeoutSeconds)
-      ) {
-        return {
-          success: false,
-          error: 'MCP request timeout must be an integer between 1 and 86400 seconds.',
-        };
-      }
-      const store = getStore();
-      if (request.operation === MarketplaceInstallOperation.UPDATE) {
-        const targetId =
-          request.origin === PluginInstallOrigin.CUSTOM
-            ? request.payload.targetId
-            : store
-                .listServers()
-                .find(server => server.registryId === request.marketplacePluginId)?.id;
-        if (!targetId) return { success: false, error: 'Installed MCP server was not found' };
-        const updated = store.updateServer(targetId, {
-          ...request.payload.config,
+    install: request =>
+      runMcpOperationExclusive(async syncConfig => {
+        if (request.payload.kind !== PluginKind.MCP) {
+          return { success: false, error: 'Invalid MCP installation payload' };
+        }
+        const requestTimeoutSeconds = request.payload.config.requestTimeoutSeconds;
+        if (
+          requestTimeoutSeconds !== undefined &&
+          requestTimeoutSeconds !== null &&
+          !isValidMcpRequestTimeoutSeconds(requestTimeoutSeconds)
+        ) {
+          return {
+            success: false,
+            error: 'MCP request timeout must be an integer between 1 and 86400 seconds.',
+          };
+        }
+        const store = getStore();
+        if (request.operation === MarketplaceInstallOperation.UPDATE) {
+          const targetId =
+            request.origin === PluginInstallOrigin.CUSTOM
+              ? request.payload.targetId
+              : store
+                  .listServers()
+                  .find(server => server.registryId === request.marketplacePluginId)?.id;
+          if (!targetId) return { success: false, error: 'Installed MCP server was not found' };
+          const previousState = store.getServer(targetId);
+          if (!previousState)
+            return { success: false, error: 'Installed MCP server was not found' };
+          const updated = store.updateServer(targetId, {
+            ...request.payload.config,
+            registryId:
+              request.origin === PluginInstallOrigin.MARKETPLACE
+                ? request.marketplacePluginId
+                : request.payload.config.registryId,
+          });
+          if (!updated) return { success: false, error: 'Installed MCP server was not found' };
+          await syncMcpMutation(syncConfig, () => store.restoreServer(previousState));
+          return { success: true, pluginId: updated.id };
+        }
+
+        const config = request.payload.config;
+        if (typeof config.name !== 'string' || !config.name.trim()) {
+          return { success: false, error: 'MCP server name is required' };
+        }
+        if (!config.transportType) {
+          return { success: false, error: 'MCP transport type is required' };
+        }
+        if (
+          request.origin === PluginInstallOrigin.MARKETPLACE &&
+          store.listServers().some(server => server.registryId === request.marketplacePluginId)
+        ) {
+          return { success: false, error: 'MCP server is already installed' };
+        }
+        const created = store.createServer({
+          ...config,
+          name: config.name,
+          transportType: config.transportType,
           registryId:
             request.origin === PluginInstallOrigin.MARKETPLACE
               ? request.marketplacePluginId
-              : request.payload.config.registryId,
+              : config.registryId,
         });
-        if (!updated) return { success: false, error: 'Installed MCP server was not found' };
-        syncMcpConfigInBackground(syncConfig);
-        return { success: true, pluginId: updated.id };
-      }
-
-      const config = request.payload.config;
-      if (typeof config.name !== 'string' || !config.name.trim()) {
-        return { success: false, error: 'MCP server name is required' };
-      }
-      if (!config.transportType) {
-        return { success: false, error: 'MCP transport type is required' };
-      }
-      if (
-        request.origin === PluginInstallOrigin.MARKETPLACE &&
-        store.listServers().some(server => server.registryId === request.marketplacePluginId)
-      ) {
-        return { success: false, error: 'MCP server is already installed' };
-      }
-      const created = store.createServer({
-        ...config,
-        name: config.name,
-        transportType: config.transportType,
-        registryId:
-          request.origin === PluginInstallOrigin.MARKETPLACE
-            ? request.marketplacePluginId
-            : config.registryId,
-      });
-      syncMcpConfigInBackground(syncConfig);
-      return { success: true, pluginId: created.id };
-    },
+        await syncMcpMutation(syncConfig, () => {
+          store.deleteServer(created.id);
+        });
+        return { success: true, pluginId: created.id };
+      }),
   });
 
-  ipcMain.handle('mcp:list', () => {
-    try {
+  ipcMain.handle('mcp:list', () =>
+    runMcpOperationExclusive(async () => {
       try {
-        discoverExternalServers();
+        try {
+          discoverExternalServers();
+        } catch (error) {
+          console.warn(
+            '[OpenClawMcp] Failed to discover externally installed MCP servers:',
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+        return { success: true, servers: listServers() };
       } catch (error) {
-        console.warn(
-          '[OpenClawMcp] Failed to discover externally installed MCP servers:',
-          error instanceof Error ? error.message : String(error),
-        );
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to list MCP servers',
+        };
       }
-      return { success: true, servers: listServers() };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to list MCP servers',
-      };
-    }
-  });
+    }),
+  );
 
   ipcMain.handle('mcp:listExtensionServers', async () => {
     try {
@@ -192,61 +246,71 @@ export const registerMcpHandlers = ({
     }
   });
 
-  ipcMain.handle('mcp:delete', async (_event, id: string) => {
-    try {
-      if (typeof id !== 'string' || !id.trim()) {
-        return { success: false, error: 'MCP server id is required' };
+  ipcMain.handle('mcp:delete', (_event, id: string) =>
+    runMcpOperationExclusive(async syncConfig => {
+      try {
+        if (typeof id !== 'string' || !id.trim()) {
+          return { success: false, error: 'MCP server id is required' };
+        }
+        const store = getStore();
+        const previousState = store.getServer(id.trim());
+        if (!previousState || !store.deleteServer(id.trim())) {
+          return { success: false, error: 'MCP server was not found' };
+        }
+        await syncMcpMutation(syncConfig, () => store.restoreServer(previousState));
+        onMarketplacePluginDeleted?.(PluginKind.MCP, id.trim());
+        const servers = listServers();
+        return { success: true, servers };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to delete MCP server',
+        };
       }
-      if (!getStore().deleteServer(id.trim())) {
-        return { success: false, error: 'MCP server was not found' };
-      }
-      onMarketplacePluginDeleted?.(PluginKind.MCP, id.trim());
-      const servers = listServers();
-      syncMcpConfigInBackground(syncConfig);
-      return { success: true, servers };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to delete MCP server',
-      };
-    }
-  });
+    }),
+  );
 
-  ipcMain.handle('mcp:setEnabled', async (_event, options: { id: string; enabled: boolean }) => {
-    try {
-      if (
-        typeof options?.id !== 'string' ||
-        !options.id.trim() ||
-        typeof options.enabled !== 'boolean'
-      ) {
-        return { success: false, error: 'MCP server id and enabled state are required' };
+  ipcMain.handle('mcp:setEnabled', (_event, options: { id: string; enabled: boolean }) =>
+    runMcpOperationExclusive(async syncConfig => {
+      try {
+        if (
+          typeof options?.id !== 'string' ||
+          !options.id.trim() ||
+          typeof options.enabled !== 'boolean'
+        ) {
+          return { success: false, error: 'MCP server id and enabled state are required' };
+        }
+        const store = getStore();
+        const previousState = store.getServer(options.id.trim());
+        if (!previousState || !store.setEnabled(options.id.trim(), options.enabled)) {
+          return { success: false, error: 'MCP server was not found' };
+        }
+        await syncMcpMutation(syncConfig, () => store.restoreServer(previousState));
+        const servers = listServers();
+        return { success: true, servers };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to update MCP server',
+        };
       }
-      if (!getStore().setEnabled(options.id.trim(), options.enabled)) {
-        return { success: false, error: 'MCP server was not found' };
-      }
-      const servers = listServers();
-      syncMcpConfigInBackground(syncConfig);
-      return { success: true, servers };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to update MCP server',
-      };
-    }
-  });
+    }),
+  );
 
-  ipcMain.handle('mcp:syncConfig', async () => {
-    try {
-      const result = await syncConfig();
-      return { success: true, tools: result.tools, error: result.error };
-    } catch (error) {
-      return {
-        success: false,
-        tools: 0,
-        error: error instanceof Error ? error.message : 'Failed to sync MCP configuration',
-      };
-    }
-  });
+  ipcMain.handle('mcp:syncConfig', () =>
+    runMcpOperationExclusive(async syncConfig => {
+      try {
+        const result = await syncConfig();
+        return { success: !result.error, tools: result.tools, error: result.error };
+      } catch (error) {
+        return {
+          success: false,
+          tools: 0,
+          error: error instanceof Error ? error.message : 'Failed to sync MCP configuration',
+        };
+      }
+    }),
+  );
 
   ipcMain.handle('mcp:probe', async (_event, id: string) => {
     try {

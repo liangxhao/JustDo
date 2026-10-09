@@ -243,6 +243,32 @@ export class McpStore {
     return true;
   }
 
+  restoreServer(record: McpServerRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO mcp_servers (id, name, description, enabled, transport_type, config_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           name = excluded.name,
+           description = excluded.description,
+           enabled = excluded.enabled,
+           transport_type = excluded.transport_type,
+           config_json = excluded.config_json,
+           created_at = excluded.created_at,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        record.id,
+        record.name,
+        record.description,
+        record.enabled ? 1 : 0,
+        record.transportType,
+        this.serializeConfig(record),
+        record.createdAt,
+        record.updatedAt,
+      );
+  }
+
   setEnabled(id: string, enabled: boolean): boolean {
     const existing = this.getServer(id);
     if (!existing) return false;

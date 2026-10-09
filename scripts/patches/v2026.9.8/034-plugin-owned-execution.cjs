@@ -1,8 +1,10 @@
 'use strict';
 
 // Capability: durable exact plugin execution facts and run-owned tool cleanup.
+// Target: pristine openclaw@2026.9.8 plugin SDK, run dispatch, registry and tool lifetime seams.
 // Scope: trusted in-process SDK, existing native registry/session custody.
-// Remove when upstream supplies equivalent settlement and cleanup evidence.
+// Safety: preserve native execution ownership, authority, exact settlement and uncertain-launch boundaries.
+// Remove when: upstream supplies equivalent settlement and cleanup evidence.
 const fs = require('node:fs');
 const path = require('node:path');
 const ts = require('typescript');

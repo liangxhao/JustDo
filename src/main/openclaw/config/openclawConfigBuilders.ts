@@ -306,7 +306,9 @@ export const buildOpenClawHookConfig = (
     ? {
         hooks: {
           internal: {
-            enabled: hooks.some(hook => hook.enabled),
+            // This is the shared dispatch gate, including extension-provided
+            // legacy Hooks. Individual entries control independent Hooks.
+            enabled: true,
             entries,
           },
         },
