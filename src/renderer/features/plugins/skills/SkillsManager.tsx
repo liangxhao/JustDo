@@ -10,6 +10,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
+import OperationResultModal, {
+  type OperationResult,
+} from '@/features/plugins/shared/OperationResultModal';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
 import PluginGroupSection from '@/features/plugins/shared/PluginGroupSection';
 import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubTypes';
@@ -27,12 +30,9 @@ import {
 import { skillService } from '@/features/plugins/skills/skillService';
 import { setSkills } from '@/features/plugins/skills/skillSlice';
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
-import OperationResultModal, {
-  type OperationResult,
-} from '@/shared/components/common/OperationResultModal';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
+import Modal from '@/shared/components/ui/Modal';
 import Tooltip from '@/shared/components/ui/Tooltip';
 import { RootState } from '@/store';
 

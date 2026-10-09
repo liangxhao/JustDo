@@ -38,7 +38,7 @@ vi.mock('electron', () => ({
 
 import { BrowserIpc } from '../../shared/browser/browser';
 import { BrowserAgentBridge } from './browserAgentBridge';
-import { claimBrowserAgentDownload } from './browserAgentDownloadCoordinator';
+import { claimBrowserAgentDownload } from './downloads/browserAgentDownloadCoordinator';
 
 let bridge: BrowserAgentBridge | null = null;
 

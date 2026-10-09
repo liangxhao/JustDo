@@ -10,8 +10,8 @@ import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
 
-import { FilePreviewToolbarContext } from './FilePreviewToolbarContext';
-import WorkspaceFileIcon from './WorkspaceFileIcon';
+import { FilePreviewToolbarContext } from '../shared/FilePreviewToolbarContext';
+import WorkspaceFileIcon from '../shared/WorkspaceFileIcon';
 
 interface UnsupportedFilePreviewProps {
   filePath: string;

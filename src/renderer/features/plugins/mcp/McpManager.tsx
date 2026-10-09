@@ -28,12 +28,12 @@ import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownD
 import PluginStateButton from '@/features/plugins/shared/PluginStateButton';
 import PluginUpdateIndicator from '@/features/plugins/shared/PluginUpdateIndicator';
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
-import ErrorMessage from '@/shared/components/ErrorMessage';
 import ClockIcon from '@/shared/components/icons/ClockIcon';
 import ConnectorIcon from '@/shared/components/icons/ConnectorIcon';
 import PencilIcon from '@/shared/components/icons/PencilIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
+import ErrorMessage from '@/shared/components/ui/ErrorMessage';
+import Modal from '@/shared/components/ui/Modal';
 import Tooltip from '@/shared/components/ui/Tooltip';
 import { RootState } from '@/store';
 

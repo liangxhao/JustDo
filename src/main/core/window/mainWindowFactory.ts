@@ -29,25 +29,25 @@ import {
   resolveBrowserPanelShortcutAction,
 } from '../../../shared/browser/browser';
 import {
-  cancelAllBrowserAgentDownloads,
-  claimBrowserAgentDownload,
-} from '../../browser/browserAgentDownloadCoordinator';
-import {
   recordBrowserDownload,
   updateBrowserDownload,
-} from '../../browser/browserDataImportService';
-import { sanitizeBrowserUrl } from '../../browser/browserDataSanitizers';
+} from '../../browser/data/browserDataImportService';
+import { sanitizeBrowserUrl } from '../../browser/data/browserDataSanitizers';
+import {
+  cancelAllBrowserAgentDownloads,
+  claimBrowserAgentDownload,
+} from '../../browser/downloads/browserAgentDownloadCoordinator';
 import {
   resolveAvailableBrowserDownloadPath,
   resolveBrowserDownloadDirectory,
-} from '../../browser/browserDownloadPath';
-import { trackBrowserFavicon } from '../../browser/browserFavicon';
-import { trackBrowserHistory } from '../../browser/browserHistoryTracking';
+} from '../../browser/downloads/browserDownloadPath';
+import { trackBrowserFavicon } from '../../browser/history/browserFavicon';
+import { trackBrowserHistory } from '../../browser/history/browserHistoryTracking';
 import {
   isAllowedLocalHtmlPreviewResource,
   isLocalHtmlPreviewUrl,
   isSameLocalHtmlPreviewScope,
-} from '../../browser/localHtmlPreviewServer';
+} from '../../browser/preview/localHtmlPreviewServer';
 import { t } from '../i18n';
 import { registerBrowserProxySession } from '../network/systemProxyPreference';
 import { BrowserHttpAuthRequests, BrowserPermissionState } from './browserPanelRequestState';

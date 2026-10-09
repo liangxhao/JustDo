@@ -6,8 +6,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
 
-import CoworkDisplayPanel from './CoworkDisplayPanel';
-import { fileDisplayTabId, WORKSPACE_FILES_DISPLAY_TAB_ID } from './displayTabIds';
+import CoworkDisplayPanel from '../display/CoworkDisplayPanel';
+import { fileDisplayTabId, WORKSPACE_FILES_DISPLAY_TAB_ID } from '../display/displayTabIds';
 import FilePreviewDrawer, { type FilePreviewDrawerHandle } from './FilePreviewDrawer';
 import UnsupportedFilePreview from './UnsupportedFilePreview';
 

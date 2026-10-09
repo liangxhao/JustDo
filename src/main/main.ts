@@ -40,15 +40,15 @@ import { BuiltinModelIpc, BuiltinModelSyncReason } from '../shared/providers/bui
 import { LocalSpeechModelIpc } from '../shared/speech/localSpeechModels';
 import { normalizeLocalSpeechSettings } from '../shared/speech/localSpeechSettings';
 import { BrowserAgentBridge } from './browser/browserAgentBridge';
-import { BrowserExtensionChatController } from './browser/browserExtensionChatController';
-import { BrowserExtensionChatServer } from './browser/browserExtensionChatServer';
+import { BrowserExtensionChatController } from './browser/extension/browserExtensionChatController';
+import { BrowserExtensionChatServer } from './browser/extension/browserExtensionChatServer';
 import {
   BROWSER_EXTENSION_RESTART_SWITCH,
   clearBrowserExtensionAppServer,
   publishBrowserExtensionAppServer,
   registerBrowserExtensionNativeHost,
-} from './browser/browserExtensionNativeMessaging';
-import { readAutomaticBrowserExtensionPairing } from './browser/browserExtensionPairing';
+} from './browser/extension/browserExtensionNativeMessaging';
+import { readAutomaticBrowserExtensionPairing } from './browser/extension/browserExtensionPairing';
 import { registerAppShutdown } from './core/app/appShutdown';
 import { createLoginSdkAdapter } from './core/app/auth/loginSdkAdapter';
 import { LoginService } from './core/app/auth/loginService';
@@ -121,9 +121,7 @@ import {
   registerCalendarPermissionHandlers,
   registerDialogHandlers,
   registerImagePreviewHandlers,
-  registerLocalAsrHandlers,
   registerLocalFileHandlers,
-  registerLocalSpeechModelHandlers,
   registerLogHandlers,
   registerNetworkHandlers,
   registerShellHandlers,
@@ -150,28 +148,26 @@ import { registerSessionDiagnosticsHandlers } from './ipc/cowork/sessionDiagnost
 import { registerSessionReviewHandlers } from './ipc/cowork/sessionReview';
 import { registerMulticaIntegrationHandlers } from './ipc/multica';
 import {
-  registerComputerControlHandlers,
-  registerExtensionHandlers,
-  registerHookHandlers,
-  registerLocalTtsHandlers,
-  registerMarketplaceHandlers,
-  registerMcpHandlers,
-  registerMediaGenerationModelHandlers,
-  registerOnlineAsrHandlers,
-  registerOnlineTtsHandlers,
-  registerOpenClawApprovalHandlers,
   registerOpenClawEngineHandlers,
   registerOpenClawHistoryHandlers,
   registerOpenClawMemoryHandlers,
   registerOpenClawModelHandlers,
   registerOpenClawUsageHandlers,
-  registerOpenClawWorkboardHandlers,
-  registerSkillHandlers,
   registerSlashCommandHandlers,
-  registerSpeechSynthesisHandlers,
 } from './ipc/openclaw';
 import { readOpenClawAssistantMedia } from './ipc/openclaw/engine';
-import { registerSkillWorkshopHandlers } from './ipc/openclaw/skillWorkshop';
+import {
+  registerExtensionHandlers,
+  registerHookHandlers,
+  registerMarketplaceHandlers,
+  registerMcpHandlers,
+  registerOpenClawWorkboardHandlers,
+  registerSkillHandlers,
+  registerSkillWorkshopHandlers,
+} from './ipc/plugins';
+import {
+  registerMediaGenerationModelHandlers,
+} from './ipc/providers/mediaGenerationModels';
 import {
   getCronJobService,
   getScheduledTaskResultStore,
@@ -179,6 +175,18 @@ import {
   initCronJobServiceManager,
   registerScheduledTaskHandlers,
 } from './ipc/scheduledTask';
+import {
+  registerComputerControlHandlers,
+  registerOpenClawApprovalHandlers,
+} from './ipc/security';
+import {
+  registerLocalAsrHandlers,
+  registerLocalSpeechModelHandlers,
+  registerLocalTtsHandlers,
+  registerOnlineAsrHandlers,
+  registerOnlineTtsHandlers,
+  registerSpeechSynthesisHandlers,
+} from './ipc/speech';
 import { buildManagedLocalSttConfig } from './openclaw/config/localSttConfig';
 import { buildManagedLocalTtsConfig } from './openclaw/config/localTtsConfig';
 import { NativeAssistantCreation } from './openclaw/config/nativeAssistantCreation';

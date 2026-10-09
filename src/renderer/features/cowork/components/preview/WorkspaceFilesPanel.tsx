@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
 
-import WorkspaceFileIcon from './WorkspaceFileIcon';
+import WorkspaceFileIcon from '../shared/WorkspaceFileIcon';
 
 interface WorkspaceFilesPanelProps {
   activeFilePath?: string;

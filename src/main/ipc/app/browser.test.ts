@@ -27,7 +27,7 @@ vi.mock('electron', () => ({
 }));
 
 const { loadHistoryFavicon } = vi.hoisted(() => ({ loadHistoryFavicon: vi.fn() }));
-vi.mock('../../browser/browserHistoryFavicon', () => ({
+vi.mock('../../browser/history/browserHistoryFavicon', () => ({
   loadBrowserHistoryFavicon: loadHistoryFavicon,
 }));
 

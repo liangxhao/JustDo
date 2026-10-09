@@ -35,7 +35,7 @@ const handlers = new Map<string, IpcHandler>();
 vi.mock('electron', () => ({
   ipcMain: { handle: (key: string, handler: IpcHandler) => handlers.set(key, handler) },
 }));
-const { registerOpenClawWorkboardHandlers } = await import('../src/main/ipc/openclaw/workboard');
+const { registerOpenClawWorkboardHandlers } = await import('../src/main/ipc/plugins/workboard');
 
 let store: WorkboardStore;
 let directory: string;

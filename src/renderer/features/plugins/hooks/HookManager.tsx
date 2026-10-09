@@ -18,11 +18,11 @@ import PluginStateButton, {
   PluginLockedIndicator,
 } from '@/features/plugins/shared/PluginStateButton';
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
-import ErrorMessage from '@/shared/components/ErrorMessage';
 import ConnectorIcon from '@/shared/components/icons/ConnectorIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
+import ErrorMessage from '@/shared/components/ui/ErrorMessage';
+import Modal from '@/shared/components/ui/Modal';
 import Tooltip from '@/shared/components/ui/Tooltip';
 
 const getMissingSummary = (hook: HookEntry): string => {

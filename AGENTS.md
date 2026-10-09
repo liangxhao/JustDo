@@ -99,7 +99,8 @@ Main-process domains:
   bundled dependencies in `runtime/`, file operations in `filesystem/`, and
   development startup/config in `development/`. Keep tests beside their modules.
 - `data/`: SQLite wrapper/stores (`sqliteStore.ts`, `coworkStore.ts`, `groupStore.ts`).
-- `ipc/`: app/openclaw/scheduled-task IPC handlers.
+- `ipc/`: app, cowork, OpenClaw, plugins, speech, security, providers, and
+  scheduled-task handlers. Register each capability from its owning domain.
 - `engine/`: cowork router, OpenClaw adapter, command safety, gateway types.
 - `cowork/`: conversation config, model API/readiness, title generation, logging, approved plans.
 - `providers/`: provider API configuration and built-in model credentials, token exchange,
@@ -112,7 +113,7 @@ Key files:
 
 - App/preload: `src/main/main.ts`, `src/main/preload.ts`
 - Runtime: `src/main/openclaw/runtime/openclawEngineManager.ts`
-- Engine: `src/main/engine/coworkEngineRouter.ts`, `src/main/engine/openclawRuntimeAdapter.ts`
+- Engine: `src/main/engine/cowork/coworkEngineRouter.ts`, `src/main/engine/openclaw/openclawRuntimeAdapter.ts`
 - Safety: `src/main/engine/commandSafety.ts`
 - Data: `src/main/data/sqliteStore.ts`, `src/main/data/coworkStore.ts`
 - Config/history: `src/main/openclaw/config/openclawConfigSync.ts`, `src/main/openclaw/sessions/`
@@ -269,15 +270,28 @@ See `docs/architecture/10-data-storage.md`.
 - Renderer plugins use `skills/`, `mcp/`, `hooks/`, `extensions/`, and
   `marketplace/`; co-locate services, types, slices, components, and tests by
   capability. `PluginsView.tsx` composes the page; `shared/` holds plugin-wide UI.
+- Browser lifecycle entry points stay at `main/browser/browserAgentBridge.ts`
+  and `renderer/features/browser/BrowserPanel.tsx`. Main browser operations use
+  `agent/`, `downloads/`, `extension/`, `history/`, `data/`, `recording/`, `pdf/`,
+  and `preview/`; Renderer uses `annotation/`, `recording/`, `intervention/`,
+  `data/`, and `pdf/`. Keep process-local tests beside their modules.
+- Renderer UI primitives live in `shared/components/ui/`; application startup
+  presentation belongs to `app/shell/`, and plugin operation feedback belongs
+  to `features/plugins/shared/`. Keep domain-only helpers beside their consumers.
 - Do not split or merge directories solely to equalize file counts. Preserve
   process boundaries and independent entry points; small cohesive domains are valid.
 - Application constants live in `src/renderer/app/constants.ts`; avoid a singleton
   file-type directory around them. Keep `store/index.ts`, process-local `types/`,
   and single-file feature/contract domains when they define a real ownership boundary.
 - Cowork components use one level of domain folders: `chat`, `composer`,
-  `sessions`, `goals`, `subagents`, `approvals`, `questions`, `preview`, `status`.
+  `sessions`, `goals`, `subagents`, `swarm-workflow`, `approvals`, `questions`,
+  `display`, `preview`, `terminal`, `review`, `status`.
   Keep helpers, tests, and CSS beside their owning components; `shared` is only
   for UI/helpers reused across these folders. Keep `CoworkView.tsx` at the root.
+  `display/` owns tab composition and selection; `preview/` owns file rendering
+  and workspace browsing. Plan review belongs to `approvals/`. Native subtask
+  graphs stay in `subagents/`; the independent Workflow plugin UI stays in
+  `swarm-workflow/`. Shared graph/document styles do not own lifecycle state.
 - Keep top-level `main.ts` and `preload.ts` thin.
 - Large controllers keep lifecycle/state ownership in the entry class and delegate
   domain operations through explicit typed contexts. `shared/app/propertyContext.ts`

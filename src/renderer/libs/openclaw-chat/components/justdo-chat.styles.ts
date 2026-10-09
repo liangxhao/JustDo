@@ -2,7 +2,7 @@ import katexStyles from 'katex/dist/katex.min.css?inline';
 import { css, unsafeCSS } from 'lit';
 import monacoEditorStyles from 'monaco-editor/min/vs/editor/editor.main.css?inline';
 
-import browserRecordingStyles from '@/features/browser/browserRecording.css?inline';
+import browserRecordingStyles from '@/features/browser/recording/browserRecording.css?inline';
 
 export const chatStyles = [
   css`

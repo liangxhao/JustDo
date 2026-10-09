@@ -14,7 +14,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { selectNewerAppUpdateState } from '@/features/settings/updates/appUpdateState';
 import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
+import Modal from '@/shared/components/ui/Modal';
 
 const INITIAL_STATE: AppUpdateState = {
   revision: -1,

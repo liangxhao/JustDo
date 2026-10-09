@@ -17,7 +17,7 @@ import type {
 } from '@/features/cowork/coworkTypes';
 import type { SessionDetailStats } from '@/features/cowork/sessionPresentation';
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
+import Modal from '@/shared/components/ui/Modal';
 
 import { useCollaborationRooms } from '../chat/CollaborationPanel';
 import QueryingIndicator from '../shared/QueryingIndicator';

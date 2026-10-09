@@ -22,9 +22,9 @@ import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
 import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownDescription';
 import PluginSectionHeader from '@/features/plugins/shared/PluginSectionHeader';
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
-import ErrorMessage from '@/shared/components/ErrorMessage';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
+import ErrorMessage from '@/shared/components/ui/ErrorMessage';
+import Modal from '@/shared/components/ui/Modal';
 import Tooltip from '@/shared/components/ui/Tooltip';
 
 export interface InstalledMarketplacePlugin {

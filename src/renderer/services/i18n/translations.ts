@@ -1,5 +1,5 @@
-import { browserInterventionTranslations } from '@/features/browser/browserInterventionTranslations';
-import { browserRecordingTranslations } from '@/features/browser/browserRecordingTranslations';
+import { browserInterventionTranslations } from '@/features/browser/intervention/browserInterventionTranslations';
+import { browserRecordingTranslations } from '@/features/browser/recording/browserRecordingTranslations';
 import type { LanguageType } from '@/services/i18n';
 
 import { appTranslations } from './appTranslations';

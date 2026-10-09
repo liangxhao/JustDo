@@ -10,7 +10,7 @@ import {
 } from '@/features/cowork/sessionListActions';
 import { i18nService } from '@/services/i18n';
 
-import { COLLABORATION_DISPLAY_TAB_ID } from '../preview/displayTabIds';
+import { COLLABORATION_DISPLAY_TAB_ID } from '../display/displayTabIds';
 
 interface CoworkSessionActionsOptions {
   setPendingSessionListAction: React.Dispatch<

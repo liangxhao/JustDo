@@ -24,9 +24,8 @@ import { BrowserRecordingChannel } from '../../shared/browser/browserRecording';
 import { TASK_WORKSPACE_DIRECTORY } from '../../shared/cowork/taskWorkspace';
 import { t } from '../core/i18n';
 import { registerBrowserProxySession } from '../core/network/systemProxyPreference';
-import * as browserAgentActions from './browserAgentActions';
-import { type BrowserAgentActionsContext } from './browserAgentActions';
-import { cancelBrowserAgentDownloadsForWebContents } from './browserAgentDownloadCoordinator';
+import * as browserAgentActions from './agent/browserAgentActions';
+import { type BrowserAgentActionsContext } from './agent/browserAgentActions';
 import {
   AGENT_INTERACTION_ACTIONS,
   AgentBrowserCommand,
@@ -60,17 +59,18 @@ import {
   serializeError,
   TabWaiter,
   USER_LOCK_READ_ACTIONS,
-} from './browserAgentProtocol';
-import * as browserAgentSnapshots from './browserAgentSnapshots';
-import { type BrowserAgentSnapshotsContext } from './browserAgentSnapshots';
+} from './agent/browserAgentProtocol';
+import * as browserAgentSnapshots from './agent/browserAgentSnapshots';
+import { type BrowserAgentSnapshotsContext } from './agent/browserAgentSnapshots';
+import { BrowserIntervention } from './agent/browserIntervention';
 import {
   importChromeData,
   listChromeImportSources,
   listImportedBrowserProfiles,
   recordImportedBrowserProfile,
-} from './browserDataImportService';
-import { sanitizeBrowserUrl as sanitizeUrlForModel } from './browserDataSanitizers';
-import { BrowserIntervention } from './browserIntervention';
+} from './data/browserDataImportService';
+import { sanitizeBrowserUrl as sanitizeUrlForModel } from './data/browserDataSanitizers';
+import { cancelBrowserAgentDownloadsForWebContents } from './downloads/browserAgentDownloadCoordinator';
 
 export class BrowserAgentBridge {
   private readonly intervention = new BrowserIntervention();

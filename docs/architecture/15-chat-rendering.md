@@ -276,6 +276,8 @@ Gateway 原生终端。页签在创建时记录产品会话归属，隐藏面板
 
 ## 12. 实现入口与回归矩阵
 
+聊天 Markdown 的路径识别辅助与测试放在 `libs/openclaw-chat/components/`。Cowork 的工作区组合由 `components/display/` 负责，文件展示由 `preview/` 负责，终端与差异审核分别由同层 `terminal/` 和 `review/` 负责；计划审核界面位于 `approvals/`。共享文档样式和工具栏上下文只承担展示协作，不改变 Gateway 消息、终端或审核状态的所有权。
+
 | 范围              | 代码 / 测试入口                                                         |
 | ----------------- | ----------------------------------------------------------------------- |
 | 连接和生命周期    | gateway/client、chat-controller 及 session-lifecycle/terminal tests     |

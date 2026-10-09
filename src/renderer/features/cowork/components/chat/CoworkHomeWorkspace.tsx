@@ -6,12 +6,12 @@ import CoworkPromptInput, {
 } from '@/features/cowork/components/composer/CoworkPromptInput';
 import CoworkDisplayPanel, {
   type CoworkDisplayTab,
-} from '@/features/cowork/components/preview/CoworkDisplayPanel';
-import DisplayPanelLauncher from '@/features/cowork/components/preview/DisplayPanelLauncher';
+} from '@/features/cowork/components/display/CoworkDisplayPanel';
+import DisplayPanelLauncher from '@/features/cowork/components/display/DisplayPanelLauncher';
+import NewDisplayTabButton from '@/features/cowork/components/display/NewDisplayTabButton';
 import FilePreviewDrawer, {
   type FilePreviewDrawerHandle,
 } from '@/features/cowork/components/preview/FilePreviewDrawer';
-import NewDisplayTabButton from '@/features/cowork/components/preview/NewDisplayTabButton';
 import UnsupportedFilePreview from '@/features/cowork/components/preview/UnsupportedFilePreview';
 import WorkspaceFilesPanel from '@/features/cowork/components/preview/WorkspaceFilesPanel';
 import { CoworkPet } from '@/features/cowork/components/status/CoworkPet';
@@ -26,9 +26,9 @@ import {
   MAX_BROWSER_TABS,
   MAX_TERMINAL_TABS,
   WORKSPACE_FILES_DISPLAY_TAB_ID,
-} from '../preview/displayTabIds';
+} from '../display/displayTabIds';
+import type { CoworkTerminalTab, SessionDisplayState } from '../display/useSessionDisplayState';
 import type { FilePreview } from '../preview/FilePreviewDrawer';
-import type { CoworkTerminalTab, SessionDisplayState } from '../preview/useSessionDisplayState';
 
 interface CoworkHomeWorkspaceProps {
   homeConversationHeader: React.JSX.Element;

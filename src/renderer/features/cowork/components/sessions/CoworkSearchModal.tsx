@@ -15,7 +15,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { CoworkSessionSummary, SessionGroup } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
+import Modal from '@/shared/components/ui/Modal';
 
 import { useDialogFocusTrap } from '../shared/useDialogFocusTrap';
 

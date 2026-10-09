@@ -4,7 +4,7 @@ import type { SchedulerSettings, SchedulerSettingsSnapshot } from '@shared/sched
 import { useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
+import Modal from '@/shared/components/ui/Modal';
 
 const PRESETS = ['24h', '7d', '30d', '90d'] as const;
 

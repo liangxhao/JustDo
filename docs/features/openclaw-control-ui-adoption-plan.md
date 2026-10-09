@@ -333,7 +333,7 @@ type SessionDiffRequest = {
 - Shared 增加领域参数/结果，Main 解析产品 session 到原生 identity 并校验归属，再调用 Gateway；Renderer 不传任意 Git 路径执行命令。
 - 原生服务计算 Diff。产品不逐一拼接 edit 入参，也不在 Main 再维护 Git 快照数据库。
 - 文件预览继续通过现有工作区授权与版本校验；真实 filesystem 路径只能在 Main 验证后使用。
-- 建议组件放 `cowork/components/preview/` 的审阅领域文件；沿用现有面板状态，保持 `CoworkView.tsx` 仅做组合。
+- 建议组件放 `cowork/components/review/`；沿用现有面板状态，保持 `CoworkView.tsx` 仅做组合。
 - 查询 identity 包含 session、范围、commit 和 generation；旧请求不得覆盖新范围。
 - 首版不做 stage、discard、commit、自动修复、推送、PR 发布。可显示只读结果，无需这些写操作就能完整验收。
 - **归属说明**：`sessions.diff` 是按原生会话基线过滤的当前 checkout 差异。共享目录里人工修改、其他会话或外部工具的修改仍可能出现，UI 不能宣称“全部由本次 Agent 产生”。会话前已有且未再变化的文件按原生规则隐藏。
@@ -397,7 +397,7 @@ type SessionDiffRequest = {
 - 沙盒会话原生不提供 portal tool；UI 不能借 Main 或人为加入工具绕过这个限制。门户查看权限和会话创建权限分别判断。
 - worker/Tailscale/wildcard ingress 首版不承诺；这些情形有明确不可用提示，后续用真实环境验证后启用。
 
-**源码定位**：上游 `docs/gateway/portals.md`、`packages/gateway-protocol/src/schema/portals.ts`、`src/gateway/server-methods/portals.ts`、`ui/src/pages/portals/`；产品新增 `features/portals/` 管目录服务，聊天展示归 `cowork/components/preview/`，Main 放对应 IPC/runtime 域。
+**源码定位**：上游 `docs/gateway/portals.md`、`packages/gateway-protocol/src/schema/portals.ts`、`src/gateway/server-methods/portals.ts`、`ui/src/pages/portals/`；产品新增 `features/portals/` 管目录服务，聊天展示组合归 `cowork/components/display/`，Main 放对应 IPC/runtime 域。
 
 **验收**：隔离测试服务可加载 HTML、JS、CSS、图片及 WebSocket HMR；先建 portal 后启动服务可重试成功；关 Tab 后服务和 portal 仍在；关闭 portal 后访问失效而服务器仍可能运行；重启不复活；同时两任务打开相同 portal 不伪造创建归属；只读 summary 缺 token 时合理降级；token 不出现在日志/复制的普通地址；跨源跳转无 Electron 权限；错误端口、服务退出、认证失败与 iframe 限制分别能解释。
 
@@ -680,8 +680,8 @@ webhook 必须显式配置，默认内部结果，不因新增 UI 把通知发�
 | ---- | --------------------------------------------------------------------------------------------------------- | --------------------------------------- |
 | J01  | [Sidebar](../../src/renderer/app/shell/Sidebar.tsx)                                                       | 当前左侧导航                            |
 | J02  | [App](../../src/renderer/app/App.tsx)                                                                     | 页面组合及导航保护                      |
-| J03  | [NewDisplayTabMenu](../../src/renderer/features/cowork/components/preview/NewDisplayTabMenu.tsx)          | 现有侧面板菜单                          |
-| J04  | [useSessionDisplayState](../../src/renderer/features/cowork/components/preview/useSessionDisplayState.ts) | 按会话面板状态与资源保留                |
+| J03  | [NewDisplayTabButton](../../src/renderer/features/cowork/components/display/NewDisplayTabButton.tsx)     | 现有侧面板菜单                          |
+| J04  | [useSessionDisplayState](../../src/renderer/features/cowork/components/display/useSessionDisplayState.ts) | 按会话面板状态与资源保留                |
 | J05  | [active-turn-timeline](../../src/renderer/libs/openclaw-chat/components/active-turn-timeline.ts)          | 工具摘要、输入输出、Diff 呈现           |
 | J06  | [chat-transcript-state](../../src/renderer/libs/openclaw-chat/model/chat-transcript-state.ts)             | 现有 ToolItem 与原生投影状态            |
 | J07  | [edit-tool-diff](../../src/renderer/libs/openclaw-chat/model/edit-tool-diff.ts)                           | 当前 edit 片段解析范围                  |

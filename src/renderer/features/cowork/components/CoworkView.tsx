@@ -53,11 +53,12 @@ import {
 } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
+import StartupLoading from '@/app/shell/StartupLoading';
 import {
   BROWSER_ANNOTATION_MAX_COUNT,
   BROWSER_ANNOTATION_MAX_IMAGE_BYTES,
   browserAnnotationDataBytes,
-} from '@/features/browser/browserAnnotation';
+} from '@/features/browser/annotation/browserAnnotation';
 import BrowserPanel, {
   BROWSER_PANEL_DEFAULT_WIDTH,
   type BrowserPanelHandle,
@@ -68,9 +69,15 @@ import {
   promoteBrowserPanelTabs,
   promotePendingBrowserPanelItems,
 } from '@/features/browser/browserPanelRetention';
-import { recordingSubmissionIssue } from '@/features/browser/browserRecordingSubmission';
 import BrowserTabIcon from '@/features/browser/BrowserTabIcon';
-import { browserTaskStopped } from '@/features/browser/browserTaskStopped';
+import { browserTaskStopped } from '@/features/browser/intervention/browserTaskStopped';
+import { recordingSubmissionIssue } from '@/features/browser/recording/browserRecordingSubmission';
+import PlanApprovalDrawer from '@/features/cowork/components/approvals/PlanApprovalDrawer';
+import {
+  initialPlanPreviewState,
+  planPreviewReducer,
+  retainedPlanForSession,
+} from '@/features/cowork/components/approvals/planPreviewState';
 import JustDoChatWrapper, {
   type JustDoChatWrapperRef,
 } from '@/features/cowork/components/chat/JustDoChatWrapper';
@@ -82,36 +89,30 @@ import CoworkPromptInput, {
   type CoworkPromptInputRef,
 } from '@/features/cowork/components/composer/CoworkPromptInput';
 import { QueuedInputCards } from '@/features/cowork/components/composer/QueuedInputCards';
-import { inferInitialGoalObjective } from '@/features/cowork/components/goals/goalPendingObjective';
-import type { GoalRunProgress } from '@/features/cowork/components/goals/goalRunProgress';
 import CoworkDisplayPanel, {
   type CoworkDisplayTab,
   type CoworkDisplayTabCloseActions,
-} from '@/features/cowork/components/preview/CoworkDisplayPanel';
-import DisplayPanelLauncher from '@/features/cowork/components/preview/DisplayPanelLauncher';
-import { getAdjacentDisplayTabId } from '@/features/cowork/components/preview/displayTabSelection';
+} from '@/features/cowork/components/display/CoworkDisplayPanel';
+import DisplayPanelLauncher from '@/features/cowork/components/display/DisplayPanelLauncher';
+import { getAdjacentDisplayTabId } from '@/features/cowork/components/display/displayTabSelection';
+import NewDisplayTabButton from '@/features/cowork/components/display/NewDisplayTabButton';
+import { useDisplayTabOrder } from '@/features/cowork/components/display/useDisplayTabOrder';
+import { useRecordingReviewTabs } from '@/features/cowork/components/display/useRecordingReviewTabs';
+import {
+  HOME_DISPLAY_SESSION_KEY,
+  useSessionDisplayState,
+} from '@/features/cowork/components/display/useSessionDisplayState';
+import { inferInitialGoalObjective } from '@/features/cowork/components/goals/goalPendingObjective';
+import type { GoalRunProgress } from '@/features/cowork/components/goals/goalRunProgress';
 import FilePreviewDrawer, {
   type FilePreviewDrawerHandle,
 } from '@/features/cowork/components/preview/FilePreviewDrawer';
 import { type FilePreviewNavigationOptions } from '@/features/cowork/components/preview/filePreviewNavigation';
-import NewDisplayTabButton from '@/features/cowork/components/preview/NewDisplayTabButton';
-import PlanApprovalDrawer from '@/features/cowork/components/preview/PlanApprovalDrawer';
-import {
-  initialPlanPreviewState,
-  planPreviewReducer,
-  retainedPlanForSession,
-} from '@/features/cowork/components/preview/planPreviewState';
-import TerminalPanel from '@/features/cowork/components/preview/TerminalPanel';
 import UnsupportedFilePreview from '@/features/cowork/components/preview/UnsupportedFilePreview';
-import { useDisplayTabOrder } from '@/features/cowork/components/preview/useDisplayTabOrder';
 import { useFilePreviewEvents } from '@/features/cowork/components/preview/useFilePreviewEvents';
-import { useRecordingReviewTabs } from '@/features/cowork/components/preview/useRecordingReviewTabs';
-import {
-  HOME_DISPLAY_SESSION_KEY,
-  useSessionDisplayState,
-} from '@/features/cowork/components/preview/useSessionDisplayState';
 import WorkspaceFilesPanel from '@/features/cowork/components/preview/WorkspaceFilesPanel';
 import ExportSessionModal from '@/features/cowork/components/sessions/ExportSessionModal';
+import { getCompactFolderName } from '@/features/cowork/components/shared/path';
 import { CoworkPet } from '@/features/cowork/components/status/CoworkPet';
 import { isCoworkRunActive } from '@/features/cowork/components/status/coworkRunActivity';
 import {
@@ -129,8 +130,9 @@ import {
   isActiveSubtask,
   type Subtask,
 } from '@/features/cowork/components/subagents/subtaskPresentation';
-import SwarmWorkflowPanel from '@/features/cowork/components/subagents/SwarmWorkflowPanel';
-import { useSwarmWorkflowDiscovery } from '@/features/cowork/components/subagents/useSwarmWorkflowDiscovery';
+import SwarmWorkflowPanel from '@/features/cowork/components/swarm-workflow/SwarmWorkflowPanel';
+import { useSwarmWorkflowDiscovery } from '@/features/cowork/components/swarm-workflow/useSwarmWorkflowDiscovery';
+import TerminalPanel from '@/features/cowork/components/terminal/TerminalPanel';
 import {
   selectCoworkConfig,
   selectCoworkSessions,
@@ -178,13 +180,11 @@ import type { QueuedInputSnapshot } from '@/libs/openclaw-chat/gateway/chat-pend
 import { OPEN_SPAWNED_AGENT_EVENT } from '@/libs/openclaw-chat/model/spawn-tool-target';
 import { i18nService } from '@/services/i18n';
 import { getGreetingPeriod, pickHomeGreeting } from '@/services/i18n/homeGreetings';
-import Modal from '@/shared/components/common/Modal';
-import StartupLoading from '@/shared/components/common/StartupLoading';
 import BrainIcon from '@/shared/components/icons/BrainIcon';
 import FolderIcon from '@/shared/components/icons/FolderIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
+import Modal from '@/shared/components/ui/Modal';
 import { type RootState, store } from '@/store';
-import { getCompactFolderName } from '@/utils/path';
 
 import CollaborationPanel, {
   CollaborationMemberLinks,
@@ -213,9 +213,9 @@ import {
   SWARM_WORKFLOW_DISPLAY_TAB_ID,
   TERMINAL_DISPLAY_TAB_PREFIX,
   WORKSPACE_FILES_DISPLAY_TAB_ID,
-} from './preview/displayTabIds';
-import SessionReviewPanel from './preview/SessionReviewPanel';
-import { useCoworkBrowserPanels } from './preview/useCoworkBrowserPanels';
+} from './display/displayTabIds';
+import { useCoworkBrowserPanels } from './display/useCoworkBrowserPanels';
+import SessionReviewPanel from './review/SessionReviewPanel';
 import type { SessionTranscriptMutation } from './sessions/useCoworkSessionActions';
 import { useCoworkSessionActions } from './sessions/useCoworkSessionActions';
 import { useCoworkRuntimePolling } from './status/useCoworkRuntimePolling';

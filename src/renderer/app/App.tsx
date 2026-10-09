@@ -14,6 +14,7 @@ import { defaultConfig, getProviderDisplayName } from '@/app/config';
 import BottomRightStatusStack from '@/app/shell/BottomRightStatusStack';
 import Sidebar from '@/app/shell/Sidebar';
 import { SidebarView } from '@/app/shell/sidebarNavigation';
+import StartupLoading from '@/app/shell/StartupLoading';
 import Toast, { type ToastContent } from '@/app/shell/Toast';
 import WindowHeader from '@/app/shell/window/WindowHeader';
 import { agentService } from '@/features/agents/agentService';
@@ -62,7 +63,6 @@ import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { matchesShortcut } from '@/services/shortcuts';
 import { themeService } from '@/services/theme';
-import StartupLoading from '@/shared/components/common/StartupLoading';
 
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);

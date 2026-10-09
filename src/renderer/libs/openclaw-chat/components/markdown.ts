@@ -35,8 +35,8 @@ import MarkdownIt from 'markdown-it';
 import markdownItTaskLists from 'markdown-it-task-lists';
 import markdownItTexMath from 'markdown-it-texmath';
 
+import { matchAutoLinkPathPrefix } from '@/libs/openclaw-chat/components/markdownPathLinks';
 import { i18nService } from '@/services/i18n';
-import { matchAutoLinkPathPrefix } from '@/utils/markdownPathLinks';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 

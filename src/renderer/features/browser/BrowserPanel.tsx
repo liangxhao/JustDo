@@ -60,14 +60,13 @@ import {
   browserAnnotationDataBytes,
   buildBrowserAnnotationDraft,
   composeAnnotatedBrowserImage,
-} from '@/features/browser/browserAnnotation';
-import BrowserAnnotationComposer from '@/features/browser/BrowserAnnotationComposer';
+} from '@/features/browser/annotation/browserAnnotation';
+import BrowserAnnotationComposer from '@/features/browser/annotation/BrowserAnnotationComposer';
 import BrowserAnnotationToolMenu, {
   type BrowserAnnotationTool,
-} from '@/features/browser/BrowserAnnotationToolMenu';
-import BrowserClearDataModal from '@/features/browser/BrowserClearDataModal';
-import BrowserDataImportModal from '@/features/browser/BrowserDataImportModal';
-import BrowserElementInspectorCard from '@/features/browser/BrowserElementInspectorCard';
+} from '@/features/browser/annotation/BrowserAnnotationToolMenu';
+import BrowserElementInspectorCard from '@/features/browser/annotation/BrowserElementInspectorCard';
+import { normalizeLiveInspectedElement } from '@/features/browser/annotation/liveBrowserInspection';
 import BrowserHttpAuthModal from '@/features/browser/BrowserHttpAuthModal';
 import BrowserOverflowMenu, {
   type BrowserOverflowAction,
@@ -76,24 +75,25 @@ import {
   getRetainedBrowserPanelTabs,
   setRetainedBrowserPanelTabs,
 } from '@/features/browser/browserPanelRetention';
-import { isLikelyPdfUrl } from '@/features/browser/browserPdf';
-import type { BrowserPdfViewerHandle } from '@/features/browser/BrowserPdfViewer';
 import BrowserTabContextMenu, {
   type BrowserTabMenuAction,
 } from '@/features/browser/BrowserTabContextMenu';
-import { normalizeLiveInspectedElement } from '@/features/browser/liveBrowserInspection';
+import BrowserClearDataModal from '@/features/browser/data/BrowserClearDataModal';
+import BrowserDataImportModal from '@/features/browser/data/BrowserDataImportModal';
+import { isLikelyPdfUrl } from '@/features/browser/pdf/browserPdf';
+import type { BrowserPdfViewerHandle } from '@/features/browser/pdf/BrowserPdfViewer';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import Tooltip from '@/shared/components/ui/Tooltip';
 
-import { BrowserInterventionBar } from './BrowserInterventionBar';
-import { BrowserRecordingControls } from './BrowserRecordingControls';
 import BrowserTabIcon from './BrowserTabIcon';
 import {
   browserToolbarButtonClassName as modeButton,
   browserToolbarGroupClassName,
 } from './browserToolbarStyles';
-import { useBrowserRecording } from './useBrowserRecording';
+import { BrowserInterventionBar } from './intervention/BrowserInterventionBar';
+import { BrowserRecordingControls } from './recording/BrowserRecordingControls';
+import { useBrowserRecording } from './recording/useBrowserRecording';
 
 type BrowserPanelMode = 'interact' | 'inspect' | 'pen' | 'rectangle';
 type Gesture =
@@ -151,7 +151,7 @@ const ANNOTATION_NOTICE_DURATION_MS = 3_500;
 // preferences are attach-time only, the suffix makes Fast Refresh replace guests
 // that were created by an older implementation instead of reusing a broken one.
 const BROWSER_WEBVIEW_CAPABILITY_VERSION = 'isolated-session-v4-pdf';
-const BrowserPdfViewer = lazy(() => import('@/features/browser/BrowserPdfViewer'));
+const BrowserPdfViewer = lazy(() => import('@/features/browser/pdf/BrowserPdfViewer'));
 
 const getBrowserPanelMaxWidth = (availableWidth = window.innerWidth): number =>
   Math.max(BROWSER_PANEL_MIN_WIDTH, availableWidth - 32);

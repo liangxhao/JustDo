@@ -118,7 +118,7 @@ import UsageAndStorageSettings from '@/features/settings/usage/UsageAndStorageSe
 import { configService } from '@/services/config';
 import { i18nService, LanguageType } from '@/services/i18n';
 import { themeService } from '@/services/theme';
-import ErrorMessage from '@/shared/components/ErrorMessage';
+import ErrorMessage from '@/shared/components/ui/ErrorMessage';
 
 import appLogoUrl from '../../../../resources/logo.png';
 import { createModelConnectionTestActions } from './models/modelConnectionTestActions';

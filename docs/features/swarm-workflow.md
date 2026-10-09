@@ -2,6 +2,8 @@
 
 Swarm Workflow 是本产品的独立任务流插件，与 OpenClaw 原生 collector 分组、SubAgent 控制树、agent-team 长期协作和 Workboard 工作事项分别管理。具体实现计划和验证关卡见 [实施计划](swarm-workflow-implementation-plan.md)。
 
+Renderer 的 Workflow 面板、节点历史、介入与图形视口辅助位于 `features/cowork/components/swarm-workflow/`，与原生子任务的 `subagents/` 平级。两者复用的图形样式和会话连接辅助位于 Cowork 的 `shared/`；Workflow 专属样式留在插件界面目录。目录归位不增加应用工作流或消息缓存，原生插件服务继续拥有持久 DAG 和执行状态。
+
 插件显示名和用户界面的功能名称统一为 **Swarm Workflow**，中文和英文界面的功能菜单、输入框标签及右侧 Tab 均使用此英文名称，强调持久化任务工作流，区别于 Agent Team 和原生 Swarm 分组。内部命名同步统一，首次发布前不保留旧名称别名或迁移逻辑：
 
 | 范围 | 名称 |

@@ -57,9 +57,9 @@ flowchart LR
 
 ## 权威实现
 
-- Native Host：`src/main/browser/browserExtensionNativeMessaging.ts`
-- WebSocket server：`src/main/browser/browserExtensionChatServer.ts`
-- 业务适配：`src/main/browser/browserExtensionChatController.ts`
+- Native Host：`src/main/browser/extension/browserExtensionNativeMessaging.ts`
+- WebSocket server：`src/main/browser/extension/browserExtensionChatServer.ts`
+- 业务适配：`src/main/browser/extension/browserExtensionChatController.ts`
 - 扩展 bootstrap：`resources/browser-extension/conversation-overlay/modules/app-server-background.js`
 - WebSocket client：`resources/browser-extension/conversation-overlay/modules/conversation-client.js`
 - Side Panel：`resources/browser-extension/conversation-overlay/sidepanel.js`

@@ -1,5 +1,5 @@
 import 'katex/dist/katex.min.css';
-import './FilePreviewDrawer.css';
+import '../shared/documentPreview.css';
 
 import {
   ArrowDownTrayIcon,
@@ -37,9 +37,9 @@ import {
 import PreviewMarkdown from '@/features/cowork/components/preview/PreviewMarkdown';
 import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
+import Modal from '@/shared/components/ui/Modal';
 
-import { FilePreviewToolbarContext } from './FilePreviewToolbarContext';
+import { FilePreviewToolbarContext } from '../shared/FilePreviewToolbarContext';
 import type { ImageFilePreview } from './imageFilePreview';
 import ImageFilePreviewPanel from './ImageFilePreviewPanel';
 

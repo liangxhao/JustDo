@@ -44,7 +44,7 @@ triage、scheduled、review、blocked 以卡片上的简短说明解释等待原
 常规测试：
 
 ```powershell
-node node_modules/vitest/vitest.mjs run src/renderer/features/workboard src/shared/openclaw/workboard.test.ts src/main/ipc/openclaw/workboard.test.ts
+node node_modules/vitest/vitest.mjs run src/renderer/features/workboard src/shared/openclaw/workboard.test.ts src/main/ipc/plugins/workboard.test.ts
 ```
 
 直接使用上游处理器、dispatcher 和临时 SQLite 的契约测试（不加入默认测试集，

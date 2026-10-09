@@ -1,4 +1,4 @@
-import './swarmPanel.css';
+import '../shared/swarmGraph.css';
 
 import {
   ArrowPathIcon,

@@ -10,7 +10,7 @@ import { selectIsOpenClawEngine } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
 import type { OpenClawEngineStatus } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
+import Modal from '@/shared/components/ui/Modal';
 
 const EngineStartupStatusBar: React.FC = () => {
   const isOpenClawEngine = useSelector(selectIsOpenClawEngine);

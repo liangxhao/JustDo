@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { getCompactFolderName } from '@/features/cowork/components/shared/path';
 import { coworkService } from '@/features/cowork/coworkService';
 import { i18nService } from '@/services/i18n';
 import ClockIcon from '@/shared/components/icons/ClockIcon';
 import FolderIcon from '@/shared/components/icons/FolderIcon';
 import FolderPlusIcon from '@/shared/components/icons/FolderPlusIcon';
-import { getCompactFolderName } from '@/utils/path';
 
 const POPOVER_GAP = 8;
 const VIEWPORT_MARGIN = 12;

@@ -11,7 +11,7 @@ import type { SessionDetailStats } from '@shared/cowork/sessionDetails';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
+import Modal from '@/shared/components/ui/Modal';
 
 import { useDraggableModal } from '../shared/useDraggableModal';
 import { reconcileSubagentLabel, type SubagentLabelSource } from './subagentLabel';

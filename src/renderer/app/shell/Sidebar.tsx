@@ -28,10 +28,10 @@ import {
 } from '@/features/cowork/sessionListActions';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
+import Modal from '@/shared/components/ui/Modal';
 import { store } from '@/store';
 
 import NavigationRail from './NavigationRail';

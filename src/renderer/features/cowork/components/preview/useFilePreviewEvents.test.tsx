@@ -4,10 +4,10 @@ import { act, cleanup, renderHook } from '@testing-library/react';
 import { useRef } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { WORKSPACE_FILES_DISPLAY_TAB_ID } from './displayTabIds';
+import { WORKSPACE_FILES_DISPLAY_TAB_ID } from '../display/displayTabIds';
+import { useSessionDisplayState } from '../display/useSessionDisplayState';
 import { IMAGE_PREVIEW_EVENT } from './imageFilePreview';
 import { useFilePreviewEvents } from './useFilePreviewEvents';
-import { useSessionDisplayState } from './useSessionDisplayState';
 
 const fileDisplayTabId = (path: string) => `file:${path.replace(/\\/g, '/')}`;
 const imageSource = 'data:image/png;base64,AA==';

@@ -27,7 +27,7 @@ import { useDialogFocusTrap } from '@/features/cowork/components/shared/useDialo
 import { coworkService } from '@/features/cowork/coworkService';
 import { toOpenClawModelRef } from '@/features/models/openclawModelRef';
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
+import Modal from '@/shared/components/ui/Modal';
 import type { RootState } from '@/store';
 
 import { agentService } from './agentService';

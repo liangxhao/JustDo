@@ -77,9 +77,9 @@ wire conventions，以降低扩展客户端适配成本。
 
 相关测试：
 
-- `src/main/browser/browserExtensionNativeMessaging.test.ts`
-- `src/main/browser/browserExtensionChatServer.test.ts`
-- `src/main/browser/browserExtensionChatController.test.ts`
+- `src/main/browser/extension/browserExtensionNativeMessaging.test.ts`
+- `src/main/browser/extension/browserExtensionChatServer.test.ts`
+- `src/main/browser/extension/browserExtensionChatController.test.ts`
 - `src/main/ipc/app/browser.test.ts`
 - `tests/scripts/prepare-browser-extension.test.ts`
 - `tests/scripts/prepare-browser-extension-dev-host.test.ts`
@@ -89,7 +89,7 @@ wire conventions，以降低扩展客户端适配成本。
 ```bash
 npm run browser-extension:prepare
 npm run browser-extension:prepare-dev-host
-npx vitest run src/main/browser/browserExtensionChatController.test.ts src/main/browser/browserExtensionChatServer.test.ts src/main/browser/browserExtensionNativeMessaging.test.ts src/main/ipc/app/browser.test.ts tests/scripts/prepare-browser-extension.test.ts
+npx vitest run src/main/browser/extension/browserExtensionChatController.test.ts src/main/browser/extension/browserExtensionChatServer.test.ts src/main/browser/extension/browserExtensionNativeMessaging.test.ts src/main/ipc/app/browser.test.ts tests/scripts/prepare-browser-extension.test.ts
 npm run compile:electron
 npm run lint
 git diff --check

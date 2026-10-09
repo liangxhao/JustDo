@@ -162,6 +162,8 @@ PresentPlan 将规范化计划作为工作区内受控文件持久化，并保�
 
 Main 从 `ipc/cowork/sessionExecution.ts`、`sessions.ts`、`sessionRuntime.ts`、`interactions.ts` 进入；Router 在 `engine/cowork/`，Adapter 在 `engine/openclaw/`，Goal 在 `openclaw/goals/`。Renderer 从 CoworkView、composer、sessions 和聊天 wrapper 组合。
 
+Cowork 界面保持单层领域结构：`display` 组合标签、选择和会话面板状态，`preview` 渲染文件并浏览工作区，`terminal` 承载 Gateway 终端，`review` 展示工作区差异，`approvals` 处理执行与计划审核。`subagents` 展示原生子任务和 collector 分组；独立插件的工作流图、节点历史及介入界面归 `swarm-workflow`。跨领域的文件图标、文档样式、图形样式和连接辅助归 `shared`；这些公共模块不持有新的运行或 transcript 状态。
+
 回归应覆盖准入前取消、重复 clientTurn、原生先完成后响应、停止失败、会话切换迟到事件、Plan reset、Goal fence、协作删除部分成功和历史恢复。对应 handler、Store、Adapter 与 controller 都有领域测试；一次正常发送不能替代这些边界验证。
 
 原生助手的角色 workspace 与任务 cwd 分开：main 和专长助手统一使用

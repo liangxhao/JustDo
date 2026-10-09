@@ -25,9 +25,9 @@ import { isLocalAudioAttachment } from '@shared/speech/localAsr';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
-import BrowserAnnotationCard from '@/features/browser/BrowserAnnotationCard';
-import { BrowserRecordingDraftCard } from '@/features/browser/BrowserRecordingDraftCard';
-import { recordingSubmissionIssue } from '@/features/browser/browserRecordingSubmission';
+import BrowserAnnotationCard from '@/features/browser/annotation/BrowserAnnotationCard';
+import { BrowserRecordingDraftCard } from '@/features/browser/recording/BrowserRecordingDraftCard';
+import { recordingSubmissionIssue } from '@/features/browser/recording/browserRecordingSubmission';
 import { resolveAgentModelSelection } from '@/features/cowork/components/composer/agentModelSelection';
 import AttachmentCard from '@/features/cowork/components/composer/AttachmentCard';
 import { rejectBlockedSlashCommand } from '@/features/cowork/components/composer/blockedSlashCommand';
@@ -67,6 +67,7 @@ import {
 import { acceptedGoalResumeRunId } from '@/features/cowork/components/goals/goalResume';
 import type { GoalRunProgress } from '@/features/cowork/components/goals/goalRunProgress';
 import GoalStatusCard from '@/features/cowork/components/goals/GoalStatusCard';
+import { getCompactFolderName } from '@/features/cowork/components/shared/path';
 import ContextUsageIndicator from '@/features/cowork/components/status/ContextUsageIndicator';
 import {
   contextUsageMatchesSession,
@@ -112,11 +113,10 @@ import { ActiveSkillBadge } from '@/features/plugins/skills';
 import type { ChatContextUsageSnapshot } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
 import PaperClipIcon from '@/shared/components/icons/PaperClipIcon';
 import XMarkIcon from '@/shared/components/icons/XMarkIcon';
+import Modal from '@/shared/components/ui/Modal';
 import { type RootState, store } from '@/store';
-import { getCompactFolderName } from '@/utils/path';
 
 import { isImagePath } from './composerAttachmentFiles';
 import { hasComposerContent } from './composerContent';

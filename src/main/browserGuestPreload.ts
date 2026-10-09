@@ -10,7 +10,7 @@ import {
   isBrowserGuestCommand,
   resolveBrowserGuestWheelZoomDirection,
 } from '../shared/browser/browser';
-import { installBrowserRecordingGuest } from './browser/browserRecordingGuest';
+import { installBrowserRecordingGuest } from './browser/recording/browserRecordingGuest';
 
 installBrowserRecordingGuest();
 

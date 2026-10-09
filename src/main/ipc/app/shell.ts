@@ -19,7 +19,7 @@ import {
 import {
   isLocalHtmlPreviewUrl,
   resolveLocalHtmlPreviewFilePath,
-} from '../../browser/localHtmlPreviewServer';
+} from '../../browser/preview/localHtmlPreviewServer';
 import { t } from '../../core/i18n';
 
 const AttachmentMenuAction = {

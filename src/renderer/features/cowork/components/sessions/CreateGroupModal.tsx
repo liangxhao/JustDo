@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { CreateGroupInput } from '@/features/cowork/coworkTypes';
 import { GROUP_COLORS } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
+import Modal from '@/shared/components/ui/Modal';
 
 interface CreateGroupModalProps {
   isOpen: boolean;

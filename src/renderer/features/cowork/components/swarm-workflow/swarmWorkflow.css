@@ -1,0 +1,59 @@
+.swarm-workflow-header {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 10px;
+  background: var(--justdo-surface, #fff);
+}
+.swarm-workflow-header > button {
+  flex-shrink: 0;
+}
+.swarm-workflow-title {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.swarm-workflow-select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  appearance: none;
+  padding: 2px 24px 2px 4px;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.swarm-workflow-select:hover {
+  background: color-mix(in srgb, currentColor 5%, transparent);
+}
+.swarm-workflow-select:focus-visible {
+  outline: 2px solid var(--justdo-primary, #6366f1);
+  outline-offset: 2px;
+}
+.swarm-workflow-select option {
+  color: var(--justdo-foreground, #111827);
+  background: var(--justdo-surface, #fff);
+}
+.swarm-workflow-status {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  color: var(--justdo-text-secondary, #64748b);
+}
+.swarm-workflow-status-running {
+  color: var(--justdo-primary, #6366f1);
+}
+.swarm-workflow-status-blocked {
+  color: var(--justdo-warning, #a16207);
+}
+.swarm-workflow-status-completed {
+  color: var(--justdo-success, #15803d);
+}

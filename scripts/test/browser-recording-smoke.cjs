@@ -11,7 +11,7 @@ if (!process.versions.electron) {
   require('esbuild').buildSync({
     stdin: {
       contents:
-        'import { installBrowserRecordingGuest } from "./src/main/browser/browserRecordingGuest"; installBrowserRecordingGuest();',
+        'import { installBrowserRecordingGuest } from "./src/main/browser/recording/browserRecordingGuest"; installBrowserRecordingGuest();',
       resolveDir: path.resolve(__dirname, '../..'),
       loader: 'ts',
     },

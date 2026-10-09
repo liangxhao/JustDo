@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import { createLocalHtmlPreview } from '../../browser/localHtmlPreviewServer';
+import { createLocalHtmlPreview } from '../../browser/preview/localHtmlPreviewServer';
 
 const { ipcHandle, openExternal } = vi.hoisted(() => ({
   ipcHandle: vi.fn(),

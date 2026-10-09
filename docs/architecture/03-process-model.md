@@ -2,6 +2,8 @@
 
 本页按当前 preload、Main 注册入口和共享合约描述通信机制。接口常量及 payload 以 `src/shared/` 为准；这里解释为什么不同通道分开、请求如何结束、旧响应如何失效。
 
+Main 处理器按能力归入 `ipc/app`、`cowork`、`openclaw`、`plugins`、`speech`、`security`、`providers` 和 `scheduledTask`。插件安装与管理、语音、权限和媒体模型配置由各自领域直接注册，不通过 OpenClaw 或 app 目录转发。目录归属不改变 preload 方法、IPC 字符串、处理器注册顺序或 Gateway 请求协议。
+
 ## 1. 运行实体和信任范围
 
 | 实体           | 可访问资源                                  | 通信边界                                                    |

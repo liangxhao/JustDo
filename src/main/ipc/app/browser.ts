@@ -39,7 +39,7 @@ import {
   clearBrowserData,
   getBrowserClearDataSummary,
   isBrowserClearDataRequest,
-} from '../../browser/browserClearDataService';
+} from '../../browser/data/browserClearDataService';
 import {
   clearBrowserDownloads,
   clearBrowserHistory,
@@ -51,11 +51,11 @@ import {
   listBrowserDownloads,
   listBrowserHistory,
   listChromeImportSources,
-} from '../../browser/browserDataImportService';
-import { readBrowserExtensionPairing } from '../../browser/browserExtensionPairing';
-import { loadBrowserHistoryFavicon } from '../../browser/browserHistoryFavicon';
-import { isBrowserPdfLoadRequest, loadBrowserPdf } from '../../browser/browserPdfService';
-import { createLocalHtmlPreview } from '../../browser/localHtmlPreviewServer';
+} from '../../browser/data/browserDataImportService';
+import { readBrowserExtensionPairing } from '../../browser/extension/browserExtensionPairing';
+import { loadBrowserHistoryFavicon } from '../../browser/history/browserHistoryFavicon';
+import { isBrowserPdfLoadRequest, loadBrowserPdf } from '../../browser/pdf/browserPdfService';
+import { createLocalHtmlPreview } from '../../browser/preview/localHtmlPreviewServer';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 import type { OpenClawCliEnvironment } from '../../openclaw/runtime/openclawEngineManager';
 
@@ -302,7 +302,7 @@ const resolveBrowserExtensionPath = (): string => {
 export {
   buildBrowserExtensionPairingCommandArgs,
   buildBrowserPairingCommandEnvironment,
-} from '../../browser/browserExtensionPairing';
+} from '../../browser/extension/browserExtensionPairing';
 
 export const copyBrowserExtensionPairing = async (
   buildCliEnvironment: () => Promise<OpenClawCliEnvironment>,

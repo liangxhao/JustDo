@@ -23,7 +23,7 @@ require.extensions['.ts'] = (module, filename) => {
 };
 const { WebSocket } = require('ws');
 const { BrowserExtensionChatServer, BROWSER_EXTENSION_ID } = require(
-  path.join(root, 'src/main/browser/browserExtensionChatServer.ts'),
+  path.join(root, 'src/main/browser/extension/browserExtensionChatServer.ts'),
 );
 
 async function main() {

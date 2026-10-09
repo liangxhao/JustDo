@@ -8,7 +8,7 @@ import {
 import React, { useEffect, useId, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
+import Modal from '@/shared/components/ui/Modal';
 
 type HeaderRow = { id: string; name: string; value: string };
 

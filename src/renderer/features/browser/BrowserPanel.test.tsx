@@ -14,8 +14,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { type ComponentProps, StrictMode, useEffect, useRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import CoworkDisplayPanel from '@/features/cowork/components/preview/CoworkDisplayPanel';
-import NewDisplayTabButton from '@/features/cowork/components/preview/NewDisplayTabButton';
+import CoworkDisplayPanel from '@/features/cowork/components/display/CoworkDisplayPanel';
+import NewDisplayTabButton from '@/features/cowork/components/display/NewDisplayTabButton';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 

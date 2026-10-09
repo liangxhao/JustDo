@@ -16,10 +16,10 @@ import type {
   SessionGroup,
 } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
 import ListChecksIcon from '@/shared/components/icons/ListChecksIcon';
 import PencilSquareIcon from '@/shared/components/icons/PencilSquareIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
+import Modal from '@/shared/components/ui/Modal';
 import Tooltip from '@/shared/components/ui/Tooltip';
 
 import CoworkSessionDiagnosticsModal from './CoworkSessionDiagnosticsModal';

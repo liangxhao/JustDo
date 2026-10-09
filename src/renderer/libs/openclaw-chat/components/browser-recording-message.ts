@@ -10,7 +10,7 @@ import {
   recordingPageLabel,
   recordingSummary,
   recordingTargetLabel,
-} from '@/features/browser/browserRecordingPresentation';
+} from '@/features/browser/recording/browserRecordingPresentation';
 import { i18nService } from '@/services/i18n';
 
 const icon = (path: string) =>

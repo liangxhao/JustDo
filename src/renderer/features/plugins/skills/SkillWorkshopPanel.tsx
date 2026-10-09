@@ -14,7 +14,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
+import Modal from '@/shared/components/ui/Modal';
 
 const t = (key: string) => i18nService.t(key);
 const unwrap = <T,>(result: SkillWorkshopResult<T>): T => {

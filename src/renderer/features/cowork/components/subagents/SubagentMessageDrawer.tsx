@@ -13,9 +13,9 @@ import {
 } from '@/features/cowork/components/subagents/subtaskPresentation';
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
+import Modal from '@/shared/components/ui/Modal';
 
-import { startSubagentGatewayConnection } from './subagentGatewayConnection';
+import { startSubagentGatewayConnection } from '../shared/subagentGatewayConnection';
 import { reconcileSubagentLabel } from './subagentLabel';
 import { ACTIVE_SUBAGENT_POLL_INTERVAL_MS, isActiveSubagentStatus } from './subagentPolling';
 import SubagentTokenUsage from './SubagentTokenUsage';

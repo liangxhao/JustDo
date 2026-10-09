@@ -23,6 +23,9 @@ import {
   groupExtensionsByOwnership,
 } from '@/features/plugins/extensions/extensionGroups';
 import MarketplaceView from '@/features/plugins/marketplace/MarketplaceView';
+import OperationResultModal, {
+  type OperationResult,
+} from '@/features/plugins/shared/OperationResultModal';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
 import PluginGroupSection from '@/features/plugins/shared/PluginGroupSection';
 import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubTypes';
@@ -32,13 +35,10 @@ import PluginStateButton, {
 } from '@/features/plugins/shared/PluginStateButton';
 import PluginUpdateIndicator from '@/features/plugins/shared/PluginUpdateIndicator';
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
-import OperationResultModal, {
-  type OperationResult,
-} from '@/shared/components/common/OperationResultModal';
 import PuzzleIcon from '@/shared/components/icons/PuzzleIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
+import Modal from '@/shared/components/ui/Modal';
 import Tooltip from '@/shared/components/ui/Tooltip';
 
 const getImportStageLabel = (stage: ExtensionImportStage): string => {

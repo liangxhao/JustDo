@@ -53,7 +53,11 @@ flowchart TB
 
 Main 的 `core/` 分为 app、window、network、runtime、filesystem、development。浏览器、语音、外部集成和 Windows 沙盒有自己的领域，不塞入通用工具文件。`providers/` 管理产品模型配置与认证；`openclaw/config/` 管理它们向原生配置的投影。
 
-Renderer 的 feature 负责页面行为，settings 内按 models/browser/speech/integrations/runtime 等领域组织。插件按 skills/mcp/hooks/extensions/marketplace 组织。Cowork 组件按 chat/composer/sessions/goals/subagents/approvals/questions/preview/status 组织；跨领域组合仍由 CoworkView 承担。
+Renderer 的 feature 负责页面行为，settings 内按 models/browser/speech/integrations/runtime 等领域组织。插件按 skills/mcp/hooks/extensions/marketplace 组织。Cowork 组件使用单层领域目录：chat/composer/sessions/goals/subagents/swarm-workflow/approvals/questions/display/preview/terminal/review/status；跨领域组合仍由 CoworkView 承担。display 管理标签组合与选择，preview 管理文件展示和工作区浏览，terminal 管理终端界面，review 管理工作区变更审核，计划审核归 approvals。原生子任务图与独立 Workflow 插件界面分别归 subagents 和 swarm-workflow，复用样式与连接辅助放在 shared，不增加执行状态所有者。
+
+浏览器 Main 与 Renderer 继续保持进程边界。Main 的 browserAgentBridge 和 Renderer 的 BrowserPanel 持有原有生命周期，录制、PDF、数据操作等辅助按能力分组；Main 的扩展通信与历史缓存独立于 Agent 操作，Renderer 的标注和人工介入独立于面板标签壳层。测试与辅助实现相邻，目录迁移不改变 Gateway 方法、guest 注册或配对协议。
+
+IPC 同样按产品能力组织：插件管理归 plugins，语音归 speech，权限和桌面控制准入归 security，媒体模型配置归 providers；原生引擎、历史、模型查询、记忆和命令入口继续归 openclaw。main.ts 从各领域直接注册处理器，原有 IPC 常量、注册顺序和校验语义保持一致。公共 UI 基础组件统一放在 Renderer shared/components/ui；启动展示属于应用外壳，插件操作结果属于插件公共界面。仅服务 Cowork 或 Markdown 的路径辅助与实际消费领域相邻，不建立通用 utils 汇集目录。
 
 设置使用独立滚动的分组侧栏与居中内容区，按用户要调整的对象分为个人偏好、模型与助手、任务执行、连接与集成、应用管理。个人偏好包含通用、外观、快捷键、语音和宠物；模型与助手管理模型来源与助手身份；任务执行包含执行设置、沙箱与隔离、Worktree、浏览器和电脑操控；连接与集成提供外部连接和消息通道；应用管理提供用量与存储、关于与帮助。浏览器和电脑操控是助手执行任务的能力，外部工具委派与消息接入属于连接设置。
 

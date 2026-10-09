@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { createImagePreviewTransform, zoomImagePreviewTransform } from '@/image-preview/transform';
 import { i18nService } from '@/services/i18n';
 
-import { FilePreviewToolbarContext } from './FilePreviewToolbarContext';
+import { FilePreviewToolbarContext } from '../shared/FilePreviewToolbarContext';
 import type { ImageFilePreview } from './imageFilePreview';
 
 export default function ImageFilePreviewPanel({

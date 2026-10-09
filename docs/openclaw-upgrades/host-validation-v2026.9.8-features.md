@@ -25,9 +25,9 @@
 ```powershell
 npx vitest run `
   src/shared/scheduledTask src/shared/openclaw/workboard.test.ts `
-  src/main/ipc/scheduledTask src/main/ipc/openclaw/workboard.test.ts `
+  src/main/ipc/scheduledTask src/main/ipc/plugins/workboard.test.ts `
   src/main/ipc/openclaw/models.test.ts src/main/ipc/openclaw/memory.test.ts `
-  src/main/ipc/openclaw/mediaGenerationModels.test.ts `
+  src/main/ipc/providers/mediaGenerationModels.test.ts `
   src/main/scheduler/cronJobService.test.ts src/main/scheduler/scheduledTaskLog.test.ts `
   src/main/scheduler/enginePrompt.test.ts src/main/scheduler/scheduledTaskSessionHistory.test.ts `
   src/main/scheduler/scheduledTaskResultSyncService.test.ts `

@@ -7,8 +7,8 @@ import React, { useEffect, useState } from 'react';
 
 import { McpRegistryEntry, McpServerConfig, McpServerFormData } from '@/features/plugins/mcp/mcp';
 import { i18nService } from '@/services/i18n';
-import Modal from '@/shared/components/common/Modal';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
+import Modal from '@/shared/components/ui/Modal';
 import Tooltip from '@/shared/components/ui/Tooltip';
 
 interface McpServerFormModalProps {
