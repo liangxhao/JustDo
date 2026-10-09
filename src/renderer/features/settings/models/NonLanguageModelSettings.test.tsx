@@ -37,15 +37,17 @@ describe('NonLanguageModelSettings', () => {
     const categories = currentConfig.onlineModelProviders as NonLanguageModelProviders;
     const initial = structuredClone(categories[kind] ?? createEmptyNonLanguageModelCategory());
     const onSubmit = vi.fn((event: FormEvent) => event.preventDefault());
+    let observedCategory = initial;
     const Host = () => {
       const [category, setCategory] = useState<NonLanguageModelCategory>(initial);
+      observedCategory = category;
       return (
         <form onSubmit={onSubmit}>
           <NonLanguageModelSettings kind={kind} category={category} setCategory={setCategory} />
         </form>
       );
     };
-    return { ...render(<Host />), onSubmit };
+    return { ...render(<Host />), onSubmit, getCategory: () => observedCategory };
   };
 
   it('shows decision provider URL and key as required and detects with Bearer auth', async () => {
@@ -95,49 +97,87 @@ describe('NonLanguageModelSettings', () => {
         },
         mediaGenerationModels: { saveConfiguration: vi.fn() },
         extensions: {
-          list: vi
-            .fn()
-            .mockResolvedValue({
-              success: true,
-              extensions: ['kie', 'zai', 'novita'].map(id => ({ id, enabled: false })),
-            }),
+          list: vi.fn().mockResolvedValue({
+            success: true,
+            extensions: ['kie', 'zai', 'novita'].map(id => ({ id, enabled: false })),
+          }),
           onChanged: vi.fn(() => () => undefined),
         },
       },
     });
   });
 
-  it('offers only installed native video services without a custom endpoint editor', async () => {
+  const addVideoProvider = async (name: string, adapter?: string) => {
+    const addButton = screen.getByRole('button', { name: 'addCustomProvider' });
+    await waitFor(() => expect(addButton.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(addButton);
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('customDisplayName'), {
+      target: { value: name },
+    });
+    if (adapter) {
+      fireEvent.change(within(dialog).getByLabelText('nativeVideoService'), {
+        target: { value: adapter },
+      });
+    }
+    fireEvent.click(within(dialog).getByRole('button', { name: 'confirm' }));
+  };
+
+  const addVideoModel = (id: string, name?: string) => {
+    fireEvent.click(screen.getByRole('button', { name: 'manualAddModel' }));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('mediaModelId'), { target: { value: id } });
+    if (name)
+      fireEvent.change(within(dialog).getByLabelText('modelName'), { target: { value: name } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'confirm' }));
+  };
+
+  it('offers only installed video adapters when adding a provider', async () => {
     renderSettings('video');
-    await screen.findByText('Kie AI');
-    expect(screen.queryByText('addCustomProvider')).toBeNull();
-    expect(screen.getByLabelText('modelProviders')).toBeTruthy();
+    const addButton = screen.getByRole('button', { name: 'addCustomProvider' });
+    await waitFor(() => expect(addButton.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(addButton);
+    expect(screen.getAllByRole('option').map(option => option.getAttribute('value'))).toEqual([
+      'kie',
+      'zai',
+      'novita',
+    ]);
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('selects installed native video models without contacting a paid provider and masks API keys', async () => {
-    renderSettings('video');
-    await screen.findByText('Kie AI');
-    fireEvent.change(screen.getByLabelText('modelProviders'), { target: { value: 'kie' } });
-    expect(screen.getByDisplayValue('kling-2.6/text-to-video')).toBeTruthy();
-    expect(screen.getByLabelText('baseUrl')).toHaveProperty('value', 'https://api.kie.ai');
-    fireEvent.change(screen.getByLabelText('apiKey'), { target: { value: 'typed-test-key' } });
-    expect(screen.getByLabelText('apiKey').getAttribute('type')).toBe('password');
-    fireEvent.change(screen.getByLabelText('modelProviders'), { target: { value: 'zai' } });
-    expect(screen.getByDisplayValue('cogvideox-3')).toBeTruthy();
-    expect(screen.getByLabelText('apiKey')).toHaveProperty('value', '');
-    fireEvent.change(screen.getByLabelText('modelProviders'), { target: { value: 'kie' } });
-    expect(screen.getByLabelText('apiKey')).toHaveProperty('value', 'typed-test-key');
+  it('switches video provider cards without selecting a default or exposing their keys', async () => {
+    const { getCategory } = renderSettings('video');
+    await addVideoProvider('Kie API', 'kie');
+    expect(screen.getByText('kling-2.6/text-to-video')).toBeTruthy();
+    expect(screen.getByLabelText('baseUrl *')).toHaveProperty('value', 'https://api.kie.ai');
+    fireEvent.change(screen.getByLabelText('apiKey *'), { target: { value: 'typed-test-key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'voiceOnlineShowApiKey' }));
+    expect(screen.getByLabelText('apiKey *').getAttribute('type')).toBe('text');
+    const firstModel = screen.getByText('kling-2.6/text-to-video').closest('div.flex')!;
+    fireEvent.click(
+      within(firstModel as HTMLElement).getByRole('button', { name: 'mediaModelSetDefault' }),
+    );
+    const defaultProviderId = getCategory().defaultProviderId;
+
+    await addVideoProvider('ZAI API', 'zai');
+    expect(screen.getByText('cogvideox-3')).toBeTruthy();
+    expect(screen.getByLabelText('apiKey *')).toHaveProperty('value', '');
+    expect(screen.getByLabelText('apiKey *').getAttribute('type')).toBe('password');
+    fireEvent.click(screen.getByRole('button', { name: 'Kie API', pressed: false }));
+    expect(screen.getByLabelText('apiKey *')).toHaveProperty('value', 'typed-test-key');
+    expect(screen.getByLabelText('apiKey *').getAttribute('type')).toBe('password');
+    expect(getCategory().defaultProviderId).toBe(defaultProviderId);
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('shows no cloud video choices or credential fields when those plugins are absent', async () => {
+  it('hides unavailable video configurations and disables adding providers', async () => {
     vi.mocked(window.electron.extensions.list).mockResolvedValue({ success: true, extensions: [] });
     currentConfig.onlineModelProviders = {
       video: {
         defaultProviderId: 'native',
         providers: {
           native: {
+            displayName: 'Unavailable API',
             nativeVideoProvider: 'kie',
             baseUrl: 'https://api.kie.ai',
             apiKey: 'retained-key',
@@ -149,10 +189,176 @@ describe('NonLanguageModelSettings', () => {
     };
     renderSettings('video');
     await screen.findByText('nativeVideoProvidersUnavailable');
-    expect(screen.getAllByRole('option').map(option => option.getAttribute('value'))).toEqual(['']);
-    expect(screen.queryByLabelText('baseUrl')).toBeNull();
-    expect(screen.queryByLabelText('apiKey')).toBeNull();
+    expect(screen.getByRole('button', { name: 'addCustomProvider' }).hasAttribute('disabled')).toBe(
+      true,
+    );
+    expect(screen.queryByRole('button', { name: 'Unavailable API' })).toBeNull();
+    expect(screen.queryByLabelText(/baseUrl/)).toBeNull();
+    expect(screen.queryByLabelText(/apiKey/)).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('adds, edits and selects video models through the shared provider and model editor', async () => {
+    vi.mocked(window.electron.extensions.list).mockResolvedValue({
+      success: true,
+      extensions: [{ id: 'video-openai', enabled: false }],
+    } as Awaited<ReturnType<typeof window.electron.extensions.list>>);
+    const { getCategory } = renderSettings('video');
+    await addVideoProvider('Video API');
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.getByLabelText('baseUrl *')).toHaveProperty('value', '');
+    fireEvent.change(screen.getByLabelText('baseUrl *'), {
+      target: { value: 'http://video.test:8091/v1/videos' },
+    });
+    fireEvent.blur(screen.getByLabelText('baseUrl *'));
+    expect(screen.getByLabelText('baseUrl *')).toHaveProperty('value', 'http://video.test:8091/v1');
+    expect(screen.getByLabelText('apiKey')).toHaveProperty('value', '');
+    expect(screen.getByText('http://video.test:8091/v1/videos')).toBeTruthy();
+    addVideoModel('Wan-AI/video', 'Wan Video');
+    expect(screen.getByText('mediaModelDefaultBadge')).toBeTruthy();
+    expect(getCategory().providers[getCategory().defaultProviderId!]).toMatchObject({
+      nativeVideoProvider: 'video-openai',
+      defaultModel: 'Wan-AI/video',
+      models: [{ id: 'Wan-AI/video', name: 'Wan Video' }],
+    });
+    addVideoModel('video-next', 'Next Video');
+    fireEvent.click(screen.getByRole('button', { name: 'mediaModelSetDefault' }));
+    fireEvent.click(screen.getByRole('button', { name: 'editModel: Next Video' }));
+    fireEvent.change(screen.getByLabelText('mediaModelId'), { target: { value: 'video-renamed' } });
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'confirm' }));
+    expect(getCategory().providers[getCategory().defaultProviderId!].defaultModel).toBe(
+      'video-renamed',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'deleteModel: Next Video' }));
+    expect(getCategory().providers[getCategory().defaultProviderId!].defaultModel).toBe(
+      'Wan-AI/video',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'nativeVideoDisabled' }));
+    expect(getCategory().defaultProviderId).toBeUndefined();
+    expect(screen.getByText('Wan Video')).toBeTruthy();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('discovers video models only on request from the configured endpoint', async () => {
+    vi.mocked(window.electron.extensions.list).mockResolvedValue({
+      success: true,
+      extensions: [{ id: 'video-openai', enabled: false }],
+    } as Awaited<ReturnType<typeof window.electron.extensions.list>>);
+    renderSettings('video');
+    await addVideoProvider('Video API');
+    fireEvent.change(screen.getByLabelText('baseUrl *'), {
+      target: { value: 'http://video.test/v1' },
+    });
+    fireEvent.change(screen.getByLabelText('apiKey'), { target: { value: 'video-test-key' } });
+    expect(fetch).not.toHaveBeenCalled();
+    fetch.mockResolvedValue({
+      ok: true,
+      data: { data: [{ id: 'video-v1' }, { id: '../invalid' }] },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'detectModels' }));
+    await screen.findByText('video-v1');
+    expect(screen.queryByText('../invalid')).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: 'http://video.test/v1/models',
+        method: 'GET',
+        headers: { Authorization: 'Bearer video-test-key' },
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'mediaModelSetDefault' }));
+    expect(screen.getByText('mediaModelDefaultBadge')).toBeTruthy();
+  });
+
+  it('falls back to multipart OpenAPI models when the model directory contains no valid video IDs', async () => {
+    vi.mocked(window.electron.extensions.list).mockResolvedValue({
+      success: true,
+      extensions: [{ id: 'video-openai', enabled: false }],
+    } as Awaited<ReturnType<typeof window.electron.extensions.list>>);
+    renderSettings('video');
+    await addVideoProvider('Video API');
+    fireEvent.change(screen.getByLabelText('baseUrl *'), {
+      target: { value: 'http://video.test/v1' },
+    });
+    fetch
+      .mockResolvedValueOnce({ ok: true, data: { data: [{ id: '../invalid' }] } })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          paths: {
+            '/v1/videos': {
+              post: {
+                requestBody: {
+                  content: {
+                    'multipart/form-data': {
+                      schema: {
+                        properties: {
+                          model: { enum: ['video-openapi'] },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+    fireEvent.click(screen.getByRole('button', { name: 'detectModels' }));
+    await screen.findByText('video-openapi');
+    expect(fetch.mock.calls.map(([options]) => options.url)).toEqual([
+      'http://video.test/v1/models',
+      'http://video.test/openapi.json',
+    ]);
+  });
+
+  it('cancels pending model discovery when adding another video provider', async () => {
+    vi.mocked(window.electron.extensions.list).mockResolvedValue({
+      success: true,
+      extensions: [{ id: 'video-openai', enabled: false }],
+    } as Awaited<ReturnType<typeof window.electron.extensions.list>>);
+    const { getCategory } = renderSettings('video');
+    await addVideoProvider('First Video');
+    fireEvent.change(screen.getByLabelText('baseUrl *'), {
+      target: { value: 'http://first.test/v1' },
+    });
+    let resolveFetch: ((value: unknown) => void) | undefined;
+    fetch.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveFetch = resolve;
+        }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'detectModels' }));
+    await addVideoProvider('Second Video');
+    expect(window.electron.api.cancelFetch).toHaveBeenCalled();
+    await act(async () => {
+      resolveFetch?.({ ok: true, data: { data: [{ id: 'stale-video' }] } });
+      await Promise.resolve();
+    });
+    expect(screen.queryByText('stale-video')).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.getByLabelText('customDisplayName')).toHaveProperty('value', 'Second Video');
+    expect(
+      Object.values(getCategory().providers).every(provider => provider.models.length === 0),
+    ).toBe(true);
+  });
+
+  it('clears video selection when deleting its last model or provider', async () => {
+    vi.mocked(window.electron.extensions.list).mockResolvedValue({
+      success: true,
+      extensions: [{ id: 'video-openai', enabled: false }],
+    } as Awaited<ReturnType<typeof window.electron.extensions.list>>);
+    const { getCategory } = renderSettings('video');
+    await addVideoProvider('Video API');
+    addVideoModel('video-v1');
+    fireEvent.click(screen.getByRole('button', { name: 'deleteModel: video-v1' }));
+    expect(getCategory().defaultProviderId).toBeUndefined();
+    expect(Object.values(getCategory().providers)[0].models).toEqual([]);
+    addVideoModel('video-v2');
+    fireEvent.click(screen.getByRole('button', { name: 'deleteCustomProvider: Video API' }));
+    expect(getCategory()).toEqual({ providers: {} });
+    expect(screen.queryByLabelText(/apiKey/)).toBeNull();
   });
 
   it('builds capability-specific endpoint previews', () => {

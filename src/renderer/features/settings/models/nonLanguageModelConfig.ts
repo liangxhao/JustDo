@@ -1,5 +1,8 @@
 import { normalizeOpenClawProviderId, validateCustomProviderDisplayName } from '@shared/providers';
-import { findNativeVideoProvider } from '@shared/providers/nativeVideoProviders';
+import {
+  findNativeVideoProvider,
+  isNativeVideoModelSupported,
+} from '@shared/providers/nativeVideoProviders';
 
 import type { AppConfig } from '@/app/config';
 import { i18nService } from '@/services/i18n';
@@ -66,25 +69,39 @@ export const normalizeNonLanguageModelCategory = (
   };
 };
 
+export const getNonLanguageModelProviderNameError = (
+  category: NonLanguageModelCategory,
+  name: string,
+  providerId?: string,
+): string => {
+  if (!name.trim()) return i18nService.t('customModelProviderNameRequired');
+  const nameValidation = validateCustomProviderDisplayName(name);
+  if (!nameValidation.valid) {
+    return i18nService.t(
+      nameValidation.reason === 'reserved' ? 'providerNameReserved' : 'providerNameInvalid',
+    );
+  }
+  const normalizedName = normalizeOpenClawProviderId(name);
+  const duplicateName = Object.entries(category.providers).some(
+    ([id, candidate]) =>
+      id !== providerId && normalizeOpenClawProviderId(candidate.displayName) === normalizedName,
+  );
+  if (duplicateName) return i18nService.t('providerNameExists');
+  return '';
+};
+
 const getProviderValidationError = (
   kind: NonLanguageModelKind,
   category: NonLanguageModelCategory,
   providerId: string,
 ): string => {
   const provider = category.providers[providerId];
-  if (!provider?.displayName.trim()) return i18nService.t('customModelProviderNameRequired');
-  const nameValidation = validateCustomProviderDisplayName(provider.displayName);
-  if (!nameValidation.valid) {
-    return i18nService.t(
-      nameValidation.reason === 'reserved' ? 'providerNameReserved' : 'providerNameInvalid',
-    );
-  }
-  const normalizedName = normalizeOpenClawProviderId(provider.displayName);
-  const duplicateName = Object.entries(category.providers).some(
-    ([id, candidate]) =>
-      id !== providerId && normalizeOpenClawProviderId(candidate.displayName) === normalizedName,
+  const nameError = getNonLanguageModelProviderNameError(
+    category,
+    provider?.displayName ?? '',
+    providerId,
   );
-  if (duplicateName) return i18nService.t('providerNameExists');
+  if (nameError) return nameError;
   try {
     const url = new URL(normalizeNonLanguageModelBaseUrl(kind, provider.baseUrl));
     const protocols =
@@ -151,16 +168,30 @@ export const getNonLanguageModelCategoryValidationError = (
   activeProviderId?: string,
 ): string => {
   if (kind === 'video') {
-    if (Object.values(category.providers).some(entry => !findNativeVideoProvider(entry.nativeVideoProvider)))
-      return i18nService.t('nativeVideoConfigurationInvalid');
+    for (const [id, entry] of Object.entries(category.providers)) {
+      const provider = findNativeVideoProvider(entry.nativeVideoProvider);
+      if (
+        !provider ||
+        entry.models.some(model => !isNativeVideoModelSupported(provider, model.id)) ||
+        (entry.defaultModel && !entry.models.some(model => model.id === entry.defaultModel))
+      )
+        return i18nService.t('nativeVideoConfigurationInvalid');
+      const nameError = getNonLanguageModelProviderNameError(category, entry.displayName, id);
+      if (nameError) return nameError;
+    }
     const selected = category.defaultProviderId
       ? category.providers[category.defaultProviderId]
       : undefined;
-    if (!selected?.nativeVideoProvider) return '';
+    if (!category.defaultProviderId) return '';
+    if (!selected?.nativeVideoProvider) return i18nService.t('nativeVideoConfigurationInvalid');
     const provider = findNativeVideoProvider(selected.nativeVideoProvider);
-    if (!provider || !(provider.models as readonly string[]).includes(selected.defaultModel ?? ''))
+    if (!provider || !isNativeVideoModelSupported(provider, selected.defaultModel))
       return i18nService.t('nativeVideoConfigurationInvalid');
-    if (!selected.apiKey.trim() || selected.apiKey.length > 16384 || /[\r\n]/.test(selected.apiKey))
+    if (
+      (provider.apiKeyRequired && !selected.apiKey.trim()) ||
+      selected.apiKey.length > 16384 ||
+      /[\r\n]/.test(selected.apiKey)
+    )
       return i18nService.t('nativeVideoApiKeyRequired');
     try {
       const url = new URL(selected.baseUrl);
@@ -169,7 +200,8 @@ export const getNonLanguageModelCategoryValidationError = (
         url.username ||
         url.password ||
         url.search ||
-        url.hash
+        url.hash ||
+        selected.baseUrl.length > 2048
       )
         throw new Error();
     } catch {

@@ -275,7 +275,7 @@ export const settingsTranslations = {
     modelTypeSpeechRecognition: '语音识别',
     modelTypeSpeechSynthesis: '语音合成',
     modelTypeImage: '图像生成',
-    modelTypeVideo: '视频生成',
+    modelTypeVideo: '视频模型',
     modelTypeDecision: '决策模型',
     customDecisionProtocolHint:
       '接口需兼容 TypeSafe System One API（/systemone）。支持内网服务，URL 和 API Key 必填。选择默认模型后用于决策评估；不支持模型发现的服务可手动添加。',
@@ -319,6 +319,12 @@ export const settingsTranslations = {
     nativeVideoDisabled: '不指定默认视频模型',
     nativeVideoProvidersUnavailable: '当前没有可用的视频生成服务。',
     nativeVideoModel: '视频模型',
+    nativeVideoService: '视频服务',
+    intranetVideoProvider: '视频模型',
+    intranetVideoCredentialsHint:
+      '填写服务的 API 基础地址和模型 ID。API Key 可选，视频凭据独立于聊天和图像模型。',
+    intranetVideoProtocolHint:
+      '服务需支持 /videos 异步提交、状态查询和内容下载。支持文生视频和单张参考图片；保存设置不会提交生成任务。',
     nativeVideoShowKey: '显示 API Key',
     nativeVideoCredentialsHint:
       '保存将启用所选服务商，并安全保存凭据。该服务商的地址和凭据也适用于使用同一服务商的其他模型。',
@@ -1623,7 +1629,7 @@ export const settingsTranslations = {
     modelTypeSpeechRecognition: 'Speech recognition',
     modelTypeSpeechSynthesis: 'Speech synthesis',
     modelTypeImage: 'Image generation',
-    modelTypeVideo: 'Video generation',
+    modelTypeVideo: 'Video models',
     modelTypeDecision: 'Decision models',
     customDecisionProtocolHint:
       'Requires a TypeSafe System One-compatible API (/systemone). Intranet services are supported. URL and API Key are required. The default model handles decision evaluations. Add models manually if discovery is unavailable.',
@@ -1670,6 +1676,12 @@ export const settingsTranslations = {
     nativeVideoDisabled: 'No default video model',
     nativeVideoProvidersUnavailable: 'No video generation services are currently available.',
     nativeVideoModel: 'Video model',
+    nativeVideoService: 'Video service',
+    intranetVideoProvider: 'Video models',
+    intranetVideoCredentialsHint:
+      'Enter the API base URL and model ID. The API key is optional; video credentials are separate from chat and image models.',
+    intranetVideoProtocolHint:
+      'Requires /videos job submission, status polling and content download. Supports text and one reference image; saving does not start a generation job.',
     nativeVideoShowKey: 'Show API key',
     nativeVideoCredentialsHint:
       'Saving enables the selected provider and securely stores its credentials. The endpoint and credentials also apply to other models using the same provider.',

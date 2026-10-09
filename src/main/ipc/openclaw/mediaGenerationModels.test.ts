@@ -12,7 +12,10 @@ vi.mock('electron', () => ({
   },
 }));
 
-import { MediaGenerationModelsIpc } from '../../../shared/providers/mediaGenerationModels';
+import {
+  MediaGenerationModelsIpc,
+  OpenAiCompatibleMediaConfigProviderIds,
+} from '../../../shared/providers/mediaGenerationModels';
 import { registerMediaGenerationModelHandlers } from './mediaGenerationModels';
 
 describe('OpenClaw media generation model IPC', () => {
@@ -141,6 +144,8 @@ describe('OpenClaw media generation model IPC', () => {
 
   it.each([
     { primary: 'openai/video-model', fallbacks: [] },
+    { primary: 'justdo-video-openai/video-model', fallbacks: [] },
+    { primary: `${OpenAiCompatibleMediaConfigProviderIds.video}/video-model`, fallbacks: [] },
     { primary: 'google/veo-3.1', fallbacks: ['openai/sora-2'] },
     {
       primary: 'google/veo-3.1',

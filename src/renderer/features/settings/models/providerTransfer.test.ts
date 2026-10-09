@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 
 import { EXPORT_FORMAT_TYPE } from '@/app/constants';
+import { getNonLanguageModelCategoryValidationError } from '@/features/settings/models/nonLanguageModelConfig';
 import {
   createProvidersExportPayload,
   mergeImportedOnlineModelProviders,
@@ -8,6 +9,7 @@ import {
   parseModelProvidersImportPayload,
   PROVIDERS_EXPORT_VERSION,
 } from '@/features/settings/models/providerTransfer';
+import { decryptWithPassword, encryptWithPassword } from '@/services/encryption';
 
 const encryptedApiKey = {
   encrypted: 'encrypted',
@@ -377,13 +379,121 @@ test('round-trips the decision provider catalog and its default selection', () =
 });
 
 test('round-trips native video identity and encrypted credentials without activating legacy endpoints', () => {
-  const payload = createProvidersExportPayload([], { video: {
-    defaultProviderId: 'native', providers: [{ key: 'native', config: {
-      displayName: 'Kie AI', nativeVideoProvider: 'kie', baseUrl: 'https://api.kie.ai', apiKey: 'plaintext-test-value',
-      defaultModel: 'kling-2.6/text-to-video', models: [{ id: 'kling-2.6/text-to-video', name: 'Kling' }],
-    }, apiKey: encryptedApiKey }],
-  } });
+  const payload = createProvidersExportPayload([], {
+    video: {
+      defaultProviderId: 'native',
+      providers: [
+        {
+          key: 'native',
+          config: {
+            displayName: 'Kie AI',
+            nativeVideoProvider: 'kie',
+            baseUrl: 'https://api.kie.ai',
+            apiKey: 'plaintext-test-value',
+            defaultModel: 'kling-2.6/text-to-video',
+            models: [{ id: 'kling-2.6/text-to-video', name: 'Kling' }],
+          },
+          apiKey: encryptedApiKey,
+        },
+      ],
+    },
+  });
   const parsed = parseModelProvidersImportPayload(payload);
-  expect(parsed.onlineModelProviders.video?.providers[0]).toMatchObject({ nativeVideoProvider: 'kie', apiKey: encryptedApiKey });
+  expect(parsed.onlineModelProviders.video?.providers[0]).toMatchObject({
+    nativeVideoProvider: 'kie',
+    apiKey: encryptedApiKey,
+  });
   expect(JSON.stringify(payload)).not.toContain('plaintext-test-value');
 });
+
+test('round-trips the intranet video adapter and custom model with encrypted credentials', () => {
+  const payload = createProvidersExportPayload([], {
+    video: {
+      defaultProviderId: 'lan',
+      providers: [
+        {
+          key: 'lan',
+          config: {
+            displayName: 'OpenAI-compatible',
+            nativeVideoProvider: 'video-openai',
+            baseUrl: 'http://video.lan:8091/v1',
+            apiKey: 'plaintext-test-value',
+            defaultModel: 'Wan-AI/internal-video',
+            models: [{ id: 'Wan-AI/internal-video', name: 'Wan-AI/internal-video' }],
+          },
+          apiKey: encryptedApiKey,
+        },
+      ],
+    },
+  });
+  expect(
+    parseModelProvidersImportPayload(payload).onlineModelProviders.video?.providers[0],
+  ).toMatchObject({
+    nativeVideoProvider: 'video-openai',
+    defaultModel: 'Wan-AI/internal-video',
+    apiKey: encryptedApiKey,
+  });
+  expect(JSON.stringify(payload)).not.toContain('plaintext-test-value');
+});
+
+test.each([
+  { nativeVideoProvider: 'video-openai' as const, defaultModel: '', models: [] },
+  {
+    nativeVideoProvider: 'video-openai' as const,
+    defaultModel: undefined,
+    models: [{ id: 'video-discovered', name: 'Discovered video' }],
+  },
+  { nativeVideoProvider: 'zai' as const, defaultModel: undefined, models: [] },
+])(
+  'round-trips an unselected $nativeVideoProvider catalog with portable credential encryption',
+  async draft => {
+    const password = 'synthetic-export-password';
+    const config = {
+      displayName: 'Video models',
+      baseUrl: '',
+      apiKey: '',
+      ...draft,
+    };
+    const payload = createProvidersExportPayload([], {
+      video: {
+        providers: [
+          { key: 'draft-video', config, apiKey: await encryptWithPassword('', password) },
+        ],
+      },
+    });
+
+    const parsed = parseModelProvidersImportPayload(JSON.parse(JSON.stringify(payload)));
+    const category = parsed.onlineModelProviders.video!;
+    const decryptedProviders = await Promise.all(
+      category.providers.map(async provider => ({
+        ...provider,
+        apiKey:
+          typeof provider.apiKey === 'string'
+            ? provider.apiKey
+            : await decryptWithPassword(provider.apiKey, password),
+      })),
+    );
+    const imported = mergeImportedOnlineModelProviders(
+      {},
+      {
+        video: { ...category, providers: decryptedProviders },
+      },
+    ).video!;
+
+    expect(Object.values(imported.providers)).toEqual([config]);
+    expect(imported.defaultProviderId).toBeUndefined();
+    expect(getNonLanguageModelCategoryValidationError('video', imported)).toBe('');
+    expect(
+      getNonLanguageModelCategoryValidationError('video', {
+        ...imported,
+        defaultProviderId: Object.keys(imported.providers)[0],
+      }),
+    ).toBeTruthy();
+
+    const selectedPayload = structuredClone(payload);
+    selectedPayload.onlineModelProviders.video!.defaultProvider = config.displayName;
+    expect(() => parseModelProvidersImportPayload(selectedPayload)).toThrow(
+      'Invalid online model default',
+    );
+  },
+);

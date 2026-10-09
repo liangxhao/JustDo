@@ -444,12 +444,19 @@ automatically allow host desktop control in sandboxed sessions. macOS still requ
 the upstream app-owned driver endpoint and OS grants; retaining the plugin is not
 Electron-native macOS computer-control support. See `docs/architecture/07-plugin-system.md`.
 
-Video settings retain the native Kie, Z.AI or Novita configuration contract, but
-these provider plugins are not bundled in the intranet runtime. Only installed
-plugins appear in video settings; config sync clears unavailable video selections
-and plugin registrations without publishing new credentials. Installed providers use the managed
-config synchronizer with file SecretRefs. Same-provider chat models share its
-endpoint and credentials. Clearing the default does not disable native automatic
-discovery. Accept only the supported native video provider configuration; do not
-add compatibility for the retired custom `/videos` transport. See
-`docs/features/model-management.md`.
+Video settings include the bundled `openclaw-extensions/video-openai`
+native provider for configured OpenAI-compatible Videos endpoints.
+Video, image and decision settings share the same provider/model editor; retain
+provider lists, credential cards, model dialogs and explicit default selection.
+Video model discovery runs only on user request against the configured endpoint.
+Require an explicit base URL and model ID, with optional API Key; keep its
+`models.providers.video-openai` endpoint and file SecretRefs isolated from
+chat/image providers. Native `video_generate` owns tool admission, input loading
+and delivery; the plugin implements multipart submission, polling and bounded
+content download under one deadline, without public defaults, redirects or
+uncertain submission retries. Kie/Z.AI/Novita contracts remain supported only
+when installed; these plugins are not bundled. Config sync clears unavailable
+video selections and registrations without publishing credentials. Clearing the
+default does not disable plugins; the video adapter has no preset model for
+automatic discovery. Do not add compatibility or migration for the retired
+custom video configuration. See `docs/features/model-management.md`.

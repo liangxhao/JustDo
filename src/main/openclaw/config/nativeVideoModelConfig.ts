@@ -1,5 +1,6 @@
 import {
   findNativeVideoProvider,
+  isNativeVideoModelSupported,
   NATIVE_VIDEO_PROVIDERS,
   type NativeVideoProviderId,
 } from '../../../shared/providers/nativeVideoProviders';
@@ -10,18 +11,28 @@ type Selection =
   | { providerId: NativeVideoProviderId; baseUrl: string; apiKey: string; model: string }
   | null
   | undefined;
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const record = (value: unknown): Record<string, unknown> =>
-  value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+  isRecord(value) ? value : {};
 
 /** Only supported native providers participate in managed video configuration. */
 export function resolveNativeVideoSelection(value: unknown): Selection {
   if (value === undefined) return undefined;
+  if (
+    !isRecord(value) ||
+    !isRecord(value.providers) ||
+    (value.defaultProviderId !== undefined && typeof value.defaultProviderId !== 'string')
+  )
+    throw new Error(t('nativeVideoConfigurationInvalid'));
   const category = record(value);
   const providers = record(category.providers);
   const nativeEntries = Object.values(providers);
-  if (!nativeEntries.length) return undefined;
+  // An explicit empty category clears the selection after deleting the last provider.
+  if (!nativeEntries.length) {
+    if (category.defaultProviderId) throw new Error(t('nativeVideoConfigurationInvalid'));
+    return null;
+  }
   for (const entry of nativeEntries) {
     if (!findNativeVideoProvider(record(entry).nativeVideoProvider))
       throw new Error(t('nativeVideoConfigurationInvalid'));
@@ -30,14 +41,15 @@ export function resolveNativeVideoSelection(value: unknown): Selection {
     typeof category.defaultProviderId === 'string'
       ? record(providers[category.defaultProviderId])
       : {};
+  if (category.defaultProviderId && selected.nativeVideoProvider === undefined)
+    throw new Error(t('nativeVideoConfigurationInvalid'));
   if (selected.nativeVideoProvider === undefined) return null;
   const provider = findNativeVideoProvider(selected.nativeVideoProvider);
   if (
     !provider ||
-    typeof selected.defaultModel !== 'string' ||
-    !(provider.models as readonly string[]).includes(selected.defaultModel) ||
+    !isNativeVideoModelSupported(provider, selected.defaultModel) ||
     typeof selected.apiKey !== 'string' ||
-    !selected.apiKey.trim() ||
+    (provider.apiKeyRequired && !selected.apiKey.trim()) ||
     selected.apiKey.length > 16384 ||
     /[\r\n]/.test(selected.apiKey)
   ) {
@@ -59,6 +71,9 @@ export function resolveNativeVideoSelection(value: unknown): Selection {
     url.hash
   )
     throw new Error(t('nativeVideoUrlInvalid'));
+  if (provider.customModel) {
+    url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/videos$/i, '') || '/';
+  }
   return {
     providerId: provider.id,
     model: selected.defaultModel,
@@ -123,9 +138,11 @@ export function applyNativeVideoConfiguration(
     config.agents = { ...agents, defaults: { ...defaults, mediaModels } };
     return false;
   }
-  const secrets = saveExtensionSecrets(config, stateDir, selection.providerId, {
-    'nativeVideo.apiKey': selection.apiKey,
-  });
+  const secrets = selection.apiKey
+    ? saveExtensionSecrets(config, stateDir, selection.providerId, {
+        'nativeVideo.apiKey': selection.apiKey,
+      })
+    : { references: {} as Record<string, Record<string, string>>, changed: false };
   const models = record(config.models);
   const providers = record(models.providers);
   const existing = record(providers[selection.providerId]);
@@ -139,6 +156,9 @@ export function applyNativeVideoConfiguration(
         models: existing.models ?? [],
         baseUrl: selection.baseUrl,
         apiKey: secrets.references['nativeVideo.apiKey'],
+        ...(findNativeVideoProvider(selection.providerId)?.customModel
+          ? { request: { ...record(existing.request), allowPrivateNetwork: true } }
+          : {}),
       },
     },
   };

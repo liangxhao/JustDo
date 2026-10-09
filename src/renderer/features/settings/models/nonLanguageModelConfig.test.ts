@@ -58,6 +58,46 @@ describe('non-language model configuration persistence', () => {
     expect(getNonLanguageModelCategoryValidationError('video', video)).toBeTruthy();
   });
 
+  it.each(['', 'invalid/name', 'Same Name'])(
+    'rejects an invalid or duplicate video provider display name: %s',
+    displayName => {
+      const valid = {
+        nativeVideoProvider: 'video-openai' as const,
+        displayName: 'Same Name',
+        baseUrl: '',
+        apiKey: '',
+        models: [],
+      };
+      expect(
+        getNonLanguageModelCategoryValidationError('video', {
+          providers: { first: valid, second: { ...valid, displayName } },
+        }),
+      ).toBeTruthy();
+    },
+  );
+
+  it('requires the selected video model to be present in its catalog while allowing unselected drafts', () => {
+    const draft = {
+      nativeVideoProvider: 'video-openai' as const,
+      displayName: 'Video API',
+      baseUrl: 'http://video.test/v1',
+      apiKey: '',
+      defaultModel: 'missing',
+      models: [{ id: 'video-v1', name: 'Video' }],
+    };
+    expect(
+      getNonLanguageModelCategoryValidationError('video', {
+        defaultProviderId: 'selected',
+        providers: { selected: draft },
+      }),
+    ).toBeTruthy();
+    expect(
+      getNonLanguageModelCategoryValidationError('video', {
+        providers: { selected: { ...draft, defaultModel: undefined } },
+      }),
+    ).toBe('');
+  });
+
   it('validates a category without requiring its settings panel to be mounted', () => {
     expect(
       getNonLanguageModelCategoryValidationError('image', {

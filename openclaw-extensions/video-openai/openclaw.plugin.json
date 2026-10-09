@@ -1,0 +1,15 @@
+{
+  "id": "video-openai",
+  "name": "Video models",
+  "description": "Video generation through an explicitly configured OpenAI-compatible endpoint.",
+  "enabledByDefault": false,
+  "contracts": {
+    "videoGenerationProviders": ["video-openai"]
+  },
+  "providers": ["video-openai"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

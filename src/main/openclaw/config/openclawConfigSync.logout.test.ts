@@ -2124,6 +2124,42 @@ test.each(['full', 'minimal'])('%s decision settings survive auth sync, rotate c
   expect(read().agents.defaults.decisionModel).toBeUndefined();
 });
 
+test.each(['full', 'minimal'])('%s sync maintains isolated intranet video configuration across startup and auth changes', mode => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'intranet-video-sync-'));
+  temporaryDirectories.push(stateDir);
+  const configPath = path.join(stateDir, 'openclaw.json');
+  const appConfig = mode === 'full' ? {
+    model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+    providers: { 'custom-provider': { enabled: true, apiKey: 'chat-test-key', baseUrl: 'http://chat.lan/v1', apiFormat: 'openai', models: [{ id: 'custom-model' }] } },
+  } : {};
+  setStoreGetter(() => ({ get: () => appConfig }) as never);
+  let category: unknown = { defaultProviderId: 'lan', providers: { lan: {
+    nativeVideoProvider: 'video-openai', displayName: 'OpenAI-compatible',
+    baseUrl: 'http://video.lan:8091/v1', apiKey: 'isolated-video-key',
+    defaultModel: 'Wan-AI/internal-video', models: [{ id: 'Wan-AI/internal-video' }],
+  } } };
+  const sync = new OpenClawConfigSync({
+    engineManager: { getConfigPath: () => configPath, getStateDir: () => stateDir, getDesiredVersion: () => '2026.9.8' },
+    getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+    getAgents: () => [], getNativeVideoCategory: () => category,
+  } as never);
+  for (const reason of ['startup', 'app-config-change', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
+    expect(sync.sync(reason).ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.agents.defaults.mediaModels.video.primary).toBe('video-openai/Wan-AI/internal-video');
+    expect(config.models.providers['video-openai']).toMatchObject({
+      baseUrl: 'http://video.lan:8091/v1', apiKey: { source: 'file' }, request: { allowPrivateNetwork: true },
+    });
+    expect(config.plugins.entries['video-openai'].enabled).toBe(true);
+    expect(JSON.stringify(config)).not.toContain('isolated-video-key');
+  }
+  category = { defaultProviderId: undefined, providers: (category as { providers: unknown }).providers };
+  expect(sync.sync('app-config-change').ok).toBe(true);
+  const cleared = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  expect(cleared.agents.defaults.mediaModels.video).toBeUndefined();
+  expect(cleared.plugins.entries['video-openai'].enabled).toBe(true);
+});
+
 test.each(['full', 'minimal'])('%s sync does not reactivate video plugins absent from the intranet runtime', mode => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-native-video-sync-'));
   temporaryDirectories.push(stateDir);

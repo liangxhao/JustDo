@@ -75,14 +75,19 @@ GitHub、Kie、Z.AI 和 Novita 插件；运行时资源准备与安装包构建�
 Transcription（PCMU 8 kHz），朗读需要兼容 Audio Speech。模型目录仍由用户配置，
 不会以插件内置模型元数据填充语音设置。ElevenLabs 不再列入受管语音提供方。
 
-原生视频配置契约支持 Kie、Z.AI 或 Novita 提供方，但这些插件不随当前内网发行版打包，
-设置页仅列出实际安装的原生视频插件；当前内网发行版没有可选的视频服务。
-配置同步器根据插件库存清除缺失插件的注册和视频默认选择，不为其写入新凭据。
-已安装提供方的配置统一投影视频默认模型、
-提供方和受管插件状态，API Key 写入受限的 `extension-secrets.json` 并通过 file SecretRef
-引用，完整和最小同步遵循相同规则。同名原生提供方与对话模型共享凭据；设置页说明
-这一关系。9.6 未发布，按用户要求移除了本次新增的旧自定义 `/videos` 清单与兼容提示；
-设置页沿用原生视频配置契约，不支持的路由仍被拒绝，不恢复已删除的 OpenAI 视频传输。
+视频服务由应用插件 `openclaw-extensions/video-openai` 注册原生视频 provider，
+经现有本地扩展复制、预编译和裁剪保护流程打包。插件默认关闭，设置页保存后由 Main
+配置同步器启用并投影 `agents.defaults.mediaModels.video`；模型 ID 和基础地址由用户填写。
+`models.providers.video-openai` 独立于聊天和图像配置；非空 API Key 写入受限的
+`extension-secrets.json`，通过 file SecretRef 引用；空 Key 不发布凭据引用。
+原生 `video_generate` 工具负责权限、参考图片读取和结果交付，插件只实现 multipart
+提交、状态轮询和视频内容下载。三阶段共用总超时与原生有界响应读取；使用配置地址和
+HTTP 策略、允许显式配置的私有网络地址、拒绝重定向和不确定提交的重试，没有公网地址或凭据回退。
+
+Kie、Z.AI、Novita 原生契约仍保留，但插件不随当前发行版打包；仅实际安装的提供方
+显示在设置中。配置同步按插件库存清除缺失注册和视频选择，不写入对应新凭据。
+完整和最小同步遵循相同规则。新视频插件通过原生 provider 扩展接入，不恢复 9.6
+旧自定义视频配置或迁移。具体协议与输入限制见 [模型管理](../features/model-management.md)。
 
 skills.status 提供 effective source、eligibility、disabled、缺失依赖和安装选项。产品文件服务只管理用户导入目录；它不能从 SKILL.md 自行重建运行元数据。受管根使用原生 stateDir/skills，避免重复 extraDirs 引入同一路径。
 

@@ -21,6 +21,11 @@ const MAX_FALLBACKS = 16;
 const MAX_TIMEOUT_MS = 3_600_000;
 const MAX_BASE_URL_LENGTH = 2_048;
 const MAX_API_KEY_LENGTH = 16_384;
+const UNSUPPORTED_VIDEO_IPC_PROVIDER_IDS = new Set<string>([
+  'openai',
+  'justdo-video-openai',
+  OpenAiCompatibleMediaConfigProviderIds.video,
+]);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -151,9 +156,7 @@ export function registerMediaGenerationModelHandlers({
         (configuration.baseUrl ||
           configuration.apiKey ||
           [configuration.primary, ...configuration.fallbacks].some(reference =>
-            ['openai', OpenAiCompatibleMediaConfigProviderIds.video].includes(
-              reference.split('/')[0],
-            ),
+            UNSUPPORTED_VIDEO_IPC_PROVIDER_IDS.has(reference.split('/')[0]),
           ))
       ) {
         throw new Error(t('nativeVideoLegacyUnsupported'));

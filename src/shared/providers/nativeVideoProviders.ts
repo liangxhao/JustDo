@@ -1,7 +1,19 @@
-// Provider/model contracts shipped with the pinned OpenClaw 2026.9.8 runtime.
+import { OpenAiCompatibleMediaConfigProviderIds } from './mediaGenerationModels';
+
+// Native provider contracts, including the application-owned video protocol adapter.
 export const NATIVE_VIDEO_PROVIDERS = [
   {
+    id: OpenAiCompatibleMediaConfigProviderIds.video,
+    name: 'Video models',
+    baseUrl: '',
+    models: [] as readonly string[],
+    customModel: true,
+    apiKeyRequired: false,
+  },
+  {
     id: 'kie',
+    customModel: false,
+    apiKeyRequired: true,
     name: 'Kie AI',
     baseUrl: 'https://api.kie.ai',
     models: [
@@ -22,12 +34,16 @@ export const NATIVE_VIDEO_PROVIDERS = [
   },
   {
     id: 'zai',
+    customModel: false,
+    apiKeyRequired: true,
     name: 'Z.AI',
     baseUrl: 'https://api.z.ai/api/paas/v4',
     models: ['cogvideox-3'],
   },
   {
     id: 'novita',
+    customModel: false,
+    apiKeyRequired: true,
     name: 'NovitaAI',
     baseUrl: 'https://api.novita.ai/openai/v1',
     models: [
@@ -44,3 +60,12 @@ export type NativeVideoProviderId = (typeof NATIVE_VIDEO_PROVIDERS)[number]['id'
 
 export const findNativeVideoProvider = (id: unknown) =>
   NATIVE_VIDEO_PROVIDERS.find(provider => provider.id === id);
+
+export const isNativeVideoModelSupported = (
+  provider: (typeof NATIVE_VIDEO_PROVIDERS)[number],
+  model: unknown,
+): model is string =>
+  typeof model === 'string' &&
+  (provider.customModel
+    ? /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,447}$/.test(model)
+    : (provider.models as readonly string[]).includes(model));

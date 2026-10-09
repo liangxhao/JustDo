@@ -179,6 +179,7 @@ const parseOnlineModel = (value: unknown): OnlineModelProvider['models'][number]
 const parseOnlineModelProvider = (
   value: unknown,
   kind: NonLanguageModelKind,
+  defaultProvider?: string,
 ): SerializedOnlineModelProvider => {
   if (
     !isRecord(value) ||
@@ -199,22 +200,26 @@ const parseOnlineModelProvider = (
     if (modelIds.has(model.id)) throw new Error('Duplicate online model id');
     modelIds.add(model.id);
   }
+  const nativeVideoProvider = findNativeVideoProvider(value.nativeVideoProvider);
+  if (value.nativeVideoProvider !== undefined && (kind !== 'video' || !nativeVideoProvider))
+    throw new Error('Invalid native video provider');
+  // Unselected native video catalogs need no local default, including empty drafts.
+  const isUnselectedVideoDraft =
+    kind === 'video' &&
+    nativeVideoProvider &&
+    (value.defaultModel === undefined || value.defaultModel === '') &&
+    (!defaultProvider ||
+      normalizeDisplayName(value.displayName) !== normalizeDisplayName(defaultProvider));
   if (
     (kind === 'image' || kind === 'video' || kind === 'decision') &&
+    !isUnselectedVideoDraft &&
     (typeof value.defaultModel !== 'string' || !modelIds.has(value.defaultModel))
   ) {
     throw new Error('Invalid online model default');
   }
-  if (
-    value.nativeVideoProvider !== undefined &&
-    (kind !== 'video' || !findNativeVideoProvider(value.nativeVideoProvider))
-  )
-    throw new Error('Invalid native video provider');
   return {
     displayName: value.displayName.trim(),
-    ...(value.nativeVideoProvider
-      ? { nativeVideoProvider: findNativeVideoProvider(value.nativeVideoProvider)!.id }
-      : {}),
+    ...(nativeVideoProvider ? { nativeVideoProvider: nativeVideoProvider.id } : {}),
     baseUrl: value.baseUrl,
     apiKey: value.apiKey as PasswordEncryptedPayload | string,
     ...(typeof value.defaultModel === 'string' ? { defaultModel: value.defaultModel } : {}),
@@ -236,7 +241,9 @@ const parseOnlineModelCategories = (
     if (category.defaultProvider !== undefined && typeof category.defaultProvider !== 'string') {
       throw new Error('Invalid online model default provider');
     }
-    const providers = category.providers.map(provider => parseOnlineModelProvider(provider, kind));
+    const providers = category.providers.map(provider =>
+      parseOnlineModelProvider(provider, kind, category.defaultProvider as string | undefined),
+    );
     validateUniqueProviderNames(providers);
     if (
       typeof category.defaultProvider === 'string' &&

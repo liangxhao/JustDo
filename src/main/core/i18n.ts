@@ -43,7 +43,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
       '取消任务后的工作目录未能清理，已保留会话入口。请在设置中检查 Worktree。',
     nativeVideoUrlInvalid:
       '视频服务地址无效，请使用不含登录信息、查询参数或片段的 HTTP 或 HTTPS 地址。',
-    nativeVideoLegacyUnsupported: '当前版本不支持 OpenAI 兼容视频接口，请选择原生视频服务。',
+    nativeVideoLegacyUnsupported: '请在设置的视频模型页面配置视频服务，此入口不支持直接写入 OpenAI 视频配置。',
     nativeVideoConfigurationInvalid: '视频模型配置无效，请检查服务商、模型、服务地址和 API Key。',
     decisionModelConfigurationInvalid:
       '决策模型配置未能生效，请检查供应商 URL、API Key、默认模型及凭据文件访问权限。',
@@ -162,7 +162,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     nativeVideoUrlInvalid:
       'Invalid video service URL. Use an HTTP or HTTPS address without credentials, query parameters or fragments.',
     nativeVideoLegacyUnsupported:
-      'This version does not support OpenAI-compatible video endpoints. Select a native video service.',
+      'Configure video services in Settings → Models → Video models. This entry point does not accept direct OpenAI video configuration.',
     nativeVideoConfigurationInvalid:
       'Invalid video configuration. Check the provider, model, service URL and API key.',
     decisionModelConfigurationInvalid:
