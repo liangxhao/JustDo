@@ -3235,8 +3235,7 @@ export const chatStyles = [
       }
     }
     @media (prefers-reduced-motion: reduce) {
-      .chat-working-indicator__spark,
-      .chat-working-indicator__label,
+      /* Keep the active-run spark and label animated as execution feedback. */
       .chat-thinking--streaming .chat-thinking__label,
       .chat-reading-indicator span,
       .chat-thinking__indicator,
@@ -3244,7 +3243,6 @@ export const chatStyles = [
       .process-summary__tool-status {
         animation: none;
       }
-      .chat-working-indicator__label,
       .chat-thinking--streaming .chat-thinking__label {
         background: none;
         color: var(--justdo-chat-text-secondary, #6b7280);
