@@ -180,7 +180,6 @@ import StartupLoading from '@/shared/components/common/StartupLoading';
 import BrainIcon from '@/shared/components/icons/BrainIcon';
 import FolderIcon from '@/shared/components/icons/FolderIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
-import SidebarToggleIcon from '@/shared/components/icons/SidebarToggleIcon';
 import { type RootState, store } from '@/store';
 import { getCompactFolderName } from '@/utils/path';
 
@@ -257,8 +256,6 @@ export interface CoworkViewProps {
   onRequestAppSettings?: (options?: SettingsOpenOptions) => void;
   isQuestionInputBlocked?: boolean;
   inputBlockedMessage?: string;
-  isSidebarCollapsed?: boolean;
-  onToggleSidebar?: () => void;
   onNewChat?: () => void;
   planInteraction?: CoworkInteractionRequest | null;
   onPlanRespond?: (result: CoworkInteractionResult) => Promise<boolean>;
@@ -266,6 +263,9 @@ export interface CoworkViewProps {
 
 export interface CoworkViewHandle {
   requestFilePreviewTransition: (options?: FilePreviewNavigationOptions) => Promise<boolean>;
+  revealSearchMatch: (
+    match: import('@shared/cowork/sessionSearch').CoworkSessionMessageSearchMatch,
+  ) => void;
 }
 
 // Keep the last greeting across home view remounts in this app session.
@@ -304,8 +304,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     onRequestAppSettings,
     isQuestionInputBlocked = false,
     inputBlockedMessage,
-    isSidebarCollapsed,
-    onToggleSidebar,
     onNewChat,
     planInteraction = null,
     onPlanRespond,
@@ -426,6 +424,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const [pendingSourceReveal, setPendingSourceReveal] = useState<{
     sessionId: string;
     entryId: string;
+    nativeSessionKey?: string;
+    nativeSessionId?: string;
   } | null>(null);
   const [sessionExportMessageCount, setSessionExportMessageCount] = useState(0);
   const [sessionSearchQuery, setSessionSearchQuery] = useState('');
@@ -734,9 +734,37 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     if (!pendingSourceReveal || pendingSourceReveal.sessionId !== currentSessionId) return;
     let cancelled = false;
     const frame = requestAnimationFrame(() => {
-      void chatWrapperRef.current?.revealMessage(pendingSourceReveal.entryId).finally(() => {
-        if (!cancelled) setPendingSourceReveal(null);
-      });
+      void chatWrapperRef.current
+        ?.revealMessage(pendingSourceReveal.entryId, {
+          sessionKey: pendingSourceReveal.nativeSessionKey,
+          sessionId: pendingSourceReveal.nativeSessionId,
+          isCurrent: () =>
+            !cancelled && currentSessionIdRef.current === pendingSourceReveal.sessionId,
+        })
+        .then(revealed => {
+          if (!cancelled && !revealed && pendingSourceReveal.nativeSessionId) {
+            window.dispatchEvent(
+              new CustomEvent('app:showToast', {
+                detail: i18nService.t('searchMessageUnavailable'),
+              }),
+            );
+          }
+        })
+        .catch(() => {
+          if (!cancelled && pendingSourceReveal.nativeSessionId) {
+            window.dispatchEvent(
+              new CustomEvent('app:showToast', {
+                detail: i18nService.t('searchMessageUnavailable'),
+              }),
+            );
+          }
+        })
+        .finally(() => {
+          if (!cancelled)
+            setPendingSourceReveal(previous =>
+              previous === pendingSourceReveal ? null : previous,
+            );
+        });
     });
     return () => {
       cancelled = true;
@@ -1349,9 +1377,20 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     [selectAdjacentDisplayTabAfterClose, setUnsupportedFilePreviews],
   );
 
-  useImperativeHandle(ref, () => ({ requestFilePreviewTransition }), [
-    requestFilePreviewTransition,
-  ]);
+  useImperativeHandle(
+    ref,
+    () => ({
+      requestFilePreviewTransition,
+      revealSearchMatch: match =>
+        setPendingSourceReveal({
+          sessionId: match.sessionId,
+          entryId: match.messageId,
+          nativeSessionKey: match.nativeSessionKey,
+          nativeSessionId: match.nativeSessionId,
+        }),
+    }),
+    [requestFilePreviewTransition],
+  );
 
   useEffect(
     () => () => {
@@ -1732,19 +1771,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   const homeConversationHeader = (
     <div className="cowork-workspace-header relative flex shrink-0 items-center justify-between border-b border-border px-2">
-      <div className="non-draggable flex h-7 items-center">
-        {isSidebarCollapsed && (
-          <div className="mr-2 flex items-center gap-1">
-            <button
-              type="button"
-              onClick={onToggleSidebar}
-              className="inline-flex h-7 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised"
-            >
-              <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
-            </button>
-          </div>
-        )}
-      </div>
+      <div className="h-7" />
       <div className="non-draggable flex items-center gap-1">
         {!isDisplayPanelOpen && (
           <NewDisplayTabButton
@@ -1924,9 +1951,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         goalPresence.sessionId !== currentSession.id ||
         !goalPresence.ready ||
         goalPresence.hasGoal
-      ) return false;
-      if (currentSession.external?.readOnly || currentSessionAgent?.enabled === false)
+      )
         return false;
+      if (currentSession.external?.readOnly || currentSessionAgent?.enabled === false) return false;
       if (!ensureOpenClawReadyForSubmit() || pendingStartRef.current?.cancelled) return false;
       const sessionKey = currentGatewaySessionKey;
       const chat = chatWrapperRef.current;
@@ -2523,17 +2550,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           <div className="relative flex min-w-0 flex-1 flex-col">
             <div className="cowork-workspace-header relative flex shrink-0 items-center justify-between border-b border-border px-2">
               <div className="non-draggable flex h-7 min-w-0 flex-1 items-center overflow-hidden">
-                {isSidebarCollapsed && (
-                  <div className="mr-2 flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={onToggleSidebar}
-                      className="inline-flex h-7 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised"
-                    >
-                      <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
-                    </button>
-                  </div>
-                )}
                 <h1
                   className="cowork-session-title max-w-[min(34vw,28rem)] truncate text-sm font-semibold text-foreground"
                   title={currentSession.title}
@@ -2905,7 +2921,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                         items={queuedInputs.items}
                         workingDirectory={currentSessionFolderPath}
                         getDetail={inputId =>
-                          chatWrapperRef.current?.getQueuedInputDetail(inputId, queuedInputs.sessionKey) ?? null
+                          chatWrapperRef.current?.getQueuedInputDetail(
+                            inputId,
+                            queuedInputs.sessionKey,
+                          ) ?? null
                         }
                         onWithdraw={async inputId => {
                           const chat = chatWrapperRef.current;

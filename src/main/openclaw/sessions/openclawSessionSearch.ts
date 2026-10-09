@@ -1,4 +1,7 @@
-import type { CoworkSessionMessageSearchMatch } from '../../../shared/cowork/sessionSearch';
+import type {
+  CoworkSessionMessageSearchMatch,
+  CoworkSessionSearchOptions,
+} from '../../../shared/cowork/sessionSearch';
 import { normalizeOpenClawAgentId } from '../../../shared/openclaw/agentId';
 import type { CoworkStore } from '../../data/coworkStore';
 import {
@@ -20,13 +23,37 @@ interface SearchBatchResult {
   indexing: boolean;
   truncated: boolean;
   partial: boolean;
+  archivedTranscriptsExcluded: number;
 }
 
 interface OpenClawSessionSearchOptions {
   query: string;
   store: Pick<CoworkStore, 'listSessions'>;
   requestGateway: GatewayRequest;
+  options?: CoworkSessionSearchOptions;
 }
+
+export const parseCoworkSessionSearchOptions = (value: unknown): CoworkSessionSearchOptions => {
+  if (value === undefined) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Search options must be an object');
+  }
+  const result: CoworkSessionSearchOptions = {};
+  for (const [key, ids] of Object.entries(value)) {
+    if (key !== 'sessionIds' && key !== 'excludeSessionIds') {
+      throw new Error('Unknown search option');
+    }
+    if (
+      !Array.isArray(ids) ||
+      ids.length > 10_000 ||
+      ids.some(id => typeof id !== 'string' || !id || id.length > 512)
+    ) {
+      throw new Error('Search session IDs must be a bounded string array');
+    }
+    result[key] = Array.from(new Set(ids as string[]));
+  }
+  return result;
+};
 
 const chunk = <T>(items: T[], size: number): T[][] => {
   const chunks: T[][] = [];
@@ -84,6 +111,10 @@ const combineSettledBatches = (
     indexing: fulfilled.some(batch => batch.value.indexing),
     truncated: fulfilled.some(batch => batch.value.truncated),
     partial: fulfilled.some(batch => batch.value.partial) || fulfilled.length !== batches.length,
+    archivedTranscriptsExcluded: fulfilled.reduce(
+      (count, batch) => count + batch.value.archivedTranscriptsExcluded,
+      0,
+    ),
   };
 };
 
@@ -98,6 +129,7 @@ export const searchCoworkSessionMessages = async ({
   query,
   store,
   requestGateway,
+  options = {},
 }: OpenClawSessionSearchOptions) => {
   const trimmedQuery = query.trim();
   if (!trimmedQuery) {
@@ -106,19 +138,27 @@ export const searchCoworkSessionMessages = async ({
       indexing: false,
       truncated: false,
       partial: false,
+      archivedTranscriptsExcluded: 0,
     };
   }
   if (trimmedQuery.length > SEARCH_QUERY_MAX_CHARS) {
     throw new Error(`Search query must not exceed ${SEARCH_QUERY_MAX_CHARS} characters`);
   }
 
-  const sessions = store.listSessions();
+  const includedIds = options.sessionIds ? new Set(options.sessionIds) : null;
+  const excludedIds = new Set(options.excludeSessionIds);
+  const sessions = store
+    .listSessions()
+    .filter(
+      session => (!includedIds || includedIds.has(session.id)) && !excludedIds.has(session.id),
+    );
   if (sessions.length === 0) {
     return {
       matches: [],
       indexing: false,
       truncated: false,
       partial: false,
+      archivedTranscriptsExcluded: 0,
     };
   }
 
@@ -127,7 +167,10 @@ export const searchCoworkSessionMessages = async ({
 
   for (const session of sessions) {
     const agentId = normalizeOpenClawAgentId(session.agentId ?? 'main');
-    const sessionKey = session.nativeSessionKey || buildManagedSessionKey(session.id, agentId);
+    const sessionKey =
+      session.nativeSessionKey ||
+      session.external?.sessionKey ||
+      buildManagedSessionKey(session.id, agentId);
     localSessionIdByKey.set(sessionKey, session.id);
     const keys = keysByAgent.get(agentId) ?? [];
     keys.push(sessionKey);
@@ -165,6 +208,7 @@ export const searchCoworkSessionMessages = async ({
         // hide another session and the first hit is already its best snippet.
         truncated: false,
         partial: false,
+        archivedTranscriptsExcluded: page.archivedTranscriptsExcluded,
       };
     }
 
@@ -173,9 +217,25 @@ export const searchCoworkSessionMessages = async ({
       searchBatch(agentId, sessionKeys.slice(0, midpoint)),
       searchBatch(agentId, sessionKeys.slice(midpoint)),
     ]);
-    const combined = combineSettledBatches(children);
+    // A successful parent page remains useful if a child scope fails or the
+    // request budget runs out. Keep those hits and report incomplete coverage.
+    const combined = children.some(child => child.status === 'fulfilled')
+      ? combineSettledBatches(children)
+      : {
+          hits: [],
+          indexing: false,
+          truncated: false,
+          partial: true,
+          archivedTranscriptsExcluded: 0,
+        };
     return {
       ...combined,
+      hits: combined.partial ? [...page.results, ...combined.hits] : combined.hits,
+      // Parent and children cover the same scope; never count archives twice.
+      archivedTranscriptsExcluded: Math.max(
+        page.archivedTranscriptsExcluded,
+        combined.archivedTranscriptsExcluded,
+      ),
       indexing: page.indexing || combined.indexing,
     };
   };
@@ -203,6 +263,9 @@ export const searchCoworkSessionMessages = async ({
     bestHitBySessionId,
     ([sessionId, hit]) => ({
       sessionId,
+      nativeSessionKey: hit.sessionKey,
+      nativeSessionId: hit.sessionId,
+      messageId: hit.messageId,
       role: hit.role,
       snippet: hit.snippet,
       timestamp: hit.timestamp,
@@ -215,5 +278,6 @@ export const searchCoworkSessionMessages = async ({
     indexing: combined.indexing,
     truncated: combined.truncated || allMatches.length > SEARCH_RESULTS_PER_REQUEST,
     partial: combined.partial,
+    archivedTranscriptsExcluded: combined.archivedTranscriptsExcluded,
   };
 };

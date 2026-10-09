@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { CoworkSessionCopyIpc } from '../../../shared/cowork/sessionCopy';
 import { CoworkSessionForkIpc } from '../../../shared/cowork/sessionFork';
 import { SessionRunBeginErrorCode } from '../../../shared/cowork/sessionRun';
+import { CoworkSessionSearchIpc } from '../../../shared/cowork/sessionSearch';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 
@@ -39,6 +40,29 @@ const registerHandlers = (stopSession: ReturnType<typeof vi.fn>): IpcHandler => 
 
 beforeEach(() => {
   mocks.handle.mockReset();
+});
+
+test('validates search scopes before Gateway access and preserves message identity in IPC results', async () => {
+  const store = { listSessions: () => [{ id: 'one', agentId: 'main' }, { id: 'two', agentId: 'main' }] };
+  const requestGateway = vi.fn().mockResolvedValue({ results: [{
+    sessionKey: 'agent:main:justdo:two', sessionId: 'native-two', messageId: 'entry-two',
+    role: 'user', snippet: 'needle', timestamp: 1, score: 1,
+  }], archivedTranscriptsExcluded: 2 });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(), requestGateway,
+  });
+  const handler = mocks.handle.mock.calls.find(([name]) => name === CoworkSessionSearchIpc.SearchMessages)![1] as IpcHandler;
+  for (const options of [null, { sessionIds: 'one' }, { sessionKeys: ['agent:main:other'] }]) {
+    await expect(handler(null, 'needle', options)).resolves.toMatchObject({ success: false });
+  }
+  expect(requestGateway).not.toHaveBeenCalled();
+  await expect(handler(null, 'needle', { sessionIds: ['one', 'two'], excludeSessionIds: ['one'] })).resolves.toMatchObject({
+    success: true, matches: [{ sessionId: 'two', nativeSessionKey: 'agent:main:justdo:two',
+      nativeSessionId: 'native-two', messageId: 'entry-two' }], archivedTranscriptsExcluded: 2,
+  });
+  expect(requestGateway).toHaveBeenCalledWith('sessions.search', expect.objectContaining({ sessionKeys: ['agent:main:justdo:two'] }));
 });
 
 test.each([

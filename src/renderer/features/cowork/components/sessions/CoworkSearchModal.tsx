@@ -1,13 +1,27 @@
-import { XMarkIcon } from '@heroicons/react/24/outline';
+import './CoworkSearchModal.css';
+
+import {
+  ArrowPathIcon,
+  ArrowTurnDownLeftIcon,
+  ChatBubbleLeftRightIcon,
+  ChevronRightIcon,
+  ClockIcon,
+  ExclamationCircleIcon,
+  MagnifyingGlassIcon as SearchIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
 import type { CoworkSessionMessageSearchMatch } from '@shared/cowork/sessionSearch';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-import type { CoworkSessionSummary } from '@/features/cowork/coworkTypes';
+import type { CoworkSessionSummary, SessionGroup } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
-import SearchIcon from '@/shared/components/icons/SearchIcon';
 
-const normalizeSearchText = (value: string): string => value.trim().toLocaleLowerCase();
+import { useDialogFocusTrap } from '../shared/useDialogFocusTrap';
+
+const normalizeSearchText = (value: string): string =>
+  value.trim().replace(/\s+/gu, ' ').toLocaleLowerCase();
+const EMPTY_GROUPS: SessionGroup[] = [];
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -24,7 +38,7 @@ const HighlightedText: React.FC<{ text: string; query: string }> = ({ text, quer
           <mark
             // The index is stable because the source text and query define this split.
             key={`${index}:${part}`}
-            className="rounded-sm bg-primary/20 px-0.5 text-inherit"
+            className="cowork-search-highlight"
           >
             {part}
           </mark>
@@ -41,10 +55,32 @@ interface CoworkSearchModalProps {
   onClose: () => void;
   sessions: CoworkSessionSummary[];
   currentSessionId: string | null;
-  onSelectSession: (sessionId: string) => void | Promise<void>;
+  groups?: SessionGroup[];
+  onSelectSession: (
+    sessionId: string,
+    match?: CoworkSessionMessageSearchMatch,
+  ) => boolean | void | Promise<boolean | void>;
 }
 
-type SearchStatus = 'idle' | 'searching' | 'incomplete' | 'error';
+type SearchStatus = 'idle' | 'searching' | 'error';
+interface SearchSnapshot {
+  query: string;
+  scope: string;
+  matches: CoworkSessionMessageSearchMatch[];
+  indexing: boolean;
+  partial: boolean;
+  truncated: boolean;
+  archivedTranscriptsExcluded: number;
+}
+const EMPTY_SEARCH: SearchSnapshot = {
+  query: '',
+  scope: '',
+  matches: [],
+  indexing: false,
+  partial: false,
+  truncated: false,
+  archivedTranscriptsExcluded: 0,
+};
 
 const INDEX_RETRY_DELAYS = [500, 1_000, 2_000, 3_000, 3_000] as const;
 
@@ -53,37 +89,70 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
   onClose,
   sessions,
   currentSessionId,
+  groups = EMPTY_GROUPS,
   onSelectSession,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [messageMatches, setMessageMatches] = useState<{
-    query: string;
-    matches: CoworkSessionMessageSearchMatch[];
-  }>({ query: '', matches: [] });
+  const [messageMatches, setMessageMatches] = useState<SearchSnapshot>(EMPTY_SEARCH);
   const [searchStatus, setSearchStatus] = useState<SearchStatus>('idle');
   const [searchRevision, setSearchRevision] = useState(0);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [pinnedOnly, setPinnedOnly] = useState(false);
+  const [groupId, setGroupId] = useState('');
+  const [composing, setComposing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [selecting, setSelecting] = useState(false);
+  const composingRef = useRef(false);
+  const searchGenerationRef = useRef(0);
+  const loadingMoreRef = useRef(false);
+  const selectingRef = useRef(false);
+  const dialogGenerationRef = useRef(0);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const resultListRef = useRef<HTMLUListElement>(null);
+  useDialogFocusTrap(dialogRef, searchInputRef, 'cowork-search', true, isOpen);
+  const language = i18nService.getLanguage();
+  const filteredSessions = useMemo(
+    () =>
+      sessions.filter(
+        session => (!pinnedOnly || session.pinned) && (!groupId || session.groupId === groupId),
+      ),
+    [sessions, pinnedOnly, groupId],
+  );
+  const scope = JSON.stringify(filteredSessions.map(session => session.id).sort());
+  const normalizedQuery = normalizeSearchText(searchQuery);
+  const currentSearch =
+    messageMatches.query === normalizedQuery && messageMatches.scope === scope
+      ? messageMatches
+      : EMPTY_SEARCH;
+  const dateFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      }),
+    [language],
+  );
 
   const searchResults = useMemo(() => {
-    const normalizedQuery = normalizeSearchText(searchQuery);
     const matchesBySessionId = new Map<string, CoworkSessionMessageSearchMatch>();
-    if (messageMatches.query === normalizedQuery) {
+    if (messageMatches.query === normalizedQuery && messageMatches.scope === scope) {
       for (const match of messageMatches.matches) {
         if (!matchesBySessionId.has(match.sessionId)) {
           matchesBySessionId.set(match.sessionId, match);
         }
       }
     }
-    const results = sessions.flatMap(session => {
-      const normalizedTitle = session.title.toLocaleLowerCase();
+    const results = filteredSessions.flatMap(session => {
+      const normalizedTitle = normalizeSearchText(session.title);
       const titleRank = !normalizedQuery
         ? 0
         : normalizedTitle === normalizedQuery
           ? 3
           : normalizedTitle.startsWith(normalizedQuery)
             ? 2
-            : normalizedTitle.includes(normalizedQuery)
+            : normalizedQuery.split(' ').every(term => normalizedTitle.includes(term))
               ? 1
               : 0;
       const messageMatch = matchesBySessionId.get(session.id);
@@ -91,7 +160,8 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
         ? [{ session, messageMatch, titleRank }]
         : [];
     });
-    if (!normalizedQuery) return results;
+    if (!normalizedQuery)
+      return results.sort((left, right) => right.session.updatedAt - left.session.updatedAt);
     return results.sort(
       (left, right) =>
         right.titleRank - left.titleRank ||
@@ -99,12 +169,15 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
           (left.messageMatch?.score ?? Number.NEGATIVE_INFINITY) ||
         right.session.updatedAt - left.session.updatedAt,
     );
-  }, [messageMatches, sessions, searchQuery]);
+  }, [messageMatches, filteredSessions, normalizedQuery, scope]);
 
   useEffect(() => {
-    const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
-    if (!isOpen || !normalizedQuery) {
-      setMessageMatches({ query: '', matches: [] });
+    searchGenerationRef.current += 1;
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
+    if (!isOpen || !normalizedQuery || composing || filteredSessions.length === 0) {
+      if (!normalizedQuery || !isOpen || filteredSessions.length === 0)
+        setMessageMatches(EMPTY_SEARCH);
       setSearchStatus('idle');
       return;
     }
@@ -114,7 +187,9 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
     setSearchStatus('searching');
     const runSearch = async () => {
       try {
-        const result = await window.electron.cowork.searchSessionMessages(searchQuery);
+        const result = await window.electron.cowork.searchSessionMessages(normalizedQuery, {
+          sessionIds: JSON.parse(scope) as string[],
+        });
         if (cancelled) return;
         if (!result.success) {
           setSearchStatus('error');
@@ -122,7 +197,12 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
         }
         setMessageMatches({
           query: normalizedQuery,
+          scope,
           matches: result.matches,
+          indexing: result.indexing,
+          partial: result.partial,
+          truncated: result.truncated,
+          archivedTranscriptsExcluded: result.archivedTranscriptsExcluded ?? 0,
         });
         if (result.indexing && attempt < INDEX_RETRY_DELAYS.length) {
           const delay = INDEX_RETRY_DELAYS[attempt];
@@ -130,9 +210,7 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
           retryTimeout = window.setTimeout(runSearch, delay);
           return;
         }
-        setSearchStatus(
-          result.indexing || result.partial || result.truncated ? 'incomplete' : 'idle',
-        );
+        setSearchStatus('idle');
       } catch {
         if (cancelled) return;
         setSearchStatus('error');
@@ -144,33 +222,46 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
       window.clearTimeout(timeout);
       if (retryTimeout !== undefined) window.clearTimeout(retryTimeout);
     };
-  }, [isOpen, searchQuery, searchRevision]);
+  }, [isOpen, normalizedQuery, scope, searchRevision, composing, filteredSessions.length]);
 
   useEffect(() => {
     setActiveIndex(null);
-  }, [searchQuery]);
+  }, [searchQuery, scope]);
 
   useEffect(() => {
     setActiveIndex(index =>
-      index === null ? null : Math.min(index, Math.max(0, searchResults.length - 1)),
+      index === null || searchResults.length === 0
+        ? null
+        : Math.min(index, searchResults.length - 1),
     );
   }, [searchResults.length]);
 
   useEffect(() => {
-    if (isOpen) {
-      requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-      });
-      return;
+    dialogGenerationRef.current += 1;
+    if (!isOpen) {
+      setSearchQuery('');
+      setActiveIndex(null);
+      composingRef.current = false;
+      setComposing(false);
+      setPinnedOnly(false);
+      setGroupId('');
     }
-    setSearchQuery('');
   }, [isOpen]);
+
+  useEffect(() => {
+    if (activeIndex === null) return;
+    resultListRef.current?.children[activeIndex]?.scrollIntoView?.({ block: 'nearest' });
+  }, [activeIndex]);
 
   useEffect(() => {
     if (!isOpen) return;
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (
+        event.key === 'Escape' &&
+        !composingRef.current &&
+        !event.isComposing &&
+        event.keyCode !== 229
+      ) {
         onClose();
       }
     };
@@ -178,12 +269,74 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
     return () => document.removeEventListener('keydown', handleEscape);
   }, [isOpen, onClose]);
 
-  const handleSelectSession = async (sessionId: string) => {
-    await onSelectSession(sessionId);
-    onClose();
+  const handleSelectSession = async (
+    sessionId: string,
+    match?: CoworkSessionMessageSearchMatch,
+  ) => {
+    if (selectingRef.current || composingRef.current) return;
+    const generation = dialogGenerationRef.current;
+    selectingRef.current = true;
+    setSelecting(true);
+    try {
+      const selected = match
+        ? await onSelectSession(sessionId, match)
+        : await onSelectSession(sessionId);
+      if (selected !== false && generation === dialogGenerationRef.current) onClose();
+    } catch {
+      if (generation === dialogGenerationRef.current) {
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', { detail: i18nService.t('searchOpenFailed') }),
+        );
+      }
+    } finally {
+      selectingRef.current = false;
+      setSelecting(false);
+    }
+  };
+
+  const handleLoadMore = async () => {
+    if (loadingMoreRef.current || searchStatus === 'searching' || composingRef.current) return;
+    const generation = searchGenerationRef.current;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const result = await window.electron.cowork.searchSessionMessages(normalizedQuery, {
+        sessionIds: JSON.parse(scope) as string[],
+        excludeSessionIds: currentSearch.matches.map(match => match.sessionId),
+      });
+      if (generation !== searchGenerationRef.current) return;
+      if (!result.success) {
+        setSearchStatus('error');
+        return;
+      }
+      setMessageMatches(previous => ({
+        ...previous,
+        matches: Array.from(
+          new Map(
+            [...previous.matches, ...result.matches].map(match => [match.sessionId, match]),
+          ).values(),
+        ),
+        indexing: previous.indexing || result.indexing,
+        partial: previous.partial || result.partial,
+        truncated: result.truncated,
+        archivedTranscriptsExcluded: Math.max(
+          previous.archivedTranscriptsExcluded,
+          result.archivedTranscriptsExcluded ?? 0,
+        ),
+      }));
+      setSearchStatus('idle');
+    } catch {
+      if (generation === searchGenerationRef.current) setSearchStatus('error');
+    } finally {
+      if (generation === searchGenerationRef.current) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
+    }
   };
 
   const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (searchResults.length === 0) return;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
@@ -195,22 +348,65 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
     } else if (event.key === 'Enter') {
       event.preventDefault();
       const result = searchResults[activeIndex ?? 0];
-      if (result) void handleSelectSession(result.session.id);
+      if (result) void handleSelectSession(result.session.id, result.messageMatch);
     }
   };
 
   if (!isOpen) return null;
 
+  const hasQuery = Boolean(searchQuery.trim());
+  const hasSearchNotice =
+    currentSearch.partial || currentSearch.indexing || searchStatus === 'error';
+  const searchNotice = i18nService.t(
+    searchStatus === 'error'
+      ? 'searchConversationsFailed'
+      : currentSearch.indexing
+        ? 'searchIndexingConversations'
+        : 'searchConversationsIncomplete',
+  );
+
   return (
     <Modal
       onClose={onClose}
-      overlayClassName="fixed inset-0 z-50 flex items-start justify-center modal-backdrop p-6"
-      className="modal-content w-full max-w-2xl mt-10 rounded-2xl border border-border bg-surface shadow-modal overflow-hidden"
+      overlayClassName="modal-backdrop cowork-search-overlay"
+      className="modal-content cowork-search-panel"
     >
-      <div role="dialog" aria-modal="true" aria-label={i18nService.t('search')}>
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
-          <div className="relative flex-1">
-            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary" />
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cowork-search-title"
+        aria-describedby="cowork-search-description"
+        className="flex min-h-0 min-w-0 flex-1 flex-col"
+      >
+        <div className="cowork-search-header">
+          <div className="mb-3 flex items-start gap-2.5">
+            <div className="cowork-search-brand" aria-hidden="true">
+              <SearchIcon className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h2 id="cowork-search-title" className="text-sm font-semibold text-foreground">
+                {i18nService.t('searchDialogTitle')}
+              </h2>
+              <p
+                id="cowork-search-description"
+                className="mt-0.5 text-[11px] leading-4 text-secondary"
+              >
+                {i18nService.t('searchDialogDescription')}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="cowork-search-icon-button -mr-1 -mt-1"
+              aria-label={i18nService.t('close')}
+              title={i18nService.t('close')}
+            >
+              <XMarkIcon className="h-[18px] w-[18px]" />
+            </button>
+          </div>
+          <div className="cowork-search-field">
+            <SearchIcon className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
             <input
               type="search"
               maxLength={4096}
@@ -218,59 +414,135 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
               value={searchQuery}
               onChange={event => setSearchQuery(event.target.value)}
               onKeyDown={handleSearchKeyDown}
+              onCompositionStart={() => {
+                composingRef.current = true;
+                setComposing(true);
+              }}
+              onCompositionEnd={event => {
+                composingRef.current = false;
+                setComposing(false);
+                setSearchQuery(event.currentTarget.value);
+              }}
               aria-label={i18nService.t('searchConversations')}
               aria-controls="cowork-search-results"
               aria-activedescendant={
                 activeIndex === null ? undefined : `cowork-search-result-${activeIndex}`
               }
               placeholder={i18nService.t('searchConversations')}
-              className="w-full pl-9 pr-3 py-2 text-sm rounded-lg bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary"
+              className="cowork-search-input"
             />
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 rounded-lg text-secondary hover:bg-surface-raised transition-colors"
-            aria-label={i18nService.t('close')}
-          >
-            <XMarkIcon className="h-5 w-5" />
-          </button>
-        </div>
-        <div className="px-3 py-3 max-h-[60vh] overflow-y-auto">
-          {searchStatus === 'searching' && searchResults.length === 0 ? (
-            <div className="py-10 text-center text-sm text-secondary">
-              {i18nService.t('searchingConversations')}
-            </div>
-          ) : searchResults.length === 0 &&
-            (searchStatus === 'incomplete' || searchStatus === 'error') ? (
-            <div
-              className="flex flex-col items-center gap-3 py-10 text-center text-sm text-secondary"
-              role="status"
-              aria-live="polite"
-            >
-              <span>
-                {i18nService.t(
-                  searchStatus === 'error'
-                    ? 'searchConversationsFailed'
-                    : 'searchConversationsIncomplete',
-                )}
-              </span>
+            {searchQuery && (
               <button
                 type="button"
-                className="font-medium text-primary hover:underline"
+                className="cowork-search-icon-button shrink-0"
+                aria-label={i18nService.t('searchClearQuery')}
+                title={i18nService.t('searchClearQuery')}
+                onClick={() => {
+                  setSearchQuery('');
+                  searchInputRef.current?.focus();
+                }}
+              >
+                <XMarkIcon className="h-4 w-4" />
+              </button>
+            )}
+            <span className="hidden sm:inline-flex" aria-hidden="true">
+              <kbd className="cowork-search-key">Esc</kbd>
+            </span>
+          </div>
+          <div className="cowork-search-filters">
+            <button
+              type="button"
+              className="cowork-search-filter"
+              aria-pressed={!pinnedOnly}
+              onClick={() => setPinnedOnly(false)}
+            >
+              {i18nService.t('searchScopeAll')}
+            </button>
+            <button
+              type="button"
+              className="cowork-search-filter"
+              aria-pressed={pinnedOnly}
+              onClick={() => setPinnedOnly(true)}
+            >
+              {i18nService.t('searchScopePinned')}
+            </button>
+            {groups.length > 0 && (
+              <select
+                className="cowork-search-group"
+                aria-label={i18nService.t('searchScopeGroup')}
+                value={groupId}
+                onChange={event => setGroupId(event.target.value)}
+              >
+                <option value="">{i18nService.t('searchScopeAllGroups')}</option>
+                {groups.map(group => (
+                  <option key={group.id} value={group.id}>
+                    {group.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2 px-4 pb-1.5 pt-2.5 text-[11px] text-secondary">
+          {hasQuery ? (
+            <SearchIcon className="h-3.5 w-3.5" aria-hidden="true" />
+          ) : (
+            <ClockIcon className="h-3.5 w-3.5" aria-hidden="true" />
+          )}
+          <span className="font-medium">
+            {i18nService.t(hasQuery ? 'searchDialogResults' : 'searchDialogRecent')}
+          </span>
+          <span className="cowork-search-count">{searchResults.length}</span>
+          <span className="ml-1 h-px flex-1 bg-border-subtle" aria-hidden="true" />
+        </div>
+        <div className="cowork-search-body">
+          {searchStatus === 'searching' && searchResults.length === 0 && !hasSearchNotice ? (
+            <div className="cowork-search-empty" role="status" aria-live="polite">
+              <div className="cowork-search-empty-icon" aria-hidden="true">
+                <ArrowPathIcon className="h-6 w-6 motion-safe:animate-spin" />
+              </div>
+              <p className="text-sm font-medium text-foreground">
+                {i18nService.t('searchingConversations')}
+              </p>
+            </div>
+          ) : searchResults.length === 0 && hasSearchNotice ? (
+            <div className="cowork-search-empty" role="status" aria-live="polite">
+              <div className="cowork-search-empty-icon" aria-hidden="true">
+                <ExclamationCircleIcon className="h-7 w-7" />
+              </div>
+              <p className="text-sm text-secondary">{searchNotice}</p>
+              <button
+                type="button"
+                className="cowork-search-retry"
                 onClick={() => setSearchRevision(revision => revision + 1)}
               >
+                <ArrowPathIcon className="h-3.5 w-3.5" aria-hidden="true" />
                 {i18nService.t('searchConversationsRetry')}
               </button>
             </div>
           ) : searchResults.length === 0 ? (
-            <div className="py-10 text-center text-sm text-secondary">
-              {i18nService.t('searchNoResults')}
+            <div className="cowork-search-empty" role="status" aria-live="polite">
+              <div className="cowork-search-empty-icon" aria-hidden="true">
+                {hasQuery ? (
+                  <SearchIcon className="h-7 w-7" />
+                ) : (
+                  <ChatBubbleLeftRightIcon className="h-7 w-7" />
+                )}
+              </div>
+              <p className="text-sm font-medium text-foreground">
+                {i18nService.t(hasQuery ? 'searchNoResults' : 'searchDialogNoConversations')}
+              </p>
+              <p className="max-w-xs text-xs leading-5 text-secondary">
+                {i18nService.t(
+                  hasQuery ? 'searchDialogNoResultsHint' : 'searchDialogNoConversationsHint',
+                )}
+              </p>
             </div>
           ) : (
             <ul
               id="cowork-search-results"
-              className="space-y-1"
+              ref={resultListRef}
+              className="space-y-0.5"
               aria-label={i18nService.t('search')}
             >
               {searchResults.map(({ session, messageMatch }, index) => (
@@ -278,55 +550,112 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
                   <button
                     id={`cowork-search-result-${index}`}
                     type="button"
-                    onClick={() => handleSelectSession(session.id)}
+                    onClick={() => void handleSelectSession(session.id, messageMatch)}
+                    disabled={selecting}
                     aria-current={session.id === currentSessionId ? 'page' : undefined}
-                    className={`w-full rounded-xl px-3 py-2.5 text-left transition-colors ${
-                      index === activeIndex
-                        ? 'bg-primary/[0.12] ring-1 ring-inset ring-primary/25'
-                        : 'hover:bg-primary/[0.08] hover:ring-1 hover:ring-inset hover:ring-primary/20'
-                    }`}
+                    className="cowork-search-result"
+                    data-active={index === activeIndex ? 'true' : undefined}
                   >
-                    <div className="truncate text-sm font-medium text-foreground">
-                      <HighlightedText text={session.title} query={searchQuery} />
-                    </div>
-                    {messageMatch && (
-                      <div className="mt-1 truncate text-xs leading-5 text-secondary">
-                        <HighlightedText text={messageMatch.snippet} query={searchQuery} />
+                    <span className="cowork-search-result-icon" aria-hidden="true">
+                      <ChatBubbleLeftRightIcon className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-[13px] text-foreground">
+                          <HighlightedText text={session.title} query={searchQuery} />
+                        </span>
+                        {session.id === currentSessionId && (
+                          <span className="cowork-search-current">
+                            {i18nService.t('searchDialogCurrent')}
+                          </span>
+                        )}
                       </div>
-                    )}
+                      {messageMatch && (
+                        <div className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-secondary">
+                          <HighlightedText text={messageMatch.snippet} query={searchQuery} />
+                        </div>
+                      )}
+                    </div>
+                    <time
+                      dateTime={new Date(session.updatedAt).toISOString()}
+                      className="hidden shrink-0 text-[11px] tabular-nums text-secondary sm:block"
+                    >
+                      {dateFormatter.format(session.updatedAt)}
+                    </time>
+                    <ChevronRightIcon className="cowork-search-result-arrow" aria-hidden="true" />
                   </button>
                 </li>
               ))}
             </ul>
           )}
+          {hasQuery && currentSearch.truncated && (
+            <div className="flex justify-center pt-2">
+              <button
+                type="button"
+                className="cowork-search-retry"
+                disabled={loadingMore || searchStatus === 'searching' || composing}
+                onClick={() => void handleLoadMore()}
+              >
+                {loadingMore && (
+                  <ArrowPathIcon className="h-3 w-3 motion-safe:animate-spin" aria-hidden="true" />
+                )}
+                {i18nService.t(loadingMore ? 'searchLoadingMore' : 'searchLoadMore')}
+              </button>
+            </div>
+          )}
           {searchQuery.trim() && searchResults.length > 0 && searchStatus === 'searching' && (
-            <div className="px-3 pt-3 text-xs text-secondary" role="status" aria-live="polite">
+            <div
+              className="flex items-center gap-2 px-3 pt-3 text-xs text-secondary"
+              role="status"
+              aria-live="polite"
+            >
+              <ArrowPathIcon className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden="true" />
               {i18nService.t('searchingConversations')}
             </div>
           )}
-          {searchResults.length > 0 &&
-            (searchStatus === 'incomplete' || searchStatus === 'error') && (
-              <div
-                className="flex items-center justify-between gap-3 px-3 pt-3 text-xs text-secondary"
-                role="status"
-                aria-live="polite"
+          {searchResults.length > 0 && hasSearchNotice && (
+            <div className="cowork-search-notice" role="status" aria-live="polite">
+              <ExclamationCircleIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="flex-1">{searchNotice}</span>
+              <button
+                type="button"
+                className="cowork-search-retry shrink-0"
+                onClick={() => setSearchRevision(revision => revision + 1)}
               >
-                <span>
-                  {i18nService.t(
-                    searchStatus === 'error'
-                      ? 'searchConversationsFailed'
-                      : 'searchConversationsIncomplete',
-                  )}
-                </span>
-                <button
-                  type="button"
-                  className="shrink-0 font-medium text-primary hover:underline"
-                  onClick={() => setSearchRevision(revision => revision + 1)}
-                >
-                  {i18nService.t('searchConversationsRetry')}
-                </button>
-              </div>
-            )}
+                {i18nService.t('searchConversationsRetry')}
+              </button>
+            </div>
+          )}
+          {hasQuery && currentSearch.archivedTranscriptsExcluded > 0 && (
+            <p className="px-2 pt-2 text-[11px] leading-4 text-secondary" role="status">
+              {i18nService
+                .t('searchArchivedExcluded')
+                .replace('{count}', String(currentSearch.archivedTranscriptsExcluded))}
+            </p>
+          )}
+        </div>
+        <div className="cowork-search-footer">
+          <span className="flex items-center gap-1.5">
+            <kbd className="cowork-search-key" aria-hidden="true">
+              ↑
+            </kbd>
+            <kbd className="cowork-search-key" aria-hidden="true">
+              ↓
+            </kbd>
+            <span className="ml-1">{i18nService.t('searchDialogNavigate')}</span>
+          </span>
+          <span className="flex items-center gap-2">
+            <kbd className="cowork-search-key" aria-hidden="true">
+              <ArrowTurnDownLeftIcon className="h-3 w-3" />
+            </kbd>
+            {i18nService.t('searchDialogOpen')}
+          </span>
+          <span className="ml-auto flex items-center gap-2">
+            <kbd className="cowork-search-key" aria-hidden="true">
+              Esc
+            </kbd>
+            {i18nService.t('close')}
+          </span>
         </div>
       </div>
     </Modal>

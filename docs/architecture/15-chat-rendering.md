@@ -232,6 +232,11 @@ stream-render-scheduler 合并 frame 更新，assistant pacer 平滑揭示文本
 
 历史窗口移动、代码块高度变化、图片加载和 Mermaid 后处理都需要维护可见锚点。搜索/minimap 基于显示投影，跳转未加载范围需先取得相应历史。虚拟化不能破坏键盘导航、选择文本或展开工具详情的稳定性。
 
+侧栏跨对话搜索沿用 Gateway `sessions.search`，将命中消息的原生 entry ID 与
+session key / 物理 session ID 传给聊天 wrapper 的 `revealMessage`。wrapper 等待
+初始历史就绪后逐页获取旧历史，Lit 按 entry 身份滚动并短暂高亮；产品导航变化、
+物理身份不一致或历史读取失败时终止，避免迟到定位滚动到另一段对话。
+
 ## 11. 工作区附件与临时侧聊
 
 终端页签复用现有 xterm、搜索、快捷键与 Windows 输入法处理，底层统一接入

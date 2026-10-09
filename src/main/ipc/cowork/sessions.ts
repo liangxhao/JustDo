@@ -37,7 +37,10 @@ import {
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
 } from '../../openclaw/sessions/openclawSessionKeys';
-import { searchCoworkSessionMessages } from '../../openclaw/sessions/openclawSessionSearch';
+import {
+  parseCoworkSessionSearchOptions,
+  searchCoworkSessionMessages,
+} from '../../openclaw/sessions/openclawSessionSearch';
 import type { CollaborationCoordinator } from './collaboration';
 
 interface SessionHandlerDependencies {
@@ -703,11 +706,13 @@ export const registerCoworkSessionHandlers = ({
       const persistedSession = store.getSession(sessionId);
       const agentId = persistedSession?.agentId || 'main';
       if (persistedSession?.nativeSessionKey) {
-        if (store.listSessions().some(summary => {
-          if (summary.id === sessionId) return false;
-          const other = store.getSession(summary.id);
-          return other && isWorkspacePathWithin(other.cwd, persistedSession.cwd);
-        })) {
+        if (
+          store.listSessions().some(summary => {
+            if (summary.id === sessionId) return false;
+            const other = store.getSession(summary.id);
+            return other && isWorkspacePathWithin(other.cwd, persistedSession.cwd);
+          })
+        ) {
           throw new Error(t('worktreeSharedWorkspaceDeleteBlocked'));
         }
         if (!requestGateway) throw new Error('Gateway is unavailable for native session deletion.');
@@ -1198,8 +1203,10 @@ export const registerCoworkSessionHandlers = ({
             const entry = described.session;
             if (!entry?.worktree || typeof entry.worktree !== 'object') continue;
             const permissionMode: PermissionMode | undefined =
-              entry.permissionMode === 'full' ? 'full'
-                : entry.permissionMode === 'workspace' ? 'auto'
+              entry.permissionMode === 'full'
+                ? 'full'
+                : entry.permissionMode === 'workspace'
+                  ? 'auto'
                   : entry.permissionMode === 'guarded' || entry.permissionMode === undefined
                     ? 'ask'
                     : undefined;
@@ -1229,27 +1236,31 @@ export const registerCoworkSessionHandlers = ({
     }
   });
 
-  ipcMain.handle(CoworkSessionSearchIpc.SearchMessages, async (_event, rawQuery: unknown) => {
-    try {
-      if (typeof rawQuery !== 'string') {
-        return { success: false, error: 'Search query must be a string.' };
+  ipcMain.handle(
+    CoworkSessionSearchIpc.SearchMessages,
+    async (_event, rawQuery: unknown, rawOptions: unknown) => {
+      try {
+        if (typeof rawQuery !== 'string') {
+          return { success: false, error: 'Search query must be a string.' };
+        }
+        if (!requestGateway) {
+          return { success: false, error: 'OpenClaw Gateway search is unavailable.' };
+        }
+        const result = await searchCoworkSessionMessages({
+          query: rawQuery,
+          store: getCoworkStore(),
+          requestGateway,
+          options: parseCoworkSessionSearchOptions(rawOptions),
+        });
+        return { success: true, ...result };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to search session messages',
+        };
       }
-      if (!requestGateway) {
-        return { success: false, error: 'OpenClaw Gateway search is unavailable.' };
-      }
-      const result = await searchCoworkSessionMessages({
-        query: rawQuery,
-        store: getCoworkStore(),
-        requestGateway,
-      });
-      return { success: true, ...result };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to search session messages',
-      };
-    }
-  });
+    },
+  );
 
   ipcMain.handle('cowork:session:remoteManaged', async (_event, sessionId: string) => {
     try {

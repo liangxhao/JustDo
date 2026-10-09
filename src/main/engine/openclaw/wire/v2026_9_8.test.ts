@@ -155,4 +155,17 @@ describe('OpenClaw v2026.9.8 wire validators', () => {
       }),
     ).toThrow('malformed');
   });
+
+  test('validates the native archived transcript exclusion count', () => {
+    expect(parseSessionsSearchResultV2026_9_8({ results: [] }).archivedTranscriptsExcluded).toBe(0);
+    expect(
+      parseSessionsSearchResultV2026_9_8({ results: [], archivedTranscriptsExcluded: 3 })
+        .archivedTranscriptsExcluded,
+    ).toBe(3);
+    for (const archivedTranscriptsExcluded of [-1, 1.5, '3', Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() =>
+        parseSessionsSearchResultV2026_9_8({ results: [], archivedTranscriptsExcluded }),
+      ).toThrow('archived exclusion count');
+    }
+  });
 });

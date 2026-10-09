@@ -29,6 +29,8 @@ vi.mock('@/services/i18n', () => ({
 
 const createProps = () => ({
   activeView: SidebarView.Home,
+  homePanelId: 'sidebar-home-panel',
+  isHomePanelExpanded: true,
   showWorkboard: true,
   unreadScheduledTaskResults: 0,
   onShowHome: vi.fn(),

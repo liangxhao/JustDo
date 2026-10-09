@@ -95,7 +95,10 @@ import {
   type SessionReviewQuery,
 } from '../shared/cowork/sessionReview';
 import { SessionRunIpc, type SessionRunUnknownInput } from '../shared/cowork/sessionRun';
-import { CoworkSessionSearchIpc } from '../shared/cowork/sessionSearch';
+import {
+  CoworkSessionSearchIpc,
+  type CoworkSessionSearchOptions,
+} from '../shared/cowork/sessionSearch';
 import { type CancelSessionStartInput, SessionStartIpc } from '../shared/cowork/sessionStart';
 import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../shared/cowork/sessionTitle';
 import { SlashCommandIpc } from '../shared/cowork/slashCommands';
@@ -774,8 +777,8 @@ contextBridge.exposeInMainWorld('electron', {
     getSessionModel: (options: { sessionId: string; agentId?: string }) =>
       ipcRenderer.invoke('cowork:session:model', options),
     listSessions: (agentId?: string) => ipcRenderer.invoke('cowork:session:list', agentId),
-    searchSessionMessages: (query: string) =>
-      ipcRenderer.invoke(CoworkSessionSearchIpc.SearchMessages, query),
+    searchSessionMessages: (query: string, options?: CoworkSessionSearchOptions) =>
+      ipcRenderer.invoke(CoworkSessionSearchIpc.SearchMessages, query, options),
     getSessionGoal: (sessionId: string) => ipcRenderer.invoke('cowork:session:goal', sessionId),
     getPlanMode: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:planMode:get', sessionId),

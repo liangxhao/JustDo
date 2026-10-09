@@ -17,6 +17,8 @@ import { normalizeSidebarPins, type SidebarFeatureId, SidebarView } from './side
 
 interface NavigationRailProps {
   activeView: SidebarView;
+  homePanelId: string;
+  isHomePanelExpanded: boolean;
   showWorkboard: boolean;
   unreadScheduledTaskResults: number;
   onShowHome: () => void;
@@ -52,6 +54,8 @@ const PinIcon: React.FC<{ pinned: boolean }> = ({ pinned }) => (
 
 const NavigationRail: React.FC<NavigationRailProps> = ({
   activeView,
+  homePanelId,
+  isHomePanelExpanded,
   showWorkboard,
   unreadScheduledTaskResults,
   onShowHome,
@@ -193,6 +197,8 @@ const NavigationRail: React.FC<NavigationRailProps> = ({
           onClick={() => navigate(onShowHome)}
           aria-label={i18nService.t('sidebarHome')}
           title={i18nService.t('sidebarHome')}
+          aria-controls={homePanelId}
+          aria-expanded={isHomePanelExpanded}
           aria-current={activeView === SidebarView.Home ? 'page' : undefined}
         >
           <HomeIcon className="h-5 w-5" />

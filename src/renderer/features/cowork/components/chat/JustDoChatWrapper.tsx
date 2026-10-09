@@ -144,7 +144,14 @@ export interface JustDoChatWrapperRef {
   dismissProgressCard: () => Promise<boolean>;
   refreshProgressCard: () => Promise<boolean>;
   rewindToUserMessage: (entryId: string) => Promise<RewindEditorDraft>;
-  revealMessage: (entryId: string) => Promise<boolean>;
+  revealMessage: (
+    entryId: string,
+    options?: {
+      sessionKey?: string;
+      sessionId?: string;
+      isCurrent?: () => boolean;
+    },
+  ) => Promise<boolean>;
   sendSideQuestion: (question: string, runId: string) => Promise<string>;
 }
 
@@ -187,6 +194,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       ? `${currentSession.external.status}:${currentSession.updatedAt}`
       : '';
     const initialSessionRef = useRef(currentSession);
+    const canonicalSessionKeyRef = useRef(canonicalSessionKey);
+    canonicalSessionKeyRef.current = canonicalSessionKey;
     const controllerRef = useRef<ChatController | null>(null);
     const chatElementRef = useRef<JustDoChatElement | null>(null);
     const handleChatElementChange = useCallback((element: JustDoChatElement | null) => {
@@ -261,7 +270,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         cancelPlanImplementationReset: requestId => {
           controllerRef.current?.cancelPlanImplementationReset(requestId);
         },
-        hasUnconfirmedQueuedInput: () => controllerRef.current?.hasUnconfirmedQueuedInput() ?? false,
+        hasUnconfirmedQueuedInput: () =>
+          controllerRef.current?.hasUnconfirmedQueuedInput() ?? false,
         getQueuedInputDetail: (inputId, expectedSessionKey) => {
           const controller = controllerRef.current;
           return controller?.state.sessionKey === expectedSessionKey
@@ -334,18 +344,47 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           if (!controller) throw new Error('Controller not initialized');
           return controller.rewindToUserMessage(entryId);
         },
-        revealMessage: async entryId => {
+        revealMessage: async (entryId, options = {}) => {
           const normalizedEntryId = entryId.trim();
           const controller = controllerRef.current;
           if (!normalizedEntryId || !controller) return false;
+          const expectedKey = options.sessionKey ?? canonicalSessionKeyRef.current;
+          const isCurrent = () =>
+            controllerRef.current === controller &&
+            canonicalSessionKeyRef.current === expectedKey &&
+            (options.isCurrent?.() ?? true);
           for (let attempt = 0; attempt < 100; attempt += 1) {
+            if (!isCurrent()) return false;
+            if (controller.state.sessionKey === expectedKey && controller.state.historyReadFailed)
+              return false;
+            if (
+              controller.state.sessionKey !== expectedKey ||
+              !controller.state.initialHistoryReady
+            ) {
+              await new Promise<void>(resolve => window.setTimeout(resolve, 100));
+              continue;
+            }
+            if (
+              controller.state.historyReadFailed ||
+              (options.sessionId && controller.state.currentSessionId !== options.sessionId)
+            )
+              return false;
             const chat = chatElementRef.current;
             if (chat) {
               await chat.updateComplete;
+              if (
+                !isCurrent() ||
+                controller.state.sessionKey !== expectedKey ||
+                (options.sessionId && controller.state.currentSessionId !== options.sessionId)
+              )
+                return false;
+              if (!controller.state.initialHistoryReady) continue;
+              if (controller.state.historyReadFailed) return false;
               if (chat.revealMessage(normalizedEntryId)) return true;
             }
             if (!controller.state.chatLoading && !controller.state.historyLoadingOlder) {
               const advanced = await controller.showOlderHistory();
+              if (!isCurrent()) return false;
               const entryLoaded = hasEntryId(controller.getLoadedMessages(), normalizedEntryId);
               if (!advanced && !controller.state.historyHasMore && !entryLoaded) return false;
             }

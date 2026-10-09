@@ -1,6 +1,7 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import type { CoworkSessionMessageSearchMatch } from '@shared/cowork/sessionSearch';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
 import { useCollaborationRooms } from '@/features/cowork/components/chat/CollaborationPanel';
@@ -17,6 +18,7 @@ import CoworkSessionList from '@/features/cowork/components/sessions/CoworkSessi
 import {
   selectCoworkSessions,
   selectCurrentSessionId,
+  selectGroups,
   selectIsOpenClawEngine,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
@@ -30,7 +32,6 @@ import Modal from '@/shared/components/common/Modal';
 import ArrowUpRightIcon from '@/shared/components/icons/ArrowUpRightIcon';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
-import SidebarToggleIcon from '@/shared/components/icons/SidebarToggleIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
 import { store } from '@/store';
 
@@ -50,6 +51,7 @@ interface SidebarProps {
   onBeforeCoworkNavigation: (options?: FilePreviewNavigationOptions) => Promise<boolean>;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
+  onRevealSearchMatch?: (match: CoworkSessionMessageSearchMatch) => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -65,9 +67,12 @@ const Sidebar: React.FC<SidebarProps> = ({
   onBeforeCoworkNavigation,
   isCollapsed,
   onToggleCollapse,
+  onRevealSearchMatch,
 }) => {
   const sessionNavigationRequestRef = useRef(0);
+  const homePanelId = useId();
   const sessions = useSelector(selectCoworkSessions);
+  const groups = useSelector(selectGroups);
   const sessionListStatus = useSelector(
     (state: import('@/store').RootState) => state.cowork.sessionListStatus,
   );
@@ -116,8 +121,12 @@ const Sidebar: React.FC<SidebarProps> = ({
     };
   }, []);
 
-  const handleSelectSession = async (sessionId: string) => {
+  const handleSelectSession = async (
+    sessionId: string,
+    match?: CoworkSessionMessageSearchMatch,
+  ) => {
     const requestId = ++sessionNavigationRequestRef.current;
+    let selected = false;
     await runGuardedFilePreviewNavigation(
       onBeforeCoworkNavigation,
       async () => {
@@ -125,6 +134,9 @@ const Sidebar: React.FC<SidebarProps> = ({
         onShowCowork();
         const target = resolveCollaborationNavigation(sessionId, collaborationRooms);
         const loaded = await coworkService.loadSession(target.sessionId);
+        if (requestId !== sessionNavigationRequestRef.current || !loaded) return;
+        selected = store.getState().cowork.currentSession?.id === target.sessionId;
+        if (selected && match && target.sessionId === match.sessionId) onRevealSearchMatch?.(match);
         if (
           requestId === sessionNavigationRequestRef.current &&
           loaded &&
@@ -136,6 +148,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       },
       { preserveTabs: true },
     );
+    return selected;
   };
 
   const handleDeleteSession = async (sessionId: string) => {
@@ -279,11 +292,13 @@ const Sidebar: React.FC<SidebarProps> = ({
     <>
       <NavigationRail
         activeView={activeView}
+        homePanelId={homePanelId}
+        isHomePanelExpanded={isHomePanelVisible}
         showWorkboard={showWorkboard}
         unreadScheduledTaskResults={unreadScheduledTaskResults}
         onShowHome={() => {
           onShowCowork();
-          if (isCollapsed) onToggleCollapse();
+          if (activeView === SidebarView.Home || isCollapsed) onToggleCollapse();
         }}
         onShowScheduledTasks={onShowScheduledTasks}
         onShowPlugins={onShowPlugins}
@@ -292,6 +307,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         onShowSettings={onShowSettings}
       />
       <aside
+        id={homePanelId}
         aria-label={i18nService.t('sidebarHome')}
         hidden={!isHomePanelVisible}
         className={`w-60 shrink-0 flex-col bg-surface-raised overflow-hidden ${isHomePanelVisible ? 'flex' : 'hidden'}`}
@@ -322,14 +338,6 @@ const Sidebar: React.FC<SidebarProps> = ({
                 aria-label={i18nService.t('search')}
               >
                 <SearchIcon className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                onClick={onToggleCollapse}
-                className="non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
-                aria-label={isCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
-              >
-                <SidebarToggleIcon className="h-4 w-4" isCollapsed={isCollapsed} />
               </button>
             </div>
           </div>
@@ -449,6 +457,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
         sessions={visibleSessions}
+        groups={groups}
         currentSessionId={currentSessionId}
         onSelectSession={handleSelectSession}
       />

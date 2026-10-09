@@ -82,6 +82,7 @@ export type OpenClawSessionsSearchResultV2026_9_8 = {
   results: OpenClawSessionsSearchHitV2026_9_8[];
   indexing: boolean;
   truncated: boolean;
+  archivedTranscriptsExcluded: number;
 };
 
 export const parseSessionsSearchResultV2026_9_8 = (
@@ -128,10 +129,18 @@ export const parseSessionsSearchResultV2026_9_8 = (
   if (value.truncated !== undefined && typeof value.truncated !== 'boolean') {
     throw new Error(`${OPENCLAW_WIRE_VERSION} sessions.search truncated must be a boolean`);
   }
+  if (
+    value.archivedTranscriptsExcluded !== undefined &&
+    (!Number.isSafeInteger(value.archivedTranscriptsExcluded) ||
+      (value.archivedTranscriptsExcluded as number) < 0)
+  ) {
+    throw new Error(`${OPENCLAW_WIRE_VERSION} sessions.search archived exclusion count is invalid`);
+  }
   return {
     results,
     indexing: value.indexing === true,
     truncated: value.truncated === true,
+    archivedTranscriptsExcluded: (value.archivedTranscriptsExcluded as number | undefined) ?? 0,
   };
 };
 

@@ -23,6 +23,7 @@ vi.mock('@/features/cowork/components/chat/CollaborationPanel', () => ({
 }));
 vi.mock('@/features/cowork/coworkSelectors', () => ({
   selectCoworkSessions: () => [],
+  selectGroups: () => [],
   selectCurrentSessionId: () => 'existing-chat',
   selectIsOpenClawEngine: () => true,
 }));
@@ -65,7 +66,7 @@ const createProps = () => ({
 });
 
 describe('Sidebar', () => {
-  it('keeps navigation available when the home list is collapsed and restores it via Home', () => {
+  it('toggles the home list through Home while keeping navigation available', () => {
     const props = createProps();
     const Shell = () => {
       const [isCollapsed, setIsCollapsed] = useState(false);
@@ -79,16 +80,51 @@ describe('Sidebar', () => {
     };
     render(<Shell />);
     expect(screen.getByRole('complementary', { name: '主页' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: translations.zh.collapse }));
+    const home = screen.getByRole('button', { name: '主页' });
+    expect(home.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.queryByRole('button', { name: translations.zh.collapse })).toBeNull();
+    fireEvent.click(home);
     expect(screen.queryByRole('complementary')).toBeNull();
+    expect(home.getAttribute('aria-expanded')).toBe('false');
     expect(screen.getByRole('navigation')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '主页' }));
     expect(screen.getByRole('complementary', { name: '主页' })).toBeTruthy();
-    expect(props.onShowCowork).toHaveBeenCalledOnce();
+    expect(home.getAttribute('aria-expanded')).toBe('true');
+    expect(props.onShowCowork).toHaveBeenCalledTimes(2);
     expect(props.onNewChat).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: translations.zh.newChat }));
     expect(props.onNewChat).toHaveBeenCalledOnce();
   });
+
+  it.each([false, true])(
+    'opens the home list from another page with collapsed=%s',
+    initialCollapsed => {
+      const props = createProps();
+      const Shell = () => {
+        const [activeView, setActiveView] = useState<SidebarView>(SidebarView.Plugins);
+        const [isCollapsed, setIsCollapsed] = useState(initialCollapsed);
+        return (
+          <Sidebar
+            {...props}
+            activeView={activeView}
+            isCollapsed={isCollapsed}
+            onShowCowork={() => setActiveView(SidebarView.Home)}
+            onToggleCollapse={() => setIsCollapsed(value => !value)}
+          />
+        );
+      };
+      render(<Shell />);
+      const home = screen.getByRole('button', { name: '主页' });
+      expect(screen.queryByRole('complementary')).toBeNull();
+      fireEvent.click(home);
+      expect(screen.getByRole('complementary', { name: '主页' })).toBeTruthy();
+      expect(home.getAttribute('aria-expanded')).toBe('true');
+      fireEvent.click(home);
+      expect(screen.queryByRole('complementary')).toBeNull();
+      expect(home.getAttribute('aria-expanded')).toBe('false');
+      expect(props.onNewChat).not.toHaveBeenCalled();
+    },
+  );
 
   it('shows the home list only on Home, preserving feature navigation and settings elsewhere', () => {
     const props = createProps();

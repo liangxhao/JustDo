@@ -869,6 +869,7 @@ const App: React.FC = () => {
             onBeforeCoworkNavigation={requestCoworkNavigation}
             isCollapsed={isSidebarCollapsed}
             onToggleCollapse={handleToggleSidebar}
+            onRevealSearchMatch={match => coworkViewRef.current?.revealSearchMatch(match)}
           />
         )}
         <div
@@ -913,8 +914,6 @@ const App: React.FC = () => {
                 inputBlockedMessage={
                   displayedPlanInteraction ? i18nService.t('coworkPlanInputBlocked') : undefined
                 }
-                isSidebarCollapsed={isSidebarCollapsed}
-                onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
                 planInteraction={displayedPlanInteraction}
                 onPlanRespond={result =>
