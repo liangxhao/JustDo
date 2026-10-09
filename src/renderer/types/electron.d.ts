@@ -1125,13 +1125,13 @@ interface IElectronAPI {
     ) => () => void;
     onSessionGoalChanged: (callback: (data: { sessionId: string }) => void) => () => void;
     getSwarmSnapshot: import('../../shared/cowork/swarm').SwarmApi['getSwarmSnapshot'];
-    getSwarmFlows: import('../../shared/cowork/swarmFlow').SwarmFlowApi['getSwarmFlows'];
-    getSwarmBatch: import('../../shared/cowork/swarmFlow').SwarmFlowApi['getSwarmBatch'];
-    retrySwarmBatch: import('../../shared/cowork/swarmFlow').SwarmFlowApi['retrySwarmBatch'];
-    getSwarmFlowDetail: import('../../shared/cowork/swarmFlow').SwarmFlowApi['getSwarmFlowDetail'];
-    controlSwarmFlow: import('../../shared/cowork/swarmFlow').SwarmFlowApi['controlSwarmFlow'];
-    interveneSwarmFlow: import('../../shared/cowork/swarmFlow').SwarmFlowApi['interveneSwarmFlow'];
-    prepareSwarm: import('../../shared/cowork/swarm').SwarmApi['prepareSwarm'];
+    getSwarmWorkflows: import('../../shared/cowork/swarmWorkflow').SwarmWorkflowApi['getSwarmWorkflows'];
+    getSwarmWorkflowBatch: import('../../shared/cowork/swarmWorkflow').SwarmWorkflowApi['getSwarmWorkflowBatch'];
+    retrySwarmWorkflowBatch: import('../../shared/cowork/swarmWorkflow').SwarmWorkflowApi['retrySwarmWorkflowBatch'];
+    getSwarmWorkflowDetail: import('../../shared/cowork/swarmWorkflow').SwarmWorkflowApi['getSwarmWorkflowDetail'];
+    controlSwarmWorkflow: import('../../shared/cowork/swarmWorkflow').SwarmWorkflowApi['controlSwarmWorkflow'];
+    interveneSwarmWorkflow: import('../../shared/cowork/swarmWorkflow').SwarmWorkflowApi['interveneSwarmWorkflow'];
+    prepareSwarmWorkflow: import('../../shared/cowork/swarmWorkflow').SwarmWorkflowApi['prepareSwarmWorkflow'];
     getSubTaskStatus: (
       sessionId?: string,
       forceRefresh?: boolean,

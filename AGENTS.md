@@ -397,15 +397,15 @@ on every turn. Runtime Services owns receipt history reads and blocks managed
 peer sends when the extension is disabled. Config sync must preserve the user's
 explicit extension state.
 
-Swarm Flow is the independent `openclaw-extensions/swarm-flow` plugin, with a
+Swarm Workflow is the independent `openclaw-extensions/swarm-workflow` plugin, with a
 per-submit composer option and a dependency graph Tab. Its Gateway service owns
-the durable DAG and stage results in stateDir/swarm-flow/flows.sqlite. It uses
+the durable DAG and stage results in stateDir/swarm-workflow/flows.sqlite. It uses
 plugin-owned native execution sessions, not forged spawnedBy relationships.
 Do not duplicate transcripts or retry uncertain launches. No Workboard/agent-team
 dependency; Workboard defaults off, preserving explicit user choices for both plugins.
-Batch snapshots and attempts use the parent project's `.agent-tasks/swarm/`;
+Batch snapshots and attempts use the parent project's `.agent-tasks/swarm-workflow/`;
 do not add compatibility or migration for the old Swarm directory layout.
-See `docs/features/swarm-visual-workflow.md`.
+See `docs/features/swarm-workflow.md`.
 
 Local audio attachment transcription is the `openclaw-extensions/stt-local-cli`
 extension (`transcribe_audio`). Config sync supplies installed Sherpa ONNX paths;

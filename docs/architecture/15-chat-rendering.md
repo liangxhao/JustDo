@@ -66,10 +66,10 @@ Gateway 原子校验待处理状态，已消费的输入不能借此中止当前
 ## 1. 从原生事件到屏幕
 
 Swarm 执行视图使用独立右侧 Tab，消息流仍按原有路径渲染。
-输入框的本次协作选项经 Main 检查独立 Swarm Flow 服务可用性后，通过 gatewayPrompt 携带精确请求标记；
+输入框的本次协作选项经 Main 检查独立 Swarm Workflow 服务可用性后，通过 gatewayPrompt 携带精确请求标记；
 显示和编辑投影仅移除产品标记，原生历史不改写。插件按当前原生输入身份创建持久化任务图。
-图形 Tab 经产品会话身份绑定读取 `swarmFlow.list`，连线来自已校验 DAG；暂停、继续和停止携带修订号。
-只保存阶段结果，不缓存 transcript。详见 [Swarm 图形视图](../features/swarm-visual-workflow.md)。
+图形 Tab 经产品会话身份绑定读取 `swarmWorkflow.list`，连线来自已校验 DAG；暂停、继续和停止携带修订号。
+只保存阶段结果，不缓存 transcript。详见 [Swarm 图形视图](../features/swarm-workflow.md)。
 
 Code Mode 继续使用相同的原生工具事件与历史投影。仅当工具为 `exec` 且输入包含字符串
 `code` 时，摘要显示原生 `title`（缺省为工具编排说明），展开后按原始换行展示 JavaScript。
@@ -443,6 +443,6 @@ sessions_spawn 保留通用参数和结果展示，仅在成功回执包含 chil
 选择。异步准备发起标记前后均核对当前选项身份，取消标签、改选或切换聊天后
 拒绝旧发送；接收成功只清理相同选项快照，不覆盖后来新选的功能。
 
-加号入口由独立的 `ComposerFeatureMenu.tsx` 承载，只接收功能项列表和已翻译的菜单标题，不导入 Swarm 类型或提交逻辑。各功能适配器提供稳定 ID、名称、图标、选中/禁用状态、选择动作及可选的所属插件 ID；`composerFeatures.tsx` 统一过滤尚未确认启用的插件，两种输入框共用同一列表。`useExtensionEnablement` 使用一次目录读取和一个订阅观察全部插件，按 ID 保留在途读取期间的开关，互不干扰。菜单统一处理多项键盘导航、禁用跳过、入口移除后的焦点恢复及空列表隐藏；`FeatureTextarea` 接收适配器图标。具体功能继续拥有自己的草稿及执行逻辑，Swarm 参数和展示定义在 `swarmComposerFeature.tsx`。详见[通用输入框功能菜单契约](../features/composer-feature-menu.md)。
+加号入口由独立的 `ComposerFeatureMenu.tsx` 承载，只接收功能项列表和已翻译的菜单标题，不导入 Swarm 类型或提交逻辑。各功能适配器提供稳定 ID、名称、图标、选中/禁用状态、选择动作及可选的所属插件 ID；`composerFeatures.tsx` 统一过滤尚未确认启用的插件，两种输入框共用同一列表。`useExtensionEnablement` 使用一次目录读取和一个订阅观察全部插件，按 ID 保留在途读取期间的开关，互不干扰。菜单统一处理多项键盘导航、禁用跳过、入口移除后的焦点恢复及空列表隐藏；`FeatureTextarea` 接收适配器图标。具体功能继续拥有自己的草稿及执行逻辑，Swarm 参数和展示定义在 `swarmWorkflowComposerFeature.tsx`。详见[通用输入框功能菜单契约](../features/composer-feature-menu.md)。
 
 Swarm 节点派发前将实际发送的任务信封（message、createdAt）与运行意图一起保存到独立插件流程库，列表投影不携带信封，详情按会话归属及依赖边验证后按需读取。它是工作流执行输入，不是原生消息历史的镜像。节点详情复用 ChatMessageDisplay，通过独立 ChatController 直接读取 Gateway 原生历史与实时事件，不增加 Main 或 Redux transcript 缓存。连线只展示已保存的输入；缺失历史输入不重新生成。

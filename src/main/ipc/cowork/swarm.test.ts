@@ -4,7 +4,7 @@ import { SwarmIpc } from '../../../shared/cowork/swarm';
 import type { OpenClawRuntimeAdapter } from '../../engine';
 const mocks = vi.hoisted(() => ({ handle: vi.fn() }));
 vi.mock('electron', () => ({ ipcMain: { handle: mocks.handle } }));
-import { SwarmFlowIpc, validFlowDetail } from '../../../shared/cowork/swarmFlow';
+import { SwarmWorkflowIpc, validFlowDetail } from '../../../shared/cowork/swarmWorkflow';
 import { registerCoworkSubtaskHandlers } from './subtasks';
 beforeEach(() => mocks.handle.mockReset());
 const handler = (key: string) => mocks.handle.mock.calls.find(call => call[0] === key)![1];
@@ -35,11 +35,11 @@ test('binds batch reads to product identity and rejects mismatched or oversized 
     getSessionKeysForSession: () => ['owned'],
   } as unknown as OpenClawRuntimeAdapter;
   registerCoworkSubtaskHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
-  const read = handler(SwarmFlowIpc.Batch);
+  const read = handler(SwarmWorkflowIpc.Batch);
   expect(await read({}, 'foreign', 'flow', 'batch', {})).toEqual({ success: false });
   expect(request).not.toHaveBeenCalled();
   expect(await read({}, 'product', 'flow', 'batch', {})).toEqual({ success: true, page });
-  expect(request).toHaveBeenCalledWith('swarmFlow.batch', {
+  expect(request).toHaveBeenCalledWith('swarmWorkflow.batch', {
     parentKeys: ['owned'],
     id: 'flow',
     stageId: 'batch',
@@ -63,7 +63,7 @@ test('rejects forged batch retry payloads and preserves skipped reasons', async 
     getSessionKeysForSession: () => ['owned'],
   } as unknown as OpenClawRuntimeAdapter;
   registerCoworkSubtaskHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
-  const retry = handler(SwarmFlowIpc.RetryBatch);
+  const retry = handler(SwarmWorkflowIpc.RetryBatch);
   for (const items of [null, [], ['same', 'same'], Array(101).fill('item')])
     expect(await retry({}, 'product', 'flow', 'batch', 3, 'request', items)).toEqual({
       success: false,
@@ -83,7 +83,7 @@ test('forwards only explicit human input under a product-owned parent and reject
     getSessionKeysForSession: () => ['owned'],
   } as unknown as OpenClawRuntimeAdapter;
   registerCoworkSubtaskHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
-  const intervene = handler(SwarmFlowIpc.Intervene);
+  const intervene = handler(SwarmWorkflowIpc.Intervene);
   const note = { id: 'input-1', action: 'continue', text: 'Environment fixed' };
   expect(await intervene({}, 'foreign', 'flow', 'verify', 5, note)).toEqual({ success: false });
   expect(
@@ -96,7 +96,7 @@ test('forwards only explicit human input under a product-owned parent and reject
   expect(
     await intervene({}, 'product', 'flow', 'verify', 5, { ...note, sessionKey: 'foreign' }),
   ).toEqual({ success: true });
-  expect(request).toHaveBeenCalledWith('swarmFlow.intervene', {
+  expect(request).toHaveBeenCalledWith('swarmWorkflow.intervene', {
     parentKeys: ['owned'],
     id: 'flow',
     nodeId: 'verify',
@@ -136,7 +136,7 @@ test('rejects renderer-supplied unknown product identities before accessing the 
   });
   expect(await handler(SwarmIpc.Snapshot)({}, 'foreign-native-key')).toEqual({ success: false });
   expect(
-    await handler(SwarmIpc.Prepare)({}, { mode: 'auto', verify: true }, 'foreign'),
+    await handler(SwarmWorkflowIpc.Prepare)({}, { mode: 'auto', verify: true }, 'foreign'),
   ).toMatchObject({ success: false, reason: 'invalid' });
   expect(getRuntime).not.toHaveBeenCalled();
 });
@@ -151,18 +151,18 @@ test('rejects plan-mode execution using the runtime authority', async () => {
     getRuntime: () => runtime,
     hasSession: () => true,
   });
-  expect(await handler(SwarmIpc.Prepare)({}, { mode: 'auto', verify: true }, 'product')).toEqual({
+  expect(await handler(SwarmWorkflowIpc.Prepare)({}, { mode: 'auto', verify: true }, 'product')).toEqual({
     success: false,
     reason: 'plan',
   });
-  expect(request).toHaveBeenCalledWith('swarmFlow.health', {});
+  expect(request).toHaveBeenCalledWith('swarmWorkflow.health', {});
 });
 test('does not enable an unavailable flow plugin on behalf of the user', async () => {
   registerCoworkSubtaskHandlers({
     getRuntime: vi.fn(),
     hasSession: () => true,
   });
-  expect(await handler(SwarmIpc.Prepare)({}, { mode: 'auto', verify: true })).toEqual({
+  expect(await handler(SwarmWorkflowIpc.Prepare)({}, { mode: 'auto', verify: true })).toEqual({
     success: false,
     reason: 'unavailable',
   });
@@ -173,7 +173,7 @@ test('rejects extra execution controls rather than granting model-supplied autho
     hasSession: () => true,
   });
   expect(
-    await handler(SwarmIpc.Prepare)({}, { mode: 'auto', verify: true, groupId: 'foreign' }),
+    await handler(SwarmWorkflowIpc.Prepare)({}, { mode: 'auto', verify: true, groupId: 'foreign' }),
   ).toEqual({ success: false, reason: 'invalid' });
 });
 
@@ -191,11 +191,11 @@ test('resolves detail parents from product authority and rejects mismatched repl
     getSessionKeysForSession: () => ['owned'],
   } as unknown as OpenClawRuntimeAdapter;
   registerCoworkSubtaskHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
-  const read = handler('cowork:swarm-flow:detail');
+  const read = handler('cowork:swarm-workflow:detail');
   expect(await read({}, 'foreign', 'flow', 'work')).toEqual({ success: false });
   expect(request).not.toHaveBeenCalled();
   expect(await read({}, 'product', 'flow', 'work', 'source')).toEqual({ success: true, detail });
-  expect(request).toHaveBeenCalledWith('swarmFlow.detail', {
+  expect(request).toHaveBeenCalledWith('swarmWorkflow.detail', {
     parentKeys: ['owned'],
     id: 'flow',
     nodeId: 'work',
@@ -228,7 +228,7 @@ test('accepts complete dispatch envelopes after bounded inputs expand during JSO
     getSessionKeysForSession: () => ['owned'],
   } as unknown as OpenClawRuntimeAdapter;
   registerCoworkSubtaskHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
-  expect(await handler('cowork:swarm-flow:detail')({}, 'product', 'flow', 'verify')).toEqual({
+  expect(await handler('cowork:swarm-workflow:detail')({}, 'product', 'flow', 'verify')).toEqual({
     success: true,
     detail,
   });
@@ -244,19 +244,19 @@ test('allows revision-bound retry only through an owned product conversation', a
     nodes: [],
   };
   const request = vi.fn(async (method: string) =>
-    method === 'swarmFlow.list' ? { flows: [flow] } : {},
+    method === 'swarmWorkflow.list' ? { flows: [flow] } : {},
   );
   const runtime = {
     getGatewayClient: () => ({ request }),
     getSessionKeysForSession: () => ['owned'],
   } as unknown as OpenClawRuntimeAdapter;
   registerCoworkSubtaskHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
-  const control = handler('cowork:swarm-flow:control');
+  const control = handler('cowork:swarm-workflow:control');
   expect(await control({}, 'foreign', 'flow', 5, 'retry')).toEqual({ success: false });
   expect(await control({}, 'product', 'flow', 5, 'retry-all')).toEqual({ success: false });
   expect(request).not.toHaveBeenCalled();
   expect(await control({}, 'product', 'flow', 5, 'retry')).toEqual({ success: true });
-  expect(request).toHaveBeenCalledWith('swarmFlow.control', {
+  expect(request).toHaveBeenCalledWith('swarmWorkflow.control', {
     parentKeys: ['owned'],
     id: 'flow',
     revision: 5,

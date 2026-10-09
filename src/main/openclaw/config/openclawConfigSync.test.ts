@@ -20,7 +20,7 @@ import {
   setActiveBuiltinModelDevelopmentApiKey,
 } from '../../providers/builtinModelCredential';
 import type { ProviderRawConfig } from '../../providers/providerApiConfig';
-import { buildManagedSwarmPluginEntries, buildOpenClawHookConfig, listKnownOpenClawWorkspaceDirs } from './openclawConfigBuilders';
+import { buildManagedSwarmWorkflowPluginEntries, buildOpenClawHookConfig, listKnownOpenClawWorkspaceDirs } from './openclawConfigBuilders';
 import {
   applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,
@@ -75,22 +75,22 @@ test('keeps extension Hook dispatch available when every independent Hook is dis
 });
 
 test('projects only product-available agents into Swarm without re-enabling the plugin', () => {
-  const entries = buildManagedSwarmPluginEntries([
+  const entries = buildManagedSwarmWorkflowPluginEntries([
     { id: 'reviewer', enabled: true },
     { id: 'disabled', enabled: false },
     { id: 'deleted', enabled: true, deletedAt: 123 },
   ], () => true);
-  expect(entries).toEqual({ 'swarm-flow': {
+  expect(entries).toEqual({ 'swarm-workflow': {
     enabled: true, config: { availableAgentIds: ['main', 'reviewer'] },
   } });
   const merged = mergeOpenClawPluginConfig(
-    { entries: { 'swarm-flow': { enabled: false, config: { availableAgentIds: ['main', 'deleted'] } } } },
-    entries, ['swarm-flow'],
+    { entries: { 'swarm-workflow': { enabled: false, config: { availableAgentIds: ['main', 'deleted'] } } } },
+    entries, ['swarm-workflow'],
   );
-  expect(merged.entries).toMatchObject({ 'swarm-flow': {
+  expect(merged.entries).toMatchObject({ 'swarm-workflow': {
     enabled: false, config: { availableAgentIds: ['main', 'reviewer'] },
   } });
-  expect(buildManagedSwarmPluginEntries([], () => false)).toEqual({});
+  expect(buildManagedSwarmWorkflowPluginEntries([], () => false)).toEqual({});
 });
 
 describe('Windows native sandbox config', () => {
@@ -1045,11 +1045,11 @@ describe('OpenClaw plugin config merging', () => {
     },
   );
   test('enables independent flows without enabling Workboard and preserves explicit choices', () => {
-    const ids = [OpenClawExtensionId.SWARM_FLOW, OpenClawExtensionId.WORKBOARD];
+    const ids = [OpenClawExtensionId.SWARM_WORKFLOW, OpenClawExtensionId.WORKBOARD];
     const defaults = buildDefaultOpenClawPluginEntries(id => ids.includes(id as typeof ids[number]));
-    expect(defaults).toEqual({ 'swarm-flow': { enabled: true }, workboard: { enabled: false } });
-    expect(applyDefaultOpenClawPluginEntries({ entries: { 'swarm-flow': { enabled: false }, workboard: { enabled: true } } }, defaults))
-      .toEqual({ entries: { 'swarm-flow': { enabled: false }, workboard: { enabled: true } } });
+    expect(defaults).toEqual({ 'swarm-workflow': { enabled: true }, workboard: { enabled: false } });
+    expect(applyDefaultOpenClawPluginEntries({ entries: { 'swarm-workflow': { enabled: false }, workboard: { enabled: true } } }, defaults))
+      .toEqual({ entries: { 'swarm-workflow': { enabled: false }, workboard: { enabled: true } } });
   });
   test.each([undefined, false])(
     'allows memory runtime hooks while preserving explicit disable (%s)',

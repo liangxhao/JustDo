@@ -15,7 +15,7 @@ function harness() {
   let session = {
     sessionId: 'session-one',
     lifecycleRevision: 'revision-one',
-    pluginOwnerId: 'swarm-flow',
+    pluginOwnerId: 'swarm-workflow',
   };
   const persist = vi.fn((_context: unknown, options: any, ...ids: string[]) => {
     options.assertCurrent();
@@ -73,7 +73,7 @@ function harness() {
       childSessionKey: 'agent:main:subagent:fixture',
       justDoPluginExecution: {
         ...context.justDoCreatePluginExecution({
-          pluginId: 'swarm-flow',
+          pluginId: 'swarm-workflow',
           childSessionKey: 'agent:main:subagent:fixture',
           managedToolsLifetime: 'run',
         }),
@@ -138,7 +138,7 @@ describe('exact plugin execution evidence', () => {
     await h.context.justDoObservePluginLifecycle(record, {
       data: { phase: 'end', aborted: true, stopReason: 'rpc', executionSettled: true },
     });
-    expect((await h.context.justDoDescribePluginRun('run-one', 'swarm-flow')).outcome).toBe(
+    expect((await h.context.justDoDescribePluginRun('run-one', 'swarm-workflow')).outcome).toBe(
       'cancelled',
     );
   });
@@ -156,7 +156,7 @@ describe('exact plugin execution evidence', () => {
       { acquireScopeCleanup: () => () => pending },
       async () => {},
     );
-    expect((await h.context.justDoDescribePluginRun('run-one', 'swarm-flow')).state).toBe(
+    expect((await h.context.justDoDescribePluginRun('run-one', 'swarm-workflow')).state).toBe(
       'accepted',
     );
     await h.context.justDoObservePluginLifecycle(record, {
@@ -166,7 +166,7 @@ describe('exact plugin execution evidence', () => {
       data: { phase: 'end', endedAt: 25, executionSettled: false },
     });
     expect(
-      (await h.context.justDoDescribePluginRun('run-one', 'swarm-flow')).executionSettled,
+      (await h.context.justDoDescribePluginRun('run-one', 'swarm-workflow')).executionSettled,
     ).toBe(false);
     const ending = h.context.justDoObservePluginLifecycle(record, {
       data: { phase: 'end', endedAt: 30, executionSettled: true },
@@ -175,7 +175,7 @@ describe('exact plugin execution evidence', () => {
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
-    expect(await h.context.justDoDescribePluginRun('run-one', 'swarm-flow')).toMatchObject({
+    expect(await h.context.justDoDescribePluginRun('run-one', 'swarm-workflow')).toMatchObject({
       executionStartedAt: 20,
       executionSettled: true,
       cleanupSettled: false,
@@ -183,7 +183,7 @@ describe('exact plugin execution evidence', () => {
     release();
     await ending;
     await h.context.justDoFinishManagedRun('run-one');
-    expect(await h.context.justDoDescribePluginRun('run-one', 'swarm-flow')).toMatchObject({
+    expect(await h.context.justDoDescribePluginRun('run-one', 'swarm-workflow')).toMatchObject({
       state: 'settled',
       executionEndedAt: 30,
       cleanupSettled: true,
@@ -192,7 +192,7 @@ describe('exact plugin execution evidence', () => {
       data: { phase: 'error', executionSettled: false },
     });
     expect(
-      (await h.context.justDoDescribePluginRun('run-one', 'swarm-flow')).executionSettled,
+      (await h.context.justDoDescribePluginRun('run-one', 'swarm-workflow')).executionSettled,
     ).toBe(true);
     expect(h.persist.mock.calls[0][0]).toEqual({ admission: 'native' });
   });
@@ -201,16 +201,16 @@ describe('exact plugin execution evidence', () => {
     const h = harness();
     h.run();
     h.stored.set('alias', h.stored.get('run-one'));
-    expect(await h.context.justDoDescribePluginRun('alias', 'swarm-flow')).toEqual({
+    expect(await h.context.justDoDescribePluginRun('alias', 'swarm-workflow')).toEqual({
       runId: 'alias',
       state: 'unknown',
     });
-    expect(await h.context.justDoDescribePluginRun('missing', 'swarm-flow')).toEqual({
+    expect(await h.context.justDoDescribePluginRun('missing', 'swarm-workflow')).toEqual({
       runId: 'missing',
       state: 'unknown',
     });
     h.setEpoch('epoch-two');
-    expect((await h.context.justDoDescribePluginRun('run-one', 'swarm-flow')).state).toBe(
+    expect((await h.context.justDoDescribePluginRun('run-one', 'swarm-workflow')).state).toBe(
       'unknown',
     );
   });
@@ -219,14 +219,14 @@ describe('exact plugin execution evidence', () => {
     const h = harness();
     h.run();
     h.run('newer');
-    await expect(h.context.justDoPreparePluginCancel('run-one', 'swarm-flow')).rejects.toThrow(
+    await expect(h.context.justDoPreparePluginCancel('run-one', 'swarm-workflow')).rejects.toThrow(
       'Another execution',
     );
     h.runs.delete('newer');
-    const cancel = await h.context.justDoPreparePluginCancel('run-one', 'swarm-flow');
+    const cancel = await h.context.justDoPreparePluginCancel('run-one', 'swarm-workflow');
     h.resetSession();
     expect(() => cancel.assertCurrent()).toThrow('changed');
-    await expect(h.context.justDoPreparePluginCancel('run-one', 'swarm-flow')).rejects.toThrow(
+    await expect(h.context.justDoPreparePluginCancel('run-one', 'swarm-workflow')).rejects.toThrow(
       'uncertain',
     );
   });
@@ -282,7 +282,7 @@ describe('exact plugin execution evidence', () => {
     await expect(failed[0]()).rejects.toThrow('still alive');
     h.runs.get('run-one').justDoPluginExecution.executionSettled = true;
     await expect(h.context.justDoFinishManagedRun('run-one')).rejects.toThrow('still alive');
-    expect((await h.context.justDoDescribePluginRun('run-one', 'swarm-flow')).cleanupSettled).toBe(
+    expect((await h.context.justDoDescribePluginRun('run-one', 'swarm-workflow')).cleanupSettled).toBe(
       false,
     );
   });
@@ -292,7 +292,7 @@ describe('exact plugin execution evidence', () => {
     h.run().justDoPluginExecution.executionSettled = true;
     h.persist.mockRejectedValueOnce(new Error('disk unavailable'));
     await expect(h.context.justDoFinishManagedRun('run-one')).rejects.toThrow('disk unavailable');
-    expect((await h.context.justDoDescribePluginRun('run-one', 'swarm-flow')).cleanupSettled).toBe(
+    expect((await h.context.justDoDescribePluginRun('run-one', 'swarm-workflow')).cleanupSettled).toBe(
       false,
     );
   });
@@ -337,7 +337,7 @@ describe('exact plugin execution evidence', () => {
     h.persist.mockResolvedValueOnce(undefined);
     await expect(h.context.justDoFinishManagedRun('run-one')).rejects.toThrow('superseded');
     expect(h.persist).toHaveBeenCalledTimes(2);
-    expect((await h.context.justDoDescribePluginRun('run-one', 'swarm-flow')).cleanupSettled).toBe(
+    expect((await h.context.justDoDescribePluginRun('run-one', 'swarm-workflow')).cleanupSettled).toBe(
       false,
     );
   });

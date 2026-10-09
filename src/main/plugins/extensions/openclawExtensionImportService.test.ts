@@ -2378,7 +2378,7 @@ describe('OpenClawExtensionImportService', () => {
             type: 'object',
             properties: { concurrency: { type: 'integer', minimum: 1, maximum: 16, default: 3 } },
           },
-          uiHints: { concurrency: { configurable: true, labelKey: 'swarmConfigConcurrency' } },
+          uiHints: { concurrency: { configurable: true, labelKey: 'swarmWorkflowConfigConcurrency' } },
           configContracts: { configurationStatusMethod: 'numericDemo.health' },
         }),
       );

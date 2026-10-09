@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest';
 
-import { buildSwarmInstruction } from '../../../shared/cowork/swarm';
+import { buildSwarmWorkflowInstruction } from '../../../shared/cowork/swarmWorkflow';
 import { parseSwarmSnapshot, readSwarmSnapshot } from './swarmGateway';
 
 const snapshot = {
@@ -41,7 +41,7 @@ test('does not turn a missing native session into successful empty history', asy
   await expect(readSwarmSnapshot({ request }, ['owned'])).rejects.toThrow();
 });
 test('encodes the independent flow mode without delegating native collector control', () => {
-  const instruction = buildSwarmInstruction({ mode: 'review', verify: true });
-  expect(instruction).toBe('<justdo-swarm-flow mode="review"/>');
-  expect(buildSwarmInstruction({ mode: 'research', verify: false })).toBe('<justdo-swarm-flow mode="research"/>');
+  const instruction = buildSwarmWorkflowInstruction({ mode: 'review', verify: true });
+  expect(instruction).toBe('<justdo-swarm-workflow mode="review"/>');
+  expect(buildSwarmWorkflowInstruction({ mode: 'research', verify: false })).toBe('<justdo-swarm-workflow mode="research"/>');
 });

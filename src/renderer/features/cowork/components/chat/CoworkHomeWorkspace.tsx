@@ -39,7 +39,7 @@ interface CoworkHomeWorkspaceProps {
     attachments?: CoworkAttachmentPayload[],
     gatewayPrompt?: string,
     worktree?: boolean,
-    swarm?: import('@shared/cowork/swarm').SwarmOptions,
+    swarmWorkflow?: import('@shared/cowork/swarmWorkflow').SwarmWorkflowOptions,
   ) => Promise<boolean | void>;
   handleStopSession: () => Promise<boolean>;
   isStreaming: boolean;

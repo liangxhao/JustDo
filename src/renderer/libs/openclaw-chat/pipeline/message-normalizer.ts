@@ -8,6 +8,7 @@ import {
 import { parseRecordingContext, serializeRecording } from '@shared/browser/browserRecording';
 import { parseCoworkSessionKey } from '@shared/cowork/sessionKey';
 import { stripSwarmInstruction } from '@shared/cowork/swarm';
+import { stripSwarmWorkflowInstruction } from '@shared/cowork/swarmWorkflow';
 import { modelRefFromIdentity, normalizeModelRef } from '@shared/openclaw/modelRef';
 
 import { stripOpenClawLogHintText } from '@/libs/openclaw-chat/pipeline/system-message-display';
@@ -631,7 +632,7 @@ function expandUserDisplayContent(
   text: string,
   includeLegacyTextFields = false,
 ): MessageContentItem[] {
-  const displayText = stripSwarmInstruction(stripInboundMetadata(text));
+  const displayText = stripSwarmInstruction(stripSwarmWorkflowInstruction(stripInboundMetadata(text)));
   const browserPrompt = parseBrowserAnnotationPrompt(displayText);
   if (!browserPrompt) return expandUserTextMediaContent(displayText, includeLegacyTextFields);
   return [

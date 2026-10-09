@@ -1201,11 +1201,11 @@ export const mergeOpenClawPluginConfig = (
       if (
         (pluginId === OpenClawExtensionId.STT_LOCAL_CLI ||
           pluginId === LOCAL_TTS_PROVIDER_ID ||
-          pluginId === OpenClawExtensionId.SWARM_FLOW) &&
+          pluginId === OpenClawExtensionId.SWARM_WORKFLOW) &&
         isRecord(value)
       ) {
         const previous = isRecord(sourcePlugins.entries) ? sourcePlugins.entries[pluginId] : null;
-        if (pluginId === OpenClawExtensionId.SWARM_FLOW && isRecord(previous)) {
+        if (pluginId === OpenClawExtensionId.SWARM_WORKFLOW && isRecord(previous)) {
           value = {
             ...previous,
             ...value,
@@ -2100,7 +2100,7 @@ export const buildDefaultOpenClawPluginEntries = (
         [OpenClawExtensionId.AGENT_TEAM, false],
         // Native desktop control requires explicit opt-in, preserved across syncs.
         [OpenClawExtensionId.CUA_COMPUTER, false],
-        [OpenClawExtensionId.SWARM_FLOW, true],
+        [OpenClawExtensionId.SWARM_WORKFLOW, true],
         [OpenClawExtensionId.TYPESAFE, false],
         // The prepared agent runtime rejects a selected memory plugin omitted from
         // an explicit allowlist, even if Gateway startup already loaded its service.
@@ -2112,13 +2112,13 @@ export const buildDefaultOpenClawPluginEntries = (
       .map(([id, enabled]) => [id, { enabled }]),
   );
 
-export const buildManagedSwarmPluginEntries = (
+export const buildManagedSwarmWorkflowPluginEntries = (
   agents: Pick<Agent, 'id' | 'enabled' | 'deletedAt'>[],
   isAvailable: (id: string) => boolean = isBundledPluginAvailable,
 ): Record<string, unknown> =>
-  isAvailable(OpenClawExtensionId.SWARM_FLOW)
+  isAvailable(OpenClawExtensionId.SWARM_WORKFLOW)
     ? {
-        [OpenClawExtensionId.SWARM_FLOW]: {
+        [OpenClawExtensionId.SWARM_WORKFLOW]: {
           enabled: true,
           config: {
             availableAgentIds: [
@@ -2136,7 +2136,7 @@ export const isUserToggleableBundledPlugin = (pluginId: string): boolean =>
   pluginId === OpenClawExtensionId.MEMORY_CORE ||
   pluginId === OpenClawExtensionId.WORKBOARD ||
   pluginId === OpenClawExtensionId.AGENT_TEAM ||
-  pluginId === OpenClawExtensionId.SWARM_FLOW ||
+  pluginId === OpenClawExtensionId.SWARM_WORKFLOW ||
   pluginId === OpenClawExtensionId.TYPESAFE ||
   pluginId === OpenClawExtensionId.STT_LOCAL_CLI ||
   pluginId === LOCAL_TTS_PROVIDER_ID;

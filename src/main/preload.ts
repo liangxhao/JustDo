@@ -108,12 +108,13 @@ import {
   CoworkSubagentDetailsIpc,
   type CoworkSubtaskChangedEvent,
 } from '../shared/cowork/subagentDetails';
-import { SwarmIpc, type SwarmOptions } from '../shared/cowork/swarm';
+import { SwarmIpc } from '../shared/cowork/swarm';
 import {
-  type SwarmFlowAction,
-  SwarmFlowIpc,
-  type SwarmIntervention,
-} from '../shared/cowork/swarmFlow';
+  type SwarmWorkflowAction,
+  type SwarmWorkflowIntervention,
+  SwarmWorkflowIpc,
+  type SwarmWorkflowOptions,
+} from '../shared/cowork/swarmWorkflow';
 import {
   MulticaIntegrationIpc,
   type MulticaIntegrationResult,
@@ -903,14 +904,14 @@ contextBridge.exposeInMainWorld('electron', {
     getSubTaskStatus: (sessionId?: string, forceRefresh?: boolean) =>
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.Status, sessionId, forceRefresh),
     getSwarmSnapshot: (sessionId: string) => ipcRenderer.invoke(SwarmIpc.Snapshot, sessionId),
-    getSwarmFlows: (sessionId: string) => ipcRenderer.invoke(SwarmFlowIpc.List, sessionId),
-    getSwarmBatch: (
+    getSwarmWorkflows: (sessionId: string) => ipcRenderer.invoke(SwarmWorkflowIpc.List, sessionId),
+    getSwarmWorkflowBatch: (
       sessionId: string,
       flowId: string,
       stageId: string,
-      options: import('../shared/cowork/swarmFlow').SwarmBatchOptions,
-    ) => ipcRenderer.invoke(SwarmFlowIpc.Batch, sessionId, flowId, stageId, options),
-    retrySwarmBatch: (
+      options: import('../shared/cowork/swarmWorkflow').SwarmWorkflowBatchOptions,
+    ) => ipcRenderer.invoke(SwarmWorkflowIpc.Batch, sessionId, flowId, stageId, options),
+    retrySwarmWorkflowBatch: (
       sessionId: string,
       flowId: string,
       stageId: string,
@@ -919,7 +920,7 @@ contextBridge.exposeInMainWorld('electron', {
       itemIds?: string[],
     ) =>
       ipcRenderer.invoke(
-        SwarmFlowIpc.RetryBatch,
+        SwarmWorkflowIpc.RetryBatch,
         sessionId,
         flowId,
         stageId,
@@ -927,19 +928,19 @@ contextBridge.exposeInMainWorld('electron', {
         operationId,
         itemIds,
       ),
-    getSwarmFlowDetail: (sessionId: string, flowId: string, nodeId: string, sourceId?: string) =>
-      ipcRenderer.invoke(SwarmFlowIpc.Detail, sessionId, flowId, nodeId, sourceId),
-    controlSwarmFlow: (sessionId: string, id: string, revision: number, action: SwarmFlowAction) =>
-      ipcRenderer.invoke(SwarmFlowIpc.Control, sessionId, id, revision, action),
-    interveneSwarmFlow: (
+    getSwarmWorkflowDetail: (sessionId: string, flowId: string, nodeId: string, sourceId?: string) =>
+      ipcRenderer.invoke(SwarmWorkflowIpc.Detail, sessionId, flowId, nodeId, sourceId),
+    controlSwarmWorkflow: (sessionId: string, id: string, revision: number, action: SwarmWorkflowAction) =>
+      ipcRenderer.invoke(SwarmWorkflowIpc.Control, sessionId, id, revision, action),
+    interveneSwarmWorkflow: (
       sessionId: string,
       id: string,
       nodeId: string,
       revision: number,
-      intervention: SwarmIntervention,
-    ) => ipcRenderer.invoke(SwarmFlowIpc.Intervene, sessionId, id, nodeId, revision, intervention),
-    prepareSwarm: (options: SwarmOptions, sessionId?: string) =>
-      ipcRenderer.invoke(SwarmIpc.Prepare, options, sessionId),
+      intervention: SwarmWorkflowIntervention,
+    ) => ipcRenderer.invoke(SwarmWorkflowIpc.Intervene, sessionId, id, nodeId, revision, intervention),
+    prepareSwarmWorkflow: (options: SwarmWorkflowOptions, sessionId?: string) =>
+      ipcRenderer.invoke(SwarmWorkflowIpc.Prepare, options, sessionId),
     getSubTaskDetails: (sessionKey: string, taskId?: string) =>
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.Get, sessionKey, taskId),
     listSubTaskDescendants: (sessionId: string) =>

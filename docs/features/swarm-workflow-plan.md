@@ -1,6 +1,6 @@
-# Swarm 持久化协作流程规划
+# Swarm Workflow 持久化协作流程规划
 
-> 此方案已被后续的 [Swarm 独立任务流插件实施计划](swarm-plugin-implementation-plan.md) 替代。
+> 此方案已被后续的 [Swarm 独立任务流插件实施计划](swarm-workflow-implementation-plan.md) 替代。
 > 不再依赖 Workboard，生成并校验任务流后自动推进；下文保留为早期设计参考。
 
 状态：待实施设计。2026-10-04。本轮只编写规划，不改变现有代码行为。
@@ -11,7 +11,7 @@
 
 本文中的“Swarm 模式”是产品层的持久化协作流程，内部可以使用原生 OpenClaw Swarm，但不等同于原生 collector 分组。界面首次使用时以一句话说明“按流程分工、验收并汇总，可稍后继续”。对外使用“Swarm 协作”，流程详情保留“工作流”概念；原生 collector 分组称“并行子任务”，避免同名混淆。
 
-已有 [Swarm 并行协作实现](swarm-visual-workflow.md) 是提示策略与原生任务组观察界面，还不是本文描述的流程系统。其代码继续保留在当前 worktree；本规划不宣称持久化调度已经完成。
+已有 [Swarm 并行协作实现](swarm-workflow.md) 是提示策略与原生任务组观察界面，还不是本文描述的流程系统。其代码继续保留在当前 worktree；本规划不宣称持久化调度已经完成。
 
 ## 原生能力与产品新增能力
 

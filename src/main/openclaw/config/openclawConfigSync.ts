@@ -30,7 +30,7 @@ import {
   buildManagedOpenClawSessionConfig,
   buildManagedOpenClawSubagentConfig,
   buildManagedOpenClawTtsPluginEntries,
-  buildManagedSwarmPluginEntries,
+  buildManagedSwarmWorkflowPluginEntries,
   buildMissingEmbeddedBrowserResult,
   buildOpenClawConfigMeta,
   buildOpenClawHookConfig,
@@ -448,7 +448,7 @@ export class OpenClawConfigSync {
         : {}),
       ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
       ...buildManagedOnlineAsrPluginEntries(existingPlugins),
-      ...buildManagedSwarmPluginEntries(this.getAgents?.() ?? []),
+      ...buildManagedSwarmWorkflowPluginEntries(this.getAgents?.() ?? []),
     };
     const defaultPluginEntries = buildDefaultOpenClawPluginEntries();
     const mcpServers = buildOpenClawMcpServers(
@@ -892,7 +892,7 @@ export class OpenClawConfigSync {
           }
         : {}),
       ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
-      ...buildManagedSwarmPluginEntries(this.getAgents?.() ?? []),
+      ...buildManagedSwarmWorkflowPluginEntries(this.getAgents?.() ?? []),
     };
     const defaultPluginEntries = buildDefaultOpenClawPluginEntries();
     const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(

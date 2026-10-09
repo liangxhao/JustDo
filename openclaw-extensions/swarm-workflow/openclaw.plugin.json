@@ -1,0 +1,73 @@
+{
+  "id": "swarm-workflow",
+  "name": "Swarm Workflow",
+  "description": "Durable agent task flows with dependency gates and independent verification.",
+  "activation": {
+    "onStartup": true,
+    "onCapabilities": ["tool"]
+  },
+  "configContracts": { "configurationStatusMethod": "swarmWorkflow.health" },
+  "contracts": {
+    "tools": [
+      "swarm_workflow_start",
+      "swarm_workflow_status",
+      "swarm_workflow_control",
+      "swarm_workflow_intervene",
+      "swarm_workflow_batch",
+      "swarm_workflow_retry_batch",
+      "swarm_workflow_results",
+      "swarm_workflow_complete",
+      "swarm_workflow_verify",
+      "swarm_workflow_block"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "globalConcurrency": { "type": "integer", "minimum": 1, "maximum": 16, "default": 3 },
+      "maxBatchItems": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 1000 },
+      "executionTimeoutSeconds": {
+        "type": "integer",
+        "minimum": 600,
+        "maximum": 86400,
+        "default": 14400
+      },
+      "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 3, "default": 3 },
+      "snapshotBudgetMiB": { "type": "integer", "minimum": 16, "maximum": 16384, "default": 1024 },
+      "availableAgentIds": {
+        "type": "array",
+        "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" },
+        "uniqueItems": true,
+        "description": "Product-managed agent IDs eligible for new Swarm stages. Defaults to main only."
+      }
+    }
+  },
+  "uiHints": {
+    "globalConcurrency": {
+      "configurable": true,
+      "labelKey": "swarmWorkflowConfigConcurrency",
+      "helpKey": "swarmWorkflowConfigConcurrencyHelp"
+    },
+    "maxBatchItems": {
+      "configurable": true,
+      "labelKey": "swarmWorkflowConfigBatchItems",
+      "helpKey": "swarmWorkflowConfigBatchItemsHelp"
+    },
+    "executionTimeoutSeconds": {
+      "configurable": true,
+      "labelKey": "swarmWorkflowConfigTimeout",
+      "helpKey": "swarmWorkflowConfigTimeoutHelp"
+    },
+    "maxAttempts": {
+      "configurable": true,
+      "labelKey": "swarmWorkflowConfigAttempts",
+      "helpKey": "swarmWorkflowConfigAttemptsHelp"
+    },
+    "snapshotBudgetMiB": {
+      "configurable": true,
+      "labelKey": "swarmWorkflowConfigBudget",
+      "helpKey": "swarmWorkflowConfigBudgetHelp"
+    }
+  }
+}

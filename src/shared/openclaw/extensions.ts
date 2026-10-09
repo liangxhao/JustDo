@@ -10,7 +10,7 @@ export const OpenClawExtensionId = {
   GITHUB: 'github',
   PLAN_MODE: 'plan-mode',
   AGENT_TEAM: 'agent-team',
-  SWARM_FLOW: 'swarm-flow',
+  SWARM_WORKFLOW: 'swarm-workflow',
   TYPESAFE: 'typesafe',
   EMBEDDED_BROWSER: 'embedded-browser',
   ACPX: 'acpx',

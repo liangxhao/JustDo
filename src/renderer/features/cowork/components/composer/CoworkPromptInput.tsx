@@ -19,7 +19,7 @@ import {
   parsePlanSlashCommandPrompt,
   shouldClearSlashCommandComposerBeforeExecution,
 } from '@shared/cowork/slashCommands';
-import type { SwarmOptions } from '@shared/cowork/swarm';
+import type { SwarmWorkflowOptions } from '@shared/cowork/swarmWorkflow';
 import { OpenClawExtensionId } from '@shared/openclaw/extensions';
 import type { OpenClawModelChoice } from '@shared/openclaw/models';
 import { isLocalAudioAttachment } from '@shared/speech/localAsr';
@@ -137,8 +137,8 @@ import {
   submittedMessageQuotes,
 } from './messageQuote';
 import { canClearSubmittedDraft } from './sessionSubmission';
-import { buildSwarmComposerFeature } from './swarmComposerFeature';
-import { blocksSwarmGoalSubmission } from './swarmSubmission';
+import { buildSwarmWorkflowComposerFeature } from './swarmWorkflowComposerFeature';
+import { blocksSwarmWorkflowGoalSubmission } from './swarmWorkflowSubmission';
 import { useComposerAttachments } from './useComposerAttachments';
 import { useComposerFeatureDraft } from './useComposerFeatureDraft';
 import { useGoalReadiness } from './useGoalReadiness';
@@ -206,7 +206,7 @@ interface CoworkPromptInputProps {
     attachments?: CoworkAttachmentPayload[],
     gatewayPrompt?: string,
     worktree?: boolean,
-    swarm?: SwarmOptions,
+    swarmWorkflow?: SwarmWorkflowOptions,
   ) => boolean | void | Promise<boolean | void>;
   onQueue?: (
     prompt: string,
@@ -301,16 +301,16 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const draftKey = draftKeyOverride || sessionId || '__home__';
     const extensionEnablement = useExtensionEnablement();
     const {
-      value: swarmOptions,
-      setValue: setSwarmOptions,
-      clearAccepted: clearAcceptedSwarm,
-      isCurrent: isCurrentSwarm,
-    } = useComposerFeatureDraft<SwarmOptions>(
+      value: swarmWorkflowOptions,
+      setValue: setSwarmWorkflowOptions,
+      clearAccepted: clearAcceptedSwarmWorkflow,
+      isCurrent: isCurrentSwarmWorkflow,
+    } = useComposerFeatureDraft<SwarmWorkflowOptions>(
       draftKey,
-      OpenClawExtensionId.SWARM_FLOW,
+      OpenClawExtensionId.SWARM_WORKFLOW,
       extensionEnablement,
     );
-    const swarmPlanMode = useSelector((state: RootState) =>
+    const swarmWorkflowPlanMode = useSelector((state: RootState) =>
       sessionId ? state.cowork.planModeBySession[sessionId] : state.cowork.newSessionPlanMode,
     );
     const currentDraftKeyRef = useRef(draftKey);
@@ -338,24 +338,24 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         const submit = queue ? queuePrompt : submitPrompt;
         if (!submit) return false;
         let instruction: string | undefined;
-        if (swarmOptions) {
-          if (!isCurrentSwarm(draftKey, swarmOptions)) return false;
-          if (swarmPlanMode || prompt.trimStart().startsWith('/')) {
+        if (swarmWorkflowOptions) {
+          if (!isCurrentSwarmWorkflow(draftKey, swarmWorkflowOptions)) return false;
+          if (swarmWorkflowPlanMode || prompt.trimStart().startsWith('/')) {
             window.dispatchEvent(
               new CustomEvent('app:showToast', {
-                detail: i18nService.t(swarmPlanMode ? 'swarmPlan' : 'swarmInvalid'),
+                detail: i18nService.t(swarmWorkflowPlanMode ? 'swarmWorkflowPlan' : 'swarmWorkflowInvalid'),
               }),
             );
             return false;
           }
           try {
-            const prepared = await window.electron.cowork.prepareSwarm(swarmOptions, sessionId);
+            const prepared = await window.electron.cowork.prepareSwarmWorkflow(swarmWorkflowOptions, sessionId);
             if (!prepared.success) {
               const key = {
-                disabled: 'swarmDisabled',
-                plan: 'swarmPlan',
-                invalid: 'swarmInvalid',
-                unavailable: 'swarmPrepareUnavailable',
+                disabled: 'swarmWorkflowDisabled',
+                plan: 'swarmWorkflowPlan',
+                invalid: 'swarmWorkflowInvalid',
+                unavailable: 'swarmWorkflowPrepareUnavailable',
               }[prepared.reason];
               window.dispatchEvent(
                 new CustomEvent('app:showToast', { detail: i18nService.t(key) }),
@@ -366,12 +366,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           } catch {
             window.dispatchEvent(
               new CustomEvent('app:showToast', {
-                detail: i18nService.t('swarmPrepareUnavailable'),
+                detail: i18nService.t('swarmWorkflowPrepareUnavailable'),
               }),
             );
             return false;
           }
-          if (currentDraftKeyRef.current !== draftKey || !isCurrentSwarm(draftKey, swarmOptions))
+          if (currentDraftKeyRef.current !== draftKey || !isCurrentSwarmWorkflow(draftKey, swarmWorkflowOptions))
             return false;
         }
         const submittedQuotes = [...submittedMessageQuotes(prompt, messageQuotes, isSideChat)];
@@ -391,12 +391,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     instruction
                 : quotedGatewayPrompt(prompt, gatewayPrompt, submittedQuotes, isSideChat),
               canSelectWorktree && useWorktree,
-              swarmOptions,
+              swarmWorkflowOptions,
             ),
           ids => dispatch(removeDraftMessageQuotes({ draftKey, ids })),
         );
-        if (result !== false && swarmOptions) {
-          clearAcceptedSwarm(draftKey, swarmOptions);
+        if (result !== false && swarmWorkflowOptions) {
+          clearAcceptedSwarmWorkflow(draftKey, swarmWorkflowOptions);
         }
         return result;
       },
@@ -409,10 +409,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         isSideChat,
         canSelectWorktree,
         useWorktree,
-        swarmOptions,
-        isCurrentSwarm,
-        clearAcceptedSwarm,
-        swarmPlanMode,
+        swarmWorkflowOptions,
+        isCurrentSwarmWorkflow,
+        clearAcceptedSwarmWorkflow,
+        swarmWorkflowPlanMode,
         sessionId,
       ],
     );
@@ -592,10 +592,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     };
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const swarmComposerFeature = buildSwarmComposerFeature({
-      swarm: swarmOptions,
-      selectSwarm: option => {
-        setSwarmOptions(option);
+    const swarmWorkflowComposerFeature = buildSwarmWorkflowComposerFeature({
+      swarmWorkflow: swarmWorkflowOptions,
+      selectSwarmWorkflow: option => {
+        setSwarmWorkflowOptions(option);
         requestAnimationFrame(() => {
           textareaRef.current?.focus();
           textareaRef.current?.setSelectionRange(0, 0);
@@ -989,16 +989,16 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         let promptValue = promptOverride ?? value;
         let trimmedValue = promptValue.trim();
         // Refuse before any goal mutation, plan command, attachment staging or
-        // draft clearing: those routes bypass the normal Swarm send wrapper.
+        // draft clearing: those routes bypass the normal Swarm Workflow send wrapper.
         if (
-          blocksSwarmGoalSubmission({
-            swarmSelected: Boolean(swarmOptions),
+          blocksSwarmWorkflowGoalSubmission({
+            swarmWorkflowSelected: Boolean(swarmWorkflowOptions),
             goalStatus: sessionGoalRef.current?.status,
             completionFeedback: completionFeedbackRef.current !== null,
           })
         ) {
           window.dispatchEvent(
-            new CustomEvent('app:showToast', { detail: i18nService.t('swarmGoalConflict') }),
+            new CustomEvent('app:showToast', { detail: i18nService.t('swarmWorkflowGoalConflict') }),
           );
           return;
         }
@@ -1516,7 +1516,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         isStopPending,
         disabled,
         onSubmit,
-        swarmOptions,
+        swarmWorkflowOptions,
         messageQuotes,
         attachments,
         browserAnnotations,
@@ -1923,7 +1923,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             ]
           : []),
         {
-          ...swarmComposerFeature,
+          ...swarmWorkflowComposerFeature,
           section: i18nService.t('composerPlugins'),
           disabled: disabled || isRunActive,
         },
@@ -2003,8 +2003,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         const hasSelection = start !== end;
         const replacesWholeDraft = hasSelection && start === 0 && end === value.length;
         const consumeSelectedFeature = () => {
-          if (!replacesWholeDraft || !swarmOptions) return;
-          clearAcceptedSwarm(draftKey, swarmOptions);
+          if (!replacesWholeDraft || !swarmWorkflowOptions) return;
+          clearAcceptedSwarmWorkflow(draftKey, swarmWorkflowOptions);
         };
         const draftIsCurrent = () =>
           currentDraftKeyRef.current === draftKey && latestValueRef.current === value;
@@ -2058,7 +2058,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             break;
         }
       },
-      [value, setValue, closeContextMenu, draftKey, swarmOptions, clearAcceptedSwarm],
+      [value, setValue, closeContextMenu, draftKey, swarmWorkflowOptions, clearAcceptedSwarmWorkflow],
     );
 
     const contextMenuItems = useMemo(() => {
@@ -2845,10 +2845,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 <FeatureTextarea
                   containerClassName={isLarge ? undefined : 'basis-full'}
                   key={draftKey}
-                  featureLabel={swarmOptions ? i18nService.t('swarmTitle') : undefined}
-                  featureIcon={swarmComposerFeature.icon}
-                  removeLabel={i18nService.t('swarmRemoveToken')}
-                  onRemoveFeature={() => setSwarmOptions(undefined)}
+                  featureLabel={swarmWorkflowOptions ? i18nService.t('swarmWorkflowTitle') : undefined}
+                  featureIcon={swarmWorkflowComposerFeature.icon}
+                  removeLabel={i18nService.t('swarmWorkflowRemoveToken')}
+                  onRemoveFeature={() => setSwarmWorkflowOptions(undefined)}
                   onLayoutChange={resizeTextarea}
                   ref={textareaRef}
                   value={value}
@@ -3112,10 +3112,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 <FeatureTextarea
                   containerClassName={isLarge ? undefined : 'basis-full'}
                   key={draftKey}
-                  featureLabel={swarmOptions ? i18nService.t('swarmTitle') : undefined}
-                  featureIcon={swarmComposerFeature.icon}
-                  removeLabel={i18nService.t('swarmRemoveToken')}
-                  onRemoveFeature={() => setSwarmOptions(undefined)}
+                  featureLabel={swarmWorkflowOptions ? i18nService.t('swarmWorkflowTitle') : undefined}
+                  featureIcon={swarmWorkflowComposerFeature.icon}
+                  removeLabel={i18nService.t('swarmWorkflowRemoveToken')}
+                  onRemoveFeature={() => setSwarmWorkflowOptions(undefined)}
                   onLayoutChange={resizeTextarea}
                   ref={textareaRef}
                   value={value}

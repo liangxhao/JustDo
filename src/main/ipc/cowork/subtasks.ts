@@ -8,22 +8,19 @@ import {
   CoworkSubagentDetailsIpc,
   type CoworkSubagentDetailsResult,
 } from '../../../shared/cowork/subagentDetails';
+import { SwarmIpc, type SwarmSnapshotResult } from '../../../shared/cowork/swarm';
 import {
-  buildSwarmInstruction,
-  isSwarmOptions,
-  SwarmIpc,
-  type SwarmPrepareResult,
-  type SwarmSnapshotResult,
-} from '../../../shared/cowork/swarm';
-import {
-  SwarmFlowGateway,
-  SwarmFlowIpc,
+  buildSwarmWorkflowInstruction,
+  isSwarmWorkflowOptions,
+  SwarmWorkflowGateway,
+  SwarmWorkflowIpc,
+  type SwarmWorkflowPrepareResult,
   validBatchOptions,
   validBatchPage,
   validFlowDetail,
   validFlowList,
-  validSwarmIntervention,
-} from '../../../shared/cowork/swarmFlow';
+  validSwarmWorkflowIntervention,
+} from '../../../shared/cowork/swarmWorkflow';
 import type { OpenClawRuntimeAdapter } from '../../engine';
 import {
   controlGatewaySubagent,
@@ -116,10 +113,10 @@ export const registerCoworkSubtaskHandlers = ({
     return { runtime, client, keys: runtime.getSessionKeysForSession(sessionId) };
   };
   ipcMain.handle(
-    SwarmIpc.Prepare,
-    async (_event, options: unknown, sessionId?: unknown): Promise<SwarmPrepareResult> => {
+    SwarmWorkflowIpc.Prepare,
+    async (_event, options: unknown, sessionId?: unknown): Promise<SwarmWorkflowPrepareResult> => {
       if (
-        !isSwarmOptions(options) ||
+        !isSwarmWorkflowOptions(options) ||
         (sessionId !== undefined && (typeof sessionId !== 'string' || !hasSession(sessionId)))
       ) {
         return { success: false, reason: 'invalid' };
@@ -127,7 +124,7 @@ export const registerCoworkSubtaskHandlers = ({
       try {
         const health = await getRuntime()
           ?.getGatewayClient()
-          ?.request<{ ready?: boolean }>(SwarmFlowGateway.Health, {});
+          ?.request<{ ready?: boolean }>(SwarmWorkflowGateway.Health, {});
         if (!health?.ready) return { success: false, reason: 'unavailable' };
       } catch {
         return { success: false, reason: 'unavailable' };
@@ -142,11 +139,11 @@ export const registerCoworkSubtaskHandlers = ({
           return { success: false, reason: 'unavailable' };
         }
       }
-      return { success: true, instruction: buildSwarmInstruction(options) };
+      return { success: true, instruction: buildSwarmWorkflowInstruction(options) };
     },
   );
   ipcMain.handle(
-    SwarmFlowIpc.Batch,
+    SwarmWorkflowIpc.Batch,
     async (_event, sessionId: unknown, id: unknown, stageId: unknown, options: unknown) => {
       try {
         if (
@@ -160,7 +157,7 @@ export const registerCoworkSubtaskHandlers = ({
         )
           return { success: false };
         const { client, keys } = resolveOwnedRoot(sessionId);
-        const page = await client.request<unknown>(SwarmFlowGateway.Batch, {
+        const page = await client.request<unknown>(SwarmWorkflowGateway.Batch, {
           parentKeys: keys,
           id,
           stageId,
@@ -180,7 +177,7 @@ export const registerCoworkSubtaskHandlers = ({
     },
   );
   ipcMain.handle(
-    SwarmFlowIpc.RetryBatch,
+    SwarmWorkflowIpc.RetryBatch,
     async (
       _event,
       sessionId: unknown,
@@ -215,7 +212,7 @@ export const registerCoworkSubtaskHandlers = ({
           retried?: unknown;
           skipped?: unknown;
           reasons?: unknown;
-        }>(SwarmFlowGateway.RetryBatch, {
+        }>(SwarmWorkflowGateway.RetryBatch, {
           parentKeys: keys,
           id,
           stageId,
@@ -257,10 +254,10 @@ export const registerCoworkSubtaskHandlers = ({
       }
     },
   );
-  ipcMain.handle(SwarmFlowIpc.List, async (_event, sessionId: unknown) => {
+  ipcMain.handle(SwarmWorkflowIpc.List, async (_event, sessionId: unknown) => {
     try {
       const { client, keys } = resolveOwnedRoot(sessionId);
-      const result = await client.request<unknown>(SwarmFlowGateway.List, { parentKeys: keys });
+      const result = await client.request<unknown>(SwarmWorkflowGateway.List, { parentKeys: keys });
       if (!hasSession(sessionId as string) || !validFlowList(result)) return { success: false };
       return { success: true, flows: result.flows };
     } catch {
@@ -268,7 +265,7 @@ export const registerCoworkSubtaskHandlers = ({
     }
   });
   ipcMain.handle(
-    SwarmFlowIpc.Detail,
+    SwarmWorkflowIpc.Detail,
     async (_event, sessionId: unknown, id: unknown, nodeId: unknown, sourceId?: unknown) => {
       try {
         if (
@@ -280,7 +277,7 @@ export const registerCoworkSubtaskHandlers = ({
         )
           return { success: false };
         const { client, keys } = resolveOwnedRoot(sessionId);
-        const detail = await client.request<unknown>(SwarmFlowGateway.Detail, {
+        const detail = await client.request<unknown>(SwarmWorkflowGateway.Detail, {
           parentKeys: keys,
           id,
           nodeId,
@@ -300,7 +297,7 @@ export const registerCoworkSubtaskHandlers = ({
     },
   );
   ipcMain.handle(
-    SwarmFlowIpc.Intervene,
+    SwarmWorkflowIpc.Intervene,
     async (
       _event,
       sessionId: unknown,
@@ -317,13 +314,13 @@ export const registerCoworkSubtaskHandlers = ({
           !nodeId ||
           !Number.isSafeInteger(revision) ||
           Number(revision) <= 0 ||
-          !validSwarmIntervention(intervention)
+          !validSwarmWorkflowIntervention(intervention)
         )
           return { success: false };
         const { client, keys } = resolveOwnedRoot(sessionId);
         // The Gateway resolves the node session and rechecks parent policy and revision.
         if (!hasSession(sessionId as string)) return { success: false };
-        await client.request(SwarmFlowGateway.Intervene, {
+        await client.request(SwarmWorkflowGateway.Intervene, {
           parentKeys: keys,
           id,
           nodeId,
@@ -341,7 +338,7 @@ export const registerCoworkSubtaskHandlers = ({
     },
   );
   ipcMain.handle(
-    SwarmFlowIpc.Control,
+    SwarmWorkflowIpc.Control,
     async (_event, sessionId: unknown, id: unknown, revision: unknown, action: unknown) => {
       try {
         if (
@@ -351,11 +348,11 @@ export const registerCoworkSubtaskHandlers = ({
         )
           return { success: false };
         const { client, keys } = resolveOwnedRoot(sessionId);
-        const result = await client.request<unknown>(SwarmFlowGateway.List, { parentKeys: keys });
+        const result = await client.request<unknown>(SwarmWorkflowGateway.List, { parentKeys: keys });
         if (!validFlowList(result) || !result.flows.some(f => f.id === id))
           return { success: false };
         if (!hasSession(sessionId as string)) return { success: false };
-        await client.request(SwarmFlowGateway.Control, { parentKeys: keys, id, revision, action });
+        await client.request(SwarmWorkflowGateway.Control, { parentKeys: keys, id, revision, action });
         return { success: true };
       } catch {
         return { success: false };

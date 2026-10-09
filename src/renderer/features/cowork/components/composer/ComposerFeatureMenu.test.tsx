@@ -8,7 +8,7 @@ import { i18nService } from '@/services/i18n';
 
 import ComposerFeatureMenu, { type ComposerFeatureItem } from './ComposerFeatureMenu';
 import { buildComposerFeatures } from './composerFeatures';
-import { buildSwarmComposerFeature } from './swarmComposerFeature';
+import { buildSwarmWorkflowComposerFeature } from './swarmWorkflowComposerFeature';
 
 afterEach(cleanup);
 const item = (id: string, disabled = false): ComposerFeatureItem => ({
@@ -71,41 +71,41 @@ test('focus leaving the module closes the menu without selecting anything', () =
 });
 test('Swarm registers its own label, selection and action without changing menu mechanics', () => {
   i18nService.setLanguage('en', { persist: false });
-  const selectSwarm = vi.fn();
+  const selectSwarmWorkflow = vi.fn();
   const items = buildComposerFeatures(
-    [buildSwarmComposerFeature({ selectSwarm, swarm: { mode: 'auto', verify: true } })],
+    [buildSwarmWorkflowComposerFeature({ selectSwarmWorkflow, swarmWorkflow: { mode: 'auto', verify: true } })],
     {
       loaded: true,
-      enabled: new Map([[OpenClawExtensionId.SWARM_FLOW, true]]),
+      enabled: new Map([[OpenClawExtensionId.SWARM_WORKFLOW, true]]),
       disabledRevisions: new Map(),
     },
   );
   render(<ComposerFeatureMenu items={items} label="Features" />);
   fireEvent.click(screen.getByRole('button'));
-  fireEvent.click(screen.getByRole('menuitem', { name: 'Swarm collaboration' }));
-  expect(selectSwarm).toHaveBeenCalledWith({ mode: 'auto', verify: true });
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Swarm Workflow' }));
+  expect(selectSwarmWorkflow).toHaveBeenCalledWith({ mode: 'auto', verify: true });
   expect(items[0].selected).toBe(true);
 });
 
 test('does not register Swarm while its plugin is disabled even with a selected draft', () => {
-  const selectSwarm = vi.fn();
+  const selectSwarmWorkflow = vi.fn();
   expect(
     buildComposerFeatures(
-      [buildSwarmComposerFeature({ selectSwarm, swarm: { mode: 'auto', verify: true } })],
+      [buildSwarmWorkflowComposerFeature({ selectSwarmWorkflow, swarmWorkflow: { mode: 'auto', verify: true } })],
       {
         loaded: true,
-        enabled: new Map([[OpenClawExtensionId.SWARM_FLOW, false]]),
+        enabled: new Map([[OpenClawExtensionId.SWARM_WORKFLOW, false]]),
         disabledRevisions: new Map(),
       },
     ),
   ).toEqual([]);
-  expect(selectSwarm).not.toHaveBeenCalled();
+  expect(selectSwarmWorkflow).not.toHaveBeenCalled();
 });
 
 test('plugin entries are independently gated and built-in entries do not require a plugin', () => {
   const select = vi.fn();
   const registrations = [
-    { ...item('Swarm'), extensionId: OpenClawExtensionId.SWARM_FLOW },
+    { ...item('Swarm'), extensionId: OpenClawExtensionId.SWARM_WORKFLOW },
     { ...item('Other'), extensionId: 'another-plugin', onSelect: select },
     { ...item('Other action'), extensionId: 'another-plugin' },
     item('Built-in'),

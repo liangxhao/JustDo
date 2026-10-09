@@ -11,7 +11,7 @@ export const PLAN_DISPLAY_TAB_ID = 'plan';
 export const SUBAGENT_DISPLAY_TAB_ID = 'subagent';
 
 export const COLLABORATION_DISPLAY_TAB_ID = 'collaboration';
-export const SWARM_DISPLAY_TAB_ID = 'swarm';
+export const SWARM_WORKFLOW_DISPLAY_TAB_ID = 'swarm-workflow';
 
 export const MAX_BROWSER_TABS = 8;
 

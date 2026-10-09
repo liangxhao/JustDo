@@ -125,8 +125,8 @@ import {
   isActiveSubtask,
   type Subtask,
 } from '@/features/cowork/components/subagents/subtaskPresentation';
-import SwarmFlowPanel from '@/features/cowork/components/subagents/SwarmFlowPanel';
-import { useSwarmFlowDiscovery } from '@/features/cowork/components/subagents/useSwarmFlowDiscovery';
+import SwarmWorkflowPanel from '@/features/cowork/components/subagents/SwarmWorkflowPanel';
+import { useSwarmWorkflowDiscovery } from '@/features/cowork/components/subagents/useSwarmWorkflowDiscovery';
 import {
   selectCoworkConfig,
   selectCoworkSessions,
@@ -206,7 +206,7 @@ import {
   MAX_TERMINAL_TABS,
   PLAN_DISPLAY_TAB_ID,
   SUBAGENT_DISPLAY_TAB_ID,
-  SWARM_DISPLAY_TAB_ID,
+  SWARM_WORKFLOW_DISPLAY_TAB_ID,
   TERMINAL_DISPLAY_TAB_PREFIX,
   WORKSPACE_FILES_DISPLAY_TAB_ID,
 } from './preview/displayTabIds';
@@ -323,7 +323,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const sessions = useSelector(selectCoworkSessions);
   const config = useSelector(selectCoworkConfig);
   const [collaborationSessionId, setCollaborationSessionId] = useState<string | null>(null);
-  const [swarmSessionId, setSwarmSessionId] = useState<string | null>(null);
+  const [swarmWorkflowSessionId, setSwarmWorkflowSessionId] = useState<string | null>(null);
   const [collaborationMemberId, setCollaborationMemberId] = useState<string | undefined>();
   const [isInitialized, setIsInitialized] = useState(false);
   const [greetingPeriod, setGreetingPeriod] = useState(() =>
@@ -553,14 +553,14 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       ...(collaborationSessionId && collaborationSessionId === currentSessionId
         ? [COLLABORATION_DISPLAY_TAB_ID]
         : []),
-      ...(swarmSessionId && swarmSessionId === currentSessionId ? [SWARM_DISPLAY_TAB_ID] : []),
+      ...(swarmWorkflowSessionId && swarmWorkflowSessionId === currentSessionId ? [SWARM_WORKFLOW_DISPLAY_TAB_ID] : []),
       ...(isReviewOpen ? [REVIEW_TAB_ID] : []),
       ...sideChatTabs.map(tab => tab.id),
       ...recordingReviewTabs.tabs.map(tab => tab.id),
     ],
     [
       collaborationSessionId,
-      swarmSessionId,
+      swarmWorkflowSessionId,
       currentSessionId,
       browserTabs,
       filePreviews,
@@ -613,14 +613,14 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     window.addEventListener(REVIEW_OPEN_EVENT, listener);
     return () => window.removeEventListener(REVIEW_OPEN_EVENT, listener);
   }, [currentSessionId, openReview]);
-  const openSwarm = useCallback(() => {
+  const openSwarmWorkflow = useCallback(() => {
     if (!currentSessionId) return;
-    setSwarmSessionId(currentSessionId);
-    setPreferredDisplayTabId(SWARM_DISPLAY_TAB_ID);
+    setSwarmWorkflowSessionId(currentSessionId);
+    setPreferredDisplayTabId(SWARM_WORKFLOW_DISPLAY_TAB_ID);
     setIsDisplayPanelOpen(true);
     setIsWorkspaceFilesOpen(false);
   }, [currentSessionId, setPreferredDisplayTabId, setIsDisplayPanelOpen, setIsWorkspaceFilesOpen]);
-  const swarmDiscovery = useSwarmFlowDiscovery(currentSessionId, openSwarm);
+  const swarmWorkflowDiscovery = useSwarmWorkflowDiscovery(currentSessionId, openSwarmWorkflow);
   const activeDisplayTabId =
     preferredDisplayTabId && availableDisplayTabIds.includes(preferredDisplayTabId)
       ? preferredDisplayTabId
@@ -2502,16 +2502,16 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             },
           ]
         : []),
-      ...(swarmSessionId === currentSession.id
+      ...(swarmWorkflowSessionId === currentSession.id
         ? [
             {
-              id: SWARM_DISPLAY_TAB_ID,
-              label: i18nService.t('swarmTitle'),
+              id: SWARM_WORKFLOW_DISPLAY_TAB_ID,
+              label: i18nService.t('swarmWorkflowTitle'),
               icon: <ShareIcon className="h-4 w-4" />,
-              onSelect: () => setPreferredDisplayTabId(SWARM_DISPLAY_TAB_ID),
+              onSelect: () => setPreferredDisplayTabId(SWARM_WORKFLOW_DISPLAY_TAB_ID),
               onClose: () => {
-                setSwarmSessionId(null);
-                selectAdjacentDisplayTabAfterClose(SWARM_DISPLAY_TAB_ID);
+                setSwarmWorkflowSessionId(null);
+                selectAdjacentDisplayTabAfterClose(SWARM_WORKFLOW_DISPLAY_TAB_ID);
               },
             },
           ]
@@ -2716,16 +2716,16 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     )}
                   </button>
                 )}
-                {swarmDiscovery.hasFlows && (
+                {swarmWorkflowDiscovery.hasFlows && (
                   <button
                     type="button"
-                    onClick={openSwarm}
-                    title={i18nService.t('swarmOpen')}
-                    aria-label={i18nService.t('swarmOpen')}
+                    onClick={openSwarmWorkflow}
+                    title={i18nService.t('swarmWorkflowOpen')}
+                    aria-label={i18nService.t('swarmWorkflowOpen')}
                     className="relative inline-flex h-7 w-7 items-center justify-center rounded-lg text-secondary hover:bg-surface-raised hover:text-foreground"
                   >
                     <ShareIcon className="h-[18px] w-[18px]" />
-                    {swarmDiscovery.running && (
+                    {swarmWorkflowDiscovery.running && (
                       <span
                         className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-primary"
                         aria-hidden="true"
@@ -3096,17 +3096,17 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               )}
               {retainedRuntimePanels}
               {recordingReviewTabs.panels(activeDisplayTabId)}
-              {swarmSessionId === currentSession.id && (
+              {swarmWorkflowSessionId === currentSession.id && (
                 <div
                   className="absolute inset-0"
-                  hidden={activeDisplayTabId !== SWARM_DISPLAY_TAB_ID}
+                  hidden={activeDisplayTabId !== SWARM_WORKFLOW_DISPLAY_TAB_ID}
                 >
-                  <SwarmFlowPanel
+                  <SwarmWorkflowPanel
                     key={currentSession.id}
                     sessionId={currentSession.id}
-                    snapshot={swarmDiscovery.result}
-                    onRefresh={swarmDiscovery.refresh}
-                    active={activeDisplayTabId === SWARM_DISPLAY_TAB_ID && isDisplayPanelOpen}
+                    snapshot={swarmWorkflowDiscovery.result}
+                    onRefresh={swarmWorkflowDiscovery.refresh}
+                    active={activeDisplayTabId === SWARM_WORKFLOW_DISPLAY_TAB_ID && isDisplayPanelOpen}
                     tasks={subtasks}
                     onOpenTask={openSubtask}
                   />

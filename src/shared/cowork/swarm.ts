@@ -1,10 +1,5 @@
-export const SwarmIpc = {
-  Snapshot: 'cowork:swarm:snapshot',
-  Prepare: 'cowork:swarm:prepare',
-} as const;
+export const SwarmIpc = { Snapshot: 'cowork:swarm:snapshot' } as const;
 
-export const SwarmMode = { Auto: 'auto', Research: 'research', Review: 'review' } as const;
-export type SwarmOptions = { mode: (typeof SwarmMode)[keyof typeof SwarmMode]; verify: boolean };
 export type SwarmChildStatus = 'queued' | 'running' | 'done' | 'failed';
 export interface SwarmGroup {
   groupId: string;
@@ -20,24 +15,14 @@ export interface SwarmSnapshot {
   otherActiveGroups: number;
 }
 export type SwarmSnapshotResult = { success: true; snapshot: SwarmSnapshot } | { success: false };
-export type SwarmPrepareResult =
-  | { success: true; instruction: string }
-  | { success: false; reason: 'disabled' | 'plan' | 'unavailable' | 'invalid' };
 export interface SwarmApi {
-  getSwarmSnapshot: (sessionId: string) => Promise<SwarmSnapshotResult>;
-  prepareSwarm: (options: SwarmOptions, sessionId?: string) => Promise<SwarmPrepareResult>;
+  getSwarmSnapshot(sessionId: string): Promise<SwarmSnapshotResult>;
 }
-export const isSwarmOptions = (value: unknown): value is SwarmOptions => {
-  if (!value || typeof value !== 'object') return false;
-  const options = value as Record<string, unknown>;
-  return (
-    Object.values(SwarmMode).includes(options.mode as SwarmOptions['mode']) &&
-    typeof options.verify === 'boolean' &&
-    Object.keys(options).every(key => key === 'mode' || key === 'verify')
-  );
-};
 
-function buildLegacySwarmInstruction(options: SwarmOptions): string {
+function buildLegacySwarmInstruction(options: {
+  mode: 'auto' | 'research' | 'review';
+  verify: boolean;
+}): string {
   const strategy = {
     auto: 'Decompose independent parts of this task where parallel work is useful.',
     research: 'Research independent aspects in parallel and preserve sources and disagreements.',
@@ -60,19 +45,13 @@ function buildLegacySwarmInstruction(options: SwarmOptions): string {
   ].join('\n');
 }
 
-export function buildSwarmInstruction(options: SwarmOptions): string {
-  return `<justdo-swarm-flow mode="${options.mode}"/>`;
-}
-
-// Display projection only. Match complete application-authored suffixes, never arbitrary tags.
+// Native collector-request display projection; workflow markers belong to swarmWorkflow.
 export function stripSwarmInstruction(text: string): string {
-  if (!text.endsWith('</parallel-collaboration-request>') && !text.endsWith('"/>')) return text;
-  for (const mode of Object.values(SwarmMode)) {
+  if (!text.endsWith('</parallel-collaboration-request>')) return text;
+  for (const mode of ['auto', 'research', 'review'] as const) {
     for (const verify of [true, false]) {
-      for (const build of [buildSwarmInstruction, buildLegacySwarmInstruction]) {
-        const suffix = '\n\n' + build({ mode, verify });
-        if (text.endsWith(suffix)) return text.slice(0, -suffix.length);
-      }
+      const suffix = '\n\n' + buildLegacySwarmInstruction({ mode, verify });
+      if (text.endsWith(suffix)) return text.slice(0, -suffix.length);
     }
   }
   return text;

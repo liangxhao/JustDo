@@ -276,7 +276,7 @@ Electron 应用已经实现该平台的原生承载。
 ## Workboard：四栏展示与原生执行
 
 Workboard 对没有显式配置的用户默认关闭；已有开启或关闭设置保持不变。
-独立 Swarm Flow 不要求开启 Workboard，也不会向其面板写入卡片。
+独立 Swarm Workflow 不要求开启 Workboard，也不会向其面板写入卡片。
 
 Workboard 仍使用 OpenClaw 插件的 `workboard.cards.*` / `workboard.boards.*`
 接口和原生 SQLite。Renderer 的四栏是展示投影，不改写持久化状态：
@@ -337,14 +337,16 @@ boundary, not a runtime patch or a fallback credential reader. The build recipe
 fingerprints this boundary. Rebuild frozen runtimes from the locked pristine
 artifact when it changes; never edit their source or proof manifests in place.
 
-## Swarm Flow：独立持久化任务流
+## Swarm Workflow：独立持久化任务流
 
-`openclaw-extensions/swarm-flow` 使用插件 service 生命周期及原生 Gateway / subagent API。
-`swarm_flow_start` 提供明确请求的工具入口；输入框的精确标记通过提示钩子限定发起工具，主会话利用历史和附件整理完整说明后建立流程。工具从当前原生用户条目派生幂等键，并单独保留原始指派依据，后台不缓存聊天历史。
+`openclaw-extensions/swarm-workflow` 使用插件 service 生命周期及原生 Gateway / subagent API。
+`swarm_workflow_start` 提供明确请求的工具入口；输入框的精确标记通过提示钩子限定发起工具，主会话利用历史和附件整理完整说明后建立流程。工具从当前原生用户条目派生幂等键，并单独保留原始指派依据，后台不缓存聊天历史。
+发起轮只整理任务说明并调用启动工具，规划、执行和进度由工作流服务负责，通用任务规则不扩展这一轮的工具权限；提供直接调用与 Code Mode 参数示例。尚未接受时，原生 `before_agent_finalize` 可反馈本轮有界工具错误并请求最多三轮安全纠正；每轮仍绑定原始用户请求并收窄工具面。父身份、项目、权限或当前请求变化后不继续纠正，接受后按原始请求去重。短期准入元数据不包含聊天内容；原生取消、超时、潜在副作用或未知结果仍禁止回放，无需增加运行时补丁。
 插件拥有规划、DAG 校验、节点准入、运行核对、独立验收和主聊天交付，服务不依赖 Renderer 存活。
-注册的 `swarmFlow.health/start/list/detail/control/intervene` 使用原生 operator scopes，产品 IPC 再绑定本地会话身份。主会话另有 `swarm_flow_status/control/intervene`：查询有界的流程状态与节点证据，按明确用户意图控制流程或给节点补充输入/继续/重跑，和 Tab 共用 FlowEngine 及 `contract.flowActions`。管理工具只提供给托管主会话，写入在版本 2 工具工厂中重新确认当前原生调用授权、归属、父身份与 revision。pause/stop 只要求原生父 sessionId 仍与创建时一致，允许项目、权限或规划模式变化后终止原流程；resume/retry 与全部节点介入继续严格核验原始项目、权限和策略。running 且正在最终投递时禁止 pause/stop；投递未确认且已 blocked 后可停止，不重发交付。运行中的节点只能保存下次执行输入，不启动第二次执行。控制与补充的幂等身份来自原生 sessionKey/runId/toolCallId 及规范化动作，不能由模型指定会话或操作来源；同一原生调用重放幂等，新调用须新有效 revision。只有新有效提交与原生成功终态才能推进下游。
+启动 RPC 在助手名单查询前冻结服务代次与父身份、目录、权限及策略，返回后重新核对同一代次、当前规划模式和原生工具准入的 30 秒有效期；失效请求不能在重启后的服务中创建流程。
+注册的 `swarmWorkflow.health/start/list/detail/control/intervene` 使用原生 operator scopes，产品 IPC 再绑定本地会话身份。主会话另有 `swarm_workflow_status/control/intervene`：查询有界的流程状态与节点证据，按明确用户意图控制流程或给节点补充输入/继续/重跑，和 Tab 共用 FlowEngine 及 `contract.flowActions`。管理工具只提供给托管主会话，写入在版本 2 工具工厂中重新确认当前原生调用授权、归属、父身份与 revision。pause/stop 只要求原生父 sessionId 仍与创建时一致，允许项目、权限或规划模式变化后终止原流程；resume/retry 与全部节点介入继续严格核验原始项目、权限和策略。running 且正在最终投递时禁止 pause/stop；投递未确认且已 blocked 后可停止，不重发交付。运行中的节点只能保存下次执行输入，不启动第二次执行。控制与补充的幂等身份来自原生 sessionKey/runId/toolCallId 及规范化动作，不能由模型指定会话或操作来源；同一原生调用重放幂等，新调用须新有效 revision。只有新有效提交与原生成功终态才能推进下游。
 
-服务对需要处理的阻塞保存有界通知意图，再通过 `chat.inject` 添加主会话提示；包含流程已 blocked、节点仍 running 且带错误的超时等待，相同节点尝试/原因不重复通知。提醒只核验父身份，策略变化造成的执行拒绝仍可提示；最终交付保持完整策略核验。原生注入无持久幂等参数，回复丢失后标为未确认，不自动重发；status 如实返回该状态。通知循环与执行调度独立，不因慢请求拖住恢复派发；ACK 从最新流程合并，不能覆盖同时发生的人工操作。停止时禁止新通知，等待在途请求后才关闭存储。它不唤醒主助手自动处理，不保存聊天历史副本。现有 `sessions.steer` 为 interrupt 模式且无法指定精确目标 run，因此不接入运行中传话；补充信息仍在下一轮执行读取。详见 [主会话管理方案](../features/swarm-main-session-management.md)。
+服务对需要处理的阻塞保存有界通知意图，再通过 `chat.inject` 添加主会话提示；包含流程已 blocked、节点仍 running 且带错误的超时等待，相同节点尝试/原因不重复通知。提醒只核验父身份，策略变化造成的执行拒绝仍可提示；最终交付保持完整策略核验。原生注入无持久幂等参数，回复丢失后标为未确认，不自动重发；status 如实返回该状态。通知循环与执行调度独立，不因慢请求拖住恢复派发；ACK 从最新流程合并，不能覆盖同时发生的人工操作。停止时禁止新通知，等待在途请求后才关闭存储。它不唤醒主助手自动处理，不保存聊天历史副本。现有 `sessions.steer` 为 interrupt 模式且无法指定精确目标 run，因此不接入运行中传话；补充信息仍在下一轮执行读取。详见 [主会话管理方案](../features/swarm-workflow-main-session-management.md)。
 
 执行会话保留插件 ownership；主会话绑定、权限和模型在准入时核验，不绕过原生 parent-link 限制。
 所有阶段继承主会话的原生 permissionMode 和项目目录；任务 access 只定义读写意图及调度互斥，不自动把只读任务降为禁止全部命令的原生 read-only。只读任务约束随派发携带，真正的权限上限仍由原生会话策略执行。
@@ -355,7 +357,7 @@ artifact when it changes; never edit their source or proof manifests in place.
 Gateway 启动的流程服务在同一进程内由各助手的独立工具/钩子注册实例共享；服务生命周期仍由启动实例管理，跨助手提交继续校验各自的原生调用身份。
 提交工具的证据入口支持文字或列表，摘要缺省时仅从显式提交的证据生成；入库始终为有界摘要和证据列表，验收仍要求显式布尔 verdict，不以终态聊天文字补造成功。
 提交错误通过原生工具结果反馈模型；`before_agent_finalize` 尽可能提前准备有界修正指令。服务确认原生成功终态后独立检查提交，不依赖钩子必定触发；空回复补全/隔离结束说明也必须收敛。缺少提示时，通过原生 `subagent.getSessionMessages` 按需读取最多 64 条记录，只提取有界提交错误，再次核对父会话与节点/run 后在同一会话追加最多三轮修正，每轮使用新的原生 run ID。`before_prompt_build` 与工具调用钩子共同限定修正阶段只能提交结果或报告阻塞。取消、失败、未知及权限变化的执行不续跑，暂停时等待恢复，耗尽修正次数仍失败；该机制不重跑任务、不回退工具活动，也不复制原生消息历史。
-实现与验证细节见 [Swarm 图形任务流](../features/swarm-visual-workflow.md)。
+实现与验证细节见 [Swarm 图形任务流](../features/swarm-workflow.md)。
 
 批量扩展将容器阶段与执行项分开：阶段图保留有界 DAG，JSONL/文件输入经可信父会话 fsPolicy、真实根及当前权限核验后冻结，执行项、原生 run 归属、预约和操作身份由插件 SQLite 保存。服务按所有流程轮转派发；普通项目写任务互斥，批次项在各自尝试目录协作并行。后台冻结、准备和发布保留预约并纳入 stop/drain，不阻塞其他流程取消。工作/验收提交和原生 `executionSettled`、`cleanupSettled` 三者均满足才发布结果。通过 before_tool_call 阻止叶子额外派发，可信 Code Mode exec/wait 外壳仍可完成收敛，内层实际工具继续校验。
 

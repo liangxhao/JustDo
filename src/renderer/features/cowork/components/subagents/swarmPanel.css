@@ -152,14 +152,14 @@
   }
 }
 
-.swarm-panel g[role='button']:hover > path.swarm-flow-edge,
-.swarm-panel g[role='button']:focus > path.swarm-flow-edge,
+.swarm-panel g[role='button']:hover > path.swarm-workflow-edge,
+.swarm-panel g[role='button']:focus > path.swarm-workflow-edge,
 .swarm-panel g[role='button']:hover > path[marker-end],
 .swarm-panel g[role='button']:focus > path[marker-end] {
   stroke-width: 3.5;
 }
 
-.swarm-flow-header {
+.swarm-workflow-header {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
@@ -168,15 +168,15 @@
   padding: 6px 10px;
   background: var(--justdo-surface, #fff);
 }
-.swarm-flow-header > button {
+.swarm-workflow-header > button {
   flex-shrink: 0;
 }
-.swarm-flow-title {
+.swarm-workflow-title {
   position: relative;
   flex: 1;
   min-width: 0;
 }
-.swarm-flow-select {
+.swarm-workflow-select {
   display: block;
   width: 100%;
   min-width: 0;
@@ -192,29 +192,29 @@
   text-overflow: ellipsis;
   cursor: pointer;
 }
-.swarm-flow-select:hover {
+.swarm-workflow-select:hover {
   background: color-mix(in srgb, currentColor 5%, transparent);
 }
-.swarm-flow-select:focus-visible {
+.swarm-workflow-select:focus-visible {
   outline: 2px solid var(--justdo-primary, #6366f1);
   outline-offset: 2px;
 }
-.swarm-flow-select option {
+.swarm-workflow-select option {
   color: var(--justdo-foreground, #111827);
   background: var(--justdo-surface, #fff);
 }
-.swarm-flow-status {
+.swarm-workflow-status {
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
   color: var(--justdo-text-secondary, #64748b);
 }
-.swarm-flow-status-running {
+.swarm-workflow-status-running {
   color: var(--justdo-primary, #6366f1);
 }
-.swarm-flow-status-blocked {
+.swarm-workflow-status-blocked {
   color: var(--justdo-warning, #a16207);
 }
-.swarm-flow-status-completed {
+.swarm-workflow-status-completed {
   color: var(--justdo-success, #15803d);
 }

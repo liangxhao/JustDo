@@ -40,9 +40,9 @@ Git 初始化由产品单独执行：普通会话通过原生工程根目录和�
 
 ## SubAgent 与平级 Team 的独立适配
 
-聊天输入框另提供本次 Swarm Flow 请求，独立插件自动规划并执行持久化任务 DAG，右侧 Tab 展示真实依赖。
+聊天输入框另提供本次 Swarm Workflow 请求，独立插件自动规划并执行持久化任务 DAG，右侧 Tab 展示真实依赖。
 它不依赖 agent-team、Workboard 或原生 collector 分组，不把工作会话当作长期助手成员。
-投影范围、权限和交互限制见 [Swarm 图形视图](swarm-visual-workflow.md)。
+投影范围、权限和交互限制见 [Swarm 图形视图](swarm-workflow.md)。
 
 原生 SubAgent 仍从独立子任务入口查看。详情从原生会话投影读取执行状态、运行身份、耗时与累计用量，并按需分页打开嵌套子会话、返回父层。取消针对稳定原生 session key；Main 验证产品会话与原生 spawnedBy 控制树归属。OpenClaw v2026.9.8 移除了旧任务账本以及重投递/忽略结果操作，产品同步移除这些按钮，不伪造已不再暴露的交付状态、等待原因与变更统计。失败或不确定结果先核对状态，不自动重跑任务。根子任务状态轮询仍扫描完整直接子会话列表。具体协议和限制见[引擎设计](../architecture/05-agent-engine.md)。
 
