@@ -1,7 +1,7 @@
 import './CoworkDisplayPanel.css';
 
-import { XMarkIcon } from '@heroicons/react/24/outline';
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ChevronDownIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
 import FileTreeIcon from '@/shared/components/icons/FileTreeIcon';
@@ -10,8 +10,10 @@ import WorkspaceFullscreenIcon from '@/shared/components/icons/WorkspaceFullscre
 
 import DisplayTabContextMenu, { type DisplayTabContextMenuItem } from './DisplayTabContextMenu';
 import { FILE_DISPLAY_TAB_PREFIX, WORKSPACE_FILES_DISPLAY_TAB_ID } from './displayTabIds';
+import DisplayTabListMenu from './DisplayTabListMenu';
 import FilePathBreadcrumbBar from './FilePathBreadcrumbBar';
 import { FilePreviewToolbarContext } from './FilePreviewToolbarContext';
+import useDisplayTabLayout from './useDisplayTabLayout';
 
 export interface CoworkDisplayTab {
   id: string;
@@ -120,6 +122,29 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   sidePanelCloseRef.current = onSidePanelClose;
   const tabButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const tabListButtonRef = useRef<HTMLButtonElement>(null);
+  const tabListMenuId = useId();
+  const [tabListOpen, setTabListOpen] = useState(false);
+  const activeTabIdRef = useRef(activeTabId);
+  activeTabIdRef.current = activeTabId;
+  const { clusterRef, scrollerRef, actionsRef, tabWidth, hasOverflow, revealTab } =
+    useDisplayTabLayout({
+      hasActions: Boolean(actions),
+      activeTabId,
+      isOpen,
+      isWorkspaceFullscreen,
+      tabCount: tabs.length,
+      tabButtonRefs,
+      width,
+    });
+
+  useLayoutEffect(() => {
+    if (!tabListOpen || (isOpen && hasOverflow && tabs.length)) return;
+    setTabListOpen(false);
+    if (isOpen) {
+      tabButtonRefs.current.get(activeTabId)?.focus({ preventScroll: true });
+    }
+  }, [activeTabId, hasOverflow, isOpen, tabListOpen, tabs.length]);
 
   const clampWidth = useCallback((nextWidth: number) => {
     return Math.min(
@@ -211,9 +236,12 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       const nextTab = tabs[nextIndex];
       if (!nextTab) return;
       nextTab.onSelect();
-      requestAnimationFrame(() => tabButtonRefs.current.get(nextTab.id)?.focus());
+      requestAnimationFrame(() => {
+        revealTab(nextTab.id);
+        tabButtonRefs.current.get(nextTab.id)?.focus({ preventScroll: true });
+      });
     },
-    [tabs],
+    [revealTab, tabs],
   );
 
   useEffect(
@@ -304,10 +332,16 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
     return true;
   }, []);
 
-  const focusTab = useCallback((tabId: string | undefined) => {
-    if (!tabId) return;
-    requestAnimationFrame(() => tabButtonRefs.current.get(tabId)?.focus());
-  }, []);
+  const focusTab = useCallback(
+    (tabId: string | undefined) => {
+      if (!tabId) return;
+      requestAnimationFrame(() => {
+        revealTab(tabId);
+        tabButtonRefs.current.get(tabId)?.focus({ preventScroll: true });
+      });
+    },
+    [revealTab],
+  );
 
   const getCloseActions = useCallback(
     (tab: CoworkDisplayTab, tabIndex: number): CoworkDisplayTabCloseActions => {
@@ -355,6 +389,11 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
     if (restoreFocus) focusTab(triggerTabId);
   };
 
+  const dismissTabList = (restoreFocus = true) => {
+    setTabListOpen(false);
+    if (restoreFocus) tabListButtonRef.current?.focus({ preventScroll: true });
+  };
+
   return (
     <aside
       id="cowork-display-panel"
@@ -387,93 +426,113 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
         aria-valuenow={Math.round(width)}
       />
 
-      <div className="cowork-workspace-header relative z-20 flex shrink-0 items-stretch border-b border-border bg-background px-2">
-        <div className="flex h-full min-w-0 flex-1 items-stretch" data-testid="display-tab-cluster">
+      <div
+        className={`cowork-workspace-header cowork-display-tabs-header relative z-20 flex shrink-0 items-stretch px-2 ${tabs.length ? 'bg-surface' : 'bg-background'}`}
+      >
+        <div
+          ref={clusterRef}
+          className="flex h-full min-w-0 flex-1 items-stretch"
+          data-testid="display-tab-cluster"
+        >
           <div
-            className={`${tabs.length > 0 ? 'flex' : 'hidden'} h-full min-w-0 items-stretch overflow-x-auto overflow-y-hidden`}
+            ref={scrollerRef}
+            className={`${tabs.length > 0 ? 'flex' : 'hidden'} cowork-display-tab-scroller h-full min-w-0 items-stretch`}
+            style={{ width: tabs.length * tabWidth }}
             role={tabs.length > 0 ? 'tablist' : undefined}
             aria-label={tabs.length > 0 ? i18nService.t('coworkCanvasTitle') : undefined}
           >
             {tabs.map((tab, tabIndex) => {
               const isActive = tab.id === activeTabId;
               return (
-                <React.Fragment key={tab.id}>
-                  <div
-                    className={`group flex h-full min-w-0 max-w-48 shrink-0 items-center rounded-t-lg border px-2 transition-colors ${
-                      isActive
-                        ? 'border-border border-b-background bg-background text-foreground'
-                        : 'border-transparent text-secondary hover:bg-surface-raised hover:text-foreground'
-                    }`}
-                    onContextMenu={
-                      tab.onContextMenu
-                        ? event => {
-                            event.preventDefault();
-                            setTabMenu(null);
-                            const rect = event.currentTarget.getBoundingClientRect();
-                            const position =
-                              event.clientX || event.clientY
-                                ? { x: event.clientX, y: event.clientY }
-                                : { x: rect.left, y: rect.bottom };
-                            tab.onContextMenu?.(position, getCloseActions(tab, tabIndex));
-                          }
-                        : event => {
-                            event.preventDefault();
-                            const rect = event.currentTarget.getBoundingClientRect();
-                            setTabMenu({
-                              tabId: tab.id,
-                              x: event.clientX || event.clientY ? event.clientX : rect.left,
-                              y: event.clientX || event.clientY ? event.clientY : rect.bottom,
-                            });
-                          }
-                    }
+                <div
+                  key={tab.id}
+                  className="group cowork-display-tab flex h-full min-w-0 shrink-0 items-center px-2"
+                  style={{ width: tabWidth }}
+                  data-active={isActive}
+                  onContextMenu={
+                    tab.onContextMenu
+                      ? event => {
+                          event.preventDefault();
+                          setTabListOpen(false);
+                          setTabMenu(null);
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          const position =
+                            event.clientX || event.clientY
+                              ? { x: event.clientX, y: event.clientY }
+                              : { x: rect.left, y: rect.bottom };
+                          tab.onContextMenu?.(position, getCloseActions(tab, tabIndex));
+                        }
+                      : event => {
+                          event.preventDefault();
+                          setTabListOpen(false);
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          setTabMenu({
+                            tabId: tab.id,
+                            x: event.clientX || event.clientY ? event.clientX : rect.left,
+                            y: event.clientX || event.clientY ? event.clientY : rect.bottom,
+                          });
+                        }
+                  }
+                >
+                  <button
+                    ref={element => {
+                      if (element) tabButtonRefs.current.set(tab.id, element);
+                      else tabButtonRefs.current.delete(tab.id);
+                    }}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    tabIndex={isActive ? 0 : -1}
+                    onClick={tab.onSelect}
+                    onKeyDown={event => handleTabKeyDown(event, tabIndex)}
+                    className="cowork-display-tab-select flex h-full min-w-0 flex-1 items-center gap-1.5 text-xs font-medium"
+                    title={tab.label}
                   >
+                    <span className="h-4 w-4 shrink-0" aria-hidden="true">
+                      {tab.icon}
+                    </span>
+                    <span className="min-w-0 truncate">{tab.label}</span>
+                  </button>
+                  {tab.onClose && (
                     <button
-                      ref={element => {
-                        if (element) tabButtonRefs.current.set(tab.id, element);
-                        else tabButtonRefs.current.delete(tab.id);
-                      }}
                       type="button"
-                      role="tab"
-                      aria-selected={isActive}
-                      tabIndex={isActive ? 0 : -1}
-                      onClick={tab.onSelect}
-                      onKeyDown={event => handleTabKeyDown(event, tabIndex)}
-                      className="flex min-w-0 flex-1 items-center gap-1.5 text-xs font-medium"
-                      title={tab.label}
+                      onClick={event => {
+                        event.stopPropagation();
+                        tab.onClose?.();
+                      }}
+                      className="cowork-display-tab-close ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted opacity-70 hover:bg-surface-overlay hover:text-foreground group-hover:opacity-100"
+                      aria-label={`${i18nService.t('close')}: ${tab.label}`}
+                      title={i18nService.t('close')}
                     >
-                      <span className="h-4 w-4 shrink-0" aria-hidden="true">
-                        {tab.icon}
-                      </span>
-                      <span className="truncate">{tab.label}</span>
+                      <XMarkIcon className="h-3.5 w-3.5" />
                     </button>
-                    {tab.onClose && (
-                      <button
-                        type="button"
-                        onClick={event => {
-                          event.stopPropagation();
-                          tab.onClose?.();
-                        }}
-                        className="ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted opacity-70 hover:bg-surface-raised hover:text-foreground group-hover:opacity-100"
-                        aria-label={`${i18nService.t('close')}: ${tab.label}`}
-                        title={i18nService.t('close')}
-                      >
-                        <XMarkIcon className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-                  {tabIndex < tabs.length - 1 && (
-                    <span
-                      data-testid="display-tab-divider"
-                      className="h-4 w-px shrink-0 self-center bg-border/60"
-                      aria-hidden="true"
-                    />
                   )}
-                </React.Fragment>
+                </div>
               );
             })}
           </div>
           {tabs.length > 0 && actions && (
-            <div className="flex h-full shrink-0 items-center">{actions}</div>
+            <div ref={actionsRef} className="flex h-full shrink-0 items-center">
+              {actions}
+            </div>
+          )}
+          {tabs.length > 0 && hasOverflow && (
+            <button
+              ref={tabListButtonRef}
+              type="button"
+              className="cowork-display-tab-list-button inline-flex h-7 w-8 shrink-0 self-center items-center justify-center rounded-md text-secondary hover:bg-surface-raised hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+              aria-label={i18nService.t('coworkDisplayTabList')}
+              title={i18nService.t('coworkDisplayTabList')}
+              aria-haspopup="menu"
+              aria-expanded={tabListOpen}
+              aria-controls={tabListOpen ? tabListMenuId : undefined}
+              onClick={() => {
+                setTabMenu(null);
+                setTabListOpen(open => !open);
+              }}
+            >
+              <ChevronDownIcon className="h-4 w-4" aria-hidden="true" />
+            </button>
           )}
         </div>
         <button
@@ -621,6 +680,20 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
           )}
         </div>
       </FilePreviewToolbarContext.Provider>
+      {isOpen && hasOverflow && tabListOpen && tabListButtonRef.current && (
+        <DisplayTabListMenu
+          id={tabListMenuId}
+          activeTabId={activeTabId}
+          anchor={tabListButtonRef.current}
+          tabs={tabs}
+          onDismiss={dismissTabList}
+          onSelect={tab => {
+            dismissTabList(false);
+            tab.onSelect();
+            requestAnimationFrame(() => focusTab(activeTabIdRef.current));
+          }}
+        />
+      )}
       {isOpen && tabMenu && menuTab && menuCloseActions && (
         <DisplayTabContextMenu
           x={tabMenu.x}

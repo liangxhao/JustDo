@@ -14,6 +14,73 @@
   pointer-events: none;
 }
 
+.cowork-display-tabs-header {
+  box-shadow: inset 0 -1px var(--justdo-border);
+}
+
+.cowork-display-tab-scroller {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.cowork-display-tab-scroller::-webkit-scrollbar {
+  display: none;
+}
+
+.cowork-display-tab {
+  position: relative;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  color: var(--justdo-text-secondary);
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.cowork-display-tab[data-active='true'] {
+  z-index: 1;
+  border-color: var(--justdo-border);
+  background: var(--justdo-background);
+  color: var(--justdo-foreground);
+}
+
+.cowork-display-tab[data-active='false']:hover {
+  background: var(--justdo-surface-raised);
+  color: var(--justdo-foreground);
+}
+
+.cowork-display-tab:not(:last-child)::after {
+  position: absolute;
+  top: 50%;
+  right: -1px;
+  width: 1px;
+  height: 14px;
+  background: var(--justdo-border);
+  content: '';
+  transform: translateY(-50%);
+}
+
+.cowork-display-tab[data-active='true']::after,
+.cowork-display-tab:hover::after,
+.cowork-display-tab:has(+ .cowork-display-tab[data-active='true'])::after,
+.cowork-display-tab:has(+ .cowork-display-tab:hover)::after {
+  opacity: 0;
+}
+
+.cowork-display-tab-select:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--justdo-primary);
+  outline-offset: -2px;
+}
+
+.cowork-display-tab-close:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--justdo-primary);
+}
+
 @starting-style {
   .cowork-display-panel[aria-hidden='false'] {
     transform: translateX(100%);
@@ -34,7 +101,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cowork-display-panel {
+  .cowork-display-panel,
+  .cowork-display-tab {
     transition: none;
   }
 }

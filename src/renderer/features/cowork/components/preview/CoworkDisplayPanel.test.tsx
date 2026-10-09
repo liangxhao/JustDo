@@ -715,7 +715,7 @@ describe('CoworkDisplayPanel', () => {
     );
 
     expect(screen.getAllByRole('tab')).toHaveLength(6);
-    expect(screen.getAllByTestId('display-tab-divider')).toHaveLength(5);
+    expect(screen.getByRole('tablist').children).toHaveLength(6);
     expect(screen.getByRole('tab', { name: 'Implementation plan' })).toBeTruthy();
     const tabCluster = screen.getByTestId('display-tab-cluster');
     expect(tabCluster.parentElement?.classList.contains('cowork-workspace-header')).toBe(true);
