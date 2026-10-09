@@ -47,9 +47,13 @@ describe('browser agent profile names', () => {
 });
 
 describe('normalizeBrowserMode', () => {
-  test('defaults missing and unknown values to the isolated browser', () => {
-    expect(normalizeBrowserMode(undefined)).toBe(BrowserMode.Isolated);
-    expect(normalizeBrowserMode('unknown')).toBe(BrowserMode.Isolated);
+  test('defaults missing and unknown values to the embedded browser', () => {
+    expect(normalizeBrowserMode(undefined)).toBe(BrowserMode.Embedded);
+    expect(normalizeBrowserMode('unknown')).toBe(BrowserMode.Embedded);
+  });
+
+  test('keeps an explicit isolated-browser selection', () => {
+    expect(normalizeBrowserMode(BrowserMode.Isolated)).toBe(BrowserMode.Isolated);
   });
 
   test('keeps an explicit user-browser selection', () => {

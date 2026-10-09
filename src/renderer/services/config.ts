@@ -1,5 +1,6 @@
 import {
   normalizeBrowserDownloadSettings,
+  normalizeBrowserMode,
   normalizeBrowserSearchEngine,
 } from '@shared/browser/browser';
 import { BrowserLinkTarget, normalizeBrowserLinkTarget } from '@shared/browser/browserLinkOpening';
@@ -140,10 +141,11 @@ export class ConfigService {
         const mergedConfig = {
           ...defaultConfig,
           ...storedConfig,
+          browserMode: normalizeBrowserMode(storedConfig.browserMode),
           browserSearchEngine: normalizeBrowserSearchEngine(storedConfig.browserSearchEngine),
           browserWebLinkTarget: normalizeBrowserLinkTarget(
             storedConfig.browserWebLinkTarget,
-            BrowserLinkTarget.Chrome,
+            BrowserLinkTarget.Embedded,
           ),
           browserHtmlLinkTarget: normalizeBrowserLinkTarget(
             storedConfig.browserHtmlLinkTarget,
@@ -226,10 +228,11 @@ export class ConfigService {
     const mergedConfig = {
       ...this.config,
       ...storedConfig,
+      browserMode: normalizeBrowserMode(storedConfig.browserMode),
       browserSearchEngine: normalizeBrowserSearchEngine(storedConfig.browserSearchEngine),
       browserWebLinkTarget: normalizeBrowserLinkTarget(
         storedConfig.browserWebLinkTarget,
-        BrowserLinkTarget.Chrome,
+        BrowserLinkTarget.Embedded,
       ),
       browserHtmlLinkTarget: normalizeBrowserLinkTarget(
         storedConfig.browserHtmlLinkTarget,
@@ -286,7 +289,7 @@ export class ConfigService {
           ? {
               browserWebLinkTarget: normalizeBrowserLinkTarget(
                 newConfig.browserWebLinkTarget,
-                BrowserLinkTarget.Chrome,
+                BrowserLinkTarget.Embedded,
               ),
             }
           : {}),

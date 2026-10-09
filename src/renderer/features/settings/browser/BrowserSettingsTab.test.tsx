@@ -216,17 +216,27 @@ describe('BrowserSettingsTab extension connection checks', () => {
   });
 
   test('restores the selected link browser if saving fails', async () => {
+    mocks.getConfig.mockReturnValue({});
     installElectronBrowserMock();
     mocks.updateConfig.mockRejectedValueOnce(new Error('Could not save'));
     render(<BrowserSettingsTab />);
     const select = screen.getByRole('combobox', {
       name: 'browserWebLinkTargetTitle',
     }) as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: BrowserLinkTarget.Embedded } });
+    for (const name of [
+      'browserModeTitle',
+      'browserWebLinkTargetTitle',
+      'browserHtmlLinkTargetTitle',
+    ]) {
+      expect((screen.getByRole('combobox', { name }) as HTMLSelectElement).value).toBe(
+        BrowserLinkTarget.Embedded,
+      );
+    }
+    fireEvent.change(select, { target: { value: BrowserLinkTarget.Chrome } });
     await waitFor(() =>
       expect(screen.getByRole('alert').textContent).toBe('browserLinkSettingsSaveFailed'),
     );
-    expect(select.value).toBe(BrowserLinkTarget.Chrome);
+    expect(select.value).toBe(BrowserLinkTarget.Embedded);
   });
 
   test('persists the selected address bar search engine', async () => {
@@ -245,7 +255,7 @@ describe('BrowserSettingsTab extension connection checks', () => {
   });
 
   test.each([
-    ['browserWebLinkTargetTitle', 'browserWebLinkTarget', BrowserLinkTarget.Embedded],
+    ['browserWebLinkTargetTitle', 'browserWebLinkTarget', BrowserLinkTarget.Chrome],
     ['browserHtmlLinkTargetTitle', 'browserHtmlLinkTarget', BrowserLinkTarget.Chrome],
   ] as const)('persists %s independently of the AI browser mode', async (title, key, target) => {
     const browser = installElectronBrowserMock();

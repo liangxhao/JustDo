@@ -178,7 +178,7 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
   const [linkTargets, setLinkTargets] = useState(() => ({
     browserWebLinkTarget: normalizeBrowserLinkTarget(
       configService.getConfig().browserWebLinkTarget,
-      BrowserLinkTarget.Chrome,
+      BrowserLinkTarget.Embedded,
     ),
     browserHtmlLinkTarget: normalizeBrowserLinkTarget(
       configService.getConfig().browserHtmlLinkTarget,

@@ -1639,7 +1639,7 @@ export const mergeManagedOpenClawSwarmConfig = (
 });
 
 export const buildManagedOpenClawConnectivityConfig = (
-  browserMode: BrowserModeValue = BrowserMode.Isolated,
+  browserMode: BrowserModeValue = BrowserMode.Embedded,
   sessionVisibility: AgentRuntimeSettings['sessions']['visibility'] = DEFAULT_AGENT_RUNTIME_SETTINGS
     .sessions.visibility,
 ) => ({

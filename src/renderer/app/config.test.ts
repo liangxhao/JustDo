@@ -1,4 +1,5 @@
 import { BrowserMode } from '@shared/browser/browser';
+import { BrowserLinkTarget } from '@shared/browser/browserLinkOpening';
 import { expect, test } from 'vitest';
 
 import {
@@ -13,8 +14,10 @@ test('defaultConfig: uses light theme for first launch', () => {
   expect(defaultConfig.theme).toBe('light');
 });
 
-test('defaultConfig: uses the isolated browser for first launch', () => {
-  expect(defaultConfig.browserMode).toBe(BrowserMode.Isolated);
+test('defaultConfig: uses the embedded browser for first launch and message links', () => {
+  expect(defaultConfig.browserMode).toBe(BrowserMode.Embedded);
+  expect(defaultConfig.browserWebLinkTarget).toBe(BrowserLinkTarget.Embedded);
+  expect(defaultConfig.browserHtmlLinkTarget).toBe(BrowserLinkTarget.Embedded);
 });
 
 test('defaultConfig: matches the Codex panel shortcuts', () => {

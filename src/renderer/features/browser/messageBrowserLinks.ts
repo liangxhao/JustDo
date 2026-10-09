@@ -16,7 +16,7 @@ export async function openMessageWebLink(url: string): Promise<void> {
   if (!isWebBrowserLink(url)) return;
   const target = normalizeBrowserLinkTarget(
     configService.getConfig().browserWebLinkTarget,
-    BrowserLinkTarget.Chrome,
+    BrowserLinkTarget.Embedded,
   );
   if (target === BrowserLinkTarget.Embedded) {
     window.dispatchEvent(new CustomEvent(MessageBrowserEvent.OpenWebUrl, { detail: { url } }));

@@ -1,3 +1,4 @@
+import { BrowserMode } from '@shared/browser/browser';
 import { BrowserLinkTarget } from '@shared/browser/browserLinkOpening';
 import { afterEach, expect, test, vi } from 'vitest';
 
@@ -22,21 +23,24 @@ test('loads defaults for absent or invalid browser link targets and preserves sa
   });
   store.getItem.mockResolvedValueOnce({
     ...defaultConfig,
+    browserMode: undefined,
     browserWebLinkTarget: 'invalid',
     browserHtmlLinkTarget: undefined,
   });
   const service = new ConfigService();
   await service.init();
-  expect(service.getConfig().browserWebLinkTarget).toBe(BrowserLinkTarget.Chrome);
+  expect(service.getConfig().browserMode).toBe(BrowserMode.Embedded);
+  expect(service.getConfig().browserWebLinkTarget).toBe(BrowserLinkTarget.Embedded);
   expect(service.getConfig().browserHtmlLinkTarget).toBe(BrowserLinkTarget.Embedded);
   await service.updateConfig({
-    browserWebLinkTarget: BrowserLinkTarget.Embedded,
+    browserMode: BrowserMode.Isolated,
+    browserWebLinkTarget: BrowserLinkTarget.Chrome,
     browserHtmlLinkTarget: BrowserLinkTarget.Chrome,
   });
   await service.reloadFromStore();
   expect(service.getConfig()).toMatchObject({
-    browserWebLinkTarget: BrowserLinkTarget.Embedded,
+    browserWebLinkTarget: BrowserLinkTarget.Chrome,
     browserHtmlLinkTarget: BrowserLinkTarget.Chrome,
-    browserMode: defaultConfig.browserMode,
+    browserMode: BrowserMode.Isolated,
   });
 });

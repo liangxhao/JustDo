@@ -385,9 +385,9 @@ export const BrowserMode = {
 export type BrowserMode = (typeof BrowserMode)[keyof typeof BrowserMode];
 
 export const normalizeBrowserMode = (value: unknown): BrowserMode =>
-  value === BrowserMode.User || value === BrowserMode.Extension || value === BrowserMode.Embedded
+  value === BrowserMode.Isolated || value === BrowserMode.User || value === BrowserMode.Extension
     ? value
-    : BrowserMode.Isolated;
+    : BrowserMode.Embedded;
 
 export const BrowserSearchEngine = {
   Baidu: 'baidu',

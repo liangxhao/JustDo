@@ -187,9 +187,9 @@ const buildDefaultProviders = (): AppConfig['providers'] => {
 
 // 默认配置
 export const defaultConfig: AppConfig = {
-  browserMode: BrowserMode.Isolated,
+  browserMode: BrowserMode.Embedded,
   browserSearchEngine: BrowserSearchEngine.Baidu,
-  browserWebLinkTarget: BrowserLinkTarget.Chrome,
+  browserWebLinkTarget: BrowserLinkTarget.Embedded,
   browserHtmlLinkTarget: BrowserLinkTarget.Embedded,
   browserDownloadDirectory: '',
   browserAskDownloadLocation: true,
