@@ -3,13 +3,13 @@ import { randomUUID } from 'node:crypto';
 import type { BrowserExtensionStreamEvent } from '../../shared/browser/browserExtensionStream';
 import { parseCoworkAttachments } from '../../shared/cowork/attachments';
 import { normalizeAgentEvent, normalizeChatEvent } from '../../shared/openclaw/agentEvent';
-import { isPermissionMode, resolvePermissionMode } from '../../shared/openclaw/approvals';
 import type {
   OpenClawAssistantMediaRequest,
   OpenClawAssistantMediaResult,
 } from '../../shared/openclaw/assistantMedia';
 import { normalizeMessageSessionKey } from '../../shared/openclaw/messageDomain';
 import { PRODUCT_NAME } from '../../shared/productMetadata';
+import { isPermissionMode, resolvePermissionMode } from '../../shared/security/approvals';
 import { resolveTaskWorkingDirectory } from '../core/filesystem/taskWorkspace';
 import type { CoworkStore } from '../data/coworkStore';
 import type { CoworkEngineRouter } from '../engine';

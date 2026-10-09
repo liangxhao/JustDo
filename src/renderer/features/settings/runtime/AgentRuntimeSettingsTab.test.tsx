@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { createDefaultAgentRuntimeSettings } from '@shared/openclaw/agentRuntimeSettings';
+import { createDefaultAgentRuntimeSettings } from '@shared/agents/agentRuntimeSettings';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 

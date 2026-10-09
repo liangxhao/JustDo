@@ -36,7 +36,7 @@ export interface PluginInstallResult {
   restartRequired?: boolean;
   failedStage?: string;
   error?: string;
-  capabilityReview?: import('../../../shared/openclaw/extensions').OpenClawPluginCapabilityReview;
+  capabilityReview?: import('../../../shared/plugins/extensions').OpenClawPluginCapabilityReview;
 }
 
 export interface PluginInstaller {

@@ -98,9 +98,9 @@ import {
   readTerminalGuardObservation,
 } from '@shared/openclaw/agentEvent';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
-import { modelRefFromIdentity } from '@shared/openclaw/modelRef';
 import { type ProgressCard } from '@shared/openclaw/progressCard';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
+import { modelRefFromIdentity } from '@shared/providers/modelRef';
 import type { LocalTtsSpeakResult } from '@shared/speech/localTts';
 
 import { toAttachmentContentBlocks } from '@/libs/openclaw-chat/attachments';

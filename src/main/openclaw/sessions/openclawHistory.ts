@@ -1,5 +1,5 @@
 import { isGatewayToolFailureNotice } from '../../../shared/cowork/toolFailureNotice';
-import { modelRefFromIdentity, normalizeModelRef } from '../../../shared/openclaw/modelRef';
+import { modelRefFromIdentity, normalizeModelRef } from '../../../shared/providers/modelRef';
 import {
   parseScheduledReminderPrompt,
   parseSimpleScheduledReminderText,

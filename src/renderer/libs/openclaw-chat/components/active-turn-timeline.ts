@@ -1,6 +1,9 @@
 import './tool-output';
 
-import { COWORK_PLAN_PREVIEW_EVENT, extractPresentPlanPreview } from '@shared/cowork/planPreview';
+import {
+  COWORK_PLAN_PREVIEW_EVENT,
+  extractPresentPlanPreview,
+} from '@shared/cowork/interactions/planPreview';
 import { REVIEW_OPEN_EVENT } from '@shared/cowork/sessionReview';
 import { html, nothing, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';

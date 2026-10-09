@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import yauzl from 'yauzl';
 
-import type { DiagnosticReport } from '../../../shared/cowork/sessionDiagnostics';
+import type { DiagnosticReport } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { buildDiagnosticArchive, writeDiagnosticArchive } from './exporter';
 
 const report = (): DiagnosticReport => ({

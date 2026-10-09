@@ -4,13 +4,16 @@ import { MAIN_USER_AGENT_ID } from '../../../shared/agents/agents';
 import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
 import { hasMessageInput } from '../../../shared/cowork/messageInput';
 import { type CancelSessionStartInput, SessionStartIpc } from '../../../shared/cowork/sessionStart';
-import { resolvePermissionMode } from '../../../shared/openclaw/approvals';
+import { resolvePermissionMode } from '../../../shared/security/approvals';
 import { resolveTaskWorkingDirectory } from '../../core/filesystem/taskWorkspace';
 import { t } from '../../core/i18n';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import type { OpenClawEngineStatus } from '../../openclaw/runtime/openclawEngineManager';
-import { createSessionWorktree, discardPreparedWorktreeSession } from '../../openclaw/sessions/worktreeSession';
+import {
+  createSessionWorktree,
+  discardPreparedWorktreeSession,
+} from '../../openclaw/sessions/worktreeSession';
 
 interface SessionExecutionHandlerDependencies {
   ensureEngineRunning: () => Promise<OpenClawEngineStatus>;

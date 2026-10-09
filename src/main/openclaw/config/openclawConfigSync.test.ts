@@ -1,14 +1,14 @@
 import path from 'path';
 import { describe, expect, test } from 'vitest';
 
-import { BrowserMode } from '../../../shared/browser/browser';
 import {
   AgentRuntimeDelegationMode,
   AgentRuntimeSessionVisibility,
   createDefaultAgentRuntimeSettings,
-} from '../../../shared/openclaw/agentRuntimeSettings';
-import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
-import { createDefaultExternalAgentSettings } from '../../../shared/openclaw/externalAgents';
+} from '../../../shared/agents/agentRuntimeSettings';
+import { BrowserMode } from '../../../shared/browser/browser';
+import { createDefaultExternalAgentSettings } from '../../../shared/integrations/externalAgents';
+import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
 import {
   OpenClawApi,
   OpenClawProviderId,
@@ -20,7 +20,11 @@ import {
   setActiveBuiltinModelDevelopmentApiKey,
 } from '../../providers/builtinModelCredential';
 import type { ProviderRawConfig } from '../../providers/providerApiConfig';
-import { buildManagedSwarmWorkflowPluginEntries, buildOpenClawHookConfig, listKnownOpenClawWorkspaceDirs } from './openclawConfigBuilders';
+import {
+  buildManagedSwarmWorkflowPluginEntries,
+  buildOpenClawHookConfig,
+  listKnownOpenClawWorkspaceDirs,
+} from './openclawConfigBuilders';
 import {
   applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,

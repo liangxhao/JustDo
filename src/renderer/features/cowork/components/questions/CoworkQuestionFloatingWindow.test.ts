@@ -1,4 +1,4 @@
-import { CoworkInteractionKind } from '@shared/openclaw/extensions';
+import { CoworkInteractionKind } from '@shared/cowork/interactions/interactions';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';

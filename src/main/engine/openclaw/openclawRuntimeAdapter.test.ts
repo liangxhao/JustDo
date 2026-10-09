@@ -18,9 +18,9 @@ vi.mock('../../cowork/coworkLogger', () => ({
   coworkLog: vi.fn(),
 }));
 
-import { CoworkPlanHandoffState } from '../../../shared/cowork/planHandoff';
-import { createDefaultAgentRuntimeSettings } from '../../../shared/openclaw/agentRuntimeSettings';
-import { AskUserQuestionGateway } from '../../../shared/openclaw/extensions';
+import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
+import { AskUserQuestionGateway } from '../../../shared/cowork/interactions/askUserQuestion';
+import { CoworkPlanHandoffState } from '../../../shared/cowork/interactions/planHandoff';
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 import type { GatewayClientLike, SessionTurn } from '../gateway/types';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';

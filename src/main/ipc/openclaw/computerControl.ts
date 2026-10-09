@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 
-import { ComputerControlIpc } from '../../../shared/openclaw/computerControl';
-import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
+import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
+import { ComputerControlIpc } from '../../../shared/security/computerControl';
 import { evaluateComputerControlNativePolicy } from '../../openclaw/config/computerControlNativePolicy';
 import { ComputerControlSettingsService } from '../../openclaw/config/computerControlSettingsService';
 import { hasBundledOpenClawExtension } from '../../plugins/extensions/openclawLocalExtensions';

@@ -1,6 +1,6 @@
 import { type NormalizedAgentEvent } from '@shared/openclaw/agentEvent';
-import { isGatewayInjectedModelRef, readModelRef } from '@shared/openclaw/modelRef';
 import { type ProgressCard } from '@shared/openclaw/progressCard';
+import { isGatewayInjectedModelRef, readModelRef } from '@shared/providers/modelRef';
 
 import type {
   GatewayClient,

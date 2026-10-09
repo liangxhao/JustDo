@@ -4,7 +4,7 @@ import path from 'node:path';
 import {
   diagnosticErrorCodes,
   isDiagnosticMetricValue,
-} from '../../../shared/cowork/diagnosticLogDetails';
+} from '../../../shared/cowork/diagnostics/diagnosticLogDetails';
 import type {
   DiagnosticLogCollection,
   DiagnosticLogCoverage,
@@ -13,7 +13,7 @@ import type {
   DiagnosticLogSource,
   DiagnosticReport,
   DiagnosticScanProgress,
-} from '../../../shared/cowork/sessionDiagnostics';
+} from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { scanDiagnosticLog } from './logScanner';
 import { projectResponseLog } from './responseLog';
 

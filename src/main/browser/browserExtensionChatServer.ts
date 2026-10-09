@@ -8,8 +8,8 @@ import {
   type BrowserExtensionStreamEvent,
 } from '../../shared/browser/browserExtensionStream';
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
-import type { PermissionMode } from '../../shared/openclaw/approvals';
 import { PRODUCT_NAME } from '../../shared/productMetadata';
+import type { PermissionMode } from '../../shared/security/approvals';
 import { readThreadImage } from './browserExtensionImage';
 
 export const BROWSER_EXTENSION_ID = 'jboajogplelmaahjbomgflnfngpolgcb';

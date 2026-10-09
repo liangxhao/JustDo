@@ -1,7 +1,7 @@
 import fs from 'fs';
 import JSON5 from 'json5';
 
-import { isValidMcpRequestTimeoutSeconds } from '../../../shared/openclaw/mcp';
+import { isValidMcpRequestTimeoutSeconds } from '../../../shared/plugins/mcp';
 import type { McpServerFormData, McpStore } from './mcpStore';
 
 type DiscoveryStore = Pick<McpStore, 'listServers' | 'createDiscoveredServer'>;

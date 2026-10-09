@@ -9,7 +9,7 @@ import {
 import {
   PermissionMode,
   type PermissionMode as PermissionModeValue,
-} from '@shared/openclaw/approvals';
+} from '@shared/security/approvals';
 import React, { useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 

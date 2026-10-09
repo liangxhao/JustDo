@@ -6,7 +6,7 @@ import {
   type ApprovalRequest,
   isApprovalDecision,
   OpenClawApprovalIpc,
-} from '../../../shared/openclaw/approvals';
+} from '../../../shared/security/approvals';
 import type { OpenClawRuntimeAdapter } from '../../engine/openclaw/openclawRuntimeAdapter';
 
 interface Dependencies {

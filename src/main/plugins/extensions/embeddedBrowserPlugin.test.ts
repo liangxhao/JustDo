@@ -14,7 +14,7 @@ import {
   BrowserToolSchema,
 } from '../../../../openclaw-extensions/embedded-browser/browserToolContract';
 import embeddedBrowserPlugin from '../../../../openclaw-extensions/embedded-browser/index';
-import { EmbeddedBrowserGateway } from '../../../shared/openclaw/extensions';
+import { EmbeddedBrowserGateway } from '../../../shared/browser/embeddedBrowser';
 
 type ToolResult = {
   content: Array<{

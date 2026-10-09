@@ -1,7 +1,7 @@
 import type { BrowserMode } from '../../../shared/browser/browser';
-import { readModelRef } from '../../../shared/openclaw/modelRef';
-import { matchesModelSelectionIdentity } from '../../../shared/openclaw/modelSelectionIdentity';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
+import { readModelRef } from '../../../shared/providers/modelRef';
+import { matchesModelSelectionIdentity } from '../../../shared/providers/modelSelectionIdentity';
 import type { WindowsSandboxStatus } from '../../../shared/security/windowsSandbox';
 import { ManagedDirectoryRuntimeStopAbortedError } from '../../core/filesystem/managedDirectoryOperations';
 import type { CoworkStore } from '../../data/coworkStore';
@@ -17,7 +17,10 @@ import type {
 import type { OpenClawHookStore } from '../../plugins/hooks';
 import type { McpStore } from '../../plugins/mcp';
 import { discoverOpenClawManagedMcpServers } from '../../plugins/mcp';
-import { GatewayConfigRestartOutcome, requestGatewayConfigRestart } from '../runtime/gatewayConfigRestart';
+import {
+  GatewayConfigRestartOutcome,
+  requestGatewayConfigRestart,
+} from '../runtime/gatewayConfigRestart';
 import {
   OPENCLAW_FALLBACK_EXEC_MODE,
   OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,

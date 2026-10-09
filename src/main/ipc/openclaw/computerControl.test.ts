@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { ComputerControlIpc } from '../../../shared/openclaw/computerControl';
+import { ComputerControlIpc } from '../../../shared/security/computerControl';
 import { registerComputerControlHandlers } from './computerControl';
 
 const mocks = vi.hoisted(() => ({ handle: vi.fn(), policy: vi.fn().mockResolvedValue(true) }));

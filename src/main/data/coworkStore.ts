@@ -3,6 +3,11 @@ import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
+import {
+  type AgentRuntimeSettings,
+  parseAgentRuntimeSettings,
+  validateAgentRuntimeSettings,
+} from '../../shared/agents/agentRuntimeSettings';
 import type { AgentProfileInput } from '../../shared/agents/agents';
 import {
   DEFAULT_MAX_RETAINED_DISPLAY_TABS,
@@ -13,7 +18,7 @@ import {
   CoworkPlanHandoffState,
   type CreateCoworkPlanHandoffInput,
   type TransitionCoworkPlanHandoffInput,
-} from '../../shared/cowork/planHandoff';
+} from '../../shared/cowork/interactions/planHandoff';
 import {
   GoalExecutionPhase,
   type GoalExecutionSnapshot,
@@ -25,28 +30,23 @@ import type {
   SessionRunTiming,
 } from '../../shared/cowork/sessionRun';
 import { TASK_WORKSPACE_DIRECTORY } from '../../shared/cowork/taskWorkspace';
+import {
+  type ExternalAgentSettings,
+  parseExternalAgentSettings,
+  validateExternalAgentSettings,
+} from '../../shared/integrations/externalAgents';
 import type {
   ExternalSessionMetadata,
   ExternalSessionStatus,
 } from '../../shared/integrations/multica';
-import {
-  type AgentRuntimeSettings,
-  parseAgentRuntimeSettings,
-  validateAgentRuntimeSettings,
-} from '../../shared/openclaw/agentRuntimeSettings';
+import { DEFAULT_WORKSPACE_DIRECTORY_NAME } from '../../shared/productMetadata';
+import { rewriteOpenClawModelProviderId } from '../../shared/providers';
 import {
   DEFAULT_PERMISSION_MODE,
   isPermissionMode,
   type PermissionMode,
   resolvePermissionMode,
-} from '../../shared/openclaw/approvals';
-import {
-  type ExternalAgentSettings,
-  parseExternalAgentSettings,
-  validateExternalAgentSettings,
-} from '../../shared/openclaw/externalAgents';
-import { DEFAULT_WORKSPACE_DIRECTORY_NAME } from '../../shared/productMetadata';
-import { rewriteOpenClawModelProviderId } from '../../shared/providers';
+} from '../../shared/security/approvals';
 
 // Default working directory for new users
 const getDefaultWorkingDirectory = (): string => {

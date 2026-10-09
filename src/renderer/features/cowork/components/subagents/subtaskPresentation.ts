@@ -1,5 +1,5 @@
 import type { CoworkSubagentDetailTask } from '@shared/cowork/subagentDetails';
-import { getExternalAgentDefinition } from '@shared/openclaw/externalAgentCatalog';
+import { getExternalAgentDefinition } from '@shared/integrations/externalAgentCatalog';
 
 import type { SubagentLabelSource } from './subagentLabel';
 

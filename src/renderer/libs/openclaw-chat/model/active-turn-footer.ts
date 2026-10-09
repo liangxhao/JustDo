@@ -3,7 +3,7 @@ import {
   isGatewayInjectedModelRef,
   modelRefFromIdentity,
   readModelRef,
-} from '@shared/openclaw/modelRef';
+} from '@shared/providers/modelRef';
 
 import type { AssistantTurnTiming } from './chat-transcript-state';
 

@@ -1,14 +1,14 @@
 import { ipcMain } from 'electron';
 
 import {
-  type ExtensionProvidedMcpServer,
-  isValidMcpRequestTimeoutSeconds,
-} from '../../../shared/openclaw/mcp';
-import {
   getExtensionProvidedManagement,
   getUserMcpManagement,
 } from '../../../shared/plugins/management';
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
+import {
+  type ExtensionProvidedMcpServer,
+  isValidMcpRequestTimeoutSeconds,
+} from '../../../shared/plugins/mcp';
 import type { PluginInstallationService } from '../../plugins/installation';
 import { PluginInstallOrigin } from '../../plugins/installation';
 import type {

@@ -5,14 +5,14 @@ import { pipeline } from 'node:stream/promises';
 
 import yazl from 'yazl';
 
-import { buildDiagnosticFindings } from '../../../shared/cowork/diagnosticFindings';
+import { buildDiagnosticFindings } from '../../../shared/cowork/diagnostics/diagnosticFindings';
 import {
   diagnosticErrorCodes,
   diagnosticOperations,
   diagnosticStages,
   isDiagnosticMetricValue,
-} from '../../../shared/cowork/diagnosticLogDetails';
-import { assessDiagnosticStop } from '../../../shared/cowork/diagnosticStop';
+} from '../../../shared/cowork/diagnostics/diagnosticLogDetails';
+import { assessDiagnosticStop } from '../../../shared/cowork/diagnostics/diagnosticStop';
 import {
   diagnosticLoopExits,
   DiagnosticReason,
@@ -20,7 +20,7 @@ import {
   diagnosticResponseIssues,
   diagnosticResponseShapes,
   diagnosticTimeoutPhases,
-} from '../../../shared/cowork/sessionDiagnostics';
+} from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import type { DiagnosticExportLogBundle } from './exportLogs';
 import { redactDiagnosticLog } from './exportLogs';
 

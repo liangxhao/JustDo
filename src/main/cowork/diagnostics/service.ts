@@ -5,7 +5,7 @@ import type {
   DiagnosticQuery,
   DiagnosticReport,
   DiagnosticScanProgress,
-} from '../../../shared/cowork/sessionDiagnostics';
+} from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import type { SessionDiagnosticsStore } from '../../data/sessionDiagnosticsStore';
 import type { GatewayClientLike, GatewayEventFrame } from '../../engine/gateway/types';
 import {

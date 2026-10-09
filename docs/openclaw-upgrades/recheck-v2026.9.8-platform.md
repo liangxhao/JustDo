@@ -83,7 +83,7 @@ Pristine 的 retained-gap 检查只证明补丁验证器不会错误地接受未
 
 ## 外部 Codex / Claude ACP
 
-入口：设置中的 external agents、`src/shared/openclaw/externalAgentCatalog.ts`、`openclawConfigBuilders.ts`、`openclaw-extensions/acpx/`。
+入口：设置中的 external agents、`src/shared/integrations/externalAgentCatalog.ts`、`openclawConfigBuilders.ts`、`openclaw-extensions/acpx/`。
 
 - Codex/Claude 默认不启用委派；acpx 插件保持可用以支持连接诊断，但 `startupProbe:false` 不主动启动外部账户请求。配置映射区分 approve-all、approve-reads、deny-all 以及非交互失败/拒绝策略。
 - 本地插件锁定 acpx 0.19.1、Codex ACP 1.12.0、Claude ACP 0.79.0，plugin API 下界为 2026.9.8。`codex-auth-bridge.ts` 使用已安装 adapter，缺失明确失败；wrapper 测试证明不自动下载替代品。宿主选择 adapter、配置的 executable 及 Windows 命令 token 路径分别有专项。

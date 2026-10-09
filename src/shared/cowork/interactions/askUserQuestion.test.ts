@@ -10,7 +10,7 @@ import {
   parseAskUserQuestions,
   parseAskUserRequest,
   parseAskUserWaitPolicy,
-} from './extensions';
+} from './askUserQuestion';
 
 const rawQuestions = [
   {

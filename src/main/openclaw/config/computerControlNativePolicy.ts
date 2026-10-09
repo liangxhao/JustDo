@@ -1,6 +1,6 @@
 import { spawn } from 'child_process';
 
-import { OpenClawToolName } from '../../../shared/openclaw/extensions';
+import { OpenClawToolName } from '../../../shared/plugins/nativeIds';
 
 const OUTPUT_PREFIX = 'JUSTDO_COMPUTER_POLICY=';
 const POLICY_TIMEOUT_MS = 10_000;

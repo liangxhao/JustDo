@@ -1,4 +1,4 @@
-import { parseAskUserQuestions } from '@shared/openclaw/extensions';
+import { parseAskUserQuestions } from '@shared/cowork/interactions/askUserQuestion';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type {

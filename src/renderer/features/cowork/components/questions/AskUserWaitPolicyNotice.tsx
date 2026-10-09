@@ -1,9 +1,9 @@
-import type { AskUserQuestion } from '@shared/openclaw/extensions';
+import type { AskUserQuestion } from '@shared/cowork/interactions/askUserQuestion';
 import {
   AskUserTimeoutBehavior,
   AskUserWaitMode,
   parseAskUserWaitPolicy,
-} from '@shared/openclaw/extensions';
+} from '@shared/cowork/interactions/askUserQuestion';
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';

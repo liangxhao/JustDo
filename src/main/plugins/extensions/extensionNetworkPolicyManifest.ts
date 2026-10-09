@@ -5,7 +5,7 @@ import path from 'path';
 import {
   EXTENSION_OUTBOUND_HEADER_MANIFEST_FILE,
   type ExtensionOutboundHeaderManifestV1,
-} from '../../../shared/openclaw/outboundHeaderPolicy';
+} from '../../../shared/plugins/outboundHeaderPolicy';
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_GROUPS = 32;

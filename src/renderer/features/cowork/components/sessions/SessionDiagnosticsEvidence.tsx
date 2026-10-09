@@ -18,13 +18,13 @@ import {
   WifiIcon,
   WrenchScrewdriverIcon,
 } from '@heroicons/react/24/outline';
-import { type DiagnosticFinding } from '@shared/cowork/diagnosticFindings';
-import { diagnoseHistoryFailure } from '@shared/cowork/diagnosticHistoryFindings';
+import { type DiagnosticFinding } from '@shared/cowork/diagnostics/diagnosticFindings';
+import { diagnoseHistoryFailure } from '@shared/cowork/diagnostics/diagnosticHistoryFindings';
 import type {
   DiagnosticEvent,
   DiagnosticLogCoverage,
   DiagnosticReport,
-} from '@shared/cowork/sessionDiagnostics';
+} from '@shared/cowork/diagnostics/sessionDiagnostics';
 import { useState } from 'react';
 
 import { i18nService } from '@/services/i18n';

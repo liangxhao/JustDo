@@ -1,4 +1,4 @@
-import { OpenClawExtensionId } from '@shared/openclaw/extensions';
+import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 import { useEffect, useState } from 'react';
 
 export function useWorkboardAvailability(initialized: boolean): boolean {

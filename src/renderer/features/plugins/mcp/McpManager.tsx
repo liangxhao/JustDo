@@ -1,6 +1,6 @@
-import { DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS } from '@shared/openclaw/mcp';
 import { PluginHubScope } from '@shared/plugins/management';
 import { PluginKind } from '@shared/plugins/marketplace';
+import { DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS } from '@shared/plugins/mcp';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 

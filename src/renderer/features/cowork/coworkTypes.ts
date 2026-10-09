@@ -1,7 +1,7 @@
 import type { CoworkAttachmentPayload } from '@shared/cowork/attachments';
+import type { CoworkInteractionKind } from '@shared/cowork/interactions/interactions';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import type { ExternalSessionMetadata } from '@shared/integrations/multica';
-import type { CoworkInteractionKind } from '@shared/openclaw/extensions';
 
 export type { CoworkAttachmentPayload } from '@shared/cowork/attachments';
 
@@ -208,4 +208,4 @@ export interface CoworkConfigResult {
   error?: string;
 }
 
-import type { PermissionMode } from '@shared/openclaw/approvals';
+import type { PermissionMode } from '@shared/security/approvals';

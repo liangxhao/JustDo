@@ -22,7 +22,7 @@ export interface McpServerConfig {
   management?: PluginManagementCapabilities;
 }
 
-export type { ExtensionProvidedMcpServer } from '@shared/openclaw/mcp';
+export type { ExtensionProvidedMcpServer } from '@shared/plugins/mcp';
 
 export interface McpServerFormData {
   name: string;

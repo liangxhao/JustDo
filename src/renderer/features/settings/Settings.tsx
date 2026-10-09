@@ -6,6 +6,11 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import {
+  type AgentRuntimeSettings,
+  createDefaultAgentRuntimeSettings,
+  validateAgentRuntimeSettings,
+} from '@shared/agents/agentRuntimeSettings';
+import {
   DEFAULT_MAX_RETAINED_DISPLAY_TABS,
   normalizeMaxRetainedDisplayTabs,
 } from '@shared/cowork/displayTabRetention';
@@ -13,6 +18,10 @@ import {
   DEFAULT_MAX_GOAL_CONTINUATION_TURNS,
   normalizeMaxGoalContinuationTurns,
 } from '@shared/cowork/sessionGoal';
+import {
+  createDefaultExternalAgentSettings,
+  type ExternalAgentSettings,
+} from '@shared/integrations/externalAgents';
 import { NetworkFetchPurpose } from '@shared/network/network';
 import {
   buildCustomProxyUrl,
@@ -22,16 +31,7 @@ import {
   ProxyMode,
   type ProxySettings,
 } from '@shared/network/proxy';
-import {
-  type AgentRuntimeSettings,
-  createDefaultAgentRuntimeSettings,
-  validateAgentRuntimeSettings,
-} from '@shared/openclaw/agentRuntimeSettings';
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '@shared/openclaw/constants';
-import {
-  createDefaultExternalAgentSettings,
-  type ExternalAgentSettings,
-} from '@shared/openclaw/externalAgents';
 import {
   GatewayPortSetErrorCode,
   GatewayPortValidationCode,

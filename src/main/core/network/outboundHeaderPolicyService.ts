@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 
 import { PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG } from '../../../config/outboundHeaders';
-import type { InstalledOpenClawExtension } from '../../../shared/openclaw/extensions';
+import type { InstalledOpenClawExtension } from '../../../shared/plugins/extensions';
 import {
   type ExtensionNetworkPolicyInspection,
   inspectExtensionNetworkPolicyManifest,

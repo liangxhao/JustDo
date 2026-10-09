@@ -7,7 +7,11 @@ import {
   captureDecisionModelConfiguration,
   resolveDecisionModelSelection,
 } from './decisionModelConfig';
-import { applyNativeVideoConfiguration, captureNativeVideoConfiguration, resolveNativeVideoSelection } from './nativeVideoModelConfig';
+import {
+  applyNativeVideoConfiguration,
+  captureNativeVideoConfiguration,
+  resolveNativeVideoSelection,
+} from './nativeVideoModelConfig';
 import {
   applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,
@@ -124,21 +128,21 @@ export {
   verifyLoggedOutOpenClawConfig,
 } from './openclawConfigBuilders';
 
+import { normalizeOpenClawAgentId } from '../../../shared/agents/agentId';
+import {
+  type AgentRuntimeSettings,
+  createDefaultAgentRuntimeSettings,
+} from '../../../shared/agents/agentRuntimeSettings';
 import {
   BrowserMode,
   type BrowserMode as BrowserModeValue,
   normalizeBrowserMode,
 } from '../../../shared/browser/browser';
-import { normalizeOpenClawAgentId } from '../../../shared/openclaw/agentId';
-import {
-  type AgentRuntimeSettings,
-  createDefaultAgentRuntimeSettings,
-} from '../../../shared/openclaw/agentRuntimeSettings';
-import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import {
   createDefaultExternalAgentSettings,
   type ExternalAgentSettings,
-} from '../../../shared/openclaw/externalAgents';
+} from '../../../shared/integrations/externalAgents';
+import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
 import { t } from '../../core/i18n';
 import type { Agent, CoworkConfig } from '../../data/coworkStore';
@@ -155,10 +159,7 @@ import {
 } from '../../providers/providerApiConfig';
 import { buildAgentEntry, buildManagedAgentEntries } from '../models/openclawAgentModels';
 import { getElectronNodeRuntimePath } from '../runtime/electronNodeRuntime';
-import {
-  resolveManagedAgentWorkspace,
-  resolveManagedAgentWorkspaceRoot,
-} from './agentWorkspace';
+import { resolveManagedAgentWorkspace, resolveManagedAgentWorkspaceRoot } from './agentWorkspace';
 import { syncBuiltinCredentialFile } from './builtinCredentialFile';
 import { seedMainRoleFiles } from './mainRoleFiles';
 import { restrictCredentialFile, syncProviderSecretFile } from './providerSecretFile';

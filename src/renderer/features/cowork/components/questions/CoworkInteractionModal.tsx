@@ -3,8 +3,9 @@ import type {
   AskUserAnswers,
   AskUserQuestion,
   AskUserQuestionOption,
-} from '@shared/openclaw/extensions';
-import { CoworkInteractionKind, parseAskUserQuestions } from '@shared/openclaw/extensions';
+} from '@shared/cowork/interactions/askUserQuestion';
+import { parseAskUserQuestions } from '@shared/cowork/interactions/askUserQuestion';
+import { CoworkInteractionKind } from '@shared/cowork/interactions/interactions';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import type {

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { DiagnosticReport } from '@shared/cowork/sessionDiagnostics';
+import type { DiagnosticReport } from '@shared/cowork/diagnostics/sessionDiagnostics';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 

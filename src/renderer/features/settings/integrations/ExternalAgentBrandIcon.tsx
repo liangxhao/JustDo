@@ -1,4 +1,4 @@
-import type { ExternalAgentId } from '@shared/openclaw/externalAgents';
+import type { ExternalAgentId } from '@shared/integrations/externalAgents';
 import React from 'react';
 
 type Props = {

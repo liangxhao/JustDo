@@ -3,7 +3,7 @@ import {
   ApprovalKind,
   type ApprovalRequest,
   ExecApprovalDecision,
-} from '@shared/openclaw/approvals';
+} from '@shared/security/approvals';
 import { describe, expect, it } from 'vitest';
 
 import {

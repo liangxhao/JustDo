@@ -1,6 +1,6 @@
 import { ShareIcon } from '@heroicons/react/24/outline';
 import type { SwarmWorkflowOptions } from '@shared/cowork/swarmWorkflow';
-import { OpenClawExtensionId } from '@shared/openclaw/extensions';
+import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 
 import { i18nService } from '@/services/i18n';
 

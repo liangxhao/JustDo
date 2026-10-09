@@ -1,4 +1,4 @@
-import { OpenClawProviderId } from '../providers/constants';
+import { OpenClawProviderId } from './constants';
 
 /** Match a Gateway selection against a requested catalog route. */
 export function matchesModelSelectionIdentity(requested: string, selected: string): boolean {

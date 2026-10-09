@@ -17,8 +17,8 @@ import type {
   OpenClawSessionMigrationProgress,
   OpenClawSessionMigrationResult,
 } from '../../../shared/openclaw/sessionMigration';
-import type { SystemPromptReplacementRule } from '../../../shared/openclaw/systemPromptReplacements';
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
+import type { SystemPromptReplacementRule } from '../../../shared/prompts/systemPromptReplacements';
 import {
   applyTrustedCertificateEnv,
   buildTrustedCaBundle,

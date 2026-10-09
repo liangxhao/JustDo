@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { DiagnosticReport } from '../../../shared/cowork/sessionDiagnostics';
+import type { DiagnosticReport } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { collectDiagnosticLogs } from './logCollector';
 
 const time = Date.parse('2026-09-28T10:00:00Z');

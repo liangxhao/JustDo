@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import { ExtensionIpc } from '../../../shared/openclaw/extensions';
+import { ExtensionIpc } from '../../../shared/plugins/extensions';
 import { PluginKind } from '../../../shared/plugins/marketplace';
 import type { OpenClawExtensionImportService } from '../../plugins/extensions';
 import type { PluginInstallationService } from '../../plugins/installation';

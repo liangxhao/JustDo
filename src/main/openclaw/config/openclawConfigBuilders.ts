@@ -3,26 +3,25 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shared/browser/browser';
-import { OPENAI_REQUEST_USER_AGENT } from '../../../shared/cowork/modelRequestHeaders';
-import { normalizeOpenClawAgentId } from '../../../shared/openclaw/agentId';
+import { normalizeOpenClawAgentId } from '../../../shared/agents/agentId';
 import {
   AgentRuntimeCodeMode,
   type AgentRuntimeSettings,
   createDefaultAgentRuntimeSettings,
   DEFAULT_AGENT_RUNTIME_SETTINGS,
-} from '../../../shared/openclaw/agentRuntimeSettings';
-import { PermissionMode } from '../../../shared/openclaw/approvals';
-import { OPENCLAW_COMPACTION_TIMEOUT_SECONDS } from '../../../shared/openclaw/compaction';
-import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
+} from '../../../shared/agents/agentRuntimeSettings';
+import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shared/browser/browser';
+import { OPENAI_REQUEST_USER_AGENT } from '../../../shared/cowork/modelRequestHeaders';
 import {
   EXTERNAL_AGENT_CATALOG,
   type ExternalAgentDefinition,
-} from '../../../shared/openclaw/externalAgentCatalog';
+} from '../../../shared/integrations/externalAgentCatalog';
 import {
   createDefaultExternalAgentSettings,
   type ExternalAgentSettings,
-} from '../../../shared/openclaw/externalAgents';
+} from '../../../shared/integrations/externalAgents';
+import { OPENCLAW_COMPACTION_TIMEOUT_SECONDS } from '../../../shared/openclaw/compaction';
+import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
 import {
   getEffectiveCustomProviderDisplayName,
   isJustDoCustomProviderKey,
@@ -32,6 +31,7 @@ import {
   ProviderName,
 } from '../../../shared/providers';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
+import { PermissionMode } from '../../../shared/security/approvals';
 import { WINDOWS_SANDBOX_BACKEND_ID } from '../../../shared/security/windowsSandbox';
 import { LOCAL_TTS_PROVIDER_ID } from '../../../shared/speech/localTts';
 import type { Agent, CoworkConfig, CoworkExecutionMode } from '../../data/coworkStore';

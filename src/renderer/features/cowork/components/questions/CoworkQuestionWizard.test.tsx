@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { CoworkInteractionKind } from '@shared/openclaw/extensions';
+import { CoworkInteractionKind } from '@shared/cowork/interactions/interactions';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 

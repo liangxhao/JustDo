@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'vitest';
 
-import { isGatewayInjectedModelRef, modelRefFromIdentity, normalizeModelRef, readModelRef } from './modelRef';
+import {
+  isGatewayInjectedModelRef,
+  modelRefFromIdentity,
+  normalizeModelRef,
+  readModelRef,
+} from './modelRef';
 
 describe('modelRef', () => {
   test('preserves the provider when Gateway returns a model ID containing slashes', () => {

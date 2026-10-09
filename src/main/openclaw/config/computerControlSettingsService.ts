@@ -1,5 +1,5 @@
-import type { ComputerControlResult } from '../../../shared/openclaw/computerControl';
-import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
+import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
+import type { ComputerControlResult } from '../../../shared/security/computerControl';
 import { asComputerConfigRecord, buildComputerControlPatch } from './computerControlConfig';
 
 type Request = <T>(method: string, params?: unknown) => Promise<T>;

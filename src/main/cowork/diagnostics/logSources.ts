@@ -1,4 +1,4 @@
-import type { DiagnosticReport } from '../../../shared/cowork/sessionDiagnostics';
+import type { DiagnosticReport } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 
 /** UTC filenames only prioritize reads; record timestamps still decide inclusion. */
 export function orderDiagnosticMainLogs(

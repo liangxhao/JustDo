@@ -1,5 +1,5 @@
-import type { ExtensionProvidedMcpServer } from '../../../shared/openclaw/mcp';
 import { getExtensionManagement, PluginHubScope } from '../../../shared/plugins/management';
+import type { ExtensionProvidedMcpServer } from '../../../shared/plugins/mcp';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import { type ExtensionMcpCommandRunner, runExtensionMcpOperation } from './extensionMcpRuntime';
 

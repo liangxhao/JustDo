@@ -1,5 +1,5 @@
-import { normalizeModelRef, readModelRef } from '../../../shared/openclaw/modelRef';
-import { matchesModelSelectionIdentity } from '../../../shared/openclaw/modelSelectionIdentity';
+import { normalizeModelRef, readModelRef } from '../../../shared/providers/modelRef';
+import { matchesModelSelectionIdentity } from '../../../shared/providers/modelSelectionIdentity';
 import type { CoworkStore } from '../../data/coworkStore';
 import { enqueueSessionModelOperation } from './sessionModelOperations';
 import type { GatewayClientLike } from './types';

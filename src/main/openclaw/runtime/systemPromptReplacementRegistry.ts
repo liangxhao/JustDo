@@ -1,12 +1,9 @@
+import { AUTHOR_NAME, PRODUCT_NAME } from '../../../shared/productMetadata';
 import {
   normalizeSystemPromptReplacementRules,
   SYSTEM_PROMPT_REPLACEMENT_MAX_RULES,
   type SystemPromptReplacementRule,
-} from '../../../shared/openclaw/systemPromptReplacements';
-import {
-  AUTHOR_NAME,
-  PRODUCT_NAME,
-} from '../../../shared/productMetadata';
+} from '../../../shared/prompts/systemPromptReplacements';
 
 /**
  * Built-in final system-prompt replacements belong here. They run before

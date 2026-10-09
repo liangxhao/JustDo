@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { createDefaultAgentRuntimeSettings } from '../../../shared/openclaw/agentRuntimeSettings';
+import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
 import {
   buildAuthScopedOpenClawConfig,

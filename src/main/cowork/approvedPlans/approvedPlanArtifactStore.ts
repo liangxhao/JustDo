@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
-import type { CoworkPlanArtifactReference } from '../../../shared/cowork/planHandoff';
+import type { CoworkPlanArtifactReference } from '../../../shared/cowork/interactions/planHandoff';
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 
 export const APPROVED_PLAN_ARTIFACT_DIRECTORY = path.join(`.${PRODUCT_NAME_LOWERCASE}`, 'plans');

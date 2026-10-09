@@ -2,6 +2,15 @@ import './AgentRuntimeSettingsTab.css';
 
 import { ArrowPathIcon, CpuChipIcon, MinusIcon, PlusIcon } from '@heroicons/react/24/outline';
 import {
+  AGENT_RUNTIME_LIMITS,
+  AgentRuntimeCodeMode,
+  AgentRuntimeDelegationMode,
+  AgentRuntimeSessionVisibility,
+  type AgentRuntimeSettings,
+  AgentRuntimeThinkingLevel,
+  AUTOMATION_APPROVAL_TIMEOUT_MINUTES,
+} from '@shared/agents/agentRuntimeSettings';
+import {
   MAX_MAX_RETAINED_DISPLAY_TABS,
   MIN_MAX_RETAINED_DISPLAY_TABS,
 } from '@shared/cowork/displayTabRetention';
@@ -10,15 +19,6 @@ import {
   MIN_MAX_GOAL_CONTINUATION_TURNS,
   normalizeMaxGoalContinuationTurns,
 } from '@shared/cowork/sessionGoal';
-import {
-  AGENT_RUNTIME_LIMITS,
-  AgentRuntimeCodeMode,
-  AgentRuntimeDelegationMode,
-  AgentRuntimeSessionVisibility,
-  type AgentRuntimeSettings,
-  AgentRuntimeThinkingLevel,
-  AUTOMATION_APPROVAL_TIMEOUT_MINUTES,
-} from '@shared/openclaw/agentRuntimeSettings';
 import React, { useId, useMemo } from 'react';
 
 import type { Model } from '@/features/models/modelSlice';

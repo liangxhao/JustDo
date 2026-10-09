@@ -48,7 +48,7 @@ runtime.subagent.run 当前不传 lane，执行落到 main lane。会话名称�
 
 JustDo 默认 agents.defaults.timeoutSeconds=0。原生 resolver 返回计时器安全哨兵；正式 attempt 将其解释为 unlimited，不设置总执行 abort timer，不能将哨兵约 24.85 天误解成实际截止。未设置该字段时原生默认 48 小时。
 
-证据：`src/shared/openclaw/agentRuntimeSettings.ts:114`；`../openclaw/src/agents/timeout.ts:6–51`、`src/agents/embedded-agent-runner/run/attempt-timeout-prepare.ts:132–148`。直接执行生产 timeout/lane helper 已核对 0 与 lane 解析。
+证据：`src/shared/agents/agentRuntimeSettings.ts:114`；`../openclaw/src/agents/timeout.ts:6–51`、`src/agents/embedded-agent-runner/run/attempt-timeout-prepare.ts:132–148`。直接执行生产 timeout/lane helper 已核对 0 与 lane 解析。
 
 公开 SDK run 没有每次运行 timeout，但 agent RPC 已有秒单位 timeout。应新增通用 timeoutSeconds 透传，保留现有准入及 registry 登记，不直接绕过 SDK 调用裸 agent RPC。显式取需求、插件配置与非零原生上限的较小值。特别注意 subagent lane 无显式 timeout 时会强制不限时，不能借此放宽原生短上限。
 

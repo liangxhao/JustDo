@@ -1,4 +1,4 @@
-import { isGatewayInjectedModelRef } from '../openclaw/modelRef';
+import { isGatewayInjectedModelRef } from '../providers/modelRef';
 
 export interface SessionDetailTokenUsage {
   input: number;

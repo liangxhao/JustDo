@@ -26,17 +26,21 @@ import {
 } from '@shared/browser/browser';
 import { recordingImagesInStepOrder } from '@shared/browser/browserRecording';
 import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
+import { CoworkInteractionKind } from '@shared/cowork/interactions/interactions';
+import {
+  COWORK_PLAN_PREVIEW_EVENT,
+  isCoworkPlanPreview,
+} from '@shared/cowork/interactions/planPreview';
 import { getMessageTitleInput } from '@shared/cowork/messageInput';
-import { COWORK_PLAN_PREVIEW_EVENT, isCoworkPlanPreview } from '@shared/cowork/planPreview';
 import { REVIEW_OPEN_EVENT, REVIEW_TAB_ID } from '@shared/cowork/sessionReview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { isGoalEditCommand } from '@shared/cowork/slashCommands';
-import { CoworkInteractionKind, OpenClawToolName } from '@shared/openclaw/extensions';
 import {
   type ProgressCard,
   progressCardIsComplete,
   type ProgressCardViewState,
 } from '@shared/openclaw/progressCard';
+import { OpenClawToolName } from '@shared/plugins/nativeIds';
 import {
   forwardRef,
   useCallback,

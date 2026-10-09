@@ -1,19 +1,19 @@
 import { ipcMain } from 'electron';
 
-import { normalizeMaxRetainedDisplayTabs } from '../../../shared/cowork/displayTabRetention';
-import { normalizeMaxGoalContinuationTurns } from '../../../shared/cowork/sessionGoal';
 import {
   AgentRuntimeSettingsIpc,
   validateAgentRuntimeSettings,
-} from '../../../shared/openclaw/agentRuntimeSettings';
-import { isPermissionMode, type PermissionMode } from '../../../shared/openclaw/approvals';
-import { getExternalAgentDefinition } from '../../../shared/openclaw/externalAgentCatalog';
+} from '../../../shared/agents/agentRuntimeSettings';
+import { normalizeMaxRetainedDisplayTabs } from '../../../shared/cowork/displayTabRetention';
+import { normalizeMaxGoalContinuationTurns } from '../../../shared/cowork/sessionGoal';
+import { getExternalAgentDefinition } from '../../../shared/integrations/externalAgentCatalog';
 import {
   ExternalAgentIpc,
   type ExternalAgentTestResult,
   validateExternalAgentSettings,
-} from '../../../shared/openclaw/externalAgents';
+} from '../../../shared/integrations/externalAgents';
 import { SessionStorageIpc } from '../../../shared/openclaw/sessionStorage';
+import { isPermissionMode, type PermissionMode } from '../../../shared/security/approvals';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkAgentEngine, CoworkEngineRouter } from '../../engine';
 import type {

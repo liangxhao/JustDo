@@ -6,7 +6,7 @@ import {
   type DiagnosticFailure,
   type DiagnosticQuery,
   SessionDiagnosticsIpc,
-} from '../../../shared/cowork/sessionDiagnostics';
+} from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import { getLanguage, t } from '../../core/i18n';
 import { buildDiagnosticArchive, writeDiagnosticArchive } from '../../cowork/diagnostics/exporter';

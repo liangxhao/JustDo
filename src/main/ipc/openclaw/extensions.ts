@@ -7,7 +7,7 @@ import {
   ExtensionIpc,
   type ExtensionSetEnabledRequest,
   type ExtensionUpdateConfigurationRequest,
-} from '../../../shared/openclaw/extensions';
+} from '../../../shared/plugins/extensions';
 import { getExtensionManagement } from '../../../shared/plugins/management';
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
 import type { OpenClawExtensionImportService } from '../../plugins/extensions';

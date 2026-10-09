@@ -19,8 +19,8 @@ import {
   shouldClearSlashCommandComposerBeforeExecution,
 } from '@shared/cowork/slashCommands';
 import type { SwarmWorkflowOptions } from '@shared/cowork/swarmWorkflow';
-import { OpenClawExtensionId } from '@shared/openclaw/extensions';
 import type { OpenClawModelChoice } from '@shared/openclaw/models';
+import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 import { isLocalAudioAttachment } from '@shared/speech/localAsr';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';

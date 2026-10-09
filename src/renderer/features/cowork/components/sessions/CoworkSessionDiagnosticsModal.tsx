@@ -12,14 +12,14 @@ import {
   StopIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import { diagnoseHistoryFailure } from '@shared/cowork/diagnosticHistoryFindings';
+import { diagnoseHistoryFailure } from '@shared/cowork/diagnostics/diagnosticHistoryFindings';
 import type {
   DiagnosticFailure,
   DiagnosticReadResult,
   DiagnosticReport,
   DiagnosticRun,
   DiagnosticScanProgress,
-} from '@shared/cowork/sessionDiagnostics';
+} from '@shared/cowork/diagnostics/sessionDiagnostics';
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';

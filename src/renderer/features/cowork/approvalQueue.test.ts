@@ -1,4 +1,4 @@
-import { ApprovalKind, type ApprovalRequest } from '@shared/openclaw/approvals';
+import { ApprovalKind, type ApprovalRequest } from '@shared/security/approvals';
 import { describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
 

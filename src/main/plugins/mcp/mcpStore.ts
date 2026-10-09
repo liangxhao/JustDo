@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
 
-import { isValidMcpRequestTimeoutSeconds } from '../../../shared/openclaw/mcp';
+import { isValidMcpRequestTimeoutSeconds } from '../../../shared/plugins/mcp';
 
 export interface McpServerRecord {
   id: string;

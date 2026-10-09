@@ -32,7 +32,7 @@
 | 发送与乐观输入 | controller send／history reconciliation | 原生接受与正式用户正文分离；按身份退役，不因相同文字误吞新输入；并发历史失败不提前压掉未确认乐观输入 | 不把 pending body 写入 Redux／Main transcript 缓存 |
 | SubAgent 列表与详情 | `main/engine/openclaw/subagentGateway.ts`、subagents 组件 | sessions.list/describe 的真实身份与 spawnedBy 关系；500项原生分页和应用游标；执行状态与交付状态分离；相关 Main/Renderer 测试通过 | native 状态未知不冒充完成；本轮未跑真实多模型并发子任务 |
 | 子任务停止与归属 | 同上；native sessions.abort | 祖先链校验、循环／深度限制；取消前重读身份，clearQueued:true 交由原生级联；伪造归属测试通过 | 原生 abort 接口以 key 为目标；无法凭 UI 自行承诺多 RPC 之间原子性 |
-| Ask 权限 | `shared/openclaw/approvals.ts`、权限协调器、approval UI | 应用 ask 映射原生 guarded；审批属于原生策略，UI 不绕过；权限／审批定向测试通过 | 有权限不等于所有外部环境可执行 |
+| Ask 权限 | `shared/security/approvals.ts`、权限协调器、approval UI | 应用 ask 映射原生 guarded；审批属于原生策略，UI 不绕过；权限／审批定向测试通过 | 有权限不等于所有外部环境可执行 |
 | Auto 权限 | 同上 | auto 映射 workspace；每轮准备核对 native permissionMode；活动轮修改延后应用，不伪造即时生效 | 延后模式变更与原生可选热变更能力是应用产品策略区别 |
 | Full 权限 | 同上 | full 映射 full；与 Plan 只读覆盖分开；失败不以本地字段冒充成功 | Full 不能绕过原生宿主、插件或沙箱限制 |
 | Plan 开关／展示 | `runtimePlanInteractions.ts`、`openclaw-extensions/plan-mode`、plan preview | active 时启用限制、会话 key、native read-only tool policy；Plan artifact 与进度卡分开；Plan plugin／preview 测试通过 | Plan 是执行策略覆盖，并非第四个权限档位 |

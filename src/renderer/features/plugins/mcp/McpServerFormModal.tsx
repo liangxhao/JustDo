@@ -2,7 +2,7 @@ import {
   DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS,
   isValidMcpRequestTimeoutSeconds,
   MCP_REQUEST_TIMEOUT_LIMITS,
-} from '@shared/openclaw/mcp';
+} from '@shared/plugins/mcp';
 import React, { useEffect, useState } from 'react';
 
 import { McpRegistryEntry, McpServerConfig, McpServerFormData } from '@/features/plugins/mcp/mcp';

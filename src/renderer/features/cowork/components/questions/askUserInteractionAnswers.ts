@@ -1,4 +1,4 @@
-import type { AskUserQuestion } from '@shared/openclaw/extensions';
+import type { AskUserQuestion } from '@shared/cowork/interactions/askUserQuestion';
 
 export const isQuestionAnswerComplete = (
   question: AskUserQuestion,

@@ -41,11 +41,21 @@ import {
   type CoworkAttachmentPayload,
   toGatewayAttachment,
 } from '../../../shared/cowork/attachments';
-import { hasMessageInput } from '../../../shared/cowork/messageInput';
+import {
+  type AskUserInteractionEnvelope,
+  type AskUserRequest,
+} from '../../../shared/cowork/interactions/askUserQuestion';
+import { type CoworkInteractionEnvelope } from '../../../shared/cowork/interactions/interactions';
 import {
   type CoworkPlanArtifactReference,
   type CoworkPlanHandoff,
-} from '../../../shared/cowork/planHandoff';
+} from '../../../shared/cowork/interactions/planHandoff';
+import {
+  type PlanModeInteractionEnvelope,
+  type PlanModeRequest,
+  type PlanModeState,
+} from '../../../shared/cowork/interactions/planMode';
+import { hasMessageInput } from '../../../shared/cowork/messageInput';
 import {
   GoalExecutionIpc,
   GoalExecutionPhase,
@@ -64,6 +74,12 @@ import {
   SlashCommandBeforeSendHook,
 } from '../../../shared/cowork/slashCommands';
 import { type NormalizedAgentEvent } from '../../../shared/openclaw/agentEvent';
+import { isGatewayRequestOutcomeUnknown } from '../../../shared/openclaw/gatewayRequestOutcome';
+import {
+  classifyAgentEvent,
+  normalizeMessageSessionKey,
+} from '../../../shared/openclaw/messageDomain';
+import { normalizeModelRef, readModelRef } from '../../../shared/providers/modelRef';
 import {
   ApprovalDecision,
   type ApprovalDecision as ApprovalDecisionValue,
@@ -75,21 +91,7 @@ import {
   type PermissionMode,
   type PluginApprovalRequest,
   toOpenClawSessionPermissionMode,
-} from '../../../shared/openclaw/approvals';
-import {
-  type AskUserInteractionEnvelope,
-  type AskUserRequest,
-  type CoworkInteractionEnvelope,
-  type PlanModeInteractionEnvelope,
-  type PlanModeRequest,
-  type PlanModeState,
-} from '../../../shared/openclaw/extensions';
-import { isGatewayRequestOutcomeUnknown } from '../../../shared/openclaw/gatewayRequestOutcome';
-import {
-  classifyAgentEvent,
-  normalizeMessageSessionKey,
-} from '../../../shared/openclaw/messageDomain';
-import { normalizeModelRef, readModelRef } from '../../../shared/openclaw/modelRef';
+} from '../../../shared/security/approvals';
 import type { ApprovedPlanArtifactStore } from '../../cowork/approvedPlans/approvedPlanArtifactStore';
 import { coworkLog } from '../../cowork/coworkLogger';
 import { type SessionTitleFetch, SessionTitleGenerator } from '../../cowork/sessionTitleGenerator';

@@ -4,7 +4,7 @@ import { performance } from 'node:perf_hooks';
 import Database from 'better-sqlite3';
 import { expect, it } from 'vitest';
 
-import type { DiagnosticEvent } from '../../../shared/cowork/sessionDiagnostics';
+import type { DiagnosticEvent } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import {
   initializeSessionDiagnosticsTables,
   SessionDiagnosticsStore,

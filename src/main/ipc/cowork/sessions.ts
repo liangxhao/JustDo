@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
 import path from 'path';
 
+import { parsePlanModeState } from '../../../shared/cowork/interactions/planMode';
 import {
   type CopyCoworkSessionInput,
   CoworkSessionCopyIpc,
@@ -21,12 +22,12 @@ import {
   type SessionRunUnknownInput,
 } from '../../../shared/cowork/sessionRun';
 import { CoworkSessionSearchIpc } from '../../../shared/cowork/sessionSearch';
+import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
 import {
   isPermissionMode,
   type PermissionMode,
   toOpenClawSessionPermissionMode,
-} from '../../../shared/openclaw/approvals';
-import { OpenClawExtensionId, parsePlanModeState } from '../../../shared/openclaw/extensions';
+} from '../../../shared/security/approvals';
 import { t } from '../../core/i18n';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';

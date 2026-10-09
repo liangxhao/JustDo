@@ -12,7 +12,7 @@ import {
   EXTERNAL_AGENT_OPERATION_TIMEOUT_OPTIONS,
   type ExternalAgentId,
   type ExternalAgentSettings,
-} from '@shared/openclaw/externalAgents';
+} from '@shared/integrations/externalAgents';
 import React, { useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';

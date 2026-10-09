@@ -15,7 +15,7 @@ import {
   ApprovalKind,
   ExecApprovalDecision,
   OpenClawApprovalIpc,
-} from '../../../shared/openclaw/approvals';
+} from '../../../shared/security/approvals';
 import { registerOpenClawApprovalHandlers } from './approvals';
 
 describe('OpenClaw approval IPC', () => {

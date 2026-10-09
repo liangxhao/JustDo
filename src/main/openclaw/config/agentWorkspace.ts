@@ -1,6 +1,6 @@
 import path from 'path';
 
-import { normalizeOpenClawAgentId } from '../../../shared/openclaw/agentId';
+import { normalizeOpenClawAgentId } from '../../../shared/agents/agentId';
 
 // Match native workspace/cwd separation: role homes never depend on the selected project.
 export function resolveManagedAgentWorkspaceRoot(stateDir: string): string {

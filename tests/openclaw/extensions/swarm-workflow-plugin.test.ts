@@ -7,8 +7,11 @@ import vm from 'node:vm';
 import { buildSync } from 'esbuild';
 import { afterEach, expect, it, vi } from 'vitest';
 
-import { buildSwarmWorkflowInstruction, SwarmWorkflowGateway } from '../../../src/shared/cowork/swarmWorkflow';
-import { OpenClawExtensionId } from '../../../src/shared/openclaw/extensions';
+import {
+  buildSwarmWorkflowInstruction,
+  SwarmWorkflowGateway,
+} from '../../../src/shared/cowork/swarmWorkflow';
+import { OpenClawExtensionId } from '../../../src/shared/plugins/nativeIds';
 import { FLOW_LIMITS } from '../../../openclaw-extensions/swarm-workflow/contract';
 const requireNative = createRequire(import.meta.url);
 const code = buildSync({

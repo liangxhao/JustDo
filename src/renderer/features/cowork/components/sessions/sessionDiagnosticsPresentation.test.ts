@@ -1,5 +1,8 @@
-import type { DiagnosticFinding } from '@shared/cowork/diagnosticFindings';
-import type { DiagnosticLogRecord, DiagnosticReport } from '@shared/cowork/sessionDiagnostics';
+import type { DiagnosticFinding } from '@shared/cowork/diagnostics/diagnosticFindings';
+import type {
+  DiagnosticLogRecord,
+  DiagnosticReport,
+} from '@shared/cowork/diagnostics/sessionDiagnostics';
 import { describe, expect, it } from 'vitest';
 
 import { i18nService } from '@/services/i18n';

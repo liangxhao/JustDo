@@ -16,7 +16,7 @@ vi.mock('electron', () => ({
   },
 }));
 
-import { CoworkInteractionIpc } from '../../../shared/openclaw/extensions';
+import { CoworkInteractionIpc } from '../../../shared/cowork/interactions/interactions';
 import { registerCoworkInteractionHandlers } from './interactions';
 
 describe('cowork AskUserQuestion interaction IPC', () => {

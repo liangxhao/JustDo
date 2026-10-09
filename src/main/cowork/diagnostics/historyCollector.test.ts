@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { DiagnosticReport } from '../../../shared/cowork/sessionDiagnostics';
+import type { DiagnosticReport } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 import { collectDiagnosticHistory } from './historyCollector';
 

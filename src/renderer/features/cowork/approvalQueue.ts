@@ -1,4 +1,4 @@
-import type { ApprovalRequest } from '@shared/openclaw/approvals';
+import type { ApprovalRequest } from '@shared/security/approvals';
 
 type ApprovalListResult = {
   success: boolean;

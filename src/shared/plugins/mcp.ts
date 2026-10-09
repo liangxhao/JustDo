@@ -24,4 +24,4 @@ export type ExtensionProvidedMcpServer = {
   scope?: PluginHubScope;
   management?: PluginManagementCapabilities;
 };
-import type { PluginHubScope, PluginManagementCapabilities } from '../plugins/management';
+import type { PluginHubScope, PluginManagementCapabilities } from './management';

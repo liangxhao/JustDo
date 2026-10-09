@@ -1,4 +1,4 @@
-import type { DiagnosticReport } from '../../../shared/cowork/sessionDiagnostics';
+import type { DiagnosticReport } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 
 const object = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)

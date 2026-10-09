@@ -1,5 +1,5 @@
-import type { PermissionMode } from '../../shared/openclaw/approvals';
 import type { OpenClawSkillSource } from '../../shared/plugins/skills';
+import type { PermissionMode } from '../../shared/security/approvals';
 
 export type CoworkAgentEngine = 'openclaw';
 

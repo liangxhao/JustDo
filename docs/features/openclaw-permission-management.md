@@ -51,4 +51,4 @@ sessionRoot 来自产品任务 cwd，并规范化验证。变更项目路径、�
 
 ## 6. 代码与测试
 
-主入口是 `src/main/openclaw/permissions/sessionPermissionModeCoordinator.ts`，发送由 Cowork handler/Router 复用，合约位于 shared/openclaw。测试应覆盖活动期间变更、失败重试、快速切换、删除与新 turn 同步，而不是只断言生成的 JSON 有某字段。
+主入口是 `src/main/openclaw/permissions/sessionPermissionModeCoordinator.ts`，发送由 Cowork handler/Router 复用，合约位于 `src/shared/security/approvals.ts`。测试应覆盖活动期间变更、失败重试、快速切换、删除与新 turn 同步，而不是只断言生成的 JSON 有某字段。

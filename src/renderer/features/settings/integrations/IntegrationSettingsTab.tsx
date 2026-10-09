@@ -1,4 +1,4 @@
-import type { ExternalAgentSettings } from '@shared/openclaw/externalAgents';
+import type { ExternalAgentSettings } from '@shared/integrations/externalAgents';
 import React from 'react';
 
 import { i18nService } from '@/services/i18n';

@@ -25,7 +25,7 @@
 
 | 修改点         | 实现入口                                                                                                                                                                                                                             | 新 Agent 的接入要求                                                  |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
-| 产品目录       | [externalAgentCatalog.ts](../../src/shared/openclaw/externalAgentCatalog.ts)                                                                                                                                                         | 增加一项；类型、设置默认值和页面列表随目录派生                       |
+| 产品目录       | [externalAgentCatalog.ts](../../src/shared/integrations/externalAgentCatalog.ts)                                                                                                                                                         | 增加一项；类型、设置默认值和页面列表随目录派生                       |
 | 中英文说明     | [settingsTranslations.ts](../../src/renderer/services/i18n/settingsTranslations.ts)                                                                                                                                                  | 两种语言补齐同一个 `descriptionKey`                                  |
 | 图标与样式     | [ExternalAgentBrandIcon.tsx](../../src/renderer/features/settings/integrations/ExternalAgentBrandIcon.tsx)、[ExternalAgentsSettingsSection.tsx](../../src/renderer/features/settings/integrations/ExternalAgentsSettingsSection.tsx) | 增加图标分支和 `AGENT_ICON_STYLES` 项                                |
 | adapter 与依赖 | [ACPX 扩展](../../openclaw-extensions/acpx/README.md)                                                                                                                                                                                | 原生 CLI 可依赖部署方安装；内置 adapter 进入扩展源码或锁定的生产依赖 |
@@ -167,7 +167,7 @@ adapter 的职责是把 ACP 请求转换为目标 Agent 能理解的调用，并
 
 权威目录位于：
 
-`src/shared/openclaw/externalAgentCatalog.ts`
+`src/shared/integrations/externalAgentCatalog.ts`
 
 ### 4.1 ID 规则
 
@@ -504,8 +504,8 @@ Skill，需要单独设计显式的、安全的适配流程，不能把“已打
 
 可优先参考并扩展这些现有测试入口：
 
-- `src/shared/openclaw/externalAgentCatalog.test.ts`
-- `src/shared/openclaw/externalAgents.test.ts`
+- `src/shared/integrations/externalAgentCatalog.test.ts`
+- `src/shared/integrations/externalAgents.test.ts`
 - `src/main/openclaw/config/openclawConfigSync.test.ts`
 - `src/main/ipc/cowork/config.test.ts`
 - `src/renderer/features/settings/integrations/ExternalAgentsSettingsSection.test.tsx`

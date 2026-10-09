@@ -20,11 +20,12 @@ import { APP_UPDATE_CONFIG } from '../config/appUpdate';
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../config/builtinModels';
 import { AuthIpc } from '../shared/app/auth';
 import { normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../shared/browser/browser';
+import { EmbeddedBrowserGateway } from '../shared/browser/embeddedBrowser';
 import { buildCoworkSessionKey } from '../shared/cowork/sessionKey';
 import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
 import type { ProxySettings } from '../shared/network/proxy';
-import { EmbeddedBrowserGateway, OpenClawExtensionId } from '../shared/openclaw/extensions';
 import { WorkboardIpc } from '../shared/openclaw/workboard';
+import { OpenClawExtensionId } from '../shared/plugins/nativeIds';
 import { HOME_WORKSPACE_SESSION_ID } from '../shared/preview/filePreview';
 import {
   DEFAULT_WORKSPACE_DIRECTORY_NAME,

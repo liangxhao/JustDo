@@ -1,4 +1,4 @@
-import { isPresentPlanToolName } from '@shared/cowork/planPreview';
+import { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
 import {
   normalizeAgentEvent,
   normalizeChatEvent,
@@ -7,7 +7,7 @@ import {
   readTerminalGuardObservation,
 } from '@shared/openclaw/agentEvent';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
-import { readModelRef } from '@shared/openclaw/modelRef';
+import { readModelRef } from '@shared/providers/modelRef';
 
 import { isTruncatedHistoryMessage } from '@/libs/openclaw-chat/gateway/chat-history-protocol';
 import type { GatewayEventFrame } from '@/libs/openclaw-chat/gateway/client';

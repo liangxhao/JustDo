@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { COWORK_PLAN_PREVIEW_EVENT } from '@shared/cowork/planPreview';
+import { COWORK_PLAN_PREVIEW_EVENT } from '@shared/cowork/interactions/planPreview';
 import { render } from 'lit';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 

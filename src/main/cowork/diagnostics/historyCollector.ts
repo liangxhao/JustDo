@@ -1,8 +1,8 @@
-import { projectDiagnosticResponse } from '../../../shared/cowork/diagnosticResponse';
+import { projectDiagnosticResponse } from '../../../shared/cowork/diagnostics/diagnosticResponse';
 import type {
   DiagnosticHistoryEvidence,
   DiagnosticReport,
-} from '../../../shared/cowork/sessionDiagnostics';
+} from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 import {
   parseChatHistoryCursorResultV2026_9_8,

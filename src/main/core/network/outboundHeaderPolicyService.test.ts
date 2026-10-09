@@ -12,7 +12,7 @@ import {
   DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG,
   PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG,
 } from '../../../config/outboundHeaders';
-import type { InstalledOpenClawExtension } from '../../../shared/openclaw/extensions';
+import type { InstalledOpenClawExtension } from '../../../shared/plugins/extensions';
 import {
   applyMainProcessOutboundHeaderPolicy,
   MainProcessOutboundHeaderSource,

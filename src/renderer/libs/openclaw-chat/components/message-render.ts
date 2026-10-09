@@ -5,8 +5,8 @@ import './message-media';
  * Thinking and Tool presentation belongs exclusively to the canonical timeline.
  */
 import { isLocalHtmlFilePath, parseLocalHtmlLink } from '@shared/browser/browserLinkOpening';
-import { isGatewayInjectedModelRef } from '@shared/openclaw/modelRef';
 import { getPreviewableFileExtension } from '@shared/preview/filePreview';
+import { isGatewayInjectedModelRef } from '@shared/providers/modelRef';
 import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 

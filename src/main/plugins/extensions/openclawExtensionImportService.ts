@@ -13,8 +13,8 @@ import type {
   InstalledOpenClawExtension,
   OpenClawExtensionConfigurationField,
   OpenClawPluginCapabilityReview,
-} from '../../../shared/openclaw/extensions';
-import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
+} from '../../../shared/plugins/extensions';
+import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
 import {
   managedDirectoryFailure,
   managedDirectoryFailureFromMessage,

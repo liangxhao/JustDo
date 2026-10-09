@@ -1,4 +1,4 @@
-import type { PermissionMode } from '../../../shared/openclaw/approvals';
+import type { PermissionMode } from '../../../shared/security/approvals';
 import type { CoworkStore } from '../../data/coworkStore';
 
 interface CoordinatorDependencies {

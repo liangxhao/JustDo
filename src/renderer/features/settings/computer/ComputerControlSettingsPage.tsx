@@ -1,5 +1,5 @@
 import { ComputerDesktopIcon } from '@heroicons/react/24/outline';
-import { OpenClawExtensionId } from '@shared/openclaw/extensions';
+import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';

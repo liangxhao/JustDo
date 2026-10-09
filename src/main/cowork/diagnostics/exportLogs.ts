@@ -1,7 +1,7 @@
 import type {
   DiagnosticLogRecord,
   DiagnosticLogSource,
-} from '../../../shared/cowork/sessionDiagnostics';
+} from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 
 const SOURCE_LIMIT = 2 * 1024 * 1024;
 const SOURCES: DiagnosticLogSource[] = ['main', 'cowork', 'gateway', 'native'];

@@ -1,10 +1,10 @@
 type DiagnosticScanProgress =
-  import('../../shared/cowork/sessionDiagnostics').DiagnosticScanProgress;
-type DiagnosticQuery = import('../../shared/cowork/sessionDiagnostics').DiagnosticQuery;
-type DiagnosticReadResult = import('../../shared/cowork/sessionDiagnostics').DiagnosticReadResult;
-type DiagnosticListResult = import('../../shared/cowork/sessionDiagnostics').DiagnosticListResult;
+  import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticScanProgress;
+type DiagnosticQuery = import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticQuery;
+type DiagnosticReadResult = import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticReadResult;
+type DiagnosticListResult = import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticListResult;
 type DiagnosticExportResult =
-  import('../../shared/cowork/sessionDiagnostics').DiagnosticExportResult;
+  import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticExportResult;
 import type {
   AgentFileName,
   AgentFileSnapshot,
@@ -50,39 +50,39 @@ type TerminalStatusEvent = import('../../shared/app/terminal').TerminalStatusEve
 type TerminalExitEvent = import('../../shared/app/terminal').TerminalExitEvent;
 type TerminalResizeRequest = import('../../shared/app/terminal').TerminalResizeRequest;
 type TerminalWriteRequest = import('../../shared/app/terminal').TerminalWriteRequest;
-type ExtensionImportProgress = import('../../shared/openclaw/extensions').ExtensionImportProgress;
-type ExtensionChangedEvent = import('../../shared/openclaw/extensions').ExtensionChangedEvent;
-type ExtensionImportRequest = import('../../shared/openclaw/extensions').ExtensionImportRequest;
-type ExtensionImportStage = import('../../shared/openclaw/extensions').ExtensionImportStage;
-type ExtensionDeleteRequest = import('../../shared/openclaw/extensions').ExtensionDeleteRequest;
-type ExtensionDeleteResult = import('../../shared/openclaw/extensions').ExtensionDeleteResult;
+type ExtensionImportProgress = import('../../shared/plugins/extensions').ExtensionImportProgress;
+type ExtensionChangedEvent = import('../../shared/plugins/extensions').ExtensionChangedEvent;
+type ExtensionImportRequest = import('../../shared/plugins/extensions').ExtensionImportRequest;
+type ExtensionImportStage = import('../../shared/plugins/extensions').ExtensionImportStage;
+type ExtensionDeleteRequest = import('../../shared/plugins/extensions').ExtensionDeleteRequest;
+type ExtensionDeleteResult = import('../../shared/plugins/extensions').ExtensionDeleteResult;
 type ExtensionSetEnabledRequest =
-  import('../../shared/openclaw/extensions').ExtensionSetEnabledRequest;
+  import('../../shared/plugins/extensions').ExtensionSetEnabledRequest;
 type ExtensionSetEnabledResult =
-  import('../../shared/openclaw/extensions').ExtensionSetEnabledResult;
+  import('../../shared/plugins/extensions').ExtensionSetEnabledResult;
 type ExtensionUpdateConfigurationRequest =
-  import('../../shared/openclaw/extensions').ExtensionUpdateConfigurationRequest;
+  import('../../shared/plugins/extensions').ExtensionUpdateConfigurationRequest;
 type ExtensionUpdateConfigurationResult =
-  import('../../shared/openclaw/extensions').ExtensionUpdateConfigurationResult;
+  import('../../shared/plugins/extensions').ExtensionUpdateConfigurationResult;
 type InstalledOpenClawExtension =
-  import('../../shared/openclaw/extensions').InstalledOpenClawExtension;
+  import('../../shared/plugins/extensions').InstalledOpenClawExtension;
 type OpenClawSkillSource = import('../../shared/plugins/skills').OpenClawSkillSource;
 type PluginHubScope = import('../../shared/plugins/management').PluginHubScope;
 type PluginManagementCapabilities =
   import('../../shared/plugins/management').PluginManagementCapabilities;
 type SystemPromptReplacementRule =
-  import('../../shared/openclaw/systemPromptReplacements').SystemPromptReplacementRule;
-type PermissionMode = import('../../shared/openclaw/approvals').PermissionMode;
-type ApprovalKind = import('../../shared/openclaw/approvals').ApprovalKind;
-type ApprovalRequest = import('../../shared/openclaw/approvals').ApprovalRequest;
-type ApprovalResolved = import('../../shared/openclaw/approvals').ApprovalResolved;
-type ApprovalDecision = import('../../shared/openclaw/approvals').ApprovalDecision;
+  import('../../shared/prompts/systemPromptReplacements').SystemPromptReplacementRule;
+type PermissionMode = import('../../shared/security/approvals').PermissionMode;
+type ApprovalKind = import('../../shared/security/approvals').ApprovalKind;
+type ApprovalRequest = import('../../shared/security/approvals').ApprovalRequest;
+type ApprovalResolved = import('../../shared/security/approvals').ApprovalResolved;
+type ApprovalDecision = import('../../shared/security/approvals').ApprovalDecision;
 type AgentRuntimeSettings =
-  import('../../shared/openclaw/agentRuntimeSettings').AgentRuntimeSettings;
-type ExternalAgentSettings = import('../../shared/openclaw/externalAgents').ExternalAgentSettings;
-type ExternalAgentId = import('../../shared/openclaw/externalAgents').ExternalAgentId;
+  import('../../shared/agents/agentRuntimeSettings').AgentRuntimeSettings;
+type ExternalAgentSettings = import('../../shared/integrations/externalAgents').ExternalAgentSettings;
+type ExternalAgentId = import('../../shared/integrations/externalAgents').ExternalAgentId;
 type ExternalAgentTestResult =
-  import('../../shared/openclaw/externalAgents').ExternalAgentTestResult;
+  import('../../shared/integrations/externalAgents').ExternalAgentTestResult;
 type OpenClawSessionMigrationPlan =
   import('../../shared/openclaw/sessionMigration').OpenClawSessionMigrationPlan;
 type OpenClawSessionMigrationProgress =
@@ -244,7 +244,7 @@ interface CoworkInteractionRequest {
   toolInput: Record<string, unknown>;
   requestId: string;
   toolUseId?: string | null;
-  interactionKind?: import('../../shared/openclaw/extensions').CoworkInteractionKind;
+  interactionKind?: import('../../shared/cowork/interactions/interactions').CoworkInteractionKind;
 }
 
 interface CoworkApiConfig {
@@ -599,7 +599,7 @@ interface IElectronAPI {
       extensionId?: string;
       error?: string;
       failedStage?: ExtensionImportStage;
-      capabilityReview?: import('../../shared/openclaw/extensions').OpenClawPluginCapabilityReview;
+      capabilityReview?: import('../../shared/plugins/extensions').OpenClawPluginCapabilityReview;
     }>;
     onImportProgress: (callback: (progress: ExtensionImportProgress) => void) => () => void;
     onChanged: (callback: (event: ExtensionChangedEvent) => void) => () => void;
@@ -652,7 +652,7 @@ interface IElectronAPI {
     }>;
     listExtensionServers: () => Promise<{
       success: boolean;
-      extensionServers?: import('@shared/openclaw/mcp').ExtensionProvidedMcpServer[];
+      extensionServers?: import('@shared/plugins/mcp').ExtensionProvidedMcpServer[];
       error?: string;
     }>;
     create: (
@@ -720,10 +720,10 @@ interface IElectronAPI {
   getRecentCwds: (limit?: number) => Promise<string[]>;
   openclaw: {
     computerControl: {
-      get: () => Promise<import('../../shared/openclaw/computerControl').ComputerControlResult>;
+      get: () => Promise<import('../../shared/security/computerControl').ComputerControlResult>;
       setEnabled: (
         enabled: boolean,
-      ) => Promise<import('../../shared/openclaw/computerControl').ComputerControlResult>;
+      ) => Promise<import('../../shared/security/computerControl').ComputerControlResult>;
     };
     worktrees: {
       getSettings: () => Promise<import('../../shared/openclaw/worktrees').WorktreeSettingsResult>;

@@ -1,4 +1,4 @@
-import { isPresentPlanToolName } from '@shared/cowork/planPreview';
+import { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
 
 import type {
   AssistantTurn,

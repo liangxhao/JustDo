@@ -1,4 +1,4 @@
-import type { ExecApprovalRequest } from '../../../shared/openclaw/approvals';
+import type { ExecApprovalRequest } from '../../../shared/security/approvals';
 
 const MAX_GRANTS_PER_SESSION = 256;
 

@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import path from 'path';
 
-import { HookIpc } from '../../../shared/openclaw/hooks';
+import { HookIpc } from '../../../shared/plugins/hooks';
 import {
   getExtensionManagement,
   getHookManagement,

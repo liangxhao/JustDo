@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { CoworkPlanHandoffState } from '../../shared/cowork/planHandoff';
+import { CoworkPlanHandoffState } from '../../shared/cowork/interactions/planHandoff';
 import { PRODUCT_NAME_LOWERCASE } from '../../shared/productMetadata';
 import { DB_FILENAME } from '../core/appConstants';
 

@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import { HookIpc } from '../../../shared/openclaw/hooks';
+import { HookIpc } from '../../../shared/plugins/hooks';
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
 import { OpenClawConfigSyncService } from '../../openclaw/config/openclawConfigSyncService';
 import type { OpenClawHookStore } from '../../plugins/hooks';

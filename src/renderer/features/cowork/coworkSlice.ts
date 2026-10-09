@@ -4,7 +4,7 @@ import type { BrowserRecordingDraft } from '@shared/browser/browserRecording';
 import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
 import { DEFAULT_MAX_GOAL_CONTINUATION_TURNS } from '@shared/cowork/sessionGoal';
 import type { SessionRuntimeSnapshot, SessionRunTiming } from '@shared/cowork/sessionRun';
-import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '@shared/openclaw/approvals';
+import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '@shared/security/approvals';
 
 import {
   removeSessionFromState,

@@ -154,7 +154,7 @@ OpenClaw 继续拥有执行语义与消息正文；Main 仅保存产品运行身
 
 ### 6.1 显式 IPC
 
-拟在 `src/shared/cowork/sessionDiagnostics.ts` 定义常量、版本化契约和上限：
+拟在 `src/shared/cowork/diagnostics/sessionDiagnostics.ts` 定义常量、版本化契约和上限：
 
 - `ListRuns({ sessionId, cursor? })`：20 条分页，包含证据可用性；游标必须服务端校验。
 - `Read({ sessionId, sessionRunId? })`：不指定时选择最新；返回 reportVersion、snapshotId、collectedAt、结论、证据、完整性及各数据源状态。
@@ -191,7 +191,7 @@ ZIP 包含 `summary.md`、`report.json`、`manifest.json`；可包含通过白�
 
 拟新增文件（名称可在实现中微调，职责不变）：
 
-- `src/shared/cowork/sessionDiagnostics.ts`：IPC/DTO/原因码常量。
+- `src/shared/cowork/diagnostics/sessionDiagnostics.ts`：IPC/DTO/原因码常量。
 - `src/main/cowork/diagnostics/`：classifier、service、sanitizer、exporter，测试与模块同目录。
 - `src/main/data/sessionDiagnosticsStore.ts`：事件仓储；schema 仍由 `sqliteStore.ts` 管理。
 - `src/main/engine/openclaw/runtimeDiagnostics.ts`：原生协议到安全证据的转换，通过显式 typed context 接入。

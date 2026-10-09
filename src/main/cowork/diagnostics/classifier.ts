@@ -2,7 +2,7 @@ import {
   type DiagnosticConclusion,
   type DiagnosticEvent,
   DiagnosticReason,
-} from '../../../shared/cowork/sessionDiagnostics';
+} from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 
 function terminalReason(event: DiagnosticEvent): DiagnosticReason {
   switch (event.stopReason) {

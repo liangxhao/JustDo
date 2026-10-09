@@ -14,12 +14,12 @@ import {
   type AgentRuntimeSettings,
   AgentRuntimeSettingsIpc,
   createDefaultAgentRuntimeSettings,
-} from '../../../shared/openclaw/agentRuntimeSettings';
+} from '../../../shared/agents/agentRuntimeSettings';
 import {
   createDefaultExternalAgentSettings,
   ExternalAgentIpc,
   type ExternalAgentSettings,
-} from '../../../shared/openclaw/externalAgents';
+} from '../../../shared/integrations/externalAgents';
 import type { CoworkConfig } from '../../data/coworkStore';
 import { registerCoworkConfigHandlers, waitForCoworkConfigUpdates } from './config';
 

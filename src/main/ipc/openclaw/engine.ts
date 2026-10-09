@@ -13,7 +13,6 @@ import {
   type OpenClawSessionMigrationConfirmRequest,
   OpenClawSessionMigrationIpc,
 } from '../../../shared/openclaw/sessionMigration';
-import { SystemPromptReplacementIpc } from '../../../shared/openclaw/systemPromptReplacements';
 import {
   type ManagedWorktree,
   type WorktreeCleanResult,
@@ -22,6 +21,7 @@ import {
   type WorktreeResult,
 } from '../../../shared/openclaw/worktrees';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
+import { SystemPromptReplacementIpc } from '../../../shared/prompts/systemPromptReplacements';
 import { JUSTDO_MANAGED_PYTHON_USER_BASE_ENV } from '../../core/runtime/pythonRuntime';
 import type { CoworkStore } from '../../data/coworkStore';
 import { isWorkspacePathWithin } from '../../engine/openclaw/runtimeAdapterSupport';

@@ -22,13 +22,13 @@ vi.mock('../../cowork/coworkLogger', () => ({
   coworkLog: vi.fn(),
 }));
 
-import { createDefaultAgentRuntimeSettings } from '../../../shared/openclaw/agentRuntimeSettings';
+import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
 import {
   ApprovalDecision,
   ApprovalKind,
   ExecApprovalDecision,
   OpenClawApprovalIpc,
-} from '../../../shared/openclaw/approvals';
+} from '../../../shared/security/approvals';
 import type { GatewayClientLike, SessionTurn } from '../gateway/types';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 

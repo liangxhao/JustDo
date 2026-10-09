@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { configureStore } from '@reduxjs/toolkit';
+import { createDefaultAgentRuntimeSettings } from '@shared/agents/agentRuntimeSettings';
 import { BrowserMode } from '@shared/browser/browser';
+import { createDefaultExternalAgentSettings } from '@shared/integrations/externalAgents';
 import { defaultCustomProxyConfig, ProxyMode } from '@shared/network/proxy';
-import { createDefaultAgentRuntimeSettings } from '@shared/openclaw/agentRuntimeSettings';
-import { createDefaultExternalAgentSettings } from '@shared/openclaw/externalAgents';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';

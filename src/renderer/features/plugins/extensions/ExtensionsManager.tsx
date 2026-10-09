@@ -13,7 +13,7 @@ import type {
   InstalledOpenClawExtension,
   OpenClawExtensionConfigurationField,
   OpenClawPluginCapabilityReview,
-} from '@shared/openclaw/extensions';
+} from '@shared/plugins/extensions';
 import { PluginKind } from '@shared/plugins/marketplace';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';

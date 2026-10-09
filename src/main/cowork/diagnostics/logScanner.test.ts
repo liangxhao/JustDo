@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { DiagnosticReport } from '../../../shared/cowork/sessionDiagnostics';
+import type { DiagnosticReport } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { collectDiagnosticLogs } from './logCollector';
 import { discoverNativeDiagnosticLogs, scanDiagnosticLog } from './logScanner';
 

@@ -1,4 +1,4 @@
-import { isGatewayInjectedModelRef, readModelRef } from '@shared/openclaw/modelRef';
+import { isGatewayInjectedModelRef, readModelRef } from '@shared/providers/modelRef';
 
 export const FAILED_RUN_MESSAGE_FLAG = '__justdoFailedRunMessage';
 export const FAILED_RUN_MESSAGE_ID = '__justdoFailedRunMessageId';

@@ -7,9 +7,9 @@ import {
   type SessionRunUnknownInput,
 } from '@shared/cowork/sessionRun';
 import { isGatewayToolFailureNotice } from '@shared/cowork/toolFailureNotice';
-import type { PermissionMode } from '@shared/openclaw/approvals';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 import type { OpenClawModelsListResult } from '@shared/openclaw/models';
+import type { PermissionMode } from '@shared/security/approvals';
 
 import {
   addGroup,

@@ -1,8 +1,8 @@
+import { normalizeOpenClawAgentId } from '../../../shared/agents/agentId';
 import type {
   CoworkSessionMessageSearchMatch,
   CoworkSessionSearchOptions,
 } from '../../../shared/cowork/sessionSearch';
-import { normalizeOpenClawAgentId } from '../../../shared/openclaw/agentId';
 import type { CoworkStore } from '../../data/coworkStore';
 import {
   type OpenClawSessionsSearchHitV2026_9_8,

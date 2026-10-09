@@ -1298,7 +1298,7 @@ describe('OpenClawExtensionImportService', () => {
         openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
       }),
     } as unknown as OpenClawEngineManager;
-    const review: import('../../../shared/openclaw/extensions').OpenClawPluginCapabilityReview = {
+    const review: import('../../../shared/plugins/extensions').OpenClawPluginCapabilityReview = {
       reviewToken: 'current-surface-token',
       declared: {
         channels: [],

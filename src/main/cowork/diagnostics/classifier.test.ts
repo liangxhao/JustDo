@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DiagnosticEvent } from '../../../shared/cowork/sessionDiagnostics';
+import type { DiagnosticEvent } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { projectDiagnosticEvent } from '../../engine/openclaw/runtimeDiagnostics';
 import { classifyDiagnostics } from './classifier';
 

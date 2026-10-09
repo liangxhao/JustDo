@@ -1,13 +1,17 @@
 import { randomUUID } from 'node:crypto';
 
-import { diagnosticErrorCodes } from '../../../shared/cowork/diagnosticLogDetails';
+import { diagnosticErrorCodes } from '../../../shared/cowork/diagnostics/diagnosticLogDetails';
 import type {
   DiagnosticErrorCategory,
   DiagnosticEvent,
   DiagnosticPhase,
   DiagnosticStopReason,
-} from '../../../shared/cowork/sessionDiagnostics';
-import { diagnosticLoopExits, diagnosticResponseShapes,diagnosticTimeoutPhases } from '../../../shared/cowork/sessionDiagnostics';
+} from '../../../shared/cowork/diagnostics/sessionDiagnostics';
+import {
+  diagnosticLoopExits,
+  diagnosticResponseShapes,
+  diagnosticTimeoutPhases,
+} from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import type { GatewayEventFrame } from '../gateway/types';
 
 const record = (value: unknown): Record<string, unknown> =>

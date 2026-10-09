@@ -9,7 +9,7 @@ import { parseRecordingContext, serializeRecording } from '@shared/browser/brows
 import { parseCoworkSessionKey } from '@shared/cowork/sessionKey';
 import { stripSwarmInstruction } from '@shared/cowork/swarm';
 import { stripSwarmWorkflowInstruction } from '@shared/cowork/swarmWorkflow';
-import { modelRefFromIdentity, normalizeModelRef } from '@shared/openclaw/modelRef';
+import { modelRefFromIdentity, normalizeModelRef } from '@shared/providers/modelRef';
 
 import { stripOpenClawLogHintText } from '@/libs/openclaw-chat/pipeline/system-message-display';
 import { stripInboundMetadata } from '@/libs/openclaw-chat/shims/backend-helpers';

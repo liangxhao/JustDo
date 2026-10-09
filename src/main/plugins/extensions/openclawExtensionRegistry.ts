@@ -1,4 +1,4 @@
-import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
+import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
 
 export type OpenClawExtensionDescriptor = {
   id: string;

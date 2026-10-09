@@ -6,7 +6,7 @@ import type {
   DiagnosticCoverage,
   DiagnosticEvent,
   DiagnosticRun,
-} from '../../shared/cowork/sessionDiagnostics';
+} from '../../shared/cowork/diagnostics/sessionDiagnostics';
 
 const RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 const GLOBAL_LIMIT = 20_000;

@@ -158,7 +158,7 @@ credential 对象、URL query 或代理认证信息。
 
 ## 8. 代码边界
 
-- `src/shared/openclaw/outboundHeaderPolicy.ts`：sidecar 类型和文件名；
+- `src/shared/plugins/outboundHeaderPolicy.ts`：sidecar 类型和文件名；
 - `src/main/plugins/extensions/extensionNetworkPolicyManifest.ts`：解析、规范化和校验；
 - `src/main/core/network/outboundHeaderPolicyService.ts`：手工配置与 Extension 规则合并；
 - `src/main/core/network/outboundHeaderProxy.ts`：Gateway/子进程数据面；

@@ -1,105 +1,5 @@
-export const OpenClawExtensionId = {
-  ASK_USER_QUESTION: 'ask-user-question',
-  AUTOMATION_PERMISSION: 'automation-permission',
-  BROWSER: 'browser',
-  CUA_COMPUTER: 'cua-computer',
-  RUNTIME_SERVICES: 'runtime-services',
-  WORKBOARD: 'workboard',
-  MEMORY_CORE: 'memory-core',
-  CODE_MODE_QUICKJS: 'code-mode-quickjs',
-  GITHUB: 'github',
-  PLAN_MODE: 'plan-mode',
-  AGENT_TEAM: 'agent-team',
-  SWARM_WORKFLOW: 'swarm-workflow',
-  TYPESAFE: 'typesafe',
-  EMBEDDED_BROWSER: 'embedded-browser',
-  ACPX: 'acpx',
-  STT_LOCAL_CLI: 'stt-local-cli',
-  WINDOWS_NATIVE_SANDBOX: 'mxc',
-} as const;
-
-export const OpenClawToolName = {
-  ASK_USER_QUESTION: 'AskUserQuestion',
-  PRESENT_PLAN: 'PresentPlan',
-  BROWSER: 'browser',
-  COMPUTER: 'computer',
-} as const;
-
-export const EmbeddedBrowserGateway = {
-  REQUESTED_EVENT: 'plugin.embedded-browser.requested',
-  CANCELLED_EVENT: 'plugin.embedded-browser.cancelled',
-  RESOLVE: 'embeddedBrowser.resolve',
-} as const;
-
-export const PlanModeGateway = {
-  LIST: 'planMode.list',
-  RESOLVE: 'planMode.resolve',
-  REQUESTED_EVENT: 'plugin.plan-mode.requested',
-  RESOLVED_EVENT: 'plugin.plan-mode.resolved',
-} as const;
-
-export const PlanModeDecision = {
-  IMPLEMENT: 'implement',
-  REVISE: 'revise',
-  CANCEL: 'cancel',
-} as const;
-
-export type PlanModeDecision = (typeof PlanModeDecision)[keyof typeof PlanModeDecision];
-
-export type PlanModeState = {
-  enabled: boolean;
-  updatedAt: number;
-  awaitingReview?: {
-    version: 1;
-    requestId: string;
-    persistedAt: number;
-  };
-};
-
-export type PlanModeRequest = {
-  requestId: string;
-  sessionKey: string;
-  plan: string;
-  title?: string;
-};
-
-export type PlanModeInteractionEnvelope = {
-  sessionId: string;
-  request: {
-    requestId: string;
-    toolName: typeof OpenClawToolName.PRESENT_PLAN;
-    interactionKind: 'plan-approval';
-    toolInput: {
-      plan: string;
-      title?: string;
-      sessionKey: string;
-      sessionId: string;
-    };
-  };
-};
-
-export type CoworkInteractionEnvelope =
-  | AskUserInteractionEnvelope
-  | PlanModeInteractionEnvelope;
-
-export const parsePlanModeRequest = (value: unknown): PlanModeRequest | null => {
-  if (!isRecord(value)) return null;
-  const requestId = readRequiredString(value.requestId);
-  const sessionKey = readRequiredString(value.sessionKey);
-  const plan = readRequiredString(value.plan);
-  const title = value.title === undefined ? undefined : readRequiredString(value.title);
-  if (!requestId || !sessionKey || !plan || (value.title !== undefined && !title)) return null;
-  return { requestId, sessionKey, plan, ...(title ? { title } : {}) };
-};
-
-export const parsePlanModeState = (value: unknown): PlanModeState => {
-  if (!isRecord(value) || value.enabled !== true) return { enabled: false, updatedAt: 0 };
-  return {
-    enabled: true,
-    updatedAt:
-      typeof value.updatedAt === 'number' && Number.isFinite(value.updatedAt) ? value.updatedAt : 0,
-  };
-};
+import { OpenClawToolName } from '../../plugins/nativeIds';
+import { CoworkInteractionKind } from './interactions';
 
 export const AskUserQuestionGateway = {
   LIST: 'askUserQuestion.list',
@@ -107,21 +7,6 @@ export const AskUserQuestionGateway = {
   REQUESTED_EVENT: 'plugin.ask-user-question.requested',
   RESOLVED_EVENT: 'plugin.ask-user-question.resolved',
 } as const;
-
-export const CoworkInteractionKind = {
-  STRUCTURED_QUESTION: 'structured-question',
-  PLAN_APPROVAL: 'plan-approval',
-} as const;
-
-export const CoworkInteractionIpc = {
-  Respond: 'cowork:interaction:respond',
-  Replay: 'cowork:interaction:replay',
-  Stream: 'cowork:stream:interaction',
-  Dismiss: 'cowork:stream:interactionDismiss',
-} as const;
-
-export type CoworkInteractionKind =
-  (typeof CoworkInteractionKind)[keyof typeof CoworkInteractionKind];
 
 export type AskUserQuestionOption = {
   id: string;
@@ -200,8 +85,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 export const ASK_USER_ID_PATTERN = '^[A-Za-z][A-Za-z0-9_-]{0,63}$';
+
 export const MAX_ASK_USER_QUESTIONS = 8;
+
 export const MAX_ASK_USER_HEADER_LENGTH = 12;
+
 const askUserIdRegex = new RegExp(ASK_USER_ID_PATTERN);
 
 export const REQUIRED_ASK_USER_WAIT_POLICY: AskUserWaitPolicy = {
@@ -218,7 +106,8 @@ const readRequiredString = (value: unknown): string | null => {
 };
 
 export const parseAskUserQuestions = (value: unknown): AskUserQuestion[] | null => {
-  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_ASK_USER_QUESTIONS) return null;
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_ASK_USER_QUESTIONS)
+    return null;
 
   const questionIds = new Set<string>();
   const questions: AskUserQuestion[] = [];
@@ -366,9 +255,7 @@ export const parseAskUserWaitPolicy = (
   };
 };
 
-export const buildAskUserDefaultAnswers = (
-  questions: AskUserQuestion[],
-): AskUserAnswers | null => {
+export const buildAskUserDefaultAnswers = (questions: AskUserQuestion[]): AskUserAnswers | null => {
   const answers: AskUserAnswers = {};
   for (const question of questions) {
     if (!question.defaultOptionIds?.length) return null;
@@ -441,9 +328,7 @@ export const parseAskUserAnswers = (
     const optionsById = new Map(question.options.map(option => [option.id, option]));
     if (selectedIds.some(id => !optionsById.has(id))) return null;
 
-    const other = rawAnswer.other === undefined
-      ? undefined
-      : readRequiredString(rawAnswer.other);
+    const other = rawAnswer.other === undefined ? undefined : readRequiredString(rawAnswer.other);
     if (rawAnswer.other !== undefined && !other) return null;
     if (other && question.allowOther === false) return null;
     if (!question.multiSelect && selectedIds.length > 0 && other) return null;
@@ -472,182 +357,3 @@ export const parseAskUserAnswers = (
   }
   return answers;
 };
-
-export const ExtensionIpc = {
-  List: 'extensions:list',
-  Import: 'extensions:import',
-  ImportProgress: 'extensions:import-progress',
-  Delete: 'extensions:delete',
-  SetEnabled: 'extensions:set-enabled',
-  UpdateConfiguration: 'extensions:update-configuration',
-  Changed: 'extensions:changed',
-} as const;
-
-export type ExtensionChangedEvent = {
-  extensionId: string;
-  enabled: boolean;
-};
-
-export type OpenClawExtensionConfigurationField = {
-  path: string;
-  label: string;
-  help?: string;
-  labelKey?: string;
-  helpKey?: string;
-  type?: 'integer' | 'number';
-  minimum?: number;
-  maximum?: number;
-  defaultValue?: number;
-  value?: number;
-  requirement?: string;
-  /** Native provider credential alternatives; saved to env.vars, never plugin config. */
-  environmentVariables?: string[];
-  configuredEnvironmentVariables?: string[];
-  inheritedEnvironmentVariables?: string[];
-  sensitive: boolean;
-  configured: boolean;
-};
-
-export type InstalledOpenClawExtension = {
-  id: string;
-  name: string;
-  description: string;
-  version?: string;
-  installPath?: string;
-  enabled: boolean;
-  state?: 'enabled' | 'disabled' | 'error';
-  origin?: string;
-  category?: string;
-  kinds?: string[];
-  error?: string;
-  removable?: boolean;
-  canToggle?: boolean;
-  managed?: boolean;
-  missingRequirements: string[];
-  configurationFields: OpenClawExtensionConfigurationField[];
-  scope?: PluginHubScope;
-  management?: PluginManagementCapabilities;
-};
-
-export type ExtensionUpdateConfigurationRequest = {
-  extensionId: string;
-  values: Record<string, string>;
-};
-
-export type ExtensionUpdateConfigurationResult = {
-  success: boolean;
-  error?: string;
-  pending?: boolean;
-};
-
-export type ExtensionSetEnabledRequest = {
-  extensionId: string;
-  enabled: boolean;
-  reviewToken?: string;
-};
-
-export type OpenClawPluginDeclaredSurface = {
-  channels: string[];
-  providers: string[];
-  tools: string[];
-  contracts: string[];
-  hooks: string[];
-  mcpServers: string[];
-  cliCommands: string[];
-  cliBackends: string[];
-  skills: string[];
-  dangerousConfigFlags: string[];
-};
-
-export type OpenClawPluginCapabilityReview = {
-  reviewToken: string;
-  declared: OpenClawPluginDeclaredSurface;
-  widened?: Partial<OpenClawPluginDeclaredSurface>;
-  source?: {
-    kind:
-      | 'bundled'
-      | 'clawhub'
-      | 'npm'
-      | 'git'
-      | 'path'
-      | 'archive'
-      | 'marketplace'
-      | 'official-catalog';
-    spec?: string;
-    packageName?: string;
-    integrity?: string;
-    integrityKind?: 'ssri' | 'sha256' | 'git-commit';
-  };
-  grants: {
-    hooks: {
-      allowPromptInjection: { effective: boolean; configured?: boolean };
-      allowConversationAccess: { effective: boolean; configured?: boolean };
-    };
-    llm?: {
-      allowModelOverride?: boolean;
-      allowedModels?: string[];
-      allowedCompletionModels?: string[];
-      allowAuthProfileOverride?: boolean;
-      allowAgentIdOverride?: boolean;
-    };
-    subagent?: {
-      allowModelOverride?: boolean;
-      allowedModels?: string[];
-    };
-  };
-  trust?: {
-    disposition: 'clean' | 'review-recommended' | 'review-required' | 'blocked';
-    reasons?: string[];
-    checkedAt?: string;
-    acknowledgedAt?: string;
-    pending?: boolean;
-    stale?: boolean;
-  };
-};
-
-export type ExtensionSetEnabledResult = {
-  success: boolean;
-  error?: string;
-  warnings?: string[];
-  capabilityReview?: OpenClawPluginCapabilityReview;
-};
-
-export type ExtensionDeleteRequest = {
-  extensionId: string;
-};
-
-export type ExtensionDeleteResult = {
-  success: boolean;
-  error?: string;
-  warnings?: string[];
-};
-
-export type ExtensionImportStage =
-  | 'preparing'
-  | 'extracting'
-  | 'validating'
-  | 'preparing_runtime'
-  | 'installing'
-  | 'installing_dependencies'
-  | 'restarting_gateway'
-  | 'completed';
-
-export type ExtensionImportRequest = {
-  requestId: string;
-  sourcePath: string;
-  reviewToken?: string;
-};
-
-export type ExtensionImportProgress = ExtensionImportRequest & {
-  stage: ExtensionImportStage;
-  percent: number;
-};
-
-export type ExtensionImportResult = {
-  success: boolean;
-  extensionId?: string;
-  error?: string;
-  failedStage?: ExtensionImportStage;
-  capabilityReview?: OpenClawPluginCapabilityReview;
-};
-import type { PluginHubScope, PluginManagementCapabilities } from '../plugins/management';

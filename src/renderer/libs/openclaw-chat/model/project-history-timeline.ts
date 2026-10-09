@@ -1,7 +1,7 @@
-import { isPresentPlanToolName } from '@shared/cowork/planPreview';
+import { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { normalizeToolTerminalStatus } from '@shared/openclaw/messageDomain';
-import { isGatewayInjectedModelRef } from '@shared/openclaw/modelRef';
+import { isGatewayInjectedModelRef } from '@shared/providers/modelRef';
 
 import { getTranscriptMedia } from '@/libs/openclaw-chat/attachments';
 import { collapseRepeatedFailures } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';

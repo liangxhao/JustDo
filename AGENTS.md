@@ -237,6 +237,11 @@ See `docs/architecture/10-data-storage.md`.
   `integrations/`, `network/`, `openclaw/`, `plugins/`, `preview/`, `prompts/`,
   `providers/`, `scheduledTask/`, `security/`, and `speech/`. Keep tests and JSON
   config beside their owning modules; only product metadata stays at the root.
+- `shared/openclaw/` retains native Gateway protocol and runtime contracts.
+  Agent identity/settings, model identity, external-agent integration, permissions,
+  prompt rules and plugin management belong to their corresponding shared domains.
+  Cowork interactions and diagnostics live in `shared/cowork/interactions/` and
+  `shared/cowork/diagnostics/`; plugin/tool IDs live in `shared/plugins/nativeIds.ts`.
 - JustDo owns UX, persistence, permissions, packaging, app shell, and product flows.
 - OpenClaw owns agent execution, Gateway capabilities, tool semantics, and skill runtime behavior.
 - `openclawSkillService.ts` talks to Gateway skill APIs.

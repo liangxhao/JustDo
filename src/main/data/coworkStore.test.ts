@@ -14,8 +14,8 @@ vi.mock('electron', () => ({
 import BetterSqlite3 from 'better-sqlite3';
 import path from 'path';
 
-import { createDefaultAgentRuntimeSettings } from '../../shared/openclaw/agentRuntimeSettings';
-import { createDefaultExternalAgentSettings } from '../../shared/openclaw/externalAgents';
+import { createDefaultAgentRuntimeSettings } from '../../shared/agents/agentRuntimeSettings';
+import { createDefaultExternalAgentSettings } from '../../shared/integrations/externalAgents';
 import { CoworkStore } from './coworkStore';
 
 // ---------------------------------------------------------------------------

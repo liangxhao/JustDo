@@ -3,8 +3,8 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
 import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shared/browser/browser';
-import { createDefaultAgentRuntimeSettings } from '../../../shared/openclaw/agentRuntimeSettings';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
 import {
   clearActiveBuiltinModelCredential,

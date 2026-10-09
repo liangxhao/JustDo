@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import type { ComputerControlResult } from '@shared/openclaw/computerControl';
-import type { ExtensionChangedEvent } from '@shared/openclaw/extensions';
+import type { ExtensionChangedEvent } from '@shared/plugins/extensions';
+import type { ComputerControlResult } from '@shared/security/computerControl';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 

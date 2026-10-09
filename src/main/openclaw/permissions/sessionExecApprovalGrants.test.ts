@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ExecApprovalRequest } from '../../../shared/openclaw/approvals';
+import type { ExecApprovalRequest } from '../../../shared/security/approvals';
 import {
   buildSessionExecApprovalFingerprint,
   SessionExecApprovalGrants,

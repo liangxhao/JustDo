@@ -4,28 +4,31 @@ import path from 'path';
 
 import { type CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
 import {
-  type CoworkPlanArtifactReference,
-  type CoworkPlanHandoff,
-  CoworkPlanHandoffState,
-} from '../../../shared/cowork/planHandoff';
-import {
   type AskUserInteractionEnvelope,
   AskUserQuestionGateway,
   type AskUserRequest,
+  parseAskUserAnswers,
+  parseAskUserRequest,
+} from '../../../shared/cowork/interactions/askUserQuestion';
+import {
   type CoworkInteractionEnvelope,
   CoworkInteractionIpc,
   CoworkInteractionKind,
-  OpenClawExtensionId,
-  OpenClawToolName,
-  parseAskUserAnswers,
-  parseAskUserRequest,
+} from '../../../shared/cowork/interactions/interactions';
+import {
+  type CoworkPlanArtifactReference,
+  type CoworkPlanHandoff,
+  CoworkPlanHandoffState,
+} from '../../../shared/cowork/interactions/planHandoff';
+import {
   parsePlanModeRequest,
   parsePlanModeState,
   PlanModeGateway,
   type PlanModeInteractionEnvelope,
   type PlanModeRequest,
   type PlanModeState,
-} from '../../../shared/openclaw/extensions';
+} from '../../../shared/cowork/interactions/planMode';
+import { OpenClawExtensionId, OpenClawToolName } from '../../../shared/plugins/nativeIds';
 import type { ApprovedPlanArtifactStore } from '../../cowork/approvedPlans/approvedPlanArtifactStore';
 import { coworkLog } from '../../cowork/coworkLogger';
 import type { CoworkStore } from '../../data/coworkStore';

@@ -1,8 +1,8 @@
 import { parseBrowserAnnotationPrompt } from '@shared/browser/browser';
 import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
-import { isGatewayInjectedModelRef } from '@shared/openclaw/modelRef';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
+import { isGatewayInjectedModelRef } from '@shared/providers/modelRef';
 
 import { normalizeTranscriptSessionKey } from '@/libs/openclaw-chat/model/chat-transcript-state';
 import {

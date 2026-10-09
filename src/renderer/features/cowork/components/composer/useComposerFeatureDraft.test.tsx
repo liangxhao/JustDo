@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { ExtensionChangedEvent } from '@shared/openclaw/extensions';
+import type { ExtensionChangedEvent } from '@shared/plugins/extensions';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 

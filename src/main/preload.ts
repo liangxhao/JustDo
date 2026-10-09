@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 import {
+  type AgentRuntimeSettings,
+  AgentRuntimeSettingsIpc,
+} from '../shared/agents/agentRuntimeSettings';
+import {
   type AgentFileName,
   type AgentFileSnapshot,
   AgentIpc,
@@ -79,13 +83,14 @@ import {
 } from '../shared/browser/browserRecording';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { CollaborationIpc } from '../shared/cowork/collaboration';
-import { type CopyCoworkSessionInput, CoworkSessionCopyIpc } from '../shared/cowork/sessionCopy';
-import { CoworkSessionDetailsIpc } from '../shared/cowork/sessionDetails';
 import {
   type DiagnosticQuery,
   type DiagnosticScanProgress,
   SessionDiagnosticsIpc,
-} from '../shared/cowork/sessionDiagnostics';
+} from '../shared/cowork/diagnostics/sessionDiagnostics';
+import { CoworkInteractionIpc } from '../shared/cowork/interactions/interactions';
+import { type CopyCoworkSessionInput, CoworkSessionCopyIpc } from '../shared/cowork/sessionCopy';
+import { CoworkSessionDetailsIpc } from '../shared/cowork/sessionDetails';
 import { CoworkSessionForkIpc, type ForkCoworkSessionInput } from '../shared/cowork/sessionFork';
 import {
   GoalExecutionIpc,
@@ -119,45 +124,22 @@ import {
   type SwarmWorkflowOptions,
 } from '../shared/cowork/swarmWorkflow';
 import {
+  type ExternalAgentId,
+  ExternalAgentIpc,
+  type ExternalAgentSettings,
+  type ExternalAgentTestResult,
+} from '../shared/integrations/externalAgents';
+import {
   MulticaIntegrationIpc,
   type MulticaIntegrationResult,
   type MulticaIntegrationStatus,
 } from '../shared/integrations/multica';
 import { type ApiFetchOptions, NetworkIpc } from '../shared/network/network';
 import {
-  type AgentRuntimeSettings,
-  AgentRuntimeSettingsIpc,
-} from '../shared/openclaw/agentRuntimeSettings';
-import {
-  type ApprovalDecision,
-  type ApprovalKind,
-  type ApprovalRequest,
-  type ApprovalResolved,
-  OpenClawApprovalIpc,
-} from '../shared/openclaw/approvals';
-import {
   OpenClawAssistantMediaIpc,
   type OpenClawAssistantMediaRequest,
 } from '../shared/openclaw/assistantMedia';
-import { ComputerControlIpc } from '../shared/openclaw/computerControl';
-import {
-  CoworkInteractionIpc,
-  type ExtensionChangedEvent,
-  type ExtensionDeleteRequest,
-  type ExtensionImportProgress,
-  type ExtensionImportRequest,
-  ExtensionIpc,
-  type ExtensionSetEnabledRequest,
-  type ExtensionUpdateConfigurationRequest,
-} from '../shared/openclaw/extensions';
-import {
-  type ExternalAgentId,
-  ExternalAgentIpc,
-  type ExternalAgentSettings,
-  type ExternalAgentTestResult,
-} from '../shared/openclaw/externalAgents';
 import { OpenClawHistoryIpc } from '../shared/openclaw/historyIpc';
-import { HookIpc } from '../shared/openclaw/hooks';
 import { MemoryIpc } from '../shared/openclaw/memory';
 import { OpenClawModelsIpc } from '../shared/openclaw/models';
 import {
@@ -169,10 +151,6 @@ import {
   SessionStorageIpc,
   type SessionStoragePolicyInput,
 } from '../shared/openclaw/sessionStorage';
-import {
-  SystemPromptReplacementIpc,
-  type SystemPromptReplacementRule,
-} from '../shared/openclaw/systemPromptReplacements';
 import { UsageStatsIpc, type UsageStatsOptions } from '../shared/openclaw/usage';
 import {
   type WorkboardCardInput,
@@ -182,6 +160,16 @@ import {
   type WorkboardStopIdentity,
 } from '../shared/openclaw/workboard';
 import { WorktreeIpc } from '../shared/openclaw/worktrees';
+import {
+  type ExtensionChangedEvent,
+  type ExtensionDeleteRequest,
+  type ExtensionImportProgress,
+  type ExtensionImportRequest,
+  ExtensionIpc,
+  type ExtensionSetEnabledRequest,
+  type ExtensionUpdateConfigurationRequest,
+} from '../shared/plugins/extensions';
+import { HookIpc } from '../shared/plugins/hooks';
 import {
   type MarketplaceCategoryRequest,
   type MarketplaceDetailRequest,
@@ -206,6 +194,10 @@ import {
   type ImagePreviewOpenResult,
 } from '../shared/preview/imagePreview';
 import {
+  SystemPromptReplacementIpc,
+  type SystemPromptReplacementRule,
+} from '../shared/prompts/systemPromptReplacements';
+import {
   type MediaGenerationModelConfiguration,
   type MediaGenerationModelKind,
   MediaGenerationModelsIpc,
@@ -219,6 +211,14 @@ import type {
   ScheduledTaskStatusEvent,
   ScheduledTaskUnreadCountEvent,
 } from '../shared/scheduledTask/types';
+import {
+  type ApprovalDecision,
+  type ApprovalKind,
+  type ApprovalRequest,
+  type ApprovalResolved,
+  OpenClawApprovalIpc,
+} from '../shared/security/approvals';
+import { ComputerControlIpc } from '../shared/security/computerControl';
 import {
   WindowsSandboxIpc,
   type WindowsSandboxOperationResult,

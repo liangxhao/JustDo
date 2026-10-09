@@ -1,12 +1,12 @@
 import { ipcMain } from 'electron';
 
-import { matchesModelSelectionIdentity } from '../../../shared/openclaw/modelSelectionIdentity';
 import {
   getEffectiveCustomProviderDisplayName,
   isJustDoCustomProviderKey,
   normalizeOpenClawProviderId,
   ProviderName,
 } from '../../../shared/providers';
+import { matchesModelSelectionIdentity } from '../../../shared/providers/modelSelectionIdentity';
 import { t } from '../../core/i18n';
 import { enqueueAppConfigUpdate } from '../../data/appConfigUpdateQueue';
 import type { CoworkStore } from '../../data/coworkStore';

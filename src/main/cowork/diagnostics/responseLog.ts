@@ -1,4 +1,4 @@
-import type { DiagnosticLogRecord } from '../../../shared/cowork/sessionDiagnostics';
+import type { DiagnosticLogRecord } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 
 /** Native closed result codes and fixed recovery messages; never retain their text. */
 export function projectResponseLog(

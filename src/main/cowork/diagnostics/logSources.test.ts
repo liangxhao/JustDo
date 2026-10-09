@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 
-import type { DiagnosticReport } from '../../../shared/cowork/sessionDiagnostics';
+import type { DiagnosticReport } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { orderDiagnosticMainLogs } from './logSources';
 
 it('prioritizes the historical run day and its active file before rotations and newer unrelated days', () => {

@@ -1,10 +1,8 @@
 import { BrowserWindow, ipcMain } from 'electron';
 
-import {
-  type AskUserInteractionEnvelope,
-  CoworkInteractionIpc,
-  type PlanModeInteractionEnvelope,
-} from '../../../shared/openclaw/extensions';
+import { type AskUserInteractionEnvelope } from '../../../shared/cowork/interactions/askUserQuestion';
+import { CoworkInteractionIpc } from '../../../shared/cowork/interactions/interactions';
+import { type PlanModeInteractionEnvelope } from '../../../shared/cowork/interactions/planMode';
 
 type AskUserRuntime = {
   listPendingAskUserInteractions: () => Promise<

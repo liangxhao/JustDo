@@ -11,7 +11,7 @@ vi.mock('electron', () => ({
 }));
 vi.mock('../../cowork/coworkLogger', () => ({ coworkLog: vi.fn() }));
 
-import { createDefaultAgentRuntimeSettings } from '../../../shared/openclaw/agentRuntimeSettings';
+import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
 import { SessionDiagnosticsService } from '../../cowork/diagnostics/service';
 import type { CoworkStore } from '../../data/coworkStore';
 import {

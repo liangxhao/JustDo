@@ -1,7 +1,7 @@
 import type { IpcMainInvokeEvent } from 'electron';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SessionDiagnosticsIpc } from '../../../shared/cowork/sessionDiagnostics';
+import { SessionDiagnosticsIpc } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import {
   DiagnosticServiceError,
   type SessionDiagnosticsService,

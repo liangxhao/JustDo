@@ -1,4 +1,4 @@
-import { isPresentPlanToolName } from '@shared/cowork/planPreview';
+import { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
 
 import { FAILED_RUN_MESSAGE_ID } from '@/libs/openclaw-chat/model/failed-run-message';
 import {

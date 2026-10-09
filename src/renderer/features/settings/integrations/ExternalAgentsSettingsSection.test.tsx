@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { createDefaultExternalAgentSettings } from '@shared/openclaw/externalAgents';
+import { createDefaultExternalAgentSettings } from '@shared/integrations/externalAgents';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 

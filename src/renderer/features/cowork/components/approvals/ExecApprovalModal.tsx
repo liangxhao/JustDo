@@ -6,7 +6,7 @@ import {
   canGrantExecApprovalForSession,
   ExecApprovalDecision,
   PERSISTENT_APPROVAL_EXPIRES_AT_MS,
-} from '@shared/openclaw/approvals';
+} from '@shared/security/approvals';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';

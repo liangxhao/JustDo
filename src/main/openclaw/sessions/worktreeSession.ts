@@ -1,6 +1,6 @@
 import path from 'path';
 
-import { toOpenClawSessionPermissionMode } from '../../../shared/openclaw/approvals';
+import { toOpenClawSessionPermissionMode } from '../../../shared/security/approvals';
 import { t } from '../../core/i18n';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import { buildManagedSessionKey } from './openclawSessionKeys';

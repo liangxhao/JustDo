@@ -1,4 +1,4 @@
-import { OpenClawExtensionId, OpenClawToolName } from '../../../shared/openclaw/extensions';
+import { OpenClawExtensionId, OpenClawToolName } from '../../../shared/plugins/nativeIds';
 
 export const asComputerConfigRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value)

@@ -172,7 +172,7 @@ flowchart LR
 | 原生任务协议与状态 | main/engine/openclaw/subagentGateway、wire、runtimeSessionStatus                       | 05-agent-engine、15-chat-rendering                  |
 | 子任务 IPC         | shared/cowork/subagentDetails、main/ipc/cowork/subtasks、preload、electron.d.ts        | 03-process-model                                    |
 | 子任务 UI          | cowork/components/subagents 与统计组件                                                 | 15-chat-rendering                                   |
-| Swarm 设置         | shared/openclaw/agentRuntimeSettings、config builders/sync、settings/runtime、双语词典 | 05-agent-engine                                     |
+| Swarm 设置         | shared/agents/agentRuntimeSettings、config builders/sync、settings/runtime、双语词典 | 05-agent-engine                                     |
 | Team 生命周期      | agent-team、runtime-services、collaboration coordinator/store/shared                   | 04-cowork-system、07-plugin-system、10-data-storage |
 | Team UI 与助手模板 | cowork/components/chat、features/agents、nativeAssistantCreation、agents IPC           | assistants-and-collaboration                        |
 

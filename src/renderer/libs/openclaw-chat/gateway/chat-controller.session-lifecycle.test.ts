@@ -1,4 +1,4 @@
-import { readModelRef } from '@shared/openclaw/modelRef';
+import { readModelRef } from '@shared/providers/modelRef';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';

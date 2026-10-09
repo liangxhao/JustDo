@@ -1,4 +1,4 @@
-import type { InstalledOpenClawExtension } from '@shared/openclaw/extensions';
+import type { InstalledOpenClawExtension } from '@shared/plugins/extensions';
 
 export const ExtensionGroupId = {
   SYSTEM: 'system',

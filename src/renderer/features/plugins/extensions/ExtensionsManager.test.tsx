@@ -5,7 +5,7 @@ import type {
   ExtensionSetEnabledResult,
   InstalledOpenClawExtension,
   OpenClawPluginCapabilityReview,
-} from '@shared/openclaw/extensions';
+} from '@shared/plugins/extensions';
 import { getExtensionManagement } from '@shared/plugins/management';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';

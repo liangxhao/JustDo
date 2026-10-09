@@ -1,4 +1,4 @@
-import { OpenClawToolName } from '../openclaw/extensions';
+import { OpenClawToolName } from '../../plugins/nativeIds';
 
 export const COWORK_PLAN_PREVIEW_EVENT = 'cowork:preview-plan';
 

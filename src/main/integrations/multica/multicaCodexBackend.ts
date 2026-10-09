@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { NormalizedAgentEvent } from '../../../shared/openclaw/agentEvent';
-import { matchesModelSelectionIdentity } from '../../../shared/openclaw/modelSelectionIdentity';
+import { matchesModelSelectionIdentity } from '../../../shared/providers/modelSelectionIdentity';
 import type { CoworkStore } from '../../data/coworkStore';
 import type {
   MulticaCodexBackend,

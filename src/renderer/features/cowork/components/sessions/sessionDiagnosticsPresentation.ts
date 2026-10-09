@@ -1,6 +1,12 @@
-import { buildDiagnosticFindings, type DiagnosticFinding } from '@shared/cowork/diagnosticFindings';
-import { assessDiagnosticStop } from '@shared/cowork/diagnosticStop';
-import type { DiagnosticLogRecord, DiagnosticReport } from '@shared/cowork/sessionDiagnostics';
+import {
+  buildDiagnosticFindings,
+  type DiagnosticFinding,
+} from '@shared/cowork/diagnostics/diagnosticFindings';
+import { assessDiagnosticStop } from '@shared/cowork/diagnostics/diagnosticStop';
+import type {
+  DiagnosticLogRecord,
+  DiagnosticReport,
+} from '@shared/cowork/diagnostics/sessionDiagnostics';
 
 import { i18nService } from '@/services/i18n';
 

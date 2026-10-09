@@ -1,13 +1,13 @@
 import { BrowserWindow } from 'electron';
 
+import { AskUserQuestionGateway } from '../../../shared/cowork/interactions/askUserQuestion';
+import { PlanModeGateway } from '../../../shared/cowork/interactions/planMode';
 import { SessionGoalIpc } from '../../../shared/cowork/sessionGoal';
 import {
   normalizeAgentEvent,
   normalizeChatEvent,
   type NormalizedAgentEvent,
 } from '../../../shared/openclaw/agentEvent';
-import { ApprovalKind, OpenClawApprovalIpc } from '../../../shared/openclaw/approvals';
-import { AskUserQuestionGateway, PlanModeGateway } from '../../../shared/openclaw/extensions';
 import { isInternalManagedSubagentHandoffError } from '../../../shared/openclaw/internalRunError';
 import type { MessageDomainAdmission } from '../../../shared/openclaw/messageDomain';
 import {
@@ -16,6 +16,7 @@ import {
   normalizeToolEvent,
 } from '../../../shared/openclaw/messageDomain';
 import { WORKBOARD_CHANGED_EVENT } from '../../../shared/openclaw/workboard';
+import { ApprovalKind, OpenClawApprovalIpc } from '../../../shared/security/approvals';
 import { coworkLog } from '../../cowork/coworkLogger';
 import type { CoworkSessionStatus, CoworkStore } from '../../data/coworkStore';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
