@@ -6,7 +6,7 @@
 
 ## 1. 部署前必须确定的配置
 
-`src/config/builtinModelAuth.ts` 编入 Main，包含完整 tokenExchangeUrl、maxJwtLifetimeSeconds 和仅开发模式使用的认证选择。默认换证 URL 为空，JWT 上限 300 秒；空地址不从模型 base URL 推断，也不发送 mtoken。
+`src/config/builtinModelAuth.ts` 编入 Main，包含完整 tokenExchangeUrl、maxJwtLifetimeSeconds 和仅开发模式使用的认证选择。仓库换证地址、模型 base URL 和出站请求头白名单留空，部署时填写；JWT 上限保留 10800 秒。空换证地址禁用换证，不从模型 base URL 推断，也不发送 mtoken。
 
 组织接口若签发更长 token，客户端与服务端必须显式配置一致上限，支持范围 30–10800 秒，不能根据返回值自动放宽。修改配置需重启开发 Main 或重新打包，用户目录不存在另一套自动生成的换证配置。
 
@@ -50,9 +50,11 @@ sequenceDiagram
   M->>G: 配置 exec SecretRef / secrets.reload
 ```
 
-换证拒绝 redirect，timeout 15 秒，响应最大 32 KiB。返回必须为 Bearer，uid/sub 与登录账号一致，JWT 期限需满足本地上限和 expires_in。Main 做结构与时间检查，真正的签名、issuer、audience 和 Team 授权在服务端完成。
+换证拒绝 redirect，timeout 15 秒，响应最大 32 KiB。返回必须为 Bearer，uid/sub 与登录账号一致，JWT 期限需满足本地上限和 expires_in。Main 要求非对称算法、非空 iss/jti、整数 iat/exp 和字符串 `aud: 'litellm'`；kid 可选，兼容内网 `RS256`、无 kid 的签发形态。Main 做结构、账号、audience 与时间预检，真正的签名、可信 issuer、audience 和 Team 授权在服务端完成。
 
-模型发现 `/models` 必需，`/model/info` 可选增强；区分 chat/embedding 并规范化能力。请求使用约定哨兵 Authorization 与专用 JWT/account 字段，不能让哨兵本身变成授权凭据。memory search 走同一 JWT SecretRef 的原生认证路径。
+模型发现 `/models` 必需，`/model/info` 可选增强；区分 chat/embedding 并规范化能力。Main 直发请求使用 `Authorization: Bearer <真实JWT>`，同时保留 `X-ACCESS-JWT` 和 `X-User-Account`；api-key 开发模式只发送 Bearer key。provider 配置中的非秘密占位符仅用于应用内配置投影，不能作为网络请求凭据。Gateway 和 memory search 通过同一 JWT SecretRef 解析真实 JWT 并发送 Bearer 认证。
+
+换证日志只记录受控失败阶段（URL、MAC、网络请求、响应、JWT、身份复核）、固定原因、可选 HTTP 状态，并单独区分超时。不记录原始 Error/cause、URL、请求体、响应体、mtoken、JWT、Cookie 或 MAC；对外继续返回统一失败错误。
 
 ## 4. 轮换与并发
 
@@ -78,7 +80,7 @@ builtin provider 在 SQLite/Renderer 中 apiKey 为空，只保存 base URL、�
 
 ## 7. 服务端长期授权
 
-LiteLLM JWT Hook 验证非对称签名、kid、issuer/audience、时间与账号，解析 internal user 和唯一非 legacy jwt_managed Team，再进入公共模型、blocked、预算和 RPM/TPM 检查。JWT 轮换不会重新创建 Team 或每用户 Virtual Key。
+仓库内参考 LiteLLM JWT Hook 验证非对称签名、kid、issuer/audience、时间与账号，解析 internal user 和唯一非 legacy jwt_managed Team，再进入公共模型、blocked、预算和 RPM/TPM 检查。该 Hook 的 kid 策略与当前内网签发形态不同；内网服务应使用其实际配置的可信验签密钥，客户端允许缺少 kid 不会替代服务端验签。JWT 轮换不会重新创建 Team 或每用户 Virtual Key。
 
 认证 dispatch 将 JWT 与普通 Key/管理会话分开，JWT 失败不得回退到旧 Key。多 worker 用量协调与权限缓存传播属于部署范围，不能承诺权限变更瞬时生效。
 

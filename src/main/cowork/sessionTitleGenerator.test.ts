@@ -21,7 +21,7 @@ test('generateTitle adds the short-lived JWT only for the built-in provider', as
     encode({ alg: 'RS256', kid: 'login-key-1' }),
     encode({
       iss: 'https://login.example.test',
-      aud: 'justdo-litellm',
+      aud: 'litellm',
       sub: 'user-123',
       iat: nowSeconds,
       exp: nowSeconds + 300,
@@ -55,7 +55,7 @@ test('generateTitle adds the short-lived JWT only for the built-in provider', as
 
   await expect(handler.generateTitle('测试')).resolves.toBe('测试标题');
   expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
-    Authorization: 'Bearer access-jwt-auth',
+    Authorization: `Bearer ${accessToken}`,
     'X-ACCESS-JWT': accessToken,
     'X-User-Account': 'user-123',
   });

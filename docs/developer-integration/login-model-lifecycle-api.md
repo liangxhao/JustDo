@@ -74,12 +74,13 @@ await dependencies.onLogoutCommitted();
 接入前配置：
 
 - `src/config/builtinModelAuth.ts`：填写完整 `tokenExchangeUrl`，并设置与签发服务一致的
-  `maxJwtLifetimeSeconds`。**当前换证地址为空，未配置时即使调用登录入口也不会启用内置模型。**
+  `maxJwtLifetimeSeconds`。仓库换证地址留空，生命周期上限为 10800 秒；未填写换证地址时，即使调用登录入口也不会启用内置模型。
 - `src/config/builtinModels.ts`：确认 `enabled` 和模型服务 `baseUrl`。
 - 正式登录验证使用 JWT 模式。未打包开发的 API key 模式是独立调试通道，不能据此验证“未登录列表为空”。
 
 换证请求为 `POST` JSON `{ mtoken, deviceId }`；`deviceId` 只使用当前有效网卡 MAC（去冒号、转大写）。Main 公共模块 [`src/main/core/network/macAddress.ts`](../../src/main/core/network/macAddress.ts) 导出 `getMacAddress(): string`，登录模块与模型换证应共同调用，不能在 Renderer 或 `src/shared` 中直接读取系统网卡。无有效 MAC 或查询失败时函数抛错，调用方应处理失败；不回退 UUID，不保存设备 ID 文件。
 响应包含 `access_token`、`token_type: "Bearer"`、整数 `expires_in`，可选 `uid` 必须匹配登录账号。
+JWT 的 `aud` 必须为字符串 `litellm`，kid 可选。模型请求使用真实 JWT Bearer；换证日志提供脱敏的失败阶段、原因和 HTTP 状态。
 JWT claims、期限和部署约定见[认证设计](../features/authentication-builtin-model-lifecycle.md)
 及[客户端部署](../../deploy/client/README.md)。修改编入 Main 的配置后需要重启开发进程或重新打包。
 

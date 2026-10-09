@@ -32,7 +32,7 @@ describe('built-in provider credential resolution', () => {
       encode({ alg: 'RS256', kid: 'login-key-1' }),
       encode({
         iss: 'https://login.example.test',
-        aud: 'justdo-litellm',
+        aud: 'litellm',
         sub: 'user-123',
         iat: nowSeconds,
         exp: nowSeconds + 300,

@@ -45,6 +45,31 @@ test('creates an empty config.json while using the built-in policy', () => {
   expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG);
 });
 
+test('injects login headers only within an explicitly configured LiteLLM URL boundary', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-litellm-policy-'));
+  tempDirectories.push(directory);
+  const userInfoPath = path.join(directory, 'user_info.json');
+  fs.writeFileSync(userInfoPath, JSON.stringify({
+    'X-User-Account': 'user-fixture', 'X-Cookie': 'cookie-fixture', mtoken: 'mtoken-fixture',
+  }));
+  const baseUrl = 'https://model.example.test/litellm/v1';
+  const configPath = path.join(directory, 'config.json');
+  fs.writeFileSync(configPath, JSON.stringify({
+    enabled: true,
+    groups: [{ baseUrlWhitelist: [baseUrl], headerNames: ['X-User-Account', 'X-Cookie'] }],
+  }));
+  const service = new OutboundHeaderPolicyService({
+    listInstalledExtensions: () => [], configPath, userInfoPath,
+  });
+  service.reconcile();
+  const source = MainProcessOutboundHeaderSource.SessionTitle;
+  expect(applyMainProcessOutboundHeaderPolicy(`${baseUrl}/chat/completions`, {}, source)).toEqual({
+    'X-User-Account': 'user-fixture', 'X-Cookie': 'cookie-fixture',
+  });
+  expect(applyMainProcessOutboundHeaderPolicy(`${baseUrl}-other/chat/completions`, {}, source)).toEqual({});
+  expect(applyMainProcessOutboundHeaderPolicy('https://untrusted.example/v1/chat/completions', {}, source)).toEqual({});
+});
+
 test('does not duplicate a default group written by an older version', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-effective-policy-'));
   tempDirectories.push(directory);
@@ -197,7 +222,7 @@ test('keeps the manual policy when Extension inventory cannot be read', () => {
 
   expect(service.reconcile().groups).toEqual([
     {
-      baseUrlWhitelist: [],
+      baseUrlWhitelist: [...PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG.groups[0].baseUrlWhitelist],
       headerNames: ['X-User-Account', 'X-Cookie'],
     },
     {

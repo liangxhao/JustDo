@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import {
   buildBuiltinModelRequestHeaders,
-  BUILTIN_MODEL_AUTHORIZATION_PLACEHOLDER,
   BUILTIN_MODEL_JWT_FIELD,
   BUILTIN_MODEL_USER_ACCOUNT_FIELD,
   clearActiveBuiltinModelCredential,
@@ -14,6 +13,7 @@ import {
   refreshActiveBuiltinModelCredential,
   setActiveBuiltinModelCredential,
   setActiveBuiltinModelDevelopmentApiKey,
+  validateBuiltinModelCredential,
 } from './builtinModelCredential';
 
 const NOW_SECONDS = 2_000_000_000;
@@ -31,7 +31,7 @@ const createJwt = (
     encodeJwtPart({ alg: 'RS256', kid: 'login-key-1', ...headerOverrides }),
     encodeJwtPart({
       iss: 'https://login.example.test',
-      aud: 'justdo-litellm',
+      aud: 'litellm',
       sub: userAccount,
       iat: NOW_SECONDS,
       exp: NOW_SECONDS + 300,
@@ -71,6 +71,27 @@ afterEach(() => {
 });
 
 describe('built-in model credential', () => {
+  test('accepts the intranet RS256 JWT without a key id', () => {
+    const accessToken = createJwt('user-123', { name: 'Fixture User' }, { kid: undefined, typ: 'JWT' });
+    expect(validateBuiltinModelCredential(accessToken, 'user-123')).toEqual({
+      accessToken, userAccount: 'user-123', expiresAt: NOW_SECONDS + 300,
+    });
+  });
+
+  test.each([undefined, '', 'justdo-litellm', 'LiteLLM', ' litellm ', ['litellm'], 123])(
+    'rejects a missing, mismatched, or unsupported audience: %j', aud => {
+      expect(validateBuiltinModelCredential(createJwt('user-123', { aud }), 'user-123')).toBeNull();
+    },
+  );
+
+  test('accepts a three-hour JWT only with the explicit deployment lifetime policy', () => {
+    const accessToken = createJwt('user-123', { exp: NOW_SECONDS + 10_800 }, { kid: undefined });
+    expect(validateBuiltinModelCredential(accessToken, 'user-123')).toBeNull();
+    expect(validateBuiltinModelCredential(accessToken, 'user-123', NOW_SECONDS, 10_800)).toEqual({
+      accessToken, userAccount: 'user-123', expiresAt: NOW_SECONDS + 10_800,
+    });
+  });
+
   test('reads a short-lived JWT whose subject matches the account header', () => {
     const accessToken = createJwt();
     const userInfoPath = writeUserInfo({
@@ -162,7 +183,7 @@ describe('built-in model credential', () => {
     expect(getActiveBuiltinModelCredential()).toBeNull();
   });
 
-  test('builds dedicated JWT headers and uses only a non-secret Authorization sentinel', () => {
+  test('builds a real JWT bearer authorization and the deployment headers', () => {
     const accessToken = createJwt();
     expect(
       buildBuiltinModelRequestHeaders({
@@ -171,7 +192,7 @@ describe('built-in model credential', () => {
         expiresAt: NOW_SECONDS + 300,
       }),
     ).toEqual({
-      Authorization: `Bearer ${BUILTIN_MODEL_AUTHORIZATION_PLACEHOLDER}`,
+      Authorization: `Bearer ${accessToken}`,
       [BUILTIN_MODEL_JWT_FIELD]: accessToken,
       [BUILTIN_MODEL_USER_ACCOUNT_FIELD]: 'user-123',
     });

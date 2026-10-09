@@ -5,6 +5,7 @@ import { mainProcessFetch } from '../core/network/mainProcessFetch';
 import type { SqliteStore } from '../data/sqliteStore';
 import {
   clearActiveBuiltinModelCredential,
+  getActiveBuiltinModelCredential,
   setActiveBuiltinModelCredential,
 } from './builtinModelCredential';
 import { BuiltinModelAccess, syncBuiltinModelProvider } from './builtinModelProvider';
@@ -24,7 +25,7 @@ const createCredential = () => {
     encode({ alg: 'RS256', kid: 'login-key-1' }),
     encode({
       iss: 'https://login.example.test',
-      aud: 'justdo-litellm',
+      aud: 'litellm',
       sub: 'user-123',
       iat: nowSeconds,
       exp: nowSeconds + 300,
@@ -60,6 +61,9 @@ describe('syncBuiltinModelProvider', () => {
       expect(saved.providers.builtin_models.embeddingModels).toEqual([expect.objectContaining({ id: 'local-embedding' })]);
       expect(local.requests[0].headers['x-user-account']).toBe('user-123');
       expect(local.requests[0].headers['x-access-jwt']).toContain('test-signature');
+      for (const request of local.requests) {
+        expect(request.headers.authorization).toBe(`Bearer ${request.headers['x-access-jwt']}`);
+      }
       expect(JSON.stringify(saved)).not.toContain('test-signature');
     } finally {
       await local.close();
@@ -252,7 +256,7 @@ describe('syncBuiltinModelProvider', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     for (const [, requestInit] of fetchMock.mock.calls) {
       expect(requestInit?.headers).toEqual({
-        Authorization: 'Bearer access-jwt-auth',
+        Authorization: `Bearer ${getActiveBuiltinModelCredential()!.accessToken}`,
         'X-ACCESS-JWT': expect.stringMatching(/^[^.]+\.[^.]+\.[^.]+$/),
         'X-User-Account': 'user-123',
       });

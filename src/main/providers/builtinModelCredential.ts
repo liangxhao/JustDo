@@ -3,6 +3,7 @@ import fs from 'fs';
 export const BUILTIN_MODEL_JWT_FIELD = 'X-ACCESS-JWT';
 export const BUILTIN_MODEL_USER_ACCOUNT_FIELD = 'X-User-Account';
 export const BUILTIN_MODEL_AUTHORIZATION_PLACEHOLDER = 'access-jwt-auth';
+export const EXPECTED_JWT_AUDIENCE = 'litellm';
 
 const MAX_JWT_LENGTH = 8_192;
 const MAX_USER_ACCOUNT_LENGTH = 512;
@@ -71,12 +72,6 @@ const decodeJwtObject = <T>(segment: string): T | null => {
   }
 };
 
-const isNonEmptyAudience = (value: unknown): boolean =>
-  (typeof value === 'string' && Boolean(value.trim())) ||
-  (Array.isArray(value) &&
-    value.length > 0 &&
-    value.every(item => typeof item === 'string' && Boolean(item.trim())));
-
 export const validateBuiltinModelCredential = (
   accessTokenValue: unknown,
   userAccountValue: unknown,
@@ -101,7 +96,6 @@ export const validateBuiltinModelCredential = (
   }
 
   const algorithm = typeof header.alg === 'string' ? header.alg : '';
-  const keyId = typeof header.kid === 'string' ? header.kid.trim() : '';
   const subject = typeof payload.sub === 'string' ? payload.sub.trim() : '';
   const issuer = typeof payload.iss === 'string' ? payload.iss.trim() : '';
   const tokenId = typeof payload.jti === 'string' ? payload.jti.trim() : '';
@@ -111,12 +105,11 @@ export const validateBuiltinModelCredential = (
   if (
     !Number.isInteger(maxLifetime) || maxLifetime < 30 || maxLifetime > 10_800 ||
     !ALLOWED_JWT_ALGORITHMS.has(algorithm) ||
-    !keyId ||
     !subject ||
     subject !== userAccount ||
     !issuer ||
     !tokenId ||
-    !isNonEmptyAudience(payload.aud) ||
+    payload.aud !== EXPECTED_JWT_AUDIENCE ||
     typeof issuedAt !== 'number' ||
     !Number.isInteger(issuedAt) ||
     typeof expiresAt !== 'number' ||
@@ -210,7 +203,7 @@ export const buildBuiltinModelRequestHeaders = (
 ): Record<string, string> => credential.authType === 'api-key'
   ? { Authorization: `Bearer ${credential.accessToken}` }
   : {
-      Authorization: `Bearer ${BUILTIN_MODEL_AUTHORIZATION_PLACEHOLDER}`,
+      Authorization: `Bearer ${credential.accessToken}`,
       [BUILTIN_MODEL_JWT_FIELD]: credential.accessToken,
       [BUILTIN_MODEL_USER_ACCOUNT_FIELD]: credential.userAccount,
     };

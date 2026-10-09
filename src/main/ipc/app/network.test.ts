@@ -76,6 +76,7 @@ test('completes an authenticated model probe against a real loopback fake model'
     expect(result).toMatchObject({ ok: true, data: { choices: [{ message: { content: 'local fixture reply' } }] } });
     expect(local.requests).toHaveLength(1);
     expect(local.requests[0].headers['x-access-jwt']).toBe(token);
+    expect(local.requests[0].headers.authorization).toBe(`Bearer ${token}`);
     expect(JSON.parse(local.requests[0].body)).toEqual(JSON.parse(probeBody));
     expect(JSON.stringify(result)).not.toContain(token);
   } finally {
@@ -109,7 +110,7 @@ test('authenticates a built-in probe in Main without exposing its JWT to Rendere
   expect(result).toMatchObject({ ok: true });
   expect(JSON.stringify(result)).not.toContain(token);
   expect(mocks.fetch.mock.calls[0][1]).toMatchObject({
-    redirect: 'error', headers: { 'X-ACCESS-JWT': token, 'X-User-Account': 'test-user' },
+    redirect: 'error', headers: { Authorization: `Bearer ${token}`, 'X-ACCESS-JWT': token, 'X-User-Account': 'test-user' },
   });
   expect(mocks.fetch.mock.calls[0][1].headers).not.toHaveProperty('x-access-jwt');
   expect(headers['x-access-jwt']).toBe('untrusted');

@@ -15,6 +15,18 @@ import {
 
 const MAX_RESPONSE_BYTES = 32_768;
 const EXCHANGE_TIMEOUT_MS = 15_000;
+const EXCHANGE_STAGE_ERRORS = {
+  url: 'Invalid token exchange URL',
+  device: 'Unable to obtain a valid MAC address',
+  request: 'Token exchange network request failed',
+  response: 'Unable to read token exchange response',
+  credential: 'Invalid or expired access token',
+  identity: 'Unable to verify current login or configuration',
+} as const;
+type ExchangeStage = keyof typeof EXCHANGE_STAGE_ERRORS;
+
+// Only locally constructed messages may enter the diagnostic log.
+class TokenExchangeError extends Error {}
 
 type Login = { mtoken: string; account: string; identity: string };
 type Dependencies = {
@@ -39,7 +51,7 @@ const readLogin = (file: string): Login | null => {
 };
 
 const readResponse = async (response: Response): Promise<unknown> => {
-  if (!response.body) throw new Error();
+  if (!response.body) throw new TokenExchangeError('Empty token exchange response');
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -48,17 +60,21 @@ const readResponse = async (response: Response): Promise<unknown> => {
       const chunk = await reader.read();
       if (chunk.done) break;
       size += chunk.value.byteLength;
-      if (size > MAX_RESPONSE_BYTES) throw new Error();
+      if (size > MAX_RESPONSE_BYTES) throw new TokenExchangeError('Token exchange response exceeds size limit');
       chunks.push(chunk.value);
     }
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    try {
+      return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    } catch {
+      throw new TokenExchangeError('Invalid token exchange response JSON');
+    }
   } finally {
     await reader.cancel().catch((): void => undefined);
     reader.releaseLock();
   }
 };
 
-/** Only Main exchanges the login mtoken; neither request nor response is logged. */
+/** Only Main exchanges the login mtoken; diagnostics exclude credentials and raw errors. */
 export class BuiltinModelTokenExchange {
   private identity: string | null = null;
   private generation = 0;
@@ -129,31 +145,48 @@ export class BuiltinModelTokenExchange {
   }
 
   private async exchange(login: Login, config: BuiltinModelAuthConfig, signal: AbortSignal, generation: number): Promise<BuiltinModelCredential | null> {
+    let stage: ExchangeStage = 'url';
+    let httpStatus: number | undefined;
+    let timeoutSignal: AbortSignal | undefined;
     try {
       const endpoint = new URL(config.tokenExchangeUrl);
-      if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.hash) throw new Error();
+      if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.hash) {
+        throw new TokenExchangeError(EXCHANGE_STAGE_ERRORS.url);
+      }
+      stage = 'device';
+      const deviceId = getMacAddress();
       const requestedAt = Math.floor(Date.now() / 1000);
+      stage = 'request';
+      timeoutSignal = AbortSignal.timeout(EXCHANGE_TIMEOUT_MS);
       const response = await this.dependencies.fetch(endpoint.href, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({
           mtoken: login.mtoken,
-          deviceId: getMacAddress(),
+          deviceId,
         }),
         redirect: 'error',
-        signal: AbortSignal.any([signal, AbortSignal.timeout(EXCHANGE_TIMEOUT_MS)]),
+        signal: AbortSignal.any([signal, timeoutSignal]),
       });
       if (!response.ok) {
+        httpStatus = response.status;
         await response.body?.cancel().catch((): void => undefined);
         if ([400, 401, 403].includes(response.status) && generation === this.generation) clearActiveBuiltinModelCredential();
-        throw new Error();
+        throw new TokenExchangeError(`Token exchange HTTP ${response.status}`);
       }
+      stage = 'response';
       const value = await readResponse(response) as Record<string, unknown> | null;
       if (!value || typeof value.token_type !== 'string' || value.token_type.toLowerCase() !== 'bearer' ||
         typeof value.expires_in !== 'number' || !Number.isInteger(value.expires_in) || value.expires_in <= 15 ||
-        (value.uid !== undefined && value.uid !== login.account)) throw new Error();
+        (value.uid !== undefined && value.uid !== login.account)) {
+        throw new TokenExchangeError('Invalid token exchange response shape');
+      }
+      stage = 'credential';
       const credential = validateBuiltinModelCredential(value.access_token, login.account, undefined, config.maxJwtLifetimeSeconds);
-      if (!credential || credential.expiresAt > requestedAt + value.expires_in + 30) throw new Error();
+      if (!credential || credential.expiresAt > requestedAt + value.expires_in + 30) {
+        throw new TokenExchangeError(EXCHANGE_STAGE_ERRORS.credential);
+      }
+      stage = 'identity';
       // Re-read identity after the request: a late response must not restore a logged-out account.
       if (generation !== this.generation) return null;
       if (readLogin(this.dependencies.userInfoPath)?.identity !== login.identity ||
@@ -163,8 +196,15 @@ export class BuiltinModelTokenExchange {
       }
       setActiveBuiltinModelCredential(credential, config.maxJwtLifetimeSeconds);
       return getActiveBuiltinModelCredential();
-    } catch {
+    } catch (error) {
       if (generation !== this.generation) return null;
+      console.error('[BuiltinModelTokenExchange] exchange failed:', {
+        stage,
+        reason: error instanceof TokenExchangeError
+          ? error.message
+          : timeoutSignal?.aborted ? 'Token exchange timed out' : EXCHANGE_STAGE_ERRORS[stage],
+        ...(httpStatus !== undefined ? { httpStatus } : {}),
+      });
       try {
         if (JSON.stringify(this.dependencies.getConfig()) !== JSON.stringify(config)) this.invalidate();
       } catch {

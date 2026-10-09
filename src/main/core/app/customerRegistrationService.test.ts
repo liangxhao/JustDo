@@ -80,6 +80,7 @@ describe('JWT customer activity', () => {
     const [url, options] = request.mock.calls[0];
     expect(url).toBe('http://localhost:9108/customer/activity');
     expect(options.headers).toMatchObject({
+      Authorization: 'Bearer short-lived-token',
       'X-ACCESS-JWT': 'short-lived-token', 'X-User-Account': 'alice',
     });
     const body = JSON.parse(options.body);

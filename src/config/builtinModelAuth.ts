@@ -12,8 +12,7 @@ export const BUILTIN_MODEL_AUTH_CONFIG: BuiltinModelAuthConfig = Object.freeze({
   // 空地址禁用换证，不从模型地址推断。
   tokenExchangeUrl: '',
   // JWT 生命周期上限：30–10800 秒，须匹配签发端和 LiteLLM 策略。
-  // 如果接口签发 10800 秒 JWT，请显式改为 10800。
-  maxJwtLifetimeSeconds: 300,
+  maxJwtLifetimeSeconds: 10800,
   // 仅未打包 Electron 进程使用；打包版始终使用 JWT。
   developmentAuthMode: 'jwt',
   // 仅在 developmentAuthMode 为 api-key 且未打包时使用。提交代码前必须清空。
