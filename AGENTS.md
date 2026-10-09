@@ -216,6 +216,9 @@ See `docs/architecture/10-data-storage.md`.
 ## Boundaries
 
 - Main may use Node, Electron main APIs, filesystem, SQLite, child processes.
+- Login integrations and built-in model token exchange share Main's
+  `core/network/macAddress.ts` (`getMacAddress`): uppercase colon-free MAC only,
+  with an error when unavailable; no UUID fallback or persisted device ID.
 - Terminal panels use Gateway terminal RPCs. Gateway owns PTYs and buffers;
   Main retains only window/tab ownership, native IDs, connection identity and offsets.
   Bind new chat terminals to the prepared native session; homepage terminals remain

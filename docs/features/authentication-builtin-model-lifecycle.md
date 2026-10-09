@@ -18,12 +18,16 @@
 | -------------- | ----------------------- | -------------------------------------------- |
 | mtoken         | 登录组件 user_info.json | Main → 明确配置的换证服务                    |
 | X-User-Account | 同一登录身份            | Main 校验、模型请求身份字段                  |
-| deviceId       | 本机安装 UUID           | 换证请求；不代表设备密钥绑定                 |
+| deviceId       | 本机有效网卡 MAC        | 换证请求；不代表设备密钥绑定                 |
 | JWT            | 换证服务                | Main、私有派生快照、Gateway 内存、模型数据面 |
 | X-Cookie       | 既有登录/工具链         | 不作为 JWT 或模型独立授权                    |
 | Team 权限      | 服务端数据库            | 模型目录、预算、blocked、限流                |
 
-登录文件通常位于 `<userData>/huawei/user_info.json`，deviceId 在同目录 model-device.json。JWT 不回写登录文件，mtoken 不进入 Gateway 或产品数据库。
+登录文件通常位于 `<userData>/huawei/user_info.json`。JWT 不回写登录文件，mtoken 不进入 Gateway 或产品数据库。
+
+deviceId 通过 Main 公共模块 `src/main/core/network/macAddress.ts` 的 `getMacAddress(): string` 获取。按系统网卡枚举顺序选择第一个非 internal、非全零且格式有效的 MAC，去掉冒号并转为 12 位大写十六进制；不额外按网卡名称猜测物理、虚拟或连接状态。登录模块应复用同一函数。没有可用 MAC 或网卡查询失败时抛错，不生成替代标识；换证在发送请求前失败。
+
+MAC 按调用时的网卡信息获取，不缓存或写入设备标识文件，也不读取已有 model-device.json。换证服务只接受规范化后的 MAC；网卡选择或随机 MAC 变化可能改变 deviceId，登录与换证须遵循同一设备绑定约定。服务端不能通过自身网卡重新计算客户端 MAC。
 
 ## 3. 换证、发现与原生接入
 
@@ -88,4 +92,4 @@ ACTIVITY_REPORTING_CONFIG 默认开启，控制 startup、周期心跳和失败�
 
 测试覆盖 claims、期限、跨账号迟到响应、退出后重试、必需/可选发现、SecretRef 轮换和敏感值不外泄。真实部署另验签发方/JWKS、Team 白名单、预算限流、管理路由拒绝与并发。
 
-JWT 是 bearer token，在剩余有效期内可重放；deviceId UUID 不是设备签名。若需要防重放，必须由身份系统提供设备密钥绑定等额外协议，客户端不能自行宣称已实现。
+JWT 是 bearer token，在剩余有效期内可重放；MAC deviceId 不是设备签名。若需要防重放，必须由身份系统提供设备密钥绑定等额外协议，客户端不能自行宣称已实现。

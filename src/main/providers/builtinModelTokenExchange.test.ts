@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { clearActiveBuiltinModelCredential, getActiveBuiltinModelCredential } from './builtinModelCredential';
 import { resolveBuiltinModelCredentialExpiryDelayMs } from './builtinModelCredentialMonitor';
-import { BuiltinModelTokenExchange, getOrCreateBuiltinModelDeviceId } from './builtinModelTokenExchange';
+import { BuiltinModelTokenExchange } from './builtinModelTokenExchange';
 
 const NOW = 2_000_000_000;
 let directory: string;
@@ -35,13 +35,18 @@ const setup = (fetch = vi.fn(async () => success())) => ({
   fetch,
   service: new BuiltinModelTokenExchange({
     userInfoPath: path.join(directory, 'user_info.json'),
-    deviceIdPath: path.join(directory, 'model-device.json'),
     getConfig: () => ({ ...config }),
     fetch,
   }),
 });
 
 beforeEach(() => {
+  vi.spyOn(os, 'networkInterfaces').mockReturnValue({
+    Ethernet: [{
+      address: '192.0.2.1', netmask: '255.255.255.0', family: 'IPv4',
+      mac: '02:ab:cd:ef:12:34', internal: false, cidr: '192.0.2.1/24',
+    }],
+  });
   vi.useFakeTimers();
   vi.setSystemTime(NOW * 1000);
   directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-exchange-'));
@@ -58,7 +63,6 @@ test('uses a development API key without login or token exchange', async () => {
   const fetch = vi.fn(async () => success());
   const service = new BuiltinModelTokenExchange({
     userInfoPath: path.join(directory, 'missing-user_info.json'),
-    deviceIdPath: path.join(directory, 'model-device.json'),
     getConfig: () => ({ ...config }),
     getDevelopmentApiKey: () => 'sk-development',
     fetch,
@@ -73,12 +77,13 @@ test('uses a development API key without login or token exchange', async () => {
 });
 afterEach(() => {
   clearActiveBuiltinModelCredential();
+  vi.restoreAllMocks();
   vi.useRealTimers();
   vi.unstubAllEnvs();
   fs.rmSync(directory, { recursive: true, force: true });
 });
 
-test('exchanges only mtoken and a stable device ID without changing the login file', async () => {
+test('exchanges only mtoken and a normalized MAC without changing the login file', async () => {
   login();
   const original = fs.readFileSync(path.join(directory, 'user_info.json'), 'utf8');
   const { service, fetch } = setup();
@@ -87,12 +92,44 @@ test('exchanges only mtoken and a stable device ID without changing the login fi
   expect(url).toBe('https://issuer.test/api/litellm/mtoken2jwt');
   expect(init.redirect).toBe('error');
   expect(JSON.parse(String(init.body))).toEqual({
-    mtoken: 'mtoken-fixture', deviceId: getOrCreateBuiltinModelDeviceId(path.join(directory, 'model-device.json')),
+    mtoken: 'mtoken-fixture', deviceId: '02ABCDEF1234',
   });
+  expect(fs.existsSync(path.join(directory, 'model-device.json'))).toBe(false);
   expect(JSON.stringify(init)).not.toContain('cookie-fixture');
   expect(fs.readFileSync(path.join(directory, 'user_info.json'), 'utf8')).toBe(original);
   await service.refresh();
   expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+test('uses the shared MAC lookup when renewing credentials after a network change', async () => {
+  login();
+  const { service, fetch } = setup();
+  await service.refresh();
+  vi.mocked(os.networkInterfaces).mockReturnValue({
+    WiFi: [{
+      address: '192.0.2.2', netmask: '255.255.255.0', family: 'IPv4',
+      mac: '02:33:44:55:66:77', internal: false, cidr: '192.0.2.2/24',
+    }],
+  });
+  vi.setSystemTime((NOW + 241) * 1000);
+
+  await service.refresh();
+
+  expect(fetch).toHaveBeenCalledTimes(2);
+  const deviceIds = (fetch.mock.calls as unknown as [string, RequestInit][])
+    .map(([, init]) => JSON.parse(String(init.body)).deviceId);
+  expect(deviceIds).toEqual(['02ABCDEF1234', '023344556677']);
+});
+
+test('does not send an exchange request when no valid MAC is available', async () => {
+  login();
+  vi.mocked(os.networkInterfaces).mockReturnValue({});
+  const { service, fetch } = setup();
+
+  await expect(service.refresh()).rejects.toThrow('Model authentication token exchange failed.');
+
+  expect(fetch).not.toHaveBeenCalled();
+  expect(getActiveBuiltinModelCredential()).toBeNull();
 });
 
 test('coalesces concurrent exchanges and renews before expiration', async () => {

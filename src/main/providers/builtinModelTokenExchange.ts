@@ -1,8 +1,8 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
-import path from 'node:path';
 
 import type { BuiltinModelAuthConfig } from '../../config/builtinModelAuth';
+import { getMacAddress } from '../core/network/macAddress';
 import {
   type BuiltinModelCredential,
   clearActiveBuiltinModelCredential,
@@ -19,7 +19,6 @@ const EXCHANGE_TIMEOUT_MS = 15_000;
 type Login = { mtoken: string; account: string; identity: string };
 type Dependencies = {
   userInfoPath: string;
-  deviceIdPath: string;
   getConfig: () => BuiltinModelAuthConfig;
   getDevelopmentApiKey?: () => string;
   fetch: (url: string, init: RequestInit) => Promise<Response>;
@@ -36,27 +35,6 @@ const readLogin = (file: string): Login | null => {
     return { mtoken, account, identity: createHash('sha256').update(JSON.stringify([mtoken, account])).digest('hex') };
   } catch {
     return null;
-  }
-};
-
-/** Installation identity, not a hardware fingerprint or proof of device possession. */
-export const getOrCreateBuiltinModelDeviceId = (file: string): string => {
-  const read = (): string => {
-    const value = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (typeof value?.deviceId !== 'string' || !/^[0-9a-f-]{36}$/i.test(value.deviceId)) {
-      throw new Error('Invalid model authentication device identity.');
-    }
-    return value.deviceId;
-  };
-  if (fs.existsSync(file)) return read();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const deviceId = randomUUID();
-  try {
-    fs.writeFileSync(file, JSON.stringify({ deviceId }), { flag: 'wx', mode: 0o600 });
-    return deviceId;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return read();
-    throw new Error('Unable to save model authentication device identity.');
   }
 };
 
@@ -160,7 +138,7 @@ export class BuiltinModelTokenExchange {
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({
           mtoken: login.mtoken,
-          deviceId: getOrCreateBuiltinModelDeviceId(this.dependencies.deviceIdPath),
+          deviceId: getMacAddress(),
         }),
         redirect: 'error',
         signal: AbortSignal.any([signal, AbortSignal.timeout(EXCHANGE_TIMEOUT_MS)]),

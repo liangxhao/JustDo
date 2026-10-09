@@ -822,7 +822,6 @@ const getBuiltinModelLifecycle = (): BuiltinModelLifecycle => {
 const getBuiltinModelTokenExchange = (): BuiltinModelTokenExchange => {
   builtinModelTokenExchange ??= new BuiltinModelTokenExchange({
     userInfoPath: resolveOutboundHeaderUserInfoPath(),
-    deviceIdPath: path.join(app.getPath('userData'), 'huawei', 'model-device.json'),
     getConfig: getBuiltinModelAuthConfig,
     getDevelopmentApiKey: () =>
       resolveBuiltinModelDevelopmentApiKey(getBuiltinModelAuthConfig(), app.isPackaged),

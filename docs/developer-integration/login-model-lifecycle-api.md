@@ -70,7 +70,7 @@ await dependencies.onLogoutCommitted();
 - `src/config/builtinModels.ts`：确认 `enabled` 和模型服务 `baseUrl`。
 - 正式登录验证使用 JWT 模式。未打包开发的 API key 模式是独立调试通道，不能据此验证“未登录列表为空”。
 
-换证请求为 `POST` JSON `{ mtoken, deviceId }`；安装级 `deviceId` 由 Main 生成和持久化。
+换证请求为 `POST` JSON `{ mtoken, deviceId }`；`deviceId` 只使用当前有效网卡 MAC（去冒号、转大写）。Main 公共模块 [`src/main/core/network/macAddress.ts`](../../src/main/core/network/macAddress.ts) 导出 `getMacAddress(): string`，登录模块与模型换证应共同调用，不能在 Renderer 或 `src/shared` 中直接读取系统网卡。无有效 MAC 或查询失败时函数抛错，调用方应处理失败；不回退 UUID，不保存设备 ID 文件。
 响应包含 `access_token`、`token_type: "Bearer"`、整数 `expires_in`，可选 `uid` 必须匹配登录账号。
 JWT claims、期限和部署约定见[认证设计](../features/authentication-builtin-model-lifecycle.md)
 及[客户端部署](../../deploy/client/README.md)。修改编入 Main 的配置后需要重启开发进程或重新打包。

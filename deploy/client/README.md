@@ -17,6 +17,12 @@ maxJwtLifetimeSeconds: 10800,
 开发启动：`npm run electron:dev`。
 Windows 打包：`npm run dist:win`。
 
+## 设备标识约定
+
+换证请求中的 `deviceId` 只采用当前首个有效网卡 MAC，去掉冒号并转为 12 位大写十六进制。Main 公共模块 `src/main/core/network/macAddress.ts` 导出 `getMacAddress(): string`，登录和换证共用；没有可用 MAC 或查询失败时抛错，不回退 UUID，也不使用本地设备 ID 文件。
+
+换证服务按该 MAC 格式校验请求中的 `deviceId`，不要读取服务端本机 MAC。网卡切换或随机 MAC 变化可能改变标识，登录与换证应采用一致的设备绑定约定；MAC 不能替代 mtoken 认证或设备签名。
+
 ## 仅 API Key 的开发验证
 
 编辑 `src/config/builtinModelAuth.ts`：
