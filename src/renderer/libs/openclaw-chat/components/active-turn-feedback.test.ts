@@ -5,11 +5,37 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { i18nService } from '@/services/i18n';
 
 import { renderTerminalTimelineMessage, renderTimelineItem } from './active-turn-timeline';
+import { chatStyles } from './justdo-chat.styles';
+
+let style: HTMLStyleElement | undefined;
 
 afterEach(() => {
   render(nothing, document.body);
+  style?.remove();
+  style = undefined;
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+test.each([
+  'Provider request failed.',
+  'Provider request failed.\nThe connection closed before the response completed.',
+  'Provider request failed. '.repeat(12),
+])('keeps the visible error copy button clickable: %s', message => {
+  style = document.createElement('style');
+  style.textContent = chatStyles.map(styles => styles.cssText).join('\n');
+  document.head.append(style);
+  render(renderTerminalTimelineMessage(message, 'error'), document.body);
+
+  const copy = document.querySelector<HTMLButtonElement>('.message-copy')!;
+  expect(getComputedStyle(copy).opacity).toBe('1');
+  expect(getComputedStyle(copy).pointerEvents).toBe('auto');
+
+  const details = document.querySelector('details');
+  if (details) {
+    details.open = true;
+    expect(getComputedStyle(copy).pointerEvents).toBe('auto');
+  }
 });
 
 test('keeps long errors collapsed and copies the complete displayed diagnostic', async () => {

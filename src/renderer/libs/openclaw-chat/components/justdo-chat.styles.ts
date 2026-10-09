@@ -3076,6 +3076,7 @@ export const chatStyles = [
       position: static;
       flex-shrink: 0;
       opacity: 1;
+      pointer-events: auto;
       margin-left: auto;
       color: inherit;
     }

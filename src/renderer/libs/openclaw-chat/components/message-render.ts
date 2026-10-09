@@ -262,20 +262,42 @@ function renderUserMessageEditor(
   `;
 }
 
-async function copyMessage(event: Event, text: string): Promise<void> {
+const copyFeedbackTimers = new WeakMap<HTMLButtonElement, number>();
+const copyRequests = new WeakMap<HTMLButtonElement, symbol>();
+
+function clearCopyFeedbackTimer(button: HTMLButtonElement): void {
+  const activeTimer = copyFeedbackTimers.get(button);
+  if (activeTimer !== undefined) window.clearTimeout(activeTimer);
+  copyFeedbackTimers.delete(button);
+}
+
+async function copyMessage(event: Event, text: string, label: string): Promise<void> {
   event.stopPropagation();
   const button = event.currentTarget as HTMLButtonElement;
-  const label = button.title || i18nService.t('copyToClipboard');
+  const request = Symbol();
+  copyRequests.set(button, request);
+  clearCopyFeedbackTimer(button);
+  const isCurrent = () => button.isConnected && copyRequests.get(button) === request;
   try {
     await navigator.clipboard.writeText(text);
+    if (!isCurrent()) return;
     button.classList.add('message-copy--copied');
-    button.setAttribute('aria-label', i18nService.t('copied'));
-    window.setTimeout(() => {
+    button.title = i18nService.t('copied');
+    button.setAttribute('aria-label', button.title);
+    const timer = window.setTimeout(() => {
+      if (!isCurrent()) return;
       button.classList.remove('message-copy--copied');
+      button.title = label;
       button.setAttribute('aria-label', label);
+      copyFeedbackTimers.delete(button);
     }, 1500);
-  } catch (error) {
-    console.error('[GroupedRender] Failed to copy message', error);
+    copyFeedbackTimers.set(button, timer);
+  } catch {
+    if (!isCurrent()) return;
+    button.classList.remove('message-copy--copied');
+    button.title = i18nService.t('messageCopyFailed');
+    button.setAttribute('aria-label', button.title);
+    window.dispatchEvent(new CustomEvent('app:showToast', { detail: button.title }));
   }
 }
 
@@ -289,7 +311,7 @@ export function renderCopyButton(
       class="message-copy"
       aria-label=${label}
       title=${label}
-      @click=${(event: Event) => void copyMessage(event, text)}
+      @click=${(event: Event) => void copyMessage(event, text, label)}
     >
       ${COPY_ICON}
     </button>
