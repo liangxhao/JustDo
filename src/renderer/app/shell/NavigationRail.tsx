@@ -8,6 +8,7 @@ import {
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import AuthEntry from '@/features/auth/AuthEntry';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import ArrowUpRightIcon from '@/shared/components/icons/ArrowUpRightIcon';
@@ -262,15 +263,18 @@ const NavigationRail: React.FC<NavigationRailProps> = ({
           </button>
         ))}
       </div>
-      <button
-        type="button"
-        className={railButtonClass(false)}
-        onClick={() => navigate(onShowSettings)}
-        aria-label={i18nService.t('settings')}
-        title={i18nService.t('settings')}
-      >
-        <Cog6ToothIcon className="h-5 w-5" />
-      </button>
+      <div className="flex shrink-0 flex-col items-center gap-2">
+        <AuthEntry compact />
+        <button
+          type="button"
+          className={railButtonClass(false)}
+          onClick={() => navigate(onShowSettings)}
+          aria-label={i18nService.t('settings')}
+          title={i18nService.t('settings')}
+        >
+          <Cog6ToothIcon className="h-5 w-5" />
+        </button>
+      </div>
       {isMoreOpen &&
         createPortal(
           <div

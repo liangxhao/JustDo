@@ -62,13 +62,14 @@ describe('NavigationRail', () => {
       translations.zh.scheduledTasks,
       translations.zh.plugins,
       '更多',
+      translations.zh.authLogin,
       translations.zh.settings,
     ]);
     expect(buttons[0].getAttribute('aria-current')).toBe('page');
     fireEvent.click(buttons[0]);
     fireEvent.click(buttons[1]);
     fireEvent.click(buttons[2]);
-    fireEvent.click(buttons[4]);
+    fireEvent.click(buttons[5]);
     expect(props.onShowHome).toHaveBeenCalledOnce();
     expect(props.onShowScheduledTasks).toHaveBeenCalledOnce();
     expect(props.onShowPlugins).toHaveBeenCalledOnce();
@@ -129,7 +130,7 @@ describe('NavigationRail', () => {
     ).toBeNull();
     expect(configService.updateConfig).not.toHaveBeenCalled();
     rerender(<NavigationRail {...props} />);
-    const pinnedButtons = rail.getAllByRole('button').slice(4, -1);
+    const pinnedButtons = rail.getAllByRole('button').slice(4, -2);
     expect(pinnedButtons.map(button => button.getAttribute('aria-label'))).toEqual([
       translations.zh.workboard,
       translations.zh.memoryTitle,

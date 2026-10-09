@@ -3,6 +3,7 @@ import { browserRecordingTranslations } from '@/features/browser/browserRecordin
 import type { LanguageType } from '@/services/i18n';
 
 import { appTranslations } from './appTranslations';
+import { authTranslations } from './authTranslations';
 import { chatTranslations } from './chatTranslations';
 import { getHomeGreetingTranslations } from './homeGreetings';
 import { pluginsTranslations } from './pluginsTranslations';
@@ -17,6 +18,7 @@ import { swarmTranslations } from './swarmTranslations';
 
 export const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    ...authTranslations.zh,
     ...swarmTranslations.zh,
     ...swarmFlowTranslations.zh,
     ...sessionDiagnosticsTranslations.zh,
@@ -33,6 +35,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...scheduledTaskTranslations.zh,
   },
   en: {
+    ...authTranslations.en,
     ...swarmTranslations.en,
     ...swarmFlowTranslations.en,
     ...sessionDiagnosticsTranslations.en,

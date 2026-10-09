@@ -62,6 +62,13 @@ flowchart LR
 
 Main 通过 webContents 事件通知会话变化、目标执行、审批、结果和更新状态。preload 为监听器返回 unsubscribe。通知可以丢失或重复，消费者重连后应查询权威状态，而不是假设收到过全部历史事件。
 
+账号入口通过 `auth` 的四个显式操作查询、登录、退出和重试服务同步，仅主窗口 main frame
+可调用。Main 的 LoginService 持有账号操作队列与 SDK 取消身份；SDK 在 Main 确认身份后
+返回凭据，产品原子写入登录文件，再 await 现有模型与 Header 生命周期入口。
+Renderer 仅接收含 revision 的显示资料、闭合错误码和独立账号/同步状态，先订阅再读取快照，
+不接收 token、Cookie 或 SDK 原始结果。文件导入只恢复 local-credentials 显示，不门禁原有
+模型启动；SDK 确认后才显示 signed-in。见[登录模板](../features/login-sdk-template.md)。
+
 ### 聊天数据
 
 桌面聊天 wrapper 从 preload 取得 Main 管理的本地连接信息，集中式 GatewayClient/ChatController 消费原生事件和历史。分页历史还使用 Main history bridge，必要时走认证 loopback REST fallback。token 只用于受控聊天连接，不进入 Redux、导出或外部网页。

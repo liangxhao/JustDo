@@ -127,6 +127,14 @@ Redux store (`src/renderer/store/index.ts`) mounts **6 slices**:
 `model`, `cowork`, `skill`, `mcp`, `scheduledTask`, `agent`.
 Do not document/use unmounted slices as active state.
 
+Account entry uses `src/main/core/app/auth/` and explicit `auth` IPC, with no
+new Redux slice or SQLite table. The SDK adapter is intentionally unconfigured;
+trusted SDK results are committed atomically before existing login/logout callbacks.
+Manual `user_info.json` import retains native model startup and is displayed as
+local credentials, not an SDK-verified login. Cookie updates preserve mtoken and
+use generation/identity leases; real SDK renewal scheduling remains an integration seam.
+See `docs/features/login-sdk-template.md`.
+
 SQLite core tables in `src/main/data/sqliteStore.ts`:
 `kv`, `cowork_sessions`, `cowork_external_sessions`, `cowork_external_session_tombstones`,
 `cowork_session_runs`, `cowork_plan_handoffs`, `cowork_config`, `agents`, `mcp_servers`,

@@ -89,6 +89,7 @@ describe('Sidebar', () => {
     expect(screen.queryByRole('complementary')).toBeNull();
     expect(home.getAttribute('aria-expanded')).toBe('false');
     expect(screen.getByRole('navigation')).toBeTruthy();
+    expect(screen.getByRole('button', { name: translations.zh.authLogin })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '主页' }));
     expect(screen.getByRole('complementary', { name: '主页' })).toBeTruthy();
     expect(home.getAttribute('aria-expanded')).toBe('true');
@@ -141,6 +142,7 @@ describe('Sidebar', () => {
       expect(screen.queryByRole('complementary')).toBeNull();
       expect(screen.getByRole('button', { name: '主页' })).toBeTruthy();
       expect(screen.getByRole('button', { name: translations.zh.settings })).toBeTruthy();
+      expect(screen.getByRole('button', { name: translations.zh.authLogin })).toBeTruthy();
     }
     rerender(<Sidebar {...props} />);
     expect(screen.getByRole('complementary')).toBeTruthy();

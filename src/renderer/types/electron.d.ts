@@ -1341,6 +1341,7 @@ interface IElectronAPI {
     getReleaseHistory: () => Promise<import('../../shared/app/appUpdate').AppReleaseHistoryResult>;
     onStateChanged: (callback: (state: AppUpdateState) => void) => () => void;
   };
+  auth: import('../../shared/app/auth').AuthApi;
   builtinModels: {
     refresh: () => Promise<{ success: boolean; error?: string }>;
   };

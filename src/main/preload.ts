@@ -14,6 +14,7 @@ import {
   type AppUpdatePreferences,
   type AppUpdateState,
 } from '../shared/app/appUpdate';
+import { AuthIpc, type AuthState } from '../shared/app/auth';
 import { DialogIpc, type SaveTextFileOptions } from '../shared/app/dialogIpc';
 import { LogIpc } from '../shared/app/logIpc';
 import { MediaCaptureIpc } from '../shared/app/mediaCapture';
@@ -1106,6 +1107,17 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = (_event: Electron.IpcRendererEvent, state: AppUpdateState) => callback(state);
       ipcRenderer.on(AppUpdateIpc.StateChanged, handler);
       return () => ipcRenderer.removeListener(AppUpdateIpc.StateChanged, handler);
+    },
+  },
+  auth: {
+    getState: () => ipcRenderer.invoke(AuthIpc.GetState),
+    login: () => ipcRenderer.invoke(AuthIpc.Login),
+    logout: () => ipcRenderer.invoke(AuthIpc.Logout),
+    retrySync: () => ipcRenderer.invoke(AuthIpc.RetrySync),
+    onStateChanged: (callback: (state: AuthState) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: AuthState) => callback(state);
+      ipcRenderer.on(AuthIpc.StateChanged, handler);
+      return () => ipcRenderer.removeListener(AuthIpc.StateChanged, handler);
     },
   },
   builtinModels: {

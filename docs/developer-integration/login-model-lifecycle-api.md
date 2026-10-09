@@ -3,6 +3,13 @@
 登录模块完成账号状态持久化后，只需在 Main 中调用一个对应入口。模型凭据换取、目录刷新、
 默认模型恢复、Gateway 同步、Renderer 通知及请求头值缓存刷新由入口内部负责。
 
+产品已提供 [登录 SDK 接入模板](../features/login-sdk-template.md)：首页账号入口、
+`LoginService`、凭据文件写入和显式账号 IPC 均已实现。后续 SDK 应通过
+`src/main/core/app/auth/loginSdkAdapter.ts` 接入，复用模板的提交顺序、重试和账号隔离。
+默认 SDK 适配器不可用，手工导入登录文件的原有启动恢复流程仍可使用。
+未登录点击头像直接调用 SDK 登录入口，不先展开产品账号菜单；失败后才显示单行提示。
+登录成功后头像显示用户名首字符的圆形徽标，点击徽标打开账号菜单；真实 SDK 只需接入既有适配器。
+
 ## 1. 已有接口
 
 实现与导出位置：[`src/main/main.ts`](../../src/main/main.ts)。
@@ -48,7 +55,8 @@ await dependencies.onLogoutCommitted();
 
 登录文件使用 `resolveOutboundHeaderUserInfoPath()`（来自
 `src/main/core/network/outboundHeaderPolicyConfig.ts`）解析路径，通常为
-`<app.getPath('userData')>/huawei/user_info.json`。不要硬编码产品名或 Windows 用户目录。
+`<app.getPath('appData')>/<productName>/huawei/user_info.json`。不要硬编码产品名或 Windows 用户目录。
+隔离开发 userData 不改变此登录文件路径。
 
 模型认证必需字段如下，示例均为占位值：
 
@@ -138,4 +146,5 @@ Cookie 单独续期且模型登录身份未变化时，可只调用
 `builtinModelTokenExchange.test.ts`、`builtinModelCredentialMonitor.test.ts`、
 `builtinModelLifecycle.test.ts`、`builtinModelProvider.test.ts`。
 
-该接口不实现登录页、身份服务登录/注销、凭据文件持久化或远端账号 token 撤销；这些由未来登录模块负责。
+这两个生命周期接口自身不实现登录页、身份服务登录/注销、凭据持久化或远端 token 撤销。
+产品模板现在负责持久化与本地账号流程；真实 SDK 弹窗、验证、远端会话和 Cookie 续期仍需后续接入。

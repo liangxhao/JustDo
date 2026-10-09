@@ -18,6 +18,7 @@ import packageJson from '../../package.json';
 import { ACTIVITY_REPORTING_CONFIG } from '../config/activityReporting';
 import { APP_UPDATE_CONFIG } from '../config/appUpdate';
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../config/builtinModels';
+import { AuthIpc } from '../shared/app/auth';
 import { normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../shared/browser/browser';
 import { buildCoworkSessionKey } from '../shared/cowork/sessionKey';
 import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
@@ -48,6 +49,9 @@ import {
 } from './browser/browserExtensionNativeMessaging';
 import { readAutomaticBrowserExtensionPairing } from './browser/browserExtensionPairing';
 import { registerAppShutdown } from './core/app/appShutdown';
+import { createLoginSdkAdapter } from './core/app/auth/loginSdkAdapter';
+import { LoginService } from './core/app/auth/loginService';
+import { LoginUserInfoStore } from './core/app/auth/loginUserInfoStore';
 import { isAutoLaunched } from './core/app/autoLaunchManager';
 import { AutoUpdateService } from './core/app/autoUpdateService';
 import { CustomerRegistrationService } from './core/app/customerRegistrationService';
@@ -110,6 +114,7 @@ import { getMulticaModelCatalog } from './integrations/multica/multicaModelCatal
 import {
   applyBrowserModeChange,
   registerAppHandlers,
+  registerAuthHandlers,
   registerAutoUpdateHandlers,
   registerBrowserHandlers,
   registerCalendarPermissionHandlers,
@@ -477,6 +482,7 @@ let openClawConfigSyncService: OpenClawConfigSyncService | null = null;
 let localSpeechModelService: LocalSpeechModelService | null = null;
 let builtinModelLifecycle: BuiltinModelLifecycle | null = null;
 let customerRegistrationService: CustomerRegistrationService | null = null;
+let loginService: LoginService | null = null;
 let builtinModelCredentialMonitor: BuiltinModelCredentialMonitor | null = null;
 let builtinModelTokenExchange: BuiltinModelTokenExchange | null = null;
 let builtinModelAuthCoordinator: BuiltinModelAuthCoordinator | null = null;
@@ -860,6 +866,28 @@ export const refreshAfterLogout = (): Promise<void> => {
   builtinModelTokenExchange?.suspend();
   clearActiveBuiltinModelCredential();
   return getBuiltinModelAuthCoordinator().logout();
+};
+
+const getLoginService = (): LoginService => {
+  loginService ??= new LoginService({
+    store: new LoginUserInfoStore(resolveOutboundHeaderUserInfoPath()),
+    adapter: createLoginSdkAdapter({ getParentWindow: () => mainWindow }),
+    onLoginCommitted: refreshAfterLogin,
+    onLogoutCommitted: refreshAfterLogout,
+    onHeadersCommitted: () => {
+      updateOutboundHeaderUserInfoCache();
+    },
+    onStateChanged: state => {
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+        try {
+          mainWindow.webContents.send(AuthIpc.StateChanged, state);
+        } catch {
+          console.warn('[LoginService] Failed to notify the account view.');
+        }
+      }
+    },
+  });
+  return loginService;
 };
 
 const getCoworkEngineService = (): CoworkEngineService => {
@@ -1380,6 +1408,7 @@ if (multicaBridgeArgv) {
       preventSleepBlockerId = blockerId;
     },
   });
+  registerAuthHandlers({ getService: getLoginService, getMainWindow: () => mainWindow });
   registerWindowHandlers({
     getMainWindow: () => mainWindow,
     showSystemMenu,
@@ -1783,6 +1812,7 @@ if (multicaBridgeArgv) {
     devSessionLifecycle?.stop();
     console.log('[Main] App is quitting, starting cleanup...');
     builtinModelCredentialMonitor?.stop();
+    loginService?.dispose();
     customerRegistrationService?.stop();
     builtinModelTokenExchange?.invalidate();
     builtinModelAuthCoordinator?.initialize(null);
@@ -2101,6 +2131,8 @@ if (multicaBridgeArgv) {
       startupSync.success ? builtinModelCredential : null,
     );
     builtinModelCredentialMonitor.start(builtinModelCredential);
+    // This display restoration never gates or repeats the existing JWT/model startup flow.
+    void getLoginService().restoreFromFile();
     if (BUILTIN_MODEL_PROVIDER_CONFIG.enabled && ACTIVITY_REPORTING_CONFIG.enabled) {
       customerRegistrationService = new CustomerRegistrationService({
         getCredential: getActiveBuiltinModelCredential,
