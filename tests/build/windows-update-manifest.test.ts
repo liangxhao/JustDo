@@ -246,18 +246,16 @@ Path = resources/win-resources-metadata.json
 Method = LZMA2:20
 `;
 
-  test('accepts the single-stream BCJ methods supported by install-time Nsis7z', () => {
+  test('accepts single-stream BCJ application archives', () => {
     const listing = `Type = 7z\nMethod = LZMA2:20 BCJ\n${requiredEntries}`;
 
     expect(() => verifyWindowsInstallerArchiveListing(listing, 'JustDo')).not.toThrow();
   });
 
-  test('rejects a BCJ2 archive that would silently omit executable files', () => {
+  test('does not reject CLI-supported BCJ2 archives by a historical plugin allowlist', () => {
     const listing = `Type = 7z\nMethod = LZMA2:20 LZMA:20 BCJ2\n${requiredEntries}`;
 
-    expect(() => verifyWindowsInstallerArchiveListing(listing, 'JustDo')).toThrow(
-      'install-time Nsis7z decoder cannot safely read',
-    );
+    expect(() => verifyWindowsInstallerArchiveListing(listing, 'JustDo')).not.toThrow();
   });
 
   test('rejects an archive missing a required executable payload', () => {

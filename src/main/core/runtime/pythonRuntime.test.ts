@@ -95,6 +95,23 @@ describe('packaged Python runtime', () => {
     );
     expect(env.JUSTDO_PYTHON_LEGACY_SITE).toBeUndefined();
     expect(env.PIP_USER).toBeUndefined();
+    expect(fs.existsSync(path.join(electronMocks.userData, 'runtimes', 'python-user'))).toBe(false);
+  });
+
+  test('keeps bundled Python usable when the unused user-package directory is occupied', () => {
+    const runtimesRoot = path.join(electronMocks.userData, 'runtimes');
+    fs.mkdirSync(runtimesRoot, { recursive: true });
+    const userPackageRoot = path.join(runtimesRoot, 'python-user');
+    fs.writeFileSync(userPackageRoot, 'preserve', 'utf8');
+
+    const env = appendPythonRuntimeToEnv({ PATH: 'C:\\Windows\\System32' });
+
+    expect(env.JUSTDO_PYTHON_ROOT).toBe(path.join(resourcesRoot, 'python-win'));
+    expect(env.PATH).toContain(path.join(resourcesRoot, 'python-win'));
+    expect(env.JUSTDO_PYTHON_USER_SITE).toBe(
+      path.join(userPackageRoot, 'Python312', 'site-packages'),
+    );
+    expect(fs.readFileSync(userPackageRoot, 'utf8')).toBe('preserve');
   });
 
   test('removes inherited provenance when the bundled runtime is unavailable', () => {
@@ -109,6 +126,7 @@ describe('packaged Python runtime', () => {
     expect(env.PYTHONUSERBASE).toBe('C:\\host\\python-user');
     expect(env.JUSTDO_MANAGED_PYTHON_USER_BASE).toBeUndefined();
     expect(env.justdo_managed_python_user_base).toBeUndefined();
+    expect(fs.existsSync(electronMocks.userData)).toBe(false);
   });
 
   test('removes inherited provenance outside Windows', () => {

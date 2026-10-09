@@ -871,11 +871,9 @@ async function beforePack(context) {
   await ensureBundledOpenClawRuntime(context);
 
   if (isWindowsTarget(context)) {
-    // The locked electron-builder 26.15.3 can let modern 7za choose BCJ2 for PE files,
-    // while the older Nsis7z decoder embedded in the installer can silently
-    // omit those blocks. Force the single-stream BCJ filter before the NSIS app
-    // archive is created; a successful 7za build alone does not prove the
-    // install-time decoder can read it.
+    // Keep a deterministic single-stream filter for the application archive.
+    // The custom installer now decodes with the bundled 7za CLI and records
+    // actual extraction errors rather than relying on Nsis7z.
     process.env.ELECTRON_BUILDER_7Z_FILTER = 'BCJ';
     console.log('[electron-builder-hooks] Forced NSIS-compatible 7z filter: BCJ');
 
@@ -1346,10 +1344,7 @@ function verifyWindowsInstallerArchiveListing(listing, productFilename) {
     );
   }
 
-  // The Nsis7z decoder shipped with the locked electron-builder 26.15.3 understands
-  // plain LZMA2/Copy and the single-stream BCJ converter only. Modern 7za can
-  // silently choose BCJ2 (x64) or another CPU filter, after which Nsis7z omits
-  // the affected executable blocks without reporting an extraction error.
+  // Inspect package completeness here; the bundled CLI performs real decoding.
   const methods = listing
     .split(/\r?\n/)
     .filter(line => line.startsWith('Method = '))
@@ -1360,22 +1355,6 @@ function verifyWindowsInstallerArchiveListing(listing, productFilename) {
       '[electron-builder-hooks] Windows installer archive listing contains no compression methods.',
     );
   }
-  const unsupportedMethods = [
-    ...new Set(
-      methods.filter(method =>
-        method
-          .split(/\s+/)
-          .some(token => !/^LZMA2(?::[^\s]+)?$/.test(token) && token !== 'BCJ' && token !== 'Copy'),
-      ),
-    ),
-  ];
-  if (unsupportedMethods.length > 0) {
-    throw new Error(
-      '[electron-builder-hooks] Windows installer uses application archive methods that the ' +
-        `install-time Nsis7z decoder cannot safely read: ${unsupportedMethods.join(', ')}.`,
-    );
-  }
-
   const archivedPaths = new Set(
     listing
       .split(/\r?\n/)

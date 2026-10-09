@@ -67,7 +67,9 @@ import { matchesShortcut } from '@/services/shortcuts';
 import { themeService } from '@/services/theme';
 import { isDomHTMLElement } from '@/shared/dom/ownerDocument';
 
-const App: React.FC = () => {
+import AppInitializationGate from './shell/AppInitializationGate';
+
+const InitializedApp: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
   const [mainView, setMainView] = useState<SidebarView>(SidebarView.Home);
@@ -955,5 +957,11 @@ const App: React.FC = () => {
     </div>
   );
 };
+
+const App: React.FC = () => (
+  <AppInitializationGate>
+    <InitializedApp />
+  </AppInitializationGate>
+);
 
 export default App;

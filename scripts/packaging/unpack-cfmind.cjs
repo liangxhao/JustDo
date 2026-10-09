@@ -6,7 +6,7 @@
  * 由 NSIS installer.nsh 的 customInstall 宏调用。
  * 通过 JustDo.exe (ELECTRON_RUN_AS_NODE=1 模式) 执行。
  *
- * 用法: JustDo.exe <本脚本路径> <tarPath> <destDir> <userDataDir>
+ * 用法: JustDo.exe <本脚本路径> <tarPath> <destDir> <reserved>
  *                   <metadataPath> <progressPath> <diagnosticLogPath>
  *                   <installerSessionId> <productVersion>
  *
@@ -25,6 +25,7 @@ const { spawn } = require('child_process');
 const { Transform } = require('stream');
 const { pipeline } = require('stream/promises');
 const { createZstdDecompress } = require('zlib');
+const { inspect } = require('util');
 
 // ============================================================
 // 参数解析
@@ -32,10 +33,12 @@ const { createZstdDecompress } = require('zlib');
 
 const tarPath = process.argv[2];
 const destDir = process.argv[3];
-const userDataDir = process.argv[4];
+// argv[4] is reserved; setup never reads or mutates user data.
 const metadataPath = process.argv[5];
 const progressPath = process.argv[6];
-const diagnosticLogPath = process.argv[7];
+const fallbackDiagnosticLogPath = destDir && path.join(destDir, 'install-resource.log');
+const requestedDiagnosticLogPath = process.argv[7];
+let diagnosticLogPath = requestedDiagnosticLogPath || fallbackDiagnosticLogPath;
 const installerSessionId = process.argv[8] || 'unknown';
 const productVersion = process.argv[9] || 'unknown';
 const diagnosticStartedAt = Date.now();
@@ -43,19 +46,73 @@ let progressWriteWarningShown = false;
 let lastProgressPercent = null;
 let lastProgressMode = 'indeterminate';
 let diagnosticWriteWarningShown = false;
-let activeExtractorChild = null;
-let activeExtractionAbort = null;
-let diskGrowthFailure = null;
 
-const GIB = 1024 * 1024 * 1024;
-const DISK_RESERVE_BYTES = 2 * GIB;
-const INSTALL_TIMEOUT_MS = 30 * 60 * 1000;
+function appendDiagnostic(content) {
+  const candidates = [
+    ...new Set([diagnosticLogPath, requestedDiagnosticLogPath, fallbackDiagnosticLogPath]),
+  ].filter(Boolean);
+  let failureDetail = '';
+  for (const candidate of candidates) {
+    try {
+      fs.mkdirSync(path.dirname(candidate), { recursive: true });
+      const relocation = failureDetail
+        ? `${new Date().toISOString()} session=${installerSessionId} event=diagnostic-log-relocated path=${candidate} error=${failureDetail}\n`
+        : '';
+      fs.appendFileSync(candidate, relocation + content, 'utf8');
+      diagnosticLogPath = candidate;
+      return;
+    } catch (error) {
+      failureDetail = sanitizeDiagnosticValue(
+        inspect(error, {
+          depth: null,
+          colors: false,
+          maxArrayLength: null,
+          maxStringLength: null,
+          customInspect: false,
+          getters: false,
+        }),
+      );
+      if (!diagnosticWriteWarningShown) {
+        console.error('[unpack-cfmind] Unable to write diagnostic log:', candidate, error);
+        diagnosticWriteWarningShown = true;
+      }
+    }
+  }
+}
 
 function sanitizeDiagnosticValue(value) {
   return String(value ?? '')
     .replace(/\r/g, '\\r')
-    .replace(/\n/g, '\\n')
-    .slice(0, 8192);
+    .replace(/\n/g, '\\n');
+}
+
+function diagnosticErrorDetails(error, prefix = '') {
+  const details = {
+    name: error?.name || '',
+    message: error?.message || (error == null ? '' : String(error)),
+    code: error?.code || '',
+    syscall: error?.syscall || '',
+    path: error?.path || '',
+    stack: error?.stack || '',
+    cause:
+      error?.cause === undefined
+        ? ''
+        : inspect(error.cause, {
+            depth: null,
+            colors: false,
+            maxArrayLength: null,
+            maxStringLength: null,
+            customInspect: false,
+            getters: false,
+          }),
+  };
+  if (!prefix) return details;
+  return Object.fromEntries(
+    Object.entries(details).map(([key, value]) => [
+      `${prefix}${key[0].toUpperCase()}${key.slice(1)}`,
+      value,
+    ]),
+  );
 }
 
 function writeDiagnostic(level, event, details = {}) {
@@ -75,15 +132,7 @@ function writeDiagnostic(level, event, details = {}) {
     .filter(Boolean)
     .join(' ');
 
-  try {
-    fs.mkdirSync(path.dirname(diagnosticLogPath), { recursive: true });
-    fs.appendFileSync(diagnosticLogPath, `${line}\n`, 'utf8');
-  } catch (error) {
-    if (!diagnosticWriteWarningShown) {
-      console.error(`[unpack-cfmind] Warning: unable to write diagnostic log: ${error.message}`);
-      diagnosticWriteWarningShown = true;
-    }
-  }
+  appendDiagnostic(`${line}\n`);
 }
 
 function writeDiagnosticBoundary(kind, status = '') {
@@ -98,26 +147,20 @@ function writeDiagnosticBoundary(kind, status = '') {
   ]
     .filter(Boolean)
     .join(' | ');
-  try {
-    fs.mkdirSync(path.dirname(diagnosticLogPath), { recursive: true });
-    fs.appendFileSync(diagnosticLogPath, `\n${separator}\n${summary}\n${separator}\n`, 'utf8');
-  } catch (error) {
-    if (!diagnosticWriteWarningShown) {
-      console.error(`[unpack-cfmind] Warning: unable to write diagnostic log: ${error.message}`);
-      diagnosticWriteWarningShown = true;
-    }
-  }
+  appendDiagnostic(`\n${separator}\n${summary}\n${separator}\n`);
 }
 
 writeDiagnosticBoundary('START');
 
-function diagnosticWarning(message, error) {
+function diagnosticWarning(message, error, context = {}) {
+  const details = diagnosticErrorDetails(error);
   writeDiagnostic('warn', 'warning', {
+    ...details,
+    ...context,
     message,
-    error: error?.message || '',
-    code: error?.code || '',
+    error: details.message,
   });
-  console.error(`[unpack-cfmind] Warning: ${message}${error ? `: ${error.message}` : ''}`);
+  console.error(`[unpack-cfmind] Warning: ${message}`, error ?? '');
 }
 
 function activity(text) {
@@ -189,154 +232,6 @@ function readArchiveMetadata() {
   }
 }
 
-function createDiskGrowthGuard(metadata, archiveSizeBytes) {
-  const declaredBytes = Number(metadata?.uncompressedBytes);
-  const hasDeclaredSize = Number.isSafeInteger(declaredBytes) && declaredBytes > 0;
-  const estimatedBytes = hasDeclaredSize
-    ? declaredBytes
-    : Math.max(archiveSizeBytes * 8, archiveSizeBytes + 4 * GIB);
-  if (!Number.isSafeInteger(estimatedBytes) || estimatedBytes <= 0) {
-    throw new Error('Unable to establish a safe extraction size limit.');
-  }
-  if (!hasDeclaredSize) {
-    writeDiagnostic('warn', 'disk-growth-guard-using-archive-fallback', {
-      archiveSizeBytes,
-      estimatedBytes,
-    });
-  }
-
-  const roots = [
-    { role: 'destination', value: destDir },
-    { role: 'original-temp', value: process.env.JUSTDO_INSTALLER_ORIGINAL_TEMP_ROOT },
-  ].filter(item => typeof item.value === 'string' && item.value.trim().length > 0);
-  const extractionRequirementBytes = BigInt(
-    estimatedBytes + Math.max(GIB, Math.ceil(estimatedBytes * 0.1)),
-  );
-  const configuredGrowthBudget = Math.max(estimatedBytes * 3, estimatedBytes + 4 * GIB);
-  const volumes = [];
-  for (const item of roots) {
-    const root = path.resolve(item.value);
-    try {
-      const stats = fs.statfsSync(root, { bigint: true });
-      const availableBytes = stats.bavail * stats.bsize;
-      const volumeRoot = path.parse(root).root.toLowerCase();
-      if (volumes.some(volume => volume.volumeRoot === volumeRoot)) continue;
-      const reserveBytes = BigInt(DISK_RESERVE_BYTES);
-      if (availableBytes <= reserveBytes) {
-        throw new Error(`Insufficient free space on ${volumeRoot}`);
-      }
-      if (
-        item.role === 'destination' &&
-        availableBytes < extractionRequirementBytes + reserveBytes
-      ) {
-        throw new Error(`Insufficient free space to extract resources on ${volumeRoot}`);
-      }
-      volumes.push({
-        availableBytes,
-        maximumGrowthBytes:
-          availableBytes - reserveBytes < BigInt(configuredGrowthBudget)
-            ? availableBytes - reserveBytes
-            : BigInt(configuredGrowthBudget),
-        reserveBytes,
-        root,
-        volumeRoot,
-      });
-    } catch (error) {
-      throw new Error(`Unable to establish disk guard for ${item.role}: ${error.message}`);
-    }
-  }
-
-  writeDiagnostic('info', 'disk-growth-guard-started', {
-    estimatedBytes,
-    reserveBytes: DISK_RESERVE_BYTES,
-    monitoredVolumes: volumes.length,
-  });
-
-  let stopped = false;
-  const sampleVolumes = () => {
-    if (stopped) return;
-    for (const volume of volumes) {
-      try {
-        const stats = fs.statfsSync(volume.root, { bigint: true });
-        const availableBytes = stats.bavail * stats.bsize;
-        const consumedBytes = volume.availableBytes - availableBytes;
-        if (availableBytes > volume.reserveBytes && consumedBytes < volume.maximumGrowthBytes) {
-          continue;
-        }
-
-        stopped = true;
-        writeDiagnostic('error', 'unexpected-disk-growth', {
-          availableBytes,
-          consumedBytes,
-          maximumGrowthBytes: volume.maximumGrowthBytes,
-          reserveBytes: volume.reserveBytes,
-          volumeRoot: volume.root,
-        });
-        reportProgress(null, 'Installation stopped because temporary disk usage grew unexpectedly');
-        diskGrowthFailure = new Error(
-          `Unexpected disk growth exceeded the installer limit on ${volume.root}`,
-        );
-        activeExtractorChild?.kill();
-        activeExtractionAbort?.();
-        return;
-      } catch (error) {
-        diskGrowthFailure = new Error(
-          `Unable to sample guarded volume ${volume.volumeRoot}: ${error.message}`,
-        );
-        activeExtractorChild?.kill();
-        activeExtractionAbort?.();
-        return;
-      }
-    }
-  };
-  const timer = setInterval(sampleVolumes, 1000);
-  timer.unref();
-
-  return {
-    checkNow() {
-      sampleVolumes();
-      assertNoDiskGrowthFailure();
-    },
-    stop() {
-      stopped = true;
-      clearInterval(timer);
-    },
-  };
-}
-
-function assertNoDiskGrowthFailure() {
-  if (diskGrowthFailure) throw diskGrowthFailure;
-}
-
-async function runValidationProcess(executable, args, timeoutMs) {
-  return await new Promise((resolve, reject) => {
-    const child = spawn(executable, args, {
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    activeExtractorChild = child;
-    let stdout = '';
-    let stderr = '';
-    child.stdout?.on('data', chunk => {
-      stdout = `${stdout}${chunk}`.slice(-8192);
-    });
-    child.stderr?.on('data', chunk => {
-      stderr = `${stderr}${chunk}`.slice(-8192);
-    });
-    const timer = setTimeout(() => child.kill(), timeoutMs);
-    child.once('error', reject);
-    child.once('close', (code, signal) => {
-      clearTimeout(timer);
-      activeExtractorChild = null;
-      if (diskGrowthFailure) {
-        reject(diskGrowthFailure);
-        return;
-      }
-      resolve({ signal, status: code, stderr, stdout });
-    });
-  });
-}
-
 function createEntryProgressReporter(totalEntries) {
   let extractedEntries = 0;
   let lastReportedPercent = -1;
@@ -400,6 +295,10 @@ async function extractArchive(entryProgress) {
       input: isZstd ? 'zstd-decoded-stdin' : 'archive-file',
     });
     const archiveFlag = tarPath.toLowerCase().endsWith('.gz') ? '-xzf' : '-xf';
+    // Resolve synchronous stream inputs before launching a writer. A failure
+    // here must not leave tar running while the transaction rolls back.
+    const archiveSize = fs.statSync(tarPath).size;
+    const decoder = isZstd ? createZstdDecompress() : null;
     const child = spawn(
       nativeTarPath,
       isZstd ? ['-xf', '-', '-C', destDir] : [archiveFlag, tarPath, '-C', destDir],
@@ -408,7 +307,6 @@ async function extractArchive(entryProgress) {
         stdio: [isZstd ? 'pipe' : 'ignore', 'ignore', 'pipe'],
       },
     );
-    activeExtractorChild = child;
     writeDiagnostic('info', 'archive-extractor-started', {
       extractor: 'windows-native-tar',
       pid: child.pid || '',
@@ -425,14 +323,22 @@ async function extractArchive(entryProgress) {
     }, 1000);
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', chunk => {
-      if (stderr.length < 16_384) stderr += chunk;
+      // Preserve the complete native error stream on disk without retaining
+      // unbounded output in memory. The later summary remains at most 16 KiB.
+      appendDiagnostic(
+        `${new Date().toISOString()} session=${sanitizeDiagnosticValue(installerSessionId)} event=native-tar-stderr\n${chunk}\n`,
+      );
+      if (stderr.length < 16_384) stderr += chunk.slice(0, 16_384 - stderr.length);
     });
 
+    let processError = null;
     const processResultPromise = new Promise(resolve => {
-      child.once('error', error => resolve({ code: null, error }));
-      child.once('close', code => resolve({ code, error: null }));
+      child.once('error', error => {
+        processError = error;
+      });
+      // Always wait for close before another extractor or rollback can write.
+      child.once('close', code => resolve({ code, error: processError }));
     });
-    const archiveSize = fs.statSync(tarPath).size;
     let archiveBytesRead = 0;
     let lastArchivePercent = -1;
     const archiveReadProgress = new Transform({
@@ -452,17 +358,15 @@ async function extractArchive(entryProgress) {
       },
     });
     const pumpResultPromise = isZstd
-      ? pipeline(
-          fs.createReadStream(tarPath),
-          archiveReadProgress,
-          createZstdDecompress(),
-          child.stdin,
-        ).then(
+      ? pipeline(fs.createReadStream(tarPath), archiveReadProgress, decoder, child.stdin).then(
           () => {
             reportProgress(null, 'Compressed resources read; writing extracted files');
             return null;
           },
-          error => error,
+          error => {
+            child.kill();
+            return error;
+          },
         )
       : Promise.resolve(null);
 
@@ -472,10 +376,8 @@ async function extractArchive(entryProgress) {
       [processResult, pumpError] = await Promise.all([processResultPromise, pumpResultPromise]);
     } finally {
       clearInterval(heartbeat);
-      activeExtractorChild = null;
     }
 
-    assertNoDiskGrowthFailure();
     if (processResult.error || processResult.code !== 0 || pumpError) {
       const detail = stderr.trim();
       writeDiagnostic('error', 'archive-extractor-failed', {
@@ -483,6 +385,8 @@ async function extractArchive(entryProgress) {
         exitCode: processResult.code ?? 'unavailable',
         processError: processResult.error?.message || '',
         pumpError: pumpError?.message || '',
+        ...diagnosticErrorDetails(processResult.error, 'processError'),
+        ...diagnosticErrorDetails(pumpError, 'pumpError'),
         stderr: detail,
       });
       const causes = [];
@@ -491,44 +395,34 @@ async function extractArchive(entryProgress) {
         causes.push(`tar exit code ${processResult.code}${detail ? `: ${detail}` : ''}`);
       }
       if (pumpError) causes.push(`zstd stream: ${pumpError.message}`);
-      throw new Error(`Windows resource extraction failed (${causes.join('; ')})`);
+      diagnosticWarning(
+        `Windows resource extraction failed (${causes.join('; ')}); retrying with npm tar`,
+      );
+    } else {
+      entryProgress.complete();
+      reportProgress(null, 'Core resource files expanded; validating runtimes');
+      writeDiagnostic('info', 'archive-extractor-complete', {
+        extractor: 'windows-native-tar',
+        durationMs: Date.now() - extractionStartedAt,
+        exitCode: processResult.code,
+      });
+      return;
     }
-    entryProgress.complete();
-    reportProgress(null, 'Core resource files expanded; validating runtimes');
-    writeDiagnostic('info', 'archive-extractor-complete', {
-      extractor: 'windows-native-tar',
-      durationMs: Date.now() - extractionStartedAt,
-      exitCode: processResult.code,
-    });
-    return;
   }
 
-  activity('Windows native tar is unavailable; using the compatible extractor...');
+  activity('Using the compatible resource extractor...');
   writeDiagnostic('info', 'archive-extractor-selected', {
     extractor: 'npm-tar',
     nativeTarCandidate: nativeTarDisabled ? 'disabled' : nativeTarPath || 'unavailable',
     input: isZstd ? 'zstd-decoded-stream' : 'archive-file',
   });
   const tar = loadTarModule();
-  if (!isZstd) {
-    throw new Error('A cancellable native tar extractor is required for this archive format.');
+  const options = { cwd: destDir, strict: true, onentry: entryProgress.onEntry };
+  if (isZstd) {
+    await pipeline(fs.createReadStream(tarPath), createZstdDecompress(), tar.extract(options));
+  } else {
+    await tar.extract({ ...options, file: tarPath });
   }
-  const abortController = new AbortController();
-  activeExtractionAbort = () => abortController.abort(diskGrowthFailure);
-  try {
-    await pipeline(
-      fs.createReadStream(tarPath),
-      createZstdDecompress(),
-      tar.extract({
-        cwd: destDir,
-        onentry: entryProgress.onEntry,
-      }),
-      { signal: abortController.signal },
-    );
-  } finally {
-    activeExtractionAbort = null;
-  }
-  assertNoDiskGrowthFailure();
   entryProgress.complete();
   writeDiagnostic('info', 'archive-extractor-complete', {
     extractor: 'npm-tar',
@@ -553,39 +447,6 @@ if (!fs.existsSync(tarPath)) {
   process.exit(1);
 }
 
-function migrateLegacyPythonRuntime() {
-  if (!userDataDir) return;
-  const legacyRoot = path.join(userDataDir, 'runtimes', 'python-win');
-  if (!fs.existsSync(legacyRoot)) return;
-
-  activity('Removing legacy Python runtime...');
-  try {
-    fs.rmSync(legacyRoot, {
-      recursive: true,
-      force: true,
-      maxRetries: 5,
-      retryDelay: 250,
-    });
-  } catch (error) {
-    // The replacement runtime is already packaged under resources. A stale
-    // userData copy is unused, so antivirus/indexer locks or an unkillable old
-    // Python process must not roll back otherwise healthy extracted runtimes.
-    // Keep this warning in the diagnostic log only. Cleanup is optional, so it
-    // must not surface as an installer-window warning or activity message.
-    writeDiagnostic('warn', 'legacy-python-runtime-cleanup-skipped', {
-      message: 'unable to remove unused legacy Python runtime; leaving it in place',
-      error: error?.message || '',
-      code: error?.code || '',
-    });
-    return;
-  }
-  try {
-    fs.rmdirSync(path.dirname(legacyRoot));
-  } catch {
-    // Keep the shared runtimes directory when another runtime or file uses it.
-  }
-}
-
 // ============================================================
 // 加载 tar 模块
 // ============================================================
@@ -604,8 +465,8 @@ function loadTarModule() {
   // Strategy 2: Direct require (may be in NODE_PATH)
   try {
     return require('tar');
-  } catch {
-    // Also failed
+  } catch (error) {
+    diagnosticWarning('failed to load tar from the module search path', error);
   }
 
   writeDiagnostic('error', 'tar-module-unavailable', { attemptedPath: asarTarPath });
@@ -652,10 +513,14 @@ function cleanupManagedInstallerTempRoot() {
     writeDiagnostic('info', 'extractor-temp-cleanup-complete', { path: managedRoot });
   } catch (error) {
     writeDiagnostic('warn', 'extractor-temp-cleanup-incomplete', {
-      path: managedRoot,
-      message: error?.message || '',
-      code: error?.code || '',
+      ...diagnosticErrorDetails(error),
+      managedTempRoot: managedRoot,
     });
+    console.error(
+      '[unpack-cfmind] Unable to remove installer temporary files:',
+      managedRoot,
+      error,
+    );
   }
 }
 
@@ -664,13 +529,6 @@ function cleanupManagedInstallerTempRoot() {
 // ============================================================
 
 async function main() {
-  let diskGrowthGuard = { checkNow() {}, stop() {} };
-  const installTimeout = setTimeout(() => {
-    diskGrowthFailure = new Error('Resource installation exceeded the 30 minute safety limit.');
-    activeExtractorChild?.kill();
-    activeExtractionAbort?.();
-  }, INSTALL_TIMEOUT_MS);
-  installTimeout.unref();
   try {
     writeDiagnostic('info', 'resource-install-start', {
       pid: process.pid,
@@ -698,7 +556,6 @@ async function main() {
 
     // Ensure destination directory exists
     fs.mkdirSync(destDir, { recursive: true });
-    diskGrowthGuard = createDiskGrowthGuard(archiveMetadata, archiveStat.size);
     try {
       const filesystem = fs.statfsSync(destDir, { bigint: true });
       writeDiagnostic('info', 'destination-filesystem-inspected', {
@@ -759,7 +616,14 @@ async function main() {
         const interruptedState = JSON.parse(fs.readFileSync(transactionStatePath, 'utf8'));
         if (!Array.isArray(interruptedState.hadOriginal)) throw new Error('missing hadOriginal');
         interruptedOriginals = new Set(interruptedState.hadOriginal);
-      } catch {
+      } catch (error) {
+        diagnosticWarning(
+          'unable to read interrupted runtime transaction state; recovering available backups',
+          error,
+          {
+            transactionStatePath,
+          },
+        );
         // A marker is removed before a transaction is committed. If the marker
         // itself was torn by a crash, conservatively restore every available
         // healthy backup and retain unmatched current directories.
@@ -837,7 +701,10 @@ async function main() {
       const installedGit = gitCandidates.find(candidate => {
         try {
           return fs.statSync(candidate).isFile() && fs.statSync(candidate).size > 0;
-        } catch {
+        } catch (error) {
+          if (error.code !== 'ENOENT') {
+            diagnosticWarning('unable to inspect a Git executable candidate', error, { candidate });
+          }
           return false;
         }
       });
@@ -865,62 +732,6 @@ async function main() {
         gitExecutable: installedGit,
         pythonExecutable: path.join(pythonDir, 'python.exe'),
       });
-      const pthFile = fs.readdirSync(pythonDir).find(name => name.endsWith('._pth'));
-      if (!pthFile) {
-        throw new Error(`Python extraction is missing its embedded _pth file: ${pythonDir}`);
-      }
-      const pthContent = fs.readFileSync(path.join(pythonDir, pthFile), 'utf8').toLowerCase();
-      for (const requiredEntry of [
-        'lib\\site-packages',
-        'lib\\bundled-site-packages',
-        'import site',
-      ]) {
-        if (!pthContent.includes(requiredEntry)) {
-          throw new Error(`Python embedded path configuration is missing: ${requiredEntry}`);
-        }
-      }
-      const pipModulePath = path.join(pythonDir, 'Lib', 'site-packages', 'pip', '__main__.py');
-      const pipExecutableCandidates = [
-        path.join(pythonDir, 'Scripts', 'pip.exe'),
-        path.join(pythonDir, 'Scripts', 'pip3.exe'),
-        path.join(pythonDir, 'Scripts', 'pip.cmd'),
-        path.join(pythonDir, 'Scripts', 'pip3.cmd'),
-        path.join(pythonDir, 'Scripts', 'pip'),
-        path.join(pythonDir, 'Scripts', 'pip3'),
-      ];
-      if (!fs.existsSync(pipModulePath) || !pipExecutableCandidates.some(fs.existsSync)) {
-        throw new Error(`Python extraction is missing pip support: ${pythonDir}`);
-      }
-      for (const importName of ['requests', 'yaml', 'openpyxl', 'pypdf', 'bs4']) {
-        const importEntry = path.join(
-          pythonDir,
-          'Lib',
-          'bundled-site-packages',
-          importName,
-          '__init__.py',
-        );
-        if (!fs.existsSync(importEntry) || fs.statSync(importEntry).size === 0) {
-          throw new Error(`Python extraction is missing bundled package: ${importName}`);
-        }
-      }
-      if (process.env.JUSTDO_INSTALLER_PYTHON_IMPORT_CHECK === '1') {
-        const importCheckStartedAt = Date.now();
-        const importCheck = await runValidationProcess(
-          path.join(pythonDir, 'python.exe'),
-          ['-c', 'import pip, requests, yaml, openpyxl, pypdf, bs4'],
-          60_000,
-        );
-        if (importCheck.status !== 0) {
-          const detail = (importCheck.stderr || importCheck.stdout || '').trim();
-          throw new Error(`Python import validation failed${detail ? `: ${detail}` : ''}`);
-        }
-        writeDiagnostic('info', 'python-import-validation-complete', {
-          durationMs: Date.now() - importCheckStartedAt,
-          exitCode: importCheck.status,
-        });
-      }
-      reportProgress(null, 'Python packages verified');
-
       const runtimePackagePath = path.join(cfmindDir, 'package.json');
       if (!fs.existsSync(runtimePackagePath) || fs.statSync(runtimePackagePath).size === 0) {
         throw new Error(
@@ -930,17 +741,12 @@ async function main() {
 
       reportProgress(null, 'OpenClaw runtime verified');
       writeDiagnostic('info', 'runtime-validation-complete');
-      diskGrowthGuard.checkNow();
       fs.rmSync(transactionStatePath, { force: true });
       if (fs.existsSync(transactionStatePath)) {
         throw new Error(`Unable to commit runtime upgrade transaction: ${transactionStatePath}`);
       }
     } catch (error) {
-      writeDiagnostic('error', 'runtime-upgrade-failed', {
-        name: error.name || 'Error',
-        message: error.message,
-        code: error.code || '',
-      });
+      writeDiagnostic('error', 'runtime-upgrade-failed', diagnosticErrorDetails(error));
       const rollbackErrors = [];
       for (const runtime of [...managedRuntimes].reverse()) {
         try {
@@ -953,6 +759,14 @@ async function main() {
           }
         } catch (rollbackError) {
           rollbackErrors.push(`${runtime.name}: ${rollbackError.message}`);
+          writeDiagnostic('error', 'runtime-rollback-failed', {
+            ...diagnosticErrorDetails(rollbackError),
+            runtime: runtime.name,
+          });
+          console.error(
+            `[unpack-cfmind] Unable to restore the previous ${runtime.name} runtime:`,
+            rollbackError,
+          );
         }
       }
       if (rollbackErrors.length === 0) {
@@ -962,9 +776,13 @@ async function main() {
         } catch (rollbackError) {
           rollbackErrors.push(`transaction marker: ${rollbackError.message}`);
           writeDiagnostic('error', 'runtime-rollback-marker-cleanup-failed', {
-            message: rollbackError.message,
-            code: rollbackError.code || '',
+            ...diagnosticErrorDetails(rollbackError),
+            transactionStatePath,
           });
+          console.error(
+            '[unpack-cfmind] Unable to remove the runtime rollback marker:',
+            rollbackError,
+          );
         }
       }
       if (rollbackErrors.length > 0) {
@@ -978,12 +796,7 @@ async function main() {
       throw error;
     }
 
-    // Legacy userData cleanup is intentionally outside the runtime upgrade
-    // transaction. Failure is non-fatal and will be retried on a later start.
-    migrateLegacyPythonRuntime();
-
-    // Validation and migration have committed the new runtimes. Backup cleanup
-    // is best-effort: a cleanup failure must never roll back verified runtimes.
+    // Committed backup cleanup is best-effort.
     reportProgress(null, 'Removing temporary runtime backups');
     for (const runtime of managedRuntimes) {
       try {
@@ -1014,25 +827,33 @@ async function main() {
       durationMs: Date.now() - t0,
       extractedEntries: entryProgress.count,
     });
-    diskGrowthGuard.checkNow();
-    diskGrowthGuard.stop();
-    clearTimeout(installTimeout);
     cleanupManagedInstallerTempRoot();
     writeDiagnosticBoundary('END', 'success');
     process.exit(0);
   } catch (err) {
-    diskGrowthGuard.stop();
-    clearTimeout(installTimeout);
-    console.error(`[unpack-cfmind] Extraction failed: ${err.message}`);
+    console.error('[unpack-cfmind] Extraction failed:', err);
     reportProgress(null, `Extraction failed: ${err.message}`);
+    if (progressPath) {
+      try {
+        fs.writeFileSync(
+          `${progressPath}.error`,
+          '\uFEFF' + err.message.replace(/[\r\n]+/g, ' ').slice(0, 700),
+          'utf16le',
+        );
+      } catch (reportError) {
+        // Reporting never replaces the original extraction failure.
+        writeDiagnostic('warn', 'error-report-file-write-failed', {
+          ...diagnosticErrorDetails(reportError),
+          reportFile: `${progressPath}.error`,
+        });
+        console.error('[unpack-cfmind] Unable to write the extraction error report:', reportError);
+      }
+    }
     writeDiagnostic('error', 'resource-install-failed', {
-      name: err.name || 'Error',
-      message: err.message,
-      code: err.code || '',
-      stack: err.stack || '',
+      ...diagnosticErrorDetails(err),
       progressPercent: lastProgressPercent,
     });
-    cleanupManagedInstallerTempRoot();
+    if (!progressPath) cleanupManagedInstallerTempRoot();
     writeDiagnosticBoundary('END', 'failed');
     process.exit(1);
   }

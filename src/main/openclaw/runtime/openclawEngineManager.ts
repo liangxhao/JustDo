@@ -1066,6 +1066,7 @@ export class OpenClawEngineManager extends EventEmitter {
       }
     } catch (error) {
       if (this.shutdownRequested) return this.getStatus();
+      console.error('[OpenClaw] Local extension preparation failed:', error);
       this.setStatus({
         phase: 'error',
         version: runtime.version,
@@ -1079,6 +1080,7 @@ export class OpenClawEngineManager extends EventEmitter {
     try {
       await this.prepareNetworkGeneration();
     } catch (error) {
+      console.error('[OpenClaw] Network generation preparation failed:', error);
       this.setStatus({
         phase: 'error',
         version: runtime.version,
@@ -2208,6 +2210,9 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   private setStatus(next: OpenClawEngineStatus): void {
+    if (next.phase === 'error') {
+      console.error('[OpenClaw] Engine error:', next);
+    }
     this.status = {
       ...next,
       message: next.message ? next.message.slice(0, 500) : undefined,

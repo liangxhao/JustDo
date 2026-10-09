@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('Find', 'Wait', 'Stop', 'StopLegacyPython', 'StageRuntimes', 'RestoreRuntimes')]
+  [ValidateSet('Find', 'Wait', 'Stop', 'StopLegacyPython')]
   [string]$Action,
 
   [ValidateRange(1, 120)]
@@ -19,6 +19,16 @@ try {
   $callerPid = [int][Environment]::GetEnvironmentVariable('JUSTDO_CALLER_PID', 'Process')
   $appProcessName = [Environment]::GetEnvironmentVariable('JUSTDO_APP_PROCESS_NAME', 'Process')
   $helperPid = $PID
+
+  function Stop-MatchedProcess($process) {
+    try {
+      $process.Kill()
+    } catch {
+      [Console]::Error.WriteLine(
+        "action=$Action operation=terminate-process pid=$($process.Id) detail=$($_.Exception.ToString()) script-stack=$($_.ScriptStackTrace)"
+      )
+    }
+  }
 
   function Test-AppExecutableLocked {
     if ([string]::IsNullOrWhiteSpace($appProcessName)) { return $false }
@@ -159,61 +169,6 @@ try {
     )
   }
 
-  $managedRuntimeNames = @('cfmind', 'mingit', 'python-win', 'local-tts')
-  $installDirectory = $installRoot.TrimEnd(
-    [IO.Path]::DirectorySeparatorChar,
-    [IO.Path]::AltDirectorySeparatorChar
-  )
-  $runtimeStagingRoot = "$installDirectory.justdo-runtime-staging"
-
-  function Assert-SafeRuntimeStagingRoot {
-    if (Test-Path -LiteralPath $runtimeStagingRoot) {
-      $stagingItem = Get-Item -LiteralPath $runtimeStagingRoot -Force
-      if (-not $stagingItem.PSIsContainer) {
-        throw 'Runtime staging target exists but is not a directory.'
-      }
-      if (($stagingItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw 'Runtime staging directory must not be a reparse point.'
-      }
-    }
-  }
-
-  function Restore-StagedRuntimes {
-    Assert-SafeRuntimeStagingRoot
-    if (-not (Test-Path -LiteralPath $runtimeStagingRoot)) { return @() }
-
-    $stagingEntries = @(Get-ChildItem -LiteralPath $runtimeStagingRoot -Force)
-    foreach ($entry in $stagingEntries) {
-      if ($entry.Name -notin $managedRuntimeNames -or
-          -not $entry.PSIsContainer -or
-          ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw 'Runtime staging directory contains an unexpected or unsafe entry.'
-      }
-    }
-
-    foreach ($runtimeName in $managedRuntimeNames) {
-      $stagedPath = Join-Path $runtimeStagingRoot $runtimeName
-      if (-not (Test-Path -LiteralPath $stagedPath)) { continue }
-      $destinationPath = Join-Path (Join-Path $installDirectory 'resources') $runtimeName
-      if (Test-Path -LiteralPath $destinationPath) {
-        throw "Runtime restore destination already exists: $runtimeName"
-      }
-    }
-
-    $restored = [Collections.Generic.List[string]]::new()
-    foreach ($runtimeName in $managedRuntimeNames) {
-      $stagedPath = Join-Path $runtimeStagingRoot $runtimeName
-      if (-not (Test-Path -LiteralPath $stagedPath)) { continue }
-      $destinationPath = Join-Path (Join-Path $installDirectory 'resources') $runtimeName
-      [IO.Directory]::CreateDirectory((Split-Path -Parent $destinationPath)) | Out-Null
-      Move-Item -LiteralPath $stagedPath -Destination $destinationPath
-      $restored.Add($runtimeName)
-    }
-
-    Remove-Item -LiteralPath $runtimeStagingRoot -Force
-    return $restored.ToArray()
-  }
-
   switch ($Action) {
     'Find' {
       if ((Get-InstalledProcesses).Count -gt 0) { exit 0 }
@@ -228,7 +183,7 @@ try {
     }
     'Stop' {
       Get-InstalledProcesses | ForEach-Object {
-        try { $_.Kill() } catch { }
+        Stop-MatchedProcess $_
       }
       for ($attempt = 0; $attempt -lt 15; $attempt++) {
         if ((Get-InstalledProcesses).Count -eq 0) { exit 0 }
@@ -242,7 +197,7 @@ try {
       # tree; never match every python.exe on the machine.
       $matched = @(Get-LegacyPythonProcesses)
       $matched | ForEach-Object {
-        try { $_.Kill() } catch { }
+        Stop-MatchedProcess $_
       }
       for ($attempt = 0; $attempt -lt 20; $attempt++) {
         $remaining = @(Get-LegacyPythonProcesses)
@@ -251,7 +206,7 @@ try {
           exit 0
         }
         $remaining | ForEach-Object {
-          try { $_.Kill() } catch { }
+          Stop-MatchedProcess $_
         }
         Start-Sleep -Milliseconds 250
       }
@@ -259,49 +214,13 @@ try {
       Write-Output "matched=$($matched.Count) remaining=$($remaining.Count)"
       exit 1
     }
-    'StageRuntimes' {
-      # Recover a prior interrupted staging operation first. Moving whole
-      # directories beside $INSTDIR is same-volume and avoids the old
-      # electron-builder uninstaller walking tens of thousands of runtime files.
-      [void](Restore-StagedRuntimes)
-      [IO.Directory]::CreateDirectory($runtimeStagingRoot) | Out-Null
-      Assert-SafeRuntimeStagingRoot
-      $moved = [Collections.Generic.List[string]]::new()
-      try {
-        foreach ($runtimeName in $managedRuntimeNames) {
-          $sourcePath = Join-Path (Join-Path $installDirectory 'resources') $runtimeName
-          if (-not (Test-Path -LiteralPath $sourcePath)) { continue }
-          $destinationPath = Join-Path $runtimeStagingRoot $runtimeName
-          if (Test-Path -LiteralPath $destinationPath) {
-            throw "Runtime staging destination already exists: $runtimeName"
-          }
-          Move-Item -LiteralPath $sourcePath -Destination $destinationPath
-          $moved.Add($runtimeName)
-        }
-      } catch {
-        for ($index = $moved.Count - 1; $index -ge 0; $index--) {
-          $runtimeName = $moved[$index]
-          $stagedPath = Join-Path $runtimeStagingRoot $runtimeName
-          $sourcePath = Join-Path (Join-Path $installDirectory 'resources') $runtimeName
-          if ((Test-Path -LiteralPath $stagedPath) -and -not (Test-Path -LiteralPath $sourcePath)) {
-            Move-Item -LiteralPath $stagedPath -Destination $sourcePath
-          }
-        }
-        throw
-      }
-      if ($moved.Count -eq 0) {
-        Remove-Item -LiteralPath $runtimeStagingRoot -Force
-      }
-      Write-Output "staged=$($moved -join ',')"
-      exit 0
-    }
-    'RestoreRuntimes' {
-      $restored = @(Restore-StagedRuntimes)
-      Write-Output "restored=$($restored -join ',')"
-      exit 0
-    }
   }
 } catch {
+  $failure = $_
+  $exceptionType = $failure.Exception.GetType().FullName
+  $hresult = $failure.Exception.HResult
+  $detail = ($failure.Exception.ToString() + ' ' + $failure.ScriptStackTrace) -replace '[\r\n]+', ' '
+  Write-Output "error-type=$exceptionType hresult=$hresult category=$($failure.CategoryInfo.Category) detail=$detail"
   # Process inventory is only an optimization before the installer performs
   # the real filesystem replacement. If Windows denies process enumeration,
   # fall back to an exclusive-open probe of the installed executable. This
@@ -320,10 +239,5 @@ try {
     exit 0
   }
 
-  # Keep diagnostics single-line and path-free so NSIS can record the failure
-  # without exposing command lines or process metadata.
-  $exceptionType = $_.Exception.GetType().FullName
-  $hresult = $_.Exception.HResult
-  Write-Output "error-type=$exceptionType hresult=$hresult category=$($_.CategoryInfo.Category)"
   exit 2
 }

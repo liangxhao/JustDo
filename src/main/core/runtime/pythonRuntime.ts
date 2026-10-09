@@ -103,7 +103,12 @@ function runtimeHealth(
         if (!hasImportSite || !hasSitePackages) {
           missing.push(`${pthFiles[0]} config (require "Lib\\site-packages" and "import site")`);
         }
-      } catch {
+      } catch (error) {
+        console.warn(
+          '[python-runtime] Unable to read embedded Python configuration:',
+          pthPath,
+          error,
+        );
         missing.push(`${pthFiles[0]} read failed`);
       }
     }
@@ -197,8 +202,7 @@ export function appendPythonRuntimeToEnv(
 
   const bundledRoot = getBundledPythonRoot();
   const userPaths = getPythonUserPaths();
-  fs.mkdirSync(userPaths.sitePackages, { recursive: true });
-  fs.mkdirSync(userPaths.scripts, { recursive: true });
+  // pip creates user-package directories on install; preparing PATH needs no profile writes.
   const pathEntries: string[] = [];
   if (bundledRoot) {
     pathEntries.push(bundledRoot, path.join(bundledRoot, 'Scripts'), userPaths.scripts);
@@ -245,7 +249,7 @@ export async function ensurePythonRuntimeReady(): Promise<{ success: boolean; er
     return { success: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error('[python-runtime] Failed to ensure runtime ready:', message);
+    console.error('[python-runtime] Failed to ensure runtime ready:', error);
     return { success: false, error: message };
   }
 }
@@ -278,7 +282,7 @@ export async function ensurePythonPipReady(): Promise<{ success: boolean; error?
     return { success: false, error: message };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error('[python-runtime] Failed to ensure pip ready:', message);
+    console.error('[python-runtime] Failed to ensure pip ready:', error);
     return { success: false, error: message };
   }
 }

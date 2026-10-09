@@ -6,6 +6,7 @@ import { appTranslations } from './appTranslations';
 import { authTranslations } from './authTranslations';
 import { chatTranslations } from './chatTranslations';
 import { getHomeGreetingTranslations } from './homeGreetings';
+import { initializationTranslations } from './initializationTranslations';
 import { pluginsTranslations } from './pluginsTranslations';
 import { scheduledTaskTranslations } from './scheduledTaskTranslations';
 import { sessionDiagnosticsTranslations } from './sessionDiagnosticsTranslations';
@@ -18,6 +19,7 @@ import { swarmWorkflowTranslations } from './swarmWorkflowTranslations';
 
 export const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    ...initializationTranslations.zh,
     ...authTranslations.zh,
     ...swarmTranslations.zh,
     ...swarmWorkflowTranslations.zh,
@@ -35,6 +37,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...scheduledTaskTranslations.zh,
   },
   en: {
+    ...initializationTranslations.en,
     ...authTranslations.en,
     ...swarmTranslations.en,
     ...swarmWorkflowTranslations.en,

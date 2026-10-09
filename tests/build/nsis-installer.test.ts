@@ -188,7 +188,8 @@ describe('Windows installer process handling', () => {
     expect(nsisScript).toContain('!insertmacro StopJustDoProcesses $0');
     expect(nsisScript).not.toContain('nsProcess::FindProcess');
     expect(nsisScript).not.toContain('nsProcess::KillProcess');
-    expect(processHelper).toContain('try { $_.Kill() } catch { }');
+    expect(processHelper).toContain('Stop-MatchedProcess $_');
+    expect(processHelper).toContain('operation=terminate-process pid=$($process.Id)');
   });
 
   it('does not start the process helper for a pristine install', () => {
@@ -200,28 +201,14 @@ describe('Windows installer process handling', () => {
     expect(processCheck).toContain('phase=process-check-skipped reason=pristine-install');
     expect(processCheck).toContain('ReadRegStr $R7 HKLM "Software\\${APP_GUID}" InstallLocation');
     expect(processCheck).toContain('${AndIfNot} ${FileExists} "$INSTDIR\\*.*"');
-    expect(processCheck).toContain('${If} $JustDoPristineInstall != "1"');
     expect(processCheck.indexOf('phase=process-check-skipped')).toBeLessThan(
       processCheck.indexOf('!insertmacro FindJustDoProcesses'),
     );
   });
 
-  it('stops legacy managed Python processes without making cleanup a setup prerequisite', () => {
-    expect(processHelper).toContain("'StopLegacyPython'");
-    expect(processHelper).toContain("Join-Path $userDataRoot 'runtimes\\python-win'");
-    expect(processHelper).toMatch(/\$executablePath\.StartsWith\(\r?\n\s+\$legacyPythonRoot,/);
-    expect(processHelper).toContain('[IO.FileAttributes]::ReparsePoint');
-    expect(processHelper).toContain('Test-PathChainContainsReparsePoint');
-    expect(nsisScript).toContain('JUSTDO_USER_DATA_ROOT');
-    expect(nsisScript).toContain('-Action StopLegacyPython');
-    expect(nsisScript).toContain('phase=legacy-python-process-stop result=$0 detail=$R9');
-    expect(nsisScript).toMatch(
-      /Call JustDoStopLegacyPythonProcesses\s+Call JustDoStageManagedRuntimes/,
-    );
-    const cleanupFunction = nsisScript.match(
-      /Function JustDoStopLegacyPythonProcesses([\s\S]*?)FunctionEnd/,
-    );
-    expect(cleanupFunction?.[1]).not.toContain('Abort');
+  it('leaves legacy user-data processes alone during installation', () => {
+    expect(nsisScript).not.toContain('Call JustDoStopLegacyPythonProcesses');
+    expect(nsisScript).not.toContain('JUSTDO_USER_DATA_ROOT');
   });
 
   it('falls back to filesystem replacement when scoped process inspection fails', () => {
@@ -239,67 +226,15 @@ describe('Windows installer process handling', () => {
     expect(processHelper).toContain('error-type=$exceptionType hresult=$hresult');
   });
 
-  it('treats managed runtime staging as an upgrade optimization', () => {
-    expect(nsisScript).toContain('phase=runtime-staging-degraded');
-    expect(nsisScript).toContain('action=continue-with-normal-old-version-removal');
-    expect(nsisScript).toContain('phase=runtime-restore-degraded');
-    expect(nsisScript).toContain('action=continue-with-new-runtime');
-    expect(nsisScript).not.toContain('reason=runtime-staging-failed');
-    expect(nsisScript).not.toContain('reason=runtime-restore-failed');
-  });
-
   it('runs process checks from a script file instead of a fragile inline command', () => {
     expect(nsisScript).toContain('/TIMEOUT=15000');
     expect(nsisScript).toContain('/TIMEOUT=90000');
     expect(nsisScript).not.toContain('-Command "');
-    expect(processHelper).toContain("'StageRuntimes', 'RestoreRuntimes'");
+    expect(processHelper).not.toContain("StageRuntimes");
+    expect(nsisScript).not.toContain("JustDoStageManagedRuntimes");
+    expect(nsisScript).not.toContain("JustDoRestoreManagedRuntimes");
     expect(processHelper).toContain('$attempt -lt $MaxAttempts');
   });
-
-  it.runIf(process.platform === 'win32')(
-    'stages and restores managed runtimes with directory-level moves',
-    () => {
-      const installRoot = mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-stage-'));
-      tempDirs.push(installRoot);
-      tempDirs.push(`${installRoot}.justdo-runtime-staging`);
-      const markerPath = path.join(installRoot, 'resources', 'cfmind', 'marker.txt');
-      const powershellPath = path.join(
-        process.env.SystemRoot || 'C:\\Windows',
-        'System32',
-        'WindowsPowerShell',
-        'v1.0',
-        'powershell.exe',
-      );
-      mkdirSync(path.dirname(markerPath), { recursive: true });
-      writeFileSync(markerPath, 'old-runtime');
-      const env = {
-        ...process.env,
-        JUSTDO_INSTALL_ROOT: installRoot,
-        JUSTDO_CALLER_PID: String(process.pid),
-      };
-
-      const stage = spawnSync(
-        powershellPath,
-        ['-NoProfile', '-NonInteractive', '-File', processHelperPath, '-Action', 'StageRuntimes'],
-        { encoding: 'utf8', env },
-      );
-      expect(stage.status, stage.stderr).toBe(0);
-      expect(existsSync(markerPath)).toBe(false);
-      expect(
-        existsSync(path.join(`${installRoot}.justdo-runtime-staging`, 'cfmind', 'marker.txt')),
-      ).toBe(true);
-
-      const restore = spawnSync(
-        powershellPath,
-        ['-NoProfile', '-NonInteractive', '-File', processHelperPath, '-Action', 'RestoreRuntimes'],
-        { encoding: 'utf8', env },
-      );
-      expect(restore.status, restore.stderr).toBe(0);
-      expect(readFileSync(markerPath, 'utf8')).toBe('old-runtime');
-      expect(existsSync(`${installRoot}.justdo-runtime-staging`)).toBe(false);
-    },
-    30_000,
-  );
 
   it.runIf(process.platform === 'win32')(
     'force-stops only an executable running from the legacy Python directory',
@@ -504,25 +439,17 @@ describe('Windows installer process handling', () => {
     );
     expect(unpackScript).toContain('fs.renameSync(runtime.dir, runtime.backupDir)');
     expect(unpackScript).toContain('fs.renameSync(runtime.backupDir, runtime.dir)');
-    expect(unpackScript).toContain('import pip, requests, yaml, openpyxl, pypdf, bs4');
+    expect(unpackScript).not.toContain('import pip, requests, yaml, openpyxl, pypdf, bs4');
   });
 
-  it('passes userData to the resource migrator instead of deleting the legacy runtime', () => {
-    expect(nsisScript).toContain('"$JustDoCurrentUserAppData\\${PRODUCT_NAME}"');
-    expect(nsisScript).not.toContain('RMDir /r "$APPDATA\\${PRODUCT_NAME}\\runtimes\\python-win"');
-    expect(unpackScript).toContain('migrateLegacyPythonRuntime()');
+  it('does not pass userData to the resource extractor', () => {
+    expect(nsisScript).toContain('"$INSTDIR\\resources" "" "$INSTDIR\\resources\\win-resources-metadata.json"');
+    expect(unpackScript).not.toContain('migrateLegacyPythonRuntime');
   });
 
-  it('uses packaged dependency config and removes legacy app-data copies', () => {
-    expect(nsisScript).not.toContain('CopyFiles /SILENT "$INSTDIR\\resources\\dependency-config');
-    expect(nsisScript).toContain(
-      'Delete "$JustDoCurrentUserAppData\\${PRODUCT_NAME}\\dependency-config\\.npmrc"',
-    );
-    expect(nsisScript).toContain(
-      'Delete "$JustDoCurrentUserAppData\\${PRODUCT_NAME}\\dependency-config\\pip.ini"',
-    );
-    expect(nsisScript).not.toContain('RMDir /r "$APPDATA\\${PRODUCT_NAME}\\dependency-config"');
-    expect(nsisScript).toContain('dependency-config-legacy: cleanup-complete');
+  it('keeps packaged dependency config in the installation directory', () => {
+    expect(nsisScript).not.toContain('dependency-config\\.npmrc');
+    expect(nsisScript).not.toContain('dependency-config\\pip.ini');
   });
 
   it('packages dependency config once as a standalone installation resource', () => {
@@ -651,8 +578,8 @@ describe('Windows installer process handling', () => {
     expect(existsSync(staleBashPath)).toBe(false);
     expect(existsSync(staleSkillPath)).toBe(false);
     expect(existsSync(stalePythonPackagePath)).toBe(false);
-    expect(existsSync(legacyUserPackagePath)).toBe(false);
-    expect(existsSync(path.join(userDataRoot, 'runtimes', 'python-win'))).toBe(false);
+    expect(existsSync(legacyUserPackagePath)).toBe(true);
+    expect(existsSync(path.join(userDataRoot, 'runtimes', 'python-win'))).toBe(true);
     expect(existsSync(customSkillPath)).toBe(true);
     expect(existsSync(path.join(installResources, '.cfmind-upgrade-backup'))).toBe(false);
     expect(existsSync(path.join(installResources, '.mingit-upgrade-backup'))).toBe(false);
@@ -662,7 +589,7 @@ describe('Windows installer process handling', () => {
     const diagnosticLog = readFileSync(diagnosticLogPath, 'utf8');
     expect(diagnosticLog).toContain('event=resource-install-start');
     expect(diagnosticLog).toContain('event=archive-inspected');
-    expect(diagnosticLog).toContain('event=disk-growth-guard-started');
+    expect(diagnosticLog).not.toContain('event=disk-growth-guard-started');
     expect(diagnosticLog).not.toContain('event=disk-growth-guard-using-archive-fallback');
     expect(diagnosticLog).toContain('event=archive-extractor-selected');
     expect(diagnosticLog).toContain('event=runtime-validation-complete');
@@ -676,7 +603,7 @@ describe('Windows installer process handling', () => {
     }
   });
 
-  it('aborts unexpected disk growth and restores the previous runtime', async () => {
+  it('does not reject a writable installation because of unrelated free-space changes', async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-disk-growth-rollback-'));
     tempDirs.push(root);
     const archiveRoot = path.join(root, 'archive');
@@ -729,9 +656,9 @@ fs.statfsSync = (...args) => {
       },
     );
 
-    expect(result.status).not.toBe(0);
-    expect(readFileSync(diagnosticLogPath, 'utf8')).toContain('event=unexpected-disk-growth');
-    expect(readFileSync(installedPackagePath, 'utf8')).toBe('{"version":"previous"}');
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(diagnosticLogPath, 'utf8')).not.toContain('event=unexpected-disk-growth');
+    expect(readFileSync(installedPackagePath, 'utf8')).toBe('{"version":"new"}');
     expect(existsSync(path.join(installResources, '.runtime-upgrade-in-progress.json'))).toBe(
       false,
     );
@@ -789,6 +716,321 @@ fs.statfsSync = (...args) => {
       expect(readFileSync(progressPath, 'utf8')).toBe('determinate\n100\nCore resources verified');
     },
   );
+
+  it.runIf(process.platform === 'win32')('retries native extraction failure and never touches an unusable user-data path', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-资源 test-'));
+    tempDirs.push(root);
+    const archiveRoot = path.join(root, 'archive');
+    const destination = path.join(root, '安装 目录', 'resources');
+    const archive = path.join(root, 'win-resources.tar.zst');
+    const userData = path.join(root, 'user-data-is-a-file');
+    const diagnosticLog = path.join(root, 'install-resource.log');
+    const preload = path.join(root, 'fail-native-tar.cjs');
+    mkdirSync(path.join(archiveRoot, 'cfmind'), { recursive: true });
+    mkdirSync(path.join(archiveRoot, 'mingit', 'cmd'), { recursive: true });
+    writePythonRuntimeFixture(path.join(archiveRoot, 'python-win'));
+    writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), '{}');
+    writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'git');
+    writeFileSync(userData, 'untouched profile');
+    await createZstdTarFixture(archiveRoot, archive, ['cfmind', 'mingit', 'python-win']);
+    writeFileSync(preload, `const cp = require('child_process');
+const original = cp.spawn;
+cp.spawn = (executable, args, options) => executable.toLowerCase().endsWith('tar.exe')
+  ? original(process.execPath, ['-e', 'process.stderr.write("native tar failure" + "x".repeat(40000) + "NATIVE_STDERR_FINAL_RECORD", () => process.exit(1))'], options)
+  : original(executable, args, options);
+`);
+    const result = spawnSync(process.execPath,
+      ['--require', preload, unpackScriptPath, archive, destination, userData, '', '', diagnosticLog],
+      { encoding: 'utf8', env: { ...process.env, JUSTDO_INSTALLER_PYTHON_IMPORT_CHECK: '1' } });
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(userData, 'utf8')).toBe('untouched profile');
+    const log = readFileSync(diagnosticLog, 'utf8');
+    expect(log).toContain('event=archive-extractor-failed');
+    expect(log).toContain('event=native-tar-stderr');
+    expect(log).toContain('NATIVE_STDERR_FINAL_RECORD');
+    const summary = log.split('\n').find(line => line.includes('event=archive-extractor-failed'));
+    expect(summary).not.toContain('NATIVE_STDERR_FINAL_RECORD');
+    expect(log).toContain('extractor=npm-tar');
+    expect(log).toContain('event=resource-install-complete');
+  });
+
+  it.runIf(process.platform === 'win32')('keeps native process and streaming errors while successfully using the fallback extractor', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-native-launch-details-'));
+    tempDirs.push(root);
+    const source = path.join(root, 'source');
+    const resources = path.join(root, 'installed', 'resources');
+    const archive = path.join(root, 'resources.tar.zst');
+    const missingExecutable = path.join(root, 'missing-native-tar.exe');
+    const diagnosticLog = path.join(root, 'install-resource.log');
+    const preload = path.join(root, 'fail-native-launch.cjs');
+    mkdirSync(path.join(source, 'cfmind'), { recursive: true });
+    mkdirSync(path.join(source, 'mingit', 'cmd'), { recursive: true });
+    writePythonRuntimeFixture(path.join(source, 'python-win'));
+    writeFileSync(path.join(source, 'cfmind', 'package.json'), '{}');
+    writeFileSync(path.join(source, 'mingit', 'cmd', 'git.exe'), 'git');
+    await createZstdTarFixture(source, archive, ['cfmind', 'mingit', 'python-win']);
+    writeFileSync(preload, `const cp = require('child_process');
+const original = cp.spawn;
+cp.spawn = (executable, args, options) => original(
+  executable.toLowerCase().endsWith('tar.exe') ? process.env.JUSTDO_TEST_MISSING_TAR : executable,
+  args, options,
+);
+`);
+    const result = spawnSync(process.execPath, [
+      '--require', preload, unpackScriptPath, archive, resources, '', '', '', diagnosticLog,
+    ], { encoding: 'utf8', env: { ...process.env, JUSTDO_TEST_MISSING_TAR: missingExecutable } });
+
+    expect(result.status, result.stderr).toBe(0);
+    const log = readFileSync(diagnosticLog, 'utf8');
+    const failure = log.split('\n').find(line => line.includes('event=archive-extractor-failed'));
+    expect(failure).toContain('processErrorCode=ENOENT');
+    expect(failure).toContain(`processErrorPath=${missingExecutable}`);
+    expect(failure).toContain('processErrorStack=Error:');
+    expect(failure).toMatch(/pumpErrorStack=Error[^\n]+/);
+    expect(log).toContain('extractor=npm-tar');
+    expect(log).toContain('event=resource-install-complete');
+  });
+
+  it('keeps the real final error available for the installer dialog', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-extraction-error-'));
+    tempDirs.push(root);
+    const resources = path.join(root, 'resources');
+    const progress = path.join(root, 'progress.txt');
+    const archive = path.join(root, 'broken.tar.zst');
+    mkdirSync(resources);
+    writeFileSync(archive, 'broken compressed archive');
+    const result = spawnSync(process.execPath, [unpackScriptPath, archive, resources, '', '', progress], { encoding: 'utf8' });
+    expect(result.status).toBe(1);
+    const error = readFileSync(progress + '.error', 'utf16le');
+    expect(error.length).toBeGreaterThan(1);
+    expect(result.stderr).toContain(error.slice(1));
+    expect(nsisScript).toContain('FileReadUTF16LE $3 $4');
+    const failureDialog = nsisScript.slice(
+      nsisScript.indexOf('TarExtractFailed:'),
+      nsisScript.indexOf('TarExtractOK:'),
+    );
+    expect(failureDialog).toContain('StrCpy $4 "$INSTDIR\\resources\\install-resource.log"');
+    expect(failureDialog).toContain('${If} $4 != $JustDoResourceLogPath');
+    expect(failureDialog).toContain('${AndIf} $4 != $JustDoInstallLogPath');
+    expect(failureDialog).toContain('${AndIf} ${FileExists} "$4"');
+    expect(failureDialog).toContain('StrCpy $1 "$1$\\r$\\n$4"');
+  });
+
+  it.each([false, true])('retains detailed resource logs under the install root when the profile log is unavailable (corrupt=%s)', async corrupt => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-resource-log-fallback-'));
+    tempDirs.push(root);
+    const resources = path.join(root, 'installed', 'resources');
+    const archiveRoot = path.join(root, 'source');
+    const archive = path.join(root, 'resources.tar');
+    const blockedProfile = path.join(root, 'profile-is-a-file');
+    writeFileSync(blockedProfile, 'preserve profile');
+    if (corrupt) {
+      writeFileSync(archive, 'broken archive');
+    } else {
+      mkdirSync(path.join(archiveRoot, 'cfmind'), { recursive: true });
+      mkdirSync(path.join(archiveRoot, 'mingit', 'cmd'), { recursive: true });
+      writePythonRuntimeFixture(path.join(archiveRoot, 'python-win'));
+      writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), '{}');
+      writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'git');
+      await createTar({ cwd: archiveRoot, file: archive }, ['cfmind', 'mingit', 'python-win']);
+    }
+    const result = spawnSync(process.execPath, [unpackScriptPath, archive, resources, '', '', '',
+      path.join(blockedProfile, 'install-resource.log')], { encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(corrupt ? 1 : 0);
+    expect(readFileSync(blockedProfile, 'utf8')).toBe('preserve profile');
+    const log = readFileSync(path.join(resources, 'install-resource.log'), 'utf8');
+    expect(log).toContain('event=diagnostic-log-relocated');
+    expect(log).toMatch(/ENOTDIR|EEXIST/);
+    expect(log).toContain(corrupt ? 'event=resource-install-failed' : 'event=resource-install-complete');
+    if (corrupt) expect(log).toContain('stack=Error:');
+  });
+
+  it('recovers resource logging to the original path when the fallback becomes unavailable', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-resource-log-recovery-'));
+    tempDirs.push(root);
+    const resources = path.join(root, 'installed', 'resources');
+    const profile = path.join(root, 'profile');
+    const requestedLog = path.join(profile, 'install-resource.log');
+    const fallbackLog = path.join(resources, 'install-resource.log');
+    const fallbackSnapshot = path.join(resources, 'first-fallback.log');
+    const preload = path.join(root, 'recover-log-path.cjs');
+    writeFileSync(profile, 'temporarily occupied');
+    writeFileSync(preload, `const fs = require('fs');
+const append = fs.appendFileSync.bind(fs);
+let changed = false;
+fs.appendFileSync = (...args) => {
+  const result = append(...args);
+  if (!changed && String(args[0]) === process.env.JUSTDO_TEST_FALLBACK_LOG) {
+    changed = true;
+    fs.renameSync(process.env.JUSTDO_TEST_FALLBACK_LOG, process.env.JUSTDO_TEST_FALLBACK_SNAPSHOT);
+    fs.mkdirSync(process.env.JUSTDO_TEST_FALLBACK_LOG);
+    fs.unlinkSync(process.env.JUSTDO_TEST_PROFILE);
+    fs.mkdirSync(process.env.JUSTDO_TEST_PROFILE);
+  }
+  return result;
+};
+`);
+    const result = spawnSync(process.execPath, [
+      '--require', preload, unpackScriptPath, path.join(root, 'missing.tar.zst'),
+      resources, '', '', '', requestedLog,
+    ], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        JUSTDO_TEST_PROFILE: profile,
+        JUSTDO_TEST_FALLBACK_LOG: fallbackLog,
+        JUSTDO_TEST_FALLBACK_SNAPSHOT: fallbackSnapshot,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(readFileSync(fallbackSnapshot, 'utf8')).toContain('RESOURCE INSTALL SESSION START');
+    const recoveredLog = readFileSync(requestedLog, 'utf8');
+    expect(recoveredLog).toContain('event=diagnostic-log-relocated');
+    expect(recoveredLog).toMatch(/EISDIR|EPERM|EACCES/);
+    expect(recoveredLog).toContain('event=archive-missing');
+    expect(recoveredLog).toContain('RESOURCE INSTALL SESSION END');
+    expect(recoveredLog).toContain('status=archive-missing');
+  });
+
+  it('keeps complete warning errors and successful installation when optional filesystem operations fail', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-warning-error-details-'));
+    tempDirs.push(root);
+    const source = path.join(root, 'source');
+    const resources = path.join(root, 'installed', 'resources');
+    const archive = path.join(root, 'resources.tar');
+    const managedTemp = path.join(root, 'installed', '.justdo-installer-temp-123-456');
+    const diagnosticLog = path.join(root, 'install-resource.log');
+    const preload = path.join(root, 'optional-failures.cjs');
+    mkdirSync(path.join(source, 'cfmind'), { recursive: true });
+    mkdirSync(path.join(source, 'mingit', 'cmd'), { recursive: true });
+    writePythonRuntimeFixture(path.join(source, 'python-win'));
+    writeFileSync(path.join(source, 'cfmind', 'package.json'), '{}');
+    writeFileSync(path.join(source, 'mingit', 'cmd', 'git.exe'), 'git');
+    createTar({ cwd: source, file: archive, sync: true }, ['cfmind', 'mingit', 'python-win']);
+    mkdirSync(resources, { recursive: true });
+    mkdirSync(managedTemp);
+    writeFileSync(path.join(resources, '.runtime-upgrade-in-progress.json'), 'invalid state');
+    writeFileSync(preload, `const fs = require('fs');
+const read = fs.readFileSync.bind(fs);
+const remove = fs.rmSync.bind(fs);
+function failure(message, syscall, target) {
+  const error = Object.assign(new Error(message), {
+    name: 'DetailedFilesystemError', code: 'EACCES', syscall, path: target,
+    cause: new Error('Underlying optional filesystem cause'),
+  });
+  error.stack += '\\n' + 'full-stack-frame-'.repeat(1000) + '\\nFINAL_STACK_RECORD';
+  return error;
+}
+fs.statfsSync = target => { throw failure('filesystem observation failed', 'statfs', target); };
+fs.readFileSync = (target, ...args) => {
+  if (String(target).endsWith('.runtime-upgrade-in-progress.json')) {
+    throw failure('transaction state read failed', 'read', target);
+  }
+  return read(target, ...args);
+};
+fs.rmSync = (target, ...args) => {
+  if (String(target) === process.env.JUSTDO_INSTALLER_TEMP_ROOT) {
+    throw failure('managed temporary cleanup failed', 'rm', target);
+  }
+  return remove(target, ...args);
+};
+`);
+    const result = spawnSync(process.execPath, [
+      '--require', preload, unpackScriptPath, archive, resources, '', '', '', diagnosticLog,
+    ], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        JUSTDO_INSTALLER_DISABLE_NATIVE_TAR: '1',
+        JUSTDO_INSTALLER_TEMP_ROOT: managedTemp,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const log = readFileSync(diagnosticLog, 'utf8');
+    expect(log).toContain('event=resource-install-complete');
+    for (const description of [
+      'filesystem observation failed', 'transaction state read failed', 'managed temporary cleanup failed',
+    ]) {
+      const record = log.split('\n').find(line => line.includes(`error=${description}`) || line.includes(`message=${description}`));
+      expect(record).toContain('name=DetailedFilesystemError');
+      expect(record).toContain('code=EACCES');
+      expect(record).toContain('syscall=');
+      expect(record).toContain('path=');
+      expect(record).toContain('stack=DetailedFilesystemError:');
+      expect(record).toContain('FINAL_STACK_RECORD');
+      expect(record).toContain('cause=Error: Underlying optional filesystem cause');
+    }
+    expect(log).toContain('event=extractor-temp-cleanup-incomplete');
+    expect(result.stderr).toContain('FINAL_STACK_RECORD');
+  });
+
+  it('logs module loading, rollback and error-report failures without replacing the original extraction error', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-multiple-error-details-'));
+    tempDirs.push(root);
+    const resources = path.join(root, 'installed', 'resources');
+    const archive = path.join(root, 'resources.tar');
+    const diagnosticLog = path.join(root, 'install-resource.log');
+    const progress = path.join(root, 'progress.txt');
+    const preload = path.join(root, 'logging-failures.cjs');
+    mkdirSync(path.join(resources, 'cfmind'), { recursive: true });
+    writeFileSync(path.join(resources, 'cfmind', 'package.json'), 'previous runtime');
+    writeFileSync(archive, 'invalid archive');
+    writeFileSync(preload, `const fs = require('fs');
+const Module = require('module');
+const load = Module._load;
+const rename = fs.renameSync.bind(fs);
+const write = fs.writeFileSync.bind(fs);
+function failure(message, syscall, target) {
+  return Object.assign(new Error(message), {
+    code: 'EACCES', syscall, path: target, cause: new Error('Underlying failure cause'),
+  });
+}
+Module._load = function (request, ...args) {
+  if (request === 'tar' || request.replaceAll('\\\\', '/').endsWith('/node_modules/tar')) {
+    throw failure('injected tar loader failure', 'require', request);
+  }
+  return load.call(this, request, ...args);
+};
+fs.renameSync = (source, destination) => {
+  if (String(source).endsWith('.cfmind-upgrade-backup')) {
+    throw failure('injected rollback failure', 'rename', source);
+  }
+  return rename(source, destination);
+};
+fs.writeFileSync = (target, ...args) => {
+  if (String(target).endsWith('progress.txt.error')) {
+    throw failure('injected error report failure', 'write', target);
+  }
+  return write(target, ...args);
+};
+`);
+    const result = spawnSync(process.execPath, [
+      '--require', preload, unpackScriptPath, archive, resources, '', '', progress, diagnosticLog,
+    ], { encoding: 'utf8', env: { ...process.env, JUSTDO_INSTALLER_DISABLE_NATIVE_TAR: '1' } });
+
+    expect(result.status, result.stderr).toBe(1);
+    const log = readFileSync(diagnosticLog, 'utf8');
+    expect(log).toContain('failed to load tar from app.asar');
+    expect(log).toContain('failed to load tar from the module search path');
+    expect(log).toContain('event=runtime-rollback-failed');
+    expect(log).toContain('event=error-report-file-write-failed');
+    expect(log).toContain('event=resource-install-failed');
+    expect(log).toContain('Cannot load the fallback tar module');
+    for (const description of [
+      'injected tar loader failure', 'injected rollback failure', 'injected error report failure',
+    ]) {
+      const record = log.split('\n').find(line => line.includes(`error=${description}`) || line.includes(`message=${description}`));
+      expect(record).toContain('code=EACCES');
+      expect(record).toContain('syscall=');
+      expect(record).toContain('path=');
+      expect(record).toContain(`stack=Error: ${description}`);
+      expect(record).toContain('cause=Error: Underlying failure cause');
+    }
+    expect(result.stderr).toContain('injected rollback failure');
+    expect(result.stderr).toContain('injected error report failure');
+  });
 
   it('restores PortableGit when the replacement archive is invalid', () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-mingit-rollback-'));
@@ -1044,8 +1286,8 @@ fs.rmSync = (target, options) => {
     );
     expect(existsSync(legacyPythonRoot)).toBe(true);
     const diagnosticLog = readFileSync(diagnosticLogPath, 'utf8');
-    expect(diagnosticLog).toContain('level=warn event=legacy-python-runtime-cleanup-skipped');
-    expect(diagnosticLog).toContain('unable to remove unused legacy Python runtime');
+    expect(diagnosticLog).not.toContain('legacy-python-runtime-cleanup-skipped');
+    expect(diagnosticLog).not.toContain('unable to remove unused legacy Python runtime');
     expect(diagnosticLog).toContain('event=resource-install-complete');
     expect(diagnosticLog).not.toContain('event=runtime-upgrade-failed');
     for (const output of [result.stdout, result.stderr]) {
@@ -1180,17 +1422,10 @@ describe('Windows installer presentation', () => {
     30_000,
   );
 
-  it('keeps upgrade cleanup limited to obsolete managed app-data resources', () => {
-    expect(nsisScript).toContain(
-      'Delete "$JustDoCurrentUserAppData\\${PRODUCT_NAME}\\dependency-config\\.npmrc"',
-    );
-    expect(nsisScript).toContain(
-      'Delete "$JustDoCurrentUserAppData\\${PRODUCT_NAME}\\dependency-config\\pip.ini"',
-    );
-    expect(unpackScript).toContain("path.join(userDataDir, 'runtimes', 'python-win')");
-    expect(nsisScript).not.toContain('Delete "$APPDATA\\${PRODUCT_NAME}\\justdo.sqlite"');
-    expect(nsisScript).not.toContain('RMDir /r "$APPDATA\\${PRODUCT_NAME}\\openclaw"');
-    expect(nsisScript).not.toContain('RMDir /r "$APPDATA\\${PRODUCT_NAME}\\local-speech-models"');
+  it('never mutates application data during install or upgrade', () => {
+    const install = nsisScript.slice(0, nsisScript.indexOf('!macro customUnInit'));
+    expect(install).not.toMatch(/(?:Delete|RMDir|CopyFiles)[^\n]*CurrentUserAppData/);
+    expect(unpackScript).not.toContain("path.join(userDataDir");
   });
 
   it.runIf(process.platform === 'win32').each([true, false])(
@@ -1262,7 +1497,7 @@ describe('Windows installer presentation', () => {
     expect(nsisScript).toContain(
       'UAC_AsUser_Call Function JustDoReadDesktopUserPaths ${UAC_SYNCREGISTERS}',
     );
-    expect(nsisScript).toContain('CreateDirectory "$JustDoCurrentUserAppData\\${PRODUCT_NAME}"');
+    expect(nsisScript).toContain('!insertmacro JustDoTryInstallLogDirectory "$JustDoCurrentUserAppData" "${PRODUCT_NAME}"');
   });
 
   it('uses a branded, DPI-aware install page', () => {
@@ -1314,15 +1549,13 @@ describe('Windows installer presentation', () => {
   });
 
   it('keeps resource extraction responsive with heartbeat activity', () => {
-    expect(nsisScript).toContain('${StdUtils.ExecShellWaitEx}');
-    expect(nsisScript).toContain('${StdUtils.WaitForProcEx} $0 $R8');
-    expect(nsisScript).toContain('StrCpy $R9 $R8 6');
-    expect(nsisScript).toContain('StrCpy $R9 "0x$R9"');
-    expect(nsisScript).toContain('WaitForSingleObject(p $R9, i 0)');
+    expect(nsisScript).toContain('Call JustDoLaunchResourceExtractor');
+    expect(nsisScript).toContain('WaitForSingleObject(p $JustDoExtractorProcessHandle, i 0)');
+    expect(nsisScript).toContain('WaitForSingleObject(p $JustDoExtractorProcessHandle, i -1)');
     expect(nsisScript).toContain('justdo-resource-progress.txt');
     expect(nsisScript).toContain('Function JustDoPollResourceProgress');
     expect(nsisScript).toContain('Call JustDoPollResourceProgress');
-    expect(nsisScript).not.toContain('GetExitCodeProcess');
+    expect(nsisScript).toContain('GetExitCodeProcess(p $JustDoExtractorProcessHandle');
     expect(nsisScript).not.toContain('process-status-error');
     expect(nsisScript).toContain('JustDoAddInstallActivity');
     expect(unpackScript).toContain("path.join(windowsRoot, 'System32', 'tar.exe')");
@@ -1341,25 +1574,13 @@ describe('Windows installer presentation', () => {
     expect(unpackScript).not.toContain("activity('●");
   });
 
-  it('isolates extractor temporary files and stops abnormal disk growth', () => {
-    expect(nsisScript).toContain('JUSTDO_INSTALLER_TEMP_ROOT');
-    expect(nsisScript).toContain('JUSTDO_INSTALLER_ORIGINAL_TEMP_ROOT');
-    expect(nsisScript).toContain('$INSTDIR\\.justdo-installer-temp-');
+  it('isolates extractor temporary files without imposing disk reserves or deadlines', () => {
+    expect(nsisScript).toContain('$JustDoExtractorTempDirectory\\justdo-resource-progress.txt');
     expect(nsisScript).not.toContain('RMDir /r "$JustDoExtractorTempDirectory"');
-    expect(nsisScript).toContain('RMDir "$JustDoExtractorTempDirectory"');
     expect(unpackScript).toContain('function cleanupManagedInstallerTempRoot');
-    expect(unpackScript).toContain('extractor-temp-cleanup-refused');
-    expect(unpackScript).toContain('function createDiskGrowthGuard');
-    expect(unpackScript).toContain('DISK_RESERVE_BYTES');
-    expect(unpackScript).toContain('Insufficient free space to extract resources');
-    expect(unpackScript).toContain("'disk-growth-guard-using-archive-fallback'");
-    expect(unpackScript).toContain("'unexpected-disk-growth'");
-    expect(unpackScript).toContain('maximumGrowthBytes');
-    expect(unpackScript).toContain('activeExtractorChild?.kill()');
-    expect(unpackScript).not.toContain('spawnSync');
-    expect(nsisScript).toContain('Function JustDoCleanupExtractorEnvironment');
-    expect(nsisScript).toContain('$JustDoExtractorActive == "1"');
-    expect(nsisScript).toContain('GetFileAttributes(t "$JustDoExtractorTempDirectory")');
+    expect(unpackScript).not.toContain('createDiskGrowthGuard');
+    expect(unpackScript).not.toContain('INSTALL_TIMEOUT_MS');
+    expect(nsisScript).not.toContain('JUSTDO_INSTALLER_PYTHON_IMPORT_CHECK');
   });
 
   it('persists privacy-safe diagnostics across early setup and resource extraction', () => {
@@ -1431,7 +1652,7 @@ describe('Windows installer presentation', () => {
     expect(log).toContain('status=archive-missing');
   });
 
-  it('tries diagnostic directories without making logging an installation prerequisite', () => {
+  it('writes installer logs only to Roaming without making logging a prerequisite', () => {
     const preInit = nsisScript.slice(
       nsisScript.indexOf('!macro preInit'),
       nsisScript.indexOf('!macroend', nsisScript.indexOf('!macro preInit')),
@@ -1449,15 +1670,10 @@ describe('Windows installer presentation', () => {
     expect(preInit).toContain('Call JustDoSelectInstallLogDirectory');
     expect(nsisScript).not.toContain('logging-unavailable');
     expect(nsisScript).not.toContain('Abort "Required installer log');
-    expect(selector.indexOf('$JustDoCurrentUserAppData')).toBeLessThan(
-      selector.indexOf('$JustDoCurrentUserLocalAppData'),
-    );
-    expect(selector.indexOf('$JustDoCurrentUserLocalAppData')).toBeLessThan(
-      selector.indexOf('$JustDoCurrentTemp'),
-    );
-    expect(selector.indexOf('$JustDoCurrentTemp')).toBeLessThan(
-      selector.indexOf('$JustDoInstallerDirectory'),
-    );
+    expect(selector).toContain('$JustDoCurrentUserAppData');
+    expect(selector).not.toContain('$JustDoCurrentUserLocalAppData');
+    expect(selector).not.toContain('$JustDoCurrentTemp');
+    expect(selector).not.toContain('$JustDoInstallerDirectory');
     expect(nsisScript.match(/FileOpen \$2 "NUL" w/g)).toHaveLength(3);
     expect(nsisScript).toContain('phase=install-log-relocated');
   });
@@ -1520,7 +1736,7 @@ describe('Windows installer presentation', () => {
     const executableCheck = customInstall.indexOf(
       '${IfNot} ${FileExists} "$INSTDIR\\${APP_EXECUTABLE_FILENAME}"',
     );
-    const resourceLaunch = customInstall.indexOf('${StdUtils.ExecShellWaitEx}');
+    const resourceLaunch = customInstall.indexOf('Call JustDoLaunchResourceExtractor');
 
     expect(executableCheck).toBeGreaterThan(-1);
     expect(resourceLaunch).toBeGreaterThan(executableCheck);
@@ -1528,7 +1744,7 @@ describe('Windows installer presentation', () => {
     expect(customInstall).toContain('resource-unpack-script');
     expect(customInstall).toContain('resource-archive');
     expect(customInstall).toContain('resource-metadata');
-    expect(customInstall).toContain('better-sqlite3-native-module');
+    expect(customInstall).not.toContain('better-sqlite3-native-module');
     expect(customInstall).toContain('文件被安全软件拦截');
   });
 

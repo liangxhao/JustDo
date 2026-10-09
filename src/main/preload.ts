@@ -20,6 +20,7 @@ import {
 } from '../shared/app/appUpdate';
 import { AuthIpc, type AuthState } from '../shared/app/auth';
 import { DialogIpc, type SaveTextFileOptions } from '../shared/app/dialogIpc';
+import { AppInitializationIpc, type AppInitializationState } from '../shared/app/initialization';
 import { LogIpc } from '../shared/app/logIpc';
 import { MediaCaptureIpc, MediaCaptureSurface } from '../shared/app/mediaCapture';
 import {
@@ -1157,6 +1158,17 @@ contextBridge.exposeInMainWorld('electron', {
   preventSleep: {
     get: () => ipcRenderer.invoke('app:getPreventSleep'),
     set: (enabled: boolean) => ipcRenderer.invoke('app:setPreventSleep', enabled),
+  },
+  initialization: {
+    getState: (): Promise<AppInitializationState> =>
+      ipcRenderer.invoke(AppInitializationIpc.GetState),
+    relaunch: () => ipcRenderer.invoke(AppInitializationIpc.Relaunch),
+    onChanged: (callback: (state: AppInitializationState) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: AppInitializationState) =>
+        callback(state);
+      ipcRenderer.on(AppInitializationIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(AppInitializationIpc.Changed, handler);
+    },
   },
   appInfo: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),

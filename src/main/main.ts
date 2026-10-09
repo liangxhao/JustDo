@@ -19,6 +19,7 @@ import { ACTIVITY_REPORTING_CONFIG } from '../config/activityReporting';
 import { APP_UPDATE_CONFIG } from '../config/appUpdate';
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../config/builtinModels';
 import { AuthIpc } from '../shared/app/auth';
+import { AppInitializationIpc, AppInitializationStep } from '../shared/app/initialization';
 import { normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../shared/browser/browser';
 import { EmbeddedBrowserGateway } from '../shared/browser/embeddedBrowser';
 import { buildCoworkSessionKey } from '../shared/cowork/sessionKey';
@@ -53,6 +54,7 @@ import {
   registerBrowserExtensionNativeHost,
 } from './browser/extension/browserExtensionNativeMessaging';
 import { readAutomaticBrowserExtensionPairing } from './browser/extension/browserExtensionPairing';
+import { AppInitialization } from './core/app/appInitialization';
 import { registerAppShutdown } from './core/app/appShutdown';
 import { createLoginSdkAdapter } from './core/app/auth/loginSdkAdapter';
 import { LoginService } from './core/app/auth/loginService';
@@ -87,6 +89,10 @@ import { enableSystemCaForCurrentProcess } from './core/network/trustedCertifica
 import { applyDependencyManagerConfigEnv } from './core/runtime/dependencyManagerConfig';
 import { ensurePythonRuntimeReady } from './core/runtime/pythonRuntime';
 import { registerContentSecurityPolicy } from './core/window/contentSecurityPolicy';
+import {
+  createInitializationWindow,
+  type InitializationWindow,
+} from './core/window/initializationWindow';
 import {
   registerLocalFileProtocol,
   registerLocalFileScheme,
@@ -138,6 +144,7 @@ import {
   registerWindowHandlers,
   registerWorkspaceWindowHandlers,
 } from './ipc/app';
+import { registerAppInitializationHandlers } from './ipc/app/initialization';
 import {
   registerAgentHandlers,
   registerCoworkConfigHandlers,
@@ -384,10 +391,27 @@ if (multicaBridgeArgv) {
   console.warn = () => undefined;
   console.error = () => undefined;
 }
-configureUserDataPath();
+let startupPreparationError: unknown;
+try {
+  configureUserDataPath();
+} catch (error) {
+  if (multicaBridgeArgv) throw error;
+  startupPreparationError = error;
+}
 if (!multicaBridgeArgv) {
-  applyDependencyManagerConfigEnv(process.env);
-  initLogger();
+  try {
+    initLogger();
+  } catch (error) {
+    console.warn('[AppInitialization] Logging is unavailable; continuing startup:', error);
+  }
+  try {
+    applyDependencyManagerConfigEnv(process.env);
+  } catch (error) {
+    console.error(
+      '[AppInitialization] Dependency configuration unavailable; continuing startup:',
+      error,
+    );
+  }
   enableSystemCaForCurrentProcess();
 }
 
@@ -1973,12 +1997,82 @@ if (multicaBridgeArgv) {
   });
   registerAutoUpdateHandlers(autoUpdateService);
 
+  const initialization = new AppInitialization(
+    app.getPath('userData'),
+    app.isPackaged && isWindows,
+    state => {
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+        try {
+          mainWindow.webContents.send(AppInitializationIpc.Changed, state);
+        } catch (error) {
+          console.warn('[AppInitialization] Failed to publish progress; startup continues:', error);
+        }
+      }
+    },
+  );
+  registerAppInitializationHandlers(initialization);
+
+  const createStartupWindow = (): InitializationWindow => {
+    const startup = createInitializationWindow({
+      appName: APP_NAME,
+      preloadPath: PRELOAD_PATH,
+      isWindows,
+      isDev,
+      devServerUrl,
+      devServerPort: Number(process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port),
+      onReady: window => {
+        emitWindowState(window);
+        if (!isAutoLaunched()) window.show();
+      },
+    });
+    const initializationWindow = startup.window;
+    mainWindow = initializationWindow;
+    initializationWindow.on('closed', () => {
+      if (mainWindow === initializationWindow) mainWindow = null;
+    });
+    return startup;
+  };
+
   // 初始化应用
   const initApp = async () => {
     registerLocalFileScheme();
     await app.whenReady();
 
+    const startup = initialization.getState().firstLaunch ? createStartupWindow() : null;
+    // The packaged HTTP host starts asynchronously; wait for its actual navigation.
+    // Load failures are logged by the window and do not block real data preparation.
+    if (startup) await startup.loaded;
+    const initializationWindow = startup?.window;
+    if (appShutdown.isQuitting()) return;
+    if (startupPreparationError) throw startupPreparationError;
+    await initialization.prepareUserData();
+    if (appShutdown.isQuitting()) return;
     store = await initStore();
+    if (appShutdown.isQuitting()) return;
+    mainWindow = null;
+    registerContentSecurityPolicy({
+      isDev,
+      devServerPort: Number(process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port),
+    });
+    createWindow();
+    // Keep a window alive during the handoff; closing the last window quits on Windows.
+    if (initializationWindow) {
+      mainWindow?.once('ready-to-show', () => {
+        if (!initializationWindow.isDestroyed()) initializationWindow.close();
+      });
+    }
+    initialization.advance(AppInitializationStep.Runtime, 1);
+    await initialization.runOptionalTask('prepare Python runtime', async () => {
+      const runtimeResult = await ensurePythonRuntimeReady();
+      if (!runtimeResult.success) {
+        console.error(
+          '[AppInitialization] Python runtime preparation failed; continuing:',
+          runtimeResult.error,
+        );
+      }
+    });
+    if (appShutdown.isQuitting()) return;
+    initialization.advance(AppInitializationStep.Configuration, 2);
     const browserExtensionChatToken = randomBytes(32).toString('hex');
     const extensionChatServer = new BrowserExtensionChatServer(
       new BrowserExtensionChatController({
@@ -2000,11 +2094,24 @@ if (multicaBridgeArgv) {
     );
     try {
       await extensionChatServer.start();
+      if (appShutdown.isQuitting()) {
+        await extensionChatServer.stop();
+        return;
+      }
       browserExtensionChatServer = extensionChatServer;
       await publishBrowserExtensionAppServer(
         app.getPath('userData'),
         extensionChatServer.getCapability(),
       );
+      if (appShutdown.isQuitting()) {
+        await clearBrowserExtensionAppServer(app.getPath('userData')).catch(error => {
+          console.warn(
+            '[BrowserExtensionChat] Failed to clear startup rendezvous during shutdown:',
+            error,
+          );
+        });
+        return;
+      }
       if (app.isPackaged) {
         await registerBrowserExtensionNativeHost(
           app.getPath('userData'),
@@ -2021,8 +2128,13 @@ if (multicaBridgeArgv) {
     } catch (error) {
       console.error('[BrowserExtensionChat] Failed to start loopback service:', error);
     }
+    if (appShutdown.isQuitting()) return;
     const initialOutboundHeaderPolicy = getOutboundHeaderPolicyService().reconcile();
     await getOutboundHeaderProxy().start();
+    if (appShutdown.isQuitting()) {
+      outboundHeaderProxy?.stop();
+      return;
+    }
     activeOutboundHeaderPolicyDigest = initialOutboundHeaderPolicy.digest;
 
     // Note: Calendar permission is checked on-demand when calendar operations are requested
@@ -2030,10 +2142,10 @@ if (multicaBridgeArgv) {
 
     // Ensure default working directory exists
     const defaultProjectDir = path.join(os.homedir(), DEFAULT_WORKSPACE_DIRECTORY_NAME, 'project');
-    if (!fs.existsSync(defaultProjectDir)) {
-      fs.mkdirSync(defaultProjectDir, { recursive: true });
-      console.log('Created default project directory:', defaultProjectDir);
-    }
+    await initialization.runOptionalTask('prepare default project directory', async () => {
+      await fs.promises.mkdir(defaultProjectDir, { recursive: true });
+    });
+    if (appShutdown.isQuitting()) return;
 
     // 注册 localfile:// 自定义协议，用于安全加载本地文件（图片等）
     registerLocalFileProtocol();
@@ -2065,18 +2177,25 @@ if (multicaBridgeArgv) {
     bindOpenClawGatewayPortProxyBypass();
     const appConfig = getStore().get<AppConfigSettings>('app_config');
     await applySystemProxyPreference(appConfig);
+    if (appShutdown.isQuitting()) return;
     await applyBrowserProxyPreference(appConfig);
+    if (appShutdown.isQuitting()) return;
 
     let builtinModelCredential: BuiltinModelCredential | null = null;
     try {
       builtinModelCredential = await getBuiltinModelTokenExchange().refresh();
-    } catch {
-      console.warn('[BuiltinModelTokenExchange] Startup exchange failed; retrying in background.');
+    } catch (error) {
+      console.warn(
+        '[BuiltinModelTokenExchange] Startup exchange failed; retrying in background:',
+        error,
+      );
     }
+    if (appShutdown.isQuitting()) return;
 
     await syncBuiltinModelProvider(store, {
       access: builtinModelCredential ? BuiltinModelAccess.Enabled : BuiltinModelAccess.Disabled,
     });
+    if (appShutdown.isQuitting()) return;
 
     const coworkEngineRouter = getCoworkEngineRouter();
     bindEmbeddedBrowserGateway();
@@ -2112,36 +2231,53 @@ if (multicaBridgeArgv) {
       console.log(`[Main] migrated agent model bindings: qualified=${qualifiedAgentModels}`);
     }
 
-    let startupSync = await syncOpenClawConfig({
-      reason: 'startup',
-    });
-    if (startupSync.success && !builtinModelCredential) {
-      startupSync = await syncOpenClawConfig({
-        reason: BuiltinModelSyncReason.AuthLogout,
+    let startupSync: Awaited<ReturnType<typeof syncOpenClawConfig>> | undefined;
+    await initialization.runOptionalTask('synchronize assistant configuration', async () => {
+      const result = await syncOpenClawConfig({
+        reason: 'startup',
       });
-    }
-    if (!startupSync.success) {
+      // Publish success only after the final credential projection completes.
+      startupSync =
+        result.success && !builtinModelCredential
+          ? await syncOpenClawConfig({ reason: BuiltinModelSyncReason.AuthLogout })
+          : result;
+    });
+    if (startupSync && !startupSync.success) {
       console.error('[OpenClaw] Startup config sync failed:', startupSync.error);
     }
+    if (appShutdown.isQuitting()) return;
 
     await ensureMulticaBridgeRunning().catch(error => {
       console.error('[MulticaBridge] Failed to start:', error);
       multicaBridgeServer = null;
     });
-
-    if (startupSync.success) {
-      void ensureOpenClawRunningForCowork()
-        .then(() => {
-          try {
-            getCronJobService().startPolling();
-          } catch {
-            // CronJobService not available after OpenClaw startup.
-          }
-        })
-        .catch(error => {
-          console.error('[OpenClaw] Failed to auto-start gateway on app startup:', error);
-        });
+    if (appShutdown.isQuitting()) {
+      await multicaBridgeServer?.stop();
+      multicaBridgeServer = null;
+      return;
     }
+
+    initialization.advance(AppInitializationStep.Engine, 3);
+    if (startupSync?.success) {
+      const startEngine = initialization.runOptionalTask('start assistant engine', async () => {
+        const status = await ensureOpenClawRunningForCowork();
+        if (status.phase !== 'running') {
+          console.error(
+            '[OpenClaw] Startup engine unavailable; settings remain accessible:',
+            status,
+          );
+          return;
+        }
+        if (appShutdown.isQuitting()) return;
+        getCronJobService().startPolling();
+      });
+      if (initialization.getState().firstLaunch) {
+        await startEngine;
+      } else {
+        void startEngine;
+      }
+    }
+    if (appShutdown.isQuitting()) return;
 
     builtinModelCredentialMonitor = new BuiltinModelCredentialMonitor({
       userInfoPath: resolveOutboundHeaderUserInfoPath(),
@@ -2151,7 +2287,7 @@ if (multicaBridgeArgv) {
       },
     });
     getBuiltinModelAuthCoordinator().initialize(
-      startupSync.success ? builtinModelCredential : null,
+      startupSync?.success ? builtinModelCredential : null,
     );
     builtinModelCredentialMonitor.start(builtinModelCredential);
     // This display restoration never gates or repeats the existing JWT/model startup flow.
@@ -2167,23 +2303,7 @@ if (multicaBridgeArgv) {
       customerRegistrationService.start();
     }
 
-    try {
-      const runtimeResult = await ensurePythonRuntimeReady();
-      if (!runtimeResult.success) {
-        console.error('[Main] initApp: ensurePythonRuntimeReady failed:', runtimeResult.error);
-      }
-    } catch (error) {
-      console.error('[Main] initApp: ensurePythonRuntimeReady threw:', error);
-    }
-
-    // 设置安全策略
-    registerContentSecurityPolicy({
-      isDev,
-      devServerPort: Number(process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port),
-    });
-
-    // 创建窗口
-    createWindow();
+    createTray(() => mainWindow);
     autoUpdateService.scheduleAutomaticChecks();
 
     // Reconnect OpenClaw gateway WS after system wake from sleep/suspend
@@ -2283,7 +2403,22 @@ if (multicaBridgeArgv) {
   };
 
   // 启动应用
-  initApp().catch(console.error);
+  void initApp()
+    .then(() => {
+      if (!appShutdown.isQuitting()) return initialization.complete();
+    })
+    .catch(error => {
+      if (appShutdown.isQuitting()) {
+        console.error(
+          '[AppInitialization] Startup failed during shutdown:',
+          initialization.getState(),
+          error,
+        );
+        return;
+      }
+      initialization.fail(error);
+      if (!mainWindow && app.isReady()) createStartupWindow();
+    });
 
   // 当所有窗口关闭时退出应用
   app.on('window-all-closed', () => {

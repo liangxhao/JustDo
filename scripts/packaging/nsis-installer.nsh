@@ -64,6 +64,7 @@ Var JustDoInstallerSessionEnded
 Var JustDoLastInstallEvent
 Var JustDoInstallMode
 Var JustDoInstallLogDirectory
+Var JustDoPayloadLogsAllowed
 Var JustDoCurrentUserAppData
 Var JustDoCurrentUserLocalAppData
 Var JustDoCurrentTemp
@@ -74,6 +75,8 @@ Var JustDoExtractorEnvironmentConfigured
 Var JustDoPreviousTemp
 Var JustDoPreviousTmp
 
+!include "${PROJECT_DIR}\scripts\packaging\nsis-extractor-launch.nsh"
+
 Function JustDoCleanupExtractorEnvironment
   Push $0
   Push $1
@@ -81,7 +84,6 @@ Function JustDoCleanupExtractorEnvironment
     System::Call 'Kernel32::SetEnvironmentVariable(t "TEMP", t "$JustDoPreviousTemp")i.r0'
     System::Call 'Kernel32::SetEnvironmentVariable(t "TMP", t "$JustDoPreviousTmp")i.r0'
     System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALLER_TEMP_ROOT", t "")i.r0'
-    System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALLER_ORIGINAL_TEMP_ROOT", t "")i.r0'
     StrCpy $JustDoExtractorEnvironmentConfigured "0"
   ${EndIf}
   ${If} $JustDoExtractorTempDirectory != ""
@@ -142,9 +144,10 @@ Function JustDoSelectInstallLogDirectory
   StrCpy $JustDoInstallLogPath ""
   StrCpy $JustDoResourceLogPath ""
   !insertmacro JustDoTryInstallLogDirectory "$JustDoCurrentUserAppData" "${PRODUCT_NAME}"
-  !insertmacro JustDoTryInstallLogDirectory "$JustDoCurrentUserLocalAppData" "${PRODUCT_NAME}"
-  !insertmacro JustDoTryInstallLogDirectory "$JustDoCurrentTemp" "${APP_FILENAME}-installer-logs"
-  !insertmacro JustDoTryInstallLogDirectory "$JustDoInstallerDirectory" "${APP_FILENAME}-installer-logs"
+  ${If} $JustDoInstallLogDirectory == ""
+  ${AndIf} $JustDoPayloadLogsAllowed == "1"
+    !insertmacro JustDoTryInstallLogDirectory "$INSTDIR" "logs"
+  ${EndIf}
   ClearErrors
   Pop $1
   Pop $0
@@ -275,12 +278,11 @@ Function .onInstFailed
   GetErrorLevel $1
   System::Call 'kernel32::GetLastError()i.r0'
   !insertmacro JustDoLogInstallEvent "phase=installer-failed status=terminated-before-success error-level=$1 win32-last-error=$0"
-  Call JustDoRestoreManagedRuntimes
   Call JustDoCleanupExtractorEnvironment
   ${If} $JustDoExtractorTempDirectory != ""
     !insertmacro JustDoLogInstallEvent "phase=extractor-temp-cleanup-incomplete"
   ${EndIf}
-  !insertmacro JustDoLogInstallEvent "phase=installer-failed-cleanup-complete runtime-restore-result=$0"
+  !insertmacro JustDoLogInstallEvent "phase=installer-failed-cleanup-complete"
   Call JustDoWriteInstallSessionEnd
 FunctionEnd
 
@@ -292,6 +294,11 @@ Function .onGUIEnd
   ${EndIf}
   !insertmacro JustDoLogInstallEvent "phase=installer-session-end terminal-state=$JustDoInstallTerminalState last-event=$JustDoLastInstallEvent"
   ${If} $JustDoExtractorActive != "1"
+    ${If} $JustDoResourceProgressFile != ""
+      Delete "$JustDoResourceProgressFile.error"
+      Delete "$JustDoResourceProgressFile"
+      StrCpy $JustDoResourceProgressFile ""
+    ${EndIf}
     Call JustDoCleanupExtractorEnvironment
     ${If} $JustDoExtractorTempDirectory != ""
       !insertmacro JustDoLogInstallEvent "phase=extractor-temp-cleanup-incomplete"
@@ -595,58 +602,6 @@ FunctionEnd
   ${EndIf}
 !macroend
 
-!ifndef BUILD_UNINSTALLER
-Function JustDoStageManagedRuntimes
-  System::Call 'Kernel32::GetCurrentProcessId()i.r0'
-  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_INSTALL_ROOT", "$INSTDIR").r1'
-  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
-  !insertmacro JustDoResolveNativePowerShell $R8
-  nsExec::ExecToStack /TIMEOUT=30000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action StageRuntimes'
-  Pop $0
-  Pop $R9
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_CALLER_PID", t "")i'
-  !insertmacro JustDoLogInstallEvent "phase=runtime-staging result=$0 detail=$R9"
-FunctionEnd
-
-Function JustDoStopLegacyPythonProcesses
-  ; Older releases ran the managed Python interpreter from userData, outside
-  ; $INSTDIR and therefore outside the normal installed-process check. Stop
-  ; only executables rooted in that exact obsolete directory. This is cleanup:
-  ; access-denied and inspection failures are logged but never block setup.
-  System::Call 'Kernel32::GetCurrentProcessId()i.r0'
-  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_INSTALL_ROOT", "$INSTDIR").r1'
-  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_USER_DATA_ROOT", "$JustDoCurrentUserAppData\${PRODUCT_NAME}").r1'
-  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
-  !insertmacro JustDoResolveNativePowerShell $R8
-  nsExec::ExecToStack /TIMEOUT=15000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action StopLegacyPython'
-  Pop $0
-  Pop $R9
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_USER_DATA_ROOT", t "")i'
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_CALLER_PID", t "")i'
-  !insertmacro JustDoLogInstallEvent "phase=legacy-python-process-stop result=$0 detail=$R9"
-FunctionEnd
-
-Function JustDoRestoreManagedRuntimes
-  ${IfNot} ${FileExists} "$PLUGINSDIR\justdo-process-helper.ps1"
-    StrCpy $0 "helper-missing"
-    !insertmacro JustDoLogInstallEvent "phase=runtime-restore result=$0 detail=process-helper-not-extracted"
-    Return
-  ${EndIf}
-  System::Call 'Kernel32::GetCurrentProcessId()i.r0'
-  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_INSTALL_ROOT", "$INSTDIR").r1'
-  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
-  !insertmacro JustDoResolveNativePowerShell $R8
-  nsExec::ExecToStack /TIMEOUT=30000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action RestoreRuntimes'
-  Pop $0
-  Pop $R9
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_CALLER_PID", t "")i'
-  !insertmacro JustDoLogInstallEvent "phase=runtime-restore result=$0 detail=$R9"
-FunctionEnd
-!endif
-
 !macro customHeader
   ; Hide the (empty) details list — electron-builder uses 7z solid extraction
   ; which produces no per-file output, so the box would just be blank.
@@ -759,16 +714,6 @@ Function JustDoCheckAppRunning
   ${EndIf}
   JustDoInstallProcessReady:
   !insertmacro JustDoLogInstallEvent "phase=process-check-complete result=ready"
-  ${If} $JustDoPristineInstall != "1"
-    Call JustDoStopLegacyPythonProcesses
-    Call JustDoStageManagedRuntimes
-    ${If} $0 != "0"
-      ; Staging only shortens old-version cleanup. If historical or unexpected
-      ; data makes it unavailable, let the normal uninstaller remove the old
-      ; tree instead of rejecting an otherwise installable upgrade.
-      !insertmacro JustDoLogInstallEvent "phase=runtime-staging-degraded result=$0 action=continue-with-normal-old-version-removal"
-    ${EndIf}
-  ${EndIf}
   System::Call 'kernel32::GetTickCount()i.r0'
   StrCpy $JustDoCoreInstallStartedTick $0
   !insertmacro JustDoLogInstallEvent "phase=electron-builder-core-start steps=old-version-cleanup,archive-extraction,atomic-copy,registry,shortcuts"
@@ -856,6 +801,7 @@ FunctionEnd
   StrCpy $JustDoCoreInstallStartedTick 0
   StrCpy $JustDoProcessCheckComplete "0"
   StrCpy $JustDoInstallTerminalState "running"
+  StrCpy $JustDoPayloadLogsAllowed "0"
   System::Call 'kernel32::GetCurrentProcessId()i.r0'
   StrCpy $JustDoInstallerPid $0
   StrCpy $JustDoInstallerSessionId "$JustDoInstallerPid-$JustDoInstallStartedTick"
@@ -987,16 +933,14 @@ FunctionEnd
   ; Write timestamps to help diagnose slow installation phases.
   ; Log directory was selected and verified by preInit.
 
-  CreateDirectory "$JustDoCurrentUserAppData\${PRODUCT_NAME}"
-  ; The old uninstaller has now removed the previous app shell. Restore the
-  ; same-volume, directory-level runtime staging so unpack-cfmind can replace it
-  ; transactionally and roll it back if the new archive is invalid.
-  Call JustDoRestoreManagedRuntimes
-  ${If} $0 != "0"
-    ; The new package installs a complete runtime. A stale runtime staging
-    ; directory is diagnostic residue, not a reason to reject the new app.
-    !insertmacro JustDoLogInstallEvent "phase=runtime-restore-degraded result=$0 action=continue-with-new-runtime"
+  ; The final installation directory now exists and old-version removal is
+  ; finished. Only log files may use this fallback when Roaming is unavailable.
+  StrCpy $JustDoPayloadLogsAllowed "1"
+  ${If} $JustDoInstallLogDirectory == ""
+    Call JustDoSelectInstallLogDirectory
+    !insertmacro JustDoLogInstallEvent "phase=install-log-fallback directory=$JustDoInstallLogDirectory"
   ${EndIf}
+
   System::Call 'kernel32::GetTickCount()i.r0'
   ${If} $JustDoCoreInstallStartedTick != 0
     IntOp $1 $0 - $JustDoCoreInstallStartedTick
@@ -1023,12 +967,6 @@ FunctionEnd
   ${ElseIfNot} ${FileExists} "$INSTDIR\resources\win-resources.tar.zst"
     StrCpy $R6 "resource-archive"
     StrCpy $R7 "$INSTDIR\resources\win-resources.tar.zst"
-  ${ElseIfNot} ${FileExists} "$INSTDIR\resources\win-resources-metadata.json"
-    StrCpy $R6 "resource-metadata"
-    StrCpy $R7 "$INSTDIR\resources\win-resources-metadata.json"
-  ${ElseIfNot} ${FileExists} "$INSTDIR\resources\app.asar.unpacked\node_modules\better-sqlite3\build\Release\better_sqlite3.node"
-    StrCpy $R6 "better-sqlite3-native-module"
-    StrCpy $R7 "$INSTDIR\resources\app.asar.unpacked\node_modules\better-sqlite3\build\Release\better_sqlite3.node"
   ${EndIf}
   ${If} $R6 != ""
     !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=core-payload-missing component=$R6 path=$R7"
@@ -1142,15 +1080,17 @@ FunctionEnd
 
   FileWrite $2 "set-details-print: none$\r$\n"
   FileWrite $2 "set-electron-run-as-node: start$\r$\n"
-  System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "1")i'
-  Pop $0
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALLER_PYTHON_IMPORT_CHECK", t "1")i'
-  Pop $0
+  System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "1")i.r0'
   FileWrite $2 "set-electron-run-as-node: result=$0$\r$\n"
+  ${If} $0 == 0
+    System::Call 'kernel32::GetLastError()i.r1'
+    !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=extractor-env-failed name=ELECTRON_RUN_AS_NODE win32=$1"
+    FileClose $2
+    Abort "Setup cannot launch its resource extractor. Retry the installation."
+  ${EndIf}
 
   ; Keep temporary artifacts created by the extractor and its direct children
-  ; inside the selected install root. Independent endpoint-security processes
-  ; do not inherit this environment and are monitored only by free-space loss.
+  ; inside the selected install root. Free-space observations never gate setup.
   ReadEnvStr $JustDoPreviousTemp "TEMP"
   ReadEnvStr $JustDoPreviousTmp "TMP"
   StrCpy $JustDoExtractorEnvironmentConfigured "1"
@@ -1164,27 +1104,29 @@ FunctionEnd
   ClearErrors
   CreateDirectory "$JustDoExtractorTempDirectory"
   ${If} ${Errors}
+    System::Call 'kernel32::GetLastError()i.r1'
+    !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=extractor-temp-create-failed path=$JustDoExtractorTempDirectory win32=$1"
     StrCpy $JustDoExtractorTempDirectory ""
-    !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=extractor-temp-create-failed"
     Abort "Setup cannot create its protected temporary directory. Check the installation path and retry."
   ${EndIf}
   System::Call 'Kernel32::SetEnvironmentVariable(t "TEMP", t "$JustDoExtractorTempDirectory")i.r0'
   ${If} $0 == 0
+    System::Call 'kernel32::GetLastError()i.r1'
+    !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=extractor-env-failed name=TEMP win32=$1"
     Call JustDoCleanupExtractorEnvironment
     Abort "Setup cannot isolate its temporary files. Retry the installation."
   ${EndIf}
   System::Call 'Kernel32::SetEnvironmentVariable(t "TMP", t "$JustDoExtractorTempDirectory")i.r0'
   ${If} $0 == 0
+    System::Call 'kernel32::GetLastError()i.r1'
+    !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=extractor-env-failed name=TMP win32=$1"
     Call JustDoCleanupExtractorEnvironment
     Abort "Setup cannot isolate its temporary files. Retry the installation."
   ${EndIf}
   System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALLER_TEMP_ROOT", t "$JustDoExtractorTempDirectory")i.r0'
   ${If} $0 == 0
-    Call JustDoCleanupExtractorEnvironment
-    Abort "Setup cannot isolate its temporary files. Retry the installation."
-  ${EndIf}
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALLER_ORIGINAL_TEMP_ROOT", t "$JustDoPreviousTemp")i.r0'
-  ${If} $0 == 0
+    System::Call 'kernel32::GetLastError()i.r1'
+    !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=extractor-env-failed name=JUSTDO_INSTALLER_TEMP_ROOT win32=$1"
     Call JustDoCleanupExtractorEnvironment
     Abort "Setup cannot isolate its temporary files. Retry the installation."
   ${EndIf}
@@ -1198,7 +1140,7 @@ FunctionEnd
   !insertmacro JustDoAddInstallActivity \
     "正在整理核心资源" \
     "Preparing core resources"
-  FileWrite $2 "tar-extract-command: $INSTDIR\${APP_EXECUTABLE_FILENAME} $INSTDIR\resources\unpack-cfmind.cjs $INSTDIR\resources\win-resources.tar.zst $INSTDIR\resources $JustDoCurrentUserAppData\${PRODUCT_NAME} $INSTDIR\resources\win-resources-metadata.json <progress-file> $JustDoResourceLogPath <session-id> ${VERSION}$\r$\n"
+  FileWrite $2 "tar-extract-command: $INSTDIR\${APP_EXECUTABLE_FILENAME} $INSTDIR\resources\unpack-cfmind.cjs $INSTDIR\resources\win-resources.tar.zst $INSTDIR\resources <reserved> $INSTDIR\resources\win-resources-metadata.json <progress-file> $JustDoResourceLogPath <session-id> ${VERSION}$\r$\n"
   FileWrite $2 "tar-extract-detail-log: $JustDoResourceLogPath$\r$\n"
   ${If} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
     FileWrite $2 "app-exe: exists$\r$\n"
@@ -1221,55 +1163,65 @@ FunctionEnd
     FileWrite $2 "resource-metadata: missing $INSTDIR\resources\win-resources-metadata.json$\r$\n"
   ${EndIf}
 
-  ; Launch the extractor asynchronously. Interactive installs poll the encoded
-  ; process handle and atomic progress file without blocking the NSIS window;
-  ; silent deployments use StdUtils' blocking wait because no UI is present.
-  StrCpy $JustDoResourceProgressFile "$PLUGINSDIR\justdo-resource-progress.txt"
+  ; Capture output from process creation onward, including Electron/bootstrap or
+  ; script load errors that happen before the extractor's own logger can start.
+  ; Direct CreateProcessW is hidden, asynchronous, and never reparses paths as shell text.
+  StrCpy $JustDoResourceProgressFile "$JustDoExtractorTempDirectory\justdo-resource-progress.txt"
   StrCpy $JustDoLastResourceActivity ""
   Delete "$JustDoResourceProgressFile"
   ${If} $JustDoProgressBar != ""
     SendMessage $JustDoProgressBar ${JUSTDO_PBM_SETMARQUEE} 0 0
     ShowWindow $JustDoProgressBar 0
   ${EndIf}
-  ${StdUtils.ExecShellWaitEx} $R7 $R8 "$INSTDIR\${APP_EXECUTABLE_FILENAME}" "open" '"$INSTDIR\resources\unpack-cfmind.cjs" "$INSTDIR\resources\win-resources.tar.zst" "$INSTDIR\resources" "$JustDoCurrentUserAppData\${PRODUCT_NAME}" "$INSTDIR\resources\win-resources-metadata.json" "$JustDoResourceProgressFile" "$JustDoResourceLogPath" "$JustDoInstallerSessionId" "${VERSION}"'
-  ${If} $R7 != "ok"
-    FileWrite $2 "tar-extract-launch-error: result=$R7 detail=$R8$\r$\n"
-    StrCpy $0 "launch-$R7-$R8"
+  StrCpy $JustDoExtractorExecutable "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+  StrCpy $JustDoExtractorCommandLine '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "$INSTDIR\resources\unpack-cfmind.cjs" "$INSTDIR\resources\win-resources.tar.zst" "$INSTDIR\resources" "" "$INSTDIR\resources\win-resources-metadata.json" "$JustDoResourceProgressFile" "$JustDoResourceLogPath" "$JustDoInstallerSessionId" "${VERSION}"'
+  StrCpy $JustDoExtractorStdioLog "$INSTDIR\resources\install-extractor-stdio-$JustDoInstallerSessionId.log"
+  Call JustDoLaunchResourceExtractor
+  FileWrite $2 "tar-extract-stdio-log: $JustDoExtractorStdioLog$\r$\n"
+  ${If} $JustDoExtractorStdioError != ""
+    FileWrite $2 "tar-extract-stdio-unavailable: $JustDoExtractorStdioError action=continue-with-extractor-diagnostics$\r$\n"
+  ${EndIf}
+  ${If} $JustDoExtractorLaunchError != ""
+    FileWrite $2 "tar-extract-launch-error: $JustDoExtractorLaunchError$\r$\n"
+    StrCpy $0 "launch-$JustDoExtractorLaunchError"
     Goto TarExtractFailed
   ${EndIf}
   StrCpy $JustDoExtractorActive "1"
 
   ${If} ${Silent}
-    ${StdUtils.WaitForProcEx} $0 $R8
+    System::Call 'kernel32::WaitForSingleObject(p $JustDoExtractorProcessHandle, i -1)i.r0'
   ${Else}
-    ; StdUtils serializes the native handle as hProc:XXXXXXXX. Parse the
-    ; plug-in token for non-blocking WaitForSingleObject polling,
-    ; then return the original token to WaitForProcEx once signaled so it owns
-    ; final exit-code retrieval and handle cleanup.
-    StrCpy $R9 $R8 6
-    ${If} $R9 == "hProc:"
-      StrCpy $R9 $R8 "" 6
-      StrCpy $R9 "0x$R9"
-      JustDoResourceWait:
-        Sleep 150
-        Call JustDoPollResourceProgress
-        System::Call 'kernel32::WaitForSingleObject(p $R9, i 0)i.r0'
-        ${If} $0 == 258
-          Goto JustDoResourceWait
-        ${ElseIf} $0 != 0
-          System::Call 'kernel32::GetLastError()i.r1'
-          FileWrite $2 "tar-extract-poll-error: wait=$0 win32=$1; using blocking fallback$\r$\n"
-        ${EndIf}
-    ${Else}
-      FileWrite $2 "tar-extract-handle-format: unexpected $R8; using blocking fallback$\r$\n"
+    JustDoResourceWait:
+    Sleep 150
+    Call JustDoPollResourceProgress
+    System::Call 'kernel32::WaitForSingleObject(p $JustDoExtractorProcessHandle, i 0)i.r0'
+    ${If} $0 == 258
+      Goto JustDoResourceWait
+    ${ElseIf} $0 != 0
+      System::Call 'kernel32::GetLastError()i.r1'
+      FileWrite $2 "tar-extract-poll-error: wait=$0 win32=$1; using blocking fallback$\r$\n"
+      System::Call 'kernel32::WaitForSingleObject(p $JustDoExtractorProcessHandle, i -1)i.r0'
     ${EndIf}
-    ${StdUtils.WaitForProcEx} $0 $R8
   ${EndIf}
+  ${If} $0 == 0
+    System::Call 'kernel32::GetExitCodeProcess(p $JustDoExtractorProcessHandle, *i .r0)i.r1'
+    ${If} $1 == 0
+      System::Call 'kernel32::GetLastError()i.r1'
+      FileWrite $2 "tar-extract-exit-code-error: win32=$1$\r$\n"
+      StrCpy $0 "exit-code-win32-$1"
+    ${EndIf}
+  ${Else}
+    System::Call 'kernel32::GetLastError()i.r1'
+    FileWrite $2 "tar-extract-wait-error: wait=$0 win32=$1$\r$\n"
+    StrCpy $0 "wait-win32-$1"
+  ${EndIf}
+  System::Call 'kernel32::CloseHandle(p $JustDoExtractorProcessHandle)i.r1'
+  StrCpy $JustDoExtractorProcessHandle "0"
   Call JustDoPollResourceProgress
   StrCpy $JustDoExtractorActive "0"
+  Call JustDoAppendExtractorStdioLog
+  FileWrite $2 "tar-extract-stdio-appended: result=$JustDoExtractorStdioCopied error=$JustDoExtractorStdioCopyError path=$JustDoExtractorStdioLog$\r$\n"
 
-  Delete "$JustDoResourceProgressFile"
-  StrCpy $JustDoResourceProgressFile ""
   FileWrite $2 "tar-extract-process-exit: $0$\r$\n"
 
   StrCmp $0 "0" TarExtractOK
@@ -1277,14 +1229,20 @@ FunctionEnd
     ${If} $JustDoProgressBar != ""
       SendMessage $JustDoProgressBar ${JUSTDO_PBM_SETMARQUEE} 0 0
     ${EndIf}
-    Delete "$JustDoResourceProgressFile"
-    StrCpy $JustDoResourceProgressFile ""
     FileWrite $2 "tar-extract-error: exit=$0$\r$\n"
     ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
     ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
       StrCpy $1 "核心资源展开失败（退出码 $0）。诊断日志可能包含本机文件路径，请确认后提供给技术支持。"
     ${Else}
       StrCpy $1 "Core resource extraction failed (exit code $0). Diagnostic logs can contain local file paths; review them before sharing with support."
+    ${EndIf}
+    ClearErrors
+    FileOpen $3 "$JustDoResourceProgressFile.error" r
+    ${IfNot} ${Errors}
+      FileReadUTF16LE $3 $4
+      FileClose $3
+      FileWrite $2 "tar-extract-failure-detail: $4$\r$\n"
+      StrCpy $1 "$1$\r$\n$4"
     ${EndIf}
     ${If} $JustDoInstallLogPath != ""
     ${AndIf} ${FileExists} "$JustDoInstallLogPath"
@@ -1294,17 +1252,34 @@ FunctionEnd
     ${AndIf} ${FileExists} "$JustDoResourceLogPath"
       StrCpy $1 "$1$\r$\n$JustDoResourceLogPath"
     ${EndIf}
+    ${If} ${FileExists} "$JustDoExtractorStdioLog"
+      StrCpy $1 "$1$\r$\n$JustDoExtractorStdioLog"
+    ${EndIf}
+    StrCpy $4 "$INSTDIR\resources\install-resource.log"
+    ${If} $4 != $JustDoResourceLogPath
+    ${AndIf} $4 != $JustDoInstallLogPath
+    ${AndIf} ${FileExists} "$4"
+      StrCpy $1 "$1$\r$\n$4"
+    ${EndIf}
     MessageBox MB_OK|MB_ICONEXCLAMATION "$1" /SD IDOK
-    System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "")i'
-    System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALLER_PYTHON_IMPORT_CHECK", t "")i'
+    System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "")i.r0'
+    Delete "$JustDoResourceProgressFile.error"
+    Delete "$JustDoResourceProgressFile"
+    StrCpy $JustDoResourceProgressFile ""
     Call JustDoCleanupExtractorEnvironment
     ${If} $JustDoExtractorTempDirectory != ""
       FileWrite $2 "extractor-temp-cleanup: incomplete path=$JustDoExtractorTempDirectory$\r$\n"
     ${EndIf}
     SetDetailsPrint both
     FileClose $2
+    SetErrorLevel 2
     Abort "Resource extraction failed."
   TarExtractOK:
+  ${If} $JustDoExtractorStdioCopied == "1"
+    Delete "$JustDoExtractorStdioLog"
+  ${EndIf}
+  Delete "$JustDoResourceProgressFile"
+  StrCpy $JustDoResourceProgressFile ""
 
   ${GetTime} "" "L" $3 $4 $5 $6 $7 $8 $9
   FileWrite $2 "tar-extract-done: $5-$4-$3 $7:$8:$9 exit=$0$\r$\n"
@@ -1335,24 +1310,7 @@ FunctionEnd
     FileWrite $2 "mingit-after-tar: missing$\r$\n"
   ${EndIf}
 
-  ; ─── Legacy dependency manager config cleanup ───
-  ; Current builds use the packaged config directly. Remove only the two files
-  ; managed by older installers, preserving any unrelated user files.
-  !insertmacro JustDoSetInstallStatus \
-    "正在写入本机配置（安装程序仍在运行）…" \
-    "Writing local configuration; setup is still working…"
-  !insertmacro JustDoAddInstallActivity \
-    "正在保存本机配置" \
-    "Saving local configuration"
-  Delete "$JustDoCurrentUserAppData\${PRODUCT_NAME}\dependency-config\.npmrc"
-  Delete "$JustDoCurrentUserAppData\${PRODUCT_NAME}\dependency-config\pip.ini"
-  RMDir "$JustDoCurrentUserAppData\${PRODUCT_NAME}\dependency-config"
-  ${If} ${FileExists} "$JustDoCurrentUserAppData\${PRODUCT_NAME}\dependency-config\.npmrc"
-  ${OrIf} ${FileExists} "$JustDoCurrentUserAppData\${PRODUCT_NAME}\dependency-config\pip.ini"
-    FileWrite $2 "dependency-config-legacy: cleanup-incomplete$\r$\n"
-  ${Else}
-    FileWrite $2 "dependency-config-legacy: cleanup-complete$\r$\n"
-  ${EndIf}
+  ; User-data preparation belongs to the first application launch.
 
   FileWrite $2 "delete-resource-tar: start$\r$\n"
   Delete "$INSTDIR\resources\win-resources.tar.zst"
@@ -1364,10 +1322,7 @@ FunctionEnd
   ${EndIf}
 
   FileWrite $2 "clear-electron-run-as-node: start$\r$\n"
-  System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "")i'
-  Pop $0
-  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALLER_PYTHON_IMPORT_CHECK", t "")i'
-  Pop $0
+  System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "")i.r0'
   Call JustDoCleanupExtractorEnvironment
   ${If} $JustDoExtractorTempDirectory != ""
     FileWrite $2 "extractor-temp-cleanup: incomplete path=$JustDoExtractorTempDirectory$\r$\n"

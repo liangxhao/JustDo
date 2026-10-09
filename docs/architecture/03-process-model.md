@@ -117,6 +117,30 @@ Gateway 启动由 Main 管理运行包准备、配置与进程生命周期。9.6
 
 热加载必须等待原生 applied／failed 回执，不能把 detected 当作成功。原生 coordinator 已接受的 deferred/coalesced 热重启保持其所有权，不竞争启动另一个进程。Windows 启动环境及两个 CJS 启动器都执行 9.8 的长编译缓存路径保护。
 
+### Windows 首次启动初始化
+
+安装器只把应用和运行资源写入安装目录，AppData 中只追加安装日志。用户数据目录准备、SQLite 打开、本地运行环境及 Gateway 启动属于 Main 的启动流程。
+
+Windows 启动先使用不持久化的初始化窗口，避免用户目录不可用时先打开 Chromium profile。初始化窗口与正常窗口都从应用拥有的随机本地 HTTP origin 读取安装目录的不可变 dist，保留静态资源校验、CSP 和页面导航限制；Main 等待初始化页实际加载，再准备真实目录和数据库，加载错误记录后仍继续数据准备。真实目录创建及数据库打开成功后交接到正常窗口；Renderer 先订阅初始化事件再读取快照，在 Main 就绪前不启动配置和业务服务。正式窗口保持 UI 偏好先恢复、App/Redux 再导入的顺序。首次启动首页显示四个实际阶段的完成数，不估算耗时百分比。失败保留阶段、目录和原始错误，允许重启重试。
+
+`app:initialization:getState/changed/relaunch` 只提供产品初始化快照与失败后的重启入口，不启动 Gateway 或缓存会话。标记表示本地应用壳已初始化；标记写入失败仅记录日志。Python、默认项目目录、配置同步和 Gateway 的可恢复故障不阻止进入首页和设置，运行能力仍遵守原有配置/权限失败关闭规则。真实用户目录或 SQLite 无法使用时保留失败页；快照暂时读取失败后，可由后续有效事件恢复。
+
+```mermaid
+sequenceDiagram
+  participant UI as 初始化首页
+  participant Main as Main
+  participant Data as 用户目录/SQLite
+  participant Gateway as Gateway
+  UI->>Main: 订阅进度并读取快照
+  Main->>Data: 创建真实目录并打开数据库
+  Main-->>UI: 用户数据已完成
+  Main-->>UI: 本地环境与配置阶段
+  Main->>Gateway: 尝试启动，失败记录并保留运行状态
+  Main-->>UI: 完成，进入首页
+```
+
+主进程、初始化窗口和正常窗口的实际加载/预加载/Renderer 异常进入详细日志；普通消息与外部网页不纳入此窗口观察器。日志写入先用用户目录，实际失败后尝试安装目录的 `logs`，不增加启动前权限探针。日志维护失败不阻断应用；失败页显示当前日志位置。
+
 ## 2. 四类通道不能混用
 
 ```mermaid

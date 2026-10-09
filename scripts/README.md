@@ -57,3 +57,9 @@ It defaults to `vendor/openclaw-runtime/current` and does not modify the runtime
 bundle and its dynamic TypeSafe SDK with an isolated file SecretRef and local
 synthetic provider. It covers first use, rotation, unavailable-owner denial and
 recovery without a chat model or user credentials.
+
+`packaging/windows-installer-script.cjs` composes upstream NSIS templates at the
+project-scoped final-script build seam. It retains electron-builder's two-pass
+uninstaller generation/signing, extracts the shell under the selected installation
+root and removes the installer EXE copy into the AppData updater cache. Do not use
+`nsis.script` for this composition: that skips native uninstaller generation.

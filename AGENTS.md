@@ -61,6 +61,13 @@ npm run dist:linux
 Before non-trivial pushes, prefer `npm run lint && npm run build && npm test`.
 For docs-only changes, run `git diff --check`.
 
+Windows setup writes application payloads and resource staging only under the installation root;
+Roaming product data receives installer logs only. NSIS bootstrap helpers still use OS temp.
+AppData suitability/database/runtime preparation happens on first launch, with homepage
+initialization milestones and a best-effort `.justdo-initialized` presentation marker.
+Python/Gateway/marker failures are logged without blocking the usable local shell;
+unwritable user logs fall back to installation `logs`. See `docs/windows-installer.md`.
+
 Windows packaging uses bundled MinGit/Python runtime assets via
 `scripts/runtime/setup-mingit.js` and `scripts/runtime/setup-python-runtime.js`.
 The Windows Python runtime also installs the hashed lock in

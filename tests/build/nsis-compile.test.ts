@@ -74,7 +74,7 @@ describe('Windows NSIS template compilation', () => {
             '!define allowToChangeInstallationDirectory',
             generator.build(),
             `!include "${path.join(repoRoot, 'scripts/packaging/nsis-installer.nsh')}"`,
-            readFileSync(path.join(templates, 'installer.nsi'), 'utf8'),
+            require('../../scripts/packaging/windows-installer-script.cjs').createWindowsInstallerScript(templates),
           ].join('\n');
           const result = spawnSync(makensis, ['/WX', '/INPUTCHARSET', 'UTF8', '-'], {
             input: source,

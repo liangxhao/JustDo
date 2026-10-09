@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { request } from 'node:http';
 import os from 'node:os';
@@ -89,6 +90,26 @@ describe('packaged application renderer host', () => {
     expect(index.headers['referrer-policy']).toBe('origin');
     expect(index.headers['cache-control']).toBe('no-store');
   });
+
+  it.each(['\r\n', '\r'])(
+    'admits trusted scripts using browser-normalized line endings (%j)',
+    async lineEnding => {
+      const browserScript = '\nwindow.bootstrapReady = true;\nwindow.bootstrapCount = 1;\n';
+      const sourceScript = browserScript.split('\n').join(lineEnding);
+      await writeFile(
+        path.join(dist, 'index.html'),
+        `<html><script>${sourceScript}</script></html>`,
+      );
+      host = await startApplicationRendererHost(dist);
+
+      const policy = (await read(host)).headers['content-security-policy'] as string;
+      const expectedHash = createHash('sha256').update(browserScript).digest('base64');
+      const scripts = policy.split('; ').find(directive => directive.startsWith('script-src'));
+      expect(scripts).toContain(`'sha256-${expectedHash}'`);
+      expect(scripts).not.toContain("'unsafe-inline'");
+      expect(scripts).not.toContain("'unsafe-eval'");
+    },
+  );
 
   it('preserves trusted entry scripts with hashes and keeps eval/inline code disabled', async () => {
     host = await startApplicationRendererHost(dist);

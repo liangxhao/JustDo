@@ -28,9 +28,21 @@ describe('shouldApplyApplicationCsp', () => {
     handler({ url: 'file:///app/index.html', responseHeaders: {} }, callback);
 
     const policy = callback.mock.lastCall?.[0].responseHeaders['Content-Security-Policy'];
-    const scripts = policy.split('; ').find((directive: string) => directive.startsWith('script-src'));
+    const scripts = policy
+      .split('; ')
+      .find((directive: string) => directive.startsWith('script-src'));
     expect(scripts).toBe("script-src 'self' 'wasm-unsafe-eval'");
     expect(scripts).not.toContain("'unsafe-eval'");
     expect(policy).toContain("connect-src 'self' *");
+  });
+
+  it('protects the initialization session without opening the persistent default session', () => {
+    onHeadersReceived.mockClear();
+    const memoryHeaders = vi.fn();
+    registerContentSecurityPolicy({ isDev: false, devServerPort: 43127 }, {
+      webRequest: { onHeadersReceived: memoryHeaders },
+    } as unknown as Electron.Session);
+    expect(memoryHeaders).toHaveBeenCalledOnce();
+    expect(onHeadersReceived).not.toHaveBeenCalled();
   });
 });

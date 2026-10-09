@@ -6,7 +6,10 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { Provider } from 'react-redux';
 
+import { registerRendererDiagnostics } from '@/app/rendererDiagnostics';
 import { rendererPreferences } from '@/services/rendererPreferences';
+
+registerRendererDiagnostics();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

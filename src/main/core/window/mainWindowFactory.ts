@@ -74,6 +74,7 @@ import {
 } from './mediaPermission';
 import { loadPackagedRenderer } from './renderer/packagedRendererLoader';
 import { getWindowChromeOptions } from './windowChrome';
+import { registerWindowDiagnostics } from './windowDiagnostics';
 import { WorkspaceWindowManager } from './workspaceWindowManager';
 
 type MainWindowFactoryOptions = {
@@ -156,6 +157,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     enableLargerThanScreen: false,
   });
 
+  registerWindowDiagnostics(mainWindow.webContents, 'MainWindow');
   if (options.isMac && options.isDev) {
     const iconPath = path.join(__dirname, '../resources/icons/png/512x512.png');
     if (fs.existsSync(iconPath)) {
@@ -1038,7 +1040,9 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         }
         console.error('[MainWindow] Failed to load development URL after maximum retries.');
         if (!mainWindow.isDestroyed()) {
-          void mainWindow.loadFile(path.join(__dirname, '../resources/error.html'));
+          void mainWindow
+            .loadFile(path.join(__dirname, '../resources/error.html'))
+            .catch(error => console.error('[MainWindow] Failed to load the error page:', error));
         }
       });
     };
@@ -1074,12 +1078,14 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     });
   }
 
-  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
-    console.error('[MainWindow] Page failed to load:', errorCode, errorDescription);
-    if (options.isDev) {
-      setTimeout(() => options.scheduleReload('did-fail-load'), LOAD_RETRY_DELAY_MS);
-    }
-  });
+  mainWindow.webContents.on(
+    'did-fail-load',
+    (_event, errorCode, _errorDescription, _url, isMainFrame) => {
+      if (options.isDev && isMainFrame && errorCode !== -3) {
+        setTimeout(() => options.scheduleReload('did-fail-load'), LOAD_RETRY_DELAY_MS);
+      }
+    },
+  );
 
   const forwardWindowState = (): void => options.onWindowStateChanged(mainWindow);
   mainWindow.on('maximize', forwardWindowState);

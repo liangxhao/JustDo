@@ -20,11 +20,11 @@ export const shouldApplyApplicationCsp = (
   }
 };
 
-export const registerContentSecurityPolicy = ({
-  isDev,
-  devServerPort,
-}: ContentSecurityPolicyOptions): void => {
-  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+export const registerContentSecurityPolicy = (
+  { isDev, devServerPort }: ContentSecurityPolicyOptions,
+  targetSession: Electron.Session = session.defaultSession,
+): void => {
+  targetSession.webRequest.onHeadersReceived((details, callback) => {
     const devPort = process.env.ELECTRON_START_URL?.match(/:(\d+)/)?.[1] || String(devServerPort);
     const applicationUrl = isDev
       ? process.env.ELECTRON_START_URL || `http://localhost:${devPort}`

@@ -204,7 +204,11 @@ export const startApplicationRendererHost = async (
     ...index.toString('utf8').matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/giu),
   ]
     .filter(match => !/\bsrc\s*=/iu.test(match[1]))
-    .map(match => `sha256-${createHash('sha256').update(match[2]).digest('base64')}`);
+    // HTML parsing normalizes CRLF/CR before CSP hashes the script text.
+    .map(
+      match =>
+        `sha256-${createHash('sha256').update(match[2].replace(/\r\n?/gu, '\n')).digest('base64')}`,
+    );
   const policy = buildApplicationContentSecurityPolicy({ isDev: false, inlineScriptHashes });
   let origin = '';
   let closed = false;
