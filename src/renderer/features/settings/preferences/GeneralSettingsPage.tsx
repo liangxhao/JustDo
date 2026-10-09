@@ -4,13 +4,15 @@ import {
   PencilSquareIcon,
   XCircleIcon,
 } from '@heroicons/react/24/outline';
-import { type CustomProxyConfig, ProxyMode, ProxyProtocol } from '@shared/network/proxy';
+import { type CustomProxyConfig, ProxyMode } from '@shared/network/proxy';
 import type { GatewayPortInputValidation } from '@shared/openclaw/gatewayPort';
 import React from 'react';
 
 import AppUpdateFrequencySetting from '@/features/settings/updates/AppUpdateFrequencySetting';
 import { i18nService, LanguageType } from '@/services/i18n';
 import ThemedSelect from '@/shared/components/ui/ThemedSelect';
+
+import { ProxySettingsSection } from './ProxySettingsSection';
 
 interface GeneralSettingsPageProps {
   language: LanguageType;
@@ -245,156 +247,16 @@ export function GeneralSettingsPage({
 
       {developerModeAvailable && developerMode && (
         <>
-          {/* Proxy Settings Section */}
-          <div className="space-y-4 rounded-xl border px-4 py-4 border-border">
-            <h4 className="text-sm font-medium text-foreground mb-3">
-              {i18nService.t('proxySettings')}
-            </h4>
-            <div className="space-y-3">
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="radio"
-                  name="proxyMode"
-                  value={ProxyMode.DIRECT}
-                  checked={proxyMode === ProxyMode.DIRECT}
-                  onChange={() => handleProxyModeChange(ProxyMode.DIRECT)}
-                  className="mt-0.5 h-4 w-4 text-primary focus:ring-primary bg-surface border-border"
-                />
-                <span>
-                  <span className="block text-sm font-medium text-foreground">
-                    {i18nService.t('noProxy')}
-                  </span>
-                  <span className="block text-xs text-secondary mt-1">
-                    {i18nService.t('noProxyDescription')}
-                  </span>
-                </span>
-              </label>
-
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="radio"
-                  name="proxyMode"
-                  value={ProxyMode.SYSTEM}
-                  checked={proxyMode === ProxyMode.SYSTEM}
-                  onChange={() => handleProxyModeChange(ProxyMode.SYSTEM)}
-                  className="mt-0.5 h-4 w-4 text-primary focus:ring-primary bg-surface border-border"
-                />
-                <span>
-                  <span className="block text-sm font-medium text-foreground">
-                    {i18nService.t('useSystemProxy')}
-                  </span>
-                  <span className="block text-xs text-secondary mt-1">
-                    {i18nService.t('useSystemProxyDescription')}
-                  </span>
-                </span>
-              </label>
-
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="radio"
-                  name="proxyMode"
-                  value={ProxyMode.CUSTOM}
-                  checked={proxyMode === ProxyMode.CUSTOM}
-                  onChange={() => handleProxyModeChange(ProxyMode.CUSTOM)}
-                  className="mt-0.5 h-4 w-4 text-primary focus:ring-primary bg-surface border-border"
-                />
-                <span>
-                  <span className="block text-sm font-medium text-foreground">
-                    {i18nService.t('customProxy')}
-                  </span>
-                  <span className="block text-xs text-secondary mt-1">
-                    {i18nService.t('customProxyDescription')}
-                  </span>
-                </span>
-              </label>
-            </div>
-
-            {proxyMode === ProxyMode.CUSTOM && (
-              <div className="space-y-3 pl-7 max-w-[640px]">
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_8rem]">
-                  <div>
-                    <label className="block text-xs font-medium text-secondary mb-1">
-                      {i18nService.t('proxyHost')}
-                    </label>
-                    <div className="flex w-full overflow-hidden rounded-xl border border-border bg-surface-inset focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/30">
-                      <select
-                        id="proxyProtocol"
-                        value={customProxy.protocol}
-                        onChange={e =>
-                          handleCustomProxyChange(
-                            'protocol',
-                            e.target.value as CustomProxyConfig['protocol'],
-                          )
-                        }
-                        aria-label={i18nService.t('proxyProtocol')}
-                        className="w-28 shrink-0 border-0 border-r border-border bg-surface px-3 py-2 text-sm font-medium text-foreground focus:outline-none"
-                      >
-                        <option value={ProxyProtocol.HTTP}>HTTP</option>
-                        <option value={ProxyProtocol.HTTPS}>HTTPS</option>
-                      </select>
-                      <input
-                        type="text"
-                        value={customProxy.host}
-                        onChange={e => handleCustomProxyChange('host', e.target.value)}
-                        className="block min-w-0 flex-1 border-0 bg-transparent px-3 py-2 text-sm text-foreground focus:outline-none"
-                        placeholder="127.0.0.1"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-secondary mb-1">
-                      {i18nService.t('proxyPort')}
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={65535}
-                      value={customProxy.port}
-                      onChange={e => handleCustomProxyChange('port', e.target.value)}
-                      className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-sm"
-                      placeholder="7890"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <div>
-                    <label className="block text-xs font-medium text-secondary mb-1">
-                      {i18nService.t('proxyUsername')}
-                    </label>
-                    <input
-                      type="text"
-                      value={customProxy.username ?? ''}
-                      onChange={e => handleCustomProxyChange('username', e.target.value)}
-                      className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-sm"
-                      placeholder={i18nService.t('optional')}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-secondary mb-1">
-                      {i18nService.t('proxyPassword')}
-                    </label>
-                    <input
-                      type="password"
-                      value={customProxy.password ?? ''}
-                      onChange={e => handleCustomProxyChange('password', e.target.value)}
-                      className="block w-full rounded-xl bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-3 py-2 text-sm"
-                      placeholder={i18nService.t('optional')}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div className="flex justify-end pl-7 max-w-[640px]">
-              <button
-                type="submit"
-                disabled={isSaving}
-                className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
-              >
-                {isSaving ? i18nService.t('saving') : i18nService.t('confirm')}
-              </button>
-            </div>
-          </div>
+          <ProxySettingsSection
+            id="application-proxy"
+            titleKey="proxySettings"
+            descriptionKey="applicationProxyDescription"
+            proxyMode={proxyMode}
+            handleProxyModeChange={handleProxyModeChange}
+            customProxy={customProxy}
+            handleCustomProxyChange={handleCustomProxyChange}
+            isSaving={isSaving}
+          />
 
           {/* Gateway Port Configuration */}
           <div className="space-y-3 rounded-xl border px-4 py-4 border-border">

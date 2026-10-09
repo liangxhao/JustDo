@@ -17,6 +17,20 @@
 
 主 Renderer 与图片预览 HTML 分别由 `src/renderer/index.html` 和 `image-preview.html` 构建。开发由 Vite 提供，生产从 dist 加载。外部 guest 始终是另一权限域，即使视觉上位于同一侧栏。
 
+### 浏览器与非浏览器的代理范围
+
+产品配置为两类请求保留独立代理偏好。`proxy`（以及既有 `useSystemProxy` 标志）只用于 Main、默认 Electron session 与 Gateway 进程环境，默认直连；`browserProxy` 只用于应用持有的浏览器 guest sessions，默认系统代理。浏览器模式与用户 Chrome 自身的网络配置不由这个 guest 偏好改写。
+
+```mermaid
+flowchart LR
+  AP[非浏览器代理设置] --> Default[Main / 默认 session]
+  AP --> Header[Gateway outbound-header 上游]
+  BP[浏览器代理设置] --> Guest[内置浏览器 guest sessions]
+  Gateway[Gateway] --> Inject[本地 Header 注入代理] --> Header
+```
+
+非浏览器代理变化保留原有 Gateway 空闲重启流程。浏览器代理变化在独立队列中更新现有 guest sessions、关闭旧连接；新 profile 注册也使用该队列，避免快速切换时旧偏好覆盖新配置。它不改变默认 session、Main 代理状态或 Gateway 环境。自定义浏览器代理的认证只取 `browserProxy` 凭据，不能借用非浏览器代理凭据。详见[浏览器设置](../features/browser-settings-design.md)。
+
 ### Gateway 启动与数据边界
 
 Gateway 启动由 Main 管理运行包准备、配置与进程生命周期。9.6 版本未发布，按用户要求，本次 9.8 升级新增的旧 SQLite 数据迁移桥接、启动门禁及对应构建资产已移除；启动链不再包含该独立迁移子进程。

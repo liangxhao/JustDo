@@ -6,6 +6,7 @@ import {
   ClipboardDocumentIcon,
   ExclamationTriangleIcon,
   FolderOpenIcon,
+  GlobeAltIcon,
   PuzzlePieceIcon,
   ShieldCheckIcon,
   UserCircleIcon,
@@ -26,6 +27,7 @@ import {
   type BrowserLinkTarget as BrowserLinkTargetValue,
   normalizeBrowserLinkTarget,
 } from '@shared/browser/browserLinkOpening';
+import { ProxyMode, type ProxySettings } from '@shared/network/proxy';
 import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
 import {
@@ -34,6 +36,7 @@ import {
 } from '@/features/settings/browser/browserConnectionVerification';
 import BrowserDownloadsPage from '@/features/settings/browser/BrowserDownloadsPage';
 import BrowserHistoryPage from '@/features/settings/browser/BrowserHistoryPage';
+import { CustomProxyFields } from '@/features/settings/preferences/CustomProxyFields';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
@@ -149,8 +152,18 @@ const ExtensionInstallDescription: React.FC = () => {
   );
 };
 
-const BrowserSettingsTab: React.FC<{ initialPage?: 'history' | 'downloads' }> = ({
+interface BrowserSettingsTabProps {
+  initialPage?: 'history' | 'downloads';
+  browserProxy: ProxySettings;
+  onBrowserProxyChange: (settings: ProxySettings) => void;
+  isSaving: boolean;
+}
+
+const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
   initialPage,
+  browserProxy,
+  onBrowserProxyChange,
+  isSaving,
 }) => {
   const [page, setPage] = useState<'main' | 'history' | 'downloads'>(initialPage ?? 'main');
   const [browserMode, setBrowserMode] = useState<BrowserModeValue>(() =>
@@ -1145,6 +1158,78 @@ const BrowserSettingsTab: React.FC<{ initialPage?: 'history' | 'downloads' }> = 
               onClick={() => setPage('downloads')}
             >
               {i18nService.t('browserManage')}
+            </button>
+          </div>
+        </div>
+      </section>
+      <section
+        aria-labelledby="browser-proxy-title"
+        className="overflow-hidden rounded-xl border border-border bg-surface"
+      >
+        <h3
+          id="browser-proxy-title"
+          className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-3 text-sm font-semibold text-foreground"
+        >
+          <GlobeAltIcon className="h-4 w-4 text-secondary" aria-hidden="true" />
+          {i18nService.t('browserProxySettings')}
+        </h3>
+        <div className="divide-y divide-border/50 px-4">
+          <div className="flex min-h-12 items-center justify-between gap-3 py-3">
+            <div className="min-w-0 flex-1">
+              <label htmlFor="browser-proxy-mode" className="text-sm text-foreground">
+                {i18nService.t('proxyMode')}
+              </label>
+              <p id="browser-proxy-mode-description" className="mt-0.5 text-xs text-secondary">
+                {i18nService.t(
+                  browserProxy.mode === ProxyMode.SYSTEM
+                    ? 'useSystemProxyDescription'
+                    : browserProxy.mode === ProxyMode.CUSTOM
+                      ? 'customProxyDescription'
+                      : 'noProxyDescription',
+                )}
+              </p>
+            </div>
+            <BrowserSelect
+              id="browser-proxy-mode"
+              aria-describedby="browser-proxy-mode-description"
+              value={browserProxy.mode}
+              disabled={isSaving}
+              onChange={event =>
+                onBrowserProxyChange({ ...browserProxy, mode: event.target.value as ProxyMode })
+              }
+            >
+              <option value={ProxyMode.SYSTEM}>{i18nService.t('useSystemProxy')}</option>
+              <option value={ProxyMode.DIRECT}>{i18nService.t('noProxy')}</option>
+              <option value={ProxyMode.CUSTOM}>{i18nService.t('customProxy')}</option>
+            </BrowserSelect>
+          </div>
+          {browserProxy.mode === ProxyMode.CUSTOM && (
+            <div className="py-3">
+              <CustomProxyFields
+                id="browser-proxy"
+                customProxy={browserProxy.custom}
+                handleCustomProxyChange={(key, value) =>
+                  onBrowserProxyChange({
+                    ...browserProxy,
+                    custom: { ...browserProxy.custom, [key]: value },
+                  })
+                }
+                isSaving={isSaving}
+              />
+            </div>
+          )}
+          <div className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="min-w-0 flex-1 text-xs leading-5 text-secondary">
+              {i18nService.t('browserProxyDescription')}
+            </p>
+            <button
+              type="submit"
+              aria-busy={isSaving}
+              disabled={isSaving}
+              className="inline-flex h-9 min-w-[88px] shrink-0 self-end items-center justify-center gap-1.5 rounded-xl bg-primary px-5 text-sm font-medium text-white shadow-sm transition-all hover:bg-primary-hover hover:shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isSaving && <ArrowPathIcon className="h-4 w-4 animate-spin" aria-hidden="true" />}
+              {isSaving ? i18nService.t('saving') : i18nService.t('save')}
             </button>
           </div>
         </div>

@@ -5,10 +5,10 @@ import {
   BROWSER_PANEL_PARTITION,
 } from '../../../shared/browser/browser';
 import {
-  type CustomProxyConfig,
-  defaultCustomProxyConfig,
+  buildCustomProxyUrl,
+  defaultBrowserProxySettings,
+  normalizeProxySettings,
   ProxyMode,
-  ProxyProtocol,
   type ProxySettings,
 } from '../../../shared/network/proxy';
 import {
@@ -22,10 +22,11 @@ import {
 export type SystemProxySettings = {
   useSystemProxy?: boolean;
   proxy?: Partial<ProxySettings>;
+  browserProxy?: Partial<ProxySettings>;
 };
 
 const dynamicBrowserSessions = new Map<string, Electron.Session>();
-let currentProxySettings: SystemProxySettings | undefined;
+let currentBrowserProxySettings = defaultBrowserProxySettings;
 
 export const isSystemProxyEnabled = (config?: SystemProxySettings): boolean => {
   return resolveProxyMode(config) === ProxyMode.SYSTEM;
@@ -41,45 +42,6 @@ const resolveProxyMode = (config?: SystemProxySettings): ProxyMode => {
   return ProxyMode.DIRECT;
 };
 
-const normalizeCustomProxy = (custom?: Partial<CustomProxyConfig>): CustomProxyConfig => {
-  const protocol = Object.values(ProxyProtocol).includes(custom?.protocol as ProxyProtocol)
-    ? (custom?.protocol as ProxyProtocol)
-    : defaultCustomProxyConfig.protocol;
-
-  return {
-    protocol,
-    host: custom?.host?.trim() ?? '',
-    port: custom?.port?.trim() ?? '',
-    username: custom?.username?.trim() ?? '',
-    password: custom?.password ?? '',
-  };
-};
-
-const buildCustomProxyUrl = (custom: CustomProxyConfig): string | null => {
-  const host = custom.host.trim();
-  const port = custom.port.trim();
-  if (!host || !port) {
-    return null;
-  }
-
-  const username = custom.username?.trim();
-  const password = custom.password ?? '';
-  const credentials = username
-    ? `${encodeURIComponent(username)}${password ? `:${encodeURIComponent(password)}` : ''}@`
-    : '';
-
-  try {
-    const parsedPort = Number(port);
-    const url = new URL(`${custom.protocol}://${credentials}${host}:${port}`);
-    if (!url.hostname || !Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65_535) {
-      return null;
-    }
-    return url.toString().replace(/\/$/, '');
-  } catch {
-    return null;
-  }
-};
-
 const removeProxyCredentials = (proxyUrl: string): string | null => {
   try {
     const url = new URL(proxyUrl);
@@ -93,13 +55,13 @@ const removeProxyCredentials = (proxyUrl: string): string | null => {
 
 const applyProxyToSessions = async (
   targetSessions: Electron.Session[],
-  settings: SystemProxySettings | undefined,
+  settings: ProxySettings,
 ): Promise<void> => {
-  const proxyMode = resolveProxyMode(settings);
+  const proxyMode = settings.mode;
   if (proxyMode === ProxyMode.SYSTEM) {
     await Promise.all(targetSessions.map(target => target.setProxy({ mode: ProxyMode.SYSTEM })));
   } else if (proxyMode === ProxyMode.CUSTOM) {
-    const customProxyUrl = buildCustomProxyUrl(normalizeCustomProxy(settings?.proxy?.custom));
+    const customProxyUrl = buildCustomProxyUrl(settings.custom);
     const proxyRules = customProxyUrl ? removeProxyCredentials(customProxyUrl) : null;
     if (proxyRules) {
       await Promise.all(
@@ -126,14 +88,18 @@ export const registerBrowserProxySession = async (
   const key = targetSession.storagePath;
   if (!key || dynamicBrowserSessions.has(key)) return;
   dynamicBrowserSessions.set(key, targetSession);
-  await applyProxyToSessions([targetSession], currentProxySettings).catch(error => {
+  const operation = browserProxyApplyQueue.then(() =>
+    applyProxyToSessions([targetSession], currentBrowserProxySettings),
+  );
+  browserProxyApplyQueue = operation.catch(error => {
     console.error('[SystemProxy] Failed to apply proxy mode to browser profile:', error);
   });
+  await browserProxyApplyQueue;
 };
 
 export const getProxyPreferenceSignature = (config?: SystemProxySettings): string => {
   const mode = resolveProxyMode(config);
-  const custom = normalizeCustomProxy(config?.proxy?.custom);
+  const custom = normalizeProxySettings(config?.proxy).custom;
   return JSON.stringify({
     mode,
     custom: mode === ProxyMode.CUSTOM ? custom : undefined,
@@ -144,18 +110,12 @@ const applySystemProxyPreferenceNow = async (
   config: SystemProxySettings | boolean | undefined,
 ): Promise<void> => {
   const settings = typeof config === 'boolean' ? { useSystemProxy: config } : config;
-  currentProxySettings = settings;
   const proxyMode = resolveProxyMode(settings);
   const useSystemProxy = proxyMode === ProxyMode.SYSTEM;
-  const targetSessions = [
-    session.defaultSession,
-    session.fromPartition(BROWSER_PANEL_PARTITION),
-    session.fromPartition(BROWSER_IMPORTED_PROFILE_PARTITION),
-    ...dynamicBrowserSessions.values(),
-  ];
+  const normalizedSettings = normalizeProxySettings({ ...settings?.proxy, mode: proxyMode });
 
   try {
-    await applyProxyToSessions(targetSessions, settings);
+    await applyProxyToSessions([session.defaultSession], normalizedSettings);
   } catch (error) {
     console.error('[SystemProxy] Failed to apply session proxy mode:', error);
   }
@@ -163,7 +123,7 @@ const applySystemProxyPreferenceNow = async (
   setSystemProxyEnabled(useSystemProxy);
 
   if (proxyMode === ProxyMode.CUSTOM) {
-    const customProxyUrl = buildCustomProxyUrl(normalizeCustomProxy(settings?.proxy?.custom));
+    const customProxyUrl = buildCustomProxyUrl(normalizedSettings.custom);
     setFixedProxyUrl(customProxyUrl);
     applySystemProxyEnv(customProxyUrl);
 
@@ -195,6 +155,44 @@ const applySystemProxyPreferenceNow = async (
 
 let proxyPreferenceGeneration = 0;
 let proxyPreferenceApplyQueue: Promise<void> = Promise.resolve();
+let browserProxyGeneration = 0;
+let browserProxyApplyQueue: Promise<void> = Promise.resolve();
+
+export const getBrowserProxyPreferenceSignature = (config?: SystemProxySettings): string => {
+  const settings = normalizeProxySettings(config?.browserProxy, ProxyMode.SYSTEM);
+  return JSON.stringify({
+    mode: settings.mode,
+    custom: settings.mode === ProxyMode.CUSTOM ? settings.custom : undefined,
+  });
+};
+
+/** Browser changes only touch guest sessions; they never change the Gateway environment. */
+export const applyBrowserProxyPreference = (config?: SystemProxySettings): Promise<boolean> => {
+  const generation = ++browserProxyGeneration;
+  const settings = normalizeProxySettings(config?.browserProxy, ProxyMode.SYSTEM);
+  const operation = browserProxyApplyQueue.then(async () => {
+    if (generation !== browserProxyGeneration) return false;
+    currentBrowserProxySettings = settings;
+    const targetSessions = [
+      ...new Set([
+        session.fromPartition(BROWSER_PANEL_PARTITION),
+        session.fromPartition(BROWSER_IMPORTED_PROFILE_PARTITION),
+        ...dynamicBrowserSessions.values(),
+      ]),
+    ];
+    try {
+      await applyProxyToSessions(targetSessions, settings);
+    } catch (error) {
+      console.error('[SystemProxy] Failed to apply browser proxy mode:', error);
+    }
+    return generation === browserProxyGeneration;
+  });
+  browserProxyApplyQueue = operation.then(
+    (): void => undefined,
+    (): void => undefined,
+  );
+  return operation;
+};
 
 /**
  * Applies proxy changes in order and reports whether this request is still the

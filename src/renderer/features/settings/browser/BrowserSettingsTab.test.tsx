@@ -2,13 +2,14 @@
 
 import { type BrowserConnectionStatus, BrowserMode } from '@shared/browser/browser';
 import { BrowserLinkTarget } from '@shared/browser/browserLinkOpening';
+import { normalizeProxySettings, ProxyMode } from '@shared/network/proxy';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { StrictMode } from 'react';
+import { StrictMode, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import type { OpenClawEngineStatus } from '@/features/cowork/coworkTypes';
 
-import BrowserSettingsTab, { extensionConnectionErrorMessage } from './BrowserSettingsTab';
+import BrowserSettingsTabComponent, { extensionConnectionErrorMessage } from './BrowserSettingsTab';
 
 const mocks = vi.hoisted(() => ({
   getConfig: vi.fn(),
@@ -16,6 +17,19 @@ const mocks = vi.hoisted(() => ({
   updateConfig: vi.fn(),
   translate: vi.fn((key: string) => key),
 }));
+
+function BrowserSettingsTab() {
+  const [browserProxy, setBrowserProxy] = useState(() =>
+    normalizeProxySettings(mocks.getConfig().browserProxy, ProxyMode.SYSTEM),
+  );
+  return (
+    <BrowserSettingsTabComponent
+      browserProxy={browserProxy}
+      onBrowserProxyChange={setBrowserProxy}
+      isSaving={false}
+    />
+  );
+}
 
 vi.mock('@/services/config', () => ({
   configService: {
@@ -109,6 +123,41 @@ describe('BrowserSettingsTab extension connection checks', () => {
     cleanup();
     vi.useRealTimers();
     vi.clearAllMocks();
+  });
+
+  test('edits the browser proxy draft without autosaving application proxy settings', async () => {
+    mocks.getConfig.mockReturnValue({
+      browserMode: BrowserMode.Embedded,
+      proxy: { mode: ProxyMode.CUSTOM },
+    });
+    installElectronBrowserMock();
+    render(<BrowserSettingsTab />);
+    const section = screen.getByRole('region', { name: 'browserProxySettings' });
+
+    expect(
+      (within(section).getByRole('combobox', { name: 'proxyMode' }) as HTMLSelectElement).value,
+    ).toBe(ProxyMode.SYSTEM);
+    fireEvent.change(within(section).getByRole('combobox', { name: 'proxyMode' }), {
+      target: { value: ProxyMode.DIRECT },
+    });
+    expect(
+      (within(section).getByRole('combobox', { name: 'proxyMode' }) as HTMLSelectElement).value,
+    ).toBe(ProxyMode.DIRECT);
+    fireEvent.change(within(section).getByRole('combobox', { name: 'proxyMode' }), {
+      target: { value: ProxyMode.CUSTOM },
+    });
+    fireEvent.change(within(section).getByLabelText('proxyHost'), {
+      target: { value: 'proxy.example' },
+    });
+    fireEvent.change(within(section).getByLabelText('proxyPort'), { target: { value: '8080' } });
+    expect((within(section).getByLabelText('proxyHost') as HTMLInputElement).value).toBe(
+      'proxy.example',
+    );
+    expect((within(section).getByLabelText('proxyPort') as HTMLInputElement).value).toBe('8080');
+    expect((within(section).getByRole('button', { name: 'save' }) as HTMLButtonElement).type).toBe(
+      'submit',
+    );
+    expect(mocks.updateConfig).not.toHaveBeenCalled();
   });
 
   test('shows the network limitation only while the isolated browser is selected', async () => {

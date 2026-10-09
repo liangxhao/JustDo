@@ -1,3 +1,4 @@
+import { defaultCustomProxyConfig, ProxyMode } from '@shared/network/proxy';
 import { describe, expect, test, vi } from 'vitest';
 
 import { defaultAppearanceConfig } from '@/app/appearance';
@@ -10,6 +11,28 @@ import {
 } from '@/features/settings/settingsPersistence';
 
 describe('settings app config updates', () => {
+  test('persists a browser proxy edit without rewriting the application debugging proxy', () => {
+    const current = {
+      ...defaultConfig,
+      proxy: {
+        mode: ProxyMode.CUSTOM,
+        custom: { ...defaultCustomProxyConfig, host: '127.0.0.1', port: '8888' },
+      },
+    };
+    const browserProxy = { mode: ProxyMode.DIRECT, custom: defaultCustomProxyConfig };
+
+    expect(
+      buildSettingsAppConfigUpdate(current, {
+        ...current,
+        providers: current.providers!,
+        currentProviders: current.providers!,
+        browserProxy,
+        shortcuts: current.shortcuts!,
+        onlineModelProviders: current.onlineModelProviders!,
+      }),
+    ).toEqual({ browserProxy });
+  });
+
   test('persists an appearance-only edit without rewriting runtime-facing providers', () => {
     const providers = defaultConfig.providers!;
     const appearance = { ...defaultAppearanceConfig, messageLayout: 'document' as const };
@@ -24,6 +47,7 @@ describe('settings app config updates', () => {
         language: defaultConfig.language,
         useSystemProxy: defaultConfig.useSystemProxy,
         proxy: defaultConfig.proxy,
+        browserProxy: defaultConfig.browserProxy,
         developerMode: defaultConfig.developerMode,
         voice: defaultConfig.voice,
         shortcuts: defaultConfig.shortcuts!,
@@ -54,6 +78,7 @@ describe('settings app config updates', () => {
         language: defaultConfig.language,
         useSystemProxy: defaultConfig.useSystemProxy,
         proxy: defaultConfig.proxy,
+        browserProxy: defaultConfig.browserProxy,
         developerMode: defaultConfig.developerMode,
         voice: defaultConfig.voice,
         shortcuts: defaultConfig.shortcuts!,
@@ -75,6 +100,7 @@ describe('settings app config updates', () => {
         language: defaultConfig.language,
         useSystemProxy: !defaultConfig.useSystemProxy,
         proxy: defaultConfig.proxy,
+        browserProxy: defaultConfig.browserProxy,
         developerMode: defaultConfig.developerMode,
         voice: defaultConfig.voice,
         shortcuts: defaultConfig.shortcuts!,
@@ -100,6 +126,7 @@ describe('settings app config updates', () => {
         language: defaultConfig.language,
         useSystemProxy: defaultConfig.useSystemProxy,
         proxy: defaultConfig.proxy,
+        browserProxy: defaultConfig.browserProxy,
         developerMode: defaultConfig.developerMode,
         voice,
         shortcuts: defaultConfig.shortcuts!,
@@ -133,6 +160,7 @@ describe('settings app config updates', () => {
         language: defaultConfig.language,
         useSystemProxy: defaultConfig.useSystemProxy,
         proxy: defaultConfig.proxy,
+        browserProxy: defaultConfig.browserProxy,
         developerMode: defaultConfig.developerMode,
         voice: defaultConfig.voice,
         shortcuts: defaultConfig.shortcuts!,

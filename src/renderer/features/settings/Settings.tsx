@@ -14,7 +14,14 @@ import {
   normalizeMaxGoalContinuationTurns,
 } from '@shared/cowork/sessionGoal';
 import { NetworkFetchPurpose } from '@shared/network/network';
-import { type CustomProxyConfig, defaultCustomProxyConfig, ProxyMode } from '@shared/network/proxy';
+import {
+  buildCustomProxyUrl,
+  type CustomProxyConfig,
+  defaultCustomProxyConfig,
+  normalizeProxySettings,
+  ProxyMode,
+  type ProxySettings,
+} from '@shared/network/proxy';
 import {
   type AgentRuntimeSettings,
   createDefaultAgentRuntimeSettings,
@@ -218,6 +225,9 @@ const Settings: React.FC<SettingsProps> = ({
   const [autoLaunch, setAutoLaunchState] = useState(false);
   const [proxyMode, setProxyMode] = useState<ProxyMode>(ProxyMode.DIRECT);
   const [customProxy, setCustomProxy] = useState<CustomProxyConfig>(defaultCustomProxyConfig);
+  const [browserProxy, setBrowserProxy] = useState<ProxySettings>(() =>
+    normalizeProxySettings(configService.getConfig().browserProxy, ProxyMode.SYSTEM),
+  );
   const [developerMode, setDeveloperMode] = useState(false);
   const [voice, setVoice] = useState<LocalSpeechSettings>(() =>
     normalizeLocalSpeechSettings(configService.getConfig().voice),
@@ -583,6 +593,7 @@ const Settings: React.FC<SettingsProps> = ({
         ...defaultCustomProxyConfig,
         ...(config.proxy?.custom ?? {}),
       });
+      setBrowserProxy(normalizeProxySettings(config.browserProxy, ProxyMode.SYSTEM));
       setDeveloperMode(config.developerMode ?? false);
       setVoice(normalizeLocalSpeechSettings(config.voice));
       setNonLanguageModelProviders(structuredClone(config.onlineModelProviders ?? {}));
@@ -1030,6 +1041,16 @@ const Settings: React.FC<SettingsProps> = ({
     e.preventDefault();
     setSaveSucceeded(false);
 
+    const normalizedBrowserProxy = normalizeProxySettings(browserProxy, ProxyMode.SYSTEM);
+    if (
+      normalizedBrowserProxy.mode === ProxyMode.CUSTOM &&
+      !buildCustomProxyUrl(normalizedBrowserProxy.custom)
+    ) {
+      setActiveTab('browser');
+      setError(i18nService.t('proxyInvalidConfiguration'));
+      return;
+    }
+
     const invalidNonLanguageModelKind = NON_LANGUAGE_MODEL_KINDS.find(kind => {
       const category = nonLanguageModelProviders[kind];
       return category && getNonLanguageModelCategoryValidationError(kind, category);
@@ -1285,6 +1306,7 @@ const Settings: React.FC<SettingsProps> = ({
                 language,
                 useSystemProxy: proxyMode === ProxyMode.SYSTEM,
                 proxy: normalizedProxy,
+                browserProxy: normalizedBrowserProxy,
                 developerMode,
                 voice: normalizedVoice,
                 shortcuts,
@@ -1301,6 +1323,7 @@ const Settings: React.FC<SettingsProps> = ({
           initialThemeIdRef.current = themeService.getThemeId();
           initialAppearanceRef.current = appearance;
           initialLanguageRef.current = language;
+          setBrowserProxy(normalizedBrowserProxy);
         },
       });
 
@@ -1718,7 +1741,14 @@ const Settings: React.FC<SettingsProps> = ({
         return <WindowsSandboxSettingsTab />;
 
       case 'browser':
-        return <BrowserSettingsTab initialPage={browserPage} />;
+        return (
+          <BrowserSettingsTab
+            initialPage={browserPage}
+            browserProxy={browserProxy}
+            onBrowserProxyChange={setBrowserProxy}
+            isSaving={isSaving}
+          />
+        );
       case 'computer':
         return <ComputerControlSettingsPage />;
       case 'voice':

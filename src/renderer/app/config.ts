@@ -8,7 +8,11 @@ import {
   BrowserLinkTarget,
   type BrowserLinkTarget as BrowserLinkTargetValue,
 } from '@shared/browser/browserLinkOpening';
-import { defaultProxySettings, type ProxySettings } from '@shared/network/proxy';
+import {
+  defaultBrowserProxySettings,
+  defaultProxySettings,
+  type ProxySettings,
+} from '@shared/network/proxy';
 import {
   getDefaultCustomProviderDisplayName,
   isReservedOpenClawProviderId,
@@ -114,8 +118,10 @@ export interface AppConfig {
   language: 'zh' | 'en';
   // 是否使用系统代理
   useSystemProxy: boolean;
-  // 代理设置
+  // 非浏览器请求的代理设置
   proxy: ProxySettings;
+  // 内置浏览器独立代理设置
+  browserProxy: ProxySettings;
   // 是否启用开发者模式
   developerMode: boolean;
   // 用户固定到功能侧边栏的可选入口，按固定顺序排列
@@ -203,6 +209,7 @@ export const defaultConfig: AppConfig = {
   language: 'zh',
   useSystemProxy: false,
   proxy: defaultProxySettings,
+  browserProxy: defaultBrowserProxySettings,
   developerMode: false,
   sidebarPinnedItems: [],
   voice: defaultLocalSpeechSettings,

@@ -17,6 +17,7 @@ interface SettingsAppConfigDraft {
   language: AppConfig['language'];
   useSystemProxy: AppConfig['useSystemProxy'];
   proxy: AppConfig['proxy'];
+  browserProxy: AppConfig['browserProxy'];
   developerMode: AppConfig['developerMode'];
   voice: AppConfig['voice'];
   shortcuts: NonNullable<AppConfig['shortcuts']>;
@@ -61,6 +62,9 @@ export const buildSettingsAppConfigUpdate = (
   ) {
     update.useSystemProxy = draft.useSystemProxy;
     update.proxy = draft.proxy;
+  }
+  if (hasConfigValueChanged(current.browserProxy, draft.browserProxy)) {
+    update.browserProxy = draft.browserProxy;
   }
   if (current.developerMode !== draft.developerMode) {
     update.developerMode = draft.developerMode;

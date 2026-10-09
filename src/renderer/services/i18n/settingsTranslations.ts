@@ -1300,6 +1300,12 @@ export const settingsTranslations = {
     pluginApprovalHeading: '插件请求批准',
     autoLaunchDescription: '系统启动时自动运行应用',
     proxySettings: '代理设置',
+    applicationProxyDescription: '仅用于模型、Agent 和其他非浏览器请求，默认不使用代理。',
+    browserProxySettings: '浏览器代理',
+    browserProxyDescription:
+      '仅用于侧边栏内置浏览器，默认使用系统代理。Chrome 和浏览器扩展沿用浏览器自身的代理设置。',
+    proxyInvalidConfiguration: '请输入有效的代理主机和端口（1–65535）。',
+    proxyMode: '代理模式',
     noProxy: '不使用代理',
     noProxyDescription: '网络请求将直接连接，不使用系统或自定义代理',
     useSystemProxy: '使用系统代理',
@@ -2699,6 +2705,13 @@ export const settingsTranslations = {
     pluginApprovalHeading: 'Plugin approval required',
     autoLaunchDescription: 'Automatically start the app when you log in',
     proxySettings: 'Proxy Settings',
+    applicationProxyDescription:
+      'Applies to model, Agent and other non-browser requests. Direct connection is the default.',
+    browserProxySettings: 'Browser Proxy',
+    browserProxyDescription:
+      "Applies only to the embedded sidebar browser and defaults to the system proxy. Chrome and browser extensions use their browser's own proxy settings.",
+    proxyInvalidConfiguration: 'Enter a valid proxy host and port (1–65535).',
+    proxyMode: 'Proxy mode',
     noProxy: 'No Proxy',
     noProxyDescription: 'Network requests connect directly without system or custom proxy settings',
     useSystemProxy: 'Use System Proxy',

@@ -3,7 +3,7 @@ import {
   normalizeBrowserSearchEngine,
 } from '@shared/browser/browser';
 import { BrowserLinkTarget, normalizeBrowserLinkTarget } from '@shared/browser/browserLinkOpening';
-import { ProxyMode, ProxyProtocol } from '@shared/network/proxy';
+import { normalizeProxySettings, ProxyMode } from '@shared/network/proxy';
 import { isLegacyCustomProviderKey } from '@shared/providers';
 import { normalizeLocalSpeechSettings } from '@shared/speech/localSpeechSettings';
 
@@ -70,28 +70,6 @@ const normalizeProvidersConfig = (providers: AppConfig['providers']): AppConfig[
         },
       ]),
   ) as AppConfig['providers'];
-};
-
-const normalizeProxyConfig = (
-  proxy: Partial<AppConfig['proxy']> | undefined,
-): AppConfig['proxy'] => {
-  const mode = Object.values(ProxyMode).includes(proxy?.mode as ProxyMode)
-    ? (proxy?.mode as ProxyMode)
-    : defaultConfig.proxy.mode;
-  const protocol = Object.values(ProxyProtocol).includes(proxy?.custom?.protocol as ProxyProtocol)
-    ? (proxy?.custom?.protocol as ProxyProtocol)
-    : defaultConfig.proxy.custom.protocol;
-
-  return {
-    mode,
-    custom: {
-      protocol,
-      host: typeof proxy?.custom?.host === 'string' ? proxy.custom.host.trim() : '',
-      port: typeof proxy?.custom?.port === 'string' ? proxy.custom.port.trim() : '',
-      username: typeof proxy?.custom?.username === 'string' ? proxy.custom.username.trim() : '',
-      password: typeof proxy?.custom?.password === 'string' ? proxy.custom.password : '',
-    },
-  };
 };
 
 export class ConfigService {
@@ -183,7 +161,8 @@ export class ConfigService {
             ...defaultConfig.app,
             ...storedConfig.app,
           },
-          proxy: normalizeProxyConfig(storedConfig.proxy),
+          proxy: normalizeProxySettings(storedConfig.proxy),
+          browserProxy: normalizeProxySettings(storedConfig.browserProxy, ProxyMode.SYSTEM),
           appearance: normalizeAppearanceConfig(storedConfig.appearance),
           voice: normalizeLocalSpeechSettings(storedConfig.voice),
           shortcuts: {
@@ -268,7 +247,8 @@ export class ConfigService {
         ...this.config.app,
         ...storedConfig.app,
       },
-      proxy: normalizeProxyConfig(storedConfig.proxy),
+      proxy: normalizeProxySettings(storedConfig.proxy),
+      browserProxy: normalizeProxySettings(storedConfig.browserProxy, ProxyMode.SYSTEM),
       appearance: normalizeAppearanceConfig(storedConfig.appearance),
       voice: normalizeLocalSpeechSettings(storedConfig.voice),
       shortcuts: {
@@ -336,7 +316,10 @@ export class ConfigService {
               };
             })()
           : {}),
-        ...(newConfig.proxy ? { proxy: normalizeProxyConfig(newConfig.proxy) } : {}),
+        ...(newConfig.proxy ? { proxy: normalizeProxySettings(newConfig.proxy) } : {}),
+        ...(newConfig.browserProxy
+          ? { browserProxy: normalizeProxySettings(newConfig.browserProxy, ProxyMode.SYSTEM) }
+          : {}),
         ...(newConfig.appearance
           ? { appearance: normalizeAppearanceConfig(newConfig.appearance) }
           : {}),

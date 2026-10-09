@@ -69,7 +69,9 @@ import { OutboundHeaderPolicyService } from './core/network/outboundHeaderPolicy
 import { OutboundHeaderProxy } from './core/network/outboundHeaderProxy';
 import { isLoopbackBaseUrl, setProcessProxyRouting } from './core/network/systemProxy';
 import {
+  applyBrowserProxyPreference,
   applySystemProxyPreference,
+  getBrowserProxyPreferenceSignature,
   getProxyPreferenceSignature,
 } from './core/network/systemProxyPreference';
 import { enableSystemCaForCurrentProcess } from './core/network/trustedCertificates';
@@ -1181,6 +1183,7 @@ type AppConfigSettings = {
   language?: string;
   useSystemProxy?: boolean;
   proxy?: Partial<ProxySettings>;
+  browserProxy?: Partial<ProxySettings>;
   providers?: unknown;
   onlineModelProviders?: { decision?: unknown; video?: unknown };
   voice?: unknown;
@@ -1721,7 +1724,7 @@ if (multicaBridgeArgv) {
         });
       },
       getProxyCredentials: () => {
-        const proxy = getStore().get<AppConfigSettings>('app_config')?.proxy;
+        const proxy = getStore().get<AppConfigSettings>('app_config')?.browserProxy;
         const custom = proxy?.custom;
         const port = Number(custom?.port);
         if (
@@ -2010,6 +2013,7 @@ if (multicaBridgeArgv) {
     bindOpenClawGatewayPortProxyBypass();
     const appConfig = getStore().get<AppConfigSettings>('app_config');
     await applySystemProxyPreference(appConfig);
+    await applyBrowserProxyPreference(appConfig);
 
     let builtinModelCredential: BuiltinModelCredential | null = null;
     try {
@@ -2203,6 +2207,12 @@ if (multicaBridgeArgv) {
         });
       }
       lastProxyPreference = currentProxyPreference;
+      if (
+        getBrowserProxyPreferenceSignature(newConfig) !==
+        getBrowserProxyPreferenceSignature(oldConfig)
+      ) {
+        void applyBrowserProxyPreference(newConfig);
+      }
     });
 
     // 在 macOS 上，当点击 dock 图标时显示已有窗口或重新创建
