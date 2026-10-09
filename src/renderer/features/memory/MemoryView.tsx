@@ -588,7 +588,7 @@ const AgentMemoryView: React.FC<
             </div>
           )}
 
-        <section className="memory-collections grid gap-4 lg:grid-cols-2">
+        <section className="memory-collections grid grid-cols-[repeat(auto-fit,minmax(min(100%,24rem),1fr))] gap-4">
           <div>
             <div className="mb-3">
               <h2 className="text-base font-semibold text-foreground">
@@ -648,7 +648,7 @@ const AgentMemoryView: React.FC<
             )}
           </div>
           {recentDocuments.length > 0 ? (
-            <div className="grid gap-3 lg:grid-cols-2">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,24rem),1fr))] gap-3">
               {recentDocuments.map(item => documentCard(item))}
             </div>
           ) : (
@@ -660,7 +660,7 @@ const AgentMemoryView: React.FC<
   };
 
   const renderSearch = () => (
-    <div className="mx-auto max-w-4xl">
+    <div>
       <div className="flex items-start gap-3">
         <SparklesIcon className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
         <div>
@@ -777,7 +777,7 @@ const AgentMemoryView: React.FC<
 
   const renderTimeline = () =>
     timelineGroups.length > 0 ? (
-      <div className="mx-auto max-w-4xl space-y-8">
+      <div className="space-y-8">
         {timelineGroups.map(([month, documents]) => (
           <section key={month} className="relative pl-7">
             <div className="absolute bottom-0 left-[7px] top-7 w-px bg-border" />
@@ -795,7 +795,7 @@ const AgentMemoryView: React.FC<
     );
 
   const renderFiles = () => (
-    <div className="mx-auto max-w-4xl space-y-4">
+    <div className="space-y-4">
       {kindOrder.map(kind => {
         const documents = overview?.documents.filter(document => document.kind === kind) || [];
         if (documents.length === 0) return null;
@@ -845,7 +845,7 @@ const AgentMemoryView: React.FC<
   );
 
   return (
-    <div className="memory-view relative flex h-full min-h-0 flex-col">
+    <div className="sidebar-panel memory-view relative flex h-full min-h-0 flex-col">
       {isSidebarCollapsed && (
         <div className="relative flex h-[2.1875rem] shrink-0 items-center justify-between border-b border-border px-4">
           <div className="flex h-8 items-center">
@@ -871,8 +871,8 @@ const AgentMemoryView: React.FC<
         </div>
       )}
 
-      <header className="memory-header shrink-0 border-b border-border bg-gradient-to-br from-primary/[0.08] via-background to-amber-500/[0.04] px-6 pb-0 pt-5">
-        <div className="relative z-10 mx-auto max-w-6xl">
+      <header className="sidebar-panel-scroll memory-header shrink-0 overflow-y-hidden border-b border-border pb-0 pt-5">
+        <div className="sidebar-panel-content relative z-10">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <div className="flex items-center gap-2.5">
@@ -912,7 +912,7 @@ const AgentMemoryView: React.FC<
             </div>
           </div>
 
-          <form onSubmit={handleSearch} className="memory-search mt-5 flex max-w-3xl gap-2">
+          <form onSubmit={handleSearch} className="memory-search mt-5 flex gap-2">
             <label className="relative min-w-0 flex-1">
               <MagnifyingGlassIcon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
               <input
@@ -979,8 +979,8 @@ const AgentMemoryView: React.FC<
         </div>
       </header>
 
-      <main className="memory-content min-h-0 flex-1 overflow-y-auto px-6 py-6">
-        <div className="mx-auto max-w-6xl">
+      <main className="sidebar-panel-scroll memory-content min-h-0 flex-1 overflow-y-auto py-6">
+        <div className="sidebar-panel-content">
           {notice && (
             <div
               role="status"

@@ -5,32 +5,9 @@
   --memory-pink: #db2777;
   --memory-teal: #0d9488;
   --memory-amber: #d97706;
-  background: var(--justdo-background);
 }
 .memory-header {
-  position: relative;
-  isolation: isolate;
-  overflow: hidden;
   padding-top: 22px;
-  background:
-    radial-gradient(ellipse at 95% 0%, #f472b635, transparent 48%),
-    radial-gradient(ellipse at 50% 0%, #38bdf830, transparent 60%),
-    linear-gradient(120deg, #8b5cf625, transparent 75%);
-}
-.memory-header::after {
-  content: '';
-  position: absolute;
-  z-index: -1;
-  width: 270px;
-  height: 270px;
-  right: -90px;
-  top: 30px;
-  border: 32px solid #a78bfa18;
-  border-radius: 50%;
-  box-shadow:
-    0 0 0 28px #38bdf80b,
-    0 0 0 60px #f472b608;
-  pointer-events: none;
 }
 .memory-toolbar-control {
   height: 38px;
@@ -77,7 +54,6 @@
   letter-spacing: -0.04em;
 }
 .memory-search {
-  max-width: 850px;
   margin-top: 20px;
 }
 .memory-search input {
@@ -109,11 +85,6 @@
   border-color: #8b5cf630;
   background: #8b5cf618;
   box-shadow: inset 0 1px 0 #ffffff20;
-}
-.memory-content {
-  background:
-    radial-gradient(ellipse at 0% 30%, #8b5cf608, transparent 60%),
-    radial-gradient(ellipse at 100% 85%, #14b8a60a, transparent 60%);
 }
 .memory-stats {
   padding: 2px 0 12px;
@@ -224,10 +195,10 @@
 }
 @media (max-width: 640px) {
   .memory-header {
-    padding: 20px 16px 0;
+    padding-top: 20px;
   }
   .memory-content {
-    padding: 20px 16px;
+    padding-block: 20px;
   }
   .memory-tabs > button:not(:last-child) {
     padding: 8px 10px;

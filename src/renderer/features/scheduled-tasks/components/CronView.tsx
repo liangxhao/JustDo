@@ -2109,7 +2109,7 @@ export const CronView: React.FC<CronViewProps> = ({
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="sidebar-panel flex flex-col h-full min-h-0">
       {isSidebarCollapsed && (
         <div className="flex h-[2.1875rem] items-center justify-between px-4 border-b border-border shrink-0">
           <div className="flex items-center space-x-3 h-8">
@@ -2134,8 +2134,8 @@ export const CronView: React.FC<CronViewProps> = ({
       )}
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-7xl flex-col p-6 md:p-8">
+      <div className="sidebar-panel-scroll min-h-0 flex-1 overflow-y-auto">
+        <div className="sidebar-panel-content flex flex-col py-6 md:py-8">
           <div className="mb-7 flex items-end justify-between gap-4 border-b border-border-subtle">
             <div className="flex gap-6">
               {(['tasks', 'results'] as const).map(tab => (
@@ -2376,7 +2376,7 @@ export const CronView: React.FC<CronViewProps> = ({
                             </p>
                           </div>
                         </div>
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] gap-3">
                           {group.tasks.map(job => (
                             <CronJobCard
                               key={job.id}

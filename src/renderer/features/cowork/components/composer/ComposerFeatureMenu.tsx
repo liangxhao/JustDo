@@ -102,7 +102,7 @@ export default function ComposerFeatureMenu({
             setOpen(true);
           }
         }}
-        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-40 ${items.some(item => item.selected) ? 'bg-primary/10 text-primary' : 'bg-surface-raised text-secondary hover:text-foreground'}`}
+        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-transparent transition-colors disabled:opacity-40 ${items.some(item => item.selected) ? 'text-primary' : 'text-secondary hover:text-foreground'}`}
       >
         <span aria-hidden="true">{triggerIcon ?? <PlusIcon className="h-4 w-4" />}</span>
       </button>

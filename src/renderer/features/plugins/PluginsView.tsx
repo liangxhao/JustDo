@@ -82,7 +82,7 @@ const PluginsView: React.FC<PluginsViewProps> = ({
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col">
+    <div className="sidebar-panel h-full min-h-0 flex flex-col">
       {isSidebarCollapsed && (
         <div className="relative flex h-[2.1875rem] shrink-0 items-center justify-between border-b border-border px-4">
           <div className="flex h-8 items-center">
@@ -107,8 +107,8 @@ const PluginsView: React.FC<PluginsViewProps> = ({
           </div>
         </div>
       )}
-      <main className="min-h-0 flex-1 overflow-y-auto px-5 pb-10 sm:px-8">
-        <div className="mx-auto max-w-4xl">
+      <main className="sidebar-panel-scroll min-h-0 flex-1 overflow-y-auto pb-10">
+        <div className="sidebar-panel-content">
           <header className="pb-4 pt-7">
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">
               {i18nService.t('plugins')}
