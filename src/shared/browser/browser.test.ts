@@ -8,6 +8,7 @@ import {
   isBrowserProfileRunning,
   normalizeBrowserDownloadSettings,
   normalizeBrowserMode,
+  normalizeBrowserPanelFaviconUpdatedEvent,
   normalizeBrowserPanelHttpAuthRequest,
   normalizeBrowserPanelHttpAuthResponse,
   normalizeBrowserPanelOpenTabEvent,
@@ -17,6 +18,29 @@ import {
   resolveBrowserAddressInput,
   resolveBrowserPanelShortcutAction,
 } from './browser';
+
+test('accepts bounded inline favicon updates and navigation resets only', () => {
+  const event = {
+    guestId: 7,
+    url: 'https://example.com/',
+    faviconUrl: 'data:image/png;base64,aWNvbg==',
+  };
+  expect(normalizeBrowserPanelFaviconUpdatedEvent(event)).toEqual(event);
+  expect(normalizeBrowserPanelFaviconUpdatedEvent({ guestId: 7, url: 'about:blank' })).toEqual({
+    guestId: 7,
+    url: 'about:blank',
+  });
+  for (const changes of [
+    { guestId: 0 },
+    { guestId: 1.5 },
+    { url: 'file:///private' },
+    { faviconUrl: 'https://example.com/icon' },
+    { faviconUrl: 'data:text/html,content' },
+    { faviconUrl: `data:image/png;base64,${'a'.repeat(512 * 1024)}` },
+  ]) {
+    expect(normalizeBrowserPanelFaviconUpdatedEvent({ ...event, ...changes })).toBeNull();
+  }
+});
 
 test('routes configured review shortcuts and respects an explicitly disabled binding', () => {
   const input = { key: 'g', ctrlKey: true, shiftKey: true, altKey: false, metaKey: false };

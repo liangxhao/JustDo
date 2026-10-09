@@ -22,6 +22,7 @@ export const BrowserIpc = {
   CancelPdf: 'browser:cancelPdf',
   PanelOpenTab: 'browser:panelOpenTab',
   PanelPdfDetected: 'browser:panelPdfDetected',
+  PanelFaviconUpdated: 'browser:panelFaviconUpdated',
   PanelHttpAuthRequest: 'browser:panelHttpAuthRequest',
   PanelHttpAuthResponse: 'browser:panelHttpAuthResponse',
   PanelHttpAuthDismissed: 'browser:panelHttpAuthDismissed',
@@ -30,6 +31,7 @@ export const BrowserIpc = {
   ListImportSources: 'browser:listImportSources',
   ImportData: 'browser:importData',
   ListHistory: 'browser:listHistory',
+  LoadHistoryFavicon: 'browser:loadHistoryFavicon',
   DeleteHistory: 'browser:deleteHistory',
   ClearHistory: 'browser:clearHistory',
   ListDownloads: 'browser:listDownloads',
@@ -180,6 +182,42 @@ export type BrowserPanelOpenTabEvent = {
 export type BrowserPanelPdfDetectedEvent = {
   url: string;
   guestId: number;
+};
+
+export const BROWSER_FAVICON_MAX_DATA_URL_LENGTH = 512 * 1024;
+
+export const isBrowserFaviconDataUrl = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  value.length <= BROWSER_FAVICON_MAX_DATA_URL_LENGTH &&
+  /^data:image\/(?:png|jpeg|gif|webp|avif|bmp|svg\+xml|x-icon|vnd\.microsoft\.icon)[;,]/iu.test(
+    value,
+  );
+
+export type BrowserPanelFaviconUpdatedEvent = {
+  url: string;
+  guestId: number;
+  faviconUrl?: string;
+};
+
+export const normalizeBrowserPanelFaviconUpdatedEvent = (
+  value: unknown,
+): BrowserPanelFaviconUpdatedEvent | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.url !== 'string' ||
+    (!/^https?:\/\//iu.test(record.url) && record.url !== 'about:blank') ||
+    !Number.isInteger(record.guestId) ||
+    (record.guestId as number) <= 0 ||
+    (record.faviconUrl !== undefined && !isBrowserFaviconDataUrl(record.faviconUrl))
+  ) {
+    return null;
+  }
+  return {
+    url: record.url,
+    guestId: record.guestId as number,
+    faviconUrl: record.faviconUrl as string | undefined,
+  };
 };
 
 export type BrowserPanelHttpAuthRequest = {
@@ -541,6 +579,10 @@ export type BrowserHistoryEntry = {
 export type BrowserHistoryListResult = BrowserActionResult & {
   entries?: BrowserHistoryEntry[];
 };
+
+export type BrowserHistoryFaviconResult =
+  | { success: true; dataUrl: string }
+  | { success: false; errorCode: 'invalid_request' | 'not_found' | 'load_failed' };
 
 export type BrowserDownloadState =
   'queued' | 'progressing' | 'completed' | 'cancelled' | 'interrupted';

@@ -120,6 +120,10 @@ Main 在 will-attach-webview 中覆盖为固定 preload，强制 sandbox、conte
 
 普通人工点击由 Chromium 直接处理；Agent 操作通过 embedded-browser 的受控插件事件到 Main，再定位真实 guest。同一 guest 命令串行。截图、DOM、页面文本是外部不可信输入；文件上传和下载输出还要经过任务工作区校验。
 
+Tab 图标同样属于对应 guest 的网络边界。Main 从原生 favicon 事件选择候选，在该 guest session 中按浏览器代理、Cookie 与资源保护读取受限图片，经单向 `browser:panelFaviconUpdated` 事件发送 data URL；Renderer 按 guest ID 和当前页面匹配，只负责展示及解码失败回退。主文档导航与 guest 销毁取消旧读取，主界面默认 session 不再重新请求网站图标。详细限制见[浏览器设计](../features/browser-settings-design.md)。
+
+最近访问由 Main 保存并复用历史记录对应的已加载图标图片；`browser:loadHistoryFavicon` 只允许主窗口主 frame 按已存在页面读取，缺图时通过默认浏览器 partition 补取，不开放任意 Renderer URL 读取。列表元数据与单张图片分开返回，避免历史列表批量携带图片正文。图片与历史记录一起删除，缓存清理则仅清空图片。字段与初始化规则见[数据存储](10-data-storage.md)。
+
 用户标注、操作演示与 Agent 控制存在互斥 lease。录制内容走 guest → Renderer，Main 只管理保护与归属；停止、导航、崩溃和窗口销毁释放资源。录制内容的字段及隐私限制见[操作演示](../features/browser-operation-recording.md)。
 
 HTTP 登录请求、媒体权限、PDF 读取各有独立超时和销毁语义，不能共用一个页面全局授权布尔值。详细 guest 行为在[浏览器设计](../features/browser-settings-design.md)，不再散放到通用 IPC 清单。

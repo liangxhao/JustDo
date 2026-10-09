@@ -38,6 +38,7 @@ vi.mock('./systemProxy', () => ({
 import {
   applyBrowserProxyPreference,
   applySystemProxyPreference,
+  getBrowserProxyCredentials,
   getBrowserProxyPreferenceSignature,
   getProxyPreferenceSignature,
   isSystemProxyEnabled,
@@ -149,6 +150,7 @@ describe('independent browser proxy preferences', () => {
     expect(mocks.setFixedProxyUrl).not.toHaveBeenCalled();
     expect(mocks.applySystemProxyEnv).not.toHaveBeenCalled();
     expect(mocks.restoreOriginalProxyEnv).not.toHaveBeenCalled();
+    expect(getBrowserProxyCredentials()).toBeNull();
   });
 
   test('uses only browser credentials for a custom browser session', async () => {
@@ -173,6 +175,12 @@ describe('independent browser proxy preferences', () => {
     });
     expect(mocks.applySystemProxyEnv).not.toHaveBeenCalled();
     expect(mocks.setProxy).not.toHaveBeenCalled();
+    expect(getBrowserProxyCredentials()).toEqual({
+      host: 'browser-proxy.example',
+      port: 8080,
+      username: 'browser-user',
+      password: 'test-password',
+    });
   });
 
   test('does not mark non-browser preferences changed after a browser-only edit', () => {

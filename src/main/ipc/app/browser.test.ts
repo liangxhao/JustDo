@@ -26,6 +26,46 @@ vi.mock('electron', () => ({
   shell: { openPath: vi.fn() },
 }));
 
+const { loadHistoryFavicon } = vi.hoisted(() => ({ loadHistoryFavicon: vi.fn() }));
+vi.mock('../../browser/browserHistoryFavicon', () => ({
+  loadBrowserHistoryFavicon: loadHistoryFavicon,
+}));
+
+test('limits history icon loading to the main application frame and forwards stored-page requests', async () => {
+  const handle = vi.mocked(ipcMain.handle);
+  handle.mockClear();
+  loadHistoryFavicon.mockClear();
+  registerBrowserHandlers({
+    getGatewayClient: () => null,
+    buildCliEnvironment: vi.fn(),
+    hasActiveSessions: () => false,
+    setBrowserMode: vi.fn(),
+  });
+  const handler = handle.mock.calls.find(
+    ([channel]) => channel === BrowserIpc.LoadHistoryFavicon,
+  )?.[1];
+  expect(handler).toBeTruthy();
+  const mainFrame = {};
+  for (const event of [
+    { sender: { getType: () => 'webview', mainFrame }, senderFrame: mainFrame },
+    { sender: { getType: () => 'window', mainFrame }, senderFrame: {} },
+  ]) {
+    expect(
+      await handler!(event as Electron.IpcMainInvokeEvent, 'https://example.com/', false),
+    ).toEqual({ success: false, errorCode: 'invalid_request' });
+  }
+  expect(loadHistoryFavicon).not.toHaveBeenCalled();
+  loadHistoryFavicon.mockResolvedValue({
+    success: true,
+    dataUrl: 'data:image/png;base64,aWNvbg==',
+  });
+  const event = { sender: { getType: () => 'window', mainFrame }, senderFrame: mainFrame };
+  expect(
+    await handler!(event as Electron.IpcMainInvokeEvent, 'https://example.com/', true),
+  ).toEqual({ success: true, dataUrl: 'data:image/png;base64,aWNvbg==' });
+  expect(loadHistoryFavicon).toHaveBeenCalledWith('https://example.com/', true);
+});
+
 describe('opening message links in Chrome', () => {
   test('denies Chrome launches from guests and child frames', () => {
     const handle = vi.mocked(ipcMain.handle);

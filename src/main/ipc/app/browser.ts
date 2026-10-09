@@ -17,6 +17,7 @@ import {
   type BrowserConnectionStatus,
   type BrowserConnectionTestResult,
   type BrowserDownloadListResult,
+  type BrowserHistoryFaviconResult,
   type BrowserHistoryListResult,
   type BrowserImportRequest,
   type BrowserImportResult,
@@ -52,6 +53,7 @@ import {
   listChromeImportSources,
 } from '../../browser/browserDataImportService';
 import { readBrowserExtensionPairing } from '../../browser/browserExtensionPairing';
+import { loadBrowserHistoryFavicon } from '../../browser/browserHistoryFavicon';
 import { isBrowserPdfLoadRequest, loadBrowserPdf } from '../../browser/browserPdfService';
 import { createLocalHtmlPreview } from '../../browser/localHtmlPreviewServer';
 import type { GatewayClientLike } from '../../engine/gateway/types';
@@ -692,6 +694,19 @@ export const registerBrowserHandlers = ({
       return { success: false };
     }
   });
+  ipcMain.handle(
+    BrowserIpc.LoadHistoryFavicon,
+    async (event, url: unknown, retry: unknown): Promise<BrowserHistoryFaviconResult> => {
+      if (event.sender.getType() !== 'window' || event.senderFrame !== event.sender.mainFrame) {
+        return { success: false, errorCode: 'invalid_request' };
+      }
+      try {
+        return await loadBrowserHistoryFavicon(url, retry);
+      } catch {
+        return { success: false, errorCode: 'load_failed' };
+      }
+    },
+  );
   ipcMain.handle(BrowserIpc.DeleteHistory, (event, urls: unknown): BrowserActionResult => {
     if (event.sender.getType() !== 'window') return { success: false, error: 'Access denied.' };
     try {

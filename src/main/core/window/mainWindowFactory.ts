@@ -41,6 +41,7 @@ import {
   resolveAvailableBrowserDownloadPath,
   resolveBrowserDownloadDirectory,
 } from '../../browser/browserDownloadPath';
+import { trackBrowserFavicon } from '../../browser/browserFavicon';
 import { trackBrowserHistory } from '../../browser/browserHistoryTracking';
 import {
   isAllowedLocalHtmlPreviewResource,
@@ -557,7 +558,23 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         event.preventDefault();
       }
     });
-    trackBrowserHistory(guestContents, () => !localPreviewScopeUrl);
+    const recordFaviconData = trackBrowserHistory(guestContents, () => !localPreviewScopeUrl);
+    trackBrowserFavicon(
+      guestContents,
+      (event, cacheSignal) => {
+        if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+          mainWindow.webContents.send(BrowserIpc.PanelFaviconUpdated, event);
+        }
+        if (event.faviconUrl) {
+          try {
+            recordFaviconData(event.faviconUrl, cacheSignal);
+          } catch {
+            console.warn('[BrowserFavicon] Could not persist the loaded icon.');
+          }
+        }
+      },
+      url => !localPreviewScopeUrl || isAllowedLocalHtmlPreviewResource(localPreviewScopeUrl, url),
+    );
     guestContents.on('context-menu', (_contextEvent, params) => {
       const template: Electron.MenuItemConstructorOptions[] = [];
       if (params.linkURL && isAllowedBrowserPanelUrl(params.linkURL)) {

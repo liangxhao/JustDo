@@ -17,12 +17,14 @@ import {
   type BrowserImportSource,
   browserPartitionForProfile,
   isBrowserAgentProfile,
+  isBrowserFaviconDataUrl,
 } from '../../shared/browser/browser';
 import {
   buildChromeCookieDetails,
   chromeTimestampToUnixMs,
   sanitizeBrowserHistoryUrl,
 } from './browserDataSanitizers';
+import { invalidateBrowserFaviconCache } from './browserFaviconCache';
 
 const profileIdPattern = /^(?:Default|Profile [1-9][0-9]{0,2})$/;
 const execFileAsync = promisify(execFile);
@@ -250,7 +252,8 @@ const openImportedDataDb = (): Database.Database => {
       title TEXT NOT NULL,
       last_visit_at INTEGER NOT NULL,
       visit_count INTEGER NOT NULL,
-      favicon_url TEXT NOT NULL DEFAULT ''
+      favicon_url TEXT NOT NULL DEFAULT '',
+      favicon_data_url TEXT NOT NULL DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS browser_downloads (
       id TEXT PRIMARY KEY,
@@ -279,12 +282,20 @@ const openImportedDataDb = (): Database.Database => {
   if (!hasHistoryFaviconColumn(db)) {
     db.exec("ALTER TABLE imported_history ADD COLUMN favicon_url TEXT NOT NULL DEFAULT ''");
   }
+  if (!hasHistoryFaviconDataColumn(db)) {
+    db.exec("ALTER TABLE imported_history ADD COLUMN favicon_data_url TEXT NOT NULL DEFAULT ''");
+  }
   return db;
 };
 
 const hasHistoryFaviconColumn = (db: Database.Database): boolean =>
   (db.pragma('table_info(imported_history)') as Array<{ name: string }>).some(
     column => column.name === 'favicon_url',
+  );
+
+const hasHistoryFaviconDataColumn = (db: Database.Database): boolean =>
+  (db.pragma('table_info(imported_history)') as Array<{ name: string }>).some(
+    column => column.name === 'favicon_data_url',
   );
 
 export const listImportedBrowserProfiles = (): string[] => {
@@ -611,6 +622,55 @@ export const updateBrowserHistoryFavicon = (url: string, faviconUrl: string): vo
   }
 };
 
+export const updateBrowserHistoryFaviconData = (url: string, dataUrl: string): void => {
+  const safeUrl = sanitizeBrowserHistoryUrl(url);
+  if (!safeUrl || !isBrowserFaviconDataUrl(dataUrl)) return;
+  const db = openImportedDataDb();
+  try {
+    db.prepare('UPDATE imported_history SET favicon_data_url = ? WHERE url = ?').run(
+      dataUrl,
+      safeUrl,
+    );
+  } finally {
+    db.close();
+  }
+};
+
+export const clearBrowserHistoryFaviconDataSince = (since: number | null): void => {
+  invalidateBrowserFaviconCache();
+  const db = openImportedDataDb();
+  try {
+    if (since === null) db.prepare("UPDATE imported_history SET favicon_data_url = ''").run();
+    else
+      db.prepare("UPDATE imported_history SET favicon_data_url = '' WHERE last_visit_at >= ?").run(
+        since,
+      );
+  } finally {
+    db.close();
+  }
+};
+
+export const readBrowserHistoryFavicon = (
+  url: string,
+): { faviconUrl: string; faviconDataUrl: string } | null => {
+  const safeUrl = sanitizeBrowserHistoryUrl(url);
+  const dbPath = path.join(app.getPath('userData'), 'browser-import.sqlite');
+  if (!safeUrl || !fs.existsSync(dbPath)) return null;
+  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  try {
+    const iconColumn = hasHistoryFaviconColumn(db) ? 'favicon_url' : "'' AS favicon_url";
+    const dataColumn = hasHistoryFaviconDataColumn(db)
+      ? 'favicon_data_url'
+      : "'' AS favicon_data_url";
+    const row = db
+      .prepare(`SELECT ${iconColumn}, ${dataColumn} FROM imported_history WHERE url = ?`)
+      .get(safeUrl) as { favicon_url: string; favicon_data_url: string } | undefined;
+    return row ? { faviconUrl: row.favicon_url, faviconDataUrl: row.favicon_data_url } : null;
+  } finally {
+    db.close();
+  }
+};
+
 export const listBrowserHistory = (query: string): BrowserHistoryEntry[] => {
   const dbPath = path.join(app.getPath('userData'), 'browser-import.sqlite');
   if (!fs.existsSync(dbPath)) return [];
@@ -654,6 +714,7 @@ export const listBrowserHistory = (query: string): BrowserHistoryEntry[] => {
 export const deleteBrowserHistory = (urls: string[]): number => {
   const values = urls.filter(url => /^https?:\/\//i.test(url) && url.length <= 4096).slice(0, 500);
   if (!values.length) return 0;
+  invalidateBrowserFaviconCache();
   const db = openImportedDataDb();
   try {
     const remove = db.prepare('DELETE FROM imported_history WHERE url = ?');
@@ -666,6 +727,7 @@ export const deleteBrowserHistory = (urls: string[]): number => {
 };
 
 export const clearBrowserHistory = (): number => {
+  invalidateBrowserFaviconCache();
   const db = openImportedDataDb();
   try {
     return db.prepare('DELETE FROM imported_history').run().changes;
@@ -704,6 +766,7 @@ export const countBrowserHistorySince = (
 };
 
 export const clearBrowserHistorySince = (since: number | null): number => {
+  invalidateBrowserFaviconCache();
   const db = openImportedDataDb();
   try {
     return since === null

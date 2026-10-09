@@ -8,7 +8,6 @@ import {
   CommandLineIcon,
   DocumentPlusIcon,
   DocumentTextIcon,
-  GlobeAltIcon,
   PhotoIcon,
   QueueListIcon,
   ShareIcon,
@@ -66,6 +65,7 @@ import {
   promotePendingBrowserPanelItems,
 } from '@/features/browser/browserPanelRetention';
 import { recordingSubmissionIssue } from '@/features/browser/browserRecordingSubmission';
+import BrowserTabIcon from '@/features/browser/BrowserTabIcon';
 import { browserTaskStopped } from '@/features/browser/browserTaskStopped';
 import JustDoChatWrapper, {
   type JustDoChatWrapperRef,
@@ -2407,11 +2407,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         ? browserTabs.map(tab => ({
             id: browserDisplayTabId(tab.targetId),
             label: getBrowserTabDisplayTitle(tab),
-            icon: tab.faviconUrl ? (
-              <img src={tab.faviconUrl} alt="" className="h-4 w-4 rounded-sm object-contain" />
-            ) : (
-              <GlobeAltIcon className="h-4 w-4" />
-            ),
+            icon: <BrowserTabIcon faviconUrl={tab.faviconUrl} />,
             onSelect: () => handleBrowserTargetChange(tab.targetId),
             onClose: () => browserPanelRefs.current.get(displaySessionKey)?.closeTab(tab.targetId),
             onContextMenu: (
@@ -3251,11 +3247,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       ? browserTabs.map(tab => ({
           id: browserDisplayTabId(tab.targetId),
           label: getBrowserTabDisplayTitle(tab),
-          icon: tab.faviconUrl ? (
-            <img src={tab.faviconUrl} alt="" className="h-4 w-4 rounded-sm object-contain" />
-          ) : (
-            <GlobeAltIcon className="h-4 w-4" />
-          ),
+          icon: <BrowserTabIcon faviconUrl={tab.faviconUrl} />,
           onSelect: () => handleBrowserTargetChange(tab.targetId),
           onClose: () => browserPanelRefs.current.get(displaySessionKey)?.closeTab(tab.targetId),
           onContextMenu: (

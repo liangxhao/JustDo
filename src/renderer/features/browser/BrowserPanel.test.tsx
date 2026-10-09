@@ -6,6 +6,7 @@ import {
   type BrowserAgentInteractionState,
   type BrowserAnnotationDraft,
   type BrowserLocalHtmlPreviewResult,
+  type BrowserPanelFaviconUpdatedEvent,
   type BrowserPanelTab,
 } from '@shared/browser/browser';
 import { BrowserRecordingChannel } from '@shared/browser/browserRecording';
@@ -53,6 +54,7 @@ type PanelHttpAuthListener = (event: {
 
 let panelOpenTabListener: PanelOpenTabListener | null = null;
 let panelPdfDetectedListener: PanelPdfDetectedListener | null = null;
+let panelFaviconUpdatedListener: ((event: BrowserPanelFaviconUpdatedEvent) => void) | null = null;
 let panelHttpAuthListener: PanelHttpAuthListener | null = null;
 let panelHttpAuthDismissedListener: ((event: { id: string; guestId: number }) => void) | null =
   null;
@@ -377,6 +379,7 @@ describe('BrowserPanel embedded webview', () => {
   beforeEach(() => {
     panelOpenTabListener = null;
     panelPdfDetectedListener = null;
+    panelFaviconUpdatedListener = null;
     panelHttpAuthListener = null;
     agentInteractionListener = null;
     loadUrl.mockClear();
@@ -461,6 +464,12 @@ describe('BrowserPanel embedded webview', () => {
             panelPdfDetectedListener = listener;
             return () => {
               if (panelPdfDetectedListener === listener) panelPdfDetectedListener = null;
+            };
+          },
+          onPanelFaviconUpdated: (listener: (event: BrowserPanelFaviconUpdatedEvent) => void) => {
+            panelFaviconUpdatedListener = listener;
+            return () => {
+              if (panelFaviconUpdatedListener === listener) panelFaviconUpdatedListener = null;
             };
           },
           onPanelHttpAuthRequest: (listener: PanelHttpAuthListener) => {
@@ -1477,9 +1486,13 @@ describe('BrowserPanel embedded webview', () => {
     const titleEvent = new Event('page-title-updated');
     Object.assign(titleEvent, { title: 'Late title' });
     webview.dispatchEvent(titleEvent);
-    const faviconEvent = new Event('page-favicon-updated');
-    Object.assign(faviconEvent, { favicons: ['https://example.com/favicon.ico'] });
-    webview.dispatchEvent(faviconEvent);
+    act(() => {
+      panelFaviconUpdatedListener?.({
+        guestId: 7,
+        url: webview.getAttribute('src')!,
+        faviconUrl: 'data:image/png;base64,aWNvbg==',
+      });
+    });
 
     expect((address as HTMLInputElement).value).toBe('typed.example/path');
 
@@ -2406,21 +2419,38 @@ describe('BrowserPanel embedded webview', () => {
     ).toBe('true');
   });
 
-  it('shows the page favicon next to its tab title', async () => {
+  it('shows the browser-session favicon next to its tab title', async () => {
     const { container } = render(<BrowserPanelHarness />);
     const webview = container.querySelector('webview')!;
     const titleEvent = new Event('page-title-updated');
     Object.assign(titleEvent, { title: 'Example Docs' });
     webview.dispatchEvent(titleEvent);
-    const faviconEvent = new Event('page-favicon-updated');
-    Object.assign(faviconEvent, { favicons: ['https://example.com/favicon.ico'] });
-    webview.dispatchEvent(faviconEvent);
+    const faviconUrl = 'data:image/png;base64,aWNvbg==';
+    act(() => {
+      panelFaviconUpdatedListener?.({ guestId: 7, url: webview.getAttribute('src')!, faviconUrl });
+    });
 
     const tab = container.querySelector('[data-browser-tab-id]')!;
-    await waitFor(() =>
-      expect(tab.querySelector('img')?.getAttribute('src')).toBe('https://example.com/favicon.ico'),
-    );
+    await waitFor(() => expect(tab.querySelector('img')?.getAttribute('src')).toBe(faviconUrl));
     expect(tab.textContent).toContain('Example Docs');
+  });
+
+  it('ignores favicon updates for another guest or an earlier page and clears on navigation', async () => {
+    const { container } = render(<BrowserPanelHarness draftKey="favicon-ownership" />);
+    const webview = container.querySelector('webview')!;
+    const url = webview.getAttribute('src')!;
+    const faviconUrl = 'data:image/png;base64,aWNvbg==';
+    const tab = container.querySelector('[data-browser-tab-id]')!;
+    act(() => {
+      panelFaviconUpdatedListener?.({ guestId: 8, url, faviconUrl });
+      panelFaviconUpdatedListener?.({ guestId: 7, url: 'https://earlier.example/', faviconUrl });
+    });
+    expect(tab.querySelector('img')).toBeNull();
+    act(() => panelFaviconUpdatedListener?.({ guestId: 7, url, faviconUrl }));
+    await waitFor(() => expect(tab.querySelector('img')).not.toBeNull());
+    act(() => panelFaviconUpdatedListener?.({ guestId: 7, url }));
+    await waitFor(() => expect(tab.querySelector('img')).toBeNull());
+    expect(tab.querySelector('svg')).not.toBeNull();
   });
 
   it('publishes page tabs to the shared display bar when embedded', async () => {

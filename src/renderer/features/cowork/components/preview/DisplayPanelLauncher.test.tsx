@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { configService } from '@/services/config';
@@ -9,18 +9,22 @@ import { i18nService } from '@/services/i18n';
 import DisplayPanelLauncher from './DisplayPanelLauncher';
 
 const listHistory = vi.fn();
+const loadHistoryFavicon = vi.fn();
+const faviconDataUrl = 'data:image/png;base64,aWNvbg==';
 beforeEach(() => {
   i18nService.setLanguage('en', { persist: false });
   listHistory.mockResolvedValue({ success: true, entries: [] });
+  loadHistoryFavicon.mockResolvedValue({ success: true, dataUrl: faviconDataUrl });
   Object.defineProperty(window, 'electron', {
     configurable: true,
-    value: { browser: { listHistory } },
+    value: { browser: { listHistory, loadHistoryFavicon } },
   });
 });
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   listHistory.mockReset();
+  loadHistoryFavicon.mockReset();
 });
 
 describe('DisplayPanelLauncher', () => {
@@ -103,7 +107,7 @@ describe('DisplayPanelLauncher', () => {
     expect(createBrowser).toHaveBeenCalledWith('https://example.com/docs');
   });
 
-  it('shows the real website icon without sending a referrer', async () => {
+  it('shows the stored inline website icon without another renderer network request', async () => {
     listHistory.mockResolvedValue({
       success: true,
       entries: [
@@ -117,9 +121,16 @@ describe('DisplayPanelLauncher', () => {
       ],
     });
     render(<DisplayPanelLauncher onCreateBrowser={vi.fn()} onCreateTerminal={vi.fn()} />);
-    const icon = (await screen.findByRole('button', { name: 'Docs' })).querySelector('img');
-    expect(icon?.getAttribute('src')).toBe('https://cdn.example.com/site.svg');
+    const button = await screen.findByRole('button', { name: 'Docs' });
+    await waitFor(() =>
+      expect(button.querySelector('img')?.getAttribute('src')).toBe(faviconDataUrl),
+    );
+    const icon = button.querySelector('img');
     expect(icon?.getAttribute('referrerpolicy')).toBe('no-referrer');
+    expect(loadHistoryFavicon).toHaveBeenCalledWith('https://example.com/docs', false);
+    expect(button.querySelector('svg')).toBeTruthy();
+    fireEvent.load(icon!);
+    expect(button.querySelector('svg')).toBeNull();
   });
 
   it('tries the site favicon then a globe when images fail, while keeping navigation usable', async () => {
@@ -138,10 +149,16 @@ describe('DisplayPanelLauncher', () => {
     const createBrowser = vi.fn();
     render(<DisplayPanelLauncher onCreateBrowser={createBrowser} onCreateTerminal={vi.fn()} />);
     const button = await screen.findByRole('button', { name: 'Docs' });
+    await waitFor(() => expect(button.querySelector('img')).toBeTruthy());
+    loadHistoryFavicon.mockResolvedValueOnce({
+      success: true,
+      dataUrl: 'data:image/png;base64,bmV3',
+    });
     fireEvent.error(button.querySelector('img')!);
-    expect(button.querySelector('img')?.getAttribute('src')).toBe(
-      'https://example.com/favicon.ico',
+    await waitFor(() =>
+      expect(button.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,bmV3'),
     );
+    expect(loadHistoryFavicon).toHaveBeenLastCalledWith('https://example.com/docs', true);
     fireEvent.error(button.querySelector('img')!);
     expect(button.querySelector('img')).toBeNull();
     expect(button.querySelector('svg')).toBeTruthy();
@@ -155,8 +172,59 @@ describe('DisplayPanelLauncher', () => {
       entries: [{ url: 'https://example.com/docs', title: 'Docs', lastVisitAt: 1, visitCount: 1 }],
     });
     render(<DisplayPanelLauncher onCreateBrowser={vi.fn()} onCreateTerminal={vi.fn()} />);
-    const icon = (await screen.findByRole('button', { name: 'Docs' })).querySelector('img');
-    expect(icon?.getAttribute('src')).toBe('https://example.com/favicon.ico');
+    const button = await screen.findByRole('button', { name: 'Docs' });
+    await waitFor(() =>
+      expect(button.querySelector('img')?.getAttribute('src')).toBe(faviconDataUrl),
+    );
+    expect(loadHistoryFavicon).toHaveBeenCalledWith('https://example.com/docs', false);
+  });
+
+  it('keeps a visible globe while a request is pending or fails', async () => {
+    listHistory.mockResolvedValue({
+      success: true,
+      entries: [{ url: 'https://example.com/', title: 'Example', lastVisitAt: 1, visitCount: 1 }],
+    });
+    let reject!: (reason: Error) => void;
+    loadHistoryFavicon.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, done) => {
+          reject = done;
+        }),
+    );
+    render(<DisplayPanelLauncher onCreateBrowser={vi.fn()} onCreateTerminal={vi.fn()} />);
+    const button = await screen.findByRole('button', { name: 'Example' });
+    expect(button.querySelector('img')).toBeNull();
+    expect(button.querySelector('svg')).toBeTruthy();
+    await act(async () => reject(new Error('offline')));
+    expect(button.querySelector('svg')).toBeTruthy();
+    expect(button.querySelector('img')).toBeNull();
+  });
+
+  it('drops late icon results after the launcher is hidden and reloads on reopening', async () => {
+    listHistory.mockResolvedValue({
+      success: true,
+      entries: [{ url: 'https://example.com/', title: 'Example', lastVisitAt: 1, visitCount: 1 }],
+    });
+    let resolve!: (value: unknown) => void;
+    loadHistoryFavicon.mockImplementationOnce(
+      () =>
+        new Promise(done => {
+          resolve = done;
+        }),
+    );
+    const props = { onCreateBrowser: vi.fn(), onCreateTerminal: vi.fn() };
+    const view = render(<DisplayPanelLauncher {...props} />);
+    const button = await screen.findByRole('button', { name: 'Example' });
+    view.rerender(<DisplayPanelLauncher {...props} visible={false} />);
+    await act(async () => resolve({ success: true, dataUrl: faviconDataUrl }));
+    expect(button.querySelector('img')).toBeNull();
+    view.rerender(<DisplayPanelLauncher {...props} visible />);
+    await waitFor(() => expect(loadHistoryFavicon).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Example' }).querySelector('img')?.getAttribute('src'),
+      ).toBe(faviconDataUrl),
+    );
   });
 
   it('resolves addresses and searches using the selected search engine', () => {

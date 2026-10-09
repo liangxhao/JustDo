@@ -42,6 +42,7 @@ import {
   type BrowserClearDataSummaryResult,
   type BrowserConnectionTestResult,
   type BrowserDownloadListResult,
+  type BrowserHistoryFaviconResult,
   type BrowserHistoryListResult,
   type BrowserImportRequest,
   type BrowserImportResult,
@@ -51,6 +52,7 @@ import {
   type BrowserMode,
   type BrowserModeSwitchAvailabilityResult,
   type BrowserModeUpdateResult,
+  type BrowserPanelFaviconUpdatedEvent,
   type BrowserPanelHttpAuthDismissed,
   type BrowserPanelHttpAuthRequest,
   type BrowserPanelHttpAuthResponse,
@@ -61,6 +63,7 @@ import {
   type BrowserPdfLoadRequest,
   type BrowserPdfLoadResult,
   type BrowserStatusResult,
+  normalizeBrowserPanelFaviconUpdatedEvent,
   normalizeBrowserPanelHttpAuthRequest,
   normalizeBrowserPanelHttpAuthResponse,
   normalizeBrowserPanelOpenTabEvent,
@@ -415,6 +418,14 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on(BrowserIpc.PanelPdfDetected, handler);
       return () => ipcRenderer.removeListener(BrowserIpc.PanelPdfDetected, handler);
     },
+    onPanelFaviconUpdated: (callback: (event: BrowserPanelFaviconUpdatedEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => {
+        const normalized = normalizeBrowserPanelFaviconUpdatedEvent(data);
+        if (normalized) callback(normalized);
+      };
+      ipcRenderer.on(BrowserIpc.PanelFaviconUpdated, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.PanelFaviconUpdated, handler);
+    },
     setPanelShortcuts: (shortcuts: BrowserPanelShortcutSettings) =>
       ipcRenderer.send(BrowserIpc.PanelSetShortcuts, shortcuts),
     onPanelShortcutAction: (callback: (action: BrowserPanelShortcutAction) => void) => {
@@ -468,6 +479,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(BrowserIpc.ImportData, request),
     listHistory: (query = ''): Promise<BrowserHistoryListResult> =>
       ipcRenderer.invoke(BrowserIpc.ListHistory, query),
+    loadHistoryFavicon: (url: string, retry = false): Promise<BrowserHistoryFaviconResult> =>
+      ipcRenderer.invoke(BrowserIpc.LoadHistoryFavicon, url, retry),
     deleteHistory: (urls: string[]): Promise<BrowserActionResult> =>
       ipcRenderer.invoke(BrowserIpc.DeleteHistory, urls),
     clearHistory: (): Promise<BrowserActionResult> => ipcRenderer.invoke(BrowserIpc.ClearHistory),

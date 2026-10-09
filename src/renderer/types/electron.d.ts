@@ -125,6 +125,8 @@ type BrowserPanelHttpAuthResponse =
   import('../../shared/browser/browser').BrowserPanelHttpAuthResponse;
 type BrowserPanelPdfDetectedEvent =
   import('../../shared/browser/browser').BrowserPanelPdfDetectedEvent;
+type BrowserPanelFaviconUpdatedEvent =
+  import('../../shared/browser/browser').BrowserPanelFaviconUpdatedEvent;
 type BrowserAgentSessionEvent = import('../../shared/browser/browser').BrowserAgentSessionEvent;
 type BrowserAgentTabReference = import('../../shared/browser/browser').BrowserAgentTabReference;
 type BrowserAgentTabRegistration =
@@ -493,6 +495,9 @@ interface IElectronAPI {
       ) => void,
     ) => () => void;
     onPanelPdfDetected: (callback: (event: BrowserPanelPdfDetectedEvent) => void) => () => void;
+    onPanelFaviconUpdated: (
+      callback: (event: BrowserPanelFaviconUpdatedEvent) => void,
+    ) => () => void;
     setPanelShortcuts: (shortcuts: BrowserPanelShortcutSettings) => void;
     onPanelShortcutAction: (callback: (action: BrowserPanelShortcutAction) => void) => () => void;
     registerAgentTab: (registration: BrowserAgentTabRegistration) => void;
@@ -513,6 +518,10 @@ interface IElectronAPI {
     listImportSources: () => Promise<BrowserImportSourcesResult>;
     importData: (request: BrowserImportRequest) => Promise<BrowserImportResult>;
     listHistory: (query?: string) => Promise<BrowserHistoryListResult>;
+    loadHistoryFavicon: (
+      url: string,
+      retry?: boolean,
+    ) => Promise<import('../../shared/browser/browser').BrowserHistoryFaviconResult>;
     deleteHistory: (urls: string[]) => Promise<BrowserActionResult>;
     clearHistory: () => Promise<BrowserActionResult>;
     listDownloads: (query?: string) => Promise<BrowserDownloadListResult>;

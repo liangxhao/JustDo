@@ -13,6 +13,7 @@ import {
 } from '../../shared/browser/browser';
 import {
   clearBrowserDownloadsSince,
+  clearBrowserHistoryFaviconDataSince,
   clearBrowserHistorySince,
   clearImportedCredentialsSince,
   countBrowserDownloadsSince,
@@ -137,6 +138,7 @@ export const clearBrowserData = async (
   }
   if (request.selection.cache) {
     try {
+      clearBrowserHistoryFaviconDataSince(since);
       await Promise.all(
         browserSessions.map(browserSession => browserSession.clearData({ dataTypes: ['cache'] })),
       );

@@ -9,7 +9,7 @@ import {
   MagnifyingGlassIcon,
   Square2StackIcon,
 } from '@heroicons/react/24/outline';
-import { resolveBrowserAddressInput } from '@shared/browser/browser';
+import { isBrowserFaviconDataUrl, resolveBrowserAddressInput } from '@shared/browser/browser';
 import { useEffect, useState } from 'react';
 
 import { defaultConfig } from '@/app/config';
@@ -69,26 +69,44 @@ function ToolButton({
   );
 }
 
-function RecentVisitIcon({ visit }: { visit: RecentBrowserVisit }) {
-  const [iconUrl, setIconUrl] = useState<string | null>(visit.faviconUrl);
-  const fallbackUrl = new URL('/favicon.ico', visit.url).href;
+function RecentVisitIcon({ visit, visible }: { visit: RecentBrowserVisit; visible: boolean }) {
+  const [iconUrl, setIconUrl] = useState<string>();
+  const [loadedUrl, setLoadedUrl] = useState<string>();
+  const [retry, setRetry] = useState(false);
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    void window.electron.browser
+      .loadHistoryFavicon(visit.url, retry)
+      .then(result => {
+        if (!cancelled && result.success && isBrowserFaviconDataUrl(result.dataUrl))
+          setIconUrl(result.dataUrl);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [retry, visit.url, visible]);
   return (
     <span
-      className="flex h-10 w-10 items-center justify-center rounded-xl bg-surface-raised text-secondary"
+      className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-surface-raised text-secondary"
       aria-hidden
     >
-      {iconUrl ? (
+      {(!iconUrl || loadedUrl !== iconUrl) && <GlobeAltIcon className="h-7 w-7" />}
+      {iconUrl && (
         <img
           key={iconUrl}
           src={iconUrl}
           alt=""
-          className="h-8 w-8 object-contain"
+          className={`absolute h-8 w-8 object-contain ${loadedUrl === iconUrl ? '' : 'opacity-0'}`}
           referrerPolicy="no-referrer"
-          loading="lazy"
-          onError={() => setIconUrl(iconUrl === fallbackUrl ? null : fallbackUrl)}
+          onLoad={() => setLoadedUrl(iconUrl)}
+          onError={() => {
+            setIconUrl(undefined);
+            setLoadedUrl(undefined);
+            if (!retry) setRetry(true);
+          }}
         />
-      ) : (
-        <GlobeAltIcon className="h-7 w-7" />
       )}
     </span>
   );
@@ -232,7 +250,7 @@ const DisplayPanelLauncher = ({
                   title={`${visit.title}\n${visit.url}`}
                   className="flex min-w-0 flex-col items-center gap-3 rounded-xl px-2 py-3 text-center transition-colors hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  <RecentVisitIcon key={visit.faviconUrl} visit={visit} />
+                  <RecentVisitIcon key={visit.faviconUrl} visit={visit} visible={visible} />
                   <span className="w-full truncate text-xs font-medium">{visit.title}</span>
                 </button>
               ))}

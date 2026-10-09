@@ -13,11 +13,15 @@ vi.mock('electron', () => ({
 
 import {
   clearBrowserHistory,
+  clearBrowserHistoryFaviconDataSince,
   deleteBrowserHistory,
   listBrowserHistory,
+  readBrowserHistoryFavicon,
   recordBrowserHistory,
   updateBrowserHistoryFavicon,
+  updateBrowserHistoryFaviconData,
 } from './browserDataImportService';
+import { getBrowserFaviconCacheSignal } from './browserFaviconCache';
 
 let directory: string;
 beforeEach(() => {
@@ -37,6 +41,45 @@ afterEach(() => {
 });
 
 describe('browser history favicon storage', () => {
+  test('clearing icon caches respects visit time and retains history and source URLs', () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(100);
+    recordBrowserHistory('https://example.com/old', 'Old', 'https://example.com/icon.png');
+    updateBrowserHistoryFaviconData('https://example.com/old', 'data:image/png;base64,aWNvbg==');
+    clock.mockReturnValue(200);
+    recordBrowserHistory('https://example.com/new', 'New', 'https://example.com/icon.png');
+    updateBrowserHistoryFaviconData('https://example.com/new', 'data:image/png;base64,aWNvbg==');
+    const pendingCacheSignal = getBrowserFaviconCacheSignal();
+    clearBrowserHistoryFaviconDataSince(150);
+    expect(pendingCacheSignal.aborted).toBe(true);
+    expect(readBrowserHistoryFavicon('https://example.com/old')?.faviconDataUrl).toBe(
+      'data:image/png;base64,aWNvbg==',
+    );
+    expect(readBrowserHistoryFavicon('https://example.com/new')).toEqual({
+      faviconUrl: 'https://example.com/icon.png',
+      faviconDataUrl: '',
+    });
+    clearBrowserHistoryFaviconDataSince(null);
+    expect(readBrowserHistoryFavicon('https://example.com/old')?.faviconDataUrl).toBe('');
+    expect(listBrowserHistory('')).toHaveLength(2);
+  });
+  test('persists loaded images separately, keeping list payloads and visit metadata small', () => {
+    recordBrowserHistory('https://example.com/', 'Example', 'https://example.com/icon.svg');
+    const before = listBrowserHistory('')[0];
+    updateBrowserHistoryFaviconData('https://example.com/', 'data:image/png;base64,aWNvbg==');
+    expect(readBrowserHistoryFavicon('https://example.com/')).toEqual({
+      faviconUrl: 'https://example.com/icon.svg',
+      faviconDataUrl: 'data:image/png;base64,aWNvbg==',
+    });
+    expect(listBrowserHistory('')[0]).toEqual(before);
+    updateBrowserHistoryFaviconData('https://missing.example/', 'data:image/png;base64,aWNvbg==');
+    updateBrowserHistoryFaviconData('https://example.com/', 'data:text/html,private');
+    expect(listBrowserHistory('')).toHaveLength(1);
+    expect(readBrowserHistoryFavicon('https://example.com/')?.faviconDataUrl).toBe(
+      'data:image/png;base64,aWNvbg==',
+    );
+    deleteBrowserHistory(['https://example.com/']);
+    expect(readBrowserHistoryFavicon('https://example.com/')).toBeNull();
+  });
   test('persists icons across reads and updates them without counting another visit', () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(100);
     recordBrowserHistory('https://example.com/docs', 'Docs', 'https://cdn.example.com/site.svg');
@@ -76,6 +119,10 @@ describe('browser history favicon storage', () => {
     expect(listBrowserHistory('Docs')).toEqual([
       { url: 'https://example.com/docs', title: 'Docs', lastVisitAt: 10, visitCount: 3 },
     ]);
+    expect(readBrowserHistoryFavicon('https://example.com/docs')).toEqual({
+      faviconUrl: '',
+      faviconDataUrl: '',
+    });
     const unchangedDb = new Database(dbPath, { readonly: true });
     expect(unchangedDb.pragma('table_info(imported_history)')).toHaveLength(4);
     unchangedDb.close();
@@ -90,6 +137,10 @@ describe('browser history favicon storage', () => {
       faviconUrl: 'https://example.com/brand.svg',
     });
     expect(listBrowserHistory('')).toHaveLength(2);
+    updateBrowserHistoryFaviconData('https://example.com/docs', 'data:image/png;base64,aWNvbg==');
+    expect(readBrowserHistoryFavicon('https://example.com/docs')?.faviconDataUrl).toBe(
+      'data:image/png;base64,aWNvbg==',
+    );
   });
 
   test('rejects non-web icons, sanitizes URL credentials, and never creates visits from icon updates', () => {

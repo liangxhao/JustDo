@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   getCookies: vi.fn(),
   clearDownloads: vi.fn(),
   clearHistory: vi.fn(),
+  clearFaviconData: vi.fn(),
   clearCredentials: vi.fn(),
   countDownloads: vi.fn(),
   countHistory: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock('electron', () => ({
 vi.mock('./browserDataImportService', () => ({
   clearBrowserDownloadsSince: mocks.clearDownloads,
   clearBrowserHistorySince: mocks.clearHistory,
+  clearBrowserHistoryFaviconDataSince: mocks.clearFaviconData,
   clearImportedCredentialsSince: mocks.clearCredentials,
   countBrowserDownloadsSince: mocks.countDownloads,
   countBrowserHistorySince: mocks.countHistory,
@@ -130,6 +132,7 @@ describe('browserClearDataService', () => {
       ],
     });
     expect(mocks.clearData).toHaveBeenCalledWith({ dataTypes: ['cache'] });
+    expect(mocks.clearFaviconData).toHaveBeenCalledWith(mocks.clearHistory.mock.calls[0][0]);
     expect(mocks.clearHistory).toHaveBeenCalledWith(expect.any(Number));
     expect(mocks.clearDownloads).not.toHaveBeenCalled();
     expect(mocks.clearCredentials).toHaveBeenCalledWith(expect.any(Number));

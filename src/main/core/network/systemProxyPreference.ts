@@ -28,6 +28,24 @@ export type SystemProxySettings = {
 const dynamicBrowserSessions = new Map<string, Electron.Session>();
 let currentBrowserProxySettings = defaultBrowserProxySettings;
 
+export const getBrowserProxyCredentials = (): {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+} | null => {
+  const settings = currentBrowserProxySettings;
+  const proxyUrl = settings.mode === ProxyMode.CUSTOM ? buildCustomProxyUrl(settings.custom) : null;
+  if (!proxyUrl || !settings.custom.username?.trim()) return null;
+  const parsed = new URL(proxyUrl);
+  return {
+    host: parsed.hostname.replace(/^\[|\]$/gu, '').toLowerCase(),
+    port: Number(settings.custom.port),
+    username: settings.custom.username.trim(),
+    password: settings.custom.password ?? '',
+  };
+};
+
 export const isSystemProxyEnabled = (config?: SystemProxySettings): boolean => {
   return resolveProxyMode(config) === ProxyMode.SYSTEM;
 };

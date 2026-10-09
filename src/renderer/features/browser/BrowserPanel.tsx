@@ -88,6 +88,7 @@ import Tooltip from '@/shared/components/ui/Tooltip';
 
 import { BrowserInterventionBar } from './BrowserInterventionBar';
 import { BrowserRecordingControls } from './BrowserRecordingControls';
+import BrowserTabIcon from './BrowserTabIcon';
 import {
   browserToolbarButtonClassName as modeButton,
   browserToolbarGroupClassName,
@@ -103,7 +104,6 @@ type GuestEvent = Event & {
   channel?: string;
   errorCode?: number;
   errorDescription?: string;
-  favicons?: string[];
   isMainFrame?: boolean;
   result?: { activeMatchOrdinal?: number; matches?: number };
   title?: string;
@@ -253,20 +253,6 @@ const resolveAddressInput = (raw: string): string | null =>
   );
 
 const isLocalFileAddress = (raw: string): boolean => /^file:/iu.test(raw.trim());
-
-const normalizeFaviconUrl = (raw: string): string | null => {
-  if (raw.length > 512 * 1024) return null;
-  if (/^data:image\//i.test(raw)) return raw;
-  try {
-    const parsed = new URL(raw);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
-    parsed.username = '';
-    parsed.password = '';
-    return parsed.toString();
-  } catch {
-    return null;
-  }
-};
 
 export const getBrowserTabDisplayTitle = (tab: BrowserPanelTab): string => {
   if (tab.customTitle) return tab.customTitle;
@@ -904,6 +890,21 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     });
   }, []);
 
+  useEffect(
+    () =>
+      window.electron.browser.onPanelFaviconUpdated(event => {
+        const targetId = [...webviewsRef.current.entries()].find(([, webview]) => {
+          try {
+            return webview.getWebContentsId?.() === event.guestId && webview.getURL() === event.url;
+          } catch {
+            return false;
+          }
+        })?.[0];
+        if (targetId) updateTab(targetId, { faviconUrl: event.faviconUrl });
+      }),
+    [updateTab],
+  );
+
   const respondToHttpAuth = useCallback((response: BrowserPanelHttpAuthResponse) => {
     window.electron.browser.respondToPanelHttpAuth(response);
     setHttpAuthRequests(current => current.filter(item => item.id !== response.id));
@@ -1292,12 +1293,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       }
       webview.addEventListener('page-title-updated', event => {
         updateTab(targetId, { title: (event as GuestEvent).title ?? webview.getTitle() });
-      });
-      webview.addEventListener('page-favicon-updated', event => {
-        const faviconUrl = (event as GuestEvent).favicons
-          ?.map(normalizeFaviconUrl)
-          .find((value): value is string => Boolean(value));
-        if (faviconUrl) updateTab(targetId, { faviconUrl });
       });
       webview.addEventListener('found-in-page', event => {
         if (activeTargetRef.current !== targetId) return;
@@ -2232,16 +2227,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
                   setTabMenu({ targetId: tab.targetId, x: event.clientX, y: event.clientY });
                 }}
               >
-                {tab.faviconUrl ? (
-                  <img
-                    src={tab.faviconUrl}
-                    alt=""
-                    className="h-4 w-4 shrink-0 rounded-sm object-contain"
-                    onError={() => updateTab(tab.targetId, { faviconUrl: undefined })}
-                  />
-                ) : (
-                  <GlobeAltIcon className="h-4 w-4 shrink-0 opacity-60" aria-hidden="true" />
-                )}
+                <BrowserTabIcon faviconUrl={tab.faviconUrl} />
                 {renamingTargetId === tab.targetId ? (
                   <input
                     autoFocus
