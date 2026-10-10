@@ -1,8 +1,10 @@
 type DiagnosticScanProgress =
   import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticScanProgress;
 type DiagnosticQuery = import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticQuery;
-type DiagnosticReadResult = import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticReadResult;
-type DiagnosticListResult = import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticListResult;
+type DiagnosticReadResult =
+  import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticReadResult;
+type DiagnosticListResult =
+  import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticListResult;
 type DiagnosticExportResult =
   import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticExportResult;
 import type {
@@ -77,9 +79,9 @@ type ApprovalKind = import('../../shared/security/approvals').ApprovalKind;
 type ApprovalRequest = import('../../shared/security/approvals').ApprovalRequest;
 type ApprovalResolved = import('../../shared/security/approvals').ApprovalResolved;
 type ApprovalDecision = import('../../shared/security/approvals').ApprovalDecision;
-type AgentRuntimeSettings =
-  import('../../shared/agents/agentRuntimeSettings').AgentRuntimeSettings;
-type ExternalAgentSettings = import('../../shared/integrations/externalAgents').ExternalAgentSettings;
+type AgentRuntimeSettings = import('../../shared/agents/agentRuntimeSettings').AgentRuntimeSettings;
+type ExternalAgentSettings =
+  import('../../shared/integrations/externalAgents').ExternalAgentSettings;
 type ExternalAgentId = import('../../shared/integrations/externalAgents').ExternalAgentId;
 type ExternalAgentTestResult =
   import('../../shared/integrations/externalAgents').ExternalAgentTestResult;
@@ -874,9 +876,9 @@ interface IElectronAPI {
     onStateChanged: (callback: (state: WindowState) => void) => () => void;
   };
   workspaceWindow: {
-    getWindowState: (generation: string) => Promise<
-      import('../../shared/cowork/workspaceWindow').WorkspaceNativeWindowState | null
-    >;
+    getWindowState: (
+      generation: string,
+    ) => Promise<import('../../shared/cowork/workspaceWindow').WorkspaceNativeWindowState | null>;
     control: (
       generation: string,
       action: import('../../shared/cowork/workspaceWindow').WorkspaceWindowControl,
@@ -918,6 +920,7 @@ interface IElectronAPI {
       ) => Promise<SessionReviewFileResult>;
     };
     startSession: (options: {
+      rendererDispatch?: boolean;
       prompt: string;
       gatewayPrompt?: string;
       cwd?: string;
@@ -941,6 +944,14 @@ interface IElectronAPI {
     cancelSessionStart: (
       input: import('../../shared/cowork/sessionStart').CancelSessionStartInput,
     ) => Promise<import('../../shared/cowork/sessionStart').CancelSessionStartResult>;
+    onNativeSessionDispatch: (
+      callback: (
+        request: import('../../shared/cowork/nativeSessionDispatch').NativeSessionDispatchRequest,
+      ) => void,
+    ) => () => void;
+    respondNativeSessionDispatch: (
+      response: import('../../shared/cowork/nativeSessionDispatch').NativeSessionDispatchResponse,
+    ) => Promise<{ success: boolean }>;
     stopSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     deleteSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     copySession: (

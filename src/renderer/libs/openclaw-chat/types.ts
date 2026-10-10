@@ -5,6 +5,8 @@
 import type { BrowserAnnotationDisplay } from '@shared/browser/browser';
 import type { BrowserRecordingDraft } from '@shared/browser/browserRecording';
 
+import type { NativeCanvasPreview } from './pipeline/native-canvas';
+
 export type UserMessageHistoryAction = 'edit' | 'withdraw';
 
 // ─── ChatItem (rendering pipeline output) ───────────────────────────────────
@@ -86,17 +88,19 @@ export type MessageContentItem =
   | { type: 'browser_recording'; recording: BrowserRecordingDraft }
   | {
       type: 'canvas';
-      preview: {
-        kind: 'canvas';
-        surface: 'assistant_message';
-        render: 'url';
-        title?: string;
-        preferredHeight?: number;
-        url?: string;
-        viewId?: string;
-        className?: string;
-        style?: string;
-      };
+      preview:
+        | NativeCanvasPreview
+        | {
+            kind: 'canvas';
+            surface: 'assistant_message';
+            render: 'url';
+            title?: string;
+            preferredHeight?: number;
+            url?: string;
+            viewId?: string;
+            className?: string;
+            style?: string;
+          };
       rawText?: string | null;
     };
 
@@ -124,17 +128,19 @@ export type ToolCard = {
   outputText?: string;
   isError?: boolean;
   messageId?: string;
-  preview?: {
-    kind: 'canvas';
-    surface: 'assistant_message';
-    render: 'url';
-    title?: string;
-    preferredHeight?: number;
-    url?: string;
-    viewId?: string;
-    className?: string;
-    style?: string;
-  };
+  preview?:
+    | NativeCanvasPreview
+    | {
+        kind: 'canvas';
+        surface: 'assistant_message';
+        render: 'url';
+        title?: string;
+        preferredHeight?: number;
+        url?: string;
+        viewId?: string;
+        className?: string;
+        style?: string;
+      };
 };
 
 // ─── Gateway Message (raw format from gateway) ─────────────────────────────

@@ -1,5 +1,10 @@
 import { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
 
+import {
+  decodeNativeCanvasResult,
+  type NativeCanvasPreview,
+  stripNativeWidgetFallbacks,
+} from '../pipeline/native-canvas';
 import type {
   AssistantTurn,
   ContentItem,
@@ -64,7 +69,14 @@ export interface WaitingStatusTimelineItem {
   status: WaitingStatusProjection;
 }
 
+export interface NativeWidgetTimelineItem {
+  kind: 'native-widget';
+  key: string;
+  preview: NativeCanvasPreview;
+}
+
 export type ActiveTurnTimelineItem =
+  | NativeWidgetTimelineItem
   | ProcessSummaryTimelineItem
   | LiveProcessTimelineItem
   | ProgressReceiptTimelineItem
@@ -140,6 +152,16 @@ export function projectTurnItems(
   let archived: Array<ThinkingItem | ToolItem> = [];
   const failedTools: ToolItem[] = [];
   let summarySegment = 0;
+  const widgets = new Map<ToolItem, NativeCanvasPreview>();
+  const nativeDocIds = new Set<string>();
+  for (const item of turn.items) {
+    if (item.type !== 'tool' || item.status !== 'completed') continue;
+    const preview = decodeNativeCanvasResult(item.output, item.name, item.toolCallId);
+    if (preview && !nativeDocIds.has(preview.docId)) {
+      widgets.set(item, preview);
+      nativeDocIds.add(preview.docId);
+    }
+  }
 
   const flushSummary = () => {
     if (archived.length === 0) return;
@@ -161,11 +183,23 @@ export function projectTurnItems(
   };
 
   for (const item of turn.items) {
-    if (item.type === 'content' && !item.text.trim()) continue;
+    const content =
+      item.type === 'content'
+        ? { ...item, text: stripNativeWidgetFallbacks(item.text, nativeDocIds) }
+        : null;
+    if (content && !content.text.trim()) continue;
     if (item.type === 'thinking' || item.type === 'tool') {
       if (item.type === 'tool') {
         if (item.status === 'failed') failedTools.push(item);
         const normalizedName = item.name.trim().toLowerCase();
+        const widget = widgets.get(item);
+        if (widget) {
+          archived.push(item);
+          flushSummary();
+          projected.push({ kind: 'native-widget', key: `widget:${item.id}`, preview: widget });
+          summarySegment += 1;
+          continue;
+        }
         if (isPresentPlanToolName(item.name)) {
           flushSummary();
           projected.push({ kind: 'plan-presentation', key: `plan:${item.id}`, item });
@@ -191,7 +225,7 @@ export function projectTurnItems(
 
     flushSummary();
     if (item.type === 'content') {
-      projected.push({ kind: 'content', key: item.id, item });
+      projected.push({ kind: 'content', key: item.id, item: content! });
       summarySegment += 1;
     } else {
       // A failed Tool already has a red status indicator and expandable error

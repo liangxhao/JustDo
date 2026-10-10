@@ -571,7 +571,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       ...(collaborationSessionId && collaborationSessionId === currentSessionId
         ? [COLLABORATION_DISPLAY_TAB_ID]
         : []),
-      ...(swarmWorkflowSessionId && swarmWorkflowSessionId === currentSessionId ? [SWARM_WORKFLOW_DISPLAY_TAB_ID] : []),
+      ...(swarmWorkflowSessionId && swarmWorkflowSessionId === currentSessionId
+        ? [SWARM_WORKFLOW_DISPLAY_TAB_ID]
+        : []),
       ...(isReviewOpen ? [REVIEW_TAB_ID] : []),
       ...sideChatTabs.map(tab => tab.id),
       ...recordingReviewTabs.tabs.map(tab => tab.id),
@@ -822,7 +824,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const currentSessionRuntimeRunningRef = useRef(currentSessionRuntimeRunning);
   currentSessionRuntimeRunningRef.current = currentSessionRuntimeRunning;
   const canonicalGatewaySessionKey = currentSession
-    ? currentSession.external?.sessionKey ||
+    ? currentSession.nativeSessionKey ||
+      currentSession.external?.sessionKey ||
       `agent:${currentSession.agentId?.trim() || 'main'}:justdo:${currentSession.id}`
     : null;
   const [reportedGatewaySessionKey, setReportedGatewaySessionKey] = useState<{
@@ -1075,6 +1078,32 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           worktree: worktree === true,
         },
         {
+          dispatchInitialTurn: async (request, isTransportCancelled) => {
+            if (
+              isPendingStartCancelled() ||
+              isTransportCancelled() ||
+              request.clientTurnId !== clientTurnId
+            ) {
+              throw Object.assign(new Error(i18nService.t('coworkInitialDispatchCancelled')), {
+                requestSent: false,
+              });
+            }
+            const deadline = Date.now() + 10_000;
+            while (Date.now() < deadline) {
+              if (isPendingStartCancelled() || isTransportCancelled())
+                throw Object.assign(new Error(i18nService.t('coworkInitialDispatchCancelled')), {
+                  requestSent: false,
+                });
+              const snapshot = chatWrapperRef.current?.getExportSnapshot();
+              if (snapshot?.sessionKey === request.sessionKey && !snapshot.isLoading) {
+                return chatWrapperRef.current!.dispatchInitialTurn(request.params);
+              }
+              await new Promise(resolve => setTimeout(resolve, 30));
+            }
+            throw Object.assign(new Error(i18nService.t('coworkInitialDispatchUnavailable')), {
+              requestSent: false,
+            });
+          },
           beforeSessionSelected: session => {
             if (pendingStartRef.current?.requestId === requestId)
               pendingStartRef.current.canonicalSessionId = session.id;
@@ -1088,22 +1117,33 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             const targetAgentId = session.agentId?.trim() || sourceAgentId;
             chatWrapperRef.current?.registerSessionPromotion(
               `agent:${sourceAgentId}:justdo:${tempSessionId}`,
-              `agent:${targetAgentId}:justdo:${session.id}`,
+              session.nativeSessionKey ||
+                session.external?.sessionKey ||
+                `agent:${targetAgentId}:justdo:${session.id}`,
             );
           },
         },
       );
 
       if (!startedSession && (startError || startCancelled)) {
+        const failedSessionId =
+          pendingStartRef.current?.requestId === requestId
+            ? (pendingStartRef.current.canonicalSessionId ?? tempSessionId)
+            : tempSessionId;
+        const selected = store.getState().cowork.currentSession;
+        const failedSessionKey =
+          selected?.id === failedSessionId
+            ? selected.nativeSessionKey ||
+              selected.external?.sessionKey ||
+              `agent:${selected.agentId?.trim() || 'main'}:justdo:${failedSessionId}`
+            : `agent:${currentAgentId?.trim() || 'main'}:justdo:${failedSessionId}`;
         dispatch(
           updateSessionStatus({
-            sessionId: tempSessionId,
+            sessionId: failedSessionId,
             status: startCancelled ? 'idle' : 'error',
           }),
         );
-        chatWrapperRef.current?.clearSending(
-          `agent:${currentAgentId?.trim() || 'main'}:justdo:${tempSessionId}`,
-        );
+        chatWrapperRef.current?.clearSending(failedSessionKey);
         if (startCancelled && store.getState().cowork.currentSession?.id === tempSessionId) {
           pendingPromptRef.current = null;
           pendingAttachmentsRef.current = [];
@@ -1135,7 +1175,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       if (isPendingStartCancelled() && startedSession) {
         cancelledStartStopped = await coworkService.stopSession(startedSession.id);
         if (cancelledStartStopped) {
-          const sessionKey = `agent:${startedSession.agentId?.trim() || 'main'}:justdo:${startedSession.id}`;
+          const sessionKey =
+            startedSession.nativeSessionKey ||
+            startedSession.external?.sessionKey ||
+            `agent:${startedSession.agentId?.trim() || 'main'}:justdo:${startedSession.id}`;
           chatWrapperRef.current?.settleConfirmedRun(
             sessionKey,
             acceptedRunId ?? clientTurnId,
@@ -1159,7 +1202,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   const handleStopSession = async () => {
     if (!currentSession) return false;
-    if (currentSession.id.startsWith('temp-') && pendingStartRef.current) {
+    if (
+      pendingStartRef.current &&
+      (currentSession.id === pendingStartRef.current.temporarySessionId ||
+        currentSession.id === pendingStartRef.current.canonicalSessionId)
+    ) {
       const pendingStart = pendingStartRef.current;
       pendingStart.cancelled = true;
       pendingStart.cancellationAction = 'stop';
@@ -2864,6 +2911,30 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             {/* Messages */}
             <JustDoChatWrapper
               ref={chatWrapperRef}
+              onWidgetDraft={
+                sessionTranscriptMutation === null && !currentSession.external?.readOnly
+                  ? (sessionKey, text) => {
+                      const active = store.getState().cowork.currentSession;
+                      if (
+                        !active ||
+                        active.id !== currentSessionIdRef.current ||
+                        sessionKey !== currentGatewaySessionKeyRef.current ||
+                        !text.trim() ||
+                        text.length > 4000 ||
+                        /^\s*[!/]/.test(text)
+                      )
+                        return;
+                      const composer = promptInputRef.current;
+                      if (composer) {
+                        composer.appendValue(text);
+                      } else {
+                        const previous = store.getState().cowork.draftPrompts[active.id] ?? '';
+                        const draft = previous ? `${previous}\n\n${text}` : text;
+                        dispatch(setDraftPrompt({ sessionId: active.id, draft }));
+                      }
+                    }
+                  : undefined
+              }
               onMessageQuote={
                 sessionTranscriptMutation === null && !currentSession.external?.readOnly
                   ? handleMessageQuote
@@ -3124,7 +3195,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     sessionId={currentSession.id}
                     snapshot={swarmWorkflowDiscovery.result}
                     onRefresh={swarmWorkflowDiscovery.refresh}
-                    active={activeDisplayTabId === SWARM_WORKFLOW_DISPLAY_TAB_ID && isWorkspaceVisible}
+                    active={
+                      activeDisplayTabId === SWARM_WORKFLOW_DISPLAY_TAB_ID && isWorkspaceVisible
+                    }
                     tasks={subtasks}
                     onOpenTask={openSubtask}
                   />

@@ -74,6 +74,7 @@ import {
   SlashCommandBeforeSendHook,
 } from '../../../shared/cowork/slashCommands';
 import { type NormalizedAgentEvent } from '../../../shared/openclaw/agentEvent';
+import { isChatSendStopReceipt } from '../../../shared/openclaw/chatSendReceipt';
 import { isGatewayRequestOutcomeUnknown } from '../../../shared/openclaw/gatewayRequestOutcome';
 import {
   classifyAgentEvent,
@@ -346,6 +347,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       planMode: options.planMode,
       untrustedContext: options.untrustedContext,
       onAccepted: options.onAccepted,
+      dispatchChatSend: options.dispatchChatSend,
     });
   }
 
@@ -880,6 +882,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       untrustedContext?: string;
       hiddenUserMessage?: boolean;
       onAccepted?: () => void;
+      dispatchChatSend?: CoworkStartOptions['dispatchChatSend'];
     },
   ): Promise<void> {
     if (!hasMessageInput({ prompt, attachments: options.attachments })) {
@@ -1012,34 +1015,49 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             : undefined;
         if (isStartCancelled()) return;
         pendingStart.phase = 'sending';
-        const result = await client.request<SessionGoalMutationResult | { runId?: string }>(
-          'chat.send',
-          {
-            sessionKey,
-            ...(commandSessionId ? { sessionId: commandSessionId } : {}),
-            message: goalStartObjective ?? prompt.trim(),
-            ...(goalStartObjective !== null
-              ? {
-                  intent: {
-                    kind: 'session-goal-start',
-                    version: 1,
-                    issuedAtMs: goalIssuedAtMs,
-                  },
-                }
-              : {}),
-            deliver: false,
-            justdoUserInitiated: true,
-            ...(options.untrustedContext?.trim()
-              ? { justdoUntrustedContext: options.untrustedContext.trim() }
-              : {}),
-            ...(options.hiddenUserMessage ? { justdoHideUserMessage: true } : {}),
-            // Structured Goal admission rejects transient timeout overrides because
-            // recovery must use only durable session settings.
-            ...(goalStartObjective === null ? { timeoutMs: 0 } : {}),
-            idempotencyKey: runId,
-            ...(attachments ? { attachments } : {}),
-          },
-        );
+        const sendParams: Record<string, unknown> = {
+          sessionKey,
+          ...(commandSessionId ? { sessionId: commandSessionId } : {}),
+          message: goalStartObjective ?? prompt.trim(),
+          ...(goalStartObjective !== null
+            ? {
+                intent: {
+                  kind: 'session-goal-start',
+                  version: 1,
+                  issuedAtMs: goalIssuedAtMs,
+                },
+              }
+            : {}),
+          deliver: false,
+          justdoUserInitiated: true,
+          ...(options.untrustedContext?.trim()
+            ? { justdoUntrustedContext: options.untrustedContext.trim() }
+            : {}),
+          ...(options.hiddenUserMessage ? { justdoHideUserMessage: true } : {}),
+          // Structured Goal admission rejects transient timeout overrides because
+          // recovery must use only durable session settings.
+          ...(goalStartObjective === null ? { timeoutMs: 0 } : {}),
+          idempotencyKey: runId,
+          ...(attachments ? { attachments } : {}),
+        };
+        const result = (options.dispatchChatSend
+          ? await options.dispatchChatSend(sendParams, preparedSession)
+          : await client.request('chat.send', sendParams)) as
+          | SessionGoalMutationResult
+          | { runId?: string };
+        if (goalStartObjective === null && isChatSendStopReceipt(result)) {
+          this.cleanupSessionTurn(sessionId);
+          this.rootRunIdBySession.delete(sessionId);
+          this.store.updateSession(sessionId, { status: 'idle' });
+          const timing = options.clientTurnId
+            ? this.store.getSessionRunByClientTurnId(options.clientTurnId)
+            : undefined;
+          if (timing?.state === 'running') this.store.finishSessionRun(timing.id, 'aborted', Date.now());
+          this.resolveTurn(sessionId);
+          this.emit('complete', sessionId, 'idle');
+          options.onAccepted?.();
+          return;
+        }
         if (goalStartObjective !== null) {
           const receipt = result as Partial<SessionGoalMutationResult>;
           const receiptGoal = normalizeSessionGoal(receipt.goal);

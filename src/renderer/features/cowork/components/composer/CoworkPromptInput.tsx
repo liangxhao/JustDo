@@ -113,6 +113,7 @@ import { ActiveSkillBadge } from '@/features/plugins/skills';
 import type { ChatContextUsageSnapshot } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
+import { rendererPreferences } from '@/services/rendererPreferences';
 import PaperClipIcon from '@/shared/components/icons/PaperClipIcon';
 import XMarkIcon from '@/shared/components/icons/XMarkIcon';
 import Modal from '@/shared/components/ui/Modal';
@@ -357,7 +358,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             return false;
           }
           try {
-            const prepared = await window.electron.cowork.prepareSwarmWorkflow(swarmWorkflowOptions, sessionId);
+            const prepared = await window.electron.cowork.prepareSwarmWorkflow(
+              swarmWorkflowOptions,
+              sessionId,
+            );
             if (!prepared.success) {
               const key = {
                 disabled: 'swarmWorkflowDisabled',
@@ -379,7 +383,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             );
             return false;
           }
-          if (currentDraftKeyRef.current !== draftKey || !isCurrentSwarmWorkflow(draftKey, swarmWorkflowOptions))
+          if (
+            currentDraftKeyRef.current !== draftKey ||
+            !isCurrentSwarmWorkflow(draftKey, swarmWorkflowOptions)
+          )
             return false;
         }
         const submittedQuotes = [...submittedMessageQuotes(prompt, messageQuotes, isSideChat)];
@@ -533,7 +540,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       : null;
     const hasNoAvailableModels = !remoteManaged && availableModels.length === 0;
     const modelSupportsImage = !!effectiveSelectedModel?.supportsImage;
-    const [value, setValue] = useState(draftPrompt);
+    const [value, setRenderedValue] = useState(draftPrompt);
+    const latestValueRef = useRef(value);
+    // Every text update must be visible to imperative appends immediately,
+    // including draft restoration and edits before React renders again.
+    const setValue = useCallback((nextValue: string) => {
+      latestValueRef.current = nextValue;
+      setRenderedValue(nextValue);
+    }, []);
     const [showFolderMenu, setShowFolderMenu] = useState(false);
     const [showFolderRequiredWarning, setShowFolderRequiredWarning] = useState(false);
     const [isDraggingFiles, setIsDraggingFiles] = useState(false);
@@ -621,7 +635,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const slashCommandRefreshSeqRef = useRef(0);
     const goalClearPendingRef = useRef(false);
     const goalClearTargetIdRef = useRef<string | null>(null);
-    const latestValueRef = useRef(value);
     const submittedDraftsRef = useRef(new Set<string>());
     const visibleDraftRef = useRef({ value, attachments });
     visibleDraftRef.current = { value, attachments };
@@ -635,7 +648,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       setPendingGoalObjective(null);
       setGoalExecution(null);
       if (!isSideChat && sessionId && !sessionId.startsWith('temp-')) {
-        window.localStorage.removeItem(goalFeedbackStorageKey(sessionId));
+        rendererPreferences.removeItem(goalFeedbackStorageKey(sessionId));
       }
       updateCompletionFeedback(null);
     }, [isSideChat, sessionId, updateCompletionFeedback]);
@@ -720,7 +733,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       let restoredFeedback: GoalCompletionFeedbackState | null = null;
       if (!isSideChat && sessionId && !sessionId.startsWith('temp-')) {
         try {
-          const raw = window.localStorage.getItem(goalFeedbackStorageKey(sessionId));
+          const raw = rendererPreferences.getItem(goalFeedbackStorageKey(sessionId));
           const parsed = raw ? (JSON.parse(raw) as Partial<GoalCompletionFeedbackState>) : null;
           if (parsed?.completedGoalId) {
             restoredFeedback = {
@@ -729,7 +742,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             };
           }
         } catch {
-          window.localStorage.removeItem(goalFeedbackStorageKey(sessionId));
+          rendererPreferences.removeItem(goalFeedbackStorageKey(sessionId));
         }
       }
       updateCompletionFeedback(restoredFeedback);
@@ -860,7 +873,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         setValue(nextValue);
         updateSlashMenu(nextValue);
       },
-      [updateSlashMenu],
+      [setValue, updateSlashMenu],
     );
 
     const focusInputAtEnd = useCallback(
@@ -968,7 +981,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         window.removeEventListener('cowork:focus-input', handleFocusInput);
         if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
       };
-    }, [dispatch, draftKey, ownerWindow]);
+    }, [dispatch, draftKey, ownerWindow, setValue]);
 
     useEffect(() => {
       if (workingDirectory?.trim()) {
@@ -980,7 +993,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     useEffect(() => {
       setValue(draftPrompt);
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [draftKey]); // intentionally omit draftPrompt to only trigger on session switch
+    }, [draftKey, setValue]); // intentionally omit draftPrompt to only trigger on session switch
 
     useEffect(() => {
       if (value !== draftPrompt) {
@@ -1009,7 +1022,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           })
         ) {
           window.dispatchEvent(
-            new CustomEvent('app:showToast', { detail: i18nService.t('swarmWorkflowGoalConflict') }),
+            new CustomEvent('app:showToast', {
+              detail: i18nService.t('swarmWorkflowGoalConflict'),
+            }),
           );
           return;
         }
@@ -1324,7 +1339,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   completedGoalId: feedback.completedGoalId,
                   preparedObjective: objective,
                 };
-                window.localStorage.setItem(
+                rendererPreferences.setItem(
                   goalFeedbackStorageKey(sessionId),
                   JSON.stringify(nextFeedback),
                 );
@@ -1364,7 +1379,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             const submissionStillCurrent = submissionIsCurrent();
             clearSubmittedInput(submissionStillCurrent);
             if (submissionStillCurrent) {
-              window.localStorage.removeItem(goalFeedbackStorageKey(sessionId));
+              rendererPreferences.removeItem(goalFeedbackStorageKey(sessionId));
               updateCompletionFeedback(null);
             }
             return;
@@ -1482,6 +1497,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       },
       [
         value,
+        setValue,
         isRunActive,
         canQueue,
         goalSubmissionBlocked,
@@ -1598,6 +1614,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       });
     }, [
       commitValue,
+      setValue,
       refreshSlashCommands,
       resetSlashMenuState,
       supportsSlashCommands,
@@ -1618,7 +1635,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           resetSlashMenuState();
         }
       },
-      [refreshSlashCommands, resetSlashMenuState, supportsSlashCommands, updateSlashMenu],
+      [setValue, refreshSlashCommands, resetSlashMenuState, supportsSlashCommands, updateSlashMenu],
     );
 
     const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -2047,7 +2064,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             break;
         }
       },
-      [value, setValue, closeContextMenu, draftKey, swarmWorkflowOptions, clearAcceptedSwarmWorkflow, ownerWindow],
+      [
+        value,
+        setValue,
+        closeContextMenu,
+        draftKey,
+        swarmWorkflowOptions,
+        clearAcceptedSwarmWorkflow,
+        ownerWindow,
+      ],
     );
 
     const contextMenuItems = useMemo(() => {
@@ -2175,7 +2200,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             feedback &&
             shouldDiscardGoalCompletionFeedback(feedback.completedGoalId, nextGoal?.id)
           ) {
-            window.localStorage.removeItem(goalFeedbackStorageKey(sessionId));
+            rendererPreferences.removeItem(goalFeedbackStorageKey(sessionId));
             updateCompletionFeedback(null);
           }
           // A successful null response can occur between command acceptance and Gateway metadata
@@ -2378,7 +2403,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         preparedObjective: goal.objective,
       };
       if (sessionId && !sessionId.startsWith('temp-')) {
-        window.localStorage.setItem(
+        rendererPreferences.setItem(
           goalFeedbackStorageKey(sessionId),
           JSON.stringify(nextFeedback),
         );
@@ -2389,7 +2414,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const handleGoalCancelImproving = useCallback(() => {
       if (sessionId && !sessionId.startsWith('temp-')) {
-        window.localStorage.removeItem(goalFeedbackStorageKey(sessionId));
+        rendererPreferences.removeItem(goalFeedbackStorageKey(sessionId));
       }
       updateCompletionFeedback(null);
     }, [sessionId, updateCompletionFeedback]);
@@ -2834,7 +2859,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 <FeatureTextarea
                   containerClassName={isLarge ? undefined : 'basis-full'}
                   key={draftKey}
-                  featureLabel={swarmWorkflowOptions ? i18nService.t('swarmWorkflowTitle') : undefined}
+                  featureLabel={
+                    swarmWorkflowOptions ? i18nService.t('swarmWorkflowTitle') : undefined
+                  }
                   featureIcon={swarmWorkflowComposerFeature.icon}
                   removeLabel={i18nService.t('swarmWorkflowRemoveToken')}
                   onRemoveFeature={() => setSwarmWorkflowOptions(undefined)}
@@ -3109,7 +3136,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 <FeatureTextarea
                   containerClassName={isLarge ? undefined : 'basis-full'}
                   key={draftKey}
-                  featureLabel={swarmWorkflowOptions ? i18nService.t('swarmWorkflowTitle') : undefined}
+                  featureLabel={
+                    swarmWorkflowOptions ? i18nService.t('swarmWorkflowTitle') : undefined
+                  }
                   featureIcon={swarmWorkflowComposerFeature.icon}
                   removeLabel={i18nService.t('swarmWorkflowRemoveToken')}
                   onRemoveFeature={() => setSwarmWorkflowOptions(undefined)}

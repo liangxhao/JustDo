@@ -6,22 +6,26 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { Provider } from 'react-redux';
 
-import App from '@/app/App';
-import { store } from '@/store';
+import { rendererPreferences } from '@/services/rendererPreferences';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
   throw new Error('Failed to find the root element');
 }
 
-try {
-  ReactDOM.createRoot(rootElement).render(
+async function startRenderer(): Promise<void> {
+  // Hydrate before slice initializers and theme consumers run on the new HTTP origin.
+  await rendererPreferences.initialize();
+  const [{ default: App }, { store }] = await Promise.all([import('@/app/App'), import('@/store')]);
+  ReactDOM.createRoot(rootElement!).render(
     <React.StrictMode>
       <Provider store={store}>
         <App />
       </Provider>
     </React.StrictMode>,
   );
-} catch (error) {
-  console.error('Failed to render the app:', error);
 }
+
+void startRenderer().catch(error => {
+  console.error('Failed to render the app:', error);
+});

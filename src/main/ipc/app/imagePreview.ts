@@ -1,5 +1,4 @@
 import { BrowserWindow, ipcMain, shell } from 'electron';
-import path from 'path';
 
 import {
   type ImagePreviewDocument,
@@ -8,6 +7,7 @@ import {
   type ImagePreviewOpenResult,
 } from '../../../shared/preview/imagePreview';
 import { t } from '../../core/i18n';
+import { isApplicationRendererOrigin } from '../../core/window/browserPanelSecurity';
 
 const MAX_IMAGE_SOURCE_LENGTH = 32 * 1024 * 1024;
 const MAX_IMAGE_ALT_LENGTH = 512;
@@ -16,8 +16,44 @@ const ALLOWED_IMAGE_PROTOCOLS = new Set(['blob:', 'http:', 'https:', 'localfile:
 type ImagePreviewHandlerOptions = {
   devServerUrl: string;
   getIconPath: () => string | undefined;
+  getMainWindow?: () => BrowserWindow | null;
   isDev: boolean;
   preloadPath: string;
+};
+
+export const resolvePackagedImagePreviewUrl = (mainWindowUrl: string): string | null => {
+  try {
+    const url = new URL(mainWindowUrl);
+    if (
+      url.protocol !== 'http:' ||
+      url.hostname !== '127.0.0.1' ||
+      !url.port ||
+      url.username ||
+      url.password ||
+      !['/', '/index.html'].includes(url.pathname) ||
+      url.search
+    )
+      return null;
+    return new URL('/image-preview.html', url.origin).href;
+  } catch {
+    return null;
+  }
+};
+
+export const isAllowedImagePreviewNavigation = (value: string, entry: string): boolean => {
+  try {
+    const url = new URL(value);
+    const expected = new URL(entry);
+    return (
+      !url.username &&
+      !url.password &&
+      url.origin === expected.origin &&
+      url.pathname === expected.pathname &&
+      url.search === expected.search
+    );
+  } catch {
+    return false;
+  }
 };
 
 export const normalizeImagePreviewRequest = (input: unknown): ImagePreviewOpenRequest | null => {
@@ -45,13 +81,15 @@ export const normalizeImagePreviewRequest = (input: unknown): ImagePreviewOpenRe
 export const registerImagePreviewHandlers = ({
   devServerUrl,
   getIconPath,
+  getMainWindow,
   isDev,
   preloadPath,
 }: ImagePreviewHandlerOptions): void => {
   let previewWindow: BrowserWindow | null = null;
   let currentDocument: ImagePreviewDocument | null = null;
+  let previewEntryUrl: string | null = null;
 
-  const createPreviewWindow = (): BrowserWindow => {
+  const createPreviewWindow = (entryUrl: string): BrowserWindow => {
     const window = new BrowserWindow({
       width: 1000,
       height: 720,
@@ -69,6 +107,7 @@ export const registerImagePreviewHandlers = ({
       enableLargerThanScreen: false,
       webPreferences: {
         nodeIntegration: false,
+        nodeIntegrationInSubFrames: false,
         contextIsolation: true,
         sandbox: true,
         webSecurity: true,
@@ -80,8 +119,27 @@ export const registerImagePreviewHandlers = ({
 
     window.setMenu(null);
     window.webContents.setWindowOpenHandler(({ url }) => {
-      if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+      if (
+        /^https?:\/\//i.test(url) &&
+        !isApplicationRendererOrigin(url, {
+          isDev: false,
+          applicationUrl: entryUrl,
+          devServerUrl,
+        })
+      )
+        void shell.openExternal(url);
       return { action: 'deny' };
+    });
+    window.webContents.on('will-navigate', event => {
+      if (!isAllowedImagePreviewNavigation(event.url, entryUrl)) event.preventDefault();
+    });
+    window.webContents.on('will-frame-navigate', event => {
+      if (event.isMainFrame && !isAllowedImagePreviewNavigation(event.url, entryUrl))
+        event.preventDefault();
+    });
+    window.webContents.on('will-redirect', event => {
+      if (event.isMainFrame && !isAllowedImagePreviewNavigation(event.url, entryUrl))
+        event.preventDefault();
     });
     window.webContents.on('did-finish-load', () => {
       if (currentDocument && !window.isDestroyed()) {
@@ -98,19 +156,13 @@ export const registerImagePreviewHandlers = ({
       if (previewWindow === window) {
         previewWindow = null;
         currentDocument = null;
+        previewEntryUrl = null;
       }
     });
 
-    if (isDev) {
-      const previewUrl = new URL('image-preview.html', `${devServerUrl.replace(/\/+$/, '')}/`);
-      void window.loadURL(previewUrl.toString()).catch(error => {
-        console.error('[ImagePreview] Failed to load development page', error);
-      });
-    } else {
-      void window.loadFile(path.join(__dirname, '../dist/image-preview.html')).catch(error => {
-        console.error('[ImagePreview] Failed to load packaged page', error);
-      });
-    }
+    void window.loadURL(entryUrl).catch(error => {
+      console.error('[ImagePreview] Failed to load application page', error);
+    });
 
     return window;
   };
@@ -118,6 +170,20 @@ export const registerImagePreviewHandlers = ({
   ipcMain.handle(ImagePreviewIpc.Open, (_event, input: unknown): ImagePreviewOpenResult => {
     const request = normalizeImagePreviewRequest(input);
     if (!request) return { success: false, error: 'Invalid image preview request' };
+
+    const mainWindow = getMainWindow?.();
+    const entryUrl = isDev
+      ? new URL('image-preview.html', `${devServerUrl.replace(/\/+$/, '')}/`).href
+      : mainWindow && !mainWindow.isDestroyed()
+        ? resolvePackagedImagePreviewUrl(mainWindow.webContents.getURL())
+        : null;
+    if (!entryUrl) return { success: false, error: t('imagePreviewUnavailable') };
+    if (previewWindow && !previewWindow.isDestroyed() && previewEntryUrl !== entryUrl) {
+      const previous = previewWindow;
+      previewWindow = null;
+      currentDocument = null;
+      previous.destroy();
+    }
 
     const defaultTitle = t('imagePreviewWindowTitle');
     currentDocument = {
@@ -129,7 +195,8 @@ export const registerImagePreviewHandlers = ({
     const window =
       previewWindow && !previewWindow.isDestroyed()
         ? previewWindow
-        : (previewWindow = createPreviewWindow());
+        : (previewWindow = createPreviewWindow(entryUrl));
+    previewEntryUrl = entryUrl;
     window.setTitle(currentDocument.title);
     if (!window.webContents.isLoadingMainFrame()) {
       window.webContents.send(ImagePreviewIpc.SourceChanged, currentDocument);

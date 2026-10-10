@@ -89,6 +89,11 @@ import {
   SessionDiagnosticsIpc,
 } from '../shared/cowork/diagnostics/sessionDiagnostics';
 import { CoworkInteractionIpc } from '../shared/cowork/interactions/interactions';
+import {
+  NativeSessionDispatchIpc,
+  type NativeSessionDispatchRequest,
+  type NativeSessionDispatchResponse,
+} from '../shared/cowork/nativeSessionDispatch';
 import { type CopyCoworkSessionInput, CoworkSessionCopyIpc } from '../shared/cowork/sessionCopy';
 import { CoworkSessionDetailsIpc } from '../shared/cowork/sessionDetails';
 import { CoworkSessionForkIpc, type ForkCoworkSessionInput } from '../shared/cowork/sessionFork';
@@ -760,6 +765,7 @@ contextBridge.exposeInMainWorld('electron', {
     },
     // Session management
     startSession: (options: {
+      rendererDispatch?: boolean;
       prompt: string;
       gatewayPrompt?: string;
       cwd?: string;
@@ -772,6 +778,14 @@ contextBridge.exposeInMainWorld('electron', {
       planMode?: boolean;
       worktree?: boolean;
     }) => ipcRenderer.invoke('cowork:session:start', options),
+    onNativeSessionDispatch: (callback: (request: NativeSessionDispatchRequest) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, request: NativeSessionDispatchRequest) =>
+        callback(request);
+      ipcRenderer.on(NativeSessionDispatchIpc.Request, listener);
+      return () => ipcRenderer.removeListener(NativeSessionDispatchIpc.Request, listener);
+    },
+    respondNativeSessionDispatch: (response: NativeSessionDispatchResponse) =>
+      ipcRenderer.invoke(NativeSessionDispatchIpc.Respond, response),
     cancelSessionStart: (input: CancelSessionStartInput) =>
       ipcRenderer.invoke(SessionStartIpc.Cancel, input),
     stopSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:stop', sessionId),
@@ -974,17 +988,26 @@ contextBridge.exposeInMainWorld('electron', {
         operationId,
         itemIds,
       ),
-    getSwarmWorkflowDetail: (sessionId: string, flowId: string, nodeId: string, sourceId?: string) =>
-      ipcRenderer.invoke(SwarmWorkflowIpc.Detail, sessionId, flowId, nodeId, sourceId),
-    controlSwarmWorkflow: (sessionId: string, id: string, revision: number, action: SwarmWorkflowAction) =>
-      ipcRenderer.invoke(SwarmWorkflowIpc.Control, sessionId, id, revision, action),
+    getSwarmWorkflowDetail: (
+      sessionId: string,
+      flowId: string,
+      nodeId: string,
+      sourceId?: string,
+    ) => ipcRenderer.invoke(SwarmWorkflowIpc.Detail, sessionId, flowId, nodeId, sourceId),
+    controlSwarmWorkflow: (
+      sessionId: string,
+      id: string,
+      revision: number,
+      action: SwarmWorkflowAction,
+    ) => ipcRenderer.invoke(SwarmWorkflowIpc.Control, sessionId, id, revision, action),
     interveneSwarmWorkflow: (
       sessionId: string,
       id: string,
       nodeId: string,
       revision: number,
       intervention: SwarmWorkflowIntervention,
-    ) => ipcRenderer.invoke(SwarmWorkflowIpc.Intervene, sessionId, id, nodeId, revision, intervention),
+    ) =>
+      ipcRenderer.invoke(SwarmWorkflowIpc.Intervene, sessionId, id, nodeId, revision, intervention),
     prepareSwarmWorkflow: (options: SwarmWorkflowOptions, sessionId?: string) =>
       ipcRenderer.invoke(SwarmWorkflowIpc.Prepare, options, sessionId),
     getSubTaskDetails: (sessionKey: string, taskId?: string) =>

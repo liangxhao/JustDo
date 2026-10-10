@@ -6,6 +6,7 @@ import type { AppearanceConfig, PetCatSelection } from '@/app/appearance';
 import { PET_FLOATING_POSITION_KEY, PET_FLOATING_RESET_EVENT } from '@/app/petFloating';
 import { petSpriteStyle } from '@/features/cowork/components/status/petSpriteStyle';
 import { i18nService } from '@/services/i18n';
+import { rendererPreferences } from '@/services/rendererPreferences';
 import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 
 import petSpriteUrl from '../../../../../resources/pets/black-white-cats/spritesheet.png';
@@ -33,7 +34,14 @@ interface PetChoiceRowProps<T extends string> {
   onChange: (value: T) => void;
 }
 
-function PetChoiceRow<T extends string>({ title, description, value, disabled, options, onChange }: PetChoiceRowProps<T>) {
+function PetChoiceRow<T extends string>({
+  title,
+  description,
+  value,
+  disabled,
+  options,
+  onChange,
+}: PetChoiceRowProps<T>) {
   return (
     <div className="pet-settings-row pet-settings-row--choice">
       <div className="pet-settings-row__copy">
@@ -61,7 +69,14 @@ function PetChoiceRow<T extends string>({ title, description, value, disabled, o
   );
 }
 
-const PetSettingRow = ({ title, description, checked, disabled, action, onChange }: PetSettingRowProps) => (
+const PetSettingRow = ({
+  title,
+  description,
+  checked,
+  disabled,
+  action,
+  onChange,
+}: PetSettingRowProps) => (
   <div className="pet-settings-row">
     <div className="pet-settings-row__copy">
       <div className="text-sm font-medium text-foreground">{title}</div>
@@ -78,7 +93,9 @@ const PetSettingRow = ({ title, description, checked, disabled, action, onChange
         onClick={() => onChange(!checked)}
         className={`ml-auto flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 shadow-inner transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${checked ? 'bg-primary' : 'bg-border'}`}
       >
-        <span className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-5' : 'translate-x-0'}`} />
+        <span
+          className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-5' : 'translate-x-0'}`}
+        />
       </button>
     </div>
   </div>
@@ -110,7 +127,11 @@ export function PetSettingsPage({ value, onChange }: PetSettingsPageProps) {
             {i18nService.t('coworkPetSettingsDescription')}
           </p>
         </div>
-        <div role="radiogroup" aria-labelledby="pet-cat-selection-title" className="pet-choice-grid">
+        <div
+          role="radiogroup"
+          aria-labelledby="pet-cat-selection-title"
+          className="pet-choice-grid"
+        >
           {catOptions.map(option => (
             <label
               key={option.value}
@@ -134,16 +155,29 @@ export function PetSettingsPage({ value, onChange }: PetSettingsPageProps) {
               </span>
               {value.petCatSelection === option.value && (
                 <span className="pet-choice-card__check" aria-hidden="true">
-                  <svg viewBox="0 0 16 16" fill="none"><path d="m4 8 2.5 2.5L12 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  <svg viewBox="0 0 16 16" fill="none">
+                    <path
+                      d="m4 8 2.5 2.5L12 5"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
                 </span>
               )}
             </label>
           ))}
         </div>
       </section>
-      <section className="pet-settings-card pet-settings-card--preferences" aria-disabled={disabled}>
+      <section
+        className="pet-settings-card pet-settings-card--preferences"
+        aria-disabled={disabled}
+      >
         <div className="pet-settings-card__heading pet-settings-card__heading--compact">
-          <h3 className="text-sm font-semibold text-foreground">{i18nService.t('coworkPetDisplayGroup')}</h3>
+          <h3 className="text-sm font-semibold text-foreground">
+            {i18nService.t('coworkPetDisplayGroup')}
+          </h3>
         </div>
         <PetSettingRow
           title={i18nService.t('coworkPetFloating')}
@@ -151,25 +185,38 @@ export function PetSettingsPage({ value, onChange }: PetSettingsPageProps) {
           checked={value.petFloatingEnabled}
           disabled={disabled}
           onChange={petFloatingEnabled => onChange({ ...value, petFloatingEnabled })}
-          action={(
+          action={
             <button
               type="button"
               disabled={disabled}
               onClick={() => {
-                window.localStorage.removeItem(PET_FLOATING_POSITION_KEY);
+                rendererPreferences.removeItem(PET_FLOATING_POSITION_KEY);
                 window.dispatchEvent(new Event(PET_FLOATING_RESET_EVENT));
               }}
               className="pet-settings-reset"
             >
-              <svg aria-hidden="true" viewBox="0 0 20 20" fill="none"><path d="M5 6.5A6 6 0 1 1 4 12M5 3v4H1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              <svg aria-hidden="true" viewBox="0 0 20 20" fill="none">
+                <path
+                  d="M5 6.5A6 6 0 1 1 4 12M5 3v4H1"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
               {i18nService.t('coworkPetResetPosition')}
             </button>
-          )}
+          }
         />
       </section>
-      <section className="pet-settings-card pet-settings-card--preferences" aria-disabled={disabled}>
+      <section
+        className="pet-settings-card pet-settings-card--preferences"
+        aria-disabled={disabled}
+      >
         <div className="pet-settings-card__heading pet-settings-card__heading--compact">
-          <h3 className="text-sm font-semibold text-foreground">{i18nService.t('coworkPetMotionGroup')}</h3>
+          <h3 className="text-sm font-semibold text-foreground">
+            {i18nService.t('coworkPetMotionGroup')}
+          </h3>
         </div>
         <PetSettingRow
           title={i18nService.t('coworkPetAnimation')}
@@ -184,11 +231,13 @@ export function PetSettingsPage({ value, onChange }: PetSettingsPageProps) {
             description={i18nService.t('coworkPetVarietyDescription')}
             value={value.petVariety}
             disabled={disabled}
-            options={([
-              { value: 'classic', label: i18nService.t('coworkPetVarietyClassic') },
-              { value: 'varied', label: i18nService.t('coworkPetVarietyVaried') },
-              { value: 'playful', label: i18nService.t('coworkPetVarietyPlayful') },
-            ] as const)}
+            options={
+              [
+                { value: 'classic', label: i18nService.t('coworkPetVarietyClassic') },
+                { value: 'varied', label: i18nService.t('coworkPetVarietyVaried') },
+                { value: 'playful', label: i18nService.t('coworkPetVarietyPlayful') },
+              ] as const
+            }
             onChange={petVariety => onChange({ ...value, petVariety })}
           />
           <PetChoiceRow
@@ -196,11 +245,13 @@ export function PetSettingsPage({ value, onChange }: PetSettingsPageProps) {
             description={i18nService.t('coworkPetSpeedDescription')}
             value={value.petSpeed}
             disabled={disabled}
-            options={([
-              { value: 'calm', label: i18nService.t('coworkPetSpeedCalm') },
-              { value: 'normal', label: i18nService.t('coworkPetSpeedNormal') },
-              { value: 'lively', label: i18nService.t('coworkPetSpeedLively') },
-            ] as const)}
+            options={
+              [
+                { value: 'calm', label: i18nService.t('coworkPetSpeedCalm') },
+                { value: 'normal', label: i18nService.t('coworkPetSpeedNormal') },
+                { value: 'lively', label: i18nService.t('coworkPetSpeedLively') },
+              ] as const
+            }
             onChange={petSpeed => onChange({ ...value, petSpeed })}
           />
           <PetChoiceRow
@@ -208,12 +259,14 @@ export function PetSettingsPage({ value, onChange }: PetSettingsPageProps) {
             description={i18nService.t('coworkPetRestAfterDescription')}
             value={value.petRestAfter}
             disabled={disabled}
-            options={([
-              { value: 'never', label: i18nService.t('coworkPetRestNever') },
-              { value: 'short', label: i18nService.t('coworkPetRestShort') },
-              { value: 'standard', label: i18nService.t('coworkPetRestStandard') },
-              { value: 'long', label: i18nService.t('coworkPetRestLong') },
-            ] as const)}
+            options={
+              [
+                { value: 'never', label: i18nService.t('coworkPetRestNever') },
+                { value: 'short', label: i18nService.t('coworkPetRestShort') },
+                { value: 'standard', label: i18nService.t('coworkPetRestStandard') },
+                { value: 'long', label: i18nService.t('coworkPetRestLong') },
+              ] as const
+            }
             onChange={petRestAfter => onChange({ ...value, petRestAfter })}
           />
         </div>

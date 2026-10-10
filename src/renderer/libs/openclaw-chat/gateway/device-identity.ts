@@ -1,4 +1,5 @@
 const DEVICE_IDENTITY_STORAGE_KEY = 'justdo.openclaw.gateway-device-identity.v1';
+const DEVICE_IDENTITY_KV_KEY = 'openclaw.gateway-renderer-device-identity.v1';
 
 type StoredGatewayDeviceIdentity = {
   version: 1;
@@ -14,7 +15,10 @@ export type GatewayDeviceIdentity = {
   sign(payload: string): Promise<string>;
 };
 
-type DeviceIdentityStorage = Pick<Storage, 'getItem' | 'setItem'>;
+type DeviceIdentityStorage = {
+  getItem(key: string): string | null | Promise<string | null>;
+  setItem(key: string, value: string): void | Promise<void>;
+};
 
 let sessionIdentityPromise: Promise<GatewayDeviceIdentity> | null = null;
 
@@ -125,6 +129,18 @@ const generateIdentity = async (): Promise<StoredGatewayDeviceIdentity> => {
 };
 
 const resolveStorage = (): DeviceIdentityStorage | null => {
+  const store = globalThis.window?.electron?.store;
+  if (store) {
+    return {
+      async getItem() {
+        const value = await store.get(DEVICE_IDENTITY_KV_KEY);
+        return typeof value === 'string' ? value : null;
+      },
+      async setItem(_key, value) {
+        await store.set(DEVICE_IDENTITY_KV_KEY, value);
+      },
+    };
+  }
   try {
     return globalThis.localStorage ?? null;
   } catch {
@@ -136,7 +152,7 @@ export const loadOrCreateGatewayDeviceIdentity = async (
   storage: DeviceIdentityStorage | null = resolveStorage(),
 ): Promise<GatewayDeviceIdentity> => {
   try {
-    const raw = storage?.getItem(DEVICE_IDENTITY_STORAGE_KEY);
+    const raw = await storage?.getItem(DEVICE_IDENTITY_STORAGE_KEY);
     if (raw) {
       const stored = await parseStoredIdentity(raw);
       if (stored) return createIdentity(stored);
@@ -145,9 +161,9 @@ export const loadOrCreateGatewayDeviceIdentity = async (
     // A blocked or malformed store falls back to one stable in-memory identity.
   }
 
-  sessionIdentityPromise ??= generateIdentity().then(stored => {
+  sessionIdentityPromise ??= generateIdentity().then(async stored => {
     try {
-      storage?.setItem(DEVICE_IDENTITY_STORAGE_KEY, JSON.stringify(stored));
+      await storage?.setItem(DEVICE_IDENTITY_STORAGE_KEY, JSON.stringify(stored));
     } catch {
       // The identity remains stable for this renderer lifetime when storage is blocked.
     }

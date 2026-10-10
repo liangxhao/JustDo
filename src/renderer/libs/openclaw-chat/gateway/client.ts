@@ -118,6 +118,15 @@ export class GatewayClient {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
+  get generation(): number {
+    return this.connectGeneration;
+  }
+
+  /** Transport address only; auth remains in the connect request. */
+  get gatewayUrl(): string {
+    return this.opts.url;
+  }
+
   start(): void {
     this.closed = false;
     globalThis.document?.addEventListener('visibilitychange', this.handleVisibilityChange);
@@ -135,10 +144,17 @@ export class GatewayClient {
 
   async request<T = unknown>(method: string, params?: unknown): Promise<T> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      throw new Error('not connected');
+      throw Object.assign(new Error('not connected'), { requestSent: false });
     }
     const id = generateId();
-    const frame = JSON.stringify({ type: 'req', id, method, params });
+    let frame: string;
+    try {
+      frame = JSON.stringify({ type: 'req', id, method, params });
+    } catch (error) {
+      throw Object.assign(error instanceof Error ? error : new Error('Invalid request'), {
+        requestSent: false,
+      });
+    }
     return new Promise<T>((resolve, reject) => {
       // Native compaction resets its watchdog as work progresses, so it has no
       // fixed total deadline. Transport loss still rejects every pending request.
@@ -148,9 +164,15 @@ export class GatewayClient {
           : setTimeout(
               () => {
                 this.pendingRequests.delete(id);
-                reject(new Error(`request timeout: ${method}`));
+                reject(
+                  Object.assign(new Error(`request timeout: ${method}`), { requestSent: true }),
+                );
               },
-              method === 'tts.speak' ? TTS_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
+              method === 'canvas.document.view'
+                ? 10_000
+                : method === 'tts.speak'
+                  ? TTS_REQUEST_TIMEOUT_MS
+                  : REQUEST_TIMEOUT_MS,
             );
       this.pendingRequests.set(id, {
         resolve: resolve as (v: unknown) => void,
@@ -162,7 +184,11 @@ export class GatewayClient {
       } catch (error) {
         clearTimeout(timer);
         this.pendingRequests.delete(id);
-        reject(error instanceof Error ? error : new Error(String(error)));
+        reject(
+          Object.assign(error instanceof Error ? error : new Error(String(error)), {
+            requestSent: false,
+          }),
+        );
       }
     });
   }
@@ -348,7 +374,15 @@ export class GatewayClient {
         signedAt: challengeTs,
         nonce,
       },
-      caps: ['tool-events'],
+      caps: [
+        'tool-events',
+        ...((globalThis.location?.protocol === 'http:' ||
+          globalThis.location?.protocol === 'https:') &&
+        globalThis.customElements?.get('justdo-native-widget') &&
+        globalThis.document?.querySelector('justdo-chat')?.isConnected
+          ? ['inline-widgets']
+          : []),
+      ],
     };
 
     if (!this.isActive(ws, generation)) return;

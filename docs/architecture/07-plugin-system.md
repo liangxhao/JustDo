@@ -2,6 +2,19 @@
 
 插件页组合多种能力，但它们不是同一种安装单元。本文以 Main 插件服务、原生 API、配置同步和 Extension 注册为依据，说明读取、启停、安装和恢复各由谁负责。
 
+`openclaw-extensions/interactive-ui` 内部按 `scenario/` 和 `ui/` 聚合各自的 schema、
+组合器、渲染逻辑、文案与样式；`document/` 提供共用的 HTML/JSON 安全序列化和资源
+初始化。两种 kind 独立校验与登记，不通过场景 schema 借用通用文档能力。
+
+该扩展是随通用本地扩展流程捆绑的可选组件插件：用原生
+`registerBoardWidgetContentKind` 注册 `scenario-explorer` 与可组合的 `interactive-answer`，严格校验 JSON，输出固定组件 body
+及只读 JS resource，由 native `show_widget` 负责包装及文档所有权。默认关闭，可在扩展页显式启用/禁用，配置同步保留用户选择；按需 skill 与插件一起提供，不改变 8 个内置技能或每轮注入指导。不新增 tool/MCP/RPC/数据库或 runtime patch。固定 renderer 的继续按钮只在当前原生私有 prompt port 可用时启用，建议由宿主确认后加入草稿；未获得 dashboard/tools/resources 执行权限。用户流程与限制见 [交互式回答](../features/chat/interactive-answers.md)。
+
+`interactive-answer` 提供 table/compare/chart/form/steps，不接受表达式、脚本或外部提交；固定
+测算仍由 scenario 负责。两种 kind 使用不同公共 renderer 资源。搜索、排序、选择、
+表单值只在当前 iframe 内存中，切换保留输入、重载恢复默认值；有界草稿标明省略，
+完整选择可在本地复制。模型质量与发布检查见 [验收清单](../plans/interactive-answers-acceptance.md)。
+
 ## 1. 类型与所有权
 
 | 类型        | 运行权威                          | 产品负责                              | 主要限制                                   |

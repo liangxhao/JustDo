@@ -4,20 +4,34 @@
 
 Main 处理器按能力归入 `ipc/app`、`cowork`、`openclaw`、`plugins`、`speech`、`security`、`providers` 和 `scheduledTask`。插件安装与管理、语音、权限和媒体模型配置由各自领域直接注册，不通过 OpenClaw 或 app 目录转发。目录归属不改变 preload 方法、IPC 字符串、处理器注册顺序或 Gateway 请求协议。
 
+Renderer 启动先通过既有 store bridge 恢复有界界面偏好，完成后才导入 App/Redux。
+这避免随机 HTTP origin 使主题和过滤设置在重启时失效；不同步浏览器完整 storage 或聊天正文。
+
 ## 1. 运行实体和信任范围
 
 | 实体           | 可访问资源                                  | 通信边界                                                    |
 | -------------- | ------------------------------------------- | ----------------------------------------------------------- |
 | 主 Renderer    | React/Lit UI、浏览器 API、显式 preload 能力 | 不能直接访问 Node/Electron/SQLite                           |
 | Browser guest  | 外部网页及隔离 partition                    | 固定 guest preload；不获得 window.electron 或 Gateway token |
-| 图片预览窗口   | 独立图片展示                                | 沙箱窗口与受限参数                                          |
+| 图片预览窗口   | 同 origin 的独立图片展示                    | 独立最小 preload、沙箱窗口与受限参数                        |
 | Preload        | contextBridge 与 Electron IPC               | 固定方法和可取消订阅                                        |
 | Main           | 文件、数据库、网络、子进程、窗口            | 校验来自所有客户端的输入                                    |
 | Gateway        | 原生执行与 transcript                       | 本地认证 RPC/event 和受控插件桥                             |
 | Chrome 扩展    | Side Panel、用户浏览器上下文                | Native Messaging 发现产品 app-server                        |
 | Multica client | 当前用户本机进程                            | 受认证 named pipe/Unix socket                               |
 
-主 Renderer 与图片预览 HTML 分别由 `src/renderer/index.html` 和 `image-preview.html` 构建。开发由 Vite 提供，生产从 dist 加载。外部 guest 始终是另一权限域，即使视觉上位于同一侧栏。
+主 Renderer、图片预览与工作区 HTML 分别由 `src/renderer/index.html`、`image-preview.html` 和 `workspace.html` 构建。开发由 Vite 提供，安装版由 Main 的本机只读静态宿主提供打包 `dist` 资源。外部 guest 始终是另一权限域，即使视觉上位于同一侧栏。
+
+### 安装版页面的本机静态宿主
+
+页面宿主、生产加载生命周期和页面 CSP 由 `src/main/core/window/renderer/` 共同负责。
+窗口 factory 只组合这一能力与原生窗口策略；该模块不接管浏览器 guest 或 Gateway 执行。
+
+主窗口使用 `http://127.0.0.1:<随机端口>/index.html`，不再从 `file:` 加载。宿主只绑定 IPv4 loopback，校验精确 Host、请求来源及 GET/HEAD 方法；启动时建立固定入口和受限类型构建资源的只读清单。路径解码、真实路径、链接和文件版本均须通过校验，拒绝目录穿越、符号链接/目录联接、启动后新增或改变的资源。它不服务源码、凭据、工程文件或 IPC/RPC，也不向外部页面开放 CORS。
+
+HTTP 响应携带生产 CSP、`no-store`、`nosniff` 与同源资源策略。脚本只允许自身资源、WASM 及可信打包入口的内联脚本哈希，不开放普通内联脚本或 `eval`；表单、插件对象和外部父页面嵌入被禁止。主窗口保留显式 preload、context isolation、sandbox、webSecurity，并关闭窗口及子 frame 的 Node 集成。导航和重定向只能进入当前宿主的主入口；应用 origin 的新窗口请求仅允许 Main 授予的精确工作区 URL 与 frameName，其他请求被拒绝。允许的外部 HTTP(S) 链接交给系统浏览器。
+
+图片窗口只加载当前主窗口 origin 的 `/image-preview.html`，使用独立最小图片 preload，不继承完整 `window.electron`。同 origin 使主窗口创建的 Blob 图片可读；主窗口 origin 不可用时预览失败关闭，origin 改变时重建预览窗口。静态宿主在主窗口关闭、加载失败或 `before-quit` 时撤销导航准入、关闭连接并移除监听器；启动途中发生关闭也不会留下服务。
 
 ### 浏览器与非浏览器的代理范围
 
@@ -36,6 +50,10 @@ flowchart LR
 ### 可分离的完整侧边栏
 
 侧边栏从首次展示起就使用固定的 `workspace.html` 文档承载。主 Renderer
+与工作区文档在开发和安装版均同 origin，安装版共享上述只读 HTTP 宿主。
+静态请求只允许工作区入口携带单个 UUID 格式的 `generation` 参数；其他入口
+或额外参数均拒绝。静态读取不授予原生窗口能力，窗口创建仍须匹配 Main 的当前授予。
+主 Renderer
 通过 React portal 渲染完整工具区；该文档没有应用入口脚本、preload 或
 `window.electron`，也不创建第二个 Redux store。源组件闭包仍调用主 Renderer
 的显式 bridge。Main 使用相同的 WebContentsView 承载这个文档，停靠时放入
@@ -103,6 +121,8 @@ Gateway 启动由 Main 管理运行包准备、配置与进程生命周期。9.6
 
 ```mermaid
 flowchart LR
+  Static[Main 只读 dist HTTP] -->|打包资源| UI
+  Static --> Preview[图片 Renderer / 最小 preload]
   UI[桌面 Renderer] -->|invoke / event| P[Preload] --> M[Main]
   Chat[集中式聊天 client] <-->|loopback WS / HTTP| G[Gateway]
   M <-->|受认证 RPC / event| G
@@ -132,6 +152,8 @@ Renderer 仅接收含 revision 的显示资料、闭合错误码和独立账号/
 ### 聊天数据
 
 桌面聊天 wrapper 从 preload 取得 Main 管理的本地连接信息，集中式 GatewayClient/ChatController 消费原生事件和历史。分页历史还使用 Main history bridge，必要时走认证 loopback REST fallback。token 只用于受控聊天连接，不进入 Redux、导出或外部网页。
+
+Gateway 的 Ed25519 连接身份通过既有 preload Store 读写 Main SQLite `kv` 的 `openclaw.gateway-renderer-device-identity.v1`，避免随机 HTTP 端口造成 `localStorage` 身份丢失。读取时核验已保存身份；无有效记录时生成并保存，存储失败时只维持当前 Renderer 的内存身份。该记录不是 transcript 缓存，也不交给 Widget iframe 或外部 guest。
 
 Thinking/Tool/Content 不经过 Main 复制给 UI。Main 只消费生命周期、身份、审批和 Goal 等产品所需事件。聊天 wire 校验与 Renderer timeline 的职责见[聊天渲染](15-chat-rendering.md)。
 

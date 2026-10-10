@@ -1,6 +1,3 @@
-import path from 'path';
-import { fileURLToPath } from 'url';
-
 const METADATA_HOSTNAMES = new Set([
   'metadata.google.internal',
   'metadata.azure.internal',
@@ -12,8 +9,7 @@ const PROMPTABLE_BROWSER_PERMISSIONS = new Set(['geolocation', 'media', 'notific
 
 const EXTERNAL_BROWSER_PROTOCOLS = new Set(['mailto:', 'magnet:', 'sms:', 'tel:', 'webcal:']);
 
-const CHROMIUM_PDF_VIEWER_URL =
-  'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html';
+const CHROMIUM_PDF_VIEWER_URL = 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html';
 
 // Chromium's PDF viewer embeds its PDF stream in a child frame. This is not a
 // website navigation: only the built-in viewer may initiate this exact stream URL.
@@ -24,7 +20,9 @@ export const isBrowserPdfStreamNavigation = (
 ): boolean =>
   !isMainFrame &&
   parentUrl === CHROMIUM_PDF_VIEWER_URL &&
-  /^chrome-extension:\/\/mhjfbmdgcfjbbpaeojofohoefgiehjai\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(url);
+  /^chrome-extension:\/\/mhjfbmdgcfjbbpaeojofohoefgiehjai\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(
+    url,
+  );
 
 export const browserPermissionKeys = (
   origin: string,
@@ -93,17 +91,46 @@ export const isAllowedBrowserPanelUrl = (value: string): boolean => {
   }
 };
 
-export const isAllowedMainWindowNavigation = (
+type MainWindowNavigationOptions = {
+  appRoot?: string;
+  devServerUrl: string;
+  isDev: boolean;
+  applicationUrl?: string;
+};
+
+export const isApplicationRendererOrigin = (
   value: string,
-  options: { appRoot: string; devServerUrl: string; isDev: boolean },
+  options: MainWindowNavigationOptions,
 ): boolean => {
   try {
     const url = new URL(value);
-    if (options.isDev) return url.origin === new URL(options.devServerUrl).origin;
-    if (url.protocol !== 'file:') return false;
-    const relative = path.relative(path.resolve(options.appRoot), path.resolve(fileURLToPath(url)));
-    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+    const applicationUrl = options.isDev ? options.devServerUrl : options.applicationUrl;
+    if (
+      !applicationUrl ||
+      url.username ||
+      url.password ||
+      !['http:', 'https:'].includes(url.protocol)
+    )
+      return false;
+    return url.origin === new URL(applicationUrl).origin;
   } catch {
     return false;
   }
 };
+
+export const isAllowedMainWindowNavigation = (
+  value: string,
+  options: MainWindowNavigationOptions,
+): boolean => {
+  if (!isApplicationRendererOrigin(value, options)) return false;
+  const url = new URL(value);
+  return options.isDev || (['/', '/index.html'].includes(url.pathname) && !url.search);
+};
+
+export const shouldOpenMainWindowLinkExternally = (
+  value: string,
+  options: MainWindowNavigationOptions,
+): boolean =>
+  value !== 'about:blank' &&
+  !isApplicationRendererOrigin(value, options) &&
+  isAllowedBrowserPanelUrl(value);

@@ -57,6 +57,18 @@ Cookie 更新合并当前文件而保留长期 mtoken；账号替换先删除旧
 
 左侧功能栏的固定偏好保存在 `kv.app_config.sidebarPinnedItems`，为可选功能 ID 的有序数组，缺省为空。Renderer 读取时过滤非法及重复项；固定和取消固定通过既有配置补丁 IPC 串行保存，保存失败保留已确认的偏好。扩展暂时关闭只隐藏对应入口，不删除其固定偏好。该设置不增加数据表，不修改原生插件配置或会话存储。
 
+正式 Renderer 的 HTTP 静态宿主每次启动使用随机端口，不能把持久偏好绑定该 origin。
+`kv['app.renderer-preferences.v1']` 通过既有 store preload 保存具名主题、宠物浮动位置、
+定时任务结果过滤，以及尚未提交的 Goal 完成反馈状态。启动先恢复这份快照，再导入 App
+和 Redux slice，确保初始过滤值和主题读取正确。只接受三个固定键与 Goal 草稿命名空间，
+最多 128 项、单值 64 KiB、总值 512 KiB；超额先淘汰最旧 Goal 草稿，固定偏好保留。
+首次采用 HTTP 宿主且 Main 尚无该记录时，在相同 Chromium session 的隔离空白 file 页面
+只读取上述有界 UI 键，再切换 HTTP 主页面；不加载旧 App 或旧 preload，不覆盖已有记录。
+开发 origin 首次采用时也只导入同一白名单。初始 Main 读取失败时，后续保存先恢复已知
+基线，再合并明确变化及删除，禁止用空快照覆盖未读数据。
+这不是 localStorage 的通用复制器，不保存 transcript、失败节选或凭据；不新增表或数据库/原生 schema 迁移。
+独立浏览器 demo 没有 privileged store 时继续使用本 origin 的浏览器偏好。
+
 Code Mode 偏好复用 `cowork_config` 中的 `agentRuntimeSettings:v1` JSON 记录，新增
 `codeMode: { mode: "off" | "auto" | "on" }`。读取旧记录时只为缺失字段补上 `off`，
 已有显式 `auto` 值保留；界面暂不允许新选自动模式。

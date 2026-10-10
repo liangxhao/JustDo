@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildGatewayDeviceAuthPayload,
@@ -26,6 +26,32 @@ const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer =>
   bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 
 describe('Gateway device identity', () => {
+  it('uses Main storage across changing renderer origins without reading legacy localStorage', async () => {
+    const values = new Map<string, unknown>();
+    const get = vi.fn(async (key: string) => values.get(key));
+    const set = vi.fn(async (key: string, value: unknown) => {
+      values.set(key, value);
+    });
+    const legacyGet = vi.fn(() => {
+      throw new Error('must not read old origin storage');
+    });
+    vi.stubGlobal('window', { electron: { store: { get, set } } });
+    vi.stubGlobal('localStorage', { getItem: legacyGet });
+    try {
+      vi.resetModules();
+      const first = await (await import('./device-identity')).loadOrCreateGatewayDeviceIdentity();
+      vi.resetModules();
+      const second = await (await import('./device-identity')).loadOrCreateGatewayDeviceIdentity();
+      expect(second.deviceId).toBe(first.deviceId);
+      expect(legacyGet).not.toHaveBeenCalled();
+      expect(set).toHaveBeenCalledTimes(1);
+      expect(
+        get.mock.calls.every(([key]) => key === 'openclaw.gateway-renderer-device-identity.v1'),
+      ).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
   it('persists one Ed25519 identity and signs payloads accepted by WebCrypto', async () => {
     const storage = new MemoryStorage();
     const first = await loadOrCreateGatewayDeviceIdentity(storage);

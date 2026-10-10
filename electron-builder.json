@@ -9,6 +9,7 @@
   "afterAllArtifactBuild": "./scripts/packaging/electron-builder-hooks.cjs",
   "files": [
     "package.json",
+    "resources/renderer-preferences.html",
     {
       "from": "dist",
       "to": "dist",

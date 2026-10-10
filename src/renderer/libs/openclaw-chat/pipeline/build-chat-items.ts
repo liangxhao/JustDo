@@ -77,7 +77,7 @@ function appendCanvasBlockToAssistantMessage(
       typed.type === 'canvas' &&
       typed.preview?.kind === 'canvas' &&
       ((preview.viewId && typed.preview.viewId === preview.viewId) ||
-        (preview.url && typed.preview.url === preview.url))
+        (preview.render === 'url' && preview.url && typed.preview.url === preview.url))
     );
   });
   if (alreadyHasArtifact) {
@@ -308,10 +308,7 @@ function isToolMessageRole(message: unknown): boolean {
   return hasToolBlock;
 }
 
-function groupMessages(
-  items: ChatItem[],
-  peerPerspective = false,
-): Array<ChatItem | MessageGroup> {
+function groupMessages(items: ChatItem[], peerPerspective = false): Array<ChatItem | MessageGroup> {
   const result: Array<ChatItem | MessageGroup> = [];
   let currentGroup: MessageGroup | null = null;
 
@@ -463,7 +460,10 @@ function stripSenderLabelPrefix(text: string, senderLabel: string): string {
   return text.replace(new RegExp(`^${escapeRegExp(label)}(?::|：|-|—)?[ \\t]+`), '');
 }
 
-function sourceDuplicateDisplayParts(message: unknown, peerPerspective: boolean): {
+function sourceDuplicateDisplayParts(
+  message: unknown,
+  peerPerspective: boolean,
+): {
   role: string;
   senderLabel: string;
   text: string;

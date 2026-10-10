@@ -12,9 +12,11 @@ import {
   isAllowedBrowserPanelUrl,
   isAllowedExternalBrowserUrl,
   isAllowedMainWindowNavigation,
+  isApplicationRendererOrigin,
   isBlockedBrowserMetadataHost,
   isBrowserPdfStreamNavigation,
   shouldAllowBrowserPanelPermission,
+  shouldOpenMainWindowLinkExternally,
   shouldPromptBrowserPanelPermission,
 } from './browserPanelSecurity';
 
@@ -27,8 +29,12 @@ describe('browser panel capabilities', () => {
     expect(isBrowserPdfStreamNavigation(stream, false, 'https://example.com/')).toBe(false);
     expect(isBrowserPdfStreamNavigation(stream, false, undefined)).toBe(false);
     expect(isBrowserPdfStreamNavigation(viewer, false, viewer)).toBe(false);
-    expect(isBrowserPdfStreamNavigation(`${stream}?redirect=https://example.com`, false, viewer)).toBe(false);
-    expect(isBrowserPdfStreamNavigation('chrome-extension://other/index.html', false, viewer)).toBe(false);
+    expect(
+      isBrowserPdfStreamNavigation(`${stream}?redirect=https://example.com`, false, viewer),
+    ).toBe(false);
+    expect(isBrowserPdfStreamNavigation('chrome-extension://other/index.html', false, viewer)).toBe(
+      false,
+    );
     expect(isAllowedBrowserPanelUrl(stream)).toBe(false);
   });
   it('does not treat a microphone grant as camera permission', () => {
@@ -110,6 +116,51 @@ describe('isAllowedMainWindowNavigation', () => {
     };
     expect(isAllowedMainWindowNavigation('http://localhost:43127/settings', options)).toBe(true);
     expect(isAllowedMainWindowNavigation('https://example.com/', options)).toBe(false);
+  });
+
+  it('admits only the current packaged entry and its same-document fragment', () => {
+    const options = {
+      devServerUrl: 'http://localhost:43127',
+      isDev: false,
+      applicationUrl: 'http://127.0.0.1:45001/index.html',
+    };
+    expect(isAllowedMainWindowNavigation(`${options.applicationUrl}#settings`, options)).toBe(true);
+    expect(isAllowedMainWindowNavigation('http://127.0.0.1:45001/', options)).toBe(true);
+    for (const url of [
+      'file:///C:/app/index.html',
+      'https://example.com',
+      'http://127.0.0.1:45002/index.html',
+      'http://localhost:45001/index.html',
+      'http://127.0.0.1:45001/assets/main.js',
+      'http://127.0.0.1:45001/image-preview.html',
+      `${options.applicationUrl}?redirect=1`,
+      'http://user@127.0.0.1:45001/index.html',
+    ])
+      expect(isAllowedMainWindowNavigation(url, options), url).toBe(false);
+    expect(
+      isAllowedMainWindowNavigation(options.applicationUrl, {
+        ...options,
+        applicationUrl: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it('keeps application URLs out of new-window/external-browser routes', () => {
+    const options = {
+      devServerUrl: 'http://localhost:43127',
+      isDev: false,
+      applicationUrl: 'http://127.0.0.1:45001/index.html',
+    };
+    expect(isApplicationRendererOrigin('http://127.0.0.1:45001/assets/main.js', options)).toBe(
+      true,
+    );
+    expect(shouldOpenMainWindowLinkExternally(options.applicationUrl, options)).toBe(false);
+    expect(
+      shouldOpenMainWindowLinkExternally('http://127.0.0.1:45001/assets/main.js', options),
+    ).toBe(false);
+    expect(shouldOpenMainWindowLinkExternally('https://example.com', options)).toBe(true);
+    expect(shouldOpenMainWindowLinkExternally('about:blank', options)).toBe(false);
+    expect(shouldOpenMainWindowLinkExternally('file:///C:/secret.txt', options)).toBe(false);
   });
 });
 

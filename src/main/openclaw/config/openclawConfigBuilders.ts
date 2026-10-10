@@ -2117,6 +2117,7 @@ export const buildDefaultOpenClawPluginEntries = (
       [
         [OpenClawExtensionId.WORKBOARD, false],
         [OpenClawExtensionId.AGENT_TEAM, false],
+        [OpenClawExtensionId.INTERACTIVE_UI, false],
         // Native desktop control requires explicit opt-in, preserved across syncs.
         [OpenClawExtensionId.CUA_COMPUTER, false],
         [OpenClawExtensionId.SWARM_WORKFLOW, true],
@@ -2162,6 +2163,7 @@ export const isUserToggleableBundledPlugin = (pluginId: string): boolean =>
   pluginId === OpenClawExtensionId.MEMORY_CORE ||
   pluginId === OpenClawExtensionId.WORKBOARD ||
   pluginId === OpenClawExtensionId.AGENT_TEAM ||
+  pluginId === OpenClawExtensionId.INTERACTIVE_UI ||
   pluginId === OpenClawExtensionId.SWARM_WORKFLOW ||
   pluginId === OpenClawExtensionId.TYPESAFE ||
   pluginId === OpenClawExtensionId.STT_LOCAL_CLI ||

@@ -11,7 +11,12 @@ import JustDoChatWrapper, { type JustDoChatWrapperRef } from './JustDoChatWrappe
 
 const fixture = vi.hoisted(() => ({
   session: { id: 'one', agentId: 'main' },
-  chat: { revealMessage: vi.fn(), updateComplete: Promise.resolve() },
+  chat: {
+    revealMessage: vi.fn(),
+    updateComplete: Promise.resolve(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  },
 }));
 vi.mock('react-redux', () => ({ useSelector: () => fixture.session }));
 vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));

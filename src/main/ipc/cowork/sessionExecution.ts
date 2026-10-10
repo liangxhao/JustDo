@@ -3,6 +3,7 @@ import { BrowserWindow, ipcMain } from 'electron';
 import { MAIN_USER_AGENT_ID } from '../../../shared/agents/agents';
 import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
 import { hasMessageInput } from '../../../shared/cowork/messageInput';
+import { NativeSessionDispatchIpc } from '../../../shared/cowork/nativeSessionDispatch';
 import { type CancelSessionStartInput, SessionStartIpc } from '../../../shared/cowork/sessionStart';
 import { resolvePermissionMode } from '../../../shared/security/approvals';
 import { resolveTaskWorkingDirectory } from '../../core/filesystem/taskWorkspace';
@@ -14,8 +15,10 @@ import {
   createSessionWorktree,
   discardPreparedWorktreeSession,
 } from '../../openclaw/sessions/worktreeSession';
+import { captureInitialDispatchLease, NativeSessionDispatcher } from './nativeSessionDispatch';
 
 interface SessionExecutionHandlerDependencies {
+  getMainWindow?: () => BrowserWindow | null;
   ensureEngineRunning: () => Promise<OpenClawEngineStatus>;
   getCoworkStore: () => CoworkStore;
   getCoworkEngineRouter: () => CoworkEngineRouter;
@@ -30,6 +33,7 @@ interface SessionExecutionHandlerDependencies {
 }
 
 interface StartSessionOptions {
+  rendererDispatch?: boolean;
   worktree?: boolean;
   prompt: string;
   gatewayPrompt?: string;
@@ -58,7 +62,12 @@ export const registerCoworkSessionExecutionHandlers = ({
   waitForConfigUpdates,
   getEngineNotReadyResponse,
   requestGateway,
+  getMainWindow,
 }: SessionExecutionHandlerDependencies): void => {
+  const nativeDispatcher = new NativeSessionDispatcher();
+  ipcMain.handle(NativeSessionDispatchIpc.Respond, (event, input: unknown) =>
+    nativeDispatcher.respond(event, input),
+  );
   type PendingStart = {
     cancelled: boolean;
     sessionId?: string;
@@ -120,11 +129,39 @@ export const registerCoworkSessionExecutionHandlers = ({
     operation.stopping = stopping;
     return stopping;
   });
-  ipcMain.handle('cowork:session:start', async (_event, options: StartSessionOptions) => {
+  ipcMain.handle('cowork:session:start', async (event, options: StartSessionOptions) => {
     let operation: PendingStart | undefined;
+    let dispatchLease: ReturnType<typeof captureInitialDispatchLease> | undefined;
     try {
       if (!options || typeof options.prompt !== 'string' || !hasMessageInput(options)) {
         return { success: false, error: 'Prompt is required.' };
+      }
+      if (options.rendererDispatch !== undefined && typeof options.rendererDispatch !== 'boolean') {
+        return { success: false, error: t('coworkInitialDispatchInvalid') };
+      }
+      if (options.rendererDispatch) {
+        const window = getMainWindow?.();
+        if (
+          !window ||
+          window.isDestroyed() ||
+          event.sender.isDestroyed() ||
+          event.sender !== window.webContents ||
+          event.senderFrame !== window.webContents.mainFrame ||
+          !/^https?:\/\//i.test(window.webContents.getURL()) ||
+          typeof options.clientTurnId !== 'string' ||
+          !options.clientTurnId.trim()
+        ) {
+          return {
+            success: false,
+            error: t('coworkInitialDispatchUnavailable'),
+          };
+        }
+        dispatchLease = captureInitialDispatchLease(event, () => {
+          if (operation && !operation.sessionId) {
+            operation.cancelled = true;
+            operation.cancelBeforeAdmission();
+          }
+        });
       }
       if (options.worktree !== undefined && typeof options.worktree !== 'boolean') {
         return { success: false, error: t('worktreeSelectionInvalid') };
@@ -235,6 +272,24 @@ export const registerCoworkSessionExecutionHandlers = ({
           agentId,
           clientTurnId: options.clientTurnId,
           planMode: options.planMode === true,
+          ...(options.rendererDispatch
+            ? {
+                dispatchChatSend: (
+                  params: Record<string, unknown>,
+                  prepared: { sessionKey: string },
+                ) =>
+                  nativeDispatcher.dispatch(
+                    event,
+                    {
+                      clientTurnId: options.clientTurnId!,
+                      sessionId: session.id,
+                      sessionKey: prepared.sessionKey,
+                      params,
+                    },
+                    dispatchLease,
+                  ),
+              }
+            : {}),
           onAccepted: () => {
             admissionSettled = true;
             resolveAdmission();
@@ -289,6 +344,7 @@ export const registerCoworkSessionExecutionHandlers = ({
         error: error instanceof Error ? error.message : 'Failed to start session',
       };
     } finally {
+      dispatchLease?.dispose();
       if (operation && pendingStarts.get(options.clientTurnId!) === operation) {
         pendingStarts.delete(options.clientTurnId!);
       }

@@ -1,3 +1,5 @@
+import { rendererPreferences } from '@/services/rendererPreferences';
+
 const STORAGE_KEY = 'justdo-scheduled-task-result-preferences-v1';
 
 export interface ScheduledTaskResultPreferences {
@@ -13,7 +15,7 @@ const DEFAULT_PREFERENCES: ScheduledTaskResultPreferences = {
 export function loadScheduledTaskResultPreferences(): ScheduledTaskResultPreferences {
   if (typeof window === 'undefined') return DEFAULT_PREFERENCES;
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '{}') as Record<
+    const parsed = JSON.parse(rendererPreferences.getItem(STORAGE_KEY) ?? '{}') as Record<
       string,
       unknown
     >;
@@ -31,7 +33,7 @@ export function saveScheduledTaskResultPreferences(
 ): void {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
+    rendererPreferences.setItem(STORAGE_KEY, JSON.stringify(preferences));
   } catch {
     // Storage can be unavailable in restricted renderer contexts. The Redux
     // state still applies the preference for the current application session.

@@ -1,0 +1,10 @@
+{
+  "id": "interactive-ui",
+  "name": "Interactive UI",
+  "description": "Validated local scenario and interactive answer widgets through native show_widget.",
+  "enabledByDefault": false,
+  "categories": ["productivity"],
+  "skills": ["./skills"],
+  "activation": { "onStartup": true },
+  "configSchema": { "type": "object", "additionalProperties": false, "properties": {} }
+}

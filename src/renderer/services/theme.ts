@@ -1,6 +1,7 @@
 import { configService } from '@/services/config';
+import { rendererPreferences } from '@/services/rendererPreferences';
 import type { ThemeDefinition } from '@/theme';
-import { allThemes,ThemeManager } from '@/theme';
+import { allThemes, ThemeManager } from '@/theme';
 
 type ThemeType = 'light' | 'dark' | 'system';
 
@@ -19,6 +20,10 @@ class ThemeService {
       storageKey: 'justdo-theme-id',
       defaultTheme: 'classic-light',
       followSystem: false,
+      storage: {
+        get: key => rendererPreferences.getItem(key),
+        set: (key, value) => rendererPreferences.setItem(key, value),
+      },
     });
   }
 
@@ -80,7 +85,7 @@ class ThemeService {
     }
   }
 
-  // 还原主题（用于取消操作）：直接 apply 指定 ID 并还原 mode，跳过 applyByAppearance 的 localStorage 读取
+  // 还原主题（用于取消操作）：直接 apply 指定 ID 并还原 mode，跳过 applyByAppearance 的偏好读取
   restoreTheme(id: string, mode: ThemeType): void {
     void this.manager.setTheme(id);
     this.currentTheme = mode;
@@ -110,7 +115,7 @@ class ThemeService {
   // 根据 appearance 选择第一个匹配的主题，或恢复已保存的主题
   private applyByAppearance(appearance: 'light' | 'dark'): void {
     // Check if there's a saved theme ID with the right appearance
-    const savedId = localStorage.getItem('justdo-theme-id');
+    const savedId = rendererPreferences.getItem('justdo-theme-id');
     if (savedId) {
       const saved = allThemes.find(t => t.meta.id === savedId);
       if (saved && saved.meta.appearance === appearance) {

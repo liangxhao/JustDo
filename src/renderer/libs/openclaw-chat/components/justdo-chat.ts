@@ -115,6 +115,8 @@ import {
   handleMessageImageContextMenu,
   handleMessageLinkClick,
 } from './message-content-interactions';
+import { NATIVE_WIDGET_CONTEXT_REQUEST, type NativeWidgetContext } from './native-widget/host';
+import { NativeWidgetView } from './native-widget/view';
 import { RichMessageControls } from './rich-message-controls';
 import { TOOL_OUTPUT_REQUEST, type ToolOutput } from './tool-output';
 
@@ -246,6 +248,9 @@ export class JustDoChatElement extends LitElement {
   declare onMessageQuote: MessageQuoteHandler | undefined;
 
   @property({ attribute: false })
+  declare canDraftWidget: (() => boolean) | undefined;
+
+  @property({ attribute: false })
   declare onAssistantMessageFork: ((entryId: string) => boolean | Promise<boolean>) | undefined;
 
   @state()
@@ -341,6 +346,7 @@ export class JustDoChatElement extends LitElement {
     this.onLastUserMessageAction = undefined;
     this.onAssistantMessageFork = undefined;
     this.onMessageQuote = undefined;
+    this.canDraftWidget = undefined;
     this.userMessageEditor = null;
     this.openProcessSummaryKey = null;
     this.collapsedProcessSummaryKeys = new Set();
@@ -884,6 +890,7 @@ export class JustDoChatElement extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    this.addEventListener(NATIVE_WIDGET_CONTEXT_REQUEST, this.handleWidgetContext);
     this.addEventListener(TOOL_OUTPUT_REQUEST, this.handleToolOutputRequest);
     this.messageThemeObserver = new MutationObserver(() => {
       this.renderRoot
@@ -912,6 +919,7 @@ export class JustDoChatElement extends LitElement {
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    this.removeEventListener(NATIVE_WIDGET_CONTEXT_REQUEST, this.handleWidgetContext);
     this.richMessageControls?.dispose();
     this.richMessageControls = null;
     this.removeEventListener(TOOL_OUTPUT_REQUEST, this.handleToolOutputRequest);
@@ -963,6 +971,7 @@ export class JustDoChatElement extends LitElement {
   }
 
   protected updated(changedProperties?: Map<string | number | symbol, unknown>): void {
+    this.syncWidgetContexts();
     traceTimelineDom(this._controller?.state.sessionKey ?? '', this.shadowRoot);
     this.syncActiveTurnClock();
     if (changedProperties?.has('processSummariesExpanded')) {
@@ -1307,9 +1316,45 @@ export class JustDoChatElement extends LitElement {
     bubble.style.width = `${Math.max(currentWidth, preferredWidth)}px`;
   }
 
+  private widgetContext(): NativeWidgetContext | undefined {
+    const controller = this._controller;
+    const client = controller?.state.client;
+    const sessionKey = controller?.state.sessionKey;
+    if (!controller?.state.connected || !client || !sessionKey) return;
+    const generation = client.generation;
+    return {
+      client,
+      sessionKey,
+      generation,
+      canDraft: () => this.canDraftWidget?.() === true,
+      isCurrent: () =>
+        this.isConnected &&
+        this._controller === controller &&
+        controller.state.client === client &&
+        controller.state.connected &&
+        controller.state.sessionKey === sessionKey &&
+        client.generation === generation,
+    };
+  }
+
+  private readonly handleWidgetContext = (event: Event): void => {
+    const widget = event.composedPath()[0];
+    if (!(widget instanceof NativeWidgetView) || !this.renderRoot.contains(widget)) return;
+    event.stopPropagation();
+    widget.context = this.widgetContext();
+  };
+
+  private syncWidgetContexts(): void {
+    const context = this.widgetContext();
+    this.renderRoot?.querySelectorAll<NativeWidgetView>('justdo-native-widget').forEach(widget => {
+      widget.context = context;
+    });
+  }
+
   private subscribeController(ctrl: ChatController): void {
     this.seedAssistantStreamPacer(ctrl);
     this._controllerUnsubscribe = ctrl.subscribe(() => {
+      this.syncWidgetContexts();
       this.captureAssistantStreamSnapshots(ctrl);
       this.requestUpdate();
       if (this.assistantStreamPacer.hasPending()) this.streamRenderScheduler.schedule();

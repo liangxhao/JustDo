@@ -13,7 +13,6 @@ import {
 } from 'electron';
 import fs from 'fs';
 import path from 'path';
-import { pathToFileURL } from 'url';
 
 import { MediaCaptureIpc, MediaCaptureSurface } from '../../../shared/app/mediaCapture';
 import {
@@ -50,6 +49,10 @@ import {
   isLocalHtmlPreviewUrl,
   isSameLocalHtmlPreviewScope,
 } from '../../browser/preview/localHtmlPreviewServer';
+import {
+  importFileOriginRendererPreferences,
+  type RendererPreferenceStore,
+} from '../app/rendererPreferencesImporter';
 import { t } from '../i18n';
 import { registerBrowserProxySession } from '../network/systemProxyPreference';
 import { BrowserHttpAuthRequests, BrowserPermissionState } from './browserPanelRequestState';
@@ -61,6 +64,7 @@ import {
   isBlockedBrowserMetadataHost,
   isBrowserPdfStreamNavigation,
   shouldAllowBrowserPanelPermission,
+  shouldOpenMainWindowLinkExternally,
   shouldPromptBrowserPanelPermission,
 } from './browserPanelSecurity';
 import {
@@ -68,6 +72,7 @@ import {
   shouldAllowAudioMediaRequest,
   shouldAllowSystemAudioCapture,
 } from './mediaPermission';
+import { loadPackagedRenderer } from './renderer/packagedRendererLoader';
 import { getWindowChromeOptions } from './windowChrome';
 import { WorkspaceWindowManager } from './workspaceWindowManager';
 
@@ -77,6 +82,7 @@ type MainWindowFactoryOptions = {
   devServerUrl: string;
   getBackgroundColor: () => string;
   getIconPath: () => string | undefined;
+  getRendererPreferenceStore: () => RendererPreferenceStore;
   getBrowserDownloadSettings: () => BrowserDownloadSettings;
   getProxyCredentials: () => {
     host: string;
@@ -130,6 +136,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     ...getWindowChromeOptions(options.isMac, options.isWindows, options.getTitleBarOverlay()),
     webPreferences: {
       nodeIntegration: false,
+      nodeIntegrationInSubFrames: false,
       contextIsolation: true,
       sandbox: true,
       webSecurity: true,
@@ -425,8 +432,14 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         callback({});
       });
   });
+  const mainNavigationOptions = {
+    devServerUrl: options.devServerUrl,
+    isDev: options.isDev,
+    applicationUrl: undefined as string | undefined,
+  };
   const openExternalLink = (url: string): void => {
-    if (isAllowedBrowserPanelUrl(url) && url !== 'about:blank') void shell.openExternal(url);
+    if (shouldOpenMainWindowLinkExternally(url, mainNavigationOptions))
+      void shell.openExternal(url);
   };
   mainWindow.webContents.setWindowOpenHandler(details => {
     const allowedWorkspace = workspaceManager?.handleOpen(details);
@@ -434,15 +447,15 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     openExternalLink(details.url);
     return { action: 'deny' };
   });
-  const mainNavigationOptions = {
-    appRoot: path.resolve(__dirname, '..'),
-    devServerUrl: options.devServerUrl,
-    isDev: options.isDev,
-  };
   mainWindow.webContents.on('will-navigate', event => {
     if (!isAllowedMainWindowNavigation(event.url, mainNavigationOptions)) event.preventDefault();
   });
   mainWindow.webContents.on('will-frame-navigate', event => {
+    if (event.isMainFrame && !isAllowedMainWindowNavigation(event.url, mainNavigationOptions)) {
+      event.preventDefault();
+    }
+  });
+  mainWindow.webContents.on('will-redirect', event => {
     if (event.isMainFrame && !isAllowedMainWindowNavigation(event.url, mainNavigationOptions)) {
       event.preventDefault();
     }
@@ -968,6 +981,24 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     });
   }
 
+  const prepareWorkspaceWindow = (applicationUrl: string): void => {
+    workspaceManager ??= new WorkspaceWindowManager(mainWindow, {
+      url: new URL('workspace.html', applicationUrl).toString(),
+      icon: options.getIconPath(),
+      getBackgroundColor: options.getBackgroundColor,
+      getTitleBarOverlay: options.getTitleBarOverlay,
+      isMac: options.isMac,
+      isWindows: options.isWindows,
+      showSystemMenu: options.showSystemMenu,
+      isQuitting: options.isQuitting,
+      configureHost: configureBrowserHost,
+      openExternal: openExternalLink,
+      readBounds: options.readWorkspaceWindowBounds,
+      saveBounds: options.saveWorkspaceWindowBounds,
+    });
+  };
+  if (options.isDev) prepareWorkspaceWindow(options.devServerUrl);
+
   const loadTimeout = options.isDev
     ? undefined
     : setTimeout(() => {
@@ -981,6 +1012,9 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     if (loadTimeout) {
       clearTimeout(loadTimeout);
     }
+  });
+  mainWindow.once('closed', () => {
+    if (loadTimeout) clearTimeout(loadTimeout);
   });
   mainWindow.webContents.on('did-finish-load', () => options.onDidFinishLoad(mainWindow));
 
@@ -1020,7 +1054,24 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       }
     });
   } else {
-    void mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    void loadPackagedRenderer(
+      mainWindow,
+      app,
+      path.join(__dirname, '../dist'),
+      url => {
+        mainNavigationOptions.applicationUrl = url;
+        if (url) prepareWorkspaceWindow(url);
+      },
+      () =>
+        importFileOriginRendererPreferences({
+          resourcePath: path.join(__dirname, '../resources/renderer-preferences.html'),
+          session: mainWindow.webContents.session,
+          store: options.getRendererPreferenceStore(),
+          isCurrent: () => !mainWindow.isDestroyed() && !options.isQuitting(),
+        }),
+    ).catch(error => {
+      console.error('[MainWindow] Failed to load packaged renderer:', error);
+    });
   }
 
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
@@ -1040,21 +1091,5 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
 
   mainWindow.once('ready-to-show', () => options.onReadyToShow(mainWindow));
   configureBrowserHost(mainWindow.webContents);
-  workspaceManager = new WorkspaceWindowManager(mainWindow, {
-    url: options.isDev
-      ? new URL('workspace.html', `${options.devServerUrl.replace(/\/+$/, '')}/`).toString()
-      : pathToFileURL(path.join(__dirname, '../dist/workspace.html')).toString(),
-    icon: options.getIconPath(),
-    getBackgroundColor: options.getBackgroundColor,
-    getTitleBarOverlay: options.getTitleBarOverlay,
-    isMac: options.isMac,
-    isWindows: options.isWindows,
-    showSystemMenu: options.showSystemMenu,
-    isQuitting: options.isQuitting,
-    configureHost: configureBrowserHost,
-    openExternal: openExternalLink,
-    readBounds: options.readWorkspaceWindowBounds,
-    saveBounds: options.saveWorkspaceWindowBounds,
-  });
   return mainWindow;
 };

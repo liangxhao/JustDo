@@ -8,6 +8,7 @@
  * with a direct gateway connection, identical to OpenClaw's webchat.
  */
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
+import { isChatSendStopReceipt } from '@shared/openclaw/chatSendReceipt';
 import type { ProgressCardViewState } from '@shared/openclaw/progressCard';
 import {
   forwardRef,
@@ -29,6 +30,8 @@ import {
 import { selectCurrentSession } from '@/features/cowork/coworkSelectors';
 import type { CoworkAttachmentPayload, CoworkSession } from '@/features/cowork/coworkTypes';
 import type { JustDoChatElement } from '@/libs/openclaw-chat/components/justdo-chat';
+import { NATIVE_WIDGET_DRAFT_EVENT } from '@/libs/openclaw-chat/components/native-widget/host';
+import { NativeWidgetView } from '@/libs/openclaw-chat/components/native-widget/view';
 import {
   type ChatContextUsageSnapshot,
   ChatController,
@@ -42,6 +45,7 @@ import {
   type QueuedInputSnapshot,
   queuedInputSnapshot,
 } from '@/libs/openclaw-chat/gateway/chat-pending-inputs';
+import { dispatchInitialTurn } from '@/libs/openclaw-chat/gateway/initial-turn-dispatch';
 import type { GatewayMessage, UserMessageHistoryAction } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
@@ -59,6 +63,7 @@ function debugLog(...args: unknown[]): void {
 }
 
 interface JustDoChatWrapperProps {
+  onWidgetDraft?: (sessionKey: string, text: string) => void;
   className?: string;
   assistantName?: string;
   workingDirectory?: string;
@@ -87,6 +92,7 @@ interface JustDoChatWrapperProps {
 }
 
 export interface JustDoChatWrapperRef {
+  dispatchInitialTurn: (params: Record<string, unknown>) => Promise<unknown>;
   getQueuedInputDetail: (inputId: string, expectedSessionKey: string) => QueuedInputDetail | null;
   withdrawQueuedInput: (inputId: string, expectedSessionKey: string) => Promise<void>;
   hasUnconfirmedQueuedInput: () => boolean;
@@ -175,6 +181,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       onHistoryReadyChange,
       onLastUserMessageAction,
       onMessageQuote,
+      onWidgetDraft,
       onAssistantMessageFork,
       onSideChatResult,
       onSideChatStream,
@@ -198,9 +205,42 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     canonicalSessionKeyRef.current = canonicalSessionKey;
     const controllerRef = useRef<ChatController | null>(null);
     const chatElementRef = useRef<JustDoChatElement | null>(null);
-    const handleChatElementChange = useCallback((element: JustDoChatElement | null) => {
-      chatElementRef.current = element;
+    const widgetDraftCallback = useRef(onWidgetDraft);
+    widgetDraftCallback.current = onWidgetDraft;
+    const canDraftWidget = useCallback(() => typeof widgetDraftCallback.current === 'function', []);
+    const handleWidgetDraft = useCallback((event: Event) => {
+      const widget = event.composedPath()[0];
+      const detail = (event as CustomEvent<{ sessionKey: string; text: string }>).detail;
+      const state = controllerRef.current?.state;
+      if (
+        !(widget instanceof NativeWidgetView) ||
+        !chatElementRef.current?.shadowRoot?.contains(widget) ||
+        !state?.connected ||
+        detail?.sessionKey !== state.sessionKey ||
+        typeof detail.text !== 'string' ||
+        detail.text.length > 4000 ||
+        !detail.text.trim() ||
+        /^\s*[!/]/.test(detail.text)
+      )
+        return;
+      widgetDraftCallback.current?.(detail.sessionKey, detail.text);
     }, []);
+    const handleChatElementChange = useCallback(
+      (element: JustDoChatElement | null) => {
+        const previous = chatElementRef.current;
+        previous?.removeEventListener(NATIVE_WIDGET_DRAFT_EVENT, handleWidgetDraft);
+        if (previous && previous !== element) previous.canDraftWidget = undefined;
+        chatElementRef.current = element;
+        if (element) element.canDraftWidget = canDraftWidget;
+        element?.addEventListener(NATIVE_WIDGET_DRAFT_EVENT, handleWidgetDraft);
+      },
+      [canDraftWidget, handleWidgetDraft],
+    );
+    useLayoutEffect(() => {
+      // The live callback fences input immediately; refresh policy/UI without
+      // replacing the iframe or discarding its local component selections.
+      chatElementRef.current?.requestUpdate();
+    }, [onWidgetDraft]);
     const historyReadyCallback = useRef(onHistoryReadyChange);
     historyReadyCallback.current = onHistoryReadyChange;
     const [historyStatus, setHistoryStatus] = useState<'loading' | 'error' | 'ready'>('loading');
@@ -251,6 +291,23 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     useImperativeHandle(
       ref,
       () => ({
+        dispatchInitialTurn: async params => {
+          const controller = controllerRef.current;
+          if (!controller)
+            throw Object.assign(new Error(i18nService.t('coworkInitialDispatchUnavailable')), {
+              requestSent: false,
+            });
+          const sessionKey = controller.state.sessionKey;
+          const receipt = await dispatchInitialTurn(controller.state, params);
+          if (isChatSendStopReceipt(receipt)) {
+            // A native control ACK never starts this initial execution. Its
+            // optimistic prompt otherwise waits forever for a stream terminal.
+            // The null run fence protects any newer execution in this session.
+            controller.clearSending(sessionKey, null);
+            if (controller.state.sessionKey === sessionKey) void controller.loadHistory(true);
+          }
+          return receipt;
+        },
         getExportSnapshot: () => {
           const controller = controllerRef.current;
           return {
@@ -535,7 +592,9 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       if (initialSession) {
         const agentId = initialSession.agentId?.trim() || 'main';
         const sessionKey =
-          initialSession.external?.sessionKey || `agent:${agentId}:justdo:${initialSession.id}`;
+          initialSession.nativeSessionKey ||
+          initialSession.external?.sessionKey ||
+          `agent:${agentId}:justdo:${initialSession.id}`;
         controller.state.sessionKey = sessionKey;
       }
 

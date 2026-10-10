@@ -76,6 +76,8 @@ Windows Gateway 子进程通过专用 Node IPC 接收退出请求，宿主注入
 
 ## 4. 配置同步是执行准入的一部分
 
+桌面主聊天的首轮原生发送支持由实际 Renderer 连接执行：Adapter 准备 session/root、权限、模型、运行 ID 与 Goal intent 后，向受信窗口交出同一份 `chat.send` 参数；Main 保留监听与运行状态。只有已挂载原生 viewer 的 HTTP(S) 聊天连接公告 `inline-widgets`，原生执行按 originating client capability 决定 `show_widget` 是否可用。Main 的后台连接保持 headless，未增加 UI capability 或 native runtime patch。一次 ACK 必须对应原始幂等 ID，停止控制回执和 structured Goal receipt 分别校验；不确定发送只恢复状态，不重新启动任务。
+
 产品配置来自 app_config、cowork_config、agents、MCP/Hook Store、Extension 开关与受管文件。ConfigSync 构建原生投影，ConfigSyncService 在串行 mutation 中应用并验证。
 
 产品暂未接入 OpenClaw Portals 展示流程，配置同步始终在全局 `tools.deny` 中加入

@@ -24,6 +24,8 @@ import { parseInlineDirectives } from '@/libs/openclaw-chat/shims/backend-helper
 import { mediaKindFromMime } from '@/libs/openclaw-chat/shims/media-core';
 import type { MessageContentItem, NormalizedMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
+
+import { isNativeCanvasPreview } from './native-canvas';
 export {
   isToolResultMessage,
   normalizeRoleForGrouping,
@@ -145,6 +147,7 @@ function coerceCanvasPreview(
   value: unknown,
 ):
   Extract<NonNullable<NormalizedMessage['content'][number]>, { type: 'canvas' }>['preview'] | null {
+  if (isNativeCanvasPreview(value)) return value;
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null;
   }
@@ -632,7 +635,9 @@ function expandUserDisplayContent(
   text: string,
   includeLegacyTextFields = false,
 ): MessageContentItem[] {
-  const displayText = stripSwarmInstruction(stripSwarmWorkflowInstruction(stripInboundMetadata(text)));
+  const displayText = stripSwarmInstruction(
+    stripSwarmWorkflowInstruction(stripInboundMetadata(text)),
+  );
   const browserPrompt = parseBrowserAnnotationPrompt(displayText);
   if (!browserPrompt) return expandUserTextMediaContent(displayText, includeLegacyTextFields);
   return [

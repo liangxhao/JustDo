@@ -20,6 +20,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     windowMaximize: '最大化',
     windowRestore: '还原',
     windowClose: '关闭',
+    coworkInitialDispatchUnavailable: '当前聊天窗口已失效，无法提交首条消息。',
+    coworkInitialDispatchInvalid: '首条消息的提交身份无效。',
+    coworkInitialDispatchUncertain: '首条消息的提交结果尚未确认，正在恢复原生状态。',
+    coworkInitialDispatchFailed: '无法提交首条消息。',
     windowsSandboxSystemDriveInvalid: 'Windows 系统盘路径无效。',
     windowsSandboxPrepResultInvalid: '系统盘准备程序未返回有效结果。',
     windowsSandboxPrepExitCodeMissing: '提权后的系统盘准备程序未返回退出码。',
@@ -47,7 +51,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
       '取消任务后的工作目录未能清理，已保留会话入口。请在设置中检查 Worktree。',
     nativeVideoUrlInvalid:
       '视频服务地址无效，请使用不含登录信息、查询参数或片段的 HTTP 或 HTTPS 地址。',
-    nativeVideoLegacyUnsupported: '请在设置的视频模型页面配置视频服务，此入口不支持直接写入 OpenAI 视频配置。',
+    nativeVideoLegacyUnsupported:
+      '请在设置的视频模型页面配置视频服务，此入口不支持直接写入 OpenAI 视频配置。',
     nativeVideoConfigurationInvalid: '视频模型配置无效，请检查服务商、模型、服务地址和 API Key。',
     decisionModelConfigurationInvalid:
       '决策模型配置未能生效，请检查供应商 URL、API Key、默认模型及凭据文件访问权限。',
@@ -80,6 +85,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     attachmentMenuShowInFolder: '打开所在的文件夹',
     imageMenuSaveAs: '图片另存为…',
     imagePreviewWindowTitle: '图片预览',
+    imagePreviewUnavailable: '图片预览暂不可用，请重新打开主窗口后重试。',
     filePreviewConflictTitle: '文件已在外部修改',
     filePreviewConflictMessage: 'Agent 或其他程序在你编辑期间修改了此文件。',
     filePreviewConflictOverwrite: '覆盖文件',
@@ -132,6 +138,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     windowMaximize: 'Maximize',
     windowRestore: 'Restore',
     windowClose: 'Close',
+    coworkInitialDispatchUnavailable:
+      'The chat window is no longer current. The first message was not submitted.',
+    coworkInitialDispatchInvalid: 'The initial message has an invalid submission identity.',
+    coworkInitialDispatchUncertain:
+      'The first message submission is still unconfirmed. Recovering native state.',
+    coworkInitialDispatchFailed: 'The first message could not be submitted.',
     windowsSandboxSystemDriveInvalid: 'The Windows system drive is invalid.',
     windowsSandboxPrepResultInvalid:
       'The MXC host preparation launcher did not return a valid result.',
@@ -215,6 +227,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     attachmentMenuShowInFolder: 'Show in Folder',
     imageMenuSaveAs: 'Save Image As…',
     imagePreviewWindowTitle: 'Image preview',
+    imagePreviewUnavailable: 'Image preview is unavailable. Reopen the main window and try again.',
     filePreviewConflictTitle: 'File changed externally',
     filePreviewConflictMessage:
       'An agent or another program changed this file while you were editing.',

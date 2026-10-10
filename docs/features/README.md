@@ -9,6 +9,7 @@
 | 对话 | [输入框功能菜单](chat/composer-feature-menu.md)                                                 | 注册、启用过滤、草稿与菜单交互                      |
 | 对话 | [运行参数](chat/agent-runtime-settings.md) / [权限管理](chat/openclaw-permission-management.md) | 容量与超时调优、执行授权分别管理                    |
 | 对话 | [会话诊断](chat/session-diagnostics.md)                                                         | 本地证据、日志扫描、结束原因与脱敏导出              |
+| 对话 | [交互式回答](chat/interactive-answers.md)                                                       | 原生卡片、可选组件、选择回到草稿与失败恢复          |
 | 助手 | [长期助手与任务内协作](assistants/assistants-and-collaboration.md)                              | 角色档案、助手切换、agent-team 与原生 SubAgent 边界 |
 
 消息、Thinking、工具、音视频与 Review 的完整渲染链路统一在[聊天渲染架构](../architecture/15-chat-rendering.md)，不另用旧渲染计划维护现状。

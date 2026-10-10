@@ -92,7 +92,10 @@ import {
   registerLocalFileScheme,
 } from './core/window/localFileProtocol';
 import { createMainWindow } from './core/window/mainWindowFactory';
-import { getWorkspaceWindowManager, isWorkspaceBrowserHost } from './core/window/workspaceWindowManager';
+import {
+  getWorkspaceWindowManager,
+  isWorkspaceBrowserHost,
+} from './core/window/workspaceWindowManager';
 import { orderDiagnosticMainLogs } from './cowork/diagnostics/logSources';
 import { SessionDiagnosticsService } from './cowork/diagnostics/service';
 import { CoworkStore } from './data/coworkStore';
@@ -171,9 +174,7 @@ import {
   registerSkillHandlers,
   registerSkillWorkshopHandlers,
 } from './ipc/plugins';
-import {
-  registerMediaGenerationModelHandlers,
-} from './ipc/providers/mediaGenerationModels';
+import { registerMediaGenerationModelHandlers } from './ipc/providers/mediaGenerationModels';
 import {
   getCronJobService,
   getScheduledTaskResultStore,
@@ -181,10 +182,7 @@ import {
   initCronJobServiceManager,
   registerScheduledTaskHandlers,
 } from './ipc/scheduledTask';
-import {
-  registerComputerControlHandlers,
-  registerOpenClawApprovalHandlers,
-} from './ipc/security';
+import { registerComputerControlHandlers, registerOpenClawApprovalHandlers } from './ipc/security';
 import {
   registerLocalAsrHandlers,
   registerLocalSpeechModelHandlers,
@@ -1434,6 +1432,7 @@ if (multicaBridgeArgv) {
   registerImagePreviewHandlers({
     devServerUrl,
     getIconPath: getAppIconPath,
+    getMainWindow: () => mainWindow,
     isDev,
     preloadPath: IMAGE_PREVIEW_PRELOAD_PATH,
   });
@@ -1606,6 +1605,7 @@ if (multicaBridgeArgv) {
   };
 
   registerCoworkSessionExecutionHandlers({
+    getMainWindow: () => mainWindow,
     ensureEngineRunning: ensureOpenClawRunningForCowork,
     getCoworkStore,
     getCoworkEngineRouter,
@@ -1764,6 +1764,7 @@ if (multicaBridgeArgv) {
       getBackgroundColor: () =>
         getInitialTheme() === 'dark' ? TITLEBAR_COLORS.dark.color : '#F8F9FB',
       getIconPath: getAppIconPath,
+      getRendererPreferenceStore: getStore,
       browserGuestPreloadPath: BROWSER_GUEST_PRELOAD_PATH,
       getBrowserDownloadSettings: () => {
         const config = getStore().get<AppConfigSettings>('app_config');

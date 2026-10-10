@@ -8,5 +8,6 @@
 | [高级协作候选](multi-agent-adaptation-plan.md)       | 角色委派、运行中指导及其授权/身份准入条件                |
 | [Worktree 验收](worktree-integration-plan.md)        | 真实 Gateway/模型、重启恢复、失败清理与平台验证          |
 | [内网功能验收](intranet-feature-acceptance.md)       | 公司模型技能审核、企业网页人工介入、冷历史恢复           |
+| [交互式回答验收](interactive-answers-acceptance.md)  | 真实模型、签名安装包、多平台及原生状态/渐进呈现的依赖    |
 
 计划不能作为产品已支持的证明；单元测试或旧环境通过不能替代当前真实验收。完成后将必要规则和限制写入对应现行说明，并清除本目录的已完成内容。

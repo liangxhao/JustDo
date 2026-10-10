@@ -8,6 +8,8 @@
 
 Renderer 同时接收两类数据：preload 提供产品命令与系统能力；集中式聊天控制器连接 loopback Gateway，接收消息与执行流。React 负责页面和工作区，Lit 负责高频聊天渲染，Redux 负责产品 UI 状态。
 
+安装版 Renderer 由 Main 持有的只读静态宿主加载：每个主窗口在随机 `127.0.0.1` 端口读取打包的 `dist/index.html`，替代 `file:` 页面，使原生 Widget sandbox 能核对 HTTP(S) 父页面来源。该服务只提供构建资源和固定图片预览入口，不提供产品 API、任意文件访问或 Gateway 凭据。窗口关闭、加载失败或应用退出时撤销入口并关闭服务；开发环境仍使用 Vite。
+
 应用外壳的左侧功能导航为 44px 图标栏，顶部固定为主页、定时任务、插件与更多，账号头像和设置齿轮位于底部。头像通过 preload 发起 Main 拥有的登录流程，账号菜单以 Portal 展示，避免被外壳裁切。主页显示独立的聊天列表面板（新聊天、搜索与已有会话）；切换到其他功能或收起聊天列表后，图标栏与账号入口仍保留。记忆及已启用的 Workboard 从更多进入，可逐项固定或取消固定，固定入口排列在更多之后。侧边栏偏好通过既有 ConfigService / preload Store 保存为 `app_config.sidebarPinnedItems`，只持久化功能 ID 与顺序；Workboard 暂时不可用时隐藏入口但保留固定偏好，不复制插件配置或聊天历史。
 
 主界面的窗口标题栏由应用外壳统一渲染，从左侧图标栏右边贯穿聊天列表与页面内容，窗口控制按钮位于最右侧。图标栏保持全高；聊天列表和各功能页面位于标题栏下方，页面切换、列表收起及聊天加载不再各自创建窗口控制按钮。设置页和初始化／错误界面保留各自独立的标题栏。开发者模式下的 WebChat 入口位于更多菜单，关闭开发者模式后立即隐藏。
@@ -15,6 +17,8 @@ Renderer 同时接收两类数据：preload 提供产品命令与系统能力；
 ```mermaid
 flowchart TB
   subgraph Desktop[Electron 产品宿主]
+    Static[只读 dist HTTP 宿主] --> UI
+    Static --> Preview[图片预览 / 最小 preload]
     UI[React 页面 / Redux] --> Chat[Lit 聊天控制器]
     UI --> Preload[contextBridge]
     Preload --> IPC[领域 IPC]
@@ -31,6 +35,8 @@ flowchart TB
 ```
 
 数据面直连只属于聊天库，不允许普通页面自行读取 token、创建任意 Gateway client 或调用 Node。Gateway 的进程独立性也不代表它不受产品权限约束：每次任务发送仍要先准备并核对原生 session mode/root。
+
+静态页面仍保留显式 preload、context isolation、sandbox 与无 Node 的窗口边界。生产 CSP 只允许自身脚本和打包入口中可信内联脚本的 SHA-256 哈希，禁止表单提交、插件对象及被其他页面嵌入；网络连接继续受配置端点和原生策略约束。主窗口导航只接受当前宿主的主入口，图片预览使用同一 origin 的固定入口和独立最小 preload，因此可以读取主窗口创建的图片 Blob，不能获得主窗口桥接能力。
 
 ## 2. 组合根与依赖注入
 
@@ -86,6 +92,8 @@ flowchart LR
   Sync --> Gateway[Gateway 启动与验证]
   Gateway --> Poll[cron 与运行事件]
   Stores --> Window[窗口 / 系统集成]
+  Window --> Static[安装版只读静态宿主]
+  Static --> Renderer[主 Renderer / 图片预览]
 ```
 
 特殊 Multica bridge client 模式在普通 UI 初始化之前处理。正常启动设置产品 userData、日志、依赖管理器环境和系统 CA；ready 后初始化数据库，整理上次中断的产品运行状态，恢复网络偏好，再准备内置模型与受管配置。
@@ -93,6 +101,8 @@ flowchart LR
 有效请求头策略由手工配置和已启用、验证通过的 Extension 声明合成，不能等 Gateway 已发出请求后才切换代理 generation。配置同步失败会记录原因，后续执行准入不得把失败状态当可用。
 
 浏览器侧栏 app-server、Native Messaging 发现文件、Multica 本机桥和托盘属于产品生命周期。它们有各自凭据和清理逻辑，不共用 Gateway token。UI 可显示启动或配置错误；窗口存在本身不证明模型可用。
+
+随机静态端口会改变浏览器 origin。桌面聊天的 Ed25519 Gateway 连接身份通过既有 preload Store 保存到 Main 的 SQLite `kv`，不依赖该 origin 的 `localStorage`，因而重建窗口和重新启动仍可复用身份。此记录不新增 Redux 状态或消息缓存；存储不可用时只保留当前 Renderer 生命周期内的内存身份。
 
 ## 5. 三条核心操作链
 

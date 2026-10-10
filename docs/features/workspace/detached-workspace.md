@@ -34,6 +34,8 @@ Tab 较多时的列表菜单也显示在工作区内，定位与键盘焦点跟�
 ## 实现和验证
 
 源 React 树 portal 到固定的无 preload 文档，通过 Main 移动同一 WebContentsView。
+开发由 Vite、安装版由 Main 的只读 HTTP 宿主提供同源 `workspace.html`；后者仅
+允许单个 UUID 格式的 generation 参数，原生窗口仍核对当前授予的 URL 和 frameName。
 生命周期和权限边界见 [进程模型](../../architecture/03-process-model.md)，跨文档
 渲染约定见 [聊天渲染](../../architecture/15-chat-rendering.md)。
 
@@ -55,6 +57,10 @@ Swarm 图形布局和聊天滚动继续更新；详情弹窗拖动与缩小窗�
 子文档自关闭后的重新取得，以及失效 generation 的重复通知。进程退出分支用
 事件注入验证；当前同源 workspace 与 Main 共享渲染进程，真实强制崩溃会同时影响二者。
 测试不启动 Gateway，也不读取应用数据库。输出在忽略的 `.tmp/` 中。
+
+以上文件 URL 是测试探针的验证模式；安装版使用 Main 提供的同源 HTTP。
+该探针不能代替安装版 HTTP/ASAR 的工作区加载、跨文档样式、原生交互卡片与
+无继承 preload 验收，检查入口见 [交互式回答验收](../../plans/interactive-answers-acceptance.md)。
 
 物理双屏拖动、不同显示缩放、操作系统中文输入法、原生剪贴板和麦克风/系统音频
 需要人工验收。合成 composition、编辑器程序输入及终端 paste 不能替代这些

@@ -1271,6 +1271,7 @@ describe('OpenClaw auth logout config sync', () => {
       'ask-user-question',
       'workboard',
       'agent-team',
+      'interactive-ui',
       'swarm-workflow',
       'typesafe',
       'memory-core',
@@ -1374,6 +1375,7 @@ describe('OpenClaw auth logout config sync', () => {
       'agent-workspace-plugin',
       'workboard',
       'agent-team',
+      'interactive-ui',
       'swarm-workflow',
       'typesafe',
       'memory-core',
@@ -1589,6 +1591,7 @@ describe('OpenClaw auth logout config sync', () => {
       'justdo-skill-only-example',
       'workboard',
       'agent-team',
+      'interactive-ui',
       'swarm-workflow',
       'typesafe',
       'memory-core',
@@ -2194,6 +2197,21 @@ test.each([true, false])('keeps the optional agent-team enabled=%s across full m
   expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries['agent-team']).toEqual({ enabled });
 });
 
+
+test.each([true, false])('keeps Interactive UI enabled=%s across startup and auth sync', enabled => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'interactive-ui-config-'));
+  temporaryDirectories.push(directory);
+  const configPath = path.join(directory, 'openclaw.json');
+  expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  expect(config.plugins.entries['interactive-ui']).toEqual({ enabled: false });
+  config.plugins.entries['interactive-ui'] = { enabled };
+  fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
+  for (const reason of ['cowork-config-change', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
+    expect(writeMinimalConfig(configPath, reason).ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries['interactive-ui']).toEqual({ enabled });
+  }
+});
 
 test.each(['full', 'minimal'])('%s decision settings survive auth sync, rotate credentials and clear selection', mode => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-decision-sync-'));

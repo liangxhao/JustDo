@@ -1,4 +1,5 @@
 import './tool-output';
+import './native-widget/view';
 
 import {
   COWORK_PLAN_PREVIEW_EVENT,
@@ -349,15 +350,27 @@ function renderEditDiff(
 function renderSpawnedAgentLink(tool: ToolItem): TemplateResult | typeof nothing {
   const sessionKey = spawnedAgentSessionKey(tool);
   if (!sessionKey) return nothing;
-  return html`<button type="button" class="tool-agent-link"
-    title=${i18nService.t('subtaskShowInfo')} aria-label=${i18nService.t('subtaskShowInfo')}
+  return html`<button
+    type="button"
+    class="tool-agent-link"
+    title=${i18nService.t('subtaskShowInfo')}
+    aria-label=${i18nService.t('subtaskShowInfo')}
     @click=${(event: Event) => {
       event.preventDefault();
       event.stopPropagation();
       window.dispatchEvent(new CustomEvent(OPEN_SPAWNED_AGENT_EVENT, { detail: { sessionKey } }));
-    }}><svg viewBox="0 0 16 16" width="18" height="18" fill="none" aria-hidden="true">
-      <path d="M3.5 12.5 12 4M4.5 4H12v7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-    </svg></button>`;
+    }}
+  >
+    <svg viewBox="0 0 16 16" width="18" height="18" fill="none" aria-hidden="true">
+      <path
+        d="M3.5 12.5 12 4M4.5 4H12v7.5"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </svg>
+  </button>`;
 }
 
 function renderToolDetail(
@@ -371,13 +384,26 @@ function renderToolDetail(
   const patch = fileToolPatch(tool);
   const media = (tool.presentation?.media ?? []).map(item => ({
     url: item.path,
-    label: item.fileName || (item.path.startsWith('data:') ? tool.name : '') || item.path.split(/[\\/]/).pop()?.slice(0, 120) || tool.name,
-    kind: isTranscriptImage(item) ? 'image' as const : item.mimeType?.startsWith('video/') || item.kind === 'video' ? 'video' as const : item.mimeType?.startsWith('audio/') || item.kind === 'audio' ? 'audio' as const : 'document' as const,
+    label:
+      item.fileName ||
+      (item.path.startsWith('data:') ? tool.name : '') ||
+      item.path.split(/[\\/]/).pop()?.slice(0, 120) ||
+      tool.name,
+    kind: isTranscriptImage(item)
+      ? ('image' as const)
+      : item.mimeType?.startsWith('video/') || item.kind === 'video'
+        ? ('video' as const)
+        : item.mimeType?.startsWith('audio/') || item.kind === 'audio'
+          ? ('audio' as const)
+          : ('document' as const),
   }));
   const codeModeSource = getCodeModeSource(tool.name, tool.input);
   return html`
     <div class="process-summary__tool-detail">
-      ${renderMessageImages(media.filter(item => item.kind === 'image'), true)}
+      ${renderMessageImages(
+        media.filter(item => item.kind === 'image'),
+        true,
+      )}
       ${renderAssistantAttachments(media.filter(item => item.kind !== 'image'))}
       ${
         tool.presentation?.exitCode !== undefined && tool.presentation.exitCode !== 0
@@ -386,28 +412,45 @@ function renderToolDetail(
             </div>`
           : nothing
       }
-      ${patch.length ? html`<div class="process-summary__detail-label">${i18nService.t('coworkToolInput')}</div>
-        ${patch.map(file => html`<details class="file-patch" open><summary>${i18nService.t(`messagePatch${file.operation}`)} · ${file.path}${file.moveTo ? html` → ${file.moveTo}` : nothing}</summary>
-          ${file.text ? html`<justdo-tool-output .text=${file.text} language="diff"></justdo-tool-output>` : nothing}
-        </details>`)}` : nothing}
       ${
-        patch.length ? nothing : editDiff
-          ? renderEditDiff(tool.id, editDiff, editDiffMode, onEditDiffModeChange)
-          : html`
-              <div class="process-summary__detail-label">${i18nService.t(codeModeSource !== null ? 'coworkCodeModeSource' : 'coworkToolInput')}</div>
-              ${
-                tool.input === undefined ||
-                tool.input === null ||
-                (typeof tool.input === 'object' && Object.keys(tool.input).length === 0)
-                  ? html`<span
-                      >${i18nService.t(tool.status === 'running' ? 'messageInputPending' : 'messageNoParameters')}</span
-                    >`
-                  : html`<justdo-tool-output
-                      .text=${codeModeSource ?? inputCode?.text ?? readableValue(tool.input)}
-                      .language=${codeModeSource !== null ? 'javascript' : inputCode ? resolveEditDiffLanguage(inputCode.path) : ''}
-                    ></justdo-tool-output>`
-              }
-            `
+        patch.length
+          ? html`<div class="process-summary__detail-label">
+                ${i18nService.t('coworkToolInput')}
+              </div>
+              ${patch.map(
+                file =>
+                  html`<details class="file-patch" open>
+                    <summary>
+                      ${i18nService.t(`messagePatch${file.operation}`)} ·
+                      ${file.path}${file.moveTo ? html` → ${file.moveTo}` : nothing}
+                    </summary>
+                    ${file.text ? html`<justdo-tool-output .text=${file.text} language="diff"></justdo-tool-output>` : nothing}
+                  </details>`,
+              )}`
+          : nothing
+      }
+      ${
+        patch.length
+          ? nothing
+          : editDiff
+            ? renderEditDiff(tool.id, editDiff, editDiffMode, onEditDiffModeChange)
+            : html`
+                <div class="process-summary__detail-label">
+                  ${i18nService.t(codeModeSource !== null ? 'coworkCodeModeSource' : 'coworkToolInput')}
+                </div>
+                ${
+                  tool.input === undefined ||
+                  tool.input === null ||
+                  (typeof tool.input === 'object' && Object.keys(tool.input).length === 0)
+                    ? html`<span
+                        >${i18nService.t(tool.status === 'running' ? 'messageInputPending' : 'messageNoParameters')}</span
+                      >`
+                    : html`<justdo-tool-output
+                        .text=${codeModeSource ?? inputCode?.text ?? readableValue(tool.input)}
+                        .language=${codeModeSource !== null ? 'javascript' : inputCode ? resolveEditDiffLanguage(inputCode.path) : ''}
+                      ></justdo-tool-output>`
+                }
+              `
       }
       ${
         hasToolResult(tool)
@@ -665,6 +708,15 @@ export function renderTimelineItem(
   speech?: TimelineSpeechOptions,
   assistantAvatar?: TemplateResult,
 ): TemplateResult {
+  if (item.kind === 'native-widget') {
+    return renderAssistantTimelineRow(
+      html`<justdo-native-widget .preview=${item.preview}></justdo-native-widget>`,
+      showAvatar,
+      '',
+      'assistant',
+      assistantAvatar,
+    );
+  }
   if (item.kind === 'waiting') {
     const labels = {
       starting: 'coworkWorkingStarting',
@@ -679,7 +731,9 @@ export function renderTimelineItem(
     return renderReadingIndicatorGroup({
       showAvatar,
       assistantAvatar,
-      label: i18nService.t(item.notice ? waitingStatusKeys[item.notice.kind] : labels[item.stage ?? 'starting']),
+      label: i18nService.t(
+        item.notice ? waitingStatusKeys[item.notice.kind] : labels[item.stage ?? 'starting'],
+      ),
       warning: item.notice?.tone === 'warning',
       elapsed:
         item.startedAt === undefined

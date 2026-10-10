@@ -6,6 +6,8 @@ import { formatToolOutputForSidebar } from '@/libs/openclaw-chat/pipeline/tool-h
 import { extractCanvasFromText } from '@/libs/openclaw-chat/shims/backend-helpers';
 import type { ToolCard } from '@/libs/openclaw-chat/types';
 
+import { decodeNativeCanvasResult } from './native-canvas';
+
 export type ToolPreview = NonNullable<ToolCard['preview']>;
 
 function normalizeContent(content: unknown): Array<Record<string, unknown>> {
@@ -61,7 +63,7 @@ function extractToolText(item: Record<string, unknown>): string | undefined {
     return item.content;
   }
   if (Array.isArray(item.content)) {
-    const parts = item.content.flatMap((entry) => {
+    const parts = item.content.flatMap(entry => {
       if (!entry || typeof entry !== 'object') {
         return [];
       }
@@ -315,7 +317,18 @@ export function extractToolCards(message: unknown, prefix = 'tool'): ToolCard[] 
       inputText: serializeToolInput(args),
       outputText: text,
       ...(messageIsError !== undefined ? { isError: messageIsError } : {}),
-      preview: extractToolPreview(text, name),
+      preview:
+        (['tool', 'function', 'toolresult', 'tool_result'].includes(role) && messageIsError !== true
+          ? decodeNativeCanvasResult(
+              text,
+              name,
+              typeof m.toolCallId === 'string'
+                ? m.toolCallId
+                : typeof m.tool_call_id === 'string'
+                  ? m.tool_call_id
+                  : undefined,
+            )
+          : undefined) ?? extractToolPreview(text, name),
     });
   }
 

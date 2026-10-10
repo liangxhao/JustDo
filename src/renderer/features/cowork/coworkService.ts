@@ -1,3 +1,4 @@
+import type { NativeSessionDispatchRequest } from '@shared/cowork/nativeSessionDispatch';
 import type { SessionDetailStats } from '@shared/cowork/sessionDetails';
 import {
   type BeginSessionRunInput,
@@ -59,8 +60,21 @@ import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { store } from '@/store';
 
+import { listenInitialSessionDispatch } from './nativeSessionDispatch';
+
 type StartSessionHooks = {
   beforeSessionSelected?: (session: CoworkSession) => void;
+  dispatchInitialTurn?: (
+    request: NativeSessionDispatchRequest,
+    isCancelled: () => boolean,
+  ) => Promise<unknown>;
+};
+
+type InitialNativeStart = {
+  cancelled: boolean;
+  sessionId?: string;
+  deleted: boolean;
+  deletion?: Promise<boolean>;
 };
 
 const DEBUG_COWORK_SERVICE =
@@ -97,6 +111,7 @@ export class CoworkService {
     Promise<{ success: boolean; error?: string; engineStatus?: OpenClawEngineStatus }>
   >();
   private readonly temporarySessionPermissionModes = new Map<string, PermissionMode>();
+  private readonly initialNativeStarts = new Map<string, InitialNativeStart>();
   private readonly interactionResponses = new Map<string, Promise<boolean>>();
 
   async init(): Promise<void> {
@@ -637,90 +652,173 @@ export class CoworkService {
     const pendingTemporarySessionId = temporarySessionId?.startsWith('temp-')
       ? temporarySessionId
       : undefined;
-    const result = await cowork.startSession(options);
-    if (result.success && result.session) {
-      const planModeEnabled = pendingTemporarySessionId
-        ? (store.getState().cowork.planModeBySession[pendingTemporarySessionId] ??
-          options.planMode ??
-          false)
-        : (options.planMode ?? false);
-      const permissionMode = pendingTemporarySessionId
-        ? await this.promoteTemporarySessionPermissionMode(
-            pendingTemporarySessionId,
-            result.session.id,
-            result.session.permissionMode,
-          )
-        : result.session.permissionMode;
-      const isRunning = result.timing ? result.timing.state === 'running' : true;
-      const runningSession: CoworkSession = {
-        ...result.session,
-        permissionMode,
-        status: isRunning ? 'running' : result.session.status,
-      };
-      const select = store.getState().cowork.currentSession?.id === temporarySessionId;
-      if (select) hooks.beforeSessionSelected?.(runningSession);
-      store.dispatch(addSession({ session: runningSession, select }));
-      store.dispatch(
-        setPlanModeState({
-          sessionId: runningSession.id,
-          enabled: planModeEnabled,
-          ...(pendingTemporarySessionId ? { promoteFrom: pendingTemporarySessionId } : {}),
-        }),
-      );
-      if (isRunning) this.markSessionInProgress(runningSession.id);
-      if (result.timing) {
+    let dispatchedSessionId: string | undefined;
+    const nativeStart: InitialNativeStart = { cancelled: false, deleted: false };
+    const stopDispatch =
+      hooks.dispatchInitialTurn &&
+      options.clientTurnId &&
+      typeof cowork.onNativeSessionDispatch === 'function' &&
+      typeof cowork.respondNativeSessionDispatch === 'function' &&
+      /^https?:$/.test(window.location.protocol)
+        ? listenInitialSessionDispatch(cowork, options.clientTurnId, async request => {
+            if (
+              nativeStart.cancelled ||
+              store.getState().cowork.currentSession?.id !== temporarySessionId
+            ) {
+              throw Object.assign(new Error(i18nService.t('coworkInitialDispatchUnavailable')), {
+                requestSent: false,
+              });
+            }
+            const row = await cowork.getSession(request.sessionId).catch(error => {
+              throw Object.assign(
+                error instanceof Error
+                  ? error
+                  : new Error(i18nService.t('coworkInitialDispatchUnavailable')),
+                { requestSent: false },
+              );
+            });
+            if (
+              !row.success ||
+              !row.session ||
+              nativeStart.cancelled ||
+              store.getState().cowork.currentSession?.id !== temporarySessionId ||
+              row.session.id !== request.sessionId
+            ) {
+              throw Object.assign(new Error(i18nService.t('coworkInitialDispatchUnavailable')), {
+                requestSent: false,
+              });
+            }
+            const preparedSession = { ...row.session, status: 'running' as const };
+            nativeStart.sessionId = preparedSession.id;
+            hooks.beforeSessionSelected?.(preparedSession);
+            dispatchedSessionId = preparedSession.id;
+            store.dispatch(addSession({ session: preparedSession, select: true }));
+            store.dispatch(
+              setPlanModeState({
+                sessionId: preparedSession.id,
+                enabled: options.planMode ?? false,
+                ...(pendingTemporarySessionId ? { promoteFrom: pendingTemporarySessionId } : {}),
+              }),
+            );
+            return hooks.dispatchInitialTurn!(request, () => nativeStart.cancelled);
+          })
+        : undefined;
+    if (stopDispatch && options.clientTurnId)
+      this.initialNativeStarts.set(options.clientTurnId, nativeStart);
+    try {
+      const result = await cowork.startSession({
+        ...options,
+        ...(stopDispatch ? { rendererDispatch: true } : {}),
+      });
+      if (nativeStart.deleted || (nativeStart.deletion && (await nativeStart.deletion))) {
+        return { session: null, cancelled: true };
+      }
+      if (result.success && result.session) {
+        const planModeEnabled = pendingTemporarySessionId
+          ? (store.getState().cowork.planModeBySession[pendingTemporarySessionId] ??
+            options.planMode ??
+            false)
+          : (options.planMode ?? false);
+        const permissionMode = pendingTemporarySessionId
+          ? await this.promoteTemporarySessionPermissionMode(
+              pendingTemporarySessionId,
+              result.session.id,
+              result.session.permissionMode,
+            )
+          : result.session.permissionMode;
+        // Permission promotion also awaits Main. A confirmed Delete during that
+        // wait must win over this stale initial admission snapshot.
+        if (nativeStart.deleted || (nativeStart.deletion && (await nativeStart.deletion))) {
+          return { session: null, cancelled: true };
+        }
+        const isRunning = result.timing ? result.timing.state === 'running' : true;
+        const runningSession: CoworkSession = {
+          ...result.session,
+          permissionMode,
+          status: isRunning ? 'running' : result.session.status,
+        };
+        const select =
+          store.getState().cowork.currentSession?.id ===
+          (dispatchedSessionId ?? temporarySessionId);
+        if (select && !dispatchedSessionId) hooks.beforeSessionSelected?.(runningSession);
+        store.dispatch(addSession({ session: runningSession, select }));
         store.dispatch(
-          setSessionRuntimeSnapshot({
+          setPlanModeState({
             sessionId: runningSession.id,
-            snapshot: {
-              revision: result.timing.startedAt,
-              known: true,
-              mainRunning: isRunning,
-              subagentRunning: false,
-              running: isRunning,
-              timing: result.timing,
-            },
+            enabled: planModeEnabled,
+            ...(pendingTemporarySessionId ? { promoteFrom: pendingTemporarySessionId } : {}),
           }),
         );
+        if (isRunning) this.markSessionInProgress(runningSession.id);
+        if (result.timing) {
+          store.dispatch(
+            setSessionRuntimeSnapshot({
+              sessionId: runningSession.id,
+              snapshot: {
+                revision: result.timing.startedAt,
+                known: true,
+                mainRunning: isRunning,
+                subagentRunning: false,
+                running: isRunning,
+                timing: result.timing,
+              },
+            }),
+          );
+        }
+        return {
+          session: runningSession,
+          acceptedRunId:
+            result.timing?.rootRunId ?? result.timing?.clientTurnId ?? options.clientTurnId,
+        };
       }
-      return {
-        session: runningSession,
-        acceptedRunId:
-          result.timing?.rootRunId ?? result.timing?.clientTurnId ?? options.clientTurnId,
-      };
-    }
 
-    if (pendingTemporarySessionId) {
-      this.temporarySessionPermissionModes.delete(pendingTemporarySessionId);
-    }
+      if (pendingTemporarySessionId) {
+        this.temporarySessionPermissionModes.delete(pendingTemporarySessionId);
+      }
 
-    if (options.worktree) {
-      // Failed or cancelled preparation can retain native recovery evidence.
-      // Refresh navigation so that entry remains reachable from the session list.
-      await this.loadSessions().catch(() => undefined);
-    }
+      if (options.worktree) {
+        // Failed or cancelled preparation can retain native recovery evidence.
+        // Refresh navigation so that entry remains reachable from the session list.
+        await this.loadSessions().catch(() => undefined);
+      }
 
-    if (result.engineStatus) {
-      this.notifyOpenClawStatus(result.engineStatus);
-    }
+      if (result.engineStatus) {
+        this.notifyOpenClawStatus(result.engineStatus);
+      }
 
-    // Show a user-visible error when session start fails
-    if (result.error) {
-      const errorContent =
-        result.code === 'ENGINE_NOT_READY'
-          ? i18nService.t('coworkErrorEngineNotReady')
-          : result.error;
-      window.dispatchEvent(new CustomEvent('app:showToast', { detail: errorContent }));
-    }
+      // Show a user-visible error when session start fails
+      if (result.error) {
+        const errorContent =
+          result.code === 'ENGINE_NOT_READY'
+            ? i18nService.t('coworkErrorEngineNotReady')
+            : result.error;
+        window.dispatchEvent(new CustomEvent('app:showToast', { detail: errorContent }));
+      }
 
-    if (store.getState().cowork.currentSession?.id === temporarySessionId) {
-      store.dispatch(setStreaming(false));
+      if (
+        store.getState().cowork.currentSession?.id === (dispatchedSessionId ?? temporarySessionId)
+      ) {
+        store.dispatch(setStreaming(false));
+      }
+      if (!result.cancelled) console.error('Failed to start session:', result.error);
+      return { session: null, error: result.error, cancelled: result.cancelled };
+    } finally {
+      stopDispatch?.();
+      if (pendingTemporarySessionId) {
+        this.temporarySessionPermissionModes.delete(pendingTemporarySessionId);
+      }
+      if (
+        options.clientTurnId &&
+        this.initialNativeStarts.get(options.clientTurnId) === nativeStart
+      ) {
+        this.initialNativeStarts.delete(options.clientTurnId);
+      }
     }
-    if (!result.cancelled) console.error('Failed to start session:', result.error);
-    return { session: null, error: result.error, cancelled: result.cancelled };
   }
 
   async cancelSessionStart(clientTurnId: string): Promise<boolean> {
+    const pending = this.initialNativeStarts.get(clientTurnId);
+    if (pending) pending.cancelled = true;
     try {
       const result = await window.electron?.cowork?.cancelSessionStart({ clientTurnId });
       return result?.success === true;
@@ -756,14 +854,34 @@ export class CoworkService {
     const cowork = window.electron?.cowork;
     if (!cowork) return false;
 
-    const result = await cowork.deleteSession(sessionId);
-    if (result.success) {
-      store.dispatch(deleteSessionAction(sessionId));
-      return true;
-    }
+    const initialStart = [...this.initialNativeStarts].find(
+      ([, pending]) => pending.sessionId === sessionId,
+    );
+    const removeSession = async () => {
+      const result = await cowork.deleteSession(sessionId);
+      if (result.success) {
+        store.dispatch(deleteSessionAction(sessionId));
+        return true;
+      }
 
-    console.error('Failed to delete session:', result.error);
-    return false;
+      console.error('Failed to delete session:', result.error);
+      return false;
+    };
+    if (!initialStart) return removeSession();
+    const [clientTurnId, pending] = initialStart;
+    if (pending.deletion) return pending.deletion;
+    const deletion = (async () => {
+      if (!(await this.cancelSessionStart(clientTurnId))) return false;
+      return removeSession();
+    })();
+    pending.deletion = deletion;
+    try {
+      const deleted = await deletion;
+      pending.deleted ||= deleted;
+      return deleted;
+    } finally {
+      if (pending.deletion === deletion) pending.deletion = undefined;
+    }
   }
 
   async copySession(session: CoworkSession): Promise<CoworkSession | null> {

@@ -5,6 +5,11 @@ import { isGatewayInjectedModelRef } from '@shared/providers/modelRef';
 
 import { getTranscriptMedia } from '@/libs/openclaw-chat/attachments';
 import { collapseRepeatedFailures } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
+import {
+  decodeNativeCanvasResult,
+  isNativeWidgetFallbackPreview,
+  stripNativeWidgetFallbacks,
+} from '@/libs/openclaw-chat/pipeline/native-canvas';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
 import { type ThinkingItem, type ToolItem } from './chat-transcript-state';
@@ -12,6 +17,7 @@ import { isFailedRunMessage } from './failed-run-message';
 import { deterministicHistoryKey } from './history-reconciler';
 import type {
   LiveProcessTimelineItem,
+  NativeWidgetTimelineItem,
   PlanPresentationTimelineItem,
   ProcessSummaryTimelineItem,
   ProgressReceiptTimelineItem,
@@ -53,7 +59,8 @@ export type PersistedTimelineItem =
   | ProcessSummaryTimelineItem
   | LiveProcessTimelineItem
   | PlanPresentationTimelineItem
-  | ProgressReceiptTimelineItem;
+  | ProgressReceiptTimelineItem
+  | NativeWidgetTimelineItem;
 
 const THINKING_TYPES = new Set(['thinking', 'reasoning']);
 const TOOL_RESULT_ROLES = new Set(['tool', 'toolresult', 'tool_result', 'function']);
@@ -210,6 +217,8 @@ export function projectPersistedTimeline(
   let segment = 0;
   const toolsByCallId = new Map<string, ToolItem[]>();
   const allTools: ToolItem[] = [];
+  const presentedWidgets = new WeakSet<ToolItem>();
+  const presentedWidgetDocIds = new Set<string>();
   const syntheticRunIds = new Set<string>();
   const toolEpochByItem = new WeakMap<ToolItem, number>();
   let toolEpoch = 0;
@@ -537,7 +546,24 @@ export function projectPersistedTimeline(
     if (!source) return false;
     const role = roleOf(source);
     if (TOOL_RESULT_ROLES.has(role)) {
-      applyToolResult(source, fallbackId, runId, sequence, timestamp);
+      const tool = applyToolResult(source, fallbackId, runId, sequence, timestamp);
+      // Only native tool-role records grant document-view authority. An
+      // assistant-authored nested result is still just ordinary transcript data.
+      const widget =
+        tool.status === 'completed'
+          ? decodeNativeCanvasResult(tool.output, tool.name, readToolCallId(source) ?? undefined)
+          : undefined;
+      if (widget && !presentedWidgets.has(tool) && !presentedWidgetDocIds.has(widget.docId)) {
+        presentedWidgets.add(tool);
+        presentedWidgetDocIds.add(widget.docId);
+        flushSummary();
+        projected.push({
+          kind: 'native-widget',
+          key: `history-widget:${tool.id}`,
+          preview: widget,
+        });
+        segment += 1;
+      }
       return true;
     }
     if (TOOL_CALL_ROLES.has(role)) {
@@ -598,6 +624,7 @@ export function projectPersistedTimeline(
         // Preserve native clear semantics for every reset that did not follow
         // a persisted PresentPlan tool call.
         projected.length = 0;
+        presentedWidgetDocIds.clear();
         archived = [];
         toolsByCallId.clear();
         allTools.length = 0;
@@ -761,11 +788,46 @@ export function projectPersistedTimeline(
   });
   flushSummary();
 
+  const nativeDocIds = new Set(
+    projected.flatMap(item => (item.kind === 'native-widget' ? [item.preview.docId] : [])),
+  );
   // A history refresh can expose an in-flight Tool before its result, notably
   // when a subagent announce is persisted behind a long sessions_yield call.
   // Keep the same invariant as the live projection: only settled Thinking and
   // Tool items belong in a collapsible summary.
   return projected.flatMap(item => {
+    if (item.kind === 'history-message' && nativeDocIds.size) {
+      const source = unwrapToolMessage(item.message);
+      if (!source || roleOf(source) !== 'assistant') return [item];
+      const content = Array.isArray(source.content)
+        ? source.content
+        : typeof source.content === 'string'
+          ? [{ type: 'text', text: source.content }]
+          : typeof source.text === 'string'
+            ? [{ type: 'text', text: source.text }]
+            : [];
+      let changed = false;
+      const cleaned = content.flatMap(block => {
+        const record = asToolRecord(block);
+        // Native history has already expanded its fallback into a URL canvas
+        // block. Suppress the exact same admitted document, not external embeds.
+        if (
+          record?.type === 'canvas' &&
+          isNativeWidgetFallbackPreview(record.preview, nativeDocIds)
+        ) {
+          changed = true;
+          return [];
+        }
+        if (record?.type !== 'text' || typeof record.text !== 'string') return [block];
+        const text = stripNativeWidgetFallbacks(record.text, nativeDocIds);
+        if (text === record.text) return [block];
+        changed = true;
+        return text.trim() ? [{ ...record, text }] : [];
+      });
+      if (!changed) return [item];
+      if (!cleaned.length && !getTranscriptMedia(source).length) return [];
+      return [{ ...item, message: visibleMessageWithContent(item.message, source, cleaned) }];
+    }
     if (item.kind !== 'process-summary') return [item];
 
     const normalized: PersistedTimelineItem[] = [];

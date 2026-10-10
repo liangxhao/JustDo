@@ -233,6 +233,12 @@ See `docs/architecture/10-data-storage.md`.
   Bind new chat terminals to the prepared native session; homepage terminals remain
   connection-owned. Reconnect by attach, never reopen or replay uncertain input.
 - Renderer must use the preload bridge only. No privileged imports.
+- Packaged Renderer loads immutable dist assets from an app-owned random loopback
+  HTTP origin so native widget isolation works. Keep its asset/CSP/navigation guards.
+  Hosting, packaged loading and page CSP live together in `main/core/window/renderer/`;
+  native window ownership remains in the window factory and workspace manager.
+  Persist approved UI preferences through `rendererPreferences` and Main KV;
+  hydrate before App/Redux imports. Never mirror generic localStorage or transcripts.
 - Shared code must not import Electron, Node built-ins, DOM-only APIs, or process state.
 - Shared contracts are grouped by domain: `agents/`, `app/`, `browser/`, `cowork/`,
   `integrations/`, `network/`, `openclaw/`, `plugins/`, `preview/`, `prompts/`,
@@ -301,6 +307,8 @@ See `docs/architecture/10-data-storage.md`.
   live in `components/justdo-chat.styles.ts`. Runtime adapter domains live beside
   `main/engine/openclaw/openclawRuntimeAdapter.ts`. Keep their behavior tests grouped
   by domain and their public entry points stable.
+  Native widget view, sandbox transport, draft admission and failure UI belong to
+  `components/native-widget/`; message projection and sending stay in pipeline/gateway.
 - Translation dictionaries in `renderer/services/i18n/` are grouped by domain,
   with both languages together; `translations.ts` only composes them. Keep key/value
   parity when moving entries.
@@ -410,6 +418,18 @@ Deleted assistant profiles retain `agents.deleted_at`, disabled identity rows an
 native ownership for historical transcripts. Hide them from Settings and reject
 profile mutations; do not call native agents.delete for this history-preserving
 flow because it purges session indexes even with deleteFiles:false.
+
+Interactive answers use the optional `openclaw-extensions/interactive-ui`
+extension, disabled by default with on-demand skills for `interactive-answer`
+and `scenario-explorer`. Real `show_widget` tool
+results own document admission; authenticated Gateway view/history own HTML.
+Only an actual current HTTP(S) viewer advertises inline widgets. Main prepares
+the initial run, delegates one send to that viewer, and never retries unknown sends.
+Widget follow-ups require human confirmation into the existing composer draft.
+Keep the two content kinds cohesive under `scenario/` and `ui/`; shared document
+serialization and resource bootstrap belong to `document/`, not either kind's schema.
+See `docs/features/chat/interactive-answers.md` for the current feature contract and
+`docs/plans/interactive-answers-acceptance.md` for pending acceptance and native dependencies.
 
 Persistent peer collaboration is the optional `openclaw-extensions/agent-team`
 extension, disabled by default and user-toggleable. Keep its tools, native-send

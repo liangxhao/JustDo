@@ -87,7 +87,7 @@ describe('browser annotation context', () => {
     expect(annotation.modelContext).toContain(
       'Browser target: {"profile":"embedded","target":"host","targetId":"local-preview"}',
     );
-    expect(annotation.modelContext).not.toContain('justdo-ui');
+    expect(annotation.modelContext).not.toContain('interactive-answer');
     expect(annotation.displayUrl).toBe(filePath);
     expect(annotation.display?.displayUrl).toBe(filePath);
   });

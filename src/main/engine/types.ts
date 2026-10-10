@@ -124,6 +124,11 @@ export type CoworkStartOptions = {
   untrustedContext?: string;
   /** Main-process admission receipt; never supplied across IPC. */
   onAccepted?: () => void;
+  /** Main-owned, one-shot delegate to the originating application Renderer. */
+  dispatchChatSend?: (
+    params: Record<string, unknown>,
+    prepared: CoworkPreparedSession,
+  ) => Promise<unknown>;
 };
 
 export type CoworkStopOptions = {

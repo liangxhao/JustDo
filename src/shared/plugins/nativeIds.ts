@@ -10,6 +10,7 @@ export const OpenClawExtensionId = {
   OPENAI: 'openai',
   PLAN_MODE: 'plan-mode',
   AGENT_TEAM: 'agent-team',
+  INTERACTIVE_UI: 'interactive-ui',
   SWARM_WORKFLOW: 'swarm-workflow',
   TYPESAFE: 'typesafe',
   EMBEDDED_BROWSER: 'embedded-browser',
@@ -23,4 +24,11 @@ export const OpenClawToolName = {
   PRESENT_PLAN: 'PresentPlan',
   BROWSER: 'browser',
   COMPUTER: 'computer',
+} as const;
+
+export const NativeWidgetToolIdentity = {
+  directName: 'show_widget',
+  dispatcherName: 'tool_call',
+  catalogId: 'openclaw:core:show_widget',
+  catalogSource: 'openclaw',
 } as const;

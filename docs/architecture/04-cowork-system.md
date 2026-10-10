@@ -26,19 +26,27 @@ sequenceDiagram
   participant UI as Composer
   participant H as Session handler
   participant S as Store / Router
+  participant R as 当前聊天 Renderer
   participant G as Gateway
   UI->>H: start(prompt, cwd, clientTurnId)
   H->>H: 校验输入、助手切换设置和助手可用性
   H->>H: 等待配置及引擎 readiness
   H->>S: 幂等查询 / 创建产品会话与回执
   S->>G: 准备原生 session、权限、模型
-  S->>G: 发送首轮
-  G-->>S: 原生 run 身份
+  S->>R: 窗口 / frame / clientTurnId 绑定的一次提交请求
+  R->>R: 临时会话提升，等待原生 history 就绪
+  R->>G: 使用实际聊天连接提交首轮
+  G-->>R: 原生 run 身份
+  R-->>S: 一次回执，runId 与原始幂等 ID 匹配
   S->>S: 绑定 receipt
   G-->>UI: 原生聊天事件
 ```
 
 消息可以由文字或合法附件组成。cwd 必须明确并经任务工作目录解析；main 模型继承应用默认，不读取历史 main 档案 override。activeSkillIds 是产品请求，不替代 Gateway 最终可用性判断。
+
+主窗口 HTTP(S) 聊天首轮显式请求 Renderer 运输，由 Main 完成配置、权限、原生会话与运行身份准备后，只委托同一窗口当前文档的 `chat.send`；Main 继续持有执行、取消与恢复状态。提交前的同 URL 重载也撤销原窗口文档 lease。Renderer 先注册临时/原生会话提升，再等待当前连接可用，避免首轮流落入临时会话。后台调用保留 Main 发送通路，不公告可渲染 capability。
+
+运输回执只收一次；失联、窗口退出或已发出的超时保留结果不确定状态，禁止改由 Main 补发或自动重试。未发送失败明确标记 `requestSent:false`；当前会话失败后清理发送占位和 streaming，不抢回用户已切走的会话。原生停止控制回执 `{ok:true,aborted,runIds}` 不创建执行 run，单独结束请求；Goal start 仍要求完整原生 structured receipt。
 
 handler 用 clientTurnId 管理 pending start。用户在等待配置或启动期间取消，应退出准入，不创建一个稍后偷偷开始的任务。session 已建立时取消转为 Router stop。迟到取消只有在回执仍为当前运行时才生效，不能终止下一 turn。
 

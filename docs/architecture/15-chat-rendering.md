@@ -2,6 +2,49 @@
 
 聊天由 React 工作区和 Lit `<justdo-chat>` 组合。本文按当前 controller、reducer、history protocol、pipeline 和组件组织，重点解释消息顺序、终态、防重复、恢复及性能，避免把功能迭代记录混入架构正文。
 
+交互式回答通过原生 `show_widget` 工具结果进入聊天：实时 Tool timeline 和真正 tool-role 历史记录解析严格 native descriptor，助手自行拼写的 shortcode/JSON 不授予文档读取。已验证 preview 对象绑定当前 client、连接 generation、sessionKey 和 docId，使用认证 `canvas.document.view` 获取原生 HTML 与独立 sandbox listener；不使用 descriptor URL 作为权限，不向 iframe URL 放 token，也不把 HTML 写入产品缓存。
+
+组件的展示、隔离传输、草稿准入和失败重建集中在 `components/native-widget/`，
+对应测试与实现同目录。消息 descriptor 投影留在 pipeline，首条发送留在 gateway，
+React composer 仍负责消费用户确认的草稿；归组不改变这些层的所有权。
+
+工作区侧聊中的组件使用实际 `ownerDocument/defaultView` 接收沙箱消息、读取宿主
+origin 与主题、观察主题和可见性；监听目标在连接时捕获，移植或卸载时在原目标解除。
+shadow 样式使用文档本地 style，避免主窗口注册的构造样式表跨文档采用失败。
+草稿的视口、焦点、瞬时用户激活与隐藏策略也以组件所在文档为准；不能借用主窗口
+的激活或尺寸，隐藏时收到私有端口同样不公告草稿可用。窗口变化仍需通过当前
+client/session/generation/docId 校验，不增加子窗口 preload 或权限。
+
+发给沙箱的资源、主题、宿主状态和草稿策略必须从实际父窗口的 JavaScript realm
+发起：跨文档调用 `postMessage` 会携带调用者的源窗口，不能仅替换监听目标。
+工作区静态启动模块在自己的文档中安装只读、受限发送函数，完成后才发布 portal root；
+组件按 frame 当前文档选择发送入口，限定已连接的原生组件 iframe、准确的沙箱路径与
+origin、四类封闭消息。未放宽原生 `source === parent`、CSP 或权限；入口缺失时资源
+投递按失败处理。断开期间不创建文档绑定，重挂载主动更新并重新读取当前原生文档。
+
+原生 Tool Search 可以通过 `tool_call` 调用 `show_widget`，历史保留外层工具结果及独立嵌套
+过程记录。仅成功的真实外层 Tool 接受精确核心目录身份
+`{ id: 'openclaw:core:show_widget', name: 'show_widget', source: 'openclaw' }`，
+从其 `result.details` 读取相同 Canvas 契约，保留实际外层调用 ID。
+不递归搜索任意 JSON，不接受 MCP/client/插件同名包装、失败结果或助手伪造数据；嵌套
+过程记录仍只展示过程。内外层同时可见时按 document ID 只展示一次组件，两个执行记录
+均保留；仅移除该已验证文档对应的相对 shortcode/结构化 fallback。
+
+HTTP(S) 主聊天挂载原生 viewer 后，实际发送连接公告 `inline-widgets`。生产主页面使用本机只读静态宿主，保留隔离 preload；外层原生 shell 独立 origin、内层 opaque iframe，逐阶段校验 origin/source、sandboxUrl 的原生 csp/v 参数与 renderId。10 秒内未加载、脚本错误或文档丢失提供手动重试，不自动 wake。切换会话、重连或卸载撤销旧绑定与端口，隐藏时关闭草稿可用策略；迟到结果丢弃。
+
+失败卡片还提供用户发起的重新生成入口：宿主可信点击生成可审阅建议，绑定当前
+generation/session/docId/mount，加入草稿时再次核对。仅传封闭 load/runtime 类别与
+受验证的身份，不转发原始错误，也不把原生 UNAVAILABLE 推断为文档已淘汰。
+切换、断线、重试或卸载清除建议；不自动调用模型、不保存组件副本。
+
+交互组件外框在消息区域水平居中，最大宽度 840 CSS 像素，窄窗口按可用宽度收缩。
+高度直接跟随当前原生 sandbox 的 `openclaw:widget-size`，向上取整并限制在 48–8000 像素；
+换文档或重新绑定时重置加载高度，旧 frame 的尺寸消息不能影响新文档。
+原生协议只报告高度，外框宽度由应用布局控制；不读取跨域 DOM、不改写已保存的组件 HTML，
+不为尺寸调整增加运行时 patch。组件内部的图表留白、标注和断点仍由该文档负责。
+
+原生私有 prompt port 只接收当前 frame 的真实用户激活，检查可见性、焦点、当前会话和长度/速率；拒绝 slash/执行前缀。草稿能力默认关闭，由当前 React consumer 的实时回调决定；只读会话或转录修改时撤销该能力、清除旧建议，并在私有消息、重建与加入草稿入口再次校验。能力切换保留原 iframe、端口与本地选择，不重新读取文档。建议先展示供用户确认，可信「加入草稿」点击只追加当前 composer 文字，保留附件与已有草稿；发送仍由用户操作。没有 dashboard/MCP/tool/resource 权限。固定 scenario 不访问外部网络，原生任意 HTML 类型仍沿用原生 CSP/CDN/media 边界，不承诺全类型断网。用户入口与限制见 [交互式回答](../features/chat/interactive-answers.md)，未完成验收见 [验收清单](../plans/interactive-answers-acceptance.md)。
+
 消息中的普通网页 URL、Markdown 链接和 `MEDIA` 附件共享浏览器打开偏好，打开当前会话内置网页 Tab 或已安装的 Chrome。句子中的本地 HTML 路径和 Markdown HTML 链接转换为受控点击标记，主窗口不导航到 file URL；文件查找与 URL 查询参数、锚点分离，路径只解码一次，裸文件路径中的 `%`、`#` 保持原名。Main 沿用本地预览服务校验文件及资源根目录，再通过主窗口主 frame 专用 IPC 打开 HTTP(S) 预览 URL。已挂载的内置浏览器通过自身 handle 创建实际 Tab，容量拒绝时不插入外层虚假 Tab。该偏好只影响用户点击，不改变 Gateway 的 browser Tool 模式或原生消息所有权。详见[浏览器设置](../features/browser/browser-settings-design.md)。
 
 右侧工作区支持整区分离，覆盖 agent-team、Swarm Workflow、临时侧聊、文件、浏览器、
@@ -135,7 +178,7 @@ flowchart LR
 
 Main 只提供连接准备、权限、产品生命周期和受限详情读取，不复制 Thinking/Tool/Content。Redux 也不保存 transcript。原生历史丢失时不能用产品消息缓存冒充恢复。
 
-Composer 提交前只是草稿；Main 建立产品会话与 `clientTurnId`，并准备模型、权限和项目根目录。首轮可由 Router 发送，后续回合由集中式聊天 client 发送。产品 receipt 只证明身份已建立，原生 admission 只证明执行已被接收，live final 也不能单独证明后代任务与 Goal 已全部结束。排障时先查原生 history 和完整 event，再查 admission、reducer 与渲染 pipeline；Main 的摘要日志缺少中间帧不能证明原生事件未发生。
+Composer 提交前只是草稿；Main 建立产品会话与 `clientTurnId`，并准备模型、权限和项目根目录。首轮由 Router 准备并委托当前聊天 client 一次发送（后台保留 Router 运输），后续回合由集中式聊天 client 发送。产品 receipt 只证明身份已建立，原生 admission 只证明执行已被接收，live final 也不能单独证明后代任务与 Goal 已全部结束。排障时先查原生 history 和完整 event，再查 admission、reducer 与渲染 pipeline；Main 的摘要日志缺少中间帧不能证明原生事件未发生。
 
 ## 2. 控制器和状态归属
 
