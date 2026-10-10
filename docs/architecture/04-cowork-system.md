@@ -119,7 +119,7 @@ PresentPlan 将规范化计划作为工作区内受控文件持久化，并保�
 
 子任务以 `sessions.list/describe` 的原生会话投影与 `sessions.changed` 为权威。Subagent 与 ACP 都保留原生 session key 作为产品 ID，状态、运行 ID、耗时和 usage 直接取当前原生快照；不再组合已经移除的 task ledger。查询失败保留不完整语义，详情不接受返回身份与请求 key 不一致的记录。完整读取立即替换成员集合，临时失败才保留上次已核验状态。
 
-平级协作由默认关闭的 agent-team 扩展提供。模型准备成员后使用原生 sessions_send，侧栏只显示锚点任务，详情按成员读取原生历史。任务成员不是 Subagent 树节点，accepted 投递也不是任务完成。完整预算与删除协议见[协作机制](../features/assistants-and-collaboration.md)。
+平级协作由默认关闭的 agent-team 扩展提供。模型准备成员后使用原生 sessions_send，侧栏只显示锚点任务，详情按成员读取原生历史。任务成员不是 Subagent 树节点，accepted 投递也不是任务完成。完整预算与删除协议见[协作机制](../features/assistants/assistants-and-collaboration.md)。
 
 ## 9. 历史、分支、复制与删除
 
@@ -156,7 +156,7 @@ PresentPlan 将规范化计划作为工作区内受控文件持久化，并保�
 
 ## 11. 实现与回归入口
 
-会话右键「诊断」通过独立 IPC 读取有界运行元数据，不切换聊天或触发恢复协调。Main 用精确运行身份和原生外层终态生成确定性结论；历史 start 不作为当前运行的证明。在线环境查询与本地报告分开，Gateway 离线仍可查看已有记录。正文始终由 OpenClaw 管理，诊断没有 transcript cache。见[会话诊断](../features/session-diagnostics.md)。
+会话右键「诊断」通过独立 IPC 读取有界运行元数据，不切换聊天或触发恢复协调。Main 用精确运行身份和原生外层终态生成确定性结论；历史 start 不作为当前运行的证明。在线环境查询与本地报告分开，Gateway 离线仍可查看已有记录。正文始终由 OpenClaw 管理，诊断没有 transcript cache。见[会话诊断](../features/chat/session-diagnostics.md)。
 
 共享的过程问题汇总从当前快照事件与安全日志投影生成，由 Renderer、复制摘要和 Main 导出共用。汇总保留关联强弱与证据引用，独立于整轮终态分类；正常结束不掩盖中途工具或模型错误，时间窗口线索不提升为已确认根因。该派生视图不新增持久状态。
 

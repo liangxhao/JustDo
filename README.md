@@ -179,7 +179,8 @@ in `docs/openclaw-runtime-patches.md`.
 Start with [docs/README.md](docs/README.md) for architecture and feature guides.
 Development startup and log triage: [development guide](docs/development.md).
 Capabilities and limits: [system overview](docs/architecture/01-overview.md).
-Persistent assistants are managed in Settings; ordinary conversations belong to main.
+Persistent assistants are managed in Settings; ordinary conversations default to main,
+with an optional setting to select another enabled assistant for a new conversation.
 Peer collaboration uses the optional agent-team extension, disabled by default.
 
 ## Contributing

@@ -6,13 +6,13 @@
 
 用户在桌面会话中提出任务、提供附件并选择项目目录、模型和权限。应用准备原生会话后，由 OpenClaw 调用模型和工具。用户可以查看执行、处理审批或问题、审核计划、停止任务，再从原生历史继续。
 
-普通用户会话固定归属 main。设置中的长期助手提供可复用身份及角色文件；启用可选协作扩展后，模型可为当前任务准备助手会话。子任务委派、平级协作、定时任务属于不同执行关系，界面分别展示。
+普通用户会话默认归属 main，启用助手切换后可选择其他已启用助手。设置中的长期助手提供可复用身份及角色文件；启用可选协作扩展后，模型可为当前任务准备助手会话。子任务委派、平级协作、定时任务属于不同执行关系，界面分别展示。
 
 “本地优先”表示桌面壳、产品数据库、配置、项目与受管运行时在本机。它不保证离线推理：模型、MCP、插件和工具的联网行为取决于用户配置与权限。
 
-已接入的主要流程包括对话与计划审核、持续目标、定时任务、插件管理、四种浏览器模式、模型与认证、语音及外部 Agent。相应行为与限制见 [Cowork](04-cowork-system.md)、[定时任务](08-scheduled-tasks.md)、[插件系统](07-plugin-system.md)、[浏览器设计](../features/browser-settings-design.md)、[模型管理](../features/model-management.md)、[语音](../features/local-tts.md)和[外部 Agent 接入](../developer-integration/external-agent-integration-guide.md)。Memory 经 Gateway 搜索及受限文件接口读取；Usage 展示 Gateway 用量投影，二者都不另建消息或执行权威。
+已接入的主要流程包括对话与计划审核、持续目标、定时任务、插件管理、四种浏览器模式、模型与认证、语音及外部 Agent。相应行为与限制见 [Cowork](04-cowork-system.md)、[定时任务](08-scheduled-tasks.md)、[插件系统](07-plugin-system.md)、[浏览器设计](../features/browser/browser-settings-design.md)、[模型管理](../features/models/model-management.md)、[语音](../features/models/local-tts.md)和[外部 Agent 接入](../developer-integration/external-agent-integration-guide.md)。Memory 经 Gateway 搜索及受限文件接口读取；Usage 展示 Gateway 用量投影，二者都不另建消息或执行权威。
 
-长期助手、任务内协作成员和原生 Subagent 是不同身份。可选协作扩展默认关闭；启用后每任务最多 12 名成员、每用户轮次最多 16 次投递。原生接收回执不代表业务完成，成员共享项目文件时也没有自动 worktree 或写冲突隔离。详见[长期助手与任务内协作](../features/assistants-and-collaboration.md)。
+长期助手、任务内协作成员和原生 Subagent 是不同身份。可选协作扩展默认关闭；启用后每任务最多 12 名成员、每用户轮次最多 16 次投递。原生接收回执不代表业务完成，成员共享项目文件时也没有自动 worktree 或写冲突隔离。详见[长期助手与任务内协作](../features/assistants/assistants-and-collaboration.md)。
 
 ## 2. 进程与通信
 
@@ -76,7 +76,7 @@ sequenceDiagram
 
 插件页统一管理 Skill、MCP、Hook 和 Extension。文件导入不等于运行可用，运行状态仍需原生 API 核对。Marketplace 是业务服务适配接口，仓库默认没有市场 provider。
 
-浏览器扩展分为 OpenClaw 配对/relay 基线与独立 conversation-overlay，前者升级不能覆盖后者的聊天功能。嵌入式页面、操作演示、侧栏对话的权限和生命周期见[浏览器设计](../features/browser-settings-design.md)。
+浏览器扩展分为 OpenClaw 配对/relay 基线与独立 conversation-overlay，前者升级不能覆盖后者的聊天功能。嵌入式页面、操作演示、侧栏对话的权限和生命周期见[浏览器设计](../features/browser/browser-settings-design.md)。
 
 本地语音模型按需安装；附件转录与麦克风开关独立。Windows 命令沙盒约束工具进程，不能代替 Electron Renderer 的隔离。详见[插件系统](07-plugin-system.md)和[安全模型](11-security-model.md)。
 

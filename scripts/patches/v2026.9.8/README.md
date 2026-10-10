@@ -19,8 +19,9 @@ exit diagnostics; 034 adds opt-in plugin execution settlement and tool cleanup;
   main-session restart recovery. Gateway restarts within one app epoch retain
   native recovery semantics.
 - **021:** upstream removed the OpenAI video-generation provider. Retain isolated
-  image-provider configuration only. Video settings accept the native Kie, Z.AI
-  or Novita provider; compatibility handling for unreleased custom `/videos`
+  image-provider configuration only. Video providers register outside this patch:
+  the application bundles `video-openai`; Kie, Z.AI and Novita are available only
+  when installed separately. Compatibility handling for unreleased custom `/videos`
   settings has been removed.
   no replacement video transport is injected into OpenClaw.
 
@@ -155,4 +156,4 @@ Tests: `tests/scripts/mxc-sandbox-patches.test.ts` and
 `src/main/security/windowsSandboxService.test.ts`.
 
 For feature-level integration and validation results see
-[the upgrade audit](../../../docs/openclaw-upgrades/v2026.9.8.md).
+[the upgrade audit](../../../docs/openclaw-upgrades/v2026.9.8/v2026.9.8.md).

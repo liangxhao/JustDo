@@ -134,7 +134,7 @@ trusted SDK results are committed atomically before existing login/logout callba
 Manual `user_info.json` import retains native model startup and is displayed as
 local credentials, not an SDK-verified login. Cookie updates preserve mtoken and
 use generation/identity leases; real SDK renewal scheduling remains an integration seam.
-See `docs/features/login-sdk-template.md`.
+See `docs/features/integrations/login-sdk-template.md`.
 
 SQLite core tables in `src/main/data/sqliteStore.ts`:
 `kv`, `cowork_sessions`, `cowork_external_sessions`, `cowork_external_session_tombstones`,
@@ -159,7 +159,7 @@ log text, collected only at export time, never cached or sent to Renderer. Trans
 are not accessed directly. On-demand `chat.history` scans the native conversation database through
 the connected Gateway, retaining only bounded redacted failure excerpts in expiring report snapshots
 and exports, never a transcript cache. Logs/excerpts may contain task content; review before sharing.
-See `docs/features/session-diagnostics.md`.
+See `docs/features/chat/session-diagnostics.md`.
 Opening or refreshing diagnostics collects bounded safe projections from Main/Cowork/Gateway logs
 and native files identified by an existing local client's structured `logs.tail.file`;
 never read paths supplied by log text or Renderer. Scan discovered files in bounded chunks
@@ -251,7 +251,7 @@ See `docs/architecture/10-data-storage.md`.
   Learning uses `/learn` directly in normal chat; the review dialog neither starts
   sessions nor changes global learning or publication policy.
 - `openclawSkillFiles.ts` only extracts/copies/removes user-imported local skill files; it is not skill metadata authority.
-- Browser-extension pairing/relay code lives in the OpenClaw-owned `openclaw/` baseline; side-panel chat lives in the separate `conversation-overlay/`. Keep their changes separate according to `docs/features/browser-settings-design.md`. OpenClaw upgrades replace the pairing baseline first, then reapply and review only the explicit build-time integration seams; do not fold chat behavior into relay modules.
+- Browser-extension pairing/relay code lives in the OpenClaw-owned `openclaw/` baseline; side-panel chat lives in the separate `conversation-overlay/`. Keep their changes separate according to `docs/features/browser/browser-settings-design.md`. OpenClaw upgrades replace the pairing baseline first, then reapply and review only the explicit build-time integration seams; do not fold chat behavior into relay modules.
   Product settings HTML/CSS/JS and translations also live in `conversation-overlay/`;
   compose them over upstream options and copy application PNG icons at build time.
   Keep settings in English with Automatic connection, Manual connection, Tab Access
@@ -355,7 +355,9 @@ Do not replace detailed design docs with file-path lists. Keep Mermaid diagrams
 when they clarify ownership, flow, or lifecycle.
 
 - Architecture docs: `docs/architecture/`
-- Feature notes: `docs/features/`
+- Current feature notes by domain: `docs/features/`
+- Pending design and acceptance work: `docs/plans/`; remove completed or superseded history after integrating current contracts.
+- Development, runtime patch and installer guides: `docs/`
 - Runtime patch developer guide: `docs/openclaw-runtime-patches.md`
 - User READMEs: `README.md`, `README_zh.md`
 - Offline downloads: `docs/offline-downloads.md`. Keep all future offline-download
@@ -402,7 +404,7 @@ uses Gateway agents.create/update. The application stores product-facing profile
 mappings, and user conversations default to main. The opt-in assistant switch in Settings allows enabled profiles for new conversations; switching from an existing chat creates a new conversation in the same project without moving native history. OpenClaw layers the selected assistant bootstrap files with project AGENTS.md; never overwrite project rules when switching. All native profiles, including main, use stable `stateDir/agent-workspaces/<agentId>` role homes; project directories use native cwd and sessionRoot. Do not move or rewrite project role files automatically. Native agents.files APIs own role-file text.
 Empty profile models inherit the application default. Disable is an application
 chat-entry restriction, not native authorization revocation. See
-`docs/features/assistants-and-collaboration.md` for the current P0/P1 scope and limitations.
+`docs/features/assistants/assistants-and-collaboration.md` for the current P0/P1 scope and limitations.
 
 Deleted assistant profiles retain `agents.deleted_at`, disabled identity rows and
 native ownership for historical transcripts. Hide them from Settings and reject
@@ -424,7 +426,7 @@ Do not duplicate transcripts or retry uncertain launches. No Workboard/agent-tea
 dependency; Workboard defaults off, preserving explicit user choices for both plugins.
 Batch snapshots and attempts use the parent project's `.agent-tasks/swarm-workflow/`;
 do not add compatibility or migration for the old Swarm directory layout.
-See `docs/features/swarm-workflow.md`.
+See `docs/features/workflow/swarm-workflow.md`.
 
 Local audio attachment transcription is the `openclaw-extensions/stt-local-cli`
 extension (`transcribe_audio`). Config sync supplies installed Sherpa ONNX paths;
@@ -441,7 +443,7 @@ using file SecretRefs in restricted `extension-secrets.json`. The documented
 `serviceUrl` transport seam supports authenticated intranet System One endpoints
 without redirects, environment proxies or hosted fallback. Preserve native
 OpenClaw decision semantics and response validation. Users without this settings
-category retain explicit extension state. See `docs/features/jev-integration.md`.
+category retain explicit extension state. See `docs/features/models/jev-integration.md`.
 
 The intranet runtime excludes `anthropic`, `elevenlabs`, `github`, `kie`, `zai`,
 and `novita` through `resources/openclaw-extension-prune.json`. Keep `openai` as
@@ -492,4 +494,4 @@ preset model for automatic discovery. Retain explicit state for other installed
 providers, which may share non-video capabilities. Incomplete inventory must not enable
 new providers, but explicit clears still disable an existing managed video adapter.
 Do not add compatibility or migration for the retired custom video configuration.
-See `docs/features/model-management.md`.
+See `docs/features/models/model-management.md`.

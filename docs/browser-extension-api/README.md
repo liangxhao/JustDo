@@ -9,11 +9,11 @@ JSON-RPC v2 形态为基线，并实现侧栏对话所需的兼容子集。Nativ
 
 ## 文档导航
 
-- [Native Messaging 启动与发现协议](./native-messaging.md)：Chrome 到桌面进程的启动、版本协商、rendezvous 文件和消息帧。
-- [WebSocket app-server 协议](./app-server.md)：连接、初始化、请求、响应、通知和订阅语义。
-- [数据模型](./data-models.md)：Thread、Turn、Item、页面上下文和状态映射。
-- [生命周期、错误与恢复](./lifecycle-errors.md)：完整时序、停止生成、断线重连和错误码。
-- [兼容性与测试](./compatibility.md)：官方协议边界、JustDo 扩展、当前未实现能力和验收要求。
+- [Native Messaging 启动与发现协议](native-messaging.md)：Chrome 到桌面进程的启动、版本协商、rendezvous 文件和消息帧。
+- [WebSocket app-server 协议](app-server.md)：连接、初始化、请求、响应、通知和订阅语义。
+- [数据模型](data-models.md)：Thread、Turn、Item、页面上下文和状态映射。
+- [生命周期、错误与恢复](lifecycle-errors.md)：完整时序、停止生成、断线重连和错误码。
+- [兼容性与测试](compatibility.md)：官方协议边界、JustDo 扩展、当前未实现能力和验收要求。
 
 ## 协议分层
 

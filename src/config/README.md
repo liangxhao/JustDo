@@ -7,13 +7,13 @@
 
 开发联调可通过 `builtinModelAuth.ts` 的 `developmentApiKeyFile` 指定本地 Key 文件；仅未打包且选择 `api-key` 模式时由 Main 读取，文件内容不参与打包。非空 `developmentApiKey` 优先于文件。
 
-| 文件 | 配置项 |
-| --- | --- |
-| [appUpdate.ts](./appUpdate.ts) | 应用更新地址、语音模型路径与版本历史限制 |
-| [builtinModels.ts](./builtinModels.ts) | 内置模型开关 `enabled`、LiteLLM API 地址 `baseUrl` |
-| [activityReporting.ts](./activityReporting.ts) | 活动信息上报开关 `enabled`，默认开启 |
-| [builtinModelAuth.ts](./builtinModelAuth.ts) | Jalor 换证地址、JWT 生命周期上限、开发认证模式与临时 API Key |
-| [outboundHeaders.ts](./outboundHeaders.ts) | 请求头注入开关、URL 白名单与请求头名称的分组预设 |
+| 文件                                         | 配置项                                                       |
+| -------------------------------------------- | ------------------------------------------------------------ |
+| [appUpdate.ts](appUpdate.ts)                 | 应用更新地址、语音模型路径与版本历史限制                     |
+| [builtinModels.ts](builtinModels.ts)         | 内置模型开关 `enabled`、LiteLLM API 地址 `baseUrl`           |
+| [activityReporting.ts](activityReporting.ts) | 活动信息上报开关 `enabled`，默认开启                         |
+| [builtinModelAuth.ts](builtinModelAuth.ts)   | Jalor 换证地址、JWT 生命周期上限、开发认证模式与临时 API Key |
+| [outboundHeaders.ts](outboundHeaders.ts)     | 请求头注入开关、URL 白名单与请求头名称的分组预设             |
 
 ## 活动上报
 

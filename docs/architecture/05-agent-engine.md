@@ -114,11 +114,11 @@ Windows 沙盒准入先验证锁定的 MXC 二进制，再运行执行器 `--pro
 
 ## 5. 模型与凭据进入执行的方式
 
-模型引用使用限定 provider/model，准备时验证模型目录、当前选择和认证状态。main 的会话默认来自应用设置；非 main 助手可配置独立模型。在线语音和图像配置按能力隔离；原生视频提供方按其统一身份配置，同名对话模型共享凭据，设置页明确说明。
+模型引用使用限定 provider/model，准备时验证模型目录、当前选择和认证状态。main 的会话默认来自应用设置；非 main 助手可配置独立模型。在线语音和图像配置按能力隔离；受管 `video-openai` 的端点和 SecretRef 独立于聊天、图像模型。其他已安装原生视频服务商按自己的统一身份配置，可能与同身份语言模型共用凭据，详见[模型管理](../features/models/model-management.md)。
 
 自定义 provider 的敏感值投影到受限权限文件，原生配置用 file SecretRef。内置模型从 user_info 中的 mtoken 换取短期 JWT，校验账号与有效期，原生只看到 exec SecretRef；SQLite builtin apiKey 保持为空。轮换触发 secrets.reload，logout/到期停止相关访问并清理派生快照。
 
-凭据解析成功与服务端 Team 授权成功也不同。模型发现、连接测试和真正请求的错误需分别报告。二进制包装不等于抵御同用户逆向的密钥保险库，详细链路见[认证专题](../features/authentication-builtin-model-lifecycle.md)。
+凭据解析成功与服务端 Team 授权成功也不同。模型发现、连接测试和真正请求的错误需分别报告。二进制包装不等于抵御同用户逆向的密钥保险库，详细链路见[认证专题](../features/integrations/authentication-builtin-model-lifecycle.md)。
 
 ## 6. 发送、原生事件与产品回执
 
@@ -235,5 +235,5 @@ keep their segment identity through completion. Provisional terminal text waits
 for its native guard commit. Execution and transcripts remain native OpenClaw
 responsibilities. Native final agent responses settle external turns;
 intermediate attempt completion does not. The external OpenClaw CLI command
-interface is removed. See [Multica integration](../features/multica-integration.md)
+interface is removed. See [Multica integration](../features/integrations/multica-integration.md)
 for session-marker ownership, setup and supported protocol boundaries.

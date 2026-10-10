@@ -9,7 +9,7 @@
 
 ## 当前接入项
 
-登录 SDK 开发先阅读[登录接入模板](../features/login-sdk-template.md)，再核对下表中的
+登录 SDK 开发先阅读[登录接入模板](../features/integrations/login-sdk-template.md)，再核对下表中的
 模型生命周期与请求头接口。不要绕过现有 LoginService 另写一套账号提交流程。
 
 | 待开发模块                 | 需要接入的接口                                 | 接入要求                                                           | 详细说明                                                     |
@@ -26,5 +26,6 @@
 
 - 本目录：后续开发者的接入步骤、接口合同、示例、失败行为与验收要求。
 - `docs/architecture/`：系统架构、进程边界与状态归属。
-- `docs/features/`：功能设计与实现方案。
+- `docs/features/`：按领域维护的现行功能与已知限制。
+- `docs/plans/`：尚待推进的候选设计与未完成验收。
 - [出站请求头使用指南](outbound-headers/README.md)：用户配置和 Extension 接入。

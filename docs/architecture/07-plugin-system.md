@@ -35,7 +35,7 @@ Renderer 显示 loading/error、操作能力和运行结果；不能通过自行
 串行重读权威目录并通知全部仍存在的窗口；已保存但运行时重启失败时也发出实际
 状态，不用请求值假定成功。导入/市场安装和卸载同步通知；通知读取失败保留操作
 结果且不伪造状态。Renderer 按插件合并在途开关，关闭版本使快速关闭/开启后的
-旧标签选择失效。详见[输入框功能菜单](../features/composer-feature-menu.md)。
+旧标签选择失效。详见[输入框功能菜单](../features/chat/composer-feature-menu.md)。
 
 Extension 卡片的警告支持鼠标悬停、键盘聚焦和点击进入详情。红色表示原生错误，
 橙黄色表示缺少凭据；详情显示错误或缺失项，并提供密码输入框、已配置提示和保存反馈。
@@ -62,7 +62,7 @@ Document Extraction 和 Web Readability Extraction 保持上游默认启用，�
 协作、记忆和本地语音可选插件继续保留用户明确禁用状态。TypeSafe 沿用模型设置的有条件托管；
 Video models 始终由视频模型设置托管，有有效默认模型时启用，未设置或清空默认模型时关闭。
 
-OpenClaw v2026.9.8 的插件管理 RPC 会直接应用运行时变更。CLI 导入等待最终运行时回执：Gateway 已应用则无需额外操作，仅保存到磁盘时调用 `plugins.reload`。CLI 卸载和启停回退后优先调用 `plugins.refresh`；原生热加载失败或出站代理策略变化时再申请 Gateway 重启。各场景和重启边界见 [Gateway reload audit](gateway-reload-audit.md)。
+OpenClaw v2026.9.8 的插件管理 RPC 会直接应用运行时变更。CLI 导入等待最终运行时回执：Gateway 已应用则无需额外操作，仅保存到磁盘时调用 `plugins.reload`。CLI 卸载和启停回退后优先调用 `plugins.refresh`；原生热加载失败或出站代理策略变化时再申请 Gateway 重启。配置应用与重启协调见[引擎](05-agent-engine.md)；保留原生对活动任务的重启延迟，不能与宿主冷重启竞争。
 
 导入尝试已交给原生安装器后，即使最终 reload／重启失败，结果也保留 Extension ID；Main 据此重读权威清单并通知消费者，让已提交的部分安装状态及其附带能力失效刷新，不按失败结果假定没有安装。
 
@@ -76,7 +76,7 @@ OpenClaw v2026.9.8 的插件管理 RPC 会直接应用运行时变更。CLI 导�
 
 Renderer 的缺失依赖徽标和详情提示不重复列出该技能自身的启用条件，由开关表示；其余程序、环境变量、配置和系统要求保持原生结果。原生 `missing.anyBins` 表示任选一种工具即可满足的要求，计为一个缺失依赖组，列表提示和详情明确说明“至少安装一个”；开启技能不会清除该依赖提示。原始 Gateway 状态不受展示过滤影响。
 
-TypeSafe 扩展声明决策模型提供方；原生 `decision_evaluate` 工具按 Agent 的 `decisionModel` 自动提供。9.8 不再注册专用评估工具或 skill，Boolean、Choice、Score 输入由提供方翻译。具体接入见 [Jev evaluations](../features/jev-integration.md)。
+TypeSafe 扩展声明决策模型提供方；原生 `decision_evaluate` 工具按 Agent 的 `decisionModel` 自动提供。9.8 不再注册专用评估工具或 skill，Boolean、Choice、Score 输入由提供方翻译。具体接入见 [Jev evaluations](../features/models/jev-integration.md)。
 
 内网发行版通过 `resources/openclaw-extension-prune.json` 排除 Anthropic、ElevenLabs、
 GitHub、Kie、Z.AI 和 Novita 插件；运行时资源准备与安装包构建共用该剪裁策略。
@@ -101,7 +101,7 @@ HTTP 策略、允许显式配置的私有网络地址、拒绝重定向和不确
 Kie、Z.AI、Novita 原生契约仍保留，但插件不随当前发行版打包；仅实际安装的提供方
 显示在设置中。配置同步按插件库存清除缺失注册和视频选择，不写入对应新凭据。
 完整和最小同步遵循相同规则。新视频插件通过原生 provider 扩展接入，不恢复 9.6
-旧自定义视频配置或迁移。具体协议与输入限制见 [模型管理](../features/model-management.md)。
+旧自定义视频配置或迁移。具体协议与输入限制见 [模型管理](../features/models/model-management.md)。
 
 skills.status 提供 effective source、eligibility、disabled、缺失依赖和安装选项。产品文件服务只管理用户导入目录；它不能从 SKILL.md 自行重建运行元数据。受管根使用原生 stateDir/skills，避免重复 extraDirs 引入同一路径。
 
@@ -256,7 +256,7 @@ adapter; Runtime settings control Code Mode use. CUA desktop control retains exp
 opt-in through its dedicated Settings switch. Both retain explicit allowlist membership. Local
 extensions import named SDK subpaths. Agent-owned Workshop collections remain
 Gateway-owned; the application does not recreate workspace-based skill ownership.
-See [upgrade audit](../openclaw-upgrades/v2026.9.8.md).
+See [upgrade audit](../openclaw-upgrades/v2026.9.8/v2026.9.8.md).
 
 ### 可选本机电脑控制
 
@@ -329,7 +329,7 @@ Workboard 仍使用 OpenClaw 插件的 `workboard.cards.*` / `workboard.boards.*
 校验 session/run/task 身份；只对已确认停止的同一次执行释放占用，保留已经到达的完成或审核状态。
 已知 runId 的定向停止失败时，不降级为整个 session 的停止，避免误停后来启动的任务。
 
-接口核对与可复现验证见 [Workboard 操作契约](../features/workboard.md)。
+接口核对与可复现验证见 [Workboard 操作契约](../features/workflow/workboard.md)。
 
 ## Jev typed evaluations
 
@@ -353,7 +353,7 @@ settings changes, login, and logout. Native OpenClaw owns transport, validation,
 cancellation and tool results. The extension inventory exposes only credential
 metadata; model settings persist credentials in existing application config.
 Settings projects file SecretRefs and uses managed native secret refresh on rotation.
-See [Jev integration](../features/jev-integration.md) for setup and scope.
+See [Jev integration](../features/models/jev-integration.md) for setup and scope.
 
 The Gateway bundler keeps the native `secret-input-runtime` SDK state-owner modules
 external, so the Gateway and dynamic plugins share prepared credential and
@@ -373,7 +373,7 @@ artifact when it changes; never edit their source or proof manifests in place.
 启动 RPC 在助手名单查询前冻结服务代次与父身份、目录、权限及策略，返回后重新核对同一代次、当前规划模式和原生工具准入的 30 秒有效期；失效请求不能在重启后的服务中创建流程。
 注册的 `swarmWorkflow.health/start/list/detail/control/intervene` 使用原生 operator scopes，产品 IPC 再绑定本地会话身份。主会话另有 `swarm_workflow_status/control/intervene`：查询有界的流程状态与节点证据，按明确用户意图控制流程或给节点补充输入/继续/重跑，和 Tab 共用 FlowEngine 及 `contract.flowActions`。管理工具只提供给托管主会话，写入在版本 2 工具工厂中重新确认当前原生调用授权、归属、父身份与 revision。pause/stop 只要求原生父 sessionId 仍与创建时一致，允许项目、权限或规划模式变化后终止原流程；resume/retry 与全部节点介入继续严格核验原始项目、权限和策略。running 且正在最终投递时禁止 pause/stop；投递未确认且已 blocked 后可停止，不重发交付。运行中的节点只能保存下次执行输入，不启动第二次执行。控制与补充的幂等身份来自原生 sessionKey/runId/toolCallId 及规范化动作，不能由模型指定会话或操作来源；同一原生调用重放幂等，新调用须新有效 revision。只有新有效提交与原生成功终态才能推进下游。
 
-服务对需要处理的阻塞保存有界通知意图，再通过 `chat.inject` 添加主会话提示；包含流程已 blocked、节点仍 running 且带错误的超时等待，相同节点尝试/原因不重复通知。提醒只核验父身份，策略变化造成的执行拒绝仍可提示；最终交付保持完整策略核验。原生注入无持久幂等参数，回复丢失后标为未确认，不自动重发；status 如实返回该状态。通知循环与执行调度独立，不因慢请求拖住恢复派发；ACK 从最新流程合并，不能覆盖同时发生的人工操作。停止时禁止新通知，等待在途请求后才关闭存储。它不唤醒主助手自动处理，不保存聊天历史副本。现有 `sessions.steer` 为 interrupt 模式且无法指定精确目标 run，因此不接入运行中传话；补充信息仍在下一轮执行读取。详见 [主会话管理方案](../features/swarm-workflow-main-session-management.md)。
+服务对需要处理的阻塞保存有界通知意图，再通过 `chat.inject` 添加主会话提示；包含流程已 blocked、节点仍 running 且带错误的超时等待，相同节点尝试/原因不重复通知。提醒只核验父身份，策略变化造成的执行拒绝仍可提示；最终交付保持完整策略核验。原生注入无持久幂等参数，回复丢失后标为未确认，不自动重发；status 如实返回该状态。通知循环与执行调度独立，不因慢请求拖住恢复派发；ACK 从最新流程合并，不能覆盖同时发生的人工操作。停止时禁止新通知，等待在途请求后才关闭存储。它不唤醒主助手自动处理，不保存聊天历史副本。现有 `sessions.steer` 为 interrupt 模式且无法指定精确目标 run，因此不接入运行中传话；补充信息仍在下一轮执行读取。详见 [主会话管理方案](../features/workflow/swarm-workflow.md)。
 
 执行会话保留插件 ownership；主会话绑定、权限和模型在准入时核验，不绕过原生 parent-link 限制。
 所有阶段继承主会话的原生 permissionMode 和项目目录；任务 access 只定义读写意图及调度互斥，不自动把只读任务降为禁止全部命令的原生 read-only。只读任务约束随派发携带，真正的权限上限仍由原生会话策略执行。
@@ -384,7 +384,7 @@ artifact when it changes; never edit their source or proof manifests in place.
 Gateway 启动的流程服务在同一进程内由各助手的独立工具/钩子注册实例共享；服务生命周期仍由启动实例管理，跨助手提交继续校验各自的原生调用身份。
 提交工具的证据入口支持文字或列表，摘要缺省时仅从显式提交的证据生成；入库始终为有界摘要和证据列表，验收仍要求显式布尔 verdict，不以终态聊天文字补造成功。
 提交错误通过原生工具结果反馈模型；`before_agent_finalize` 尽可能提前准备有界修正指令。服务确认原生成功终态后独立检查提交，不依赖钩子必定触发；空回复补全/隔离结束说明也必须收敛。缺少提示时，通过原生 `subagent.getSessionMessages` 按需读取最多 64 条记录，只提取有界提交错误，再次核对父会话与节点/run 后在同一会话追加最多三轮修正，每轮使用新的原生 run ID。`before_prompt_build` 与工具调用钩子共同限定修正阶段只能提交结果或报告阻塞。取消、失败、未知及权限变化的执行不续跑，暂停时等待恢复，耗尽修正次数仍失败；该机制不重跑任务、不回退工具活动，也不复制原生消息历史。
-实现与验证细节见 [Swarm 图形任务流](../features/swarm-workflow.md)。
+实现与验证细节见 [Swarm 图形任务流](../features/workflow/swarm-workflow.md)。
 
 批量扩展将容器阶段与执行项分开：阶段图保留有界 DAG，JSONL/文件输入经可信父会话 fsPolicy、真实根及当前权限核验后冻结，执行项、原生 run 归属、预约和操作身份由插件 SQLite 保存。服务按所有流程轮转派发；普通项目写任务互斥，批次项在各自尝试目录协作并行。后台冻结、准备和发布保留预约并纳入 stop/drain，不阻塞其他流程取消。工作/验收提交和原生 `executionSettled`、`cleanupSettled` 三者均满足才发布结果。通过 before_tool_call 阻止叶子额外派发，可信 Code Mode exec/wait 外壳仍可完成收敛，内层实际工具继续校验。
 

@@ -31,7 +31,7 @@ flowchart LR
   Gateway[Gateway] --> Inject[本地 Header 注入代理] --> Header
 ```
 
-非浏览器代理变化保留原有 Gateway 空闲重启流程。浏览器代理变化在独立队列中更新现有 guest sessions、关闭旧连接；新 profile 注册也使用该队列，避免快速切换时旧偏好覆盖新配置。它不改变默认 session、Main 代理状态或 Gateway 环境。自定义浏览器代理的认证只取 `browserProxy` 凭据，不能借用非浏览器代理凭据。详见[浏览器设置](../features/browser-settings-design.md)。
+非浏览器代理变化保留原有 Gateway 空闲重启流程。浏览器代理变化在独立队列中更新现有 guest sessions、关闭旧连接；新 profile 注册也使用该队列，避免快速切换时旧偏好覆盖新配置。它不改变默认 session、Main 代理状态或 Gateway 环境。自定义浏览器代理的认证只取 `browserProxy` 凭据，不能借用非浏览器代理凭据。详见[浏览器设置](../features/browser/browser-settings-design.md)。
 
 ### 可分离的完整侧边栏
 
@@ -127,7 +127,7 @@ Main 通过 webContents 事件通知会话变化、目标执行、审批、结�
 返回凭据，产品原子写入登录文件，再 await 现有模型与 Header 生命周期入口。
 Renderer 仅接收含 revision 的显示资料、闭合错误码和独立账号/同步状态，先订阅再读取快照，
 不接收 token、Cookie 或 SDK 原始结果。文件导入只恢复 local-credentials 显示，不门禁原有
-模型启动；SDK 确认后才显示 signed-in。见[登录模板](../features/login-sdk-template.md)。
+模型启动；SDK 确认后才显示 signed-in。见[登录模板](../features/integrations/login-sdk-template.md)。
 
 ### 聊天数据
 
@@ -180,13 +180,13 @@ Main 在 will-attach-webview 中覆盖为固定 preload，强制 sandbox、conte
 
 普通人工点击由 Chromium 直接处理；Agent 操作通过 embedded-browser 的受控插件事件到 Main，再定位真实 guest。同一 guest 命令串行。截图、DOM、页面文本是外部不可信输入；文件上传和下载输出还要经过任务工作区校验。
 
-Tab 图标同样属于对应 guest 的网络边界。Main 从原生 favicon 事件选择候选，在该 guest session 中按浏览器代理、Cookie 与资源保护读取受限图片，经单向 `browser:panelFaviconUpdated` 事件发送 data URL；Renderer 按 guest ID 和当前页面匹配，只负责展示及解码失败回退。主文档导航与 guest 销毁取消旧读取，主界面默认 session 不再重新请求网站图标。详细限制见[浏览器设计](../features/browser-settings-design.md)。
+Tab 图标同样属于对应 guest 的网络边界。Main 从原生 favicon 事件选择候选，在该 guest session 中按浏览器代理、Cookie 与资源保护读取受限图片，经单向 `browser:panelFaviconUpdated` 事件发送 data URL；Renderer 按 guest ID 和当前页面匹配，只负责展示及解码失败回退。主文档导航与 guest 销毁取消旧读取，主界面默认 session 不再重新请求网站图标。详细限制见[浏览器设计](../features/browser/browser-settings-design.md)。
 
 最近访问由 Main 保存并复用历史记录对应的已加载图标图片；`browser:loadHistoryFavicon` 只允许主窗口主 frame 按已存在页面读取，缺图时通过默认浏览器 partition 补取，不开放任意 Renderer URL 读取。列表元数据与单张图片分开返回，避免历史列表批量携带图片正文。图片与历史记录一起删除，缓存清理则仅清空图片。字段与初始化规则见[数据存储](10-data-storage.md)。
 
-用户标注、操作演示与 Agent 控制存在互斥 lease。录制内容走 guest → Renderer，Main 只管理保护与归属；停止、导航、崩溃和窗口销毁释放资源。录制内容的字段及隐私限制见[操作演示](../features/browser-operation-recording.md)。
+用户标注、操作演示与 Agent 控制存在互斥 lease。录制内容走 guest → Renderer，Main 只管理保护与归属；停止、导航、崩溃和窗口销毁释放资源。录制内容的字段及隐私限制见[操作演示](../features/browser/browser-operation-recording.md)。
 
-HTTP 登录请求、媒体权限、PDF 读取各有独立超时和销毁语义，不能共用一个页面全局授权布尔值。详细 guest 行为在[浏览器设计](../features/browser-settings-design.md)，不再散放到通用 IPC 清单。
+HTTP 登录请求、媒体权限、PDF 读取各有独立超时和销毁语义，不能共用一个页面全局授权布尔值。详细 guest 行为在[浏览器设计](../features/browser/browser-settings-design.md)，不再散放到通用 IPC 清单。
 
 ### 原生子任务查询与精确操作
 
