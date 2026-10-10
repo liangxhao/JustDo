@@ -1401,36 +1401,25 @@ describe('normalizeGatewayHistoryForDisplay', () => {
     ]);
   });
 
-  test('shares gateway compaction enrichment with history consumers', async () => {
-    const enrichCompactionMarkers = vi.fn(async (messages: unknown[]) =>
-      messages.map(message => ({
-        ...(message as Record<string, unknown>),
-        __openclaw: {
-          ...((message as Record<string, unknown>).__openclaw as Record<string, unknown>),
-          summary: 'Earlier work summary',
-        },
-      })),
-    );
-
-    const messages = await normalizeGatewayHistoryForDisplay(
-      [
-        {
-          role: 'system',
-          __openclaw: { kind: 'compaction', id: 'compact-1' },
-        },
-      ],
-      {
-        sessionKey: 'agent:main:main',
-        enrichCompactionMarkers,
+  test('hydrates native compaction entry details for shared history consumers', async () => {
+    const getCompactionDetails = vi.fn().mockResolvedValue({
+      success: true,
+      details: {
+        'compact-1': { summary: 'Earlier work summary' },
       },
+    });
+    vi.stubGlobal('electron', { openclaw: { history: { getCompactionDetails } } });
+    const messages = await normalizeGatewayHistoryForDisplay(
+      [{ role: 'system', __openclaw: { kind: 'compaction', id: 'compact-1' } }],
+      { sessionKey: 'agent:main:main' },
     );
-
-    expect(enrichCompactionMarkers).toHaveBeenCalledOnce();
+    expect(getCompactionDetails).toHaveBeenCalledWith({
+      sessionKey: 'agent:main:main',
+      entryIds: ['compact-1'],
+    });
     expect(messages[0]).toEqual(
       expect.objectContaining({
-        __openclaw: expect.objectContaining({
-          summary: 'Earlier work summary',
-        }),
+        __openclaw: expect.objectContaining({ summary: 'Earlier work summary' }),
       }),
     );
   });

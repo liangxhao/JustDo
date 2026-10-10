@@ -1,7 +1,10 @@
 import { createPropertyContext } from '@shared/app/propertyContext';
 
 import * as chatControllerCompaction from './chat-controller-compaction';
-import { type ChatControllerCompactionContext } from './chat-controller-compaction';
+import {
+  type ChatControllerCompactionContext,
+  type ManualCompactionOperation,
+} from './chat-controller-compaction';
 import * as chatControllerHistory from './chat-controller-history';
 import { type ChatControllerHistoryContext } from './chat-controller-history';
 import * as chatControllerProgress from './chat-controller-progress';
@@ -24,7 +27,6 @@ import {
   cloneAssistantTurn,
   collectActiveContentText,
   collectActiveThinkingText,
-  CompactionCheckpoint,
   contextUsageSnapshotsEqual,
   debugLog,
   DEFAULT_INITIAL_HISTORY_RETRY_DELAYS_MS,
@@ -207,16 +209,8 @@ export class ChatController {
   private localCompactionStatusBySession = new Map<string, LocalCompactionStatus>();
   private settledCompactionEventIds = new Set<string>();
   private manualCompactionRequestIdsBySession = new Map<string, string>();
-  private manualCompactionOperations = new Map<
-    string,
-    {
-      sessionKey: string;
-      client: NonNullable<ChatController['state']['client']>;
-      cancelled: boolean;
-      settled: boolean;
-      error?: unknown;
-    }
-  >();
+  private manualCompactionOperations = new Map<string, ManualCompactionOperation>();
+  private manualCompactionRecoveryGeneration = 0;
   private progressCardCache = new Map<string, ProgressCard | null>();
   private progressCardLoadGeneration = 0;
   private assistantSnapshotRunId: string | null = null;
@@ -1862,8 +1856,11 @@ export class ChatController {
       restoredTurn.assistantSuppressionSeq === undefined &&
       (this.suspendedRunId === runId ||
         !restoredTurn.items.some(
-          item => item.type === 'content' && item.preambleItemId === undefined &&
-            item.text && item.recoveredSnapshotText !== item.text,
+          item =>
+            item.type === 'content' &&
+            item.preambleItemId === undefined &&
+            item.text &&
+            item.recoveredSnapshotText !== item.text,
         )) &&
       text.trim() &&
       !isHiddenOrPendingControlReplyText(text) &&
@@ -1931,6 +1928,7 @@ export class ChatController {
       preferStartup?: boolean;
       reconcileSuspended?: boolean;
       backfillActiveSessionsYield?: boolean;
+      expectedCompactionSuccessor?: { previousSessionId: string; sessionId: string };
     } = {},
   ): Promise<boolean> {
     return chatControllerHistory.loadHistory.call(
@@ -2108,6 +2106,13 @@ export class ChatController {
       (options.expectedSessionKey && options.expectedSessionKey !== this.state.sessionKey)
     ) {
       throw new Error('The message submission context changed');
+    }
+    if (
+      [...this.manualCompactionOperations.values()].some(
+        operation => this.isSelectedSession(operation.sessionKey) && !operation.nativeSettled,
+      )
+    ) {
+      throw new Error(i18nService.t('coworkCompactionInProgress'));
     }
     if (this.state.chatSending) throw new Error('A message is already being sent');
 
@@ -2387,30 +2392,25 @@ export class ChatController {
     );
   }
 
+  private restorePendingManualCompactions(sessionKey?: string): void {
+    chatControllerCompaction.restorePendingManualCompactions.call(
+      this.chatControllerCompactionContext,
+      sessionKey,
+    );
+  }
+
+  private reconcileManualCompactions(client: GatewayClient, generation: number): Promise<void> {
+    return chatControllerCompaction.reconcileManualCompactions.call(
+      this.chatControllerCompactionContext,
+      client,
+      generation,
+    );
+  }
+
   private compactSession(_argumentsText = ''): Promise<void> {
     return chatControllerCompaction.compactSession.call(
       this.chatControllerCompactionContext,
       _argumentsText,
-    );
-  }
-
-  private loadCompactionCheckpoints(
-    sessionKey = this.state.sessionKey,
-  ): Promise<CompactionCheckpoint[]> {
-    return chatControllerCompaction.loadCompactionCheckpoints.call(
-      this.chatControllerCompactionContext,
-      sessionKey,
-    );
-  }
-
-  private enrichCompactionMarkers(
-    messages: unknown[],
-    sessionKey = this.state.sessionKey,
-  ): Promise<unknown[]> {
-    return chatControllerCompaction.enrichCompactionMarkers.call(
-      this.chatControllerCompactionContext,
-      messages,
-      sessionKey,
     );
   }
 
@@ -2464,6 +2464,7 @@ export class ChatController {
       },
       resetHistoryPagination: { get: () => this.resetHistoryPagination.bind(this) },
       resetTranscriptForSession: { get: () => this.resetTranscriptForSession.bind(this) },
+      clearRunActivity: { get: () => this.clearRunActivity.bind(this) },
       setCurrentSessionMessages: { get: () => this.setCurrentSessionMessages.bind(this) },
       loadHistory: { get: () => this.loadHistory.bind(this) },
       scheduleDeferredHistoryReload: { get: () => this.scheduleDeferredHistoryReload.bind(this) },
@@ -2477,7 +2478,6 @@ export class ChatController {
       transcriptImageReadWaiters: { get: () => this.transcriptImageReadWaiters },
       resolveTranscriptImageUrl: { get: () => this.resolveTranscriptImageUrl.bind(this) },
       resolveManagedHistoryImages: { get: () => this.resolveManagedHistoryImages.bind(this) },
-      enrichCompactionMarkers: { get: () => this.enrichCompactionMarkers.bind(this) },
       loadOlderHistoryPage: { get: () => this.loadOlderHistoryPage.bind(this) },
       normalizeHistoryPage: { get: () => this.normalizeHistoryPage.bind(this) },
       findExpectedInitialHistoryIndex: {
@@ -2543,10 +2543,10 @@ export class ChatController {
       },
       scheduleDeferredHistoryReload: { get: () => this.scheduleDeferredHistoryReload.bind(this) },
       manualCompactionOperations: { get: () => this.manualCompactionOperations },
+      manualCompactionRecoveryGeneration: { get: () => this.manualCompactionRecoveryGeneration },
       settleCompactionRequest: { get: () => this.settleCompactionRequest.bind(this) },
       manualCompactionRequestIdsBySession: { get: () => this.manualCompactionRequestIdsBySession },
       loadHistory: { get: () => this.loadHistory.bind(this) },
-      loadCompactionCheckpoints: { get: () => this.loadCompactionCheckpoints.bind(this) },
     });
 
   // Resolve dependencies at call time so cancellation, session changes, and teardown stay authoritative.
@@ -2816,6 +2816,16 @@ export class ChatController {
       manualCompactionRequestIdsBySession: { get: () => this.manualCompactionRequestIdsBySession },
       settleCompactionRequest: { get: () => this.settleCompactionRequest.bind(this) },
       clearLocalCompactionStatus: { get: () => this.clearLocalCompactionStatus.bind(this) },
+      manualCompactionRecoveryGeneration: {
+        get: () => this.manualCompactionRecoveryGeneration,
+        set: value => {
+          this.manualCompactionRecoveryGeneration = value;
+        },
+      },
+      restorePendingManualCompactions: {
+        get: () => this.restorePendingManualCompactions.bind(this),
+      },
+      reconcileManualCompactions: { get: () => this.reconcileManualCompactions.bind(this) },
       rememberHistoryPagination: { get: () => this.rememberHistoryPagination.bind(this) },
       progressCardLoadGeneration: {
         get: () => this.progressCardLoadGeneration,

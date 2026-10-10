@@ -60,6 +60,7 @@ import {
   precedingSegmentsByToolCallId,
   readExplicitMessageRunId,
   readLatestOpenClawMessageSeq,
+  readStringList,
   RewindEditorDraft,
   sliceActiveSubagentHistoryPrefix,
   summarizeHistoryForDebug,
@@ -102,6 +103,7 @@ export interface ChatControllerHistoryContext {
     sessionId: string | null,
     preserveTiming?: boolean,
   ) => void;
+  readonly clearRunActivity: () => void;
   readonly setCurrentSessionMessages: (
     messages: unknown[],
     options?: { resetLoadedHistory?: boolean },
@@ -112,6 +114,7 @@ export interface ChatControllerHistoryContext {
       preferStartup?: boolean;
       reconcileSuspended?: boolean;
       backfillActiveSessionsYield?: boolean;
+      expectedCompactionSuccessor?: { previousSessionId: string; sessionId: string };
     },
   ) => Promise<boolean>;
   readonly scheduleDeferredHistoryReload: (sessionKey: string, reason: string) => void;
@@ -125,10 +128,6 @@ export interface ChatControllerHistoryContext {
   readonly resolveManagedHistoryImages: (
     messages: unknown[],
     sessionKey: string,
-  ) => Promise<unknown[]>;
-  readonly enrichCompactionMarkers: (
-    messages: unknown[],
-    sessionKey?: string,
   ) => Promise<unknown[]>;
   readonly loadOlderHistoryPage: (sessionKey: string, cursor: string) => Promise<ChatHistoryPage>;
   readonly normalizeHistoryPage: (messages: unknown[], sessionKey: string) => Promise<unknown[]>;
@@ -726,8 +725,6 @@ export async function normalizeHistoryPage(
     lastError: this.state.lastError,
     includeFailedRunOverlays: false,
     includeInterruptedOverlays: false,
-    enrichCompactionMarkers: (projectedMessages, key) =>
-      this.enrichCompactionMarkers(projectedMessages, key),
   });
   return this.resolveManagedHistoryImages(normalized, sessionKey);
 }
@@ -853,6 +850,7 @@ export async function loadHistory(
     preferStartup?: boolean;
     reconcileSuspended?: boolean;
     backfillActiveSessionsYield?: boolean;
+    expectedCompactionSuccessor?: { previousSessionId: string; sessionId: string };
   } = {},
 ): Promise<boolean> {
   const client = this.state.client;
@@ -860,6 +858,13 @@ export async function loadHistory(
 
   const sessionKey = this.state.sessionKey;
   this.ensureTranscriptSessionIdentity();
+  const expectedSuccessor = options.expectedCompactionSuccessor;
+  if (
+    expectedSuccessor &&
+    this.state.transcript.sessionId !== expectedSuccessor.previousSessionId
+  ) {
+    return false;
+  }
   if (this.historyLoadsInFlight.has(sessionKey)) {
     if (queueIfBusy) {
       this.historyReloadRequested.add(sessionKey);
@@ -929,6 +934,21 @@ export async function loadHistory(
     }
 
     const loadedSessionId = normalizeSessionId(result?.sessionInfo?.sessionId ?? result?.sessionId);
+    if (
+      expectedSuccessor &&
+      (loadedSessionId !== expectedSuccessor.sessionId ||
+        normalizeSessionId(result?.sessionId) !== expectedSuccessor.sessionId ||
+        result?.sessionInfo?.key !== sessionKey)
+    ) {
+      debugLog('[ChatCtrl] compaction successor no longer owns the history snapshot', {
+        sessionKey,
+        expectedSessionId: expectedSuccessor.sessionId,
+        loadedSessionId,
+      });
+      this.state.chatLoading = false;
+      this.notify();
+      return false;
+    }
     const normalizedSessionKey = normalizeTranscriptSessionKey(sessionKey);
     const responseHasActiveLeaf = Object.prototype.hasOwnProperty.call(
       result?.sessionInfo ?? {},
@@ -1024,7 +1044,6 @@ export async function loadHistory(
       sessionKey,
       sessionId: authoritativeSessionId,
       lastError: this.state.lastError,
-      enrichCompactionMarkers: (messages, key) => this.enrichCompactionMarkers(messages, key),
     });
     if (!requestStillCurrent()) {
       debugLog('[ChatCtrl] loadHistory ABORT identity changed during normalization', {
@@ -1052,7 +1071,27 @@ export async function loadHistory(
     // Clearing here used to expose a transient empty transcript whenever a
     // reset/rotation coincided with a large history response.
     if (replacesHistoryProjection) {
+      const activeTurn = this.state.transcript.activeTurn;
+      const preservesRunningTurn =
+        rotatesSessionIdentity &&
+        activeTurn?.status === 'running' &&
+        result?.sessionInfo?.hasActiveRun === true &&
+        readStringList(result.sessionInfo.activeRunIds).includes(activeTurn.runId);
+      if (rotatesSessionIdentity) this.state.contextUsage = null;
       this.resetTranscriptForSession(sessionKey, authoritativeSessionId, false);
+      // A successor can carry the same executing run. Keep its live items only
+      // when the authoritative snapshot proves that owner survived rotation.
+      if (preservesRunningTurn) {
+        activeTurn.sessionId = authoritativeSessionId;
+        this.state.transcript.activeTurn = activeTurn;
+      } else if (rotatesSessionIdentity && result?.sessionInfo?.hasActiveRun === false) {
+        // The predecessor no longer owns this physical session. This retires
+        // Renderer sending state, without establishing a whole-run outcome.
+        this.state.chatSending = false;
+        this.state.chatRunId = null;
+        this.state.compactionInFlight = false;
+        this.clearRunActivity();
+      }
       this.resetHistoryPagination(sessionKey);
       this.displayedHistoryLeafBySession.delete(normalizedSessionKey);
       this.currentMessageHistory.reset();
@@ -1067,14 +1106,17 @@ export async function loadHistory(
     this.state.currentSessionId = authoritativeSessionId;
     this.state.transcript.sessionId = authoritativeSessionId;
     this.applySessionContextUsage(result?.sessionInfo, sessionKey);
-    // Native custody has independent paging and must never become canonical
-    // transcript history. Recover it without blocking the history commit.
-    void refreshNativePendingInputs(
-      this.state,
-      result,
-      () => this.notify(),
-      () => this.scheduleDeferredHistoryReload(sessionKey, 'pending-input-consumed'),
-    );
+    const refreshPendingInputs = () => {
+      // A complete empty custody page can notify synchronously. Start this
+      // only after committing history, or after rejecting a same-identity
+      // refresh, so observers never see a successor with cleared old history.
+      void refreshNativePendingInputs(
+        this.state,
+        result,
+        () => this.notify(),
+        () => this.scheduleDeferredHistoryReload(sessionKey, 'pending-input-consumed'),
+      );
+    };
     let messages = this.projectLocalCompactionStatus(sessionKey, hydratedMessages);
     messages = mergeRefreshedHistoryWindow(
       replacesHistoryProjection ? [] : previousMessages,
@@ -1137,7 +1179,7 @@ export async function loadHistory(
     const repairedActiveTail = this.hydrateActiveToolItemsFromHistory(messages, {
       backfillMissingSessionsYield: options.backfillActiveSessionsYield,
     });
-    if (repairedActiveTail) this.publishActiveToolHistoryRepair();
+    if (repairedActiveTail && !replacesHistoryProjection) this.publishActiveToolHistoryRepair();
     if (options.backfillActiveSessionsYield) {
       // Resolve the transcript-level gap only after the same authoritative
       // snapshot has passed the identity/time-limited Tool hydration step.
@@ -1178,10 +1220,13 @@ export async function loadHistory(
       },
       source: 'gateway',
       messages,
-      requestStartMessages: previousMessages,
+      requestStartMessages: replacesHistoryProjection ? [] : previousMessages,
       currentMessages: this.state.chatMessages,
       activeRun:
-        this.state.chatSending && !options.reconcileSuspended && !catchesUpMissingInitialHistory,
+        this.state.chatSending &&
+        !replacesHistoryProjection &&
+        !options.reconcileSuspended &&
+        !catchesUpMissingInitialHistory,
       isVisibleMessage: message => !shouldHideMessage(message),
     });
     if (!reconciliation.accepted) {
@@ -1209,6 +1254,7 @@ export async function loadHistory(
           result?.sessionInfo,
         );
       }
+      refreshPendingInputs();
       this.state.chatLoading = false;
       this.notify();
       return false;
@@ -1253,6 +1299,8 @@ export async function loadHistory(
     this.setCurrentSessionMessages(messages, {
       resetLoadedHistory: this.expectInitialHistory && subagentTaskHistoryIndex >= 0,
     });
+    refreshPendingInputs();
+    if (repairedActiveTail && replacesHistoryProjection) this.publishActiveToolHistoryRepair();
     this.applyInFlightRunSnapshot(
       result?.inFlightRun,
       sessionKey,
@@ -1261,7 +1309,10 @@ export async function loadHistory(
       result?.sessionInfo,
     );
     const pendingCompaction = this.localCompactionStatusBySession.get(sessionKey);
-    if (pendingCompaction?.message.__openclaw.phase === 'completed') {
+    if (
+      pendingCompaction?.message.__openclaw.phase === 'completed' &&
+      pendingCompaction.markerExpected !== false
+    ) {
       this.scheduleDeferredHistoryReload(sessionKey, 'compaction-marker-pending');
     } else {
       this.deferredHistoryReloadAttempts.delete(sessionKey);
@@ -1290,8 +1341,10 @@ export async function loadHistory(
       error: err instanceof Error ? err.message : String(err),
       ...this._snap(),
     });
+    const pendingCompaction = this.localCompactionStatusBySession.get(sessionKey);
     if (
-      this.localCompactionStatusBySession.get(sessionKey)?.message.__openclaw.phase === 'completed'
+      pendingCompaction?.message.__openclaw.phase === 'completed' &&
+      pendingCompaction.markerExpected !== false
     ) {
       this.scheduleDeferredHistoryReload(sessionKey, 'compaction-marker-pending');
     }

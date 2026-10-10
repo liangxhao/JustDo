@@ -126,6 +126,9 @@ export interface ChatControllerSessionContext {
     initializationSeq: number;
   }) => Promise<void>;
   readonly manualCompactionRequestIdsBySession: Map<string, string>;
+  manualCompactionRecoveryGeneration: number;
+  readonly restorePendingManualCompactions: (sessionKey?: string) => void;
+  readonly reconcileManualCompactions: (client: GatewayClient, generation: number) => Promise<void>;
   readonly settleCompactionRequest: (sessionKey: string, errorMessage?: string) => void;
   readonly clearLocalCompactionStatus: (sessionKey: string) => void;
   readonly rememberHistoryPagination: (sessionKey: string) => void;
@@ -784,6 +787,7 @@ export async function connect(
   token: string,
   sessionKey: string,
 ): Promise<void> {
+  this.manualCompactionRecoveryGeneration += 1;
   for (const key of this.manualCompactionRequestIdsBySession.keys()) {
     this.settleCompactionRequest(key);
     this.clearLocalCompactionStatus(key);
@@ -924,6 +928,7 @@ export async function switchSession(
   this.clearPostFinalHistoryReload();
   this.clearDeferredHistoryReload();
   this.clearActiveToolHistoryCatchUp();
+  this.restorePendingManualCompactions(sessionKey);
   this.notify();
 
   const client = this.state.client;
@@ -939,6 +944,7 @@ export async function switchSession(
 }
 
 export function disconnect(this: ChatControllerSessionContext): void {
+  this.manualCompactionRecoveryGeneration += 1;
   this.manualCompactionRequestIdsBySession.clear();
   this.settledCompactionEventIds.clear();
   this.clearLifecycleEndFallback();
@@ -984,6 +990,8 @@ export function handleHello(this: ChatControllerSessionContext, hello: GatewayHe
   this.state.hello = hello;
   this.state.lastError = null;
   this.state.progressCardAvailable = this.isGatewayMethodAdvertised(PROGRESS_CARD_GET_METHOD);
+  const recoveryGeneration = ++this.manualCompactionRecoveryGeneration;
+  this.restorePendingManualCompactions();
   this.notify();
 
   // Subscribe to session events (matches webchat: subscribeSessions + syncSelectedSessionMessageSubscription)
@@ -992,15 +1000,18 @@ export function handleHello(this: ChatControllerSessionContext, hello: GatewayHe
   if (!client) return;
   const sessionKey = this.state.sessionKey;
   const initializationSeq = ++this.connectionInitializationSeq;
+  // Restore the sending fence synchronously, then read operation receipts
+  // after initial history so an unconfirmed-result notice stays visible.
   void this.initializeConnectedSession({
     client,
     sessionKey,
     initializationSeq,
     resumedTransport,
-  });
+  }).finally(() => this.reconcileManualCompactions(client, recoveryGeneration));
 }
 
 export function handleClose(this: ChatControllerSessionContext): void {
+  this.manualCompactionRecoveryGeneration += 1;
   // A reconnected socket must establish authoritative history again. Invalidate
   // requests on this transport even when GatewayClient reuses its identity.
   this.state.initialHistoryReady = false;

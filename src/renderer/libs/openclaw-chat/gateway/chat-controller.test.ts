@@ -941,9 +941,6 @@ test('sends the backing session id returned by chat history', async () => {
     if (method === 'chat.history') {
       return Promise.resolve({ messages: [], sessionId: ' backing-session-1 ' });
     }
-    if (method === 'sessions.compaction.list') {
-      return Promise.resolve({ checkpoints: [] });
-    }
     if (method === 'chat.send') {
       return Promise.resolve({ runId: 'run-1', status: 'started' });
     }
@@ -1526,69 +1523,58 @@ test.each([
   expect(controller.state.chatMessages).toEqual([]);
 });
 
-test('does not apply history when the session changes during async normalization', async () => {
-  let resolveCheckpoints:
-    | ((value: { checkpoints: Array<{ checkpointId: string; summary: string }> }) => void)
-    | undefined;
-  const request = vi.fn().mockImplementation((method: string) => {
-    if (method === 'chat.history') {
-      return Promise.resolve({
-        messages: [
-          {
-            role: 'system',
-            timestamp: 1000,
-            __openclaw: { kind: 'compaction', id: 'checkpoint-1' },
-          },
-        ],
-      });
-    }
-    return new Promise(resolve => {
-      resolveCheckpoints = resolve;
+test('does not apply history when the session changes during native detail hydration', async () => {
+  let resolveDetails!: (value: Record<string, unknown>) => void;
+  const getCompactionDetails = vi.fn(
+    () =>
+      new Promise(resolve => {
+        resolveDetails = resolve;
+      }),
+  );
+  vi.stubGlobal('electron', { openclaw: { history: { getCompactionDetails } } });
+  const request = vi
+    .fn()
+    .mockResolvedValue({
+      messages: [
+        { role: 'system', timestamp: 1000, __openclaw: { kind: 'compaction', id: 'entry-1' } },
+      ],
     });
-  });
   const controller = new ChatController();
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
-
   const load = controller.loadHistory();
-  await vi.waitFor(() => {
-    expect(request).toHaveBeenCalledWith('sessions.compaction.list', {
-      key: 'agent:main:justdo:session-1',
-    });
-  });
+  await vi.waitFor(() => expect(getCompactionDetails).toHaveBeenCalledOnce());
   const nextSessionMessages = [{ role: 'assistant', content: 'session 2 content' }];
   controller.state.sessionKey = 'agent:main:justdo:session-2';
   controller.state.chatMessages = nextSessionMessages;
   controller.state.chatLoading = false;
-  resolveCheckpoints?.({
-    checkpoints: [{ checkpointId: 'checkpoint-1', summary: 'session 1 summary' }],
-  });
-
+  resolveDetails({ success: true, details: { 'entry-1': { summary: 'session 1 summary' } } });
   await load;
   expect(controller.state.chatMessages).toBe(nextSessionMessages);
 });
 
-test('uses positional fallback only for a legacy checkpoint without transcript position', async () => {
+test('preserves native compaction metrics and fills only matching entry details', async () => {
+  const getCompactionDetails = vi.fn().mockResolvedValue({
+    success: true,
+    details: {
+      'history-marker-id': { summary: 'Persisted compact summary.' },
+    },
+  });
+  vi.stubGlobal('electron', { openclaw: { history: { getCompactionDetails } } });
   const request = vi
     .fn()
-    .mockResolvedValueOnce({
+    .mockResolvedValue({
       messages: [
         {
           role: 'system',
           timestamp: 2000,
-          __openclaw: { kind: 'compaction', id: 'history-marker-id' },
-        },
-      ],
-    })
-    .mockResolvedValueOnce({
-      checkpoints: [
-        {
-          checkpointId: 'checkpoint-1',
-          summary: 'Persisted compact summary.',
-          tokensBefore: 25_329,
-          tokensAfter: 1_069,
-          createdAt: 2000,
+          __openclaw: {
+            kind: 'compaction',
+            id: 'history-marker-id',
+            tokensBefore: 25_329,
+            tokensAfter: 1_069,
+          },
         },
       ],
     });
@@ -1596,15 +1582,13 @@ test('uses positional fallback only for a legacy checkpoint without transcript p
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
-
   await controller.loadHistory();
-
+  expect(request).toHaveBeenCalledOnce();
   expect(controller.state.chatMessages).toEqual([
     expect.objectContaining({
       __openclaw: {
         kind: 'compaction',
         id: 'history-marker-id',
-        checkpointId: 'checkpoint-1',
         summary: 'Persisted compact summary.',
         tokensBefore: 25_329,
         tokensAfter: 1_069,
@@ -1613,49 +1597,27 @@ test('uses positional fallback only for a legacy checkpoint without transcript p
   ]);
 });
 
-test('pairs multiple history markers with distinct checkpoints from newest to newest', async () => {
-  const request = vi
-    .fn()
-    .mockResolvedValueOnce({
-      messages: [
-        {
-          role: 'system',
-          timestamp: 1000,
-          __openclaw: { kind: 'compaction', id: 'history-marker-1' },
-        },
-        {
-          role: 'system',
-          timestamp: 2000,
-          __openclaw: { kind: 'compaction', id: 'history-marker-2' },
-        },
-        {
-          role: 'system',
-          timestamp: 3000,
-          __openclaw: { kind: 'compaction', id: 'history-marker-3' },
-        },
-      ],
-    })
-    .mockResolvedValueOnce({
-      checkpoints: [
-        {
-          checkpointId: 'checkpoint-1',
-          summary: 'First persisted summary.',
-          createdAt: 1000,
-        },
-        {
-          checkpointId: 'checkpoint-2',
-          summary: 'Second persisted summary.',
-          createdAt: 2000,
-        },
-      ],
-    });
+test('never assigns compaction summaries by position or response order', async () => {
+  const getCompactionDetails = vi.fn().mockResolvedValue({
+    success: true,
+    details: {
+      'history-marker-3': { summary: 'Second persisted summary.' },
+      'history-marker-2': { summary: 'First persisted summary.' },
+    },
+  });
+  vi.stubGlobal('electron', { openclaw: { history: { getCompactionDetails } } });
+  const request = vi.fn().mockResolvedValue({
+    messages: [1, 2, 3].map(index => ({
+      role: 'system',
+      timestamp: index * 1000,
+      __openclaw: { kind: 'compaction', id: 'history-marker-' + index },
+    })),
+  });
   const controller = new ChatController();
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
-
   await controller.loadHistory();
-
   expect(
     controller.state.chatMessages.map(message => (message as Record<string, unknown>).__openclaw),
   ).toEqual([
@@ -1663,7 +1625,6 @@ test('pairs multiple history markers with distinct checkpoints from newest to ne
     {
       kind: 'compaction',
       id: 'history-marker-2',
-      checkpointId: 'checkpoint-1',
       summary: 'First persisted summary.',
       tokensBefore: undefined,
       tokensAfter: undefined,
@@ -1671,7 +1632,6 @@ test('pairs multiple history markers with distinct checkpoints from newest to ne
     {
       kind: 'compaction',
       id: 'history-marker-3',
-      checkpointId: 'checkpoint-2',
       summary: 'Second persisted summary.',
       tokensBefore: undefined,
       tokensAfter: undefined,

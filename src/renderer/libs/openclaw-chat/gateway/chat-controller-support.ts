@@ -142,23 +142,10 @@ export interface ChatControllerOptions {
   initialHistoryRetryDelaysMs?: readonly number[];
 }
 
-export type CompactionTranscriptReference = {
-  leafId?: string;
-  entryId?: string;
-};
-
-export type CompactionCheckpoint = {
-  checkpointId?: string;
-  summary?: string;
-  tokensBefore?: number;
-  tokensAfter?: number;
-  createdAt?: number;
-  postCompaction?: CompactionTranscriptReference;
-};
-
 export type LocalCompactionStatus = {
   id: string;
   eventId?: string;
+  markerExpected?: boolean;
   authoritativeMarkerSeen?: boolean;
   markerFingerprintsBefore: Set<string>;
   message: {

@@ -1,5 +1,5 @@
 import { isDefinitiveSessionGoalGatewayError } from '@shared/cowork/sessionGoal';
-import { isBenignCompactionNoopReason } from '@shared/openclaw/compaction';
+import { isBenignCompactionNoopReason, isCompactionAbortReason } from '@shared/openclaw/compaction';
 
 import { ChunkedMessageHistory } from '@/libs/openclaw-chat/model/chunked-message-history';
 import { i18nService } from '@/services/i18n';
@@ -8,9 +8,7 @@ import type { ChatController } from './chat-controller';
 import {
   ChatState,
   ChatStreamUpdateKind,
-  CompactionCheckpoint,
   formatI18n,
-  isCompactionMarker,
   isLocalCompactionStatus,
   LocalCompactionStatus,
   MANUAL_COMPACTION_STOP_RETRY_WINDOW_MS,
@@ -18,6 +16,30 @@ import {
   readNonBlankString,
   SessionLiveState,
 } from './chat-controller-support';
+
+export interface ManualCompactionOperation {
+  sessionKey: string;
+  operationId: string;
+  client: NonNullable<ChatController['state']['client']>;
+  cancelled: boolean;
+  settled: boolean;
+  nativeSettled: boolean;
+  status: LocalCompactionStatus;
+  error?: unknown;
+}
+
+interface CompactionOperationSnapshot {
+  operationId: string;
+  key: string;
+  phase: 'in-progress' | 'settled' | 'unknown';
+  outcome?: 'completed' | 'skipped' | 'failed' | 'aborted';
+  compacted?: boolean;
+  markerExpected?: boolean;
+  tokensBefore?: number;
+  tokensAfter?: number;
+  reason?: string;
+}
+
 export interface ChatControllerCompactionContext {
   readonly isSelectedSession: (sessionKey: string) => boolean;
   readonly state: ChatState;
@@ -59,16 +81,8 @@ export interface ChatControllerCompactionContext {
   readonly terminalLifecycleSeen: boolean;
   readonly scheduleChatLifecycleEndFallback: () => void;
   readonly scheduleDeferredHistoryReload: (sessionKey: string, reason: string) => void;
-  readonly manualCompactionOperations: Map<
-    string,
-    {
-      sessionKey: string;
-      client: NonNullable<ChatController['state']['client']>;
-      cancelled: boolean;
-      settled: boolean;
-      error?: unknown;
-    }
-  >;
+  readonly manualCompactionOperations: Map<string, ManualCompactionOperation>;
+  readonly manualCompactionRecoveryGeneration: number;
   readonly settleCompactionRequest: (sessionKey: string, errorMessage?: string) => void;
   readonly manualCompactionRequestIdsBySession: Map<string, string>;
   readonly loadHistory: (
@@ -79,7 +93,6 @@ export interface ChatControllerCompactionContext {
       backfillActiveSessionsYield?: boolean;
     },
   ) => Promise<boolean>;
-  readonly loadCompactionCheckpoints: (sessionKey?: string) => Promise<CompactionCheckpoint[]>;
 }
 
 export function settleCompactionRequest(
@@ -133,6 +146,7 @@ export function projectLocalCompactionStatus(
   const status = this.localCompactionStatusBySession.get(sessionKey);
   if (!status) return messages;
   const hasAuthoritativeMarker = messages.some(message => {
+    if (status.markerExpected === false) return false;
     const fingerprint = readCompactionMarkerFingerprint(message);
     if (fingerprint === null || status.markerFingerprintsBefore.has(fingerprint)) return false;
     // The transcript entry id and compaction item id are distinct. A delayed
@@ -267,6 +281,176 @@ export function clearLocalCompactionStatus(
   this.updateLocalCompactionMessage(sessionKey, status.id, null);
 }
 
+function ownsManualCompactionPresentation(
+  context: ChatControllerCompactionContext,
+  operation: ManualCompactionOperation,
+): boolean {
+  const status = context.localCompactionStatusBySession.get(operation.sessionKey);
+  if (status && status.id !== operation.status.id && status.eventId !== operation.status.eventId)
+    return false;
+  const live = context.isSelectedSession(operation.sessionKey)
+    ? context.state
+    : context.findLiveSessionState(operation.sessionKey)?.[1];
+  return !(
+    live &&
+    (live.transcript.activeTurn?.status === 'running' ||
+      (live.chatSending && (live.chatRunId || live.runActivity || live.pendingUserMessage)))
+  );
+}
+
+export function restorePendingManualCompactions(
+  this: ChatControllerCompactionContext,
+  sessionKey?: string,
+): void {
+  for (const [id, operation] of this.manualCompactionOperations) {
+    if (operation.nativeSettled || (sessionKey && !this.isSelectedSession(operation.sessionKey)))
+      continue;
+    if (!ownsManualCompactionPresentation(this, operation)) continue;
+    const key = operation.sessionKey;
+    this.localCompactionStatusBySession.set(key, operation.status);
+    this.manualCompactionRequestIdsBySession.set(key, id);
+    if (this.isSelectedSession(key)) {
+      this.state.chatSending = true;
+      this.state.compactionInFlight = true;
+      this.setCurrentSessionMessages(
+        this.projectLocalCompactionStatus(key, this.state.chatMessages),
+      );
+    } else {
+      const cached = this.findLiveSessionState(key)?.[1];
+      if (cached) {
+        cached.chatSending = true;
+        cached.compactionInFlight = true;
+      }
+      const history = this.chatMessagesBySession.get(key) ?? new ChunkedMessageHistory();
+      history.replaceRecent(this.projectLocalCompactionStatus(key, history.recentMessages));
+      this.chatMessagesBySession.set(key, history);
+    }
+  }
+}
+
+export async function reconcileManualCompactions(
+  this: ChatControllerCompactionContext,
+  client: NonNullable<ChatController['state']['client']>,
+  generation: number,
+): Promise<void> {
+  if (
+    !this.state.connected ||
+    this.state.client !== client ||
+    this.manualCompactionRecoveryGeneration !== generation
+  )
+    return;
+  restorePendingManualCompactions.call(this);
+  this.notifyStream();
+  this.notify();
+  await Promise.all(
+    [...this.manualCompactionOperations].map(async ([id, operation]) => {
+      const key = operation.sessionKey;
+      const isCurrent = () =>
+        this.state.connected &&
+        this.state.client === client &&
+        this.manualCompactionRecoveryGeneration === generation &&
+        this.manualCompactionOperations.get(id) === operation;
+      const validate = (receipt: CompactionOperationSnapshot) => {
+        if (receipt?.operationId !== operation.operationId || receipt.key !== key) {
+          throw new Error(i18nService.t('coworkStopFailed'));
+        }
+        if (
+          receipt.phase === 'settled' &&
+          !['completed', 'skipped', 'failed', 'aborted'].includes(receipt.outcome ?? '')
+        ) {
+          throw new Error(i18nService.t('coworkStopFailed'));
+        }
+        if (!['in-progress', 'settled', 'unknown'].includes(receipt.phase)) {
+          throw new Error(i18nService.t('coworkStopFailed'));
+        }
+      };
+      try {
+        let receipt = await client.request<CompactionOperationSnapshot>(
+          'sessions.compaction.status',
+          {
+            key,
+            operationId: operation.operationId,
+          },
+        );
+        if (!isCurrent()) return;
+        validate(receipt);
+        const resultUnknown = receipt.phase === 'unknown';
+        if (resultUnknown) {
+          // A restarted Gateway cannot attest to the old process's result.
+          // Fence a delayed submission before releasing the local sending lock.
+          operation.cancelled = true;
+          receipt = await client.request<CompactionOperationSnapshot>('sessions.compaction.abort', {
+            key,
+            operationId: operation.operationId,
+          });
+          if (!isCurrent()) return;
+          validate(receipt);
+        }
+        if (receipt.phase === 'in-progress') return;
+        if (receipt.phase !== 'settled') throw new Error(i18nService.t('coworkStopFailed'));
+        if (!ownsManualCompactionPresentation(this, operation)) {
+          // A newer native card or run owns the presentation. Reconcile only
+          // this old submission, including a confirmed cancellation tombstone.
+          operation.nativeSettled = true;
+          operation.settled = true;
+          operation.error = undefined;
+          this.manualCompactionOperations.delete(id);
+          if (this.manualCompactionRequestIdsBySession.get(key) === id) {
+            this.manualCompactionRequestIdsBySession.delete(key);
+          }
+          const oldStatus = this.localCompactionStatusBySession.get(key);
+          if (oldStatus?.id === operation.status.id) {
+            this.localCompactionStatusBySession.delete(key);
+            this.updateLocalCompactionMessage(key, oldStatus.id, null);
+            if (this.isSelectedSession(key)) this.notify();
+          }
+          this.settledCompactionEventIds.add(
+            JSON.stringify([key, `operation:${operation.operationId}`]),
+          );
+          return;
+        }
+        if (resultUnknown) {
+          operation.nativeSettled = true;
+          operation.settled = true;
+          operation.error = undefined;
+          this.updateLocalCompactionMessage(key, id, {
+            role: 'system',
+            content: i18nService.t('coworkCompactPreviousResultUnknown'),
+            timestamp: operation.status.message.timestamp,
+          });
+          this.localCompactionStatusBySession.delete(key);
+          this.deferredHistoryReloadAttempts.delete(key);
+          this.settledCompactionEventIds.add(
+            JSON.stringify([key, `operation:${operation.operationId}`]),
+          );
+          this.manualCompactionOperations.delete(id);
+          if (this.manualCompactionRequestIdsBySession.get(key) === id) {
+            this.manualCompactionRequestIdsBySession.delete(key);
+          }
+          this.settleCompactionRequest(key);
+        } else {
+          handleCompactionPhase.call(this, 'end', key, {
+            ...receipt,
+            completed: receipt.outcome === 'completed',
+          });
+        }
+        if (this.isSelectedSession(key) && ownsManualCompactionPresentation(this, operation)) {
+          this.state.lastError = null;
+          this.notifyStream();
+          this.notify();
+        }
+      } catch (error) {
+        if (!isCurrent()) return;
+        // A rejected status read is not a terminal compaction receipt.
+        if (this.isSelectedSession(key) && ownsManualCompactionPresentation(this, operation)) {
+          this.state.lastError = (error as Error).message;
+          this.notify();
+        }
+      }
+    }),
+  );
+}
+
 export function handleCompactionPhase(
   this: ChatControllerCompactionContext,
   phase: string,
@@ -283,7 +467,39 @@ export function handleCompactionPhase(
   const settledKey = eventId ? JSON.stringify([sessionKey, eventId]) : undefined;
   if (settledKey && this.settledCompactionEventIds.has(settledKey)) return;
   const existing = this.localCompactionStatusBySession.get(sessionKey);
+  let manualOperationSettled = false;
+  let manualPresentationSuperseded = false;
+  if (
+    (phase === 'end' || phase === 'error' || phase === 'failed') &&
+    typeof data.operationId === 'string'
+  ) {
+    for (const [id, operation] of this.manualCompactionOperations) {
+      if (operation.sessionKey !== sessionKey || operation.operationId !== data.operationId)
+        continue;
+      manualPresentationSuperseded ||= !ownsManualCompactionPresentation(this, operation);
+      operation.settled = true;
+      operation.nativeSettled = true;
+      operation.error = undefined;
+      manualOperationSettled = true;
+      this.manualCompactionOperations.delete(id);
+      if (this.manualCompactionRequestIdsBySession.get(sessionKey) === id) {
+        this.manualCompactionRequestIdsBySession.delete(sessionKey);
+      }
+    }
+  }
+  if (manualPresentationSuperseded) {
+    if (settledKey) {
+      this.settledCompactionEventIds.add(settledKey);
+      if (this.settledCompactionEventIds.size > 256) {
+        this.settledCompactionEventIds.delete(
+          this.settledCompactionEventIds.values().next().value!,
+        );
+      }
+    }
+    return;
+  }
   // A late terminal/update from the preceding compaction must not settle its successor.
+  // Its own native receipt still retires the original submission identity.
   if (phase !== 'start' && eventId && existing?.eventId && existing.eventId !== eventId) {
     return;
   }
@@ -309,15 +525,25 @@ export function handleCompactionPhase(
       this.settledCompactionEventIds.delete(this.settledCompactionEventIds.values().next().value!);
     }
   }
-  const unsuccessful =
-    phase !== 'end' ||
-    data.completed === false ||
-    data.outcome === 'failed' ||
-    data.outcome === 'skipped' ||
-    data.outcome === 'aborted';
+  const outcome =
+    data.outcome === 'failed' || data.outcome === 'skipped' || data.outcome === 'aborted'
+      ? data.outcome
+      : phase !== 'end'
+        ? 'failed'
+        : data.completed !== false
+          ? 'completed'
+          : isCompactionAbortReason(data.reason)
+            ? 'aborted'
+            : isBenignCompactionNoopReason(data.reason)
+              ? 'skipped'
+              : 'failed';
+  const unsuccessful = outcome !== 'completed';
   const wasInProgress =
     this.localCompactionStatusBySession.get(sessionKey)?.message.__openclaw.phase === 'in-progress';
   const inProgressStatus = this.localCompactionStatusBySession.get(sessionKey);
+  if (inProgressStatus && typeof data.markerExpected === 'boolean') {
+    inProgressStatus.markerExpected = data.markerExpected;
+  }
   if (inProgressStatus) this.updateLocalCompactionSummary(sessionKey, inProgressStatus, data);
   const status = unsuccessful
     ? inProgressStatus
@@ -330,7 +556,7 @@ export function handleCompactionPhase(
       ...status.message,
       __openclaw: {
         ...status.message.__openclaw,
-        phase: data.outcome === 'skipped' || data.outcome === 'aborted' ? data.outcome : 'failed',
+        phase: outcome,
         reason: readNonBlankString(data.reason) ?? readNonBlankString(data.error),
       },
     };
@@ -352,6 +578,7 @@ export function handleCompactionPhase(
       this.deferredHistoryReloadAttempts.delete(sessionKey);
     }
   }
+  if (manualOperationSettled) this.settleCompactionRequest(sessionKey);
   if (!isCurrentSession) {
     const cached = this.findLiveSessionState(sessionKey)?.[1];
     if (cached) cached.compactionInFlight = false;
@@ -359,8 +586,25 @@ export function handleCompactionPhase(
   }
   this.state.compactionInFlight = false;
   if (this.terminalLifecycleSeen) this.scheduleChatLifecycleEndFallback();
-  if (status && wasInProgress && !unsuccessful && !status.authoritativeMarkerSeen) {
+  if (
+    status &&
+    wasInProgress &&
+    !unsuccessful &&
+    status.markerExpected !== false &&
+    !status.authoritativeMarkerSeen
+  ) {
     this.scheduleDeferredHistoryReload(sessionKey, 'compaction-marker-pending');
+  }
+  if (
+    manualOperationSettled &&
+    !unsuccessful &&
+    status?.markerExpected === false &&
+    this.state.connected &&
+    !this.state.chatSending
+  ) {
+    // Native end retires the RPC identity before its reply arrives. A
+    // marker-free manual commit still needs one authoritative history read.
+    void this.loadHistory();
   }
   this.notifyStream();
   this.notify();
@@ -374,11 +618,9 @@ export async function cancelManualCompaction(
     operation => operation.sessionKey === sessionKey,
   );
   for (const operation of operations) operation.cancelled = true;
-  // The native cancellation handle is registered after async preparation.
-  // A no-active-run reply during that preparation is not completion proof.
-  const needsConfirmation = (operation: (typeof operations)[number]) =>
-    !operation.settled ||
-    Boolean(operation.error && !isDefinitiveSessionGoalGatewayError(operation.error));
+  // The native operation registry covers preparation and queued admission too.
+  // Never use a session-wide no-active-run reply as proof this operation stopped.
+  const needsConfirmation = (operation: (typeof operations)[number]) => !operation.nativeSettled;
   const retryDeadline = Date.now() + MANUAL_COMPACTION_STOP_RETRY_WINDOW_MS;
   while (operations.some(needsConfirmation)) {
     // Preparation may never register a native handle. Keep its admission
@@ -388,22 +630,35 @@ export async function cancelManualCompaction(
     if (Date.now() >= retryDeadline) throw new Error(i18nService.t('coworkStopFailed'));
     const operation = operations.find(needsConfirmation)!;
     const client = this.state.connected && this.state.client ? this.state.client : operation.client;
-    const result = await client.request<{ ok?: boolean; status?: string }>('sessions.abort', {
-      key: sessionKey,
-      clearQueued: true,
-    });
-    if (result.ok !== true || !['aborted', 'no-active-run'].includes(result.status ?? '')) {
-      throw new Error('Gateway did not confirm compaction cancellation');
+    let result: CompactionOperationSnapshot;
+    try {
+      result = await client.request<CompactionOperationSnapshot>('sessions.compaction.abort', {
+        key: sessionKey,
+        operationId: operation.operationId,
+      });
+    } catch (error) {
+      if (operation.nativeSettled) continue;
+      throw error;
     }
-    if (
-      operation.settled &&
-      operation.error &&
-      !isDefinitiveSessionGoalGatewayError(operation.error)
-    ) {
-      if (result.status !== 'aborted') throw operation.error;
+    if (operation.nativeSettled) continue;
+    if (result.operationId !== operation.operationId || result.key !== sessionKey) {
+      throw new Error(i18nService.t('coworkStopFailed'));
+    }
+    if (result.phase === 'settled') {
+      if (!['completed', 'skipped', 'failed', 'aborted'].includes(result.outcome ?? '')) {
+        throw new Error(i18nService.t('coworkStopFailed'));
+      }
+      operation.settled = true;
+      operation.nativeSettled = true;
       operation.error = undefined;
+      handleCompactionPhase.call(this, 'end', sessionKey, {
+        ...result,
+        completed: result.outcome === 'completed',
+      });
+    } else if (result.phase !== 'in-progress') {
+      throw new Error(i18nService.t('coworkStopFailed'));
     }
-    if (operations.some(candidate => !candidate.settled)) {
+    if (operations.some(needsConfirmation)) {
       await new Promise(resolve => setTimeout(resolve, 250));
     }
   }
@@ -412,11 +667,16 @@ export async function cancelManualCompaction(
   );
   if (uncertain) throw uncertain.error;
   for (const [id, operation] of this.manualCompactionOperations) {
-    if (operations.includes(operation)) this.manualCompactionOperations.delete(id);
+    if (operations.includes(operation)) {
+      this.manualCompactionOperations.delete(id);
+      if (this.manualCompactionRequestIdsBySession.get(sessionKey) === id) {
+        this.manualCompactionRequestIdsBySession.delete(sessionKey);
+      }
+    }
   }
   if (operations.length > 0) {
-    this.settleCompactionRequest(sessionKey);
-    if (this.isSelectedSession(sessionKey)) {
+    if (this.isSelectedSession(sessionKey) && !this.state.chatSending) {
+      this.state.lastError = null;
       this.notifyStream();
       this.notify();
     }
@@ -425,37 +685,45 @@ export async function cancelManualCompaction(
 
 export async function compactSession(
   this: ChatControllerCompactionContext,
-  _argumentsText = '',
+  argumentsText = '',
 ): Promise<void> {
   const client = this.state.client;
   if (!client || !this.state.connected) throw new Error('not connected');
+  if (argumentsText.trim()) {
+    const error = new Error(i18nService.t('coworkCompactArgumentsUnsupported'));
+    this.state.lastError = error.message;
+    this.notify();
+    throw error;
+  }
   const sessionKey = this.state.sessionKey;
   if (
     [...this.manualCompactionOperations.values()].some(
-      operation =>
-        operation.sessionKey === sessionKey &&
-        operation.cancelled &&
-        (!operation.settled || operation.error),
+      operation => this.isSelectedSession(operation.sessionKey) && !operation.nativeSettled,
     )
   ) {
-    throw new Error('The session is still stopping');
+    throw new Error(i18nService.t('coworkCompactionInProgress'));
   }
-  // v2026.9.2 sessions.compact accepts key, agentId and maxLines only.
-  // Inline instructions cannot be forwarded by this RPC.
+  // The v2026.9.8 native lifecycle patch binds Stop to this single submission.
+  // Inline instructions are not supported by the manual compaction RPC.
   const localStatus = this.beginLocalCompactionStatus(sessionKey, { forceNew: true });
   const statusId = localStatus.id;
-  const markerFingerprintsBefore = localStatus.markerFingerprintsBefore;
   const operation = {
     sessionKey,
+    operationId: crypto.randomUUID(),
     client,
     cancelled: false,
     settled: false,
+    nativeSettled: false,
+    status: localStatus,
     error: undefined as unknown,
   };
+  localStatus.eventId = `operation:${operation.operationId}`;
   this.manualCompactionOperations.set(statusId, operation);
   this.manualCompactionRequestIdsBySession.set(sessionKey, statusId);
+  const requestGeneration = this.manualCompactionRecoveryGeneration;
   const requestStillCurrent = (): boolean =>
     this.state.client === client &&
+    this.manualCompactionRecoveryGeneration === requestGeneration &&
     this.manualCompactionRequestIdsBySession.get(sessionKey) === statusId;
 
   this.state.chatSending = true;
@@ -464,19 +732,24 @@ export async function compactSession(
   this.notifyStream();
   this.notify();
 
+  let responseReceived = false;
   try {
     const result = await client.request<{
       ok?: boolean;
       compacted?: boolean;
       reason?: string;
-      result?: { tokensBefore?: number; tokensAfter?: number };
-    }>('sessions.compact', { key: sessionKey });
+      outcome?: 'completed' | 'skipped' | 'failed' | 'aborted';
+      markerExpected?: boolean;
+      result?: { kind?: string; tokensBefore?: number; tokensAfter?: number };
+    }>('sessions.compact', { key: sessionKey, operationId: operation.operationId });
+    responseReceived = true;
     operation.settled = true;
     if (!requestStillCurrent()) return;
-    if (operation.cancelled) {
+    if (result.outcome === 'aborted' || isCompactionAbortReason(result.reason)) {
+      operation.nativeSettled = true;
       this.updateLocalCompactionMessage(sessionKey, statusId, {
         ...localStatus.message,
-        __openclaw: { ...localStatus.message.__openclaw, phase: 'aborted' },
+        __openclaw: { ...localStatus.message.__openclaw, phase: 'aborted', reason: result.reason },
       });
       this.localCompactionStatusBySession.delete(sessionKey);
       this.settleCompactionRequest(sessionKey);
@@ -486,12 +759,20 @@ export async function compactSession(
       }
       return;
     }
-    if (result?.ok === false && !isBenignCompactionNoopReason(result.reason)) {
+    if (
+      result?.ok === false &&
+      result.outcome !== 'skipped' &&
+      !isBenignCompactionNoopReason(result.reason)
+    ) {
+      operation.nativeSettled = true;
       throw new Error(result.reason || i18nService.t('coworkCompactUnknownError'));
     }
+    operation.nativeSettled = true;
     const before = result?.result?.tokensBefore;
     const after = result?.result?.tokensAfter;
     if (result?.compacted) {
+      localStatus.markerExpected =
+        result.markerExpected ?? (result.result?.kind === 'server-endpoint' ? false : undefined);
       this.completeLocalCompactionStatus(sessionKey, { before, after });
       this.settleCompactionRequest(sessionKey);
       if (!this.isSelectedSession(sessionKey)) return;
@@ -502,38 +783,11 @@ export async function compactSession(
       if (!historyLoaded) {
         // A history read failure cannot undo the acknowledged compaction.
         // Keep its success visible while waiting for the durable marker.
-        this.scheduleDeferredHistoryReload(sessionKey, 'compaction-marker-pending');
-        return;
-      }
-      let newMarkerIndex = -1;
-      for (let index = this.state.chatMessages.length - 1; index >= 0; index--) {
-        const message = this.state.chatMessages[index];
-        if (!isCompactionMarker(message)) continue;
-        const fingerprint = readCompactionMarkerFingerprint(message);
-        if (fingerprint && !markerFingerprintsBefore.has(fingerprint)) {
-          newMarkerIndex = index;
-          break;
+        if (localStatus.markerExpected !== false) {
+          this.scheduleDeferredHistoryReload(sessionKey, 'compaction-marker-pending');
         }
-      }
-      if (newMarkerIndex < 0) {
         return;
       }
-      this.setCurrentSessionMessages(
-        this.state.chatMessages.map((message, index) => {
-          if (index !== newMarkerIndex) return message;
-          const record = message as Record<string, unknown>;
-          const marker = record.__openclaw as Record<string, unknown>;
-          return {
-            ...record,
-            __openclaw: {
-              ...marker,
-              tokensBefore: marker.tokensBefore ?? before,
-              tokensAfter: marker.tokensAfter ?? after,
-            },
-          };
-        }),
-      );
-      this.notify();
       return;
     }
     this.localCompactionStatusBySession.delete(sessionKey);
@@ -552,10 +806,18 @@ export async function compactSession(
     this.notifyStream();
     this.notify();
   } catch (err) {
+    if (operation.nativeSettled && !responseReceived) {
+      if (requestStillCurrent()) {
+        this.settleCompactionRequest(sessionKey);
+        this.notifyStream();
+        this.notify();
+      }
+      return;
+    }
     operation.error = err;
     operation.settled = true;
     if (!requestStillCurrent()) return;
-    if (operation.cancelled && !isDefinitiveSessionGoalGatewayError(err)) {
+    if (!operation.nativeSettled && !isDefinitiveSessionGoalGatewayError(err)) {
       if (this.isSelectedSession(sessionKey)) {
         this.state.lastError = (err as Error).message;
         this.notify();
@@ -576,121 +838,16 @@ export async function compactSession(
     this.notify();
   } finally {
     operation.settled = true;
-    // Retain an uncertain cancelled request so a retry cannot silently claim
-    // success after its transport has disappeared during native preparation.
+    // A lost transport does not end native work. Keep its identity until a
+    // terminal event, receipt or definitive admission failure establishes it.
     if (
-      !operation.cancelled ||
-      !operation.error ||
-      isDefinitiveSessionGoalGatewayError(operation.error)
+      operation.nativeSettled ||
+      (isDefinitiveSessionGoalGatewayError(operation.error) && requestStillCurrent())
     ) {
       this.manualCompactionOperations.delete(statusId);
-    }
-    if (this.manualCompactionRequestIdsBySession.get(sessionKey) === statusId) {
-      this.manualCompactionRequestIdsBySession.delete(sessionKey);
-    }
-  }
-}
-
-export async function loadCompactionCheckpoints(
-  this: ChatControllerCompactionContext,
-  sessionKey = this.state.sessionKey,
-): Promise<CompactionCheckpoint[]> {
-  const client = this.state.client;
-  if (!client) return [];
-  try {
-    const response = await client.request<{
-      checkpoints?: CompactionCheckpoint[];
-    }>('sessions.compaction.list', { key: sessionKey });
-    return response?.checkpoints ?? [];
-  } catch (err) {
-    console.warn('[ChatController] Failed to load compaction checkpoints', (err as Error).message);
-    return [];
-  }
-}
-
-export async function enrichCompactionMarkers(
-  this: ChatControllerCompactionContext,
-  messages: unknown[],
-  sessionKey = this.state.sessionKey,
-): Promise<unknown[]> {
-  const markerIndexes = messages.flatMap((message, index) =>
-    isCompactionMarker(message) ? [index] : [],
-  );
-  if (markerIndexes.length === 0) return messages;
-
-  const checkpoints = await this.loadCompactionCheckpoints(sessionKey);
-  if (checkpoints.length === 0) return messages;
-  const checkpointsByTranscriptId = new Map<string, CompactionCheckpoint>();
-  const checkpointsById = new Map<string, CompactionCheckpoint>();
-  for (const checkpoint of checkpoints) {
-    if (checkpoint.checkpointId) checkpointsById.set(checkpoint.checkpointId, checkpoint);
-    for (const id of [checkpoint.postCompaction?.entryId, checkpoint.postCompaction?.leafId]) {
-      if (id) checkpointsByTranscriptId.set(id, checkpoint);
+      if (this.manualCompactionRequestIdsBySession.get(sessionKey) === statusId) {
+        this.manualCompactionRequestIdsBySession.delete(sessionKey);
+      }
     }
   }
-  const checkpointsNewestFirst = [...checkpoints].sort(
-    (left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0),
-  );
-  const checkpointByMarkerIndex = new Map<number, (typeof checkpoints)[number]>();
-  const assignedCheckpointIds = new Set<string>();
-
-  for (const markerIndex of markerIndexes) {
-    const marker = (messages[markerIndex] as Record<string, unknown>).__openclaw as Record<
-      string,
-      unknown
-    >;
-    const markerId = typeof marker.id === 'string' ? marker.id : undefined;
-    const exactCheckpoint = markerId
-      ? (checkpointsByTranscriptId.get(markerId) ?? checkpointsById.get(markerId))
-      : undefined;
-    if (!exactCheckpoint) continue;
-    checkpointByMarkerIndex.set(markerIndex, exactCheckpoint);
-    if (exactCheckpoint.checkpointId) assignedCheckpointIds.add(exactCheckpoint.checkpointId);
-  }
-
-  // OpenClaw transcript markers carry the compaction-entry id, while the
-  // checkpoint API exposes a separately generated checkpoint UUID. Align the
-  // remaining records newest-to-newest so each historical marker receives at
-  // most one checkpoint instead of reusing the latest checkpoint for all of them.
-  const unmatchedMarkerIndexesNewestFirst = markerIndexes
-    .filter(markerIndex => !checkpointByMarkerIndex.has(markerIndex))
-    .reverse();
-  const unassignedCheckpointsNewestFirst = checkpointsNewestFirst.filter(checkpoint => {
-    const hasTranscriptPosition = Boolean(
-      checkpoint.postCompaction?.entryId || checkpoint.postCompaction?.leafId,
-    );
-    return (
-      !hasTranscriptPosition &&
-      (!checkpoint.checkpointId || !assignedCheckpointIds.has(checkpoint.checkpointId))
-    );
-  });
-  for (
-    let index = 0;
-    index <
-    Math.min(unmatchedMarkerIndexesNewestFirst.length, unassignedCheckpointsNewestFirst.length);
-    index++
-  ) {
-    checkpointByMarkerIndex.set(
-      unmatchedMarkerIndexesNewestFirst[index],
-      unassignedCheckpointsNewestFirst[index],
-    );
-  }
-
-  return messages.map((message, index) => {
-    if (!isCompactionMarker(message)) return message;
-    const record = message as Record<string, unknown>;
-    const marker = record.__openclaw as Record<string, unknown>;
-    const checkpoint = checkpointByMarkerIndex.get(index);
-    if (!checkpoint) return message;
-    return {
-      ...record,
-      __openclaw: {
-        ...marker,
-        checkpointId: checkpoint.checkpointId,
-        summary: readNonBlankString(checkpoint.summary) ?? readNonBlankString(marker.summary),
-        tokensBefore: checkpoint.tokensBefore ?? marker.tokensBefore,
-        tokensAfter: checkpoint.tokensAfter ?? marker.tokensAfter,
-      },
-    };
-  });
 }

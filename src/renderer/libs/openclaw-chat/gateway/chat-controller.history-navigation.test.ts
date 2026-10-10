@@ -410,47 +410,32 @@ test('admits a live subagent task event immediately and rejects an older in-flig
   expect(controller.state.chatMessages).toEqual([taskMessage]);
 });
 
-test('does not shift an older positioned checkpoint onto a newer marker', async () => {
-  const request = vi
-    .fn()
-    .mockResolvedValueOnce({
-      messages: [
-        {
-          role: 'system',
-          timestamp: 1000,
-          __openclaw: { kind: 'compaction', id: 'compaction-entry-1' },
-        },
-        {
-          role: 'system',
-          timestamp: 2000,
-          __openclaw: { kind: 'compaction', id: 'compaction-entry-2' },
-        },
-      ],
-    })
-    .mockResolvedValueOnce({
-      checkpoints: [
-        {
-          checkpointId: 'checkpoint-1',
-          summary: 'Summary for the first compaction only.',
-          createdAt: 1000,
-          postCompaction: { entryId: 'compaction-entry-1' },
-        },
-      ],
-    });
+test('does not shift an older native compaction detail onto a newer marker', async () => {
+  const getCompactionDetails = vi.fn().mockResolvedValue({
+    success: true,
+    details: {
+      'compaction-entry-1': { summary: 'Summary for the first compaction only.' },
+    },
+  });
+  vi.stubGlobal('electron', { openclaw: { history: { getCompactionDetails } } });
+  const request = vi.fn().mockResolvedValue({
+    messages: [1, 2].map(index => ({
+      role: 'system',
+      timestamp: index * 1000,
+      __openclaw: { kind: 'compaction', id: 'compaction-entry-' + index },
+    })),
+  });
   const controller = new ChatController();
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
-
   await controller.loadHistory();
-
   expect(
     controller.state.chatMessages.map(message => (message as Record<string, unknown>).__openclaw),
   ).toEqual([
     {
       kind: 'compaction',
       id: 'compaction-entry-1',
-      checkpointId: 'checkpoint-1',
       summary: 'Summary for the first compaction only.',
       tokensBefore: undefined,
       tokensAfter: undefined,

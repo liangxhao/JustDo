@@ -166,9 +166,8 @@ export const mapGatewaySlashCommand = (entry: GatewayCommandEntry): SlashCommand
   // normalized primary name when older gateways do not provide a key.
   const key = typeof entry.key === 'string' && entry.key.trim() ? entry.key.trim() : name;
   const normalizedAliases = aliases.map(normalizeAlias).filter(alias => alias && alias !== name);
-  // OpenClaw v2026.9.2 still advertises /compact instructions even though its
-  // sessions.compact RPC accepts only key, agentId, and maxLines. Keep ignoring
-  // the text argument silently while JustDo uses the RPC path.
+  // Native /compact advertises instructions, but the manual RPC cannot forward
+  // them. Hide the hint; the Renderer explicitly rejects typed arguments.
   const exposeArgs = key !== 'compact';
 
   return {

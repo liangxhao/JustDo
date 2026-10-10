@@ -257,7 +257,9 @@ stateDiagram-v2
 
 停止成功回执通过 settleConfirmedRun 进入同一终态 reducer，不依赖 aborted stream 恰好送达。首个流事件尚未到达时只保存 fence，不制造空消息或结束别的 run。重复 receipt/abort/lifecycle 共用终态行及结束时间。
 
-手动 compaction/send 尚未获得原生 handle 时，取消需要等待迟到 admission；UI 等待有界，超时不能假装原生已空闲。后台继续处理原操作取消，同一操作重试共用取消任务，完成前保留发送隔离。
+普通 send 尚未获得原生 handle 时，取消需要等待迟到 admission；UI 等待有界，超时不能假装原生已空闲。后台继续处理原操作取消，同一操作重试共用取消任务，完成前保留发送隔离。
+
+手动压缩以客户端生成的 `operationId` 绑定一次 `sessions.compact` 提交。原生操作状态覆盖排队和准备阶段；`sessions.compaction.abort` 取消这个操作，`sessions.compaction.status` 用于重连核对。会话级 `no-active-run`、请求超时和断线都不是压缩终态，不能据此重发或解除发送隔离；只有匹配操作与会话的权威终态可收敛。Gateway 重启后未知结果不能伪装为成功或已取消：先建立迟到提交取消围栏，再明确提示无法确认原结果。原生记录只保存有界、无内容的操作状态，不建立另一份 transcript 或持久压缩账本。
 
 ## 7. Plan、Goal 与 progress card
 
@@ -266,6 +268,8 @@ Plan 规划和实施共用 canonical transcript，原生 reset 切断模型上�
 消息编辑/撤回仅绑定最后一个合法持久 user entry；分支入口绑定稳定、成功完成的助手 entry。Goal 存在、Plan reset 边界、sending、压缩、历史加载或缺少身份时限制操作，避免 rewind 与计划插件状态/文件副作用不同步。
 
 Goal 卡保留六种原生状态，Main 只提供自动续跑阶段。progress_card 从原生 session 读取，不能扫描工具参数或模型文字重建“当前计划”。压缩进度与历史摘要也使用对应原生状态，不当作普通用户消息。
+
+压缩事件区分完成、失败、取消和跳过；失败等终态原因直接显示并允许换行。溢出／预算／超时恢复压缩也发布独立的原生开始、进度和终态。普通历史标记自带 token 指标，缺少摘要时仅按原生 entry ID 经 Runtime Services 详情接口补取，不调用已移除的检查点列表或按位置猜测对应关系。成功压缩不一定新增摘要标记；`markerExpected:false` 的结果保留本轮成功提示，但不安排摘要标记补查、不制造持久摘要。手动 `/compact` 附加要求不受此 RPC 支持，界面明确拒绝，不能静默丢弃。
 
 `progressCard.changed` 携带 revision，Renderer 在 Gateway 声明读取能力后调用 `progressCard.get`，并核对 session 与连接 generation。当前卡只保留有界内存投影；原生返回 null、读取失败或 revision 失效时不能沿用旧卡冒充最新状态。关闭卡片和完成后隐藏属于 UI 状态，不删除原生卡。progress_card 是执行进度，PresentPlan 是待审核 artifact，Goal 是目标与预算；三者的生命周期不可混用。
 
@@ -278,6 +282,8 @@ Goal 卡保留六种原生状态，Main 只提供自动续跑阶段。progress_c
 时长绑定当前 turn/run，重复终态不反复结算。子任务总 Token 使用原生 canonical usage，不能用 sessions.list 的上下文快照当累计消耗，也不要求各 breakdown 简单相加恰好等于 total。
 
 输入框上下文占用来自 `chat.history.sessionInfo`、`sessions.changed` 与 `session.message` 的 Gateway 投影，`totalTokens` 是最近请求的 prompt 快照（不含输出 Token），不是会话累计消耗。分母优先使用 `contextBudgetStatus.promptBudgetBeforeReserve`，其次是原生 `contextTokens`，最后才是当前模型配置；最近请求预算在提示中单独标明，不能用 `remainingPromptBudgetTokens` 或预估 `estimatedPromptTokens` 替代这个口径。Gateway 负责过滤不匹配当前模型/窗口的预算。过期快照保留 `~` 与估算说明，使用中性色；明确未知用量隐藏占用，不能沿用旧准确值。仅生命周期且省略用量的事件不覆盖已有快照。更新须匹配当前 canonical session 与 native sessionId，并拒绝同一会话较旧的 updatedAt；预算变化也必须触发 UI 更新。这里只保存用量元数据，不增加 transcript 缓存或轮询。
+
+原生压缩器可以在保持逻辑会话 key 的同时提交后继物理 sessionId。管理会话只把 `reason:compact`、`compacted:true` 且 key／sessionId 一致的完整 Gateway 快照作为补读通知，不直接采纳事件中的新身份；当前连接与历史世代仍有效、`chat.history` 的顶层及 `sessionInfo` 身份均确认后，才原子替换显示历史、分页与占用。旧占用立即退役，后继缺少用量时隐藏占用。正在执行的 turn 仅在权威快照的 `hasActiveRun` 和 `activeRunIds` 证明同一 run 继续拥有后继会话时保留并重绑；只有后继明确 `hasActiveRun:false` 才清理失效的 Renderer 发送与等待状态，不能据此认定 Main 整个 run 成功。重置、其他会话和旧连接的迟到结果不能接管。
 
 ### 子任务详情与嵌套导航
 

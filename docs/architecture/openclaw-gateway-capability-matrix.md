@@ -4,21 +4,21 @@
 
 ## 1. 能力与产品消费方
 
-| 能力          | 原生权威                        | 产品职责                 | 升级关键检查                             |
-| ------------- | ------------------------------- | ------------------------ | ---------------------------------------- |
-| chat/history  | transcript、实时与历史协议      | 身份准入、分页、渲染     | delta/snapshot、entry identity、可见分支 |
-| session/model | 原生身份和模型设置              | 产品 key、选择与准入     | create/describe/patch、provider/model    |
-| Goal          | 内容、状态、预算与原生变更      | 自动续跑 phase、卡片     | 六状态、resume 预算、goalId fence        |
-| task/Subagent | admission、queue、join、会话状态  | 父子状态、详情与停止     | spawnedBy 身份、运行状态、后代取消          |
-| approval      | pending、期限、终态与撤销       | modal、选择校验          | stop/restart 及迟到回复                  |
-| compaction    | context budget、压缩和恢复      | 进度、取消与详情         | admission 竞态、历史可见性               |
-| progress_card | session 当前进度                | 原样展示、显式刷新       | revision、scope、clear、refresh 幂等                   |
-| cron          | job/run、调度与 delivery        | CRUD、结果 receipt       | owner 保留、默认 delivery、分页          |
-| Skill         | 解析赢家、资格与启停            | 文件事务、来源提示       | 同名 fallback、extension scope           |
-| Extension     | inventory、启停、卸载与能力审查 | 导入入口、保护和 UI      | installed-index、reviewToken             |
-| peer send     | 原生 sessions_send              | 成员/轮次准入、回执      | 精确目标、可信 provenance、未知接收      |
-| Agent files   | 原生角色文件                    | 档案管理与冲突检测       | 工作区/文件身份，删除保留历史            |
-| browser       | 原生协议与工具语义              | 模式、guest bridge、配对 | action 对齐、profile、取消与导航         |
+| 能力          | 原生权威                         | 产品职责                 | 升级关键检查                                                     |
+| ------------- | -------------------------------- | ------------------------ | ---------------------------------------------------------------- |
+| chat/history  | transcript、实时与历史协议       | 身份准入、分页、渲染     | delta/snapshot、entry identity、可见分支                         |
+| session/model | 原生身份和模型设置               | 产品 key、选择与准入     | create/describe/patch、provider/model                            |
+| Goal          | 内容、状态、预算与原生变更       | 自动续跑 phase、卡片     | 六状态、resume 预算、goalId fence                                |
+| task/Subagent | admission、queue、join、会话状态 | 父子状态、详情与停止     | spawnedBy 身份、运行状态、后代取消                               |
+| approval      | pending、期限、终态与撤销        | modal、选择校验          | stop/restart 及迟到回复                                          |
+| compaction    | context budget、压缩和恢复       | 进度、取消与详情         | operation identity、准备阶段取消、断线核对、无标记成功与后继身份 |
+| progress_card | session 当前进度                 | 原样展示、显式刷新       | revision、scope、clear、refresh 幂等                             |
+| cron          | job/run、调度与 delivery         | CRUD、结果 receipt       | owner 保留、默认 delivery、分页                                  |
+| Skill         | 解析赢家、资格与启停             | 文件事务、来源提示       | 同名 fallback、extension scope                                   |
+| Extension     | inventory、启停、卸载与能力审查  | 导入入口、保护和 UI      | installed-index、reviewToken                                     |
+| peer send     | 原生 sessions_send               | 成员/轮次准入、回执      | 精确目标、可信 provenance、未知接收                              |
+| Agent files   | 原生角色文件                     | 档案管理与冲突检测       | 工作区/文件身份，删除保留历史                                    |
+| browser       | 原生协议与工具语义               | 模式、guest bridge、配对 | action 对齐、profile、取消与导航                                 |
 
 窗口、更新、托盘、分组、未读、文件授权和市场 SDK 适配属于产品，不应为 UI 方便增加 Gateway patch。
 

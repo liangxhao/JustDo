@@ -113,6 +113,7 @@ export interface ChatControllerRecoveryContext {
       preferStartup?: boolean;
       reconcileSuspended?: boolean;
       backfillActiveSessionsYield?: boolean;
+      expectedCompactionSuccessor?: { previousSessionId: string; sessionId: string };
     },
   ) => Promise<boolean>;
   readonly hasPendingActiveToolHistoryCatchUp: (
@@ -1241,10 +1242,32 @@ export function handleTimelineEvent(
       nextSessionId && currentSessionId && nextSessionId !== currentSessionId,
     );
     const previousContextUsage = this.state.contextUsage;
-    if (rotatesSessionIdentity) {
+    if (rotatesSessionIdentity && currentSessionId && nextSessionId) {
       const explicitIdentityChange = reason === 'new' || reason === 'reset' || reason === 'delete';
       const managedSession = /^agent:[^:]+:justdo:[^:]+$/i.test(this.state.sessionKey);
       if (managedSession && !explicitIdentityChange) {
+        const snapshotKey = readNonBlankString(sessionSnapshot?.key);
+        const snapshotSessionId = normalizeSessionId(sessionSnapshot?.sessionId);
+        const envelopeSessionId = normalizeSessionId(payload?.sessionId);
+        if (
+          reason === 'compact' &&
+          payload?.compacted === true &&
+          snapshotKey === this.state.sessionKey &&
+          snapshotSessionId === nextSessionId &&
+          (!envelopeSessionId || envelopeSessionId === snapshotSessionId)
+        ) {
+          // A compaction engine may retain the logical key while committing a
+          // successor. Adopt it through the current Gateway history snapshot;
+          // an event alone cannot replace a physical session or its live turn.
+          void this.loadHistory(true, {
+            backfillActiveSessionsYield: true,
+            expectedCompactionSuccessor: {
+              previousSessionId: currentSessionId,
+              sessionId: nextSessionId,
+            },
+          });
+          return;
+        }
         debugLog('[ChatCtrl] rejected unexpected managed session id rotation', {
           sessionKey: this.state.sessionKey,
           currentSessionId,

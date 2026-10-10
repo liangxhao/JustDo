@@ -12,7 +12,8 @@ The 22 existing integration seams remain necessary, with two important scope red
 exit diagnostics; 034 adds opt-in plugin execution settlement and tool cleanup;
 035 populates the existing prompt-hook field with the actual attempt context budget;
 036 adds the shared desktop terminal launch and close contract;
-037 replaces the operator terminal welcome art with the desktop product name:
+037 replaces the operator terminal welcome art with the desktop product name;
+038 supplies native compaction lifecycle and operation-scoped cancellation:
 
 - **008:** upstream removed the generic durable task registry. Delete its task
   maintenance patch; retain only the application-process boundary on native
@@ -59,9 +60,61 @@ display projection and the ordering of restored messages.
 | 035   | Actual prompt-hook context budget     | Expose the resolved native attempt budget through the existing contextTokenBudget hook field; model selection and context guards remain native                  |
 | 036   | Shared desktop terminal               | Admin terminal launch accepts project cwd and shell/args; explicit termination retains native viewer ownership checks                                           |
 | 037   | Product terminal welcome              | Welcome text reads validated build-time productName; no lobster art; native buffer seeding and output offsets remain unchanged                                  |
+| 038   | Native compaction lifecycle           | Recovery start/update/end events; admin operation status/cancellation covers preparation and cleanup; bounded native receipts retain no transcript or summary    |
 
 Each module header records its scope, native safety boundary and removal condition.
 No upstream issue number is claimed without an actual filed issue.
+
+Patch 038 closes two native 9.8 gaps. Timeout/overflow/budget recovery calls the
+context engine directly, bypassing ordinary AgentSession compaction events; its
+only existing progress callback requires configured notifier hook messages.
+Recovery now emits one unique item/operation identity with start, periodic update
+and end, including completed/skipped/failed/aborted outcome and available token
+accounting. Hook notifications become updates within that operation. Observation
+never waits for remote notification delivery, and pending callbacks suppress
+heartbeat updates; terminal delivery and timer cleanup do not block execution.
+This seam adds lifecycle and heartbeat observations, not summary streaming.
+
+Manual `sessions.compact` accepts an optional UUID `operationId`. Native admin
+methods `sessions.compaction.status` and `sessions.compaction.abort` accept exactly
+`{key, operationId}` and return a direct snapshot with `phase` equal to
+`in-progress`, `settled` or `unknown`; settled snapshots include `outcome`, `ok`,
+`compacted`, `markerExpected` and available token counts. `admitted` distinguishes
+an accepted operation from a cancellation fence created before its dispatch.
+Abort does not clear the follow-up queue; native `sessions.abort` still owns that
+separate capability. Absence of an active embedded run never proves preparation
+has settled. Unknown abort IDs are reserved before confirming cancellation,
+preventing a delayed original submission from starting. Repeated IDs never run
+again. In-progress aborts settle only after the native handler's cleanup releases
+its operator/lifecycle custody; RPC responses and `session.operation` terminals
+are delivered after that cleanup. The wrapper transfers the native opaque
+mutation-authority binding rather than relying on copied request properties.
+
+The Gateway keeps at most 4096 content-free receipts/fences per native runtime
+identity for its process lifetime. It never evicts them or expires cancellation
+fences, and rejects new admission at capacity. A restart returns unknown; clients
+must fence uncertain old IDs before allowing later work and must not reconstruct
+their earlier outcome. Receipts contain fixed reason codes, never summaries,
+provider error text or transcripts; immediate RPC and live terminal attribution
+retain the native reason or error message. Exact native no-op and cancellation
+reasons retain their semantics.
+Only stock client compaction of a durable transcript advertises an expected
+history marker. Server-endpoint, CLI, detached-memory and opaque custom-engine
+successes can finish without one.
+
+The new methods retain native operator.admin and session/profile target policy.
+Compact parameter and operation-event schema changes are verified with the
+handler, native method descriptors, relay descriptors, context-engine delegate,
+producer, recovery module and both native workers before writing any target.
+Public plugin hooks cannot establish preparation/cleanup settlement or observe
+the missing recovery lifecycle, so this capability belongs at the native seam.
+Rebuild from the locked pristine package; partial and historical shapes fail
+closed. Remove 038 when upstream exposes equivalent operation-scoped settlement
+and cancellation covering preparation, plus complete recovery events and marker
+provenance. The adjacent `native-compaction-lifecycle.js` contains the serialized
+native helpers and is included in the patch input/build-recipe fingerprints;
+038 owns all transformations and exact verification. Tests:
+`tests/openclaw/patches/v2026.9.8/native-compaction-lifecycle.test.ts`.
 
 Patch 037 renders `Welcome to the <productName>.` using validated `package.json`
 metadata, preserving ANSI theme colors and CRLF spacing. The monochrome app icon

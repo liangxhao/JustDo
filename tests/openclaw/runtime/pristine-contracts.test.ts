@@ -48,6 +48,7 @@ const EXPECTED_PATCH_FILES = [
   '035-hook-context-budget.cjs',
   '036-shared-terminal-launch.cjs',
   '037-terminal-product-banner.cjs',
+  '038-native-compaction-lifecycle.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

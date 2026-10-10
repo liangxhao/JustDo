@@ -671,9 +671,14 @@ export const chatStyles = [
       background: var(--justdo-chat-border, rgba(0, 0, 0, 0.12));
     }
 
-    .chat-divider__details {
+    .chat-divider__details,
+    .chat-divider__status {
       min-width: 0;
       max-width: min(720px, 80%);
+    }
+
+    .chat-divider__status {
+      text-align: center;
     }
 
     .chat-divider__summary {
@@ -682,6 +687,19 @@ export const chatStyles = [
       text-align: center;
       white-space: nowrap;
       user-select: none;
+    }
+
+    .chat-divider__status .chat-divider__summary {
+      cursor: default;
+      white-space: normal;
+    }
+
+    .chat-divider__description {
+      margin-top: 4px;
+      font-size: 12px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
 
     .chat-divider__content {

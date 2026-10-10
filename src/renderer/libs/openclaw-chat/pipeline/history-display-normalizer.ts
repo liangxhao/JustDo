@@ -57,7 +57,6 @@ export interface HistoryDisplayNormalizationOptions {
   lastError?: string | null;
   includeFailedRunOverlays?: boolean;
   includeInterruptedOverlays?: boolean;
-  enrichCompactionMarkers?: (messages: unknown[], sessionKey: string) => Promise<unknown[]>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -898,12 +897,9 @@ export async function hydrateGatewayHistoryForDisplay(
     options.includeInterruptedOverlays === false
       ? messages
       : mergeInterruptedMessages(messages, options.sessionKey);
-  const withGatewayCompactionDetails = options.enrichCompactionMarkers
-    ? await options.enrichCompactionMarkers(messagesWithInterruptedOverlays, options.sessionKey)
-    : messagesWithInterruptedOverlays;
   const withLocalCompactionDetails = await hydrateMissingCompactionDetails(
     options.sessionKey,
-    withGatewayCompactionDetails,
+    messagesWithInterruptedOverlays,
   );
   const withToolInputs = await hydrateMissingToolInputs(
     options.sessionKey,

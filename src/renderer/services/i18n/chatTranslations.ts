@@ -702,6 +702,9 @@ export const chatTranslations = {
     coworkCompactAborted: '上下文压缩已取消',
     coworkCompactSkipped: '上下文压缩已跳过',
     coworkCompactUnknownError: '未知压缩错误',
+    coworkCompactPreviousResultUnknown: '无法确认上次压缩结果，已停止待处理请求，可继续发送。',
+    coworkCompactArgumentsUnsupported:
+      '当前压缩操作不支持附加要求。请使用 /compact，或先将需要保留的信息写入项目文件。',
     coworkCompactionInProgress: '正在压缩上下文…',
     coworkCompacted: '上下文已压缩',
     coworkCompactDetails: '查看压缩摘要',
@@ -1453,6 +1456,10 @@ export const chatTranslations = {
     coworkCompactAborted: 'Context compaction cancelled',
     coworkCompactSkipped: 'Context compaction skipped',
     coworkCompactUnknownError: 'Unknown compaction error',
+    coworkCompactPreviousResultUnknown:
+      'The previous compaction result could not be confirmed. Pending requests have been stopped, and you can send messages again.',
+    coworkCompactArgumentsUnsupported:
+      'This compaction action does not support additional instructions. Use /compact, or save the information you need to keep in a project file first.',
     coworkCompactionInProgress: 'Compacting...',
     coworkCompacted: 'Context compacted',
     coworkCompactDetails: 'View compaction summary',

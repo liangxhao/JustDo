@@ -2,13 +2,14 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { beginAssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
+import { i18nService } from '@/services/i18n';
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
-test('waits through pre-registration no-active replies and cancels the later manual compaction handle', async () => {
+test('waits for native preparation to settle instead of using a session-wide no-active reply', async () => {
   vi.useFakeTimers();
   const controller = new ChatController();
   let finishCompact!: (result: unknown) => void;
@@ -16,14 +17,18 @@ test('waits through pre-registration no-active replies and cancels the later man
     finishCompact = resolve;
   });
   let abortCount = 0;
-  const request = vi.fn(async (method: string) => {
+  const request = vi.fn(async (method: string, params: { key: string; operationId: string }) => {
     if (method === 'sessions.compact') return compact;
-    if (method === 'sessions.abort') {
+    if (method === 'sessions.compaction.abort') {
       abortCount += 1;
       if (abortCount === 2) finishCompact({ ok: false, compacted: false, reason: 'aborted' });
-      return { ok: true, status: abortCount === 1 ? 'no-active-run' : 'aborted' };
+      return {
+        ...params,
+        phase: abortCount === 1 ? 'in-progress' : 'settled',
+        outcome: abortCount === 1 ? undefined : 'aborted',
+      };
     }
-    return {};
+    throw new Error('Unexpected RPC: ' + method);
   });
   controller.state.client = { request } as never;
   controller.state.connected = true;
@@ -44,16 +49,16 @@ test('waits through pre-registration no-active replies and cancels the later man
   expect(vi.getTimerCount()).toBe(0);
 });
 
-test('stopping a manual compaction after switching sessions never aborts or clears the new session', async () => {
+test('stopping a manual compaction after switching sessions only cancels its operation', async () => {
   const controller = new ChatController();
   let finishCompact!: (result: unknown) => void;
   const compact = new Promise(resolve => {
     finishCompact = resolve;
   });
-  const request = vi.fn(async (method: string) => {
+  const request = vi.fn(async (method: string, params: { key: string; operationId: string }) => {
     if (method === 'sessions.compact') return compact;
     finishCompact({ ok: false, reason: 'aborted' });
-    return { ok: true, status: 'aborted' };
+    return { ...params, phase: 'settled', outcome: 'aborted' };
   });
   controller.state.client = { request } as never;
   controller.state.connected = true;
@@ -63,11 +68,14 @@ test('stopping a manual compaction after switching sessions never aborts or clea
   controller.state.chatSending = true;
   await controller.cancelManualCompaction('session-a');
   await compacting;
-  expect(request).toHaveBeenCalledWith('sessions.abort', { key: 'session-a', clearQueued: true });
+  expect(request).toHaveBeenCalledWith('sessions.compaction.abort', {
+    key: 'session-a',
+    operationId: expect.any(String),
+  });
   expect(controller.state.chatSending).toBe(true);
 });
 
-test('manual compaction cancellation reports a lost connection instead of claiming it stopped', async () => {
+test('reconciles a lost connection with native settlement and releases the retained stop fence', async () => {
   const controller = new ChatController();
   let rejectCompact!: (error: Error) => void;
   const compact = new Promise((_resolve, reject) => {
@@ -84,13 +92,23 @@ test('manual compaction cancellation reports a lost connection instead of claimi
   const compacting = controller.sendMessage('/compact');
   await expect(controller.cancelManualCompaction('session-a')).rejects.toThrow('connection closed');
   await compacting;
-  const recoveredRequest = vi.fn().mockResolvedValue({ ok: true, status: 'no-active-run' });
+  const recoveredRequest = vi.fn(async (method: string, params: Record<string, unknown>) => {
+    if (method === 'sessions.compaction.abort')
+      return { ...params, phase: 'settled', outcome: 'aborted' };
+    if (method === 'sessions.compact')
+      return { ok: true, compacted: false, reason: 'no transcript' };
+    throw new Error('Unexpected RPC: ' + method);
+  });
   controller.state.client = { request: recoveredRequest } as never;
-  await expect(controller.cancelManualCompaction('session-a')).rejects.toThrow('connection closed');
-  recoveredRequest.mockResolvedValue({ ok: true, status: 'aborted' });
   await controller.cancelManualCompaction('session-a');
   expect(controller.state.compactionInFlight).toBe(false);
   expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.lastError).toBeNull();
+  await controller.sendMessage('/compact');
+  expect(recoveredRequest.mock.calls.map(call => call[0])).toEqual([
+    'sessions.compaction.abort',
+    'sessions.compact',
+  ]);
 });
 
 test.each([true, false])(
@@ -214,7 +232,7 @@ test.each(['Already compacted', 'Nothing to compact (session too small)'])(
 );
 
 test.each(['success', 'failure'])(
-  'ignores an old manual compaction %s after disconnect and a replacement request',
+  'blocks replacement after disconnect until an old manual compaction %s is reconciled',
   async outcome => {
     const pending: Array<{ resolve(value: unknown): void; reject(error: Error): void }> = [];
     const client = {
@@ -229,19 +247,16 @@ test.each(['success', 'failure'])(
     controller.disconnect();
     controller.state.client = client as never;
     controller.state.connected = true;
-    const second = controller.sendMessage('/compact');
+    await expect(controller.sendMessage('/compact')).rejects.toThrow();
     if (outcome === 'success') pending[0].resolve({ ok: true, compacted: true });
     else pending[0].reject(new Error('old connection failed'));
     await first;
-    expect(controller.state.compactionInFlight).toBe(true);
-    expect(controller.state.chatSending).toBe(true);
-    expect(controller.state.lastError).toBeNull();
-    expect(controller.state.chatMessages).toEqual([
-      expect.objectContaining({ __openclaw: expect.objectContaining({ phase: 'in-progress' }) }),
-    ]);
-    pending[1].resolve({ ok: true, compacted: false, reason: 'no transcript' });
-    await second;
+    expect(controller.state.compactionInFlight).toBe(false);
     expect(controller.state.chatSending).toBe(false);
+    expect(controller.state.lastError).toBeNull();
+    expect(controller.state.chatMessages).toEqual([]);
+    await expect(controller.sendMessage('/compact')).rejects.toThrow();
+    expect(client.request).toHaveBeenCalledTimes(1);
   },
 );
 
@@ -299,11 +314,19 @@ test('reports a manual compaction business failure even when the RPC transport s
   expect(request).toHaveBeenCalledOnce();
 });
 
-test('compacts the current session instead of sending /compact as chat', async () => {
+test('compacts once and hydrates the new native marker by entry identity', async () => {
+  const getCompactionDetails = vi.fn().mockResolvedValue({
+    success: true,
+    details: {
+      'compaction-entry-1': { summary: 'The compacted conversation summary.' },
+    },
+  });
+  vi.stubGlobal('electron', { openclaw: { history: { getCompactionDetails } } });
   const request = vi
     .fn()
     .mockResolvedValueOnce({
       compacted: true,
+      markerExpected: true,
       result: { tokensBefore: 25_329, tokensAfter: 1_069 },
     })
     .mockResolvedValueOnce({
@@ -311,19 +334,12 @@ test('compacts the current session instead of sending /compact as chat', async (
         {
           role: 'system',
           timestamp: 2000,
-          __openclaw: { kind: 'compaction', id: 'compaction-entry-1' },
-        },
-      ],
-    })
-    .mockResolvedValueOnce({
-      checkpoints: [
-        {
-          checkpointId: 'checkpoint-1',
-          summary: 'The compacted conversation summary.',
-          tokensBefore: 25_329,
-          tokensAfter: 1_069,
-          createdAt: 2000,
-          postCompaction: { entryId: 'compaction-entry-1', leafId: 'compaction-entry-1' },
+          __openclaw: {
+            kind: 'compaction',
+            id: 'compaction-entry-1',
+            tokensBefore: 25_329,
+            tokensAfter: 1_069,
+          },
         },
       ],
     });
@@ -331,29 +347,27 @@ test('compacts the current session instead of sending /compact as chat', async (
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
-
   await controller.sendMessage('/compact');
-
   expect(request).toHaveBeenNthCalledWith(1, 'sessions.compact', {
-    key: 'agent:main:justdo:session-1',
+    key: controller.state.sessionKey,
+    operationId: expect.any(String),
   });
   expect(request).toHaveBeenNthCalledWith(2, 'chat.history', {
-    sessionKey: 'agent:main:justdo:session-1',
+    sessionKey: controller.state.sessionKey,
     limit: 250,
     maxChars: 500_000,
   });
-  expect(request).toHaveBeenNthCalledWith(3, 'sessions.compaction.list', {
-    key: 'agent:main:justdo:session-1',
+  expect(request).toHaveBeenCalledTimes(2);
+  expect(getCompactionDetails).toHaveBeenCalledWith({
+    sessionKey: controller.state.sessionKey,
+    entryIds: ['compaction-entry-1'],
   });
-  expect(request).not.toHaveBeenCalledWith('chat.send', expect.anything());
   expect(controller.state.chatSending).toBe(false);
   expect(controller.state.chatMessages).toEqual([
     expect.objectContaining({
-      role: 'system',
       __openclaw: {
         kind: 'compaction',
         id: 'compaction-entry-1',
-        checkpointId: 'checkpoint-1',
         summary: 'The compacted conversation summary.',
         tokensBefore: 25_329,
         tokensAfter: 1_069,
@@ -379,9 +393,6 @@ test('settles a manual compaction request after switching away', async () => {
     }
     if (method === 'chat.startup' || method === 'chat.history') {
       return Promise.resolve({ messages: [] });
-    }
-    if (method === 'sessions.compaction.list') {
-      return Promise.resolve({ checkpoints: [] });
     }
     return Promise.resolve({});
   });
@@ -434,17 +445,6 @@ test('hydrates an automatic compaction summary when no checkpoint was persisted'
         ],
       });
     }
-    if (method === 'sessions.compaction.list') {
-      return Promise.resolve({
-        checkpoints: [
-          {
-            checkpointId: 'checkpoint-1',
-            summary: '',
-            postCompaction: { entryId: 'compaction-entry-1' },
-          },
-        ],
-      });
-    }
     return Promise.resolve({});
   });
   const controller = new ChatController();
@@ -463,7 +463,6 @@ test('hydrates an automatic compaction summary when no checkpoint was persisted'
       __openclaw: {
         kind: 'compaction',
         id: 'compaction-entry-1',
-        checkpointId: 'checkpoint-1',
         summary: 'Recovered automatic compaction summary.',
         tokensBefore: 25_329,
       },
@@ -491,7 +490,6 @@ test('keeps base history when local compaction detail hydration rejects', async 
         ],
       });
     }
-    if (method === 'sessions.compaction.list') return Promise.resolve({ checkpoints: [] });
     return Promise.resolve({});
   });
   const controller = new ChatController();
@@ -526,20 +524,12 @@ test('shows compaction progress immediately and replaces it with the authoritati
           {
             role: 'system',
             timestamp: 2000,
-            __openclaw: { kind: 'compaction', id: 'compaction-entry-1' },
-          },
-        ],
-      });
-    }
-    if (method === 'sessions.compaction.list') {
-      return Promise.resolve({
-        checkpoints: [
-          {
-            checkpointId: 'checkpoint-1',
-            summary: 'Compacted summary.',
-            tokensBefore: 100,
-            tokensAfter: 20,
-            postCompaction: { entryId: 'compaction-entry-1' },
+            __openclaw: {
+              kind: 'compaction',
+              id: 'compaction-entry-1',
+              tokensBefore: 100,
+              tokensAfter: 20,
+            },
           },
         ],
       });
@@ -583,27 +573,25 @@ test('shows compaction progress immediately and replaces it with the authoritati
   ]);
 });
 
-test('compacts while intentionally ignoring unsupported /compact arguments', async () => {
-  const request = vi.fn().mockResolvedValueOnce({
-    compacted: false,
-    reason: 'not enough history',
-  });
+test('rejects unsupported compact instructions without silently discarding them', async () => {
+  const request = vi.fn();
   const controller = new ChatController();
   controller.state.client = { request } as never;
   controller.state.connected = true;
-  controller.state.sessionKey = 'agent:main:justdo:session-1';
-
-  await controller.sendMessage('/compact keep recent decisions');
-
-  expect(request).toHaveBeenCalledOnce();
-  expect(request).toHaveBeenCalledWith('sessions.compact', {
-    key: 'agent:main:justdo:session-1',
-  });
-  expect(controller.state.lastError).toBeNull();
+  await expect(controller.sendMessage('/compact keep recent decisions')).rejects.toThrow();
+  expect(request).not.toHaveBeenCalled();
+  expect(controller.state.lastError).toBeTruthy();
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.compactionInFlight).toBe(false);
+  expect(controller.state.chatMessages).toEqual([]);
 });
 
-test('renders an error result and does not refresh history when session compaction fails', async () => {
-  const request = vi.fn().mockRejectedValue(new Error('compact unavailable'));
+test('renders a definitive admission error without refreshing history or retaining a lock', async () => {
+  const request = vi.fn().mockRejectedValue(
+    Object.assign(new Error('compact unavailable'), {
+      gatewayCode: 'INVALID_REQUEST',
+    }),
+  );
   const controller = new ChatController();
   controller.state.client = { request } as never;
   controller.state.connected = true;
@@ -614,6 +602,7 @@ test('renders an error result and does not refresh history when session compacti
   expect(request).toHaveBeenCalledOnce();
   expect(request).toHaveBeenCalledWith('sessions.compact', {
     key: 'agent:main:justdo:session-1',
+    operationId: expect.any(String),
   });
   expect(controller.state.chatSending).toBe(false);
   expect(controller.state.lastError).toBe('compact unavailable');
@@ -661,7 +650,7 @@ test('keeps an acknowledged compaction visible until a failed history refresh re
     .mockResolvedValueOnce({ compacted: true, result: { tokensBefore: 100, tokensAfter: 20 } })
     .mockRejectedValueOnce(new Error('history unavailable'))
     .mockImplementation((method: string) =>
-      Promise.resolve(method === 'chat.history' ? { messages: [marker] } : { checkpoints: [] }),
+      Promise.resolve(method === 'chat.history' ? { messages: [marker] } : {}),
     );
   const controller = new ChatController();
   controller.state.client = { request } as never;
@@ -702,8 +691,7 @@ test('applies intentionally shorter authoritative history after compaction', asy
   const request = vi
     .fn()
     .mockResolvedValueOnce({ compacted: true, result: { tokensBefore: 100, tokensAfter: 20 } })
-    .mockResolvedValueOnce({ messages: [compactedMarker] })
-    .mockResolvedValueOnce({ checkpoints: [] });
+    .mockResolvedValueOnce({ messages: [compactedMarker] });
   const controller = new ChatController();
   controller.state.client = { request } as never;
   controller.state.connected = true;
@@ -722,45 +710,41 @@ test('applies intentionally shorter authoritative history after compaction', asy
   ]);
 });
 
-test('enriches compaction markers again after history refreshes', async () => {
-  const request = vi
-    .fn()
-    .mockResolvedValueOnce({
-      messages: [
-        {
-          role: 'system',
-          timestamp: 2000,
-          __openclaw: { kind: 'compaction', id: 'checkpoint-1' },
-        },
-      ],
-    })
-    .mockResolvedValueOnce({
-      checkpoints: [
-        {
-          checkpointId: 'checkpoint-1',
-          summary: 'Persisted compact summary.',
+test('hydrates compaction details again after history refresh without retired RPCs', async () => {
+  const getCompactionDetails = vi.fn().mockResolvedValue({
+    success: true,
+    details: {
+      'native-entry-1': { summary: 'Persisted compact summary.' },
+    },
+  });
+  vi.stubGlobal('electron', { openclaw: { history: { getCompactionDetails } } });
+  const request = vi.fn().mockResolvedValue({
+    messages: [
+      {
+        role: 'system',
+        timestamp: 2000,
+        __openclaw: {
+          kind: 'compaction',
+          id: 'native-entry-1',
           tokensBefore: 25_329,
           tokensAfter: 1_069,
-          createdAt: 2000,
         },
-      ],
-    });
+      },
+    ],
+  });
   const controller = new ChatController();
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
-
   await controller.loadHistory();
-
-  expect(request).toHaveBeenNthCalledWith(2, 'sessions.compaction.list', {
-    key: 'agent:main:justdo:session-1',
-  });
+  await controller.loadHistory();
+  expect(request.mock.calls.map(call => call[0])).toEqual(['chat.history', 'chat.history']);
+  expect(getCompactionDetails).toHaveBeenCalledTimes(2);
   expect(controller.state.chatMessages).toEqual([
     expect.objectContaining({
       __openclaw: {
         kind: 'compaction',
-        id: 'checkpoint-1',
-        checkpointId: 'checkpoint-1',
+        id: 'native-entry-1',
         summary: 'Persisted compact summary.',
         tokensBefore: 25_329,
         tokensAfter: 1_069,
@@ -1177,9 +1161,9 @@ test('releases an unconfirmed compaction Stop for retry without admitting replac
   const compact = new Promise(resolve => {
     finishCompact = resolve;
   });
-  const request = vi.fn(async (method: string) => {
+  const request = vi.fn(async (method: string, params: Record<string, unknown>) => {
     if (method === 'sessions.compact') return compact;
-    return { ok: true, status: 'no-active-run' };
+    return { ...params, phase: 'in-progress' };
   });
   controller.state.client = { request } as never;
   controller.state.connected = true;
@@ -1196,13 +1180,15 @@ test('releases an unconfirmed compaction Stop for retry without admitting replac
   const compactionRequests = request.mock.calls.filter(
     ([method]) => method === 'sessions.compact',
   ).length;
-  await expect(controller.sendMessage('/compact')).rejects.toThrow('already being sent');
+  await expect(controller.sendMessage('/compact')).rejects.toThrow(
+    i18nService.t('coworkCompactionInProgress'),
+  );
   expect(request.mock.calls.filter(([method]) => method === 'sessions.compact')).toHaveLength(
     compactionRequests,
   );
-  request.mockImplementation(async () => {
+  request.mockImplementation(async (_method: string, params: Record<string, unknown>) => {
     finishCompact({ ok: false, reason: 'aborted' });
-    return { ok: true, status: 'aborted' };
+    return { ...params, phase: 'settled', outcome: 'aborted' };
   });
   const retry = controller.cancelManualCompaction('session-a');
   await vi.advanceTimersByTimeAsync(250);
