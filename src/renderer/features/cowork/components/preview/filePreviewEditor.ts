@@ -43,6 +43,7 @@ const FILE_PREVIEW_EDITOR_LANGUAGES: Record<PreviewableFileExtension, FilePrevie
   '.js': 'javascript',
   '.json': 'json',
   '.jsonc': 'json',
+  '.jsonl': 'plaintext',
   '.jsx': 'javascript',
   '.less': 'less',
   '.log': 'plaintext',

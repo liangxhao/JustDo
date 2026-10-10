@@ -9,10 +9,11 @@ import {
 } from '@heroicons/react/24/outline';
 import type { SessionDetailStats } from '@shared/cowork/sessionDetails';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
-import { isDomNode, useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
+import { isDomNode, OwnerDocumentContext, useOwnerDocument } from '@/shared/dom/ownerDocument';
 
 import { useDraggableModal } from '../shared/useDraggableModal';
 import { reconcileSubagentLabel, type SubagentLabelSource } from './subagentLabel';
@@ -38,6 +39,8 @@ interface SubtaskListPanelProps {
   sessionId: string;
   panelId?: string;
   isOpen: boolean;
+  embedded?: boolean;
+  portalTarget?: HTMLElement | null;
   parentRunning?: boolean;
   anchorRef?: React.RefObject<HTMLElement>;
   onClose: (restoreFocus?: boolean) => void;
@@ -60,14 +63,17 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
   sessionId,
   panelId = 'cowork-subtask-list',
   isOpen,
+  embedded = false,
+  portalTarget,
   parentRunning = false,
   anchorRef,
   onClose,
   onOpenSubtask,
   onSubtasksChange,
 }) => {
-  const ownerDocument = useOwnerDocument();
-  const ownerWindow = useOwnerWindow();
+  const contextDocument = useOwnerDocument();
+  const ownerDocument = portalTarget?.ownerDocument ?? contextDocument;
+  const ownerWindow = (ownerDocument.defaultView ?? window) as Window & typeof globalThis;
   const [isLoading, setIsLoading] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [hasLoadError, setHasLoadError] = useState(false);
@@ -113,7 +119,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
   );
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || embedded) return;
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (!isDomNode(target)) return;
@@ -131,10 +137,13 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
       ownerDocument.removeEventListener('pointerdown', handlePointerDown);
       ownerDocument.removeEventListener('keydown', handleKeyDown);
     };
-  }, [anchorRef, detailSubtask, isOpen, onClose, ownerDocument]);
+  }, [anchorRef, detailSubtask, embedded, isOpen, onClose, ownerDocument]);
   const { active, finished } = useMemo(() => partitionSubtasks(subtasks), [subtasks]);
 
   const closeDetails = useCallback(() => setDetailSubtask(null), []);
+  useEffect(() => {
+    if (embedded && (!portalTarget || !isOpen)) closeDetails();
+  }, [embedded, portalTarget, isOpen, closeDetails]);
 
   const refresh = useCallback(
     async (force = false) => {
@@ -412,7 +421,8 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
       ownerDocument.removeEventListener('keydown', handleKeyDown, true);
       const returnFocusTarget = detailReturnFocusRef.current;
       ownerWindow.requestAnimationFrame(() => {
-        if (returnFocusTarget?.isConnected) returnFocusTarget.focus();
+        if (returnFocusTarget?.isConnected && !returnFocusTarget.closest('[hidden]'))
+          returnFocusTarget.focus();
       });
     };
   }, [closeDetails, detailSessionKey, ownerDocument, ownerWindow]);
@@ -595,19 +605,23 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
     );
   };
 
-  return (
+  const content = (
     <>
       {isOpen && (
         <aside
           ref={panelRef}
           id={panelId}
-          className="absolute right-0 top-full z-[90] mt-2 flex max-h-[min(32rem,calc(100vh-4.5rem))] w-[22rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-surface/95 shadow-popover backdrop-blur-xl"
-          aria-label={i18nService.t('subtasks')}
+          className={
+            embedded
+              ? 'absolute inset-0 flex min-h-0 flex-col overflow-hidden bg-surface'
+              : 'absolute right-0 top-full z-[90] mt-2 flex max-h-[min(32rem,calc(100vh-4.5rem))] w-[22rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-surface/95 shadow-popover backdrop-blur-xl'
+          }
+          aria-label={i18nService.t(embedded ? 'coworkSummarySubagents' : 'subtasks')}
         >
           <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border px-3">
             <div className="min-w-0">
               <h2 className="truncate text-sm font-semibold text-foreground">
-                {i18nService.t('subtasks')}
+                {i18nService.t(embedded ? 'coworkSummarySubagents' : 'subtasks')}
               </h2>
             </div>
             <div className="flex shrink-0 items-center gap-1">
@@ -866,6 +880,15 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
       </Modal>
     </>
   );
+  if (!embedded) return content;
+  return portalTarget
+    ? createPortal(
+        <OwnerDocumentContext.Provider value={ownerDocument}>
+          {content}
+        </OwnerDocumentContext.Provider>,
+        portalTarget,
+      )
+    : null;
 };
 
 export default SubtaskListPanel;

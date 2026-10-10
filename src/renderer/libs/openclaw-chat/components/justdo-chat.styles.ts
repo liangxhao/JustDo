@@ -20,7 +20,9 @@ export const chatStyles = [
       background: color-mix(in srgb, var(--justdo-chat-accent, #6366f1) 12%, transparent);
       cursor: pointer;
     }
-    .tool-agent-link svg { display: block; }
+    .tool-agent-link svg {
+      display: block;
+    }
     .tool-agent-link:hover {
       background: color-mix(in srgb, var(--justdo-chat-accent, #6366f1) 23%, transparent);
       border-color: currentColor;
@@ -28,7 +30,10 @@ export const chatStyles = [
     .tool-agent-link:active {
       background: color-mix(in srgb, var(--justdo-chat-accent, #6366f1) 30%, transparent);
     }
-    .tool-agent-link:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+    .tool-agent-link:focus-visible {
+      outline: 2px solid currentColor;
+      outline-offset: 2px;
+    }
     .process-summary__tool-title:has(.tool-agent-link) {
       padding: 3px 6px;
       border-radius: 7px;
@@ -1844,11 +1849,26 @@ export const chatStyles = [
     }
 
     .message-attachment__icon svg {
-      width: 13px;
-      height: 13px;
+      width: 16px;
+      height: 16px;
       stroke-width: 1.7;
       stroke-linecap: round;
       stroke-linejoin: round;
+    }
+
+    .message-attachment__glyph {
+      font-family: var(
+        --font-mono,
+        ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        Monaco,
+        Consolas,
+        monospace
+      );
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
     }
 
     .message-attachment__content {
@@ -2032,22 +2052,62 @@ export const chatStyles = [
     /* ── highlight.js (GitHub theme) ────────────────────────────────── */
 
     :host(.dark) .tool-output-bubble--code,
-    :host([data-theme='dark']) .tool-output-bubble--code { background: #161b22; }
+    :host([data-theme='dark']) .tool-output-bubble--code {
+      background: #161b22;
+    }
     :host(.dark) .tool-output-bubble--code > pre,
-    :host([data-theme='dark']) .tool-output-bubble--code > pre { color: #e6edf3; }
+    :host([data-theme='dark']) .tool-output-bubble--code > pre {
+      color: #e6edf3;
+    }
     :host(.dark) .message-media,
-    :host([data-theme='dark']) .message-media { color-scheme: dark; }
+    :host([data-theme='dark']) .message-media {
+      color-scheme: dark;
+    }
     :host(.dark) .tool-output-bubble--code .hljs-addition,
-    :host([data-theme='dark']) .tool-output-bubble--code .hljs-addition { color: #aff5b4; background: #19362a; }
+    :host([data-theme='dark']) .tool-output-bubble--code .hljs-addition {
+      color: #aff5b4;
+      background: #19362a;
+    }
     :host(.dark) .tool-output-bubble--code .hljs-deletion,
-    :host([data-theme='dark']) .tool-output-bubble--code .hljs-deletion { color: #ffdcd7; background: #4a2026; }
-    .file-code-path, .file-patch summary { font-size: 12px; margin: 6px 0; overflow-wrap: anywhere; }
-    .file-patch { margin: 8px 0; }
-    justdo-message-media { display: block; min-width: 0; max-width: 100%; }
-    .message-media { margin: 8px 0; max-width: 640px; }
-    .message-media figcaption { font-size: 12px; opacity: .75; margin-bottom: 6px; overflow-wrap: anywhere; }
-    .message-media audio { width: 360px; max-width: 100%; }
-    .message-media video { display: block; width: 100%; max-height: 420px; border-radius: 8px; background: #181818; }
+    :host([data-theme='dark']) .tool-output-bubble--code .hljs-deletion {
+      color: #ffdcd7;
+      background: #4a2026;
+    }
+    .file-code-path,
+    .file-patch summary {
+      font-size: 12px;
+      margin: 6px 0;
+      overflow-wrap: anywhere;
+    }
+    .file-patch {
+      margin: 8px 0;
+    }
+    justdo-message-media {
+      display: block;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .message-media {
+      margin: 8px 0;
+      max-width: 640px;
+    }
+    .message-media figcaption {
+      font-size: 12px;
+      opacity: 0.75;
+      margin-bottom: 6px;
+      overflow-wrap: anywhere;
+    }
+    .message-media audio {
+      width: 360px;
+      max-width: 100%;
+    }
+    .message-media video {
+      display: block;
+      width: 100%;
+      max-height: 420px;
+      border-radius: 8px;
+      background: #181818;
+    }
     .hljs {
       color: #24292e;
     }

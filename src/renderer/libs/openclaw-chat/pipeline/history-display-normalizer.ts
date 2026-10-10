@@ -23,6 +23,32 @@ const INTERRUPTED_MESSAGE_STORAGE_KEY = 'justdo-openclaw-interrupted-messages';
 const INTERRUPTED_MESSAGE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const LEGACY_INTERRUPTED_STATUS_TEXTS = new Set(['运行已中断。', 'The run was interrupted.']);
 
+const collapsedDeliveryArtifacts = Symbol('collapsed-delivery-artifacts');
+type CollapsedDeliveryArtifact = {
+  artifactId?: string;
+  messageSeq?: number;
+  path: string;
+  title: string;
+  mimeType?: string;
+};
+
+/** Display-only identities survive hydration spreads but never serialize into history. */
+export function readCollapsedDeliveryArtifacts(
+  message: unknown,
+): readonly CollapsedDeliveryArtifact[] {
+  return (
+    (message as { [collapsedDeliveryArtifacts]?: CollapsedDeliveryArtifact[] } | null)?.[
+      collapsedDeliveryArtifacts
+    ] ?? []
+  );
+}
+
+export function retainCollapsedDeliveryArtifacts<T>(message: T, placeholder: unknown): T {
+  const links = readCollapsedDeliveryArtifacts(placeholder);
+  const full = asRecord(message);
+  return links.length && full ? ({ ...full, [collapsedDeliveryArtifacts]: links } as T) : message;
+}
+
 type FailedRunRecord = {
   sessionKey: string;
   sessionId?: string | null;
@@ -345,7 +371,47 @@ function collapseAssistantMediaDeliveryCompanions<T>(messages: T[]): T[] {
       canonicalCompanionText(previous) === canonicalCompanionText(message) &&
       mediaUrls.every((url, index) => fileNameFromMediaPath(url) === labels[index]);
 
-    if (!isMatchingCompanion) retained.push(message);
+    if (!isMatchingCompanion) {
+      retained.push(message);
+      continue;
+    }
+    const seq =
+      asRecord(asRecord(message)?.__openclaw)?.seq ??
+      asRecord(messageRecord(message)?.__openclaw)?.seq;
+    const content = messageDisplayContent(message);
+    const attachments = Array.isArray(content)
+      ? content.flatMap(block => {
+          const attachment = asRecord(asRecord(block)?.attachment);
+          return typeof attachment?.url === 'string' &&
+            attachment.url.trim().startsWith('/api/chat/media/outgoing/') &&
+            typeof attachment.label === 'string' &&
+            attachment.label.trim()
+            ? [attachment]
+            : [];
+        })
+      : [];
+    const links = attachments.flatMap((attachment, index) => {
+      const artifactId =
+        typeof attachment.artifactId === 'string' && attachment.artifactId.trim()
+          ? attachment.artifactId.trim()
+          : undefined;
+      const messageSeq = typeof seq === 'number' ? seq : undefined;
+      if (!artifactId && messageSeq === undefined) return [];
+      return [
+        {
+          artifactId,
+          messageSeq,
+          path: mediaUrls[index],
+          title: String(attachment.label).trim(),
+          mimeType: typeof attachment.mimeType === 'string' ? attachment.mimeType : undefined,
+        },
+      ];
+    });
+    if (links.length)
+      retained[retained.length - 1] = {
+        ...asRecord(previous),
+        [collapsedDeliveryArtifacts]: [...readCollapsedDeliveryArtifacts(previous), ...links],
+      } as T;
   }
   return retained;
 }

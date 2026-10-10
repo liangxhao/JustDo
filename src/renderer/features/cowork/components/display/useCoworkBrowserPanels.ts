@@ -94,6 +94,16 @@ export function useCoworkBrowserPanels({
 }: CoworkBrowserPanelsOptions) {
   const initializingTabSessionRef = useRef<string | null>(null);
   const previousDisplayTabsRef = useRef({ displaySessionKey, hasDisplayTabs });
+  const messageNavigationScopeRef = useRef<object | null>(null);
+  const openBrowserTabRef = useRef(openBrowserTab);
+  openBrowserTabRef.current = openBrowserTab;
+  useEffect(() => {
+    const scope = {};
+    messageNavigationScopeRef.current = scope;
+    return () => {
+      if (messageNavigationScopeRef.current === scope) messageNavigationScopeRef.current = null;
+    };
+  }, [displaySessionKey]);
   const handleCreateBrowserTab = useCallback(
     (url?: string) => {
       setIsDisplayPanelOpen(true);
@@ -345,6 +355,7 @@ export function useCoworkBrowserPanels({
   ]);
 
   useEffect(() => {
+    const navigationScope = messageNavigationScopeRef.current;
     const openMessageBrowserTab = (tab: BrowserPanelTab) => {
       // A mounted panel owns its live tabs; changing initialTabs only seeds an
       // empty panel. Use the same identity in both the guest and parent state.
@@ -356,7 +367,7 @@ export function useCoworkBrowserPanels({
         sourcePreviewRootUrl: tab.sourcePreviewRootUrl,
       });
       if (created === false) return;
-      openBrowserTab(displaySessionKey, tab, MAX_BROWSER_TABS);
+      openBrowserTabRef.current(displaySessionKey, tab, MAX_BROWSER_TABS);
     };
     const handleOpenWebUrl = (event: Event) => {
       const detail = (event as CustomEvent<{ url?: unknown }>).detail;
@@ -369,9 +380,12 @@ export function useCoworkBrowserPanels({
           filePath?: string;
           workingDirectory?: string;
           navigationSuffix?: unknown;
+          displayTarget?: unknown;
+          currentSessionOnly?: boolean;
+          isCurrent?: () => boolean;
         }>
       ).detail;
-      if (!detail?.filePath) return;
+      if (!detail?.filePath || detail.isCurrent?.() === false) return;
       const navigationSuffix = detail.navigationSuffix;
       if (
         navigationSuffix !== undefined &&
@@ -382,7 +396,7 @@ export function useCoworkBrowserPanels({
         return;
       }
       const target = normalizeBrowserLinkTarget(
-        configService.getConfig().browserHtmlLinkTarget,
+        detail.displayTarget ?? configService.getConfig().browserHtmlLinkTarget,
         BrowserLinkTarget.Embedded,
       );
       try {
@@ -390,6 +404,11 @@ export function useCoworkBrowserPanels({
           detail.filePath,
           detail.workingDirectory,
         );
+        if (
+          (detail.currentSessionOnly && messageNavigationScopeRef.current !== navigationScope) ||
+          detail.isCurrent?.() === false
+        )
+          return;
         if (!result.success) {
           window.dispatchEvent(
             new CustomEvent('app:showToast', {
@@ -433,6 +452,11 @@ export function useCoworkBrowserPanels({
         });
         openMessageBrowserTab(tab);
       } catch {
+        if (
+          (detail.currentSessionOnly && messageNavigationScopeRef.current !== navigationScope) ||
+          detail.isCurrent?.() === false
+        )
+          return;
         window.dispatchEvent(
           new CustomEvent('app:showToast', { detail: i18nService.t('coworkFilePreviewFailed') }),
         );
@@ -444,6 +468,6 @@ export function useCoworkBrowserPanels({
       window.removeEventListener(MessageBrowserEvent.OpenWebUrl, handleOpenWebUrl);
       window.removeEventListener(MessageBrowserEvent.OpenLocalHtml, handleOpenLocalHtml);
     };
-  }, [browserPanelRefs, displaySessionKey, openBrowserTab]);
+  }, [browserPanelRefs, displaySessionKey]);
   return { handleCreateBrowserTab };
 }

@@ -263,6 +263,26 @@ stateDiagram-v2
 
 ## 7. Plan、Goal 与 progress card
 
+聊天右上角以「摘要」统一任务进度、子智能体、输出内容、来源、Swarm Workflow 和 Agent Team 的入口。子智能体显示运行中、已完成和失败数量，点击打开列表 Tab；列表的原生发现控制器持续挂载，展示内容通过 Portal 放入工作区，沿实际窗口观察和处理交互。关闭列表 Tab 不终止发现，也不影响单个子智能体的详情 Tab。Goal 文字直接来自输入框已有的原生目标读取 owner，只展示 objective，不可点击；摘要不展示 Plan 模式，现有计划审批保持独立。
+
+任务进度在 Goal 后作为独立分组，直接复用 `SessionProgressCard`，标题为「任务进度」，与摘要其它分组使用一致的标题字号、颜色和左右对齐；去除卡片独立的外框、背景、阴影、入场动画与内部滚动区。标题右侧集中状态图标、完成数量、折叠与刷新操作，关闭统一由摘要提供。内容区保留原 Markdown、步骤文字的字体和颜色、步骤标记与间距及内容分隔线，不显示更新时间。移除右上角独立进度按钮和聊天上方的悬浮卡，进度状态仍由当前会话的原生 card 与 run state 提供，不复制或重建计划。完成卡仍保留在摘要内，不沿用旧悬浮卡的完成后自动隐藏计时。首次原生进度出现也参与摘要的一次自动展开，此后的 revision 和运行状态更新不重新打开已关闭的摘要。
+
+摘要的输出内容通过当前聊天的认证 Gateway client 调用 `artifacts.list(sessionKey, messageRole:'assistant')` 获取交付 metadata，不传只适用于 image 查询的分页参数；另补充助手消息明确交付的本地文件链接和站点描述。工具写文件的参数不作为交付证据。来源来自当前 Renderer 已加载原生 user 附件/文件引用，以及带有效 externalContent 归属的成功 web_search/web_fetch 结果，覆盖搜索结果与 provider citations；普通助手网页链接和工作区所有被触及文件不冒充来源。没有独立 `sources.list` 接口，来源列表以已就绪的原生会话记录为依据，有实际条目时显示来源栏目。metadata 投影停留在 Renderer 内存，不引入 Main/Redux transcript 缓存或 SQLite 表。
+
+网页来源同时读取顶层原生工具结果与 Gateway 投影的 `custom` / `openclaw.nested-tool.v1` 记录中的 `toolResult` block，覆盖 tool_call 和 Code Mode 的嵌套执行；外层调度结果即使被截断，也可使用已有的完整嵌套结果。仅采纳成功且具备原生 externalContent 归属的结果，不采纳工具调用参数、助手/用户消息伪装的结果或任意 custom 记录中的链接；网页正文截断不影响已确认的原网页地址。
+
+摘要条目复用原有打开通路，不调用 `artifacts.download`，不下载、暂存或自动另存副本。原生 artifact metadata 按已有 attachment identity 或原生消息 seq 关联当前已加载的交付引用，优先使用附件明确指向的文件路径或网页地址；不透明引用仅在同条消息的原始 MEDIA 文件路径及附件名称均无歧义时关联，并与原文件条目去重。同一 seq 的名称匹配不能覆盖另一个明确的 artifact ID；不从文件名搜索其它消息或猜测磁盘路径。已有文件进入侧边栏预览，不支持预览的格式和过大文件直接用系统默认工具打开；网页打开浏览器 Tab，本地 HTML 复用受保护的预览站点并明确在工作区展示。已加载内联图片直接复用图片预览，不落地；只有内联文档内容但没有原文件地址的条目显示不可打开提示。附件内容按点击从既有历史 owner 解析，不在摘要 metadata 中复制 base64；解析和预览绑定当前会话与导航 generation，切换会话后的旧读取不切换 Tab 或打开系统工具。列表仅展示 metadata，查询失败保留已确认条目并提示读取失败；用户重新打开摘要可重试。
+
+输出内容栏目始终保留，空列表在标题右侧以小字显示「暂无」；实际输出到达后移除空状态文字并显示正常列表，读取失败或大型输出省略时使用对应状态提示。其余栏目仅在有实际内容时显示，空状态本身不触发自动展开。
+
+网页资源仅在去重身份中去掉 fragment，实际打开保留锚点和 SPA 路由。来源中的原生 `media://` 引用不能覆盖已水合的内联图片，只有确认原文件条目已覆盖同一附件时才去重。原生媒体的 artifact 名称通过同消息 seq 的原始 block 标题与附件 URL、类型和身份关联，不用显示名称猜测其它消息。
+
+历史折叠已确认的 managed-media 伴生交付时，将 artifact ID、伴生 seq 与原交付路径的短小关联附在 Renderer 显示对象的私有 Symbol 上；截断消息补全时显式保留这份关联。它不进入 JSON 或持久化，不保留伴生正文，不改变原生消息对象。摘要解析沿该已确认关系复用原文件，并保留原生 artifact 标题。
+
+输出内容与来源在摘要内分别最多展示前三条，超过三条时在栏目末尾显示「查看全部」。点击关闭摘要并打开对应的工作区列表 Tab，不在浮层内展开。列表展示全部已确认条目及已有文件路径或网页地址，复用同一会话的即时 metadata 投影和原有打开通路；新条目同步更新，读取失败保留已确认内容。列表 Tab 的打开、关闭与选中状态按会话隔离，并参与工作区后台 Tab 保留上限；不复制资源内容，也不新增历史读取或下载行为。
+
+Workflow 和 Team 分别按当前会话关联的流程数和房间数显示，关闭详情 Tab 不清除入口；工作流的暂时查询失败保留最后成功数量。摘要在本次界面生命周期内每个会话首次出现有意义条目时自动展开一次，不聚焦、不切走当前 Tab。手动关闭或点击条目后不会因状态轮询、新条目或切换回来再次自动打开，可随时点击摘要按钮重开。
+
 Plan 规划和实施共用 canonical transcript，原生 reset 切断模型上下文但 display history 可跨边界。Renderer 不拼接多份 transcript，也不维护本地 segment 血缘。计划卡可重开持久计划预览，审核侧栏不是任意文件编辑器。
 
 消息编辑/撤回仅绑定最后一个合法持久 user entry；分支入口绑定稳定、成功完成的助手 entry。Goal 存在、Plan reset 边界、sending、压缩、历史加载或缺少身份时限制操作，避免 rewind 与计划插件状态/文件副作用不同步。
@@ -271,7 +291,7 @@ Goal 卡保留六种原生状态，Main 只提供自动续跑阶段。progress_c
 
 压缩事件区分完成、失败、取消和跳过；失败等终态原因直接显示并允许换行。溢出／预算／超时恢复压缩也发布独立的原生开始、进度和终态。普通历史标记自带 token 指标，缺少摘要时仅按原生 entry ID 经 Runtime Services 详情接口补取，不调用已移除的检查点列表或按位置猜测对应关系。成功压缩不一定新增摘要标记；`markerExpected:false` 的结果保留本轮成功提示，但不安排摘要标记补查、不制造持久摘要。手动 `/compact` 附加要求不受此 RPC 支持，界面明确拒绝，不能静默丢弃。
 
-`progressCard.changed` 携带 revision，Renderer 在 Gateway 声明读取能力后调用 `progressCard.get`，并核对 session 与连接 generation。当前卡只保留有界内存投影；原生返回 null、读取失败或 revision 失效时不能沿用旧卡冒充最新状态。关闭卡片和完成后隐藏属于 UI 状态，不删除原生卡。progress_card 是执行进度，PresentPlan 是待审核 artifact，Goal 是目标与预算；三者的生命周期不可混用。
+`progressCard.changed` 携带 revision，Renderer 在 Gateway 声明读取能力后调用 `progressCard.get`，并核对 session 与连接 generation。当前卡只保留有界内存投影；原生返回 null、读取失败或 revision 失效时不能沿用旧卡冒充最新状态。关闭摘要和折叠进度属于 UI 状态，不删除原生卡。progress_card 是执行进度，PresentPlan 是待审核 artifact，Goal 是目标与预算；三者的生命周期不可混用。
 
 用户刷新卡片时，聊天 client 直接发送 `progressCard.refresh`。接收回执不替换已保存卡或输入草稿；后续 `progressCard.changed` 触发按 revision 读取。结果不确定时复用原刷新意图并查询原生卡，明确终态失败后才创建新意图。切换会话后的迟到回执不修改当前显示，也不生成合成用户消息。
 

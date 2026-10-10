@@ -63,14 +63,53 @@ export function useFilePreviewEvents({
           filePath?: string;
           keepWorkspaceFilesOpen?: boolean;
           workingDirectory?: string;
+          openUnsupportedInSystem?: boolean;
+          isCurrent?: () => boolean;
         }>
       ).detail;
-      if (!detail?.filePath) return;
+      if (!detail?.filePath || detail.isCurrent?.() === false) return;
       if (isImageFilePath(detail.filePath)) {
         openImage(detail.filePath, '', detail.workingDirectory, detail.keepWorkspaceFilesOpen);
         return;
       }
       const activeRequestId = ++filePreviewRequestIdRef.current;
+      const sourceSessionId = currentSessionIdRef.current;
+      const requestIsCurrent = () =>
+        detail.isCurrent?.() !== false &&
+        isCurrentFilePreviewRequest(
+          activeRequestId,
+          filePreviewRequestIdRef.current,
+          sourceSessionId,
+          currentSessionIdRef.current,
+        );
+      const openInSystem = async () => {
+        if (!requestIsCurrent()) return;
+        try {
+          const result = await window.electron.shell.openPath(
+            detail.filePath!,
+            detail.workingDirectory,
+          );
+          if (!result.success && requestIsCurrent()) {
+            window.dispatchEvent(
+              new CustomEvent('app:showToast', {
+                detail: result.notFound
+                  ? i18nService
+                      .t('coworkAttachmentNotFound')
+                      .replace('{filepath}', detail.filePath!)
+                  : i18nService.t('coworkUnsupportedFileOpenFailed'),
+              }),
+            );
+          }
+        } catch {
+          if (requestIsCurrent()) {
+            window.dispatchEvent(
+              new CustomEvent('app:showToast', {
+                detail: i18nService.t('coworkUnsupportedFileOpenFailed'),
+              }),
+            );
+          }
+        }
+      };
       const requestedTabId = fileDisplayTabId(detail.filePath);
       const existingPreview = filePreviewsRef.current.find(
         preview => fileDisplayTabId(preview.filePath) === requestedTabId,
@@ -79,12 +118,15 @@ export function useFilePreviewEvents({
         filePath => fileDisplayTabId(filePath) === requestedTabId,
       );
       if (existingPreview || existingUnsupportedPreview) {
+        if (!existingPreview && detail.openUnsupportedInSystem) {
+          await openInSystem();
+          return;
+        }
         if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
         setPreferredDisplayTabId(requestedTabId);
         setIsDisplayPanelOpen(true);
         return;
       }
-      const sourceSessionId = currentSessionIdRef.current;
       let result: Awaited<ReturnType<typeof window.electron.shell.readPreviewFile>>;
       try {
         result = await window.electron.shell.readPreviewFile(
@@ -92,14 +134,7 @@ export function useFilePreviewEvents({
           detail.workingDirectory,
         );
       } catch {
-        if (
-          isCurrentFilePreviewRequest(
-            activeRequestId,
-            filePreviewRequestIdRef.current,
-            sourceSessionId,
-            currentSessionIdRef.current,
-          )
-        ) {
+        if (requestIsCurrent()) {
           window.dispatchEvent(
             new CustomEvent('app:showToast', {
               detail: i18nService.t('coworkFilePreviewFailed'),
@@ -108,14 +143,7 @@ export function useFilePreviewEvents({
         }
         return;
       }
-      if (
-        !isCurrentFilePreviewRequest(
-          activeRequestId,
-          filePreviewRequestIdRef.current,
-          sourceSessionId,
-          currentSessionIdRef.current,
-        )
-      ) {
+      if (!requestIsCurrent()) {
         if (result.success) {
           void window.electron.shell
             .revokePreviewFileEdit(result.editToken)
@@ -147,6 +175,10 @@ export function useFilePreviewEvents({
         if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
         setPreferredDisplayTabId(resolvedTabId);
         setIsDisplayPanelOpen(true);
+        return;
+      }
+      if (detail.openUnsupportedInSystem && (result.unsupportedType || result.tooLarge)) {
+        await openInSystem();
         return;
       }
       if (result.unsupportedType) {

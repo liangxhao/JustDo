@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 /** Observe the selected chat independently of whether its workflow Tab is open. */
 export function useSwarmWorkflowDiscovery(
   sessionId: string | null | undefined,
-  onDiscover: () => void,
+  onDiscover?: () => void,
 ) {
   const seen = useRef(new Map<string, Set<string>>());
   const onDiscoverRef = useRef(onDiscover);
@@ -13,6 +13,7 @@ export function useSwarmWorkflowDiscovery(
     sessionId: string;
     result: SwarmWorkflowResult;
     hasFlows: boolean;
+    count: number;
   }>();
   const [revision, setRevision] = useState(0);
   const refresh = useCallback(() => setRevision(value => value + 1), []);
@@ -34,8 +35,13 @@ export function useSwarmWorkflowDiscovery(
         hasFlows: result.success
           ? result.flows.length > 0
           : previous?.sessionId === sessionId && previous.hasFlows,
+        count: result.success
+          ? result.flows.length
+          : previous?.sessionId === sessionId
+            ? previous.count
+            : 0,
       }));
-      if (result.success) {
+      if (result.success && onDiscoverRef.current) {
         const known = seen.current.get(sessionId);
         const discovered = result.flows.some(
           flow =>
@@ -60,5 +66,6 @@ export function useSwarmWorkflowDiscovery(
   const running =
     result.success && result.flows.some(flow => ['running', 'stopping'].includes(flow.status));
   const hasFlows = snapshot?.sessionId === sessionId && snapshot?.hasFlows === true;
-  return { result, running, hasFlows, refresh };
+  const count = snapshot && snapshot.sessionId === sessionId ? snapshot.count : 0;
+  return { result, running, hasFlows, count, refresh };
 }

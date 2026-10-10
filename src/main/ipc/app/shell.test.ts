@@ -276,19 +276,22 @@ test.each([
   expect(isDownloadableImageUrl(imageUrl)).toBe(false);
 });
 
-test('reads a previewable file with a stable content version', async () => {
+test.each([
+  ['notes.md', '# Notes\n'],
+  ['orders.jsonl', '{"order":1}\n{"order":2}\n'],
+])('reads %s for preview without changing its contents', async (fileName, content) => {
   const workingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-preview-'));
   temporaryDirectories.push(workingDirectory);
-  const filePath = path.join(workingDirectory, 'notes.md');
-  fs.writeFileSync(filePath, '# Notes\n', 'utf8');
+  const filePath = path.join(workingDirectory, fileName);
+  fs.writeFileSync(filePath, content, 'utf8');
 
   await expect(readPreviewFile(filePath)).resolves.toEqual(
     expect.objectContaining({
       success: true,
-      content: '# Notes\n',
+      content,
       editToken: expect.any(String),
       filePath,
-      version: createPreviewFileVersion('# Notes\n'),
+      version: createPreviewFileVersion(content),
     }),
   );
 });

@@ -1,20 +1,17 @@
 import {
-  ArrowPathIcon,
+  AdjustmentsHorizontalIcon,
   ArrowTopRightOnSquareIcon,
   ArrowUturnLeftIcon,
   ChatBubbleLeftEllipsisIcon,
-  CheckCircleIcon,
   ClipboardDocumentCheckIcon,
   CommandLineIcon,
   DocumentPlusIcon,
   DocumentTextIcon,
+  LinkIcon,
   PhotoIcon,
   QueueListIcon,
   ShareIcon,
-  StopCircleIcon,
-  XCircleIcon,
 } from '@heroicons/react/24/outline';
-import { PauseCircleIcon as PauseCircleSolidIcon } from '@heroicons/react/24/solid';
 import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
 import { SaveTextFileErrorCode } from '@shared/app/dialogIpc';
 import {
@@ -24,6 +21,7 @@ import {
   composeBrowserGatewayPrompt,
   serializeBrowserAnnotationContext,
 } from '@shared/browser/browser';
+import { BrowserLinkTarget } from '@shared/browser/browserLinkOpening';
 import { recordingImagesInStepOrder } from '@shared/browser/browserRecording';
 import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
 import { CoworkInteractionKind } from '@shared/cowork/interactions/interactions';
@@ -35,11 +33,7 @@ import { getMessageTitleInput } from '@shared/cowork/messageInput';
 import { REVIEW_OPEN_EVENT, REVIEW_TAB_ID } from '@shared/cowork/sessionReview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { isGoalEditCommand } from '@shared/cowork/slashCommands';
-import {
-  type ProgressCard,
-  progressCardIsComplete,
-  type ProgressCardViewState,
-} from '@shared/openclaw/progressCard';
+import { type ProgressCard, type ProgressCardViewState } from '@shared/openclaw/progressCard';
 import { OpenClawToolName } from '@shared/plugins/nativeIds';
 import {
   forwardRef,
@@ -71,6 +65,7 @@ import {
 } from '@/features/browser/browserPanelRetention';
 import BrowserTabIcon from '@/features/browser/BrowserTabIcon';
 import { browserTaskStopped } from '@/features/browser/intervention/browserTaskStopped';
+import { MessageBrowserEvent } from '@/features/browser/messageBrowserLinks';
 import { recordingSubmissionIssue } from '@/features/browser/recording/browserRecordingSubmission';
 import PlanApprovalDrawer from '@/features/cowork/components/approvals/PlanApprovalDrawer';
 import {
@@ -96,12 +91,15 @@ import CoworkDisplayPanel, {
 import DisplayPanelLauncher from '@/features/cowork/components/display/DisplayPanelLauncher';
 import { getAdjacentDisplayTabId } from '@/features/cowork/components/display/displayTabSelection';
 import NewDisplayTabButton from '@/features/cowork/components/display/NewDisplayTabButton';
+import SessionSummaryPanel from '@/features/cowork/components/display/SessionSummaryPanel';
+import SessionSummaryResourceList from '@/features/cowork/components/display/SessionSummaryResourceList';
 import { useDisplayTabOrder } from '@/features/cowork/components/display/useDisplayTabOrder';
 import { useRecordingReviewTabs } from '@/features/cowork/components/display/useRecordingReviewTabs';
 import {
   HOME_DISPLAY_SESSION_KEY,
   useSessionDisplayState,
 } from '@/features/cowork/components/display/useSessionDisplayState';
+import { useSessionSummaryVisibility } from '@/features/cowork/components/display/useSessionSummaryVisibility';
 import { WORKSPACE_PRESENTATION_EVENT } from '@/features/cowork/components/display/useWorkspacePortal';
 import { inferInitialGoalObjective } from '@/features/cowork/components/goals/goalPendingObjective';
 import type { GoalRunProgress } from '@/features/cowork/components/goals/goalRunProgress';
@@ -109,6 +107,8 @@ import FilePreviewDrawer, {
   type FilePreviewDrawerHandle,
 } from '@/features/cowork/components/preview/FilePreviewDrawer';
 import { type FilePreviewNavigationOptions } from '@/features/cowork/components/preview/filePreviewNavigation';
+import { IMAGE_PREVIEW_EVENT } from '@/features/cowork/components/preview/imageFilePreview';
+import { openSummaryResource } from '@/features/cowork/components/preview/openSummaryResource';
 import UnsupportedFilePreview from '@/features/cowork/components/preview/UnsupportedFilePreview';
 import { useFilePreviewEvents } from '@/features/cowork/components/preview/useFilePreviewEvents';
 import WorkspaceFilesPanel from '@/features/cowork/components/preview/WorkspaceFilesPanel';
@@ -120,17 +120,11 @@ import {
   resolveBackgroundRuntimeDiscoverySessionIds,
   resolveBackgroundRuntimeSessionIds,
 } from '@/features/cowork/components/status/runtimePolling';
-import SessionProgressCard, {
-  type ProgressCardRunState,
-} from '@/features/cowork/components/status/SessionProgressCard';
-import { useProgressCardVisibility } from '@/features/cowork/components/status/useProgressCardVisibility';
+import type { ProgressCardRunState } from '@/features/cowork/components/status/SessionProgressCard';
 import { loadSpawnedSubtask } from '@/features/cowork/components/subagents/spawnedSubtask';
 import SubagentMessageDrawer from '@/features/cowork/components/subagents/SubagentMessageDrawer';
 import SubtaskListPanel from '@/features/cowork/components/subagents/SubtaskListPanel';
-import {
-  isActiveSubtask,
-  type Subtask,
-} from '@/features/cowork/components/subagents/subtaskPresentation';
+import type { Subtask } from '@/features/cowork/components/subagents/subtaskPresentation';
 import SwarmWorkflowPanel from '@/features/cowork/components/swarm-workflow/SwarmWorkflowPanel';
 import { useSwarmWorkflowDiscovery } from '@/features/cowork/components/swarm-workflow/useSwarmWorkflowDiscovery';
 import TerminalPanel from '@/features/cowork/components/terminal/TerminalPanel';
@@ -178,6 +172,10 @@ import type {
   RewindEditorDraft,
 } from '@/libs/openclaw-chat/gateway/chat-controller';
 import type { QueuedInputSnapshot } from '@/libs/openclaw-chat/gateway/chat-pending-inputs';
+import type {
+  SessionSummaryResources,
+  SummaryResource,
+} from '@/libs/openclaw-chat/model/session-summary-resources';
 import { OPEN_SPAWNED_AGENT_EVENT } from '@/libs/openclaw-chat/model/spawn-tool-target';
 import { i18nService } from '@/services/i18n';
 import { getGreetingPeriod, pickHomeGreeting } from '@/services/i18n/homeGreetings';
@@ -185,12 +183,10 @@ import BrainIcon from '@/shared/components/icons/BrainIcon';
 import FolderIcon from '@/shared/components/icons/FolderIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import Modal from '@/shared/components/ui/Modal';
+import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
 import { type RootState, store } from '@/store';
 
-import CollaborationPanel, {
-  CollaborationMemberLinks,
-  useCollaborationRooms,
-} from './chat/CollaborationPanel';
+import CollaborationPanel, { useCollaborationRooms } from './chat/CollaborationPanel';
 import { CoworkHomeWorkspace } from './chat/CoworkHomeWorkspace';
 import { useCoworkSideChats } from './chat/useCoworkSideChats';
 import type { MessageQuoteHandler } from './composer/messageQuote';
@@ -211,6 +207,9 @@ import {
   MAX_TERMINAL_TABS,
   PLAN_DISPLAY_TAB_ID,
   SUBAGENT_DISPLAY_TAB_ID,
+  SUBAGENTS_DISPLAY_TAB_ID,
+  SUMMARY_RESOURCE_DISPLAY_TAB_IDS,
+  type SummaryResourceListKind,
   SWARM_WORKFLOW_DISPLAY_TAB_ID,
   TERMINAL_DISPLAY_TAB_PREFIX,
   WORKSPACE_FILES_DISPLAY_TAB_ID,
@@ -316,16 +315,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const currentSession = useSelector(selectCurrentSession);
   const currentSessionId = currentSession?.id ?? null;
   const [isWorkspaceDetached, setIsWorkspaceDetached] = useState(false);
-  const collaborationRooms = useCollaborationRooms({
-    activeSessionId: currentSessionId,
-    onFirstCollaboration: sessionId => {
-      setCollaborationSessionId(sessionId);
-      setCollaborationMemberId(undefined);
-      setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID);
-      setIsDisplayPanelOpen(true);
-      setIsWorkspaceFilesOpen(false);
-    },
-  });
+  const collaborationRooms = useCollaborationRooms();
   const sessions = useSelector(selectCoworkSessions);
   const config = useSelector(selectCoworkConfig);
   const [collaborationSessionId, setCollaborationSessionId] = useState<string | null>(null);
@@ -346,13 +336,20 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     return () => clearInterval(timer);
   }, []);
   const openClawStatusRef = useRef<OpenClawEngineStatus | null>(null);
-  const [subtasks, setSubtasks] = useState<Subtask[]>([]);
-  const [isSubtaskListOpen, setIsSubtaskListOpen] = useState(false);
+  const [subtaskSnapshot, setSubtaskSnapshot] = useState<{
+    sessionId: string | null;
+    tasks: Subtask[];
+  }>();
+  const subtasks = subtaskSnapshot?.sessionId === currentSessionId ? subtaskSnapshot.tasks : [];
+  const [subagentsPortalTarget, setSubagentsPortalTarget] = useState<HTMLDivElement | null>(null);
+  const [summaryResources, setSummaryResources] = useState<SessionSummaryResources | null>(null);
   const {
     sessionKey: displaySessionKey,
     states: displayStates,
     state: {
       selectedSubagent,
+      isSubagentsTabOpen,
+      summaryResourceTabs,
       isDisplayPanelOpen,
       isBrowserPanelOpen,
       hasBrowserPanelOpened,
@@ -374,6 +371,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     },
     setters: {
       setSelectedSubagent,
+      setIsSubagentsTabOpen,
+      setSummaryResourceTabs,
       setIsDisplayPanelOpen,
       setIsBrowserPanelOpen,
       setHasBrowserPanelOpened,
@@ -414,7 +413,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     window.addEventListener(WORKSPACE_PRESENTATION_EVENT, listener);
     return () => window.removeEventListener(WORKSPACE_PRESENTATION_EVENT, listener);
   }, [setIsDisplayPanelOpen]);
-  const subtaskListToggleRef = useRef<HTMLButtonElement>(null);
+  const summaryToggleRef = useRef<HTMLButtonElement>(null);
   const displayPanelToggleRef = useRef<HTMLButtonElement>(null);
   const [planPreviewState, dispatchPlanPreview] = useReducer(
     planPreviewReducer,
@@ -426,6 +425,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     sessionId: string | undefined;
     hasGoal: boolean;
     ready: boolean;
+    objective?: string;
   }>({ sessionId: undefined, hasGoal: false, ready: false });
   const [contextUsage, setContextUsage] = useState<ChatContextUsageSnapshot | null>(null);
   const [progressCardState, setProgressCardState] = useState<ProgressCardViewState | null>(null);
@@ -535,11 +535,14 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const pendingInitialGoalRef = useRef<{ sessionId: string; objective: string } | null>(null);
 
   const handleGoalPresenceChange = useCallback(
-    (sessionId: string | undefined, hasGoal: boolean, ready: boolean) => {
+    (sessionId: string | undefined, hasGoal: boolean, ready: boolean, objective?: string) => {
       setGoalPresence(current =>
-        current.sessionId === sessionId && current.hasGoal === hasGoal && current.ready === ready
+        current.sessionId === sessionId &&
+        current.hasGoal === hasGoal &&
+        current.ready === ready &&
+        current.objective === objective
           ? current
-          : { sessionId, hasGoal, ready },
+          : { sessionId, hasGoal, ready, objective },
       );
     },
     [],
@@ -568,6 +571,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       ...unsupportedFilePreviews.map(fileDisplayTabId),
       ...(visiblePlanInteraction ? [PLAN_DISPLAY_TAB_ID] : []),
       ...(selectedSubagent ? [SUBAGENT_DISPLAY_TAB_ID] : []),
+      ...(isSubagentsTabOpen ? [SUBAGENTS_DISPLAY_TAB_ID] : []),
+      ...summaryResourceTabs.map(kind => SUMMARY_RESOURCE_DISPLAY_TAB_IDS[kind]),
       ...(collaborationSessionId && collaborationSessionId === currentSessionId
         ? [COLLABORATION_DISPLAY_TAB_ID]
         : []),
@@ -587,6 +592,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       isBrowserPanelOpen,
       isWorkspaceFilesTabOpen,
       selectedSubagent,
+      isSubagentsTabOpen,
+      summaryResourceTabs,
       isReviewOpen,
       sideChatTabs,
       terminalTabs,
@@ -640,7 +647,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     setIsDisplayPanelOpen(true);
     setIsWorkspaceFilesOpen(false);
   }, [currentSessionId, setPreferredDisplayTabId, setIsDisplayPanelOpen, setIsWorkspaceFilesOpen]);
-  const swarmWorkflowDiscovery = useSwarmWorkflowDiscovery(currentSessionId, openSwarmWorkflow);
+  const swarmWorkflowDiscovery = useSwarmWorkflowDiscovery(currentSessionId);
   const activeDisplayTabId =
     preferredDisplayTabId && availableDisplayTabIds.includes(preferredDisplayTabId)
       ? preferredDisplayTabId
@@ -838,13 +845,41 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       : canonicalGatewaySessionKey;
   const currentGatewaySessionKeyRef = useRef(currentGatewaySessionKey);
   currentGatewaySessionKeyRef.current = currentGatewaySessionKey;
+  const summaryNavigationScope = useRef({ sessionKey: currentGatewaySessionKey, generation: 0 });
+  if (summaryNavigationScope.current.sessionKey !== currentGatewaySessionKey) {
+    summaryNavigationScope.current = {
+      sessionKey: currentGatewaySessionKey,
+      generation: summaryNavigationScope.current.generation + 1,
+    };
+  }
+  const summaryResourceRequest = useRef(0);
+  const currentSummaryResources =
+    summaryResources?.sessionKey === currentGatewaySessionKey ? summaryResources : null;
+  const summaryObjective =
+    goalPresence.sessionId === currentSessionId ? goalPresence.objective : undefined;
+  const summaryTeamCount = collaborationRooms.filter(
+    room =>
+      !room.deleting &&
+      (room.anchorSessionId === currentSessionId ||
+        room.members.some(member => member.sessionId === currentSessionId)),
+  ).length;
+  const progressCard =
+    progressCardState?.sessionKey === currentGatewaySessionKey ? progressCardState.card : null;
+  const summaryVisibility = useSessionSummaryVisibility(
+    currentSessionId,
+    !!summaryObjective ||
+      !!progressCard ||
+      subtasks.length > 0 ||
+      swarmWorkflowDiscovery.count > 0 ||
+      summaryTeamCount > 0 ||
+      !!currentSummaryResources?.outputs.length ||
+      !!currentSummaryResources?.sources.length,
+  );
   const handleGoalResumeAccepted = useCallback((sessionId: string, runId: string) => {
     if (currentSessionIdRef.current !== sessionId) return;
     const sessionKey = currentGatewaySessionKeyRef.current;
     if (sessionKey) chatWrapperRef.current?.beginGoalResume(sessionKey, runId);
   }, []);
-  const progressCard =
-    progressCardState?.sessionKey === currentGatewaySessionKey ? progressCardState.card : null;
   const currentSessionRunTimings = currentSession
     ? (sessionRunTimings[currentSession.id] ?? [])
     : [];
@@ -855,15 +890,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         currentSessionRunTimings,
       )
     : 'idle';
-  const progressCardVisibility = useProgressCardVisibility(progressCard);
-  const progressCardComplete = progressCard ? progressCardIsComplete(progressCard) : false;
-  const progressCardPaused = Boolean(
-    progressCard &&
-    !progressCardComplete &&
-    (progressCardRunState === 'completed' ||
-      (progressCardRunState === 'idle' &&
-        progressCard.steps?.some(step => step.status === 'in_progress'))),
-  );
   const pendingInitialGoal = pendingInitialGoalRef.current;
   const initialGoalObjective =
     currentSessionRuntimeRunning &&
@@ -1108,6 +1134,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             if (pendingStartRef.current?.requestId === requestId)
               pendingStartRef.current.canonicalSessionId = session.id;
             promoteDisplaySession(tempSessionId, session.id);
+            summaryVisibility.promote(tempSessionId, session.id);
             promoteBrowserPanelTabs(tempSessionId, session.id);
             browserPanelRefs.current.forEach(panel =>
               panel.promoteRecordingSession(tempSessionId, session.id),
@@ -1271,7 +1298,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   const handleSubtasksChange = useCallback(
     (nextSubtasks: Subtask[]) => {
-      setSubtasks(nextSubtasks);
+      setSubtaskSnapshot({ sessionId: currentSessionId, tasks: nextSubtasks });
       setSelectedSubagent(current => {
         if (!current) return null;
         if (current.parentSessionId && current.parentSessionId !== currentSessionId) return current;
@@ -1280,11 +1307,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     },
     [setSelectedSubagent, currentSessionId],
   );
-
-  const closeSubtaskList = useCallback((restoreFocus = true) => {
-    setIsSubtaskListOpen(false);
-    if (restoreFocus) requestAnimationFrame(() => subtaskListToggleRef.current?.focus());
-  }, []);
 
   const closeBrowserPanel = useCallback(() => {
     setIsBrowserPanelOpen(false);
@@ -1311,7 +1333,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       setIsWorkspaceFilesOpen(false);
       setPreferredDisplayTabId(SUBAGENT_DISPLAY_TAB_ID);
       setIsDisplayPanelOpen(true);
-      setIsSubtaskListOpen(false);
     },
     [
       currentSessionId,
@@ -1356,7 +1377,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   }, [currentSessionId, openSubtask]);
 
   const openDisplayPanel = useCallback(() => {
-    setIsSubtaskListOpen(false);
     setIsDisplayPanelOpen(true);
     if (isWorkspaceDetached) window.electron.workspaceWindow?.focus();
   }, [setIsDisplayPanelOpen, isWorkspaceDetached]);
@@ -1366,8 +1386,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     setIsWorkspaceFilesOpen(false);
     requestAnimationFrame(() => displayPanelToggleRef.current?.focus());
   }, [setIsDisplayPanelOpen, setIsWorkspaceFilesOpen]);
-
-  const activeSubtaskCount = subtasks.filter(subtask => isActiveSubtask(subtask.status)).length;
 
   useEffect(() => {
     const handleNewSession = () => onNewChat?.();
@@ -1593,6 +1611,81 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     openBrowserTab,
   });
 
+  const handleOpenSummaryResourceList = (kind: SummaryResourceListKind) => {
+    if (!currentSessionId) return;
+    summaryVisibility.close();
+    setSummaryResourceTabs(current => (current.includes(kind) ? current : [...current, kind]));
+    setPreferredDisplayTabId(SUMMARY_RESOURCE_DISPLAY_TAB_IDS[kind]);
+    setIsWorkspaceFilesOpen(false);
+    openDisplayPanel();
+  };
+
+  const handleOpenSummaryResource = (resource: SummaryResource) => {
+    if (!currentGatewaySessionKey) return;
+    if (resource.target.kind === 'url' && browserTabs.length >= MAX_BROWSER_TABS) {
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', { detail: i18nService.t('coworkSummaryBrowserLimit') }),
+      );
+      return;
+    }
+    summaryVisibility.close();
+    const sessionKey = currentGatewaySessionKey;
+    const scope = summaryNavigationScope.current;
+    const request = ++summaryResourceRequest.current;
+    const isCurrent = () =>
+      summaryNavigationScope.current === scope && summaryResourceRequest.current === request;
+    const openFile = (filePath: string) => {
+      window.dispatchEvent(
+        new CustomEvent(
+          /\.(?:html?|xhtml)$/iu.test(filePath)
+            ? MessageBrowserEvent.OpenLocalHtml
+            : 'cowork:preview-file',
+          {
+            detail: {
+              filePath,
+              workingDirectory: currentSessionFolderPath,
+              displayTarget: BrowserLinkTarget.Embedded,
+              currentSessionOnly: true,
+              openUnsupportedInSystem: true,
+              isCurrent,
+            },
+          },
+        ),
+      );
+      if (isWorkspaceDetached) window.electron.workspaceWindow?.focus();
+    };
+    void openSummaryResource(resource, {
+      isCurrent,
+      resolveArtifact: (target, title) =>
+        chatWrapperRef.current?.resolveSummaryArtifact(target, title, sessionKey) ?? null,
+      readAttachment: target =>
+        chatWrapperRef.current?.readSummaryAttachment(target, sessionKey) ?? null,
+      openFile,
+      openImage: (src, alt) => {
+        window.dispatchEvent(new CustomEvent(IMAGE_PREVIEW_EVENT, { detail: { src, alt } }));
+        if (isWorkspaceDetached) window.electron.workspaceWindow?.focus();
+      },
+      openUrl: url => {
+        if (browserTabs.length >= MAX_BROWSER_TABS)
+          throw new Error(i18nService.t('coworkSummaryBrowserLimit'));
+        handleCreateBrowserTab(url);
+        if (isWorkspaceDetached) window.electron.workspaceWindow?.focus();
+      },
+    })
+      .then(opened => {
+        if (!opened && isCurrent())
+          throw new Error(i18nService.t('coworkSummaryResourceUnavailable'));
+      })
+      .catch(() => {
+        if (isCurrent())
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', {
+              detail: i18nService.t('coworkSummaryResourceUnavailable'),
+            }),
+          );
+      });
+  };
+
   const handleCreateTerminalTab = useCallback(() => {
     if (terminalTabs.length >= MAX_TERMINAL_TABS) return;
     if (!terminalWorkingDirectory) {
@@ -1669,7 +1762,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     setIsWorkspaceFilesTabOpen(true);
     setIsWorkspaceFilesOpen(true);
     setPreferredDisplayTabId(WORKSPACE_FILES_DISPLAY_TAB_ID);
-    setIsSubtaskListOpen(false);
     setIsDisplayPanelOpen(true);
   }, [
     currentSessionId,
@@ -2565,6 +2657,40 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             },
           ]
         : []),
+      ...(isSubagentsTabOpen
+        ? [
+            {
+              id: SUBAGENTS_DISPLAY_TAB_ID,
+              label: i18nService.t('coworkSummarySubagents'),
+              icon: <QueueListIcon className="h-4 w-4" />,
+              onSelect: () => setPreferredDisplayTabId(SUBAGENTS_DISPLAY_TAB_ID),
+              onClose: () => {
+                setIsSubagentsTabOpen(false);
+                selectAdjacentDisplayTabAfterClose(SUBAGENTS_DISPLAY_TAB_ID);
+              },
+            },
+          ]
+        : []),
+      ...summaryResourceTabs.map(kind => {
+        const id = SUMMARY_RESOURCE_DISPLAY_TAB_IDS[kind];
+        return {
+          id,
+          label: i18nService.t(
+            kind === 'outputs' ? 'coworkSummaryOutputs' : 'coworkSummarySources',
+          ),
+          icon:
+            kind === 'outputs' ? (
+              <DocumentTextIcon className="h-4 w-4" />
+            ) : (
+              <LinkIcon className="h-4 w-4" />
+            ),
+          onSelect: () => setPreferredDisplayTabId(id),
+          onClose: () => {
+            setSummaryResourceTabs(current => current.filter(value => value !== kind));
+            selectAdjacentDisplayTabAfterClose(id);
+          },
+        };
+      }),
       ...(swarmWorkflowSessionId === currentSession.id
         ? [
             {
@@ -2722,126 +2848,93 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 >
                   <SearchIcon className="h-4 w-4" />
                 </button>
-                {progressCard && (
-                  <button
-                    type="button"
-                    onMouseDown={event => event.stopPropagation()}
-                    onClick={event => {
-                      event.stopPropagation();
-                      if (progressCardVisibility.visible) {
-                        progressCardVisibility.hide();
-                      } else {
-                        progressCardVisibility.show();
-                      }
-                    }}
-                    className={`relative inline-flex h-7 w-8 items-center justify-center rounded-lg transition-colors ${
-                      progressCardVisibility.visible
-                        ? 'bg-surface-raised text-primary'
-                        : progressCardComplete
-                          ? 'text-green-500 hover:bg-surface-raised'
-                          : progressCardRunState === 'failed'
-                            ? 'text-destructive hover:bg-surface-raised'
-                            : progressCardPaused
-                              ? 'text-amber-500 hover:bg-surface-raised'
-                              : 'text-secondary hover:bg-surface-raised hover:text-foreground'
-                    }`}
-                    title={i18nService.t(
-                      progressCardVisibility.visible
-                        ? 'coworkProgressCardHide'
-                        : 'coworkProgressCardShow',
-                    )}
-                    aria-label={i18nService.t(
-                      progressCardVisibility.visible
-                        ? 'coworkProgressCardHide'
-                        : 'coworkProgressCardShow',
-                    )}
-                    aria-expanded={progressCardVisibility.visible}
-                    aria-controls="cowork-progress-card-overlay"
-                  >
-                    {progressCardComplete ? (
-                      <CheckCircleIcon className="h-[18px] w-[18px]" />
-                    ) : progressCardRunState === 'running' ? (
-                      <ArrowPathIcon className="h-[18px] w-[18px] animate-spin" />
-                    ) : progressCardRunState === 'failed' ? (
-                      <XCircleIcon className="h-[18px] w-[18px]" />
-                    ) : progressCardRunState === 'aborted' ? (
-                      <StopCircleIcon className="h-[18px] w-[18px]" />
-                    ) : progressCardPaused ? (
-                      <PauseCircleSolidIcon className="h-[18px] w-[18px]" />
-                    ) : (
-                      <ClipboardDocumentCheckIcon className="h-[18px] w-[18px]" />
-                    )}
-                    {!progressCardVisibility.visible && !progressCardComplete && (
-                      <span
-                        className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-primary"
-                        aria-hidden="true"
-                      />
-                    )}
-                  </button>
-                )}
-                {swarmWorkflowDiscovery.hasFlows && (
-                  <button
-                    type="button"
-                    onClick={openSwarmWorkflow}
-                    title={i18nService.t('swarmWorkflowOpen')}
-                    aria-label={i18nService.t('swarmWorkflowOpen')}
-                    className="relative inline-flex h-7 w-7 items-center justify-center rounded-lg text-secondary hover:bg-surface-raised hover:text-foreground"
-                  >
-                    <ShareIcon className="h-[18px] w-[18px]" />
-                    {swarmWorkflowDiscovery.running && (
-                      <span
-                        className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-primary"
-                        aria-hidden="true"
-                      />
-                    )}
-                  </button>
-                )}
-                <CollaborationMemberLinks
-                  sessionId={currentSession.id}
-                  onOpen={() => {
-                    setIsSubtaskListOpen(false);
-                    setCollaborationMemberId(undefined);
-                    setCollaborationSessionId(currentSession.id);
-                    setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID);
-                    setIsDisplayPanelOpen(true);
-                    setIsWorkspaceFilesOpen(false);
-                  }}
-                />
                 <div className="relative">
                   <button
-                    ref={subtaskListToggleRef}
+                    ref={summaryToggleRef}
                     type="button"
                     onMouseDown={event => event.stopPropagation()}
                     onClick={event => {
                       event.stopPropagation();
-                      setIsSubtaskListOpen(open => !open);
+                      if (!summaryVisibility.visible)
+                        chatWrapperRef.current?.refreshSummaryResources();
+                      summaryVisibility.toggle();
                     }}
                     className={`relative inline-flex h-7 w-8 items-center justify-center rounded-lg transition-colors ${
-                      isSubtaskListOpen
+                      summaryVisibility.visible
                         ? 'bg-surface-raised text-primary'
                         : 'text-secondary hover:bg-surface-raised hover:text-foreground'
                     }`}
-                    title={i18nService.t(isSubtaskListOpen ? 'subtaskHide' : 'subtaskShow')}
-                    aria-label={i18nService.t(isSubtaskListOpen ? 'subtaskHide' : 'subtaskShow')}
-                    aria-expanded={isSubtaskListOpen}
-                    aria-controls="cowork-subtask-list"
+                    title={i18nService.t('coworkSummaryTitle')}
+                    aria-label={i18nService.t('coworkSummaryTitle')}
+                    aria-expanded={summaryVisibility.visible}
+                    aria-controls="cowork-session-summary"
                   >
-                    <QueueListIcon className="h-[18px] w-[18px]" />
-                    {!isSubtaskListOpen && activeSubtaskCount > 0 && (
-                      <span className="absolute -right-0.5 -top-0.5 inline-flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-4 text-white">
-                        {activeSubtaskCount}
-                      </span>
-                    )}
+                    <AdjustmentsHorizontalIcon className="h-[18px] w-[18px]" />
                   </button>
-                  <SubtaskListPanel
+                  <SessionSummaryPanel
                     sessionId={currentSession.id}
-                    isOpen={isSubtaskListOpen}
-                    parentRunning={currentSessionRuntimeRunning}
-                    anchorRef={subtaskListToggleRef}
-                    onClose={closeSubtaskList}
-                    onOpenSubtask={openSubtask}
-                    onSubtasksChange={handleSubtasksChange}
+                    visible={summaryVisibility.visible}
+                    anchorRef={summaryToggleRef}
+                    objective={summaryObjective}
+                    progress={
+                      progressCard
+                        ? {
+                            card: progressCard,
+                            runState: progressCardRunState,
+                            onRefresh: () =>
+                              chatWrapperRef.current?.refreshProgressCard() ??
+                              Promise.resolve(false),
+                          }
+                        : undefined
+                    }
+                    tasks={subtasks}
+                    resources={currentSummaryResources}
+                    workflowCount={swarmWorkflowDiscovery.count}
+                    teamCount={summaryTeamCount}
+                    onClose={summaryVisibility.close}
+                    onOpenSubagents={() => {
+                      summaryVisibility.close();
+                      setIsSubagentsTabOpen(true);
+                      setPreferredDisplayTabId(SUBAGENTS_DISPLAY_TAB_ID);
+                      setIsWorkspaceFilesOpen(false);
+                      openDisplayPanel();
+                    }}
+                    onOpenWorkflow={() => {
+                      summaryVisibility.close();
+                      openSwarmWorkflow();
+                    }}
+                    onOpenTeam={() => {
+                      summaryVisibility.close();
+                      setCollaborationMemberId(undefined);
+                      setCollaborationSessionId(currentSession.id);
+                      setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID);
+                      setIsWorkspaceFilesOpen(false);
+                      openDisplayPanel();
+                    }}
+                    onOpenResource={handleOpenSummaryResource}
+                    onOpenResourceList={handleOpenSummaryResourceList}
                   />
+                  <OwnerDocumentContext.Provider
+                    value={subagentsPortalTarget?.ownerDocument ?? document}
+                  >
+                    <SubtaskListPanel
+                      sessionId={currentSession.id}
+                      embedded
+                      portalTarget={subagentsPortalTarget}
+                      isOpen={
+                        isSubagentsTabOpen &&
+                        activeDisplayTabId === SUBAGENTS_DISPLAY_TAB_ID &&
+                        isWorkspaceVisible
+                      }
+                      parentRunning={currentSessionRuntimeRunning}
+                      onClose={() => {
+                        setIsSubagentsTabOpen(false);
+                        selectAdjacentDisplayTabAfterClose(SUBAGENTS_DISPLAY_TAB_ID);
+                      }}
+                      onOpenSubtask={openSubtask}
+                      onSubtasksChange={handleSubtasksChange}
+                    />
+                  </OwnerDocumentContext.Provider>
                 </div>
                 {(!isDisplayPanelOpen || isWorkspaceDetached) && (
                   <NewDisplayTabButton
@@ -2910,6 +3003,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             </div>
             {/* Messages */}
             <JustDoChatWrapper
+              onSummaryResourcesChange={setSummaryResources}
               ref={chatWrapperRef}
               onWidgetDraft={
                 sessionTranscriptMutation === null && !currentSession.external?.readOnly
@@ -3071,25 +3165,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 </p>
               </div>
             </div>
-            {progressCard && progressCardVisibility.visible && (
-              <div className="pointer-events-none absolute left-3 right-3 top-3 z-40 sm:left-auto sm:w-[min(340px,calc(100%-24px))]">
-                <div
-                  className="pointer-events-auto"
-                  onPointerDownCapture={progressCardVisibility.show}
-                  onFocusCapture={progressCardVisibility.show}
-                >
-                  <SessionProgressCard
-                    key={`floating:${progressCard.sessionKey}`}
-                    card={progressCard}
-                    runState={progressCardRunState}
-                    onClose={progressCardVisibility.hide}
-                    onRefresh={() =>
-                      chatWrapperRef.current?.refreshProgressCard() ?? Promise.resolve(false)
-                    }
-                  />
-                </div>
-              </div>
-            )}
           </div>
           {(isDisplayPanelOpen ||
             isWorkspaceDetached ||
@@ -3184,6 +3259,27 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 />
               )}
               {retainedRuntimePanels}
+              {isSubagentsTabOpen && (
+                <div
+                  key={`subagents:${currentSession.id}`}
+                  ref={setSubagentsPortalTarget}
+                  className="absolute inset-0"
+                  hidden={activeDisplayTabId !== SUBAGENTS_DISPLAY_TAB_ID}
+                />
+              )}
+              {summaryResourceTabs.map(kind => (
+                <div
+                  key={`${currentSession.id}:${kind}`}
+                  className="absolute inset-0"
+                  hidden={activeDisplayTabId !== SUMMARY_RESOURCE_DISPLAY_TAB_IDS[kind]}
+                >
+                  <SessionSummaryResourceList
+                    kind={kind}
+                    resources={currentSummaryResources}
+                    onOpenResource={handleOpenSummaryResource}
+                  />
+                </div>
+              ))}
               {recordingReviewTabs.panels(activeDisplayTabId)}
               {swarmWorkflowSessionId === currentSession.id && (
                 <div

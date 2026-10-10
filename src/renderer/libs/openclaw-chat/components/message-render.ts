@@ -41,6 +41,7 @@ import { i18nService } from '@/services/i18n';
 import { readTranscriptIdentity } from '../model/transcript-identity';
 import { renderBrowserAnnotation } from './browser-annotation-message';
 import { renderBrowserRecording } from './browser-recording-message';
+import { renderMessageFileIcon } from './message-file-icon';
 
 type AssistantCanvasItem = Extract<MessageContentItem, { type: 'canvas' }>;
 
@@ -385,13 +386,6 @@ function renderAssistantCanvas(item: AssistantCanvasItem): TemplateResult {
   `;
 }
 
-const ATTACHMENT_ICON = html`
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-    <path d="M14 2v6h6"></path>
-  </svg>
-`;
-
 function localPathFromAttachmentUrl(url: string): string {
   if (!url.startsWith('file://')) return url;
   try {
@@ -607,7 +601,7 @@ export function renderAssistantAttachments(
                 : nothing
             }
           >
-            <span class="message-attachment__icon">${ATTACHMENT_ICON}</span>
+            ${renderMessageFileIcon(attachment.label)}
             <span class="message-attachment__content">
               <span class="message-attachment__name">${attachment.label}</span>
             </span>
@@ -632,7 +626,7 @@ function renderAttachmentError(
       title=${unavailable}
       aria-label=${unavailable}
     >
-      <span class="message-attachment__icon">${ATTACHMENT_ICON}</span>
+      ${renderMessageFileIcon(attachment.label)}
       <span class="message-attachment__content">
         <span class="message-attachment__name message-attachment__name--with-warning">
           <span class="message-attachment__filename">${attachment.label}</span>

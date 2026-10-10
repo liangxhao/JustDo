@@ -29,11 +29,10 @@ describe('SessionProgressCard', () => {
 
   it('shows the current durable card with safe Markdown and an accessible progress bar', () => {
     i18nService.setLanguage('zh', { persist: false });
-    const { container } = render(
-      <SessionProgressCard card={activeCard} runState="running" onClose={vi.fn()} />,
-    );
+    const { container } = render(<SessionProgressCard card={activeCard} runState="running" />);
 
-    expect(screen.getByRole('complementary', { name: '任务进度' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: '任务进度' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '任务进度', level: 3 })).toBeTruthy();
     expect(screen.getAllByText('运行测试')).toHaveLength(1);
     expect(screen.getByText('已完成 1/3')).toBeTruthy();
     const progress = container.querySelector('progress');
@@ -55,7 +54,6 @@ describe('SessionProgressCard', () => {
           markdown: '当前任务：等待新任务',
         }}
         runState="idle"
-        onClose={vi.fn()}
       />,
     );
 
@@ -65,7 +63,7 @@ describe('SessionProgressCard', () => {
 
   it('lets the user collapse an active card without losing it', () => {
     i18nService.setLanguage('en', { persist: false });
-    render(<SessionProgressCard card={activeCard} runState="running" onClose={vi.fn()} />);
+    render(<SessionProgressCard card={activeCard} runState="running" />);
 
     const disclosure = screen.getByRole('button', { expanded: true });
     fireEvent.click(disclosure);
@@ -84,7 +82,7 @@ describe('SessionProgressCard', () => {
         status: ProgressCardStepStatus.Completed,
       })),
     };
-    render(<SessionProgressCard card={completedCard} runState="completed" onClose={vi.fn()} />);
+    render(<SessionProgressCard card={completedCard} runState="completed" />);
 
     expect(screen.getByRole('button', { expanded: true })).toBeTruthy();
     expect(screen.getByText('检查代码')).toBeTruthy();
@@ -92,7 +90,7 @@ describe('SessionProgressCard', () => {
 
   it('presents an orphaned in-progress step as paused without changing its data', () => {
     i18nService.setLanguage('zh', { persist: false });
-    render(<SessionProgressCard card={activeCard} runState="idle" onClose={vi.fn()} />);
+    render(<SessionProgressCard card={activeCard} runState="idle" />);
 
     expect(screen.getByRole('img', { name: '已暂停' }).textContent).toBe('Ⅱ');
     expect(activeCard.steps?.[1]?.status).toBe(ProgressCardStepStatus.InProgress);
@@ -100,9 +98,7 @@ describe('SessionProgressCard', () => {
 
   it('presents an incomplete plan as waiting when its run finishes normally', () => {
     i18nService.setLanguage('zh', { persist: false });
-    const { container } = render(
-      <SessionProgressCard card={activeCard} runState="completed" onClose={vi.fn()} />,
-    );
+    const { container } = render(<SessionProgressCard card={activeCard} runState="completed" />);
 
     expect(screen.getByRole('button', { name: /等待继续/ })).toBeTruthy();
     expect(screen.getByRole('img', { name: '等待继续' }).textContent).toBe('Ⅱ');
@@ -111,27 +107,15 @@ describe('SessionProgressCard', () => {
     expect(activeCard.steps?.[1]?.status).toBe(ProgressCardStepStatus.InProgress);
   });
 
-  it('hides locally without mutating the durable progress card', () => {
-    i18nService.setLanguage('en', { persist: false });
-    const onClose = vi.fn();
-    render(<SessionProgressCard card={activeCard} runState="running" onClose={onClose} />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Hide task progress' }));
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
   it('preserves the user disclosure choice across progress revisions', async () => {
     i18nService.setLanguage('en', { persist: false });
-    const { rerender } = render(
-      <SessionProgressCard card={activeCard} runState="running" onClose={vi.fn()} />,
-    );
+    const { rerender } = render(<SessionProgressCard card={activeCard} runState="running" />);
     fireEvent.click(screen.getByRole('button', { expanded: true }));
 
     rerender(
       <SessionProgressCard
         card={{ ...activeCard, revision: activeCard.revision + 1 }}
         runState="running"
-        onClose={vi.fn()}
       />,
     );
 
@@ -145,7 +129,7 @@ describe('SessionProgressCard', () => {
     'shows a terminal %s outcome instead of calling the active step paused',
     (runState, label) => {
       i18nService.setLanguage('en', { persist: false });
-      render(<SessionProgressCard card={activeCard} runState={runState} onClose={vi.fn()} />);
+      render(<SessionProgressCard card={activeCard} runState={runState} />);
 
       expect(screen.getByRole('img', { name: label })).toBeTruthy();
       expect(screen.queryByRole('img', { name: 'Paused' })).toBeNull();
@@ -163,7 +147,7 @@ it('keeps the saved card while refreshing and unlocks after a new saved revision
   };
   const onRefresh = vi.fn().mockResolvedValue(true);
   const { rerender } = render(
-    <SessionProgressCard card={card} runState="idle" onClose={vi.fn()} onRefresh={onRefresh} />,
+    <SessionProgressCard card={card} runState="idle" onRefresh={onRefresh} />,
   );
   const button = screen.getByRole('button', { name: i18nService.t('coworkProgressCardRefresh') });
   fireEvent.click(button);
@@ -174,7 +158,7 @@ it('keeps the saved card while refreshing and unlocks after a new saved revision
     <SessionProgressCard
       card={{ ...card, revision: 8, markdown: 'New status' }}
       runState="idle"
-      onClose={vi.fn()}
+
       onRefresh={onRefresh}
     />,
   );

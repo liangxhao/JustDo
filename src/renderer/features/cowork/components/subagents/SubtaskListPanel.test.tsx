@@ -25,6 +25,88 @@ const installElectron = (
 };
 
 describe('SubtaskListPanel', () => {
+  it('releases detail keyboard capture when its retained list Tab becomes hidden', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    const task = {
+      id: 'one',
+      taskName: 'one',
+      sessionKey: 'child',
+      label: 'Research',
+      labelSource: 'label',
+      status: 'running',
+    };
+    installElectron(
+      vi.fn().mockResolvedValue({ success: true, subagents: [task] }),
+      vi.fn().mockResolvedValue({ success: true, subagent: task }),
+    );
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const props = { sessionId: 'parent', embedded: true, portalTarget: host, onClose: vi.fn() };
+    const view = render(<SubtaskListPanel {...props} isOpen />);
+    try {
+      fireEvent.click(await within(host).findByRole('button', { name: 'View details' }));
+      expect(within(host).getByRole('dialog', { name: 'Research' })).toBeTruthy();
+      host.hidden = true;
+      view.rerender(<SubtaskListPanel {...props} isOpen={false} />);
+      const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+      document.dispatchEvent(tab);
+      expect(tab.defaultPrevented).toBe(false);
+      const escape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      document.dispatchEvent(escape);
+      expect(escape.defaultPrevented).toBe(false);
+      host.hidden = false;
+      view.rerender(<SubtaskListPanel {...props} isOpen />);
+      expect(within(host).queryByRole('dialog')).toBeNull();
+    } finally {
+      view.unmount();
+      host.remove();
+    }
+  });
+
+  it('keeps one discovery controller while rendering the list inside its Tab surface', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    const task = {
+      id: 'one',
+      taskName: 'one',
+      sessionKey: 'child',
+      label: 'Research',
+      labelSource: 'label',
+      status: 'running',
+    };
+    const read = vi.fn().mockResolvedValue({ success: true, subagents: [task] });
+    installElectron(read);
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const onClose = vi.fn(),
+      onOpen = vi.fn(),
+      onChange = vi.fn();
+    const props = {
+      sessionId: 'parent',
+      embedded: true,
+      onClose,
+      onOpenSubtask: onOpen,
+      onSubtasksChange: onChange,
+    };
+    const view = render(<SubtaskListPanel {...props} isOpen={false} portalTarget={null} />);
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith([expect.objectContaining({ id: 'one' })]),
+    );
+    expect(screen.queryByRole('button', { name: 'Research' })).toBeNull();
+    view.rerender(<SubtaskListPanel {...props} isOpen portalTarget={host} />);
+    fireEvent.click(await within(host).findByRole('button', { name: 'Research' }));
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 'one' }));
+    fireEvent.pointerDown(document.body);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(host.querySelector('aside')?.className).toContain('absolute inset-0');
+    view.rerender(<SubtaskListPanel {...props} isOpen={false} portalTarget={null} />);
+    expect(within(host).queryByRole('button', { name: 'Research' })).toBeNull();
+    host.remove();
+  });
   it('groups explicit Swarm members within each status section and exposes membership in details', async () => {
     i18nService.setLanguage('en', { persist: false });
     const tasks = [

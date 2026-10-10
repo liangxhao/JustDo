@@ -1,6 +1,9 @@
 import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 
-import { isPersistedFailedAssistantMessage } from '../pipeline/history-display-normalizer';
+import {
+  isPersistedFailedAssistantMessage,
+  retainCollapsedDeliveryArtifacts,
+} from '../pipeline/history-display-normalizer';
 import { extractText } from '../pipeline/message-extract';
 import type { GatewayClient } from './client';
 
@@ -182,11 +185,14 @@ const retainHistoryIdentity = (message: unknown, placeholder: unknown): unknown 
     reason: _fullReason,
     ...fullMetadata
   } = asRecord(full.__openclaw) ?? {};
-  return {
-    ...full,
-    ...(original?.activity ? { activity: original.activity } : {}),
-    __openclaw: { ...fullMetadata, ...identity },
-  };
+  return retainCollapsedDeliveryArtifacts(
+    {
+      ...full,
+      ...(original?.activity ? { activity: original.activity } : {}),
+      __openclaw: { ...fullMetadata, ...identity },
+    },
+    placeholder,
+  );
 };
 
 async function readChunkedHistoryMessage(

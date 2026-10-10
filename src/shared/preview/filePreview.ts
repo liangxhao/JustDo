@@ -2,6 +2,7 @@ export const PREVIEWABLE_FILE_EXTENSIONS = [
   '.md',
   '.markdown',
   '.json',
+  '.jsonl',
   '.txt',
   '.yaml',
   '.yml',

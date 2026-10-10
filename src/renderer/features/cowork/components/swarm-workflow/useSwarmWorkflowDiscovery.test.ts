@@ -35,11 +35,13 @@ test('opens only after a flow exists and does not reopen the same flow after the
   expect(open).toHaveBeenCalledTimes(1);
   expect(hook.result.current.running).toBe(true);
   expect(hook.result.current.hasFlows).toBe(true);
+  expect(hook.result.current.count).toBe(1);
   await tick();
   expect(open).toHaveBeenCalledTimes(1);
   read.mockResolvedValue({ success: true, flows: [flow('two'), flow('one', 'completed')] });
   await tick();
   expect(open).toHaveBeenCalledTimes(2);
+  expect(hook.result.current.count).toBe(2);
 });
 
 test('does not open completed history on initial load, but restores an active flow', async () => {
@@ -100,8 +102,10 @@ test('keeps the reopen entry on a temporary failure but never carries it into an
   read.mockRejectedValue(new Error('offline'));
   await tick();
   expect(hook.result.current.hasFlows).toBe(true);
+  expect(hook.result.current.count).toBe(1);
   hook.rerender({ id: 'second' });
   expect(hook.result.current.hasFlows).toBe(false);
+  expect(hook.result.current.count).toBe(0);
   await tick();
   expect(hook.result.current.hasFlows).toBe(false);
 });

@@ -246,7 +246,12 @@ interface CoworkPromptInputProps {
   /** Notifies the chat projection as soon as a Goal resume is accepted. */
   onGoalResumeAccepted?: (sessionId: string, runId: string) => void;
   /** Reports whether the canonical session currently owns Goal metadata. */
-  onGoalPresenceChange?: (sessionId: string | undefined, hasGoal: boolean, ready: boolean) => void;
+  onGoalPresenceChange?: (
+    sessionId: string | undefined,
+    hasGoal: boolean,
+    ready: boolean,
+    objective?: string,
+  ) => void;
   /** When true, hides attachment/skill buttons but keeps the input box visible (disabled) */
   remoteManaged?: boolean;
   /** Restricts controls to capabilities supported by an OpenClaw `/btw` side question. */
@@ -587,9 +592,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       sessionId,
       isSideChat,
     );
+    const summaryGoalObjective = goalStateMatchesSession
+      ? (sessionGoal?.objective ?? pendingGoalObjective ?? undefined)
+      : undefined;
     useEffect(() => {
-      onGoalPresenceChange?.(sessionId, hasSessionGoal, goalReadReady);
-    }, [hasSessionGoal, goalReadReady, onGoalPresenceChange, sessionId]);
+      onGoalPresenceChange?.(sessionId, hasSessionGoal, goalReadReady, summaryGoalObjective);
+    }, [hasSessionGoal, goalReadReady, onGoalPresenceChange, sessionId, summaryGoalObjective]);
     const { isStopping, isStopPending, requestStop } = useSessionStop(
       stopOperationKey ?? sessionId,
       onStop,

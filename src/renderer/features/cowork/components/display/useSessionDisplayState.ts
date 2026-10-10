@@ -22,7 +22,12 @@ import type { SideChatMessage } from '@/features/cowork/components/chat/SideChat
 import type { FilePreview } from '@/features/cowork/components/preview/FilePreviewDrawer';
 import type { Subtask } from '@/features/cowork/components/subagents/subtaskPresentation';
 
-import { WORKSPACE_FILES_DISPLAY_TAB_ID } from './displayTabIds';
+import {
+  SUBAGENTS_DISPLAY_TAB_ID,
+  SUMMARY_RESOURCE_DISPLAY_TAB_IDS,
+  type SummaryResourceListKind,
+  WORKSPACE_FILES_DISPLAY_TAB_ID,
+} from './displayTabIds';
 
 export const HOME_DISPLAY_SESSION_KEY = '__home__';
 
@@ -43,6 +48,8 @@ export interface CoworkSideChatTab {
 export interface SessionDisplayState {
   runtimeId: string;
   selectedSubagent: (Subtask & { parentSessionId?: string }) | null;
+  isSubagentsTabOpen: boolean;
+  summaryResourceTabs: SummaryResourceListKind[];
   isDisplayPanelOpen: boolean;
   isBrowserPanelOpen: boolean;
   hasBrowserPanelOpened: boolean;
@@ -73,6 +80,8 @@ let displayRuntimeSequence = 0;
 export const createSessionDisplayState = (browserPanelWidth: number): SessionDisplayState => ({
   runtimeId: `display-runtime:${++displayRuntimeSequence}`,
   selectedSubagent: null,
+  isSubagentsTabOpen: false,
+  summaryResourceTabs: [],
   isDisplayPanelOpen: false,
   isBrowserPanelOpen: false,
   hasBrowserPanelOpened: false,
@@ -110,6 +119,8 @@ const getDisplayTabIds = (state: SessionDisplayState): string[] => [
   ...state.filePreviews.map(preview => fileTabId(preview.filePath)),
   ...state.unsupportedFilePreviews.map(fileTabId),
   ...(state.selectedSubagent ? [SUBAGENT_TAB_ID] : []),
+  ...(state.isSubagentsTabOpen ? [SUBAGENTS_DISPLAY_TAB_ID] : []),
+  ...state.summaryResourceTabs.map(kind => SUMMARY_RESOURCE_DISPLAY_TAB_IDS[kind]),
   ...state.sideChatTabs.map(tab => tab.id),
 ];
 
@@ -146,7 +157,12 @@ const retainTabs = (state: SessionDisplayState, retainedTabIds: Set<string>) => 
     retainedTabIds.has(fileTabId(filePath)),
   );
   const selectedSubagent = retainedTabIds.has(SUBAGENT_TAB_ID) ? state.selectedSubagent : null;
+  const isSubagentsTabOpen =
+    state.isSubagentsTabOpen && retainedTabIds.has(SUBAGENTS_DISPLAY_TAB_ID);
   const sideChatTabs = state.sideChatTabs.filter(tab => retainedTabIds.has(tab.id));
+  const summaryResourceTabs = state.summaryResourceTabs.filter(kind =>
+    retainedTabIds.has(SUMMARY_RESOURCE_DISPLAY_TAB_IDS[kind]),
+  );
   const isReviewOpen = state.isReviewOpen && retainedTabIds.has(REVIEW_TAB_ID);
   const isWorkspaceFilesTabOpen =
     state.isWorkspaceFilesTabOpen && retainedTabIds.has(WORKSPACE_FILES_DISPLAY_TAB_ID);
@@ -158,6 +174,8 @@ const retainTabs = (state: SessionDisplayState, retainedTabIds: Set<string>) => 
     ...filePreviews.map(preview => fileTabId(preview.filePath)),
     ...unsupportedFilePreviews.map(fileTabId),
     ...(selectedSubagent ? [SUBAGENT_TAB_ID] : []),
+    ...(isSubagentsTabOpen ? [SUBAGENTS_DISPLAY_TAB_ID] : []),
+    ...summaryResourceTabs.map(kind => SUMMARY_RESOURCE_DISPLAY_TAB_IDS[kind]),
     ...sideChatTabs.map(tab => tab.id),
   ]);
   return {
@@ -171,6 +189,8 @@ const retainTabs = (state: SessionDisplayState, retainedTabIds: Set<string>) => 
     filePreviews,
     unsupportedFilePreviews,
     selectedSubagent,
+    isSubagentsTabOpen,
+    summaryResourceTabs,
     sideChatTabs,
     isBrowserPanelOpen: browserTabs.length > 0 && state.isBrowserPanelOpen,
     hasBrowserPanelOpened: browserTabs.length > 0 && state.hasBrowserPanelOpened,
@@ -337,6 +357,8 @@ export function useSessionDisplayState(
       >;
     return {
       setSelectedSubagent: setter('selectedSubagent'),
+      setIsSubagentsTabOpen: setter('isSubagentsTabOpen'),
+      setSummaryResourceTabs: setter('summaryResourceTabs'),
       setIsDisplayPanelOpen: setter('isDisplayPanelOpen'),
       setIsBrowserPanelOpen: setter('isBrowserPanelOpen'),
       setHasBrowserPanelOpened: setter('hasBrowserPanelOpened'),

@@ -7,7 +7,6 @@ import {
   ClipboardDocumentCheckIcon,
   StopCircleIcon,
   XCircleIcon,
-  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { PauseCircleIcon as PauseCircleSolidIcon } from '@heroicons/react/24/solid';
 import type { SessionRunState } from '@shared/cowork/sessionRun';
@@ -25,7 +24,6 @@ import { i18nService } from '@/services/i18n';
 interface SessionProgressCardProps {
   card: ProgressCard;
   runState: ProgressCardRunState;
-  onClose: () => void;
   onRefresh?: () => Promise<boolean>;
 }
 
@@ -36,18 +34,6 @@ const currentProgressStep = (steps: readonly ProgressCardStep[]): ProgressCardSt
   steps.find(step => step.status === ProgressCardStepStatus.Pending) ??
   [...steps].reverse().find(step => step.status === ProgressCardStepStatus.Completed) ??
   null;
-
-const relativeUpdatedAt = (updatedAt: number, now: number): string => {
-  const deltaSeconds = Math.round((updatedAt - now) / 1_000);
-  const language = i18nService.getLanguage() === 'zh' ? 'zh-CN' : 'en';
-  const formatter = new Intl.RelativeTimeFormat(language, { numeric: 'auto' });
-  if (Math.abs(deltaSeconds) < 60) return formatter.format(deltaSeconds, 'second');
-  const deltaMinutes = Math.round(deltaSeconds / 60);
-  if (Math.abs(deltaMinutes) < 60) return formatter.format(deltaMinutes, 'minute');
-  const deltaHours = Math.round(deltaMinutes / 60);
-  if (Math.abs(deltaHours) < 24) return formatter.format(deltaHours, 'hour');
-  return formatter.format(Math.round(deltaHours / 24), 'day');
-};
 
 const stepStatusLabel = (
   status: ProgressCardStep['status'] | 'paused' | 'waiting' | 'failed' | 'aborted',
@@ -65,7 +51,7 @@ const stepStatusLabel = (
   return i18nService.t('coworkProgressCardPending');
 };
 
-const SessionProgressCard = ({ card, runState, onClose, onRefresh }: SessionProgressCardProps) => {
+const SessionProgressCard = ({ card, runState, onRefresh }: SessionProgressCardProps) => {
   const complete = progressCardIsComplete(card);
   const steps = card.steps ?? [];
   const completedCount = steps.filter(
@@ -95,18 +81,11 @@ const SessionProgressCard = ({ card, runState, onClose, onRefresh }: SessionProg
     const accepted = await onRefresh().catch(() => false);
     if (!accepted && generation === refreshGeneration.current) setRefreshState('failed');
   };
-  const [now, setNow] = useState(Date.now());
-
   useEffect(() => {
     if (initialSessionKeyRef.current === card.sessionKey) return;
     initialSessionKeyRef.current = card.sessionKey;
     setExpanded(true);
   }, [card.sessionKey]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
 
   const markdownHtml = useMemo(
     () =>
@@ -148,67 +127,65 @@ const SessionProgressCard = ({ card, runState, onClose, onRefresh }: SessionProg
   ]
     .filter(Boolean)
     .join('. ');
-  const updatedAtText = relativeUpdatedAt(card.updatedAt, now);
-  const updatedAtTitle = new Intl.DateTimeFormat(
-    i18nService.getLanguage() === 'zh' ? 'zh-CN' : 'en',
-    { dateStyle: 'medium', timeStyle: 'medium' },
-  ).format(card.updatedAt);
   const bodyId = `cowork-progress-card-${card.sessionKey.replace(/[^a-z0-9_-]/gi, '-')}`;
 
   return (
-    <aside
-      id="cowork-progress-card-overlay"
-      className="cowork-progress-card cowork-progress-card--floating"
+    <section
+      id="cowork-progress-card"
+      className="cowork-progress-card"
       aria-label={i18nService.t('coworkProgressCardTitle')}
-      data-progress-card-placement="floating"
+      data-progress-card-placement="summary"
       data-progress-card-revision={card.revision}
     >
       <div className="cowork-progress-card__header">
-        <button
-          type="button"
-          className="cowork-progress-card__summary"
-          onClick={() => setExpanded(value => !value)}
-          aria-expanded={expanded}
-          aria-controls={bodyId}
-          aria-label={summaryAccessibleLabel}
+        <h3
+          className="cowork-progress-card__heading"
+          aria-label={i18nService.t('coworkProgressCardTitle')}
         >
-          <span
-            className={`cowork-progress-card__state cowork-progress-card__state--${headerState}`}
-            aria-hidden="true"
+          <button
+            type="button"
+            className="cowork-progress-card__summary"
+            onClick={() => setExpanded(value => !value)}
+            aria-expanded={expanded}
+            aria-controls={bodyId}
+            aria-label={summaryAccessibleLabel}
           >
-            {complete ? (
-              <CheckCircleIcon />
-            ) : runState === 'completed' ? (
-              <PauseCircleSolidIcon />
-            ) : runState === 'failed' ? (
-              <XCircleIcon />
-            ) : runState === 'aborted' ? (
-              <StopCircleIcon />
-            ) : paused ? (
-              <PauseCircleSolidIcon />
-            ) : runState === 'running' ? (
-              <ArrowPathIcon className="animate-spin" />
-            ) : (
-              <ClipboardDocumentCheckIcon />
-            )}
-          </span>
-          <span className="cowork-progress-card__summary-copy">
             <span className="cowork-progress-card__title">
               {i18nService.t('coworkProgressCardTitle')}
             </span>
-          </span>
-          {completedCountText && (
-            <span className="cowork-progress-card__count">{completedCountText}</span>
-          )}
-          <ChevronDownIcon
-            className={`cowork-progress-card__chevron ${expanded ? 'rotate-180' : ''}`}
-            aria-hidden="true"
-          />
-        </button>
+            <span
+              className={`cowork-progress-card__state cowork-progress-card__state--${headerState}`}
+              aria-hidden="true"
+            >
+              {complete ? (
+                <CheckCircleIcon />
+              ) : runState === 'completed' ? (
+                <PauseCircleSolidIcon />
+              ) : runState === 'failed' ? (
+                <XCircleIcon />
+              ) : runState === 'aborted' ? (
+                <StopCircleIcon />
+              ) : paused ? (
+                <PauseCircleSolidIcon />
+              ) : runState === 'running' ? (
+                <ArrowPathIcon className="animate-spin" />
+              ) : (
+                <ClipboardDocumentCheckIcon />
+              )}
+            </span>
+            {completedCountText && (
+              <span className="cowork-progress-card__count">{completedCountText}</span>
+            )}
+            <ChevronDownIcon
+              className={`cowork-progress-card__chevron ${expanded ? 'rotate-180' : ''}`}
+              aria-hidden="true"
+            />
+          </button>
+        </h3>
         {onRefresh && (
           <button
             type="button"
-            className="cowork-progress-card__dismiss"
+            className="cowork-progress-card__action"
             disabled={refreshState === 'pending'}
             onClick={() => void refresh()}
             aria-label={i18nService.t('coworkProgressCardRefresh')}
@@ -217,15 +194,6 @@ const SessionProgressCard = ({ card, runState, onClose, onRefresh }: SessionProg
             <ArrowPathIcon className={refreshState === 'pending' ? 'animate-spin' : ''} />
           </button>
         )}
-        <button
-          type="button"
-          className="cowork-progress-card__dismiss"
-          onClick={onClose}
-          aria-label={i18nService.t('coworkProgressCardHide')}
-          title={i18nService.t('coworkProgressCardHide')}
-        >
-          <XMarkIcon />
-        </button>
       </div>
 
       {refreshState === 'failed' && (
@@ -282,12 +250,9 @@ const SessionProgressCard = ({ card, runState, onClose, onRefresh }: SessionProg
               })}
             </ol>
           )}
-          <div className="cowork-progress-card__footer" title={updatedAtTitle}>
-            {i18nService.t('coworkProgressCardUpdated').replace('{time}', updatedAtText)}
-          </div>
         </div>
       )}
-    </aside>
+    </section>
   );
 };
 

@@ -14,6 +14,7 @@ describe('file preview editor state', () => {
     ['.md', 'markdown'],
     ['.markdown', 'markdown'],
     ['.json', 'json'],
+    ['.jsonl', 'plaintext'],
     ['.txt', 'plaintext'],
     ['.yaml', 'yaml'],
     ['.yml', 'yaml'],

@@ -4,7 +4,12 @@ import { REVIEW_TAB_ID } from '@shared/cowork/sessionReview';
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { fileDisplayTabId, WORKSPACE_FILES_DISPLAY_TAB_ID } from './displayTabIds';
+import {
+  fileDisplayTabId,
+  SUBAGENTS_DISPLAY_TAB_ID,
+  SUMMARY_RESOURCE_DISPLAY_TAB_IDS,
+  WORKSPACE_FILES_DISPLAY_TAB_ID,
+} from './displayTabIds';
 import {
   createSessionDisplayState,
   enforceBackgroundTabLimit,
@@ -13,6 +18,83 @@ import {
 } from './useSessionDisplayState';
 
 describe('useSessionDisplayState', () => {
+  it('retains both resource list tabs per chat and closes them independently', () => {
+    const { result, rerender } = renderHook(({ id }) => useSessionDisplayState(id, 520), {
+      initialProps: { id: 'a' },
+    });
+    act(() => {
+      result.current.setters.setSummaryResourceTabs(['outputs', 'sources']);
+      result.current.setters.setPreferredDisplayTabId(SUMMARY_RESOURCE_DISPLAY_TAB_IDS.sources);
+    });
+    expect(
+      result.current.state.tabRecency[SUMMARY_RESOURCE_DISPLAY_TAB_IDS.outputs],
+    ).toBeGreaterThan(0);
+    rerender({ id: 'b' });
+    expect(result.current.state.summaryResourceTabs).toEqual([]);
+    rerender({ id: 'a' });
+    expect(result.current.state.summaryResourceTabs).toEqual(['outputs', 'sources']);
+    expect(result.current.state.preferredDisplayTabId).toBe(
+      SUMMARY_RESOURCE_DISPLAY_TAB_IDS.sources,
+    );
+
+    act(() => {
+      result.current.setters.setSummaryResourceTabs(current =>
+        current.filter(kind => kind !== 'sources'),
+      );
+      result.current.setters.setPreferredDisplayTabId(SUMMARY_RESOURCE_DISPLAY_TAB_IDS.outputs);
+    });
+    expect(result.current.state.summaryResourceTabs).toEqual(['outputs']);
+    expect(
+      result.current.state.tabRecency[SUMMARY_RESOURCE_DISPLAY_TAB_IDS.sources],
+    ).toBeUndefined();
+    act(() => result.current.setters.setSummaryResourceTabs(['outputs', 'sources']));
+    expect(result.current.state.summaryResourceTabs).toEqual(['outputs', 'sources']);
+  });
+
+  it('counts resource lists toward the background tab limit and preserves the active chat', () => {
+    const background = {
+      ...createSessionDisplayState(520),
+      summaryResourceTabs: ['outputs', 'sources'] as const,
+    };
+    const states = {
+      background: {
+        ...background,
+        summaryResourceTabs: [...background.summaryResourceTabs],
+        preferredDisplayTabId: SUMMARY_RESOURCE_DISPLAY_TAB_IDS.outputs,
+        tabRecency: {
+          [SUMMARY_RESOURCE_DISPLAY_TAB_IDS.outputs]: 1,
+          [SUMMARY_RESOURCE_DISPLAY_TAB_IDS.sources]: 2,
+        },
+      },
+      active: { ...background, summaryResourceTabs: [...background.summaryResourceTabs] },
+    };
+    const retained = enforceBackgroundTabLimit(states, 'active', 1);
+    expect(retained.background.summaryResourceTabs).toEqual(['sources']);
+    expect(retained.background.preferredDisplayTabId).toBeNull();
+    expect(retained.background.tabRecency).toEqual({
+      [SUMMARY_RESOURCE_DISPLAY_TAB_IDS.sources]: 2,
+    });
+    expect(retained.active.summaryResourceTabs).toEqual(['outputs', 'sources']);
+  });
+
+  it('retains the subagent list Tab per chat and reopens it after closing', () => {
+    const hook = renderHook(({ id }) => useSessionDisplayState(id, 520), {
+      initialProps: { id: 'a' },
+    });
+    act(() => {
+      hook.result.current.setters.setIsSubagentsTabOpen(true);
+      hook.result.current.setters.setPreferredDisplayTabId(SUBAGENTS_DISPLAY_TAB_ID);
+    });
+    hook.rerender({ id: 'b' });
+    expect(hook.result.current.state.isSubagentsTabOpen).toBe(false);
+    hook.rerender({ id: 'a' });
+    expect(hook.result.current.state.isSubagentsTabOpen).toBe(true);
+    expect(hook.result.current.state.preferredDisplayTabId).toBe(SUBAGENTS_DISPLAY_TAB_ID);
+    act(() => hook.result.current.setters.setIsSubagentsTabOpen(false));
+    expect(hook.result.current.state.isSubagentsTabOpen).toBe(false);
+    act(() => hook.result.current.setters.setIsSubagentsTabOpen(true));
+    expect(hook.result.current.state.isSubagentsTabOpen).toBe(true);
+  });
   it('keeps the open-file tab and its selection isolated by session', () => {
     const { result, rerender } = renderHook(
       ({ sessionId }) => useSessionDisplayState(sessionId, 520),

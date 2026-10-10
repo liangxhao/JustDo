@@ -1,4 +1,5 @@
 import { isGatewayToolFailureNotice } from '../../../shared/cowork/toolFailureNotice';
+import { OPENCLAW_NESTED_TOOL_CUSTOM_TYPE } from '../../../shared/openclaw/constants';
 import { modelRefFromIdentity, normalizeModelRef } from '../../../shared/providers/modelRef';
 import {
   parseScheduledReminderPrompt,
@@ -6,8 +7,6 @@ import {
 } from '../../../shared/scheduledTask/reminderText';
 
 type GatewayHistoryRole = 'user' | 'assistant' | 'system' | 'tool_use' | 'tool_result';
-
-const OPENCLAW_NESTED_TOOL_CUSTOM_TYPE = 'openclaw.nested-tool.v1';
 
 export interface GatewayHistoryEntry {
   role: GatewayHistoryRole;

@@ -14,6 +14,7 @@ const imageSource = 'data:image/png;base64,AA==';
 
 function usePreviewHarness() {
   const currentSessionIdRef = useRef<string | null>('session-a');
+  const navigationScope = useRef({});
   const filePreviewRequestIdRef = useRef(0);
   const { state, setters } = useSessionDisplayState('session-a', 520);
   const { filePreviews, unsupportedFilePreviews } = state;
@@ -42,6 +43,14 @@ function usePreviewHarness() {
   });
   return {
     ...state,
+    captureNavigationScope: () => {
+      const scope = navigationScope.current;
+      return () => scope === navigationScope.current;
+    },
+    switchSession: (sessionId = 'session-b') => {
+      if (currentSessionIdRef.current !== sessionId) navigationScope.current = {};
+      currentSessionIdRef.current = sessionId;
+    },
     openFiles: () => {
       setters.setIsWorkspaceFilesTabOpen(true);
       setIsWorkspaceFilesOpen(true);
@@ -55,6 +64,145 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
+
+test.each(['unsupported', 'too-large', 'existing-unsupported'])(
+  'opens the original %s file with the system tool when requested by Summary',
+  async kind => {
+    const filePath = 'E:/output/report.docx';
+    const readPreviewFile = vi
+      .fn()
+      .mockResolvedValue(
+        kind === 'too-large'
+          ? { success: false, tooLarge: true }
+          : { success: false, unsupportedType: true },
+      );
+    const openPath = vi.fn().mockResolvedValue({ success: true });
+    vi.stubGlobal('electron', { shell: { readPreviewFile, openPath } });
+    const { result } = renderHook(usePreviewHarness);
+    if (kind === 'existing-unsupported') {
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('cowork:preview-file', { detail: { filePath } }));
+      });
+      expect(result.current.unsupportedFilePreviews).toEqual([filePath]);
+    }
+    const previousTab = result.current.preferredDisplayTabId;
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('cowork:preview-file', {
+          detail: { filePath, workingDirectory: 'E:/output', openUnsupportedInSystem: true },
+        }),
+      );
+    });
+    expect(openPath).toHaveBeenCalledWith(filePath, 'E:/output');
+    expect(result.current.filePreviews).toEqual([]);
+    expect(result.current.preferredDisplayTabId).toBe(previousTab);
+    if (kind !== 'existing-unsupported') expect(result.current.unsupportedFilePreviews).toEqual([]);
+  },
+);
+
+test('keeps a supported Summary file in the normal preview and never opens the system tool', async () => {
+  const filePath = 'E:/output/report.md';
+  const readPreviewFile = vi.fn().mockResolvedValue({
+    success: true,
+    filePath,
+    content: 'report',
+    editToken: 'grant',
+    version: '1',
+  });
+  const openPath = vi.fn();
+  vi.stubGlobal('electron', { shell: { readPreviewFile, openPath } });
+  const { result } = renderHook(usePreviewHarness);
+  await act(async () => {
+    window.dispatchEvent(
+      new CustomEvent('cowork:preview-file', {
+        detail: { filePath, openUnsupportedInSystem: true },
+      }),
+    );
+  });
+  expect(result.current.filePreviews).toHaveLength(1);
+  expect(result.current.preferredDisplayTabId).toBe(fileDisplayTabId(filePath));
+  expect(openPath).not.toHaveBeenCalled();
+});
+
+test('does not open an unsupported Summary file after switching sessions during preview inspection', async () => {
+  let finishRead!: (result: FilePreviewReadResult) => void;
+  const readPreviewFile = vi.fn(
+    () =>
+      new Promise<FilePreviewReadResult>(resolve => {
+        finishRead = resolve;
+      }),
+  );
+  const openPath = vi.fn();
+  vi.stubGlobal('electron', { shell: { readPreviewFile, openPath } });
+  const { result } = renderHook(usePreviewHarness);
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent('cowork:preview-file', {
+        detail: { filePath: 'E:/output/report.docx', openUnsupportedInSystem: true },
+      }),
+    );
+    result.current.switchSession();
+  });
+  await act(async () => {
+    finishRead({ success: false, unsupportedType: true });
+  });
+  expect(openPath).not.toHaveBeenCalled();
+  expect(result.current.filePreviews).toEqual([]);
+});
+
+test.each(['unsupported', 'supported', 'error'])(
+  'ignores a late %s Summary file result after switching away and back to the same session',
+  async kind => {
+    let finishRead!: (result: FilePreviewReadResult) => void;
+    let rejectRead!: (error: Error) => void;
+    const readPreviewFile = vi.fn(
+      () =>
+        new Promise<FilePreviewReadResult>((resolve, reject) => {
+          finishRead = resolve;
+          rejectRead = reject;
+        }),
+    );
+    const openPath = vi.fn();
+    const revokePreviewFileEdit = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('electron', { shell: { readPreviewFile, openPath, revokePreviewFileEdit } });
+    const dispatch = vi.spyOn(window, 'dispatchEvent');
+    const { result } = renderHook(usePreviewHarness);
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('cowork:preview-file', {
+          detail: {
+            filePath: 'E:/output/report.md',
+            openUnsupportedInSystem: true,
+            isCurrent: result.current.captureNavigationScope(),
+          },
+        }),
+      );
+      result.current.switchSession();
+      result.current.switchSession('session-a');
+    });
+    dispatch.mockClear();
+    await act(async () => {
+      if (kind === 'error') rejectRead(new Error('read failed'));
+      else
+        finishRead(
+          kind === 'unsupported'
+            ? { success: false, unsupportedType: true }
+            : {
+                success: true,
+                filePath: 'E:/output/report.md',
+                content: 'report',
+                editToken: 'old-grant',
+                version: '1',
+              },
+        );
+    });
+    expect(openPath).not.toHaveBeenCalled();
+    expect(result.current.filePreviews).toEqual([]);
+    expect(result.current.unsupportedFilePreviews).toEqual([]);
+    expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'app:showToast' }));
+    if (kind === 'supported') expect(revokePreviewFileEdit).toHaveBeenCalledWith('old-grant');
+  },
+);
 
 test.each(['text', 'image', 'unsupported', 'existing'])(
   'replaces the open-file tab when a %s preview opens from the workspace tree',

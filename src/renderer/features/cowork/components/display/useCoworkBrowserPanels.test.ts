@@ -242,6 +242,128 @@ const localHtmlPreview = {
   previewRootUrl: 'http://127.0.0.1:43210/preview/',
 };
 
+test('opens a summary HTML output in the workspace even when ordinary HTML links use Chrome', async () => {
+  vi.spyOn(configService, 'getConfig').mockReturnValue({
+    ...defaultConfig,
+    browserHtmlLinkTarget: BrowserLinkTarget.Chrome,
+  });
+  const { options, openTab, openInChrome } = createMessageLinkOptions(true, true);
+  renderHook(() => useCoworkBrowserPanels(options));
+  await act(async () =>
+    window.dispatchEvent(
+      new CustomEvent(MessageBrowserEvent.OpenLocalHtml, {
+        detail: {
+          filePath: 'report.html',
+          displayTarget: BrowserLinkTarget.Embedded,
+          currentSessionOnly: true,
+        },
+      }),
+    ),
+  );
+  expect(openTab).toHaveBeenCalledWith(
+    localHtmlPreview.url,
+    expect.objectContaining({ sourceFilePath: localHtmlPreview.filePath }),
+  );
+  expect(openInChrome).not.toHaveBeenCalled();
+});
+
+test('drops a summary HTML preview completed after leaving its chat', async () => {
+  const { options, createLocalHtmlPreview, openTab } = createMessageLinkOptions(true, true);
+  let resolve!: (value: typeof localHtmlPreview) => void;
+  createLocalHtmlPreview.mockImplementation(
+    () =>
+      new Promise(done => {
+        resolve = done;
+      }),
+  );
+  const hook = renderHook(useCoworkBrowserPanels, { initialProps: options });
+  act(() =>
+    window.dispatchEvent(
+      new CustomEvent(MessageBrowserEvent.OpenLocalHtml, {
+        detail: {
+          filePath: 'report.html',
+          displayTarget: BrowserLinkTarget.Embedded,
+          currentSessionOnly: true,
+        },
+      }),
+    ),
+  );
+  hook.rerender({ ...options, displaySessionKey: 'other', currentSessionId: 'other' });
+  await act(async () => resolve(localHtmlPreview));
+  expect(openTab).not.toHaveBeenCalled();
+  expect(options.openBrowserTab).not.toHaveBeenCalled();
+});
+
+test('drops a summary HTML preview superseded by another resource in the same chat', async () => {
+  const { options, createLocalHtmlPreview, openTab } = createMessageLinkOptions(true, true);
+  let resolve!: (value: typeof localHtmlPreview) => void;
+  let current = true;
+  createLocalHtmlPreview.mockImplementation(
+    () =>
+      new Promise(done => {
+        resolve = done;
+      }),
+  );
+  renderHook(() => useCoworkBrowserPanels(options));
+  act(() =>
+    window.dispatchEvent(
+      new CustomEvent(MessageBrowserEvent.OpenLocalHtml, {
+        detail: {
+          filePath: 'report.html',
+          displayTarget: BrowserLinkTarget.Embedded,
+          currentSessionOnly: true,
+          isCurrent: () => current,
+        },
+      }),
+    ),
+  );
+  current = false;
+  await act(async () => resolve(localHtmlPreview));
+  expect(openTab).not.toHaveBeenCalled();
+  expect(options.openBrowserTab).not.toHaveBeenCalled();
+});
+
+test('keeps a pending summary HTML preview when another session updates the tab callback', async () => {
+  const { options, createLocalHtmlPreview, openTab } = createMessageLinkOptions(true, true);
+  let resolve!: (value: typeof localHtmlPreview) => void;
+  createLocalHtmlPreview.mockImplementation(() => new Promise(done => (resolve = done)));
+  const hook = renderHook(useCoworkBrowserPanels, { initialProps: options });
+  act(() =>
+    window.dispatchEvent(
+      new CustomEvent(MessageBrowserEvent.OpenLocalHtml, {
+        detail: { filePath: 'report.html', currentSessionOnly: true },
+      }),
+    ),
+  );
+  const updatedOpenBrowserTab = vi.fn();
+  hook.rerender({ ...options, openBrowserTab: updatedOpenBrowserTab });
+  await act(async () => resolve(localHtmlPreview));
+  expect(openTab).toHaveBeenCalledWith(localHtmlPreview.url, expect.any(Object));
+  expect(updatedOpenBrowserTab).toHaveBeenCalledWith(
+    'session',
+    expect.objectContaining({ url: localHtmlPreview.url }),
+    MAX_BROWSER_TABS,
+  );
+});
+
+test('drops a pending summary HTML preview after the workspace owner unmounts', async () => {
+  const { options, createLocalHtmlPreview, openTab } = createMessageLinkOptions(true, true);
+  let resolve!: (value: typeof localHtmlPreview) => void;
+  createLocalHtmlPreview.mockImplementation(() => new Promise(done => (resolve = done)));
+  const hook = renderHook(useCoworkBrowserPanels, { initialProps: options });
+  act(() =>
+    window.dispatchEvent(
+      new CustomEvent(MessageBrowserEvent.OpenLocalHtml, {
+        detail: { filePath: 'report.html', currentSessionOnly: true },
+      }),
+    ),
+  );
+  hook.unmount();
+  await act(async () => resolve(localHtmlPreview));
+  expect(openTab).not.toHaveBeenCalled();
+  expect(options.openBrowserTab).not.toHaveBeenCalled();
+});
+
 function createMessageLinkOptions(mounted: boolean, accepted: boolean) {
   const options = createOptions();
   const openTab = vi.fn().mockReturnValue(accepted);

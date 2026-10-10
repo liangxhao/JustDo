@@ -45,7 +45,15 @@ import {
   type QueuedInputSnapshot,
   queuedInputSnapshot,
 } from '@/libs/openclaw-chat/gateway/chat-pending-inputs';
+import { ChatSummaryResourceObserver } from '@/libs/openclaw-chat/gateway/chat-summary-resources';
 import { dispatchInitialTurn } from '@/libs/openclaw-chat/gateway/initial-turn-dispatch';
+import {
+  resolveSummaryArtifactResource,
+  resolveSummaryAttachment,
+  type SessionSummaryResources,
+  type SummaryResource,
+  type SummaryResourceTarget,
+} from '@/libs/openclaw-chat/model/session-summary-resources';
 import type { GatewayMessage, UserMessageHistoryAction } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
@@ -77,6 +85,7 @@ interface JustDoChatWrapperProps {
   onQueuedInputsChange?: (snapshot: QueuedInputSnapshot | null) => void;
   onContextUsageChange?: (usage: ChatContextUsageSnapshot | null) => void;
   onProgressCardChange?: (state: ProgressCardViewState | null) => void;
+  onSummaryResourcesChange?: (state: SessionSummaryResources | null) => void;
   onHistoryReadyChange?: (sessionKey: string, ready: boolean) => void;
   onSessionKeyChange?: (sessionKey: string) => void;
   runTimings?: SessionRunTiming[];
@@ -92,6 +101,16 @@ interface JustDoChatWrapperProps {
 }
 
 export interface JustDoChatWrapperRef {
+  refreshSummaryResources: () => void;
+  readSummaryAttachment: (
+    target: Extract<SummaryResourceTarget, { kind: 'attachment' }>,
+    expectedSessionKey: string,
+  ) => { url: string; label: string; mimeType?: string } | null;
+  resolveSummaryArtifact: (
+    target: Extract<SummaryResourceTarget, { kind: 'artifact' }>,
+    title: string,
+    expectedSessionKey: string,
+  ) => SummaryResource | null;
   dispatchInitialTurn: (params: Record<string, unknown>) => Promise<unknown>;
   getQueuedInputDetail: (inputId: string, expectedSessionKey: string) => QueuedInputDetail | null;
   withdrawQueuedInput: (inputId: string, expectedSessionKey: string) => Promise<void>;
@@ -177,6 +196,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       onQueuedInputsChange,
       onContextUsageChange,
       onProgressCardChange,
+      onSummaryResourcesChange,
       onSessionKeyChange,
       onHistoryReadyChange,
       onLastUserMessageAction,
@@ -258,6 +278,9 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const lastActivityKeyRef = useRef('');
     const lastContextUsageKeyRef = useRef('');
     const lastProgressCardKeyRef = useRef('');
+    const summaryResourcesCallback = useRef(onSummaryResourcesChange);
+    const summaryObserverRef = useRef<ChatSummaryResourceObserver | null>(null);
+    summaryResourcesCallback.current = onSummaryResourcesChange;
     const [connectionError, setConnectionError] = useState<string | null>(null);
     // Buffer for pending user message when the controller is not yet created
     const pendingUserMessageRef = useRef<{
@@ -291,6 +314,19 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     useImperativeHandle(
       ref,
       () => ({
+        refreshSummaryResources: () => summaryObserverRef.current?.retry(),
+        readSummaryAttachment: (target, expectedSessionKey) => {
+          const controller = controllerRef.current;
+          if (!controller?.state.connected || controller.state.sessionKey !== expectedSessionKey)
+            return null;
+          return resolveSummaryAttachment(controller.getLoadedMessages(), target);
+        },
+        resolveSummaryArtifact: (target, title, expectedSessionKey) => {
+          const controller = controllerRef.current;
+          if (!controller?.state.connected || controller.state.sessionKey !== expectedSessionKey)
+            return null;
+          return resolveSummaryArtifactResource(controller.getLoadedMessages(), target, title);
+        },
         dispatchInitialTurn: async params => {
           const controller = controllerRef.current;
           if (!controller)
@@ -468,9 +504,22 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       setController(controller);
 
       let lastHistoryReady = '';
+      const summaryObserver = new ChatSummaryResourceObserver(
+        () => ({
+          sessionKey: controller.state.sessionKey,
+          connected: controller.state.connected,
+          ready: controller.state.initialHistoryReady && !controller.state.historyReadFailed,
+          running: controller.state.chatSending,
+          messages: controller.getLoadedMessages(),
+          client: controller.state.client,
+        }),
+        snapshot => summaryResourcesCallback.current?.(snapshot),
+      );
+      summaryObserverRef.current = summaryObserver;
       let loadingSessionKey: string | null = null;
       let loadingNoticeTimer: ReturnType<typeof setTimeout> | undefined;
       const publishActivity = () => {
+        if (summaryResourcesCallback.current) summaryObserver.publish();
         // Only time a real initial history read, not connection setup or a new turn.
         const nextLoadingSessionKey =
           controller.state.connected &&
@@ -627,6 +676,9 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
 
       return () => {
         cancelled = true;
+        summaryObserver.dispose();
+        summaryObserverRef.current = null;
+        summaryResourcesCallback.current?.(null);
         clearTimeout(loadingNoticeTimer);
         unsubscribeState();
         unsubscribeStream();

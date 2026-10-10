@@ -12,12 +12,15 @@ describe('getPreviewableFileExtension', () => {
     },
   );
 
-  test.each(['report.pdf', 'data.jsonl', 'markdown.text', 'notes.txt#payload', 'notes.md?draft'])(
-    'rejects non-previewable path %s',
-    filePath => {
-      expect(getPreviewableFileExtension(filePath)).toBeNull();
-    },
-  );
+  test.each([
+    'report.pdf',
+    'data.jsonl.bak',
+    'markdown.text',
+    'notes.txt#payload',
+    'notes.md?draft',
+  ])('rejects non-previewable path %s', filePath => {
+    expect(getPreviewableFileExtension(filePath)).toBeNull();
+  });
 
   test.each([
     ['C:\\workspace\\.gitignore', '.txt'],
