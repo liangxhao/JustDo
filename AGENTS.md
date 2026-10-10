@@ -447,6 +447,9 @@ The intranet runtime excludes `anthropic`, `elevenlabs`, `github`, `kie`, `zai`,
 and `novita` through `resources/openclaw-extension-prune.json`. Keep `openai` as
 the protocol adapter for configured intranet speech/model/media endpoints; do not
 equate the adapter with a requirement to call the public OpenAI service.
+The desktop runtime also excludes `admin-http-rpc` and `file-transfer`: application
+management uses Gateway WebSocket RPC, and paired-node file transfers and remote
+workspace mappings are not integrated. Keep the remote file-tool deny policy.
 Managed speech providers are `openai` and `tts-local-cli`.
 Online speech IPC reports registered adapters and explicit configuration only;
 do not add vendor model/voice presets or fallback catalogs when Gateway is unavailable.

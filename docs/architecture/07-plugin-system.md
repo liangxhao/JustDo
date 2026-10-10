@@ -80,6 +80,10 @@ TypeSafe 扩展声明决策模型提供方；原生 `decision_evaluate` 工具�
 
 内网发行版通过 `resources/openclaw-extension-prune.json` 排除 Anthropic、ElevenLabs、
 GitHub、Kie、Z.AI 和 Novita 插件；运行时资源准备与安装包构建共用该剪裁策略。
+同一策略裁剪 `admin-http-rpc` 和 `file-transfer`：应用管理通过 Gateway WebSocket RPC，
+没有接入额外的 HTTP 管理端点、已配对节点的文件传输或远程工作空间映射。
+本地附件与文件操作使用既有能力；全局工具策略继续禁用 `file_fetch`、`dir_list`、
+`dir_fetch`、`file_write`，避免用户另行安装插件后意外开放未接入的远程能力。
 保留 OpenAI 插件作为内网兼容接口的协议适配器，在线语音设置显式提交内网服务地址、
 模型及凭据；保留插件不代表必须连接 OpenAI 公网。实时识别需要兼容 Realtime
 Transcription（PCMU 8 kHz），朗读需要兼容 Audio Speech。模型目录仍由用户配置，

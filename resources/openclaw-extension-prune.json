@@ -5,11 +5,9 @@
   "description": "Version-scoped allowlist for OpenClaw-managed bundled extensions. Every upstream extension must be declared in keep or remove; unknown extensions fail pruning for review. JustDo-owned custom extensions are protected separately.",
   "keep": [
     "active-memory",
-    "admin-http-rpc",
     "browser",
     "cua-computer",
     "document-extract",
-    "file-transfer",
     "llm-task",
     "logbook",
     "memory-core",
@@ -25,16 +23,14 @@
   ],
   "remove": [
     {
+      "category": "unused-http-administration",
+      "reason": "The desktop application uses Gateway WebSocket RPC and does not integrate the optional HTTP administration endpoint.",
+      "extensions": ["admin-http-rpc"]
+    },
+    {
       "category": "public-cloud-integrations",
       "reason": "Public vendor APIs are unavailable in the intranet deployment. Keep OpenAI only as the protocol adapter for configured intranet model, speech and media endpoints.",
-      "extensions": [
-        "anthropic",
-        "elevenlabs",
-        "github",
-        "kie",
-        "zai",
-        "novita"
-      ]
+      "extensions": ["anthropic", "elevenlabs", "github", "kie", "zai", "novita"]
     },
     {
       "category": "unused-remote-and-device-integrations",
@@ -46,6 +42,7 @@
         "canvas",
         "crabbox",
         "device-pair",
+        "file-transfer",
         "geolocation",
         "imap",
         "linux-node",
@@ -59,10 +56,7 @@
     {
       "category": "migration-tools",
       "reason": "One-time third-party import helpers are not required for normal JustDo startup or the native session SQLite migration.",
-      "extensions": [
-        "migrate-claude",
-        "migrate-hermes"
-      ]
+      "extensions": ["migrate-claude", "migrate-hermes"]
     },
     {
       "category": "optional-speech-and-media",
