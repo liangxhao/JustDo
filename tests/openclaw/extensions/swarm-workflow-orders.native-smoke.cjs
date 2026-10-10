@@ -166,7 +166,7 @@ async function connect() {
     await delay(15000);
     const rpc = await connect(); const parentKey = 'agent:main:justdo:orders-proof';
     await rpc('sessions.create', { key: parentKey, cwd: project, permissionMode: 'full' });
-    const intake = await rpc('chat.send', { sessionKey: parentKey, idempotencyKey: 'orders-proof-once', message: goal + '\n\n<justdo-swarm-workflow mode="auto"/>' });
+    const intake = await rpc('chat.send', { sessionKey: parentKey, idempotencyKey: 'orders-proof-once', message: goal + '\n\n<swarm-workflow mode="auto"/>' });
     let done;
     for (let i = 0; i < 180; i++) {
       if (fixtureFailure) throw fixtureFailure;

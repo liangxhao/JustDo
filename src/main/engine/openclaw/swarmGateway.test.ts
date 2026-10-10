@@ -42,6 +42,6 @@ test('does not turn a missing native session into successful empty history', asy
 });
 test('encodes the independent flow mode without delegating native collector control', () => {
   const instruction = buildSwarmWorkflowInstruction({ mode: 'review', verify: true });
-  expect(instruction).toBe('<justdo-swarm-workflow mode="review"/>');
-  expect(buildSwarmWorkflowInstruction({ mode: 'research', verify: false })).toBe('<justdo-swarm-workflow mode="research"/>');
+  expect(instruction).toBe('<swarm-workflow mode="review"/>');
+  expect(buildSwarmWorkflowInstruction({ mode: 'research', verify: false })).toBe('<swarm-workflow mode="research"/>');
 });

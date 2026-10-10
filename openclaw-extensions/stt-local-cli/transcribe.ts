@@ -136,7 +136,7 @@ export async function transcribeFile(
     throw new Error('Audio must be a non-empty local file no larger than 256 MiB.');
   }
   const run = options.run ?? runCommand;
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'justdo-stt-'));
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'stt-local-cli-'));
   try {
     // Work from our own copy; reject playlist demuxers and all network protocols.
     const localInput = path.join(tempDir, `input${path.extname(inputPath).toLowerCase()}`);

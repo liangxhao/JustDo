@@ -209,8 +209,13 @@ const plugin = {
           const entry = getSessionEntry({
             sessionKey: params.sessionKey,
             readConsistency: 'latest',
-          }) as { justdoPlanMode?: { enabled?: boolean } } | undefined;
-          if (entry?.justdoPlanMode?.enabled && params.operation !== 'native-result')
+          }) as
+            | { pluginExtensions?: { 'plan-mode'?: { state?: { enabled?: boolean } } } }
+            | undefined;
+          if (
+            entry?.pluginExtensions?.['plan-mode']?.state?.enabled === true &&
+            params.operation !== 'native-result'
+          )
             throw new Error('Collaboration sending is unavailable in Plan mode.');
           const callKey = `${params.sessionKey}|${params.toolCallId}`;
           const input = params.input as Record<string, unknown> | undefined;

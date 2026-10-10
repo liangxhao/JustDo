@@ -12,7 +12,8 @@ Renderer 的 Workflow 面板、节点历史、介入与图形视口辅助位于 
 | 插件包                  | `openclaw-swarm-workflow`                                |
 | 模型工具                | `swarm_workflow_*`                                       |
 | Gateway 方法 / 应用 IPC | `swarmWorkflow.*` / `cowork:swarm-workflow:*`            |
-| 消息发起标记            | `<justdo-swarm-workflow mode="auto\|research\|review"/>` |
+| 消息发起标记            | `<swarm-workflow mode="auto\|research\|review"/>`        |
+| 进程内服务注册键        | `Symbol.for('swarm-workflow.service')`                   |
 | 流程数据库              | `stateDir/swarm-workflow/flows.sqlite`                   |
 | 批次产物目录            | `.agent-tasks/swarm-workflow/`                           |
 | 应用类型、组件和翻译键  | `SwarmWorkflow*` / `swarmWorkflow*`                      |

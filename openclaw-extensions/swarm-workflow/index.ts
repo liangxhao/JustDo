@@ -58,6 +58,11 @@ const object = (value: unknown): value is Record<string, unknown> =>
 const entry = (key: string) =>
   getSessionEntry({ sessionKey: key, readConsistency: 'latest' }) as
     Record<string, unknown> | undefined;
+const inPlanMode = (value: Record<string, unknown> | undefined): boolean => {
+  const extensions = value?.pluginExtensions;
+  const plan = object(extensions) ? extensions['plan-mode'] : undefined;
+  return object(plan) && object(plan.state) && plan.state.enabled === true;
+};
 
 type SubmissionCall = { runId: string; expiresAt: number; signal?: AbortSignal };
 type StartAdmission = {
@@ -99,7 +104,7 @@ type SharedService = {
 // Native agent registries register separate tool/hook instances in this process.
 // They must all address the service started by the Gateway registry, while each
 // invocation still proves its own native session/run authority before writing.
-const serviceKey = Symbol.for('justdo.swarm-workflow.service');
+const serviceKey = Symbol.for('swarm-workflow.service');
 const processServices = globalThis as typeof globalThis & {
   [key: symbol]: SharedService | undefined;
 };
@@ -151,7 +156,7 @@ export default {
         (flow.filesystemAdmission &&
           permissionFingerprint(api.runtime.config.current(), flow.filesystemAdmission.agentIds) !==
             flow.filesystemAdmission.policy) ||
-        (current.justdoPlanMode as { enabled?: boolean } | undefined)?.enabled
+        inPlanMode(current)
       )
         throw new Error(
           'Parent identity, permissions or project changed. Flow admission is blocked.',
@@ -579,7 +584,7 @@ export default {
             parent.sessionRoot !== intake.cwd ||
             parent.permissionMode !== intake.permissionMode ||
             parentPolicy(parent) !== intake.policy ||
-            (parent.justdoPlanMode as { enabled?: boolean } | undefined)?.enabled
+            inPlanMode(parent)
           )
             return;
           const history = await rpc<{ messages?: Array<Record<string, unknown>> }>('chat.history', {
@@ -600,7 +605,7 @@ export default {
             after.sessionRoot !== intake.cwd ||
             after.permissionMode !== intake.permissionMode ||
             parentPolicy(after) !== intake.policy ||
-            (after.justdoPlanMode as { enabled?: boolean } | undefined)?.enabled
+            inPlanMode(after)
           )
             return;
           const error = lastStartError(event.messages, ctx.runId);
@@ -870,7 +875,7 @@ export default {
       if (
         message === undefined &&
         ctx.runId &&
-        (event.prompt?.includes('<justdo-swarm-workflow ') || pendingStart)
+        (event.prompt?.includes('<swarm-workflow ') || pendingStart)
       ) {
         try {
           const history = await rpc<{ messages?: Array<Record<string, unknown>> }>('chat.history', {
@@ -881,7 +886,7 @@ export default {
           requestId = pendingStart?.requestId ?? ctx.runId + ':user';
           if (
             pendingStart &&
-            !event.prompt?.includes('<justdo-swarm-workflow ') &&
+            !event.prompt?.includes('<swarm-workflow ') &&
             [...(history.messages ?? [])].reverse().find(item => item.role === 'user')
               ?.idempotencyKey !== requestId
           )
@@ -906,7 +911,7 @@ export default {
       }
       const marker =
         typeof message === 'string'
-          ? /\n\n<justdo-swarm-workflow mode="(auto|research|review)"\/>$/.exec(message)
+          ? /\n\n<swarm-workflow mode="(auto|research|review)"\/>$/.exec(message)
           : null;
       if (!marker || message === undefined) {
         if (state.store?.all().some(flow => flow.parentKey === ctx.sessionKey))
@@ -1003,7 +1008,7 @@ export default {
             !['read-only', 'workspace', 'guarded', 'full'].includes(
               String(parent.permissionMode),
             ) ||
-            (parent.justdoPlanMode as { enabled?: boolean } | undefined)?.enabled
+            inPlanMode(parent)
             )
             throw new Error('Parent session is not ready for flow execution.');
           const current = ensure();
@@ -1052,7 +1057,7 @@ export default {
             latestParent.sessionRoot !== parentSnapshot.cwd ||
             latestParent.permissionMode !== parentSnapshot.permissionMode ||
             parentPolicy(latestParent) !== parentSnapshot.policy ||
-            (latestParent.justdoPlanMode as { enabled?: boolean } | undefined)?.enabled
+            inPlanMode(latestParent)
           )
             throw new Error('Parent changed before flow creation.');
           if (!agents.some(agent => agent.id === DEFAULT_FLOW_AGENT))
@@ -1306,7 +1311,7 @@ export default {
                 (input.sourceRequestId !== undefined && input.sourceRequestId !== sourceRequestId)
               )
                 throw new Error('The source Swarm Workflow request is no longer current.');
-              const sourceMarker = /\n\n<justdo-swarm-workflow mode="(auto|research|review)"\/>$/.exec(
+              const sourceMarker = /\n\n<swarm-workflow mode="(auto|research|review)"\/>$/.exec(
                 content,
               );
               if (sourceMarker && sourceMarker[1] !== input.mode)

@@ -34,6 +34,9 @@ tasks through OpenClaw Gateway, with durable state in SQLite and bundled skills.
   `author.name` is separate publisher metadata.
 - Project task artifacts use the fixed, product-neutral `.agent-tasks/` root;
   keep browser output and Swarm batches under their respective subdirectories.
+- Plugin-owned state slots, service registry keys, message markers, and temporary
+  path prefixes must use capability/plugin names, without `justdo` or productName
+  branding. Existing application session identities retain the `justdo:` namespace.
 
 ## Commands
 

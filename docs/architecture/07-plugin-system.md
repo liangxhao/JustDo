@@ -219,7 +219,11 @@ flowchart LR
 | stt-local-cli         | 本地附件转录工具                     | 已安装 Sherpa 路径及文件策略 |
 
 Plan mode 使用 `api.session.state.registerSessionExtension`、`sessions.pluginPatch` 和
-`sessions.describe.pluginExtensions` 保存与读取会话开关，`agent_turn_prepare` 注入规划约束，
+`sessions.describe.pluginExtensions` 保存与读取 `plan-mode/state` 会话开关，原生会话状态槽名为
+`planMode`。plan-mode、agent-team 和 Swarm Workflow 的规划门禁统一读取原生
+`pluginExtensions['plan-mode'].state`，不依赖可能缺失或过期的会话槽投影。插件自有状态槽、服务注册键、
+消息标记和临时路径前缀按能力或插件命名，不带产品名；应用会话身份保留现有 `justdo:` 命名空间。
+`agent_turn_prepare` 注入规划约束，
 `registerTrustedToolPolicy` 在执行前阻止已知变更工具。`PresentPlan` 保持 direct-only；
 Tool Search 分发器由原生对实际目标再次执行策略。动作型工具使用上游
 `isReplaySafeToolCall` 分类，包括 `theme` 的 list/get（允许）和 set/import（阻止）。

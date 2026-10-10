@@ -7,7 +7,7 @@ import { Type } from 'typebox';
 
 const PLUGIN_ID = 'plan-mode';
 const STATE_NAMESPACE = 'state';
-const SESSION_SLOT_KEY = 'justdoPlanMode';
+const SESSION_SLOT_KEY = 'planMode';
 const PRESENT_PLAN_TOOL = 'PresentPlan';
 const POLICY_ID = 'plan-mode-read-only';
 const LIST_METHOD = 'planMode.list';
@@ -41,8 +41,8 @@ const isJustDoSession = (sessionKey: string | undefined): sessionKey is string =
 const readPlanState = (sessionKey: string | undefined): PlanState | null => {
   if (!isJustDoSession(sessionKey)) return null;
   const entry = getSessionEntry({ sessionKey, readConsistency: 'latest' }) as
-    (UnknownRecord & { justdoPlanMode?: unknown }) | undefined;
-  const state = entry?.justdoPlanMode;
+    (UnknownRecord & { pluginExtensions?: Record<string, UnknownRecord> }) | undefined;
+  const state = entry?.pluginExtensions?.[PLUGIN_ID]?.[STATE_NAMESPACE];
   if (!isRecord(state) || typeof state.enabled !== 'boolean') return null;
   return {
     enabled: state.enabled,

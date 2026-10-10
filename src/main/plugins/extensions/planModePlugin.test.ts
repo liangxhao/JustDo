@@ -44,8 +44,9 @@ const registerPlugin = () => {
   let policy: ((event: unknown, context: unknown) => unknown) | undefined;
   let toolFactory: ToolFactory | undefined;
   let service: { start: (context: unknown) => void; stop: () => void } | undefined;
+  const registerSessionExtension = vi.fn();
   planModePlugin.register({
-    session: { state: { registerSessionExtension: vi.fn() } },
+    session: { state: { registerSessionExtension } },
     on: (name: string, hook: (event: unknown, context: { sessionKey?: string }) => unknown) =>
       hooks.set(name, hook),
     registerTrustedToolPolicy: (registration: { evaluate: typeof policy }) => {
@@ -61,6 +62,7 @@ const registerPlugin = () => {
     logger: { info: vi.fn(), warn: vi.fn() },
   } as never);
   return {
+    registerSessionExtension,
     gatewayMethods,
     hooks,
     get policy() {
@@ -78,13 +80,36 @@ const registerPlugin = () => {
 beforeEach(() => {
   vi.clearAllMocks();
   sdk.getSessionEntry.mockReturnValue({
-    justdoPlanMode: { enabled: true, updatedAt: 1 },
+    pluginExtensions: { 'plan-mode': { state: { enabled: true, updatedAt: 1 } } },
   });
 });
 
 describe('Plan mode extension', () => {
+  test.each([true, false])('uses canonical state when the promoted slot disagrees: %s', enabled => {
+    sdk.getSessionEntry.mockReturnValue({
+      pluginExtensions: { 'plan-mode': { state: { enabled, updatedAt: 2 } } },
+      planMode: { enabled: !enabled, updatedAt: 1 },
+    });
+    const registered = registerPlugin();
+    const context = { sessionKey: 'agent:main:justdo:session-1' };
+
+    const prepared = registered.hooks.get('agent_turn_prepare')?.({}, context);
+    const tool = registered.toolFactory?.(context);
+
+    if (enabled) {
+      expect(prepared).toMatchObject({ prependContext: expect.stringContaining('<plan_mode>') });
+      expect(tool).not.toBeNull();
+    } else {
+      expect(prepared).toBeUndefined();
+      expect(tool).toBeNull();
+    }
+  });
+
   test('injects planning instructions and blocks mutations while preserving read-only research', () => {
     const registered = registerPlugin();
+    expect(registered.registerSessionExtension).toHaveBeenCalledWith(
+      expect.objectContaining({ namespace: 'state', sessionEntrySlotKey: 'planMode' }),
+    );
     const context = { sessionKey: 'agent:main:justdo:session-1' };
     const prepared = registered.hooks.get('agent_turn_prepare')?.({}, context) as {
       prependContext?: string;
@@ -189,7 +214,7 @@ describe('Plan mode extension', () => {
     const request = emit.mock.calls[0][1] as { requestId: string };
     const respond = vi.fn();
     sdk.getSessionEntry.mockReturnValue({
-      justdoPlanMode: { enabled: false, updatedAt: 2 },
+      pluginExtensions: { 'plan-mode': { state: { enabled: false, updatedAt: 2 } } },
     });
     registered.gatewayMethods.get('planMode.resolve')?.({
       params: { requestId: request.requestId, decision: 'implement' },
@@ -230,7 +255,7 @@ describe('Plan mode extension', () => {
     registered.service?.start({ gatewayEvents: { emit: vi.fn() } });
     const tool = registered.toolFactory?.({ sessionKey: 'agent:main:justdo:session-1' });
     sdk.getSessionEntry.mockReturnValue({
-      justdoPlanMode: { enabled: false, updatedAt: 2 },
+      pluginExtensions: { 'plan-mode': { state: { enabled: false, updatedAt: 2 } } },
     });
 
     await expect(tool!.execute('tool-1', { plan: 'Stale plan' })).resolves.toMatchObject({

@@ -232,7 +232,7 @@ it.each(['permissions', 'project', 'planning'])('allows safe controls after %s c
   const flow = await f.request('swarmWorkflow.start', { parentKey: f.parentKey, requestId: 'safe-controls', goal: 'Inspect', mode: 'auto' }) as any;
   if (change === 'permissions') f.parent.permissionMode = 'read-only';
   else if (change === 'project') f.parent.sessionRoot = path.join(f.root, 'other');
-  else Object.assign(f.parent, { justdoPlanMode: { enabled: true } });
+  else Object.assign(f.parent, { pluginExtensions: { 'plan-mode': { state: { enabled: true } } } });
   const factory = f.toolFactories.filter(value => value.contextVersion === 2)[1];
   const tool = factory.create({ sessionKey: f.parentKey, assertInvocationCurrent: vi.fn() }).find((item: any) => item.name === 'swarm_workflow_control');
   const invoke = async (action: string, revision: number, call: string) => {
@@ -280,7 +280,7 @@ it.each(['permissions', 'project', 'planning'])('notifies a %s admission blocker
   await f.request('swarmWorkflow.start', { parentKey: f.parentKey, requestId: 'changed-policy-notice', goal: 'Inspect', mode: 'auto' });
   if (change === 'permissions') f.parent.permissionMode = 'read-only';
   else if (change === 'project') f.parent.sessionRoot = path.join(f.root, 'other');
-  else Object.assign(f.parent, { justdoPlanMode: { enabled: true } });
+  else Object.assign(f.parent, { pluginExtensions: { 'plan-mode': { state: { enabled: true } } } });
   await vi.advanceTimersByTimeAsync(1600);
   const flow = (await f.request('swarmWorkflow.list', { parentKeys: [f.parentKey] }) as any).flows[0];
   expect(flow.status).toBe('blocked');
@@ -382,7 +382,7 @@ it.each(['stop', 'restart', 'planning', 'expired', 'identity', 'project', 'permi
           await f.service.stop();
           if (change === 'restart') await f.service.start({ stateDir: f.root, logger: { error: vi.fn() } });
         } else if (change === 'expired') vi.setSystemTime(Date.now() + 30001);
-        else if (change === 'planning') (f.parent as any).justdoPlanMode = { enabled: true };
+        else if (change === 'planning') Object.assign(f.parent, { pluginExtensions: { 'plan-mode': { state: { enabled: true } } } });
         else if (change === 'identity') f.parent.sessionId = 'changed';
         else if (change === 'project') f.parent.sessionRoot = path.join(f.root, 'changed');
         else if (change === 'permissions') f.parent.permissionMode = 'read-only';
@@ -475,7 +475,7 @@ it.each(['new-message', 'parent', 'permissions', 'project', 'plan', 'expired', '
     if (change === 'parent') f.parent.sessionId = 'replaced';
     if (change === 'permissions') f.parent.permissionMode = 'read-only';
     if (change === 'project') f.parent.sessionRoot = path.join(f.root, 'other');
-    if (change === 'plan') Object.assign(f.parent, { justdoPlanMode: { enabled: true } });
+    if (change === 'plan') Object.assign(f.parent, { pluginExtensions: { 'plan-mode': { state: { enabled: true } } } });
     if (change === 'expired') vi.setSystemTime(Date.now() + 30 * 60 * 1000 + 1);
     if (change === 'retired') await f.service.stop();
     expect(await f.hooks.get('before_agent_finalize')({ ...context, stopHookActive: false }, context)).toBeUndefined();

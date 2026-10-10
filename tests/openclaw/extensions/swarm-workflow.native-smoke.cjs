@@ -146,7 +146,7 @@ const wait=ms=>new Promise(r=>setTimeout(r,ms));
     }throw Error('Management native turn timed out');
   };
   await rpc('sessions.create',{key:parentKey,cwd:path.join(base,'project'),permissionMode:execScenario?'full':'workspace'});
-  const startReceipt=await rpc('chat.send',{sessionKey:parentKey,idempotencyKey:'fixture-once',message:'Read-only smoke check'+(specialized?' '+assignment:'')+'\n\n<justdo-swarm-workflow mode="auto"/>'});
+  const startReceipt=await rpc('chat.send',{sessionKey:parentKey,idempotencyKey:'fixture-once',message:'Read-only smoke check'+(specialized?' '+assignment:'')+'\n\n<swarm-workflow mode="auto"/>'});
   for(let i=0;i<70;i++){
     const result=await rpc('swarmWorkflow.list',{parentKeys:[parentKey]});const flow=result.flows[0]; if(!flow){
       if(startCorrection==='exhaust'){

@@ -17,7 +17,7 @@ export const isSwarmWorkflowOptions = (value: unknown): value is SwarmWorkflowOp
 };
 
 export function buildSwarmWorkflowInstruction(options: SwarmWorkflowOptions): string {
-  return `<justdo-swarm-workflow mode="${options.mode}"/>`;
+  return `<swarm-workflow mode="${options.mode}"/>`;
 }
 
 // Match only the exact current workflow suffix; there are no historical aliases.

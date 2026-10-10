@@ -64,7 +64,7 @@ function fixture(teamEnabled = true, separateHooks = false) {
             ? {
                 getSessionEntry: () => ({
                   sessionId: nativeSessionId,
-                  justdoPlanMode: { enabled: plan },
+                  pluginExtensions: { 'plan-mode': { state: { enabled: plan } } },
                 }),
               }
             : name === 'openclaw/plugin-sdk/codex-session-transcript-runtime'
