@@ -451,6 +451,13 @@ Managed speech providers are `openai` and `tts-local-cli`.
 Online speech IPC reports registered adapters and explicit configuration only;
 do not add vendor model/voice presets or fallback catalogs when Gateway is unavailable.
 
+OpenAI Provider and QuickJS Code Mode are application-managed required adapters;
+keep bundled entries enabled and admitted in full/minimal/auth config sync, preserving
+unrelated plugin configuration and tool permissions. Generic extension controls must
+reject enable/disable, configuration and deletion. Runtime settings own Code Mode use.
+Document Extraction and Web Readability Extraction remain default-enabled and
+user-toggleable. Locked cards and details explain their management source.
+
 Retain `cua-computer` in the runtime. Desktop control defaults off and is user-toggleable
 in Settings → Computer control. Its single switch atomically changes the native plugin
 entry and global `computer` tool admission. The extension panel locks this managed
@@ -475,7 +482,11 @@ and delivery; the plugin implements multipart submission, polling and bounded
 content download under one deadline, without public defaults, redirects or
 uncertain submission retries. Kie/Z.AI/Novita contracts remain supported only
 when installed; these plugins are not bundled. Config sync clears unavailable
-video selections and registrations without publishing credentials. Clearing the
-default does not disable plugins; the video adapter has no preset model for
-automatic discovery. Do not add compatibility or migration for the retired
-custom video configuration. See `docs/features/model-management.md`.
+video selections and registrations without publishing credentials. The bundled
+video adapter is always application-managed; enable it only with a valid default
+video model, and disable it when that selection is cleared or absent. It has no
+preset model for automatic discovery. Retain explicit state for other installed
+providers, which may share non-video capabilities. Incomplete inventory must not enable
+new providers, but explicit clears still disable an existing managed video adapter.
+Do not add compatibility or migration for the retired custom video configuration.
+See `docs/features/model-management.md`.

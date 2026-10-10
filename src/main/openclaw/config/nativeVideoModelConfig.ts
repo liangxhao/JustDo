@@ -1,3 +1,4 @@
+import { OpenAiCompatibleMediaConfigProviderIds } from '../../../shared/providers/mediaGenerationModels';
 import {
   findNativeVideoProvider,
   isNativeVideoModelSupported,
@@ -88,12 +89,13 @@ export function applyNativeVideoConfiguration(
   stateDir: string,
   availableExtensionIds: readonly string[] | null,
 ): boolean {
-  // An incomplete inventory cannot establish absence, and must not enable new providers.
-  if (availableExtensionIds === null) return false;
+  // An incomplete inventory cannot establish absence or admit a new provider,
+  // but explicit Settings clears must still disable the existing managed adapter.
+  const inventoryComplete = availableExtensionIds !== null;
   const unavailable = new Set<string>(
-    NATIVE_VIDEO_PROVIDERS.filter(provider => !availableExtensionIds.includes(provider.id)).map(
-      provider => provider.id,
-    ),
+    NATIVE_VIDEO_PROVIDERS.filter(
+      provider => availableExtensionIds !== null && !availableExtensionIds.includes(provider.id),
+    ).map(provider => provider.id),
   );
   const isUnavailableModel = (model: unknown) =>
     typeof model === 'string' && [...unavailable].some(id => model.startsWith(`${id}/`));
@@ -126,16 +128,39 @@ export function applyNativeVideoConfiguration(
     const ids = currentPlugins[field];
     if (Array.isArray(ids)) currentPlugins[field] = ids.filter(id => !unavailable.has(id));
   }
-  if (selection === undefined || (selection && unavailable.has(selection.providerId))) return false;
+  // The application-owned adapter has no preset model; Settings owns its enablement.
+  const adapterId = OpenAiCompatibleMediaConfigProviderIds.video;
+  if (
+    !unavailable.has(adapterId) &&
+    (inventoryComplete ||
+      (selection?.providerId !== adapterId && isRecord(currentEntries[adapterId])))
+  ) {
+    const plugins = record(config.plugins);
+    const entries = record(plugins.entries);
+    config.plugins = {
+      ...plugins,
+      entries: {
+        ...entries,
+        [adapterId]: {
+          ...record(entries[adapterId]),
+          enabled: selection?.providerId === adapterId,
+        },
+      },
+    };
+  }
+  if (selection && (!inventoryComplete || unavailable.has(selection.providerId))) return false;
   if (!selection) {
     const primary =
       typeof mediaModels.video === 'string' ? mediaModels.video : record(mediaModels.video).primary;
-    if (
+    const clearsVideo =
       typeof primary === 'string' &&
-      NATIVE_VIDEO_PROVIDERS.some(provider => primary.startsWith(`${provider.id}/`))
-    )
-      delete mediaModels.video;
-    config.agents = { ...agents, defaults: { ...defaults, mediaModels } };
+      (selection === null
+        ? NATIVE_VIDEO_PROVIDERS.some(provider => primary.startsWith(`${provider.id}/`))
+        : primary.startsWith(`${adapterId}/`));
+    if (clearsVideo) delete mediaModels.video;
+    if (clearsVideo || selection === null) {
+      config.agents = { ...agents, defaults: { ...defaults, mediaModels } };
+    }
     return false;
   }
   const secrets = selection.apiKey

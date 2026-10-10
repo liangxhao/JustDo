@@ -177,7 +177,7 @@ describe('ExtensionsManager extension toggle', () => {
     expect(screen.getByRole('button', { name: 'importExtension' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'pluginGroupExpand' }));
     expect(
-      screen.getByRole('img', { name: 'pluginStatusDisabled · extensionToggleUnavailable' }),
+      screen.getByRole('img', { name: 'pluginStatusDisabled · extensionManagedApplication' }),
     ).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'extensionFolderUnavailable' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'openFolder' })).toBeNull();
@@ -223,7 +223,7 @@ describe('ExtensionsManager extension toggle', () => {
       });
       render(<ExtensionsManager searchQuery="Computer" />);
       const lock = await screen.findByRole('img', {
-        name: `${enabled ? 'pluginStatusEnabled' : 'pluginStatusDisabled'} · extensionToggleUnavailable`,
+        name: `${enabled ? 'pluginStatusEnabled' : 'pluginStatusDisabled'} · extensionManagedComputer`,
       });
       expect(lock.className).toContain(enabled ? 'text-emerald-600' : 'text-amber-600');
       expect(screen.queryByRole('switch')).toBeNull();
@@ -256,6 +256,73 @@ describe('ExtensionsManager extension toggle', () => {
 
     await waitFor(() => expect(onRequestedExtensionHandled).toHaveBeenCalledOnce());
     expect(screen.getByRole('button', { name: 'openFolder' })).toBeTruthy();
+  });
+
+  test.each([
+    ['openai', 'extensionManagedModelAdapter'],
+    ['code-mode-quickjs', 'extensionManagedCodeMode'],
+    ['typesafe', 'extensionManagedDecisionModels'],
+    ['video-openai', 'extensionManagedVideoModels'],
+  ])('explains where managed %s is controlled in the card and details', async (id, label) => {
+    const managedExtension: InstalledOpenClawExtension = {
+      ...extension,
+      id,
+      name: id,
+      enabled: true,
+      managed: true,
+      origin: 'bundled',
+      ...getExtensionManagement({ managed: true }),
+    };
+    const setEnabled = vi.fn();
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn(async () => ({ success: true, extensions: [managedExtension] })),
+          setEnabled,
+          onImportProgress: vi.fn(() => vi.fn()),
+        },
+      },
+    });
+
+    render(<ExtensionsManager searchQuery={id} />);
+
+    expect(await screen.findByRole('img', { name: `pluginStatusEnabled · ${label}` })).toBeTruthy();
+    expect(screen.queryByRole('switch')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: `subtaskShowInfo: ${id}` }));
+    expect(screen.getByText(label)).toBeTruthy();
+    expect(setEnabled).not.toHaveBeenCalled();
+  });
+
+  test('keeps the disabled video adapter locked and explains Settings ownership', async () => {
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn(async () => ({
+            success: true,
+            extensions: [
+              {
+                ...extension,
+                id: 'video-openai',
+                enabled: false,
+                managed: true,
+                origin: 'bundled',
+                ...getExtensionManagement({ managed: true }),
+              },
+            ],
+          })),
+          onImportProgress: vi.fn(() => vi.fn()),
+        },
+      },
+    });
+
+    render(<ExtensionsManager searchQuery="video-openai" />);
+
+    expect(await screen.findByRole('img', { name: 'pluginStatusDisabled · extensionManagedVideoModels' })).toBeTruthy();
+    expect(screen.queryByRole('switch')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'subtaskShowInfo: Sample Extension' }));
+    expect(screen.getByText('extensionManagedVideoModels')).toBeTruthy();
   });
 
   test('saves a bundled Jev key without enabling the extension or retaining it in the input', async () => {
@@ -323,7 +390,7 @@ describe('ExtensionsManager extension toggle', () => {
       await screen.findByRole('button', { name: 'subtaskShowInfo: Managed Configurable' }),
     );
 
-    expect(screen.getByText('pluginManagedActionUnavailable')).toBeTruthy();
+    expect(screen.getByText('extensionManagedApplication')).toBeTruthy();
     expect(screen.queryByLabelText('Token')).toBeNull();
     expect(screen.queryByRole('button', { name: 'save' })).toBeNull();
     expect(updateConfiguration).not.toHaveBeenCalled();

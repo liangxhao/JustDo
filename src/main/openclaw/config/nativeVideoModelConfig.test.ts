@@ -185,19 +185,87 @@ test('translates malformed video service URLs instead of leaking URL parser erro
   ).toThrow(t('nativeVideoUrlInvalid'));
 });
 
-test('deleting the last configured video provider clears its native default without disabling plugins', () => {
+test.each([
+  { providers: {} },
+  { providers: { lan: { nativeVideoProvider: 'video-openai' } } },
+])('clearing the default video model disables the adapter while preserving other models: %j', category => {
   const config: Record<string, unknown> = {
     agents: { defaults: { model: 'chat/model', mediaModels: {
       video: { primary: 'video-openai/video-v1', fallbacks: [] }, image: 'image/model',
     } } },
-    plugins: { entries: { 'video-openai': { enabled: true } } },
+    plugins: { entries: { 'video-openai': { enabled: true, config: { retained: true } }, other: { enabled: true } } },
   };
-  applyNativeVideoConfiguration(config, resolveNativeVideoSelection({ providers: {} }), os.tmpdir(), ['video-openai']);
+  applyNativeVideoConfiguration(config, resolveNativeVideoSelection(category), os.tmpdir(), ['video-openai']);
   expect(config).toEqual({
     agents: { defaults: { model: 'chat/model', mediaModels: { image: 'image/model' } } },
-    plugins: { entries: { 'video-openai': { enabled: true } } },
+    plugins: { entries: { 'video-openai': { enabled: false, config: { retained: true } }, other: { enabled: true } } },
   });
 });
+
+test('keeps the adapter disabled before video settings are configured without disabling other native providers', () => {
+  const config: Record<string, unknown> = {
+    agents: { defaults: { mediaModels: { video: 'kie/model' } } },
+    plugins: { entries: { 'video-openai': { enabled: true }, kie: { enabled: true } } },
+  };
+  applyNativeVideoConfiguration(config, undefined, os.tmpdir(), ['video-openai', 'kie']);
+  expect(config).toMatchObject({
+    agents: { defaults: { mediaModels: { video: 'kie/model' } } },
+    plugins: { entries: { 'video-openai': { enabled: false }, kie: { enabled: true } } },
+  });
+});
+
+test.each([null, undefined])(
+  'clears managed video use even with an incomplete inventory: %j',
+  selection => {
+    const config: Record<string, unknown> = {
+      agents: { defaults: { mediaModels: { video: 'video-openai/old', image: 'other/image' } } },
+      plugins: {
+        allow: ['video-openai', 'unknown'],
+        deny: ['unknown'],
+        entries: { 'video-openai': { enabled: true }, unknown: { enabled: true } },
+      },
+      models: { providers: { unknown: { baseUrl: 'http://other.lan/v1' } } },
+    };
+
+    expect(applyNativeVideoConfiguration(config, selection, os.tmpdir(), null)).toBe(false);
+
+    expect(config).toEqual({
+      agents: { defaults: { mediaModels: { image: 'other/image' } } },
+      plugins: {
+        allow: ['video-openai', 'unknown'],
+        deny: ['unknown'],
+        entries: { 'video-openai': { enabled: false }, unknown: { enabled: true } },
+      },
+      models: { providers: { unknown: { baseUrl: 'http://other.lan/v1' } } },
+    });
+  },
+);
+
+test.each([{}, { 'video-openai': { enabled: false } }])(
+  'does not add or enable a video provider when the inventory is incomplete: %j',
+  entries => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uncertain-native-video-'));
+    directories.push(stateDir);
+    const config: Record<string, unknown> = { plugins: { entries } };
+    const original = structuredClone(config);
+    const selection = resolveNativeVideoSelection({
+      defaultProviderId: 'lan',
+      providers: {
+        lan: {
+          nativeVideoProvider: 'video-openai',
+          baseUrl: 'http://video.lan/v1',
+          apiKey: 'unused-video-key',
+          defaultModel: 'internal-video',
+        },
+      },
+    });
+
+    expect(applyNativeVideoConfiguration(config, selection, stateDir, null)).toBe(false);
+
+    expect(config).toEqual(original);
+    expect(fs.existsSync(path.join(stateDir, 'extension-secrets.json'))).toBe(false);
+  },
+);
 
 test.each([null, [], 'invalid', {}, { providers: null }, { providers: [] }, { providers: 'invalid' }, { providers: {}, defaultProviderId: 'missing' }, { providers: {}, defaultProviderId: 123 }])(
   'rejects malformed video categories rather than treating them as an explicit clear: %j', value => {

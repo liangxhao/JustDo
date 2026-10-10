@@ -19,9 +19,11 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import {
+  canToggleExtension,
   ExtensionGroupId,
   groupExtensionsByOwnership,
 } from '@/features/plugins/extensions/extensionGroups';
+import { getExtensionManagementLabel } from '@/features/plugins/extensions/extensionManagementLabel';
 import MarketplaceView from '@/features/plugins/marketplace/MarketplaceView';
 import OperationResultModal, {
   type OperationResult,
@@ -702,12 +704,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                     ) : (
                       <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
                         {group.extensions.map((extension, visualIndex) => {
-                          const canToggle = extension.management
-                            ? (extension.enabled
-                                ? extension.management.disable
-                                : extension.management.enable
-                              ).allowed
-                            : extension.canToggle === true;
+                          const canToggle = canToggleExtension(extension);
                           return (
                             <article
                               key={extension.id}
@@ -749,7 +746,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                                   ) : (
                                     <PluginLockedIndicator
                                       checked={extension.enabled}
-                                      label={i18nService.t('extensionToggleUnavailable')}
+                                      label={getExtensionManagementLabel(extension)}
                                     />
                                   )}
                                   {extension.error ? (
@@ -929,6 +926,12 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
               />
             )}
 
+            {!canToggleExtension(selectedExtension) && (
+              <div className="mt-3 rounded-xl bg-surface-raised px-3 py-2 text-xs text-secondary">
+                {getExtensionManagementLabel(selectedExtension)}
+              </div>
+            )}
+
             <div className="mt-6">
               {selectedExtension.error && (
                 <div
@@ -1076,7 +1079,8 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                   </div>
                 )}
               {selectedExtension.configurationFields.length > 0 &&
-                selectedExtension.management?.configure.allowed === false && (
+                selectedExtension.management?.configure.allowed === false &&
+                canToggleExtension(selectedExtension) && (
                   <div className="rounded-xl bg-surface-raised px-3 py-2 text-xs text-secondary">
                     {i18nService.t('pluginManagedActionUnavailable')}
                   </div>

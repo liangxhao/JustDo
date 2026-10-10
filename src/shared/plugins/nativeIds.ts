@@ -7,7 +7,7 @@ export const OpenClawExtensionId = {
   WORKBOARD: 'workboard',
   MEMORY_CORE: 'memory-core',
   CODE_MODE_QUICKJS: 'code-mode-quickjs',
-  GITHUB: 'github',
+  OPENAI: 'openai',
   PLAN_MODE: 'plan-mode',
   AGENT_TEAM: 'agent-team',
   SWARM_WORKFLOW: 'swarm-workflow',

@@ -3,7 +3,10 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
+import {
+  AgentRuntimeCodeMode,
+  createDefaultAgentRuntimeSettings,
+} from '../../../shared/agents/agentRuntimeSettings';
 import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shared/browser/browser';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
 import {
@@ -12,6 +15,7 @@ import {
 } from '../../providers/builtinModelCredential';
 import { setStoreGetter } from '../../providers/providerApiConfig';
 import {
+  listAvailableOpenClawExtensionIds,
   listManagedOpenClawPluginIds,
   OpenClawConfigSync,
   type OpenClawConfigSyncResult,
@@ -31,7 +35,17 @@ vi.mock('electron', () => ({
 const optionalInventory = vi.hoisted(() => ({ computerAvailable: false }));
 vi.mock('../../plugins/extensions/openclawLocalExtensions', async importOriginal => {
   const actual = await importOriginal<typeof import('../../plugins/extensions/openclawLocalExtensions')>();
-  const bundledIds = ['browser', 'workboard', 'memory-core', 'code-mode-quickjs', 'openai', 'mxc'];
+  const bundledIds = [
+    'browser',
+    'workboard',
+    'memory-core',
+    'code-mode-quickjs',
+    'openai',
+    'mxc',
+    'document-extract',
+    'web-readability',
+    'tts-local-cli',
+  ];
   const inventory = () => [
     ...bundledIds,
     ...(optionalInventory.computerAvailable ? ['cua-computer'] : []),
@@ -87,6 +101,104 @@ test.each(['full', 'minimal'])('%s sync preserves Gateway-owned worktree setting
 
 test('allows users to toggle agent-team independently of required extensions', () => {
   expect(listManagedOpenClawPluginIds()).not.toContain('agent-team');
+});
+
+test('locks required adapters while keeping document and web extraction user-toggleable', () => {
+  const managedIds = listManagedOpenClawPluginIds();
+  expect(managedIds).toEqual(expect.arrayContaining(['openai', 'code-mode-quickjs']));
+  expect(managedIds).not.toContain('document-extract');
+  expect(managedIds).not.toContain('web-readability');
+  expect(managedIds).toContain('video-openai');
+});
+
+test.each([
+  ['full', AgentRuntimeCodeMode.Off],
+  ['full', AgentRuntimeCodeMode.On],
+  ['minimal', AgentRuntimeCodeMode.Off],
+  ['minimal', AgentRuntimeCodeMode.On],
+] as const)('%s sync keeps required adapters available while Code Mode is %s', (mode, codeMode) => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-required-adapters-'));
+  temporaryDirectories.push(stateDir);
+  const configPath = path.join(stateDir, 'openclaw.json');
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      plugins: {
+        allow: ['browser'],
+        deny: ['openai', 'code-mode-quickjs', 'document-extract'],
+        entries: {
+          openai: { enabled: false, config: { personality: 'friendly' } },
+          'code-mode-quickjs': { enabled: false },
+          'document-extract': { enabled: false },
+          'web-readability': { enabled: false },
+          'agent-team': { enabled: false },
+          'stt-local-cli': { enabled: false },
+          'tts-local-cli': { enabled: false },
+        },
+      },
+    }),
+  );
+  const appConfig =
+    mode === 'full'
+      ? {
+          model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+          providers: {
+            'custom-provider': {
+              enabled: true,
+              apiKey: 'chat-test-key',
+              baseUrl: 'https://custom.example.test/v1',
+              apiFormat: 'openai',
+              models: [{ id: 'custom-model' }],
+            },
+          },
+        }
+      : {};
+  setStoreGetter(() => ({ get: () => appConfig }) as never);
+  const settings = createDefaultAgentRuntimeSettings();
+  settings.codeMode.mode = codeMode;
+  const sync = new OpenClawConfigSync({
+    engineManager: {
+      getConfigPath: () => configPath,
+      getStateDir: () => stateDir,
+      getDesiredVersion: () => '2026.9.8',
+    },
+    getCoworkConfig: () => ({
+      workingDirectory: '',
+      executionMode: 'local',
+      agentEngine: 'openclaw',
+    }),
+    getAgentRuntimeSettings: () => settings,
+    getAgents: () => [],
+  } as never);
+  for (const reason of [
+    'startup',
+    'app-config-change',
+    BuiltinModelSyncReason.AuthLogin,
+    BuiltinModelSyncReason.AuthLogout,
+  ]) {
+    expect(sync.sync(reason).ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.entries.openai).toEqual({
+      enabled: true,
+      config: { personality: 'friendly' },
+    });
+    expect(config.plugins.entries['code-mode-quickjs']).toEqual({ enabled: true });
+    expect(config.plugins.allow).toEqual(expect.arrayContaining(['openai', 'code-mode-quickjs']));
+    expect(config.plugins.deny).toEqual(['document-extract']);
+    for (const id of [
+      'document-extract',
+      'web-readability',
+      'agent-team',
+      'stt-local-cli',
+      'tts-local-cli',
+    ]) {
+      expect(config.plugins.entries[id].enabled).toBe(false);
+    }
+    expect(config.tools.codeMode).toMatchObject({
+      enabled: codeMode === AgentRuntimeCodeMode.On,
+      executor: 'quickjs',
+    });
+  }
 });
 
 const setActiveJwt = (): string => {
@@ -1162,8 +1274,9 @@ describe('OpenClaw auth logout config sync', () => {
       'swarm-workflow',
       'typesafe',
       'memory-core',
-      'code-mode-quickjs',
       'browser',
+      'openai',
+      'code-mode-quickjs',
       'stt-local-cli',
       'acpx',
       'automation-permission',
@@ -1264,8 +1377,9 @@ describe('OpenClaw auth logout config sync', () => {
       'swarm-workflow',
       'typesafe',
       'memory-core',
-      'code-mode-quickjs',
       'browser',
+      'openai',
+      'code-mode-quickjs',
       'stt-local-cli',
       'acpx',
       'ask-user-question',
@@ -1478,8 +1592,9 @@ describe('OpenClaw auth logout config sync', () => {
       'swarm-workflow',
       'typesafe',
       'memory-core',
-      'code-mode-quickjs',
       'browser',
+      'openai',
+      'code-mode-quickjs',
       'stt-local-cli',
       'acpx',
       'ask-user-question',
@@ -2157,8 +2272,63 @@ test.each(['full', 'minimal'])('%s sync maintains isolated intranet video config
   expect(sync.sync('app-config-change').ok).toBe(true);
   const cleared = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   expect(cleared.agents.defaults.mediaModels.video).toBeUndefined();
-  expect(cleared.plugins.entries['video-openai'].enabled).toBe(true);
+  expect(cleared.plugins.entries['video-openai'].enabled).toBe(false);
+  for (const reason of ['startup', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
+    expect(sync.sync(reason).ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.agents.defaults.mediaModels.video).toBeUndefined();
+    expect(config.plugins.entries['video-openai'].enabled).toBe(false);
+  }
+  category = { defaultProviderId: 'lan', providers: (category as { providers: unknown }).providers };
+  expect(sync.sync('app-config-change').ok).toBe(true);
+  const restored = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  expect(restored.agents.defaults.mediaModels.video.primary).toBe('video-openai/Wan-AI/internal-video');
+  expect(restored.plugins.entries['video-openai'].enabled).toBe(true);
 });
+
+test.each(['full', 'minimal'])(
+  '%s sync clears video use across lifecycle changes even with a standalone plugin inventory',
+  mode => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uncertain-video-sync-'));
+    temporaryDirectories.push(stateDir);
+    const configPath = path.join(stateDir, 'openclaw.json');
+    const pluginPath = path.join(stateDir, 'standalone-plugin.js');
+    fs.writeFileSync(pluginPath, 'export default { id: "standalone-plugin" };');
+    const existingPlugins = {
+      load: { paths: [pluginPath] },
+      allow: ['video-openai', 'standalone-plugin'],
+      deny: ['standalone-plugin'],
+      entries: { 'video-openai': { enabled: true }, 'standalone-plugin': { enabled: false } },
+    };
+    fs.writeFileSync(configPath, JSON.stringify({
+      agents: { defaults: { mediaModels: { video: 'video-openai/old' } } },
+      plugins: existingPlugins,
+    }));
+    expect(listAvailableOpenClawExtensionIds(stateDir, existingPlugins)).toBeNull();
+    const appConfig = mode === 'full' ? {
+      model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+      providers: { 'custom-provider': { enabled: true, apiKey: 'chat-test-key', baseUrl: 'http://chat.lan/v1', apiFormat: 'openai', models: [{ id: 'custom-model' }] } },
+    } : {};
+    setStoreGetter(() => ({ get: () => appConfig }) as never);
+    const sync = new OpenClawConfigSync({
+      engineManager: { getConfigPath: () => configPath, getStateDir: () => stateDir, getDesiredVersion: () => '2026.9.8' },
+      getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+      getAgents: () => [],
+      getNativeVideoCategory: () => ({ providers: {} }),
+    } as never);
+
+    for (const reason of ['app-config-change', 'startup', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
+      expect(sync.sync(reason).ok).toBe(true);
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(config.agents.defaults.mediaModels.video).toBeUndefined();
+      expect(config.plugins.entries['video-openai'].enabled).toBe(false);
+      expect(config.plugins.entries['standalone-plugin']).toEqual({ enabled: false });
+      expect(config.plugins.allow).toContain('standalone-plugin');
+      expect(config.plugins.deny).toEqual(['standalone-plugin']);
+      expect(config.plugins.load).toEqual({ paths: [pluginPath] });
+    }
+  },
+);
 
 test.each(['full', 'minimal'])('%s sync does not reactivate video plugins absent from the intranet runtime', mode => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-native-video-sync-'));

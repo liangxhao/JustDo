@@ -14,13 +14,18 @@ export interface ExtensionGroup {
 
 const groupOrder: ExtensionGroupId[] = [ExtensionGroupId.USER, ExtensionGroupId.SYSTEM];
 
+export const canToggleExtension = (extension: InstalledOpenClawExtension): boolean =>
+  extension.management
+    ? (extension.enabled ? extension.management.disable : extension.management.enable).allowed
+    : extension.canToggle === true;
+
 const resolveExtensionGroup = (extension: InstalledOpenClawExtension): ExtensionGroupId => {
   return extension.managed || extension.origin === 'bundled'
     ? ExtensionGroupId.SYSTEM
     : ExtensionGroupId.USER;
 };
 
-/** Separates system-owned plugins from extensions installed by the user. */
+/** Separates ownership groups and places locked system plugins after toggleable ones. */
 export const groupExtensionsByOwnership = (
   extensions: InstalledOpenClawExtension[],
 ): ExtensionGroup[] => {
@@ -33,6 +38,13 @@ export const groupExtensionsByOwnership = (
 
   return groupOrder.flatMap(id => {
     const groupedExtensions = groups.get(id);
-    return groupedExtensions ? [{ id, extensions: groupedExtensions }] : [];
+    if (!groupedExtensions) return [];
+    const orderedExtensions =
+      id === ExtensionGroupId.SYSTEM
+        ? [...groupedExtensions].sort(
+            (a, b) => Number(canToggleExtension(b)) - Number(canToggleExtension(a)),
+          )
+        : groupedExtensions;
+    return [{ id, extensions: orderedExtensions }];
   });
 };

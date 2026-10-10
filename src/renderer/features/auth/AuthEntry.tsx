@@ -183,7 +183,7 @@ export default function AuthEntry({ compact = false }: { compact?: boolean }) {
         {hasAccount && initial ? (
           <span
             aria-hidden="true"
-            className={`inline-flex shrink-0 items-center justify-center rounded-full border border-current bg-transparent font-medium leading-none ${compact ? 'h-6 w-6 text-xs' : 'h-7 w-7 text-sm'}`}
+            className={`inline-flex shrink-0 items-center justify-center rounded-full border border-current bg-transparent font-medium leading-none ${compact ? 'h-[18px] w-[18px] text-[10px]' : 'h-7 w-7 text-sm'}`}
           >
             {initial}
           </span>

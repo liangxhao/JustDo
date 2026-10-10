@@ -52,6 +52,16 @@ Main 每次保存重新读取 manifest 并限制可写字段，inventory 仅返�
 顶层 `env.NAME`，避免旧值覆盖 `env.vars.NAME`；系统环境提供的变量显示来源并禁止
 无效覆盖，用户修改系统变量后重启应用。权限或写入失败直接报错，不触发最小配置重建。
 
+系统内置扩展按开关权限排序，可手动切换的项在前，加锁项在后，各类内部保留原有顺序。
+锁定图标的提示及详情展示管理来源：模型、视频、决策模型、浏览器、电脑操控、运行参数、
+执行模式或应用基础组件。Renderer 根据 Main 返回的管理权限解释来源，不按插件名称自行限制操作。
+OpenAI Provider 和 QuickJS Code Mode 是应用托管适配器，通用插件入口禁止启停、配置和删除；
+完整、最小及登录状态同步均保持已打包适配器启用、加入 allowlist，并移除这两个插件的 deny，
+保留其他配置和权限。模型、图像及语音功能仍由各自设置与凭据控制；Code Mode 是否使用由运行参数控制。
+Document Extraction 和 Web Readability Extraction 保持上游默认启用，允许用户关闭；
+协作、记忆和本地语音可选插件继续保留用户明确禁用状态。TypeSafe 沿用模型设置的有条件托管；
+Video models 始终由视频模型设置托管，有有效默认模型时启用，未设置或清空默认模型时关闭。
+
 OpenClaw v2026.9.8 的插件管理 RPC 会直接应用运行时变更。CLI 导入等待最终运行时回执：Gateway 已应用则无需额外操作，仅保存到磁盘时调用 `plugins.reload`。CLI 卸载和启停回退后优先调用 `plugins.refresh`；原生热加载失败或出站代理策略变化时再申请 Gateway 重启。各场景和重启边界见 [Gateway reload audit](gateway-reload-audit.md)。
 
 导入尝试已交给原生安装器后，即使最终 reload／重启失败，结果也保留 Extension ID；Main 据此重读权威清单并通知消费者，让已提交的部分安装状态及其附带能力失效刷新，不按失败结果假定没有安装。
@@ -237,8 +247,9 @@ Extension 可用 outbound-header-policy.json 声明 HTTPS 目标、Header 名称
 
 ## OpenClaw 2026.9.8 integration
 
-The runtime retains the native QuickJS Code Mode executor and CUA desktop-control plugin,
-including explicit allowlist membership while preserving user disable state. Local
+The runtime retains the native QuickJS Code Mode executor as an enabled application-managed
+adapter; Runtime settings control Code Mode use. CUA desktop control retains explicit
+opt-in through its dedicated Settings switch. Both retain explicit allowlist membership. Local
 extensions import named SDK subpaths. Agent-owned Workshop collections remain
 Gateway-owned; the application does not recreate workspace-based skill ownership.
 See [upgrade audit](../openclaw-upgrades/v2026.9.8.md).

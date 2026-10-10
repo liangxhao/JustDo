@@ -73,7 +73,7 @@ describe('OpenClawExtensionImportService', () => {
     ).toBe(false);
   });
 
-  it.each(['automation-permission', 'cua-computer'])(
+  it.each(['automation-permission', 'cua-computer', 'openai', 'code-mode-quickjs', 'video-openai'])(
     'protects managed %s from user mutation',
     async extensionId => {
       const runCommand = vi.fn();

@@ -21,6 +21,7 @@ import {
 } from '../../providers/builtinModelCredential';
 import type { ProviderRawConfig } from '../../providers/providerApiConfig';
 import {
+  buildManagedCapabilityPluginEntries,
   buildManagedSwarmWorkflowPluginEntries,
   buildOpenClawHookConfig,
   listKnownOpenClawWorkspaceDirs,
@@ -1491,15 +1492,22 @@ test('disables missed-job catch-up by default while preserving an explicit opt-i
   expect(buildManagedOpenClawCronConfig({ skipMissedJobs: false }).skipMissedJobs).toBe(false);
 });
 
-  test.each([OpenClawExtensionId.CODE_MODE_QUICKJS])('retains %s in explicit allowlists while preserving disable', id => {
-    const defaults = buildDefaultOpenClawPluginEntries(candidate => candidate === id);
+test.each([OpenClawExtensionId.OPENAI, OpenClawExtensionId.CODE_MODE_QUICKJS])(
+  'keeps required %s available without changing unrelated plugin choices',
+  id => {
     const merged = mergeOpenClawPluginConfig(
-      applyDefaultOpenClawPluginEntries({ allow: [], entries: { [id]: { enabled: false } } }, defaults),
-      {}, Object.keys(defaults),
+      {
+        allow: [],
+        deny: [id, 'optional'],
+        entries: { [id]: { enabled: false }, optional: { enabled: false } },
+      },
+      buildManagedCapabilityPluginEntries(candidate => candidate === id),
     );
     expect(merged.allow).toContain(id);
-    expect(merged.entries).toEqual({ [id]: { enabled: false } });
-  });
+    expect(merged.deny).toEqual(['optional']);
+    expect(merged.entries).toEqual({ [id]: { enabled: true }, optional: { enabled: false } });
+  },
+);
 
 
 describe('native session cold storage configuration ownership', () => {

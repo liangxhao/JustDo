@@ -31,6 +31,7 @@ import {
   ProviderName,
 } from '../../../shared/providers';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
+import { OpenAiCompatibleMediaConfigProviderIds } from '../../../shared/providers/mediaGenerationModels';
 import { PermissionMode } from '../../../shared/security/approvals';
 import { WINDOWS_SANDBOX_BACKEND_ID } from '../../../shared/security/windowsSandbox';
 import { LOCAL_TTS_PROVIDER_ID } from '../../../shared/speech/localTts';
@@ -1154,6 +1155,11 @@ export const removeUnavailableOpenClawPluginRegistrations = (
   return cleaned;
 };
 
+const APPLICATION_CAPABILITY_PLUGIN_IDS = [
+  OpenClawExtensionId.OPENAI,
+  OpenClawExtensionId.CODE_MODE_QUICKJS,
+] as const;
+
 export const mergeOpenClawPluginConfig = (
   existingPlugins: Record<string, unknown>,
   managedEntries: Record<string, unknown>,
@@ -1197,6 +1203,10 @@ export const mergeOpenClawPluginConfig = (
       ...(isRecord(sourcePlugins.entries) ? sourcePlugins.entries : {}),
       ...managedEntries,
     }).map(([pluginId, value]) => {
+      if (APPLICATION_CAPABILITY_PLUGIN_IDS.some(id => id === pluginId) && isRecord(value)) {
+        const previous = isRecord(sourcePlugins.entries) ? sourcePlugins.entries[pluginId] : null;
+        if (isRecord(previous)) value = { ...previous, ...value };
+      }
       // Refresh application-owned paths and admission data without changing user toggles.
       if (
         (pluginId === OpenClawExtensionId.STT_LOCAL_CLI ||
@@ -1247,10 +1257,19 @@ export const mergeOpenClawPluginConfig = (
     : shouldPinInstalledExtensions
       ? [...new Set([...trustedIds, ...managedIds])]
       : null;
+  const requiredCapabilityIds = new Set<string>(
+    APPLICATION_CAPABILITY_PLUGIN_IDS.filter(id => {
+      const entry = managedEntries[id];
+      return isRecord(entry) && entry.enabled === true;
+    }),
+  );
   return {
     ...sourcePlugins,
     ...(managedIds.length > 0 ? { enabled: true } : {}),
     ...(allow ? { allow } : {}),
+    ...(Array.isArray(sourcePlugins.deny)
+      ? { deny: sourcePlugins.deny.filter(id => !requiredCapabilityIds.has(id)) }
+      : {}),
     entries: mergedEntries,
   };
 };
@@ -2105,11 +2124,18 @@ export const buildDefaultOpenClawPluginEntries = (
         // The prepared agent runtime rejects a selected memory plugin omitted from
         // an explicit allowlist, even if Gateway startup already loaded its service.
         [OpenClawExtensionId.MEMORY_CORE, true],
-        [OpenClawExtensionId.CODE_MODE_QUICKJS, true],
       ] as const
     )
       .filter(([id]) => isAvailable(id))
       .map(([id, enabled]) => [id, { enabled }]),
+  );
+
+/** Keep required adapters available; feature settings control their actual use. */
+export const buildManagedCapabilityPluginEntries = (
+  isAvailable: (id: string) => boolean = isBundledPluginAvailable,
+): Record<string, Record<string, unknown>> =>
+  Object.fromEntries(
+    APPLICATION_CAPABILITY_PLUGIN_IDS.filter(isAvailable).map(id => [id, { enabled: true }]),
   );
 
 export const buildManagedSwarmWorkflowPluginEntries = (
@@ -2146,6 +2172,10 @@ export const listManagedOpenClawPluginIds = (): string[] => [
     ...(isBundledPluginAvailable(OpenClawExtensionId.BROWSER) ? [OpenClawExtensionId.BROWSER] : []),
     ...(isBundledPluginAvailable(OpenClawExtensionId.CUA_COMPUTER)
       ? [OpenClawExtensionId.CUA_COMPUTER]
+      : []),
+    ...Object.keys(buildManagedCapabilityPluginEntries()),
+    ...(isBundledPluginAvailable(OpenAiCompatibleMediaConfigProviderIds.video)
+      ? [OpenAiCompatibleMediaConfigProviderIds.video]
       : []),
     ...readPreinstalledPluginIds().filter(
       id => !isUserToggleableBundledPlugin(id) && isBundledPluginAvailable(id),
@@ -2217,6 +2247,7 @@ export const buildManagedBundledExtensionEntries = (
   const embeddedBrowserEnabled = browserMode === BrowserMode.Embedded;
   return {
     [OpenClawExtensionId.BROWSER]: { enabled: !embeddedBrowserEnabled },
+    ...buildManagedCapabilityPluginEntries(),
     ...buildBundledExtensionEntries(
       isBundledPluginAvailable,
       agentRuntimeSettings.automation.approvalTimeoutMinutes,

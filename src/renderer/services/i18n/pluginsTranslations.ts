@@ -1,5 +1,18 @@
 export const pluginsTranslations = {
   zh: {
+    // Extension ownership
+    extensionManagedApplication: '由应用管理，不能在此更改启用状态',
+    extensionManagedCore: '应用基础组件，启用状态由应用管理',
+    extensionManagedModelAdapter: '应用基础组件，模型、图像和语音服务由设置管理',
+    extensionManagedCodeMode: '由设置 → 运行参数中的 Code Mode 开关控制使用',
+    extensionManagedDecisionModels: '由设置 → 模型 → 决策模型管理',
+    extensionManagedVideoModels: '由设置 → 模型 → 视频模型管理',
+    extensionManagedBrowser: '由设置 → 浏览器中的浏览器选择管理',
+    extensionManagedComputer: '由设置 → 电脑操控管理',
+    extensionManagedSandbox: '由任务执行模式和沙箱设置管理',
+    extensionManagedExternalAgents: '应用基础组件，外部助手连接和权限由设置管理',
+    extensionManagedPlanMode: '应用基础组件，计划模式由会话输入框控制',
+    extensionManagedApprovals: '应用基础组件，审批行为由会话执行权限控制',
     // Skills
     skills: '技能',
     searchSkills: '搜索技能',
@@ -172,6 +185,25 @@ export const pluginsTranslations = {
     mcpDetailEmpty: '暂无',
   },
   en: {
+    // Extension ownership
+    extensionManagedApplication:
+      'Managed by the application; its enabled state cannot be changed here',
+    extensionManagedCore:
+      'Core application component; its enabled state is managed by the application',
+    extensionManagedModelAdapter:
+      'Core application component; model, image and speech services are managed in Settings',
+    extensionManagedCodeMode: 'Usage is controlled by Code Mode in Settings → Runtime',
+    extensionManagedDecisionModels: 'Managed in Settings → Models → Decision models',
+    extensionManagedVideoModels: 'Managed in Settings → Models → Video models',
+    extensionManagedBrowser: 'Managed by the browser selection in Settings → Browser',
+    extensionManagedComputer: 'Managed in Settings → Computer control',
+    extensionManagedSandbox: 'Managed by the task execution mode and sandbox settings',
+    extensionManagedExternalAgents:
+      'Core application component; external agent connections and permissions are managed in Settings',
+    extensionManagedPlanMode:
+      'Core application component; plan mode is controlled from the chat composer',
+    extensionManagedApprovals:
+      'Core application component; approvals follow the chat execution permissions',
     // Skills
     skills: 'Skills',
     searchSkills: 'Search skills',
