@@ -1,3 +1,5 @@
+import { CoworkSessionSource } from '@shared/cowork/sessionSource';
+
 import type { CoworkSessionSummary } from '@/features/cowork/coworkTypes';
 export type { SessionDetailStats } from '@shared/cowork/sessionDetails';
 export { sumSessionDetailTokenUsage } from '@shared/cowork/sessionDetails';
@@ -11,6 +13,7 @@ export interface SessionDateGroup {
 
 export interface SidebarSessionBuckets {
   multica: CoworkSessionSummary[];
+  browserExtension: CoworkSessionSummary[];
   regular: CoworkSessionSummary[];
 }
 
@@ -38,14 +41,22 @@ export const partitionSidebarSessions = (
   sessions: CoworkSessionSummary[],
 ): SidebarSessionBuckets => {
   const multica: CoworkSessionSummary[] = [];
+  const browserExtension: CoworkSessionSummary[] = [];
   const regular: CoworkSessionSummary[] = [];
 
   for (const session of sessions) {
-    (session.external?.origin === 'multica' ? multica : regular).push(session);
+    if (session.external?.origin === 'multica') {
+      multica.push(session);
+    } else if (session.source === CoworkSessionSource.BrowserExtension) {
+      browserExtension.push(session);
+    } else {
+      regular.push(session);
+    }
   }
 
   return {
     multica: multica.sort(sortByRecentActivity),
+    browserExtension: browserExtension.sort(sortByRecentActivity),
     regular,
   };
 };

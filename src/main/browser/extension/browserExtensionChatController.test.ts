@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { CoworkSessionSource } from '../../../shared/cowork/sessionSource';
 import {
   BrowserExtensionChatController,
   buildBrowserExtensionContext,
@@ -729,6 +730,65 @@ describe('BrowserExtensionChatController', () => {
     expect(finishSessionRun).not.toHaveBeenCalled();
   });
 
+  it.each([false, true])(
+    'marks only newly created conversations when sending from the extension (existing=%s)',
+    async existing => {
+      const desktop = {
+        id: 'desktop',
+        agentId: 'main',
+        cwd: process.cwd(),
+        permissionMode: 'auto',
+      };
+      const browser = { ...desktop, id: 'browser', source: CoworkSessionSource.BrowserExtension };
+      const createSession = vi.fn(() => browser);
+      const updateSession = vi.fn();
+      const controller = new BrowserExtensionChatController({
+        ensureEngineRunning: async () => ({ phase: 'running' }) as never,
+        getRouter: () =>
+          ({
+            isSessionActive: () => false,
+            startSession: vi.fn((_id, _prompt, options) => {
+              options.onAccepted();
+              return new Promise<void>(() => undefined);
+            }),
+          }) as never,
+        getRuntime: () => null,
+        getStore: () =>
+          ({
+            getConfig: () => ({ workingDirectory: process.cwd(), permissionMode: 'auto' }),
+            getSession: () => desktop,
+            createSession,
+            updateSession,
+            beginSessionRun: () => ({ id: 'timing' }),
+          }) as never,
+      });
+
+      const result = await controller.sendMessage({
+        message: 'Hello',
+        ...(existing ? { sessionId: desktop.id } : {}),
+      });
+
+      expect(result.sessionId).toBe(existing ? desktop.id : browser.id);
+      if (existing) {
+        expect(createSession).not.toHaveBeenCalled();
+        expect(desktop).not.toHaveProperty('source');
+      } else {
+        expect(createSession).toHaveBeenCalledWith(
+          'Hello',
+          process.cwd(),
+          'local',
+          [],
+          'main',
+          'auto',
+          undefined,
+          undefined,
+          CoworkSessionSource.BrowserExtension,
+        );
+      }
+      expect(updateSession).not.toHaveBeenCalled();
+    },
+  );
+
   it('retains the real router error when the accepted execution resolves', async () => {
     let resolveExecution!: () => void;
     let reportRouterError!: (sessionId: string, error: string) => void;
@@ -860,7 +920,7 @@ describe('BrowserExtensionChatController', () => {
   });
 });
 
-it('creates main threads without persisting the obsolete profile model', async () => {
+it('marks newly created extension threads while inheriting the application model', async () => {
   const createSession = vi.fn(() => ({ id: 'new-thread' }));
   const controller = new BrowserExtensionChatController({
     ensureEngineRunning: vi.fn(),
@@ -882,6 +942,8 @@ it('creates main threads without persisting the obsolete profile model', async (
     'main',
     'auto',
     undefined,
+    undefined,
+    CoworkSessionSource.BrowserExtension,
   );
 });
 

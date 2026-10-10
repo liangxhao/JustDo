@@ -189,6 +189,7 @@ export const chatTranslations = {
     // JustDo
     coworkHistory: '最近对话',
     groupedSessions: '对话分组',
+    browserExtensionSessionGroup: 'Chrome',
     coworkNoSessions: '暂无最近对话',
     sessionGroupPinned: '置顶',
     sessionGroupToday: '今天',
@@ -915,6 +916,7 @@ export const chatTranslations = {
     // JustDo
     coworkHistory: 'Recent Chats',
     groupedSessions: 'Groups',
+    browserExtensionSessionGroup: 'Chrome',
     coworkNoSessions: 'No chats yet',
     sessionGroupPinned: 'Pinned',
     sessionGroupToday: 'Today',

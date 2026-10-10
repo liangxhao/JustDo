@@ -150,6 +150,7 @@ export class SqliteStore {
         active_skill_ids TEXT,
         agent_id TEXT NOT NULL DEFAULT 'main',
         model_ref TEXT,
+        source TEXT,
         forked_from_session_id TEXT REFERENCES cowork_sessions(id) ON DELETE SET NULL,
         forked_from_session_title TEXT,
         forked_from_entry_id TEXT,
@@ -160,6 +161,7 @@ export class SqliteStore {
     `);
     this.ensureColumn('cowork_sessions', 'permission_mode', 'TEXT');
     this.ensureColumn('cowork_sessions', 'model_ref', 'TEXT');
+    this.ensureColumn('cowork_sessions', 'source', 'TEXT');
     this.ensureColumn('cowork_sessions', 'native_session_key', 'TEXT');
     this.ensureColumn('cowork_sessions', 'native_parent_session_id', 'TEXT');
     this.db.exec(

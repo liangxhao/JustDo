@@ -5,6 +5,7 @@ import path from 'path';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { CoworkPlanHandoffState } from '../../shared/cowork/interactions/planHandoff';
+import { CoworkSessionSource } from '../../shared/cowork/sessionSource';
 import { PRODUCT_NAME_LOWERCASE } from '../../shared/productMetadata';
 import { DB_FILENAME } from '../core/appConstants';
 
@@ -28,6 +29,47 @@ function createTempDir(): string {
   tempDirs.push(dir);
   return dir;
 }
+
+test('retains extension creation source across updates and database reopen without creating user groups', () => {
+  const directory = createTempDir();
+  const initial = SqliteStore.create(directory);
+  const cowork = new CoworkStore(initial.getDatabase());
+  const desktop = cowork.createSession('Desktop', '/tmp');
+  const extension = cowork.createSession(
+    'Browser',
+    '/tmp',
+    'local',
+    [],
+    'main',
+    'auto',
+    undefined,
+    undefined,
+    CoworkSessionSource.BrowserExtension,
+  );
+  expect(extension.source).toBe(CoworkSessionSource.BrowserExtension);
+  cowork.updateSession(extension.id, { title: 'Renamed browser conversation' });
+  cowork.setSessionPinned(extension.id, true);
+  initial.close();
+
+  const reopened = SqliteStore.create(directory);
+  try {
+    const loaded = new CoworkStore(reopened.getDatabase());
+    expect(loaded.getSession(extension.id)).toMatchObject({
+      source: CoworkSessionSource.BrowserExtension,
+      title: 'Renamed browser conversation',
+      pinned: true,
+    });
+    for (const sessions of [loaded.listSessions(), loaded.listSessions('main')]) {
+      expect(sessions.find(session => session.id === extension.id)?.source).toBe(
+        CoworkSessionSource.BrowserExtension,
+      );
+      expect(sessions.find(session => session.id === desktop.id)?.source).toBeUndefined();
+    }
+    expect(reopened.getDatabase().prepare('SELECT id FROM session_groups').all()).toEqual([]);
+  } finally {
+    reopened.close();
+  }
+});
 
 test('persists builtin references without changing unrelated legacy credentials', () => {
   const store = SqliteStore.create(createTempDir());
@@ -237,6 +279,7 @@ test('adds compatible session metadata, keeps product sessions, and removes the 
   expect(columns.map(column => column.name)).toEqual(
     expect.arrayContaining([
       'model_ref',
+      'source',
       'forked_from_session_id',
       'forked_from_session_title',
       'forked_from_entry_id',
@@ -251,6 +294,7 @@ test('adds compatible session metadata, keeps product sessions, and removes the 
   ).find(key => key.from === 'forked_from_session_id');
   expect(forkForeignKey).toMatchObject({ table: 'cowork_sessions', on_delete: 'SET NULL' });
   expect(keptRow).toEqual({ id: 'kept-session' });
+  expect(new CoworkStore(migratedDb).getSession('kept-session')?.source).toBeUndefined();
   expect(messageCacheTable).toBeUndefined();
   expect(resultColumns.map(column => column.name)).toContain('system_managed');
   expect(keptResult).toEqual({ run_id: 'kept-result', system_managed: 0 });

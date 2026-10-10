@@ -26,6 +26,7 @@ type CoworkAttachmentPayload = import('../../shared/cowork/attachments').CoworkA
 type BeginSessionRunInput = import('../../shared/cowork/sessionRun').BeginSessionRunInput;
 type SessionRunBeginErrorCode = import('../../shared/cowork/sessionRun').SessionRunBeginErrorCode;
 type SessionRunTiming = import('../../shared/cowork/sessionRun').SessionRunTiming;
+type CoworkSessionSource = import('../../shared/cowork/sessionSource').CoworkSessionSource;
 type SessionRuntimeSnapshot = import('../../shared/cowork/sessionRun').SessionRuntimeSnapshot;
 type ExternalSessionMetadata = import('../../shared/integrations/multica').ExternalSessionMetadata;
 type MulticaIntegrationResult =
@@ -188,6 +189,7 @@ interface CoworkSession {
     entryId: string;
   };
   external?: ExternalSessionMetadata;
+  source?: CoworkSessionSource;
   createdAt: number;
   updatedAt: number;
 }
@@ -201,6 +203,7 @@ interface CoworkSessionSummary {
   groupId?: string | null;
   agentId?: string;
   external?: ExternalSessionMetadata;
+  source?: CoworkSessionSource;
   createdAt: number;
   updatedAt: number;
 }

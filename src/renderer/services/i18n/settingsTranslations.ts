@@ -455,7 +455,7 @@ export const settingsTranslations = {
     multicaToggle: '启用或停用 Multica 集成',
     multicaRefresh: '重新检测',
     multicaSessionBadge: 'Multica',
-    multicaSessionGroup: 'Multica 会话',
+    multicaSessionGroup: 'Multica',
     multicaSessionReadOnly: '此会话由 Multica 管理，仅供查看。请回到 Multica 继续或停止任务。',
     agentRuntimeRetry: '重新加载',
     agentRuntimeUnsaved: '有未保存更改',
@@ -1831,7 +1831,7 @@ export const settingsTranslations = {
     multicaToggle: 'Enable or disable Multica integration',
     multicaRefresh: 'Recheck',
     multicaSessionBadge: 'Multica',
-    multicaSessionGroup: 'Multica sessions',
+    multicaSessionGroup: 'Multica',
     multicaSessionReadOnly:
       'This session is managed by Multica and is read-only here. Continue or stop it in Multica.',
     agentRuntimeRetry: 'Reload',

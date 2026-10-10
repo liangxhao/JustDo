@@ -7,6 +7,7 @@ import {
   InformationCircleIcon,
   Square2StackIcon,
 } from '@heroicons/react/24/outline';
+import { CoworkSessionSource } from '@shared/cowork/sessionSource';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import CoworkSessionDetailsModal from '@/features/cowork/components/sessions/CoworkSessionDetailsModal';
@@ -102,7 +103,9 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: session.id,
     data: { session },
-    disabled: session.external?.readOnly === true,
+    disabled:
+      session.external?.readOnly === true ||
+      session.source === CoworkSessionSource.BrowserExtension,
   });
 
   useEffect(() => {
@@ -454,7 +457,9 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
               disabled: isRuntimeRunning || !!session.nativeSessionKey,
               title: session.nativeSessionKey
                 ? i18nService.t('worktreeCopyUnavailable')
-                : isRuntimeRunning ? i18nService.t('coworkCopyWaitForCompletion') : undefined,
+                : isRuntimeRunning
+                  ? i18nService.t('coworkCopyWaitForCompletion')
+                  : undefined,
             },
           ]
         : []),

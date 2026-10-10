@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { BrowserExtensionStreamEvent } from '../../../shared/browser/browserExtensionStream';
 import { parseCoworkAttachments } from '../../../shared/cowork/attachments';
+import { CoworkSessionSource } from '../../../shared/cowork/sessionSource';
 import { normalizeAgentEvent, normalizeChatEvent } from '../../../shared/openclaw/agentEvent';
 import type {
   OpenClawAssistantMediaRequest,
@@ -428,7 +429,8 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
     if (!history) throw new Error('Unable to load conversation history.');
     const projected = history.messages.map(message => ({
       message,
-      pendingInput: undefined as { id: string; state: string; runId?: string; incomplete?: boolean } | undefined,
+      pendingInput: undefined as
+        { id: string; state: string; runId?: string; incomplete?: boolean } | undefined,
     }));
     for (const pending of history.pendingInputs ?? []) {
       if (pending.message.display === false) continue;
@@ -708,6 +710,8 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
       agentId,
       resolvePermissionMode(config.permissionMode),
       undefined,
+      undefined,
+      CoworkSessionSource.BrowserExtension,
     );
   }
 }

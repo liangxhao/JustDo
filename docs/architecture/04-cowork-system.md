@@ -19,6 +19,11 @@ Cowork 将桌面产品会话映射到 OpenClaw 原生执行。本文以当前 se
 
 Redux cowork 管理列表、草稿、交互和产品状态；Lit 控制器维护当前历史窗口及实时投影。Thinking、Tool、Content 的唯一持久来源是 Gateway，不能写回 Main 或 Redux transcript cache。
 
+Chrome 扩展新建会话的创建入口保存在产品 `source` 字段，完整会话与列表摘要都携带此元数据。
+侧边栏将 `source: browser-extension` 与 Multica 外部映射分别投影为默认收起的来源分组，
+不混入最近会话或用户分组，选中对应会话时自动展开。从扩展继续桌面会话不会更改创建来源；
+来源分组不改变会话权限或原生历史所有权。
+
 ## 3. 首轮发送与准入前取消
 
 ```mermaid

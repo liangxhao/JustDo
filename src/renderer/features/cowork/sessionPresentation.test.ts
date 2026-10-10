@@ -1,3 +1,4 @@
+import { CoworkSessionSource } from '@shared/cowork/sessionSource';
 import { describe, expect, it } from 'vitest';
 
 import type { CoworkSessionSummary } from '@/features/cowork/coworkTypes';
@@ -111,7 +112,27 @@ describe('sidebar source grouping', () => {
 
     expect(partitionSidebarSessions([olderMultica, local, newerMultica])).toEqual({
       multica: [newerMultica, olderMultica],
+      browserExtension: [],
       regular: [local],
     });
+  });
+
+  it('keeps extension sessions out of recent and user groups regardless of title or pin', () => {
+    const local = { ...summary('local', 4), title: 'Chrome extension sessions' };
+    const older = { ...summary('browser-old', 1), source: CoworkSessionSource.BrowserExtension };
+    const newer = {
+      ...summary('browser-new', 2, true),
+      source: CoworkSessionSource.BrowserExtension,
+      groupId: 'user-group',
+    };
+    const sameActivity = { ...older, id: 'browser-tie', createdAt: 3 };
+    const input = [older, local, sameActivity, newer];
+
+    expect(partitionSidebarSessions(input)).toEqual({
+      multica: [],
+      browserExtension: [newer, sameActivity, older],
+      regular: [local],
+    });
+    expect(input).toEqual([older, local, sameActivity, newer]);
   });
 });

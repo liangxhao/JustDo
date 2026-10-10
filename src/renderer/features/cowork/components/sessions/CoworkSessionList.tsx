@@ -304,17 +304,32 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   );
   const groups = useSelector(selectGroups);
   const expandedGroupIds = useSelector(selectExpandedGroupIds);
-  const { multica: multicaSessions, regular: regularSessions } = useMemo(
-    () => partitionSidebarSessions(sessions),
-    [sessions],
-  );
-  const [isMulticaGroupExpanded, setIsMulticaGroupExpanded] = useState(false);
+  const {
+    multica: multicaSessions,
+    browserExtension: browserExtensionSessions,
+    regular: regularSessions,
+  } = useMemo(() => partitionSidebarSessions(sessions), [sessions]);
+  const [expandedSourceGroupIds, setExpandedSourceGroupIds] = useState<Set<string>>(new Set());
+  const currentSourceGroupId = multicaSessions.some(session => session.id === currentSessionId)
+    ? 'multica'
+    : browserExtensionSessions.some(session => session.id === currentSessionId)
+      ? 'browserExtension'
+      : null;
+  const sourceGroups = [
+    { id: 'multica', sessions: multicaSessions, label: 'multicaSessionGroup', color: '#6f7ed8' },
+    {
+      id: 'browserExtension',
+      sessions: browserExtensionSessions,
+      label: 'browserExtensionSessionGroup',
+      color: '#359daf',
+    },
+  ];
 
   useEffect(() => {
-    if (multicaSessions.some(session => session.id === currentSessionId)) {
-      setIsMulticaGroupExpanded(true);
+    if (currentSourceGroupId) {
+      setExpandedSourceGroupIds(current => new Set(current).add(currentSourceGroupId));
     }
-  }, [currentSessionId, multicaSessions]);
+  }, [currentSessionId, currentSourceGroupId]);
 
   // DnD state
   const [activeSession, setActiveSession] = useState<CoworkSessionSummary | null>(null);
@@ -367,7 +382,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
 
     // Session moving
     const sessionId = activeId;
-    if (multicaSessions.some(session => session.id === sessionId)) return;
+    if (!regularSessions.some(session => session.id === sessionId)) return;
     if (targetId.startsWith('group-') && !targetId.startsWith('group-drag-')) {
       const groupId = targetId.replace('group-', '');
       await coworkService.moveSessionToGroup(sessionId, groupId);
@@ -511,48 +526,57 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
             </button>
           )}
         </div>
-        {multicaSessions.length > 0 && (
-          <>
-            <button
-              type="button"
-              className="session-group-header w-full"
-              onClick={() => setIsMulticaGroupExpanded(expanded => !expanded)}
-              aria-expanded={isMulticaGroupExpanded}
-            >
-              <span
-                className="group-indicator"
-                style={{ '--group-color': '#6f7ed8' } as React.CSSProperties}
-                aria-hidden="true"
+        {sourceGroups.map(sourceGroup => {
+          if (sourceGroup.sessions.length === 0) return null;
+          const isExpanded = expandedSourceGroupIds.has(sourceGroup.id);
+          return (
+            <React.Fragment key={sourceGroup.id}>
+              <button
+                type="button"
+                className="session-group-header w-full"
+                onClick={() =>
+                  setExpandedSourceGroupIds(current => {
+                    const next = new Set(current);
+                    if (next.has(sourceGroup.id)) next.delete(sourceGroup.id);
+                    else next.add(sourceGroup.id);
+                    return next;
+                  })
+                }
+                aria-expanded={isExpanded}
               >
-                <ChatBubbleLeftRightIcon />
-              </span>
-              <span className="group-name">{i18nService.t('multicaSessionGroup')}</span>
-              <span className="group-count">{multicaSessions.length}</span>
-              <ChevronRightIcon
-                className={`chevron-icon ${isMulticaGroupExpanded ? 'rotate-90' : ''}`}
+                <span
+                  className="group-indicator"
+                  style={{ '--group-color': sourceGroup.color } as React.CSSProperties}
+                  aria-hidden="true"
+                >
+                  <ChatBubbleLeftRightIcon />
+                </span>
+                <span className="group-name">{i18nService.t(sourceGroup.label)}</span>
+                <span className="group-count">{sourceGroup.sessions.length}</span>
+                <ChevronRightIcon className={`chevron-icon ${isExpanded ? 'rotate-90' : ''}`} />
+              </button>
+              <SessionGroupPanel
+                sessions={sourceGroup.sessions}
+                groups={[]}
+                isExpanded={isExpanded}
+                currentSessionId={currentSessionId}
+                unreadSessionIds={unreadSessionIds}
+                runtimeRunningSessionIds={runtimeRunningSessionIds}
+                isBatchMode={isBatchMode}
+                selectedIds={selectedIds}
+                onSelectSession={onSelectSession}
+                onDeleteSession={onDeleteSession}
+                onRename={onRenameSession}
+                onExportSession={onExportSession}
+                onCopySession={onCopySession}
+                onCollaborationSession={onCollaborationSession}
+                onTogglePinned={handleTogglePinned}
+                onToggleSelection={onToggleSelection}
+                onEnterBatchMode={onEnterBatchMode}
               />
-            </button>
-            <SessionGroupPanel
-              sessions={multicaSessions}
-              groups={[]}
-              isExpanded={isMulticaGroupExpanded}
-              currentSessionId={currentSessionId}
-              unreadSessionIds={unreadSessionIds}
-              runtimeRunningSessionIds={runtimeRunningSessionIds}
-              isBatchMode={isBatchMode}
-              selectedIds={selectedIds}
-              onSelectSession={onSelectSession}
-              onDeleteSession={onDeleteSession}
-              onRename={onRenameSession}
-              onExportSession={onExportSession}
-              onCopySession={onCopySession}
-              onCollaborationSession={onCollaborationSession}
-              onTogglePinned={handleTogglePinned}
-              onToggleSelection={onToggleSelection}
-              onEnterBatchMode={onEnterBatchMode}
-            />
-          </>
-        )}
+            </React.Fragment>
+          );
+        })}
         {groups.length > 0 && (
           <>
             {groups.map((group, index) => {

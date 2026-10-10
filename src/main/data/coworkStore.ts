@@ -29,6 +29,7 @@ import type {
   SessionRunState,
   SessionRunTiming,
 } from '../../shared/cowork/sessionRun';
+import { CoworkSessionSource } from '../../shared/cowork/sessionSource';
 import { TASK_WORKSPACE_DIRECTORY } from '../../shared/cowork/taskWorkspace';
 import {
   type ExternalAgentSettings,
@@ -134,6 +135,7 @@ export interface CoworkSession {
   handoffSource?: import('../../shared/agents/agents').AgentHandoffSource;
   forkSource?: CoworkSessionForkSource;
   external?: ExternalSessionMetadata;
+  source?: CoworkSessionSource;
   nativeSessionKey?: string;
   nativeParentSessionId?: string;
   createdAt: number;
@@ -155,6 +157,7 @@ export interface CoworkSessionSummary {
   groupId: string | null;
   agentId: string;
   external?: ExternalSessionMetadata;
+  source?: CoworkSessionSource;
   createdAt: number;
   updatedAt: number;
 }
@@ -614,6 +617,7 @@ export class CoworkStore {
     permissionMode: PermissionMode = DEFAULT_PERMISSION_MODE,
     modelRef?: string,
     forkSource?: { sessionId: string; title: string; entryId: string },
+    source?: CoworkSessionSource,
   ): CoworkSession {
     const id = uuidv4();
     const now = Date.now();
@@ -624,9 +628,9 @@ export class CoworkStore {
       INSERT INTO cowork_sessions (
         id, title, status, cwd, execution_mode, permission_mode, active_skill_ids, agent_id,
         model_ref, forked_from_session_id, forked_from_session_title, forked_from_entry_id,
-        pinned, created_at, updated_at
+        source, pinned, created_at, updated_at
       )
-      VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+      VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
     `,
       )
       .run(
@@ -641,6 +645,7 @@ export class CoworkStore {
         forkSource?.sessionId ?? null,
         forkSource?.title ?? null,
         forkSource?.entryId ?? null,
+        source ?? null,
         now,
         now,
       );
@@ -657,6 +662,7 @@ export class CoworkStore {
       agentId,
       ...(modelRef?.trim() ? { modelRef: modelRef.trim() } : {}),
       ...(forkSource ? { forkSource: { ...forkSource } } : {}),
+      ...(source ? { source } : {}),
       createdAt: now,
       updatedAt: now,
     };
@@ -674,6 +680,7 @@ export class CoworkStore {
       active_skill_ids?: string | null;
       agent_id?: string | null;
       model_ref?: string | null;
+      source?: string | null;
       native_session_key?: string | null;
       native_parent_session_id?: string | null;
       forked_from_session_id?: string | null;
@@ -693,7 +700,7 @@ export class CoworkStore {
       SELECT
         session.id, session.title, session.status, session.pinned, session.cwd,
         session.execution_mode, session.permission_mode, session.active_skill_ids,
-        session.agent_id, session.model_ref, session.native_session_key,
+        session.agent_id, session.model_ref, session.source, session.native_session_key,
         session.native_parent_session_id, session.forked_from_session_id,
         session.forked_from_session_title, session.forked_from_entry_id,
         session.handoff_from_session_title,
@@ -758,6 +765,7 @@ export class CoworkStore {
           }
         : {}),
       ...(external ? { external } : {}),
+      ...(row.source === CoworkSessionSource.BrowserExtension ? { source: row.source } : {}),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -889,6 +897,7 @@ export class CoworkStore {
       pinned: number | null;
       agent_id: string | null;
       group_id: string | null;
+      source: string | null;
       created_at: number;
       updated_at: number;
     }
@@ -897,7 +906,7 @@ export class CoworkStore {
     if (agentId) {
       rows = this.getAll<SessionSummaryRow>(
         `
-        SELECT id, title, status, pinned, agent_id, group_id, created_at, updated_at, native_session_key
+        SELECT id, title, status, pinned, agent_id, group_id, source, created_at, updated_at, native_session_key
         FROM cowork_sessions
         WHERE agent_id = ?
         ORDER BY pinned DESC, updated_at DESC
@@ -906,7 +915,7 @@ export class CoworkStore {
       );
     } else {
       rows = this.getAll<SessionSummaryRow>(`
-        SELECT id, title, status, pinned, agent_id, group_id, created_at, updated_at, native_session_key
+        SELECT id, title, status, pinned, agent_id, group_id, source, created_at, updated_at, native_session_key
         FROM cowork_sessions
         ORDER BY pinned DESC, updated_at DESC
       `);
@@ -922,6 +931,7 @@ export class CoworkStore {
       agentId: row.agent_id || 'main',
       groupId: row.group_id,
       ...(externalBySessionId.get(row.id) ? { external: externalBySessionId.get(row.id) } : {}),
+      ...(row.source === CoworkSessionSource.BrowserExtension ? { source: row.source } : {}),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));

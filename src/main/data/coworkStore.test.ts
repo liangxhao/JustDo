@@ -40,6 +40,7 @@ function setupDb(): void {
       execution_mode TEXT NOT NULL DEFAULT 'local',
       permission_mode TEXT,
       model_ref TEXT,
+      source TEXT,
       native_session_key TEXT,
       native_parent_session_id TEXT,
       forked_from_session_id TEXT REFERENCES cowork_sessions(id) ON DELETE SET NULL,
