@@ -874,6 +874,14 @@ interface IElectronAPI {
     onStateChanged: (callback: (state: WindowState) => void) => () => void;
   };
   workspaceWindow: {
+    getWindowState: (generation: string) => Promise<
+      import('../../shared/cowork/workspaceWindow').WorkspaceNativeWindowState | null
+    >;
+    control: (
+      generation: string,
+      action: import('../../shared/cowork/workspaceWindow').WorkspaceWindowControl,
+      position?: { x: number; y: number },
+    ) => void;
     onInvalidated: (
       callback: (state: import('../../shared/cowork/workspaceWindow').WorkspaceWindowState) => void,
     ) => () => void;

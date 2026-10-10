@@ -52,3 +52,19 @@ it('keeps generation and payload validation owned by the window manager', () => 
   mocks.handlers.get(WorkspaceWindowIpc.Update)!(event(10, 21), { generation: 'current' });
   expect(updateLayout).not.toHaveBeenCalled();
 });
+
+it('admits native controls only from the registered owner main frame', () => {
+  const control = vi.fn(), getWindowState = vi.fn(() => ({ isMaximized: true }));
+  mocks.get.mockReturnValue({ control, getWindowState });
+  mocks.handlers.get(WorkspaceWindowIpc.Control)!(event(10, 21), 'current', 'close');
+  expect(control).not.toHaveBeenCalled();
+  expect(mocks.handlers.get(WorkspaceWindowIpc.GetWindowState)!(event(10, 21), 'current')).toBeNull();
+  expect(getWindowState).not.toHaveBeenCalled();
+  mocks.handlers.get(WorkspaceWindowIpc.Control)!(event(), 'current', 'minimize');
+  expect(control).toHaveBeenCalledWith('current', 'minimize', undefined);
+  expect(mocks.handlers.get(WorkspaceWindowIpc.GetWindowState)!(event(), 'current')).toEqual({ isMaximized: true });
+  mocks.get.mockReturnValue(undefined);
+  expect(mocks.handlers.get(WorkspaceWindowIpc.GetWindowState)!(event(999), 'current')).toBeNull();
+  mocks.handlers.get(WorkspaceWindowIpc.Control)!(event(999), 'current', 'close');
+  expect(control).toHaveBeenCalledTimes(1);
+});

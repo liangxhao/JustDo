@@ -68,6 +68,7 @@ import {
   shouldAllowAudioMediaRequest,
   shouldAllowSystemAudioCapture,
 } from './mediaPermission';
+import { getWindowChromeOptions } from './windowChrome';
 import { WorkspaceWindowManager } from './workspaceWindowManager';
 
 type MainWindowFactoryOptions = {
@@ -84,6 +85,7 @@ type MainWindowFactoryOptions = {
     username: string;
   } | null;
   getTitleBarOverlay: () => Electron.TitleBarOverlay;
+  showSystemMenu: (window: BrowserWindow, position?: { x: number; y: number }) => void;
   isDev: boolean;
   isMac: boolean;
   isQuitting: () => boolean;
@@ -125,20 +127,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     height: 800,
     title: options.appName,
     icon: options.getIconPath(),
-    ...(options.isMac
-      ? {
-          titleBarStyle: 'hiddenInset' as const,
-          trafficLightPosition: { x: 12, y: 20 },
-        }
-      : options.isWindows
-        ? {
-            frame: false,
-            titleBarStyle: 'hidden' as const,
-          }
-        : {
-            titleBarStyle: 'hidden' as const,
-            titleBarOverlay: options.getTitleBarOverlay(),
-          }),
+    ...getWindowChromeOptions(options.isMac, options.isWindows, options.getTitleBarOverlay()),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -1056,7 +1045,11 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       ? new URL('workspace.html', `${options.devServerUrl.replace(/\/+$/, '')}/`).toString()
       : pathToFileURL(path.join(__dirname, '../dist/workspace.html')).toString(),
     icon: options.getIconPath(),
-    backgroundColor: options.getBackgroundColor(),
+    getBackgroundColor: options.getBackgroundColor,
+    getTitleBarOverlay: options.getTitleBarOverlay,
+    isMac: options.isMac,
+    isWindows: options.isWindows,
+    showSystemMenu: options.showSystemMenu,
     isQuitting: options.isQuitting,
     configureHost: configureBrowserHost,
     openExternal: openExternalLink,

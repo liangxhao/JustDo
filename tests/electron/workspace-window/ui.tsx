@@ -1,21 +1,24 @@
-import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
+import '@/libs/openclaw-chat/components/justdo-chat';
+import '@/theme/css/themes.css';
+
+import { Terminal } from '@xterm/xterm';
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js';
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
+import WindowHeader from '@/app/shell/window/WindowHeader';
+import { WorkspaceNotifications } from '@/app/shell/WorkspaceNotifications';
 import { MessageBrowserEvent } from '@/features/browser/messageBrowserLinks';
 import CoworkDisplayPanel from '@/features/cowork/components/display/CoworkDisplayPanel';
 import DisplayTabContextMenu from '@/features/cowork/components/display/DisplayTabContextMenu';
 import { useDraggableModal } from '@/features/cowork/components/shared/useDraggableModal';
+import { CoworkPet } from '@/features/cowork/components/status/CoworkPet';
 import SwarmWorkflowPanel from '@/features/cowork/components/swarm-workflow/SwarmWorkflowPanel';
 import TerminalPanel from '@/features/cowork/components/terminal/TerminalPanel';
-import { WorkspaceNotifications } from '@/app/shell/WorkspaceNotifications';
-import '@/libs/openclaw-chat/components/justdo-chat';
 import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
-import { useOwnerDocument } from '@/shared/dom/ownerDocument';
 import { observeEditorLayout } from '@/shared/dom/observeEditorLayout';
-import '@/theme/css/themes.css';
+import { useOwnerDocument } from '@/shared/dom/ownerDocument';
 
 window.addEventListener('error', event => {
   if (event.error?.stack) console.error(event.error.stack);
@@ -95,7 +98,7 @@ function Tools() {
     probe.move = () =>
       ownerDocument
         .querySelector<HTMLButtonElement>(
-          '[aria-label="在独立窗口中打开侧边栏"], [aria-label="收回主窗口"]',
+          '[aria-label="在独立窗口中打开侧边栏"]',
         )!
         .click();
     probe.snapshot = () => ({
@@ -117,7 +120,7 @@ function Tools() {
           ),
       ),
       blocker: !!ownerDocument.querySelector('[data-testid="workspace-main-prompt"]'),
-      detached: !!ownerDocument.querySelector('[aria-label="收回主窗口"]'),
+      detached: !!ownerDocument.querySelector('[data-window-header]'),
     });
     return () => {
       probe.unmounts++;
@@ -230,10 +233,14 @@ function DragProbe() {
 
 function Harness() {
   const [epoch, setEpoch] = useState(0);
+  const [open, setOpen] = useState(true);
   const [activeTabId, setActiveTabId] = useState('Browser');
   probe.remount = () => setEpoch(value => value + 1);
+  probe.toggleOpen = () => setOpen(value => !value);
   return (
     <>
+      <div className="bg-background"><WindowHeader /></div>
+      <CoworkPet running={false} waiting={false} />
       <WorkspaceNotifications>
         <div id="notice">Notice</div>
       </WorkspaceNotifications>
@@ -244,7 +251,7 @@ function Harness() {
         <CoworkDisplayPanel
           key={epoch}
           activeTabId={activeTabId}
-          isOpen
+          isOpen={open}
           onClose={() => {}}
           tabs={[
             'Browser',

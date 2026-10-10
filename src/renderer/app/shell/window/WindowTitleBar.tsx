@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 
+import { i18nService } from '@/services/i18n';
+
 interface WindowTitleBarProps {
+  controls?: Window['electron']['window'];
   compact?: boolean;
   isOverlayActive?: boolean;
   inline?: boolean;
@@ -24,12 +27,15 @@ const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
   isOverlayActive = false,
   inline = false,
   className = '',
+  controls,
 }) => {
+  const api = controls ?? window.electron?.window;
   const [state, setState] = useState<WindowState>(DEFAULT_STATE);
 
   useEffect(() => {
+    if (!api) return;
     let disposed = false;
-    window.electron.window
+    api
       .isMaximized()
       .then(isMaximized => {
         if (!disposed) {
@@ -40,7 +46,7 @@ const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
         console.error('Failed to get initial maximize state:', error);
       });
 
-    const unsubscribe = window.electron.window.onStateChanged(nextState => {
+    const unsubscribe = api.onStateChanged(nextState => {
       setState(nextState);
     });
 
@@ -48,35 +54,37 @@ const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
       disposed = true;
       unsubscribe();
     };
-  }, []);
+  }, [api]);
 
   const handleMinimize = () => {
-    window.electron.window.minimize();
+    api?.minimize();
   };
 
   const handleToggleMaximize = () => {
-    window.electron.window.toggleMaximize();
+    api?.toggleMaximize();
   };
 
   const handleClose = () => {
-    window.electron.window.close();
+    api?.close();
   };
 
   const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
-    window.electron.window.showSystemMenu({
+    event.stopPropagation();
+    api?.showSystemMenu({
       x: event.clientX,
       y: event.clientY,
     });
   };
 
-  const handleDoubleClick = () => {
+  const handleDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.stopPropagation();
     if (!state.isFullscreen) {
       handleToggleMaximize();
     }
   };
 
-  if (window.electron.platform !== 'win32') {
+  if (window.electron?.platform !== 'win32') {
     return null;
   }
 
@@ -100,8 +108,9 @@ const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
         type="button"
         onClick={handleMinimize}
         className={`non-draggable ${controlHeightClass} w-8 inline-flex items-center justify-center rounded-lg transition-colors text-secondary hover:hover:bg-surface-raised`}
-        aria-label="Minimize"
-        title="Minimize"
+        aria-label={i18nService.t('windowMinimize')}
+        title={i18nService.t('windowMinimize')}
+        data-window-control="minimize"
       >
         <svg
           viewBox="0 0 12 12"
@@ -119,8 +128,9 @@ const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
         type="button"
         onClick={handleToggleMaximize}
         className={`non-draggable ${controlHeightClass} w-8 inline-flex items-center justify-center rounded-lg transition-colors text-secondary hover:hover:bg-surface-raised`}
-        aria-label={state.isMaximized ? 'Restore' : 'Maximize'}
-        title={state.isMaximized ? 'Restore' : 'Maximize'}
+        aria-label={i18nService.t(state.isMaximized ? 'windowRestore' : 'windowMaximize')}
+        title={i18nService.t(state.isMaximized ? 'windowRestore' : 'windowMaximize')}
+        data-window-control="toggleMaximize"
       >
         {state.isMaximized ? (
           <svg
@@ -153,8 +163,9 @@ const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
         type="button"
         onClick={handleClose}
         className={`non-draggable ${controlHeightClass} w-8 inline-flex items-center justify-center rounded-lg transition-colors text-secondary hover:bg-red-500 hover:text-white dark:hover:bg-red-500`}
-        aria-label="Close"
-        title="Close"
+        aria-label={i18nService.t('windowClose')}
+        title={i18nService.t('windowClose')}
+        data-window-control="close"
       >
         <svg
           viewBox="0 0 12 12"

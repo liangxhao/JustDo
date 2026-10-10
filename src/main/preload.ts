@@ -124,6 +124,7 @@ import {
   type SwarmWorkflowOptions,
 } from '../shared/cowork/swarmWorkflow';
 import {
+  type WorkspaceWindowControl,
   WorkspaceWindowIpc,
   type WorkspaceWindowState,
   type WorkspaceWindowUpdate,
@@ -576,6 +577,13 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(WorkspaceWindowIpc.SetDetached, generation, detached),
     focusMain: () => ipcRenderer.send(WorkspaceWindowIpc.FocusMain),
     focus: () => ipcRenderer.send(WorkspaceWindowIpc.Focus),
+    getWindowState: (generation: string) =>
+      ipcRenderer.invoke(WorkspaceWindowIpc.GetWindowState, generation),
+    control: (
+      generation: string,
+      action: WorkspaceWindowControl,
+      position?: { x: number; y: number },
+    ) => ipcRenderer.send(WorkspaceWindowIpc.Control, generation, action, position),
     onInvalidated: (callback: (state: WorkspaceWindowState) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, state: WorkspaceWindowState) =>
         callback(state);

@@ -1,5 +1,9 @@
 export const appTranslations = {
   zh: {
+    windowMinimize: '最小化',
+    windowMaximize: '最大化',
+    windowRestore: '还原',
+    windowClose: '关闭',
     sidebarNavigation: '功能导航',
     sidebarHome: '主页',
     sidebarMore: '更多',
@@ -281,6 +285,10 @@ export const appTranslations = {
     memoryFlowRecallDescription: '后续任务按含义检索相关内容，不必每次重新交代。',
   },
   en: {
+    windowMinimize: 'Minimize',
+    windowMaximize: 'Maximize',
+    windowRestore: 'Restore',
+    windowClose: 'Close',
     sidebarNavigation: 'Navigation',
     sidebarHome: 'Home',
     sidebarMore: 'More',

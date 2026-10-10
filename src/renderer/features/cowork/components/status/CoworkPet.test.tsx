@@ -4,6 +4,9 @@ import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import { setDockedWorkspaceSurface } from '@/app/shell/dockedWorkspaceSurface';
+import { setWorkspaceNotificationDocument } from '@/app/shell/WorkspaceNotifications';
+
 import { CoworkPet } from './CoworkPet';
 
 vi.mock('@/services/i18n', () => ({
@@ -26,6 +29,8 @@ const run = (state: SessionRunTiming['state']): SessionRunTiming => ({
 
 afterEach(() => {
   cleanup();
+  setWorkspaceNotificationDocument(null);
+  setDockedWorkspaceSurface(null);
   vi.useRealTimers();
   vi.restoreAllMocks();
   delete document.documentElement.dataset.coworkPet;
@@ -41,6 +46,114 @@ afterEach(() => {
 });
 
 describe('CoworkPet', () => {
+  test('keeps the floating pet in Main when notifications move to another window', () => {
+    document.documentElement.dataset.coworkPetFloating = 'on';
+    const workspace = document.implementation.createHTMLDocument('Workspace');
+    setWorkspaceNotificationDocument(workspace);
+    render(<CoworkPet running={false} waiting={false} />);
+    const pet = screen.getByRole('status');
+    expect(pet.ownerDocument).toBe(document);
+    expect(workspace.querySelector('.cowork-pet')).toBeNull();
+    act(() => setWorkspaceNotificationDocument(null));
+    act(() => setWorkspaceNotificationDocument(workspace));
+    expect(screen.getByRole('status')).toBe(pet);
+    expect(pet.parentElement).toBe(document.body);
+  });
+
+  test('preserves the Main node and position across docked, hidden and detached sidebar presentations', () => {
+    document.documentElement.dataset.coworkPetFloating = 'on';
+    window.localStorage.setItem('justdo-pet-floating-position', JSON.stringify({ x: 700, y: 120 }));
+    const workspace = document.implementation.createHTMLDocument('Workspace');
+    render(<CoworkPet running={false} waiting={false} />);
+    const pet = screen.getByRole('status');
+    act(() => setDockedWorkspaceSurface({ document: workspace, x: 600, y: 40 }));
+    const projection = workspace.querySelector<HTMLElement>('[data-cowork-pet-projection]')!;
+    expect(projection.style.left).toBe('100px');
+    expect(projection.style.top).toBe('80px');
+    expect(projection.getAttribute('role')).toBeNull();
+    expect(screen.getByRole('status')).toBe(pet);
+    expect(pet.style.left).toBe('700px');
+    expect(pet.style.top).toBe('120px');
+    act(() => setDockedWorkspaceSurface(null));
+    expect(workspace.querySelector('.cowork-pet')).toBeNull();
+    act(() => setWorkspaceNotificationDocument(workspace));
+    expect(screen.getByRole('status')).toBe(pet);
+    expect(pet.parentElement).toBe(document.body);
+    expect(pet.style.left).toBe('700px');
+    expect(pet.style.top).toBe('120px');
+  });
+
+  test('drags across the docked native view using Main coordinates and viewport bounds', () => {
+    document.documentElement.dataset.coworkPetFloating = 'on';
+    window.localStorage.setItem('justdo-pet-floating-position', JSON.stringify({ x: 700, y: 120 }));
+    const iframe = document.createElement('iframe');
+    document.body.append(iframe);
+    const workspace = iframe.contentDocument!;
+    const workspaceWindow = iframe.contentWindow!;
+    try {
+      render(<CoworkPet running={false} waiting={false} />);
+      act(() => setDockedWorkspaceSurface({ document: workspace, x: 600, y: 40 }));
+      const pet = screen.getByRole('status');
+      const projection = workspace.querySelector<HTMLElement>('[data-cowork-pet-projection]')!;
+      fireEvent.pointerDown(projection, { button: 0, pointerId: 9, clientX: 110, clientY: 90 });
+      // Captured pointer input can cross the view's left edge into Main's chat.
+      fireEvent.pointerMove(workspaceWindow, { pointerId: 9, clientX: -390, clientY: 190 });
+      fireEvent.pointerUp(workspaceWindow, { pointerId: 9, clientX: -390, clientY: 190 });
+      expect(pet.style.left).toBe('200px');
+      expect(pet.style.top).toBe('220px');
+      expect(JSON.parse(window.localStorage.getItem('justdo-pet-floating-position')!)).toEqual({ x: 200, y: 220 });
+      fireEvent.pointerDown(pet, { button: 0, pointerId: 10, clientX: 210, clientY: 230 });
+      fireEvent.pointerMove(window, { pointerId: 10, clientX: window.innerWidth + 100, clientY: window.innerHeight + 100 });
+      fireEvent.pointerUp(window, { pointerId: 10, clientX: window.innerWidth + 100, clientY: window.innerHeight + 100 });
+      expect(pet.style.left).toBe(`${window.innerWidth - 64}px`);
+      expect(pet.style.top).toBe(`${window.innerHeight - 64}px`);
+      act(() => setDockedWorkspaceSurface(null));
+      expect(screen.getByRole('status')).toBe(pet);
+    } finally {
+      act(() => setDockedWorkspaceSurface(null));
+      iframe.remove();
+    }
+  });
+
+  test('ignores detached window input and confines every drag to Main bounds', () => {
+    document.documentElement.dataset.coworkPetFloating = 'on';
+    window.localStorage.setItem('justdo-pet-floating-position', JSON.stringify({ x: 700, y: 120 }));
+    const iframe = document.createElement('iframe');
+    document.body.append(iframe);
+    const workspace = iframe.contentDocument!;
+    const workspaceWindow = iframe.contentWindow!;
+    try {
+      render(<CoworkPet running={false} waiting={false} />);
+      act(() => setDockedWorkspaceSurface({ document: workspace, x: 600, y: 40 }));
+      act(() => setDockedWorkspaceSurface(null));
+      act(() => setWorkspaceNotificationDocument(workspace));
+      const pet = screen.getByRole('status');
+      expect(workspace.querySelector('.cowork-pet')).toBeNull();
+      for (const [targetX, targetY, expectedX, expectedY] of [
+        [-500, -500, 0, 0],
+        [window.innerWidth + 500, -500, window.innerWidth - 64, 0],
+        [-500, window.innerHeight + 500, 0, window.innerHeight - 64],
+        [window.innerWidth + 500, window.innerHeight + 500, window.innerWidth - 64, window.innerHeight - 64],
+      ]) {
+        const previousPosition = { x: Number.parseFloat(pet.style.left), y: Number.parseFloat(pet.style.top) };
+        fireEvent.pointerDown(pet, { button: 0, pointerId: 11, clientX: previousPosition.x + 16, clientY: previousPosition.y + 16 });
+        fireEvent.pointerMove(workspaceWindow, { pointerId: 11, clientX: targetX, clientY: targetY });
+        fireEvent.pointerUp(workspaceWindow, { pointerId: 11, clientX: targetX, clientY: targetY });
+        expect(pet.style.left).toBe(`${previousPosition.x}px`);
+        expect(pet.style.top).toBe(`${previousPosition.y}px`);
+        fireEvent.pointerMove(window, { pointerId: 11, clientX: targetX, clientY: targetY });
+        fireEvent.pointerUp(window, { pointerId: 11, clientX: targetX, clientY: targetY });
+        expect(pet.style.left).toBe(`${expectedX}px`);
+        expect(pet.style.top).toBe(`${expectedY}px`);
+        expect(screen.getByRole('status')).toBe(pet);
+        expect(workspace.querySelector('.cowork-pet')).toBeNull();
+      }
+    } finally {
+      setWorkspaceNotificationDocument(null);
+      iframe.remove();
+    }
+  });
+
   test('gives the two cats independent frame timing and stops both when motion is disabled', async () => {
     vi.useFakeTimers();
     const { container } = render(<CoworkPet running waiting={false} />);

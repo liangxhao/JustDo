@@ -5,7 +5,7 @@ const http = require('node:http');
 const { pathToFileURL } = require('node:url');
 const assert = require('node:assert/strict');
 const output = process.argv[2];
-const { WorkspaceWindowManager, isWorkspaceBrowserHost, getWorkspaceWindowManager } = require(
+const { WorkspaceWindowManager, isWorkspaceBrowserHost, getWorkspaceWindowManager, getWindowChromeOptions } = require(
   path.join(output, 'manager.cjs'),
 );
 const { registerWorkspaceWindowHandlers } = require(path.join(output, 'ipc.cjs'));
@@ -37,6 +37,8 @@ app
     startup.hide();
     startup.destroy();
     registerWorkspaceWindowHandlers();
+    const mainControls = [];
+    ipcMain.on('probe:main:control', (_event, action) => mainControls.push(action));
     const terminalCalls = { create: [], close: [], resize: [] };
     ipcMain.handle('probe:terminal:create', (event, value) => {
       terminalCalls.create.push({ owner: event.sender.id, ...value });
@@ -97,6 +99,7 @@ app
         show: false,
         width: 1000,
         height: 850,
+        ...getWindowChromeOptions(process.platform === 'darwin', process.platform === 'win32', { color: '#ffffff', symbolColor: '#111111', height: 48 }),
         webPreferences: {
           contextIsolation: true,
           sandbox: true,
@@ -111,6 +114,7 @@ app
       let quitting = false;
       const externalLinks = [];
       const errors = [];
+      let backgroundColor = '#ffffff';
       owner.webContents.on('console-message', details => {
         // Monaco's automatic-layout observer may defer a notification to the next
         // paint during native resize. Preserve all other renderer errors as failures.
@@ -124,7 +128,11 @@ app
       });
       const manager = new WorkspaceWindowManager(owner, {
         url: workspaceUrl,
-        backgroundColor: '#ffffff',
+        getBackgroundColor: () => backgroundColor,
+        getTitleBarOverlay: () => ({ color: backgroundColor, symbolColor: '#111111', height: 48 }),
+        isMac: process.platform === 'darwin',
+        isWindows: process.platform === 'win32',
+        showSystemMenu: () => {},
         isQuitting: () => quitting,
         openExternal: url => externalLinks.push(url),
         readBounds: () => saved,
@@ -157,7 +165,7 @@ app
       // Open the workspace from a shown Main, matching the interactive app.
       owner.showInactive();
       await owner.webContents.executeJavaScript(
-        `window.guestUrl=${JSON.stringify(`${base}guest.html`)};let script=document.createElement('script');script.src='bundle.js';document.head.append(script);`,
+        `window.guestUrl=${JSON.stringify(`${base}guest.html`)};document.documentElement.dataset.coworkPetFloating="on";let script=document.createElement('script');script.src='bundle.js';document.head.append(script);`,
       );
       console.log(`${mode}: starting workspace`);
       await waitFor(() => owner.webContents.executeJavaScript('!!window.probe?.editor'));
@@ -176,6 +184,60 @@ app
       assert.equal(before.childMarker, false);
       assert.equal(before.hasAllTabs, true);
       assert.ok(before.litStyles > 0);
+      // Main's pet retains its node and viewport coordinates. The docked native
+      // layer only paints the covered portion at the same on-screen position.
+      await owner.webContents.executeJavaScript('probe.mainPet=document.querySelector(".cowork-pet--floating");probe.petPosition=[probe.mainPet.style.left,probe.mainPet.style.top]');
+      const petIsStable = () => owner.webContents.executeJavaScript('document.querySelector(".cowork-pet--floating")===probe.mainPet && probe.mainPet.style.left===probe.petPosition[0] && probe.mainPet.style.top===probe.petPosition[1]');
+      const assertPetDragBounds = async detached => {
+        const viewport = await owner.webContents.executeJavaScript('({width:innerWidth,height:innerHeight,x:parseFloat(probe.mainPet.style.left),y:parseFloat(probe.mainPet.style.top)})');
+        for (const target of [
+          { x: -100, y: -100 },
+          { x: viewport.width + 100, y: -100 },
+          { x: -100, y: viewport.height + 100 },
+          { x: viewport.width + 100, y: viewport.height + 100 },
+          { x: viewport.x, y: viewport.y },
+        ]) {
+          const input = await owner.webContents.executeJavaScript('(()=>{const r=probe.mainPet.getBoundingClientRect();const slot=document.querySelector(".cowork-display-panel").getBoundingClientRect();const x=r.x+16,y=r.y+16;const projected=!!probe.document.querySelector("[data-cowork-pet-projection]") && x>=slot.left && x<slot.right && y>=slot.top && y<slot.bottom;return {x,y,projected,offsetX:projected?slot.x:0,offsetY:projected?slot.y:0}})()');
+          assert.ok(!detached || !input.projected);
+          const inputContents = input.projected ? host : owner.webContents;
+          inputContents.sendInputEvent({ type: 'mouseDown', x: Math.round(input.x - input.offsetX), y: Math.round(input.y - input.offsetY), button: 'left', clickCount: 1 });
+          inputContents.sendInputEvent({ type: 'mouseMove', x: Math.round(target.x + 16 - input.offsetX), y: Math.round(target.y + 16 - input.offsetY), button: 'left' });
+          inputContents.sendInputEvent({ type: 'mouseUp', x: Math.round(target.x + 16 - input.offsetX), y: Math.round(target.y + 16 - input.offsetY), button: 'left', clickCount: 1 });
+          const expected = { x: Math.max(0, Math.min(target.x, viewport.width - 64)), y: Math.max(0, Math.min(target.y, viewport.height - 64)) };
+          await waitFor(() => owner.webContents.executeJavaScript(`probe.mainPet.style.left==="${expected.x}px" && probe.mainPet.style.top==="${expected.y}px"`));
+          assert.equal(await owner.webContents.executeJavaScript('document.querySelector(".cowork-pet--floating")===probe.mainPet'), true);
+          if (detached) assert.equal(await host.executeJavaScript('!!document.querySelector(".cowork-pet")'), false);
+        }
+        await owner.webContents.executeJavaScript('probe.petPosition=[probe.mainPet.style.left,probe.mainPet.style.top]');
+      };
+      await waitFor(() => owner.webContents.executeJavaScript('!!probe.document.querySelector("[data-cowork-pet-projection]")'));
+      assert.equal(
+        await owner.webContents.executeJavaScript('(()=>{const main=probe.mainPet.getBoundingClientRect();const projection=probe.document.querySelector("[data-cowork-pet-projection]").getBoundingClientRect();const slot=document.querySelector(".cowork-display-panel").getBoundingClientRect();return Math.abs(main.x-projection.x-slot.x)<1 && Math.abs(main.y-projection.y-slot.y)<1})()'),
+        true,
+      );
+      await owner.webContents.executeJavaScript('probe.toggleOpen()');
+      await waitFor(() => owner.webContents.executeJavaScript('!probe.document.querySelector("[data-cowork-pet-projection]")'));
+      assert.equal(await petIsStable(), true);
+      await owner.webContents.executeJavaScript('probe.toggleOpen()');
+      await waitFor(() => owner.webContents.executeJavaScript('!!probe.document.querySelector("[data-cowork-pet-projection]")'));
+      assert.equal(await petIsStable(), true);
+      fs.writeFileSync(path.join(output, `${mode}-docked-pet.png`), (await host.capturePage()).toPNG());
+      // Use real native input and pointer capture to drag from the sidebar into
+      // the chat area, beyond the sidebar's local left edge.
+      const petInput = await host.executeJavaScript('(()=>{const r=document.querySelector("[data-cowork-pet-projection] button").getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()');
+      host.sendInputEvent({ type: 'mouseDown', ...petInput, button: 'left', clickCount: 1 });
+      host.sendInputEvent({ type: 'mouseMove', x: -180, y: petInput.y, button: 'left' });
+      host.sendInputEvent({ type: 'mouseUp', x: -180, y: petInput.y, button: 'left', clickCount: 1 });
+      await waitFor(() => owner.webContents.executeJavaScript('Number.parseFloat(probe.mainPet.style.left)<document.querySelector(".cowork-display-panel").getBoundingClientRect().left'));
+      assert.equal(await owner.webContents.executeJavaScript('document.querySelector(".cowork-pet--floating")===probe.mainPet'), true);
+      const mainPetInput = await owner.webContents.executeJavaScript('(()=>{const r=probe.mainPet.querySelector("button").getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()');
+      owner.webContents.sendInputEvent({ type: 'mouseDown', ...mainPetInput, button: 'left', clickCount: 1 });
+      owner.webContents.sendInputEvent({ type: 'mouseMove', x: 900, y: mainPetInput.y, button: 'left' });
+      owner.webContents.sendInputEvent({ type: 'mouseUp', x: 900, y: mainPetInput.y, button: 'left', clickCount: 1 });
+      await waitFor(() => owner.webContents.executeJavaScript('Number.parseFloat(probe.mainPet.style.left)>document.querySelector(".cowork-display-panel").getBoundingClientRect().left'));
+      await owner.webContents.executeJavaScript('probe.petPosition=[probe.mainPet.style.left,probe.mainPet.style.top]');
+      assert.equal(await owner.webContents.executeJavaScript('getComputedStyle(probe.mainPet.querySelector("button")).getPropertyValue("-webkit-app-region")'), 'no-drag');
+      await assertPetDragBounds(false);
       await owner.webContents.executeJavaScript(
         'document.documentElement.dataset.theme="classic-dark"',
       );
@@ -237,9 +299,42 @@ app
         const shell = manager.presentationWindow();
         assert.notEqual(shell, owner);
         await waitFor(() => shell.isVisible());
+        await waitFor(() => owner.webContents.executeJavaScript('!!probe.document.querySelector("[data-window-header]") && !probe.document.querySelector("[data-cowork-pet-projection], [aria-label=在独立窗口中打开侧边栏], [aria-label=关闭侧边栏]")'));
+        assert.equal(await petIsStable(), true);
+        if (round === 0) await assertPetDragBounds(true);
         assert.equal(shell.getTitle(), '');
         await host.executeJavaScript('document.title="Changed conversation title"');
         assert.equal(shell.getTitle(), '');
+        assert.equal(
+          await owner.webContents.executeJavaScript('!!document.querySelector(".cowork-pet--floating") && !probe.document.querySelector(".cowork-pet")'),
+          true,
+        );
+        assert.equal(
+          await owner.webContents.executeJavaScript('getComputedStyle(document.querySelector("[data-window-header]")).height===probe.document.defaultView.getComputedStyle(probe.document.querySelector("[data-window-header]")).height'),
+          true,
+        );
+        backgroundColor = '#102030';
+        manager.updateAppearance();
+        assert.equal(shell.getBackgroundColor(), '#102030');
+        backgroundColor = '#ffffff';
+        manager.updateAppearance();
+        manager.control('revoked-generation', 'minimize');
+        manager.control(manager.prepare().generation, 'unknown-control');
+        assert.equal(shell.isMinimized(), false);
+        if (process.platform === 'win32' && round === 0) {
+          await owner.webContents.executeJavaScript('probe.document.querySelector("[data-window-control=toggleMaximize]").click()');
+          await waitFor(() => shell.isMaximized());
+          assert.equal(owner.isMaximized(), false);
+          await waitFor(() => owner.webContents.executeJavaScript('probe.document.querySelector("[data-window-control=toggleMaximize]").title==="还原"'));
+          await owner.webContents.executeJavaScript('probe.document.querySelector("[data-window-control=toggleMaximize]").click()');
+          await waitFor(() => !shell.isMaximized());
+          await owner.webContents.executeJavaScript('probe.document.querySelector("[data-window-control=minimize]").click()');
+          await waitFor(() => shell.isMinimized());
+          assert.equal(owner.isMinimized(), false);
+          manager.focus();
+          await waitFor(() => !shell.isMinimized());
+          assert.equal(mainControls.length, 0);
+        }
         if (round === 0) shell.setSize(620, 700);
         const [contentWidth] = shell.getContentSize();
         // The upstream overflow control must stay in the workspace document and
@@ -305,12 +400,15 @@ app
         await owner.webContents.executeJavaScript(
           'probe.click();probe.editor.focus();probe.editor.trigger("probe","type",{text:"!"});probe.editor.trigger("probe","undo",{});probe.terminal.resize(48,10);probe.menu()',
         );
-        await waitFor(() => owner.webContents.executeJavaScript('probe.snapshot().menuInChild'));
+        await waitFor(() => owner.webContents.executeJavaScript('!!probe.document.querySelector("[role=menu]")'));
         await owner.webContents.executeJavaScript(
           'probe.document.querySelector("[role=menuitem]").click()',
         );
-        await waitFor(() => owner.webContents.executeJavaScript('!probe.snapshot().menuInChild'));
+        await waitFor(() => owner.webContents.executeJavaScript('!probe.document.querySelector("[role=menu]")'));
         if (round === 0) {
+          const screenshot = path.join(output, `${mode}-workspace-chrome.png`);
+          fs.writeFileSync(screenshot, (await host.capturePage()).toPNG());
+          console.log(`${mode}: chrome screenshot ${screenshot}`);
           await owner.webContents.executeJavaScript(
             'probe.dialog=probe.document.createElement("dialog");probe.dialog.innerHTML="<input id=modal-input>";probe.chat.shadowRoot.append(probe.dialog);probe.dialog.showModal()',
           );
@@ -334,6 +432,13 @@ app
             ),
             true,
           );
+          if (process.platform === 'win32') {
+            await owner.webContents.executeJavaScript('probe.document.querySelector("[data-testid=workspace-main-prompt] [data-window-control=minimize]").click()');
+            await waitFor(() => shell.isMinimized());
+            assert.equal(owner.isMinimized(), false);
+            manager.focus();
+            await waitFor(() => !shell.isMinimized());
+          }
           await owner.webContents.executeJavaScript('document.querySelector("#blocker").remove()');
           await waitFor(() =>
             owner.webContents.executeJavaScript(
@@ -406,15 +511,20 @@ app
           owner.showInactive();
           await waitFor(() => shell.isVisible());
         }
-        shell.close();
+        if (process.platform === 'win32' && round === 2) {
+          await owner.webContents.executeJavaScript('probe.document.querySelector("[data-window-control=close]").click()');
+          assert.equal(mainControls.length, 0);
+        } else shell.close();
         await waitFor(() => !manager.prepare().detached);
+        await waitFor(() => owner.webContents.executeJavaScript('!!probe.document.querySelector("[data-cowork-pet-projection]")'));
+        assert.equal(await petIsStable(), true);
         assert.equal(host.isDestroyed(), false);
         assert.equal(host.id, hostId);
         assert.equal(guest.id, guestId);
         assert.equal(host.getBackgroundThrottling(), false);
         await waitFor(() =>
           owner.webContents.executeJavaScript(
-            'probe.document.defaultView.innerWidth===520 && !probe.snapshot().detached',
+            'probe.document.defaultView.innerWidth===520 && !!probe.document.querySelector("[aria-label=在独立窗口中打开侧边栏]") && !!probe.document.querySelector("[aria-label=关闭侧边栏]")',
           ),
         );
         await waitFor(() =>
@@ -492,7 +602,7 @@ app
         screen.emit('display-metrics-changed');
         manager.setDetached(manager.prepare().generation, false);
       }
-      await waitFor(() => owner.webContents.executeJavaScript('!probe.snapshot().detached'));
+      await waitFor(() => owner.webContents.executeJavaScript('!!probe.document.querySelector("[aria-label=在独立窗口中打开侧边栏]")'));
       // Reacquire an existing named document after React entry changes. The grant
       // must report current presentation, and must never navigate the live host.
       await owner.webContents.executeJavaScript('probe.remount()');
@@ -502,13 +612,13 @@ app
       await waitFor(() => manager.prepare().detached);
       await owner.webContents.executeJavaScript('probe.remount()');
       await waitFor(() =>
-        owner.webContents.executeJavaScript('probe.mounts===3 && probe.snapshot().detached'),
+        owner.webContents.executeJavaScript('probe.mounts===3 && !!probe.document.querySelector("[data-window-header]") && !probe.document.querySelector("[aria-label=在独立窗口中打开侧边栏], [aria-label=关闭侧边栏]")'),
       );
       manager.presentationWindow().close();
       await waitFor(() => !manager.prepare().detached);
       await owner.webContents.executeJavaScript('probe.remount()');
       await waitFor(() =>
-        owner.webContents.executeJavaScript('probe.mounts===4 && !probe.snapshot().detached'),
+        owner.webContents.executeJavaScript('probe.mounts===4 && !!probe.document.querySelector("[aria-label=在独立窗口中打开侧边栏]") && !!probe.document.querySelector("[aria-label=关闭侧边栏]")'),
       );
       assert.equal(navigations, 1);
       for (const { detached, processExit } of [

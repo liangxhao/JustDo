@@ -26,6 +26,8 @@
 }
 
 .cowork-pet__sprite {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
   position: relative;
   display: block;
   flex: none;

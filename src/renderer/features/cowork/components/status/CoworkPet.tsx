@@ -6,7 +6,7 @@ import { createPortal } from 'react-dom';
 
 import { applyAppearanceConfig, normalizeAppearanceConfig, type PetCatSelection } from '@/app/appearance';
 import { clampPetPosition, defaultPetPosition, PET_FLOATING_RESET_EVENT, type PetPosition,readPetPosition, savePetPosition } from '@/app/petFloating';
-import { useWorkspaceNotificationDocument } from '@/app/shell/WorkspaceNotifications';
+import { useDockedWorkspaceSurface } from '@/app/shell/dockedWorkspaceSurface';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
@@ -132,7 +132,10 @@ const petSettings = () => {
 };
 
 export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: CoworkPetProps) {
-  const notificationDocument = useWorkspaceNotificationDocument();
+  const dockedSurface = useDockedWorkspaceSurface();
+  const dockedWindow = dockedSurface?.document.defaultView;
+  const dockedSurfaceRef = useRef(dockedSurface);
+  dockedSurfaceRef.current = dockedSurface;
   const [celebratingRunId, setCelebratingRunId] = useState<string | null>(null);
   const [reactingRunId, setReactingRunId] = useState<string | null>(null);
   const [resting, setResting] = useState(false);
@@ -140,8 +143,8 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
   const [variantIndex, setVariantIndex] = useState(0);
   const [blackCursor, setBlackCursor] = useState({ frame: 0, variant: 0 });
   const [settings, setSettings] = useState(() => petSettings());
-  const ownerDocument = settings.floating ? notificationDocument : document;
-  const ownerWindow = ownerDocument.defaultView ?? window;
+  const ownerDocument = document;
+  const ownerWindow = window;
   const [documentVisible, setDocumentVisible] = useState(() => !document.hidden);
   const cellSize = 64;
   const [position, setPosition] = useState(() => readPetPosition(cellSize, ownerWindow));
@@ -151,7 +154,7 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
   const previousFeedbackRef = useRef<Record<string, number>>({});
   const clickTimerRef = useRef<number | null>(null);
   const draggedRef = useRef(false);
-  const dragRef = useRef<{ pointerId: number; startX: number; startY: number; origin: PetPosition; moved: boolean } | null>(null);
+  const dragRef = useRef<{ pointerId: number; pointerWindow: Window; startX: number; startY: number; origin: PetPosition; moved: boolean } | null>(null);
   const latestRunId = latestRun?.id;
   const latestRunState = latestRun?.state;
   const previousRunRef = useRef(latestRunId ? `${latestRunId}:${latestRunState}` : null);
@@ -203,11 +206,16 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
   }, [cellSize, ownerWindow]);
 
   useEffect(() => {
+    const mainPoint = (event: PointerEvent) => {
+      const surface = (event.currentTarget as Window).document === document ? null : dockedSurfaceRef.current;
+      return { x: event.clientX + (surface?.x ?? 0), y: event.clientY + (surface?.y ?? 0) };
+    };
     const move = (event: PointerEvent) => {
       const drag = dragRef.current;
-      if (!drag || event.pointerId !== drag.pointerId) return;
-      const dx = event.clientX - drag.startX;
-      const dy = event.clientY - drag.startY;
+      if (!drag || event.pointerId !== drag.pointerId || (event.currentTarget as Window).document !== drag.pointerWindow.document) return;
+      const point = mainPoint(event);
+      const dx = point.x - drag.startX;
+      const dy = point.y - drag.startY;
       if (!drag.moved && Math.hypot(dx, dy) < 4) return;
       drag.moved = true;
       draggedRef.current = true;
@@ -218,12 +226,13 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
     };
     const end = (event: PointerEvent) => {
       const drag = dragRef.current;
-      if (!drag || event.pointerId !== drag.pointerId) return;
+      if (!drag || event.pointerId !== drag.pointerId || (event.currentTarget as Window).document !== drag.pointerWindow.document) return;
       dragRef.current = null;
       if (!drag.moved) return;
+      const point = mainPoint(event);
       const nextPosition = clampPetPosition({
-        x: drag.origin.x + event.clientX - drag.startX,
-        y: drag.origin.y + event.clientY - drag.startY,
+        x: drag.origin.x + point.x - drag.startX,
+        y: drag.origin.y + point.y - drag.startY,
       }, cellSize, ownerWindow);
       setPosition(nextPosition);
       setDragPosition(nextPosition);
@@ -236,21 +245,31 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
       }
     };
     const cancel = (event: Event) => {
-      if (!dragRef.current || ('pointerId' in event && event.pointerId !== dragRef.current.pointerId)) return;
+      if (!dragRef.current || (event.currentTarget as Window).document !== dragRef.current.pointerWindow.document ||
+        ('pointerId' in event && event.pointerId !== dragRef.current.pointerId)) return;
       dragRef.current = null;
       setDragPosition(null);
     };
-    ownerWindow.addEventListener('pointermove', move);
-    ownerWindow.addEventListener('pointerup', end);
-    ownerWindow.addEventListener('pointercancel', cancel);
-    ownerWindow.addEventListener('blur', cancel);
+    const pointerWindows = dockedWindow ? [ownerWindow, dockedWindow] : [ownerWindow];
+    pointerWindows.forEach(pointerWindow => {
+      pointerWindow.addEventListener('pointermove', move);
+      pointerWindow.addEventListener('pointerup', end);
+      pointerWindow.addEventListener('pointercancel', cancel);
+      pointerWindow.addEventListener('blur', cancel);
+    });
     return () => {
-      ownerWindow.removeEventListener('pointermove', move);
-      ownerWindow.removeEventListener('pointerup', end);
-      ownerWindow.removeEventListener('pointercancel', cancel);
-      ownerWindow.removeEventListener('blur', cancel);
+      pointerWindows.forEach(pointerWindow => {
+        pointerWindow.removeEventListener('pointermove', move);
+        pointerWindow.removeEventListener('pointerup', end);
+        pointerWindow.removeEventListener('pointercancel', cancel);
+        pointerWindow.removeEventListener('blur', cancel);
+      });
+      if (dragRef.current?.pointerWindow === dockedWindow) {
+        dragRef.current = null;
+        setDragPosition(null);
+      }
     };
-  }, [cellSize, floating, ownerWindow]);
+  }, [cellSize, floating, ownerWindow, dockedWindow]);
 
   useEffect(() => {
     const previous = previousRunRef.current;
@@ -385,21 +404,28 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
     previousFeedbackRef.current[historyKey] = variant;
     setInteraction({ kind, variant, id: ++interactionSerialRef.current });
   };
-  const pet = (
+  const renderPet = (projection = false) => (
     <div
       className={`cowork-pet cowork-pet--${placement}${floating || dragPosition ? ' cowork-pet--floating' : ''}${!interaction && mode === 'complete' && cats !== 'both' ? ' cowork-pet--solo-complete' : ''}${interaction ? ` cowork-pet--${interaction.kind} cowork-pet--feedback-${selectedFeedback?.motion}` : ''}`}
-      role="status"
-      aria-label={label}
-      style={floating || dragPosition ? { left: displayedPosition.x, top: displayedPosition.y } : undefined}
+      role={projection ? undefined : 'status'}
+      aria-label={projection ? undefined : label}
+      aria-hidden={projection ? true : undefined}
+      data-cowork-pet-projection={projection ? 'true' : undefined}
+      style={floating || dragPosition ? {
+        left: displayedPosition.x - (projection ? dockedSurface!.x : 0),
+        top: displayedPosition.y - (projection ? dockedSurface!.y : 0),
+      } : undefined}
       onPointerDown={event => {
         if (event.button !== 0) return;
+        if (projection) event.preventDefault();
         draggedRef.current = false;
         event.currentTarget.setPointerCapture?.(event.pointerId);
         const rect = event.currentTarget.getBoundingClientRect();
         dragRef.current = {
           pointerId: event.pointerId,
-          startX: event.clientX,
-          startY: event.clientY,
+          pointerWindow: projection ? dockedWindow! : ownerWindow,
+          startX: event.clientX + (projection ? dockedSurface!.x : 0),
+          startY: event.clientY + (projection ? dockedSurface!.y : 0),
           origin: floating || dragPosition ? displayedPosition : { x: rect.right - cellSize, y: rect.top - 8 },
           moved: false,
         };
@@ -421,6 +447,7 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
     >
       <button
         type="button"
+        tabIndex={projection ? -1 : undefined}
         className={`cowork-pet__sprite${cats === 'both' ? '' : ` cowork-pet__sprite--${cats}`}`}
         aria-label={i18nService.t('coworkPetInteract')}
         onKeyDown={event => {
@@ -439,5 +466,10 @@ export function CoworkPet({ running, waiting, latestRun, placement = 'chat' }: C
     </div>
   );
   // Keep the original node mounted during the first drag so touch pointer capture survives.
-  return floating ? createPortal(pet, ownerDocument.body) : pet;
+  // The native sidebar paints above Main's DOM. Its projection shares this state,
+  // converts pointer input back to Main coordinates and never enters a detached window.
+  return <>
+    {floating ? createPortal(renderPet(), ownerDocument.body) : renderPet()}
+    {dockedSurface && (floating || dragPosition) && createPortal(renderPet(true), dockedSurface.document.body)}
+  </>;
 }

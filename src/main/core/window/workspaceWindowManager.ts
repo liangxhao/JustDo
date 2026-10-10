@@ -3,12 +3,15 @@ import { BrowserWindow, screen, WebContentsView } from 'electron';
 
 import {
   WORKSPACE_WINDOW_FRAME_NAME,
+  type WorkspaceNativeWindowState,
   type WorkspaceWindowBounds,
+  WorkspaceWindowControl,
   type WorkspaceWindowGrant,
   WorkspaceWindowIpc,
   type WorkspaceWindowResult,
   type WorkspaceWindowUpdate,
 } from '../../../shared/cowork/workspaceWindow';
+import { getWindowChromeOptions } from './windowChrome';
 import {
   clipWorkspaceViewBounds,
   fitWorkspaceWindowBounds,
@@ -18,7 +21,11 @@ import {
 type WorkspaceWindowOptions = {
   url: string;
   icon?: string;
-  backgroundColor: string;
+  getBackgroundColor: () => string;
+  getTitleBarOverlay: () => Electron.TitleBarOverlay;
+  isMac: boolean;
+  isWindows: boolean;
+  showSystemMenu: (window: BrowserWindow, position?: { x: number; y: number }) => void;
   isQuitting: () => boolean;
   configureHost: (host: Electron.WebContents) => void;
   openExternal: (url: string) => void;
@@ -203,7 +210,55 @@ export class WorkspaceWindowManager {
       this.owner.webContents.send(WorkspaceWindowIpc.StateChanged, {
         generation: this.generation,
         detached: this.shell !== null,
+        windowState: this.getWindowState(this.generation) ?? undefined,
       });
+    }
+  }
+
+  getWindowState(generation: unknown): WorkspaceNativeWindowState | null {
+    const shell = this.shell;
+    if (generation !== this.generation || !shell || shell.isDestroyed()) return null;
+    return {
+      isMaximized: shell.isMaximized(),
+      isFullscreen: shell.isFullScreen(),
+      isFocused: shell.isFocused(),
+    };
+  }
+
+  control(generation: unknown, action: unknown, position?: unknown): void {
+    const shell = this.shell;
+    if (generation !== this.generation || !shell || shell.isDestroyed()) return;
+    switch (action) {
+      case WorkspaceWindowControl.Minimize:
+        shell.minimize();
+        break;
+      case WorkspaceWindowControl.ToggleMaximize:
+        if (shell.isMaximized()) shell.unmaximize();
+        else shell.maximize();
+        break;
+      case WorkspaceWindowControl.Close:
+        shell.close();
+        break;
+      case WorkspaceWindowControl.ShowSystemMenu: {
+        if (!this.options.isWindows) return;
+        if (position === undefined) {
+          this.options.showSystemMenu(shell);
+          return;
+        }
+        if (!position || typeof position !== 'object') return;
+        const point = position as { x: number; y: number };
+        if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+        this.options.showSystemMenu(shell, { x: point.x, y: point.y });
+      }
+    }
+  }
+
+  updateAppearance(): void {
+    const shell = this.shell;
+    if (!shell || shell.isDestroyed()) return;
+    shell.setBackgroundColor(this.options.getBackgroundColor());
+    if (!this.options.isMac && !this.options.isWindows) {
+      shell.setTitleBarOverlay(this.options.getTitleBarOverlay());
     }
   }
 
@@ -256,10 +311,14 @@ export class WorkspaceWindowManager {
           minWidth: Math.min(480, bounds.width),
           minHeight: Math.min(320, bounds.height),
           show: false,
-          frame: true,
+          ...getWindowChromeOptions(
+            this.options.isMac,
+            this.options.isWindows,
+            this.options.getTitleBarOverlay(),
+          ),
           title: '',
           icon: this.options.icon,
-          backgroundColor: this.options.backgroundColor,
+          backgroundColor: this.options.getBackgroundColor(),
           autoHideMenuBar: true,
           webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
         });
@@ -271,6 +330,13 @@ export class WorkspaceWindowManager {
         shell.contentView.addChildView(this.view);
         this.shell = shell;
         shell.on('resize', () => this.applyLayout());
+        const forwardWindowState = () => this.emitState();
+        shell.on('maximize', forwardWindowState);
+        shell.on('unmaximize', forwardWindowState);
+        shell.on('enter-full-screen', forwardWindowState);
+        shell.on('leave-full-screen', forwardWindowState);
+        shell.on('focus', forwardWindowState);
+        shell.on('blur', forwardWindowState);
         const saveBounds = () => {
           if (!shell.isDestroyed() && !shell.isMaximized() && !shell.isMinimized()) {
             this.saveBounds(shell.getBounds());

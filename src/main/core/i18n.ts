@@ -16,6 +16,10 @@ export type LanguageType = 'zh' | 'en';
 
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    windowMinimize: '最小化',
+    windowMaximize: '最大化',
+    windowRestore: '还原',
+    windowClose: '关闭',
     windowsSandboxSystemDriveInvalid: 'Windows 系统盘路径无效。',
     windowsSandboxPrepResultInvalid: '系统盘准备程序未返回有效结果。',
     windowsSandboxPrepExitCodeMissing: '提权后的系统盘准备程序未返回退出码。',
@@ -124,6 +128,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     browserContextSaveImage: '图片另存为…',
   },
   en: {
+    windowMinimize: 'Minimize',
+    windowMaximize: 'Maximize',
+    windowRestore: 'Restore',
+    windowClose: 'Close',
     windowsSandboxSystemDriveInvalid: 'The Windows system drive is invalid.',
     windowsSandboxPrepResultInvalid:
       'The MXC host preparation launcher did not return a valid result.',

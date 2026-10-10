@@ -16,7 +16,7 @@ const output = fs.mkdtempSync(path.join(root, '.tmp/workspace-integration-'));
     tsconfig: path.join(root, 'tsconfig.json'),
     define: { 'process.env.NODE_ENV': '"production"', 'import.meta.env': '{}' },
     logOverride: { 'empty-import-meta': 'silent' },
-    loader: { '.ttf': 'file', '.woff': 'file', '.woff2': 'file' },
+    loader: { '.ttf': 'file', '.woff': 'file', '.woff2': 'file', '.png': 'file', '.webp': 'file' },
   });
   // Generate the production utilities, including tab sizing and focus styles;
   // an incomplete CSS fixture can change whether the overflow control exists.
@@ -30,7 +30,7 @@ const output = fs.mkdtempSync(path.join(root, '.tmp/workspace-integration-'));
   await build({
     stdin: {
       contents:
-        "export * from './src/main/core/window/workspaceWindowManager'; export * from './src/main/ipc/app/workspaceWindow';",
+        "export * from './src/main/core/window/workspaceWindowManager'; export * from './src/main/ipc/app/workspaceWindow'; export * from './src/main/core/window/windowChrome';",
       resolveDir: root,
     },
     bundle: true,

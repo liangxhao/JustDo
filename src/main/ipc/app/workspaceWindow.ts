@@ -20,4 +20,12 @@ export const registerWorkspaceWindowHandlers = (): void => {
   );
   ipcMain.on(WorkspaceWindowIpc.FocusMain, event => resolve(event)?.focusMain());
   ipcMain.on(WorkspaceWindowIpc.Focus, event => resolve(event)?.focus());
+  ipcMain.handle(WorkspaceWindowIpc.GetWindowState, (event, generation: unknown) =>
+    resolve(event)?.getWindowState(generation) ?? null,
+  );
+  ipcMain.on(
+    WorkspaceWindowIpc.Control,
+    (event, generation: unknown, action: unknown, position: unknown) =>
+      resolve(event)?.control(generation, action, position),
+  );
 };

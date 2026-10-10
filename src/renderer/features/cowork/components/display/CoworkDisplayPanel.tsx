@@ -2,13 +2,13 @@ import './CoworkDisplayPanel.css';
 
 import {
   ArrowTopRightOnSquareIcon,
-  ArrowUturnLeftIcon,
   ChevronDownIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import WindowHeader from '@/app/shell/window/WindowHeader';
 import { i18nService } from '@/services/i18n';
 import FileTreeIcon from '@/shared/components/icons/FileTreeIcon';
 import RightSidebarIcon from '@/shared/components/icons/RightSidebarIcon';
@@ -438,7 +438,7 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       ref={panelRef}
       className={
         portal.native
-          ? `${visible ? 'flex' : 'hidden'} relative h-full w-full min-w-0 flex-col border-l border-border bg-background`
+          ? `${visible ? 'flex' : 'hidden'} relative h-full w-full min-w-0 flex-col ${portal.detached ? '' : 'border-l border-border'} bg-background`
           : `${isOpen ? 'flex' : 'hidden'} cowork-display-panel absolute inset-y-0 right-0 z-50 max-w-[calc(100%-2rem)] flex-col border-l border-border bg-background shadow-xl`
       }
       style={
@@ -579,30 +579,22 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
             </button>
           )}
         </div>
-        {portal.native && (
+        {portal.native && !portal.detached && (
           <button
             type="button"
             onClick={() => void portal.toggleDetached()}
             disabled={portal.transitioning || !portal.target}
-            className="inline-flex h-7 w-8 shrink-0 self-center items-center justify-center rounded-lg text-secondary hover:bg-surface-raised disabled:opacity-40"
-            title={i18nService.t(
-              portal.detached ? 'coworkDisplayWindowDock' : 'coworkDisplayWindowDetach',
-            )}
-            aria-label={i18nService.t(
-              portal.detached ? 'coworkDisplayWindowDock' : 'coworkDisplayWindowDetach',
-            )}
+            className="inline-flex h-6 w-6 shrink-0 self-center items-center justify-center rounded-md text-secondary hover:bg-surface-raised disabled:opacity-40"
+            title={i18nService.t('coworkDisplayWindowDetach')}
+            aria-label={i18nService.t('coworkDisplayWindowDetach')}
           >
-            {portal.detached ? (
-              <ArrowUturnLeftIcon className="h-4 w-4" />
-            ) : (
-              <ArrowTopRightOnSquareIcon className="h-4 w-4" />
-            )}
+            <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
           </button>
         )}
         <button
           type="button"
           onClick={() => setIsWorkspaceFullscreen(fullscreen => !fullscreen)}
-          className={`${portal.detached ? 'hidden' : 'inline-flex'} h-7 w-8 shrink-0 self-center items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground`}
+          className={`${portal.detached ? 'hidden' : 'inline-flex'} h-6 w-6 shrink-0 self-center items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface-raised hover:text-foreground`}
           title={i18nService.t(
             isWorkspaceFullscreen
               ? 'coworkDisplayPanelExitFullscreen'
@@ -615,21 +607,22 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
           )}
           aria-pressed={isWorkspaceFullscreen}
         >
-          <WorkspaceFullscreenIcon className="h-4 w-4" expanded={isWorkspaceFullscreen} />
+          <WorkspaceFullscreenIcon className="h-3.5 w-3.5" expanded={isWorkspaceFullscreen} />
         </button>
-        <button
-          type="button"
-          onClick={() => {
-            setIsWorkspaceFullscreen(false);
-            if (portal.detached) void portal.toggleDetached();
-            else onClose();
-          }}
-          className="inline-flex h-7 w-8 shrink-0 self-center items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
-          title={i18nService.t('coworkDisplayPanelClose')}
-          aria-label={i18nService.t('coworkDisplayPanelClose')}
-        >
-          <RightSidebarIcon className="h-4 w-4" />
-        </button>
+        {!portal.detached && (
+          <button
+            type="button"
+            onClick={() => {
+              setIsWorkspaceFullscreen(false);
+              onClose();
+            }}
+            className="inline-flex h-6 w-6 shrink-0 self-center items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+            title={i18nService.t('coworkDisplayPanelClose')}
+            aria-label={i18nService.t('coworkDisplayPanelClose')}
+          >
+            <RightSidebarIcon className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
 
       {showFileToolbar && (
@@ -817,24 +810,34 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       {portal.target &&
         createPortal(
           <OwnerDocumentContext.Provider value={ownerDocument}>
-            <div className="h-full" {...(portal.detached && portal.blocked ? { inert: '' } : {})}>
-              {content}
+            <div className={`flex h-full min-h-0 flex-col ${portal.detached ? 'bg-surface-raised p-1.5' : ''}`}>
+              <div className={`flex min-h-0 flex-1 flex-col ${portal.detached ? 'overflow-hidden rounded-xl bg-background' : ''}`}>
+                {portal.detached && <WindowHeader controls={portal.windowControls} />}
+                <div className="min-h-0 flex-1" {...(portal.detached && portal.blocked ? { inert: '' } : {})}>
+                  {content}
+                </div>
+              </div>
             </div>
             {portal.detached && portal.blocked && (
               <dialog
                 ref={mainPromptRef}
                 data-testid="workspace-main-prompt"
                 onCancel={event => event.preventDefault()}
-                className="cowork-workspace-main-prompt fixed inset-0 m-0 flex h-full max-h-none w-full max-w-none flex-col items-center justify-center gap-3 bg-background/95 px-6 text-center text-sm text-foreground"
+                className="cowork-workspace-main-prompt fixed inset-0 m-0 flex h-full max-h-none w-full max-w-none flex-col border-0 bg-surface-raised p-1.5 text-center text-sm text-foreground"
                 aria-label={i18nService.t('coworkDisplayWindowMainPrompt')}
               >
-                <p>{i18nService.t('coworkDisplayWindowMainPrompt')}</p>
-                <button
-                  className="rounded-lg bg-primary px-4 py-2 text-white"
-                  onClick={portal.focusMain}
-                >
-                  {i18nService.t('coworkDisplayWindowFocusMain')}
-                </button>
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl bg-background">
+                  <WindowHeader controls={portal.windowControls} />
+                  <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6">
+                    <p>{i18nService.t('coworkDisplayWindowMainPrompt')}</p>
+                    <button
+                      className="rounded-lg bg-primary px-4 py-2 text-white"
+                      onClick={portal.focusMain}
+                    >
+                      {i18nService.t('coworkDisplayWindowFocusMain')}
+                    </button>
+                  </div>
+                </div>
               </dialog>
             )}
           </OwnerDocumentContext.Provider>,

@@ -1,6 +1,11 @@
-import type { WorkspaceWindowGrant } from '@shared/cowork/workspaceWindow';
-import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  type WorkspaceNativeWindowState,
+  WorkspaceWindowControl,
+  type WorkspaceWindowGrant,
+} from '@shared/cowork/workspaceWindow';
+import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { setDockedWorkspaceSurface } from '@/app/shell/dockedWorkspaceSurface';
 import { setWorkspaceNotificationDocument } from '@/app/shell/WorkspaceNotifications';
 import { i18nService } from '@/services/i18n';
 
@@ -105,6 +110,23 @@ export function useWorkspacePortal(slot: RefObject<HTMLElement>, open: boolean) 
   const latestRef = useRef({ open, detached });
   latestRef.current = { open, detached };
   const transitionRef = useRef(false);
+
+  const windowControls = useMemo<Window['electron']['window'] | undefined>(() => {
+    const generation = grantRef.current?.generation;
+    if (!api || !target || !generation) return undefined;
+    return {
+      minimize: () => api.control(generation, WorkspaceWindowControl.Minimize),
+      toggleMaximize: () => api.control(generation, WorkspaceWindowControl.ToggleMaximize),
+      close: () => api.control(generation, WorkspaceWindowControl.Close),
+      showSystemMenu: position =>
+        api.control(generation, WorkspaceWindowControl.ShowSystemMenu, position),
+      isMaximized: async () => (await api.getWindowState(generation))?.isMaximized ?? false,
+      onStateChanged: (callback: (state: WorkspaceNativeWindowState) => void) =>
+        api.onStateChanged(state => {
+          if (state.generation === generation && state.windowState) callback(state.windowState);
+        }),
+    };
+  }, [api, target]);
 
   const publishDetached = useCallback((value: boolean) => {
     setDetached(value);
@@ -240,6 +262,11 @@ export function useWorkspacePortal(slot: RefObject<HTMLElement>, open: boolean) 
           ? target.ownerDocument
           : null,
       );
+      setDockedWorkspaceSurface(
+        !latest.detached && !occluded && latest.open && element.getClientRects().length > 0
+          ? { document: target.ownerDocument, x: Math.max(0, rect.x), y: Math.max(0, rect.y) }
+          : null,
+      );
       api.update({
         generation: grant.generation,
         x: rect.x,
@@ -273,6 +300,7 @@ export function useWorkspacePortal(slot: RefObject<HTMLElement>, open: boolean) 
     update();
     return () => {
       setWorkspaceNotificationDocument(null);
+      setDockedWorkspaceSurface(null);
       resize.disconnect();
       mutation.disconnect();
       window.removeEventListener('resize', schedule);
@@ -299,6 +327,11 @@ export function useWorkspacePortal(slot: RefObject<HTMLElement>, open: boolean) 
     setWorkspaceNotificationDocument(
       !currentBlocked && (detached || (!occluded && open && element.getClientRects().length > 0))
         ? (target?.ownerDocument ?? null)
+        : null,
+    );
+    setDockedWorkspaceSurface(
+      target && !detached && !occluded && open && element.getClientRects().length > 0
+        ? { document: target.ownerDocument, x: Math.max(0, rect.x), y: Math.max(0, rect.y) }
         : null,
     );
   }, [api, open, detached, blocked, slot, target]);
@@ -353,6 +386,7 @@ export function useWorkspacePortal(slot: RefObject<HTMLElement>, open: boolean) 
     detached,
     blocked,
     transitioning,
+    windowControls,
     toggleDetached,
     focusMain: () => api?.focusMain(),
   };

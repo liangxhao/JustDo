@@ -1,0 +1,10 @@
+.window-header {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.window-header .window-controls-floating,
+.window-header .window-controls-floating * {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}

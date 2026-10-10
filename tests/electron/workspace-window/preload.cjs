@@ -8,6 +8,14 @@ const listen = (channel, listener) => {
 contextBridge.exposeInMainWorld('probeMarker', true);
 contextBridge.exposeInMainWorld('electron', {
   platform: process.platform,
+  window: {
+    minimize: () => ipcRenderer.send('probe:main:control', 'minimize'),
+    toggleMaximize: () => ipcRenderer.send('probe:main:control', 'toggleMaximize'),
+    close: () => ipcRenderer.send('probe:main:control', 'close'),
+    showSystemMenu: () => ipcRenderer.send('probe:main:control', 'showSystemMenu'),
+    isMaximized: () => Promise.resolve(false),
+    onStateChanged: listener => listen('window:state-changed', listener),
+  },
   terminal: {
     create: value => ipcRenderer.invoke('probe:terminal:create', value),
     close: id => ipcRenderer.invoke('probe:terminal:close', id),
@@ -18,6 +26,8 @@ contextBridge.exposeInMainWorld('electron', {
     onExit: listener => listen('probe:terminal:exit', listener),
   },
   workspaceWindow: {
+    getWindowState: generation => ipcRenderer.invoke(prefix + 'getWindowState', generation),
+    control: (generation, action, position) => ipcRenderer.send(prefix + 'control', generation, action, position),
     onInvalidated: listener => listen(prefix + 'invalidated', listener),
     prepare: () => ipcRenderer.invoke(prefix + 'prepare'),
     update: value => ipcRenderer.send(prefix + 'update', value),

@@ -67,7 +67,7 @@ import { resolveDevelopmentDataDirectory } from './core/development/developmentD
 import { getDevServerUrlFromCommandLine } from './core/development/devServerHandoff';
 import { createDevSessionLifecycle } from './core/development/devSessionLifecycle';
 import { ManagedDirectoryOperationCoordinator } from './core/filesystem/managedDirectoryOperations';
-import { setLanguage } from './core/i18n';
+import { setLanguage, t } from './core/i18n';
 import { getRecentMainLogEntries, initLogger } from './core/logger';
 import { mainProcessFetch, mainProcessTitleFetch } from './core/network/mainProcessFetch';
 import {
@@ -92,7 +92,7 @@ import {
   registerLocalFileScheme,
 } from './core/window/localFileProtocol';
 import { createMainWindow } from './core/window/mainWindowFactory';
-import { isWorkspaceBrowserHost } from './core/window/workspaceWindowManager';
+import { getWorkspaceWindowManager, isWorkspaceBrowserHost } from './core/window/workspaceWindowManager';
 import { orderDiagnosticMainLogs } from './cowork/diagnostics/logSources';
 import { SessionDiagnosticsService } from './cowork/diagnostics/service';
 import { CoworkStore } from './data/coworkStore';
@@ -1287,6 +1287,7 @@ const updateTitleBarOverlay = () => {
   const config = getStore().get<AppConfigSettings>('app_config');
   const theme = resolveThemeFromConfig(config);
   mainWindow.setBackgroundColor(theme === 'dark' ? '#0F1117' : '#F8F9FB');
+  getWorkspaceWindowManager(mainWindow.webContents.id)?.updateAppearance();
 };
 
 const emitWindowState = (window = mainWindow) => {
@@ -1299,18 +1300,18 @@ const emitWindowState = (window = mainWindow) => {
   });
 };
 
-const showSystemMenu = (position?: { x?: number; y?: number }) => {
+const showSystemMenu = (position?: { x?: number; y?: number }, targetWindow = mainWindow) => {
   if (!isWindows) return;
-  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!targetWindow || targetWindow.isDestroyed()) return;
 
-  const window = mainWindow;
+  const window = targetWindow;
   const isMaximized = window.isMaximized();
   const menu = Menu.buildFromTemplate([
-    { label: 'Restore', enabled: isMaximized, click: () => window.restore() },
-    { role: 'minimize' },
-    { label: 'Maximize', enabled: !isMaximized, click: () => window.maximize() },
+    { label: t('windowRestore'), enabled: isMaximized, click: () => window.restore() },
+    { label: t('windowMinimize'), click: () => window.minimize() },
+    { label: t('windowMaximize'), enabled: !isMaximized, click: () => window.maximize() },
     { type: 'separator' },
-    { role: 'close' },
+    { label: t('windowClose'), click: () => window.close() },
   ]);
 
   menu.popup({
@@ -1793,6 +1794,7 @@ if (multicaBridgeArgv) {
         };
       },
       getTitleBarOverlay: getTitleBarOverlayOptions,
+      showSystemMenu: (window, position) => showSystemMenu(position, window),
       isDev,
       isMac,
       isQuitting: appShutdown.isQuitting,
