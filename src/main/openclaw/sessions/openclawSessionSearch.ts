@@ -8,7 +8,7 @@ import {
   type OpenClawSessionsSearchHitV2026_9_8,
   parseSessionsSearchResultV2026_9_8,
 } from '../../engine/openclaw/wire/v2026_9_8';
-import { buildManagedSessionKey } from './openclawSessionKeys';
+import { buildManagedSessionKey, isTeamDiscussionHoldingSessionKey } from './openclawSessionKeys';
 
 const SESSION_KEYS_PER_REQUEST = 200;
 const SEARCH_RESULTS_PER_REQUEST = 25;
@@ -150,7 +150,12 @@ export const searchCoworkSessionMessages = async ({
   const sessions = store
     .listSessions()
     .filter(
-      session => (!includedIds || includedIds.has(session.id)) && !excludedIds.has(session.id),
+      session =>
+        (!includedIds || includedIds.has(session.id)) &&
+        !excludedIds.has(session.id) &&
+        !isTeamDiscussionHoldingSessionKey(
+          session.nativeSessionKey || session.external?.sessionKey,
+        ),
     );
   if (sessions.length === 0) {
     return {

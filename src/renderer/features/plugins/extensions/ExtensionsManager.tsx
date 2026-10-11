@@ -2,6 +2,7 @@ import {
   ArchiveBoxIcon,
   ArrowUpTrayIcon,
   ChevronDownIcon,
+  Cog6ToothIcon,
   ExclamationTriangleIcon,
   FolderIcon,
   QuestionMarkCircleIcon,
@@ -42,6 +43,8 @@ import SearchIcon from '@/shared/components/icons/SearchIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
 import Modal from '@/shared/components/ui/Modal';
 import Tooltip from '@/shared/components/ui/Tooltip';
+
+import AgentTeamSettingsDialog from './AgentTeamSettingsDialog';
 
 const getImportStageLabel = (stage: ExtensionImportStage): string => {
   switch (stage) {
@@ -108,6 +111,7 @@ const getConfigurationVariable = (
   field.environmentVariables?.[0];
 
 interface ExtensionsManagerProps extends PluginHubManagerProps {
+  onOpenRuntime?: () => void;
   requestedExtensionId?: string;
   onRequestedExtensionHandled?: () => void;
 }
@@ -117,7 +121,9 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   visibility = 'all',
   requestedExtensionId,
   onRequestedExtensionHandled,
+  onOpenRuntime,
 }) => {
+  const [teamSettingsOpen, setTeamSettingsOpen] = useState(false);
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   const searchQuery = sharedSearchQuery ?? localSearchQuery;
   const [importPickerOpen, setImportPickerOpen] = useState(false);
@@ -735,6 +741,20 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                                   {marketplaceUpdateIds.has(extension.id.toLowerCase()) && (
                                     <PluginUpdateIndicator />
                                   )}
+                                  {extension.id === 'agent-team' && (
+                                    <button
+                                      type="button"
+                                      className="pointer-events-auto rounded-lg p-1.5 text-secondary hover:bg-surface-raised"
+                                      aria-label={i18nService.t('agentTeamSettings')}
+                                      title={i18nService.t('agentTeamSettings')}
+                                      onClick={event => {
+                                        event.stopPropagation();
+                                        setTeamSettingsOpen(true);
+                                      }}
+                                    >
+                                      <Cog6ToothIcon className="h-4 w-4" />
+                                    </button>
+                                  )}
                                   {canToggle ? (
                                     <ExtensionToggle
                                       extension={extension}
@@ -838,6 +858,12 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         </section>
       )}
 
+      {teamSettingsOpen && (
+        <AgentTeamSettingsDialog
+          onClose={() => setTeamSettingsOpen(false)}
+          onOpenRuntime={onOpenRuntime}
+        />
+      )}
       {importPickerOpen &&
         createPortal(
           <Modal
@@ -1118,6 +1144,18 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                       </button>
                     </Tooltip>
                   )}
+                {selectedExtension.id === 'agent-team' && (
+                  <button
+                    type="button"
+                    className="rounded-lg px-3 py-2 text-sm text-primary hover:bg-surface-raised"
+                    onClick={() => {
+                      setSelectedExtension(null);
+                      setTeamSettingsOpen(true);
+                    }}
+                  >
+                    {i18nService.t('agentTeamSettings')}
+                  </button>
+                )}
                 {(selectedExtension.management?.remove.allowed ??
                   selectedExtension.removable === true) && (
                   <Tooltip content={i18nService.t('extensionDelete')} position="top">

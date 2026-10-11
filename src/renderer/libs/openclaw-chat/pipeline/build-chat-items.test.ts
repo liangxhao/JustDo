@@ -130,6 +130,70 @@ test('hides trusted peer transport messages outside member-history perspective',
   expect(result[0].messages[0].message).toMatchObject({ content: 'User-facing synthesis.' });
 });
 
+test('hides the native group summary trigger while retaining the actual summary in main history', () => {
+  const provenance = {
+    kind: 'inter_session',
+    sourceSessionKey: 'agent:review:justdo:group-member',
+    sourceChannel: 'justdo-team',
+    sourceTool: 'team_discussion',
+  };
+  const input = 'A group discussion has ended. Summarize its available public results.';
+  const result = groups(
+    build({
+      peerPerspective: false,
+      historyRenderLimit: 2,
+      messages: [
+        { role: 'user', timestamp: 1, content: 'Please discuss the design.' },
+        { role: 'user', timestamp: 2, content: input, provenance },
+        // An assistant output remains visible even if native provenance is carried forward.
+        {
+          role: 'assistant',
+          timestamp: 3,
+          content: 'The recommended design is simple.',
+          provenance,
+        },
+      ],
+    }),
+  );
+  expect(result.map(group => group.role)).toEqual(['user', 'assistant']);
+  expect(result.flatMap(group => group.messages.map(item => item.message))).toEqual([
+    expect.objectContaining({ content: 'Please discuss the design.' }),
+    expect.objectContaining({ content: 'The recommended design is simple.' }),
+  ]);
+});
+
+test('retains group dispatch input under a separate identity in member history', () => {
+  const input = {
+    role: 'user',
+    timestamp: 1,
+    content: 'Group thread round 2. Add something new only; otherwise reply NO_REPLY.',
+    provenance: {
+      kind: 'inter_session',
+      sourceSessionKey: 'agent:main:team-discussion:room',
+      sourceChannel: 'justdo-team',
+      sourceTool: 'team_discussion',
+    },
+  };
+  const result = groups(build({ peerPerspective: true, messages: [input] }));
+  expect(result).toHaveLength(1);
+  expect(result[0]).toMatchObject({ role: 'user', senderId: 'team-discussion:dispatcher' });
+  expect(result[0].senderLabel).toBeTruthy();
+  expect(result[0].messages[0].message).toBe(input);
+  expect(input).not.toHaveProperty('senderId');
+});
+
+test.each([
+  undefined,
+  { kind: 'external_user', sourceChannel: 'justdo-team', sourceTool: 'team_discussion' },
+  { kind: 'inter_session', sourceChannel: 'webchat', sourceTool: 'team_discussion' },
+  { kind: 'inter_session', sourceChannel: 'justdo-team', sourceTool: 'another-tool' },
+])('does not hide a user-authored summary prompt or another origin (%j)', provenance => {
+  const content = 'A group discussion has ended. Summarize its available public results.';
+  const result = groups(build({ messages: [{ role: 'user', content, provenance }] }));
+  expect(result).toHaveLength(1);
+  expect(result[0].messages[0].message).toMatchObject({ role: 'user', content });
+});
+
 function streams(
   items: ReturnType<typeof buildChatItems>,
 ): Extract<ChatItem, { kind: 'stream' }>[] {

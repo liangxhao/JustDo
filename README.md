@@ -194,3 +194,10 @@ Peer collaboration uses the optional agent-team extension, disabled by default.
 ## License
 
 MIT
+
+With Agent Team enabled, ask the source assistant to organize task collaboration
+or a group discussion. The side panel switches between a graph and a chat where
+you can participate directly. The organizer summarizes each new discussion batch
+back in the source conversation, and can optionally join using that same native
+conversation. Uncertain execution is never automatically replayed. See the
+[implementation and limits](docs/features/assistants/agent-team.md).

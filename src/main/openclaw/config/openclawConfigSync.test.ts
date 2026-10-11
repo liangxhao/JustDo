@@ -21,7 +21,9 @@ import {
 } from '../../providers/builtinModelCredential';
 import type { ProviderRawConfig } from '../../providers/providerApiConfig';
 import {
+  buildAuthScopedOpenClawConfig,
   buildManagedCapabilityPluginEntries,
+  buildManagedOpenClawSurfaces,
   buildManagedSwarmWorkflowPluginEntries,
   buildOpenClawHookConfig,
   listKnownOpenClawWorkspaceDirs,
@@ -80,21 +82,35 @@ test('keeps extension Hook dispatch available when every independent Hook is dis
 });
 
 test('projects only product-available agents into Swarm without re-enabling the plugin', () => {
-  const entries = buildManagedSwarmWorkflowPluginEntries([
-    { id: 'reviewer', enabled: true },
-    { id: 'disabled', enabled: false },
-    { id: 'deleted', enabled: true, deletedAt: 123 },
-  ], () => true);
-  expect(entries).toEqual({ 'swarm-workflow': {
-    enabled: true, config: { availableAgentIds: ['main', 'reviewer'] },
-  } });
-  const merged = mergeOpenClawPluginConfig(
-    { entries: { 'swarm-workflow': { enabled: false, config: { availableAgentIds: ['main', 'deleted'] } } } },
-    entries, ['swarm-workflow'],
+  const entries = buildManagedSwarmWorkflowPluginEntries(
+    [
+      { id: 'reviewer', enabled: true },
+      { id: 'disabled', enabled: false },
+      { id: 'deleted', enabled: true, deletedAt: 123 },
+    ],
+    () => true,
   );
-  expect(merged.entries).toMatchObject({ 'swarm-workflow': {
-    enabled: false, config: { availableAgentIds: ['main', 'reviewer'] },
-  } });
+  expect(entries).toEqual({
+    'swarm-workflow': {
+      enabled: true,
+      config: { availableAgentIds: ['main', 'reviewer'] },
+    },
+  });
+  const merged = mergeOpenClawPluginConfig(
+    {
+      entries: {
+        'swarm-workflow': { enabled: false, config: { availableAgentIds: ['main', 'deleted'] } },
+      },
+    },
+    entries,
+    ['swarm-workflow'],
+  );
+  expect(merged.entries).toMatchObject({
+    'swarm-workflow': {
+      enabled: false,
+      config: { availableAgentIds: ['main', 'reviewer'] },
+    },
+  });
   expect(buildManagedSwarmWorkflowPluginEntries([], () => false)).toEqual({});
 });
 
@@ -118,10 +134,20 @@ describe('Windows native sandbox config', () => {
 
   test('keeps trusted collaboration tools available inside the sandbox', () => {
     expect(buildManagedOpenClawSandboxToolConfig('sandbox')).toEqual({
-      tools: { alsoAllow: ['task_assistants', 'assistants_create', 'decision_evaluate'] },
+      tools: {
+        alsoAllow: ['task_assistants', 'assistants_create', 'team_discussion', 'decision_evaluate'],
+      },
     });
     expect(buildManagedOpenClawSandboxToolConfig('local')).toEqual({
-      tools: { alsoAllow: ['task_assistants', 'assistants_create', 'decision_evaluate', 'bundle-mcp'] },
+      tools: {
+        alsoAllow: [
+          'task_assistants',
+          'assistants_create',
+          'team_discussion',
+          'decision_evaluate',
+          'bundle-mcp',
+        ],
+      },
     });
   });
 });
@@ -915,43 +941,47 @@ describe('OpenClaw managed ACP config', () => {
     settings.shareConfiguredMcpServers = true;
 
     expect(
-      buildManagedAcpxPluginEntry(settings, [], [
-        {
-          id: 'local',
-          name: 'workspace-tools',
-          description: '',
-          enabled: true,
-          transportType: 'stdio',
-          command: 'node',
-          args: ['server.mjs'],
-          env: { MODE: 'acp' },
-          isBuiltIn: false,
-          createdAt: 1,
-          updatedAt: 1,
-        },
-        {
-          id: 'remote',
-          name: 'remote-tools',
-          description: '',
-          enabled: true,
-          transportType: 'http',
-          url: 'https://example.invalid/mcp',
-          isBuiltIn: false,
-          createdAt: 1,
-          updatedAt: 1,
-        },
-        {
-          id: 'reserved',
-          name: 'openclaw-tools',
-          description: '',
-          enabled: true,
-          transportType: 'stdio',
-          command: 'collision',
-          isBuiltIn: false,
-          createdAt: 1,
-          updatedAt: 1,
-        },
-      ]),
+      buildManagedAcpxPluginEntry(
+        settings,
+        [],
+        [
+          {
+            id: 'local',
+            name: 'workspace-tools',
+            description: '',
+            enabled: true,
+            transportType: 'stdio',
+            command: 'node',
+            args: ['server.mjs'],
+            env: { MODE: 'acp' },
+            isBuiltIn: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          {
+            id: 'remote',
+            name: 'remote-tools',
+            description: '',
+            enabled: true,
+            transportType: 'http',
+            url: 'https://example.invalid/mcp',
+            isBuiltIn: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          {
+            id: 'reserved',
+            name: 'openclaw-tools',
+            description: '',
+            enabled: true,
+            transportType: 'stdio',
+            command: 'collision',
+            isBuiltIn: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      ),
     ).toMatchObject({
       config: {
         pluginToolsMcpBridge: true,
@@ -969,19 +999,23 @@ describe('OpenClaw managed ACP config', () => {
 
   test('does not share configured MCP servers until explicitly enabled', () => {
     const settings = createDefaultExternalAgentSettings();
-    const entry = buildManagedAcpxPluginEntry(settings, [], [
-      {
-        id: 'local',
-        name: 'workspace-tools',
-        description: '',
-        enabled: true,
-        transportType: 'stdio',
-        command: 'node',
-        isBuiltIn: false,
-        createdAt: 1,
-        updatedAt: 1,
-      },
-    ]);
+    const entry = buildManagedAcpxPluginEntry(
+      settings,
+      [],
+      [
+        {
+          id: 'local',
+          name: 'workspace-tools',
+          description: '',
+          enabled: true,
+          transportType: 'stdio',
+          command: 'node',
+          isBuiltIn: false,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    );
 
     expect(entry).toMatchObject({
       config: {
@@ -1027,6 +1061,28 @@ describe('OpenClaw managed session retention', () => {
 });
 
 describe('OpenClaw plugin config merging', () => {
+  test('keeps required launch guard conversation access while preserving other plugin hook choices', () => {
+    const id = OpenClawExtensionId.RUNTIME_SERVICES;
+    const result = mergeOpenClawPluginConfig(
+      {
+        entries: {
+          [id]: {
+            enabled: false,
+            hooks: { allowConversationAccess: false, allowPromptInjection: false },
+          },
+          'agent-team': { enabled: false },
+        },
+      },
+      { [id]: { enabled: true, hooks: { allowConversationAccess: true } } },
+    );
+    expect(result.entries).toEqual({
+      [id]: {
+        enabled: true,
+        hooks: { allowConversationAccess: true, allowPromptInjection: false },
+      },
+      'agent-team': { enabled: false },
+    });
+  });
   test.each([undefined, false, true])(
     'keeps desktop control opt-in and preserves the user choice (%s) in an explicit allowlist',
     enabled => {
@@ -1051,10 +1107,19 @@ describe('OpenClaw plugin config merging', () => {
   );
   test('enables independent flows without enabling Workboard and preserves explicit choices', () => {
     const ids = [OpenClawExtensionId.SWARM_WORKFLOW, OpenClawExtensionId.WORKBOARD];
-    const defaults = buildDefaultOpenClawPluginEntries(id => ids.includes(id as typeof ids[number]));
-    expect(defaults).toEqual({ 'swarm-workflow': { enabled: true }, workboard: { enabled: false } });
-    expect(applyDefaultOpenClawPluginEntries({ entries: { 'swarm-workflow': { enabled: false }, workboard: { enabled: true } } }, defaults))
-      .toEqual({ entries: { 'swarm-workflow': { enabled: false }, workboard: { enabled: true } } });
+    const defaults = buildDefaultOpenClawPluginEntries(id =>
+      ids.includes(id as (typeof ids)[number]),
+    );
+    expect(defaults).toEqual({
+      'swarm-workflow': { enabled: true },
+      workboard: { enabled: false },
+    });
+    expect(
+      applyDefaultOpenClawPluginEntries(
+        { entries: { 'swarm-workflow': { enabled: false }, workboard: { enabled: true } } },
+        defaults,
+      ),
+    ).toEqual({ entries: { 'swarm-workflow': { enabled: false }, workboard: { enabled: true } } });
   });
   test.each([undefined, false])(
     'allows memory runtime hooks while preserving explicit disable (%s)',
@@ -1276,11 +1341,10 @@ describe('OpenClaw managed speech config', () => {
 
   test('disables retained Gateway TTS when response reading is turned off', () => {
     expect(
-      resolveManagedOpenClawTtsConfig(
-        { tts: { enabled: true, provider: 'openai' } },
-        null,
-        { enabled: false, mode: 'online' },
-      ),
+      resolveManagedOpenClawTtsConfig({ tts: { enabled: true, provider: 'openai' } }, null, {
+        enabled: false,
+        mode: 'online',
+      }),
     ).toEqual({ enabled: false, provider: 'openai' });
   });
 
@@ -1319,8 +1383,9 @@ describe('OpenClaw skill config merging', () => {
     expect(mergeOpenClawSkillConfig(skills, {})).toEqual(skills);
   });
   test('defaults automation off without losing workshop preferences', () => {
-    expect(mergeOpenClawSkillConfig({ workshop: { autonomous: { custom: true } } }, {}))
-      .toEqual({ workshop: { autonomous: { mode: 'off', custom: true } } });
+    expect(mergeOpenClawSkillConfig({ workshop: { autonomous: { custom: true } } }, {})).toEqual({
+      workshop: { autonomous: { mode: 'off', custom: true } },
+    });
   });
   test('preserves disabled skills and custom load directories', () => {
     expect(
@@ -1403,11 +1468,7 @@ describe('OpenClaw skill config merging', () => {
       ),
     ).toEqual({
       enabled: true,
-      allow: [
-        'existing-trusted',
-        'justdo-skill-only-example',
-        'automation-permission',
-      ],
+      allow: ['existing-trusted', 'justdo-skill-only-example', 'automation-permission'],
       entries: {
         existing: { enabled: false },
         'automation-permission': { enabled: true },
@@ -1456,25 +1517,82 @@ describe('OpenClaw skill config merging', () => {
   });
 });
 
-
 describe('optional agent-team configuration', () => {
+  test('permits native group silence only on the managed discussion surface', () => {
+    const existing = {
+      webchat: { silentReply: { group: 'disallow' } },
+      slack: { silentReply: { group: 'allow' } },
+      'justdo-team': { silentReply: { group: 'disallow' } },
+    };
+    const original = structuredClone(existing);
+    expect(buildManagedOpenClawSurfaces(existing)).toEqual({
+      ...existing,
+      'justdo-team': { silentReply: { group: 'allow' } },
+    });
+    expect(buildManagedOpenClawSurfaces(undefined)).toEqual({
+      'justdo-team': { silentReply: { group: 'allow' } },
+    });
+    expect(existing).toEqual(original);
+  });
+  test('retains the required launch guard during auth-only sync and preserves optional choices', () => {
+    const result = buildAuthScopedOpenClawConfig(
+      {
+        plugins: {
+          allow: ['agent-team'],
+          entries: {
+            'agent-team': { enabled: false },
+            'runtime-services': {
+              enabled: false,
+              hooks: { allowConversationAccess: false, allowPromptInjection: false },
+            },
+          },
+        },
+      },
+      {
+        plugins: {
+          entries: {
+            'agent-team': { enabled: true },
+            'runtime-services': { enabled: true },
+          },
+        },
+      },
+      'auth-login',
+    );
+    expect(result.plugins).toMatchObject({
+      allow: ['agent-team', 'runtime-services'],
+      entries: {
+        'agent-team': { enabled: false },
+        'runtime-services': {
+          enabled: true,
+          hooks: { allowConversationAccess: true, allowPromptInjection: false },
+        },
+      },
+    });
+  });
+
   test.each([true, false])('preserves the user enabled=%s choice during config sync', enabled => {
     const result = mergeOpenClawPluginConfig(
-      applyDefaultOpenClawPluginEntries({ entries: { 'agent-team': { enabled } } },
-        { 'agent-team': { enabled: false } }),
-      { 'runtime-services': { enabled: true } }, ['agent-team'],
+      applyDefaultOpenClawPluginEntries(
+        { entries: { 'agent-team': { enabled } } },
+        { 'agent-team': { enabled: false } },
+      ),
+      { 'runtime-services': { enabled: true } },
+      ['agent-team'],
     );
     expect(result.entries).toMatchObject({ 'agent-team': { enabled } });
   });
   test('defaults to disabled without affecting the required history service', () => {
     const result = mergeOpenClawPluginConfig(
       applyDefaultOpenClawPluginEntries({}, { 'agent-team': { enabled: false } }),
-      { 'runtime-services': { enabled: true } }, ['agent-team'],
+      { 'runtime-services': { enabled: true } },
+      ['agent-team'],
     );
-    expect(result.entries).toEqual({ 'agent-team': { enabled: false }, 'runtime-services': { enabled: true } });
+    expect(result.entries).toEqual({
+      'agent-team': { enabled: false },
+      'runtime-services': { enabled: true, hooks: { allowConversationAccess: true } },
+    });
   });
 });
-
 
 test('preserves user scheduler settings across managed config synchronization', () => {
   expect(buildManagedOpenClawCronConfig(undefined)).toEqual({
@@ -1482,9 +1600,16 @@ test('preserves user scheduler settings across managed config synchronization', 
     skipMissedJobs: true,
     sessionRetention: '7d',
   });
-  const existing = { enabled: false, sessionRetention: false, skipMissedJobs: true, failureAlert: { after: 5 } };
+  const existing = {
+    enabled: false,
+    sessionRetention: false,
+    skipMissedJobs: true,
+    failureAlert: { after: 5 },
+  };
   expect(buildManagedOpenClawCronConfig(existing)).toEqual(existing);
-  expect(buildManagedOpenClawCronConfig({ sessionRetention: '1h30m' }).sessionRetention).toBe('1h30m');
+  expect(buildManagedOpenClawCronConfig({ sessionRetention: '1h30m' }).sessionRetention).toBe(
+    '1h30m',
+  );
 });
 
 test('disables missed-job catch-up by default while preserving an explicit opt-in', () => {
@@ -1509,21 +1634,32 @@ test.each([OpenClawExtensionId.OPENAI, OpenClawExtensionId.CODE_MODE_QUICKJS])(
   },
 );
 
-
 describe('native session cold storage configuration ownership', () => {
-  test.each([true, false])('preserves explicit enabled=%s and unrelated native maintenance fields', enabled => {
-    const existing = { maintenance: { coldStorage: { enabled, afterDays: 47 }, maxDiskBytes: 123456 }, custom: 'retained' };
-    expect(buildManagedOpenClawSessionConfig(existing)).toMatchObject(existing);
-    expect(existing.maintenance.coldStorage.afterDays).toBe(47);
-    expect(buildManagedOpenClawSessionConfig().maintenance).not.toHaveProperty('coldStorage');
-  });
+  test.each([true, false])(
+    'preserves explicit enabled=%s and unrelated native maintenance fields',
+    enabled => {
+      const existing = {
+        maintenance: { coldStorage: { enabled, afterDays: 47 }, maxDiskBytes: 123456 },
+        custom: 'retained',
+      };
+      expect(buildManagedOpenClawSessionConfig(existing)).toMatchObject(existing);
+      expect(existing.maintenance.coldStorage.afterDays).toBe(47);
+      expect(buildManagedOpenClawSessionConfig().maintenance).not.toHaveProperty('coldStorage');
+    },
+  );
 });
 
 test('inventories independent main and specialist role homes before a previous config exists', () => {
   const directories = listKnownOpenClawWorkspaceDirs({
-    stateDir: '/state', mainWorkspaceDir: '/project', agents: [{ id: 'research' }] as never,
+    stateDir: '/state',
+    mainWorkspaceDir: '/project',
+    agents: [{ id: 'research' }] as never,
   });
-  expect(directories).toEqual(expect.arrayContaining([
-    '/project', path.join('/state', 'agent-workspaces', 'main'), path.join('/state', 'agent-workspaces', 'research'),
-  ]));
+  expect(directories).toEqual(
+    expect.arrayContaining([
+      '/project',
+      path.join('/state', 'agent-workspaces', 'main'),
+      path.join('/state', 'agent-workspaces', 'research'),
+    ]),
+  );
 });

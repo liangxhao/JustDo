@@ -49,6 +49,7 @@ const EXPECTED_PATCH_FILES = [
   '036-shared-terminal-launch.cjs',
   '037-terminal-product-banner.cjs',
   '038-native-compaction-lifecycle.cjs',
+  '039-peer-transcript-write-scope.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

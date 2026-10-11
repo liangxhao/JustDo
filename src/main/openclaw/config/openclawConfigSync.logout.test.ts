@@ -34,7 +34,8 @@ vi.mock('electron', () => ({
 // replaced concurrently. Inventory discovery has its own filesystem tests.
 const optionalInventory = vi.hoisted(() => ({ computerAvailable: false }));
 vi.mock('../../plugins/extensions/openclawLocalExtensions', async importOriginal => {
-  const actual = await importOriginal<typeof import('../../plugins/extensions/openclawLocalExtensions')>();
+  const actual =
+    await importOriginal<typeof import('../../plugins/extensions/openclawLocalExtensions')>();
   const bundledIds = [
     'browser',
     'workboard',
@@ -75,29 +76,60 @@ vi.mock('node:child_process', async importOriginal => {
 
 const temporaryDirectories: string[] = [];
 
-test.each(['full', 'minimal'])('%s sync preserves Gateway-owned worktree settings across startup and auth changes', mode => {
-  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-worktree-sync-'));
-  temporaryDirectories.push(stateDir);
-  const configPath = path.join(stateDir, 'openclaw.json');
-  const root = path.join(stateDir, '工作目录 with spaces');
-  fs.writeFileSync(configPath, JSON.stringify({ worktreeRoot: root, worktreeAcceleration: false }));
-  const appConfig = mode === 'full' ? {
-    model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
-    providers: { 'custom-provider': { enabled: true, apiKey: 'chat-test-key', baseUrl: 'https://custom.example.test/v1', apiFormat: 'openai', models: [{ id: 'custom-model' }] } },
-  } : {};
-  setStoreGetter(() => ({ get: () => appConfig }) as never);
-  const sync = new OpenClawConfigSync({
-    engineManager: { getConfigPath: () => configPath, getStateDir: () => stateDir, getDesiredVersion: () => '2026.9.6' },
-    getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
-    getAgents: () => [],
-  } as never);
-  for (const reason of ['startup', 'app-config-change', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
-    expect(sync.sync(reason).ok).toBe(true);
-    expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toMatchObject({
-      worktreeRoot: root, worktreeAcceleration: false,
-    });
-  }
-});
+test.each(['full', 'minimal'])(
+  '%s sync preserves Gateway-owned worktree settings across startup and auth changes',
+  mode => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-worktree-sync-'));
+    temporaryDirectories.push(stateDir);
+    const configPath = path.join(stateDir, 'openclaw.json');
+    const root = path.join(stateDir, '工作目录 with spaces');
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ worktreeRoot: root, worktreeAcceleration: false }),
+    );
+    const appConfig =
+      mode === 'full'
+        ? {
+            model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+            providers: {
+              'custom-provider': {
+                enabled: true,
+                apiKey: 'chat-test-key',
+                baseUrl: 'https://custom.example.test/v1',
+                apiFormat: 'openai',
+                models: [{ id: 'custom-model' }],
+              },
+            },
+          }
+        : {};
+    setStoreGetter(() => ({ get: () => appConfig }) as never);
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath,
+        getStateDir: () => stateDir,
+        getDesiredVersion: () => '2026.9.6',
+      },
+      getCoworkConfig: () => ({
+        workingDirectory: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+      }),
+      getAgents: () => [],
+    } as never);
+    for (const reason of [
+      'startup',
+      'app-config-change',
+      BuiltinModelSyncReason.AuthLogin,
+      BuiltinModelSyncReason.AuthLogout,
+    ]) {
+      expect(sync.sync(reason).ok).toBe(true);
+      expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toMatchObject({
+        worktreeRoot: root,
+        worktreeAcceleration: false,
+      });
+    }
+  },
+);
 
 test('allows users to toggle agent-team independently of required extensions', () => {
   expect(listManagedOpenClawPluginIds()).not.toContain('agent-team');
@@ -123,6 +155,10 @@ test.each([
   fs.writeFileSync(
     configPath,
     JSON.stringify({
+      surfaces: {
+        webchat: { silentReply: { group: 'disallow' } },
+        'justdo-team': { silentReply: { group: 'disallow' } },
+      },
       plugins: {
         allow: ['browser'],
         deny: ['openai', 'code-mode-quickjs', 'document-extract'],
@@ -178,6 +214,10 @@ test.each([
   ]) {
     expect(sync.sync(reason).ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.surfaces).toMatchObject({
+      webchat: { silentReply: { group: 'disallow' } },
+      'justdo-team': { silentReply: { group: 'allow' } },
+    });
     expect(config.plugins.entries.openai).toEqual({
       enabled: true,
       config: { personality: 'friendly' },
@@ -300,41 +340,76 @@ test.each(['full', 'minimal'])(
 );
 
 test.each([
-  ['full', undefined], ['full', false], ['full', true],
-  ['minimal', undefined], ['minimal', false], ['minimal', true],
-] as const)('%s sync preserves desktop-control opt-in (%s) across startup and auth changes', (mode, enabled) => {
-  optionalInventory.computerAvailable = true;
-  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-computer-sync-'));
-  temporaryDirectories.push(stateDir);
-  const configPath = path.join(stateDir, 'openclaw.json');
-  fs.writeFileSync(configPath, JSON.stringify({
-    plugins: {
-      allow: ['browser'],
-      ...(enabled === undefined ? {} : { entries: { 'cua-computer': { enabled } } }),
-    },
-  }));
-  const appConfig = mode === 'full' ? {
-    model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
-    providers: { 'custom-provider': { enabled: true, apiKey: 'chat-test-key', baseUrl: 'https://custom.example.test/v1', apiFormat: 'openai', models: [{ id: 'custom-model' }] } },
-  } : {};
-  setStoreGetter(() => ({ get: () => appConfig }) as never);
-  const sync = new OpenClawConfigSync({
-    engineManager: { getConfigPath: () => configPath, getStateDir: () => stateDir, getDesiredVersion: () => '2026.9.8' },
-    getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
-    getAgents: () => [],
-  } as never);
+  ['full', undefined],
+  ['full', false],
+  ['full', true],
+  ['minimal', undefined],
+  ['minimal', false],
+  ['minimal', true],
+] as const)(
+  '%s sync preserves desktop-control opt-in (%s) across startup and auth changes',
+  (mode, enabled) => {
+    optionalInventory.computerAvailable = true;
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-computer-sync-'));
+    temporaryDirectories.push(stateDir);
+    const configPath = path.join(stateDir, 'openclaw.json');
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        plugins: {
+          allow: ['browser'],
+          ...(enabled === undefined ? {} : { entries: { 'cua-computer': { enabled } } }),
+        },
+      }),
+    );
+    const appConfig =
+      mode === 'full'
+        ? {
+            model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+            providers: {
+              'custom-provider': {
+                enabled: true,
+                apiKey: 'chat-test-key',
+                baseUrl: 'https://custom.example.test/v1',
+                apiFormat: 'openai',
+                models: [{ id: 'custom-model' }],
+              },
+            },
+          }
+        : {};
+    setStoreGetter(() => ({ get: () => appConfig }) as never);
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath,
+        getStateDir: () => stateDir,
+        getDesiredVersion: () => '2026.9.8',
+      },
+      getCoworkConfig: () => ({
+        workingDirectory: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+      }),
+      getAgents: () => [],
+    } as never);
 
-  for (const reason of ['startup', 'app-config-change', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
-    expect(sync.sync(reason).ok).toBe(true);
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.plugins.entries['cua-computer']).toEqual({ enabled: enabled ?? false });
-    expect(config.plugins.allow).toContain('cua-computer');
-    expect(config.tools.deny.includes('computer')).toBe(enabled !== true);
-    if (enabled === true) expect(config.tools.allow ?? config.tools.alsoAllow).toContain('computer');
-    expect(config.tools.sandbox.tools.alsoAllow).not.toContain('computer');
-  }
-  expect(listManagedOpenClawPluginIds()).toContain('cua-computer');
-});
+    for (const reason of [
+      'startup',
+      'app-config-change',
+      BuiltinModelSyncReason.AuthLogin,
+      BuiltinModelSyncReason.AuthLogout,
+    ]) {
+      expect(sync.sync(reason).ok).toBe(true);
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(config.plugins.entries['cua-computer']).toEqual({ enabled: enabled ?? false });
+      expect(config.plugins.allow).toContain('cua-computer');
+      expect(config.tools.deny.includes('computer')).toBe(enabled !== true);
+      if (enabled === true)
+        expect(config.tools.allow ?? config.tools.alsoAllow).toContain('computer');
+      expect(config.tools.sandbox.tools.alsoAllow).not.toContain('computer');
+    }
+    expect(listManagedOpenClawPluginIds()).toContain('cua-computer');
+  },
+);
 
 const writeExistingBuiltinConfig = (): string => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-auth-logout-config-'));
@@ -513,18 +588,27 @@ const writeMinimalConfig = (
   ).writeMinimalConfig(configPath, reason);
 };
 
-test.each([true, false])('preserves cold storage through minimal startup and subsequent runtime saves (enabled=%s)', enabled => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-storage-config-'));
-  temporaryDirectories.push(directory);
-  const configPath = path.join(directory, 'openclaw.json');
-  const maintenance = { coldStorage: { enabled, afterDays: 47 }, maxDiskBytes: 104857600 };
-  fs.writeFileSync(configPath, JSON.stringify({ session: { maintenance } }));
-  for (const reason of ['startup', 'agent-runtime-settings-change', BuiltinModelSyncReason.AuthLogout]) {
-    const result = writeMinimalConfig(configPath, reason);
-    expect(result.ok).toBe(true);
-    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).session.maintenance).toMatchObject(maintenance);
-  }
-});
+test.each([true, false])(
+  'preserves cold storage through minimal startup and subsequent runtime saves (enabled=%s)',
+  enabled => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-storage-config-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    const maintenance = { coldStorage: { enabled, afterDays: 47 }, maxDiskBytes: 104857600 };
+    fs.writeFileSync(configPath, JSON.stringify({ session: { maintenance } }));
+    for (const reason of [
+      'startup',
+      'agent-runtime-settings-change',
+      BuiltinModelSyncReason.AuthLogout,
+    ]) {
+      const result = writeMinimalConfig(configPath, reason);
+      expect(result.ok).toBe(true);
+      expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).session.maintenance).toMatchObject(
+        maintenance,
+      );
+    }
+  },
+);
 
 test('removes stale independent Hook entries from no-model config while retaining webhook settings', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-empty-hook-config-'));
@@ -576,14 +660,26 @@ describe('OpenClaw auth logout config sync', () => {
           getStateDir: () => path.dirname(configPath),
           getDesiredVersion: () => '2026.9.6',
         },
-        getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+        getCoworkConfig: () => ({
+          workingDirectory: '',
+          executionMode: 'local',
+          agentEngine: 'openclaw',
+        }),
         getAgents: () => [],
       } as never);
 
-      expect(sync.sync(reason)).toMatchObject({ ok: false, changed: false, error: 'Synthetic permission failure' });
+      expect(sync.sync(reason)).toMatchObject({
+        ok: false,
+        changed: false,
+        error: 'Synthetic permission failure',
+      });
       expect(attempts).toBe(1);
       expect(fs.readFileSync(configPath, 'utf8')).toBe(original);
-      expect(fs.readdirSync(path.dirname(configPath)).filter(name => name.startsWith('openclaw.json.tmp-'))).toEqual([]);
+      expect(
+        fs
+          .readdirSync(path.dirname(configPath))
+          .filter(name => name.startsWith('openclaw.json.tmp-')),
+      ).toEqual([]);
     },
   );
 
@@ -640,192 +736,309 @@ describe('OpenClaw auth logout config sync', () => {
     },
   );
 
-  test.each(['full', 'minimal'] as const)('%s sync separates all native role homes from changing project directories', mode => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-role-homes-'));
-    temporaryDirectories.push(stateDir);
-    const configPath = path.join(stateDir, 'openclaw.json');
-    let projectDir = path.join(stateDir, '项目 A');
-    fs.mkdirSync(projectDir);
-    const projectRules = path.join(projectDir, 'AGENTS.md');
-    const projectSoul = path.join(projectDir, 'SOUL.md');
-    fs.writeFileSync(projectRules, 'Shared project rules');
-    fs.writeFileSync(projectSoul, 'Existing main persona must not be moved or deleted');
-    const roleRoot = path.join(stateDir, 'agent-workspaces');
-    const mainHome = path.join(roleRoot, 'main');
-    fs.mkdirSync(mainHome, { recursive: true });
-    fs.writeFileSync(path.join(mainHome, 'SOUL.md'), 'Independent main persona');
-    const appConfig = mode === 'full' ? {
-      model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
-      providers: { 'custom-provider': {
-        enabled: true, apiKey: 'test-secret', baseUrl: 'https://custom.example.test/v1',
-        apiFormat: 'openai', models: [{ id: 'custom-model' }],
-      } },
-    } : {};
-    setStoreGetter(() => ({ get: () => appConfig }) as never);
-    const sync = new OpenClawConfigSync({
-      engineManager: {
-        getConfigPath: () => configPath, getStateDir: () => stateDir,
-        getDesiredVersion: () => '2026.9.6',
-      },
-      getCoworkConfig: () => ({ workingDirectory: projectDir, executionMode: 'local', agentEngine: 'openclaw' }),
-      getAgents: () => ['main', 'research'].map(id => ({ id, name: id, enabled: true, model: '', isDefault: id === 'main' })),
-    } as never);
-    for (const reason of ['startup', 'settings', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
-      const existing = fs.existsSync(configPath)
-        ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
-        : { gateway: { mode: 'local' }, agents: { defaults: {} } };
-      existing.agents.defaults.skipBootstrap = false;
-      fs.writeFileSync(configPath, JSON.stringify(existing));
-      expect(sync.sync(reason).ok).toBe(true);
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      expect(config.agents.defaults.workspace).toBe(roleRoot);
-      expect(config.agents.defaults.cwd).toBe(projectDir);
-      expect(config.agents.defaults.skipBootstrap).toBe(true);
-      for (const id of ['main', 'research']) {
-        expect(config.agents.entries[id]).toMatchObject({ workspace: path.join(roleRoot, id), cwd: projectDir });
-      }
-      projectDir = path.join(stateDir, '项目 B');
-    }
-    expect(fs.readFileSync(projectRules, 'utf8')).toBe('Shared project rules');
-    expect(fs.readFileSync(projectSoul, 'utf8')).toBe('Existing main persona must not be moved or deleted');
-    expect(fs.readFileSync(path.join(mainHome, 'SOUL.md'), 'utf8')).toBe('Independent main persona');
-    expect(fs.existsSync(path.join(mainHome, 'AGENTS.md'))).toBe(false);
-  });
-
-  test.each(['full', 'minimal'].flatMap(mode =>
-    ['allow', 'alsoAllow', 'emptyAllow'].map(policy => ({ mode, policy })),
-  ))('$mode sync preserves Jev opt-in, SecretRefs and $policy across lifecycle changes', ({ mode, policy }) => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-jev-sync-'));
-    temporaryDirectories.push(stateDir);
-    const configPath = path.join(stateDir, 'openclaw.json');
-    const appConfig = mode === 'full' ? {
-      model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
-      providers: { 'custom-provider': {
-        enabled: true, apiKey: 'test-secret', baseUrl: 'https://custom.example.test/v1',
-        apiFormat: 'openai', models: [{ id: 'custom-model' }],
-      } },
-    } : {};
-    setStoreGetter(() => ({ get: () => appConfig }) as never);
-    const sync = new OpenClawConfigSync({
-      engineManager: {
-        getConfigPath: () => configPath, getStateDir: () => stateDir,
-        getDesiredVersion: () => '2026.9.6',
-      },
-      getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
-      getAgents: () => [],
-    } as never);
-    expect(sync.sync('startup').ok).toBe(true);
-    const readConfig = () => JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(readConfig().plugins.entries.typesafe).toEqual({ enabled: false });
-    const source = { source: 'file', path: path.join(stateDir, 'extension-secrets.json'), mode: 'json' };
-    const apiKey = { source: 'file', provider: 'justdo-extension-secrets', id: '/test-key' };
-    for (const enabled of [true, false]) {
-      const config = readConfig();
-      config.plugins.entries.typesafe = { enabled, config: { apiKey, serviceUrl: 'http://localhost:8009' } };
-      config.secrets = { ...(config.secrets ?? {}), providers: {
-        ...(config.secrets?.providers ?? {}), 'justdo-extension-secrets': source,
-      } };
-      delete config.tools.allow;
-      delete config.tools.alsoAllow;
-      config.tools[policy === 'emptyAllow' ? 'allow' : policy] = policy === 'emptyAllow' ? [] : ['operator-tool'];
-      config.tools.deny = ['operator-denied-tool', 'decision_evaluate', 'skill_workshop', 'tts'];
-      fs.writeFileSync(configPath, JSON.stringify(config));
-      for (const reason of ['startup', 'settings', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
-        expect(sync.sync(reason).ok).toBe(true);
-        const saved = readConfig();
-        expect(saved.plugins.entries.typesafe).toEqual({ enabled, config: { apiKey, serviceUrl: 'http://localhost:8009' } });
-        expect(saved.secrets.providers['justdo-extension-secrets']).toEqual(source);
-        expect(saved.tools[policy === 'emptyAllow' ? 'alsoAllow' : policy]).toEqual(
-          policy === 'emptyAllow' ? ['decision_evaluate'] : ['operator-tool', 'decision_evaluate'],
-        );
-        expect(saved.tools[policy === 'allow' ? 'alsoAllow' : 'allow']).toBeUndefined();
-        expect(saved.tools.deny).toContain('operator-denied-tool');
-        expect(saved.tools.deny).toContain('decision_evaluate');
-        expect(saved.tools.deny).not.toContain('skill_workshop');
-        expect(saved.tools.deny).not.toContain('tts');
-      }
-    }
-  });
-
-  test.each(['full', 'minimal'] as const)('%s sync applies Code Mode changes across startup and auth refresh', mode => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-code-mode-sync-'));
-    temporaryDirectories.push(stateDir);
-    const configPath = path.join(stateDir, 'openclaw.json');
-    const appConfig = mode === 'full' ? {
-      model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
-      providers: {
-        'custom-provider': {
-          enabled: true, apiKey: 'test-secret', baseUrl: 'https://custom.example.test/v1',
-          apiFormat: 'openai', models: [{ id: 'custom-model' }],
+  test.each(['full', 'minimal'] as const)(
+    '%s sync separates all native role homes from changing project directories',
+    mode => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-role-homes-'));
+      temporaryDirectories.push(stateDir);
+      const configPath = path.join(stateDir, 'openclaw.json');
+      let projectDir = path.join(stateDir, '项目 A');
+      fs.mkdirSync(projectDir);
+      const projectRules = path.join(projectDir, 'AGENTS.md');
+      const projectSoul = path.join(projectDir, 'SOUL.md');
+      fs.writeFileSync(projectRules, 'Shared project rules');
+      fs.writeFileSync(projectSoul, 'Existing main persona must not be moved or deleted');
+      const roleRoot = path.join(stateDir, 'agent-workspaces');
+      const mainHome = path.join(roleRoot, 'main');
+      fs.mkdirSync(mainHome, { recursive: true });
+      fs.writeFileSync(path.join(mainHome, 'SOUL.md'), 'Independent main persona');
+      const appConfig =
+        mode === 'full'
+          ? {
+              model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+              providers: {
+                'custom-provider': {
+                  enabled: true,
+                  apiKey: 'test-secret',
+                  baseUrl: 'https://custom.example.test/v1',
+                  apiFormat: 'openai',
+                  models: [{ id: 'custom-model' }],
+                },
+              },
+            }
+          : {};
+      setStoreGetter(() => ({ get: () => appConfig }) as never);
+      const sync = new OpenClawConfigSync({
+        engineManager: {
+          getConfigPath: () => configPath,
+          getStateDir: () => stateDir,
+          getDesiredVersion: () => '2026.9.6',
         },
-      },
-    } : {};
-    setStoreGetter(() => ({ get: () => appConfig }) as never);
-    const settings = createDefaultAgentRuntimeSettings();
-    const sync = new OpenClawConfigSync({
-      engineManager: {
-        getConfigPath: () => configPath, getStateDir: () => stateDir,
-        getDesiredVersion: () => '2026.9.6',
-      },
-      getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
-      getAgentRuntimeSettings: () => settings,
-      getAgents: () => [],
-    } as never);
-    fs.writeFileSync(configPath, JSON.stringify({ tools: { codeMode: { executor: 'node', timeoutMs: 20000 } } }));
-    for (const [activation, enabled] of [['auto', 'auto'], ['on', true], ['off', false]] as const) {
-      settings.codeMode.mode = activation;
-      for (const reason of ['startup', 'agent-runtime-settings-change', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
+        getCoworkConfig: () => ({
+          workingDirectory: projectDir,
+          executionMode: 'local',
+          agentEngine: 'openclaw',
+        }),
+        getAgents: () =>
+          ['main', 'research'].map(id => ({
+            id,
+            name: id,
+            enabled: true,
+            model: '',
+            isDefault: id === 'main',
+          })),
+      } as never);
+      for (const reason of [
+        'startup',
+        'settings',
+        BuiltinModelSyncReason.AuthLogin,
+        BuiltinModelSyncReason.AuthLogout,
+      ]) {
+        const existing = fs.existsSync(configPath)
+          ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
+          : { gateway: { mode: 'local' }, agents: { defaults: {} } };
+        existing.agents.defaults.skipBootstrap = false;
+        fs.writeFileSync(configPath, JSON.stringify(existing));
         expect(sync.sync(reason).ok).toBe(true);
         const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        expect(config.tools.codeMode).toEqual({ enabled, executor: 'quickjs', timeoutMs: 20000 });
-        expect(config.tools.exec.mode).toBe('ask');
-        expect(config.tools.fs.workspaceOnly).toBe(true);
+        expect(config.agents.defaults.workspace).toBe(roleRoot);
+        expect(config.agents.defaults.cwd).toBe(projectDir);
+        expect(config.agents.defaults.skipBootstrap).toBe(true);
+        for (const id of ['main', 'research']) {
+          expect(config.agents.entries[id]).toMatchObject({
+            workspace: path.join(roleRoot, id),
+            cwd: projectDir,
+          });
+        }
+        projectDir = path.join(stateDir, '项目 B');
       }
-    }
-    expect(sync.sync('settings')).toMatchObject({ ok: true, configChanged: false });
-  });
+      expect(fs.readFileSync(projectRules, 'utf8')).toBe('Shared project rules');
+      expect(fs.readFileSync(projectSoul, 'utf8')).toBe(
+        'Existing main persona must not be moved or deleted',
+      );
+      expect(fs.readFileSync(path.join(mainHome, 'SOUL.md'), 'utf8')).toBe(
+        'Independent main persona',
+      );
+      expect(fs.existsSync(path.join(mainHome, 'AGENTS.md'))).toBe(false);
+    },
+  );
 
-  test.each(['full', 'minimal'] as const)('%s sync retains Gateway migration receipts across startup and auth changes', mode => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-migration-receipts-'));
-    temporaryDirectories.push(stateDir);
-    const configPath = path.join(stateDir, 'openclaw.json');
-    const appConfig = mode === 'full' ? {
-      model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
-      providers: {
-        'custom-provider': {
-          enabled: true,
-          apiKey: 'test-secret',
-          baseUrl: 'https://custom.example.test/v1',
-          apiFormat: 'openai',
-          models: [{ id: 'custom-model' }],
+  test.each(
+    ['full', 'minimal'].flatMap(mode =>
+      ['allow', 'alsoAllow', 'emptyAllow'].map(policy => ({ mode, policy })),
+    ),
+  )(
+    '$mode sync preserves Jev opt-in, SecretRefs and $policy across lifecycle changes',
+    ({ mode, policy }) => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-jev-sync-'));
+      temporaryDirectories.push(stateDir);
+      const configPath = path.join(stateDir, 'openclaw.json');
+      const appConfig =
+        mode === 'full'
+          ? {
+              model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+              providers: {
+                'custom-provider': {
+                  enabled: true,
+                  apiKey: 'test-secret',
+                  baseUrl: 'https://custom.example.test/v1',
+                  apiFormat: 'openai',
+                  models: [{ id: 'custom-model' }],
+                },
+              },
+            }
+          : {};
+      setStoreGetter(() => ({ get: () => appConfig }) as never);
+      const sync = new OpenClawConfigSync({
+        engineManager: {
+          getConfigPath: () => configPath,
+          getStateDir: () => stateDir,
+          getDesiredVersion: () => '2026.9.6',
         },
-      },
-    } : {};
-    setStoreGetter(() => ({ get: () => appConfig }) as never);
-    const sync = new OpenClawConfigSync({
-      engineManager: {
-        getConfigPath: () => configPath,
-        getStateDir: () => stateDir,
-        getDesiredVersion: () => '2026.9.6',
-      },
-      getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
-      getAgents: () => [],
-    } as never);
-    expect(sync.sync('startup').ok).toBe(true);
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(Boolean(config.models.providers?.['custom-provider'])).toBe(mode === 'full');
-    const migrations = { modelPolicyAllowlist: true, utilityModelSeparation: true };
-    config.meta.migrations = migrations;
-    fs.writeFileSync(configPath, JSON.stringify(config));
+        getCoworkConfig: () => ({
+          workingDirectory: '',
+          executionMode: 'local',
+          agentEngine: 'openclaw',
+        }),
+        getAgents: () => [],
+      } as never);
+      expect(sync.sync('startup').ok).toBe(true);
+      const readConfig = () => JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(readConfig().plugins.entries.typesafe).toEqual({ enabled: false });
+      const source = {
+        source: 'file',
+        path: path.join(stateDir, 'extension-secrets.json'),
+        mode: 'json',
+      };
+      const apiKey = { source: 'file', provider: 'justdo-extension-secrets', id: '/test-key' };
+      for (const enabled of [true, false]) {
+        const config = readConfig();
+        config.plugins.entries.typesafe = {
+          enabled,
+          config: { apiKey, serviceUrl: 'http://localhost:8009' },
+        };
+        config.secrets = {
+          ...(config.secrets ?? {}),
+          providers: {
+            ...(config.secrets?.providers ?? {}),
+            'justdo-extension-secrets': source,
+          },
+        };
+        delete config.tools.allow;
+        delete config.tools.alsoAllow;
+        config.tools[policy === 'emptyAllow' ? 'allow' : policy] =
+          policy === 'emptyAllow' ? [] : ['operator-tool'];
+        config.tools.deny = ['operator-denied-tool', 'decision_evaluate', 'skill_workshop', 'tts'];
+        fs.writeFileSync(configPath, JSON.stringify(config));
+        for (const reason of [
+          'startup',
+          'settings',
+          BuiltinModelSyncReason.AuthLogin,
+          BuiltinModelSyncReason.AuthLogout,
+        ]) {
+          expect(sync.sync(reason).ok).toBe(true);
+          const saved = readConfig();
+          expect(saved.plugins.entries.typesafe).toEqual({
+            enabled,
+            config: { apiKey, serviceUrl: 'http://localhost:8009' },
+          });
+          expect(saved.secrets.providers['justdo-extension-secrets']).toEqual(source);
+          expect(saved.tools[policy === 'emptyAllow' ? 'alsoAllow' : policy]).toEqual(
+            policy === 'emptyAllow'
+              ? ['decision_evaluate']
+              : ['operator-tool', 'decision_evaluate'],
+          );
+          expect(saved.tools[policy === 'allow' ? 'alsoAllow' : 'allow']).toBeUndefined();
+          expect(saved.tools.deny).toContain('operator-denied-tool');
+          expect(saved.tools.deny).toContain('decision_evaluate');
+          expect(saved.tools.deny).not.toContain('skill_workshop');
+          expect(saved.tools.deny).not.toContain('tts');
+        }
+      }
+    },
+  );
 
-    for (const reason of ['startup', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout, 'settings']) {
-      expect(sync.sync(reason).ok).toBe(true);
-      expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).meta).toEqual({
-        lastTouchedVersion: '2026.9.6', migrations,
-      });
-    }
-    expect(sync.sync('settings')).toMatchObject({ ok: true, configChanged: false });
-  });
+  test.each(['full', 'minimal'] as const)(
+    '%s sync applies Code Mode changes across startup and auth refresh',
+    mode => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-code-mode-sync-'));
+      temporaryDirectories.push(stateDir);
+      const configPath = path.join(stateDir, 'openclaw.json');
+      const appConfig =
+        mode === 'full'
+          ? {
+              model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+              providers: {
+                'custom-provider': {
+                  enabled: true,
+                  apiKey: 'test-secret',
+                  baseUrl: 'https://custom.example.test/v1',
+                  apiFormat: 'openai',
+                  models: [{ id: 'custom-model' }],
+                },
+              },
+            }
+          : {};
+      setStoreGetter(() => ({ get: () => appConfig }) as never);
+      const settings = createDefaultAgentRuntimeSettings();
+      const sync = new OpenClawConfigSync({
+        engineManager: {
+          getConfigPath: () => configPath,
+          getStateDir: () => stateDir,
+          getDesiredVersion: () => '2026.9.6',
+        },
+        getCoworkConfig: () => ({
+          workingDirectory: '',
+          executionMode: 'local',
+          agentEngine: 'openclaw',
+        }),
+        getAgentRuntimeSettings: () => settings,
+        getAgents: () => [],
+      } as never);
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({ tools: { codeMode: { executor: 'node', timeoutMs: 20000 } } }),
+      );
+      for (const [activation, enabled] of [
+        ['auto', 'auto'],
+        ['on', true],
+        ['off', false],
+      ] as const) {
+        settings.codeMode.mode = activation;
+        for (const reason of [
+          'startup',
+          'agent-runtime-settings-change',
+          BuiltinModelSyncReason.AuthLogin,
+          BuiltinModelSyncReason.AuthLogout,
+        ]) {
+          expect(sync.sync(reason).ok).toBe(true);
+          const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          expect(config.tools.codeMode).toEqual({ enabled, executor: 'quickjs', timeoutMs: 20000 });
+          expect(config.tools.exec.mode).toBe('ask');
+          expect(config.tools.fs.workspaceOnly).toBe(true);
+        }
+      }
+      expect(sync.sync('settings')).toMatchObject({ ok: true, configChanged: false });
+    },
+  );
+
+  test.each(['full', 'minimal'] as const)(
+    '%s sync retains Gateway migration receipts across startup and auth changes',
+    mode => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-migration-receipts-'));
+      temporaryDirectories.push(stateDir);
+      const configPath = path.join(stateDir, 'openclaw.json');
+      const appConfig =
+        mode === 'full'
+          ? {
+              model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+              providers: {
+                'custom-provider': {
+                  enabled: true,
+                  apiKey: 'test-secret',
+                  baseUrl: 'https://custom.example.test/v1',
+                  apiFormat: 'openai',
+                  models: [{ id: 'custom-model' }],
+                },
+              },
+            }
+          : {};
+      setStoreGetter(() => ({ get: () => appConfig }) as never);
+      const sync = new OpenClawConfigSync({
+        engineManager: {
+          getConfigPath: () => configPath,
+          getStateDir: () => stateDir,
+          getDesiredVersion: () => '2026.9.6',
+        },
+        getCoworkConfig: () => ({
+          workingDirectory: '',
+          executionMode: 'local',
+          agentEngine: 'openclaw',
+        }),
+        getAgents: () => [],
+      } as never);
+      expect(sync.sync('startup').ok).toBe(true);
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(Boolean(config.models.providers?.['custom-provider'])).toBe(mode === 'full');
+      const migrations = { modelPolicyAllowlist: true, utilityModelSeparation: true };
+      config.meta.migrations = migrations;
+      fs.writeFileSync(configPath, JSON.stringify(config));
+
+      for (const reason of [
+        'startup',
+        BuiltinModelSyncReason.AuthLogin,
+        BuiltinModelSyncReason.AuthLogout,
+        'settings',
+      ]) {
+        expect(sync.sync(reason).ok).toBe(true);
+        expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).meta).toEqual({
+          lastTouchedVersion: '2026.9.6',
+          migrations,
+        });
+      }
+      expect(sync.sync('settings')).toMatchObject({ ok: true, configChanged: false });
+    },
+  );
 
   test.each(['full', 'minimal'] as const)(
     '%s sync refreshes local STT configuration without overriding speech extension toggles',
@@ -833,18 +1046,21 @@ describe('OpenClaw auth logout config sync', () => {
       const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-speech-toggle-sync-'));
       temporaryDirectories.push(stateDir);
       const configPath = path.join(stateDir, 'openclaw.json');
-      const appConfig = mode === 'full' ? {
-        model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
-        providers: {
-          'custom-provider': {
-            enabled: true,
-            apiKey: 'test-secret',
-            baseUrl: 'https://custom.example.test/v1',
-            apiFormat: 'openai',
-            models: [{ id: 'custom-model' }],
-          },
-        },
-      } : {};
+      const appConfig =
+        mode === 'full'
+          ? {
+              model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+              providers: {
+                'custom-provider': {
+                  enabled: true,
+                  apiKey: 'test-secret',
+                  baseUrl: 'https://custom.example.test/v1',
+                  apiFormat: 'openai',
+                  models: [{ id: 'custom-model' }],
+                },
+              },
+            }
+          : {};
       setStoreGetter(() => ({ get: () => appConfig }) as never);
       let sttConfig = { command: 'sherpa.exe', args: ['--model=first.onnx'], modelId: 'first' };
       const sync = new OpenClawConfigSync({
@@ -853,7 +1069,11 @@ describe('OpenClaw auth logout config sync', () => {
           getStateDir: () => stateDir,
           getDesiredVersion: () => '2026.9.2',
         },
-        getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+        getCoworkConfig: () => ({
+          workingDirectory: '',
+          executionMode: 'local',
+          agentEngine: 'openclaw',
+        }),
         getAgents: () => [],
         getLocalSttConfig: () => sttConfig,
         getLocalTtsConfig: () => ({
@@ -878,7 +1098,10 @@ describe('OpenClaw auth logout config sync', () => {
 
       expect(sync.sync('local-speech-model-installed').ok).toBe(true);
       config = readConfig();
-      expect(config.plugins.entries['stt-local-cli']).toEqual({ enabled: false, config: sttConfig });
+      expect(config.plugins.entries['stt-local-cli']).toEqual({
+        enabled: false,
+        config: sttConfig,
+      });
       expect(config.plugins.entries['tts-local-cli'].enabled).toBe(false);
       for (const pluginId of ['tts-local-cli', 'stt-local-cli']) {
         config.plugins.entries[pluginId].enabled = true;
@@ -938,7 +1161,9 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.tools.exec.host).toBe('sandbox');
     expect(config.tools.fs.workspaceOnly).toBe(true);
     expect(config.tools.sandbox).toEqual({
-      tools: { alsoAllow: ['task_assistants', 'assistants_create', 'decision_evaluate'] },
+      tools: {
+        alsoAllow: ['task_assistants', 'assistants_create', 'team_discussion', 'decision_evaluate'],
+      },
     });
   });
 
@@ -950,14 +1175,22 @@ describe('OpenClaw auth logout config sync', () => {
       { id: 'main', enabled: true, name: 'Main', isDefault: true },
       { id: 'research', enabled: true, name: 'Research', isDefault: false },
     ];
-    expect(writeMinimalConfig(configPath, 'agent-profile-change', 'ask', BrowserMode.Isolated, agents).ok).toBe(true);
+    expect(
+      writeMinimalConfig(configPath, 'agent-profile-change', 'ask', BrowserMode.Isolated, agents)
+        .ok,
+    ).toBe(true);
     let config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.agents.entries.research.workspace).toBe(path.join(directory, 'agent-workspaces', 'research'));
+    expect(config.agents.entries.research.workspace).toBe(
+      path.join(directory, 'agent-workspaces', 'research'),
+    );
     expect(config.agents.entries.research.model).toBeUndefined();
     agents[0].isDefault = false;
     agents[1].isDefault = true;
     agents[1].name = 'Reviewer';
-    expect(writeMinimalConfig(configPath, 'agent-profile-change', 'ask', BrowserMode.Isolated, agents).ok).toBe(true);
+    expect(
+      writeMinimalConfig(configPath, 'agent-profile-change', 'ask', BrowserMode.Isolated, agents)
+        .ok,
+    ).toBe(true);
     config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.agents.entries.research).toMatchObject({ identity: { name: 'Reviewer' } });
     expect(config.agents.entries.main.identity.name).toBe('Main');
@@ -1336,9 +1569,9 @@ describe('OpenClaw auth logout config sync', () => {
     );
 
     const agents = [{ id: 'Worker_ONE', enabled: true }];
-    expect(
-      writeMinimalConfig(configPath, 'startup', 'ask', BrowserMode.Isolated, agents).ok,
-    ).toBe(true);
+    expect(writeMinimalConfig(configPath, 'startup', 'ask', BrowserMode.Isolated, agents).ok).toBe(
+      true,
+    );
     const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     existing.plugins.load = { paths: [externalPluginDir] };
     existing.plugins.entries['external-plugin'] = { enabled: false };
@@ -1355,13 +1588,8 @@ describe('OpenClaw auth logout config sync', () => {
     fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
 
     expect(
-      writeMinimalConfig(
-        configPath,
-        'cowork-config-change',
-        'ask',
-        BrowserMode.Isolated,
-        agents,
-      ).ok,
+      writeMinimalConfig(configPath, 'cowork-config-change', 'ask', BrowserMode.Isolated, agents)
+        .ok,
     ).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.plugins.load).toEqual({ paths: [externalPluginDir] });
@@ -1449,12 +1677,7 @@ describe('OpenClaw auth logout config sync', () => {
       defaultProfile: 'openclaw',
     });
 
-    const result = writeMinimalConfig(
-      configPath,
-      'browser-mode-change',
-      'ask',
-      BrowserMode.User,
-    );
+    const result = writeMinimalConfig(configPath, 'browser-mode-change', 'ask', BrowserMode.User);
 
     expect(result.ok).toBe(true);
     expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).browser).toMatchObject({
@@ -1479,18 +1702,21 @@ describe('OpenClaw auth logout config sync', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-browser-switch-'));
     temporaryDirectories.push(directory);
     const configPath = path.join(directory, 'openclaw.json');
-    const appConfig = configMode === 'full' ? {
-      model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
-      providers: {
-        'custom-provider': {
-          enabled: true,
-          apiKey: 'test-secret',
-          baseUrl: 'https://custom.example.test/v1',
-          apiFormat: 'openai',
-          models: [{ id: 'custom-model' }],
-        },
-      },
-    } : {};
+    const appConfig =
+      configMode === 'full'
+        ? {
+            model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+            providers: {
+              'custom-provider': {
+                enabled: true,
+                apiKey: 'test-secret',
+                baseUrl: 'https://custom.example.test/v1',
+                apiFormat: 'openai',
+                models: [{ id: 'custom-model' }],
+              },
+            },
+          }
+        : {};
     setStoreGetter(() => ({ get: () => appConfig }) as never);
     let browserMode: BrowserModeValue = nativeMode;
     const sync = new OpenClawConfigSync({
@@ -1499,7 +1725,11 @@ describe('OpenClaw auth logout config sync', () => {
         getStateDir: () => directory,
         getDesiredVersion: () => '2026.9.2',
       },
-      getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+      getCoworkConfig: () => ({
+        workingDirectory: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+      }),
       getAgents: () => [],
       getBrowserMode: () => browserMode,
     } as never);
@@ -1511,7 +1741,9 @@ describe('OpenClaw auth logout config sync', () => {
 
     browserMode = BrowserMode.Embedded;
     expect(sync.sync('browser-mode-change')).toMatchObject({
-      ok: true, configChanged: true, requiresGatewayRestart: false,
+      ok: true,
+      configChanged: true,
+      requiresGatewayRestart: false,
     });
     const config = readConfig();
     expect(config.browser.enabled).toBe(true);
@@ -1520,14 +1752,18 @@ describe('OpenClaw auth logout config sync', () => {
 
     browserMode = nativeMode;
     expect(sync.sync('browser-mode-change')).toMatchObject({
-      ok: true, configChanged: true, requiresGatewayRestart: false,
+      ok: true,
+      configChanged: true,
+      requiresGatewayRestart: false,
     });
     const restoredConfig = readConfig();
     expect(restoredConfig.browser).toEqual(nativeConfig.browser);
     expect(restoredConfig.plugins.entries.browser).toEqual({ enabled: true });
     expect(restoredConfig.plugins.entries['embedded-browser']).toEqual({ enabled: false });
     expect(sync.sync('browser-mode-change')).toMatchObject({
-      ok: true, configChanged: false, requiresGatewayRestart: false,
+      ok: true,
+      configChanged: false,
+      requiresGatewayRestart: false,
     });
   });
 
@@ -1541,17 +1777,24 @@ describe('OpenClaw auth logout config sync', () => {
     config.skills.workshop.autonomous.mode = 'auto';
     fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
     expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.ManualRefresh).ok).toBe(true);
-    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).skills.workshop.autonomous.mode).toBe('auto');
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).skills.workshop.autonomous.mode).toBe(
+      'auto',
+    );
   });
 
-  test.each([undefined, 'off', 'auto', 'propose'])('auth sync defaults only missing skill mode (%s)', mode => {
-    const configPath = writeExistingBuiltinConfig();
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    config.skills = { workshop: { autonomous: mode ? { mode } : {} } };
-    fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
-    expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout).ok).toBe(true);
-    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).skills.workshop.autonomous.mode).toBe(mode ?? 'off');
-  });
+  test.each([undefined, 'off', 'auto', 'propose'])(
+    'auth sync defaults only missing skill mode (%s)',
+    mode => {
+      const configPath = writeExistingBuiltinConfig();
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      config.skills = { workshop: { autonomous: mode ? { mode } : {} } };
+      fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
+      expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout).ok).toBe(true);
+      expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).skills.workshop.autonomous.mode).toBe(
+        mode ?? 'off',
+      );
+    },
+  );
 
   test('a second no-model sync removes retired managed tool deny entries', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-tool-deny-'));
@@ -1614,7 +1857,9 @@ describe('OpenClaw auth logout config sync', () => {
   test.each([false, true])(
     'a no-model sync defaults Workboard off and preserves explicit enabled=%s',
     enabled => {
-      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-workboard-disabled-'));
+      const directory = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'justdo-minimal-workboard-disabled-'),
+      );
       temporaryDirectories.push(directory);
       const configPath = path.join(directory, 'openclaw.json');
       expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
@@ -1623,7 +1868,9 @@ describe('OpenClaw auth logout config sync', () => {
       existing.plugins.entries.workboard = { enabled };
       fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
 
-      expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.CoworkConfigChange).ok).toBe(true);
+      expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.CoworkConfigChange).ok).toBe(
+        true,
+      );
       expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries.workboard).toEqual({
         enabled,
       });
@@ -1715,9 +1962,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(content).toContain('JUSTDO_APIKEY_BUILTIN_MODELS');
     const config = JSON.parse(content);
     expect(config.models.catalogRefresh).toEqual({ enabled: false });
-    expect(config.agents.defaults.compaction).not.toHaveProperty(
-      'keepRecentTokens',
-    );
+    expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
     expect(config.agents.defaults.modelSelectionScope).toBe('session');
     expect(config.agents.defaults.subagents).toMatchObject({
       allowAgents: ['worker'],
@@ -2093,7 +2338,9 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.secrets.providers.justdo_login).toMatchObject({ source: 'exec' });
     expect(fs.readFileSync(configPath, 'utf8')).not.toContain(accessToken);
     expect(config.models.providers['custom-provider'].apiKey).toEqual({
-      source: 'file', provider: 'justdo-model-providers', id: '/custom-provider',
+      source: 'file',
+      provider: 'justdo-model-providers',
+      id: '/custom-provider',
     });
     expect(config.models.providers.custom_1).toBeUndefined();
     expect(config.models).not.toHaveProperty('pricing');
@@ -2119,15 +2366,23 @@ describe('OpenClaw auth logout config sync', () => {
         baseUrl: 'https://second.example/v1',
       },
     };
-    setStoreGetter(() => ({ get: () => ({ ...appConfig, providers: providersWithSecond }) }) as never);
+    setStoreGetter(
+      () => ({ get: () => ({ ...appConfig, providers: providersWithSecond }) }) as never,
+    );
     expect(sync.sync('provider-add')).toMatchObject({
-      ok: true, configChanged: true, secretsChanged: true, requiresGatewayRestart: false,
+      ok: true,
+      configChanged: true,
+      secretsChanged: true,
+      requiresGatewayRestart: false,
     });
     expect(sync.collectGatewayLaunchEnvVars()).toEqual(launchEnvironment);
 
     providersWithSecond['second-provider'].apiKey = 'rotated-provider-fixture-key';
     expect(sync.sync('provider-key-change')).toMatchObject({
-      ok: true, changed: true, configChanged: false, secretsChanged: true,
+      ok: true,
+      changed: true,
+      configChanged: false,
+      secretsChanged: true,
     });
     expect(sync.collectGatewayLaunchEnvVars()).toEqual(launchEnvironment);
 
@@ -2157,12 +2412,12 @@ describe('OpenClaw auth logout config sync', () => {
     const renamed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(renamed.models.providers['custom-provider']).toBeUndefined();
     expect(renamed.models.providers['renamed-provider'].apiKey).toEqual({
-      source: 'file', provider: 'justdo-model-providers', id: '/renamed-provider',
+      source: 'file',
+      provider: 'justdo-model-providers',
+      id: '/renamed-provider',
     });
     expect(renamed.agents.defaults.model.primary).toBe('renamed-provider/custom-model');
-    expect(renamed.agents.entries.worker.model.primary).toBe(
-      'renamed-provider/custom-model',
-    );
+    expect(renamed.agents.entries.worker.model.primary).toBe('renamed-provider/custom-model');
 
     setStoreGetter(
       () =>
@@ -2183,126 +2438,231 @@ describe('OpenClaw auth logout config sync', () => {
   });
 });
 
-
-test.each([true, false])('keeps the optional agent-team enabled=%s across full minimal config synchronization', enabled => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-agent-team-config-'));
-  temporaryDirectories.push(directory);
-  const configPath = path.join(directory, 'openclaw.json');
-  expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
-  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  expect(config.plugins.entries['agent-team']).toEqual({ enabled: false });
-  config.plugins.entries['agent-team'] = { enabled };
-  fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
-  expect(writeMinimalConfig(configPath, 'cowork-config-change').ok).toBe(true);
-  expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries['agent-team']).toEqual({ enabled });
-});
-
-
-test.each([true, false])('keeps Interactive UI enabled=%s across startup and auth sync', enabled => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'interactive-ui-config-'));
-  temporaryDirectories.push(directory);
-  const configPath = path.join(directory, 'openclaw.json');
-  expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
-  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  expect(config.plugins.entries['interactive-ui']).toEqual({ enabled: false });
-  config.plugins.entries['interactive-ui'] = { enabled };
-  fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
-  for (const reason of ['cowork-config-change', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
-    expect(writeMinimalConfig(configPath, reason).ok).toBe(true);
-    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries['interactive-ui']).toEqual({ enabled });
-  }
-});
-
-test.each(['full', 'minimal'])('%s decision settings survive auth sync, rotate credentials and clear selection', mode => {
-  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-decision-sync-'));
-  temporaryDirectories.push(stateDir);
-  const configPath = path.join(stateDir, 'openclaw.json');
-  const appConfig = mode === 'full' ? {
-    model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
-    providers: { 'custom-provider': { enabled: true, apiKey: 'chat-test-key', baseUrl: 'https://custom.example.test/v1', apiFormat: 'openai', models: [{ id: 'custom-model' }] } },
-  } : {};
-  setStoreGetter(() => ({ get: () => appConfig }) as never);
-  let category: unknown = { defaultProviderId: 'lan', providers: { lan: {
-    displayName: 'LAN', baseUrl: 'http://10.1.2.3:8009/v1', apiKey: 'decision-test-key', defaultModel: 'kev-latest', models: [{ id: 'kev-latest' }],
-  } } };
-  const sync = new OpenClawConfigSync({
-    engineManager: { getConfigPath: () => configPath, getStateDir: () => stateDir, getDesiredVersion: () => '2026.9.6' },
-    getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
-    getAgents: () => [], getDecisionModelCategory: () => category,
-  } as never);
-  const read = () => JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  const configuredCategory = category;
-  category = undefined;
-  expect(sync.sync('startup').ok).toBe(true);
-  category = configuredCategory;
-  for (const reason of ['startup', 'app-config-change', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
-    expect(sync.sync(reason).ok).toBe(true);
-    expect(read().agents.defaults.decisionModel).toBe('typesafe/kev-latest');
-    expect(read().plugins.entries.typesafe).toMatchObject({ enabled: true, config: { serviceUrl: 'http://10.1.2.3:8009/v1', apiKey: { source: 'file' } } });
-    expect(JSON.stringify(read())).not.toContain('decision-test-key');
-  }
-  sync.sync('app-config-change');
-  (category as { providers: { lan: { apiKey: string } } }).providers.lan.apiKey = 'rotated-decision-key';
-  const rotated = sync.sync('app-config-change');
-  expect(rotated.ok).toBe(true);
-  expect(rotated.secretsChanged).toBe(true);
-  expect(sync.sync('app-config-change').secretsChanged).toBe(false);
-  category = undefined;
-  expect(sync.sync('app-config-change').ok).toBe(true);
-  expect(read().plugins.entries.typesafe).toEqual({ enabled: false });
-  expect(read().agents.defaults.decisionModel).toBeUndefined();
-  category = { providers: {} };
-  expect(sync.sync('app-config-change').ok).toBe(true);
-  expect(read().plugins.entries.typesafe.enabled).toBe(false);
-  expect(read().agents.defaults.decisionModel).toBeUndefined();
-});
-
-test.each(['full', 'minimal'])('%s sync maintains isolated intranet video configuration across startup and auth changes', mode => {
-  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'intranet-video-sync-'));
-  temporaryDirectories.push(stateDir);
-  const configPath = path.join(stateDir, 'openclaw.json');
-  const appConfig = mode === 'full' ? {
-    model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
-    providers: { 'custom-provider': { enabled: true, apiKey: 'chat-test-key', baseUrl: 'http://chat.lan/v1', apiFormat: 'openai', models: [{ id: 'custom-model' }] } },
-  } : {};
-  setStoreGetter(() => ({ get: () => appConfig }) as never);
-  let category: unknown = { defaultProviderId: 'lan', providers: { lan: {
-    nativeVideoProvider: 'video-openai', displayName: 'OpenAI-compatible',
-    baseUrl: 'http://video.lan:8091/v1', apiKey: 'isolated-video-key',
-    defaultModel: 'Wan-AI/internal-video', models: [{ id: 'Wan-AI/internal-video' }],
-  } } };
-  const sync = new OpenClawConfigSync({
-    engineManager: { getConfigPath: () => configPath, getStateDir: () => stateDir, getDesiredVersion: () => '2026.9.8' },
-    getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
-    getAgents: () => [], getNativeVideoCategory: () => category,
-  } as never);
-  for (const reason of ['startup', 'app-config-change', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
-    expect(sync.sync(reason).ok).toBe(true);
+test.each([true, false])(
+  'keeps the optional agent-team enabled=%s across full minimal config synchronization',
+  enabled => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-agent-team-config-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.agents.defaults.mediaModels.video.primary).toBe('video-openai/Wan-AI/internal-video');
-    expect(config.models.providers['video-openai']).toMatchObject({
-      baseUrl: 'http://video.lan:8091/v1', apiKey: { source: 'file' }, request: { allowPrivateNetwork: true },
+    expect(config.plugins.entries['agent-team']).toEqual({ enabled: false });
+    config.plugins.entries['agent-team'] = { enabled };
+    fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
+    expect(writeMinimalConfig(configPath, 'cowork-config-change').ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries['agent-team']).toEqual({
+      enabled,
     });
-    expect(config.plugins.entries['video-openai'].enabled).toBe(true);
-    expect(JSON.stringify(config)).not.toContain('isolated-video-key');
-  }
-  category = { defaultProviderId: undefined, providers: (category as { providers: unknown }).providers };
-  expect(sync.sync('app-config-change').ok).toBe(true);
-  const cleared = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  expect(cleared.agents.defaults.mediaModels.video).toBeUndefined();
-  expect(cleared.plugins.entries['video-openai'].enabled).toBe(false);
-  for (const reason of ['startup', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
-    expect(sync.sync(reason).ok).toBe(true);
+  },
+);
+
+test.each([true, false])(
+  'keeps Interactive UI enabled=%s across startup and auth sync',
+  enabled => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'interactive-ui-config-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.agents.defaults.mediaModels.video).toBeUndefined();
-    expect(config.plugins.entries['video-openai'].enabled).toBe(false);
-  }
-  category = { defaultProviderId: 'lan', providers: (category as { providers: unknown }).providers };
-  expect(sync.sync('app-config-change').ok).toBe(true);
-  const restored = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  expect(restored.agents.defaults.mediaModels.video.primary).toBe('video-openai/Wan-AI/internal-video');
-  expect(restored.plugins.entries['video-openai'].enabled).toBe(true);
-});
+    expect(config.plugins.entries['interactive-ui']).toEqual({ enabled: false });
+    config.plugins.entries['interactive-ui'] = { enabled };
+    fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
+    for (const reason of [
+      'cowork-config-change',
+      BuiltinModelSyncReason.AuthLogin,
+      BuiltinModelSyncReason.AuthLogout,
+    ]) {
+      expect(writeMinimalConfig(configPath, reason).ok).toBe(true);
+      expect(
+        JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries['interactive-ui'],
+      ).toEqual({ enabled });
+    }
+  },
+);
+
+test.each(['full', 'minimal'])(
+  '%s decision settings survive auth sync, rotate credentials and clear selection',
+  mode => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-decision-sync-'));
+    temporaryDirectories.push(stateDir);
+    const configPath = path.join(stateDir, 'openclaw.json');
+    const appConfig =
+      mode === 'full'
+        ? {
+            model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+            providers: {
+              'custom-provider': {
+                enabled: true,
+                apiKey: 'chat-test-key',
+                baseUrl: 'https://custom.example.test/v1',
+                apiFormat: 'openai',
+                models: [{ id: 'custom-model' }],
+              },
+            },
+          }
+        : {};
+    setStoreGetter(() => ({ get: () => appConfig }) as never);
+    let category: unknown = {
+      defaultProviderId: 'lan',
+      providers: {
+        lan: {
+          displayName: 'LAN',
+          baseUrl: 'http://10.1.2.3:8009/v1',
+          apiKey: 'decision-test-key',
+          defaultModel: 'kev-latest',
+          models: [{ id: 'kev-latest' }],
+        },
+      },
+    };
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath,
+        getStateDir: () => stateDir,
+        getDesiredVersion: () => '2026.9.6',
+      },
+      getCoworkConfig: () => ({
+        workingDirectory: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+      }),
+      getAgents: () => [],
+      getDecisionModelCategory: () => category,
+    } as never);
+    const read = () => JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const configuredCategory = category;
+    category = undefined;
+    expect(sync.sync('startup').ok).toBe(true);
+    category = configuredCategory;
+    for (const reason of [
+      'startup',
+      'app-config-change',
+      BuiltinModelSyncReason.AuthLogin,
+      BuiltinModelSyncReason.AuthLogout,
+    ]) {
+      expect(sync.sync(reason).ok).toBe(true);
+      expect(read().agents.defaults.decisionModel).toBe('typesafe/kev-latest');
+      expect(read().plugins.entries.typesafe).toMatchObject({
+        enabled: true,
+        config: { serviceUrl: 'http://10.1.2.3:8009/v1', apiKey: { source: 'file' } },
+      });
+      expect(JSON.stringify(read())).not.toContain('decision-test-key');
+    }
+    sync.sync('app-config-change');
+    (category as { providers: { lan: { apiKey: string } } }).providers.lan.apiKey =
+      'rotated-decision-key';
+    const rotated = sync.sync('app-config-change');
+    expect(rotated.ok).toBe(true);
+    expect(rotated.secretsChanged).toBe(true);
+    expect(sync.sync('app-config-change').secretsChanged).toBe(false);
+    category = undefined;
+    expect(sync.sync('app-config-change').ok).toBe(true);
+    expect(read().plugins.entries.typesafe).toEqual({ enabled: false });
+    expect(read().agents.defaults.decisionModel).toBeUndefined();
+    category = { providers: {} };
+    expect(sync.sync('app-config-change').ok).toBe(true);
+    expect(read().plugins.entries.typesafe.enabled).toBe(false);
+    expect(read().agents.defaults.decisionModel).toBeUndefined();
+  },
+);
+
+test.each(['full', 'minimal'])(
+  '%s sync maintains isolated intranet video configuration across startup and auth changes',
+  mode => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'intranet-video-sync-'));
+    temporaryDirectories.push(stateDir);
+    const configPath = path.join(stateDir, 'openclaw.json');
+    const appConfig =
+      mode === 'full'
+        ? {
+            model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+            providers: {
+              'custom-provider': {
+                enabled: true,
+                apiKey: 'chat-test-key',
+                baseUrl: 'http://chat.lan/v1',
+                apiFormat: 'openai',
+                models: [{ id: 'custom-model' }],
+              },
+            },
+          }
+        : {};
+    setStoreGetter(() => ({ get: () => appConfig }) as never);
+    let category: unknown = {
+      defaultProviderId: 'lan',
+      providers: {
+        lan: {
+          nativeVideoProvider: 'video-openai',
+          displayName: 'OpenAI-compatible',
+          baseUrl: 'http://video.lan:8091/v1',
+          apiKey: 'isolated-video-key',
+          defaultModel: 'Wan-AI/internal-video',
+          models: [{ id: 'Wan-AI/internal-video' }],
+        },
+      },
+    };
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath,
+        getStateDir: () => stateDir,
+        getDesiredVersion: () => '2026.9.8',
+      },
+      getCoworkConfig: () => ({
+        workingDirectory: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+      }),
+      getAgents: () => [],
+      getNativeVideoCategory: () => category,
+    } as never);
+    for (const reason of [
+      'startup',
+      'app-config-change',
+      BuiltinModelSyncReason.AuthLogin,
+      BuiltinModelSyncReason.AuthLogout,
+    ]) {
+      expect(sync.sync(reason).ok).toBe(true);
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(config.agents.defaults.mediaModels.video.primary).toBe(
+        'video-openai/Wan-AI/internal-video',
+      );
+      expect(config.models.providers['video-openai']).toMatchObject({
+        baseUrl: 'http://video.lan:8091/v1',
+        apiKey: { source: 'file' },
+        request: { allowPrivateNetwork: true },
+      });
+      expect(config.plugins.entries['video-openai'].enabled).toBe(true);
+      expect(JSON.stringify(config)).not.toContain('isolated-video-key');
+    }
+    category = {
+      defaultProviderId: undefined,
+      providers: (category as { providers: unknown }).providers,
+    };
+    expect(sync.sync('app-config-change').ok).toBe(true);
+    const cleared = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(cleared.agents.defaults.mediaModels.video).toBeUndefined();
+    expect(cleared.plugins.entries['video-openai'].enabled).toBe(false);
+    for (const reason of [
+      'startup',
+      BuiltinModelSyncReason.AuthLogin,
+      BuiltinModelSyncReason.AuthLogout,
+    ]) {
+      expect(sync.sync(reason).ok).toBe(true);
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(config.agents.defaults.mediaModels.video).toBeUndefined();
+      expect(config.plugins.entries['video-openai'].enabled).toBe(false);
+    }
+    category = {
+      defaultProviderId: 'lan',
+      providers: (category as { providers: unknown }).providers,
+    };
+    expect(sync.sync('app-config-change').ok).toBe(true);
+    const restored = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(restored.agents.defaults.mediaModels.video.primary).toBe(
+      'video-openai/Wan-AI/internal-video',
+    );
+    expect(restored.plugins.entries['video-openai'].enabled).toBe(true);
+  },
+);
 
 test.each(['full', 'minimal'])(
   '%s sync clears video use across lifecycle changes even with a standalone plugin inventory',
@@ -2318,24 +2678,51 @@ test.each(['full', 'minimal'])(
       deny: ['standalone-plugin'],
       entries: { 'video-openai': { enabled: true }, 'standalone-plugin': { enabled: false } },
     };
-    fs.writeFileSync(configPath, JSON.stringify({
-      agents: { defaults: { mediaModels: { video: 'video-openai/old' } } },
-      plugins: existingPlugins,
-    }));
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        agents: { defaults: { mediaModels: { video: 'video-openai/old' } } },
+        plugins: existingPlugins,
+      }),
+    );
     expect(listAvailableOpenClawExtensionIds(stateDir, existingPlugins)).toBeNull();
-    const appConfig = mode === 'full' ? {
-      model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
-      providers: { 'custom-provider': { enabled: true, apiKey: 'chat-test-key', baseUrl: 'http://chat.lan/v1', apiFormat: 'openai', models: [{ id: 'custom-model' }] } },
-    } : {};
+    const appConfig =
+      mode === 'full'
+        ? {
+            model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+            providers: {
+              'custom-provider': {
+                enabled: true,
+                apiKey: 'chat-test-key',
+                baseUrl: 'http://chat.lan/v1',
+                apiFormat: 'openai',
+                models: [{ id: 'custom-model' }],
+              },
+            },
+          }
+        : {};
     setStoreGetter(() => ({ get: () => appConfig }) as never);
     const sync = new OpenClawConfigSync({
-      engineManager: { getConfigPath: () => configPath, getStateDir: () => stateDir, getDesiredVersion: () => '2026.9.8' },
-      getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+      engineManager: {
+        getConfigPath: () => configPath,
+        getStateDir: () => stateDir,
+        getDesiredVersion: () => '2026.9.8',
+      },
+      getCoworkConfig: () => ({
+        workingDirectory: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+      }),
       getAgents: () => [],
       getNativeVideoCategory: () => ({ providers: {} }),
     } as never);
 
-    for (const reason of ['app-config-change', 'startup', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
+    for (const reason of [
+      'app-config-change',
+      'startup',
+      BuiltinModelSyncReason.AuthLogin,
+      BuiltinModelSyncReason.AuthLogout,
+    ]) {
       expect(sync.sync(reason).ok).toBe(true);
       const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       expect(config.agents.defaults.mediaModels.video).toBeUndefined();
@@ -2348,36 +2735,78 @@ test.each(['full', 'minimal'])(
   },
 );
 
-test.each(['full', 'minimal'])('%s sync does not reactivate video plugins absent from the intranet runtime', mode => {
-  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-native-video-sync-'));
-  temporaryDirectories.push(stateDir);
-  const configPath = path.join(stateDir, 'openclaw.json');
-  fs.writeFileSync(configPath, JSON.stringify({
-    agents: { defaults: { mediaModels: { video: { primary: 'kie/kling-2.6/text-to-video' } } } },
-    plugins: { allow: ['kie'], entries: { kie: { enabled: true } } },
-  }));
-  const appConfig = mode === 'full' ? {
-    model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
-    providers: { 'custom-provider': { enabled: true, apiKey: 'chat-test-key', baseUrl: 'https://custom.example.test/v1', apiFormat: 'openai', models: [{ id: 'custom-model' }] } },
-  } : {};
-  setStoreGetter(() => ({ get: () => appConfig }) as never);
-  const category = { defaultProviderId: 'native', providers: { native: {
-    nativeVideoProvider: 'kie', displayName: 'Kie AI', baseUrl: 'https://api.kie.ai', apiKey: 'video-test-key',
-    defaultModel: 'kling-2.6/text-to-video', models: [{ id: 'kling-2.6/text-to-video' }],
-  } } };
-  const sync = new OpenClawConfigSync({
-    engineManager: { getConfigPath: () => configPath, getStateDir: () => stateDir, getDesiredVersion: () => '2026.9.8' },
-    getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
-    getAgents: () => [], getNativeVideoCategory: () => category,
-  } as never);
-  for (const reason of ['startup', 'app-config-change', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
-    expect(sync.sync(reason).ok).toBe(true);
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.agents.defaults.mediaModels?.video).toBeUndefined();
-    expect(config.plugins.entries.kie).toBeUndefined();
-    expect(config.plugins.allow).not.toContain('kie');
-    expect(config.models?.providers?.kie).toBeUndefined();
-    expect(fs.existsSync(path.join(stateDir, 'extension-secrets.json'))).toBe(false);
-    expect(JSON.stringify(config)).not.toContain('video-test-key');
-  }
-});
+test.each(['full', 'minimal'])(
+  '%s sync does not reactivate video plugins absent from the intranet runtime',
+  mode => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-native-video-sync-'));
+    temporaryDirectories.push(stateDir);
+    const configPath = path.join(stateDir, 'openclaw.json');
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        agents: {
+          defaults: { mediaModels: { video: { primary: 'kie/kling-2.6/text-to-video' } } },
+        },
+        plugins: { allow: ['kie'], entries: { kie: { enabled: true } } },
+      }),
+    );
+    const appConfig =
+      mode === 'full'
+        ? {
+            model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+            providers: {
+              'custom-provider': {
+                enabled: true,
+                apiKey: 'chat-test-key',
+                baseUrl: 'https://custom.example.test/v1',
+                apiFormat: 'openai',
+                models: [{ id: 'custom-model' }],
+              },
+            },
+          }
+        : {};
+    setStoreGetter(() => ({ get: () => appConfig }) as never);
+    const category = {
+      defaultProviderId: 'native',
+      providers: {
+        native: {
+          nativeVideoProvider: 'kie',
+          displayName: 'Kie AI',
+          baseUrl: 'https://api.kie.ai',
+          apiKey: 'video-test-key',
+          defaultModel: 'kling-2.6/text-to-video',
+          models: [{ id: 'kling-2.6/text-to-video' }],
+        },
+      },
+    };
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath,
+        getStateDir: () => stateDir,
+        getDesiredVersion: () => '2026.9.8',
+      },
+      getCoworkConfig: () => ({
+        workingDirectory: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+      }),
+      getAgents: () => [],
+      getNativeVideoCategory: () => category,
+    } as never);
+    for (const reason of [
+      'startup',
+      'app-config-change',
+      BuiltinModelSyncReason.AuthLogin,
+      BuiltinModelSyncReason.AuthLogout,
+    ]) {
+      expect(sync.sync(reason).ok).toBe(true);
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(config.agents.defaults.mediaModels?.video).toBeUndefined();
+      expect(config.plugins.entries.kie).toBeUndefined();
+      expect(config.plugins.allow).not.toContain('kie');
+      expect(config.models?.providers?.kie).toBeUndefined();
+      expect(fs.existsSync(path.join(stateDir, 'extension-secrets.json'))).toBe(false);
+      expect(JSON.stringify(config)).not.toContain('video-test-key');
+    }
+  },
+);

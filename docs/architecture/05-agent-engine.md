@@ -48,6 +48,16 @@ Gateway bundle 位于运行时根目录，构建流程必须把原始 `dist/buil
 
 冻结 manifest 把补丁、helper、source lock 和构建 recipe 绑定在一起。同版本输入变化也可能拒绝旧产物。历史或部分补丁标记不得就地迁移；从 pristine 包重建，见[开发指南](../development.md)。
 
+原生助手向其它会话转发新任务时，调用者授权与 transcript 写入归属具有不同的寿命。
+Gateway 保留发送者的授权、目标校验和取消信号，但目标任务必须取得自己的原生写入归属。
+9.8 的转发入口会恢复调用者的完整异步上下文；补丁 039 在恢复之后，仅退出发送者的
+transcript/CLI-history 写入上下文，避免目标任务在自动压缩后的恢复或终止记录保存时
+误用发送者的写入归属。其它 RPC 和目标写入保护保持原生行为。
+构建同时使 bundle 与动态 SDK 共用原生 `transcript-write-context` 和其依赖的
+`cli-history-boundary` 状态模块；否则上下文清理函数与 CLI 写入者可能操作不同的
+AsyncLocalStorage。异步工作载体已经由上游的全局 singleton 共享，保持原生行为。
+Main 不接管 transcript 或重试转发。
+
 ## 3. 启动与重启状态
 
 Manager 对外 phase 为 ready、starting、running、error；canRetry 与 message 用于产品反馈。它们不是单个 Agent run 的状态。
@@ -195,6 +205,12 @@ embedding host 关闭 Bonjour、shell snapshot、自重生和非产品 channel�
 
 回归入口为 Manager/ConfigSyncService 测试、Adapter 各领域测试、wire validator 测试及 `tests/openclaw/runtime/`。版本升级必须验证 pristine contracts 与最终打包产物，不能用旁边的 OpenClaw 开发副本代替。
 
+## 群组讨论原生执行
+
+agent-team 本地 Channel 调用公开 dispatchChannelInboundTurn。适配器为各成员恢复精确会话 pinning，校验 cwd / permissionMode / lifecycleRevision，并在公开投递入原生 transcript 前再次校验。原生调度拥有轮次及沉默语义，Main 不编排逐 Agent 调用。执行 admission receipt 无消息正文，并在重启后禁止自动重放。
+
+详见 [Agent Team 现行契约](../features/assistants/agent-team.md)。
+
 ## 记忆浏览与索引诊断
 
 首页记忆页只读取 `main` 的工作区 Markdown 资料，不维护第二份记忆库。
@@ -239,3 +255,9 @@ responsibilities. Native final agent responses settle external turns;
 intermediate attempt completion does not. The external OpenClaw CLI command
 interface is removed. See [Multica integration](../features/integrations/multica-integration.md)
 for session-marker ownership, setup and supported protocol boundaries.
+
+### 来源参与与总结的原生路由
+
+含组织者的群由公开 `runGroupThread` 调度，来源回合经 `dispatchReplyWithBufferedBlockDispatcher` 使用 webchat/direct/inter_session，保持原 canonical delivery；普通成员仍走 Channel。最终 dispatch 边界重新校验原生身份并恢复 expectedExistingSessionId/pinExpectedExistingSession。群内来源只允许 read，总结 disableTools；不临时更改源权限。只读流程拒绝 ACP/未验证 runtime。
+
+公开来源发言镜像到 room-owned 原生历史，并保存 speaker 身份，保证源历史删除后群公开时间线仍可读。独立 summary receipt 固定 source incarnation、批次和输出 entryId，支持先于 admission 的取消墓碑及 exact AbortSignal；旧 owner 中断不盲重跑。见[验证边界](../features/assistants/agent-team.md)。

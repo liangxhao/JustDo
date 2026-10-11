@@ -20,6 +20,7 @@ describe('openclawExtensionRegistry', () => {
       },
       [OpenClawExtensionId.RUNTIME_SERVICES]: {
         enabled: true,
+        hooks: { allowConversationAccess: true },
       },
       [OpenClawExtensionId.PLAN_MODE]: {
         enabled: true,

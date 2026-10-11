@@ -12,6 +12,7 @@ import CoworkQuestionWizard from './CoworkQuestionWizard';
 interface CoworkQuestionFloatingWindowProps {
   interaction: CoworkInteractionRequest;
   isVisible: boolean;
+  sourceLabel?: string;
   onRespond: (result: CoworkInteractionResult) => Promise<boolean>;
 }
 
@@ -70,6 +71,7 @@ export const resolveQuestionWindowOffsetCorrection = (
 const CoworkQuestionFloatingWindow: React.FC<CoworkQuestionFloatingWindowProps> = ({
   interaction,
   isVisible,
+  sourceLabel,
   onRespond,
 }) => {
   const [offset, setOffset] = useState<WindowOffset>({ x: 0, y: 0 });
@@ -212,6 +214,7 @@ const CoworkQuestionFloatingWindow: React.FC<CoworkQuestionFloatingWindowProps> 
         onPointerCancel={endDrag}
         onLostPointerCapture={handleLostPointerCapture}
       >
+        {sourceLabel && <p className="px-5 pt-4 text-sm text-secondary">{sourceLabel}</p>}
         {hasMultipleQuestions ? (
           <CoworkQuestionWizard
             interaction={interaction}

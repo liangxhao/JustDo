@@ -3,6 +3,7 @@ import { FolderIcon } from '@heroicons/react/24/solid';
 import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
 import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
 import { recordingImagesInStepOrder } from '@shared/browser/browserRecording';
+import { appendAgentTeamInstruction } from '@shared/cowork/agent-team/agentTeamPrompt';
 import {
   GoalExecutionPhase,
   type GoalExecutionSnapshot,
@@ -84,7 +85,11 @@ import {
   selectDraftPrompts,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
-import { removeDraftMessageQuotes } from '@/features/cowork/coworkSlice';
+import {
+  clearSubmittedAgentTeamMode,
+  removeDraftMessageQuotes,
+  setDraftAgentTeamMode,
+} from '@/features/cowork/coworkSlice';
 import {
   beginManualModelSelection,
   clearDraftAttachments,
@@ -108,7 +113,10 @@ import {
   matchesOpenClawModelRef,
   resolveOpenClawModelRef,
 } from '@/features/models/openclawModelRef';
-import { useExtensionEnablement } from '@/features/plugins/extensions/useExtensionEnablement';
+import {
+  getExtensionEnabled,
+  useExtensionEnablement,
+} from '@/features/plugins/extensions/useExtensionEnablement';
 import { ActiveSkillBadge } from '@/features/plugins/skills';
 import type { ChatContextUsageSnapshot } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { configService } from '@/services/config';
@@ -120,11 +128,23 @@ import Modal from '@/shared/components/ui/Modal';
 import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 import { type RootState, store } from '@/store';
 
+import { buildAgentTeamFeature } from './AgentTeamSelector';
+import {
+  type AgentTeamMode,
+  submitAgentTeamMessage,
+  teamSubmissionConflict,
+} from './agentTeamSubmission';
 import { isImagePath } from './composerAttachmentFiles';
 import { hasComposerContent } from './composerContent';
 import ComposerFeatureMenu from './ComposerFeatureMenu';
 import { buildComposerFeatures } from './composerFeatures';
-import { COMPOSER_SURFACE_CLASS, COMPOSER_TEXTAREA_CLASS } from './composerStyles';
+import {
+  COMPOSER_SURFACE_CLASS,
+  COMPOSER_TEXTAREA_CLASS,
+  COMPOSER_TEXTAREA_MAX_HEIGHT,
+  COMPOSER_TEXTAREA_MIN_HEIGHT,
+  resizeComposerTextarea,
+} from './composerStyles';
 import { ConversationAgentSelector } from './ConversationAgentSelector';
 import FeatureTextarea from './FeatureTextarea';
 import { createGoalReadRetry } from './goalReadRetry';
@@ -132,7 +152,7 @@ import { readGoalState } from './goalReadState';
 import {
   appendMessageQuotes,
   EMPTY_MESSAGE_QUOTES,
-  messageQuoteAttachment,
+  messageQuoteAttachments,
   quotedGatewayPrompt,
   submitMessageQuoteDrafts,
   submittedMessageQuotes,
@@ -320,6 +340,49 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       OpenClawExtensionId.SWARM_WORKFLOW,
       extensionEnablement,
     );
+    const teamDrafts = useSelector((state: RootState) => state.cowork.draftAgentTeamModes);
+    const teamSelection = teamDrafts?.[draftKey];
+    const teamEnabled = getExtensionEnabled(extensionEnablement, OpenClawExtensionId.AGENT_TEAM);
+    const teamDisabledRevision =
+      extensionEnablement.disabledRevisions.get(OpenClawExtensionId.AGENT_TEAM) ?? 0;
+    const previousTeamRevision = useRef(teamDisabledRevision);
+    useEffect(() => {
+      if (teamEnabled === false || previousTeamRevision.current !== teamDisabledRevision) {
+        for (const [key, draft] of Object.entries(teamDrafts ?? {}))
+          dispatch(clearSubmittedAgentTeamMode({ draftKey: key, id: draft.id }));
+      }
+      previousTeamRevision.current = teamDisabledRevision;
+    }, [teamEnabled, teamDisabledRevision, teamDrafts, dispatch]);
+    const teamMode =
+      remoteManaged || mode === 'side-chat' || teamEnabled !== true
+        ? undefined
+        : teamSelection?.mode;
+    const currentTeamSelection = useRef({
+      teamMode,
+      id: teamSelection?.id,
+      revision: teamDisabledRevision,
+    });
+    currentTeamSelection.current = {
+      teamMode,
+      id: teamSelection?.id,
+      revision: teamDisabledRevision,
+    };
+    const teamSendContext = useRef({ draftKey, active: true });
+    if (teamSendContext.current.draftKey !== draftKey)
+      teamSendContext.current = { draftKey, active: true };
+    useEffect(() => {
+      teamSendContext.current.active = true;
+      return () => {
+        teamSendContext.current.active = false;
+      };
+    }, []);
+    const setTeamMode = (selected?: AgentTeamMode) =>
+      dispatch(
+        setDraftAgentTeamMode({
+          draftKey,
+          draft: selected ? { id: crypto.randomUUID(), mode: selected } : undefined,
+        }),
+      );
     const planModeEnabled = useSelector((state: RootState) =>
       sessionId
         ? (state.cowork.planModeBySession[sessionId] ?? false)
@@ -347,6 +410,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         gatewayPrompt?: string,
         queue = false,
       ) => {
+        const context = teamSendContext.current;
         const submit = queue ? queuePrompt : submitPrompt;
         if (!submit) return false;
         let instruction: string | undefined;
@@ -396,25 +460,54 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         }
         const submittedQuotes = [...submittedMessageQuotes(prompt, messageQuotes, isSideChat)];
         const label = i18nService.t('messageQuoteContext');
-        const result = await submitMessageQuoteDrafts(
-          submittedQuotes,
-          () =>
-            submit(
-              appendMessageQuotes(prompt, submittedQuotes, label, isSideChat),
-              !isSideChat && submittedQuotes.length
-                ? [...(attachments ?? []), ...submittedQuotes.map(messageQuoteAttachment)]
-                : attachments,
-              instruction
-                ? (quotedGatewayPrompt(prompt, gatewayPrompt, submittedQuotes, isSideChat) ??
-                    prompt) +
-                    '\n\n' +
-                    instruction
-                : quotedGatewayPrompt(prompt, gatewayPrompt, submittedQuotes, isSideChat),
-              canSelectWorktree && useWorktree,
-              swarmWorkflowOptions,
+        const result = await submitAgentTeamMessage({
+          mode: teamMode,
+          queued: queue,
+          enabled: async () => {
+            const extensions = await window.electron.extensions.list();
+            if (!extensions.success) throw new Error('Extension lookup failed');
+            return extensions.extensions.some(item => item.id === 'agent-team' && item.enabled);
+          },
+          isCurrent: () =>
+            context.active &&
+            teamSendContext.current === context &&
+            (!teamMode ||
+              (currentTeamSelection.current.teamMode === teamMode &&
+                currentTeamSelection.current.id === teamSelection?.id &&
+                currentTeamSelection.current.revision === teamDisabledRevision)),
+          report: key =>
+            window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t(key) })),
+          accepted: () => {
+            if (teamSelection)
+              dispatch(clearSubmittedAgentTeamMode({ draftKey, id: teamSelection.id }));
+          },
+          submit: () =>
+            submitMessageQuoteDrafts(
+              submittedQuotes,
+              () =>
+                submit(
+                  appendMessageQuotes(prompt, submittedQuotes, label, isSideChat),
+                  !isSideChat && submittedQuotes.length
+                    ? [...(attachments ?? []), ...messageQuoteAttachments(submittedQuotes)]
+                    : attachments,
+                  teamMode
+                    ? appendAgentTeamInstruction(
+                        quotedGatewayPrompt(prompt, gatewayPrompt, submittedQuotes, isSideChat) ??
+                          prompt,
+                        teamMode,
+                      )
+                    : instruction
+                      ? (quotedGatewayPrompt(prompt, gatewayPrompt, submittedQuotes, isSideChat) ??
+                          prompt) +
+                        '\n\n' +
+                        instruction
+                      : quotedGatewayPrompt(prompt, gatewayPrompt, submittedQuotes, isSideChat),
+                  canSelectWorktree && useWorktree,
+                  swarmWorkflowOptions,
+                ),
+              ids => dispatch(removeDraftMessageQuotes({ draftKey, ids })),
             ),
-          ids => dispatch(removeDraftMessageQuotes({ draftKey, ids })),
-        );
+        });
         if (result !== false && swarmWorkflowOptions) {
           clearAcceptedSwarmWorkflow(draftKey, swarmWorkflowOptions);
         }
@@ -432,6 +525,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         swarmWorkflowOptions,
         isCurrentSwarmWorkflow,
         clearAcceptedSwarmWorkflow,
+        teamMode,
+        teamSelection,
+        teamDisabledRevision,
         planModeEnabled,
         sessionId,
       ],
@@ -622,9 +718,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     };
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const teamComposerFeature = buildAgentTeamFeature(teamMode, option => {
+      setSwarmWorkflowOptions(undefined);
+      setTeamMode(option);
+      ownerWindow.requestAnimationFrame(() => textareaRef.current?.focus());
+    });
     const swarmWorkflowComposerFeature = buildSwarmWorkflowComposerFeature({
       swarmWorkflow: swarmWorkflowOptions,
       selectSwarmWorkflow: option => {
+        setTeamMode(undefined);
         setSwarmWorkflowOptions(option);
         ownerWindow.requestAnimationFrame(() => {
           textareaRef.current?.focus();
@@ -954,14 +1056,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     }));
 
     const isLarge = size === 'large';
-    const minHeight = isLarge ? 60 : 24;
-    const maxHeight = isLarge ? 200 : 200;
+    const minHeight = isLarge ? COMPOSER_TEXTAREA_MIN_HEIGHT : 24;
+    const maxHeight = COMPOSER_TEXTAREA_MAX_HEIGHT;
     const resizeTextarea = useCallback(
       (textarea: HTMLTextAreaElement) => {
-        textarea.style.height = 'auto';
-        textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight)}px`;
+        resizeComposerTextarea(textarea, minHeight);
       },
-      [minHeight, maxHeight],
+      [minHeight],
     );
 
     // Auto-resize textarea
@@ -979,6 +1080,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         if (shouldClear) {
           setValue('');
           dispatch(clearDraftAttachments(draftKey));
+          dispatch(setDraftAgentTeamMode({ draftKey }));
         }
         ownerWindow.requestAnimationFrame(() => {
           textareaRef.current?.focus();
@@ -1020,8 +1122,28 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       async (promptOverride?: string) => {
         const promptValue = promptOverride ?? value;
         const trimmedValue = promptValue.trim();
+        if (teamMode && isRunActive) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', { detail: i18nService.t('teamFeatureBusy') }),
+          );
+          return;
+        }
         // Refuse before any goal mutation, attachment staging or
         // draft clearing: those routes bypass the normal Swarm Workflow send wrapper.
+        if (
+          teamMode &&
+          teamSubmissionConflict({
+            prompt: trimmedValue,
+            plan: !!planModeEnabled,
+            goalStatus: sessionGoalRef.current?.status,
+            completionFeedback: completionFeedbackRef.current !== null,
+          })
+        ) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', { detail: i18nService.t('teamFeatureConflict') }),
+          );
+          return;
+        }
         if (
           blocksSwarmWorkflowGoalSubmission({
             swarmWorkflowSelected: Boolean(swarmWorkflowOptions),
@@ -1513,6 +1635,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         disabled,
         onSubmit,
         swarmWorkflowOptions,
+        teamMode,
+        planModeEnabled,
         messageQuotes,
         attachments,
         browserAnnotations,
@@ -1783,7 +1907,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       : 'relative flex flex-wrap items-end gap-2 p-3 rounded-xl border border-border bg-surface';
 
     const textareaClass = isLarge
-      ? `${COMPOSER_TEXTAREA_CLASS} min-h-[${minHeight}px] max-h-[${maxHeight}px]`
+      ? COMPOSER_TEXTAREA_CLASS
       : 'flex-1 resize-none bg-transparent text-foreground placeholder:placeholder:text-secondary focus:outline-none text-sm leading-relaxed min-h-[24px] max-h-[200px]';
 
     const truncatePath = (path: string, maxLength = 30): string => {
@@ -1938,6 +2062,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           section: i18nService.t('composerPlugins'),
           disabled: disabled || isRunActive,
         },
+        {
+          ...teamComposerFeature,
+          section: i18nService.t('composerPlugins'),
+          disabled: disabled || isRunActive,
+        },
       ],
       extensionEnablement,
     );
@@ -2017,8 +2146,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         const hasSelection = start !== end;
         const replacesWholeDraft = hasSelection && start === 0 && end === value.length;
         const consumeSelectedFeature = () => {
-          if (!replacesWholeDraft || !swarmWorkflowOptions) return;
-          clearAcceptedSwarmWorkflow(draftKey, swarmWorkflowOptions);
+          if (!replacesWholeDraft) return;
+          if (teamSelection)
+            dispatch(clearSubmittedAgentTeamMode({ draftKey, id: teamSelection.id }));
+          if (swarmWorkflowOptions) clearAcceptedSwarmWorkflow(draftKey, swarmWorkflowOptions);
         };
         const draftIsCurrent = () =>
           currentDraftKeyRef.current === draftKey && latestValueRef.current === value;
@@ -2080,6 +2211,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         swarmWorkflowOptions,
         clearAcceptedSwarmWorkflow,
         ownerWindow,
+        teamSelection,
+        dispatch,
       ],
     );
 
@@ -2868,11 +3001,22 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   containerClassName={isLarge ? undefined : 'basis-full'}
                   key={draftKey}
                   featureLabel={
-                    swarmWorkflowOptions ? i18nService.t('swarmWorkflowTitle') : undefined
+                    teamMode
+                      ? `${i18nService.t('teamTitle')} · ${i18nService.t(teamMode === 'group' ? 'teamGroup' : 'teamTask')}`
+                      : swarmWorkflowOptions
+                        ? i18nService.t('swarmWorkflowTitle')
+                        : undefined
                   }
-                  featureIcon={swarmWorkflowComposerFeature.icon}
-                  removeLabel={i18nService.t('swarmWorkflowRemoveToken')}
-                  onRemoveFeature={() => setSwarmWorkflowOptions(undefined)}
+                  featureIcon={
+                    teamMode ? teamComposerFeature.icon : swarmWorkflowComposerFeature.icon
+                  }
+                  removeLabel={i18nService.t(
+                    teamMode ? 'teamFeatureRemove' : 'swarmWorkflowRemoveToken',
+                  )}
+                  onRemoveFeature={() => {
+                    setTeamMode(undefined);
+                    setSwarmWorkflowOptions(undefined);
+                  }}
                   onLayoutChange={resizeTextarea}
                   ref={textareaRef}
                   value={value}
@@ -2884,12 +3028,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   disabled={disabled}
                   rows={isLarge ? 2 : 1}
                   className={textareaClass}
-                  style={{ minHeight: `${minHeight}px` }}
+                  style={{ minHeight, maxHeight }}
                 />
                 <div className="flex flex-nowrap items-center justify-between gap-1 px-3 pb-2 pt-1.5">
                   <div className="relative flex shrink-0 items-center gap-1">
                     {supportsAgentControls && (
                       <ComposerFeatureMenu
+                        key={draftKey}
+                        backLabel={i18nService.t('teamFeatureBack')}
                         items={composerFeatures}
                         label={i18nService.t('composerFeatures')}
                         disabled={composerFeatures.every(item => item.disabled)}
@@ -3145,11 +3291,22 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   containerClassName={isLarge ? undefined : 'basis-full'}
                   key={draftKey}
                   featureLabel={
-                    swarmWorkflowOptions ? i18nService.t('swarmWorkflowTitle') : undefined
+                    teamMode
+                      ? `${i18nService.t('teamTitle')} · ${i18nService.t(teamMode === 'group' ? 'teamGroup' : 'teamTask')}`
+                      : swarmWorkflowOptions
+                        ? i18nService.t('swarmWorkflowTitle')
+                        : undefined
                   }
-                  featureIcon={swarmWorkflowComposerFeature.icon}
-                  removeLabel={i18nService.t('swarmWorkflowRemoveToken')}
-                  onRemoveFeature={() => setSwarmWorkflowOptions(undefined)}
+                  featureIcon={
+                    teamMode ? teamComposerFeature.icon : swarmWorkflowComposerFeature.icon
+                  }
+                  removeLabel={i18nService.t(
+                    teamMode ? 'teamFeatureRemove' : 'swarmWorkflowRemoveToken',
+                  )}
+                  onRemoveFeature={() => {
+                    setTeamMode(undefined);
+                    setSwarmWorkflowOptions(undefined);
+                  }}
                   onLayoutChange={resizeTextarea}
                   ref={textareaRef}
                   value={value}
@@ -3167,6 +3324,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   <div className="flex flex-1 items-center gap-1">
                     {supportsAgentControls && (
                       <ComposerFeatureMenu
+                        key={draftKey}
+                        backLabel={i18nService.t('teamFeatureBack')}
                         items={composerFeatures}
                         label={i18nService.t('composerFeatures')}
                         disabled={composerFeatures.every(item => item.disabled)}

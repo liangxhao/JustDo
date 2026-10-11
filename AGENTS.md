@@ -152,6 +152,7 @@ SQLite core tables in `src/main/data/sqliteStore.ts`:
 `cowork_run_diagnostic_events`, `cowork_run_diagnostic_coverage`,
 `openclaw_hooks`, `session_groups`, `collaboration_rooms`, `collaboration_members`,
 `collaboration_rounds`, `collaboration_deliveries`, `collaboration_deletions`,
+`collaboration_execution_receipts`, `collaboration_reviews`, `collaboration_review_deliveries`,
 `collaboration_deleted_members`, `scheduled_task_run_receipts`,
 `scheduled_task_result_cleanup`, `scheduled_task_result_tombstones`.
 
@@ -258,7 +259,8 @@ See `docs/architecture/10-data-storage.md`.
   Agent identity/settings, model identity, external-agent integration, permissions,
   prompt rules and plugin management belong to their corresponding shared domains.
   Cowork interactions and diagnostics live in `shared/cowork/interactions/` and
-  `shared/cowork/diagnostics/`; plugin/tool IDs live in `shared/plugins/nativeIds.ts`.
+  `shared/cowork/diagnostics/`; Agent Team contracts live in `shared/cowork/agent-team/`.
+  Plugin/tool IDs live in `shared/plugins/nativeIds.ts`.
 - JustDo owns UX, persistence, permissions, packaging, app shell, and product flows.
 - OpenClaw owns agent execution, Gateway capabilities, tool semantics, and skill runtime behavior.
 - `openclawSkillService.ts` talks to Gateway skill APIs.
@@ -300,7 +302,7 @@ See `docs/architecture/10-data-storage.md`.
   file-type directory around them. Keep `store/index.ts`, process-local `types/`,
   and single-file feature/contract domains when they define a real ownership boundary.
 - Cowork components use one level of domain folders: `chat`, `composer`,
-  `sessions`, `goals`, `subagents`, `swarm-workflow`, `approvals`, `questions`,
+  `collaboration`, `discussions`, `sessions`, `goals`, `subagents`, `swarm-workflow`, `approvals`, `questions`,
   `display`, `preview`, `terminal`, `review`, `status`.
   Keep helpers, tests, and CSS beside their owning components; `shared` is only
   for UI/helpers reused across these folders. Keep `CoworkView.tsx` at the root.
@@ -308,6 +310,10 @@ See `docs/architecture/10-data-storage.md`.
   and workspace browsing. Plan review belongs to `approvals/`. Native subtask
   graphs stay in `subagents/`; the independent Workflow plugin UI stays in
   `swarm-workflow/`. Shared graph/document styles do not own lifecycle state.
+  Agent Team Graph, member history and continuation belong to `collaboration/`;
+  public group messages, mentions and group input belong to `discussions/`.
+  Team tab composition and entry selection belong to `display/`; per-submit
+  mode selection stays in `composer/` and the header menu stays in `chat/`.
 - Keep top-level `main.ts` and `preload.ts` thin.
 - Large controllers keep lifecycle/state ownership in the entry class and delegate
   domain operations through explicit typed contexts. `shared/app/propertyContext.ts`
@@ -447,6 +453,11 @@ hooks and skill together; do not inject a roster or collaboration instructions
 on every turn. Runtime Services owns receipt history reads and blocks managed
 peer sends when the extension is disabled. Config sync must preserve the user's
 explicit extension state.
+Agent Team Main handlers and metadata stores live in `ipc/cowork/agent-team/`
+and `data/agent-team/`. The optional extension composes `collaboration/` and
+`discussion/`; required history, holding custody, receipt ledgers and launch
+protection live in `runtime-services/agent-team/`. Required Runtime Services must
+not import the optional Agent Team implementation to remain operational when disabled.
 
 Swarm Workflow is the independent `openclaw-extensions/swarm-workflow` plugin, with a
 per-submit composer option and a dependency graph Tab. Its Gateway service owns
@@ -465,6 +476,60 @@ plugin disable state. The host tool is unavailable in sandboxed sessions and
 respects effective filesystem policy. External audio attachments are staged in
 the project before sending. See `docs/architecture/07-plugin-system.md`.
 
+Agent Team also provides optional local group discussions through the public
+`justdo-team` Channel / native broadcast SDK. Keep task collaboration unchanged.
+Discussion metadata lives in `team_discussion_rooms`, `team_discussion_runs`,
+`team_discussion_executions`, `team_discussion_task_links`, and
+`team_discussion_deleted_rooms`; never persist message bodies there.
+Runtime Services owns native public discussion history reads when Agent Team is
+disabled. Native execution receipts contain identities and status only. The
+Renderer keeps a mounted timeline projection, not a Redux transcript cache.
+Group discussions default to native read-only permissions; task Plan approval
+state is not carried across modes. Product extensions marked `justdo.bundle`
+are bundled during resource sync so shared product contracts are packaged.
+
+Agent Team pending group input uses metadata-only `team_discussion_queue_control`
+and `team_discussion_pending_inputs`; at most 3 active inputs per room, with FIFO
+admission after the prior discussion and source summary settle. Body, attachment
+paths and quotes live only in native locked `justdo-team-holding` custom-role
+entries owned and registered by required Runtime Services, with native metadata
+in `pluginExtensions.runtime-services.holding`, never Main/Redux transcript caches.
+Prepare/Save/Read/Status require optional Agent Team enabled; Cancel/Close/owner
+unlock remain available for legal cleanup after disable. Verify exact native identity, entry,
+idempotency and fingerprints before dispatch. Unknown/blocked retain capacity;
+cancel epochs and late ACKs never revive inputs. Ordinary native import/list/search
+and status projections exclude the reserved holding key without changing native
+pagination. Project attachments remain under `.agent-tasks/team-discussions/`.
+Explicit extension disable acquires a Main admission lease and durably fences
+pending inputs before config mutation; rapid toggles share a serial lane. Normal
+Gateway shutdown preserves saved input. Holding deletion closes admission, then
+uses Main operator archive, owning SDK unlock of the exact archived incarnation,
+and Main exact archivedOnly delete; never forge pluginOwnerId or bypass custody.
+Unlocked holders lose the native owner marker on normal retirement. Cleanup-only
+recovery requires a closed durable slot and exact key/SID/revision/harness/root
+matching an archived, unlocked native entry with no conflicting marker; never
+relax normal body admission or accept a replacement incarnation.
+See `docs/features/assistants/agent-team.md` for current SDK contracts;
+see `docs/plans/agent-team-acceptance.md` for remaining integration limits.
+
+Peer-detail continuation submits a new ordinary source user turn and requests
+model-mediated managed peer forwarding; source acceptance and exact new target
+run acceptance are distinct. Keep main composer drafts/options intact, never
+reuse old rounds or replay unknown submissions. Limited explicit Team launch
+guarding belongs to required Runtime Services and exact normal-turn lineage;
+queued/followup lineage is not inferred from the latest message or runId suffix.
+The guard's content-free Runtime Services ledger is authoritative across restarts;
+native session pluginExtensions is only a projection, cleared on normal SIGTERM
+retirement for ordinary source sessions. Corrupt/unreadable/uncertain metadata or
+an unreleased prior process owner freezes admission. Exact released generations
+are durable tombstones; late retired or unauthorized writers must not commit.
+After a released source resets, historical or exact current SID may inspect the
+prior generation, but identity drift never transfers whole-run proof. Fresh
+registration binds the current SID/revision and next generation; unreleased
+identity drift still freezes admission.
+
+Agent Team group discussions can be organized from a live main conversation with `team_discussion` (create/send/read/stop), using the existing bound native tool/host channel. Main derives source project and permission; model-created rooms are read-only. The team panel contains collaboration Graph and linked group tabs. Avatar details reuse native member history. `team_discussion_runs.initiator_agent_id` distinguishes organizer messages from direct user input without caching bodies.
+
 Jev evaluations use the vendored upstream `typesafe` extension. Settings → Models
 → Decision models owns the required URL/API Key, default model and activation
 once configured; TypeSafe then becomes managed in the extension panel.
@@ -474,6 +539,26 @@ using file SecretRefs in restricted `extension-secrets.json`. The documented
 without redirects, environment proxies or hosted fallback. Preserve native
 OpenClaw decision semantics and response validation. Users without this settings
 category retain explicit extension state. See `docs/features/models/jev-integration.md`.
+
+Agent Team optimization: model-created readonly rooms pin `summarySource`; optional
+source participation borrows the original native conversation, while public source
+replies mirror into room-owned native history. Never delete borrowed source sessions.
+`team_discussion_summaries` is a metadata-only transactional outbox; stopped runs
+persist `summary_suppressed`. Summary tools are disabled, native receipts consume
+admission once, and interrupted unknown requests are not automatically replayed.
+`task_assistants({seal:true})` closes collaboration admission; `closing_run_id` and
+`collaboration_execution_receipts` keep whole-run outcomes separate from accepted
+sends. Missing terminal evidence stays unconfirmed. See
+`docs/features/assistants/agent-team.md` for implementation and limits.
+
+Independent task reviews use `task_assistants({review:{deliveryIds,verdict}})`.
+Only an organizer-admitted peer run can report on completed worker receipts in
+the same batch; self/organizer review is rejected. Reports are immutable per
+reviewer run and confirmed only after accepted admission plus a successful
+whole-run terminal. Review tables store IDs and closed verdicts, never findings
+or artifact bodies. A confirmed review covers only its exact receipts, not later
+work or whole-task quality. Group reply buttons preserve drafts and select exact
+recipients; attention uses structured questions and exact native room identities.
 
 The intranet runtime excludes `anthropic`, `elevenlabs`, `github`, `kie`, `zai`,
 and `novita` through `resources/openclaw-extension-prune.json`. Keep `openai` as
@@ -525,3 +610,25 @@ providers, which may share non-video capabilities. Incomplete inventory must not
 new providers, but explicit clears still disable an existing managed video adapter.
 Do not add compatibility or migration for the retired custom video configuration.
 See `docs/features/models/model-management.md`.
+
+Agent Team resource preferences use `kv.agentTeam.settings` with revision CAS;
+plugins card and team overflow menus own the UI. Team overrides live in each
+room's settings_json; collaboration_rounds.message_budget and discussion run
+resources_json/requested_rounds are metadata only. Defaults save offline without
+enabling the extension or restarting Gateway. Group response permits cover the
+shared public dispatcher for owned and borrowed members, releasing only after
+dispatch cleanup and exact native executionSettled lifecycle evidence. Unknown
+executions retain admission and block further dispatch. Do not add collaboration
+automatic queues or duplicate transcript/config authorities. See
+`docs/features/assistants/agent-team.md`.
+
+Discussion/summary owner changes never establish terminal execution outcomes.
+Receipt settlement requires exact whole-run run IDs plus dispatcher cleanup;
+unknown summaries block new sends, source participation changes and all source
+deletion paths, including batch deletion. A member detail reference is a locator
+card in the actual source draft, never a peer send or an old-round continuation.
+Explicit Team launches are not queued while the source is busy. Native inert-input
+holding now backs the bounded group FIFO described above; it does not establish
+native queued/followup launch lineage. Do not append staged input to active member
+transcripts or infer reliable automatic launch correction from prompt markers.
+See `docs/features/assistants/agent-team.md` for the actual rollout.

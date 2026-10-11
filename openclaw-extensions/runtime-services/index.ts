@@ -10,7 +10,10 @@ import {
   ssrfPolicyFromHttpBaseUrlAllowedHostname,
 } from 'openclaw/plugin-sdk/ssrf-runtime';
 
-import { registerCollaborationHistory } from './collaboration-history';
+import { registerAgentTeamLaunchGuard } from './agent-team/agent-team-launch-guard';
+import { registerCollaborationHistory } from './agent-team/collaboration-history';
+import { registerDiscussionHistory } from './agent-team/discussion-history';
+import { registerDiscussionHolding } from './agent-team/discussion-holding';
 import { registerScheduledTaskHistory } from './scheduled-task-history';
 
 const PLUGIN_ID = 'runtime-services';
@@ -224,7 +227,10 @@ const plugin = {
   name: 'Runtime Services',
   description: 'Provides runtime progress, history detail, and embedding capabilities.',
   register(api: OpenClawPluginApi) {
+    registerAgentTeamLaunchGuard(api);
+    registerDiscussionHolding(api);
     registerCollaborationHistory(api);
+    registerDiscussionHistory(api);
     registerScheduledTaskHistory(api);
     const historyMessageTransfers = new Map<string, HistoryMessageTransfer>();
     let historyMessageTransferSequence = 0;

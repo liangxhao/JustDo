@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { beginAssistantTurn, createChatTranscriptState } from './chat-transcript-state';
 import {
   markOptimisticHistoryTail,
+  projectInitialHistoryForActiveTurn,
   projectPersistedMessagesForActiveTurn,
   retireSettledActiveTurn,
 } from './optimistic-history-tail';
@@ -13,6 +14,85 @@ const dependencies = {
 };
 
 describe('optimistic history tail ownership', () => {
+  test('loads older history without losing its last reply when the active prompt is not persisted', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const turn = beginAssistantTurn(state, { runId: 'run-current', startedAt: 1000 }, dependencies);
+    const history = [
+      { role: 'user', content: 'old question', timestamp: 100 },
+      { role: 'assistant', content: 'old reply', timestamp: 200 },
+    ];
+    expect(projectInitialHistoryForActiveTurn(history, turn)).toEqual(history);
+    expect(
+      projectInitialHistoryForActiveTurn([{ role: 'assistant', content: 'unscoped' }], turn),
+    ).toBeNull();
+  });
+
+  test('retains a failure until native history has the same run error', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const turn = beginAssistantTurn(state, { runId: 'run-current' }, dependencies);
+    turn.status = 'error';
+    const failure = {
+      role: 'assistant',
+      content: '',
+      errorMessage: 'writer lost',
+      stopReason: 'error',
+      runId: turn.runId,
+    };
+    expect(retireSettledActiveTurn(state, [])).toBe(false);
+    expect(retireSettledActiveTurn(state, [{ ...failure, runId: 'run-old' }])).toBe(false);
+    expect(
+      retireSettledActiveTurn(state, [{ role: 'toolResult', isError: true, runId: turn.runId }]),
+    ).toBe(false);
+    expect(retireSettledActiveTurn(state, [markOptimisticHistoryTail(failure)])).toBe(false);
+    expect(retireSettledActiveTurn(state, [failure])).toBe(true);
+    expect(state.activeTurn).toBeNull();
+  });
+
+  test('keeps the whole-run error while displaying a differing native attempt diagnostic', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const turn = beginAssistantTurn(state, { runId: 'run-current' }, dependencies);
+    const error = 'LLM request failed: provider rejected the request schema or tool payload.';
+    turn.status = 'error';
+    turn.items.push({
+      id: 'terminal',
+      runId: turn.runId,
+      firstSeq: 2,
+      lastSeq: 2,
+      startedAt: 1,
+      updatedAt: 2,
+      type: 'terminal',
+      status: 'error',
+      message: error,
+    });
+    const failure = {
+      role: 'system',
+      content: '400 provider schema detail.',
+      errorMessage: '400 provider schema detail.',
+      isError: true,
+      stopReason: 'error',
+      __openclaw: { id: 'native-failure', seq: 4, runId: turn.runId },
+    };
+    expect(retireSettledActiveTurn(state, [failure])).toBe(false);
+    expect(projectPersistedMessagesForActiveTurn([failure], turn)).toEqual([failure]);
+    expect(
+      projectPersistedMessagesForActiveTurn([markOptimisticHistoryTail(failure)], turn),
+    ).toEqual([]);
+    expect(
+      projectPersistedMessagesForActiveTurn(
+        [{ ...failure, __openclaw: { runId: turn.runId } }],
+        turn,
+      ),
+    ).toEqual([]);
+    const partialAssistant = {
+      ...failure,
+      role: 'assistant',
+      content: 'partial reply already projected live',
+    };
+    expect(projectPersistedMessagesForActiveTurn([partialAssistant], turn)).toEqual([]);
+    expect(state.activeTurn).toBe(turn);
+    expect(turn.items).toMatchObject([{ type: 'terminal', message: error }]);
+  });
+
   test('hides authoritative messages already represented by a running tool turn', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
     const turn = beginAssistantTurn(state, { runId: 'run-1' }, dependencies);

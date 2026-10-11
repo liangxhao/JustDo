@@ -1,18 +1,22 @@
 {
   "id": "agent-team",
   "name": "Agent Team",
+  "channels": ["justdo-team"],
+  "channelConfigs": {
+    "justdo-team": { "label": "Agent Team", "description": "Local group discussions." }
+  },
   "activation": {
     "onStartup": true,
     "onCapabilities": ["tool"]
   },
   "contracts": {
-    "tools": ["task_assistants", "assistants_create"]
+    "tools": ["task_assistants", "assistants_create", "team_discussion"]
   },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {}
   },
-  "description": "Optional persistent assistant collaboration. Discover teammates and coordinate work on demand.",
+  "description": "Optional task collaboration and local group discussions. Discover teammates, coordinate work, or discuss a topic in a bounded native group thread.",
   "skills": ["./skills"]
 }

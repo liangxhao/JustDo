@@ -48,6 +48,7 @@ import {
   type PermissionMode,
   resolvePermissionMode,
 } from '../../shared/security/approvals';
+import { isTeamDiscussionHoldingSessionKey } from '../openclaw/sessions/openclawSessionKeys';
 
 // Default working directory for new users
 const getDefaultWorkingDirectory = (): string => {
@@ -787,6 +788,8 @@ export class CoworkStore {
   }
 
   bindNativeSession(sessionId: string, sessionKey: string, parentSessionId: string | null): void {
+    if (isTeamDiscussionHoldingSessionKey(sessionKey))
+      throw new Error('teamDiscussionInvalidInput');
     this.db
       .prepare(
         'UPDATE cowork_sessions SET native_session_key = ?, native_parent_session_id = ? WHERE id = ?',
@@ -801,6 +804,8 @@ export class CoworkStore {
     cwd: string,
     permissionMode: PermissionMode = parent.permissionMode,
   ): CoworkSession {
+    if (isTeamDiscussionHoldingSessionKey(sessionKey))
+      throw new Error('teamDiscussionInvalidInput');
     return this.db.transaction(() => {
       const existing = this.getSessionByNativeKey(sessionKey);
       if (existing) return existing;
@@ -922,19 +927,26 @@ export class CoworkStore {
     }
 
     const externalBySessionId = this.listExternalSessionMetadata();
-    return rows.map(row => ({
-      ...(row.native_session_key ? { nativeSessionKey: row.native_session_key } : {}),
-      id: row.id,
-      title: row.title,
-      status: row.status as CoworkSessionStatus,
-      pinned: Boolean(row.pinned),
-      agentId: row.agent_id || 'main',
-      groupId: row.group_id,
-      ...(externalBySessionId.get(row.id) ? { external: externalBySessionId.get(row.id) } : {}),
-      ...(row.source === CoworkSessionSource.BrowserExtension ? { source: row.source } : {}),
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
+    return rows
+      .filter(
+        row =>
+          !isTeamDiscussionHoldingSessionKey(
+            row.native_session_key || externalBySessionId.get(row.id)?.sessionKey,
+          ),
+      )
+      .map(row => ({
+        ...(row.native_session_key ? { nativeSessionKey: row.native_session_key } : {}),
+        id: row.id,
+        title: row.title,
+        status: row.status as CoworkSessionStatus,
+        pinned: Boolean(row.pinned),
+        agentId: row.agent_id || 'main',
+        groupId: row.group_id,
+        ...(externalBySessionId.get(row.id) ? { external: externalBySessionId.get(row.id) } : {}),
+        ...(row.source === CoworkSessionSource.BrowserExtension ? { source: row.source } : {}),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
   }
 
   resetRunningSessions(): number {

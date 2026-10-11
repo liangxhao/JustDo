@@ -8,9 +8,96 @@ import { projectSessionSummaryResources } from '@/libs/openclaw-chat/model/sessi
 import { i18nService } from '@/services/i18n';
 
 import type { Subtask } from '../subagents/subtaskPresentation';
+import { type AgentTeamEntry, AgentTeamKind, buildAgentTeamEntries } from './agentTeamEntries';
 import SessionSummaryPanel from './SessionSummaryPanel';
 
 afterEach(cleanup);
+
+function mixedTeamEntries() {
+  return buildAgentTeamEntries(
+    'chat',
+    [
+      {
+        id: 'room',
+        anchorSessionId: 'chat',
+        members: [],
+        rounds: [
+          { id: 'old', state: 'settled', pending: 0 },
+          { id: 'new', state: 'open', pending: 1 },
+        ],
+      },
+    ],
+    ['chat', 'chat', 'chat', 'other'].map((sourceSessionId, index) => ({
+      id: 'group-' + index,
+      title: 'Topic ' + index,
+      sourceSessionId,
+      state: 'ready',
+      members: [],
+    })),
+    key => i18nService.t(key),
+  );
+}
+
+it('shows per-mode counts and opens team tabs directly without a second summary menu', () => {
+  const { props, onOpenTeam } = fixture();
+  i18nService.setLanguage('zh', { persist: false });
+  const onHistory = vi.fn();
+  render(
+    <SessionSummaryPanel
+      {...props}
+      teamEntries={mixedTeamEntries()}
+      onOpenTeamHistory={onHistory}
+    />,
+  );
+  const button = screen.getByRole('button', { name: 'Agent Team 协作 × 2，群聊 × 3' });
+  expect(button.hasAttribute('aria-haspopup')).toBe(false);
+  fireEvent.click(button);
+  expect(onOpenTeam).toHaveBeenCalledTimes(1);
+  expect(onHistory).not.toHaveBeenCalled();
+  expect(screen.queryByRole('menu')).toBeNull();
+  expect(screen.queryByText('Topic 0')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: '全部团队记录' }));
+  expect(onHistory).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  ['zh', AgentTeamKind.TASK, 'Agent Team 协作 × 2'],
+  ['zh', AgentTeamKind.GROUP, 'Agent Team 群聊 × 3'],
+  ['en', AgentTeamKind.TASK, 'Agent Team Collaboration × 2'],
+  ['en', AgentTeamKind.GROUP, 'Agent Team Groups × 3'],
+] as const)('omits the empty mode for %s %s teams', (language, kind, label) => {
+  const { props, onOpenTeam } = fixture();
+  i18nService.setLanguage(language, { persist: false });
+  render(
+    <SessionSummaryPanel
+      {...props}
+      teamEntries={mixedTeamEntries().filter(entry => entry.kind === kind)}
+    />,
+  );
+  const button = screen.getByRole('button', { name: label });
+  expect(button.textContent).not.toContain('× 0');
+  expect(button.textContent).not.toContain('，');
+  expect(button.textContent).not.toContain(',');
+  fireEvent.click(button);
+  expect(onOpenTeam).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole('menu')).toBeNull();
+});
+
+it('keeps global team history reachable when this conversation has no teams', () => {
+  const { props, onOpenTeam } = fixture();
+  const onHistory = vi.fn();
+  const { rerender } = render(
+    <SessionSummaryPanel {...props} teamEntries={[]} onOpenTeamHistory={onHistory} />,
+  );
+  const button = screen.getByRole('button', { name: 'Agent Team' });
+  expect(button.textContent).not.toContain('×');
+  fireEvent.click(button);
+  expect(onHistory).toHaveBeenCalledTimes(1);
+  expect(onOpenTeam).not.toHaveBeenCalled();
+  expect(screen.queryByRole('menu')).toBeNull();
+  rerender(<SessionSummaryPanel {...props} teamEntries={[]} />);
+  expect(screen.queryByRole('button', { name: /Agent Team/ })).toBeNull();
+});
 
 const progressCard: ProgressCard = {
   sessionKey: 'agent:main:justdo:chat',
@@ -55,7 +142,17 @@ function fixture() {
       omittedOversized: false,
     },
     workflowCount: 2,
-    teamCount: 1,
+    teamEntries: [
+      {
+        kind: AgentTeamKind.TASK,
+        key: 'task:room:old',
+        roomId: 'room',
+        roundId: 'old',
+        label: 'Task 1',
+        memberCount: 3,
+        statusKey: 'teamRecordEnded',
+      },
+    ] as AgentTeamEntry[],
     onOpenSubagents,
     onOpenWorkflow,
     onOpenTeam,
@@ -160,7 +257,7 @@ it('shows a static objective, three subagent counts, and count-only workflow/tea
   expect(screen.getByText('Prepare the release').closest('button')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '2 running 1 completed 2 failed' }));
   fireEvent.click(screen.getByRole('button', { name: 'Swarm Workflow 2' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Agent Team 1' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Agent Team Collaboration × 1' }));
   expect(onOpenSubagents).toHaveBeenCalledTimes(1);
   expect(onOpenWorkflow).toHaveBeenCalledTimes(1);
   expect(onOpenTeam).toHaveBeenCalledTimes(1);
@@ -174,7 +271,7 @@ it('keeps an empty output section until real outputs arrive, then opens the orig
     objective: undefined,
     tasks: [],
     workflowCount: 0,
-    teamCount: 0,
+    teamEntries: [],
   };
   const { rerender } = render(<SessionSummaryPanel {...emptyProps} resources={null} />);
   expect(screen.getAllByRole('heading').map(heading => heading.textContent)).toEqual([

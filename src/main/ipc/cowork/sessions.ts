@@ -29,6 +29,7 @@ import {
   toOpenClawSessionPermissionMode,
 } from '../../../shared/security/approvals';
 import { t } from '../../core/i18n';
+import type { AgentTeamLaunchCoordinator } from '../../cowork/agentTeamLaunchCoordinator';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import { isWorkspacePathWithin } from '../../engine/openclaw/runtimeAdapterSupport';
@@ -37,14 +38,16 @@ import type { PermissionModeOperationResult } from '../../openclaw/permissions/s
 import {
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
+  isTeamDiscussionHoldingSessionKey,
 } from '../../openclaw/sessions/openclawSessionKeys';
 import {
   parseCoworkSessionSearchOptions,
   searchCoworkSessionMessages,
 } from '../../openclaw/sessions/openclawSessionSearch';
-import type { CollaborationCoordinator } from './collaboration';
+import type { CollaborationCoordinator } from './agent-team/collaboration';
 
 interface SessionHandlerDependencies {
+  getAgentTeamLaunch?: () => AgentTeamLaunchCoordinator;
   getCollaboration?: () => CollaborationCoordinator;
   getCoworkStore: () => CoworkStore;
   getCoworkEngineRouter: () => CoworkEngineRouter;
@@ -122,6 +125,7 @@ export const registerCoworkSessionHandlers = ({
   setSessionPermissionMode,
   requestGateway,
   getCollaboration,
+  getAgentTeamLaunch,
 }: SessionHandlerDependencies): void => {
   const unknownAdmissions = new Map<string, { id: string; runId: string; cancelled: boolean }>();
   const stoppingSessions = new Map<string, Promise<{ success: boolean; error?: string }>>();
@@ -490,6 +494,10 @@ export const registerCoworkSessionHandlers = ({
     if (existing) return existing;
     const pending = Promise.resolve().then(async () => {
       try {
+        if (getAgentTeamLaunch)
+          await getAgentTeamLaunch()
+            .cancel(sessionId)
+            .catch((): void => undefined);
         await getCoworkEngineRouter().stopSession(sessionId, { diagnosticUserInitiated: true });
         if (unknownAdmissions.has(sessionId)) {
           return {
@@ -514,7 +522,17 @@ export const registerCoworkSessionHandlers = ({
   });
 
   ipcMain.handle('cowork:session:run:begin', async (_event, input: BeginSessionRunInput) => {
-    if (getCollaboration?.().read(input.sessionId).room?.deleting)
+    if (
+      !input ||
+      typeof input.sessionId !== 'string' ||
+      typeof input.clientTurnId !== 'string' ||
+      (input.agentTeamPrompt !== undefined && typeof input.agentTeamPrompt !== 'string')
+    )
+      return { success: false, error: 'Invalid session run input.' };
+    if (
+      getCollaboration?.().isSourceDeleting(input.sessionId) ||
+      getCollaboration?.().read(input.sessionId).room?.deleting
+    )
       return { success: false, error: 'collaborationDeletePending' };
     try {
       if (stoppingSessions.has(input.sessionId) || unknownAdmissions.has(input.sessionId)) {
@@ -534,6 +552,8 @@ export const registerCoworkSessionHandlers = ({
           forceRefresh: true,
           fullScan: true,
         });
+        if (getCollaboration?.().isSourceDeleting(input.sessionId))
+          return { success: false, error: 'collaborationDeletePending' };
         if (!raw.known) {
           return {
             success: false,
@@ -552,6 +572,34 @@ export const registerCoworkSessionHandlers = ({
       if (stoppingSessions.has(input.sessionId)) {
         return { success: false, errorCode: SessionRunBeginErrorCode.RuntimeActive };
       }
+      if (getCollaboration?.().isSourceDeleting(input.sessionId))
+        return { success: false, error: 'collaborationDeletePending' };
+      // Reconcile old launch cleanup when possible; only another explicit
+      // Team launch requires it. Ordinary input retains native run admission.
+      if (getAgentTeamLaunch) {
+        const launch = getAgentTeamLaunch();
+        const released = await launch.releaseIfSettled(input.sessionId).catch(() => false);
+        if (input.agentTeamPrompt) {
+          if (!released) throw new Error('teamLaunchUnconfirmed');
+          await launch.register({
+            sessionId: input.sessionId,
+            clientTurnId: input.clientTurnId,
+            prompt: input.agentTeamPrompt,
+            assertCurrent: () => {
+              if (
+                stoppingSessions.has(input.sessionId) ||
+                getCollaboration?.().isSourceDeleting(input.sessionId)
+              )
+                throw new Error('collaborationDeletePending');
+            },
+          });
+        }
+      }
+      if (
+        stoppingSessions.has(input.sessionId) ||
+        getCollaboration?.().isSourceDeleting(input.sessionId)
+      )
+        throw new Error('collaborationDeletePending');
       idleConfirmations.delete(input.sessionId);
       terminalOutcomes.delete(input.sessionId);
       finalizedOutcomes.delete(input.sessionId);
@@ -569,12 +617,68 @@ export const registerCoworkSessionHandlers = ({
         } satisfies SessionRuntimeSnapshot,
       };
     } catch (error) {
+      if (input.agentTeamPrompt)
+        await getAgentTeamLaunch?.()
+          .cancel(input.sessionId, input.clientTurnId)
+          .catch((): void => undefined);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to begin session run',
+        error: error instanceof Error ? t(error.message) : 'Failed to begin session run',
       };
     }
   });
+
+  ipcMain.handle(
+    SessionRunIpc.TeamSubmissionStarted,
+    async (_event, input: { sessionId: string; clientTurnId: string }) => {
+      try {
+        if (
+          !input ||
+          typeof input.sessionId !== 'string' ||
+          typeof input.clientTurnId !== 'string' ||
+          stoppingSessions.has(input.sessionId) ||
+          getCollaboration?.().isSourceDeleting(input.sessionId) ||
+          getCoworkStore().getLatestSessionRun(input.sessionId)?.clientTurnId !==
+            input.clientTurnId ||
+          !getAgentTeamLaunch
+        )
+          throw new Error('teamLaunchUnconfirmed');
+        await getAgentTeamLaunch().markSubmissionStarted(input.sessionId, input.clientTurnId);
+        return { success: true };
+      } catch (error) {
+        return {
+          success: false,
+          error: t(error instanceof Error ? error.message : 'teamLaunchUnconfirmed'),
+        };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    SessionRunIpc.TeamSubmissionAbortedBeforeSend,
+    async (_event, input: { sessionId: string; clientTurnId: string }) => {
+      try {
+        if (
+          !input ||
+          typeof input.sessionId !== 'string' ||
+          typeof input.clientTurnId !== 'string' ||
+          Object.keys(input).some(key => !['sessionId', 'clientTurnId'].includes(key)) ||
+          !getAgentTeamLaunch
+        )
+          throw new Error('teamLaunchUnconfirmed');
+        const success = await getAgentTeamLaunch().abortBeforeSend(
+          input.sessionId,
+          input.clientTurnId,
+        );
+        return { success, ...(!success ? { error: t('teamLaunchUnconfirmed') } : {}) };
+      } catch (error) {
+        return {
+          success: false,
+          error: t(error instanceof Error ? error.message : 'teamLaunchUnconfirmed'),
+        };
+      }
+    },
+  );
 
   ipcMain.handle(SessionRunIpc.Unknown, (_event, input: SessionRunUnknownInput) => {
     try {
@@ -671,6 +775,7 @@ export const registerCoworkSessionHandlers = ({
         idleConfirmations.delete(input.sessionId);
         terminalOutcomes.delete(input.sessionId);
         const timing = getCoworkStore().finishSessionRun(input.id, 'failed', input.endedAt);
+        if (timing) await getAgentTeamLaunch?.().cancel(input.sessionId, timing.clientTurnId);
         if (timing) finalizedOutcomes.set(input.sessionId, { id: timing.id, state: 'failed' });
         return {
           success: true,
@@ -693,7 +798,9 @@ export const registerCoworkSessionHandlers = ({
   );
 
   ipcMain.handle('cowork:session:delete', async (_event, sessionId: string) => {
+    let release: (() => void) | undefined;
     try {
+      release = getCollaboration?.().acquireSourceDeletion([sessionId]);
       if (getCoworkStore().hasNativeChildSessions(sessionId)) {
         throw new Error('Delete independent child sessions before deleting this session.');
       }
@@ -759,6 +866,8 @@ export const registerCoworkSessionHandlers = ({
         success: false,
         error: error instanceof Error ? error.message : 'Failed to delete session',
       };
+    } finally {
+      release?.();
     }
   });
 
@@ -1010,7 +1119,9 @@ export const registerCoworkSessionHandlers = ({
   ipcMain.handle('cowork:session:deleteBatch', async (_event, sessionIds: string[]) => {
     const deletedSessionIds: string[] = [];
     const errors: string[] = [];
+    let release: (() => void) | undefined;
     try {
+      release = getCollaboration?.().acquireSourceDeletion(sessionIds);
       if (sessionIds.some(id => getCoworkStore().getSession?.(id)?.nativeSessionKey)) {
         return {
           success: false,
@@ -1039,7 +1150,16 @@ export const registerCoworkSessionHandlers = ({
               errors.push(error instanceof Error ? error.message : 'collaborationDeletePending');
             }
           }
-        } else standalone.push(id);
+        } else {
+          try {
+            // A source may own group discussions without a collaboration room.
+            // The deletion owner verifies all linked executions before fallback.
+            if (await getCollaboration?.().deleteTask(id)) deletedSessionIds.push(id);
+            else standalone.push(id);
+          } catch (error) {
+            errors.push(error instanceof Error ? error.message : 'collaborationDeletePending');
+          }
+        }
       }
       sessionIds = standalone;
       if (!sessionIds.length)
@@ -1094,6 +1214,8 @@ export const registerCoworkSessionHandlers = ({
         error: error instanceof Error ? error.message : 'Failed to batch delete sessions',
         deletedSessionIds,
       };
+    } finally {
+      release?.();
     }
   });
 
@@ -1186,6 +1308,7 @@ export const registerCoworkSessionHandlers = ({
           );
           for (const native of nativeSessions) {
             if (typeof native.key !== 'string') continue;
+            if (isTeamDiscussionHoldingSessionKey(native.key)) continue;
             if (!native.worktree || typeof native.worktree !== 'object') continue;
             const parentKey =
               typeof native.parentSessionKey === 'string'

@@ -344,6 +344,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       agentId: options.agentId,
       workspaceRoot: options.workspaceRoot,
       clientTurnId: options.clientTurnId,
+      beforeNativeSend: options.beforeNativeSend,
+      onNativeSendAbandoned: options.onNativeSendAbandoned,
       planMode: options.planMode,
       untrustedContext: options.untrustedContext,
       onAccepted: options.onAccepted,
@@ -359,7 +361,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!session) throw new Error(`Session ${sessionId} not found`);
 
     const agentId = options.agentId || session.agentId || DEFAULT_MANAGED_AGENT_ID;
-    return this.prepareSessionKey(sessionId, session.nativeSessionKey || this.toSessionKey(sessionId, agentId), options);
+    return this.prepareSessionKey(
+      sessionId,
+      session.nativeSessionKey || this.toSessionKey(sessionId, agentId),
+      options,
+    );
   }
 
   setContinuationPermissionPreparer(preparer: ((sessionId: string) => Promise<void>) | null): void {
@@ -400,11 +406,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const nativeRoot = entry?.sessionRoot ?? entry?.spawnedCwd ?? entry?.spawnedWorkspaceDir;
       const worktreeId = (entry?.worktree as { id?: unknown } | null | undefined)?.id;
       if (
-        typeof entry?.sessionId !== 'string' || !entry.sessionId.trim() ||
+        typeof entry?.sessionId !== 'string' ||
+        !entry.sessionId.trim() ||
         !entry.worktree ||
         typeof entry.worktree !== 'object' ||
-        typeof worktreeId !== 'string' || !worktreeId ||
-        typeof nativeRoot !== 'string' || !path.isAbsolute(nativeRoot) ||
+        typeof worktreeId !== 'string' ||
+        !worktreeId ||
+        typeof nativeRoot !== 'string' ||
+        !path.isAbsolute(nativeRoot) ||
         !areWorkspacePathsEquivalent(nativeRoot, workspaceRoot)
       ) {
         throw new Error('The native worktree session is unavailable or its workspace changed.');
@@ -419,16 +428,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           expectedSessionId: entry.sessionId,
           expectedPermissionMode: entry.permissionMode ?? null,
         });
-        const patchedWorktreeId = (patched.entry?.worktree as { id?: unknown } | null | undefined)?.id;
+        const patchedWorktreeId = (patched.entry?.worktree as { id?: unknown } | null | undefined)
+          ?.id;
         if (
-          patched.key !== sessionKey || patched.entry?.sessionId !== entry.sessionId ||
+          patched.key !== sessionKey ||
+          patched.entry?.sessionId !== entry.sessionId ||
           patchedWorktreeId !== worktreeId
         ) {
           throw new Error(t('worktreePermissionIdentityChanged'));
         }
-        const patchedRoot = patched.entry.sessionRoot ?? patched.entry.spawnedCwd ?? patched.entry.spawnedWorkspaceDir;
+        const patchedRoot =
+          patched.entry.sessionRoot ??
+          patched.entry.spawnedCwd ??
+          patched.entry.spawnedWorkspaceDir;
         this.assertPreparedSessionEntry(
-          { ...patched.entry, sessionRoot: patchedRoot }, nativePermissionMode, workspaceRoot,
+          { ...patched.entry, sessionRoot: patchedRoot },
+          nativePermissionMode,
+          workspaceRoot,
         );
       }
       this.rememberSessionKey(sessionId, sessionKey);
@@ -490,9 +506,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const existing = this.stopSessionPromises.get(sessionId);
     if (existing) return existing;
     // Capture identity before cancellation mutates or removes the active turn.
-    const nativeRunId = this.activeTurns.get(sessionId)?.runId
-      || this.unknownSessionRuns.get(sessionId)?.runId;
-    const diagnostic = { sessionId, nativeRunId, userInitiated: options.diagnosticUserInitiated === true };
+    const nativeRunId =
+      this.activeTurns.get(sessionId)?.runId || this.unknownSessionRuns.get(sessionId)?.runId;
+    const diagnostic = {
+      sessionId,
+      nativeRunId,
+      userInitiated: options.diagnosticUserInitiated === true,
+    };
     this.emitDiagnostic('diagnosticCancellation', { ...diagnostic, phase: 'requested' });
     const stopping = this.stopSessionInternal(sessionId, options, true);
     this.stopSessionPromises.set(sessionId, stopping);
@@ -878,6 +898,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       agentId?: string;
       workspaceRoot?: string;
       clientTurnId?: string;
+      beforeNativeSend?: () => Promise<void>;
+      onNativeSendAbandoned?: () => Promise<void>;
       planMode?: boolean;
       untrustedContext?: string;
       hiddenUserMessage?: boolean;
@@ -915,6 +937,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     let completionPromise: Promise<void> | null = null;
     let turn: SessionTurn | null = null;
     let failureReported = false;
+    let nativeSendIssued = false;
 
     try {
       // A user-initiated turn is current-app work even when it continues a Goal
@@ -1014,6 +1037,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             ? preparedSession.gatewaySessionId
             : undefined;
         if (isStartCancelled()) return;
+        await options.beforeNativeSend?.();
+        if (isStartCancelled()) return;
         pendingStart.phase = 'sending';
         const sendParams: Record<string, unknown> = {
           sessionKey,
@@ -1040,11 +1065,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           idempotencyKey: runId,
           ...(attachments ? { attachments } : {}),
         };
-        const result = (options.dispatchChatSend
-          ? await options.dispatchChatSend(sendParams, preparedSession)
-          : await client.request('chat.send', sendParams)) as
-          | SessionGoalMutationResult
-          | { runId?: string };
+        nativeSendIssued = true;
+        const result = (
+          options.dispatchChatSend
+            ? await options.dispatchChatSend(sendParams, preparedSession)
+            : await client.request('chat.send', sendParams)
+        ) as SessionGoalMutationResult | { runId?: string };
         if (goalStartObjective === null && isChatSendStopReceipt(result)) {
           this.cleanupSessionTurn(sessionId);
           this.rootRunIdBySession.delete(sessionId);
@@ -1052,7 +1078,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           const timing = options.clientTurnId
             ? this.store.getSessionRunByClientTurnId(options.clientTurnId)
             : undefined;
-          if (timing?.state === 'running') this.store.finishSessionRun(timing.id, 'aborted', Date.now());
+          if (timing?.state === 'running')
+            this.store.finishSessionRun(timing.id, 'aborted', Date.now());
           this.resolveTurn(sessionId);
           this.emit('complete', sessionId, 'idle');
           options.onAccepted?.();
@@ -1139,8 +1166,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           }
         }
       } catch (error) {
+        // The presenting Renderer can authoritatively reject its closed handoff
+        // before issuing chat.send. Unknown handoffs retain the launch fence.
+        if (
+          options.dispatchChatSend &&
+          error instanceof Error &&
+          (error as Error & { requestSent?: boolean }).requestSent === false
+        ) {
+          nativeSendIssued = false;
+        }
         if (isStartCancelled()) {
-          if (this.disconnectedSessionIds.has(sessionId) || isGatewayRequestOutcomeUnknown(error)) {
+          if (
+            nativeSendIssued &&
+            (this.disconnectedSessionIds.has(sessionId) || isGatewayRequestOutcomeUnknown(error))
+          ) {
             this.registerUnknownSessionRun(sessionId, turn.runId, { cancelled: true });
             pendingStart.cancellationAbortError = new Error(
               'The submitted run is still unconfirmed; cancellation remains pending.',
@@ -1157,8 +1196,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           }
           if (!pendingStart.cancellationAbortError) return;
         } else if (
-          this.disconnectedSessionIds.has(sessionId) ||
-          isGatewayRequestOutcomeUnknown(error)
+          nativeSendIssued &&
+          (this.disconnectedSessionIds.has(sessionId) || isGatewayRequestOutcomeUnknown(error))
         ) {
           this.registerUnknownSessionRun(sessionId, turn.runId, {
             onConfirmed: options.onAccepted,
@@ -1209,6 +1248,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (this.pendingTurnStarts.get(sessionId) === pendingStart) {
         this.pendingTurnStarts.delete(sessionId);
       }
+      if (!nativeSendIssued) await options.onNativeSendAbandoned?.().catch((): void => undefined);
     }
 
     await completionPromise;
@@ -1971,8 +2011,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   /** Diagnostics must never fall back to the latest run or an unrelated session. */
   resolveDiagnosticSession(runId: string, sessionKey?: string): string | null {
     if (!runId.trim()) return null;
-    const activeSession = [...this.activeTurns].find(([, turn]) =>
-      turn.runId === runId || turn.knownRunIds.has(runId),
+    const activeSession = [...this.activeTurns].find(
+      ([, turn]) => turn.runId === runId || turn.knownRunIds.has(runId),
     )?.[0];
     if (!sessionKey) return activeSession ?? null;
     const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
@@ -2001,7 +2041,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (
         nativeSession.nativeSessionKey !== sessionKey ||
         !sessionKey.startsWith(`agent:${agentId}:`)
-      ) return null;
+      )
+        return null;
       this.rememberSessionKey(nativeSession.id, sessionKey);
       return nativeSession.id;
     }
@@ -2499,7 +2540,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   fetchSessionHistoryByKey(
     sessionKey: string,
     fallbackSessionId?: string | null,
-    options: { forceFullSnapshot?: boolean; scheduledTaskRun?: boolean; includePendingInputs?: boolean } = {},
+    options: {
+      forceFullSnapshot?: boolean;
+      scheduledTaskRun?: boolean;
+      includePendingInputs?: boolean;
+    } = {},
   ): Promise<runtimeHistory.RuntimeSessionHistory | null> {
     return runtimeHistory.fetchSessionHistoryByKey.call(
       this.runtimeHistoryContext,

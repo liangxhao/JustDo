@@ -19,7 +19,7 @@ import type { SessionDetailStats } from '@/features/cowork/sessionPresentation';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
 
-import { useCollaborationRooms } from '../chat/CollaborationPanel';
+import { useCollaborationRooms } from '../collaboration/CollaborationPanel';
 import QueryingIndicator from '../shared/QueryingIndicator';
 import { useDraggableModal } from '../shared/useDraggableModal';
 import SessionTotalTokenUsageModal from '../status/SessionTotalTokenUsageModal';

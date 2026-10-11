@@ -9,6 +9,12 @@ type DiagnosticListResult =
 type DiagnosticExportResult =
   import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticExportResult;
 import type {
+  TeamDiscussionResult,
+  TeamDiscussionRoom,
+  TeamDiscussionSend,
+} from '@shared/cowork/agent-team/teamDiscussion';
+
+import type {
   AgentFileName,
   AgentFileSnapshot,
   AgentProfileInput,
@@ -686,20 +692,99 @@ interface IElectronAPI {
     onConfigSyncStart: (callback: () => void) => () => void;
     onConfigSyncDone: (callback: (data: { tools: number; error?: string }) => void) => () => void;
   };
+  teamDiscussion: {
+    participation: (input: {
+      roomId: string;
+      expectedRevision: number;
+      enabled: boolean;
+    }) => Promise<TeamDiscussionResult<TeamDiscussionRoom>>;
+    createTask: (input: {
+      roomId: string;
+      requestId: string;
+    }) => Promise<TeamDiscussionResult<string>>;
+    list: () => Promise<TeamDiscussionResult<TeamDiscussionRoom[]>>;
+    create: (input: unknown) => Promise<TeamDiscussionResult<TeamDiscussionRoom>>;
+    read: (
+      id: string,
+      beforeDiscussionId?: string,
+      exactDiscussionIds?: string[],
+    ) => Promise<
+      TeamDiscussionResult<
+        import('@shared/cowork/agent-team/teamDiscussion').TeamDiscussionReadResult
+      >
+    >;
+    send: (input: TeamDiscussionSend) => Promise<TeamDiscussionResult<TeamDiscussionRoom>>;
+    enqueue: (input: TeamDiscussionSend) => Promise<TeamDiscussionResult<TeamDiscussionRoom>>;
+    cancelPending: (input: {
+      roomId: string;
+      requestId: string;
+    }) => Promise<TeamDiscussionResult<TeamDiscussionRoom>>;
+    stop: (id: string) => Promise<TeamDiscussionResult<TeamDiscussionRoom>>;
+    delete: (id: string) => Promise<TeamDiscussionResult<void>>;
+  };
+  agentTeamSettings: {
+    read: () => Promise<
+      TeamDiscussionResult<
+        import('@shared/cowork/agent-team/agentTeamSettings').AgentTeamSettingsSnapshot
+      >
+    >;
+    save: (
+      value: import('@shared/cowork/agent-team/agentTeamSettings').AgentTeamSettings,
+      expectedRevision: number,
+    ) => Promise<
+      TeamDiscussionResult<
+        import('@shared/cowork/agent-team/agentTeamSettings').AgentTeamSettingsSnapshot
+      >
+    >;
+    readTeam: (
+      kind: import('@shared/cowork/agent-team/agentTeamSettings').AgentTeamKind,
+      roomId: string,
+    ) => Promise<
+      TeamDiscussionResult<
+        import('@shared/cowork/agent-team/agentTeamSettings').AgentTeamSettingsView
+      >
+    >;
+    saveTeam: (
+      kind: import('@shared/cowork/agent-team/agentTeamSettings').AgentTeamKind,
+      roomId: string,
+      value: import('@shared/cowork/agent-team/agentTeamSettings').AgentTeamOverrides,
+      expectedRevision: number,
+    ) => Promise<
+      TeamDiscussionResult<
+        import('@shared/cowork/agent-team/agentTeamSettings').AgentTeamSettingsView
+      >
+    >;
+  };
   collaboration: {
+    prepareContinuation: (
+      input: import('@shared/cowork/agent-team/collaboration').CollaborationContinuePreparation,
+    ) => Promise<
+      AgentResult<import('@shared/cowork/agent-team/collaboration').CollaborationContinueTarget>
+    >;
     read: (
       sessionId: string,
-    ) => Promise<AgentResult<import('@shared/cowork/collaboration').CollaborationSnapshot>>;
+    ) => Promise<
+      AgentResult<import('@shared/cowork/agent-team/collaboration').CollaborationSnapshot>
+    >;
     readMessages: (
       sessionId: string,
       deliveryIds: string[],
-    ) => Promise<AgentResult<import('@shared/cowork/collaboration').CollaborationMessageResult[]>>;
-    list: () => Promise<AgentResult<import('@shared/cowork/collaboration').CollaborationRoom[]>>;
+    ) => Promise<
+      AgentResult<import('@shared/cowork/agent-team/collaboration').CollaborationMessageResult[]>
+    >;
+    list: () => Promise<
+      AgentResult<import('@shared/cowork/agent-team/collaboration').CollaborationRoomEntry[]>
+    >;
     create: (
       sessionId: string,
       agentIds: string[],
-    ) => Promise<AgentResult<import('@shared/cowork/collaboration').CollaborationSnapshot>>;
+    ) => Promise<
+      AgentResult<import('@shared/cowork/agent-team/collaboration').CollaborationSnapshot>
+    >;
     stop: (sessionId: string) => Promise<AgentResult<void>>;
+    stopMember: (
+      input: import('@shared/cowork/agent-team/collaboration').CollaborationStopMemberInput,
+    ) => Promise<AgentResult<void>>;
   };
   agents: {
     delete: (agentId: string) => Promise<AgentResult<void>>;
@@ -1032,6 +1117,14 @@ interface IElectronAPI {
       errorCode?: SessionRunBeginErrorCode;
       error?: string;
     }>;
+    markTeamSubmissionStarted: (input: {
+      sessionId: string;
+      clientTurnId: string;
+    }) => Promise<{ success: boolean; error?: string }>;
+    abortTeamSubmissionBeforeSend: (input: {
+      sessionId: string;
+      clientTurnId: string;
+    }) => Promise<{ success: boolean; error?: string }>;
     bindSessionRun: (input: { id: string; rootRunId: string }) => Promise<{
       success: boolean;
       timing?: SessionRunTiming;

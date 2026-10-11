@@ -1,4 +1,5 @@
 import { parseBrowserAnnotationPrompt } from '@shared/browser/browser';
+import { stripAgentTeamInstruction } from '@shared/cowork/agent-team/agentTeamPrompt';
 import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
@@ -420,9 +421,12 @@ function projectBrowserAnnotationForDisplay(message: unknown): unknown {
   const record = asRecord(message);
   if (!record || String(record.role ?? '').toLowerCase() !== 'user') return message;
   const projectText = (value: string): unknown[] | null => {
-    const normalized = stripInboundMetadata(value);
+    const normalized = stripAgentTeamInstruction(stripInboundMetadata(value));
     const parsed = parseBrowserAnnotationPrompt(normalized);
-    if (!parsed) return null;
+    if (!parsed)
+      return normalized !== stripInboundMetadata(value)
+        ? [{ type: 'text', text: normalized }]
+        : null;
     return [
       { type: 'text', text: parsed.userText },
       ...(parsed.recording ? [{ type: 'browser_recording', recording: parsed.recording }] : []),

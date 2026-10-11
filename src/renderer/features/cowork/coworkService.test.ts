@@ -673,6 +673,110 @@ describe('cowork session permission selection', () => {
     expect(store.getState().cowork.config.permissionMode).toBe('full');
   });
 
+  test.each(['session', 'model'] as const)(
+    'does not select a linked task after its origin closes during the %s read',
+    async stage => {
+      store.dispatch(clearCurrentSession());
+      const session: CoworkSession = {
+        id: 'cancelled-linked-task',
+        title: 'Linked task',
+        status: 'idle',
+        pinned: false,
+        cwd: 'C:\\workspace',
+        executionMode: 'local',
+        permissionMode: 'ask',
+        activeSkillIds: [],
+        agentId: 'main',
+        createdAt: 1,
+        updatedAt: 2,
+      };
+      let finishRead!: () => void;
+      const pending = new Promise<void>(resolve => {
+        finishRead = resolve;
+      });
+      const getSession = vi.fn(async () => {
+        if (stage === 'session') await pending;
+        return { success: true, session };
+      });
+      const getSessionModel = vi.fn(async () => {
+        if (stage === 'model') await pending;
+        return { success: true };
+      });
+      const remoteManaged = vi.fn();
+      vi.stubGlobal('window', {
+        electron: { cowork: { getSession, getSessionModel, remoteManaged } },
+      });
+      let originOpen = true;
+
+      const onSelected = vi.fn();
+      const loading = coworkService.loadSession(session.id, {
+        canSelect: () => originOpen,
+        onSelected,
+      });
+      if (stage === 'model') await vi.waitFor(() => expect(getSessionModel).toHaveBeenCalledOnce());
+      originOpen = false;
+      finishRead();
+
+      await expect(loading).resolves.toBeNull();
+      expect(store.getState().cowork.currentSession).toBeNull();
+      expect(remoteManaged).not.toHaveBeenCalled();
+      expect(onSelected).not.toHaveBeenCalled();
+      if (stage === 'session') expect(getSessionModel).not.toHaveBeenCalled();
+    },
+  );
+
+  test.each([false, true])(
+    'commits selection-owned drafts before hydration and completes hydration after callback failure=%s',
+    async callbackFails => {
+      store.dispatch(clearCurrentSession());
+      const session = {
+        id: 'source-reference',
+        title: 'Source',
+        status: 'idle',
+        pinned: false,
+        cwd: 'C:\\workspace',
+        executionMode: 'local',
+        permissionMode: 'ask',
+        activeSkillIds: [],
+        agentId: 'main',
+        createdAt: 1,
+        updatedAt: 2,
+      } as CoworkSession;
+      let finishHydration!: () => void;
+      const remoteManaged = vi.fn(
+        () =>
+          new Promise<{ remoteManaged: boolean }>(resolve => {
+            finishHydration = () => resolve({ remoteManaged: false });
+          }),
+      );
+      vi.stubGlobal('window', {
+        electron: {
+          cowork: {
+            getSession: vi.fn().mockResolvedValue({ success: true, session }),
+            remoteManaged,
+          },
+        },
+      });
+      let originOpen = true;
+      const onSelected = vi.fn(() => {
+        expect(store.getState().cowork.currentSession?.id).toBe(session.id);
+        if (callbackFails) throw new Error('teamReferenceLimit');
+      });
+      const loading = coworkService.loadSession(session.id, {
+        canSelect: () => originOpen,
+        onSelected,
+      });
+      await vi.waitFor(() => expect(remoteManaged).toHaveBeenCalledOnce());
+      // React reacts to the selected source while remoteManaged is still pending.
+      originOpen = false;
+      expect(onSelected).toHaveBeenCalledOnce();
+      finishHydration();
+      if (callbackFails) await expect(loading).rejects.toThrow('teamReferenceLimit');
+      else await loading;
+      expect(onSelected).toHaveBeenCalledOnce();
+    },
+  );
+
   test('does not overwrite a Plan mode toggle with an older load response', async () => {
     const session = {
       id: 'session-plan',
@@ -1228,22 +1332,41 @@ test.each([undefined, 'canonical-start-run'])(
   'preserves the accepted initial run identity for stop settlement (root=%s)',
   async rootRunId => {
     const initial: CoworkSession = {
-      id: 'start-identity-session', title: 'Initial', status: 'idle', pinned: false,
-      cwd: '', executionMode: 'local', permissionMode: 'ask', activeSkillIds: [],
-      agentId: 'main', createdAt: 1, updatedAt: 1,
+      id: 'start-identity-session',
+      title: 'Initial',
+      status: 'idle',
+      pinned: false,
+      cwd: '',
+      executionMode: 'local',
+      permissionMode: 'ask',
+      activeSkillIds: [],
+      agentId: 'main',
+      createdAt: 1,
+      updatedAt: 1,
     };
-    vi.stubGlobal('window', { electron: { cowork: {
-      startSession: vi.fn().mockResolvedValue({
-        success: true,
-        session: initial,
-        timing: {
-          id: 'start-identity-receipt', sessionId: initial.id,
-          clientTurnId: 'justdo-initial', rootRunId, startedAt: 1, state: 'aborted',
+    vi.stubGlobal('window', {
+      electron: {
+        cowork: {
+          startSession: vi.fn().mockResolvedValue({
+            success: true,
+            session: initial,
+            timing: {
+              id: 'start-identity-receipt',
+              sessionId: initial.id,
+              clientTurnId: 'justdo-initial',
+              rootRunId,
+              startedAt: 1,
+              state: 'aborted',
+            },
+          }),
         },
-      }),
-    } } });
+      },
+    });
     try {
-      const result = await coworkService.startSession({ prompt: 'first turn', clientTurnId: 'justdo-initial' });
+      const result = await coworkService.startSession({
+        prompt: 'first turn',
+        clientTurnId: 'justdo-initial',
+      });
       expect(result.acceptedRunId).toBe(rootRunId ?? 'justdo-initial');
     } finally {
       store.dispatch(deleteSession(initial.id));
@@ -1407,9 +1530,7 @@ test('forks after an assistant response with an empty composer', async () => {
   vi.stubGlobal('window', { electron: { cowork: { forkSession } } });
   store.dispatch(setCurrentSession(source));
 
-  await expect(
-    coworkService.forkSession(source, 'assistant-1'),
-  ).resolves.toEqual({
+  await expect(coworkService.forkSession(source, 'assistant-1')).resolves.toEqual({
     session: forked,
     draft: {
       text: '',

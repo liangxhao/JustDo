@@ -11,6 +11,7 @@ import {
   DEFAULT_AGENT_RUNTIME_SETTINGS,
 } from '../../../shared/agents/agentRuntimeSettings';
 import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shared/browser/browser';
+import { TEAM_DISCUSSION_CHANNEL } from '../../../shared/cowork/agent-team/teamDiscussion';
 import { OPENAI_REQUEST_USER_AGENT } from '../../../shared/cowork/modelRequestHeaders';
 import {
   EXTERNAL_AGENT_CATALOG,
@@ -506,6 +507,18 @@ export const collectCanonicalAgentEntries = (
     }
   }
   return entries;
+};
+
+/** The discussion surface permits native ambient silence without relaxing direct replies. */
+export const buildManagedOpenClawSurfaces = (existing: unknown): Record<string, unknown> => {
+  const surfaces = isRecord(existing) ? existing : {};
+  return {
+    ...surfaces,
+    [TEAM_DISCUSSION_CHANNEL]: {
+      ...(isRecord(surfaces[TEAM_DISCUSSION_CHANNEL]) ? surfaces[TEAM_DISCUSSION_CHANNEL] : {}),
+      silentReply: { group: 'allow' },
+    },
+  };
 };
 
 /**
@@ -1064,6 +1077,19 @@ export const buildAuthScopedOpenClawConfig = (
       {},
     ),
     secrets: managedSecrets,
+    ...(isRecord(managedConfig.plugins) &&
+    isRecord(managedConfig.plugins.entries) &&
+    isRecord(managedConfig.plugins.entries[OpenClawExtensionId.RUNTIME_SERVICES])
+      ? {
+          plugins: mergeOpenClawPluginConfig(
+            isRecord(canonicalExistingConfig.plugins) ? canonicalExistingConfig.plugins : {},
+            {
+              [OpenClawExtensionId.RUNTIME_SERVICES]:
+                managedConfig.plugins.entries[OpenClawExtensionId.RUNTIME_SERVICES],
+            },
+          ),
+        }
+      : {}),
     models,
     agents: {
       ...existingAgents,
@@ -1206,6 +1232,22 @@ export const mergeOpenClawPluginConfig = (
       if (APPLICATION_CAPABILITY_PLUGIN_IDS.some(id => id === pluginId) && isRecord(value)) {
         const previous = isRecord(sourcePlugins.entries) ? sourcePlugins.entries[pluginId] : null;
         if (isRecord(previous)) value = { ...previous, ...value };
+      }
+      if (
+        pluginId === OpenClawExtensionId.RUNTIME_SERVICES &&
+        Object.prototype.hasOwnProperty.call(managedEntries, pluginId) &&
+        isRecord(value)
+      ) {
+        const previous = isRecord(sourcePlugins.entries) ? sourcePlugins.entries[pluginId] : null;
+        value = {
+          ...(isRecord(previous) ? previous : {}),
+          ...value,
+          hooks: {
+            ...(isRecord(previous) && isRecord(previous.hooks) ? previous.hooks : {}),
+            ...(isRecord(value.hooks) ? value.hooks : {}),
+            allowConversationAccess: true,
+          },
+        };
       }
       // Refresh application-owned paths and admission data without changing user toggles.
       if (
@@ -1377,27 +1419,37 @@ export const mergeManagedOptionalToolPolicy = (
   existing: unknown,
 ): { allow?: string[]; alsoAllow?: string[]; deny?: string[] } => {
   const policy = removeRetiredManagedToolDenyEntries(isRecord(existing) ? existing : {});
-  const usesAllow = Array.isArray(policy.allow) && policy.allow.some(
-    value => typeof value === 'string' && value.trim().length > 0,
-  );
+  const usesAllow =
+    Array.isArray(policy.allow) &&
+    policy.allow.some(value => typeof value === 'string' && value.trim().length > 0);
   const values = usesAllow ? policy.allow : policy.alsoAllow;
-  const allowed = [...new Set([
-    ...(Array.isArray(values)
-      ? values.filter((value): value is string => typeof value === 'string')
-      : []),
-    OPENCLAW_DECISION_EVALUATION_TOOL,
-  ])];
+  const allowed = [
+    ...new Set([
+      ...(Array.isArray(values)
+        ? values.filter((value): value is string => typeof value === 'string')
+        : []),
+      OPENCLAW_DECISION_EVALUATION_TOOL,
+    ]),
+  ];
   // Native OpenClaw rejects allow + alsoAllow in the same policy scope.
   // An empty native allowlist is unrestricted; do not turn it into Jev-only access.
   const deny = Array.isArray(policy.deny)
-    ? { deny: [...new Set(policy.deny.filter((value): value is string => typeof value === 'string'))] }
+    ? {
+        deny: [
+          ...new Set(policy.deny.filter((value): value is string => typeof value === 'string')),
+        ],
+      }
     : {};
   return usesAllow
     ? { allow: allowed, alsoAllow: undefined, ...deny }
     : { allow: undefined, alsoAllow: allowed, ...deny };
 };
 
-export const OPENCLAW_COLLABORATION_TOOLS = ['task_assistants', 'assistants_create'] as const;
+export const OPENCLAW_COLLABORATION_TOOLS = [
+  'task_assistants',
+  'assistants_create',
+  'team_discussion',
+] as const;
 
 export const buildManagedOpenClawSandboxToolConfig = (mode: CoworkExecutionMode) => ({
   tools: {

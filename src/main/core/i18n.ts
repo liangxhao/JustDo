@@ -24,6 +24,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkInitialDispatchInvalid: '首条消息的提交身份无效。',
     coworkInitialDispatchUncertain: '首条消息的提交结果尚未确认，正在恢复原生状态。',
     coworkInitialDispatchFailed: '无法提交首条消息。',
+    teamLaunchUnconfirmed: '上次 Agent Team 请求尚未完成核实，请等待执行和队列清理后重试。',
+    teamLaunchContractUnavailable: '当前会话暂不支持发起 Agent Team，请在普通可执行会话中重试。',
+    teamFeatureBusy: '请等待当前执行结束后再发起 Agent Team；草稿和所选模式已保留。',
     windowsSandboxSystemDriveInvalid: 'Windows 系统盘路径无效。',
     windowsSandboxPrepResultInvalid: '系统盘准备程序未返回有效结果。',
     windowsSandboxPrepExitCodeMissing: '提权后的系统盘准备程序未返回退出码。',
@@ -144,6 +147,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkInitialDispatchUncertain:
       'The first message submission is still unconfirmed. Recovering native state.',
     coworkInitialDispatchFailed: 'The first message could not be submitted.',
+    teamLaunchUnconfirmed:
+      'The previous Agent Team request is still being verified. Wait for execution and queue cleanup before retrying.',
+    teamLaunchContractUnavailable:
+      'Agent Team cannot start in this conversation. Use a normal conversation with execution available.',
+    teamFeatureBusy:
+      'Wait for the current execution to finish before starting Agent Team. Your draft and selected mode are preserved.',
     windowsSandboxSystemDriveInvalid: 'The Windows system drive is invalid.',
     windowsSandboxPrepResultInvalid:
       'The MXC host preparation launcher did not return a valid result.',

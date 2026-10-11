@@ -35,9 +35,15 @@ export interface BeginSessionRunInput {
   clientTurnId: string;
   startedAt: number;
   modelRef?: string;
+  /** Transient explicit Team input; Main persists only its hash and execution receipt. */
+  agentTeamPrompt?: string;
 }
 
-export const SessionRunIpc = { Unknown: 'cowork:session:run:unknown' } as const;
+export const SessionRunIpc = {
+  Unknown: 'cowork:session:run:unknown',
+  TeamSubmissionStarted: 'cowork:session:run:team-submission-started',
+  TeamSubmissionAbortedBeforeSend: 'cowork:session:run:team-submission-aborted-before-send',
+} as const;
 
 export interface SessionRunUnknownInput {
   sessionId: string;

@@ -51,6 +51,7 @@ export const appTranslations = {
     collaborationPair: '{from} 与 {to}',
     collaborationIncomingMessage: '来自协作助手',
     collaborationOverview: '协作流程',
+    collaborationBackToOverview: '返回协作流程',
     collaborationOverviewHelp: '点助手查看工作详情，点箭头查看该方向的交流记录。',
     collaborationReceiptUnavailable:
       '原生历史中暂未找到这条消息。它可能仍待投递，或历史记录已不再保留。',
@@ -60,11 +61,14 @@ export const appTranslations = {
     collaborationHistoryLoading: '正在加载助手消息…',
     collaborationHistoryEmpty: '这个助手还没有消息。收到协作任务后，消息会显示在这里。',
     collaborationHistoryError: '暂时无法加载消息。返回协作流程后重新打开可重试。',
-    collaborationTimelineResize: '拖动调整最近交流高度，点击收起或展开；方向键调整，回车切换。',
+    collaborationTimelineCollapse: '收起最近交流',
+    collaborationTimelineExpand: '展开最近交流',
     collaborationGraphNavigation: '滚轮缩放，拖拽移动，双击空白处复位。',
     collaborationLegend:
       '箭头表示消息方向，数字表示投递次数。“已接收”仅表示收到消息，不代表任务已完成。',
     collaborationStop: '停止整个协作',
+    collaborationStopMember: '停止当前助手',
+    collaborationStopFailed: '停止未确认，请检查执行状态后重试。',
     collaborationCreate: '开始协作',
     collaborationSetupHelp:
       '在主会话中告诉助手你的需求。助手参与协作后，工作状态和交流记录会自动显示在这里，无需手动配置流程。',
@@ -340,6 +344,7 @@ export const appTranslations = {
     collaborationPair: '{from} and {to}',
     collaborationIncomingMessage: 'From a collaborating agent',
     collaborationOverview: 'Collaboration flow',
+    collaborationBackToOverview: 'Back to collaboration flow',
     collaborationOverviewHelp:
       'Select an agent to see its work, or an arrow to see messages in that direction.',
     collaborationReceiptUnavailable:
@@ -352,13 +357,15 @@ export const appTranslations = {
       'This agent has no messages yet. Its conversation appears here after it receives work.',
     collaborationHistoryError:
       'Messages could not be loaded. Return to the flow and reopen this agent to retry.',
-    collaborationTimelineResize:
-      'Drag to resize recent exchanges, click to collapse or expand; arrow keys resize, Enter toggles.',
+    collaborationTimelineCollapse: 'Collapse recent exchanges',
+    collaborationTimelineExpand: 'Expand recent exchanges',
     collaborationGraphNavigation:
       'Scroll to zoom, drag to pan, double-click the background to reset.',
     collaborationLegend:
       'Arrows show message direction; numbers count deliveries. Accepted means the message was received, not that the task is complete.',
     collaborationStop: 'Stop collaboration',
+    collaborationStopMember: 'Stop this assistant',
+    collaborationStopFailed: 'Stop was not confirmed. Check the execution state and try again.',
     collaborationCreate: 'Create collaboration',
     collaborationSetupHelp:
       'Describe what you need in the main conversation. Participating agents and their exchanges appear here automatically; no manual workflow setup is needed.',

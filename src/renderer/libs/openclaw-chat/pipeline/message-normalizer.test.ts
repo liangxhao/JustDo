@@ -5,6 +5,26 @@ import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normaliz
 
 import { projectGatewayHistoryForDisplay } from './history-display-normalizer';
 
+test.each([true, false])(
+  'attributes stored group transport independently of its text (peer perspective: %s)',
+  peerPerspective => {
+    const message = {
+      role: 'user',
+      content: 'Group thread round 2. These are sibling replies.',
+      __openclaw: { transport: { channel: 'justdo-team', messageId: 'group-thread:round2' } },
+    };
+    const projected = projectGatewayHistoryForDisplay([message]);
+    const result = normalizeMessage(projected[0], { peerPerspective });
+    expect(result.senderId).toBe(peerPerspective ? 'team-discussion:dispatcher' : null);
+    expect(result.content).toEqual([{ type: 'text', text: message.content }]);
+    const ordinary = normalizeMessage(
+      { ...message, __openclaw: { transport: { channel: 'webchat' } } },
+      { peerPerspective },
+    );
+    expect(ordinary.senderId).toBeNull();
+  },
+);
+
 describe('normalizeMessage image content', () => {
   test('preserves screenshot references through history projection and repeated normalization', () => {
     const prompt = composeBrowserGatewayPrompt('', [], {

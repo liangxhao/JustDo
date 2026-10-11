@@ -105,6 +105,24 @@ describe('Plan mode extension', () => {
     }
   });
 
+  test('blocks discussion side effects in Plan mode while allowing public history reads', () => {
+    const registered = registerPlugin();
+    const enabled = { getSessionExtension: () => ({ enabled: true }) };
+    for (const action of ['create', 'send', 'stop', undefined, 'unknown']) {
+      expect(
+        registered.policy?.({ toolName: 'team_discussion', params: { action } }, enabled),
+      ).toMatchObject({ allow: false });
+    }
+    expect(
+      registered.policy?.({ toolName: 'team_discussion', params: { action: 'read' } }, enabled),
+    ).toBeUndefined();
+    expect(
+      registered.policy?.(
+        { toolName: 'team_discussion', params: { action: 'create' } },
+        { getSessionExtension: () => ({ enabled: false }) },
+      ),
+    ).toBeUndefined();
+  });
   test('injects planning instructions and blocks mutations while preserving read-only research', () => {
     const registered = registerPlugin();
     expect(registered.registerSessionExtension).toHaveBeenCalledWith(

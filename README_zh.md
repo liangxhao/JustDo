@@ -173,3 +173,5 @@ Runtime patch 策略见 `scripts/patches/README.md`，开发指南见 `docs/open
 ## 许可证
 
 MIT
+
+启用 Agent Team 扩展后，可在主会话让助手组织“任务协作”或“群组讨论”。右侧页签切换查看 Graph 或聊天；用户可直接在群内发言。主助手默认只组织和汇总，也可在成员设置中参与讨论，复用原会话。新群每批结束后将结果反馈到来源会话；状态不确定时不会自动重复执行。详情见[实现说明](docs/features/assistants/agent-team.md)。

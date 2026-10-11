@@ -176,6 +176,7 @@ describe('native widget draft integration', () => {
       setValue: state.setValue,
       dispatch: state.dispatch,
       clearDraftAttachments: vi.fn(),
+      setDraftAgentTeamMode: vi.fn(value => value),
       draftKey: 'session-1',
       ownerWindow: { requestAnimationFrame: vi.fn() },
     })({ detail: { clear: true } });
@@ -192,6 +193,7 @@ describe('native widget draft integration', () => {
     async action => {
       const state = fixture();
       const current = state.visible.current;
+      const clearSubmittedAgentTeamMode = vi.fn(value => value);
       const menu = runInNewContext(contextMenuExpression, {
         value: current,
         latestValueRef: state.latestValueRef,
@@ -201,6 +203,9 @@ describe('native widget draft integration', () => {
         },
         closeContextMenu: vi.fn(),
         swarmWorkflowOptions: null,
+        teamSelection: { id: 'team-selection-1', mode: 'group' },
+        clearSubmittedAgentTeamMode,
+        dispatch: state.dispatch,
         currentDraftKeyRef: { current: 'session-1' },
         draftKey: 'session-1',
         ownerWindow: {
@@ -215,6 +220,10 @@ describe('native widget draft integration', () => {
       }) as (action: 'cut' | 'paste') => Promise<void>;
       await menu(action);
       expect(state.visible.current).toBe(action === 'cut' ? '' : 'Pasted text');
+      expect(clearSubmittedAgentTeamMode).toHaveBeenCalledExactlyOnceWith({
+        draftKey: 'session-1',
+        id: 'team-selection-1',
+      });
 
       state.callback!('native-key-1', 'Widget suggestion');
 

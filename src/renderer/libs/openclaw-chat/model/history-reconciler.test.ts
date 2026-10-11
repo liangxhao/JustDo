@@ -312,4 +312,120 @@ describe('history reconciliation', () => {
     expect(result.activeTurnTakeover).toBe('retired');
     expect(state.activeTurn).toBeNull();
   });
+
+  test('admits an initial history prefix while retaining the exact live turn', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const turn = beginAssistantTurn(
+      state,
+      { runId: 'run-current', startedAt: 1000 },
+      {
+        now: () => 1000,
+        createId: prefix => `${prefix}-1`,
+      },
+    );
+    const prefix = [
+      { role: 'user', content: 'earlier question', timestamp: 100 },
+      { role: 'assistant', content: 'earlier answer', timestamp: 200 },
+      { role: 'user', content: 'current question', __openclaw: { runId: turn.runId } },
+    ];
+    const result = reconcileHistory(state, {
+      request: { sessionKey: 'session-1', sessionId: 'sid-1', historyGeneration: 0 },
+      source: 'gateway',
+      messages: [
+        ...prefix,
+        { role: 'assistant', content: 'older live snapshot', runId: turn.runId },
+      ],
+      activeRun: true,
+      bootstrapActiveRun: { runId: turn.runId },
+    });
+    expect(result).toMatchObject({
+      accepted: true,
+      messages: prefix,
+      activeTurnTakeover: 'retained',
+    });
+    expect(state.activeTurn).toBe(turn);
+  });
+
+  test('rejects a bootstrap snapshot from a different run', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    beginAssistantTurn(
+      state,
+      { runId: 'run-current' },
+      {
+        now: () => 1000,
+        createId: prefix => `${prefix}-1`,
+      },
+    );
+    const result = reconcileHistory(state, {
+      request: { sessionKey: 'session-1', sessionId: 'sid-1', historyGeneration: 0 },
+      source: 'gateway',
+      messages: [],
+      activeRun: true,
+      bootstrapActiveRun: { runId: 'run-stale' },
+    });
+    expect(result).toMatchObject({ accepted: false, reason: 'active-run' });
+  });
+
+  test('preserves current native run appends while rejecting another run concurrent update', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    beginAssistantTurn(
+      state,
+      { runId: 'run-current', startedAt: 1000 },
+      {
+        now: () => 1000,
+        createId: prefix => `${prefix}-1`,
+      },
+    );
+    const prefix = [{ role: 'user', content: 'older question', timestamp: 100 }];
+    const append = {
+      role: 'assistant',
+      content: 'current native append',
+      timestamp: 1100,
+      __openclaw: { id: 'native-current', seq: 4, runId: 'run-current' },
+    };
+    const params = {
+      request: { sessionKey: 'session-1', sessionId: 'sid-1', historyGeneration: 0 },
+      source: 'gateway' as const,
+      messages: [...prefix, { ...append, content: 'older snapshot' }],
+      activeRun: true,
+      bootstrapActiveRun: { runId: 'run-current' },
+      requestStartMessages: [],
+      currentMessages: [append],
+    };
+    const result = reconcileHistory(state, params);
+    expect(result).toMatchObject({ accepted: true, messages: [...prefix, append] });
+    const sibling = { ...append, content: 'another admitted projection of the same native row' };
+    const withSiblings = reconcileHistory(state, { ...params, currentMessages: [append, sibling] });
+    expect(withSiblings).toMatchObject({
+      accepted: true,
+      messages: [...prefix, append, sibling],
+    });
+    const foreignAppend = {
+      ...append,
+      __openclaw: { id: 'native-other', seq: 5, runId: 'other-run' },
+    };
+    expect(
+      reconcileHistory(state, { ...params, currentMessages: [append, foreignAppend] }),
+    ).toMatchObject({ accepted: false, reason: 'stale-concurrent-update' });
+  });
+
+  test('keeps a live failure when history has no matching persisted failure', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const turn = beginAssistantTurn(
+      state,
+      { runId: 'run-current' },
+      {
+        now: () => 1000,
+        createId: prefix => `${prefix}-1`,
+      },
+    );
+    turn.status = 'error';
+    const result = reconcileHistory(state, {
+      request: { sessionKey: 'session-1', sessionId: 'sid-1', historyGeneration: 0 },
+      source: 'gateway',
+      messages: [{ role: 'assistant', content: 'partial output', runId: turn.runId }],
+    });
+    expect(result).toMatchObject({ accepted: true, activeTurnTakeover: 'retained' });
+    expect(state.activeTurn).toBe(turn);
+  });
 });

@@ -5,6 +5,7 @@ import {
   DEFAULT_MANAGED_AGENT_ID,
   isCronSessionKey,
   isManagedSessionKey,
+  isTeamDiscussionHoldingSessionKey,
   parseManagedSessionKey,
 } from './openclawSessionKeys';
 
@@ -41,4 +42,16 @@ test('isManagedSessionKey only accepts JustDo-owned session keys', () => {
   expect(isManagedSessionKey('justdo:abc-123')).toBe(true);
   expect(isManagedSessionKey('agent:main:main')).toBe(false);
   expect(isManagedSessionKey('cron:abc-123')).toBe(false);
+});
+
+test('reserves the entire native pending-input harness namespace', () => {
+  expect(isTeamDiscussionHoldingSessionKey('agent:main:harness:justdo-team-holding:room:1')).toBe(
+    true,
+  );
+  expect(
+    isTeamDiscussionHoldingSessionKey('agent:worker:harness:justdo-team-holding:malformed'),
+  ).toBe(true);
+  expect(isTeamDiscussionHoldingSessionKey('agent:main:harness:other:room:1')).toBe(false);
+  expect(isTeamDiscussionHoldingSessionKey('agent:main:justdo:room')).toBe(false);
+  expect(isTeamDiscussionHoldingSessionKey(null)).toBe(false);
 });

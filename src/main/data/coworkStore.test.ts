@@ -454,11 +454,15 @@ test('retains native worktree identity and its own permissions across metadata r
   const reloaded = new CoworkStore(db);
 
   expect(reloaded.getSessionByNativeKey(key)).toMatchObject({
-    id: child.id, cwd: '/worktree', permissionMode: 'ask',
-    nativeSessionKey: key, nativeParentSessionId: parent.id,
+    id: child.id,
+    cwd: '/worktree',
+    permissionMode: 'ask',
+    nativeSessionKey: key,
+    nativeParentSessionId: parent.id,
   });
-  expect(reloaded.listSessions().find(summary => summary.id === child.id))
-    .toMatchObject({ nativeSessionKey: key });
+  expect(reloaded.listSessions().find(summary => summary.id === child.id)).toMatchObject({
+    nativeSessionKey: key,
+  });
   expect(reloaded.adoptNativeSession(key, parent, 'Duplicate', '/other', 'full').id).toBe(child.id);
   expect(reloaded.listSessions()).toHaveLength(2);
 });
@@ -470,4 +474,17 @@ test('hides the worktree checkbox by default and persists only its visibility pr
   expect(reloaded.getConfig().showWorktreeCheckbox).toBe(true);
   reloaded.setConfig({ showWorktreeCheckbox: false });
   expect(store.getConfig().showWorktreeCheckbox).toBe(false);
+});
+
+test('rejects pending-input native adoption and omits reserved rows from user conversations', () => {
+  const parent = store.createSession('Parent', '/source', 'local');
+  const key = 'agent:main:harness:justdo-team-holding:room:1';
+  expect(() => store.adoptNativeSession(key, parent, 'Pending', '/source')).toThrow(
+    'teamDiscussionInvalidInput',
+  );
+  expect(() => store.bindNativeSession(parent.id, key, null)).toThrow('teamDiscussionInvalidInput');
+  expect(store.listSessions()).toHaveLength(1);
+  db.prepare('UPDATE cowork_sessions SET native_session_key = ? WHERE id = ?').run(key, parent.id);
+  expect(store.listSessions()).toEqual([]);
+  expect(store.listSessions('main')).toEqual([]);
 });

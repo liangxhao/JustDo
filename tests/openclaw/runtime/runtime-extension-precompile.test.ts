@@ -5,14 +5,21 @@ import { pathToFileURL } from 'node:url';
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-const { syncOpenClawRuntimeResources } = require('../../../scripts/openclaw/sync-openclaw-runtime-resources.cjs') as {
-  syncOpenClawRuntimeResources: (runtimeRoot: string, options: { repoRoot: string }) => void;
-};
-const { precompileOpenClawExtensions } = require('../../../scripts/openclaw/precompile-openclaw-extensions.cjs') as {
-  precompileOpenClawExtensions: (runtimeRoot: string, options: { required: boolean }) => Promise<{
-    compiled: number; skipped: number; errors: number;
-  }>;
-};
+const { syncOpenClawRuntimeResources } =
+  require('../../../scripts/openclaw/sync-openclaw-runtime-resources.cjs') as {
+    syncOpenClawRuntimeResources: (runtimeRoot: string, options: { repoRoot: string }) => void;
+  };
+const { precompileOpenClawExtensions } =
+  require('../../../scripts/openclaw/precompile-openclaw-extensions.cjs') as {
+    precompileOpenClawExtensions: (
+      runtimeRoot: string,
+      options: { required: boolean },
+    ) => Promise<{
+      compiled: number;
+      skipped: number;
+      errors: number;
+    }>;
+  };
 
 const roots: string[] = [];
 
@@ -31,10 +38,26 @@ function createFixture() {
     fs.mkdirSync(path.join(repoRoot, 'resources', 'docs', relative), { recursive: true });
   }
   fs.writeFileSync(path.join(repoRoot, 'resources/docs/gateway/config-channels.md'), 'fixture');
-  fs.writeFileSync(path.join(repoRoot, 'resources/openclaw-extension-prune.json'), JSON.stringify({
-    version: 1, openclawVersion: '2026.9.6', keep: [], remove: [],
-  }));
-  fs.cpSync(path.join(process.cwd(), 'openclaw-extensions/runtime-services'), sourceDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(repoRoot, 'resources/openclaw-extension-prune.json'),
+    JSON.stringify({
+      version: 1,
+      openclawVersion: '2026.9.6',
+      keep: [],
+      remove: [],
+    }),
+  );
+  fs.cpSync(path.join(process.cwd(), 'openclaw-extensions/runtime-services'), sourceDir, {
+    recursive: true,
+  });
+  fs.cpSync(
+    path.join(process.cwd(), 'openclaw-extensions/agent-team'),
+    path.join(repoRoot, 'openclaw-extensions/agent-team'),
+    { recursive: true },
+  );
+  fs.cpSync(path.join(process.cwd(), 'src/shared'), path.join(repoRoot, 'src/shared'), {
+    recursive: true,
+  });
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
   return { repoRoot, runtimeRoot, sourceDir, outputDir };
 }
@@ -70,13 +93,22 @@ describe('local extension packaging', () => {
   test('compiles setup hooks independently of an already compiled main entry', async () => {
     const { runtimeRoot, outputDir } = createFixture();
     fs.mkdirSync(outputDir, { recursive: true });
-    fs.writeFileSync(path.join(outputDir, 'package.json'), JSON.stringify({
-      type: 'module', openclaw: { extensions: ['./index.js'] },
-    }));
+    fs.writeFileSync(
+      path.join(outputDir, 'package.json'),
+      JSON.stringify({
+        type: 'module',
+        openclaw: { extensions: ['./index.js'] },
+      }),
+    );
     fs.writeFileSync(path.join(outputDir, 'index.js'), 'export default {};');
-    fs.writeFileSync(path.join(outputDir, 'setup-helper.ts'), 'export const reason: string = "ACP runtime configured";');
-    fs.writeFileSync(path.join(outputDir, 'setup-api.ts'),
-      'import { reason } from "./setup-helper.ts"; export const probe = (enabled: boolean) => enabled ? reason : null;');
+    fs.writeFileSync(
+      path.join(outputDir, 'setup-helper.ts'),
+      'export const reason: string = "ACP runtime configured";',
+    );
+    fs.writeFileSync(
+      path.join(outputDir, 'setup-api.ts'),
+      'import { reason } from "./setup-helper.ts"; export const probe = (enabled: boolean) => enabled ? reason : null;',
+    );
 
     const result = await precompileOpenClawExtensions(runtimeRoot, { required: true });
 
@@ -86,7 +118,10 @@ describe('local extension packaging', () => {
     expect(setup.probe(true)).toBe('ACP runtime configured');
     expect(setup.probe(false)).toBeNull();
     expect(fs.readFileSync(path.join(outputDir, 'index.js'), 'utf8')).toBe('export default {};');
-    expect(await precompileOpenClawExtensions(runtimeRoot, { required: true })).toMatchObject({ compiled: 0, skipped: 1 });
+    expect(await precompileOpenClawExtensions(runtimeRoot, { required: true })).toMatchObject({
+      compiled: 0,
+      skipped: 1,
+    });
   });
 
   test('retains a failed setup source and rejects required packaging', async () => {
@@ -95,7 +130,9 @@ describe('local extension packaging', () => {
     fs.writeFileSync(path.join(outputDir, 'setup-api.ts'), 'export const broken: = ;');
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    await expect(precompileOpenClawExtensions(runtimeRoot, { required: true })).rejects.toThrow('Failed to compile 1 extension');
+    await expect(precompileOpenClawExtensions(runtimeRoot, { required: true })).rejects.toThrow(
+      'Failed to compile 1 extension',
+    );
 
     expect(fs.existsSync(path.join(outputDir, 'setup-api.ts'))).toBe(true);
     expect(fs.existsSync(path.join(outputDir, 'setup-api.js'))).toBe(false);
@@ -107,7 +144,10 @@ describe('local extension packaging', () => {
     syncOpenClawRuntimeResources(runtimeRoot, { repoRoot });
     await precompileOpenClawExtensions(runtimeRoot, { required: true });
     const firstBuild = fs.readFileSync(path.join(outputDir, 'index.js'), 'utf8');
-    fs.appendFileSync(path.join(sourceDir, 'index.ts'), '\nexport const testBuildRevision = "second";\n');
+    fs.appendFileSync(
+      path.join(sourceDir, 'index.ts'),
+      '\nexport const testBuildRevision = "second";\n',
+    );
     fs.writeFileSync(path.join(sourceDir, 'setup-api.ts'), 'export const revision: number = 2;');
 
     // beforePack repeats resource sync after the runtime pipeline already compiled the plugin.
@@ -115,26 +155,33 @@ describe('local extension packaging', () => {
     const result = await precompileOpenClawExtensions(runtimeRoot, { required: true });
 
     expect(result).toMatchObject({ compiled: 1, errors: 0 });
-    expect(JSON.parse(fs.readFileSync(path.join(outputDir, 'package.json'), 'utf8')).openclaw.extensions).toEqual(['./index.js']);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(outputDir, 'package.json'), 'utf8')).openclaw.extensions,
+    ).toEqual(['./index.js']);
     expect(fs.existsSync(path.join(outputDir, 'index.ts'))).toBe(false);
     const secondBuild = fs.readFileSync(path.join(outputDir, 'index.js'), 'utf8');
     expect(secondBuild).not.toBe(firstBuild);
     expect(secondBuild).toContain('testBuildRevision');
+    expect(secondBuild).toContain('teamDiscussion.history');
+    expect(secondBuild).not.toMatch(/from ["']\.\.\/.*src\//);
     expect(secondBuild).toContain('openclaw/plugin-sdk/session-store-runtime');
     expect(fs.readFileSync(path.join(outputDir, 'setup-api.js'), 'utf8')).toContain('revision = 2');
     expect(fs.existsSync(path.join(outputDir, 'setup-api.ts'))).toBe(false);
-    expect(JSON.parse(fs.readFileSync(path.join(outputDir, 'openclaw.plugin.json'), 'utf8')).activation.onStartup).toBe(true);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(outputDir, 'openclaw.plugin.json'), 'utf8')).activation
+        .onStartup,
+    ).toBe(true);
   });
 
   test('fails packaging on compilation errors while retaining the source entry', async () => {
     const { repoRoot, runtimeRoot, sourceDir, outputDir } = createFixture();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     fs.writeFileSync(path.join(sourceDir, 'index.ts'), 'export default { broken: ;');
-    syncOpenClawRuntimeResources(runtimeRoot, { repoRoot });
-
-    await expect(precompileOpenClawExtensions(runtimeRoot, { required: true })).rejects.toThrow('Failed to compile 1 extension');
-
-    expect(fs.existsSync(path.join(outputDir, 'index.ts'))).toBe(true);
-    expect(JSON.parse(fs.readFileSync(path.join(outputDir, 'package.json'), 'utf8')).openclaw.extensions).toEqual(['./index.ts']);
+    expect(() => syncOpenClawRuntimeResources(runtimeRoot, { repoRoot })).toThrow('Build failed');
+    expect(fs.existsSync(path.join(sourceDir, 'index.ts'))).toBe(true);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(sourceDir, 'package.json'), 'utf8')).openclaw.extensions,
+    ).toEqual(['./index.ts']);
+    expect(fs.existsSync(path.join(outputDir, 'index.js'))).toBe(false);
   });
 });

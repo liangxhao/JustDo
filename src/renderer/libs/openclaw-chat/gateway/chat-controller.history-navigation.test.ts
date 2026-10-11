@@ -354,9 +354,12 @@ test('backfills a delayed in-flight snapshot after a newer live event without re
       ],
     },
   });
-  // Persisted history remains rejected while the live turn owns the pane, but
-  // its independently owned in-flight snapshot still repairs missing events.
-  await expect(loading).resolves.toBe(false);
+  // Initial history may fill the durable prefix while the independently
+  // owned in-flight snapshot repairs gaps without rewinding newer live text.
+  await expect(loading).resolves.toBe(true);
+  expect(controller.state.chatMessages).toEqual([
+    { role: 'user', content: 'continue', timestamp: 1_000 },
+  ]);
 
   expect(controller.state.runActivity?.stage).toBe('responding');
   expect(controller.state.transcript.activeTurn).toMatchObject({

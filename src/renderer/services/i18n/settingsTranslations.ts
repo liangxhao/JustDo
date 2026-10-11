@@ -540,7 +540,7 @@ export const settingsTranslations = {
     agentRuntimeAgentMaxConcurrent: 'Agent 总并发数',
     agentRuntimeSystemDefault: '系统默认',
     agentRuntimeAgentMaxConcurrentDescription:
-      '整个运行服务中可同时执行的 Agent 任务数；系统默认会根据设备能力在 8–16 之间自动选择。',
+      '整个运行服务中可同时执行的 Agent 任务数；系统默认会根据设备能力自动选择，至少为 8。',
     agentRuntimeCapacityTitle: '容量与排队',
     agentRuntimeCapacityDescription:
       '所有后台 Subagent 共享全局运行额度；每个父 Agent 的直属子任务上限独立计算。',
@@ -1925,7 +1925,7 @@ export const settingsTranslations = {
     agentRuntimeAgentMaxConcurrent: 'Total Agent concurrency',
     agentRuntimeSystemDefault: 'System default',
     agentRuntimeAgentMaxConcurrentDescription:
-      'Agent tasks that may run concurrently across the runtime service. The system default adapts between 8 and 16 based on the device.',
+      'Agent tasks that may run concurrently across the runtime service. The system default adapts to device capacity, with a minimum of 8.',
     agentRuntimeCapacityTitle: 'Capacity and queueing',
     agentRuntimeCapacityDescription:
       'All background Subagents share a global run limit; each parent Agent has its own direct-child limit.',

@@ -1,5 +1,5 @@
 import { ChevronRightIcon } from '@heroicons/react/24/outline';
-import type { CollaborationRoom } from '@shared/cowork/collaboration';
+import type { CollaborationRoom } from '@shared/cowork/agent-team/collaboration';
 import { useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
 
@@ -8,7 +8,7 @@ import type { CoworkSessionSummary } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
 
-import { COLLABORATION_PALETTE } from '../chat/collaborationPalette';
+import { COLLABORATION_PALETTE } from '../shared/collaborationPalette';
 
 type Detail = Awaited<ReturnType<typeof coworkService.getSessionDetails>>;
 

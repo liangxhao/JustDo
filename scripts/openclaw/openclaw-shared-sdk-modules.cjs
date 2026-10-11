@@ -6,13 +6,17 @@ const path = require('node:path');
 /** Preserve native module identity between the Gateway bundle and dynamically loaded SDKs. */
 function createSharedSdkModulesPlugin(runtimeDir, esbuild) {
   const runtimeRoot = fs.realpathSync(runtimeDir);
-  const entry = path.join(runtimeRoot, 'dist', 'plugin-sdk', 'secret-input-runtime.js');
-  if (!fs.existsSync(entry)) throw new Error('Missing native secret-input-runtime SDK entry.');
+  const entries = ['secret-input-runtime', 'reply-runtime'].map(name => {
+    const entry = path.join(runtimeRoot, 'dist', 'plugin-sdk', `${name}.js`);
+    if (!fs.existsSync(entry)) throw new Error(`Missing native ${name} SDK entry.`);
+    return entry;
+  });
   // Locate the pinned SDK's native state owners through its dependency graph.
-  // Pure helpers remain bundled; config/auth/degradation state must have one owner.
+  // Pure helpers remain bundled; config/auth/authorization state must have one owner.
   const analysis = esbuild.buildSync({
     absWorkingDir: runtimeRoot,
-    entryPoints: [entry],
+    entryPoints: entries,
+    outdir: path.join(runtimeRoot, '.shared-sdk-analysis'),
     bundle: true,
     platform: 'node',
     format: 'esm',
@@ -40,6 +44,17 @@ function createSharedSdkModulesPlugin(runtimeDir, esbuild) {
     'registerFreshSharedAuthStoreHandoff',
     'markAuthProfileMigrationRequired',
     'loadPersistedAuthProfileStoreAtDatabasePath',
+    // Webchat peer continuations carry opaque host-issued authorities. Issuance
+    // and validation must use the same native WeakSet across bundle/SDK graphs.
+    'createAdmittedRunOperatorAuthority',
+    // Admitted contexts retain an exact-owner private slot before they freeze.
+    'prepareGatewayContextBindingOwner',
+    // Nested peer runs and lazy compaction must detach/inherit the same writer
+    // scope. A second AsyncLocalStorage would leave the caller's fence active.
+    'captureOwnedTranscriptWriteAssertion',
+    // Native detach also clears CLI history ownership. Its producer/consumer
+    // must share the same carrier as the external transcript scope helper.
+    'getCliHistoryWriter',
   ];
   const inputs = Object.keys(analysis.metafile.inputs).map(input => {
     const absolute = fs.realpathSync(path.resolve(runtimeRoot, input));

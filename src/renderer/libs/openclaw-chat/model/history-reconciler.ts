@@ -1,5 +1,10 @@
 import type { ChatTranscriptState, HistorySource } from './chat-transcript-state';
-import { isLocallyOptimisticHistoryTail } from './optimistic-history-tail';
+import {
+  isLocallyOptimisticHistoryTail,
+  projectInitialHistoryForActiveTurn,
+  readActiveTurnMessageRunId,
+  retireSettledActiveTurn,
+} from './optimistic-history-tail';
 import { readTranscriptIdentity } from './transcript-identity';
 
 export interface HistoryRequestIdentity {
@@ -408,6 +413,7 @@ export function reconcileHistory(
     requestStartMessages?: unknown[];
     currentMessages?: unknown[];
     activeRun?: boolean;
+    bootstrapActiveRun?: { runId: string; startedAt?: number };
     isVisibleMessage?: (message: unknown) => boolean;
   },
 ): HistoryReconciliationResult {
@@ -437,7 +443,56 @@ export function reconcileHistory(
   if (SOURCE_AUTHORITY[params.source] < SOURCE_AUTHORITY[state.historySource]) {
     return rejected('lower-authority');
   }
-  if (params.activeRun) return rejected('active-run');
+  let incomingMessages = params.messages;
+  if (params.activeRun) {
+    const turn = state.activeTurn;
+    const prefix =
+      turn?.status === 'running' && params.bootstrapActiveRun?.runId === turn.runId
+        ? projectInitialHistoryForActiveTurn(
+            incomingMessages,
+            turn,
+            params.bootstrapActiveRun.startedAt,
+          )
+        : null;
+    if (!prefix) return rejected('active-run');
+    incomingMessages = prefix;
+    // Producer-owned appends may have arrived while this initial snapshot
+    // was loading. Keep those exact native rows instead of either dropping
+    // them or rejecting the older prefix as a concurrent timeline rewind.
+    // One native row can have several admitted display projections. Replace
+    // each source group together, rather than overwriting its siblings by ID.
+    const activeGroups = new Map<string, { kind: string; value: string; messages: unknown[] }>();
+    for (const message of currentMessages) {
+      const identity = readTranscriptIdentity(message);
+      if (
+        readActiveTurnMessageRunId(message) !== turn?.runId ||
+        !identity?.kind.startsWith('openclaw-') ||
+        isLocallyOptimisticHistoryTail(message)
+      )
+        continue;
+      const key = `${identity.kind}\0${identity.value}`;
+      const group = activeGroups.get(key);
+      if (group) group.messages.push(message);
+      else activeGroups.set(key, { ...identity, messages: [message] });
+    }
+    for (const group of activeGroups.values()) {
+      const matchesGroup = (candidate: unknown): boolean => {
+        const candidateIdentity = readTranscriptIdentity(candidate);
+        return candidateIdentity?.kind === group.kind && candidateIdentity.value === group.value;
+      };
+      const index = incomingMessages.findIndex(matchesGroup);
+      incomingMessages =
+        index < 0
+          ? [...incomingMessages, ...group.messages]
+          : incomingMessages.flatMap((candidate, candidateIndex) =>
+              candidateIndex === index
+                ? group.messages
+                : matchesGroup(candidate)
+                  ? []
+                  : [candidate],
+            );
+    }
+  }
   if (
     params.messages.length === 0 &&
     currentMessages.some(message => Boolean(asRecord(message)?.__openclawStreamFallback))
@@ -446,7 +501,7 @@ export function reconcileHistory(
   }
 
   let messages = preserveOptimisticTailMessages(
-    params.messages,
+    incomingMessages,
     requestStartMessages,
     isVisibleMessage,
   );
@@ -475,21 +530,12 @@ export function reconcileHistory(
   state.persistedMessages = messages;
   state.historySource = params.source;
   state.revision += 1;
-  let activeTurnTakeover: HistoryReconciliationResult['activeTurnTakeover'] = 'retained';
-  if (
-    state.activeTurn &&
-    state.activeTurn.status !== 'running' &&
-    !isLocallyOptimisticHistoryTail(messages[messages.length - 1])
-  ) {
-    state.activeTurn = null;
-    state.revision += 1;
-    activeTurnTakeover = 'retired';
-  }
+  const activeTurnTakeover = retireSettledActiveTurn(state, messages) ? 'retired' : 'retained';
   return {
     accepted: true,
     messages,
     persistedToolCallIds: extractToolCallIds(messages),
-    preservedOptimisticTailCount: messages.length - params.messages.length,
+    preservedOptimisticTailCount: messages.length - incomingMessages.length,
     activeTurnTakeover,
     catchUp: 'none',
   };

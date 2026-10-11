@@ -1,6 +1,7 @@
 import type { BrowserPanelTab } from '@shared/browser/browser';
 import { HOME_WORKSPACE_SESSION_ID } from '@shared/preview/filePreview';
 
+import { COMPOSER_FRAME_CLASS } from '@/features/cowork/components/composer/composerStyles';
 import CoworkPromptInput, {
   type CoworkPromptInputRef,
 } from '@/features/cowork/components/composer/CoworkPromptInput';
@@ -144,7 +145,7 @@ export function CoworkHomeWorkspace({
                 {/* Prompt Input Area - Large version with folder selector */}
                 <div className="space-y-3">
                   <CoworkPet running={false} waiting={false} placement="home" />
-                  <div className="shadow-glow-accent rounded-2xl">
+                  <div className={COMPOSER_FRAME_CLASS}>
                     <CoworkPromptInput
                       ref={promptInputRef}
                       onSubmit={handleStartSession}

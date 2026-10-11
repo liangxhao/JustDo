@@ -365,6 +365,33 @@ function cleanInterruptedExtensionStaging(targetDir) {
   }
 }
 
+// App extensions may import pure product contracts. Bundle from the repository
+// before staging so packaged plugins never resolve ../../src against OpenClaw.
+function bundleProductExtension(sourceDir, targetDir) {
+  const pkg = readJsonFile(path.join(sourceDir, 'package.json'));
+  if (pkg?.justdo?.bundle !== true) return;
+  const entries = pkg.openclaw?.extensions;
+  if (!Array.isArray(entries) || entries.length !== 1)
+    throw new Error('Bundled product extension must have one entry');
+  require('esbuild').buildSync({
+    entryPoints: [path.resolve(sourceDir, entries[0])],
+    outfile: path.join(targetDir, 'index.js'),
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node24',
+    packages: 'external',
+  });
+  fs.writeFileSync(
+    path.join(targetDir, 'package.json'),
+    `${JSON.stringify({ ...pkg, openclaw: { ...pkg.openclaw, extensions: ['./index.js'] } }, null, 2)}\n`,
+  );
+  const stagedEntry = path.resolve(targetDir, entries[0]);
+  if (path.relative(targetDir, stagedEntry).startsWith('..') || !stagedEntry.endsWith('.ts'))
+    throw new Error('Invalid product extension source entry');
+  if (fs.existsSync(stagedEntry)) fs.unlinkSync(stagedEntry);
+}
+
 function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
   const sourceDir = path.join(repoRoot, 'openclaw-extensions');
   const targetDir = path.join(runtimeRoot, 'dist', 'extensions');
@@ -382,7 +409,9 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
   // agent-team replaces the former always-on collaboration extension.
   // Remove only this exact app-owned artifact; leave third-party extensions intact.
   const retiredCollaboration = path.join(targetDir, 'collaboration');
-  if (readJsonFile(path.join(retiredCollaboration, 'package.json'))?.name === 'openclaw-collaboration') {
+  if (
+    readJsonFile(path.join(retiredCollaboration, 'package.json'))?.name === 'openclaw-collaboration'
+  ) {
     fs.rmSync(retiredCollaboration, { recursive: true, force: true });
   }
 
@@ -427,7 +456,10 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
 
     if (canReuseDependencies) {
       replaceExtensionSources(extensionSourceDir, extensionTargetDir);
-      pruneExtensionDependencies(extensionTargetDir, { preserveLegalFiles: ['acpx', 'stt-local-cli', 'typesafe'].includes(entry.name) });
+      bundleProductExtension(extensionSourceDir, extensionTargetDir);
+      pruneExtensionDependencies(extensionTargetDir, {
+        preserveLegalFiles: ['acpx', 'stt-local-cli', 'typesafe'].includes(entry.name),
+      });
       console.log(`[${label}] Reused locked production dependencies: ${entry.name}`);
       copied.push(entry.name);
       continue;
@@ -441,12 +473,15 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
         force: true,
         verbatimSymlinks: true,
       });
+      bundleProductExtension(extensionSourceDir, stagingDir);
       if (usesProductionDependencies) {
         console.log(`[${label}] Installing production dependencies: ${entry.name}`);
         installDependencies(stagingDir, installTarget);
         verifyDeclaredDependencies(stagingDir);
         verifyAcpxTargetDependencies(stagingDir, installTarget);
-        pruneExtensionDependencies(stagingDir, { preserveLegalFiles: ['acpx', 'stt-local-cli', 'typesafe'].includes(entry.name) });
+        pruneExtensionDependencies(stagingDir, {
+          preserveLegalFiles: ['acpx', 'stt-local-cli', 'typesafe'].includes(entry.name),
+        });
         fs.writeFileSync(
           path.join(stagingDir, EXTENSION_ASSEMBLY_MANIFEST),
           `${JSON.stringify({ version: EXTENSION_ASSEMBLY_VERSION, target: installTarget.targetId, dependencyFingerprint: fingerprint }, null, 2)}\n`,
@@ -525,6 +560,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  bundleProductExtension,
   installProductionDependencies,
   renameExtensionIntoPlace,
   resolveExtensionInstallTimeoutMs,

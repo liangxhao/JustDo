@@ -102,6 +102,7 @@ import {
   getWorkspaceWindowManager,
   isWorkspaceBrowserHost,
 } from './core/window/workspaceWindowManager';
+import { AgentTeamLaunchCoordinator } from './cowork/agentTeamLaunchCoordinator';
 import { orderDiagnosticMainLogs } from './cowork/diagnostics/logSources';
 import { SessionDiagnosticsService } from './cowork/diagnostics/service';
 import { CoworkStore } from './data/coworkStore';
@@ -159,7 +160,9 @@ import {
   registerWindowsSandboxHandlers,
   waitForCoworkConfigUpdates,
 } from './ipc/cowork';
-import { registerCollaborationHandlers } from './ipc/cowork/collaboration';
+import { registerAgentTeamSettingsHandlers } from './ipc/cowork/agent-team/agentTeamSettings';
+import { registerCollaborationHandlers } from './ipc/cowork/agent-team/collaboration';
+import { registerTeamDiscussionHandlers } from './ipc/cowork/agent-team/teamDiscussion';
 import { registerSessionDiagnosticsHandlers } from './ipc/cowork/sessionDiagnostics';
 import { registerSessionReviewHandlers } from './ipc/cowork/sessionReview';
 import { registerMulticaIntegrationHandlers } from './ipc/multica';
@@ -1532,6 +1535,7 @@ if (multicaBridgeArgv) {
   });
   registerMarketplaceHandlers(pluginManager);
   registerExtensionHandlers({
+    beforeAgentTeamDisable: () => getTeamDiscussionCoordinator().cancelPendingForDisable(),
     extensionImportService: getOpenClawExtensionImportService(),
     installationService: pluginInstallationService,
     onMarketplacePluginDeleted: (kind, runtimeId) =>
@@ -1628,8 +1632,18 @@ if (multicaBridgeArgv) {
     sessionPermissionModeRuntimeBound = true;
   };
 
+  let agentTeamLaunch: AgentTeamLaunchCoordinator | undefined;
+  const getAgentTeamLaunch = () =>
+    (agentTeamLaunch ??= new AgentTeamLaunchCoordinator({
+      getStore: getCoworkStore,
+      getDatabase: () => getStore().getDatabase(),
+      getRouter: getCoworkEngineRouter,
+      requestGateway: <T>(method: string, params?: unknown) =>
+        getCoworkEngineService().requestGateway<T>(method, params),
+    }));
   registerCoworkSessionExecutionHandlers({
     getMainWindow: () => mainWindow,
+    getAgentTeamLaunch,
     ensureEngineRunning: ensureOpenClawRunningForCowork,
     getCoworkStore,
     getCoworkEngineRouter,
@@ -1640,6 +1654,7 @@ if (multicaBridgeArgv) {
   });
 
   registerCoworkSessionHandlers({
+    getAgentTeamLaunch,
     getCollaboration: () => bindCollaboration.coordinator(),
     getCoworkStore,
     getCoworkEngineRouter,
@@ -1679,6 +1694,12 @@ if (multicaBridgeArgv) {
     onChanged: notifyCoworkSessionsChanged,
   });
   const bindCollaboration = registerCollaborationHandlers({
+    onExecution: payload => getAgentTeamLaunch().observeExecution(payload),
+    onLaunchAccepted: receipt => getAgentTeamLaunch().confirm(receipt),
+    stopDiscussions: (sessionId, requireSettled) =>
+      getTeamDiscussionCoordinator().stopForSource(sessionId, requireSettled),
+    discussion: (sessionId, input, identity, assertActive) =>
+      getTeamDiscussionCoordinator().fromAgent(sessionId, input, identity, assertActive),
     createAssistant: (input, identity, assertActive) =>
       nativeAssistantCreation.create(input, identity, assertActive),
     onSessionsChanged: notifyCoworkSessionsChanged,
@@ -1695,6 +1716,38 @@ if (multicaBridgeArgv) {
     syncConfig: () => syncOpenClawConfig({ reason: 'agent-profile-change' }),
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
+  });
+
+  registerAgentTeamSettingsHandlers(() => getStore().getDatabase());
+  const getTeamDiscussionCoordinator = registerTeamDiscussionHandlers({
+    isExtensionEnabled: () => {
+      try {
+        const config = JSON.parse(
+          fs.readFileSync(getOpenClawEngineManager().getConfigPath(), 'utf8'),
+        );
+        const plugins = config.plugins;
+        return (
+          plugins?.enabled !== false &&
+          plugins?.entries?.[OpenClawExtensionId.AGENT_TEAM]?.enabled === true &&
+          !plugins?.deny?.includes(OpenClawExtensionId.AGENT_TEAM) &&
+          (!plugins?.allow?.length || plugins.allow.includes(OpenClawExtensionId.AGENT_TEAM))
+        );
+      } catch {
+        return false;
+      }
+    },
+    isSourceDeleting: sessionId => bindCollaboration.coordinator().isSourceDeleting(sessionId),
+    getDatabase: () => getStore().getDatabase(),
+    getStore: getCoworkStore,
+    ensureReady: ensureOpenClawRunningForCowork,
+    requestConnectedGateway: async <T>(method: string, params?: unknown) => {
+      const client = getOpenClawRuntimeAdapter()?.getGatewayClient();
+      if (!client) throw new Error('teamDiscussionUnavailable');
+      return client.request<T>(method, params);
+    },
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
+    onChanged: notifyCoworkSessionsChanged,
   });
 
   registerCoworkInteractionHandlers({
@@ -1858,6 +1911,7 @@ if (multicaBridgeArgv) {
     openClawEngineManager?.beginApplicationShutdown();
     devSessionLifecycle?.stop();
     console.log('[Main] App is quitting, starting cleanup...');
+    getTeamDiscussionCoordinator().dispose();
     builtinModelCredentialMonitor?.stop();
     loginService?.dispose();
     customerRegistrationService?.stop();
@@ -2200,6 +2254,7 @@ if (multicaBridgeArgv) {
     const coworkEngineRouter = getCoworkEngineRouter();
     bindEmbeddedBrowserGateway();
     bindCollaboration();
+    getTeamDiscussionCoordinator().startReconciliation();
     bindSessionPermissionModeRuntime();
     bindCoworkRuntimeForwarder(coworkEngineRouter, getCoworkStore);
     coworkEngineRouter.on('cronChanged', payload => {

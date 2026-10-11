@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { beginAssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
+import { projectPersistedMessagesForActiveTurn } from '@/libs/openclaw-chat/model/optimistic-history-tail';
 import { projectTurnItems } from '@/libs/openclaw-chat/model/project-turn-items';
 import { projectWaitingStatus } from '@/libs/openclaw-chat/model/run-activity';
 
@@ -9,6 +10,307 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
+
+test('loads earlier peer history when live events arrive before the initial snapshot', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(1000);
+  const sessionKey = 'agent:research:justdo:peer';
+  let resolveHistory!: (result: unknown) => void;
+  const request = vi.fn().mockImplementation(
+    () =>
+      new Promise(resolve => {
+        resolveHistory = resolve;
+      }),
+  );
+  const controller = new ChatController();
+  controller.state.client = { request, stop: vi.fn() } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  const load = controller.loadHistory(true, { preferStartup: true });
+  const handleEvent = (
+    controller as unknown as { handleEvent(event: { event: string; payload: unknown }): void }
+  ).handleEvent.bind(controller);
+  handleEvent({
+    event: 'agent',
+    payload: {
+      sessionKey,
+      sessionId: 'sid-peer',
+      runId: 'run-peer',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'agent',
+    payload: {
+      sessionKey,
+      sessionId: 'sid-peer',
+      runId: 'run-peer',
+      seq: 2,
+      stream: 'thinking',
+      data: { text: 'current live thinking' },
+    },
+  });
+  const turn = controller.state.transcript.activeTurn;
+  const prefix = [
+    { role: 'user', content: 'old question', timestamp: 100 },
+    { role: 'assistant', content: 'old answer', timestamp: 200 },
+    { role: 'user', content: 'current task', timestamp: 900, runId: 'run-peer' },
+  ];
+  resolveHistory({
+    messages: [
+      ...prefix,
+      { role: 'assistant', content: 'stale partial', timestamp: 1100, runId: 'run-peer' },
+    ],
+    sessionId: 'sid-peer',
+    sessionInfo: { sessionId: 'sid-peer', hasActiveRun: true, activeRunIds: ['run-peer'] },
+    inFlightRun: { runId: 'run-peer', startedAt: 1000 },
+  });
+  expect(await load).toBe(true);
+  expect(controller.state.chatMessages).toEqual(prefix);
+  expect(controller.state.initialHistoryReady).toBe(true);
+  expect(controller.state.transcript.activeTurn).toBe(turn);
+  expect(turn?.items).toMatchObject([{ type: 'thinking', text: 'current live thinking' }]);
+  expect(controller.state.chatSending).toBe(true);
+  controller.disconnect();
+});
+
+test('keeps the Gateway failure visible across history refreshes without a persisted terminal', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(1000);
+  const sessionKey = 'agent:research:justdo:peer';
+  const request = vi.fn().mockResolvedValue({
+    messages: [{ role: 'user', content: 'task', timestamp: 1000, runId: 'run-peer' }],
+    sessionId: 'sid-peer',
+  });
+  const controller = new ChatController();
+  controller.state.client = { request, stop: vi.fn() } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  await controller.loadHistory();
+  const handleEvent = (
+    controller as unknown as { handleEvent(event: { event: string; payload: unknown }): void }
+  ).handleEvent.bind(controller);
+  handleEvent({
+    event: 'agent',
+    payload: {
+      sessionKey,
+      sessionId: 'sid-peer',
+      runId: 'run-peer',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  const error = 'session writer claim changed before transcript persistence';
+  handleEvent({
+    event: 'agent',
+    payload: {
+      sessionKey,
+      sessionId: 'sid-peer',
+      runId: 'run-peer',
+      seq: 2,
+      stream: 'lifecycle',
+      data: { phase: 'error', error, executionSettled: true },
+    },
+  });
+  await vi.waitFor(() => expect(controller.state.chatLoading).toBe(false));
+  expect(await controller.loadHistory()).toBe(true);
+  expect(await controller.loadHistory()).toBe(true);
+  expect(controller.state.transcript.activeTurn).toMatchObject({
+    status: 'error',
+    items: [{ type: 'terminal', message: error }],
+  });
+  expect(controller.state.lastError).toBe(error);
+  request.mockResolvedValue({
+    messages: [
+      {
+        role: 'assistant',
+        content: '',
+        stopReason: 'error',
+        errorMessage: 'Context overflow during the earlier model attempt',
+        runId: 'run-peer',
+      },
+    ],
+    sessionId: 'sid-peer',
+  });
+  expect(await controller.loadHistory()).toBe(true);
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([
+    { type: 'terminal', message: error },
+  ]);
+  request.mockResolvedValue({
+    messages: [
+      {
+        role: 'assistant',
+        content: '',
+        stopReason: 'error',
+        errorMessage: error,
+        runId: 'run-peer',
+      },
+    ],
+    sessionId: 'sid-peer',
+  });
+  expect(await controller.loadHistory()).toBe(true);
+  expect(controller.state.transcript.activeTurn).toBeNull();
+  controller.disconnect();
+});
+
+test('loads earlier peer history without rewinding a native append received during initialization', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(1000);
+  const sessionKey = 'agent:research:justdo:peer';
+  let resolveHistory!: (result: unknown) => void;
+  const request = vi.fn().mockImplementation(
+    () =>
+      new Promise(resolve => {
+        resolveHistory = resolve;
+      }),
+  );
+  const controller = new ChatController();
+  controller.state.client = { request, stop: vi.fn() } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  const load = controller.loadHistory(true, { preferStartup: true });
+  const handleEvent = (
+    controller as unknown as { handleEvent(event: { event: string; payload: unknown }): void }
+  ).handleEvent.bind(controller);
+  handleEvent({
+    event: 'agent',
+    payload: {
+      sessionKey,
+      sessionId: 'sid-peer',
+      runId: 'run-peer',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  const durable = {
+    role: 'assistant',
+    timestamp: 1100,
+    content: 'current durable preamble',
+    __openclaw: { id: 'current-native-row', seq: 3, runId: 'run-peer' },
+  };
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey,
+      sessionId: 'sid-peer',
+      runId: 'run-peer',
+      message: durable,
+      messageSeq: 3,
+      activeRunIds: ['run-peer'],
+    },
+  });
+  expect(controller.state.chatMessages).toEqual([durable]);
+  const turn = controller.state.transcript.activeTurn;
+  const prefix = [
+    { role: 'user', content: 'old question', timestamp: 100 },
+    { role: 'assistant', content: 'old answer', timestamp: 200 },
+    { role: 'user', content: 'current task', timestamp: 900, runId: 'run-peer' },
+  ];
+  resolveHistory({
+    messages: [...prefix, { ...durable, content: 'older snapshot' }],
+    sessionId: 'sid-peer',
+    sessionInfo: { sessionId: 'sid-peer', hasActiveRun: true, activeRunIds: ['run-peer'] },
+    inFlightRun: { runId: 'run-peer', startedAt: 1000 },
+  });
+  expect(await load).toBe(true);
+  expect(controller.state.chatMessages).toEqual([...prefix, durable]);
+  expect(controller.state.initialHistoryReady).toBe(true);
+  expect(controller.state.transcript.activeTurn).toBe(turn);
+  controller.disconnect();
+});
+
+test.each([
+  {
+    kind: 'a differing provider diagnostic',
+    error: 'LLM request failed: provider rejected the request schema or tool payload.',
+    diagnosis: '400 Fixture post-compaction provider failure.',
+  },
+  {
+    kind: 'only an earlier attempt failure',
+    error: 'session writer claim changed before transcript persistence',
+    diagnosis: 'Context overflow during the earlier model attempt',
+  },
+])(
+  'preserves the confirmed whole-run error alongside $kind despite a matching failed receipt',
+  async ({ error, diagnosis }) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1000);
+    const sessionKey = 'agent:research:justdo:peer';
+    const user = { role: 'user', content: 'task', timestamp: 1000, runId: 'run-peer' };
+    const request = vi.fn().mockResolvedValue({ messages: [user], sessionId: 'sid-peer' });
+    const controller = new ChatController();
+    controller.state.client = { request, stop: vi.fn() } as never;
+    controller.state.connected = true;
+    controller.state.sessionKey = sessionKey;
+    await controller.loadHistory();
+    const handleEvent = (
+      controller as unknown as { handleEvent(event: { event: string; payload: unknown }): void }
+    ).handleEvent.bind(controller);
+    handleEvent({
+      event: 'agent',
+      payload: {
+        sessionKey,
+        sessionId: 'sid-peer',
+        runId: 'run-peer',
+        seq: 1,
+        stream: 'lifecycle',
+        data: { phase: 'start' },
+      },
+    });
+    vi.setSystemTime(3000);
+    handleEvent({
+      event: 'agent',
+      payload: {
+        sessionKey,
+        sessionId: 'sid-peer',
+        runId: 'run-peer',
+        seq: 2,
+        stream: 'lifecycle',
+        data: { phase: 'error', error, executionSettled: true },
+      },
+    });
+    await vi.waitFor(() => expect(controller.state.chatLoading).toBe(false));
+    const failure = {
+      role: 'assistant',
+      content: '',
+      stopReason: 'error',
+      timestamp: 2000,
+      errorMessage: diagnosis,
+      __openclaw: { id: 'native-failure', seq: 4, runId: 'run-peer' },
+    };
+    request.mockResolvedValue({
+      messages: [user, failure],
+      sessionId: 'sid-peer',
+      sessionInfo: {
+        sessionId: 'sid-peer',
+        hasActiveRun: false,
+        status: 'failed',
+        lastRunId: 'run-peer',
+        lastRunError: error,
+      },
+    });
+    expect(await controller.loadHistory()).toBe(true);
+    expect(controller.state.transcript.activeTurn).toMatchObject({
+      status: 'error',
+      items: [{ type: 'terminal', message: error }],
+    });
+    expect(controller.state.chatMessages[1]).toMatchObject({
+      content: failure.errorMessage,
+      isError: true,
+    });
+    expect(
+      projectPersistedMessagesForActiveTurn(
+        controller.state.chatMessages,
+        controller.state.transcript.activeTurn,
+      ),
+    ).toEqual(controller.state.chatMessages);
+    controller.disconnect();
+  },
+);
 
 test.each(['thinking', 'responding', 'retrying'] as const)(
   'background tool history repair preserves the newer %s phase',

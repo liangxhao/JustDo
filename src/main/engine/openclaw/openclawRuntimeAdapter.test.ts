@@ -544,7 +544,9 @@ test('recovers a native worktree binding before first preparation and after cach
   const { store, session } = createEmptyStore();
   const key = 'agent:main:subagent:child';
   const nativeSession = { ...session, nativeSessionKey: key };
-  const getSessionByNativeKey = vi.fn((candidate: string) => candidate === key ? nativeSession : null);
+  const getSessionByNativeKey = vi.fn((candidate: string) =>
+    candidate === key ? nativeSession : null,
+  );
   const adapter = new OpenClawRuntimeAdapter({ ...store, getSessionByNativeKey }, {});
   const internals = adapter as unknown as {
     sessionIdBySessionKey: Map<string, string>;
@@ -562,10 +564,13 @@ test('recovers a native worktree binding before first preparation and after cach
 test('does not recover a persisted native key bound to a different agent', () => {
   const { store, session } = createEmptyStore();
   const key = 'agent:other:subagent:child';
-  const adapter = new OpenClawRuntimeAdapter({
-    ...store,
-    getSessionByNativeKey: () => ({ ...session, nativeSessionKey: key }),
-  }, {});
+  const adapter = new OpenClawRuntimeAdapter(
+    {
+      ...store,
+      getSessionByNativeKey: () => ({ ...session, nativeSessionKey: key }),
+    },
+    {},
+  );
   expect(adapter.resolveDiagnosticSession('native-run', key)).toBeNull();
 });
 
@@ -731,6 +736,41 @@ test('getSessionRuntimeStatuses shares one Gateway snapshot across concurrent ca
   await expect(Promise.all([first, second])).resolves.toEqual([
     { known: true, mainRunning: false, subagentRunning: false, running: false },
     { known: true, mainRunning: false, subagentRunning: false, running: false },
+  ]);
+});
+
+test('omits pending-input harness rows while advancing native runtime list pagination', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn(async (_method: string, params: { offset?: number }) =>
+    params.offset === 1
+      ? { sessions: [{ key: 'agent:main:justdo:session-1', hasActiveRun: false }], hasMore: false }
+      : {
+          sessions: [
+            {
+              key: 'agent:main:harness:justdo-team-holding:room:1',
+              spawnedBy: 'agent:main:justdo:session-1',
+              hasActiveRun: true,
+            },
+          ],
+          hasMore: true,
+        },
+  );
+  adapter.rememberSessionKey('session-1', 'agent:main:justdo:session-1');
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    request,
+  } as unknown as GatewayClientLike;
+  await expect(
+    adapter.getSessionRuntimeStatus('session-1', { includeSubagents: true, fullScan: true }),
+  ).resolves.toEqual({
+    known: true,
+    mainRunning: false,
+    subagentRunning: false,
+    running: false,
+  });
+  expect(request.mock.calls.map(([, params]) => params)).toEqual([
+    { limit: 500 },
+    { limit: 500, offset: 1 },
   ]);
 });
 

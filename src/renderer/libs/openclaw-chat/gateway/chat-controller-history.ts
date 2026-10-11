@@ -1227,6 +1227,13 @@ export async function loadHistory(
         !replacesHistoryProjection &&
         !options.reconcileSuspended &&
         !catchesUpMissingInitialHistory,
+      bootstrapActiveRun:
+        !this.expectInitialHistory &&
+        !this.state.initialHistoryReady &&
+        !deferHistoryBranchReplacement &&
+        result?.inFlightRun?.runId === this.state.transcript.activeTurn?.runId
+          ? result.inFlightRun
+          : undefined,
       isVisibleMessage: message => !shouldHideMessage(message),
     });
     if (!reconciliation.accepted) {

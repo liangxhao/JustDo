@@ -76,6 +76,9 @@ describe('AskUserQuestion extension', () => {
     const factory = registerTool.mock.calls[0][0];
     expect(factory({ sessionKey: 'agent:main:subagent:child' })).toBeNull();
     expect(factory({ sessionKey: 'agent:main:unrelated:session' })).toBeNull();
+    expect(factory({ sessionKey: 'agent:alice:justdo-team:group:room' })).toMatchObject({
+      name: 'AskUserQuestion',
+    });
     expect(factory({ sessionKey: 'agent:main:justdo:session-1' })).toMatchObject({
       name: 'AskUserQuestion',
       description: ASK_USER_QUESTION_DESCRIPTION,

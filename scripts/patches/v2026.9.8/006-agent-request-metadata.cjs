@@ -246,10 +246,21 @@ function patchAgentStream(content, runtimeDir, filePath) {
   ).exec(body)?.[1];
   if (!attemptName || !sessionName)
     throw new Error(`${filePath}: transport attempt/session variables are unknown`);
-  const assertionName = /\b([A-Za-z_$][\w$]*)\s*=\s*resolveAdmittedRunActiveAssertion\(/.exec(
-    body,
-  )?.[1];
-  if (!assertionName) throw new Error(`${filePath}: transport authority assertion is missing`);
+  // Sharing the native authority owner keeps this resolver as an external ESM
+  // import. esbuild gives repeated imports numeric local suffixes in the bundle.
+  // Native source still requires its exact pinned name; neither missing nor
+  // ambiguous assertions may bypass the final provider boundary.
+  const resolver = isGatewayBundlePath(filePath)
+    ? 'resolveAdmittedRunActiveAssertion\\d*'
+    : 'resolveAdmittedRunActiveAssertion';
+  const assertions = [
+    ...body.matchAll(new RegExp(`\\b([A-Za-z_$][\\w$]*)\\s*=\\s*${resolver}\\(`, 'g')),
+  ];
+  if (assertions.length !== 1)
+    throw new Error(
+      `${filePath}: transport authority assertion is ${assertions.length ? 'ambiguous' : 'missing'}`,
+    );
+  const assertionName = assertions[0][1];
   const installationNeedle = `${sessionName}.agent.streamFn = await wrapJustDoAgentRequestMetadata(`;
   if (body.includes(installationNeedle)) return updated;
   const installation = `${sessionName}.agent.streamFn = await wrapJustDoAgentRequestMetadata(${sessionName}.agent.streamFn, {

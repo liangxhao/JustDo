@@ -12,6 +12,7 @@ import {
   extractThinkingCached,
 } from '@/libs/openclaw-chat/pipeline/message-extract';
 import {
+  isTeamDiscussionInput,
   isTrustedPeerInput,
   normalizeMessage,
   stripMessageDisplayMetadataText,
@@ -977,7 +978,8 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
     (Array.isArray(props.messages) ? props.messages : []).filter(
       message =>
         !isAssistantHeartbeatAckForDisplay(message) &&
-        (props.peerPerspective === true || !isTrustedPeerInput(message)),
+        (props.peerPerspective === true ||
+          (!isTrustedPeerInput(message) && !isTeamDiscussionInput(message))),
     ),
   );
   const tools = Array.isArray(props.toolMessages) ? props.toolMessages : [];

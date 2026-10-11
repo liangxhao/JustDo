@@ -175,6 +175,29 @@ test('stops an acknowledged turn with the Gateway root run before lifecycle even
   });
 });
 
+test('does not send native input when the Main-owned launch boundary rejects it', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.on('error', vi.fn());
+  const request = vi.fn().mockResolvedValue({});
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike;
+    prepareSession: () => Promise<{ sessionKey: string; gatewaySessionId: string }>;
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.prepareSession = vi
+    .fn()
+    .mockResolvedValue({ sessionKey: 'agent:main:justdo:session-1', gatewaySessionId: 'native-1' });
+  const beforeNativeSend = vi.fn().mockRejectedValue(new Error('launch cancelled'));
+  const onNativeSendAbandoned = vi.fn().mockResolvedValue(undefined);
+  await expect(
+    adapter.startSession(session.id, 'start team', { beforeNativeSend, onNativeSendAbandoned }),
+  ).rejects.toThrow('launch cancelled');
+  expect(beforeNativeSend).toHaveBeenCalledOnce();
+  expect(onNativeSendAbandoned).toHaveBeenCalledOnce();
+  expect(request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
+});
+
 test('waits for Gateway confirmation before clearing a stopped session', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
@@ -797,16 +820,28 @@ test.each(['end', 'error'])('unsettled lifecycle %s cannot finish an active exec
     adapter.rememberSessionKey('session-1', sessionKey);
     adapter.ensureActiveTurn('session-1', sessionKey, 'run-1');
     for (const executionSettled of [undefined, false]) {
-      adapter.handleGatewayEvent({ event: 'agent', payload: {
-        runId: 'run-1', sessionKey, stream: 'lifecycle', data: { phase, executionSettled },
-      } });
+      adapter.handleGatewayEvent({
+        event: 'agent',
+        payload: {
+          runId: 'run-1',
+          sessionKey,
+          stream: 'lifecycle',
+          data: { phase, executionSettled },
+        },
+      });
       vi.advanceTimersByTime(2000);
       expect(adapter.isSessionActive('session-1')).toBe(true);
       expect(complete).not.toHaveBeenCalled();
     }
-    adapter.handleGatewayEvent({ event: 'agent', payload: {
-      runId: 'run-1', sessionKey, stream: 'lifecycle', data: { phase: 'end', executionSettled: true },
-    } });
+    adapter.handleGatewayEvent({
+      event: 'agent',
+      payload: {
+        runId: 'run-1',
+        sessionKey,
+        stream: 'lifecycle',
+        data: { phase: 'end', executionSettled: true },
+      },
+    });
     vi.advanceTimersByTime(1500);
     expect(adapter.isSessionActive('session-1')).toBe(false);
     expect(complete).toHaveBeenCalledExactlyOnceWith('session-1', 'idle');
@@ -1334,7 +1369,8 @@ test.each([
 ])('does not settle the current turn from a nonterminal or foreign session row: %j', row => {
   const { session, store } = createEmptyStore();
   session.status = 'running';
-  store.updateSession = (_sessionId: string, updates: Record<string, unknown>) => Object.assign(session, updates);
+  store.updateSession = (_sessionId: string, updates: Record<string, unknown>) =>
+    Object.assign(session, updates);
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const complete = vi.fn();
   adapter.on('complete', complete);
@@ -1346,9 +1382,16 @@ test.each([
   expect(adapter.activeTurns.has('session-1')).toBe(true);
   expect(session.status).toBe('running');
   expect(complete).not.toHaveBeenCalled();
-  adapter.handleGatewayEvent({ event: 'sessions.changed', payload: {
-    sessionKey: key, sessionId: 'native-current', lastRunId: 'run-current', status: 'done', hasActiveRun: false,
-  } });
+  adapter.handleGatewayEvent({
+    event: 'sessions.changed',
+    payload: {
+      sessionKey: key,
+      sessionId: 'native-current',
+      lastRunId: 'run-current',
+      status: 'done',
+      hasActiveRun: false,
+    },
+  });
   expect(adapter.activeTurns.has('session-1')).toBe(false);
   expect(complete).toHaveBeenCalledWith('session-1', 'idle');
 });

@@ -6,6 +6,8 @@
 | ---------------------------------------------------- | -------------------------------------------------------- |
 | [产品体验候选](openclaw-control-ui-adoption-plan.md) | 导航、门户、成果、活动与管理增强；每项先核对真实剩余差异 |
 | [高级协作候选](multi-agent-adaptation-plan.md)       | 角色委派、运行中指导及其授权/身份准入条件                |
+| [Agent Team 验收](agent-team-acceptance.md)          | 生产 FIFO、来源转发、完整界面与语音、未知执行及后续候选  |
+| [MoA 独立扩展](moa-extension-plan.md)                | Provider SDK 原型、多参考模型聚合、权限与调用成本验收    |
 | [Worktree 验收](worktree-integration-plan.md)        | 真实 Gateway/模型、重启恢复、失败清理与平台验证          |
 | [内网功能验收](intranet-feature-acceptance.md)       | 公司模型技能审核、企业网页人工介入、冷历史恢复           |
 | [交互式回答验收](interactive-answers-acceptance.md)  | 真实模型、签名安装包、多平台及原生状态/渐进呈现的依赖    |

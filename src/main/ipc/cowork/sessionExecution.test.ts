@@ -1,7 +1,11 @@
+import { EventEmitter } from 'node:events';
+
 import path from 'path';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { appendAgentTeamInstruction } from '../../../shared/cowork/agent-team/agentTeamPrompt';
 import { SessionStartIpc } from '../../../shared/cowork/sessionStart';
+import type { AgentTeamLaunchCoordinator } from '../../cowork/agentTeamLaunchCoordinator';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 
@@ -17,6 +21,81 @@ vi.mock('electron', () => ({
 }));
 
 import { registerCoworkSessionExecutionHandlers } from './sessionExecution';
+
+test('keeps Team launch hooks when the first message is delegated to its current viewer', async () => {
+  const created = session('ask');
+  const frame = { url: 'http://127.0.0.1:43127/' };
+  const owner = Object.assign(new EventEmitter(), {
+    mainFrame: frame,
+    getURL: () => frame.url,
+    isDestroyed: () => false,
+  });
+  const window = { webContents: owner, isDestroyed: () => false };
+  const launch = {
+    register: vi.fn().mockResolvedValue(undefined),
+    markSubmissionStarted: vi.fn().mockResolvedValue(undefined),
+    abortBeforeSend: vi.fn().mockResolvedValue(true),
+  };
+  const startSession = vi.fn(
+    async (
+      _id: string,
+      _prompt: string,
+      options: {
+        dispatchChatSend?: unknown;
+        beforeNativeSend?: () => Promise<void>;
+        onNativeSendAbandoned?: () => Promise<void>;
+        onAccepted: () => void;
+      },
+    ) => {
+      expect(options.dispatchChatSend).toBeTypeOf('function');
+      await options.beforeNativeSend!();
+      await options.onNativeSendAbandoned!();
+      options.onAccepted();
+    },
+  );
+  registerCoworkSessionExecutionHandlers({
+    getMainWindow: () => window as never,
+    getAgentTeamLaunch: () => launch as unknown as AgentTeamLaunchCoordinator,
+    ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
+    getCoworkStore: () =>
+      ({
+        getConfig: () => ({ workingDirectory: 'C:/project', permissionMode: 'ask' }),
+        getAgent: () => ({ enabled: true, model: '' }),
+        getSessionRunByClientTurnId: () => undefined,
+        createSession: () => created,
+        getSession: () => created,
+        updateSession: vi.fn(),
+      }) as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({ startSession }) as unknown as CoworkEngineRouter,
+    waitForConfigUpdates: async () => {},
+    getEngineNotReadyResponse: vi.fn(),
+  });
+  const prompt = appendAgentTeamInstruction('Compare two designs', 'group');
+  await expect(
+    handlers.get('cowork:session:start')!(
+      { sender: owner, senderFrame: frame },
+      {
+        prompt,
+        rendererDispatch: true,
+        clientTurnId: 'team-initial-viewer',
+      },
+    ),
+  ).resolves.toMatchObject({ success: true });
+
+  expect(launch.register).toHaveBeenCalledWith(
+    expect.objectContaining({
+      sessionId: created.id,
+      clientTurnId: 'team-initial-viewer',
+      prompt,
+    }),
+  );
+  expect(launch.markSubmissionStarted).toHaveBeenCalledExactlyOnceWith(
+    created.id,
+    'team-initial-viewer',
+  );
+  expect(launch.abortBeforeSend).toHaveBeenCalledExactlyOnceWith(created.id, 'team-initial-viewer');
+  expect(owner.listenerCount('did-start-navigation')).toBe(0);
+});
 
 const session = (permissionMode: 'ask' | 'auto' | 'full'): CoworkSession => ({
   id: 'session-1',
@@ -37,11 +116,11 @@ describe('worktree first-message admission', () => {
     const created = session('ask');
     const root = path.resolve('native-worktrees', 'task-1');
     let resolveCreation!: (value: unknown) => void;
-    const nativeCreation = new Promise(resolve => { resolveCreation = resolve; });
+    const nativeCreation = new Promise(resolve => {
+      resolveCreation = resolve;
+    });
     const requestGateway = vi.fn((method: string) =>
-      method === 'sessions.create'
-        ? nativeCreation
-        : Promise.resolve({ ok: true, deleted: true }),
+      method === 'sessions.create' ? nativeCreation : Promise.resolve({ ok: true, deleted: true }),
     );
     const store = {
       getConfig: () => ({ workingDirectory: created.cwd, permissionMode: 'ask' }),
@@ -49,13 +128,19 @@ describe('worktree first-message admission', () => {
       createSession: () => created,
       getSession: () => created,
       getSessionRunByClientTurnId: () => undefined,
-      updateSession: vi.fn((_id: string, changes: Partial<CoworkSession>) => Object.assign(created, changes)),
-      bindNativeSession: vi.fn((_id: string, key: string) => { created.nativeSessionKey = key; }),
+      updateSession: vi.fn((_id: string, changes: Partial<CoworkSession>) =>
+        Object.assign(created, changes),
+      ),
+      bindNativeSession: vi.fn((_id: string, key: string) => {
+        created.nativeSessionKey = key;
+      }),
       deleteSession: vi.fn(),
     };
-    const startSession = vi.fn(async (_id: string, _prompt: string, options: { onAccepted: () => void }) => {
-      options.onAccepted();
-    });
+    const startSession = vi.fn(
+      async (_id: string, _prompt: string, options: { onAccepted: () => void }) => {
+        options.onAccepted();
+      },
+    );
     registerCoworkSessionExecutionHandlers({
       ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
       getCoworkStore: () => store as unknown as CoworkStore,
@@ -64,14 +149,22 @@ describe('worktree first-message admission', () => {
       getEngineNotReadyResponse: vi.fn(),
       requestGateway: requestGateway as <T>(method: string, params?: unknown) => Promise<T>,
     });
-    const resolve = () => resolveCreation({
-      key: 'agent:main:justdo:session-1', sessionId: 'native-1',
-      entry: { sessionRoot: root, permissionMode: 'guarded', worktree: { id: 'tree-1' } },
-      worktree: { id: 'tree-1', path: root },
-    });
-    const start = () => handlers.get('cowork:session:start')!({}, {
-      prompt: 'work independently', worktree: true, clientTurnId: 'worktree-client-1',
-    }) as Promise<unknown>;
+    const resolve = () =>
+      resolveCreation({
+        key: 'agent:main:justdo:session-1',
+        sessionId: 'native-1',
+        entry: { sessionRoot: root, permissionMode: 'guarded', worktree: { id: 'tree-1' } },
+        worktree: { id: 'tree-1', path: root },
+      });
+    const start = () =>
+      handlers.get('cowork:session:start')!(
+        {},
+        {
+          prompt: 'work independently',
+          worktree: true,
+          clientTurnId: 'worktree-client-1',
+        },
+      ) as Promise<unknown>;
     return { start, resolve, requestGateway, store, startSession, root };
   };
 
@@ -83,7 +176,9 @@ describe('worktree first-message admission', () => {
     fixture.resolve();
     await expect(pending).resolves.toMatchObject({ success: true, session: { cwd: fixture.root } });
     expect(fixture.startSession).toHaveBeenCalledWith(
-      'session-1', 'work independently', expect.objectContaining({ workspaceRoot: fixture.root }),
+      'session-1',
+      'work independently',
+      expect.objectContaining({ workspaceRoot: fixture.root }),
     );
   });
 
@@ -95,7 +190,8 @@ describe('worktree first-message admission', () => {
     fixture.resolve();
     await expect(pending).resolves.toMatchObject({ success: false, cancelled: true });
     expect(fixture.requestGateway).toHaveBeenCalledWith('sessions.delete', {
-      key: 'agent:main:justdo:session-1', deleteTranscript: true,
+      key: 'agent:main:justdo:session-1',
+      deleteTranscript: true,
     });
     expect(fixture.store.deleteSession).toHaveBeenCalledWith('session-1');
     expect(fixture.startSession).not.toHaveBeenCalled();

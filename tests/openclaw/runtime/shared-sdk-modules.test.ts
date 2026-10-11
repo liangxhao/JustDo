@@ -9,6 +9,9 @@ import { afterEach, expect, test } from 'vitest';
 const {
   createSharedSdkModulesPlugin,
 } = require('../../../scripts/openclaw/openclaw-shared-sdk-modules.cjs');
+const {
+  transform: detachPeerDispatcher,
+} = require('../../../scripts/patches/v2026.9.8/039-peer-transcript-write-scope.cjs').__testing;
 const roots: string[] = [];
 afterEach(() => roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true })));
 
@@ -97,6 +100,86 @@ test('Gateway and separately loaded SDK share activation, rotation, revocation a
     export function loadPersistedAuthProfileStoreAtDatabasePath(key) { throw migration.get(key) || new AuthStoreError(); }`,
   );
   fs.writeFileSync(
+    path.join(root, 'dist/plugin-sdk/reply-runtime.js'),
+    "export * from '../admitted-run-context.js'; export * from '../gateway-context-binding-owner.js'; export * from '../transcript-write-context.js'; export * from '../cli-history-boundary.js';",
+  );
+  fs.writeFileSync(
+    path.join(root, 'dist/cli-history-boundary.js'),
+    `import { AsyncLocalStorage } from 'node:async_hooks';
+    const cliHistoryWriter = new AsyncLocalStorage();
+    export function runWithCliHistoryWriter(writer, run) {
+      return writer ? cliHistoryWriter.run(writer, run) : cliHistoryWriter.exit(run);
+    }
+    export function getCliHistoryWriter(target) {
+      const writer = cliHistoryWriter.getStore();
+      return writer && writer.target.agentId === target.agentId &&
+        writer.target.sessionId === target.sessionId &&
+        writer.target.sessionKey === target.sessionKey &&
+        writer.target.storePath === target.storePath ? writer : undefined;
+    }`,
+  );
+  fs.writeFileSync(
+    path.join(root, 'dist/transcript-write-context.js'),
+    `import { AsyncLocalStorage } from 'node:async_hooks';
+    import { runWithCliHistoryWriter } from './cli-history-boundary.js';
+    const writers = new AsyncLocalStorage();
+    export const getWriter = () => writers.getStore();
+    export const withWriter = (writer, run) => writers.run(writer, run);
+    export const withoutWriter = run => writers.exit(() => runWithCliHistoryWriter(undefined, run));
+    export function captureOwnedTranscriptWriteAssertion(target) {
+      const writer = writers.getStore();
+      return () => {
+        if (writer && (writer.target !== target || writer.revoked)) throw new Error('writer rebound');
+      };
+    }`,
+  );
+  fs.writeFileSync(
+    path.join(root, 'dist/peer-dispatch.js'),
+    detachPeerDispatcher(`import { AsyncLocalStorage } from 'node:async_hooks';
+    const runBoundInProcessGatewayCall = run => run();
+    const withInProcessAgentRuntimeIdentity = () => undefined;
+    const dispatchGatewayMethodInProcess = (method, params) => params.run();
+    async function callAgentToolGatewayRequestBound(request, resolver, identity, assertCaller, forceTransport = false, revalidate = true) {
+      const signal = request.signal;
+      const guard = request.sessionMutationCommitGuard;
+      request.assertDispatchCurrent?.();
+      assertCaller?.();
+      guard?.();
+      signal?.throwIfAborted();
+      return runBoundInProcessGatewayCall(() => dispatchGatewayMethodInProcess(request.method, request.params, withInProcessAgentRuntimeIdentity()));
+    }
+    export function bindPeerDispatcher() {
+      const snapshot = AsyncLocalStorage.snapshot();
+      return request => snapshot(() => callAgentToolGatewayRequestBound(request, {}, {}, () => undefined));
+    }`, '<fixture>', { module: './transcript-write-context.js', exportName: 'withoutWriter' }),
+  );
+  fs.writeFileSync(
+    path.join(root, 'dist/gateway-context-binding-owner.js'),
+    `const key = Symbol('gatewayContextBindingOwner');
+    class Owner {
+      #owner;
+      constructor(owner) { this.#owner = owner; }
+      static read(value, owner) { return typeof value === 'object' && value !== null && #owner in value && value.#owner === owner ? value : undefined; }
+    }
+    export function prepareGatewayContextBindingOwner(owner) {
+      if (!Owner.read(owner[key], owner)) Object.defineProperty(owner, key, { value: new Owner(owner) });
+      return owner;
+    }`,
+  );
+  fs.writeFileSync(
+    path.join(root, 'dist/admitted-run-context.js'),
+    `const issued = new WeakSet();
+    export function createAdmittedRunOperatorAuthority(source) {
+      const authority = Object.freeze({ assertCurrent: source.assertCurrent });
+      issued.add(authority);
+      return authority;
+    }
+    export function assertAdmittedRunOperatorAuthority(authority) {
+      if (!issued.has(authority)) throw new Error('operator run authority must be issued by the host');
+      authority.assertCurrent();
+    }`,
+  );
+  fs.writeFileSync(
     path.join(root, 'dist/gateway.js'),
     `
     export { activate } from './state.js';
@@ -109,6 +192,11 @@ test('Gateway and separately loaded SDK share activation, rotation, revocation a
     export * from './scope.js';
     export * from './config-state.js';
     export * from './auth-owners.js';
+    export * from './admitted-run-context.js';
+    export * from './gateway-context-binding-owner.js';
+    export * from './transcript-write-context.js';
+    export * from './cli-history-boundary.js';
+    export * from './peer-dispatch.js';
   `,
   );
   const original = fs.readFileSync(path.join(root, 'dist/state.js'), 'utf8');
@@ -127,10 +215,101 @@ test('Gateway and separately loaded SDK share activation, rotation, revocation a
     `
     import assert from 'node:assert/strict';
     import * as sdk from './dist/plugin-sdk/secret-input-runtime.js';
+    import * as replySdk from './dist/plugin-sdk/reply-runtime.js';
     import * as broken from './broken-bundle.mjs';
     import * as host from './gateway-bundle.mjs';
     import * as nativeOwners from './dist/owners.js';
     import * as nativeErrors from './dist/errors.js';
+    const sourceTarget = { agentId:'main', sessionId:'source-sid', sessionKey:'agent:main:source', storePath:'source-store' };
+    const peerTarget = { agentId:'peer', sessionId:'peer-sid', sessionKey:'agent:peer:target', storePath:'peer-store' };
+    let sourceActive = true;
+    const sourceCli = { target: sourceTarget, assertCurrent() { if (!sourceActive) throw new Error('source stopped'); } };
+    const peerCli = { target: peerTarget, assertCurrent() {} };
+    const peerWriter = { target: 'peer' };
+    const scopedSourceWriter = { target: 'organizer' };
+    // Both native private carriers must be shared. Sharing only transcript
+    // ownership leaves the bundled CLI producer outside the SDK detach scope.
+    await broken.runWithCliHistoryWriter(sourceCli, async () => {
+      await replySdk.withoutWriter(async () => {
+        await Promise.resolve();
+        assert.equal(broken.getCliHistoryWriter(sourceTarget), sourceCli);
+      });
+    });
+    let releasePeer;
+    let peerTail;
+    await host.withWriter(scopedSourceWriter, () => host.runWithCliHistoryWriter(sourceCli, async () => {
+      const call = host.bindPeerDispatcher();
+      await call({ method:'sessions.patch', params:{ run:async () => {
+        await Promise.resolve();
+        assert.equal(host.getWriter(), scopedSourceWriter);
+        assert.equal(replySdk.getCliHistoryWriter(sourceTarget), sourceCli);
+      } } });
+      await call({ method:'agent', params:{ run:async () => {
+        await Promise.resolve();
+        assert.equal(host.getWriter(), undefined);
+        assert.equal(host.getCliHistoryWriter(sourceTarget), undefined);
+        assert.equal(replySdk.getCliHistoryWriter(sourceTarget), undefined);
+        await replySdk.withWriter(peerWriter, () => replySdk.runWithCliHistoryWriter(peerCli, async () => {
+          assert.equal(host.getWriter(), peerWriter);
+          assert.equal(host.getCliHistoryWriter(peerTarget), peerCli);
+          peerTail = (async () => {
+            await new Promise(resolve => { releasePeer = resolve; });
+            assert.equal(host.getWriter(), peerWriter);
+            assert.equal(host.getCliHistoryWriter(peerTarget), peerCli);
+            assert.equal(host.getCliHistoryWriter(sourceTarget), undefined);
+            replySdk.captureOwnedTranscriptWriteAssertion('peer')();
+            host.getCliHistoryWriter(peerTarget).assertCurrent();
+          })();
+        }));
+        assert.equal(host.getWriter(), undefined);
+        assert.equal(host.getCliHistoryWriter(peerTarget), undefined);
+      } } });
+      assert.equal(host.getWriter(), scopedSourceWriter);
+      assert.equal(replySdk.getCliHistoryWriter(sourceTarget), sourceCli);
+      sourceActive = false;
+      scopedSourceWriter.revoked = true;
+      assert.throws(() => host.getCliHistoryWriter(sourceTarget).assertCurrent(), /source stopped/);
+      assert.throws(replySdk.captureOwnedTranscriptWriteAssertion('organizer'), /writer rebound/);
+    }));
+    releasePeer();
+    await peerTail;
+    assert.equal(host.getWriter(), undefined);
+    assert.equal(host.getCliHistoryWriter(sourceTarget), undefined);
+    const sourceWriter = { target: 'organizer' };
+    await broken.withWriter(sourceWriter, async () => {
+      await replySdk.withoutWriter(async () => {
+        await Promise.resolve();
+        assert.equal(broken.getWriter(), sourceWriter);
+        assert.throws(broken.captureOwnedTranscriptWriteAssertion('peer'), /writer rebound/);
+      });
+    });
+    await host.withWriter(sourceWriter, async () => {
+      await replySdk.withoutWriter(async () => {
+        await Promise.resolve();
+        assert.equal(host.getWriter(), undefined);
+        host.captureOwnedTranscriptWriteAssertion('peer')();
+      });
+      assert.equal(replySdk.getWriter(), sourceWriter);
+      assert.throws(replySdk.captureOwnedTranscriptWriteAssertion('peer'), /writer rebound/);
+      const assertOriginalWriter = replySdk.captureOwnedTranscriptWriteAssertion('organizer');
+      assertOriginalWriter();
+      sourceWriter.revoked = true;
+      assert.throws(assertOriginalWriter, /writer rebound/);
+    });
+    assert.equal(host.getWriter(), undefined);
+    const foreignContext = Object.freeze(broken.prepareGatewayContextBindingOwner({}));
+    assert.throws(() => replySdk.prepareGatewayContextBindingOwner(foreignContext), /not extensible/);
+    const context = Object.freeze(host.prepareGatewayContextBindingOwner({}));
+    assert.equal(replySdk.prepareGatewayContextBindingOwner(context), context);
+    const brokenAuthority = broken.createAdmittedRunOperatorAuthority({ assertCurrent() {} });
+    assert.throws(() => replySdk.assertAdmittedRunOperatorAuthority(brokenAuthority), /issued by the host/);
+    let revoked = false;
+    const authority = host.createAdmittedRunOperatorAuthority({ assertCurrent() { if (revoked) throw new Error('revoked'); } });
+    replySdk.assertAdmittedRunOperatorAuthority(authority);
+    host.assertAdmittedRunOperatorAuthority(replySdk.createAdmittedRunOperatorAuthority({ assertCurrent() {} }));
+    assert.throws(() => replySdk.assertAdmittedRunOperatorAuthority({ ...authority }), /issued by the host/);
+    revoked = true;
+    assert.throws(() => replySdk.assertAdmittedRunOperatorAuthority(authority), /revoked/);
     assert.equal(nativeOwners.classify(broken.createError()), 'unknown');
     assert.equal(host.classifyCreatedError(), 'unavailable');
     assert.equal(nativeOwners.classify(host.createError()), 'unavailable');
@@ -180,8 +359,13 @@ test('Gateway and separately loaded SDK share activation, rotation, revocation a
   );
 });
 
-test('fails clearly when the pinned SDK entry is missing', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'missing-native-sdk-'));
-  roots.push(root);
-  expect(() => createSharedSdkModulesPlugin(root, esbuild)).toThrow('Missing native');
-});
+test.each(['secret-input-runtime', 'reply-runtime'])(
+  'fails clearly when the pinned %s SDK entry is missing', missing => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'missing-native-sdk-'));
+    roots.push(root);
+    fs.mkdirSync(path.join(root, 'dist/plugin-sdk'), { recursive: true });
+    for (const name of ['secret-input-runtime', 'reply-runtime'])
+      if (name !== missing) fs.writeFileSync(path.join(root, 'dist/plugin-sdk', `${name}.js`), '');
+    expect(() => createSharedSdkModulesPlugin(root, esbuild)).toThrow(`Missing native ${missing}`);
+  },
+);

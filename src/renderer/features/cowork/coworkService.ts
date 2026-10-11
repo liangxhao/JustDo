@@ -1015,21 +1015,28 @@ export class CoworkService {
     return { session: null, error: result.error };
   }
 
-  async loadSession(sessionId: string): Promise<CoworkSession | null> {
+  async loadSession(
+    sessionId: string,
+    options: { canSelect?: () => boolean; onSelected?: () => void } = {},
+  ): Promise<CoworkSession | null> {
     const cowork = window.electron?.cowork;
-    if (!cowork) return null;
+    if (!cowork || options.canSelect?.() === false) return null;
     const requestId = ++this.latestLoadSessionRequestId;
     const modelRevision = this.sessionModelRevisions.get(sessionId) ?? 0;
     const modelReadVersion = (this.sessionModelReadVersions.get(sessionId) ?? 0) + 1;
     this.sessionModelReadVersions.set(sessionId, modelReadVersion);
 
     const result = await cowork.getSession(sessionId);
+    if (options.canSelect?.() === false) return null;
     if (result.success && result.session) {
       const selectedModel = cowork.getSessionModel
         ? await cowork
             .getSessionModel({ sessionId, agentId: result.session.agentId })
             .catch(() => null)
         : null;
+      // A navigation origin may disappear while either metadata read is pending.
+      // Once selected, normal session hydration must continue even if that selection unmounts it.
+      if (options.canSelect?.() === false) return null;
       // Keep only the latest session load result to avoid stale async overwrites.
       if (requestId !== this.latestLoadSessionRequestId) {
         return result.session;
@@ -1071,10 +1078,20 @@ export class CoworkService {
       }
       store.dispatch(setStreaming(mainRuntimeRunning));
 
+      // Commit navigation-owned drafts before selection effects unmount their origin.
+      // The selection guard above has already authorized this synchronous phase.
+      let selectionFailure: { error: unknown } | undefined;
+      try {
+        options.onSelected?.();
+      } catch (error) {
+        selectionFailure = { error };
+      }
+
       const imResult = await cowork.remoteManaged(sessionId);
       if (requestId === this.latestLoadSessionRequestId) {
         store.dispatch(setRemoteManaged(imResult?.remoteManaged ?? false));
       }
+      if (selectionFailure) throw selectionFailure.error;
 
       return result.session;
     }

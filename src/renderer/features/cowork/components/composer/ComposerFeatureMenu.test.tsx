@@ -6,6 +6,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import type { ExtensionEnablement } from '@/features/plugins/extensions/useExtensionEnablement';
 import { i18nService } from '@/services/i18n';
 
+import { buildAgentTeamFeature } from './AgentTeamSelector';
 import ComposerFeatureMenu, { type ComposerFeatureItem } from './ComposerFeatureMenu';
 import { buildComposerFeatures } from './composerFeatures';
 import { buildSwarmWorkflowComposerFeature } from './swarmWorkflowComposerFeature';
@@ -73,7 +74,12 @@ test('Swarm registers its own label, selection and action without changing menu 
   i18nService.setLanguage('en', { persist: false });
   const selectSwarmWorkflow = vi.fn();
   const items = buildComposerFeatures(
-    [buildSwarmWorkflowComposerFeature({ selectSwarmWorkflow, swarmWorkflow: { mode: 'auto', verify: true } })],
+    [
+      buildSwarmWorkflowComposerFeature({
+        selectSwarmWorkflow,
+        swarmWorkflow: { mode: 'auto', verify: true },
+      }),
+    ],
     {
       loaded: true,
       enabled: new Map([[OpenClawExtensionId.SWARM_WORKFLOW, true]]),
@@ -91,7 +97,12 @@ test('does not register Swarm while its plugin is disabled even with a selected 
   const selectSwarmWorkflow = vi.fn();
   expect(
     buildComposerFeatures(
-      [buildSwarmWorkflowComposerFeature({ selectSwarmWorkflow, swarmWorkflow: { mode: 'auto', verify: true } })],
+      [
+        buildSwarmWorkflowComposerFeature({
+          selectSwarmWorkflow,
+          swarmWorkflow: { mode: 'auto', verify: true },
+        }),
+      ],
       {
         loaded: true,
         enabled: new Map([[OpenClawExtensionId.SWARM_WORKFLOW, false]]),
@@ -153,4 +164,108 @@ test('an empty registry hides the plus button and restoring an entry keeps the m
   view.rerender(<ComposerFeatureMenu items={[feature]} label="Features" />);
   expect(screen.getByRole('button')).toBeTruthy();
   expect(screen.queryByRole('menu')).toBeNull();
+});
+
+test('nested features coexist with flat entries and return to the root without selecting', () => {
+  const child = item('Discussion');
+  const team = { ...item('Team'), children: [child] };
+  render(<ComposerFeatureMenu items={[item('Swarm'), team]} label="Features" backLabel="Back" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Features' }));
+  fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Team' }), { key: 'ArrowRight' });
+  expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Discussion' }));
+  expect(screen.queryByRole('menuitem', { name: 'Back' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+  expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Team' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Team' }));
+  fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
+  expect(screen.getByRole('menuitem', { name: 'Swarm' })).toBeTruthy();
+  expect(team.onSelect).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Team' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Discussion' }));
+  expect(child.onSelect).toHaveBeenCalledOnce();
+  expect(screen.queryByRole('menu')).toBeNull();
+});
+
+test('registers Swarm and both Team modes in one menu with independent actions', () => {
+  i18nService.setLanguage('en', { persist: false });
+  const selectSwarm = vi.fn();
+  const selectTeam = vi.fn();
+  const items = buildComposerFeatures(
+    [
+      buildSwarmWorkflowComposerFeature({ selectSwarmWorkflow: selectSwarm }),
+      buildAgentTeamFeature('group', selectTeam),
+    ],
+    {
+      loaded: true,
+      enabled: new Map([
+        [OpenClawExtensionId.SWARM_WORKFLOW, true],
+        [OpenClawExtensionId.AGENT_TEAM, true],
+      ]),
+      disabledRevisions: new Map(),
+    },
+  );
+  render(<ComposerFeatureMenu items={items} label="Features" backLabel="Back" />);
+  expect(screen.getAllByRole('button')).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button'));
+  fireEvent.click(screen.getByRole('menuitem', { name: items[1].label }));
+  const choices = screen.getAllByRole('menuitemradio');
+  expect(choices).toHaveLength(2);
+  expect(choices[0].getAttribute('aria-checked')).toBe('true');
+  fireEvent.click(choices[1]);
+  expect(selectTeam).toHaveBeenCalledWith('task');
+  expect(selectSwarm).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button'));
+  fireEvent.click(screen.getByRole('menuitem', { name: items[0].label }));
+  expect(selectSwarm).toHaveBeenCalledWith({ mode: 'auto', verify: true });
+});
+
+test('removing Team while its submenu is open preserves the attachment action', () => {
+  const selectTeam = vi.fn();
+  const attachments = item('Attachments');
+  const team = buildAgentTeamFeature('group', selectTeam);
+  const settings = (enabled: boolean): ExtensionEnablement => ({
+    loaded: true,
+    enabled: new Map([[OpenClawExtensionId.AGENT_TEAM, enabled]]),
+    disabledRevisions: new Map(),
+  });
+  const view = render(
+    <ComposerFeatureMenu
+      items={buildComposerFeatures([attachments, team], settings(true))}
+      label="Features"
+      backLabel="Back"
+    />,
+  );
+  fireEvent.click(screen.getByRole('button'));
+  fireEvent.click(screen.getByRole('menuitem', { name: team.label }));
+  expect(screen.getAllByRole('menuitemradio')).toHaveLength(2);
+  view.rerender(
+    <ComposerFeatureMenu
+      items={buildComposerFeatures([attachments, team], settings(false))}
+      label="Features"
+      backLabel="Back"
+    />,
+  );
+  expect(screen.queryByRole('menuitemradio')).toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Attachments' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Attachments' }));
+  expect(attachments.onSelect).toHaveBeenCalledOnce();
+  expect(selectTeam).not.toHaveBeenCalled();
+});
+
+test('an open submenu uses the current mode and callback after rerendering', () => {
+  const oldSelect = vi.fn();
+  const select = vi.fn();
+  const view = render(
+    <ComposerFeatureMenu items={[buildAgentTeamFeature('group', oldSelect)]} label="Features" />,
+  );
+  fireEvent.click(screen.getByRole('button'));
+  fireEvent.click(screen.getByRole('menuitem'));
+  view.rerender(
+    <ComposerFeatureMenu items={[buildAgentTeamFeature('task', select)]} label="Features" />,
+  );
+  const choices = screen.getAllByRole('menuitemradio');
+  expect(choices[1].getAttribute('aria-checked')).toBe('true');
+  fireEvent.click(choices[0]);
+  expect(select).toHaveBeenCalledWith('group');
+  expect(oldSelect).not.toHaveBeenCalled();
 });

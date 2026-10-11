@@ -92,7 +92,10 @@ import {
 import { isEntryAfterLatestPlanImplementationReset } from '@/libs/openclaw-chat/model/transcript-identity';
 import { buildChatItems } from '@/libs/openclaw-chat/pipeline/build-chat-items';
 import { extractTextCached } from '@/libs/openclaw-chat/pipeline/message-extract';
-import { isTrustedPeerInput } from '@/libs/openclaw-chat/pipeline/message-normalizer';
+import {
+  isTeamDiscussionInput,
+  isTrustedPeerInput,
+} from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import type {
   ChatItem,
   GatewayMessage,
@@ -536,7 +539,9 @@ export class JustDoChatElement extends LitElement {
     }
     if (this.peerFilteredHistorySource !== messages) {
       this.peerFilteredHistorySource = messages;
-      this.peerFilteredHistory = messages.filter(message => !isTrustedPeerInput(message));
+      this.peerFilteredHistory = messages.filter(
+        message => !isTrustedPeerInput(message) && !isTeamDiscussionInput(message),
+      );
     }
     return this.peerFilteredHistory;
   }

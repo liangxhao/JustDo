@@ -206,6 +206,8 @@ const isMutatingTool = (event: {
   params?: unknown;
 }): boolean => {
   const normalized = event.toolName.trim().toLowerCase();
+  if (normalized === 'team_discussion')
+    return !isRecord(event.params) || event.params.action !== 'read';
   if (normalized === 'task_assistants')
     return Boolean(isRecord(event.params) && event.params.agentId);
   if (normalized === PRESENT_PLAN_TOOL.toLowerCase()) return false;

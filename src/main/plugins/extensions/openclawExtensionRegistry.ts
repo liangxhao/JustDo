@@ -33,7 +33,7 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
   },
   {
     id: OpenClawExtensionId.RUNTIME_SERVICES,
-    buildEntry: () => ({ enabled: true }),
+    buildEntry: () => ({ enabled: true, hooks: { allowConversationAccess: true } }),
   },
   {
     id: OpenClawExtensionId.PLAN_MODE,

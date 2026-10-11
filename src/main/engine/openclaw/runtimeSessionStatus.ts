@@ -1,6 +1,7 @@
 import { GoalExecutionPhase } from '../../../shared/cowork/sessionGoal';
 import type { CoworkStore } from '../../data/coworkStore';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
+import { isTeamDiscussionHoldingSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 import type { GatewayClientLike } from '../gateway/types';
 import {
   RUNTIME_SESSION_SNAPSHOT_TTL_MS,
@@ -374,7 +375,12 @@ export async function getRuntimeSessionSnapshot(
         ...(offset > 0 ? { offset } : {}),
       });
       const page = result.sessions ?? [];
-      sessions.push(...page);
+      sessions.push(
+        ...page.filter(
+          row =>
+            !isTeamDiscussionHoldingSessionKey(typeof row.key === 'string' ? row.key : undefined),
+        ),
+      );
       const hasMore =
         result.hasMore === true || (result.hasMore === undefined && page.length >= 500);
       if (!fullScan || !hasMore) {

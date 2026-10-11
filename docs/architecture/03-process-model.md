@@ -361,3 +361,9 @@ Main 不执行 Git、不采集或存储 Git 快照。
 文件打开仅允许单链接的普通文件，避免通过硬链接绕过原生 Diff 的内容保护。
 预览/Files 只返回核验过的路径，编辑器动作在 Main 调用现有 Windows 系统
 Open With 选择器。Renderer 不把原生远程路径交给本机 shell。
+
+## 群组讨论进程边界
+
+Renderer 经显式 teamDiscussion preload / IPC 访问 Main；Main 原子预留请求后调用扩展 admin RPC。扩展响应 accepted 后仍等待 native dispatch 结束，以保持 Gateway admission scope。Renderer 卸载只释放读取订阅，不停止后台讨论；停止与删除是显式操作。
+
+详见 [Agent Team 现行契约](../features/assistants/agent-team.md)。

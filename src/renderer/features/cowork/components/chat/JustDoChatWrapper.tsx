@@ -132,6 +132,7 @@ export interface JustDoChatWrapperRef {
       onRequestUnknown?: (runId: string) => void | Promise<void>;
       clientTurnId?: string;
       onRunBound?: (runId: string) => void | Promise<void>;
+      onRequestIssued?: () => void;
     },
   ) => Promise<void>;
   getExportSnapshot: () => {

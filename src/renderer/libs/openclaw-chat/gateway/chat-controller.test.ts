@@ -2399,6 +2399,27 @@ test('propagates a definitive send rejection so the product can settle its recei
   expect(controller.state.chatSending).toBe(false);
 });
 
+test('records issuance at native chat.send and never marks a failed pre-send sender as issued', async () => {
+  const controller = new ChatController();
+  const events: string[] = [];
+  const request = vi.fn(async () => {
+    events.push('native-send');
+    return { runId: 'client', status: 'ok' };
+  });
+  controller.state.client = { request } as never;
+  controller.state.sessionKey = 'session-a';
+  const onRequestIssued = vi.fn(() => {
+    events.push('issued');
+  });
+  await expect(controller.sendMessage('hello', [], undefined, { onRequestIssued })).rejects.toThrow(
+    'not connected',
+  );
+  expect(onRequestIssued).not.toHaveBeenCalled();
+  controller.state.connected = true;
+  await controller.sendMessage('hello', [], undefined, { onRequestIssued, clientTurnId: 'client' });
+  expect(events).toEqual(['issued', 'native-send']);
+});
+
 test('does not clear the active session when an earlier session stop completes', () => {
   const controller = new ChatController();
   controller.state.sessionKey = 'session-b';

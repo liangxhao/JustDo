@@ -148,3 +148,9 @@ Renderer 提交产品期望 → Main 校验并持久化 → 配置同步器生�
 架构变更应从共享合约追到实际注册、服务、消费方及测试。重点验证启动配置失败、快速停止、重连、卸载和部分删除，不能只跑首次成功发送。
 
 入口测试包括 `core/app/appShutdown.test.ts`、运行时 manager 测试、cowork handler/adapter 测试和 config sync 测试，均位于 `src/main/` 相应领域。本页说明现有责任和检查范围，不把测试文件存在等同于当前平台已通过验收。
+
+## Agent Team 双模式
+
+任务协作继续使用原有 peer room 与投递流程。群组讨论是现有可选 agent-team 扩展中的本地 Channel；Main 管理独立房间元数据，OpenClaw broadcast 管理成员调用及轮次。每次入站临时投影房间配置，不修改全局策略或写入每轮 roster。
+
+详见 [Agent Team 现行契约](../features/assistants/agent-team.md)。

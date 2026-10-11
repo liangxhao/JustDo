@@ -7,7 +7,8 @@
     "onCapabilities": ["hook"]
   },
   "contracts": {
-    "embeddingProviders": ["runtime-services"]
+    "embeddingProviders": ["runtime-services"],
+    "trustedToolPolicies": ["agent-team-launch"]
   },
   "configSchema": {
     "type": "object",

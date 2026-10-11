@@ -1,6 +1,7 @@
 import { BrowserWindow, ipcMain } from 'electron';
 
 import { MAIN_USER_AGENT_ID } from '../../../shared/agents/agents';
+import { recognizeAgentTeamMode } from '../../../shared/cowork/agent-team/agentTeamPrompt';
 import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
 import { hasMessageInput } from '../../../shared/cowork/messageInput';
 import { NativeSessionDispatchIpc } from '../../../shared/cowork/nativeSessionDispatch';
@@ -8,6 +9,7 @@ import { type CancelSessionStartInput, SessionStartIpc } from '../../../shared/c
 import { resolvePermissionMode } from '../../../shared/security/approvals';
 import { resolveTaskWorkingDirectory } from '../../core/filesystem/taskWorkspace';
 import { t } from '../../core/i18n';
+import type { AgentTeamLaunchCoordinator } from '../../cowork/agentTeamLaunchCoordinator';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import type { OpenClawEngineStatus } from '../../openclaw/runtime/openclawEngineManager';
@@ -19,6 +21,7 @@ import { captureInitialDispatchLease, NativeSessionDispatcher } from './nativeSe
 
 interface SessionExecutionHandlerDependencies {
   getMainWindow?: () => BrowserWindow | null;
+  getAgentTeamLaunch?: () => AgentTeamLaunchCoordinator;
   ensureEngineRunning: () => Promise<OpenClawEngineStatus>;
   getCoworkStore: () => CoworkStore;
   getCoworkEngineRouter: () => CoworkEngineRouter;
@@ -63,6 +66,7 @@ export const registerCoworkSessionExecutionHandlers = ({
   getEngineNotReadyResponse,
   requestGateway,
   getMainWindow,
+  getAgentTeamLaunch,
 }: SessionExecutionHandlerDependencies): void => {
   const nativeDispatcher = new NativeSessionDispatcher();
   ipcMain.handle(NativeSessionDispatchIpc.Respond, (event, input: unknown) =>
@@ -93,6 +97,9 @@ export const registerCoworkSessionExecutionHandlers = ({
         return { success: false, error: 'The start operation is no longer current.' };
       }
       try {
+        await getAgentTeamLaunch?.()
+          .cancel(timing.sessionId, input.clientTurnId)
+          .catch((): void => undefined);
         await getCoworkEngineRouter().stopSession(timing.sessionId, {
           diagnosticUserInitiated: true,
         });
@@ -112,6 +119,9 @@ export const registerCoworkSessionExecutionHandlers = ({
     if (operation.stopping) return operation.stopping;
     const stopping = (async () => {
       try {
+        await getAgentTeamLaunch?.()
+          .cancel(operation.sessionId!, input.clientTurnId)
+          .catch((): void => undefined);
         await getCoworkEngineRouter().stopSession(operation.sessionId!, {
           diagnosticUserInitiated: true,
         });
@@ -244,6 +254,25 @@ export const registerCoworkSessionExecutionHandlers = ({
           return { success: false, cancelled: true };
         }
       }
+      const outbound = options.gatewayPrompt ?? options.prompt;
+      const explicitTeam = recognizeAgentTeamMode(outbound) !== undefined;
+      if (explicitTeam) {
+        if (!getAgentTeamLaunch || !options.clientTurnId || options.planMode)
+          throw new Error('teamLaunchContractUnavailable');
+        if (operation) operation.sessionId = session.id;
+        await getAgentTeamLaunch().register({
+          sessionId: session.id,
+          clientTurnId: options.clientTurnId,
+          prompt: outbound.trim(),
+          assertCurrent: () => {
+            if (operation?.cancelled) throw new Error('teamLaunchContractUnavailable');
+          },
+        });
+        if (operation?.cancelled) {
+          await getAgentTeamLaunch().cancel(session.id, options.clientTurnId);
+          return { success: false, cancelled: true };
+        }
+      }
       store.updateSession(session.id, { status: 'running' });
       const timing =
         options.clientTurnId && Number.isFinite(options.startedAt)
@@ -290,6 +319,20 @@ export const registerCoworkSessionExecutionHandlers = ({
                   ),
               }
             : {}),
+          ...(explicitTeam
+            ? {
+                beforeNativeSend: async () => {
+                  if (operation?.cancelled) throw new Error('teamLaunchContractUnavailable');
+                  await getAgentTeamLaunch!().markSubmissionStarted(
+                    session.id,
+                    options.clientTurnId!,
+                  );
+                },
+                onNativeSendAbandoned: async () => {
+                  await getAgentTeamLaunch!().abortBeforeSend(session.id, options.clientTurnId!);
+                },
+              }
+            : {}),
           onAccepted: () => {
             admissionSettled = true;
             resolveAdmission();
@@ -314,6 +357,10 @@ export const registerCoworkSessionExecutionHandlers = ({
           }
         })
         .catch(error => {
+          if (explicitTeam)
+            void getAgentTeamLaunch!()
+              .cancel(session.id, options.clientTurnId)
+              .catch((): void => undefined);
           if (!admissionSettled) {
             admissionSettled = true;
             rejectAdmission(error);
@@ -341,7 +388,7 @@ export const registerCoworkSessionExecutionHandlers = ({
       return {
         success: false,
         ...(options?.worktree && operation?.cancelled ? { cancelled: true } : {}),
-        error: error instanceof Error ? error.message : 'Failed to start session',
+        error: error instanceof Error ? t(error.message) : 'Failed to start session',
       };
     } finally {
       dispatchLease?.dispose();

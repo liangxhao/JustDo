@@ -1,6 +1,7 @@
 import { createSlice, original, PayloadAction } from '@reduxjs/toolkit';
 import type { BrowserAnnotationDraft } from '@shared/browser/browser';
 import type { BrowserRecordingDraft } from '@shared/browser/browserRecording';
+import type { AgentTeamMode } from '@shared/cowork/agent-team/agentTeamPrompt';
 import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
 import { DEFAULT_MAX_GOAL_CONTINUATION_TURNS } from '@shared/cowork/sessionGoal';
 import type { SessionRuntimeSnapshot, SessionRunTiming } from '@shared/cowork/sessionRun';
@@ -21,6 +22,7 @@ import type {
 import type { Model } from '@/features/models/modelSlice';
 
 import type { MessageQuote } from './components/composer/messageQuote';
+import { MESSAGE_QUOTE_KIND, validCollaborationQuote } from './components/composer/messageQuote';
 
 export interface DraftAttachment {
   path: string;
@@ -38,6 +40,7 @@ interface CoworkState {
   currentSession: CoworkSession | null;
   draftPrompts: Record<string, string>;
   draftMessageQuotes: Record<string, MessageQuote[]>;
+  draftAgentTeamModes: Record<string, { id: string; mode: AgentTeamMode }>;
   /** Keyed by draftKey (sessionId or '__home__'), stores pending attachments */
   draftAttachments: Record<string, DraftAttachment[]>;
   /** Browser annotations are generated context and remain scoped to one composer draft. */
@@ -73,6 +76,7 @@ const initialState: CoworkState = {
   currentSession: null,
   draftPrompts: {},
   draftMessageQuotes: {},
+  draftAgentTeamModes: {},
   draftAttachments: {},
   draftBrowserAnnotations: {},
   draftBrowserRecordings: {},
@@ -263,10 +267,49 @@ const coworkSlice = createSlice({
       }
     },
 
+    setDraftAgentTeamMode(
+      state,
+      action: PayloadAction<{ draftKey: string; draft?: { id: string; mode: AgentTeamMode } }>,
+    ) {
+      if (action.payload.draft)
+        state.draftAgentTeamModes[action.payload.draftKey] = action.payload.draft;
+      else delete state.draftAgentTeamModes[action.payload.draftKey];
+    },
+    clearSubmittedAgentTeamMode(state, action: PayloadAction<{ draftKey: string; id: string }>) {
+      if (state.draftAgentTeamModes[action.payload.draftKey]?.id === action.payload.id)
+        delete state.draftAgentTeamModes[action.payload.draftKey];
+    },
     addDraftMessageQuote(state, action: PayloadAction<{ draftKey: string; quote: MessageQuote }>) {
       const { draftKey, quote } = action.payload;
       const quotes = state.draftMessageQuotes[draftKey] ?? [];
-      if (quotes.length >= 8 || !quote.sessionKey || !quote.text.trim()) return;
+      if (quotes.length >= 8 || !quote.text.trim()) return;
+      if (quote.kind === MESSAGE_QUOTE_KIND.DISCUSSION) {
+        if (
+          !quote.roomId ||
+          !quote.discussionId ||
+          quotes.some(
+            item =>
+              item.kind === MESSAGE_QUOTE_KIND.DISCUSSION &&
+              item.roomId === quote.roomId &&
+              item.discussionId === quote.discussionId,
+          )
+        )
+          return;
+      } else if (quote.kind === MESSAGE_QUOTE_KIND.COLLABORATION) {
+        if (
+          !validCollaborationQuote(quote) ||
+          quote.sourceSessionId !== draftKey ||
+          quotes.some(
+            item =>
+              item.kind === MESSAGE_QUOTE_KIND.COLLABORATION &&
+              item.roomId === quote.roomId &&
+              item.targetSessionKey === quote.targetSessionKey &&
+              item.priorRoundId === quote.priorRoundId &&
+              item.deliveryId === quote.deliveryId,
+          )
+        )
+          return;
+      } else if (!quote.sessionKey) return;
       state.draftMessageQuotes[draftKey] = [
         ...quotes,
         { ...quote, text: quote.text.slice(0, 12_000) },
@@ -343,6 +386,7 @@ const coworkSlice = createSlice({
         interaction => interaction.sessionId !== action.payload,
       );
       delete state.draftMessageQuotes[action.payload];
+      delete state.draftAgentTeamModes[action.payload];
       delete state.draftBrowserAnnotations[action.payload];
       delete state.draftBrowserRecordings[action.payload];
     },
@@ -353,6 +397,7 @@ const coworkSlice = createSlice({
         clearSessionModelSelectionState(state, sessionId);
         delete state.planModeBySession[sessionId];
         delete state.draftMessageQuotes[sessionId];
+        delete state.draftAgentTeamModes[sessionId];
         delete state.draftBrowserAnnotations[sessionId];
         delete state.draftBrowserRecordings[sessionId];
       }
@@ -792,6 +837,8 @@ export const {
   setSessionRuntimeActivities,
   setDraftPrompt,
   addDraftMessageQuote,
+  setDraftAgentTeamMode,
+  clearSubmittedAgentTeamMode,
   removeDraftMessageQuotes,
   setDraftAttachments,
   addDraftAttachment,

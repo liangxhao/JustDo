@@ -1,12 +1,12 @@
 export const submitCoworkMessage = async (
   send: () => Promise<void>,
-  onFailure: (error: unknown) => void,
+  onFailure: (error: unknown) => void | Promise<void>,
 ): Promise<boolean> => {
   try {
     await send();
     return true;
   } catch (error) {
-    onFailure(error);
+    await onFailure(error);
     return false;
   }
 };

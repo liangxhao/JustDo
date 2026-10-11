@@ -16,6 +16,7 @@ import { settingsTranslations } from './settingsTranslations';
 import { skillWorkshopTranslations } from './skillWorkshopTranslations';
 import { swarmTranslations } from './swarmTranslations';
 import { swarmWorkflowTranslations } from './swarmWorkflowTranslations';
+import { teamDiscussionTranslations } from './teamDiscussionTranslations';
 
 export const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
@@ -23,6 +24,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...authTranslations.zh,
     ...swarmTranslations.zh,
     ...swarmWorkflowTranslations.zh,
+    ...teamDiscussionTranslations.zh,
     ...sessionDiagnosticsTranslations.zh,
     ...sessionReviewTranslations.zh,
     ...sessionStorageTranslations.zh,
@@ -41,6 +43,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...authTranslations.en,
     ...swarmTranslations.en,
     ...swarmWorkflowTranslations.en,
+    ...teamDiscussionTranslations.en,
     ...sessionDiagnosticsTranslations.en,
     ...sessionReviewTranslations.en,
     ...sessionStorageTranslations.en,

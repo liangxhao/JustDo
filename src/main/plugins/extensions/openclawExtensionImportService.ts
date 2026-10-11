@@ -1650,15 +1650,24 @@ export class OpenClawExtensionImportService {
     const manager = this.deps.getOpenClawEngineManager();
     const initialPhase = manager.getStatus().phase;
     const wasRuntimeActive = initialPhase === 'running' || initialPhase === 'starting';
+    // Native 9.8 skill refresh retains pre-toggle discovery configurations. A
+    // later watcher event can publish that old configuration and remove the new
+    // plugin skill junction. Reset the native discovery lifetime after the Team
+    // and skill writes; never copy skills or rewrite the model's read arguments.
+    const restartTeamDiscovery = extensionId === OpenClawExtensionId.AGENT_TEAM && wasRuntimeActive;
     const policyDigestBefore = this.deps.outboundHeaderPolicy?.reconcile().digest;
     let gatewayMayNeedRestore = false;
     const convergeColdState = async (forceRestart = false): Promise<string | undefined> => {
       const policyDigestAfter = this.deps.outboundHeaderPolicy?.reconcile().digest;
-      if (!wasRuntimeActive || (!forceRestart && policyDigestAfter === policyDigestBefore)) {
+      if (
+        !wasRuntimeActive ||
+        (!forceRestart && !restartTeamDiscovery && policyDigestAfter === policyDigestBefore)
+      ) {
         return undefined;
       }
       if (
         forceRestart &&
+        !restartTeamDiscovery &&
         policyDigestAfter === policyDigestBefore &&
         (await this.reloadPluginAfterCliMutation('plugins.refresh'))
       ) {
@@ -1702,7 +1711,11 @@ export class OpenClawExtensionImportService {
           }
         }
         const policyDigestAfter = this.deps.outboundHeaderPolicy?.reconcile().digest;
-        if (result.restartRequired || policyDigestAfter !== policyDigestBefore) {
+        if (
+          result.restartRequired ||
+          restartTeamDiscovery ||
+          policyDigestAfter !== policyDigestBefore
+        ) {
           const status = await this.restartGatewayAfterMutation(
             policyDigestAfter !== policyDigestBefore
               ? 'extension-network-policy-change'

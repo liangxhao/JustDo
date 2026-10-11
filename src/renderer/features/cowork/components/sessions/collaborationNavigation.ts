@@ -1,4 +1,4 @@
-import type { CollaborationRoom } from '@shared/cowork/collaboration';
+import type { CollaborationRoom } from '@shared/cowork/agent-team/collaboration';
 
 /** Search can match a peer transcript, but the main conversation stays at the room anchor. */
 export function resolveCollaborationNavigation(

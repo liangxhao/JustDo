@@ -6,6 +6,8 @@ import {
   parseBrowserAnnotationPrompt,
 } from '@shared/browser/browser';
 import { parseRecordingContext, serializeRecording } from '@shared/browser/browserRecording';
+import { stripAgentTeamInstruction } from '@shared/cowork/agent-team/agentTeamPrompt';
+import { TEAM_DISCUSSION_CHANNEL } from '@shared/cowork/agent-team/teamDiscussion';
 import { parseCoworkSessionKey } from '@shared/cowork/sessionKey';
 import { stripSwarmInstruction } from '@shared/cowork/swarm';
 import { stripSwarmWorkflowInstruction } from '@shared/cowork/swarmWorkflow';
@@ -44,6 +46,21 @@ export function isTrustedPeerInput(message: unknown): boolean {
     (raw?.role === 'user' || raw?.role === 'assistant') &&
     provenance?.kind === 'inter_session' &&
     ['collaboration_send', 'sessions_send'].includes(String(provenance.sourceTool))
+  );
+}
+
+/** Native group dispatch is internal input, not a message authored by the user. */
+export function isTeamDiscussionInput(message: unknown): boolean {
+  const raw = asRecord(message);
+  const provenance = asRecord(raw?.provenance);
+  const nativeMetadata = asRecord(raw?.__openclaw);
+  const transport = asRecord(nativeMetadata?.transport);
+  return (
+    raw?.role === 'user' &&
+    ((provenance?.kind === 'inter_session' &&
+      provenance.sourceChannel === TEAM_DISCUSSION_CHANNEL &&
+      provenance.sourceTool === 'team_discussion') ||
+      transport?.channel === TEAM_DISCUSSION_CHANNEL)
   );
 }
 
@@ -636,7 +653,7 @@ function expandUserDisplayContent(
   includeLegacyTextFields = false,
 ): MessageContentItem[] {
   const displayText = stripSwarmInstruction(
-    stripSwarmWorkflowInstruction(stripInboundMetadata(text)),
+    stripSwarmWorkflowInstruction(stripAgentTeamInstruction(stripInboundMetadata(text))),
   );
   const browserPrompt = parseBrowserAnnotationPrompt(displayText);
   if (!browserPrompt) return expandUserTextMediaContent(displayText, includeLegacyTextFields);
@@ -833,6 +850,7 @@ export function normalizeMessage(
   const provenance = asRecord(m.provenance);
   const isPeerInput = isTrustedPeerInput(m);
   const projectPeerInput = isPeerInput && options.peerPerspective === true;
+  const projectTeamInput = isTeamDiscussionInput(m) && options.peerPerspective === true;
   const peerSourceKey =
     isPeerInput && typeof provenance?.sourceSessionKey === 'string'
       ? provenance.sourceSessionKey.trim()
@@ -840,11 +858,13 @@ export function normalizeMessage(
   // Keep source identity in the display label: grouping and duplicate detection also use it.
   // Do not infer it from message text or a model-supplied sender label.
   const peerSource = parseCoworkSessionKey(peerSourceKey)?.agentId || peerSourceKey;
-  const senderLabel = projectPeerInput
-    ? [i18nService.t('collaborationIncomingMessage'), peerSource].filter(Boolean).join(' · ')
-    : typeof m.senderLabel === 'string' && m.senderLabel.trim()
-      ? m.senderLabel.trim()
-      : null;
+  const senderLabel = projectTeamInput
+    ? i18nService.t('teamDiscussionDispatcher')
+    : projectPeerInput
+      ? [i18nService.t('collaborationIncomingMessage'), peerSource].filter(Boolean).join(' · ')
+      : typeof m.senderLabel === 'string' && m.senderLabel.trim()
+        ? m.senderLabel.trim()
+        : null;
   const modelName = isAssistantMessage && !projectPeerInput ? resolveMessageModelName(m) : null;
 
   if (
@@ -877,7 +897,12 @@ export function normalizeMessage(
     timestamp,
     id,
     senderLabel,
-    senderId: projectPeerInput ? peerSource || null : null,
+    // The colon makes this display identity distinct from every native agent ID.
+    senderId: projectTeamInput
+      ? 'team-discussion:dispatcher'
+      : projectPeerInput
+        ? peerSource || null
+        : null,
     modelName,
     ...(audioAsVoice ? { audioAsVoice: true } : {}),
     ...(replyTarget ? { replyTarget } : {}),

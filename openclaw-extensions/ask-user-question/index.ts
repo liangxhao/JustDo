@@ -569,7 +569,10 @@ const plugin = {
     api.registerTool(
       ctx => {
         const sessionKey = ctx.sessionKey?.trim() ?? '';
-        if (!sessionKey.startsWith('justdo:') && !/^agent:[^:]+:justdo:/.test(sessionKey)) {
+        if (
+          !sessionKey.startsWith('justdo:') &&
+          !/^agent:[^:]+:(?:justdo:|justdo-team:group:)/.test(sessionKey)
+        ) {
           return null;
         }
         return {

@@ -1,5 +1,7 @@
 # 长期助手与任务内协作
 
+任务协作、群组讨论、资源设置与恢复契约见 [Agent Team](agent-team.md)。
+
 长期助手是跨任务复用的档案；任务成员是某个用户会话中的助手会话；原生 Subagent 是委派执行。普通用户消息默认发给 main；开启“允许切换主会话的助手”后可选择其他已启用助手。模型在需要协作时准备成员，再通过原生 `sessions_send` 通信。
 
 ## 长期助手档案
@@ -30,7 +32,7 @@ Git 初始化由产品单独执行：普通会话通过原生工程根目录和�
 
 ## 启用与用户入口
 
-协作由可选 `agent-team` Extension 提供，默认关闭。启用后提供 `task_assistants`、`assistants_create`、配套 Skill 和原生发送 hooks。配置同步保留用户开关，不在每个普通 turn 自动注入 roster 或协作说明。
+协作由可选 `agent-team` Extension 提供，默认关闭。启用后提供 `task_assistants`、`assistants_create`、`team_discussion`、配套 Skill 和原生发送 hooks。配置同步保留用户开关，不在每个普通 turn 自动注入 roster 或协作说明。双模式入口、群聊、续协作与资源设置统一维护在 [Agent Team](agent-team.md)。
 
 普通对话默认发给 main；显式开启助手切换后可选择其他已启用助手。模型先发现助手，再按需为任务准备成员；侧边栏以锚点会话展示一条任务。聊天右上角「摘要」的 Agent Team 条目按当前会话关联房间数显示，点击可重新打开协作 Tab，选择成员查看其原生历史，主输入框不切换收件人。新团队的发现可触发摘要首次展开，不自动切换到协作图。Subagent 使用摘要中的独立子智能体列表 Tab，不混入平级协作图。
 
@@ -58,7 +60,7 @@ Git 初始化由产品单独执行：普通会话通过原生工程根目录和�
 | 轮次 | 用户运行派生的 roundId；成员回复继承该轮次，不自动重置预算     |
 | 投递 | 可信 sourceRunId/toolCallId 派生的幂等身份及原生接收 runId     |
 
-`src/shared/cowork/collaboration.ts` 定义最多 12 名成员、每轮最多 16 次投递；消息参数上限 16000 字符。失败投递也计入轮次预算。原生 session 只能归属一个 room，一个助手在同一 room 只能有一个成员实例。
+产品硬边界最多 12 名成员、每轮最多 16 次投递；用户设置可以收紧，见 [Team 资源设置](agent-team.md#资源设置)。消息参数上限 16000 字符，失败投递也计入轮次预算。原生 session 只能归属一个 room，一个助手在同一 room 只能有一个成员实例。
 
 产品 SQLite 保存路由、状态、摘要哈希和回执，不保存正文、模型输出或复制的 transcript。原生历史缺失时不能创建空白会话冒充恢复。
 
@@ -128,10 +130,10 @@ stateDiagram-v2
 
 ## 维护和验证入口
 
-- `src/main/ipc/cowork/collaboration.test.ts`：成员准备、可信来源、原生回执、停止和删除流程。
-- `src/main/data/collaborationStore.test.ts`：唯一约束、预算、状态迁移及恢复。
-- `src/shared/cowork/collaboration.test.ts`：参数、路由和状态合约。
-- `tests/openclaw/extensions/collaboration.test.ts`：扩展工具、hooks 和原生通信接入。
+- `src/main/ipc/cowork/agent-team/collaboration.test.ts`：成员准备、可信来源、原生回执、停止和删除流程。
+- `src/main/data/agent-team/collaborationStore.test.ts`：唯一约束、预算、状态迁移及恢复。
+- `src/shared/cowork/agent-team/collaboration.test.ts`：参数、路由和状态合约。
+- `tests/openclaw/extensions/agent-team/collaboration.test.ts`：扩展工具、hooks 和原生通信接入。
 - `src/main/openclaw/config/openclawConfigSync.logout.test.ts`：可选扩展开关保留。
 
 这些是现有验证入口，不表示本轮重新执行了上述测试。真实 Gateway 与模型验收需在隔离配置下检查：主会话创建并邀请助手、原生 `sessions_send` 往返、图与成员历史定位、停止后的迟到回复、部分失败删除与重试。主列表仍只有一条用户任务；导出只含主对话，协作任务不提供复制或手工交接。协议测试、模型自主协作质量、沙盒与多客户端竞态必须分别验收。

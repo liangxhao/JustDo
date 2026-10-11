@@ -113,6 +113,10 @@ export interface CoworkRuntimeEvents {
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
 
 export type CoworkStartOptions = {
+  /** Main-owned preparation at the actual native send boundary. */
+  beforeNativeSend?: () => Promise<void>;
+  /** Called only once the owning sender has closed without issuing native chat.send. */
+  onNativeSendAbandoned?: () => Promise<void>;
   skillIds?: string[];
   workspaceRoot?: string;
   confirmationMode?: 'modal' | 'text';

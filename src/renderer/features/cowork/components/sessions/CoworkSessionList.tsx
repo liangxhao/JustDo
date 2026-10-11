@@ -44,7 +44,7 @@ import {
 import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
 
-import { useCollaborationRooms } from '../chat/CollaborationPanel';
+import { useCollaborationRooms } from '../collaboration/CollaborationPanel';
 
 interface UngroupedDroppableZoneProps {
   unGroupedSessions: CoworkSessionSummary[];

@@ -1,7 +1,8 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import runtimeServicesPlugin from '../../../../openclaw-extensions/runtime-services/index';
 
@@ -38,6 +39,8 @@ vi.mock('openclaw/plugin-sdk/session-store-paths', () => ({
   resolveStorePath: vi.fn(),
 }));
 vi.mock('openclaw/plugin-sdk/session-transcript-runtime', () => ({
+  appendSessionTranscriptMessageByIdentity: vi.fn(),
+  readSessionTranscriptRawDelta: vi.fn(),
   readVisibleSessionTranscriptMessageEntries: sdk.readVisibleSessionTranscriptMessageEntries,
 }));
 vi.mock('openclaw/plugin-sdk/ssrf-runtime', () => ({
@@ -64,7 +67,23 @@ type HistoryHandler = (request: {
   respond: ReturnType<typeof vi.fn>;
 }) => Promise<void>;
 
+const temporaryStateDirs = new Set<string>();
+afterEach(() => {
+  const base = path.resolve(os.tmpdir()) + path.sep;
+  for (const directory of temporaryStateDirs) {
+    if (
+      !directory.startsWith(base) ||
+      !path.basename(directory).startsWith('justdo-runtime-services-')
+    )
+      throw new Error('Unexpected Runtime Services test cleanup directory');
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+  temporaryStateDirs.clear();
+});
+
 function registerPlugin() {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-services-'));
+  temporaryStateDirs.add(stateDir);
   const hooks = new Map<string, Hook>();
   const emitAgentEvent = vi.fn((_event: { data: { stage: string } }) => ({ emitted: true }));
   const registerGatewayMethod = vi.fn();
@@ -73,6 +92,14 @@ function registerPlugin() {
     config: { memory: { search: { enabled: false } } },
     on: (name: string, hook: Hook) => hooks.set(name, hook),
     agent: { events: { emitAgentEvent } },
+    session: { state: { registerSessionExtension: vi.fn() } },
+    runtime: {
+      events: { onAgentEvent: vi.fn() },
+      state: { resolveStateDir: () => stateDir },
+    },
+    registerTrustedToolPolicy: vi.fn(),
+    registerAgentHarness: vi.fn(),
+    registerService: vi.fn(),
     registerGatewayMethod,
     registerEmbeddingProvider,
     logger: { info: vi.fn() },

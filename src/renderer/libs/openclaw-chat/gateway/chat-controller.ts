@@ -2094,6 +2094,8 @@ export class ChatController {
       onRequestUnknown?: (runId: string) => void | Promise<void>;
       clientTurnId?: string;
       onRunBound?: (runId: string) => void | Promise<void>;
+      /** Synchronous owning-sender evidence, immediately before native submission. */
+      onRequestIssued?: () => void;
     } = {},
   ): Promise<void> {
     const client = this.state.client;
@@ -2252,6 +2254,7 @@ export class ChatController {
       const gatewayAttachments = attachments
         .filter(attachment => attachment.base64Data)
         .map(toGatewayAttachment);
+      options.onRequestIssued?.();
       const ack = await client.request<
         SessionGoalMutationResult | { runId?: string; status?: string }
       >('chat.send', {

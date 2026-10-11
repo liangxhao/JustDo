@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+import { appendAgentTeamInstruction } from '../../../shared/cowork/agent-team/agentTeamPrompt';
 import { CoworkSessionCopyIpc } from '../../../shared/cowork/sessionCopy';
 import { CoworkSessionForkIpc } from '../../../shared/cowork/sessionFork';
 import { SessionRunBeginErrorCode } from '../../../shared/cowork/sessionRun';
+import { SessionRunIpc } from '../../../shared/cowork/sessionRun';
 import { CoworkSessionSearchIpc } from '../../../shared/cowork/sessionSearch';
+import type { AgentTeamLaunchCoordinator } from '../../cowork/agentTeamLaunchCoordinator';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 
@@ -17,7 +20,7 @@ vi.mock('electron', () => ({
   },
 }));
 
-import type { CollaborationCoordinator } from './collaboration';
+import type { CollaborationCoordinator } from './agent-team/collaboration';
 import { registerCoworkSessionHandlers } from './sessions';
 
 type IpcHandler = (...args: unknown[]) => Promise<unknown>;
@@ -43,26 +46,57 @@ beforeEach(() => {
 });
 
 test('validates search scopes before Gateway access and preserves message identity in IPC results', async () => {
-  const store = { listSessions: () => [{ id: 'one', agentId: 'main' }, { id: 'two', agentId: 'main' }] };
-  const requestGateway = vi.fn().mockResolvedValue({ results: [{
-    sessionKey: 'agent:main:justdo:two', sessionId: 'native-two', messageId: 'entry-two',
-    role: 'user', snippet: 'needle', timestamp: 1, score: 1,
-  }], archivedTranscriptsExcluded: 2 });
+  const store = {
+    listSessions: () => [
+      { id: 'one', agentId: 'main' },
+      { id: 'two', agentId: 'main' },
+    ],
+  };
+  const requestGateway = vi.fn().mockResolvedValue({
+    results: [
+      {
+        sessionKey: 'agent:main:justdo:two',
+        sessionId: 'native-two',
+        messageId: 'entry-two',
+        role: 'user',
+        snippet: 'needle',
+        timestamp: 1,
+        score: 1,
+      },
+    ],
+    archivedTranscriptsExcluded: 2,
+  });
   registerCoworkSessionHandlers({
     getCoworkStore: () => store as unknown as CoworkStore,
     getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
-    setSessionPermissionMode: vi.fn(), requestGateway,
+    setSessionPermissionMode: vi.fn(),
+    requestGateway,
   });
-  const handler = mocks.handle.mock.calls.find(([name]) => name === CoworkSessionSearchIpc.SearchMessages)![1] as IpcHandler;
+  const handler = mocks.handle.mock.calls.find(
+    ([name]) => name === CoworkSessionSearchIpc.SearchMessages,
+  )![1] as IpcHandler;
   for (const options of [null, { sessionIds: 'one' }, { sessionKeys: ['agent:main:other'] }]) {
     await expect(handler(null, 'needle', options)).resolves.toMatchObject({ success: false });
   }
   expect(requestGateway).not.toHaveBeenCalled();
-  await expect(handler(null, 'needle', { sessionIds: ['one', 'two'], excludeSessionIds: ['one'] })).resolves.toMatchObject({
-    success: true, matches: [{ sessionId: 'two', nativeSessionKey: 'agent:main:justdo:two',
-      nativeSessionId: 'native-two', messageId: 'entry-two' }], archivedTranscriptsExcluded: 2,
+  await expect(
+    handler(null, 'needle', { sessionIds: ['one', 'two'], excludeSessionIds: ['one'] }),
+  ).resolves.toMatchObject({
+    success: true,
+    matches: [
+      {
+        sessionId: 'two',
+        nativeSessionKey: 'agent:main:justdo:two',
+        nativeSessionId: 'native-two',
+        messageId: 'entry-two',
+      },
+    ],
+    archivedTranscriptsExcluded: 2,
   });
-  expect(requestGateway).toHaveBeenCalledWith('sessions.search', expect.objectContaining({ sessionKeys: ['agent:main:justdo:two'] }));
+  expect(requestGateway).toHaveBeenCalledWith(
+    'sessions.search',
+    expect.objectContaining({ sessionKeys: ['agent:main:justdo:two'] }),
+  );
 });
 
 test.each([
@@ -70,36 +104,103 @@ test.each([
   { nativeMode: 'guarded', localMode: 'ask' },
   { nativeMode: 'workspace', localMode: 'auto' },
   { nativeMode: 'full', localMode: 'full' },
-])('adopts a Gateway worktree child once with $nativeMode permission and its native key', async ({ nativeMode, localMode }) => {
-  const parent = { id: 'parent', agentId: 'main', executionMode: 'local', permissionMode: 'full' };
-  const sessions = new Map<string, Record<string, unknown>>([['parent', parent]]);
+])(
+  'adopts a Gateway worktree child once with $nativeMode permission and its native key',
+  async ({ nativeMode, localMode }) => {
+    const parent = {
+      id: 'parent',
+      agentId: 'main',
+      executionMode: 'local',
+      permissionMode: 'full',
+    };
+    const sessions = new Map<string, Record<string, unknown>>([['parent', parent]]);
+    const store = {
+      listSessions: () => [...sessions.values()],
+      getSession: (id: string) => sessions.get(id) ?? null,
+      getSessionByNativeKey: (key: string) =>
+        [...sessions.values()].find(session => session.nativeSessionKey === key) ?? null,
+      adoptNativeSession: vi.fn(
+        (key: string, parent: { id: string }, _title: string, cwd: string) => {
+          const child = {
+            id: 'child',
+            cwd,
+            nativeSessionKey: key,
+            nativeParentSessionId: parent.id,
+          };
+          sessions.set('child', child);
+          return child;
+        },
+      ),
+    };
+    const childKey = 'agent:main:subagent:child';
+    const requestGateway = vi.fn(async (method: string) =>
+      method === 'sessions.list'
+        ? {
+            sessions: [
+              {
+                key: childKey,
+                parentSessionKey: 'agent:main:justdo:parent',
+                worktree: { id: 'tree' },
+              },
+            ],
+          }
+        : {
+            session: {
+              spawnedCwd: 'E:\\repo\\child',
+              label: 'Isolated task',
+              worktree: { id: 'tree' },
+              permissionMode: nativeMode,
+            },
+          },
+    );
+    registerCoworkSessionHandlers({
+      getCoworkStore: () => store as unknown as CoworkStore,
+      getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
+      setSessionPermissionMode: vi.fn(),
+      requestGateway: requestGateway as <T>(method: string, params?: unknown) => Promise<T>,
+    });
+    const handler = mocks.handle.mock.calls.find(
+      ([name]) => name === 'cowork:session:list',
+    )![1] as IpcHandler;
+    await handler(null);
+    await handler(null);
+    expect(requestGateway.mock.calls).toContainEqual(['sessions.describe', { key: childKey }]);
+    expect(store.adoptNativeSession).toHaveBeenCalledOnce();
+    expect(store.adoptNativeSession).toHaveBeenCalledWith(
+      childKey,
+      parent,
+      'Isolated task',
+      'E:\\repo\\child',
+      localMode,
+    );
+  },
+);
+
+test('does not broaden an unsupported native read-only worktree permission during adoption', async () => {
+  const parent = { id: 'parent', agentId: 'main', permissionMode: 'full' };
+  const adoptNativeSession = vi.fn();
   const store = {
-    listSessions: () => [...sessions.values()],
-    getSession: (id: string) => sessions.get(id) ?? null,
-    getSessionByNativeKey: (key: string) =>
-      [...sessions.values()].find(session => session.nativeSessionKey === key) ?? null,
-    adoptNativeSession: vi.fn(
-      (key: string, parent: { id: string }, _title: string, cwd: string) => {
-        const child = { id: 'child', cwd, nativeSessionKey: key, nativeParentSessionId: parent.id };
-        sessions.set('child', child);
-        return child;
-      },
-    ),
+    listSessions: () => [parent],
+    getSession: () => parent,
+    getSessionByNativeKey: () => null,
+    adoptNativeSession,
   };
-  const childKey = 'agent:main:subagent:child';
   const requestGateway = vi.fn(async (method: string) =>
     method === 'sessions.list'
       ? {
           sessions: [
-            { key: childKey, parentSessionKey: 'agent:main:justdo:parent', worktree: { id: 'tree' } },
+            {
+              key: 'agent:main:subagent:child',
+              parentSessionKey: 'agent:main:justdo:parent',
+              worktree: { id: 'tree' },
+            },
           ],
         }
       : {
           session: {
-            spawnedCwd: 'E:\\repo\\child',
-            label: 'Isolated task',
             worktree: { id: 'tree' },
-            permissionMode: nativeMode,
+            spawnedCwd: 'E:\\repo\\child',
+            permissionMode: 'read-only',
           },
         },
   );
@@ -113,37 +214,38 @@ test.each([
     ([name]) => name === 'cowork:session:list',
   )![1] as IpcHandler;
   await handler(null);
-  await handler(null);
-  expect(requestGateway.mock.calls).toContainEqual(['sessions.describe', { key: childKey }]);
-  expect(store.adoptNativeSession).toHaveBeenCalledOnce();
-  expect(store.adoptNativeSession).toHaveBeenCalledWith(
-    childKey,
-    parent,
-    'Isolated task',
-    'E:\\repo\\child',
-    localMode,
-  );
+  expect(adoptNativeSession).not.toHaveBeenCalled();
 });
 
-test('does not broaden an unsupported native read-only worktree permission during adoption', async () => {
+test('does not import pending-input harness rows even when native metadata claims a worktree', async () => {
   const parent = { id: 'parent', agentId: 'main', permissionMode: 'full' };
-  const adoptNativeSession = vi.fn();
   const store = {
-    listSessions: () => [parent], getSession: () => parent,
-    getSessionByNativeKey: () => null, adoptNativeSession,
+    listSessions: () => [parent],
+    getSession: () => parent,
+    getSessionByNativeKey: () => null,
+    adoptNativeSession: vi.fn(),
   };
-  const requestGateway = vi.fn(async (method: string) => method === 'sessions.list'
-    ? { sessions: [{ key: 'agent:main:subagent:child', parentSessionKey: 'agent:main:justdo:parent', worktree: { id: 'tree' } }] }
-    : { session: { worktree: { id: 'tree' }, spawnedCwd: 'E:\\repo\\child', permissionMode: 'read-only' } });
+  const requestGateway = vi.fn().mockResolvedValue({
+    sessions: [
+      {
+        key: 'agent:main:harness:justdo-team-holding:room:1',
+        parentSessionKey: 'agent:main:justdo:parent',
+        worktree: { id: 'tree' },
+      },
+    ],
+  });
   registerCoworkSessionHandlers({
     getCoworkStore: () => store as unknown as CoworkStore,
     getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
     setSessionPermissionMode: vi.fn(),
-    requestGateway: requestGateway as <T>(method: string, params?: unknown) => Promise<T>,
+    requestGateway,
   });
-  const handler = mocks.handle.mock.calls.find(([name]) => name === 'cowork:session:list')![1] as IpcHandler;
+  const handler = mocks.handle.mock.calls.find(
+    ([name]) => name === 'cowork:session:list',
+  )![1] as IpcHandler;
   await handler(null);
-  expect(adoptNativeSession).not.toHaveBeenCalled();
+  expect(store.adoptNativeSession).not.toHaveBeenCalled();
+  expect(requestGateway).toHaveBeenCalledOnce();
 });
 
 test.each([CoworkSessionCopyIpc.Copy, CoworkSessionForkIpc.Fork])(
@@ -152,7 +254,11 @@ test.each([CoworkSessionCopyIpc.Copy, CoworkSessionForkIpc.Fork])(
     const createSession = vi.fn();
     const requestGateway = vi.fn();
     const store = {
-      getSession: () => ({ id: 'child', nativeSessionKey: 'agent:main:subagent:child', cwd: 'E:\\worktree' }),
+      getSession: () => ({
+        id: 'child',
+        nativeSessionKey: 'agent:main:subagent:child',
+        cwd: 'E:\\worktree',
+      }),
       createSession,
     };
     registerCoworkSessionHandlers({
@@ -162,8 +268,9 @@ test.each([CoworkSessionCopyIpc.Copy, CoworkSessionForkIpc.Fork])(
       requestGateway,
     });
     const handler = mocks.handle.mock.calls.find(([name]) => name === channel)![1] as IpcHandler;
-    await expect(handler(null, { sessionId: 'child', title: 'Copy', entryId: 'entry-1' }))
-      .resolves.toMatchObject({ success: false });
+    await expect(
+      handler(null, { sessionId: 'child', title: 'Copy', entryId: 'entry-1' }),
+    ).resolves.toMatchObject({ success: false });
     expect(createSession).not.toHaveBeenCalled();
     expect(requestGateway).not.toHaveBeenCalled();
   },
@@ -196,27 +303,34 @@ test('keeps a native session visible when Gateway preserves its worktree on dele
   expect(store.deleteSession).not.toHaveBeenCalled();
 });
 
-test.each(['', '\\packages\\api'])('does not delete an owned worktree while another conversation uses its workspace (%s)', async suffix => {
-  const store = {
-    hasNativeChildSessions: () => false,
-    getSession: (id: string) => ({ id, cwd: `E:\\repo\\child${id === 'other' ? suffix : ''}`,
-      ...(id === 'child' ? { nativeSessionKey: 'agent:main:subagent:child' } : {}),
-    }),
-    listSessions: () => [{ id: 'child' }, { id: 'other' }],
-    deleteSession: vi.fn(),
-  };
-  const requestGateway = vi.fn();
-  registerCoworkSessionHandlers({
-    getCoworkStore: () => store as unknown as CoworkStore,
-    getCoworkEngineRouter: () => ({ stopSession: vi.fn() }) as unknown as CoworkEngineRouter,
-    setSessionPermissionMode: vi.fn(),
-    requestGateway,
-  });
-  const handler = mocks.handle.mock.calls.find(([name]) => name === 'cowork:session:delete')![1] as IpcHandler;
-  await expect(handler(null, 'child')).resolves.toMatchObject({ success: false });
-  expect(requestGateway).not.toHaveBeenCalled();
-  expect(store.deleteSession).not.toHaveBeenCalled();
-});
+test.each(['', '\\packages\\api'])(
+  'does not delete an owned worktree while another conversation uses its workspace (%s)',
+  async suffix => {
+    const store = {
+      hasNativeChildSessions: () => false,
+      getSession: (id: string) => ({
+        id,
+        cwd: `E:\\repo\\child${id === 'other' ? suffix : ''}`,
+        ...(id === 'child' ? { nativeSessionKey: 'agent:main:subagent:child' } : {}),
+      }),
+      listSessions: () => [{ id: 'child' }, { id: 'other' }],
+      deleteSession: vi.fn(),
+    };
+    const requestGateway = vi.fn();
+    registerCoworkSessionHandlers({
+      getCoworkStore: () => store as unknown as CoworkStore,
+      getCoworkEngineRouter: () => ({ stopSession: vi.fn() }) as unknown as CoworkEngineRouter,
+      setSessionPermissionMode: vi.fn(),
+      requestGateway,
+    });
+    const handler = mocks.handle.mock.calls.find(
+      ([name]) => name === 'cowork:session:delete',
+    )![1] as IpcHandler;
+    await expect(handler(null, 'child')).resolves.toMatchObject({ success: false });
+    expect(requestGateway).not.toHaveBeenCalled();
+    expect(store.deleteSession).not.toHaveBeenCalled();
+  },
+);
 
 test('reports successful task deletions even when another task needs a retry', async () => {
   const deleteTask = vi.fn(async (id: string) => {
@@ -233,6 +347,7 @@ test('reports successful task deletions even when another task needs a retry', a
           room: { id, members: [{ sessionId: id }, { sessionId: `${id}-peer` }] },
         }),
         deleteTask,
+        acquireSourceDeletion: () => () => {},
       }) as unknown as CollaborationCoordinator,
   });
   const handler = mocks.handle.mock.calls.find(
@@ -244,6 +359,224 @@ test('reports successful task deletions even when another task needs a retry', a
     error: 'collaborationDeletePending',
   });
   expect(deleteTask).toHaveBeenCalledTimes(2);
+});
+
+test('keeps a group-only source in a batch delete while its execution is unresolved', async () => {
+  const deleteTask = vi.fn(async (id: string) => {
+    if (id === 'group-source') throw new Error('teamDiscussionBusy');
+    return false;
+  });
+  const store = {
+    getSession: (id: string) => ({ id, agentId: 'main', cwd: '/project' }),
+    listPlanHandoffs: () => [],
+    deleteSessions: vi.fn(),
+  };
+  const router = { stopSession: vi.fn(), onSessionDeleted: vi.fn() };
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store as unknown as CoworkStore,
+    getCoworkEngineRouter: () => router as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+    getCollaboration: () =>
+      ({
+        read: () => ({}),
+        deleteTask,
+        acquireSourceDeletion: () => () => {},
+      }) as unknown as CollaborationCoordinator,
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([name]) => name === 'cowork:session:deleteBatch',
+  )![1] as IpcHandler;
+  await expect(handler(null, ['group-source', 'settled'])).resolves.toEqual({
+    success: false,
+    deletedSessionIds: ['settled'],
+    error: 'teamDiscussionBusy',
+  });
+  expect(deleteTask).toHaveBeenCalledWith('group-source');
+  expect(router.stopSession).toHaveBeenCalledExactlyOnceWith('settled', { bestEffort: true });
+  expect(store.deleteSessions).toHaveBeenCalledExactlyOnceWith(['settled']);
+  expect(router.onSessionDeleted).not.toHaveBeenCalledWith(
+    'group-source',
+    expect.anything(),
+    expect.anything(),
+    expect.anything(),
+  );
+});
+
+test.each(['cowork:session:delete', 'cowork:session:deleteBatch'])(
+  'holds the source deletion lease through standalone stop and store deletion in %s',
+  async channel => {
+    let frozen = false;
+    let finishStop!: () => void;
+    const waiting = new Promise<void>(resolve => {
+      finishStop = resolve;
+    });
+    const release = vi.fn(() => {
+      frozen = false;
+    });
+    const acquireSourceDeletion = vi.fn(() => {
+      frozen = true;
+      return release;
+    });
+    const deleteTask = vi.fn(async () => false);
+    const beginSessionRun = vi.fn();
+    const deleteSession = vi.fn(() => {
+      expect(frozen).toBe(true);
+    });
+    const deleteSessions = vi.fn(() => {
+      expect(frozen).toBe(true);
+    });
+    const store = {
+      getSession: (id: string) => ({ id, agentId: 'main', cwd: '/project' }),
+      hasNativeChildSessions: () => false,
+      listPlanHandoffs: () => [],
+      beginSessionRun,
+      deleteSession,
+      deleteSessions,
+    };
+    const router = {
+      stopSession: vi.fn(() => {
+        expect(frozen).toBe(true);
+        return waiting;
+      }),
+      onSessionDeleted: vi.fn(),
+    };
+    registerCoworkSessionHandlers({
+      getCoworkStore: () => store as unknown as CoworkStore,
+      getCoworkEngineRouter: () => router as unknown as CoworkEngineRouter,
+      setSessionPermissionMode: vi.fn(),
+      getCollaboration: () =>
+        ({
+          read: () => ({}),
+          isSourceDeleting: () => frozen,
+          acquireSourceDeletion,
+          deleteTask,
+        }) as unknown as CollaborationCoordinator,
+    });
+    const handler = (name: string) =>
+      mocks.handle.mock.calls.find(([registered]) => registered === name)![1] as IpcHandler;
+    const deleting = handler(channel)(
+      null,
+      channel.endsWith('deleteBatch') ? ['source'] : 'source',
+    );
+    await vi.waitFor(() => expect(router.stopSession).toHaveBeenCalledOnce());
+    expect(acquireSourceDeletion).toHaveBeenCalledExactlyOnceWith(['source']);
+    expect(release).not.toHaveBeenCalled();
+    await expect(
+      handler('cowork:session:run:begin')(null, {
+        sessionId: 'source',
+        clientTurnId: 'new-turn',
+        startedAt: 1,
+      }),
+    ).resolves.toMatchObject({ success: false, error: 'collaborationDeletePending' });
+    expect(beginSessionRun).not.toHaveBeenCalled();
+
+    finishStop();
+    await expect(deleting).resolves.toMatchObject({ success: true });
+    expect(deleteTask).toHaveBeenCalledWith('source');
+    expect(channel.endsWith('deleteBatch') ? deleteSessions : deleteSession).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledOnce();
+    expect(frozen).toBe(false);
+  },
+);
+
+test('releases the batch deletion lease when preflight rejects a native child', async () => {
+  const release = vi.fn();
+  const deleteTask = vi.fn();
+  const stopSession = vi.fn();
+  registerCoworkSessionHandlers({
+    getCoworkStore: () =>
+      ({ getSession: () => ({}), hasNativeChildSessions: () => true }) as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({ stopSession }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+    getCollaboration: () =>
+      ({ acquireSourceDeletion: () => release, deleteTask }) as unknown as CollaborationCoordinator,
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'cowork:session:deleteBatch',
+  )![1] as IpcHandler;
+
+  await expect(handler(null, ['source'])).resolves.toMatchObject({
+    success: false,
+    deletedSessionIds: [],
+  });
+
+  expect(release).toHaveBeenCalledOnce();
+  expect(deleteTask).not.toHaveBeenCalled();
+  expect(stopSession).not.toHaveBeenCalled();
+});
+
+test.each(['cowork:session:delete', 'cowork:session:deleteBatch'])(
+  'returns a structured failure when acquiring the deletion lease fails in %s',
+  async channel => {
+    const stopSession = vi.fn();
+    registerCoworkSessionHandlers({
+      getCoworkStore: () => ({}) as CoworkStore,
+      getCoworkEngineRouter: () => ({ stopSession }) as unknown as CoworkEngineRouter,
+      setSessionPermissionMode: vi.fn(),
+      getCollaboration: () =>
+        ({
+          acquireSourceDeletion: () => {
+            throw new Error('metadata unavailable');
+          },
+        }) as unknown as CollaborationCoordinator,
+    });
+    const handler = mocks.handle.mock.calls.find(
+      ([registered]) => registered === channel,
+    )![1] as IpcHandler;
+
+    await expect(
+      handler(null, channel.endsWith('deleteBatch') ? ['source'] : 'source'),
+    ).resolves.toMatchObject({
+      success: false,
+      error: 'metadata unavailable',
+    });
+    expect(stopSession).not.toHaveBeenCalled();
+  },
+);
+
+test('rejects a resumed run when source deletion starts while restart status is pending', async () => {
+  let deleting = false;
+  let reply!: (value: { known: boolean; running: boolean }) => void;
+  const waiting = new Promise<{ known: boolean; running: boolean }>(resolve => {
+    reply = resolve;
+  });
+  const beginSessionRun = vi.fn();
+  const getSessionRuntimeStatus = vi.fn(() => waiting);
+  registerCoworkSessionHandlers({
+    getCoworkStore: () =>
+      ({
+        getSession: () => ({ id: 'source', agentId: 'main' }),
+        getAgent: () => ({ enabled: true }),
+        getLatestSessionRun: () => ({
+          id: 'checkpoint',
+          sessionId: 'source',
+          clientTurnId: 'old-turn',
+          rootRunId: 'old-turn',
+          startedAt: 10,
+          acceptedAt: 10,
+          endedAt: 10,
+          state: 'aborted',
+        }),
+        beginSessionRun,
+      }) as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({ getSessionRuntimeStatus }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+    getCollaboration: () =>
+      ({
+        read: () => ({}),
+        isSourceDeleting: () => deleting,
+      }) as unknown as CollaborationCoordinator,
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'cowork:session:run:begin',
+  )![1] as IpcHandler;
+  const pending = handler(null, { sessionId: 'source', clientTurnId: 'new-turn', startedAt: 11 });
+  expect(getSessionRuntimeStatus).toHaveBeenCalledOnce();
+  deleting = true;
+  reply({ known: false, running: false });
+
+  await expect(pending).resolves.toEqual({ success: false, error: 'collaborationDeletePending' });
+  expect(beginSessionRun).not.toHaveBeenCalled();
 });
 
 afterEach(() => {
@@ -284,6 +617,177 @@ test('registers session handlers without reading the not-yet-initialized store',
     }),
   ).not.toThrow();
   expect(getCoworkStore).not.toHaveBeenCalled();
+});
+
+test('registers the exact explicit input before the source run and fences native send marking', async () => {
+  const events: string[] = [];
+  const launch = {
+    releaseIfSettled: vi.fn().mockResolvedValue(true),
+    register: vi.fn(async () => {
+      events.push('registered');
+    }),
+    markSubmissionStarted: vi.fn(),
+    cancel: vi.fn(),
+  };
+  const beginSessionRun = vi.fn(input => {
+    events.push('reserved');
+    return { ...input, id: 'receipt', state: 'running' };
+  });
+  registerCoworkSessionHandlers({
+    getAgentTeamLaunch: () => launch as unknown as AgentTeamLaunchCoordinator,
+    getCoworkStore: () =>
+      ({
+        getSession: () => ({ agentId: 'main' }),
+        getAgent: () => ({ enabled: true }),
+        getLatestSessionRun: () => ({ clientTurnId: 'client' }),
+        beginSessionRun,
+      }) as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const handler = (channel: string) =>
+    mocks.handle.mock.calls.find(([name]) => name === channel)![1] as IpcHandler;
+  const prompt = appendAgentTeamInstruction('Discuss', 'group');
+  await expect(
+    handler('cowork:session:run:begin')(null, {
+      sessionId: 'source',
+      clientTurnId: 'client',
+      startedAt: 1,
+      agentTeamPrompt: prompt,
+    }),
+  ).resolves.toMatchObject({ success: true });
+  expect(events).toEqual(['registered', 'reserved']);
+  expect(launch.register).toHaveBeenCalledWith(
+    expect.objectContaining({ prompt, clientTurnId: 'client', sessionId: 'source' }),
+  );
+  await expect(
+    handler(SessionRunIpc.TeamSubmissionStarted)(null, {
+      sessionId: 'source',
+      clientTurnId: 'wrong',
+    }),
+  ).resolves.toMatchObject({ success: false });
+  expect(launch.markSubmissionStarted).not.toHaveBeenCalled();
+  await expect(
+    handler(SessionRunIpc.TeamSubmissionStarted)(null, {
+      sessionId: 'source',
+      clientTurnId: 'client',
+    }),
+  ).resolves.toMatchObject({ success: true });
+  expect(launch.markSubmissionStarted).toHaveBeenCalledWith('source', 'client');
+});
+
+function registerTeamFollowupFixture() {
+  const launch = {
+    releaseIfSettled: vi.fn().mockResolvedValue(false),
+    register: vi.fn(),
+    cancel: vi.fn().mockResolvedValue(undefined),
+  };
+  const beginSessionRun = vi.fn(input => ({ ...input, id: 'followup', state: 'running' }));
+  registerCoworkSessionHandlers({
+    getAgentTeamLaunch: () => launch as unknown as AgentTeamLaunchCoordinator,
+    getCoworkStore: () =>
+      ({
+        getSession: () => ({ agentId: 'main' }),
+        getAgent: () => ({ enabled: true }),
+        getLatestSessionRun: () => ({ state: 'completed', clientTurnId: 'previous-team' }),
+        beginSessionRun,
+      }) as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([name]) => name === 'cowork:session:run:begin',
+  )![1] as IpcHandler;
+  const input = { sessionId: 'source', clientTurnId: 'new-input', startedAt: 2 };
+  return { launch, beginSessionRun, handler, input };
+}
+
+test.each(['settled', 'unsettled', 'unavailable'])(
+  'admits an ordinary main follow-up while the previous Team launch cleanup is %s',
+  async condition => {
+    const { launch, beginSessionRun, handler, input } = registerTeamFollowupFixture();
+    if (condition === 'settled') launch.releaseIfSettled.mockResolvedValue(true);
+    if (condition === 'unavailable')
+      launch.releaseIfSettled.mockRejectedValue(new Error('Gateway disconnected'));
+
+    await expect(handler(null, input)).resolves.toMatchObject({
+      success: true,
+      timing: { id: 'followup', clientTurnId: 'new-input' },
+    });
+    expect(beginSessionRun).toHaveBeenCalledWith(input);
+    expect(launch.releaseIfSettled).toHaveBeenCalledWith('source');
+    expect(launch.register).not.toHaveBeenCalled();
+    expect(launch.cancel).not.toHaveBeenCalled();
+  },
+);
+
+test.each(['task', 'group'] as const)(
+  'keeps a new explicit %s Team launch blocked until the previous launch is settled',
+  async mode => {
+    const { launch, beginSessionRun, handler, input } = registerTeamFollowupFixture();
+    await expect(
+      handler(null, { ...input, agentTeamPrompt: appendAgentTeamInstruction('New team', mode) }),
+    ).resolves.toMatchObject({ success: false });
+    expect(launch.releaseIfSettled).toHaveBeenCalledWith('source');
+    expect(launch.register).not.toHaveBeenCalled();
+    expect(beginSessionRun).not.toHaveBeenCalled();
+  },
+);
+
+test('preserves the active user-run rejection independently of previous Team launch cleanup', async () => {
+  const { launch, beginSessionRun, handler, input } = registerTeamFollowupFixture();
+  beginSessionRun.mockImplementation(() => {
+    throw new Error('This session already has an active user run.');
+  });
+  await expect(handler(null, input)).resolves.toMatchObject({
+    success: false,
+    error: 'This session already has an active user run.',
+  });
+  expect(launch.releaseIfSettled).toHaveBeenCalledWith('source');
+  expect(launch.cancel).not.toHaveBeenCalled();
+});
+
+test('does not let a failed guard cancellation prevent stopping the actual source run', async () => {
+  const stopSession = vi.fn().mockResolvedValue(undefined);
+  registerCoworkSessionHandlers({
+    getAgentTeamLaunch: () =>
+      ({
+        cancel: vi.fn().mockRejectedValue(new Error('disconnected')),
+      }) as unknown as AgentTeamLaunchCoordinator,
+    getCoworkStore: () => ({}) as CoworkStore,
+    getCoworkEngineRouter: () => ({ stopSession }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([name]) => name === 'cowork:session:stop',
+  )![1] as IpcHandler;
+  await expect(handler(null, 'source')).resolves.toEqual({ success: true });
+  expect(stopSession).toHaveBeenCalledWith('source', { diagnosticUserInitiated: true });
+});
+
+test('releases a closed pre-send sender only through the exact guard client contract', async () => {
+  const abortBeforeSend = vi.fn().mockResolvedValue(true);
+  registerCoworkSessionHandlers({
+    getAgentTeamLaunch: () => ({ abortBeforeSend }) as unknown as AgentTeamLaunchCoordinator,
+    getCoworkStore: () => ({}) as CoworkStore,
+    getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([name]) => name === SessionRunIpc.TeamSubmissionAbortedBeforeSend,
+  )![1] as IpcHandler;
+  await expect(
+    handler(null, { sessionId: 'source', clientTurnId: 'exact-client' }),
+  ).resolves.toEqual({ success: true });
+  expect(abortBeforeSend).toHaveBeenCalledWith('source', 'exact-client');
+  await expect(
+    handler(null, { sessionId: 'source', clientTurnId: 'exact-client', neverSubmitted: true }),
+  ).resolves.toMatchObject({ success: false });
+  expect(abortBeforeSend).toHaveBeenCalledOnce();
+  abortBeforeSend.mockResolvedValue(false);
+  await expect(
+    handler(null, { sessionId: 'source', clientTurnId: 'old-client' }),
+  ).resolves.toMatchObject({ success: false });
 });
 
 test('copies an idle session from its canonical transcript', async () => {

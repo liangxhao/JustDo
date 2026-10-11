@@ -82,8 +82,18 @@ import {
   BrowserRecordingChannel,
   type BrowserRecordingLease,
 } from '../shared/browser/browserRecording';
+import {
+  type AgentTeamKind,
+  type AgentTeamOverrides,
+  type AgentTeamSettings,
+  AgentTeamSettingsIpc,
+} from '../shared/cowork/agent-team/agentTeamSettings';
+import { CollaborationIpc } from '../shared/cowork/agent-team/collaboration';
+import {
+  TeamDiscussionIpc,
+  type TeamDiscussionSend,
+} from '../shared/cowork/agent-team/teamDiscussion';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
-import { CollaborationIpc } from '../shared/cowork/collaboration';
 import {
   type DiagnosticQuery,
   type DiagnosticScanProgress,
@@ -714,7 +724,24 @@ contextBridge.exposeInMainWorld('electron', {
       getDaily: (options: UsageStatsOptions) => ipcRenderer.invoke(UsageStatsIpc.GetDaily, options),
     },
   },
+  agentTeamSettings: {
+    read: () => ipcRenderer.invoke(AgentTeamSettingsIpc.Read),
+    save: (value: AgentTeamSettings, expectedRevision: number) =>
+      ipcRenderer.invoke(AgentTeamSettingsIpc.Save, { value, expectedRevision }),
+    readTeam: (kind: AgentTeamKind, roomId: string) =>
+      ipcRenderer.invoke(AgentTeamSettingsIpc.ReadTeam, { kind, roomId }),
+    saveTeam: (
+      kind: AgentTeamKind,
+      roomId: string,
+      value: AgentTeamOverrides,
+      expectedRevision: number,
+    ) =>
+      ipcRenderer.invoke(AgentTeamSettingsIpc.SaveTeam, { kind, roomId, value, expectedRevision }),
+  },
   collaboration: {
+    prepareContinuation: (
+      input: import('../shared/cowork/agent-team/collaboration').CollaborationContinuePreparation,
+    ) => ipcRenderer.invoke(CollaborationIpc.PrepareContinuation, input),
     read: (sessionId: string) => ipcRenderer.invoke(CollaborationIpc.Read, sessionId),
     readMessages: (sessionId: string, deliveryIds: string[]) =>
       ipcRenderer.invoke(CollaborationIpc.ReadMessages, { sessionId, deliveryIds }),
@@ -722,6 +749,25 @@ contextBridge.exposeInMainWorld('electron', {
     create: (sessionId: string, agentIds: string[]) =>
       ipcRenderer.invoke(CollaborationIpc.Create, { sessionId, agentIds }),
     stop: (sessionId: string) => ipcRenderer.invoke(CollaborationIpc.Stop, sessionId),
+    stopMember: (
+      input: import('../shared/cowork/agent-team/collaboration').CollaborationStopMemberInput,
+    ) => ipcRenderer.invoke(CollaborationIpc.StopMember, input),
+  },
+  teamDiscussion: {
+    participation: (input: { roomId: string; expectedRevision: number; enabled: boolean }) =>
+      ipcRenderer.invoke(TeamDiscussionIpc.Participation, input),
+    createTask: (input: { roomId: string; requestId: string }) =>
+      ipcRenderer.invoke(TeamDiscussionIpc.CreateTask, input),
+    list: () => ipcRenderer.invoke(TeamDiscussionIpc.List),
+    create: (input: unknown) => ipcRenderer.invoke(TeamDiscussionIpc.Create, input),
+    read: (roomId: string, beforeDiscussionId?: string, exactDiscussionIds?: string[]) =>
+      ipcRenderer.invoke(TeamDiscussionIpc.Read, roomId, beforeDiscussionId, exactDiscussionIds),
+    send: (input: TeamDiscussionSend) => ipcRenderer.invoke(TeamDiscussionIpc.Send, input),
+    enqueue: (input: TeamDiscussionSend) => ipcRenderer.invoke(TeamDiscussionIpc.Enqueue, input),
+    cancelPending: (input: { roomId: string; requestId: string }) =>
+      ipcRenderer.invoke(TeamDiscussionIpc.CancelPending, input),
+    stop: (roomId: string) => ipcRenderer.invoke(TeamDiscussionIpc.Stop, roomId),
+    delete: (roomId: string) => ipcRenderer.invoke(TeamDiscussionIpc.Delete, roomId),
   },
   agents: {
     delete: (agentId: string) => ipcRenderer.invoke(AgentIpc.Delete, agentId),
@@ -826,7 +872,12 @@ contextBridge.exposeInMainWorld('electron', {
       clientTurnId: string;
       startedAt: number;
       modelRef?: string;
+      agentTeamPrompt?: string;
     }) => ipcRenderer.invoke('cowork:session:run:begin', input),
+    markTeamSubmissionStarted: (input: { sessionId: string; clientTurnId: string }) =>
+      ipcRenderer.invoke(SessionRunIpc.TeamSubmissionStarted, input),
+    abortTeamSubmissionBeforeSend: (input: { sessionId: string; clientTurnId: string }) =>
+      ipcRenderer.invoke(SessionRunIpc.TeamSubmissionAbortedBeforeSend, input),
     bindSessionRun: (input: { id: string; rootRunId: string }) =>
       ipcRenderer.invoke('cowork:session:run:bind', input),
     listSessionRuns: (sessionId: string) =>

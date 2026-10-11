@@ -332,26 +332,66 @@ describe('OpenClawExtensionImportService', () => {
   });
 
   it.each([true, false])(
-    'synchronizes the team skill through native APIs when enabled=%s',
+    'resets native team skill discovery after synchronizing enabled=%s',
     async enabled => {
       const requestGateway = vi.fn().mockResolvedValue({ ok: true, restartRequired: false });
+      const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
       const service = new OpenClawExtensionImportService({
         getOpenClawEngineManager: () =>
           ({ getStatus: () => ({ phase: 'running' }) }) as OpenClawEngineManager,
         requestGateway,
+        restartGatewayAfterMutation,
       });
       await expect(service.setEnabled('agent-team', enabled)).resolves.toEqual({ success: true });
       expect(requestGateway.mock.calls).toEqual([
         ['plugins.setEnabled', { pluginId: 'agent-team', enabled }],
         ['skills.update', { skillKey: 'agent-team', enabled }],
       ]);
+      expect(restartGatewayAfterMutation).toHaveBeenCalledExactlyOnceWith(
+        'extension-status-change',
+      );
+      expect(requestGateway.mock.invocationCallOrder.at(-1)).toBeLessThan(
+        restartGatewayAfterMutation.mock.invocationCallOrder[0],
+      );
     },
   );
 
-  it('honors a required native reload even when the team skill write fails', async () => {
+  it.each([
+    { enabled: true, restartRequired: false },
+    { enabled: false, restartRequired: false },
+    { enabled: true, restartRequired: true },
+    { enabled: false, restartRequired: true },
+  ])(
+    'honors Swarm enabled=$enabled and native restartRequired=$restartRequired without mutating Team skills',
+    async ({ enabled, restartRequired }) => {
+      const requestGateway = vi.fn().mockResolvedValue({ ok: true, restartRequired });
+      const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () =>
+          ({ getStatus: () => ({ phase: 'running' }) }) as OpenClawEngineManager,
+        requestGateway,
+        restartGatewayAfterMutation,
+      });
+
+      await expect(service.setEnabled('swarm-workflow', enabled)).resolves.toEqual({ success: true });
+      expect(requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.setEnabled', {
+        pluginId: 'swarm-workflow',
+        enabled,
+      });
+      if (restartRequired) {
+        expect(restartGatewayAfterMutation).toHaveBeenCalledExactlyOnceWith(
+          'extension-status-change',
+        );
+      } else {
+        expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it('resets team discovery even when the skill write fails and native hot reload reports success', async () => {
     const requestGateway = vi.fn(async method => {
       if (method === 'skills.update') throw new Error('Skill update unavailable');
-      return { ok: true, restartRequired: true };
+      return { ok: true, restartRequired: false };
     });
     const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
     const service = new OpenClawExtensionImportService({
@@ -379,6 +419,7 @@ describe('OpenClawExtensionImportService', () => {
         ({ getStatus: () => ({ phase: 'running' }) }) as OpenClawEngineManager,
       requestGateway,
       runCommand,
+      restartGatewayAfterMutation: vi.fn().mockResolvedValue({ phase: 'running' }),
     });
     await expect(service.setEnabled('agent-team', true)).resolves.toMatchObject({
       success: false,
@@ -440,6 +481,78 @@ describe('OpenClawExtensionImportService', () => {
       expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).skills.load.watch).toBe(false);
     },
   );
+
+  it('resets stale team discovery after an active Gateway falls back to an unchanged cold toggle', async () => {
+    const stateDir = path.join(fixtureRoot, 'state');
+    const configPath = path.join(stateDir, 'openclaw.json');
+    const extensionDir = path.join(stateDir, 'extensions', 'agent-team');
+    fs.mkdirSync(extensionDir, { recursive: true });
+    fs.writeFileSync(path.join(extensionDir, 'openclaw.plugin.json'), '{"id":"agent-team"}');
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        plugins: { entries: { 'agent-team': { enabled: true } } },
+        skills: { entries: { 'agent-team': { enabled: true } } },
+      }),
+    );
+    const requestGateway = vi.fn().mockRejectedValue(new Error('gateway not connected'));
+    const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
+    const runCommand = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () =>
+        ({
+          getStatus: () => ({ phase: 'running' }),
+          getStateDir: () => stateDir,
+          getConfigPath: () => configPath,
+          getBaseDir: () => stateDir,
+          buildCliEnvironment: async () => ({
+            env: {},
+            runtimeRoot: fixtureRoot,
+            openclawEntry: 'openclaw.mjs',
+          }),
+        }) as unknown as OpenClawEngineManager,
+      requestGateway,
+      restartGatewayAfterMutation,
+      runCommand,
+    });
+
+    await expect(service.setEnabled('agent-team', true)).resolves.toEqual({ success: true });
+    expect(requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.setEnabled', {
+      pluginId: 'agent-team',
+      enabled: true,
+    });
+    expect(restartGatewayAfterMutation).toHaveBeenCalledExactlyOnceWith('extension-status-change');
+    expect(runCommand.mock.invocationCallOrder[0]).toBeLessThan(
+      restartGatewayAfterMutation.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('reports a failed team discovery restart and retries it through the same native toggle', async () => {
+    const requestGateway = vi.fn().mockResolvedValue({ ok: true, restartRequired: false });
+    const restartGatewayAfterMutation = vi
+      .fn()
+      .mockResolvedValueOnce({ phase: 'error', message: 'Skill publication restart failed' })
+      .mockResolvedValueOnce({ phase: 'running' });
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () =>
+        ({ getStatus: () => ({ phase: 'running' }) }) as OpenClawEngineManager,
+      requestGateway,
+      restartGatewayAfterMutation,
+    });
+
+    await expect(service.setEnabled('agent-team', true)).resolves.toEqual({
+      success: false,
+      error: 'Skill publication restart failed',
+    });
+    await expect(service.setEnabled('agent-team', true)).resolves.toEqual({ success: true });
+    expect(restartGatewayAfterMutation).toHaveBeenCalledTimes(2);
+    expect(requestGateway.mock.calls.map(([method]) => method)).toEqual([
+      'plugins.setEnabled',
+      'skills.update',
+      'plugins.setEnabled',
+      'skills.update',
+    ]);
+  });
 
   it('uses Gateway mutations and restarts only when OpenClaw requests it', async () => {
     const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });

@@ -24,7 +24,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-function fixture() {
+function fixture(beforeAgentTeamDisable?: () => Promise<() => void>) {
   const sender = { isDestroyed: vi.fn(() => false), send: vi.fn() };
   const peer = { isDestroyed: vi.fn(() => false), send: vi.fn() };
   windows.getAllWindows.mockReturnValue([
@@ -42,6 +42,7 @@ function fixture() {
   registerExtensionHandlers({
     extensionImportService: service as unknown as OpenClawExtensionImportService,
     installationService: installation as unknown as PluginInstallationService,
+    beforeAgentTeamDisable,
   });
   return { service, installation, sender, peer, event: { sender } };
 }
@@ -118,13 +119,24 @@ test('failed catalog reads preserve the mutation result and do not invent an ena
 
 test('a partially installed extension still invalidates attached capabilities when its reload fails', async () => {
   const f = fixture();
-  f.service.importPath.mockResolvedValue({ success: false, extensionId: 'feature-plugin', error: 'restart failed' });
+  f.service.importPath.mockResolvedValue({
+    success: false,
+    extensionId: 'feature-plugin',
+    error: 'restart failed',
+  });
   f.service.listCatalog.mockResolvedValue([{ id: 'feature-plugin', enabled: true }]);
   const installer = f.installation.registerInstaller.mock.calls[0][0];
 
-  await expect(installer.install({ payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' }, origin: 'custom' }))
-    .resolves.toMatchObject({ success: false, pluginId: 'feature-plugin', error: 'restart failed' });
-  expect(f.peer.send).toHaveBeenCalledWith(ExtensionIpc.Changed, { extensionId: 'feature-plugin', enabled: true });
+  await expect(
+    installer.install({
+      payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' },
+      origin: 'custom',
+    }),
+  ).resolves.toMatchObject({ success: false, pluginId: 'feature-plugin', error: 'restart failed' });
+  expect(f.peer.send).toHaveBeenCalledWith(ExtensionIpc.Changed, {
+    extensionId: 'feature-plugin',
+    enabled: true,
+  });
 });
 
 test('serialized notifications prevent an older catalog response from arriving after a newer one', async () => {
@@ -194,4 +206,120 @@ test('invalid requests neither mutate plugins nor publish state', async () => {
   expect(f.service.setEnabled).not.toHaveBeenCalled();
   expect(f.service.listCatalog).not.toHaveBeenCalled();
   expect(f.peer.send).not.toHaveBeenCalled();
+});
+
+test('fences pending Agent Team inputs before saving its disabled configuration', async () => {
+  let release!: () => void;
+  const releaseDisable = vi.fn();
+  const fence = vi.fn(
+    () =>
+      new Promise<() => void>(resolve => {
+        release = () => resolve(releaseDisable);
+      }),
+  );
+  const f = fixture(fence);
+  f.service.setEnabled.mockResolvedValue({ success: true });
+  const disabling = handlers.get(ExtensionIpc.SetEnabled)!(f.event, {
+    extensionId: 'agent-team',
+    enabled: false,
+  });
+  await vi.waitFor(() => expect(fence).toHaveBeenCalledOnce());
+  expect(f.service.setEnabled).not.toHaveBeenCalled();
+  expect(releaseDisable).not.toHaveBeenCalled();
+  const enabling = handlers.get(ExtensionIpc.SetEnabled)!(f.event, {
+    extensionId: 'agent-team',
+    enabled: true,
+  });
+  await Promise.resolve();
+  expect(f.service.setEnabled).not.toHaveBeenCalled();
+  release();
+  await Promise.all([disabling, enabling]);
+  expect(f.service.setEnabled.mock.calls.map(call => call.slice(0, 2))).toEqual([
+    ['agent-team', false],
+    ['agent-team', true],
+  ]);
+  expect(fence).toHaveBeenCalledOnce();
+  expect(releaseDisable).toHaveBeenCalledOnce();
+});
+
+test('holds admission until native configuration settles and releases before a queued re-enable', async () => {
+  const releaseDisable = vi.fn();
+  const f = fixture(async () => releaseDisable);
+  let finish!: (result: { success: boolean }) => void;
+  f.service.setEnabled
+    .mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+    )
+    .mockImplementationOnce(async () => {
+      expect(releaseDisable).toHaveBeenCalledOnce();
+      return { success: true };
+    });
+  const disabling = handlers.get(ExtensionIpc.SetEnabled)!(f.event, {
+    extensionId: 'agent-team',
+    enabled: false,
+  });
+  await vi.waitFor(() => expect(f.service.setEnabled).toHaveBeenCalledOnce());
+  const enabling = handlers.get(ExtensionIpc.SetEnabled)!(f.event, {
+    extensionId: 'agent-team',
+    enabled: true,
+  });
+  await Promise.resolve();
+  expect(f.service.setEnabled).toHaveBeenCalledOnce();
+  expect(releaseDisable).not.toHaveBeenCalled();
+  finish({ success: true });
+  await Promise.all([disabling, enabling]);
+  expect(releaseDisable).toHaveBeenCalledOnce();
+});
+
+test('releases the disable admission lease after a failed native mutation', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const releaseDisable = vi.fn();
+  const f = fixture(async () => releaseDisable);
+  f.service.setEnabled.mockRejectedValue(new Error('config rejected'));
+  expect(
+    await handlers.get(ExtensionIpc.SetEnabled)!(f.event, {
+      extensionId: 'agent-team',
+      enabled: false,
+    }),
+  ).toMatchObject({ success: false, error: 'config rejected' });
+  expect(releaseDisable).toHaveBeenCalledOnce();
+});
+
+test('keeps the extension configuration unchanged when the required queue fence fails', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const f = fixture(vi.fn().mockRejectedValue(new Error('queue fence failed')));
+  expect(
+    await handlers.get(ExtensionIpc.SetEnabled)!(f.event, {
+      extensionId: 'agent-team',
+      enabled: false,
+    }),
+  ).toMatchObject({ success: false, error: 'queue fence failed' });
+  expect(f.service.setEnabled).not.toHaveBeenCalled();
+});
+
+test('rejects Agent Team disable without its Main queue owner integration', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const f = fixture();
+  expect(
+    await handlers.get(ExtensionIpc.SetEnabled)!(f.event, {
+      extensionId: 'agent-team',
+      enabled: false,
+    }),
+  ).toMatchObject({ success: false, error: 'teamDiscussionUnavailable' });
+  expect(f.service.setEnabled).not.toHaveBeenCalled();
+});
+
+test('does not invoke the Agent Team queue fence for another extension', async () => {
+  const fence = vi.fn();
+  const f = fixture(fence);
+  f.service.setEnabled.mockResolvedValue({ success: true });
+  await handlers.get(ExtensionIpc.SetEnabled)!(f.event, {
+    extensionId: 'feature-plugin',
+    enabled: false,
+  });
+  expect(f.service.setEnabled).toHaveBeenCalledOnce();
+  expect(fence).not.toHaveBeenCalled();
 });

@@ -1,0 +1,7 @@
+.team-discussion-message-content .file-preview-markdown > :first-child {
+  margin-top: 0;
+}
+
+.team-discussion-message-content .file-preview-markdown > :last-child {
+  margin-bottom: 0;
+}

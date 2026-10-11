@@ -348,6 +348,20 @@ Workboard 仍使用 OpenClaw 插件的 `workboard.cards.*` / `workboard.boards.*
 
 接口核对与可复现验证见 [Workboard 操作契约](../features/workflow/workboard.md)。
 
+## Agent Team 群组讨论扩展
+
+配置同步固定 `surfaces.justdo-team.silentReply.group: allow`，允许群成员按原生规则静默，避免 `NO_REPLY` 被空回答恢复强迫重试。该策略写入实际运行时配置，覆盖正常、最小及登录／登出同步；保留其他 surfaces 与显式插件状态，不改变主会话或来源汇总的回复要求，也不增加运行时补丁。
+
+agent-team 同时承载旧任务协作和 justdo-team 群组 Channel，保持默认关闭及用户开关。它提供 bundled-channel-entry 合约；Runtime Services 注册只读 teamDiscussion.history，使禁用 Agent Team 后仍可查看历史。群聊调用 AskUserQuestion 时沿用同一扩展和取消信号，Renderer 根据完整原生 room key 显示提问者。agent-team 与 runtime-services 的 package.json 声明 justdo.bundle，资源同步从产品源码预先 bundle 共享纯合约，SDK 保持 external；不增加 OpenClaw patch。
+
+详见 [Agent Team 现行契约](../features/assistants/agent-team.md)。
+
+Agent Team 新增模型工具 team_discussion（create/send/read/stop），声明于 manifest，并加入受管理工具可用列表。群聊成员无法反向创建团队；模型创建讨论固定只读，来源项目由 Main 推导。 详见[主会话组织团队](../features/assistants/agent-team.md)。
+
+Main 从鉴权后的来源会话生成组织者身份，通过 Gateway-only 字段传入群聊 admission 并纳入原生请求指纹。原生模型上下文使用组织者的 SenderId / SenderName，并明确助手转达不增加用户授权；用户直接输入仍为 local-user。适配器也提供 SenderIsBot，但当前打包 SDK 的模型投影不保留该标记，身份区分不依赖它。Renderer 和模型工具参数不能指定该身份。Plan trusted policy 将 team_discussion 的非 read 动作归为变更操作。
+
+独立群成员尚不能继承来源原生会话的额外工具限制和执行绑定。模型 create / send 在原生派发入口检查来源会话；存在明确的工具禁用、继承工具策略或必需 sandbox / 远程执行绑定时，拒绝启动并说明限制，不能以创建独立群聊放宽这些约束。read / stop 保持可用；全局沙盒配置继续由原生执行链执行。
+
 ## Jev typed evaluations
 
 The optional `typesafe` extension is vendored from a pinned upstream revision in
@@ -412,3 +426,45 @@ Gateway 启动的流程服务在同一进程内由各助手的独立工具/钩�
 原生 035 将已解析的 attempt.contextTokenBudget 填入已有的 before_prompt_build 上下文字段。结果分页以当前运行的有效预算计算完整工具包装大小；不使用模型窗口代替实际预算，缺证据时保持保守额度。该补丁只暴露元数据，不改变原生模型解析、截断或上下文守卫。
 
 通用扩展配置表单支持 manifest 明确声明的有界 integer/number 字段。Swarm 的五个参数使用精确 hotPrefixes；并发影响后续准入，其他默认值保存于新流程。数值保存不因 reload ACK 缺失自动重启。manifest 可声明 configurationStatusMethod，保存后核对服务实际配置；Swarm health 返回有限数值配置、hash、生效并发和服务代际。未确认或未运行时显示待生效，重复保存不能伪装已应用。助手名单归应用所有，其余用户数值和显式禁用状态保留。
+
+## Agent Team 协作与讨论策略
+
+Gateway 单文件打包与动态 SDK 必须共享原生运行授权及私有会话绑定标记的状态所有者。打包器从锁定 SDK 的 secret/reply 依赖图识别原生模块，将 `createAdmittedRunOperatorAuthority` 和 `prepareGatewayContextBindingOwner` 所在模块分别保留为同一外部 ESM 实例；不复制或重新签发授权，不放宽原生 WeakSet、来源、撤销或精确 owner 校验。这修复真实 webchat 发起的 peer 执行在继续投递时被另一份授权校验状态拒绝的问题，属于打包边界修复，不新增运行时行为 patch。后台/System 连接不能替代这一链路的验证；已有冻结 runtime 必须按原构建流程从锁定 pristine 包重建，不能修改旧 bundle 或补写证明文件。
+
+共享模块使 esbuild 为多处权限 resolver 导入生成数字后缀。现有 metadata 补丁的 bundle 检查接受此编译形态，原生文件仍要求锁定的精确函数名；缺失或重复的 transport authority assertion 继续报错。验收须覆盖从 pristine 安装、打包后的完整补丁复核到 Gateway 启动，单独重打包与 SDK 用例不能代替该流程。
+
+Agent Team 的 `team_discussion` 新增 `configure`/`organizerParticipates` 与精确 `discussionIds`。模型工具/skill、群运行服务及总结服务仍同属可选扩展。来源 snapshot 由可信 Gateway 查询，不接受 Renderer 指定 native key。总结使用独立 native admission ledger，工具完全禁用；Runtime Services 提供禁用后的历史及 summary status/stop。用户显式 disable 保留。
+
+`task_assistants({seal:true})` 使用既有原生工具身份绑定，只允许组织者收束当前批次；不是新的 peer 调度器。普通用户对话不自动注入 roster 或团队说明。见[最新实现](../features/assistants/agent-team.md)。
+
+`task_assistants` 的查询现在返回最近的精确投递/执行回执和验收报告。独立验收助手通过 `review:{deliveryIds,verdict}` 上报；hook 使用原生 sessionKey/runId/toolCallId 绑定，Plan 拦截变更，过期、重放调用和混合动作拒绝。Main 对原生接收竞态做有界等待，再检查当前档案及会话归属；报告成功不表示验收执行已结束。协议与 skill 仍属于默认关闭的 Agent Team 扩展，无新增运行时补丁。
+
+团队 skill 引导来源助手在派发前定义交付物和检查标准、按依赖顺序收取结果、安排独立检查；返工产生新执行和新验收。当前没有自动 DAG 调度或强制质量门禁，来源助手仍负责给用户综合结果。MoA 另行实现为独立扩展，交接见 [MoA 实施方案](../plans/moa-extension-plan.md)。
+
+Agent Team 的输入框模式选择只为用户显式选择的单次消息附加模式指令；普通消息不注入团队指令。选择群组讨论时使用 team_discussion，选择任务协作时使用持久 task peers 和 sessions_send；技能明确遵从用户所选模式。UI 发送前检查扩展启用状态，原生执行仍受现有工具准入、来源、Plan 与生命周期限制，不增加运行时补丁。
+
+Agent Team 开关通过原生插件与技能 API 持久化后，在线场景使用现有安全 Gateway 重启协调器刷新技能发现生命周期；离线修改不启动服务。这样避免 9.8 热替换遗留的旧发现配置在后续刷新时清理新发布的技能链接。技能目录发布及模型读取仍归 OpenClaw；不复制生成目录或改写读取工具参数。详见[技能发布与启用流程](../features/assistants/agent-team.md)。
+
+### Agent Team 资源设置
+
+插件卡片使用专用设置对话框，继续复用原有启用开关。`kv.agentTeam.settings` 是全局产品默认的唯一来源；Main CAS 保存不调用 Gateway、不改变插件开关或原生配置。`task_assistants` 按需返回限制，省略轮次与组织者参与才采用用户默认。团队覆盖只允许继承或收紧资源上限。
+
+群聊 Start 由已认证的 Main 提交不可变资源快照；扩展将其纳入 admission 指纹，以局部 broadcast `maxTurns` 控制响应总量。每批次 FIFO 许可池在一个公开 dispatcher 边界覆盖普通成员和 borrowed source。仅在 dispatcher 清理结束以及公开 `runtime.events.onAgentEvent` 的精确 run/session `executionSettled:true` 均成立时释放许可。终态不明停止后续派发、保持 unknown 准入占用，不自动重试。主会话汇总不占 participant turn 或该池许可。
+
+协作模式只配置成员上限与每用户轮次的消息投递预算，保留原生 peer 队列；本期不提供可能造成循环等待的协作自动排队开关。没有新增 OpenClaw runtime patch。见[Agent Team 资源设置](../features/assistants/agent-team.md)。
+
+### Agent Team 恢复证据与交接
+
+group/summary service 在接收原生 run ID 的回调中先保留身份，再验证来源/成员和取消；已接纳的 run 不因校验失败消失。可见 final 和终态回调仅描述回复，精确 `executionSettled:true` 才更新 native outcome。批次结果和汇总交付结果分别记录，dispatcher 清理前不结算 admission；NO_REPLY 或来源 reset 可以是 native completed 而 summary failed。丢失 owner 或缺少结算/清理证据的旧回执保持 unknown，online/offline Stop 只有确实未接纳时才写取消 tombstone，不据插件关闭推断取消完成。
+
+skill 和一次性发起指令补全目标、材料、约束、交付及验收说明，不将成员文本或附件变成授权。受限发起守卫由常驻 Runtime Services 提供 trusted tool policy 和原生钩子，只保护能够核对精确当前输入的正常来源提交；可选 Agent Team 关闭不能卸载保护。queued/followup 的通用 lineage 仍未成立，忙碌显式提交保留草稿。guard、有限 revise 与 Main 生命周期接入仍需整合验收，不描述为确定建群或扩权能力。
+
+Runtime Services 的发起账本位于 `stateDir/runtime-services/agent-team-launch/`，只保存来源身份、generation、owner、状态、指纹及 whole-run 元数据，不保存输入或回复。原生 `pluginExtensions.runtime-services.agent-team-launch` 仅作镜像：正常 SIGTERM 无后继 registry 时会按 disable 清除普通会话的插件状态。账本先持久提交再更新镜像；同进程各注册实例共用来源串行约束，写入前检查客户端授权和退役状态。旧进程未 released、读取失败、损坏或写入未知均冻结，精确 released 才可接纳下一代。锁定自有 holding harness 的原生状态有单独的退休保留规则，不将普通来源的 namespace 清理结论扩展到锁定 holding。
+
+群聊待发存储由常驻 Runtime Services 注册和持有：自有锁定 `justdo-team-holding` inert harness 保存 custom-role、`display:false`、`excludeFromContext:true` 的原生条目，native owner 标记在 `pluginExtensions.runtime-services.holding`。Prepare/Save/Read/Status 受可选 Agent Team 开关限制，Cancel/Close/owning unlock 在关闭后仍可合法清理，不临时启用插件。保存不调用模型；公开 raw delta 仅按 exact identity/request/entry/idempotency/指纹核对目标条目。Main 三名额事务与同群 FIFO 是产品接纳层，不追加活动成员 transcript、不构成全局调度器。产品普通会话导入、搜索、列表和状态过滤 holding 保留 key。
+
+插件私有进程状态槽使用 `agent-team` / `runtime-services` 能力名称。待发正文的 customType 为 `agent-team-holding-input`，幂等键前缀为 `agent-team-holding:`，原生消息标记为 `__openclaw.agentTeamHolding`；保留已建立的 holding harness 会话身份及对应导入过滤、归档和清理规则。历史正文标记不自动迁移或重新解释，无法精确核验的待发正文保持未确认；仍可按真实 holder 身份取消和清理。
+
+正常 shutdown 保留 saved，产品明确关闭先持久取消代次并冻结新准入，再改插件配置。公开 service.stop 可能仍持有旧配置且没有关闭原因，因此扩展 stop 的配置检查不能独立保证热关闭取消。Main 的 disable lease 与串行开关 lane 覆盖这一边界。关闭房间先收齐持久 native 身份，正常 operator 客户端归档，owning SDK 仅对 exact archived session 解锁，再由 operator 精确 archivedOnly 删除；harness 归属不能伪造成 pluginOwnerId。已解锁后正常 SIGTERM 会清除 native holding marker；仅 durable closed slot 与仍 archived/unlocked 的精确 key/SID/revision/harness/root 吻合且没有冲突 marker 时可继续清理，正常正文准入未放宽。真实当前 SDK 已验证此清理闭环（含解锁后重启）、保存/重启/禁用和启用 memory-core 的 session FTS 隔离，dreaming 和所有管理恢复入口尚无实际全覆盖。
+
+详情页补充走正常来源新 user turn，由来源模型受管工具转发；真实新 peer accepted run 才证明目标已发起。它不伪造新执行或复用旧 round，unknown 不自动重试，也不保证定向转述。详见[本轮实现与验证边界](../features/assistants/agent-team.md)。本轮没有增加或修改运行时 patch。

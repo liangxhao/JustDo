@@ -47,6 +47,7 @@ const TAB_PRESENTATION: Record<
 };
 
 interface PluginsViewProps {
+  onOpenRuntime?: () => void;
   isSidebarCollapsed: boolean;
   onToggleSidebar: () => void;
   onNewChat: () => void;
@@ -55,6 +56,7 @@ interface PluginsViewProps {
 const PluginsView: React.FC<PluginsViewProps> = ({
   isSidebarCollapsed,
   onToggleSidebar,
+  onOpenRuntime,
   onNewChat,
 }) => {
   const [activeTab, setActiveTab] = useState<PluginTab>('extensions');
@@ -162,6 +164,7 @@ const PluginsView: React.FC<PluginsViewProps> = ({
           <div className="mt-5">
             {activeTab === 'extensions' && (
               <ExtensionsManager
+                onOpenRuntime={onOpenRuntime}
                 searchQuery={searchQuery}
                 visibility="all"
                 requestedExtensionId={requestedExtensionId}

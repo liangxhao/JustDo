@@ -10,6 +10,7 @@ import {
 } from '../../../shared/plugins/extensions';
 import { getExtensionManagement } from '../../../shared/plugins/management';
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
+import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
 import type { OpenClawExtensionImportService } from '../../plugins/extensions';
 import { type PluginInstallationService, PluginInstallOrigin } from '../../plugins/installation';
 
@@ -17,16 +18,27 @@ type ExtensionHandlerDependencies = {
   extensionImportService: OpenClawExtensionImportService;
   installationService: PluginInstallationService;
   onMarketplacePluginDeleted?: (kind: typeof PluginKind.EXTENSION, runtimeId: string) => void;
+  beforeAgentTeamDisable?: () => Promise<() => void>;
 };
 
 export const registerExtensionHandlers = ({
   extensionImportService,
   installationService,
   onMarketplacePluginDeleted,
+  beforeAgentTeamDisable,
 }: ExtensionHandlerDependencies): void => {
   // Mutations can persist before reporting a restart error. Publish observed state,
   // including installs/removals, and keep catalog notifications in completion order.
   let stateNotification = Promise.resolve();
+  let agentTeamMutation = Promise.resolve();
+  const withAgentTeamMutation = <T>(operation: () => Promise<T>): Promise<T> => {
+    const pending = agentTeamMutation.then(operation);
+    agentTeamMutation = pending.then(
+      (): void => undefined,
+      (): void => undefined,
+    );
+    return pending;
+  };
   const publishExtensionState = (extensionId: string): Promise<void> => {
     stateNotification = stateNotification.then(async () => {
       try {
@@ -174,17 +186,28 @@ export const registerExtensionHandlers = ({
         return { success: false, error: 'Extension id and enabled state are required' };
       }
       const extensionId = request.extensionId.trim();
-      try {
-        return await extensionImportService.setEnabled(
-          extensionId,
-          request.enabled,
-          typeof request.reviewToken === 'string'
-            ? request.reviewToken.trim() || undefined
-            : undefined,
-        );
-      } finally {
-        await publishExtensionState(extensionId);
-      }
+      const mutate = async () => {
+        let releaseDisable: (() => void) | undefined;
+        try {
+          if (extensionId === OpenClawExtensionId.AGENT_TEAM && !request.enabled) {
+            if (!beforeAgentTeamDisable) throw new Error('teamDiscussionUnavailable');
+            releaseDisable = await beforeAgentTeamDisable();
+          }
+          return await extensionImportService.setEnabled(
+            extensionId,
+            request.enabled,
+            typeof request.reviewToken === 'string'
+              ? request.reviewToken.trim() || undefined
+              : undefined,
+          );
+        } finally {
+          releaseDisable?.();
+          await publishExtensionState(extensionId);
+        }
+      };
+      return await (extensionId === OpenClawExtensionId.AGENT_TEAM
+        ? withAgentTeamMutation(mutate)
+        : mutate());
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to update extension status';
       console.error('[Extensions] extensions:set-enabled error:', errorMsg);

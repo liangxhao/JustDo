@@ -3,10 +3,70 @@ import './justdo-chat';
 
 import { afterEach, expect, test } from 'vitest';
 
+import { i18nService } from '@/services/i18n';
+
 import { ChatController } from '../gateway/chat-controller';
 import type { JustDoChatElement } from './justdo-chat';
 
 afterEach(() => document.body.replaceChildren());
+
+test.each([
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+])(
+  'attributes native group input only in member history (peer perspective: %s, transport only: %s)',
+  async (peerPerspective, transportOnly) => {
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.peerPerspective = peerPerspective;
+    chat.assistantName = '研究助手';
+    const controller = new ChatController();
+    controller.state.visibleChatMessages = [
+      { id: 'real-user', role: 'user', timestamp: 1, content: 'A real user question.' },
+      {
+        id: 'group-input',
+        role: 'user',
+        timestamp: 2,
+        content: 'Group thread round 2. These are sibling replies.',
+        senderLabel: 'You',
+        ...(transportOnly
+          ? {
+              __openclaw: {
+                transport: { channel: 'justdo-team', messageId: 'group-thread:round2' },
+              },
+            }
+          : {
+              provenance: {
+                kind: 'inter_session',
+                sourceSessionKey: 'agent:main:team-discussion:room',
+                sourceChannel: 'justdo-team',
+                sourceTool: 'team_discussion',
+              },
+            }),
+      },
+      { id: 'reply', role: 'assistant', timestamp: 3, content: 'The actual assistant reply.' },
+    ];
+    chat.controller = controller;
+    document.body.append(chat);
+    await chat.updateComplete;
+    const root = chat.shadowRoot!;
+    expect(root.querySelectorAll('.chat-group--user .chat-avatar.user')).toHaveLength(1);
+    const dispatchers = [...root.querySelectorAll('.chat-group--user .chat-avatar.peer')];
+    expect(dispatchers).toHaveLength(peerPerspective ? 1 : 0);
+    if (peerPerspective) {
+      const label = i18nService.t('teamDiscussionDispatcher');
+      expect(dispatchers[0].getAttribute('title')).toBe(label);
+      expect(dispatchers[0].textContent?.trim()).toBe(Array.from(label)[0]);
+      expect(dispatchers[0].querySelector('svg')).toBeNull();
+      expect(root.textContent).toContain('Group thread round 2.');
+      expect(root.textContent).toContain(label);
+    } else {
+      expect(root.textContent).not.toContain('Group thread round 2.');
+    }
+    expect(root.textContent).toContain('The actual assistant reply.');
+  },
+);
 
 test.each([false, true])(
   'keeps one matching assistant avatar per reply group (process first: %s)',

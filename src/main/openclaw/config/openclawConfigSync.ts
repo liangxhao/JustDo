@@ -33,6 +33,7 @@ import {
   buildManagedOpenClawSecrets,
   buildManagedOpenClawSessionConfig,
   buildManagedOpenClawSubagentConfig,
+  buildManagedOpenClawSurfaces,
   buildManagedOpenClawTtsPluginEntries,
   buildManagedSwarmWorkflowPluginEntries,
   buildMissingEmbeddedBrowserResult,
@@ -254,7 +255,10 @@ export class OpenClawConfigSync {
     }
   }
 
-  private applyManagedNonLanguageModels(config: Record<string, unknown>): void {
+  private applyManagedRuntimeConfiguration(config: Record<string, unknown>): void {
+    // Reply preparation consumes admitted runtime configuration, not a
+    // channel dispatcher's temporary projection. Set the surface policy here.
+    config.surfaces = buildManagedOpenClawSurfaces(config.surfaces);
     if (this.nativeVideoSelection === undefined && this.restoreUnmanagedVideo) this.restoreUnmanagedVideo(config);
     const availableExtensionIds = listAvailableOpenClawExtensionIds(
       this.engineManager.getStateDir(),
@@ -496,6 +500,7 @@ export class OpenClawConfigSync {
       ),
       // Native provider setup owns these variables, including extension credentials.
       ...(isRecord(existingConfig?.env) ? { env: existingConfig.env } : {}),
+      ...(isRecord(existingConfig?.surfaces) ? { surfaces: existingConfig.surfaces } : {}),
       gateway: {
         mode: 'local',
         bind: 'loopback',
@@ -669,7 +674,7 @@ export class OpenClawConfigSync {
       };
     }
     const configToPersist = withComputerControlPolicy(preparedSecrets.config);
-    this.applyManagedNonLanguageModels(configToPersist);
+    this.applyManagedRuntimeConfiguration(configToPersist);
     const nextContent = `${JSON.stringify(configToPersist, null, 2)}\n`;
     const configChanged = hasOpenClawConfigChanged(currentContent, configToPersist);
     if (configChanged) {
@@ -995,6 +1000,7 @@ export class OpenClawConfigSync {
         if (previousConfig[key] !== undefined) minimalConfig[key] = previousConfig[key];
       }
       if (isRecord(previousConfig.env)) minimalConfig.env = previousConfig.env;
+      if (isRecord(previousConfig.surfaces)) minimalConfig.surfaces = previousConfig.surfaces;
       minimalConfig.tools = {
         ...(isRecord(minimalConfig.tools) ? minimalConfig.tools : {}),
         codeMode: mergeManagedOpenClawCodeModeConfig(
@@ -1008,7 +1014,7 @@ export class OpenClawConfigSync {
         previousConfig.meta,
       );
     }
-    this.applyManagedNonLanguageModels(minimalConfig);
+    this.applyManagedRuntimeConfiguration(minimalConfig);
     minimalConfig = withComputerControlPolicy(minimalConfig);
     const nextContent = `${JSON.stringify(minimalConfig, null, 2)}\n`;
     const buildMinimalSyncResult = (
@@ -1026,7 +1032,7 @@ export class OpenClawConfigSync {
           const sanitizedConfig = withComputerControlPolicy(
             buildAuthScopedOpenClawConfig(existing, minimalConfig, reason),
           );
-          this.applyManagedNonLanguageModels(sanitizedConfig);
+          this.applyManagedRuntimeConfiguration(sanitizedConfig);
           const sanitizedContent = `${JSON.stringify(sanitizedConfig, null, 2)}\n`;
           if (hasOpenClawConfigChanged(currentContent, sanitizedConfig)) {
             ensureDir(path.dirname(configPath));
@@ -1213,7 +1219,7 @@ export class OpenClawConfigSync {
                 { enabled: false },
               ),
             );
-            this.applyManagedNonLanguageModels(mergedConfig);
+            this.applyManagedRuntimeConfiguration(mergedConfig);
             const configToWrite = withComputerControlPolicy(mergedConfig);
             const mergedContent = `${JSON.stringify(configToWrite, null, 2)}\n`;
             if (hasOpenClawConfigChanged(currentContent, configToWrite)) {

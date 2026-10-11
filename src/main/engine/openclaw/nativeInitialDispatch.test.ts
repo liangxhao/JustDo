@@ -79,7 +79,8 @@ function setup(sendReceipt?: Record<string, unknown>) {
         entry: { sessionId: gatewaySessionId, sessionRoot: process.cwd(), permissionMode: 'full' },
       };
     }
-    if (method === 'chat.send') return sendReceipt ?? { runId: params?.idempotencyKey, status: 'started' };
+    if (method === 'chat.send')
+      return sendReceipt ?? { runId: params?.idempotencyKey, status: 'started' };
     throw new Error(`Unexpected Main RPC: ${method}`);
   });
   const adapter = new OpenClawRuntimeAdapter(
@@ -96,41 +97,66 @@ function setup(sendReceipt?: Record<string, unknown>) {
     await running;
     internals.cleanupSessionTurn(sessionId);
   };
-  return { adapter, internals, request, updateSession, bindSessionRunRootRun, finishSessionRun, finish };
+  return {
+    adapter,
+    internals,
+    request,
+    updateSession,
+    bindSessionRunRootRun,
+    finishSessionRun,
+    finish,
+  };
 }
 
 describe('Main initial turn delegated to the presenting Renderer', () => {
-  it.each(['/stop', '停止！', 'please stop'])('settles the native non-executing control receipt for %s', async message => {
-    const s = setup();
-    const receipt = { ok: true, aborted: false, runIds: [] };
-    const dispatch = vi.fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>().mockResolvedValue(receipt);
-    const accepted = vi.fn();
-    const complete = vi.fn();
-    s.adapter.on('complete', complete);
+  it.each(['/stop', '停止！', 'please stop'])(
+    'settles the native non-executing control receipt for %s',
+    async message => {
+      const s = setup();
+      const receipt = { ok: true, aborted: false, runIds: [] };
+      const dispatch = vi
+        .fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>()
+        .mockResolvedValue(receipt);
+      const accepted = vi.fn();
+      const complete = vi.fn();
+      s.adapter.on('complete', complete);
 
-    await s.adapter.startSession(sessionId, message, {
-      clientTurnId,
-      dispatchChatSend: dispatch,
-      onAccepted: accepted,
-    });
+      await s.adapter.startSession(sessionId, message, {
+        clientTurnId,
+        dispatchChatSend: dispatch,
+        onAccepted: accepted,
+      });
 
-    expect(dispatch).toHaveBeenCalledOnce();
-    expect(accepted).toHaveBeenCalledOnce();
-    expect(complete).toHaveBeenCalledExactlyOnceWith(sessionId, 'idle');
-    expect(s.updateSession).toHaveBeenLastCalledWith(sessionId, { status: 'idle' });
-    expect(s.bindSessionRunRootRun).not.toHaveBeenCalled();
-    expect(s.finishSessionRun).toHaveBeenCalledExactlyOnceWith('timing-initial', 'aborted', expect.any(Number));
-    expect(s.internals.activeTurns.has(sessionId)).toBe(false);
-    expect(s.internals.unknownSessionRuns.has(sessionId)).toBe(false);
-    expect(s.request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
-  });
+      expect(dispatch).toHaveBeenCalledOnce();
+      expect(accepted).toHaveBeenCalledOnce();
+      expect(complete).toHaveBeenCalledExactlyOnceWith(sessionId, 'idle');
+      expect(s.updateSession).toHaveBeenLastCalledWith(sessionId, { status: 'idle' });
+      expect(s.bindSessionRunRootRun).not.toHaveBeenCalled();
+      expect(s.finishSessionRun).toHaveBeenCalledExactlyOnceWith(
+        'timing-initial',
+        'aborted',
+        expect.any(Number),
+      );
+      expect(s.internals.activeTurns.has(sessionId)).toBe(false);
+      expect(s.internals.unknownSessionRuns.has(sessionId)).toBe(false);
+      expect(s.request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
+    },
+  );
 
   it('settles an explicit background control acknowledgement including its native warning', async () => {
-    const s = setup({ ok: true, aborted: true, runIds: ['native-existing-run'], warning: 'Synthetic save warning.' });
+    const s = setup({
+      ok: true,
+      aborted: true,
+      runIds: ['native-existing-run'],
+      warning: 'Synthetic save warning.',
+    });
     const accepted = vi.fn();
     await s.adapter.startSession(sessionId, '/stop', { clientTurnId, onAccepted: accepted });
 
-    expect(s.request.mock.calls.map(([method]) => method)).toEqual(['sessions.create', 'chat.send']);
+    expect(s.request.mock.calls.map(([method]) => method)).toEqual([
+      'sessions.create',
+      'chat.send',
+    ]);
     expect(accepted).toHaveBeenCalledOnce();
     expect(s.internals.activeTurns.has(sessionId)).toBe(false);
     expect(s.internals.unknownSessionRuns.has(sessionId)).toBe(false);
@@ -139,11 +165,17 @@ describe('Main initial turn delegated to the presenting Renderer', () => {
 
   it('does not accept a stop control acknowledgement as structured Goal admission', async () => {
     const s = setup();
-    const dispatch = vi.fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>().mockResolvedValue({ ok: true, aborted: false, runIds: [] });
+    const dispatch = vi
+      .fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>()
+      .mockResolvedValue({ ok: true, aborted: false, runIds: [] });
     const accepted = vi.fn();
-    await expect(s.adapter.startSession(sessionId, '/goal Synthetic goal', {
-      clientTurnId, dispatchChatSend: dispatch, onAccepted: accepted,
-    })).rejects.toThrow('mismatched Goal start receipt');
+    await expect(
+      s.adapter.startSession(sessionId, '/goal Synthetic goal', {
+        clientTurnId,
+        dispatchChatSend: dispatch,
+        onAccepted: accepted,
+      }),
+    ).rejects.toThrow('mismatched Goal start receipt');
 
     expect(accepted).not.toHaveBeenCalled();
     expect(dispatch).toHaveBeenCalledOnce();
@@ -153,15 +185,21 @@ describe('Main initial turn delegated to the presenting Renderer', () => {
 
   it('prepares the native session in Main and delegates the identical single chat admission', async () => {
     const s = setup();
-    const dispatch = vi.fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>().mockResolvedValue({
-      runId: clientTurnId,
-      status: 'started',
-    });
+    const dispatch = vi
+      .fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>()
+      .mockResolvedValue({
+        runId: clientTurnId,
+        status: 'started',
+      });
     const accepted = vi.fn();
+    const beforeNativeSend = vi.fn().mockResolvedValue(undefined);
+    const onNativeSendAbandoned = vi.fn().mockResolvedValue(undefined);
     const running = s.adapter.startSession(sessionId, '  Explore this scenario  ', {
       clientTurnId,
       onAccepted: accepted,
       dispatchChatSend: dispatch,
+      beforeNativeSend,
+      onNativeSendAbandoned,
       untrustedContext: '  Synthetic private context  ',
       attachments: [{ name: 'input.png', mimeType: 'image/png', base64Data: 'aGVsbG8=' }],
     });
@@ -182,11 +220,18 @@ describe('Main initial turn delegated to the presenting Renderer', () => {
         justdoUntrustedContext: 'Synthetic private context',
         timeoutMs: 0,
         idempotencyKey: clientTurnId,
-        attachments: [{ type: 'image', fileName: 'input.png', mimeType: 'image/png', content: 'aGVsbG8=' }],
+        attachments: [
+          { type: 'image', fileName: 'input.png', mimeType: 'image/png', content: 'aGVsbG8=' },
+        ],
       },
       { sessionKey, gatewaySessionId },
     );
     expect(accepted).toHaveBeenCalledOnce();
+    expect(beforeNativeSend).toHaveBeenCalledOnce();
+    expect(beforeNativeSend.mock.invocationCallOrder[0]).toBeLessThan(
+      dispatch.mock.invocationCallOrder[0],
+    );
+    expect(onNativeSendAbandoned).not.toHaveBeenCalled();
     expect(s.bindSessionRunRootRun).toHaveBeenCalledExactlyOnceWith('timing-initial', clientTurnId);
     expect(s.internals.activeTurns.get(sessionId)?.runId).toBe(clientTurnId);
     await s.finish(running);
@@ -194,10 +239,15 @@ describe('Main initial turn delegated to the presenting Renderer', () => {
 
   it('keeps background admission on the existing Main client without UI capability fields', async () => {
     const s = setup();
-    const running = s.adapter.startSession(sessionId, 'Synthetic background task', { clientTurnId });
+    const running = s.adapter.startSession(sessionId, 'Synthetic background task', {
+      clientTurnId,
+    });
     await vi.waitFor(() => expect(s.bindSessionRunRootRun).toHaveBeenCalled());
 
-    expect(s.request.mock.calls.map(([method]) => method)).toEqual(['sessions.create', 'chat.send']);
+    expect(s.request.mock.calls.map(([method]) => method)).toEqual([
+      'sessions.create',
+      'chat.send',
+    ]);
     const params = s.request.mock.calls.find(([method]) => method === 'chat.send')?.[1];
     expect(params).toMatchObject({ sessionKey, idempotencyKey: clientTurnId });
     expect(params).not.toHaveProperty('caps');
@@ -206,34 +256,66 @@ describe('Main initial turn delegated to the presenting Renderer', () => {
     await s.finish(running);
   });
 
-  it.each(['/goal status', '/goal pause'])('preserves native slash session identity for %s', async command => {
-    const s = setup();
-    const dispatch = vi.fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>().mockResolvedValue({ runId: clientTurnId });
-    const running = s.adapter.startSession(sessionId, command, { clientTurnId, dispatchChatSend: dispatch });
-    await vi.waitFor(() => expect(s.bindSessionRunRootRun).toHaveBeenCalled());
+  it.each(['/goal status', '/goal pause'])(
+    'preserves native slash session identity for %s',
+    async command => {
+      const s = setup();
+      const dispatch = vi
+        .fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>()
+        .mockResolvedValue({ runId: clientTurnId });
+      const running = s.adapter.startSession(sessionId, command, {
+        clientTurnId,
+        dispatchChatSend: dispatch,
+      });
+      await vi.waitFor(() => expect(s.bindSessionRunRootRun).toHaveBeenCalled());
 
-    expect(dispatch).toHaveBeenCalledExactlyOnceWith(
-      { sessionKey, sessionId: gatewaySessionId, message: command, deliver: false, justdoUserInitiated: true, timeoutMs: 0, idempotencyKey: clientTurnId },
-      { sessionKey, gatewaySessionId },
-    );
-    expect(s.request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
-    await s.finish(running);
-  });
+      expect(dispatch).toHaveBeenCalledExactlyOnceWith(
+        {
+          sessionKey,
+          sessionId: gatewaySessionId,
+          message: command,
+          deliver: false,
+          justdoUserInitiated: true,
+          timeoutMs: 0,
+          idempotencyKey: clientTurnId,
+        },
+        { sessionKey, gatewaySessionId },
+      );
+      expect(s.request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
+      await s.finish(running);
+    },
+  );
 
   it('delegates structured Goal admission with its durable issued time and no transient timeout', async () => {
     const s = setup();
-    const dispatch = vi.fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>().mockResolvedValue({
-      operationId: clientTurnId, action: 'start', sessionId: gatewaySessionId,
-      runId: clientTurnId, goalId: 'fixture-goal', status: 'started',
-    });
+    const dispatch = vi
+      .fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>()
+      .mockResolvedValue({
+        operationId: clientTurnId,
+        action: 'start',
+        sessionId: gatewaySessionId,
+        runId: clientTurnId,
+        goalId: 'fixture-goal',
+        status: 'started',
+      });
     const accepted = vi.fn();
     const running = s.adapter.startSession(sessionId, '/goal start  Ship the synthetic release  ', {
-      clientTurnId, dispatchChatSend: dispatch, onAccepted: accepted,
+      clientTurnId,
+      dispatchChatSend: dispatch,
+      onAccepted: accepted,
     });
     await vi.waitFor(() => expect(s.bindSessionRunRootRun).toHaveBeenCalled());
 
     expect(dispatch).toHaveBeenCalledExactlyOnceWith(
-      { sessionKey, sessionId: gatewaySessionId, message: 'Ship the synthetic release', intent: { kind: 'session-goal-start', version: 1, issuedAtMs: startedAt }, deliver: false, justdoUserInitiated: true, idempotencyKey: clientTurnId },
+      {
+        sessionKey,
+        sessionId: gatewaySessionId,
+        message: 'Ship the synthetic release',
+        intent: { kind: 'session-goal-start', version: 1, issuedAtMs: startedAt },
+        deliver: false,
+        justdoUserInitiated: true,
+        idempotencyKey: clientTurnId,
+      },
       { sessionKey, gatewaySessionId },
     );
     expect(accepted).toHaveBeenCalledOnce();
@@ -243,14 +325,24 @@ describe('Main initial turn delegated to the presenting Renderer', () => {
 
   it('rejects a mismatched Goal receipt before publishing Main admission', async () => {
     const s = setup();
-    const dispatch = vi.fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>().mockResolvedValue({
-      operationId: clientTurnId, action: 'start', sessionId: 'wrong-native-session',
-      runId: clientTurnId, goalId: 'fixture-goal', status: 'started',
-    });
+    const dispatch = vi
+      .fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>()
+      .mockResolvedValue({
+        operationId: clientTurnId,
+        action: 'start',
+        sessionId: 'wrong-native-session',
+        runId: clientTurnId,
+        goalId: 'fixture-goal',
+        status: 'started',
+      });
     const accepted = vi.fn();
-    await expect(s.adapter.startSession(sessionId, '/goal Synthetic goal', {
-      clientTurnId, dispatchChatSend: dispatch, onAccepted: accepted,
-    })).rejects.toThrow('mismatched Goal start receipt');
+    await expect(
+      s.adapter.startSession(sessionId, '/goal Synthetic goal', {
+        clientTurnId,
+        dispatchChatSend: dispatch,
+        onAccepted: accepted,
+      }),
+    ).rejects.toThrow('mismatched Goal start receipt');
 
     expect(dispatch).toHaveBeenCalledOnce();
     expect(accepted).not.toHaveBeenCalled();
@@ -261,36 +353,81 @@ describe('Main initial turn delegated to the presenting Renderer', () => {
   it('keeps an uncertain Renderer admission fenced and never retries it through Main', async () => {
     const s = setup();
     const dispatch = vi.fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>().mockRejectedValue(
-      Object.assign(new Error('connection lost while dispatching initial chat turn'), { code: 'CLIENT_TIMEOUT', requestSent: true }),
+      Object.assign(new Error('connection lost while dispatching initial chat turn'), {
+        code: 'CLIENT_TIMEOUT',
+        requestSent: true,
+      }),
     );
     const accepted = vi.fn();
+    const beforeNativeSend = vi.fn().mockResolvedValue(undefined);
+    const onNativeSendAbandoned = vi.fn().mockResolvedValue(undefined);
     const running = s.adapter.startSession(sessionId, 'Synthetic scenario', {
-      clientTurnId, dispatchChatSend: dispatch, onAccepted: accepted,
+      clientTurnId,
+      dispatchChatSend: dispatch,
+      onAccepted: accepted,
+      beforeNativeSend,
+      onNativeSendAbandoned,
     });
     await vi.waitFor(() => expect(s.internals.unknownSessionRuns.has(sessionId)).toBe(true));
 
     expect(s.internals.unknownSessionRuns.get(sessionId)?.runId).toBe(clientTurnId);
     expect(accepted).not.toHaveBeenCalled();
-    await expect(s.adapter.startSession(sessionId, 'Retry', { clientTurnId, dispatchChatSend: dispatch })).rejects.toThrow('awaiting confirmation');
+    await expect(
+      s.adapter.startSession(sessionId, 'Retry', { clientTurnId, dispatchChatSend: dispatch }),
+    ).rejects.toThrow('awaiting confirmation');
     expect(dispatch).toHaveBeenCalledOnce();
+    expect(beforeNativeSend).toHaveBeenCalledOnce();
+    expect(onNativeSendAbandoned).not.toHaveBeenCalled();
     expect(s.request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
     await s.finish(running);
   });
 
   it('treats a known pre-send Renderer rejection as unsubmitted without fallback', async () => {
     const s = setup();
-    const dispatch = vi.fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>().mockRejectedValue(
-      Object.assign(new Error('Initial turn client/session unavailable'), { requestSent: false }),
-    );
+    const dispatch = vi
+      .fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>()
+      .mockRejectedValue(
+        Object.assign(new Error('Initial turn client/session unavailable'), { requestSent: false }),
+      );
     const accepted = vi.fn();
-    await expect(s.adapter.startSession(sessionId, 'Synthetic scenario', {
-      clientTurnId, dispatchChatSend: dispatch, onAccepted: accepted,
-    })).rejects.toThrow('client/session unavailable');
+    const beforeNativeSend = vi.fn().mockResolvedValue(undefined);
+    const onNativeSendAbandoned = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      s.adapter.startSession(sessionId, 'Synthetic scenario', {
+        clientTurnId,
+        dispatchChatSend: dispatch,
+        onAccepted: accepted,
+        beforeNativeSend,
+        onNativeSendAbandoned,
+      }),
+    ).rejects.toThrow('client/session unavailable');
 
     expect(dispatch).toHaveBeenCalledOnce();
+    expect(beforeNativeSend).toHaveBeenCalledOnce();
+    expect(onNativeSendAbandoned).toHaveBeenCalledOnce();
     expect(accepted).not.toHaveBeenCalled();
     expect(s.internals.unknownSessionRuns.has(sessionId)).toBe(false);
     expect(s.internals.activeTurns.has(sessionId)).toBe(false);
+    expect(s.request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
+  });
+
+  it('does not delegate an initial input when the Team launch boundary has been revoked', async () => {
+    const s = setup();
+    const dispatch = vi.fn<NonNullable<CoworkStartOptions['dispatchChatSend']>>();
+    const beforeNativeSend = vi.fn().mockRejectedValue(new Error('Team launch was cancelled'));
+    const onNativeSendAbandoned = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      s.adapter.startSession(sessionId, 'Start a team', {
+        clientTurnId,
+        dispatchChatSend: dispatch,
+        beforeNativeSend,
+        onNativeSendAbandoned,
+      }),
+    ).rejects.toThrow('Team launch was cancelled');
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(onNativeSendAbandoned).toHaveBeenCalledOnce();
+    expect(s.internals.unknownSessionRuns.has(sessionId)).toBe(false);
     expect(s.request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
   });
 });

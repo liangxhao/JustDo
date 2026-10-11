@@ -3,6 +3,7 @@ import {
   type BrowserRecordingDraft,
   recordingImageFingerprint,
 } from '@shared/browser/browserRecording';
+import { stripAgentTeamInstruction } from '@shared/cowork/agent-team/agentTeamPrompt';
 import type { CoworkAttachmentPayload } from '@shared/cowork/attachments';
 import { stripSwarmInstruction } from '@shared/cowork/swarm';
 import { stripSwarmWorkflowInstruction } from '@shared/cowork/swarmWorkflow';
@@ -23,7 +24,11 @@ export function parseEditorDraftPayload(
   editorAttachments: unknown,
   options: { restoreBrowserAnnotations?: boolean } = {},
 ): EditorDraftPayload {
-  const rawEditorText = typeof editorText === 'string' ? stripSwarmInstruction(stripSwarmWorkflowInstruction(editorText)) : '';
+  const rawEditorText = stripSwarmInstruction(
+    stripSwarmWorkflowInstruction(
+      stripAgentTeamInstruction(typeof editorText === 'string' ? editorText : ''),
+    ),
+  );
   const browserPrompt = parseBrowserAnnotationPrompt(rawEditorText);
   const visibleText = browserPrompt?.userText ?? rawEditorText;
   const goalText = extractGoalFollowUpRequest(visibleText) ?? visibleText;

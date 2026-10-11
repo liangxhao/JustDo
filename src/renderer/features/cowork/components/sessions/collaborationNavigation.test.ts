@@ -1,4 +1,4 @@
-import type { CollaborationRoom } from '@shared/cowork/collaboration';
+import type { CollaborationRoom } from '@shared/cowork/agent-team/collaboration';
 import { describe, expect, it } from 'vitest';
 
 import {

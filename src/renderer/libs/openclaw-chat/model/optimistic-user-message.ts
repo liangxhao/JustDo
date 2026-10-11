@@ -1,4 +1,5 @@
 import { parseBrowserAnnotationPrompt } from '@shared/browser/browser';
+import { stripAgentTeamInstruction } from '@shared/cowork/agent-team/agentTeamPrompt';
 import { parseGoalStartObjective } from '@shared/cowork/slashCommands';
 import { stripSwarmInstruction } from '@shared/cowork/swarm';
 import { stripSwarmWorkflowInstruction } from '@shared/cowork/swarmWorkflow';
@@ -40,8 +41,10 @@ function messageContentIdentity(message: GatewayMessage): { text: string; record
     // match merely because both have an empty visible prompt.
     recordings.push(steps.map(step => [step?.id, step?.action, step?.pageId]));
   };
-  const textPart = (text: string) => {
-    text = stripSwarmInstruction(stripSwarmWorkflowInstruction(text));
+  const textPart = (source: string) => {
+    const text = stripSwarmInstruction(
+      stripSwarmWorkflowInstruction(stripAgentTeamInstruction(source)),
+    );
     const browser = parseBrowserAnnotationPrompt(text);
     if (browser?.recording) addRecording(browser.recording);
     return browser?.recording ? browser.userText : text;

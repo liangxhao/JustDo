@@ -5,8 +5,9 @@ import fs from 'fs';
 import path from 'path';
 
 import { DB_FILENAME } from '../core/appConstants';
+import { initializeCollaborationTables } from './agent-team/collaborationStore';
+import { initializeTeamDiscussionTables } from './agent-team/teamDiscussionStore';
 import { transformAppConfigCredentials } from './appConfigCredentials';
-import { initializeCollaborationTables } from './collaborationStore';
 import { initializeSessionDiagnosticsTables } from './sessionDiagnosticsStore';
 
 type ChangePayload<T = unknown> = {
@@ -350,6 +351,7 @@ export class SqliteStore {
       this.db.exec('ALTER TABLE agents ADD COLUMN deleted_at INTEGER');
 
     initializeCollaborationTables(this.db);
+    initializeTeamDiscussionTables(this.db);
 
     // Create MCP servers table
     this.db.exec(`

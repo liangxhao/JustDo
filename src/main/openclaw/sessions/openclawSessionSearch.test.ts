@@ -17,6 +17,20 @@ const summary = (id: string, agentId: string) => ({
 });
 
 describe('searchCoworkSessionMessages', () => {
+  test('never sends a pending-input native or external row into user message search', async () => {
+    const key = 'agent:main:harness:justdo-team-holding:room:1';
+    const store = {
+      listSessions: () => [
+        { ...summary('pending-native', 'main'), nativeSessionKey: key },
+        { ...summary('pending-external', 'main'), external: { sessionKey: key } },
+      ],
+    } as unknown as CoworkStore;
+    const requestGateway = vi.fn();
+    expect(
+      (await searchCoworkSessionMessages({ query: 'needle', store, requestGateway })).matches,
+    ).toEqual([]);
+    expect(requestGateway).not.toHaveBeenCalled();
+  });
   test('uses the persisted external conversation key instead of a managed key', async () => {
     const store = {
       listSessions: () => [

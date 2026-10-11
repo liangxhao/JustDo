@@ -1,5 +1,6 @@
 import {
   ChatBubbleLeftEllipsisIcon,
+  ClockIcon,
   LinkIcon,
   ShareIcon,
   XMarkIcon,
@@ -17,6 +18,7 @@ import { isDomNode, useOwnerDocument } from '@/shared/dom/ownerDocument';
 import SessionProgressCard, { type ProgressCardRunState } from '../status/SessionProgressCard';
 import type { Subtask } from '../subagents/subtaskPresentation';
 import { isActiveSubtask } from '../subagents/subtaskPresentation';
+import { type AgentTeamEntry, AgentTeamKind } from './agentTeamEntries';
 import type { SummaryResourceListKind } from './displayTabIds';
 import { SessionSummaryResourceIcon } from './SessionSummaryResourceList';
 
@@ -42,11 +44,12 @@ interface Props {
   tasks: readonly Subtask[];
   resources: SessionSummaryResources | null;
   workflowCount: number;
-  teamCount: number;
+  teamEntries: readonly AgentTeamEntry[];
   onClose: () => void;
   onOpenSubagents: () => void;
   onOpenWorkflow: () => void;
   onOpenTeam: () => void;
+  onOpenTeamHistory?: () => void;
   onOpenResource: (resource: SummaryResource) => void;
   onOpenResourceList: (kind: SummaryResourceListKind) => void;
 }
@@ -118,6 +121,15 @@ export default function SessionSummaryPanel(props: Props) {
   const ownerDocument = useOwnerDocument();
   const panelRef = useRef<HTMLElement>(null);
   const counts = summarySubagentCounts(props.tasks);
+  const teamCountLabel = [
+    { kind: AgentTeamKind.TASK, key: 'teamSummaryTaskCount' },
+    { kind: AgentTeamKind.GROUP, key: 'teamSummaryGroupCount' },
+  ]
+    .flatMap(({ kind, key }) => {
+      const count = props.teamEntries.filter(entry => entry.kind === kind).length;
+      return count > 0 ? [i18nService.t(key).replace('{count}', String(count))] : [];
+    })
+    .join(i18nService.t('teamSummaryCountSeparator'));
   const subagentStatuses = [
     { count: counts.running, key: 'coworkSummaryRunning', className: 'text-primary' },
     { count: counts.completed, key: 'coworkSummaryCompleted', className: '' },
@@ -277,17 +289,39 @@ export default function SessionSummaryPanel(props: Props) {
             <span className="text-secondary">{props.workflowCount}</span>
           </button>
         )}
-        {props.teamCount > 0 && (
-          <button
-            type="button"
-            className={`${rowClass} py-2 text-sm`}
-            aria-label={`${i18nService.t('coworkSummaryAgentTeam')} ${props.teamCount}`}
-            onClick={props.onOpenTeam}
-          >
-            <ChatBubbleLeftEllipsisIcon className="h-4 w-4 shrink-0 text-secondary" />
-            <span className="min-w-0 flex-1">{i18nService.t('coworkSummaryAgentTeam')}</span>
-            <span className="text-secondary">{props.teamCount}</span>
-          </button>
+        {(props.teamEntries.length > 0 || props.onOpenTeamHistory) && (
+          <div className="flex min-w-0 items-center gap-1">
+            <button
+              type="button"
+              className={`${rowClass} flex-1 py-2 text-sm`}
+              aria-label={[i18nService.t('coworkSummaryAgentTeam'), teamCountLabel]
+                .filter(Boolean)
+                .join(' ')}
+              onClick={props.teamEntries.length ? props.onOpenTeam : props.onOpenTeamHistory}
+            >
+              <ChatBubbleLeftEllipsisIcon className="h-4 w-4 shrink-0 text-secondary" />
+              <span className="shrink-0">{i18nService.t('coworkSummaryAgentTeam')}</span>
+              {teamCountLabel && (
+                <span className="min-w-0 flex-1 text-right text-xs text-secondary tabular-nums">
+                  {teamCountLabel}
+                </span>
+              )}
+              {!props.teamEntries.length && (
+                <ClockIcon aria-hidden="true" className="ml-auto h-4 w-4 text-secondary" />
+              )}
+            </button>
+            {props.teamEntries.length > 0 && props.onOpenTeamHistory && (
+              <button
+                type="button"
+                title={i18nService.t('teamAllRecords')}
+                aria-label={i18nService.t('teamAllRecords')}
+                onClick={props.onOpenTeamHistory}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-secondary hover:bg-surface-raised hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                <ClockIcon aria-hidden="true" className="h-4 w-4" />
+              </button>
+            )}
+          </div>
         )}
       </div>
     </aside>

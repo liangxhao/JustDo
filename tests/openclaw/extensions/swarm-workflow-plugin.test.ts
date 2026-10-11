@@ -12,7 +12,6 @@ import {
   SwarmWorkflowGateway,
 } from '../../../src/shared/cowork/swarmWorkflow';
 import { OpenClawExtensionId } from '../../../src/shared/plugins/nativeIds';
-import { FLOW_LIMITS } from '../../../openclaw-extensions/swarm-workflow/contract';
 const requireNative = createRequire(import.meta.url);
 const code = buildSync({
   entryPoints: [path.resolve('openclaw-extensions/swarm-workflow/index.ts')],
@@ -438,7 +437,12 @@ it('limits task actions only for the admitted launch turn and permits Code Mode 
   expect(before({ toolName: 'fixture_other_tool' }, context)).toMatchObject({ block: true, blockReason: expect.stringContaining('ONLY a workflow launch turn') });
   expect(before({ toolName: 'exec' }, context)).toMatchObject({ block: true });
   expect(before({ toolName: 'exec', toolKind: 'code_mode_exec', toolInputKind: 'javascript' }, context)).toBeUndefined();
-  expect(before({ toolName: 'tool_call' }, context)).toBeUndefined();
+  for (const toolName of ['tool_search', 'tool_describe', 'tool_call']) {
+    expect(before({ toolName }, context)).toBeUndefined();
+  }
+  // Native Tool Search controls run the hook again for the resolved target.
+  expect(before({ toolName: 'write' }, context)).toMatchObject({ block: true });
+  expect(before({ toolName: 'sessions_spawn' }, context)).toMatchObject({ block: true });
   expect(before({ toolName: 'swarm_workflow_start' }, context)).toBeUndefined();
   expect(before({ toolName: 'fixture_other_tool' }, { ...context, runId: 'normal' })).toBeUndefined();
 });
@@ -457,6 +461,11 @@ it('requests at most three native launch corrections with the exact request and 
   const rebuilt = await f.hook({ prompt: 'Native finalize correction without a request marker', messages: [] }, context);
   expect(rebuilt.toolsAllow).toEqual(['swarm_workflow_start']);
   expect(rebuilt.prependSystemContext).toContain('"sourceRequestId":"launch:user"');
+  const before = f.hooks.get('before_tool_call');
+  for (const toolName of ['tool_search', 'tool_describe', 'tool_call']) {
+    expect(before({ toolName }, context)).toBeUndefined();
+  }
+  expect(before({ toolName: 'exec' }, context)).toMatchObject({ block: true });
   expect((await f.request('swarmWorkflow.list', { parentKeys: [f.parentKey] }) as any).flows).toHaveLength(0);
   await f.tool.execute('start', { goal: 'Inspect project', mode: 'auto', sourceRequestId: 'launch:user' });
   expect(await finalize(event, context)).toBeUndefined();
@@ -738,6 +747,10 @@ it('continues a prematurely ended task in the same session with only submission 
   expect(before({ toolName: 'exec' }, repairContext)).toMatchObject({ block: true });
   expect(before({ toolName: 'exec', toolKind: 'code_mode_exec', toolInputKind: 'javascript' }, repairContext)).toBeUndefined();
   expect(before({ toolName: 'wait', toolKind: 'code_mode_wait' }, repairContext)).toBeUndefined();
+  for (const toolName of ['tool_search', 'tool_describe', 'tool_call']) {
+    expect(before({ toolName }, repairContext)).toBeUndefined();
+  }
+  expect(before({ toolName: 'write' }, repairContext)).toMatchObject({ block: true });
   expect(before({ toolName: 'exec', params: { toolKind: 'code_mode_exec' } }, repairContext)).toMatchObject({ block: true });
   expect(before({ toolName: 'wait' }, repairContext)).toMatchObject({ block: true });
   const repairTool = factory.create({ sessionKey: repair.sessionKey, assertInvocationCurrent: vi.fn() }).find((value: any) => value.name === 'swarm_workflow_complete');

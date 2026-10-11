@@ -23,6 +23,12 @@ import {
 } from '@shared/browser/browser';
 import { BrowserLinkTarget } from '@shared/browser/browserLinkOpening';
 import { recordingImagesInStepOrder } from '@shared/browser/browserRecording';
+import { recognizeAgentTeamMode } from '@shared/cowork/agent-team/agentTeamPrompt';
+import type {
+  CollaborationDelivery,
+  CollaborationMember,
+  CollaborationRoom,
+} from '@shared/cowork/agent-team/collaboration';
 import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
 import { CoworkInteractionKind } from '@shared/cowork/interactions/interactions';
 import {
@@ -78,6 +84,7 @@ import JustDoChatWrapper, {
 } from '@/features/cowork/components/chat/JustDoChatWrapper';
 import SideChatPanel from '@/features/cowork/components/chat/SideChatPanel';
 import { resolveAgentModelSelection } from '@/features/cowork/components/composer/agentModelSelection';
+import { COMPOSER_FRAME_CLASS } from '@/features/cowork/components/composer/composerStyles';
 import { submitCoworkMessage } from '@/features/cowork/components/composer/coworkMessageSubmit';
 import CoworkPromptInput, {
   appendMediaDirectiveLines,
@@ -183,12 +190,17 @@ import BrainIcon from '@/shared/components/icons/BrainIcon';
 import FolderIcon from '@/shared/components/icons/FolderIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import Modal from '@/shared/components/ui/Modal';
-import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
+import { OwnerDocumentContext, useOwnerDocument } from '@/shared/dom/ownerDocument';
 import { type RootState, store } from '@/store';
 
-import CollaborationPanel, { useCollaborationRooms } from './chat/CollaborationPanel';
 import { CoworkHomeWorkspace } from './chat/CoworkHomeWorkspace';
 import { useCoworkSideChats } from './chat/useCoworkSideChats';
+import type {
+  CollaborationContinueRequest,
+  CollaborationContinueStatus,
+} from './collaboration/collaborationContinueDraft';
+import { submitCollaborationContinuation } from './collaboration/collaborationContinueSubmission';
+import { useCollaborationRooms } from './collaboration/CollaborationPanel';
 import type { MessageQuoteHandler } from './composer/messageQuote';
 import {
   bindSessionSubmissionRun,
@@ -197,6 +209,10 @@ import {
   type SessionSubmission,
   stopSessionSubmission,
 } from './composer/sessionSubmission';
+import { OPEN_TEAM_PANEL, useTeamDiscussionRooms } from './discussions/teamDiscussionNavigation';
+import { buildAgentTeamEntries, groupTeamKey } from './display/agentTeamEntries';
+import { OPEN_TEAM_RECORDS } from './display/agentTeamHistory';
+import AgentTeamPanel from './display/AgentTeamPanel';
 import {
   BROWSER_DISPLAY_TAB_PREFIX,
   browserDisplayTabId,
@@ -312,15 +328,40 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     onPlanRespond,
   } = props;
   const dispatch = useDispatch();
+  const ownerDocument = useOwnerDocument();
   const currentSession = useSelector(selectCurrentSession);
   const currentSessionId = currentSession?.id ?? null;
   const [isWorkspaceDetached, setIsWorkspaceDetached] = useState(false);
-  const collaborationRooms = useCollaborationRooms();
+  const [teamPanelSelection, setTeamPanelSelection] = useState<{ key?: string; version: number }>({
+    version: 0,
+  });
+  const [collaborationMemberId, setCollaborationMemberId] = useState<string | undefined>();
+  const selectTeamPanel = useCallback((key?: string) => {
+    setCollaborationMemberId(undefined);
+    setTeamPanelSelection(current => ({ key, version: current.version + 1 }));
+  }, []);
+  const collaborationRooms = useCollaborationRooms({
+    activeSessionId: currentSessionId,
+    onFirstCollaboration: sessionId => {
+      selectTeamPanel();
+      setCollaborationSessionId(sessionId);
+      setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID);
+      setIsDisplayPanelOpen(true);
+      setIsWorkspaceFilesOpen(false);
+    },
+  });
+  const discussionRooms = useTeamDiscussionRooms(room => {
+    if (room.sourceSessionId !== currentSessionId) return;
+    selectTeamPanel(groupTeamKey(room.id));
+    setCollaborationSessionId(currentSessionId);
+    setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID);
+    setIsDisplayPanelOpen(true);
+    setIsWorkspaceFilesOpen(false);
+  });
   const sessions = useSelector(selectCoworkSessions);
   const config = useSelector(selectCoworkConfig);
   const [collaborationSessionId, setCollaborationSessionId] = useState<string | null>(null);
   const [swarmWorkflowSessionId, setSwarmWorkflowSessionId] = useState<string | null>(null);
-  const [collaborationMemberId, setCollaborationMemberId] = useState<string | undefined>();
   const [isInitialized, setIsInitialized] = useState(false);
   const [greetingPeriod, setGreetingPeriod] = useState(() =>
     getGreetingPeriod(new Date().getHours()),
@@ -554,6 +595,20 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     visiblePlanInteraction !== null &&
     (planInteraction === null ||
       retainedPlanInteraction?.requestId === visiblePlanInteraction.requestId);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const { sessionId, roomId, teamKey } = (
+        event as CustomEvent<{ sessionId: string; roomId: string; teamKey?: string }>
+      ).detail;
+      selectTeamPanel(teamKey ?? groupTeamKey(roomId));
+      setCollaborationSessionId(sessionId);
+      setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID);
+      setIsDisplayPanelOpen(true);
+      setIsWorkspaceFilesOpen(false);
+    };
+    window.addEventListener(OPEN_TEAM_PANEL, open);
+    return () => window.removeEventListener(OPEN_TEAM_PANEL, open);
+  }, [selectTeamPanel, setIsDisplayPanelOpen, setIsWorkspaceFilesOpen, setPreferredDisplayTabId]);
   const recordingReviewTabs = useRecordingReviewTabs(
     displaySessionKey,
     id => {
@@ -857,12 +912,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     summaryResources?.sessionKey === currentGatewaySessionKey ? summaryResources : null;
   const summaryObjective =
     goalPresence.sessionId === currentSessionId ? goalPresence.objective : undefined;
-  const summaryTeamCount = collaborationRooms.filter(
-    room =>
-      !room.deleting &&
-      (room.anchorSessionId === currentSessionId ||
-        room.members.some(member => member.sessionId === currentSessionId)),
-  ).length;
+  const summaryTeamEntries = currentSessionId
+    ? buildAgentTeamEntries(currentSessionId, collaborationRooms, discussionRooms, key =>
+        i18nService.t(key),
+      )
+    : [];
   const progressCard =
     progressCardState?.sessionKey === currentGatewaySessionKey ? progressCardState.card : null;
   const summaryVisibility = useSessionSummaryVisibility(
@@ -871,7 +925,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       !!progressCard ||
       subtasks.length > 0 ||
       swarmWorkflowDiscovery.count > 0 ||
-      summaryTeamCount > 0 ||
+      summaryTeamEntries.length > 0 ||
       !!currentSummaryResources?.outputs.length ||
       !!currentSummaryResources?.sources.length,
   );
@@ -2119,12 +2173,13 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       pendingMessageSubmissionsRef.current.set(currentSession.id, operation);
       return submitCoworkMessage(
         () => chat.queueMessage(prompt, attachments, gatewayPrompt, sessionKey),
-        error =>
+        error => {
           window.dispatchEvent(
             new CustomEvent('app:showToast', {
               detail: error instanceof Error ? error.message : String(error),
             }),
-          ),
+          );
+        },
       ).finally(() => {
         operation.finish();
         if (
@@ -2139,15 +2194,26 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       prompt: string,
       attachments?: CoworkAttachmentPayload[],
       gatewayPrompt?: string,
+      submission?: boolean | { clientTurnId: string },
     ) => {
       if (currentSession.external?.readOnly) return false;
       if (goalPresence.sessionId !== currentSession.id || !goalPresence.ready) return false;
       if (!ensureOpenClawReadyForSubmit() || pendingStartRef.current?.cancelled) return false;
       const outboundPrompt = gatewayPrompt ?? prompt;
+      const explicitTeam = recognizeAgentTeamMode(outboundPrompt) !== undefined;
       // The previous run may have finished while a queue acknowledgement was
       // lost. Preserve its idempotency identity even though the composer is idle.
-      if (chatWrapperRef.current?.hasUnconfirmedQueuedInput())
+      if (chatWrapperRef.current?.hasUnconfirmedQueuedInput()) {
+        // This exact application suffix is only a restriction hint, not launch
+        // authority. A queued native execution has no proven intent lineage yet.
+        if (explicitTeam) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', { detail: i18nService.t('teamFeatureBusy') }),
+          );
+          return false;
+        }
         return handleQueueMessage(prompt, attachments, gatewayPrompt);
+      }
       const goalEdit = isGoalEditCommand(outboundPrompt);
       const targetSessionKey = currentGatewaySessionKey;
       if (!targetSessionKey || pendingMessageSubmissionsRef.current.has(currentSession.id))
@@ -2156,13 +2222,17 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       operation.sessionKey = targetSessionKey;
       pendingMessageSubmissionsRef.current.set(currentSession.id, operation);
       let requestUnknown = false;
+      let nativeSendIssued = false;
       const ensureSubmissionCurrent = () => {
         if (operation.cancelled || currentGatewaySessionKeyRef.current !== targetSessionKey) {
           throw new Error('The message submission context changed');
         }
       };
       const startedAt = Date.now();
-      const clientTurnId = `justdo-${startedAt}-${crypto.randomUUID()}`;
+      const clientTurnId =
+        typeof submission === 'object'
+          ? submission.clientTurnId
+          : `justdo-${startedAt}-${crypto.randomUUID()}`;
       let runTimingId: string | null = null;
       return submitCoworkMessage(
         async () => {
@@ -2176,12 +2246,22 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             sessionId: currentSession.id,
             clientTurnId,
             startedAt,
+            ...(explicitTeam ? { agentTeamPrompt: outboundPrompt } : {}),
           });
           runTimingId = timing.id;
           operation.receiptId = timing.id;
           ensureSubmissionCurrent();
           const chatWrapper = chatWrapperRef.current;
           if (!chatWrapper) throw new Error('Chat controller is not ready');
+          if (explicitTeam) {
+            const marked = await window.electron.cowork.markTeamSubmissionStarted({
+              sessionId: currentSession.id,
+              clientTurnId,
+            });
+            if (!marked.success)
+              throw new Error(marked.error || i18nService.t('teamLaunchUnconfirmed'));
+            ensureSubmissionCurrent();
+          }
           await chatWrapper.sendMessage(prompt, attachments, gatewayPrompt, {
             propagateRequestFailure: true,
             expectedSessionKey: targetSessionKey,
@@ -2198,6 +2278,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               operation.unknownMarked = true;
             },
             clientTurnId,
+            onRequestIssued: () => {
+              nativeSendIssued = true;
+            },
             onRunBound: async runId => {
               await bindSessionSubmissionRun(operation, runId, () =>
                 coworkService.bindSessionRun(timing.id, runId, currentSession.id),
@@ -2205,7 +2288,16 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             },
           });
         },
-        err => {
+        async err => {
+          const cancelled = operation.cancelled;
+          if (explicitTeam && !nativeSendIssued) {
+            // This failed sender cannot resume. Native abandonment still checks
+            // exact user-input absence, dispatcher idle and the generation fence.
+            operation.cancelled = true;
+            await window.electron.cowork
+              .abortTeamSubmissionBeforeSend({ sessionId: currentSession.id, clientTurnId })
+              .catch(() => undefined);
+          }
           if (runTimingId && !requestUnknown)
             void coworkService.failSessionRun(currentSession.id, runTimingId);
           else {
@@ -2215,7 +2307,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               fullScan: true,
             });
           }
-          if ((goalEdit && !requestUnknown) || operation.cancelled) return;
+          if ((goalEdit && !requestUnknown) || cancelled) return;
           const message = err instanceof Error ? err.message : String(err);
           window.dispatchEvent(
             new CustomEvent('app:showToast', {
@@ -2235,6 +2327,77 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           pendingMessageSubmissionsRef.current.delete(currentSession.id);
         }
       });
+    };
+
+    const handleCollaborationContinue = async (
+      room: CollaborationRoom,
+      member: CollaborationMember,
+      delivery: CollaborationDelivery | undefined,
+      input: CollaborationContinueRequest,
+    ): Promise<CollaborationContinueStatus> => {
+      const sourceId = currentSession.id;
+      const sourceKey = currentGatewaySessionKey;
+      const assertCurrent = () => {
+        if (
+          currentSessionIdRef.current !== sourceId ||
+          currentGatewaySessionKeyRef.current !== sourceKey ||
+          currentSession.external ||
+          currentSessionRuntimeRunningRef.current ||
+          goalPresence.sessionId !== sourceId ||
+          !goalPresence.ready ||
+          goalPresence.hasGoal ||
+          pendingMessageSubmissionsRef.current.has(sourceId) ||
+          chatWrapperRef.current?.hasUnconfirmedQueuedInput()
+        )
+          throw new Error('collaborationContinuationUnavailable');
+      };
+      try {
+        assertCurrent();
+        if (!input.message.trim() || input.message.trimStart().startsWith('/')) return 'rejected';
+        const prepared = await window.electron.collaboration.prepareContinuation({
+          sourceSessionId: sourceId,
+          roomId: room.id,
+          targetSessionKey: member.sessionKey,
+          ...(delivery ? { priorDeliveryId: delivery.id } : {}),
+        });
+        assertCurrent();
+        if (!prepared.success) throw new Error(prepared.error);
+        if (
+          prepared.value.sourceSessionId !== sourceId ||
+          prepared.value.targetSessionId !== member.sessionId ||
+          prepared.value.targetSessionKey !== member.sessionKey ||
+          prepared.value.sourceAgentId !== currentSession.agentId
+        )
+          throw new Error('collaborationInvalidRecipient');
+        return await submitCollaborationContinuation(input, {
+          target: prepared.value,
+          cwd: currentSession.cwd,
+          assertCurrent,
+          supportsImages: () => promptInputRef.current?.supportsImages() === true,
+          stageAudio: (path, cwd) => window.electron.localAsr.stageAttachment(path, cwd),
+          readImage: path => window.electron.dialog.readFileAsDataUrl(path),
+          beforeSubmit: async () => {
+            const current = await window.electron.collaboration.prepareContinuation({
+              sourceSessionId: sourceId,
+              roomId: room.id,
+              targetSessionKey: member.sessionKey,
+              ...(delivery ? { priorDeliveryId: delivery.id } : {}),
+            });
+            assertCurrent();
+            if (!current.success) throw new Error(current.error);
+            if (JSON.stringify(current.value) !== JSON.stringify(prepared.value))
+              throw new Error('collaborationInvalidRecipient');
+          },
+          submit: (display, images, gateway, clientTurnId) =>
+            handleSendMessage(display, images, gateway, { clientTurnId }),
+          outcomeUnknown: () =>
+            pendingMessageSubmissionsRef.current.get(sourceId)?.unknown === true,
+        });
+      } catch (error) {
+        const key = error instanceof Error ? error.message : 'collaborationContinuationUnavailable';
+        window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t(key) }));
+        return pendingMessageSubmissionsRef.current.get(sourceId)?.unknown ? 'unknown' : 'rejected';
+      }
     };
 
     continueBrowserTaskRef.current = async (sessionId, prompt) => {
@@ -2709,7 +2872,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         ? [
             {
               id: COLLABORATION_DISPLAY_TAB_ID,
-              label: i18nService.t('collaborationTab'),
+              label: i18nService.t('teamTitle'),
               icon: <ChatBubbleLeftEllipsisIcon className="h-4 w-4" />,
               onSelect: () => setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID),
               onClose: () => {
@@ -2890,7 +3053,17 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     tasks={subtasks}
                     resources={currentSummaryResources}
                     workflowCount={swarmWorkflowDiscovery.count}
-                    teamCount={summaryTeamCount}
+                    teamEntries={summaryTeamEntries}
+                    onOpenTeamHistory={
+                      collaborationRooms.length || discussionRooms.length
+                        ? () => {
+                            summaryVisibility.close();
+                            window.dispatchEvent(
+                              new CustomEvent(OPEN_TEAM_RECORDS, { detail: ownerDocument }),
+                            );
+                          }
+                        : undefined
+                    }
                     onClose={summaryVisibility.close}
                     onOpenSubagents={() => {
                       summaryVisibility.close();
@@ -2905,7 +3078,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     }}
                     onOpenTeam={() => {
                       summaryVisibility.close();
-                      setCollaborationMemberId(undefined);
+                      selectTeamPanel();
                       setCollaborationSessionId(currentSession.id);
                       setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID);
                       setIsWorkspaceFilesOpen(false);
@@ -3110,7 +3283,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                         }}
                       />
                     )}
-                    <div className="shadow-glow-accent relative z-10 rounded-2xl">
+                    <div className={`${COMPOSER_FRAME_CLASS} relative z-10`}>
                       <CoworkPromptInput
                         ref={promptInputRef}
                         onSubmit={handleSendMessage}
@@ -3301,12 +3474,17 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               )}
               {collaborationSessionId === currentSession.id &&
                 activeDisplayTabId === COLLABORATION_DISPLAY_TAB_ID && (
-                  <CollaborationPanel
+                  <AgentTeamPanel
                     key={currentSession.id}
+                    selectionRequest={teamPanelSelection}
+                    onFocusComposer={() =>
+                      requestAnimationFrame(() => promptInputRef.current?.focus())
+                    }
                     source={currentSession}
                     selectedMemberId={collaborationMemberId}
                     onSelect={setCollaborationMemberId}
                     onOpenSubtask={openSubtask}
+                    onRequestContinue={handleCollaborationContinue}
                   />
                 )}
               <SubagentMessageDrawer

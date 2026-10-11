@@ -1,4 +1,4 @@
-import type { CollaborationRoom } from '@shared/cowork/collaboration';
+import type { CollaborationRoom } from '@shared/cowork/agent-team/collaboration';
 import { useEffect } from 'react';
 
 import { type JustDoChatWrapperRef } from '@/features/cowork/components/chat/JustDoChatWrapper';

@@ -4,7 +4,7 @@ import type { CoworkSessionMessageSearchMatch } from '@shared/cowork/sessionSear
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import { useCollaborationRooms } from '@/features/cowork/components/chat/CollaborationPanel';
+import { useCollaborationRooms } from '@/features/cowork/components/collaboration/CollaborationPanel';
 import {
   type FilePreviewNavigationOptions,
   runGuardedFilePreviewNavigation,
@@ -70,6 +70,12 @@ const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const sessionNavigationRequestRef = useRef(0);
   const homePanelId = useId();
+  // An unmounted sidebar no longer owns any pending navigation.
+  useEffect(() => {
+    return () => {
+      sessionNavigationRequestRef.current += 1;
+    };
+  }, []);
   const sessions = useSelector(selectCoworkSessions);
   const groups = useSelector(selectGroups);
   const sessionListStatus = useSelector(
@@ -91,6 +97,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   useEffect(() => {
     const handleSearch = () => {
+      sessionNavigationRequestRef.current += 1;
       onShowCowork();
       setIsSearchOpen(true);
     };
@@ -102,6 +109,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   useEffect(() => {
     if (isHomePanelVisible) return;
+    sessionNavigationRequestRef.current += 1;
     setIsSearchOpen(false);
     setIsBatchMode(false);
     setSelectedIds(new Set());
@@ -131,7 +139,9 @@ const Sidebar: React.FC<SidebarProps> = ({
         if (requestId !== sessionNavigationRequestRef.current) return;
         onShowCowork();
         const target = resolveCollaborationNavigation(sessionId, collaborationRooms);
-        const loaded = await coworkService.loadSession(target.sessionId);
+        const loaded = await coworkService.loadSession(target.sessionId, {
+          canSelect: () => requestId === sessionNavigationRequestRef.current,
+        });
         if (requestId !== sessionNavigationRequestRef.current || !loaded) return;
         selected = store.getState().cowork.currentSession?.id === target.sessionId;
         if (selected && match && target.sessionId === match.sessionId) onRevealSearchMatch?.(match);
@@ -182,7 +192,9 @@ const Sidebar: React.FC<SidebarProps> = ({
       async () => {
         if (requestId !== sessionNavigationRequestRef.current) return;
         onShowCowork();
-        const session = await coworkService.loadSession(sessionId);
+        const session = await coworkService.loadSession(sessionId, {
+          canSelect: () => requestId === sessionNavigationRequestRef.current,
+        });
         if (
           requestId === sessionNavigationRequestRef.current &&
           session &&
@@ -287,6 +299,12 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  const navigateFromRail = (navigate: () => void) => {
+    sessionNavigationRequestRef.current += 1;
+    setIsSearchOpen(false);
+    navigate();
+  };
+
   return (
     <>
       <NavigationRail
@@ -296,14 +314,14 @@ const Sidebar: React.FC<SidebarProps> = ({
         showWorkboard={showWorkboard}
         unreadScheduledTaskResults={unreadScheduledTaskResults}
         onShowHome={() => {
-          onShowCowork();
+          navigateFromRail(onShowCowork);
           if (activeView === SidebarView.Home || isCollapsed) onToggleCollapse();
         }}
-        onShowScheduledTasks={onShowScheduledTasks}
-        onShowPlugins={onShowPlugins}
-        onShowMemory={onShowMemory}
-        onShowWorkboard={onShowWorkboard}
-        onShowSettings={onShowSettings}
+        onShowScheduledTasks={() => navigateFromRail(onShowScheduledTasks)}
+        onShowPlugins={() => navigateFromRail(onShowPlugins)}
+        onShowMemory={() => navigateFromRail(onShowMemory)}
+        onShowWorkboard={() => navigateFromRail(onShowWorkboard)}
+        onShowSettings={() => navigateFromRail(onShowSettings)}
         onOpenChatWeb={developerMode && isOpenClawEngine ? handleOpenChatWeb : undefined}
       />
       <aside
@@ -317,7 +335,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={onNewChat}
+                onClick={() => navigateFromRail(onNewChat)}
                 className={`relative min-w-0 flex-1 inline-flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors ${
                   activeView === SidebarView.Home
                     ? 'text-primary hover:bg-surface'
@@ -330,6 +348,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               <button
                 type="button"
                 onClick={() => {
+                  sessionNavigationRequestRef.current += 1;
                   onShowCowork();
                   setIsSearchOpen(true);
                 }}
