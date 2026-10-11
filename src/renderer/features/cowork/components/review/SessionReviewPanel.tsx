@@ -8,6 +8,7 @@ import {
   ChevronRightIcon,
   EllipsisHorizontalIcon,
   ExclamationTriangleIcon,
+  FolderIcon,
   FolderOpenIcon,
   InformationCircleIcon,
   MagnifyingGlassIcon,
@@ -26,7 +27,9 @@ import { i18nService } from '@/services/i18n';
 import { useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 import WorkspaceFileIcon from '../shared/WorkspaceFileIcon';
+import { describeReviewPath } from './reviewPathDisplay';
 import SessionReviewPatch from './SessionReviewPatch';
+import { useReviewNavigationResize } from './useReviewNavigationResize';
 
 interface Props {
   sessionId: string;
@@ -45,6 +48,8 @@ export default function SessionReviewPanel({
   onOpenFile,
 }: Props) {
   const ownerWindow = useOwnerWindow();
+  const navigationResize = useReviewNavigationResize(visible);
+  const navigationId = useId();
   const [scope, setScope] = useState<SessionReviewQuery['scope']>(ReviewScope.All);
   const [commit, setCommit] = useState('');
   const [commitInput, setCommitInput] = useState('');
@@ -253,6 +258,14 @@ export default function SessionReviewPanel({
     diff?.files.filter(file =>
       `${file.oldPath ?? ''} ${file.path}`.toLocaleLowerCase().includes(filter.toLocaleLowerCase()),
     ) ?? [];
+  const visibleEntries = files.slice(0, fileLimit).map(file => {
+    const display = describeReviewPath(file.path);
+    return {
+      file,
+      ...display,
+      name: display.name.trim() ? display.name : i18nService.t('reviewUnknownPath'),
+    };
+  });
   return (
     <section className="session-review" hidden={!visible} aria-label={i18nService.t('reviewTitle')}>
       <header className="review-toolbar">
@@ -450,7 +463,7 @@ export default function SessionReviewPanel({
         {actionError && <p role="alert">{i18nService.t('reviewError_file')}</p>}
         {copyError && <p role="alert">{i18nService.t('reviewError_copy')}</p>}
       </header>
-      <div className="review-body">
+      <div className="review-body" ref={navigationResize.bodyRef} style={navigationResize.style}>
         <div className="review-main">
           <div className="review-search">
             <MagnifyingGlassIcon aria-hidden="true" />
@@ -494,7 +507,7 @@ export default function SessionReviewPanel({
                 <p>{i18nService.t(filter ? 'reviewNoMatches' : 'reviewEmpty')}</p>
               </div>
             )}
-            {files.slice(0, fileLimit).map(file => {
+            {visibleEntries.map(({ file, name, directory, isDirectory }) => {
               const focused = file.path === focusedPath;
               const isExpanded =
                 expanded.has(file.path) || (focused && !expanded.has(`closed:${file.path}`));
@@ -527,7 +540,11 @@ export default function SessionReviewPanel({
                       }
                     >
                       <ChevronRightIcon aria-hidden="true" className="review-chevron" />
-                      <WorkspaceFileIcon fileName={file.path.split('/').pop() ?? file.path} />
+                      {isDirectory ? (
+                        <FolderIcon aria-hidden="true" />
+                      ) : (
+                        <WorkspaceFileIcon fileName={name} />
+                      )}
                       <span
                         className={`review-status review-status-${file.status}`}
                         title={i18nService.t(`reviewStatus_${file.status}`)}
@@ -539,19 +556,21 @@ export default function SessionReviewPanel({
                         title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}
                       >
                         <span className="review-directory">
-                          {file.oldPath
-                            ? `${file.oldPath} → `
-                            : file.path.includes('/')
-                              ? `${file.path.slice(0, file.path.lastIndexOf('/'))}/`
-                              : ''}
+                          {file.oldPath ? `${file.oldPath} → ` : directory ? `${directory}/` : ''}
                         </span>
-                        <strong>{file.oldPath ? file.path : file.path.split('/').pop()}</strong>
+                        <strong>{file.oldPath ? file.path : name}</strong>
                       </span>
-                      <span className="review-count">
-                        <span className="review-added">+{file.additions}</span>
-                        <span className="review-deleted">−{file.deletions}</span>
-                      </span>
-                      {file.untracked && (
+                      {isDirectory ? (
+                        <span className="review-file-badge">
+                          {i18nService.t('reviewDirectory')}
+                        </span>
+                      ) : (
+                        <span className="review-count">
+                          <span className="review-added">+{file.additions}</span>
+                          <span className="review-deleted">−{file.deletions}</span>
+                        </span>
+                      )}
+                      {file.untracked && !isDirectory && (
                         <span
                           className="review-file-badge"
                           title={i18nService.t('reviewUntracked')}
@@ -599,31 +618,43 @@ export default function SessionReviewPanel({
                             )}
                           </button>
                         )}
-                        {(['preview', 'files', 'editor'] as const)
-                          .filter(
-                            action => action !== 'editor' || window.electron.platform === 'win32',
-                          )
-                          .map(action => (
-                            <button
-                              key={action}
-                              className="review-button"
-                              disabled={!diff?.root || file.status === 'deleted' || actionPending}
-                              onClick={() => void openFile(file.path, action)}
-                            >
-                              {i18nService.t(`reviewAction_${action}`)}
-                            </button>
-                          ))}
+                        {!isDirectory &&
+                          (['preview', 'files', 'editor'] as const)
+                            .filter(
+                              action => action !== 'editor' || window.electron.platform === 'win32',
+                            )
+                            .map(action => (
+                              <button
+                                key={action}
+                                className="review-button"
+                                disabled={!diff?.root || file.status === 'deleted' || actionPending}
+                                onClick={() => void openFile(file.path, action)}
+                              >
+                                {i18nService.t(`reviewAction_${action}`)}
+                              </button>
+                            ))}
                       </div>
                     </details>
                   </div>
                   {isExpanded && (
                     <>
                       {!diff?.root && <p>{i18nService.t('reviewRemote')}</p>}
-                      {file.status === 'deleted' && <p>{i18nService.t('reviewDeleted')}</p>}
-                      {file.binary && <p>{i18nService.t('reviewBinary')}</p>}
-                      {file.truncated && <p>{i18nService.t('reviewTruncated')}</p>}
-                      {!file.binary && !file.patch && <p>{i18nService.t('reviewNoPatch')}</p>}
-                      {file.patch && (
+                      {isDirectory && <p>{i18nService.t('reviewDirectoryNoPatch')}</p>}
+                      {!isDirectory && file.status === 'deleted' && (
+                        <p>{i18nService.t('reviewDeleted')}</p>
+                      )}
+                      {!isDirectory && file.binary && <p>{i18nService.t('reviewBinary')}</p>}
+                      {!isDirectory && file.truncated && (file.binary || file.patch) && (
+                        <p>{i18nService.t('reviewTruncated')}</p>
+                      )}
+                      {!isDirectory && !file.binary && !file.patch && (
+                        <p>
+                          {i18nService.t(
+                            file.truncated ? 'reviewTruncatedNoPatch' : 'reviewNoPatch',
+                          )}
+                        </p>
+                      )}
+                      {!isDirectory && file.patch && (
                         <SessionReviewPatch
                           key={`${key}:${file.path}`}
                           patch={file.patch}
@@ -644,35 +675,39 @@ export default function SessionReviewPanel({
             )}
           </div>
         </div>
-        <nav className="review-navigation" aria-label={i18nService.t('reviewFileNavigation')}>
+        <div
+          className="review-navigation-resizer"
+          role="separator"
+          aria-label={i18nService.t('reviewResizeNavigation')}
+          aria-orientation="vertical"
+          aria-controls={navigationId}
+          aria-valuemin={navigationResize.minWidth}
+          aria-valuemax={navigationResize.maxWidth}
+          aria-valuenow={navigationResize.width}
+          tabIndex={navigationResize.tabIndex}
+          onPointerDown={navigationResize.beginResize}
+          onKeyDown={navigationResize.handleKeyDown}
+        />
+        <nav
+          id={navigationId}
+          className="review-navigation"
+          aria-label={i18nService.t('reviewFileNavigation')}
+        >
           <div className="review-navigation-title">{i18nService.t('reviewFilesChanged')}</div>
-          {[
-            ...new Set(
-              files
-                .slice(0, fileLimit)
-                .map(file =>
-                  file.path.includes('/') ? file.path.slice(0, file.path.lastIndexOf('/')) : '',
-                ),
-            ),
-          ].map(directory => (
+          {[...new Set(visibleEntries.map(entry => entry.directory))].map(directory => (
             <details key={directory} open className="review-directory-group">
               <summary>
                 <ChevronRightIcon aria-hidden="true" />
                 <span>{directory || i18nService.t('reviewWorkspace')}</span>
               </summary>
-              {files
-                .slice(0, fileLimit)
-                .filter(
-                  file =>
-                    (file.path.includes('/')
-                      ? file.path.slice(0, file.path.lastIndexOf('/'))
-                      : '') === directory,
-                )
-                .map(file => (
+              {visibleEntries
+                .filter(entry => entry.directory === directory)
+                .map(({ file, name, isDirectory }) => (
                   <button
                     key={file.path}
                     className="review-navigation-file"
                     aria-label={file.path}
+                    title={file.path}
                     aria-current={selectedFile === file.path ? 'location' : undefined}
                     onClick={() => {
                       setSelectedFile(file.path);
@@ -685,13 +720,21 @@ export default function SessionReviewPanel({
                       fileNodes.current.get(file.path)?.scrollIntoView?.({ block: 'start' });
                     }}
                   >
-                    <WorkspaceFileIcon fileName={file.path.split('/').pop() ?? file.path} />
-                    <span>{file.path.split('/').pop()}</span>
+                    {isDirectory ? (
+                      <FolderIcon aria-hidden="true" />
+                    ) : (
+                      <WorkspaceFileIcon fileName={name} />
+                    )}
+                    <span>{name}</span>
                     <span
                       className={`review-nav-status review-status-${file.status}`}
                       aria-label={i18nService.t(`reviewStatus_${file.status}`)}
                     >
-                      {{ added: 'A', modified: 'M', deleted: 'D', renamed: 'R' }[file.status]}
+                      {isDirectory
+                        ? i18nService
+                            .t('reviewDirectoryStatus')
+                            .replace('{status}', i18nService.t(`reviewStatus_${file.status}`))
+                        : i18nService.t(`reviewStatus_${file.status}`)}
                     </span>
                   </button>
                 ))}

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
@@ -33,7 +33,44 @@ beforeEach(() => {
     value: { writeText: copy.mockResolvedValue(undefined) },
   });
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+function setupResizeLayout(width = 1000) {
+  vi.stubGlobal(
+    'PointerEvent',
+    class extends MouseEvent {
+      readonly pointerId: number;
+      constructor(type: string, options: PointerEventInit = {}) {
+        super(type, options);
+        this.pointerId = options.pointerId ?? 1;
+      }
+    },
+  );
+  let bodyWidth = width;
+  let measure = () => {};
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: () => void) {
+        measure = callback;
+      }
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+    () => ({ width: bodyWidth }) as DOMRect,
+  );
+  load.mockResolvedValue(result('src/change.ts'));
+  return (next: number) => {
+    bodyWidth = next;
+    act(() => measure());
+  };
+}
 
 test('reuses a loaded review when reopening the panel and refreshes only on request', async () => {
   load.mockResolvedValue(result('stable.ts'));
@@ -248,16 +285,98 @@ test('shows absent patches explicitly for binary, truncated and renamed files', 
   expect(screen.getByText(t('reviewBinary'))).toBeTruthy();
   expect(screen.getByTitle(t('reviewUntracked')).textContent).toBe('U');
   fireEvent.click(screen.getByText('large.txt', { selector: '.review-file-heading *' }));
-  expect(screen.getByText(t('reviewTruncated'))).toBeTruthy();
+  expect(screen.getByText(t('reviewTruncatedNoPatch'))).toBeTruthy();
+  expect(screen.queryByText(t('reviewTruncated'))).toBeNull();
   fireEvent.click(screen.getByTitle('old.ts → new.ts'));
-  expect(screen.getAllByText(t('reviewNoPatch'))).toHaveLength(2);
+  expect(screen.getAllByText(t('reviewNoPatch'))).toHaveLength(1);
+});
+
+test.each([
+  ['.agent-tasks/swarm/flow/task-2/stage/attempt-1/', '.agent-tasks/swarm/flow/task-2/stage'],
+  ['nested/attempt-1///', 'nested'],
+  ['attempt-1/', t('reviewWorkspace')],
+])(
+  'shows directory entry %s with its name, type and accurate explanation',
+  async (path, parent) => {
+    load.mockResolvedValue({
+      success: true,
+      diff: {
+        sessionKey: 'native',
+        root: 'C:/repo',
+        additions: 0,
+        deletions: 0,
+        truncated: true,
+        files: [
+          { path, status: 'added', additions: 0, deletions: 0, untracked: true, truncated: true },
+        ],
+      },
+    });
+    render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+    const entry = await screen.findByRole('button', { name: path });
+    expect(within(entry).getByText('attempt-1')).toBeTruthy();
+    expect(
+      within(entry).getByText(
+        t('reviewDirectoryStatus').replace('{status}', t('reviewStatus_added')),
+      ),
+    ).toBeTruthy();
+    expect(entry.closest('details')?.querySelector('summary span')?.textContent).toBe(parent);
+    fireEvent.click(entry);
+    const article = screen
+      .getByText('attempt-1', { selector: '.review-file-heading strong' })
+      .closest('article')!;
+    expect(within(article).getByText(t('reviewDirectory'))).toBeTruthy();
+    expect(within(article).getByText(t('reviewDirectoryNoPatch'))).toBeTruthy();
+    expect(within(article).queryByText(t('reviewTruncatedNoPatch'))).toBeNull();
+    expect(within(article).queryByText(t('reviewTruncated'))).toBeNull();
+    expect(within(article).queryByText(t('reviewNoPatch'))).toBeNull();
+    expect(article.querySelector('.review-count')).toBeNull();
+    fireEvent.click(within(article).getByLabelText(t('reviewFileActions')));
+    for (const action of ['preview', 'files', 'editor']) {
+      expect(
+        within(article).queryByRole('button', { name: t(`reviewAction_${action}`) }),
+      ).toBeNull();
+    }
+    expect(file).not.toHaveBeenCalled();
+    fireEvent.click(within(article).getByRole('button', { name: t('reviewCopyPath') }));
+    await waitFor(() => expect(copy).toHaveBeenCalledWith(path));
+  },
+);
+
+test('shows a readable fallback instead of an empty filename for a separator-only directory path', async () => {
+  load.mockResolvedValue({
+    success: true,
+    diff: {
+      sessionKey: 'native',
+      additions: 0,
+      deletions: 0,
+      files: [{ path: '/', status: 'added', additions: 0, deletions: 0, truncated: true }],
+    },
+  });
+  render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  const entry = await screen.findByRole('button', { name: '/' });
+  expect(within(entry).getByText(t('reviewUnknownPath'))).toBeTruthy();
+  expect(
+    screen.getByText(t('reviewUnknownPath'), { selector: '.review-file-heading strong' }),
+  ).toBeTruthy();
+});
+
+test('preserves literal backslashes in native Git filenames', async () => {
+  const path = 'src/name\\with-backslash.ts';
+  load.mockResolvedValue(result(path));
+  render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  const entry = await screen.findByRole('button', { name: path });
+  expect(within(entry).getByText('name\\with-backslash.ts')).toBeTruthy();
+  expect(within(entry).getByText(t('reviewStatus_modified'))).toBeTruthy();
+  fireEvent.click(entry);
+  expect(screen.queryByText(t('reviewDirectoryNoPatch'))).toBeNull();
+  expect(screen.getByText('old')).toBeTruthy();
 });
 
 test('focuses only the longest matching path and preserves later filtering on refresh', async () => {
   const response = result('file.ts');
   response.diff.files.push({ ...response.diff.files[0], path: 'src/file.ts' });
   load.mockResolvedValue(response);
-  render(
+  const { container } = render(
     <SessionReviewPanel
       sessionId="one"
       visible
@@ -266,11 +385,12 @@ test('focuses only the longest matching path and preserves later filtering on re
       onOpenFile={vi.fn()}
     />,
   );
-  await screen.findByTitle('src/file.ts');
-  expect(screen.getByTitle('file.ts').closest('button')?.getAttribute('aria-expanded')).toBe(
+  const content = within(container.querySelector('.review-content')!);
+  await content.findByTitle('src/file.ts');
+  expect(content.getByTitle('file.ts').closest('button')?.getAttribute('aria-expanded')).toBe(
     'false',
   );
-  expect(screen.getByTitle('src/file.ts').closest('button')?.getAttribute('aria-expanded')).toBe(
+  expect(content.getByTitle('src/file.ts').closest('button')?.getAttribute('aria-expanded')).toBe(
     'true',
   );
   fireEvent.change(screen.getByLabelText(t('reviewFilter')), { target: { value: 'src/' } });
@@ -279,7 +399,7 @@ test('focuses only the longest matching path and preserves later filtering on re
   await waitFor(() =>
     expect(screen.getByLabelText(t('reviewFilter'))).toHaveProperty('value', 'src/'),
   );
-  expect(screen.queryByTitle('file.ts')).toBeNull();
+  expect(content.queryByTitle('file.ts')).toBeNull();
 });
 
 test('does not reopen preview when a pending file action completes after hiding and reopening review', async () => {
@@ -393,12 +513,15 @@ test('reveals and scrolls to a new focus beyond the initial file page', async ()
 
 test('opens a diff from the directory index without invoking a file action', async () => {
   load.mockResolvedValue(result('src/nested/change.ts'));
-  render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  const { container } = render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
   const navigationFile = await screen.findByRole('button', { name: 'src/nested/change.ts' });
   fireEvent.click(navigationFile);
   expect(navigationFile.getAttribute('aria-current')).toBe('location');
   expect(
-    screen.getByTitle('src/nested/change.ts').closest('button')?.getAttribute('aria-expanded'),
+    within(container.querySelector('.review-content')!)
+      .getByTitle('src/nested/change.ts')
+      .closest('button')
+      ?.getAttribute('aria-expanded'),
   ).toBe('true');
   expect(screen.getByText('old')).toBeTruthy();
   expect(file).not.toHaveBeenCalled();
@@ -484,3 +607,80 @@ test('opens the workspace folder and keeps truncation details inside the explana
   fireEvent.click(open);
   expect(await screen.findByRole('alert')).toHaveProperty('textContent', t('reviewError_file'));
 });
+
+test('resizes the review file tree in both directions and keeps space for the diff', () => {
+  setupResizeLayout();
+  const { container } = render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  const divider = screen.getByRole('separator', { name: t('reviewResizeNavigation') });
+  const body = container.querySelector<HTMLElement>('.review-body')!;
+  expect(divider.getAttribute('aria-valuenow')).toBe('240');
+  fireEvent.pointerDown(divider, { button: 0, pointerId: 7, clientX: 760 });
+  fireEvent.pointerMove(window, { pointerId: 7, clientX: 640 });
+  expect(body.style.getPropertyValue('--review-navigation-width')).toBe('360px');
+  fireEvent.pointerMove(window, { pointerId: 8, clientX: 100 });
+  fireEvent.pointerUp(window, { pointerId: 8 });
+  expect(divider.getAttribute('aria-valuenow')).toBe('360');
+  fireEvent.pointerMove(window, { pointerId: 7, clientX: -1000 });
+  expect(divider.getAttribute('aria-valuenow')).toBe('674');
+  fireEvent.pointerMove(window, { pointerId: 7, clientX: 2000 });
+  expect(divider.getAttribute('aria-valuenow')).toBe('160');
+  fireEvent.pointerMove(window, { pointerId: 7, clientX: 700 });
+  expect(divider.getAttribute('aria-valuenow')).toBe('300');
+  fireEvent.pointerUp(window, { pointerId: 7 });
+  fireEvent.pointerMove(window, { pointerId: 7, clientX: 600 });
+  expect(divider.getAttribute('aria-valuenow')).toBe('300');
+  expect(document.body.style.cursor).toBe('');
+  expect(document.body.style.userSelect).toBe('');
+});
+
+test('adjusts the review tree by keyboard and retains its requested width across layout changes', () => {
+  const resize = setupResizeLayout();
+  const view = render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  const divider = screen.getByRole('separator', { name: t('reviewResizeNavigation') });
+  fireEvent.keyDown(divider, { key: 'End' });
+  expect(divider.getAttribute('aria-valuenow')).toBe('674');
+  fireEvent.keyDown(divider, { key: 'ArrowRight' });
+  expect(divider.getAttribute('aria-valuenow')).toBe('650');
+  fireEvent.keyDown(divider, { key: 'ArrowLeft' });
+  expect(divider.getAttribute('aria-valuenow')).toBe('674');
+  resize(800);
+  expect(divider.getAttribute('aria-valuenow')).toBe('474');
+  resize(700);
+  expect(divider.tabIndex).toBe(-1);
+  resize(1000);
+  expect(divider.getAttribute('aria-valuenow')).toBe('674');
+  view.rerender(<SessionReviewPanel sessionId="one" visible={false} onOpenFile={vi.fn()} />);
+  view.rerender(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  expect(divider.getAttribute('aria-valuenow')).toBe('674');
+  fireEvent.keyDown(divider, { key: 'Home' });
+  expect(divider.getAttribute('aria-valuenow')).toBe('160');
+});
+
+test.each(['pointercancel', 'lostpointercapture', 'blur', 'hidden', 'narrow', 'unmount'])(
+  'releases review-tree dragging state on %s',
+  action => {
+    const resize = setupResizeLayout();
+    document.body.style.cursor = 'default';
+    document.body.style.userSelect = 'text';
+    const view = render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+    const divider = screen.getByRole('separator', { name: t('reviewResizeNavigation') });
+    fireEvent.pointerDown(divider, { button: 0, pointerId: 7, clientX: 760 });
+    expect(document.body.style.cursor).toBe('col-resize');
+    if (action === 'unmount') view.unmount();
+    else if (action === 'hidden')
+      view.rerender(<SessionReviewPanel sessionId="one" visible={false} onOpenFile={vi.fn()} />);
+    else if (action === 'narrow') resize(700);
+    else if (action === 'blur') fireEvent(window, new Event('blur'));
+    else
+      fireEvent(
+        action === 'lostpointercapture' ? divider : window,
+        new PointerEvent(action, { pointerId: 7 }),
+      );
+    expect(document.body.style.cursor).toBe('default');
+    expect(document.body.style.userSelect).toBe('text');
+    fireEvent.pointerMove(window, { pointerId: 7, clientX: 600 });
+    if (action !== 'unmount') expect(divider.getAttribute('aria-valuenow')).toBe('240');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  },
+);
