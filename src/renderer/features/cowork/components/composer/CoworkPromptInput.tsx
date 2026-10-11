@@ -3034,7 +3034,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   <div className="relative flex shrink-0 items-center gap-1">
                     {supportsAgentControls && (
                       <ComposerFeatureMenu
-                        key={draftKey}
+                        key={`features:${draftKey}`}
                         backLabel={i18nService.t('teamFeatureBack')}
                         items={composerFeatures}
                         label={i18nService.t('composerFeatures')}
@@ -3043,7 +3043,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     )}
                     {supportsSpeechInput && (
                       <LocalSpeechInputButton
-                        key={draftKey}
+                        key={`speech:${draftKey}`}
                         disabled={disabled || isRunActive}
                         onTranscript={insertSpeechTranscript}
                       />
@@ -3324,7 +3324,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   <div className="flex flex-1 items-center gap-1">
                     {supportsAgentControls && (
                       <ComposerFeatureMenu
-                        key={draftKey}
+                        key={`features:${draftKey}`}
                         backLabel={i18nService.t('teamFeatureBack')}
                         items={composerFeatures}
                         label={i18nService.t('composerFeatures')}
@@ -3333,7 +3333,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     )}
                     {supportsSpeechInput && (
                       <LocalSpeechInputButton
-                        key={draftKey}
+                        key={`speech:${draftKey}`}
                         disabled={disabled || isRunActive}
                         onTranscript={insertSpeechTranscript}
                       />
