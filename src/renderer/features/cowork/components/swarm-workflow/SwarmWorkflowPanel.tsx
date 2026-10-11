@@ -4,13 +4,13 @@ import './swarmWorkflow.css';
 import {
   ArrowPathIcon,
   CheckCircleIcon,
-  ChevronDownIcon,
   ClockIcon,
   ExclamationCircleIcon,
   MinusIcon,
   PauseIcon,
   PlayIcon,
   PlusIcon,
+  ShareIcon,
   StopIcon,
   ViewfinderCircleIcon,
 } from '@heroicons/react/24/outline';
@@ -20,7 +20,7 @@ import type {
   SwarmWorkflowResult,
   SwarmWorkflowView,
 } from '@shared/cowork/swarmWorkflow';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
 import { useOwnerWindow } from '@/shared/dom/ownerDocument';
@@ -139,6 +139,7 @@ export default function SwarmWorkflowPanel({
   const viewport = useSwarmWorkflowGraphViewport();
   const resetViewport = viewport.reset;
   const container = useRef<HTMLElement>(null);
+  const tabsRef = useRef<HTMLElement>(null);
   const [columns, setColumns] = useState(2);
   useEffect(() => {
     if (!container.current || !ownerWindow.ResizeObserver) return;
@@ -204,6 +205,27 @@ export default function SwarmWorkflowPanel({
     else refresh(v => v + 1);
   };
   const flow = flows.find(f => f.id === chosen) ?? flows[0];
+  useLayoutEffect(() => {
+    const tabs = tabsRef.current;
+    if (!active || !tabs) return;
+    const revealSelectedTab = () => {
+      const selected = tabs.querySelector<HTMLButtonElement>('button[aria-pressed="true"]');
+      if (!selected) return;
+      const bounds = tabs.getBoundingClientRect();
+      const selectedBounds = selected.getBoundingClientRect();
+      if (!bounds.width || !selectedBounds.width) return;
+      if (selectedBounds.left < bounds.left + 12) {
+        tabs.scrollLeft -= bounds.left + 12 - selectedBounds.left;
+      } else if (selectedBounds.right > bounds.right - 12) {
+        tabs.scrollLeft += selectedBounds.right - bounds.right + 12;
+      }
+    };
+    revealSelectedTab();
+    if (!ownerWindow.ResizeObserver) return;
+    const observer = new ownerWindow.ResizeObserver(revealSelectedTab);
+    observer.observe(tabs);
+    return () => observer.disconnect();
+  }, [active, flow?.id, flows.length, ownerWindow]);
   const StatusIcon = flow ? flowIcons[flow.status] : ClockIcon;
   const node = flow?.nodes.find(n => n.id === selected);
   const source = flow?.nodes.find(n => n.id === selectedEdge);
@@ -252,6 +274,32 @@ export default function SwarmWorkflowPanel({
       ref={container}
       className="swarm-panel flex h-full min-h-0 flex-col bg-surface text-foreground"
     >
+      {flows.length > 0 && (
+        <nav
+          ref={tabsRef}
+          className="flex h-10 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border-subtle bg-background px-3"
+          aria-label={t('swarmWorkflowHistory')}
+        >
+          {flows.map(item => (
+            <button
+              key={item.id}
+              type="button"
+              title={item.goal}
+              className="inline-flex h-7 max-w-56 shrink-0 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-[13px] font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary aria-pressed:border-border-input aria-pressed:bg-primary-muted aria-pressed:text-primary"
+              aria-pressed={flow?.id === item.id}
+              onClick={() => {
+                setChosen(item.id);
+                resetViewport();
+                setSelected(undefined);
+                setSelectedEdge(undefined);
+              }}
+            >
+              <ShareIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 truncate">{item.goal}</span>
+            </button>
+          ))}
+        </nav>
+      )}
       {node?.kind === 'batch' && !source && flow ? (
         <SwarmWorkflowBatchPanel
           key={JSON.stringify([sessionId, flow.id, node.id])}
@@ -306,32 +354,8 @@ export default function SwarmWorkflowPanel({
                 )}
               </span>
             )}
-            <div className="swarm-workflow-title">
-              <select
-                className="swarm-workflow-select"
-                aria-label={t('swarmWorkflowHistory')}
-                title={flow?.goal ?? t('swarmWorkflowTitle')}
-                value={flow?.id ?? ''}
-                onChange={e => {
-                  setChosen(e.target.value);
-                  resetViewport();
-                  setSelected(undefined);
-                  setSelectedEdge(undefined);
-                }}
-              >
-                {!flows.length && <option value="">{t('swarmWorkflowTitle')}</option>}
-                {flows.map(f => (
-                  <option key={f.id} value={f.id}>
-                    {f.goal.slice(0, 50)}
-                  </option>
-                ))}
-              </select>
-              {flows.length > 1 && (
-                <ChevronDownIcon
-                  className="pointer-events-none absolute right-1 top-1 h-4 w-4 text-muted"
-                  aria-hidden="true"
-                />
-              )}
+            <div className="swarm-workflow-title" title={flow?.goal ?? t('swarmWorkflowTitle')}>
+              {flow?.goal ?? t('swarmWorkflowTitle')}
             </div>
             {button('swarmWorkflowRefresh', ArrowPathIcon, refreshFlows)}
           </header>
@@ -397,7 +421,9 @@ export default function SwarmWorkflowPanel({
                         aria-label={
                           t('swarmWorkflowHandoff') +
                           ': ' +
-                          (source.kind === 'work' ? source.title : t('swarmWorkflowKind_' + source.kind)) +
+                          (source.kind === 'work'
+                            ? source.title
+                            : t('swarmWorkflowKind_' + source.kind)) +
                           ' → ' +
                           (n.kind === 'work' ? n.title : t('swarmWorkflowKind_' + n.kind))
                         }
@@ -534,7 +560,12 @@ export default function SwarmWorkflowPanel({
             {flow && !['completed', 'cancelled'].includes(flow.status) && (
               <>
                 {actions.retry &&
-                  button('swarmWorkflowRetry', ArrowPathIcon, () => void control('retry'), busy || stale)}
+                  button(
+                    'swarmWorkflowRetry',
+                    ArrowPathIcon,
+                    () => void control('retry'),
+                    busy || stale,
+                  )}
                 {flow.status === 'paused'
                   ? button(
                       'swarmWorkflowResume',

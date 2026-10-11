@@ -10,6 +10,8 @@ import { getExtensionManagement } from '@shared/plugins/management';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { OPEN_TEAM_RECORDS } from '@/features/cowork/components/display/agentTeamHistory';
+
 import ExtensionsManager from './ExtensionsManager';
 
 vi.mock('@/features/plugins/marketplace/MarketplaceView', () => ({
@@ -72,6 +74,66 @@ describe('ExtensionsManager extension toggle', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  test.each([false, true])(
+    'opens Agent Team records from its card with enabled=%s without toggling the plugin',
+    async enabled => {
+      const setEnabled = vi.fn();
+      const received = vi.fn();
+      Object.defineProperty(window, 'electron', {
+        configurable: true,
+        value: {
+          extensions: {
+            list: vi.fn(async () => ({
+              success: true,
+              extensions: [{ ...extension, id: 'agent-team', name: 'Agent Team', enabled }],
+            })),
+            setEnabled,
+            onImportProgress: vi.fn(() => vi.fn()),
+          },
+        },
+      });
+      window.addEventListener(OPEN_TEAM_RECORDS, received);
+      try {
+        render(<ExtensionsManager />);
+        fireEvent.click(await screen.findByRole('button', { name: 'teamAllRecords' }));
+        expect(received).toHaveBeenCalledTimes(1);
+        expect(received.mock.calls[0][0].detail).toBe(document);
+        expect(setEnabled).not.toHaveBeenCalled();
+        expect(screen.queryByRole('heading', { name: 'Agent Team', level: 2 })).toBeNull();
+      } finally {
+        window.removeEventListener(OPEN_TEAM_RECORDS, received);
+      }
+    },
+  );
+
+  test('opens Agent Team records from details after closing the details dialog', async () => {
+    const received = vi.fn();
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn(async () => ({
+            success: true,
+            extensions: [{ ...extension, id: 'agent-team', name: 'Agent Team' }],
+          })),
+          onImportProgress: vi.fn(() => vi.fn()),
+        },
+      },
+    });
+    window.addEventListener(OPEN_TEAM_RECORDS, received);
+    try {
+      render(<ExtensionsManager requestedExtensionId="agent-team" />);
+      await screen.findByRole('heading', { name: 'Agent Team', level: 2 });
+      const history = screen.getAllByRole('button', { name: 'teamAllRecords' });
+      fireEvent.click(history.find(button => button.textContent === 'teamAllRecords')!);
+      expect(received).toHaveBeenCalledTimes(1);
+      expect(received.mock.calls[0][0].detail).toBe(document);
+      expect(screen.queryByRole('heading', { name: 'Agent Team', level: 2 })).toBeNull();
+    } finally {
+      window.removeEventListener(OPEN_TEAM_RECORDS, received);
+    }
   });
 
   test('animates toward the requested state while the change is being applied', async () => {
@@ -319,7 +381,11 @@ describe('ExtensionsManager extension toggle', () => {
 
     render(<ExtensionsManager searchQuery="video-openai" />);
 
-    expect(await screen.findByRole('img', { name: 'pluginStatusDisabled · extensionManagedVideoModels' })).toBeTruthy();
+    expect(
+      await screen.findByRole('img', {
+        name: 'pluginStatusDisabled · extensionManagedVideoModels',
+      }),
+    ).toBeTruthy();
     expect(screen.queryByRole('switch')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'subtaskShowInfo: Sample Extension' }));
     expect(screen.getByText('extensionManagedVideoModels')).toBeTruthy();
@@ -327,27 +393,40 @@ describe('ExtensionsManager extension toggle', () => {
 
   test('saves a bundled Jev key without enabling the extension or retaining it in the input', async () => {
     const typesafe: InstalledOpenClawExtension = {
-      ...extension, id: 'typesafe', name: 'TypeSafe AI', origin: 'bundled',
-      installPath: undefined, removable: false,
-      configurationFields: [{ path: 'apiKey', label: 'TypeSafe API credential', sensitive: true, configured: false }],
+      ...extension,
+      id: 'typesafe',
+      name: 'TypeSafe AI',
+      origin: 'bundled',
+      installPath: undefined,
+      removable: false,
+      configurationFields: [
+        { path: 'apiKey', label: 'TypeSafe API credential', sensitive: true, configured: false },
+      ],
     };
     const updateConfiguration = vi.fn().mockResolvedValue({ success: true });
     const setEnabled = vi.fn();
     Object.defineProperty(window, 'electron', {
       configurable: true,
-      value: { extensions: {
-        list: vi.fn(async () => ({ success: true, extensions: [typesafe] })),
-        updateConfiguration, setEnabled, onImportProgress: vi.fn(() => vi.fn()),
-      } },
+      value: {
+        extensions: {
+          list: vi.fn(async () => ({ success: true, extensions: [typesafe] })),
+          updateConfiguration,
+          setEnabled,
+          onImportProgress: vi.fn(() => vi.fn()),
+        },
+      },
     });
     render(<ExtensionsManager requestedExtensionId="typesafe" />);
     const input = (await screen.findByLabelText('TypeSafe API credential')) as HTMLInputElement;
     expect(input.type).toBe('password');
     fireEvent.change(input, { target: { value: 'synthetic-ui-key' } });
     fireEvent.click(screen.getByRole('button', { name: 'save' }));
-    await waitFor(() => expect(updateConfiguration).toHaveBeenCalledWith({
-      extensionId: 'typesafe', values: { apiKey: 'synthetic-ui-key' },
-    }));
+    await waitFor(() =>
+      expect(updateConfiguration).toHaveBeenCalledWith({
+        extensionId: 'typesafe',
+        values: { apiKey: 'synthetic-ui-key' },
+      }),
+    );
     await waitFor(() => expect(input.value).toBe(''));
     expect(setEnabled).not.toHaveBeenCalled();
   });

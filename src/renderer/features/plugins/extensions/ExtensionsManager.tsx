@@ -2,6 +2,7 @@ import {
   ArchiveBoxIcon,
   ArrowUpTrayIcon,
   ChevronDownIcon,
+  ClockIcon,
   Cog6ToothIcon,
   ExclamationTriangleIcon,
   FolderIcon,
@@ -19,6 +20,7 @@ import { PluginKind } from '@shared/plugins/marketplace';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { OPEN_TEAM_RECORDS } from '@/features/cowork/components/display/agentTeamHistory';
 import {
   canToggleExtension,
   ExtensionGroupId,
@@ -43,6 +45,7 @@ import SearchIcon from '@/shared/components/icons/SearchIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
 import Modal from '@/shared/components/ui/Modal';
 import Tooltip from '@/shared/components/ui/Tooltip';
+import { useOwnerDocument } from '@/shared/dom/ownerDocument';
 
 import AgentTeamSettingsDialog from './AgentTeamSettingsDialog';
 
@@ -123,6 +126,10 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   onRequestedExtensionHandled,
   onOpenRuntime,
 }) => {
+  const ownerDocument = useOwnerDocument();
+  const openTeamRecords = useCallback(() => {
+    window.dispatchEvent(new CustomEvent(OPEN_TEAM_RECORDS, { detail: ownerDocument }));
+  }, [ownerDocument]);
   const [teamSettingsOpen, setTeamSettingsOpen] = useState(false);
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   const searchQuery = sharedSearchQuery ?? localSearchQuery;
@@ -742,18 +749,32 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                                     <PluginUpdateIndicator />
                                   )}
                                   {extension.id === 'agent-team' && (
-                                    <button
-                                      type="button"
-                                      className="pointer-events-auto rounded-lg p-1.5 text-secondary hover:bg-surface-raised"
-                                      aria-label={i18nService.t('agentTeamSettings')}
-                                      title={i18nService.t('agentTeamSettings')}
-                                      onClick={event => {
-                                        event.stopPropagation();
-                                        setTeamSettingsOpen(true);
-                                      }}
-                                    >
-                                      <Cog6ToothIcon className="h-4 w-4" />
-                                    </button>
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="pointer-events-auto rounded-lg p-1.5 text-secondary hover:bg-surface-raised"
+                                        aria-label={i18nService.t('teamAllRecords')}
+                                        title={i18nService.t('teamAllRecords')}
+                                        onClick={event => {
+                                          event.stopPropagation();
+                                          openTeamRecords();
+                                        }}
+                                      >
+                                        <ClockIcon className="h-4 w-4" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="pointer-events-auto rounded-lg p-1.5 text-secondary hover:bg-surface-raised"
+                                        aria-label={i18nService.t('agentTeamSettings')}
+                                        title={i18nService.t('agentTeamSettings')}
+                                        onClick={event => {
+                                          event.stopPropagation();
+                                          setTeamSettingsOpen(true);
+                                        }}
+                                      >
+                                        <Cog6ToothIcon className="h-4 w-4" />
+                                      </button>
+                                    </>
                                   )}
                                   {canToggle ? (
                                     <ExtensionToggle
@@ -1128,8 +1149,8 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
               )}
             </div>
 
-            <div className="mt-6 flex items-center justify-between gap-3 border-t border-border pt-4">
-              <div className="flex items-center gap-2">
+            <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
                 {selectedExtension.installPath &&
                   (selectedExtension.management?.revealInFolder.allowed ?? true) && (
                     <Tooltip content={i18nService.t('openFolder')} position="top">
@@ -1145,16 +1166,29 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                     </Tooltip>
                   )}
                 {selectedExtension.id === 'agent-team' && (
-                  <button
-                    type="button"
-                    className="rounded-lg px-3 py-2 text-sm text-primary hover:bg-surface-raised"
-                    onClick={() => {
-                      setSelectedExtension(null);
-                      setTeamSettingsOpen(true);
-                    }}
-                  >
-                    {i18nService.t('agentTeamSettings')}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-primary hover:bg-surface-raised"
+                      onClick={() => {
+                        setSelectedExtension(null);
+                        openTeamRecords();
+                      }}
+                    >
+                      <ClockIcon aria-hidden="true" className="h-4 w-4" />
+                      {i18nService.t('teamAllRecords')}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-lg px-3 py-2 text-sm text-primary hover:bg-surface-raised"
+                      onClick={() => {
+                        setSelectedExtension(null);
+                        setTeamSettingsOpen(true);
+                      }}
+                    >
+                      {i18nService.t('agentTeamSettings')}
+                    </button>
+                  </>
                 )}
                 {(selectedExtension.management?.remove.allowed ??
                   selectedExtension.removable === true) && (

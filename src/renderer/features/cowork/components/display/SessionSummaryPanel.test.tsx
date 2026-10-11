@@ -41,23 +41,14 @@ function mixedTeamEntries() {
 it('shows per-mode counts and opens team tabs directly without a second summary menu', () => {
   const { props, onOpenTeam } = fixture();
   i18nService.setLanguage('zh', { persist: false });
-  const onHistory = vi.fn();
-  render(
-    <SessionSummaryPanel
-      {...props}
-      teamEntries={mixedTeamEntries()}
-      onOpenTeamHistory={onHistory}
-    />,
-  );
+  render(<SessionSummaryPanel {...props} teamEntries={mixedTeamEntries()} />);
   const button = screen.getByRole('button', { name: 'Agent Team 协作 × 2，群聊 × 3' });
   expect(button.hasAttribute('aria-haspopup')).toBe(false);
   fireEvent.click(button);
   expect(onOpenTeam).toHaveBeenCalledTimes(1);
-  expect(onHistory).not.toHaveBeenCalled();
   expect(screen.queryByRole('menu')).toBeNull();
   expect(screen.queryByText('Topic 0')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: '全部团队记录' }));
-  expect(onHistory).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole('button', { name: '全部团队记录' })).toBeNull();
 });
 
 it.each([
@@ -83,20 +74,18 @@ it.each([
   expect(screen.queryByRole('menu')).toBeNull();
 });
 
-it('keeps global team history reachable when this conversation has no teams', () => {
+it('hides team navigation when switching to a conversation without teams even if global history exists', () => {
   const { props, onOpenTeam } = fixture();
-  const onHistory = vi.fn();
-  const { rerender } = render(
-    <SessionSummaryPanel {...props} teamEntries={[]} onOpenTeamHistory={onHistory} />,
-  );
-  const button = screen.getByRole('button', { name: 'Agent Team' });
-  expect(button.textContent).not.toContain('×');
-  fireEvent.click(button);
-  expect(onHistory).toHaveBeenCalledTimes(1);
+  const { rerender } = render(<SessionSummaryPanel {...props} />);
+  expect(screen.getByRole('button', { name: 'Agent Team Collaboration × 1' })).toBeTruthy();
+  rerender(<SessionSummaryPanel {...props} sessionId="unrelated" teamEntries={[]} />);
+  expect(screen.queryByRole('button', { name: /Agent Team/ })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'All team records' })).toBeNull();
   expect(onOpenTeam).not.toHaveBeenCalled();
   expect(screen.queryByRole('menu')).toBeNull();
-  rerender(<SessionSummaryPanel {...props} teamEntries={[]} />);
-  expect(screen.queryByRole('button', { name: /Agent Team/ })).toBeNull();
+  rerender(<SessionSummaryPanel {...props} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Agent Team Collaboration × 1' }));
+  expect(onOpenTeam).toHaveBeenCalledTimes(1);
 });
 
 const progressCard: ProgressCard = {

@@ -1,6 +1,5 @@
 import {
   ChatBubbleLeftEllipsisIcon,
-  ClockIcon,
   LinkIcon,
   ShareIcon,
   XMarkIcon,
@@ -49,7 +48,6 @@ interface Props {
   onOpenSubagents: () => void;
   onOpenWorkflow: () => void;
   onOpenTeam: () => void;
-  onOpenTeamHistory?: () => void;
   onOpenResource: (resource: SummaryResource) => void;
   onOpenResourceList: (kind: SummaryResourceListKind) => void;
 }
@@ -289,7 +287,7 @@ export default function SessionSummaryPanel(props: Props) {
             <span className="text-secondary">{props.workflowCount}</span>
           </button>
         )}
-        {(props.teamEntries.length > 0 || props.onOpenTeamHistory) && (
+        {props.teamEntries.length > 0 && (
           <div className="flex min-w-0 items-center gap-1">
             <button
               type="button"
@@ -297,7 +295,7 @@ export default function SessionSummaryPanel(props: Props) {
               aria-label={[i18nService.t('coworkSummaryAgentTeam'), teamCountLabel]
                 .filter(Boolean)
                 .join(' ')}
-              onClick={props.teamEntries.length ? props.onOpenTeam : props.onOpenTeamHistory}
+              onClick={props.onOpenTeam}
             >
               <ChatBubbleLeftEllipsisIcon className="h-4 w-4 shrink-0 text-secondary" />
               <span className="shrink-0">{i18nService.t('coworkSummaryAgentTeam')}</span>
@@ -306,21 +304,7 @@ export default function SessionSummaryPanel(props: Props) {
                   {teamCountLabel}
                 </span>
               )}
-              {!props.teamEntries.length && (
-                <ClockIcon aria-hidden="true" className="ml-auto h-4 w-4 text-secondary" />
-              )}
             </button>
-            {props.teamEntries.length > 0 && props.onOpenTeamHistory && (
-              <button
-                type="button"
-                title={i18nService.t('teamAllRecords')}
-                aria-label={i18nService.t('teamAllRecords')}
-                onClick={props.onOpenTeamHistory}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-secondary hover:bg-surface-raised hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              >
-                <ClockIcon aria-hidden="true" className="h-4 w-4" />
-              </button>
-            )}
           </div>
         )}
       </div>

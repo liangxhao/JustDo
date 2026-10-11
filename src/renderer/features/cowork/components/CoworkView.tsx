@@ -190,7 +190,7 @@ import BrainIcon from '@/shared/components/icons/BrainIcon';
 import FolderIcon from '@/shared/components/icons/FolderIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import Modal from '@/shared/components/ui/Modal';
-import { OwnerDocumentContext, useOwnerDocument } from '@/shared/dom/ownerDocument';
+import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
 import { type RootState, store } from '@/store';
 
 import { CoworkHomeWorkspace } from './chat/CoworkHomeWorkspace';
@@ -211,7 +211,6 @@ import {
 } from './composer/sessionSubmission';
 import { OPEN_TEAM_PANEL, useTeamDiscussionRooms } from './discussions/teamDiscussionNavigation';
 import { buildAgentTeamEntries, groupTeamKey } from './display/agentTeamEntries';
-import { OPEN_TEAM_RECORDS } from './display/agentTeamHistory';
 import AgentTeamPanel from './display/AgentTeamPanel';
 import {
   BROWSER_DISPLAY_TAB_PREFIX,
@@ -328,7 +327,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     onPlanRespond,
   } = props;
   const dispatch = useDispatch();
-  const ownerDocument = useOwnerDocument();
   const currentSession = useSelector(selectCurrentSession);
   const currentSessionId = currentSession?.id ?? null;
   const [isWorkspaceDetached, setIsWorkspaceDetached] = useState(false);
@@ -3054,16 +3052,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     resources={currentSummaryResources}
                     workflowCount={swarmWorkflowDiscovery.count}
                     teamEntries={summaryTeamEntries}
-                    onOpenTeamHistory={
-                      collaborationRooms.length || discussionRooms.length
-                        ? () => {
-                            summaryVisibility.close();
-                            window.dispatchEvent(
-                              new CustomEvent(OPEN_TEAM_RECORDS, { detail: ownerDocument }),
-                            );
-                          }
-                        : undefined
-                    }
                     onClose={summaryVisibility.close}
                     onOpenSubagents={() => {
                       summaryVisibility.close();

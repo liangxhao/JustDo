@@ -129,7 +129,7 @@ const InitializedApp: React.FC = () => {
     return () => window.removeEventListener(OPEN_TEAM_RECORDS, open);
   }, []);
   useEffect(() => {
-    if (teamEntry || showSettings || mainView !== 'cowork') setTeamHistoryDocument(null);
+    setTeamHistoryDocument(null);
   }, [teamEntry, showSettings, mainView]);
   useEffect(() => {
     const ownerWindow = teamHistoryDocument?.defaultView;

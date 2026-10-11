@@ -27,6 +27,8 @@ vi.mock('./SwarmWorkflowDetailPanel', () => ({
 import SwarmWorkflowPanel, { layoutFlow, routeFlowEdge } from './SwarmWorkflowPanel';
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 const flow: SwarmWorkflowView = {
@@ -170,15 +172,18 @@ test('routes skipped dependency levels and wrapped parallel rows outside every c
   }
 });
 
-test('selects newly discovered workflow while preserving history selection on ordinary refresh', async () => {
+test('switches workflow subtabs and preserves manual selection until a new workflow is discovered', async () => {
   fixture();
   const old = { ...flow, id: 'old', goal: 'Older flow', status: 'completed' as const };
   const props = { sessionId: 'product', tasks: [], onOpenTask: () => {} };
   const view = render(
     <SwarmWorkflowPanel {...props} snapshot={{ success: true, flows: [flow, old] }} />,
   );
-  const history = await screen.findByRole('combobox', { name: 'Task flows' });
-  fireEvent.change(history, { target: { value: 'old' } });
+  await screen.findByRole('navigation', { name: 'Task flows' });
+  expect(screen.queryByRole('combobox')).toBeNull();
+  const olderTab = screen.getByRole('button', { name: 'Older flow' });
+  expect(screen.getByRole('button', { name: flow.goal }).getAttribute('aria-pressed')).toBe('true');
+  fireEvent.click(olderTab);
   view.rerender(
     <SwarmWorkflowPanel
       {...props}
@@ -186,20 +191,180 @@ test('selects newly discovered workflow while preserving history selection on or
       snapshot={{ success: true, flows: [{ ...flow, revision: 9 }, old] }}
     />,
   );
-  expect((history as HTMLSelectElement).value).toBe('old');
+  expect(olderTab.getAttribute('aria-pressed')).toBe('true');
   const latest = { ...flow, id: 'new', goal: 'New task' };
   view.rerender(
     <SwarmWorkflowPanel {...props} snapshot={{ success: true, flows: [latest, flow, old] }} />,
   );
-  await waitFor(() => expect((history as HTMLSelectElement).value).toBe('new'));
-  fireEvent.change(history, { target: { value: 'old' } });
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'New task' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    ),
+  );
+  expect(olderTab.getAttribute('aria-pressed')).toBe('false');
+  fireEvent.click(olderTab);
   view.rerender(
     <SwarmWorkflowPanel
       {...props}
       snapshot={{ success: true, flows: [{ ...latest, revision: 10 }, flow, old] }}
     />,
   );
-  expect((history as HTMLSelectElement).value).toBe('old');
+  expect(olderTab.getAttribute('aria-pressed')).toBe('true');
+});
+
+test('reveals the selected workflow subtab when the panel becomes narrower', async () => {
+  fixture();
+  const observers = new Map<Element, ResizeObserverCallback>();
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) {
+        observers.set(target, this.callback);
+      }
+      disconnect() {}
+    },
+  );
+  const old = { ...flow, id: 'old', goal: 'Older flow' };
+  render(
+    <SwarmWorkflowPanel
+      sessionId="product"
+      tasks={[]}
+      onOpenTask={() => {}}
+      snapshot={{ success: true, flows: [flow, old] }}
+    />,
+  );
+  const tabs = await screen.findByRole('navigation', { name: 'Task flows' });
+  const olderTab = screen.getByRole('button', { name: old.goal });
+  let width = 600;
+  vi.spyOn(tabs, 'getBoundingClientRect').mockImplementation(() => new DOMRect(0, 0, width, 40));
+  vi.spyOn(olderTab, 'getBoundingClientRect').mockImplementation(
+    () => new DOMRect(250 - tabs.scrollLeft, 0, 200, 28),
+  );
+  fireEvent.click(olderTab);
+  expect(tabs.scrollLeft).toBe(0);
+  width = 300;
+  act(() => observers.get(tabs)!([], {} as ResizeObserver));
+  expect(olderTab.getBoundingClientRect().right).toBeLessThanOrEqual(width - 12);
+  expect(olderTab.getAttribute('aria-pressed')).toBe('true');
+});
+
+test('reveals a workflow discovered while hidden when the panel becomes active', async () => {
+  fixture();
+  const old = { ...flow, id: 'old', goal: 'Older flow' };
+  const latest = { ...flow, id: 'latest', goal: 'New task' };
+  const props = { sessionId: 'product', tasks: [], onOpenTask: () => {} };
+  const view = render(
+    <SwarmWorkflowPanel {...props} snapshot={{ success: true, flows: [flow, old] }} />,
+  );
+  const tabs = await screen.findByRole('navigation', { name: 'Task flows' });
+  fireEvent.click(screen.getByRole('button', { name: old.goal }));
+  let width = 0;
+  vi.spyOn(tabs, 'getBoundingClientRect').mockImplementation(() => new DOMRect(0, 0, width, 40));
+  tabs.scrollLeft = 260;
+  const snapshot = { success: true as const, flows: [latest, flow, old] };
+  view.rerender(<SwarmWorkflowPanel {...props} active={false} snapshot={snapshot} />);
+  const latestTab = screen.getByRole('button', { name: latest.goal });
+  expect(latestTab.getAttribute('aria-pressed')).toBe('true');
+  expect(tabs.scrollLeft).toBe(260);
+  vi.spyOn(latestTab, 'getBoundingClientRect').mockImplementation(
+    () => new DOMRect(12 - tabs.scrollLeft, 0, 200, 28),
+  );
+  width = 320;
+  view.rerender(<SwarmWorkflowPanel {...props} snapshot={snapshot} />);
+  expect(tabs.scrollLeft).toBe(0);
+  expect(latestTab.getBoundingClientRect().left).toBe(12);
+  expect(latestTab.getAttribute('aria-pressed')).toBe('true');
+});
+
+test.each([
+  { entry: 'Security review: Running', detail: 'history:a' },
+  { entry: 'Task message sent downstream: Plan → Security review', detail: 'plan → a' },
+])(
+  'switches workflows directly from $detail and clears the previous detail selection',
+  async ({ entry, detail }) => {
+    const f = fixture();
+    const other = {
+      ...flow,
+      id: 'other',
+      revision: 12,
+      goal: 'Another workflow',
+      nodes: flow.nodes.map(node =>
+        node.id === 'a' ? { ...node, title: 'Another review' } : node,
+      ),
+    };
+    render(
+      <SwarmWorkflowPanel
+        sessionId="product"
+        tasks={[]}
+        onOpenTask={() => {}}
+        snapshot={{ success: true, flows: [flow, other] }}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: entry }));
+    expect(screen.getByText(detail)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: other.goal }));
+    expect(screen.queryByText(detail)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Another review: Running' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Pause new task dispatch' }));
+    await waitFor(() => expect(f.control).toHaveBeenCalledWith('product', 'other', 12, 'pause'));
+  },
+);
+
+test('keeps workflow subtabs available in batch item details and returns to the other graph', async () => {
+  fixture();
+  const counts = {
+    total: 1,
+    done: 0,
+    failed: 1,
+    running: 0,
+    preparing: 0,
+    uncertain: 0,
+    cancelled: 0,
+    queued: 0,
+  };
+  const batch = {
+    ...flow.nodes[1],
+    kind: 'batch' as const,
+    title: 'Batch review',
+    batchCounts: counts,
+  };
+  const batchFlow = { ...flow, nodes: [batch] };
+  Object.defineProperty(window.electron.cowork, 'getSwarmWorkflowBatch', {
+    value: vi.fn().mockResolvedValue({
+      success: true,
+      page: {
+        flowId: flow.id,
+        stageId: batch.id,
+        revision: flow.revision,
+        manifestVersion: 'v1',
+        counts,
+        matched: 1,
+        retryable: 1,
+        items: [
+          { id: 'a', title: 'Batch item', status: 'failed', agentName: 'ReviewBot', attempt: 1 },
+        ],
+      },
+    }),
+  });
+  const other = { ...flow, id: 'other', goal: 'Another workflow' };
+  render(
+    <SwarmWorkflowPanel
+      sessionId="product"
+      tasks={[]}
+      onOpenTask={() => {}}
+      snapshot={{ success: true, flows: [batchFlow, other] }}
+    />,
+  );
+  fireEvent.click(await screen.findByRole('button', { name: 'Batch review: Running' }));
+  fireEvent.click(await screen.findByText('Batch item'));
+  expect(screen.getByText('history:a')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: other.goal }));
+  expect(screen.queryByText('history:a')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Security review: Running' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: flow.goal }));
+  expect(screen.getByRole('button', { name: 'Batch review: Running' })).toBeTruthy();
+  expect(screen.queryByText('Batch item')).toBeNull();
 });
 
 test('shows assigned agents and uses Team-style line weights while keeping straight dependency paths', async () => {
@@ -254,7 +419,9 @@ test('keeps prior graph on disconnect and prevents controls on a stale snapshot'
 });
 test('does not poll while the tab is hidden', async () => {
   const f = fixture();
-  render(<SwarmWorkflowPanel sessionId="product" active={false} tasks={[]} onOpenTask={() => {}} />);
+  render(
+    <SwarmWorkflowPanel sessionId="product" active={false} tasks={[]} onOpenTask={() => {}} />,
+  );
   await act(async () => {});
   expect(f.read).not.toHaveBeenCalled();
 });
@@ -302,7 +469,9 @@ test('shows the retry entry only when the engine confirms conclusive failed node
     ),
   };
   const props = { sessionId: 'product', tasks: [], onOpenTask: () => {} };
-  const view = render(<SwarmWorkflowPanel {...props} snapshot={{ success: true, flows: [blocked] }} />);
+  const view = render(
+    <SwarmWorkflowPanel {...props} snapshot={{ success: true, flows: [blocked] }} />,
+  );
   fireEvent.click(
     await screen.findByRole('button', { name: 'Retry failed nodes (keep completed stages)' }),
   );
