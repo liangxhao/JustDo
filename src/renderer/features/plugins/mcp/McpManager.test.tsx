@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import type { ExtensionProvidedMcpServer } from './mcp';
+import type { ExtensionProvidedMcpServer, McpServerConfig } from './mcp';
 import McpManager from './McpManager';
 import { mcpService } from './mcpService';
 import mcpReducer from './mcpSlice';
@@ -18,6 +18,7 @@ vi.mock('./mcpService', () => ({
     loadExtensionServers: vi.fn(async () => []),
     getExtensionServers: vi.fn(() => null),
     probeServer: vi.fn(),
+    deleteServer: vi.fn(),
     onConfigSyncStart: vi.fn(() => () => undefined),
     onConfigSyncDone: vi.fn(() => () => undefined),
   },
@@ -76,6 +77,35 @@ const renderManager = (searchQuery = '') => {
   );
   return onOpenExtension;
 };
+
+test('removes the last user MCP after confirmed deletion without displaying an unavailable error', async () => {
+  const server: McpServerConfig = {
+    id: 'user-mcp',
+    name: 'User MCP',
+    description: 'Custom MCP service',
+    enabled: true,
+    transportType: 'stdio',
+    command: 'node',
+    isBuiltIn: false,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  vi.mocked(mcpService.loadServers).mockResolvedValue([server]);
+  vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([]);
+  vi.mocked(mcpService.deleteServer).mockResolvedValue({ success: true, servers: [] });
+  renderManager();
+  await screen.findByText('User MCP');
+
+  fireEvent.click(screen.getByRole('button', { name: 'editMcpServer' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'deleteMcpServer' }));
+  fireEvent.click(screen.getByRole('button', { name: 'confirmDelete' }));
+
+  await screen.findByText('mcpNoInstalledServers');
+  expect(screen.queryByText('User MCP')).toBeNull();
+  expect(screen.queryByText('mcpDeleteFailed')).toBeNull();
+  expect(screen.queryByText(/unavailable/i)).toBeNull();
+  expect(mcpService.deleteServer).toHaveBeenCalledWith('user-mcp');
+});
 
 test('shows imported extension MCP immediately under user installs while keeping bundled MCP collapsed', async () => {
   const onOpenExtension = renderManager();

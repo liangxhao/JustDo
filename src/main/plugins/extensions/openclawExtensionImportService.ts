@@ -1020,7 +1020,7 @@ export class OpenClawExtensionImportService {
     const operation = await this.directoryOperations.execute({
       resourceName: t('extensionDirectoryResource'),
       targetPath,
-      manageRuntimeOnLock: true,
+      manageRuntimeOnLock: false,
       // OpenClaw's CLI owns the internal directory mutation. Detect external
       // owners before invoking it so a failed recursive uninstall/update cannot
       // leave the live extension directory only partially modified.
@@ -1477,10 +1477,10 @@ export class OpenClawExtensionImportService {
       try {
         const result = await this.deps.requestGateway<{
           ok: true;
-          restartRequired: true;
+          restartRequired: boolean;
           warnings?: string[];
         }>('plugins.uninstall', { pluginId: extensionId });
-        const convergenceError = await convergePolicy(result.restartRequired);
+        const convergenceError = await convergePolicy(result.restartRequired, true);
         if (convergenceError) {
           return { success: false, error: convergenceError };
         }
@@ -1507,7 +1507,7 @@ export class OpenClawExtensionImportService {
             try {
               // The uninstall committed and only its response was lost. Do not
               // repeat the destructive mutation; only converge the live runtime.
-              const convergenceError = await convergePolicy(true);
+              const convergenceError = await convergePolicy(true, true);
               if (convergenceError) return { success: false, error: convergenceError };
               return { success: true };
             } catch (restartError) {

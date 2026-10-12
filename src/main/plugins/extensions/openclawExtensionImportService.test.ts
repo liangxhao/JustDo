@@ -373,7 +373,9 @@ describe('OpenClawExtensionImportService', () => {
         restartGatewayAfterMutation,
       });
 
-      await expect(service.setEnabled('swarm-workflow', enabled)).resolves.toEqual({ success: true });
+      await expect(service.setEnabled('swarm-workflow', enabled)).resolves.toEqual({
+        success: true,
+      });
       expect(requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.setEnabled', {
         pluginId: 'swarm-workflow',
         enabled,
@@ -554,6 +556,58 @@ describe('OpenClawExtensionImportService', () => {
     ]);
   });
 
+  it.each([false, true])(
+    'tries native hot refresh before an uninstall restart (still required: %s)',
+    async restartRequired => {
+      const requestGateway = vi
+        .fn()
+        .mockResolvedValueOnce({ ok: true, restartRequired: true })
+        .mockResolvedValueOnce({ ok: true, restartRequired });
+      const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () =>
+          ({
+            getStateDir: () => path.join(fixtureRoot, 'state'),
+            getStatus: () => ({ phase: 'running' }),
+          }) as OpenClawEngineManager,
+        requestGateway,
+        restartGatewayAfterMutation,
+      });
+
+      await expect(service.delete('sample-extension')).resolves.toEqual({ success: true });
+      expect(requestGateway).toHaveBeenNthCalledWith(1, 'plugins.uninstall', {
+        pluginId: 'sample-extension',
+      });
+      expect(requestGateway).toHaveBeenNthCalledWith(2, 'plugins.refresh', {});
+      if (restartRequired) {
+        expect(restartGatewayAfterMutation).toHaveBeenCalledExactlyOnceWith('extension-delete');
+      } else {
+        expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it('preserves necessary uninstall recovery when hot refresh fails', async () => {
+    const requestGateway = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, restartRequired: true })
+      .mockRejectedValueOnce(new Error('Hot refresh unavailable'));
+    const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () =>
+        ({
+          getStateDir: () => path.join(fixtureRoot, 'state'),
+          getStatus: () => ({ phase: 'running' }),
+        }) as OpenClawEngineManager,
+      requestGateway,
+      restartGatewayAfterMutation,
+    });
+
+    await expect(service.delete('sample-extension')).resolves.toEqual({ success: true });
+    expect(requestGateway).toHaveBeenCalledTimes(2);
+    expect(restartGatewayAfterMutation).toHaveBeenCalledExactlyOnceWith('extension-delete');
+  });
+
   it('uses Gateway mutations and restarts only when OpenClaw requests it', async () => {
     const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
     const requestGateway = vi
@@ -583,7 +637,7 @@ describe('OpenClawExtensionImportService', () => {
     });
   });
 
-  it('retries a Gateway uninstall file lock through the lock-aware cold CLI path', async () => {
+  it('reports a Gateway uninstall file lock without stopping the Gateway or retrying destructive commands', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
     const stateDir = path.join(fixtureRoot, 'state');
     const installedDir = path.join(stateDir, 'extensions', 'locked-extension');
@@ -620,15 +674,7 @@ describe('OpenClawExtensionImportService', () => {
       .mockResolvedValueOnce({
         plugins: [{ id: 'locked-extension', installed: true }],
       });
-    const runCommand = vi.fn(async () => {
-      expect(phase).toBe('ready');
-      fs.rmSync(installedDir, { recursive: true, force: true });
-      return {
-        exitCode: 0,
-        stdout: 'Uninstalled plugin "locked-extension"',
-        stderr: '',
-      };
-    });
+    const runCommand = vi.fn();
     const service = new OpenClawExtensionImportService({
       getOpenClawEngineManager: () => manager,
       requestGateway,
@@ -648,14 +694,16 @@ describe('OpenClawExtensionImportService', () => {
       }),
     });
 
-    await expect(service.delete('locked-extension')).resolves.toEqual({ success: true });
+    await expect(service.delete('locked-extension')).resolves.toMatchObject({ success: false });
     expect(requestGateway).toHaveBeenNthCalledWith(1, 'plugins.uninstall', {
       pluginId: 'locked-extension',
     });
     expect(requestGateway).toHaveBeenNthCalledWith(2, 'plugins.list', {});
-    expect(runCommand).toHaveBeenCalledOnce();
-    expect(stop).toHaveBeenCalledOnce();
-    expect(start).toHaveBeenCalledOnce();
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(stop).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+    expect(phase).toBe('running');
+    expect(fs.existsSync(path.join(installedDir, 'openclaw.plugin.json'))).toBe(true);
   });
 
   it('refreshes the live plugin registry after a CLI uninstall fallback', async () => {
@@ -771,7 +819,8 @@ describe('OpenClawExtensionImportService', () => {
           code: 'UNAVAILABLE',
         });
       })
-      .mockResolvedValueOnce({ plugins: [] });
+      .mockResolvedValueOnce({ plugins: [] })
+      .mockResolvedValueOnce({ ok: true, restartRequired: false });
     const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
     const runCommand = vi.fn();
     const service = new OpenClawExtensionImportService({
@@ -783,7 +832,8 @@ describe('OpenClawExtensionImportService', () => {
 
     await expect(service.delete('removed-extension')).resolves.toEqual({ success: true });
     expect(requestGateway).toHaveBeenNthCalledWith(2, 'plugins.list', {});
-    expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-delete');
+    expect(requestGateway).toHaveBeenLastCalledWith('plugins.refresh', {});
+    expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
     expect(runCommand).not.toHaveBeenCalled();
   });
 
@@ -1298,29 +1348,51 @@ describe('OpenClawExtensionImportService', () => {
   );
 
   it.each(['failure result', 'exception'])(
-    'retains the installed extension identity when Gateway application fails: %s', async failure => {
+    'retains the installed extension identity when Gateway application fails: %s',
+    async failure => {
       const sourceDir = path.join(fixtureRoot, 'partial-extension');
       const stateDir = path.join(fixtureRoot, 'state');
       fs.mkdirSync(sourceDir);
       fs.mkdirSync(stateDir);
-      fs.writeFileSync(path.join(sourceDir, 'openclaw.plugin.json'),
-        JSON.stringify({ id: 'partial-extension', configSchema: { type: 'object' } }));
+      fs.writeFileSync(
+        path.join(sourceDir, 'openclaw.plugin.json'),
+        JSON.stringify({ id: 'partial-extension', configSchema: { type: 'object' } }),
+      );
       const restartGatewayAfterMutation = vi.fn();
-      if (failure === 'exception') restartGatewayAfterMutation.mockRejectedValue(new Error('restart failed'));
-      else restartGatewayAfterMutation.mockResolvedValue({ phase: 'error', message: 'restart failed' });
+      if (failure === 'exception')
+        restartGatewayAfterMutation.mockRejectedValue(new Error('restart failed'));
+      else
+        restartGatewayAfterMutation.mockResolvedValue({
+          phase: 'error',
+          message: 'restart failed',
+        });
       const service = new OpenClawExtensionImportService({
-        getOpenClawEngineManager: () => ({
-          getStatus: () => ({ phase: 'running' }), getBaseDir: () => fixtureRoot,
-          buildCliEnvironment: async () => ({ env: { OPENCLAW_STATE_DIR: stateDir },
-            runtimeRoot: fixtureRoot, openclawEntry: path.join(fixtureRoot, 'openclaw.mjs') }),
-        }) as unknown as OpenClawEngineManager,
+        getOpenClawEngineManager: () =>
+          ({
+            getStatus: () => ({ phase: 'running' }),
+            getBaseDir: () => fixtureRoot,
+            buildCliEnvironment: async () => ({
+              env: { OPENCLAW_STATE_DIR: stateDir },
+              runtimeRoot: fixtureRoot,
+              openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
+            }),
+          }) as unknown as OpenClawEngineManager,
         requestGateway: vi.fn().mockResolvedValue({ ok: true, restartRequired: true }),
         restartGatewayAfterMutation,
-        runCommand: vi.fn().mockResolvedValue({ exitCode: 0, stdout: 'Installed plugin: partial-extension\nSaved for the next Gateway start.', stderr: '' }),
+        runCommand: vi.fn().mockResolvedValue({
+          exitCode: 0,
+          stdout: 'Installed plugin: partial-extension\nSaved for the next Gateway start.',
+          stderr: '',
+        }),
       });
 
-      await expect(service.importPath(sourceDir, undefined, undefined, { trustMarketplaceSource: true }))
-        .resolves.toMatchObject({ success: false, extensionId: 'partial-extension', error: 'restart failed' });
+      await expect(
+        service.importPath(sourceDir, undefined, undefined, { trustMarketplaceSource: true }),
+      ).resolves.toMatchObject({
+        success: false,
+        extensionId: 'partial-extension',
+        error: 'restart failed',
+      });
     },
   );
 
@@ -1529,7 +1601,7 @@ describe('OpenClawExtensionImportService', () => {
     );
   });
 
-  it('activates an imported network sidecar after a locked directory mutation', async () => {
+  it('keeps the Gateway and network policy when an extension import directory is locked', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
     const sourceDir = path.join(fixtureRoot, 'locked-extension');
     const stateDir = path.join(fixtureRoot, 'state');
@@ -1575,20 +1647,7 @@ describe('OpenClawExtensionImportService', () => {
       startGateway,
       restartGateway,
     } as unknown as OpenClawEngineManager;
-    const runCommand = vi.fn(async () => {
-      expect(phase).toBe('ready');
-      const installedDir = path.join(stateDir, 'extensions', 'locked-extension');
-      fs.mkdirSync(installedDir, { recursive: true });
-      fs.copyFileSync(
-        path.join(sourceDir, 'openclaw.plugin.json'),
-        path.join(installedDir, 'openclaw.plugin.json'),
-      );
-      fs.copyFileSync(
-        path.join(sourceDir, 'outbound-header-policy.json'),
-        path.join(installedDir, 'outbound-header-policy.json'),
-      );
-      return { exitCode: 0, stdout: '', stderr: '' };
-    });
+    const runCommand = vi.fn();
     const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
     const reconcile = vi
       .fn()
@@ -1602,7 +1661,7 @@ describe('OpenClawExtensionImportService', () => {
         overwrite: false,
         enabled: true,
         groups: [],
-        digest: 'after-import',
+        digest: 'before-import',
       });
     const service = new OpenClawExtensionImportService({
       getOpenClawEngineManager: () => manager,
@@ -1641,15 +1700,18 @@ describe('OpenClawExtensionImportService', () => {
     });
 
     await expect(service.importPath(sourceDir)).resolves.toEqual({
-      success: true,
+      success: false,
       extensionId: 'locked-extension',
+      error: expect.any(String),
+      failedStage: 'installing',
     });
-    expect(runCommand).toHaveBeenCalledOnce();
-    expect(stopGateway).toHaveBeenCalledOnce();
-    expect(startGateway).toHaveBeenCalledOnce();
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(stopGateway).not.toHaveBeenCalled();
+    expect(startGateway).not.toHaveBeenCalled();
     expect(restartGateway).not.toHaveBeenCalled();
     expect(reconcile).toHaveBeenCalledTimes(2);
-    expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-network-policy-change');
+    expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
+    expect(phase).toBe('running');
   });
 
   it('reports an external owner before deleting any extension files', async () => {
@@ -2491,7 +2553,9 @@ describe('OpenClawExtensionImportService', () => {
             type: 'object',
             properties: { concurrency: { type: 'integer', minimum: 1, maximum: 16, default: 3 } },
           },
-          uiHints: { concurrency: { configurable: true, labelKey: 'swarmWorkflowConfigConcurrency' } },
+          uiHints: {
+            concurrency: { configurable: true, labelKey: 'swarmWorkflowConfigConcurrency' },
+          },
           configContracts: { configurationStatusMethod: 'numericDemo.health' },
         }),
       );

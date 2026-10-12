@@ -1,16 +1,16 @@
 import { ipcMain } from 'electron';
 
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
-import { getSkillManagementCapabilities, getSkillScope } from '../../../shared/plugins/skillManagement';
+import {
+  getSkillManagementCapabilities,
+  getSkillScope,
+} from '../../../shared/plugins/skillManagement';
 import { isUserOwnedSkillSource } from '../../../shared/plugins/skills';
 import type { GatewaySkillEntry } from '../../engine/types';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import type { PluginInstallationService } from '../../plugins/installation';
 import { PluginInstallOrigin } from '../../plugins/installation';
-import type {
-  OpenClawSkillFileService,
-  OpenClawSkillService,
-} from '../../plugins/skills';
+import type { OpenClawSkillFileService, OpenClawSkillService } from '../../plugins/skills';
 import { resolveSkillOwnershipScope } from '../../plugins/skills/openclawSkillOwnership';
 
 interface SkillHandlerDependencies {
@@ -32,8 +32,7 @@ const mapGatewaySkill = (entry: GatewaySkillEntry, manager?: OpenClawEngineManag
   description: entry.description,
   // Skills can require an explicit opt-in even when Gateway does not mark them disabled.
   enabled:
-    !entry.disabled &&
-    !entry.missing.config.includes(`skills.entries.${entry.skillKey}.enabled`),
+    !entry.disabled && !entry.missing.config.includes(`skills.entries.${entry.skillKey}.enabled`),
   isOfficial: entry.bundled,
   isBuiltIn: entry.bundled,
   updatedAt: 0,
@@ -105,7 +104,11 @@ export const registerSkillHandlers = ({
 
   ipcMain.handle('skills:setEnabled', async (_event, options: { id: string; enabled: boolean }) => {
     try {
-      if (typeof options?.id !== 'string' || !options.id.trim() || typeof options.enabled !== 'boolean') {
+      if (
+        typeof options?.id !== 'string' ||
+        !options.id.trim() ||
+        typeof options.enabled !== 'boolean'
+      ) {
         return { success: false, error: 'Skill id and enabled state are required' };
       }
       const currentStatus = await skillService.getStatus();
@@ -120,7 +123,10 @@ export const registerSkillHandlers = ({
       });
       const requestedAction = options.enabled ? capabilities.enable : capabilities.disable;
       if (!requestedAction.allowed) {
-        return { success: false, error: requestedAction.reason || 'Skill status cannot be changed' };
+        return {
+          success: false,
+          error: requestedAction.reason || 'Skill status cannot be changed',
+        };
       }
       const result = await skillService.updateConfig({
         skillKey: options.id.trim(),
@@ -174,8 +180,28 @@ export const registerSkillHandlers = ({
 
       await skillFileService.deleteDirectory(skill.baseDir);
       onMarketplacePluginDeleted?.(PluginKind.SKILL, skillId, skill.baseDir);
-      const updatedStatus = await skillService.getStatus();
-      return { success: true, skills: updatedStatus.skills.map(mapSkill) };
+      try {
+        const updatedStatus = await skillService.getStatus();
+        return { success: true, skills: updatedStatus.skills.map(mapSkill) };
+      } catch (error) {
+        console.warn(
+          '[Skills] Deleted skill, but its status refresh failed:',
+          error instanceof Error ? error.message : String(error),
+        );
+        // Deletion is committed. Project only the confirmed removal from this
+        // operation's native inventory; the next read discovers any fallback.
+        return {
+          success: true,
+          skills: currentStatus.skills
+            .filter(
+              entry =>
+                entry.skillKey !== skill.skillKey ||
+                entry.source !== skill.source ||
+                entry.baseDir !== skill.baseDir,
+            )
+            .map(mapSkill),
+        };
+      }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to delete skill';
       return { success: false, error: errorMsg };

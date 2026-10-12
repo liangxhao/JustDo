@@ -75,7 +75,9 @@ Document Extraction 和 Web Readability Extraction 保持上游默认启用，�
 协作、记忆和本地语音可选插件继续保留用户明确禁用状态。TypeSafe 沿用模型设置的有条件托管；
 Video models 始终由视频模型设置托管，有有效默认模型时启用，未设置或清空默认模型时关闭。
 
-OpenClaw v2026.9.8 的插件管理 RPC 会直接应用运行时变更。CLI 导入等待最终运行时回执：Gateway 已应用则无需额外操作，仅保存到磁盘时调用 `plugins.reload`。CLI 卸载和启停回退后优先调用 `plugins.refresh`；原生热加载失败或出站代理策略变化时再申请 Gateway 重启。配置应用与重启协调见[引擎](05-agent-engine.md)；保留原生对活动任务的重启延迟，不能与宿主冷重启竞争。
+OpenClaw v2026.9.8 的插件管理 RPC 会直接应用运行时变更。CLI 导入等待最终运行时回执：Gateway 已应用则无需额外操作，仅保存到磁盘时调用 `plugins.reload`。卸载 RPC 仍请求重启时，以及 CLI 卸载和启停回退后，优先调用 `plugins.refresh`；原生确认已热应用且无需重启时直接完成，仍需重启、热加载失败或出站代理策略变化时再申请 Gateway 重启。配置应用与重启协调见[引擎](05-agent-engine.md)；保留原生对活动任务的重启延迟，不能与宿主冷重启竞争。运行时代码、凭据/网络策略和 Agent Team 技能发现代次的必要重启不能等同于文件操作的目录锁恢复。
+
+Extension CLI 文件变更的预检保留目录锁诊断，但关闭文件锁触发的 Gateway stop/mutate/start；占用者即使是 Gateway，也先报告真实失败，不通过重启或重复破坏性命令绕过。原生卸载已提交而响应丢失时，先核对清单和原安装路径，只收敛运行态，不重放卸载。
 
 导入尝试已交给原生安装器后，即使最终 reload／重启失败，结果也保留 Extension ID；Main 据此重读权威清单并通知消费者，让已提交的部分安装状态及其附带能力失效刷新，不按失败结果假定没有安装。
 
@@ -126,7 +128,11 @@ Extension 发布技能的 scope 表示父插件管理，ownershipScope 表示产
 
 导入验证结构与精确目标，复制到受管根。删除先原子移入同卷 `.justdo-skill-trash/delete-*`，避免递归删除中途留下半残 live skill。机会式清理仅处理已知 trash 子目录，不能扫描删除未知项目。
 
-Windows 文件被占用时，ManagedDirectoryOperationCoordinator 识别受管进程，必要时取得配置 mutation 中的原生 suspension，再 stop/mutate/start。不能因为文件锁就杀任意进程；恢复失败必须可诊断。
+技能导入、同名覆盖更新与删除保持 Gateway 运行；文件服务显式关闭 ManagedDirectoryOperationCoordinator 的 runtime 停启恢复，只保留串行变更与文件锁诊断。Windows Gateway 启动环境使用原生支持的 `CHOKIDAR_USEPOLLING=true`、`CHOKIDAR_INTERVAL=500`，由原生技能监听器和其他 Chokidar 监听器轮询变更，避免长期目录句柄阻止原子重命名。该设置传给 Gateway 及其 worker，不修改应用或 CLI 的基础环境；其他平台保留原生监听方式。外部程序占用或权限问题按真实失败提示，不停止 Gateway 或杀进程。
+
+删除后重新查询原生技能清单，成功弹窗明确显示“已删除”。技能消失是删除的预期结果；只有同名技能实际解析到另一个来源时，才追加来源变化说明。批量导入只要有成功项就刷新清单，部分失败弹窗保留成功、失败数量与逐项原因。
+
+技能文件删除已提交后，原生清单刷新失败不会改报删除失败。Main 仅从本次操作前的原生清单投影中移除确切匹配 key、来源和目录的已删除条目，保留其他原生元数据；不缓存清单或猜测同名回退，后续查询仍以原生清单为准。
 
 ### 技能提案审核
 
@@ -187,6 +193,8 @@ Extension MCP 卡片提供详情、单项测试和全部测试入口。Main 按�
 插件附带 Hook 以 `hooks.status` 为清单权威，以 `plugins.list` 的父扩展 origin 补充展示分组；用户扩展附带项进入用户安装区，bundled 父扩展附带项进入系统内置区。父扩展清单暂不可读时仍保留 Hook 展示和管理锁，不能因来源读取失败隐去 Hook，也不能把“由插件管理”等同于“系统内置”。
 
 删除先隔离目录，再修改 Store 和同步配置；同步失败恢复记录与目录，成功后清理隔离区。SQLite transaction 只保护本地行，无法回滚原生 reload，必须保留跨边界补偿语义。
+
+删除已提交后的 `hooks.status` 刷新失败不会把成功改成失败。Renderer 在这种情况下只从已有列表移除该确切已删除 ID，保留其他条目的原生元数据；后续查询仍以 Gateway 清单为准，避免成功提示后仍展示旧 Hook。
 
 ## 6. Extension：审查与运行态对账
 

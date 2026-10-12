@@ -260,9 +260,6 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
           title: i18nService.t('importSkill'),
           message: i18nService.t('skillImportSuccess').replace('{skillId}', skillIds),
         });
-        // Reload skills
-        const loadedSkills = await skillService.loadSkills();
-        dispatch(setSkills(loadedSkills));
       }
 
       if (failed.length > 0) {
@@ -291,6 +288,12 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             })),
           ],
         });
+      }
+
+      if (succeeded.length > 0) {
+        const loadedSkills = await skillService.loadSkills();
+        dispatch(setSkills(loadedSkills));
+        setGatewayOffline(skillService.isGatewayOffline());
       }
     } catch (error) {
       setActionOutcome({
@@ -332,13 +335,14 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
       if (result.success && result.skills) {
         dispatch(setSkills(result.skills));
         setSelectedSkillId(null);
-        const resolutionMessage = getResolutionChangeMessage(pendingSkill, result.skills);
+        const resolutionMessage = result.skills.some(skill => skill.name === pendingSkill.name)
+          ? getResolutionChangeMessage(pendingSkill, result.skills)
+          : null;
+        const deleteMessage = i18nService.t('skillDeleteSuccess').replace('{name}', pendingSkill.name);
         setActionOutcome({
           type: 'success',
           title: i18nService.t('deleteSkill'),
-          message:
-            resolutionMessage ||
-            i18nService.t('skillDeleteSuccess').replace('{name}', pendingSkill.name),
+          message: resolutionMessage ? `${deleteMessage}\n\n${resolutionMessage}` : deleteMessage,
         });
       } else {
         setActionOutcome({

@@ -408,6 +408,62 @@ test('reports incomplete recovery when the compensating Hook sync also fails', a
   expect(harness.records.size).toBe(0);
 });
 
+test('deletes a custom Hook and returns the refreshed native inventory without a restart request', async () => {
+  const harness = createHookImportHarness('native-hook-key');
+  await expect(harness.importHook()).resolves.toMatchObject({ success: true });
+  harness.requestGateway.mockClear();
+  harness.syncConfig.mockClear();
+
+  const result = await handlers.get(HookIpc.Delete)?.(undefined, 'native-hook-key');
+
+  expect(result).toMatchObject({ success: true, restartRequired: false });
+  expect(fs.existsSync(harness.installedPath)).toBe(false);
+  expect(harness.records.has('native-hook-key')).toBe(false);
+  expect(
+    (result as { hooks: Array<{ hookKey?: string }> }).hooks.some(
+      hook => hook.hookKey === 'native-hook-key',
+    ),
+  ).toBe(false);
+  expect(harness.syncConfig).toHaveBeenCalledOnce();
+  expect(harness.requestGateway.mock.calls.every(([method]) => method === 'hooks.status')).toBe(
+    true,
+  );
+});
+
+test('restores the Hook files and enabled record when deletion cannot be applied', async () => {
+  const harness = createHookImportHarness();
+  await expect(harness.importHook()).resolves.toMatchObject({ success: true });
+  const previous = { ...harness.records.get('demo-hook')! };
+  harness.syncConfig.mockClear();
+  harness.syncConfig
+    .mockResolvedValueOnce({ hooks: 0, error: 'Hot reload failed' })
+    .mockResolvedValueOnce({ hooks: 1 });
+
+  await expect(handlers.get(HookIpc.Delete)?.(undefined, 'demo-hook')).resolves.toMatchObject({
+    success: false,
+    error: 'Hot reload failed',
+  });
+  expect(fs.existsSync(path.join(harness.installedPath, 'HOOK.md'))).toBe(true);
+  expect(harness.records.get('demo-hook')).toEqual(previous);
+  expect(harness.syncConfig).toHaveBeenCalledTimes(2);
+});
+
+test('does not relabel committed Hook deletion as failure when its status refresh is unavailable', async () => {
+  const harness = createHookImportHarness();
+  await expect(harness.importHook()).resolves.toMatchObject({ success: true });
+  const report = await harness.requestGateway('hooks.status');
+  harness.requestGateway
+    .mockResolvedValueOnce(report)
+    .mockRejectedValueOnce(new Error('Status unavailable'));
+
+  await expect(handlers.get(HookIpc.Delete)?.(undefined, 'demo-hook')).resolves.toMatchObject({
+    success: true,
+    restartRequired: false,
+  });
+  expect(fs.existsSync(harness.installedPath)).toBe(false);
+  expect(harness.records.has('demo-hook')).toBe(false);
+});
+
 test('uses hooks.status as the authoritative hook inventory', async () => {
   const requestGateway = vi.fn().mockResolvedValue(hookReport);
   registerHookHandlers({
@@ -454,11 +510,15 @@ test('projects plugin-managed Hook grouping from native parent origins without u
     hooks: [
       {
         scope: 'personal',
-        management: { disable: { allowed: false, reason: 'managed-by-extension', managedById: 'user-demo' } },
+        management: {
+          disable: { allowed: false, reason: 'managed-by-extension', managedById: 'user-demo' },
+        },
       },
       {
         scope: 'system',
-        management: { disable: { allowed: false, reason: 'managed-by-extension', managedById: 'system-demo' } },
+        management: {
+          disable: { allowed: false, reason: 'managed-by-extension', managedById: 'system-demo' },
+        },
       },
     ],
   });

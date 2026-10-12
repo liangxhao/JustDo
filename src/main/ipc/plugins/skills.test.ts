@@ -1,5 +1,6 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 
+import { PluginKind } from '../../../shared/plugins/marketplace';
 import type { GatewaySkillEntry, GatewaySkillStatus } from '../../engine/types';
 import { PluginInstallationService } from '../../plugins/installation';
 import type { OpenClawSkillService } from '../../plugins/skills';
@@ -89,6 +90,75 @@ test('rejects noncanonical source names', async () => {
     handlers.get('skills:delete')?.(undefined, { id: 'example', source: 'managed' }),
   ).resolves.toEqual({ success: false, error: 'Skill id and source are required' });
   expect(getStatus).not.toHaveBeenCalled();
+});
+
+test('keeps committed skill deletion successful when the native status refresh fails', async () => {
+  const removed = createSkill('openclaw-managed');
+  const retained = createSkill('openclaw-workspace', {
+    filePath: 'C:/workspace/skills/example/SKILL.md',
+    baseDir: 'C:/workspace/skills/example',
+  });
+  const sibling = createSkill('openclaw-managed', {
+    name: 'Unrelated skill',
+    skillKey: 'sibling',
+    filePath: 'C:/skills/sibling/SKILL.md',
+    baseDir: 'C:/skills/sibling',
+  });
+  const getStatus = vi
+    .fn<() => Promise<GatewaySkillStatus>>()
+    .mockResolvedValueOnce({ ...createStatus(removed), skills: [removed, retained, sibling] })
+    .mockRejectedValueOnce(new Error('Gateway not connected'));
+  const deleteDirectory = vi.fn();
+  const onMarketplacePluginDeleted = vi.fn();
+  registerSkillHandlers({
+    skillService: { getStatus } as unknown as OpenClawSkillService,
+    skillFileService: { deleteDirectory },
+    installationService: new PluginInstallationService(),
+    onMarketplacePluginDeleted,
+  });
+
+  const result = await handlers.get('skills:delete')?.(undefined, {
+    id: removed.skillKey,
+    source: removed.source,
+  });
+
+  expect(result).toMatchObject({
+    success: true,
+    skills: [
+      { id: retained.skillKey, source: retained.source, skillPath: retained.filePath },
+      { id: sibling.skillKey, source: sibling.source, skillPath: sibling.filePath },
+    ],
+  });
+  expect((result as { skills: unknown[] }).skills).toHaveLength(2);
+  expect(deleteDirectory).toHaveBeenCalledExactlyOnceWith(removed.baseDir);
+  expect(onMarketplacePluginDeleted).toHaveBeenCalledExactlyOnceWith(
+    PluginKind.SKILL,
+    removed.skillKey,
+    removed.baseDir,
+  );
+  expect(getStatus).toHaveBeenCalledTimes(2);
+});
+
+test('reports an actual skill deletion failure without reading a replacement inventory', async () => {
+  const skill = createSkill('openclaw-managed');
+  const getStatus = vi.fn(async () => createStatus(skill));
+  const deleteDirectory = vi.fn().mockRejectedValue(new Error('Directory is locked'));
+  const onMarketplacePluginDeleted = vi.fn();
+  registerSkillHandlers({
+    skillService: { getStatus } as unknown as OpenClawSkillService,
+    skillFileService: { deleteDirectory },
+    installationService: new PluginInstallationService(),
+    onMarketplacePluginDeleted,
+  });
+
+  await expect(
+    handlers.get('skills:delete')?.(undefined, {
+      id: skill.skillKey,
+      source: skill.source,
+    }),
+  ).resolves.toEqual({ success: false, error: 'Directory is locked' });
+  expect(getStatus).toHaveBeenCalledOnce();
+  expect(onMarketplacePluginDeleted).not.toHaveBeenCalled();
 });
 
 test('returns the skill import validation error to the renderer', async () => {
@@ -258,30 +328,30 @@ test('reports an opt-in skill as disabled until its native enable requirement is
   await expect(handlers.get('skills:list')?.()).resolves.toMatchObject({
     skills: [{ enabled: false, management: { enable: { allowed: true } } }],
   });
-  getStatus
-    .mockResolvedValueOnce(createStatus(skill))
-    .mockResolvedValueOnce(
-      createStatus({
-        ...skill,
-        eligible: false,
-        missing: {
-          bins: [],
-          anyBins: ['claude', 'codex', 'opencode'],
-          env: [],
-          config: [],
-          os: [],
-        },
-      }),
-    );
+  getStatus.mockResolvedValueOnce(createStatus(skill)).mockResolvedValueOnce(
+    createStatus({
+      ...skill,
+      eligible: false,
+      missing: {
+        bins: [],
+        anyBins: ['claude', 'codex', 'opencode'],
+        env: [],
+        config: [],
+        os: [],
+      },
+    }),
+  );
 
   await expect(
     handlers.get('skills:setEnabled')?.(undefined, { id: 'coding-agent', enabled: true }),
   ).resolves.toMatchObject({
-    skills: [{
-      enabled: true,
-      eligible: false,
-      missing: { anyBins: ['claude', 'codex', 'opencode'] },
-    }],
+    skills: [
+      {
+        enabled: true,
+        eligible: false,
+        missing: { anyBins: ['claude', 'codex', 'opencode'] },
+      },
+    ],
   });
   expect(updateConfig).toHaveBeenCalledWith({ skillKey: 'coding-agent', enabled: true });
 });

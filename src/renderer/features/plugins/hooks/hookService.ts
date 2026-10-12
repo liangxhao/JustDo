@@ -100,7 +100,9 @@ class HookService {
   async deleteHook(id: string): Promise<HookListResult> {
     const result: GatewayHookListResult = await window.electron.hooks.delete(id);
     if (!result.success) throw new Error(result.error || 'Failed to delete Hook');
-    if (result.hooks) this.hooks = result.hooks.map(normalizeHook);
+    this.hooks = result.hooks
+      ? result.hooks.map(normalizeHook)
+      : this.hooks.filter(hook => hook.id !== id);
     return { ...result, hooks: this.hooks };
   }
 

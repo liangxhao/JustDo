@@ -2,7 +2,7 @@
 
 import { configureStore } from '@reduxjs/toolkit';
 import { getSkillManagementCapabilities } from '@shared/plugins/skillManagement';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
@@ -15,13 +15,27 @@ vi.mock('./SkillMarketplace', () => ({ default: () => null }));
 vi.mock('./skillService', () => ({
   skillService: {
     loadSkills: vi.fn(),
+    importSkill: vi.fn(),
+    deleteSkill: vi.fn(),
     setSkillEnabled: vi.fn(),
     isGatewayOffline: vi.fn(() => false),
     getLocalizedSkillDescription: (_id: string, _name: string, description: string) => description,
   },
 }));
 vi.mock('@/services/i18n', () => ({
-  i18nService: { t: (key: string) => key, getLanguage: () => 'en' },
+  i18nService: {
+    t: (key: string) => {
+      const messages: Record<string, string> = {
+        pluginImportPartialSummary: '{successCount} succeeded and {failureCount} failed.',
+        skillImportSuccess: 'Skill {skillId} imported successfully',
+        skillDeleteSuccess: 'Skill "{name}" deleted',
+        skillResolutionUnavailable: '"{name}" is currently unavailable.',
+        skillResolutionChanged: '"{name}" now uses {to} instead of {from}.',
+      };
+      return messages[key] ?? key;
+    },
+    getLanguage: () => 'en',
+  },
 }));
 
 const skill: Skill = {
@@ -49,18 +63,23 @@ const skill: Skill = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(skillService.loadSkills).mockResolvedValue([skill]);
+  vi.mocked(skillService.loadSkills).mockReset().mockResolvedValue([skill]);
+  vi.mocked(skillService.importSkill).mockReset();
+  vi.mocked(skillService.deleteSkill).mockReset();
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
-async function openDetails(readOnly = false) {
+async function openDetails(readOnly = false, skillName = skill.name) {
   const store = configureStore({ reducer: { skill: skillReducer } });
   render(
     <Provider store={store}>
-      <SkillsManager searchQuery="coding-agent" visibility="installed" readOnly={readOnly} />
+      <SkillsManager searchQuery={skillName} visibility="installed" readOnly={readOnly} />
     </Provider>,
   );
-  fireEvent.click(await screen.findByRole('button', { name: 'subtaskShowInfo: coding-agent' }));
+  fireEvent.click(await screen.findByRole('button', { name: `subtaskShowInfo: ${skillName}` }));
   return store;
 }
 
@@ -204,4 +223,156 @@ test('does not expose mutations in read-only skill details', async () => {
   expect(toggle.getAttribute('aria-checked')).toBe('false');
   fireEvent.click(toggle);
   expect(skillService.setSkillEnabled).not.toHaveBeenCalled();
+});
+
+const importedSkill: Skill = {
+  ...skill,
+  id: 'imported-skill',
+  name: 'imported-skill',
+  description: 'A locally imported skill',
+  enabled: true,
+  isOfficial: false,
+  isBuiltIn: false,
+  skillPath: 'C:/state/skills/imported-skill/SKILL.md',
+  source: 'openclaw-managed',
+  eligible: true,
+  missing: { bins: [], env: [], config: [], os: [] },
+  scope: 'personal',
+  ownershipScope: 'personal',
+  management: getSkillManagementCapabilities({
+    source: 'openclaw-managed',
+    bundled: false,
+    eligible: true,
+    hasPath: true,
+  }),
+};
+
+async function startImport(paths: string[], sourceType: 'folders' | 'archives' = 'folders') {
+  vi.stubGlobal('electron', {
+    dialog: {
+      selectFolders: vi.fn().mockResolvedValue({ success: true, paths }),
+      selectFiles: vi.fn().mockResolvedValue({ success: true, paths }),
+    },
+  });
+  const store = configureStore({ reducer: { skill: skillReducer } });
+  render(
+    <Provider store={store}>
+      <SkillsManager visibility="installed" />
+    </Provider>,
+  );
+  await waitFor(() => expect(store.getState().skill.skills).toEqual([skill]));
+  fireEvent.click(screen.getByRole('button', { name: 'importSkill' }));
+  fireEvent.click(
+    screen.getByRole('button', {
+      name:
+        sourceType === 'folders'
+          ? /selectSkillFolders selectSkillFoldersDescription/
+          : /selectSkillArchives selectSkillArchivesDescription/,
+    }),
+  );
+  return store;
+}
+
+test.each(['folders', 'archives'] as const)(
+  'shows partial import details and refreshes successful skills from %s',
+  async sourceType => {
+    const suffix = sourceType === 'archives' ? '.zip' : '';
+    const paths = [`C:/imports/invalid-skill${suffix}`, `C:/imports/imported-skill${suffix}`];
+    vi.mocked(skillService.importSkill)
+      .mockResolvedValueOnce({ success: false, error: 'SKILL.md is missing' })
+      .mockResolvedValueOnce({ success: true, skillId: importedSkill.id });
+    vi.mocked(skillService.loadSkills)
+      .mockResolvedValueOnce([skill])
+      .mockResolvedValue([skill, importedSkill]);
+
+    const store = await startImport(paths, sourceType);
+
+    const dialog = await screen.findByRole('alertdialog', { name: 'pluginImportPartialTitle' });
+    expect(within(dialog).getByText('1 succeeded and 1 failed.')).toBeTruthy();
+    expect(within(dialog).getByText(`invalid-skill${suffix}`)).toBeTruthy();
+    expect(within(dialog).getByText('SKILL.md is missing')).toBeTruthy();
+    expect(within(dialog).getByText(importedSkill.id)).toBeTruthy();
+    expect(within(dialog).getByText('pluginImportItemSuccess')).toBeTruthy();
+    await screen.findByRole('button', { name: 'subtaskShowInfo: imported-skill' });
+    expect(store.getState().skill.skills).toEqual([skill, importedSkill]);
+    expect(skillService.importSkill).toHaveBeenNthCalledWith(1, paths[0]);
+    expect(skillService.importSkill).toHaveBeenNthCalledWith(2, paths[1]);
+    expect(skillService.loadSkills).toHaveBeenCalledTimes(2);
+  },
+);
+
+test('refreshes the list and shows a success dialog when all imports succeed', async () => {
+  vi.mocked(skillService.importSkill).mockResolvedValue({
+    success: true,
+    skillId: importedSkill.id,
+  });
+  vi.mocked(skillService.loadSkills)
+    .mockResolvedValueOnce([skill])
+    .mockResolvedValue([skill, importedSkill]);
+
+  const store = await startImport(['C:/imports/imported-skill']);
+
+  const dialog = await screen.findByRole('alertdialog', { name: 'importSkill' });
+  expect(within(dialog).getByText('Skill imported-skill imported successfully')).toBeTruthy();
+  await screen.findByRole('button', { name: 'subtaskShowInfo: imported-skill' });
+  expect(store.getState().skill.skills).toEqual([skill, importedSkill]);
+  expect(skillService.loadSkills).toHaveBeenCalledTimes(2);
+});
+
+test('shows every failure and keeps the list when all imports fail', async () => {
+  vi.mocked(skillService.importSkill)
+    .mockResolvedValueOnce({ success: false, error: 'SKILL.md is missing' })
+    .mockResolvedValueOnce({ success: false, error: 'Invalid skill name' });
+
+  const store = await startImport(['C:/imports/missing-skill', 'C:/imports/invalid-skill']);
+
+  const dialog = await screen.findByRole('alertdialog', { name: 'skillImportFailed' });
+  expect(within(dialog).getByText('missing-skill')).toBeTruthy();
+  expect(within(dialog).getByText('SKILL.md is missing')).toBeTruthy();
+  expect(within(dialog).getByText('invalid-skill')).toBeTruthy();
+  expect(within(dialog).getByText('Invalid skill name')).toBeTruthy();
+  expect(store.getState().skill.skills).toEqual([skill]);
+  expect(skillService.loadSkills).toHaveBeenCalledOnce();
+  expect(screen.getByRole('button', { name: 'importSkill' }).hasAttribute('disabled')).toBe(false);
+});
+
+test('confirms successful deletion without calling the removed skill unavailable', async () => {
+  vi.mocked(skillService.loadSkills).mockResolvedValue([importedSkill]);
+  vi.mocked(skillService.deleteSkill).mockResolvedValue({ success: true, skills: [] });
+  const store = await openDetails(false, importedSkill.name);
+
+  fireEvent.click(screen.getByRole('button', { name: 'deleteSkill' }));
+  fireEvent.click(screen.getByRole('button', { name: 'delete' }));
+
+  const dialog = await screen.findByRole('alertdialog', { name: 'deleteSkill' });
+  expect(within(dialog).getByText('Skill "imported-skill" deleted')).toBeTruthy();
+  expect(within(dialog).queryByText(/currently unavailable/)).toBeNull();
+  expect(store.getState().skill.skills).toEqual([]);
+  expect(screen.queryByRole('button', { name: 'subtaskShowInfo: imported-skill' })).toBeNull();
+  expect(skillService.deleteSkill).toHaveBeenCalledWith(importedSkill.id, importedSkill.source);
+});
+
+test('confirms deletion and explains the actual same-name fallback', async () => {
+  const fallback: Skill = {
+    ...skill,
+    id: importedSkill.id,
+    name: importedSkill.name,
+    skillPath: 'C:/runtime/skills/imported-skill/SKILL.md',
+  };
+  vi.mocked(skillService.loadSkills).mockResolvedValue([importedSkill]);
+  vi.mocked(skillService.deleteSkill).mockResolvedValue({ success: true, skills: [fallback] });
+  const store = await openDetails(false, importedSkill.name);
+
+  fireEvent.click(screen.getByRole('button', { name: 'deleteSkill' }));
+  fireEvent.click(screen.getByRole('button', { name: 'delete' }));
+
+  const dialog = await screen.findByRole('alertdialog', { name: 'deleteSkill' });
+  expect(within(dialog).getByText('Skill "imported-skill" deleted')).toBeTruthy();
+  expect(
+    within(dialog).getByText(
+      '"imported-skill" now uses pluginSkillSource.openclaw-bundled instead of pluginSkillSource.openclaw-managed.',
+    ),
+  ).toBeTruthy();
+  expect(within(dialog).queryByText(/currently unavailable/)).toBeNull();
+  expect(store.getState().skill.skills).toEqual([fallback]);
 });

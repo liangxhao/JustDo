@@ -20,7 +20,7 @@ vi.mock('@/features/plugins/marketplace/MarketplaceView', () => ({
 
 vi.mock('@/services/i18n', () => ({
   i18nService: {
-    t: (key: string) => key,
+    t: (key: string) => (key === 'extensionDeleteSuccess' ? 'Extension "{name}" deleted' : key),
     getLanguage: () => 'en',
   },
 }));
@@ -74,6 +74,38 @@ describe('ExtensionsManager extension toggle', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  test('confirms deletion without relabeling the removed extension unavailable', async () => {
+    let installed = true;
+    const deleteExtension = vi.fn(async () => {
+      installed = false;
+      return { success: true };
+    });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn(async () => ({ success: true, extensions: installed ? [extension] : [] })),
+          delete: deleteExtension,
+          onChanged: vi.fn(() => () => undefined),
+          onImportProgress: vi.fn(() => () => undefined),
+        },
+      },
+    });
+    render(<ExtensionsManager />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'subtaskShowInfo: Sample Extension' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'extensionDelete' }));
+    fireEvent.click(screen.getByRole('button', { name: 'delete' }));
+
+    await screen.findByText('Extension "Sample Extension" deleted');
+    await waitFor(() => expect(screen.queryByText('Sample Extension')).toBeNull());
+    expect(screen.queryByText('extensionDeleteFailed')).toBeNull();
+    expect(screen.queryByText(/unavailable/i)).toBeNull();
+    expect(deleteExtension).toHaveBeenCalledWith({ extensionId: extension.id });
   });
 
   test.each([false, true])(
