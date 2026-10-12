@@ -6,14 +6,22 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+import { usePluginMarketplace } from '@/features/plugins/marketplace/usePluginMarketplace';
+
 import type { Skill } from './skill';
 import { skillService } from './skillService';
 import skillReducer from './skillSlice';
 import SkillsManager from './SkillsManager';
 
-vi.mock('./SkillMarketplace', () => ({
-  default: ({ onInstalled }: { onInstalled: () => Promise<void> }) => (
-    <button onClick={() => void onInstalled()}>finish marketplace install or update</button>
+vi.mock('@/features/plugins/marketplace/MarketplaceView', () => ({
+  MarketplaceResults: ({
+    controller,
+  }: {
+    controller: { refreshInventory: () => Promise<void> };
+  }) => (
+    <button onClick={() => void controller.refreshInventory()}>
+      finish marketplace install or update
+    </button>
   ),
 }));
 vi.mock('./skillService', () => ({
@@ -25,9 +33,31 @@ vi.mock('./skillService', () => ({
     setSkillEnabled: vi.fn(),
     subscribeInventory: vi.fn(() => () => undefined),
     isGatewayOffline: vi.fn(() => false),
+    hasInventoryReadFailed: vi.fn(() => false),
     getLocalizedSkillDescription: (_id: string, _name: string, description: string) => description,
   },
 }));
+
+vi.mock('@/features/plugins/marketplace/usePluginMarketplace', async importOriginal => {
+  const actual =
+    await importOriginal<typeof import('@/features/plugins/marketplace/usePluginMarketplace')>();
+  return {
+    ...actual,
+    usePluginMarketplace: vi.fn((options: { onInstalled?: () => Promise<void> }) => ({
+      filter: 'all',
+      source: null,
+      query: '',
+      updateById: new Map(),
+      recentlyUpdated: new Set(),
+      operations: {},
+      matchesInstalled: (_id: string, matches: boolean) => matches,
+      operationFor: () => undefined,
+      setFilter: () => undefined,
+      refreshInventory: options.onInstalled,
+    })),
+  };
+});
+
 vi.mock('@/services/i18n', () => ({
   i18nService: {
     t: (key: string) => {
@@ -73,10 +103,28 @@ beforeEach(() => {
   vi.mocked(skillService.importSkill).mockReset();
   vi.mocked(skillService.deleteSkill).mockReset();
   vi.mocked(skillService.setSkillEnabled).mockReset();
+  vi.mocked(skillService.hasInventoryReadFailed).mockReset().mockReturnValue(false);
 });
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+test('does not authorize marketplace inventory or confirm refresh after an online read failure', async () => {
+  vi.mocked(skillService.hasInventoryReadFailed).mockReturnValue(true);
+  const store = configureStore({ reducer: { skill: skillReducer } });
+  render(
+    <Provider store={store}>
+      <SkillsManager />
+    </Provider>,
+  );
+  await waitFor(() => expect(store.getState().skill.skills).toEqual([skill]));
+
+  const calls = vi.mocked(usePluginMarketplace).mock.calls;
+  const options = calls[calls.length - 1][0];
+  expect(options.runtimeUnavailable).toBe(false);
+  expect(options.inventoryReady).toBe(false);
+  await expect(options.onInstalled?.()).rejects.toThrow('Inventory unavailable');
 });
 
 async function openDetails(readOnly = false, skillName = skill.name) {

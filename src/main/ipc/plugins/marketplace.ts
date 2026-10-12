@@ -10,6 +10,7 @@ import {
   MarketplaceIpc,
   MarketplacePluginKind,
   type MarketplaceQuery,
+  type MarketplaceResolveResponse,
   type MarketplaceSearchResponse,
   type MarketplaceSourcesResponse,
   type MarketplaceUpdateCheckResponse,
@@ -47,11 +48,7 @@ const requireString = (value: unknown, field: string, maxLength = 256): string =
   return normalized;
 };
 
-const optionalString = (
-  value: unknown,
-  field: string,
-  maxLength = 256,
-): string | undefined => {
+const optionalString = (value: unknown, field: string, maxLength = 256): string | undefined => {
   if (value === undefined) return undefined;
   if (typeof value !== 'string') {
     throw new MarketplaceError(
@@ -101,9 +98,7 @@ const optionalOperation = (operation: unknown): MarketplaceInstallRequest['opera
   return operation as MarketplaceInstallRequest['operation'];
 };
 
-const requireInstalledPlugins = (
-  value: unknown,
-): Array<{ id: string; version?: string }> => {
+const requireInstalledPlugins = (value: unknown): Array<{ id: string; version?: string }> => {
   if (!Array.isArray(value) || value.length > 200) {
     throw new MarketplaceError(
       MarketplaceErrorCode.INVALID_REQUEST,
@@ -121,7 +116,10 @@ const requireInstalledPlugins = (
 
 const publicError = (
   error: unknown,
-): { error: string; errorCode: (typeof MarketplaceErrorCode)[keyof typeof MarketplaceErrorCode] } => {
+): {
+  error: string;
+  errorCode: (typeof MarketplaceErrorCode)[keyof typeof MarketplaceErrorCode];
+} => {
   if (error instanceof MarketplaceError) {
     return { error: error.message, errorCode: error.code };
   }
@@ -162,6 +160,35 @@ const publicInstallResult = (result: {
 };
 
 export const registerMarketplaceHandlers = (pluginManager: PluginManager): void => {
+  ipcMain.handle(
+    MarketplaceIpc.ResolveInstalled,
+    async (_event, request: unknown): Promise<MarketplaceResolveResponse> => {
+      try {
+        const input = requireRecord(request);
+        const kind = requireKind(input.kind);
+        if (!Array.isArray(input.installed) || input.installed.length > 200) {
+          throw new MarketplaceError(
+            MarketplaceErrorCode.INVALID_REQUEST,
+            'Invalid marketplace inventory',
+          );
+        }
+        const installed = input.installed.map(value => {
+          const item = requireRecord(value);
+          return {
+            id: requireString(item.id, 'runtime id'),
+            installPath: optionalString(item.installPath, 'install path', 4096),
+          };
+        });
+        return {
+          success: true,
+          installations: pluginManager.resolveMarketplaceInstalled({ kind, installed }),
+        };
+      } catch (error) {
+        logError('resolve installed', error);
+        return { success: false, ...publicError(error) };
+      }
+    },
+  );
   ipcMain.handle(
     MarketplaceIpc.ListSources,
     async (_event, kind?: unknown): Promise<MarketplaceSourcesResponse> => {

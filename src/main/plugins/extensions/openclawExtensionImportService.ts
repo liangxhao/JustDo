@@ -67,6 +67,9 @@ const createInstallSuccessPattern = (
 
 export type { ExtensionImportProgress, ExtensionImportResult, ExtensionImportStage };
 
+/** Main-only evidence that native installation completed before a later failure. */
+type CommittedExtensionImportResult = ExtensionImportResult & { installationCommitted?: true };
+
 export type { InstalledOpenClawExtension };
 
 type CommandResult = {
@@ -1869,8 +1872,8 @@ export class OpenClawExtensionImportService {
     sourcePath: string,
     onProgress?: (progress: Omit<ExtensionImportProgress, 'requestId' | 'sourcePath'>) => void,
     reviewToken?: string,
-    options?: { trustMarketplaceSource?: boolean },
-  ): Promise<ExtensionImportResult> {
+    options?: { trustMarketplaceSource?: boolean; preserveActivation?: boolean },
+  ): Promise<CommittedExtensionImportResult> {
     return this.runMutationExclusive(() =>
       this.importPathExclusive(sourcePath, onProgress, reviewToken, options),
     );
@@ -1880,14 +1883,15 @@ export class OpenClawExtensionImportService {
     sourcePath: string,
     onProgress?: (progress: Omit<ExtensionImportProgress, 'requestId' | 'sourcePath'>) => void,
     reviewToken?: string,
-    options?: { trustMarketplaceSource?: boolean },
-  ): Promise<ExtensionImportResult> {
+    options?: { trustMarketplaceSource?: boolean; preserveActivation?: boolean },
+  ): Promise<CommittedExtensionImportResult> {
     let temporaryDirectory: string | null = null;
     let cleanupInstallSource: (() => Promise<void>) | undefined;
     let installSourceInFlight = false;
     let retainedInstallSourcePath: string | undefined;
     let extensionId: string | undefined;
     let installationAttempted = false;
+    let installationCommitted = false;
     let currentStage: ExtensionImportStage = 'preparing';
     const reportProgress = (stage: ExtensionImportStage, percent: number): void => {
       currentStage = stage;
@@ -1990,6 +1994,7 @@ export class OpenClawExtensionImportService {
         'install',
         installSourcePath,
         '--force',
+        ...(options?.preserveActivation ? ['--no-enable'] : []),
         ...(this.deps.requestGateway || options?.trustMarketplaceSource
           ? ['--accept-capabilities']
           : []),
@@ -2055,7 +2060,12 @@ export class OpenClawExtensionImportService {
         // native lifecycle is still reading this source. Retain that one-shot
         // copy on unknown outcomes; never remove it or replay the install.
         installSourceInFlight = result.exitCode !== 0 || result.timedOut === true;
-        if (result.exitCode === 0 && extensionId && !this.deps.requestGateway) {
+        if (
+          result.exitCode === 0 &&
+          extensionId &&
+          !this.deps.requestGateway &&
+          !options?.preserveActivation
+        ) {
           try {
             updateExtensionAllowlist(
               configPath,
@@ -2084,6 +2094,7 @@ export class OpenClawExtensionImportService {
           failedStage,
         };
       }
+      installationCommitted = true;
 
       let networkPolicyChanged = false;
       if (extensionId && this.deps.outboundHeaderPolicy) {
@@ -2094,6 +2105,7 @@ export class OpenClawExtensionImportService {
             success: false,
             extensionId,
             error: 'Extension installed, but its canonical install path could not be verified.',
+            installationCommitted: true,
             failedStage: currentStage,
           };
         }
@@ -2108,6 +2120,7 @@ export class OpenClawExtensionImportService {
               error instanceof Error
                 ? error.message
                 : 'The installed Extension network policy is invalid.',
+            installationCommitted: true,
             failedStage: currentStage,
           };
         }
@@ -2135,6 +2148,7 @@ export class OpenClawExtensionImportService {
               error:
                 status.message ||
                 'Extension installed, but the OpenClaw Gateway failed to restart.',
+              installationCommitted: true,
               failedStage: currentStage,
             };
           }
@@ -2146,6 +2160,7 @@ export class OpenClawExtensionImportService {
           success: false,
           extensionId,
           error: `Extension installed, but it could not be added to the plugin allowlist: ${allowlistError}`,
+          installationCommitted: true,
           failedStage: currentStage,
         };
       }
@@ -2156,6 +2171,7 @@ export class OpenClawExtensionImportService {
       return {
         success: false,
         ...(installationAttempted ? { extensionId } : {}),
+        ...(installationCommitted ? { installationCommitted: true as const } : {}),
         error: error instanceof Error ? error.message : 'Failed to import extension',
         failedStage: currentStage,
       };

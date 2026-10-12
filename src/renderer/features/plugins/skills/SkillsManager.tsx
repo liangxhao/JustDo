@@ -6,10 +6,21 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { PluginHubScope } from '@shared/plugins/management';
+import { PluginKind } from '@shared/plugins/marketplace';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
+import {
+  InstalledMarketplaceAction,
+  MarketplaceFeedback,
+} from '@/features/plugins/marketplace/MarketplaceActions';
+import MarketplaceToolbar from '@/features/plugins/marketplace/MarketplaceToolbar';
+import { MarketplaceResults } from '@/features/plugins/marketplace/MarketplaceView';
+import {
+  MarketplaceFilter,
+  usePluginMarketplace,
+} from '@/features/plugins/marketplace/usePluginMarketplace';
 import OperationResultModal, {
   type OperationResult,
 } from '@/features/plugins/shared/OperationResultModal';
@@ -20,9 +31,7 @@ import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownD
 import PluginStateButton, {
   PluginLockedIndicator,
 } from '@/features/plugins/shared/PluginStateButton';
-import PluginUpdateIndicator from '@/features/plugins/shared/PluginUpdateIndicator';
 import { Skill } from '@/features/plugins/skills/skill';
-import SkillMarketplace from '@/features/plugins/skills/SkillMarketplace';
 import {
   getMissingRequirementCount,
   getMissingSkillDependencies,
@@ -63,13 +72,13 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
   const [importing, setImporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [updatingSkillIds, setUpdatingSkillIds] = useState<Set<string>>(() => new Set());
-  const [marketplaceUpdateIds, setMarketplaceUpdateIds] = useState<Set<string>>(() => new Set());
   const [actionOutcome, setActionOutcome] = useState<OperationResult | null>(null);
   const mounted = useRef(false);
   const inventoryReadGeneration = useRef(0);
 
   // Gateway offline state
   const [gatewayOffline, setGatewayOffline] = useState(false);
+  const [inventoryReady, setInventoryReady] = useState(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -80,12 +89,14 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
       if (!isActive || generation !== inventoryReadGeneration.current) return;
       dispatch(setSkills(loadedSkills));
       setGatewayOffline(skillService.isGatewayOffline());
+      setInventoryReady(!skillService.hasInventoryReadFailed());
     };
     const stopInventoryUpdates = skillService.subscribeInventory(loadedSkills => {
       if (!isActive) return;
       inventoryReadGeneration.current += 1;
       dispatch(setSkills(loadedSkills));
       setGatewayOffline(skillService.isGatewayOffline());
+      setInventoryReady(!skillService.hasInventoryReadFailed());
     });
     loadSkills();
 
@@ -104,20 +115,42 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
     if (!mounted.current || generation !== inventoryReadGeneration.current) return;
     dispatch(setSkills(loadedSkills));
     setGatewayOffline(skillService.isGatewayOffline());
+    setInventoryReady(!skillService.hasInventoryReadFailed());
   };
 
-  const filteredSkills = useMemo(() => {
-    const query = skillSearchQuery.trim().toLowerCase();
-    return skills.filter(skill => {
-      const matchesSearch =
-        skill.name.toLowerCase().includes(query) ||
-        skillService
-          .getLocalizedSkillDescription(skill.id, skill.name, skill.description)
-          .toLowerCase()
-          .includes(query);
-      return matchesSearch;
-    });
-  }, [skills, skillSearchQuery]);
+  const installedMarketplaceSkills = useMemo(
+    () =>
+      skills.map(skill => ({
+        id: skill.id,
+        version: skill.version,
+        installPath: skill.skillPath.replace(/[\\/]SKILL\.md$/i, ''),
+        updateEligible: skill.ownershipScope !== PluginHubScope.SYSTEM,
+      })),
+    [skills],
+  );
+  const marketplace = usePluginMarketplace({
+    kind: PluginKind.SKILL,
+    installed: installedMarketplaceSkills,
+    inventoryReady,
+    searchQuery: skillSearchQuery,
+    readOnly,
+    runtimeUnavailable: gatewayOffline,
+    onInstalled: async () => {
+      await skillService.refreshInventoryAfterMutation();
+      if (skillService.hasInventoryReadFailed()) throw new Error('Inventory unavailable');
+    },
+  });
+
+  const filteredSkills = skills.filter(skill =>
+    marketplace.matchesInstalled(
+      skill.id,
+      [
+        skill.id,
+        skill.name,
+        skillService.getLocalizedSkillDescription(skill.id, skill.name, skill.description),
+      ].some(value => value.toLowerCase().includes(skillSearchQuery.trim().toLowerCase())),
+    ),
+  );
   const skillOwnershipGroups = useMemo(() => {
     const userSkills = filteredSkills.filter(
       skill => skill.ownershipScope !== PluginHubScope.SYSTEM,
@@ -132,15 +165,6 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
       ...(systemSkills.length > 0 ? [{ id: 'system' as const, skills: systemSkills }] : []),
     ];
   }, [filteredSkills, skillSearchQuery]);
-  const installedMarketplaceSkills = useMemo(
-    () =>
-      skills.map(skill => ({
-        id: skill.id,
-        version: skill.version,
-        updateEligible: skill.ownershipScope !== PluginHubScope.SYSTEM,
-      })),
-    [skills],
-  );
 
   const getScopeLabel = (scope: Skill['scope']) =>
     i18nService.t(`pluginScope.${scope || PluginHubScope.OTHER}`);
@@ -180,6 +204,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
   };
 
   const handleToggleSkill = async (skillId: string) => {
+    if (marketplace.operationFor(skillId)?.busy) return;
     if (readOnly || updatingSkillIds.has(skillId)) return;
     if (gatewayOffline) {
       setActionOutcome({
@@ -349,6 +374,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
   };
 
   const handleDeleteClick = (skill: Skill) => {
+    if (marketplace.operationFor(skill.id)?.busy) return;
     if (!skill.management.remove.allowed) return;
     setSelectedSkillId(null);
     setSkillPendingDelete(skill);
@@ -442,6 +468,104 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
       </Tooltip>
     ) : undefined;
 
+  const renderInstalledCard = (skill: Skill, visualIndex: number) => {
+    const toggleAllowed = skill.enabled
+      ? skill.management.disable.allowed
+      : skill.management.enable.allowed;
+    return (
+      <article
+        key={skill.id}
+        className="group relative min-h-16 min-w-0 cursor-pointer rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-border/70 hover:bg-surface-raised/70"
+        onClick={() => setSelectedSkillId(skill.id)}
+      >
+        <button
+          type="button"
+          className="absolute inset-0 z-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
+          aria-label={`${i18nService.t('subtaskShowInfo')}: ${skill.name}`}
+          onClick={event => {
+            event.stopPropagation();
+            setSelectedSkillId(skill.id);
+          }}
+        />
+        <div className="pointer-events-none relative z-10 grid min-w-0 grid-cols-[2rem_minmax(0,1fr)_auto] gap-x-2 [&_button]:pointer-events-auto">
+          <div
+            className={`row-span-3 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${getPluginArtworkTone(`skills:${skill.ownershipScope}`, visualIndex)}`}
+          >
+            <SparklesIcon className="h-4 w-4" />
+          </div>
+          <div className="flex min-w-0 items-center gap-1.5 self-center">
+            <span className="min-w-0 truncate text-sm font-medium text-foreground">
+              {skill.name}
+            </span>
+            {/* Status badge */}
+            {renderSkillStatus(skill)}
+            {skill.scope !== PluginHubScope.PERSONAL && (
+              <span className="shrink-0 rounded-full bg-surface-raised px-1.5 py-0.5 text-[10px] font-medium text-secondary">
+                {getScopeLabel(skill.scope)}
+              </span>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-1 self-center">
+            <InstalledMarketplaceAction
+              controller={marketplace}
+              id={skill.id}
+              disabled={updatingSkillIds.has(skill.id)}
+            />
+            {!toggleAllowed && !gatewayOffline ? (
+              <PluginLockedIndicator
+                checked={skill.enabled}
+                label={i18nService.t('pluginManagedActionUnavailable')}
+              />
+            ) : (
+              <PluginStateButton
+                checked={skill.enabled}
+                label={i18nService.t(skill.enabled ? 'disableSkill' : 'enableSkill')}
+                disabled={
+                  marketplace.operationFor(skill.id)?.busy ||
+                  readOnly ||
+                  gatewayOffline ||
+                  !toggleAllowed ||
+                  updatingSkillIds.has(skill.id)
+                }
+                busy={updatingSkillIds.has(skill.id)}
+                onToggle={() => {
+                  if (!readOnly && !gatewayOffline && toggleAllowed) {
+                    void handleToggleSkill(skill.id);
+                  }
+                }}
+              />
+            )}
+          </div>
+          <Tooltip
+            content={skillService.getLocalizedSkillDescription(
+              skill.id,
+              skill.name,
+              skill.description,
+            )}
+            position="bottom"
+            maxWidth="360px"
+            className="col-start-2 block min-w-0"
+          >
+            <p className="truncate text-xs text-secondary">
+              {skillService.getLocalizedSkillDescription(skill.id, skill.name, skill.description)}
+            </p>
+          </Tooltip>
+
+          {skill.version && (
+            <div className="col-start-2 mt-1 flex min-w-0 items-center text-[10px] text-secondary">
+              <div className="flex items-center gap-2">
+                <span className="px-1.5 py-0.5 rounded bg-surface-raised font-medium">
+                  v{skill.version}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+        <MarketplaceFeedback controller={marketplace} id={skill.id} />
+      </article>
+    );
+  };
+
   return (
     <div className="space-y-4">
       {/* Gateway offline warning */}
@@ -451,182 +575,80 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
         </div>
       )}
 
-      {visibility !== 'available' && (
-        <section className="space-y-4">
-          <div className="space-y-4">
-            {sharedSearchQuery === undefined && (
-              <div className="relative min-w-0 sm:max-w-md">
-                <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
-                <input
-                  type="text"
-                  placeholder={i18nService.t('searchSkills')}
-                  value={skillSearchQuery}
-                  onChange={e => setLocalSearchQuery(e.target.value)}
-                  disabled={gatewayOffline}
-                  className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm text-foreground placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
-                />
-              </div>
-            )}
+      <MarketplaceToolbar controller={marketplace} hasLocalMatches={filteredSkills.length > 0} />
+      {visibility !== 'available' &&
+        (marketplace.filter !== MarketplaceFilter.UPDATES ||
+          marketplace.updateById.size > 0 ||
+          marketplace.recentlyUpdated.size > 0) && (
+          <section className="space-y-4">
+            <div className="space-y-4">
+              {sharedSearchQuery === undefined && (
+                <div className="relative min-w-0 sm:max-w-md">
+                  <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
+                  <input
+                    type="text"
+                    placeholder={i18nService.t('searchSkills')}
+                    value={skillSearchQuery}
+                    onChange={e => setLocalSearchQuery(e.target.value)}
+                    disabled={gatewayOffline}
+                    className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm text-foreground placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </div>
+              )}
 
-            {filteredSkills.length === 0 && skillSearchQuery.trim() ? (
-              <div className="text-center py-8 text-sm text-secondary">
-                {gatewayOffline
-                  ? i18nService.t('gatewayOffline')
-                  : i18nService.t('noSkillsAvailable')}
-              </div>
-            ) : (
-              <div className="space-y-5">
-                {skillOwnershipGroups.map(group => (
-                  <PluginGroupSection
-                    key={group.id}
-                    title={i18nService.t(`pluginGroup.${group.id}.label`)}
-                    count={group.skills.length}
-                    action={
-                      group.id === 'user' ? (
-                        <div className="flex items-center gap-1">
-                          {importSkillAction}
-                          {!readOnly && (
-                            <SkillWorkshopPanel
-                              onSkillsChanged={async () => {
-                                await refreshSkillList({ force: true });
-                              }}
-                            />
-                          )}
-                        </div>
-                      ) : undefined
-                    }
-                    collapsible={group.id === 'system'}
-                    defaultExpanded={group.id !== 'system'}
-                    forceExpanded={Boolean(skillSearchQuery.trim())}
-                  >
-                    {group.skills.length === 0 ? (
-                      <p className="px-2 py-3 text-xs text-secondary">
-                        {i18nService.t('noSkillsAvailable')}
-                      </p>
-                    ) : (
-                      <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
-                        {group.skills.map((skill, visualIndex) => {
-                          const toggleAllowed = skill.enabled
-                            ? skill.management.disable.allowed
-                            : skill.management.enable.allowed;
-                          return (
-                            <article
-                              key={skill.id}
-                              className="group relative min-h-16 min-w-0 cursor-pointer rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-border/70 hover:bg-surface-raised/70"
-                              onClick={() => setSelectedSkillId(skill.id)}
-                            >
-                              <button
-                                type="button"
-                                className="absolute inset-0 z-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
-                                aria-label={`${i18nService.t('subtaskShowInfo')}: ${skill.name}`}
-                                onClick={event => {
-                                  event.stopPropagation();
-                                  setSelectedSkillId(skill.id);
+              {filteredSkills.length === 0 && skillSearchQuery.trim() ? null : (
+                <div className="space-y-5">
+                  {skillOwnershipGroups.map(group => (
+                    <PluginGroupSection
+                      hideHeader={Boolean(skillSearchQuery.trim())}
+                      key={group.id}
+                      title={i18nService.t(`pluginGroup.${group.id}.label`)}
+                      count={group.skills.length}
+                      action={
+                        group.id === 'user' ? (
+                          <div className="flex items-center gap-1">
+                            {importSkillAction}
+                            {!readOnly && (
+                              <SkillWorkshopPanel
+                                onSkillsChanged={async () => {
+                                  await refreshSkillList({ force: true });
                                 }}
                               />
-                              <div className="pointer-events-none relative z-10 grid min-w-0 grid-cols-[2rem_minmax(0,1fr)_auto] gap-x-2 [&_button]:pointer-events-auto">
-                                <div
-                                  className={`row-span-3 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${getPluginArtworkTone(`skills:${group.id}`, visualIndex)}`}
-                                >
-                                  <SparklesIcon className="h-4 w-4" />
-                                </div>
-                                <div className="flex min-w-0 items-center gap-1.5 self-center">
-                                  <span className="min-w-0 truncate text-sm font-medium text-foreground">
-                                    {skill.name}
-                                  </span>
-                                  {/* Status badge */}
-                                  {renderSkillStatus(skill)}
-                                  {skill.scope !== PluginHubScope.PERSONAL && (
-                                    <span className="shrink-0 rounded-full bg-surface-raised px-1.5 py-0.5 text-[10px] font-medium text-secondary">
-                                      {getScopeLabel(skill.scope)}
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex shrink-0 items-center gap-1 self-center">
-                                  {skill.ownershipScope !== PluginHubScope.SYSTEM &&
-                                    marketplaceUpdateIds.has(skill.id.toLowerCase()) && (
-                                      <PluginUpdateIndicator />
-                                    )}
-                                  {!toggleAllowed && !gatewayOffline ? (
-                                    <PluginLockedIndicator
-                                      checked={skill.enabled}
-                                      label={i18nService.t('pluginManagedActionUnavailable')}
-                                    />
-                                  ) : (
-                                    <PluginStateButton
-                                      checked={skill.enabled}
-                                      label={i18nService.t(
-                                        skill.enabled ? 'disableSkill' : 'enableSkill',
-                                      )}
-                                      disabled={
-                                        readOnly ||
-                                        gatewayOffline ||
-                                        !toggleAllowed ||
-                                        updatingSkillIds.has(skill.id)
-                                      }
-                                      busy={updatingSkillIds.has(skill.id)}
-                                      onToggle={() => {
-                                        if (!readOnly && !gatewayOffline && toggleAllowed) {
-                                          void handleToggleSkill(skill.id);
-                                        }
-                                      }}
-                                    />
-                                  )}
-                                </div>
-                                <Tooltip
-                                  content={skillService.getLocalizedSkillDescription(
-                                    skill.id,
-                                    skill.name,
-                                    skill.description,
-                                  )}
-                                  position="bottom"
-                                  maxWidth="360px"
-                                  className="col-start-2 block min-w-0"
-                                >
-                                  <p className="truncate text-xs text-secondary">
-                                    {skillService.getLocalizedSkillDescription(
-                                      skill.id,
-                                      skill.name,
-                                      skill.description,
-                                    )}
-                                  </p>
-                                </Tooltip>
-
-                                {skill.version && (
-                                  <div className="col-start-2 mt-1 flex min-w-0 items-center text-[10px] text-secondary">
-                                    <div className="flex items-center gap-2">
-                                      <span className="px-1.5 py-0.5 rounded bg-surface-raised font-medium">
-                                        v{skill.version}
-                                      </span>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </article>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </PluginGroupSection>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-      )}
+                            )}
+                          </div>
+                        ) : undefined
+                      }
+                      collapsible={group.id === 'system'}
+                      defaultExpanded={group.id !== 'system'}
+                      forceExpanded={Boolean(skillSearchQuery.trim())}
+                    >
+                      {group.skills.length === 0 ? (
+                        <p className="px-2 py-3 text-xs text-secondary">
+                          {i18nService.t('noSkillsAvailable')}
+                        </p>
+                      ) : (
+                        <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
+                          {group.skills.map(renderInstalledCard)}
+                        </div>
+                      )}
+                    </PluginGroupSection>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
       {visibility !== 'installed' && (
-        <section className="border-t border-border pt-6">
-          <SkillMarketplace
-            installed={installedMarketplaceSkills}
-            onUpdateIdsChange={setMarketplaceUpdateIds}
-            readOnly={readOnly}
-            onInstalled={async () => {
-              await skillService.refreshInventoryAfterMutation();
+        <section className={skillSearchQuery.trim() ? '' : 'border-t border-border pt-6'}>
+          <MarketplaceResults
+            hasLocalMatches={filteredSkills.length > 0}
+            controller={marketplace}
+            icon={<SparklesIcon className="h-4 w-4" />}
+            renderInstalled={(id, index) => {
+              const entry = skills.find(item => item.id === id);
+              return entry ? renderInstalledCard(entry, index) : null;
             }}
-            searchQuery={skillSearchQuery}
-            availableOnly={visibility === 'available'}
-            runtimeUnavailable={gatewayOffline}
           />
         </section>
       )}

@@ -30,6 +30,21 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+test('reports inventory failure independently of Gateway connectivity and clears it after recovery', async () => {
+  api.list
+    .mockResolvedValueOnce({ success: false, gatewayOffline: false, error: 'RPC timeout' })
+    .mockResolvedValueOnce({ success: true, skills: [skill] });
+  const { skillService } = await import('./skillService');
+
+  await skillService.loadSkills();
+  expect(skillService.isGatewayOffline()).toBe(false);
+  expect(skillService.hasInventoryReadFailed()).toBe(true);
+
+  await skillService.loadSkills();
+  expect(skillService.hasInventoryReadFailed()).toBe(false);
+  expect(skillService.getSkills()).toEqual([skill]);
+});
+
 test('automatically rereads native inventory after import within a five-second window', async () => {
   vi.useFakeTimers();
   api.list.mockResolvedValue({ success: true, skills: [] });

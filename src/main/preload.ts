@@ -199,6 +199,7 @@ import {
   MarketplaceIpc,
   type MarketplacePluginKind,
   type MarketplaceQuery,
+  type MarketplaceResolveRequest,
   type MarketplaceUpdateCheckRequest,
 } from '../shared/plugins/marketplace';
 import type { OpenClawSkillSource } from '../shared/plugins/skills';
@@ -287,6 +288,8 @@ contextBridge.exposeInMainWorld('electron', {
     remove: (key: string) => ipcRenderer.invoke('store:remove', key),
   },
   marketplace: {
+    resolveInstalled: (request: MarketplaceResolveRequest) =>
+      ipcRenderer.invoke(MarketplaceIpc.ResolveInstalled, request),
     listSources: (kind?: MarketplacePluginKind) =>
       ipcRenderer.invoke(MarketplaceIpc.ListSources, kind),
     listCategories: (request: MarketplaceCategoryRequest) =>

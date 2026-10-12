@@ -11,7 +11,10 @@ import McpManager from './McpManager';
 import { mcpService } from './mcpService';
 import mcpReducer from './mcpSlice';
 
-vi.mock('@/features/plugins/marketplace/MarketplaceView', () => ({ default: () => null }));
+vi.mock('@/features/plugins/marketplace/MarketplaceView', () => ({
+  MarketplaceResults: () => null,
+  default: () => null,
+}));
 vi.mock('./mcpService', () => ({
   mcpService: {
     loadServers: vi.fn(async () => []),
@@ -28,6 +31,27 @@ vi.mock('./mcpService', () => ({
     onConfigSyncDone: vi.fn(() => () => undefined),
   },
 }));
+
+vi.mock('@/features/plugins/marketplace/usePluginMarketplace', async importOriginal => {
+  const actual =
+    await importOriginal<typeof import('@/features/plugins/marketplace/usePluginMarketplace')>();
+  return {
+    ...actual,
+    usePluginMarketplace: (options: { onInstalled?: () => Promise<void> }) => ({
+      filter: 'all',
+      source: null,
+      query: '',
+      updateById: new Map(),
+      recentlyUpdated: new Set(),
+      operations: {},
+      matchesInstalled: (_id: string, matches: boolean) => matches,
+      operationFor: () => undefined,
+      setFilter: () => undefined,
+      refreshInventory: options.onInstalled,
+    }),
+  };
+});
+
 vi.mock('@/services/i18n', () => ({
   i18nService: { t: (key: string) => key, getLanguage: () => 'en' },
 }));

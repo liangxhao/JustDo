@@ -2,6 +2,8 @@
 
 市场层解决目录查询、下载、来源和版本映射，不拥有插件执行状态。当前共享 MarketplacePluginKind 只包含 extension、skill、mcp；Hook 虽在 PluginKind 中存在，也不是已接通的市场安装类型。仓库默认没有业务 Provider。
 
+产品只对接一个市场。工厂第三参数注入单一 Provider，页面不提供来源选择或聚合。SDK 实施步骤、示例和验收见 [插件市场接入指南](../developer-integration/plugin-marketplace-integration.md)。
+
 ## 1. 最小接入面
 
 `PluginMarketplaceProvider` 位于 `src/main/plugins/marketplace/types.ts`。公司 SDK 只需提供搜索与下载，其他能力按实际支持暴露。
@@ -15,7 +17,7 @@
 | listCategories | 否   | 指定 source/kind 的稳定类别目录     |
 | checkUpdates   | 否   | 已安装项目的批量更新候选            |
 
-Main 投影 supportsDetail/supportsCategories，Renderer 不为缺失能力制造空页面。最小 SDK 不必为了 UI 补造一个不存在的详情接口。
+Main 投影 supportsDetail/supportsCategories/supportsUpdates，Renderer 不为缺失能力制造空页面。最小 SDK 不必为了 UI 补造一个不存在的详情接口。
 
 ## 2. 查询与响应验证
 
@@ -49,7 +51,7 @@ sequenceDiagram
 
 SDK 负责下载和认证，Main 不自行拼下载 URL 或重复实现公司协议。Extension/Skill 的 sourcePath 是下载后的本地目录；MCP 是经过映射的结构化配置。通用安装服务位于 `src/main/plugins/installation/`，路由到现有领域安装器。
 
-临时资源无论成功失败都 cleanup。相同安装身份串行，避免重复点击产生交错覆盖；一个来源失败不应把其他来源的查询结果伪装为空。
+临时资源无论成功失败都 cleanup。相同安装身份串行，避免重复点击产生交错覆盖；市场查询失败必须明确提示，不能伪装为空结果或影响本地管理。
 
 ## 4. 格式与能力审查
 
@@ -75,11 +77,17 @@ SDK 负责下载和认证，Main 不自行拼下载 URL 或重复实现公司协
 
 ## 6. 更新检查与 UI 一致性
 
-checkUpdates 按 source 分组，仅传该来源的安装记录；无此接口时可消费搜索结果中的 update-available。不能判断版本就不制造更新提示，也不假设所有版本遵循 semver。
+checkUpdates 仅向已配置的单一 Provider 传递该市场的安装记录；无此接口时可消费搜索结果中的 update-available。不能判断版本就不制造更新提示，也不假设所有版本遵循 semver。
 
 完整候选保留在 Renderer，即使普通推荐结果没再次带更新标记，同一 source/catalog/runtime identity 仍使用候选版本执行更新。成功后刷新 inventory 与 registry，使市场卡片和已安装卡片同时收敛。
 
-单 Provider 的旧安装兼容检查只用于缺少历史映射的场景；多来源不能按同名 ID 猜归属。
+分类页通过 `usePluginMarketplace` 共享搜索、更新候选、筛选和逐卡片操作状态。已安装卡片直接执行更新，并在更新期间禁用冲突开关；市场搜索命中已安装项时复用本地卡片，默认发现区去重。新安装卡片在当前查询中保持原位置，刷新后复用原领域卡片，避免重复或丢失配置入口。操作已提交但状态未确认时只刷新清单，不重放安装。
+
+Renderer 会话内的 `marketplaceOperationOwner` 按分类保留有界操作反馈与进行中锁，跨组件卸载继续接收结果；有页面挂载时使用当前页面的清单刷新回调，无页面时将刷新留待下次挂载。它不持有插件清单、凭据或下载输入，不是持久化安装状态。
+
+新增只读 `resolveInstalled` IPC 将本地清单与 Main registry 对账。文件类必须同时匹配原生 ID 与安装目录，MCP 匹配原生记录 ID；响应只包含目录和原生身份，不含内部路径。系统管理项和无市场映射的本地同名项不能获得更新操作。安装事实仍由原生清单决定，身份映射不是授权或新的插件清单。本地导入成功覆盖市场安装时清除旧市场归属，Skill 同时核对 managed 路径。
+
+服务层保留的旧安装兼容检查只用于缺少历史映射的场景；当前页面仍须通过 resolveInstalled 确认归属，不能按同名 ID 猜测。
 
 ## 7. 失败和补偿
 
@@ -96,4 +104,4 @@ checkUpdates 按 source 分组，仅传该来源的安装记录；无此接口�
 
 MarketplaceService tests 覆盖 provider 校验、可选能力、分页、错误与安装串行；install registry tests 覆盖来源/runtime/path 映射；installation 与 Extension/Skill/MCP 测试覆盖实际 mutation。
 
-接入验收至少用一个仅支持搜索/下载的最小 Provider、一个多来源同名冲突场景、一次失败更新和临时目录清理。业务 SDK 联网验收与本地协议测试分开记录。
+接入验收至少用一个仅支持搜索/下载的最小 Provider、一个市场与本地导入同名冲突场景、一次失败更新和临时目录清理。业务 SDK 联网验收与本地协议测试分开记录。

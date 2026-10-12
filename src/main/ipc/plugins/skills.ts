@@ -92,6 +92,10 @@ export const registerSkillHandlers = ({
           ? skillFileService.getManagedSkillPath?.(result.skillId)
           : undefined;
         if (result.success) {
+          if (result.skillId && installPath && request.origin === PluginInstallOrigin.CUSTOM) {
+            // Invalidate only the replaced managed installation, not a same-name project layer.
+            onMarketplacePluginDeleted?.(PluginKind.SKILL, result.skillId, installPath);
+          }
           try {
             await skillService.getStatus(undefined, { connectedOnly: true });
           } catch (error) {

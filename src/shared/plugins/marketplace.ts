@@ -35,6 +35,7 @@ export interface MarketplaceSource {
   supportsDetail?: boolean;
   /** Whether the provider exposes a stable category catalog for this plugin kind. */
   supportsCategories?: boolean;
+  supportsUpdates?: boolean;
 }
 
 export interface MarketplaceCategory {
@@ -120,6 +121,30 @@ export interface MarketplaceInstalledPlugin {
   version?: string;
 }
 
+/** Runtime inventory identity supplied for read-only registry reconciliation. */
+export interface MarketplaceInventoryEntry {
+  id: string;
+  installPath?: string;
+}
+
+export interface MarketplaceResolveRequest {
+  kind: MarketplacePluginKind;
+  installed: MarketplaceInventoryEntry[];
+}
+
+export interface MarketplaceInstallationIdentity {
+  runtimeId: string;
+  sourceId: string;
+  pluginId: string;
+}
+
+export interface MarketplaceResolveResponse {
+  success: boolean;
+  installations?: MarketplaceInstallationIdentity[];
+  error?: string;
+  errorCode?: MarketplaceErrorCode;
+}
+
 export interface MarketplaceUpdateCheckRequest {
   kind: MarketplacePluginKind;
   installed: MarketplaceInstalledPlugin[];
@@ -145,6 +170,7 @@ export interface MarketplaceDetailRequest {
 
 export const MarketplaceIpc = {
   ListSources: 'plugins:marketplace:listSources',
+  ResolveInstalled: 'plugins:marketplace:resolveInstalled',
   ListCategories: 'plugins:marketplace:listCategories',
   Search: 'plugins:marketplace:search',
   CheckUpdates: 'plugins:marketplace:checkUpdates',

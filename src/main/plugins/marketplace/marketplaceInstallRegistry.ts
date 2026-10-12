@@ -1,6 +1,10 @@
 import path from 'path';
 
-import type { MarketplacePluginKind } from '../../../shared/plugins/marketplace';
+import type {
+  MarketplaceInstallationIdentity,
+  MarketplacePluginKind,
+  MarketplaceResolveRequest,
+} from '../../../shared/plugins/marketplace';
 import { MarketplacePluginKind as MarketplaceKinds } from '../../../shared/plugins/marketplace';
 
 const STORE_KEY = 'plugin_marketplace_installations_v1';
@@ -50,7 +54,9 @@ const normalizeRecord = (value: unknown): MarketplaceInstallRecord | null => {
 };
 
 const samePath = (left: string, right: string): boolean =>
-  path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase();
+  process.platform === 'win32'
+    ? path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase()
+    : path.resolve(left) === path.resolve(right);
 
 /** Persists marketplace identity only; runtime inventories remain installation authority. */
 export class MarketplaceInstallRegistry {
@@ -63,6 +69,29 @@ export class MarketplaceInstallRegistry {
       .map(normalizeRecord)
       .filter((record): record is MarketplaceInstallRecord => Boolean(record))
       .filter(record => !kind || record.kind === kind);
+  }
+
+  resolve(request: MarketplaceResolveRequest): MarketplaceInstallationIdentity[] {
+    return this.list(request.kind)
+      .filter(record => {
+        const matches = request.installed.filter(item => item.id === record.runtimeId);
+        if (matches.length !== 1) return false;
+        const item = matches[0];
+        // File installations must match the recorded directory, not a same-name fallback.
+        if (request.kind !== MarketplaceKinds.MCP) {
+          return Boolean(
+            record.installPath &&
+            item.installPath &&
+            samePath(record.installPath, item.installPath),
+          );
+        }
+        return true;
+      })
+      .map(record => ({
+        runtimeId: record.runtimeId,
+        sourceId: record.sourceId,
+        pluginId: record.marketplacePluginId,
+      }));
   }
 
   upsert(record: MarketplaceInstallRecord): void {

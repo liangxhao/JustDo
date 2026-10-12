@@ -15,10 +15,34 @@ import { OPEN_TEAM_RECORDS } from '@/features/cowork/components/display/agentTea
 import ExtensionsManager from './ExtensionsManager';
 
 vi.mock('@/features/plugins/marketplace/MarketplaceView', () => ({
-  default: ({ onInstalled }: { onInstalled: () => Promise<void> }) => (
-    <button onClick={() => void onInstalled()}>finishMarketplaceInstall</button>
+  MarketplaceResults: ({
+    controller,
+  }: {
+    controller: { refreshInventory: () => Promise<void> };
+  }) => (
+    <button onClick={() => void controller.refreshInventory()}>finishMarketplaceInstall</button>
   ),
 }));
+
+vi.mock('@/features/plugins/marketplace/usePluginMarketplace', async importOriginal => {
+  const actual =
+    await importOriginal<typeof import('@/features/plugins/marketplace/usePluginMarketplace')>();
+  return {
+    ...actual,
+    usePluginMarketplace: (options: { onInstalled?: () => Promise<void> }) => ({
+      filter: 'all',
+      source: null,
+      query: '',
+      updateById: new Map(),
+      recentlyUpdated: new Set(),
+      operations: {},
+      matchesInstalled: (_id: string, matches: boolean) => matches,
+      operationFor: () => undefined,
+      setFilter: () => undefined,
+      refreshInventory: options.onInstalled,
+    }),
+  };
+});
 
 vi.mock('@/services/i18n', () => ({
   i18nService: {

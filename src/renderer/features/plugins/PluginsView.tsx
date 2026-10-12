@@ -125,8 +125,16 @@ const PluginsView: React.FC<PluginsViewProps> = ({
                 type="search"
                 value={searchQuery}
                 onChange={event => setSearchQuery(event.target.value)}
-                placeholder={i18nService.t('pluginHubSearchPlaceholder')}
-                aria-label={i18nService.t('pluginHubSearchPlaceholder')}
+                placeholder={
+                  activeTab === 'hooks'
+                    ? i18nService.t('searchHooks')
+                    : i18nService.t('marketplaceSearchKind').replace('{kind}', tabLabels[activeTab])
+                }
+                aria-label={
+                  activeTab === 'hooks'
+                    ? i18nService.t('searchHooks')
+                    : i18nService.t('marketplaceSearchKind').replace('{kind}', tabLabels[activeTab])
+                }
                 className="w-full rounded-xl border border-border bg-surface py-2.5 pl-9 pr-3 text-sm text-foreground shadow-sm placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>

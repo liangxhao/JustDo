@@ -5,6 +5,7 @@ import type {
   MarketplaceInstallRequest,
   MarketplacePluginDetail,
   MarketplaceQuery,
+  MarketplaceResolveRequest,
   MarketplaceSearchResult,
   MarketplaceSource,
   MarketplaceUpdateCheckRequest,
@@ -21,6 +22,10 @@ import type { PluginMarketplaceService } from './marketplace';
  */
 export class PluginManager {
   constructor(private readonly marketplace: PluginMarketplaceService) {}
+
+  resolveMarketplaceInstalled(request: MarketplaceResolveRequest) {
+    return this.marketplace.resolveInstalled(request);
+  }
 
   listMarketplaceSources(kind?: MarketplaceQuery['kind']): MarketplaceSource[] {
     return this.marketplace.listSources(kind);

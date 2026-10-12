@@ -8,6 +8,7 @@ import type {
   MarketplacePlugin,
   MarketplacePluginDetail,
   MarketplaceQuery,
+  MarketplaceResolveRequest,
   MarketplaceSearchResult,
   MarketplaceSource,
   MarketplaceUpdateCheckRequest,
@@ -90,12 +91,15 @@ export class PluginMarketplaceService {
         supportedKinds: [...provider.source.supportedKinds],
         supportsDetail: typeof provider.getDetail === 'function',
         supportsCategories: typeof provider.listCategories === 'function',
+        supportsUpdates: typeof provider.checkUpdates === 'function',
       }));
   }
 
-  async listCategories(
-    request: MarketplaceCategoryRequest,
-  ): Promise<MarketplaceCategoriesResult> {
+  resolveInstalled(request: MarketplaceResolveRequest) {
+    return this.installRegistry.resolve(request);
+  }
+
+  async listCategories(request: MarketplaceCategoryRequest): Promise<MarketplaceCategoriesResult> {
     const provider = this.requireProviderForKind(request.sourceId, request.kind);
     if (!provider.listCategories) return { categories: [] };
     const categories = await this.callProvider(
@@ -184,7 +188,9 @@ export class PluginMarketplaceService {
     };
   }
 
-  async checkUpdates(request: MarketplaceUpdateCheckRequest): Promise<MarketplaceUpdateCheckResult> {
+  async checkUpdates(
+    request: MarketplaceUpdateCheckRequest,
+  ): Promise<MarketplaceUpdateCheckResult> {
     const runtimeInstalled = new Map(request.installed.map(item => [item.id.toLowerCase(), item]));
     const persisted = this.installRegistry
       .list(request.kind)
@@ -243,7 +249,11 @@ export class PluginMarketplaceService {
               Boolean(normalized.runtimeId) &&
               entry.runtimeId?.toLowerCase() === normalized.runtimeId?.toLowerCase()),
         );
-        const installedId = (normalized.runtimeId || matched?.runtimeId || normalized.id).toLowerCase();
+        const installedId = (
+          normalized.runtimeId ||
+          matched?.runtimeId ||
+          normalized.id
+        ).toLowerCase();
         if (
           normalized.installState !== MarketplaceInstallState.UPDATE_AVAILABLE ||
           !matched ||

@@ -22,6 +22,7 @@ import { registerMarketplaceHandlers } from './marketplace';
 
 const createPluginManager = () =>
   ({
+    resolveMarketplaceInstalled: vi.fn(() => []),
     listMarketplaceSources: vi.fn(() => []),
     listMarketplaceCategories: vi.fn(async () => ({ categories: [] })),
     searchMarketplace: vi.fn(async () => ({ items: [] })),
@@ -39,10 +40,13 @@ test('rejects malformed marketplace search input before calling the manager', as
   const manager = createPluginManager();
   registerMarketplaceHandlers(manager);
 
-  const response = await handlers.get(MarketplaceIpc.Search)?.({}, {
-    kind: PluginKind.SKILL,
-    query: { unexpected: true },
-  });
+  const response = await handlers.get(MarketplaceIpc.Search)?.(
+    {},
+    {
+      kind: PluginKind.SKILL,
+      query: { unexpected: true },
+    },
+  );
 
   expect(response).toEqual({
     success: false,
@@ -72,15 +76,18 @@ test('constructs a narrow validated install request', async () => {
   const manager = createPluginManager();
   registerMarketplaceHandlers(manager);
 
-  await handlers.get(MarketplaceIpc.Install)?.({}, {
-    sourceId: ' enterprise ',
-    pluginId: ' writer ',
-    kind: PluginKind.SKILL,
-    version: ' 1.2.3 ',
-    operation: MarketplaceInstallOperation.UPDATE,
-    force: true,
-    arbitrary: 'ignored',
-  });
+  await handlers.get(MarketplaceIpc.Install)?.(
+    {},
+    {
+      sourceId: ' enterprise ',
+      pluginId: ' writer ',
+      kind: PluginKind.SKILL,
+      version: ' 1.2.3 ',
+      operation: MarketplaceInstallOperation.UPDATE,
+      force: true,
+      arbitrary: 'ignored',
+    },
+  );
 
   expect(manager.installFromMarketplace).toHaveBeenCalledWith({
     sourceId: 'enterprise',
@@ -116,11 +123,14 @@ test('projects successful install results onto the public response contract', as
   });
   registerMarketplaceHandlers(manager);
 
-  const response = await handlers.get(MarketplaceIpc.Install)?.({}, {
-    sourceId: 'enterprise',
-    pluginId: 'writer',
-    kind: PluginKind.SKILL,
-  });
+  const response = await handlers.get(MarketplaceIpc.Install)?.(
+    {},
+    {
+      sourceId: 'enterprise',
+      pluginId: 'writer',
+      kind: PluginKind.SKILL,
+    },
+  );
 
   expect(response).toEqual({
     success: true,
@@ -138,11 +148,14 @@ test('does not expose internal installation failure details', async () => {
   });
   registerMarketplaceHandlers(manager);
 
-  const response = await handlers.get(MarketplaceIpc.Install)?.({}, {
-    sourceId: 'enterprise',
-    pluginId: 'writer',
-    kind: PluginKind.SKILL,
-  });
+  const response = await handlers.get(MarketplaceIpc.Install)?.(
+    {},
+    {
+      sourceId: 'enterprise',
+      pluginId: 'writer',
+      kind: PluginKind.SKILL,
+    },
+  );
 
   expect(response).toEqual({
     success: false,
@@ -156,15 +169,21 @@ test('constructs narrow category list and filtered search requests', async () =>
   const manager = createPluginManager();
   registerMarketplaceHandlers(manager);
 
-  await handlers.get(MarketplaceIpc.ListCategories)?.({}, {
-    sourceId: ' enterprise ',
-    kind: PluginKind.SKILL,
-    ignored: true,
-  });
-  await handlers.get(MarketplaceIpc.Search)?.({}, {
-    kind: PluginKind.SKILL,
-    categoryId: ' development ',
-  });
+  await handlers.get(MarketplaceIpc.ListCategories)?.(
+    {},
+    {
+      sourceId: ' enterprise ',
+      kind: PluginKind.SKILL,
+      ignored: true,
+    },
+  );
+  await handlers.get(MarketplaceIpc.Search)?.(
+    {},
+    {
+      kind: PluginKind.SKILL,
+      categoryId: ' development ',
+    },
+  );
 
   expect(manager.listMarketplaceCategories).toHaveBeenCalledWith({
     sourceId: 'enterprise',
@@ -184,14 +203,43 @@ test('constructs a narrow validated update-check request', async () => {
   const manager = createPluginManager();
   registerMarketplaceHandlers(manager);
 
-  await handlers.get(MarketplaceIpc.CheckUpdates)?.({}, {
-    kind: PluginKind.SKILL,
-    installed: [{ id: ' writer ', version: ' 1.2.3 ', ignored: true }],
-    ignored: true,
-  });
+  await handlers.get(MarketplaceIpc.CheckUpdates)?.(
+    {},
+    {
+      kind: PluginKind.SKILL,
+      installed: [{ id: ' writer ', version: ' 1.2.3 ', ignored: true }],
+      ignored: true,
+    },
+  );
 
   expect(manager.checkMarketplaceUpdates).toHaveBeenCalledWith({
     kind: PluginKind.SKILL,
     installed: [{ id: 'writer', version: '1.2.3' }],
   });
+});
+
+test('validates inventory reconciliation and strips unrelated fields', async () => {
+  const manager = createPluginManager();
+  registerMarketplaceHandlers(manager);
+  const request = {
+    kind: PluginKind.SKILL,
+    installed: [{ id: ' writer ', installPath: ' /skills/writer ', secret: 'discard' }],
+  };
+  expect(await handlers.get(MarketplaceIpc.ResolveInstalled)?.({}, request)).toEqual({
+    success: true,
+    installations: [],
+  });
+  expect(manager.resolveMarketplaceInstalled).toHaveBeenCalledWith({
+    kind: PluginKind.SKILL,
+    installed: [{ id: 'writer', installPath: '/skills/writer' }],
+  });
+  const invalid = await handlers.get(MarketplaceIpc.ResolveInstalled)?.(
+    {},
+    { kind: PluginKind.SKILL, installed: [{ id: 'writer', installPath: {} }] },
+  );
+  expect(invalid).toMatchObject({
+    success: false,
+    errorCode: MarketplaceErrorCode.INVALID_REQUEST,
+  });
+  expect(manager.resolveMarketplaceInstalled).toHaveBeenCalledTimes(1);
 });

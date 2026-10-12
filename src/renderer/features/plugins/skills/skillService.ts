@@ -194,6 +194,10 @@ class SkillService {
     return this.gatewayOffline;
   }
 
+  hasInventoryReadFailed(): boolean {
+    return this.inventoryReadFailed;
+  }
+
   setSkillEnabled(id: string, enabled: boolean): Promise<Skill[]> {
     const existing = this.pendingSkillUpdates.get(id);
     if (existing?.enabled === enabled) return existing.promise;

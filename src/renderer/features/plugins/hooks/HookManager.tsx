@@ -448,7 +448,7 @@ const HookManager: React.FC<HookManagerProps> = ({
                         {i18nService.t('noHooksAvailable')}
                       </p>
                     ) : (
-                      <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
+                      <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
                         {group.hooks.map((hook, visualIndex) => {
                           const missingSummary = getMissingSummary(hook);
                           return (

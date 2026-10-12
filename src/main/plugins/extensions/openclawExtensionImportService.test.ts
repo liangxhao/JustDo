@@ -24,6 +24,99 @@ describe('OpenClawExtensionImportService', () => {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   });
 
+  it.each([0, 1])(
+    'reports commit evidence only after native install succeeds (exit: %s)',
+    async exitCode => {
+      const sourceDir = path.join(fixtureRoot, 'source');
+      const stateDir = path.join(fixtureRoot, 'state');
+      fs.mkdirSync(sourceDir);
+      fs.mkdirSync(stateDir);
+      fs.writeFileSync(
+        path.join(sourceDir, 'openclaw.plugin.json'),
+        JSON.stringify({
+          id: 'demo',
+          configSchema: { type: 'object' },
+        }),
+      );
+      const manager = {
+        getStatus: () => ({ phase: 'running' }),
+        getBaseDir: () => fixtureRoot,
+        getStateDir: () => stateDir,
+        getConfigPath: () => path.join(stateDir, 'openclaw.json'),
+        buildCliEnvironment: async () => ({
+          env: { OPENCLAW_STATE_DIR: stateDir },
+          runtimeRoot: fixtureRoot,
+          openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
+        }),
+      } as unknown as OpenClawEngineManager;
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () => manager,
+        runCommand: vi
+          .fn()
+          .mockResolvedValue({ exitCode, stdout: '', stderr: 'synthetic failure' }),
+        restartGatewayAfterMutation: vi.fn().mockResolvedValue({ phase: 'error' }),
+      });
+
+      const result = await service.importPath(sourceDir);
+
+      expect(result).toMatchObject({ success: false, extensionId: 'demo' });
+      expect(result.installationCommitted).toBe(exitCode === 0 ? true : undefined);
+    },
+  );
+
+  it.each([false, true])(
+    'preserves existing activation policy during an update (enabled: %s)',
+    async enabled => {
+      const sourceDir = path.join(fixtureRoot, 'source');
+      const stateDir = path.join(fixtureRoot, 'state');
+      fs.mkdirSync(sourceDir);
+      fs.mkdirSync(stateDir);
+      fs.writeFileSync(
+        path.join(sourceDir, 'openclaw.plugin.json'),
+        JSON.stringify({ id: 'demo', configSchema: { type: 'object' } }),
+      );
+      const configPath = path.join(stateDir, 'openclaw.json');
+      const config = {
+        plugins: {
+          allow: enabled ? ['demo'] : [],
+          deny: enabled ? [] : ['demo'],
+          entries: { demo: { enabled } },
+        },
+      };
+      fs.writeFileSync(configPath, JSON.stringify(config));
+      const manager = {
+        getStatus: () => ({ phase: 'ready' }),
+        getBaseDir: () => fixtureRoot,
+        getStateDir: () => stateDir,
+        getConfigPath: () => configPath,
+        buildCliEnvironment: async () => ({
+          env: { OPENCLAW_STATE_DIR: stateDir },
+          runtimeRoot: fixtureRoot,
+          openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
+        }),
+      } as unknown as OpenClawEngineManager;
+      const runCommand = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () => manager,
+        runCommand,
+      });
+
+      await expect(
+        service.importPath(sourceDir, undefined, undefined, {
+          trustMarketplaceSource: true,
+          preserveActivation: true,
+        }),
+      ).resolves.toEqual({ success: true, extensionId: 'demo' });
+
+      expect(runCommand).toHaveBeenCalledWith(
+        process.execPath,
+        expect.arrayContaining(['plugins', 'install', '--no-enable']),
+        expect.any(Object),
+      );
+      expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(config);
+    },
+  );
+
   it('routes a wrapped foreign archive through conversion before preparing the runtime', async () => {
     const sourceDir = path.join(fixtureRoot, 'foreign');
     fs.mkdirSync(path.join(sourceDir, '.codex-plugin'), { recursive: true });

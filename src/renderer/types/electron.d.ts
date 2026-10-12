@@ -449,6 +449,8 @@ import type {
   MarketplaceInstallResponse,
   MarketplacePluginKind,
   MarketplaceQuery,
+  MarketplaceResolveRequest,
+  MarketplaceResolveResponse,
   MarketplaceSearchResponse,
   MarketplaceSourcesResponse,
   MarketplaceUpdateCheckRequest,
@@ -562,6 +564,7 @@ interface IElectronAPI {
     remove: (key: string) => Promise<void>;
   };
   marketplace: {
+    resolveInstalled: (request: MarketplaceResolveRequest) => Promise<MarketplaceResolveResponse>;
     listSources: (kind?: MarketplacePluginKind) => Promise<MarketplaceSourcesResponse>;
     listCategories: (request: MarketplaceCategoryRequest) => Promise<MarketplaceCategoriesResponse>;
     search: (query: MarketplaceQuery) => Promise<MarketplaceSearchResponse>;

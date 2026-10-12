@@ -1,9 +1,9 @@
 import fs from 'fs';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import { PluginKind } from '../../../shared/plugins/marketplace';
+import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
 import type { GatewaySkillEntry, GatewaySkillStatus } from '../../engine/types';
-import { PluginInstallationService } from '../../plugins/installation';
+import { PluginInstallationService, PluginInstallOrigin } from '../../plugins/installation';
 import { OpenClawSkillService } from '../../plugins/skills';
 import { SkillStateConfirmationError } from '../../plugins/skills/openclawSkillService';
 
@@ -806,3 +806,31 @@ test('keeps an enabled skill enabled when unrelated requirements are missing', a
     skills: [{ enabled: true, eligible: false }],
   });
 });
+
+test.each([PluginInstallOrigin.CUSTOM, PluginInstallOrigin.MARKETPLACE])(
+  'only relinquishes market ownership for a committed local skill replacement: %s',
+  async origin => {
+    const installationService = new PluginInstallationService();
+    const forget = vi.fn();
+    registerSkillHandlers({
+      skillService: {
+        getStatus: vi.fn(async () => createStatus(createSkill('openclaw-managed'))),
+      } as unknown as OpenClawSkillService,
+      skillFileService: {
+        importPath: vi.fn(async () => ({ success: true, skillId: 'example' })),
+        deleteDirectory: vi.fn(),
+        getManagedSkillPath: () => 'C:/skills/example',
+      },
+      installationService,
+      onMarketplacePluginDeleted: forget,
+    });
+    await installationService.install({
+      operation: MarketplaceInstallOperation.INSTALL,
+      origin,
+      payload: { kind: PluginKind.SKILL, sourcePath: 'C:/source' },
+    });
+    if (origin === PluginInstallOrigin.CUSTOM)
+      expect(forget).toHaveBeenCalledWith(PluginKind.SKILL, 'example', 'C:/skills/example');
+    else expect(forget).not.toHaveBeenCalled();
+  },
+);

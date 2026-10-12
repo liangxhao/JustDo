@@ -72,12 +72,34 @@ export const registerExtensionHandlers = ({
         request.payload.sourcePath,
         request.onProgress,
         request.payload.reviewToken,
-        { trustMarketplaceSource: request.origin === PluginInstallOrigin.MARKETPLACE },
+        {
+          trustMarketplaceSource: request.origin === PluginInstallOrigin.MARKETPLACE,
+          preserveActivation: request.operation === MarketplaceInstallOperation.UPDATE,
+        },
       );
+      if (
+        (result.success || result.installationCommitted) &&
+        result.extensionId &&
+        request.origin === PluginInstallOrigin.CUSTOM
+      ) {
+        // A local replacement no longer belongs to the previous marketplace installation.
+        onMarketplacePluginDeleted?.(PluginKind.EXTENSION, result.extensionId);
+      }
       if (result.extensionId) await publishExtensionState(result.extensionId);
+      let installPath: string | undefined;
+      if (result.success && result.extensionId) {
+        try {
+          installPath = extensionImportService
+            .listInstalled()
+            .find(extension => extension.id === result.extensionId)?.installPath;
+        } catch {
+          console.warn('[Extensions] Installation committed, but its path could not be resolved');
+        }
+      }
       return {
         success: result.success,
         pluginId: result.extensionId,
+        installPath,
         failedStage: result.failedStage,
         error: result.error,
         capabilityReview: result.capabilityReview,

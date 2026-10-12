@@ -12,6 +12,7 @@ interface PluginGroupSectionProps {
   forceExpanded?: boolean;
   action?: React.ReactNode;
   children: React.ReactNode;
+  hideHeader?: boolean;
 }
 
 const PluginGroupSection: React.FC<PluginGroupSectionProps> = ({
@@ -23,6 +24,7 @@ const PluginGroupSection: React.FC<PluginGroupSectionProps> = ({
   forceExpanded = false,
   action,
   children,
+  hideHeader = false,
 }) => {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const effectiveExpanded = forceExpanded || expanded;
@@ -56,7 +58,7 @@ const PluginGroupSection: React.FC<PluginGroupSectionProps> = ({
 
   return (
     <section>
-      {canCollapse ? (
+      {hideHeader ? null : canCollapse ? (
         <button
           type="button"
           className="group mb-2.5 flex w-full min-w-0 flex-wrap items-center gap-2 text-left"
@@ -72,7 +74,7 @@ const PluginGroupSection: React.FC<PluginGroupSectionProps> = ({
       ) : (
         <div className="mb-2.5 flex min-w-0 flex-wrap items-center gap-2">{header}</div>
       )}
-      <div id={contentId} hidden={!effectiveExpanded}>
+      <div id={contentId} hidden={!hideHeader && !effectiveExpanded}>
         {children}
       </div>
     </section>

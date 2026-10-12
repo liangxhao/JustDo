@@ -28,7 +28,16 @@ import {
   groupExtensionsByOwnership,
 } from '@/features/plugins/extensions/extensionGroups';
 import { getExtensionManagementLabel } from '@/features/plugins/extensions/extensionManagementLabel';
-import MarketplaceView from '@/features/plugins/marketplace/MarketplaceView';
+import {
+  InstalledMarketplaceAction,
+  MarketplaceFeedback,
+} from '@/features/plugins/marketplace/MarketplaceActions';
+import MarketplaceToolbar from '@/features/plugins/marketplace/MarketplaceToolbar';
+import { MarketplaceResults } from '@/features/plugins/marketplace/MarketplaceView';
+import {
+  MarketplaceFilter,
+  usePluginMarketplace,
+} from '@/features/plugins/marketplace/usePluginMarketplace';
 import OperationResultModal, {
   type OperationResult,
 } from '@/features/plugins/shared/OperationResultModal';
@@ -39,7 +48,6 @@ import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownD
 import PluginStateButton, {
   PluginLockedIndicator,
 } from '@/features/plugins/shared/PluginStateButton';
-import PluginUpdateIndicator from '@/features/plugins/shared/PluginUpdateIndicator';
 import { i18nService } from '@/services/i18n';
 import PuzzleIcon from '@/shared/components/icons/PuzzleIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
@@ -139,6 +147,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   const [actionOutcome, setActionOutcome] = useState<OperationResult | null>(null);
   const [extensions, setExtensions] = useState<InstalledOpenClawExtension[]>([]);
   const [loadingExtensions, setLoadingExtensions] = useState(true);
+  const [inventoryReady, setInventoryReady] = useState(false);
   const inventoryGeneration = useRef(0);
   const inventoryMounted = useRef(false);
   const latestInventoryRead = useRef<Promise<InstalledOpenClawExtension[] | null> | null>(null);
@@ -147,7 +156,6 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   const [pendingDelete, setPendingDelete] = useState<InstalledOpenClawExtension | null>(null);
   const [deletingExtensionId, setDeletingExtensionId] = useState<string | null>(null);
   const [togglingExtensionId, setTogglingExtensionId] = useState<string | null>(null);
-  const [marketplaceUpdateIds, setMarketplaceUpdateIds] = useState<Set<string>>(() => new Set());
   const [pendingCapabilityReview, setPendingCapabilityReview] = useState<
     | {
         kind: 'toggle';
@@ -175,7 +183,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   const [configurationSaved, setConfigurationSaved] = useState(false);
   const [configurationPending, setConfigurationPending] = useState(false);
   const [savingConfiguration, setSavingConfiguration] = useState(false);
-  const extensionActionBusy =
+  const localExtensionActionBusy =
     importing ||
     deletingExtensionId !== null ||
     togglingExtensionId !== null ||
@@ -191,9 +199,11 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         if (!isCurrent()) return inventoryMounted.current ? latestInventoryRead.current : null;
         if (!result.success) throw new Error(result.error || i18nService.t('extensionListFailed'));
         setExtensions(result.extensions);
+        setInventoryReady(true);
         return result.extensions;
       } catch (error) {
         if (!isCurrent()) return inventoryMounted.current ? latestInventoryRead.current : null;
+        setInventoryReady(false);
         setActionOutcome({
           type: 'error',
           title: i18nService.t('extensionListFailed'),
@@ -247,24 +257,37 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     return () => window.clearInterval(timer);
   }, [importing]);
 
-  const filteredExtensions = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return extensions;
-    return extensions.filter(
-      extension =>
-        extension.name.toLowerCase().includes(query) ||
-        extension.id.toLowerCase().includes(query) ||
-        extension.description.toLowerCase().includes(query),
-    );
-  }, [extensions, searchQuery]);
   const installedMarketplaceExtensions = useMemo(
     () =>
       extensions.map(extension => ({
         id: extension.id,
         version: extension.version,
+        installPath: extension.installPath,
         updateEligible: !extension.managed && extension.origin !== 'bundled',
       })),
     [extensions],
+  );
+  const marketplace = usePluginMarketplace({
+    kind: PluginKind.EXTENSION,
+    installed: installedMarketplaceExtensions,
+    inventoryReady,
+    searchQuery: searchQuery,
+    readOnly: localExtensionActionBusy,
+    onInstalled: async () => {
+      if (!(await loadExtensions())) throw new Error('Inventory unavailable');
+    },
+  });
+
+  const extensionActionBusy =
+    localExtensionActionBusy ||
+    Object.values(marketplace.operations).some(operation => operation.busy);
+  const filteredExtensions = extensions.filter(extension =>
+    marketplace.matchesInstalled(
+      extension.id,
+      [extension.name, extension.id, extension.description].some(value =>
+        value.toLowerCase().includes(searchQuery.trim().toLowerCase()),
+      ),
+    ),
   );
   const groupedExtensions = useMemo(
     () => groupExtensionsByOwnership(filteredExtensions),
@@ -661,6 +684,143 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     </Tooltip>
   );
 
+  const renderInstalledCard = (extension: InstalledOpenClawExtension, visualIndex: number) => {
+    const canToggle = canToggleExtension(extension);
+    return (
+      <article
+        key={extension.id}
+        onClick={() => openExtensionDetails(extension)}
+        className="group relative flex min-h-16 min-w-0 cursor-pointer flex-col rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-border/70 hover:bg-surface-raised/70"
+      >
+        <button
+          type="button"
+          className="absolute inset-0 z-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
+          aria-label={`${i18nService.t('subtaskShowInfo')}: ${extension.name}`}
+          onClick={event => {
+            event.stopPropagation();
+            openExtensionDetails(extension);
+          }}
+        />
+        <div className="pointer-events-none relative z-10 flex items-center justify-between gap-2 [&_button]:pointer-events-auto">
+          <div className="flex min-w-0 items-center gap-2">
+            <div
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${getPluginArtworkTone(`extensions:${extension.origin}`, visualIndex)}`}
+            >
+              <PuzzleIcon className="h-4 w-4" />
+            </div>
+            <h3 className="truncate text-sm font-medium text-foreground">{extension.name}</h3>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <InstalledMarketplaceAction
+              controller={marketplace}
+              id={extension.id}
+              disabled={extensionActionBusy}
+            />
+            {extension.id === 'agent-team' && (
+              <>
+                <button
+                  type="button"
+                  className="pointer-events-auto rounded-lg p-1.5 text-secondary hover:bg-surface-raised"
+                  aria-label={i18nService.t('teamAllRecords')}
+                  title={i18nService.t('teamAllRecords')}
+                  onClick={event => {
+                    event.stopPropagation();
+                    openTeamRecords();
+                  }}
+                >
+                  <ClockIcon className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  className="pointer-events-auto rounded-lg p-1.5 text-secondary hover:bg-surface-raised"
+                  aria-label={i18nService.t('agentTeamSettings')}
+                  title={i18nService.t('agentTeamSettings')}
+                  onClick={event => {
+                    event.stopPropagation();
+                    setTeamSettingsOpen(true);
+                  }}
+                >
+                  <Cog6ToothIcon className="h-4 w-4" />
+                </button>
+              </>
+            )}
+            {canToggle ? (
+              <ExtensionToggle
+                extension={extension}
+                canToggle
+                pending={togglingExtensionId === extension.id}
+                busy={extensionActionBusy || Boolean(marketplace.operationFor(extension.id)?.busy)}
+                onToggle={() => void handleToggleExtension(extension)}
+              />
+            ) : (
+              <PluginLockedIndicator
+                checked={extension.enabled}
+                label={getExtensionManagementLabel(extension)}
+              />
+            )}
+            {extension.error ? (
+              <Tooltip
+                content={extension.error}
+                position="bottom"
+                maxWidth="360px"
+                className="pointer-events-auto"
+                renderInPortal
+                dismissOnClick
+              >
+                <button
+                  type="button"
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-red-500 focus:outline-none focus:ring-2 focus:ring-primary"
+                  aria-label={extension.error}
+                  onClick={event => {
+                    event.stopPropagation();
+                    openExtensionDetails(extension);
+                  }}
+                >
+                  <ExclamationTriangleIcon className="h-4 w-4" />
+                </button>
+              </Tooltip>
+            ) : extension.missingRequirements.length > 0 ? (
+              <Tooltip
+                content={i18nService.t('extensionMissingConfiguration')}
+                position="top"
+                className="pointer-events-auto"
+                renderInPortal
+                dismissOnClick
+              >
+                <button
+                  type="button"
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-amber-600 dark:text-amber-400 focus:outline-none focus:ring-2 focus:ring-primary"
+                  aria-label={i18nService.t('extensionMissingConfiguration')}
+                  onClick={event => {
+                    event.stopPropagation();
+                    openExtensionDetails(extension);
+                  }}
+                >
+                  <ExclamationTriangleIcon className="h-4 w-4" />
+                </button>
+              </Tooltip>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="pointer-events-none relative z-10 ml-10 min-w-0 pr-2">
+          {extension.description && (
+            <Tooltip
+              content={extension.description}
+              position="bottom"
+              maxWidth="360px"
+              className="pointer-events-auto block w-full"
+              renderInPortal
+            >
+              <p className="truncate text-xs text-secondary">{extension.description}</p>
+            </Tooltip>
+          )}
+        </div>
+        <MarketplaceFeedback controller={marketplace} id={extension.id} />
+      </article>
+    );
+  };
+
   return (
     <div className="space-y-4">
       {importing && importProgress && (
@@ -690,216 +850,75 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         </div>
       )}
 
-      {visibility !== 'available' && (
-        <section className="space-y-4">
-          <div className="space-y-4">
-            {sharedSearchQuery === undefined && (
-              <div className="relative min-w-0 sm:max-w-md">
-                <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
-                <input
-                  type="text"
-                  placeholder={i18nService.t('searchExtensions')}
-                  value={searchQuery}
-                  onChange={event => setLocalSearchQuery(event.target.value)}
-                  className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm text-foreground placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary"
-                />
-              </div>
-            )}
-
-            {loadingExtensions ? (
-              <div className="py-10 text-center text-sm text-secondary">
-                {i18nService.t('loading')}
-              </div>
-            ) : filteredExtensions.length === 0 && searchQuery.trim() ? (
-              <div className="flex min-h-64 items-center justify-center rounded-xl border border-dashed border-border bg-surface/40 px-4 py-10 text-center">
-                <div className="max-w-md space-y-3">
-                  <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-surface-raised text-secondary">
-                    <PuzzleIcon className="h-5 w-5" />
-                  </div>
-                  <h3 className="text-base font-semibold text-foreground">
-                    {searchQuery
-                      ? i18nService.t('noExtensionsMatched')
-                      : i18nService.t('noExtensionsInstalled')}
-                  </h3>
+      <MarketplaceToolbar
+        controller={marketplace}
+        hasLocalMatches={filteredExtensions.length > 0}
+      />
+      {visibility !== 'available' &&
+        (marketplace.filter !== MarketplaceFilter.UPDATES ||
+          marketplace.updateById.size > 0 ||
+          marketplace.recentlyUpdated.size > 0) && (
+          <section className="space-y-4">
+            <div className="space-y-4">
+              {sharedSearchQuery === undefined && (
+                <div className="relative min-w-0 sm:max-w-md">
+                  <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
+                  <input
+                    type="text"
+                    placeholder={i18nService.t('searchExtensions')}
+                    value={searchQuery}
+                    onChange={event => setLocalSearchQuery(event.target.value)}
+                    className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm text-foreground placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
                 </div>
-              </div>
-            ) : (
-              <div className="space-y-5">
-                {displayExtensionGroups.map(group => (
-                  <PluginGroupSection
-                    key={group.id}
-                    title={getExtensionGroupLabel(group.id)}
-                    count={group.extensions.length}
-                    action={group.id === ExtensionGroupId.USER ? importExtensionAction : undefined}
-                    collapsible={group.id === ExtensionGroupId.SYSTEM}
-                    defaultExpanded={group.id !== ExtensionGroupId.SYSTEM}
-                    forceExpanded={Boolean(searchQuery.trim())}
-                  >
-                    {group.extensions.length === 0 ? (
-                      <p className="px-2 py-3 text-xs text-secondary">
-                        {i18nService.t('noExtensionsInstalled')}
-                      </p>
-                    ) : (
-                      <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
-                        {group.extensions.map((extension, visualIndex) => {
-                          const canToggle = canToggleExtension(extension);
-                          return (
-                            <article
-                              key={extension.id}
-                              onClick={() => openExtensionDetails(extension)}
-                              className="group relative flex min-h-16 min-w-0 cursor-pointer flex-col rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-border/70 hover:bg-surface-raised/70"
-                            >
-                              <button
-                                type="button"
-                                className="absolute inset-0 z-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
-                                aria-label={`${i18nService.t('subtaskShowInfo')}: ${extension.name}`}
-                                onClick={event => {
-                                  event.stopPropagation();
-                                  openExtensionDetails(extension);
-                                }}
-                              />
-                              <div className="pointer-events-none relative z-10 flex items-center justify-between gap-2 [&_button]:pointer-events-auto">
-                                <div className="flex min-w-0 items-center gap-2">
-                                  <div
-                                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${getPluginArtworkTone(`extensions:${group.id}`, visualIndex)}`}
-                                  >
-                                    <PuzzleIcon className="h-4 w-4" />
-                                  </div>
-                                  <h3 className="truncate text-sm font-medium text-foreground">
-                                    {extension.name}
-                                  </h3>
-                                </div>
-                                <div className="flex shrink-0 items-center gap-1.5">
-                                  {marketplaceUpdateIds.has(extension.id.toLowerCase()) && (
-                                    <PluginUpdateIndicator />
-                                  )}
-                                  {extension.id === 'agent-team' && (
-                                    <>
-                                      <button
-                                        type="button"
-                                        className="pointer-events-auto rounded-lg p-1.5 text-secondary hover:bg-surface-raised"
-                                        aria-label={i18nService.t('teamAllRecords')}
-                                        title={i18nService.t('teamAllRecords')}
-                                        onClick={event => {
-                                          event.stopPropagation();
-                                          openTeamRecords();
-                                        }}
-                                      >
-                                        <ClockIcon className="h-4 w-4" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="pointer-events-auto rounded-lg p-1.5 text-secondary hover:bg-surface-raised"
-                                        aria-label={i18nService.t('agentTeamSettings')}
-                                        title={i18nService.t('agentTeamSettings')}
-                                        onClick={event => {
-                                          event.stopPropagation();
-                                          setTeamSettingsOpen(true);
-                                        }}
-                                      >
-                                        <Cog6ToothIcon className="h-4 w-4" />
-                                      </button>
-                                    </>
-                                  )}
-                                  {canToggle ? (
-                                    <ExtensionToggle
-                                      extension={extension}
-                                      canToggle
-                                      pending={togglingExtensionId === extension.id}
-                                      busy={extensionActionBusy}
-                                      onToggle={() => void handleToggleExtension(extension)}
-                                    />
-                                  ) : (
-                                    <PluginLockedIndicator
-                                      checked={extension.enabled}
-                                      label={getExtensionManagementLabel(extension)}
-                                    />
-                                  )}
-                                  {extension.error ? (
-                                    <Tooltip
-                                      content={extension.error}
-                                      position="bottom"
-                                      maxWidth="360px"
-                                      className="pointer-events-auto"
-                                      renderInPortal
-                                      dismissOnClick
-                                    >
-                                      <button
-                                        type="button"
-                                        className="flex h-6 w-6 items-center justify-center rounded-md text-red-500 focus:outline-none focus:ring-2 focus:ring-primary"
-                                        aria-label={extension.error}
-                                        onClick={event => {
-                                          event.stopPropagation();
-                                          openExtensionDetails(extension);
-                                        }}
-                                      >
-                                        <ExclamationTriangleIcon className="h-4 w-4" />
-                                      </button>
-                                    </Tooltip>
-                                  ) : extension.missingRequirements.length > 0 ? (
-                                    <Tooltip
-                                      content={i18nService.t('extensionMissingConfiguration')}
-                                      position="top"
-                                      className="pointer-events-auto"
-                                      renderInPortal
-                                      dismissOnClick
-                                    >
-                                      <button
-                                        type="button"
-                                        className="flex h-6 w-6 items-center justify-center rounded-md text-amber-600 dark:text-amber-400 focus:outline-none focus:ring-2 focus:ring-primary"
-                                        aria-label={i18nService.t('extensionMissingConfiguration')}
-                                        onClick={event => {
-                                          event.stopPropagation();
-                                          openExtensionDetails(extension);
-                                        }}
-                                      >
-                                        <ExclamationTriangleIcon className="h-4 w-4" />
-                                      </button>
-                                    </Tooltip>
-                                  ) : null}
-                                </div>
-                              </div>
+              )}
 
-                              <div className="pointer-events-none relative z-10 ml-10 min-w-0 pr-2">
-                                {extension.description && (
-                                  <Tooltip
-                                    content={extension.description}
-                                    position="bottom"
-                                    maxWidth="360px"
-                                    className="pointer-events-auto block w-full"
-                                    renderInPortal
-                                  >
-                                    <p className="truncate text-xs text-secondary">
-                                      {extension.description}
-                                    </p>
-                                  </Tooltip>
-                                )}
-                              </div>
-                            </article>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </PluginGroupSection>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-      )}
+              {loadingExtensions ? (
+                <div className="py-10 text-center text-sm text-secondary">
+                  {i18nService.t('loading')}
+                </div>
+              ) : filteredExtensions.length === 0 && searchQuery.trim() ? null : (
+                <div className="space-y-5">
+                  {displayExtensionGroups.map(group => (
+                    <PluginGroupSection
+                      hideHeader={Boolean(searchQuery.trim())}
+                      key={group.id}
+                      title={getExtensionGroupLabel(group.id)}
+                      count={group.extensions.length}
+                      action={
+                        group.id === ExtensionGroupId.USER ? importExtensionAction : undefined
+                      }
+                      collapsible={group.id === ExtensionGroupId.SYSTEM}
+                      defaultExpanded={group.id !== ExtensionGroupId.SYSTEM}
+                      forceExpanded={Boolean(searchQuery.trim())}
+                    >
+                      {group.extensions.length === 0 ? (
+                        <p className="px-2 py-3 text-xs text-secondary">
+                          {i18nService.t('noExtensionsInstalled')}
+                        </p>
+                      ) : (
+                        <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
+                          {group.extensions.map(renderInstalledCard)}
+                        </div>
+                      )}
+                    </PluginGroupSection>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
       {visibility !== 'installed' && (
-        <section className="border-t border-border pt-6">
-          <MarketplaceView
-            kind={PluginKind.EXTENSION}
+        <section className={searchQuery.trim() ? '' : 'border-t border-border pt-6'}>
+          <MarketplaceResults
+            hasLocalMatches={filteredExtensions.length > 0}
+            controller={marketplace}
             icon={<PuzzleIcon className="h-4 w-4" />}
-            installed={installedMarketplaceExtensions}
-            onUpdateIdsChange={setMarketplaceUpdateIds}
-            onInstalled={async () => {
-              await loadExtensions();
+            renderInstalled={(id, index) => {
+              const entry = extensions.find(item => item.id === id);
+              return entry ? renderInstalledCard(entry, index) : null;
             }}
-            searchQuery={searchQuery}
-            availableOnly={visibility === 'available'}
           />
         </section>
       )}

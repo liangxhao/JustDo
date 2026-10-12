@@ -5,7 +5,16 @@ import { DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS } from '@shared/plugins/mcp';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
-import MarketplaceView from '@/features/plugins/marketplace/MarketplaceView';
+import {
+  InstalledMarketplaceAction,
+  MarketplaceFeedback,
+} from '@/features/plugins/marketplace/MarketplaceActions';
+import MarketplaceToolbar from '@/features/plugins/marketplace/MarketplaceToolbar';
+import { MarketplaceResults } from '@/features/plugins/marketplace/MarketplaceView';
+import {
+  MarketplaceFilter,
+  usePluginMarketplace,
+} from '@/features/plugins/marketplace/usePluginMarketplace';
 import ExtensionMcpCard from '@/features/plugins/mcp/ExtensionMcpCard';
 import {
   ExtensionProvidedMcpServer,
@@ -27,7 +36,6 @@ import PluginGroupSection from '@/features/plugins/shared/PluginGroupSection';
 import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubTypes';
 import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownDescription';
 import PluginStateButton from '@/features/plugins/shared/PluginStateButton';
-import PluginUpdateIndicator from '@/features/plugins/shared/PluginUpdateIndicator';
 import { i18nService } from '@/services/i18n';
 import ClockIcon from '@/shared/components/icons/ClockIcon';
 import ConnectorIcon from '@/shared/components/icons/ConnectorIcon';
@@ -166,7 +174,6 @@ const McpManager: React.FC<McpManagerProps> = ({
   const [pendingDelete, setPendingDelete] = useState<McpServerConfig | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [updatingServerIds, setUpdatingServerIds] = useState<Set<string>>(() => new Set());
-  const [marketplaceUpdateIds, setMarketplaceUpdateIds] = useState<Set<string>>(() => new Set());
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingServer, setEditingServer] = useState<McpServerConfig | null>(null);
   const [installingRegistry, setInstallingRegistry] = useState<McpRegistryEntry | null>(null);
@@ -329,18 +336,37 @@ const McpManager: React.FC<McpManagerProps> = ({
     return null;
   };
 
-  const filteredInstalled = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return servers;
-    return servers.filter(
-      server =>
-        server.name.toLowerCase().includes(query) ||
-        getInstalledDescription(server).toLowerCase().includes(query),
-    );
-  }, [servers, searchQuery, getInstalledDescription]);
+  const installedMarketplaceServers = useMemo(
+    () =>
+      servers.map(server => ({
+        id: server.id,
+        updateEligible: true,
+      })),
+    [servers],
+  );
+  const marketplace = usePluginMarketplace({
+    kind: PluginKind.MCP,
+    installed: installedMarketplaceServers,
+    inventoryReady: !isLoadingServers && !serverLoadFailed,
+    searchQuery: searchQuery,
+    onInstalled: async () => {
+      dispatch(setMcpServers(await mcpService.loadServers()));
+      if (mounted.current) setServerLoadFailed(mcpService.hasServerLoadFailed());
+      if (mcpService.hasServerLoadFailed()) throw new Error('Inventory unavailable');
+    },
+  });
 
+  const filteredInstalled = servers.filter(server =>
+    marketplace.matchesInstalled(
+      server.id,
+      [server.id, server.name, getInstalledDescription(server)].some(value =>
+        value.toLowerCase().includes(searchQuery.trim().toLowerCase()),
+      ),
+    ),
+  );
   const filteredExtensionServers = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
+    if (marketplace.filter === MarketplaceFilter.UPDATES) return [];
     if (!query) return extensionServers;
     return extensionServers.filter(
       server =>
@@ -348,7 +374,7 @@ const McpManager: React.FC<McpManagerProps> = ({
         server.providerName.toLowerCase().includes(query) ||
         server.providerDescription.toLowerCase().includes(query),
     );
-  }, [extensionServers, searchQuery]);
+  }, [extensionServers, searchQuery, marketplace.filter]);
   const userExtensionServers = filteredExtensionServers.filter(
     server => server.scope !== PluginHubScope.SYSTEM,
   );
@@ -360,14 +386,6 @@ const McpManager: React.FC<McpManagerProps> = ({
     ...servers,
     ...extensionServers.filter(server => server.enabled && server.supported),
   ];
-  const installedMarketplaceServers = useMemo(
-    () =>
-      servers.map(server => ({
-        id: server.registryId || server.id,
-        updateEligible: Boolean(server.registryId),
-      })),
-    [servers],
-  );
 
   const reconcileFailedMutation = async (generation: number) => {
     if (!mounted.current || generation !== inventoryReadGeneration.current) return;
@@ -378,6 +396,7 @@ const McpManager: React.FC<McpManagerProps> = ({
   };
 
   const handleToggleEnabled = async (serverId: string) => {
+    if (marketplace.operationFor(serverId)?.busy) return;
     if (updatingServerIds.has(serverId)) return;
     const targetServer = servers.find(s => s.id === serverId);
     if (!targetServer) return;
@@ -407,6 +426,7 @@ const McpManager: React.FC<McpManagerProps> = ({
   };
 
   const handleRequestDelete = (server: McpServerConfig) => {
+    if (marketplace.operationFor(server.id)?.busy) return;
     setActionError('');
     setPendingDelete(server);
   };
@@ -782,6 +802,104 @@ const McpManager: React.FC<McpManagerProps> = ({
     </div>
   );
 
+  const renderInstalledCard = (server: McpServerConfig, visualIndex: number) => {
+    const registryEntry = getRegistryEntryForServer(server);
+    const installedDescription = getInstalledDescription(server);
+    const statusLabel = getServerStatusLabel(server);
+    const statusClass = getServerStatusClass(server);
+    return (
+      <div
+        key={server.id}
+        className="group min-h-16 min-w-0 rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-border/70 hover:bg-surface-raised/70"
+      >
+        <div className="flex items-start justify-between mb-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div
+              className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${getPluginArtworkTone('mcp:user', visualIndex)}`}
+            >
+              <ConnectorIcon className="h-4 w-4" />
+            </div>
+            <span className="text-sm font-medium text-foreground truncate">{server.name}</span>
+          </div>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <InstalledMarketplaceAction
+              controller={marketplace}
+              id={server.id}
+              disabled={
+                updatingServerIds.has(server.id) || marketplace.operationFor(server.id)?.busy
+              }
+            />
+            <button
+              type="button"
+              disabled={marketplace.operationFor(server.id)?.busy}
+              onClick={() => void handleOpenEditForm(server)}
+              className="p-1 rounded-lg text-secondary hover:text-primary dark:hover:text-primary transition-colors"
+              title={i18nService.t('editMcpServer')}
+            >
+              <PencilIcon className="h-3.5 w-3.5" />
+            </button>
+            <PluginStateButton
+              checked={server.enabled}
+              label={i18nService.t(server.enabled ? 'disableMcpServer' : 'enableMcpServer')}
+              disabled={
+                updatingServerIds.has(server.id) || marketplace.operationFor(server.id)?.busy
+              }
+              busy={updatingServerIds.has(server.id)}
+              onToggle={() => handleToggleEnabled(server.id)}
+            />
+          </div>
+        </div>
+
+        <Tooltip
+          content={installedDescription}
+          position="bottom"
+          maxWidth="360px"
+          className="block w-full"
+        >
+          <p className="line-clamp-2 text-xs text-secondary">{installedDescription}</p>
+        </Tooltip>
+
+        <div className="mt-3 flex items-center justify-between gap-3 text-[10px] text-secondary">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <span
+              className={`px-1.5 py-0.5 rounded font-medium ${TRANSPORT_BADGE_COLORS[server.transportType] || ''}`}
+            >
+              {server.transportType}
+            </span>
+            {registryEntry?.requiredEnvKeys && registryEntry.requiredEnvKeys.length > 0 && (
+              <>
+                <span>·</span>
+                <span className="text-amber-500 dark:text-amber-400">
+                  {registryEntry.requiredEnvKeys.length} key
+                  {registryEntry.requiredEnvKeys.length > 1 ? 's' : ''}
+                </span>
+              </>
+            )}
+            {statusLabel && statusClass && (
+              <span
+                title={probeResults[server.id]?.error}
+                className={`shrink-0 rounded-full px-2 py-0.5 font-medium ${statusClass}`}
+              >
+                {statusLabel}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => handleProbeServer(server, true)}
+            disabled={probingServerIds.has(server.id)}
+            className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15 disabled:cursor-wait disabled:opacity-60"
+            title={i18nService.t('mcpTestServer')}
+          >
+            <ClockIcon className="h-3.5 w-3.5" />
+            <span>{i18nService.t('mcpTestShort')}</span>
+          </button>
+        </div>
+        <MarketplaceFeedback controller={marketplace} id={server.id} />
+      </div>
+    );
+  };
+
   return (
     <div className="relative space-y-4">
       {/* Sync overlay — blocks ALL interaction (including sidebar) while MCP bridge is refreshing */}
@@ -847,162 +965,99 @@ const McpManager: React.FC<McpManagerProps> = ({
       )}
 
       <div>
-        {visibility !== 'available' && (
-          <section className="space-y-4">
-            <div className="space-y-4">
-              {sharedSearchQuery === undefined && (
-                <div className="relative min-w-0 sm:max-w-md">
-                  <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary" />
-                  <input
-                    type="text"
-                    placeholder={i18nService.t('searchMcpServers')}
-                    value={searchQuery}
-                    onChange={e => setLocalSearchQuery(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2 text-sm rounded-xl bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                </div>
-              )}
-              {isLoadingServers && (
-                <div
-                  className="flex items-center gap-2 px-2 py-3 text-xs text-secondary"
-                  role="status"
-                >
-                  <span
-                    aria-hidden="true"
-                    className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-current/25 border-t-current"
-                  />
-                  {i18nService.t('mcpLoadingServers')}
-                </div>
-              )}
-              {!isLoadingServers &&
-              !serverLoadFailed &&
-              !providerLoadFailed &&
-              filteredInstalled.length === 0 &&
-              filteredExtensionServers.length === 0 &&
-              searchQuery.trim() ? (
-                <div className="py-12 text-center text-sm text-secondary">
-                  {i18nService.t('mcpNoInstalledServers')}
-                </div>
-              ) : (
-                <div className="space-y-6">
-                  {(userServerCount > 0 || !searchQuery.trim()) && (
-                    <PluginGroupSection
-                      title={i18nService.t('pluginGroup.user.label')}
-                      count={userServerCount}
-                      action={userActions}
-                    >
-                      {userServerCount === 0 ? (
-                        !isLoadingServers &&
-                        !serverLoadFailed &&
-                        !providerLoadFailed && (
-                          <p className="px-2 py-3 text-xs text-secondary">
-                            {i18nService.t('mcpNoInstalledServers')}
-                          </p>
-                        )
-                      ) : (
-                        <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
-                          {filteredInstalled.map((server, visualIndex) => {
-                            const registryEntry = getRegistryEntryForServer(server);
-                            const installedDescription = getInstalledDescription(server);
-                            const statusLabel = getServerStatusLabel(server);
-                            const statusClass = getServerStatusClass(server);
-                            return (
-                              <div
+        <MarketplaceToolbar
+          controller={marketplace}
+          hasLocalMatches={filteredInstalled.length + filteredExtensionServers.length > 0}
+        />
+        {visibility !== 'available' &&
+          (marketplace.filter !== MarketplaceFilter.UPDATES ||
+            marketplace.updateById.size > 0 ||
+            marketplace.recentlyUpdated.size > 0) && (
+            <section className="space-y-4">
+              <div className="space-y-4">
+                {sharedSearchQuery === undefined && (
+                  <div className="relative min-w-0 sm:max-w-md">
+                    <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary" />
+                    <input
+                      type="text"
+                      placeholder={i18nService.t('searchMcpServers')}
+                      value={searchQuery}
+                      onChange={e => setLocalSearchQuery(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 text-sm rounded-xl bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                  </div>
+                )}
+                {isLoadingServers && (
+                  <div
+                    className="flex items-center gap-2 px-2 py-3 text-xs text-secondary"
+                    role="status"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-current/25 border-t-current"
+                    />
+                    {i18nService.t('mcpLoadingServers')}
+                  </div>
+                )}
+                {!isLoadingServers &&
+                !serverLoadFailed &&
+                !providerLoadFailed &&
+                filteredInstalled.length === 0 &&
+                filteredExtensionServers.length === 0 &&
+                searchQuery.trim() ? null : (
+                  <div className="space-y-6">
+                    {(userServerCount > 0 || !searchQuery.trim()) && (
+                      <PluginGroupSection
+                        hideHeader={Boolean(searchQuery.trim())}
+                        title={i18nService.t('pluginGroup.user.label')}
+                        count={userServerCount}
+                        action={userActions}
+                      >
+                        {userServerCount === 0 ? (
+                          !isLoadingServers &&
+                          !serverLoadFailed &&
+                          !providerLoadFailed && (
+                            <p className="px-2 py-3 text-xs text-secondary">
+                              {i18nService.t('mcpNoInstalledServers')}
+                            </p>
+                          )
+                        ) : (
+                          <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
+                            {filteredInstalled.map(renderInstalledCard)}
+                            {userExtensionServers.map((server, visualIndex) => (
+                              <ExtensionMcpCard
                                 key={server.id}
-                                className="group min-h-16 min-w-0 rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-border/70 hover:bg-surface-raised/70"
-                              >
-                                <div className="flex items-start justify-between mb-2">
-                                  <div className="flex items-center gap-2 min-w-0">
-                                    <div
-                                      className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${getPluginArtworkTone('mcp:user', visualIndex)}`}
-                                    >
-                                      <ConnectorIcon className="h-4 w-4" />
-                                    </div>
-                                    <span className="text-sm font-medium text-foreground truncate">
-                                      {server.name}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                                    {marketplaceUpdateIds.has(
-                                      (server.registryId || server.id).toLowerCase(),
-                                    ) && <PluginUpdateIndicator />}
-                                    <button
-                                      type="button"
-                                      onClick={() => void handleOpenEditForm(server)}
-                                      className="p-1 rounded-lg text-secondary hover:text-primary dark:hover:text-primary transition-colors"
-                                      title={i18nService.t('editMcpServer')}
-                                    >
-                                      <PencilIcon className="h-3.5 w-3.5" />
-                                    </button>
-                                    <PluginStateButton
-                                      checked={server.enabled}
-                                      label={i18nService.t(
-                                        server.enabled ? 'disableMcpServer' : 'enableMcpServer',
-                                      )}
-                                      disabled={updatingServerIds.has(server.id)}
-                                      busy={updatingServerIds.has(server.id)}
-                                      onToggle={() => handleToggleEnabled(server.id)}
-                                    />
-                                  </div>
-                                </div>
-
-                                <Tooltip
-                                  content={installedDescription}
-                                  position="bottom"
-                                  maxWidth="360px"
-                                  className="block w-full"
-                                >
-                                  <p className="line-clamp-2 text-xs text-secondary">
-                                    {installedDescription}
-                                  </p>
-                                </Tooltip>
-
-                                <div className="mt-3 flex items-center justify-between gap-3 text-[10px] text-secondary">
-                                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                                    <span
-                                      className={`px-1.5 py-0.5 rounded font-medium ${TRANSPORT_BADGE_COLORS[server.transportType] || ''}`}
-                                    >
-                                      {server.transportType}
-                                    </span>
-                                    {registryEntry?.requiredEnvKeys &&
-                                      registryEntry.requiredEnvKeys.length > 0 && (
-                                        <>
-                                          <span>·</span>
-                                          <span className="text-amber-500 dark:text-amber-400">
-                                            {registryEntry.requiredEnvKeys.length} key
-                                            {registryEntry.requiredEnvKeys.length > 1 ? 's' : ''}
-                                          </span>
-                                        </>
-                                      )}
-                                    {statusLabel && statusClass && (
-                                      <span
-                                        title={probeResults[server.id]?.error}
-                                        className={`shrink-0 rounded-full px-2 py-0.5 font-medium ${statusClass}`}
-                                      >
-                                        {statusLabel}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleProbeServer(server, true)}
-                                    disabled={probingServerIds.has(server.id)}
-                                    className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15 disabled:cursor-wait disabled:opacity-60"
-                                    title={i18nService.t('mcpTestServer')}
-                                  >
-                                    <ClockIcon className="h-3.5 w-3.5" />
-                                    <span>{i18nService.t('mcpTestShort')}</span>
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          })}
-                          {userExtensionServers.map((server, visualIndex) => (
+                                server={server}
+                                visualIndex={filteredInstalled.length + visualIndex}
+                                group="user"
+                                onOpenExtension={onOpenExtension}
+                                onOpenDetail={() => void handleProbeServer(server, true)}
+                                probing={probingServerIds.has(server.id)}
+                                statusLabel={getServerStatusLabel(server)}
+                                statusClass={getServerStatusClass(server)}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </PluginGroupSection>
+                    )}
+                    {systemExtensionServers.length > 0 && (
+                      <PluginGroupSection
+                        hideHeader={Boolean(searchQuery.trim())}
+                        title={i18nService.t('pluginGroup.system.label')}
+                        count={systemExtensionServers.length}
+                        description={i18nService.t('mcpGroupExtensionDescription')}
+                        collapsible
+                        defaultExpanded={false}
+                        forceExpanded={Boolean(searchQuery.trim())}
+                      >
+                        <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
+                          {systemExtensionServers.map((server, visualIndex) => (
                             <ExtensionMcpCard
                               key={server.id}
                               server={server}
-                              visualIndex={filteredInstalled.length + visualIndex}
-                              group="user"
+                              visualIndex={visualIndex}
+                              group="system"
                               onOpenExtension={onOpenExtension}
                               onOpenDetail={() => void handleProbeServer(server, true)}
                               probing={probingServerIds.has(server.id)}
@@ -1011,53 +1066,24 @@ const McpManager: React.FC<McpManagerProps> = ({
                             />
                           ))}
                         </div>
-                      )}
-                    </PluginGroupSection>
-                  )}
-                  {systemExtensionServers.length > 0 && (
-                    <PluginGroupSection
-                      title={i18nService.t('pluginGroup.system.label')}
-                      count={systemExtensionServers.length}
-                      description={i18nService.t('mcpGroupExtensionDescription')}
-                      collapsible
-                      defaultExpanded={false}
-                      forceExpanded={Boolean(searchQuery.trim())}
-                    >
-                      <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
-                        {systemExtensionServers.map((server, visualIndex) => (
-                          <ExtensionMcpCard
-                            key={server.id}
-                            server={server}
-                            visualIndex={visualIndex}
-                            group="system"
-                            onOpenExtension={onOpenExtension}
-                            onOpenDetail={() => void handleProbeServer(server, true)}
-                            probing={probingServerIds.has(server.id)}
-                            statusLabel={getServerStatusLabel(server)}
-                            statusClass={getServerStatusClass(server)}
-                          />
-                        ))}
-                      </div>
-                    </PluginGroupSection>
-                  )}
-                </div>
-              )}
-            </div>
-          </section>
-        )}
+                      </PluginGroupSection>
+                    )}
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
 
         {visibility !== 'installed' && (
-          <section className="mt-6 border-t border-border pt-6">
-            <MarketplaceView
-              kind={PluginKind.MCP}
+          <section className={searchQuery.trim() ? '' : 'mt-6 border-t border-border pt-6'}>
+            <MarketplaceResults
+              hasLocalMatches={filteredInstalled.length + filteredExtensionServers.length > 0}
+              controller={marketplace}
               icon={<ConnectorIcon className="h-4 w-4" />}
-              installed={installedMarketplaceServers}
-              onUpdateIdsChange={setMarketplaceUpdateIds}
-              onInstalled={async () => {
-                dispatch(setMcpServers(await mcpService.loadServers()));
+              renderInstalled={(id, index) => {
+                const entry = servers.find(item => item.id === id);
+                return entry ? renderInstalledCard(entry, index) : null;
               }}
-              searchQuery={searchQuery}
-              availableOnly={visibility === 'available'}
             />
           </section>
         )}
