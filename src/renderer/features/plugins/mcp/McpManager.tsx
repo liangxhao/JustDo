@@ -1,3 +1,4 @@
+import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import { PluginHubScope } from '@shared/plugins/management';
 import { PluginKind } from '@shared/plugins/marketplace';
 import { DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS } from '@shared/plugins/mcp';
@@ -151,7 +152,13 @@ const McpManager: React.FC<McpManagerProps> = ({
   );
   const [isLoadingServers, setIsLoadingServers] = useState(true);
   const [serverLoadFailed, setServerLoadFailed] = useState(false);
+  const [providerLoadFailed, setProviderLoadFailed] = useState(false);
   const inventoryGeneration = useRef(0);
+  const inventoryReadGeneration = useRef(0);
+  const providerReadGeneration = useRef(0);
+  const providerReadPending = useRef(false);
+  const formGeneration = useRef(0);
+  const mounted = useRef(false);
   const detailGeneration = useRef(0);
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   const searchQuery = sharedSearchQuery ?? localSearchQuery;
@@ -189,31 +196,47 @@ const McpManager: React.FC<McpManagerProps> = ({
     error?: string;
   } | null>(null);
   useEffect(() => {
+    mounted.current = true;
     let isActive = true;
-    let loadGeneration = 0;
     const loadServers = async () => {
-      const generation = ++loadGeneration;
-      const isCurrent = () => isActive && generation === loadGeneration;
+      const generation = ++inventoryReadGeneration.current;
+      const providerGeneration = ++providerReadGeneration.current;
+      const isCurrent = () => isActive && generation === inventoryReadGeneration.current;
+      const isProviderCurrent = () =>
+        isActive && providerGeneration === providerReadGeneration.current;
+      providerReadPending.current = true;
       setIsLoadingServers(true);
       setServerLoadFailed(false);
       setActionError('');
       await Promise.all([
         mcpService.loadServers().then(loaded => {
-          if (isCurrent()) dispatch(setMcpServers(loaded));
+          if (isCurrent()) {
+            dispatch(setMcpServers(loaded));
+            if (mcpService.hasServerLoadFailed()) {
+              setServerLoadFailed(true);
+              setActionError(i18nService.t('mcpLoadFailed'));
+            }
+          }
         }),
         mcpService
           .loadExtensionServers()
           .then(loaded => {
-            if (isCurrent()) setExtensionServers(loaded);
+            if (isProviderCurrent()) {
+              providerReadPending.current = false;
+              setProviderLoadFailed(false);
+              setExtensionServers(loaded);
+              if (!isCurrent()) setIsLoadingServers(false);
+            }
           })
           .catch(() => {
-            if (isCurrent()) {
-              setServerLoadFailed(true);
-              setActionError(i18nService.t('mcpLoadFailed'));
+            if (isProviderCurrent()) {
+              providerReadPending.current = false;
+              setProviderLoadFailed(true);
+              if (!isCurrent()) setIsLoadingServers(false);
             }
           }),
       ]);
-      if (isCurrent()) setIsLoadingServers(false);
+      if (isCurrent() || isProviderCurrent()) setIsLoadingServers(false);
     };
     void loadServers();
     const stop = window.electron.extensions.onChanged(() => {
@@ -233,6 +256,11 @@ const McpManager: React.FC<McpManagerProps> = ({
     });
     return () => {
       isActive = false;
+      mounted.current = false;
+      inventoryReadGeneration.current += 1;
+      providerReadGeneration.current += 1;
+      providerReadPending.current = false;
+      formGeneration.current += 1;
       inventoryGeneration.current += 1;
       stop();
     };
@@ -341,23 +369,40 @@ const McpManager: React.FC<McpManagerProps> = ({
     [servers],
   );
 
+  const reconcileFailedMutation = async (generation: number) => {
+    if (!mounted.current || generation !== inventoryReadGeneration.current) return;
+    await mcpService.loadServers();
+    if (mounted.current && generation === inventoryReadGeneration.current) {
+      dispatch(setMcpServers(mcpService.getServers()));
+    }
+  };
+
   const handleToggleEnabled = async (serverId: string) => {
     if (updatingServerIds.has(serverId)) return;
     const targetServer = servers.find(s => s.id === serverId);
     if (!targetServer) return;
+    const generation = ++inventoryReadGeneration.current;
     setUpdatingServerIds(current => new Set(current).add(serverId));
     try {
-      const updatedServers = await mcpService.setServerEnabled(serverId, !targetServer.enabled);
-      dispatch(setMcpServers(updatedServers));
-      setActionError('');
+      await mcpService.setServerEnabled(serverId, !targetServer.enabled);
+      if (!mounted.current) return;
+      dispatch(setMcpServers(mcpService.getServers()));
+      setActionError(mcpService.hasServerLoadFailed() ? i18nService.t('mcpLoadFailed') : '');
     } catch (error) {
+      if (!mounted.current) return;
       setActionError(error instanceof Error ? error.message : i18nService.t('mcpUpdateFailed'));
+      await reconcileFailedMutation(generation);
     } finally {
-      setUpdatingServerIds(current => {
-        const next = new Set(current);
-        next.delete(serverId);
-        return next;
-      });
+      if (mounted.current) {
+        setUpdatingServerIds(current => {
+          const next = new Set(current);
+          next.delete(serverId);
+          return next;
+        });
+        if (generation === inventoryReadGeneration.current && !providerReadPending.current) {
+          setIsLoadingServers(false);
+        }
+      }
     }
   };
 
@@ -373,19 +418,32 @@ const McpManager: React.FC<McpManagerProps> = ({
 
   const handleConfirmDelete = async () => {
     if (!pendingDelete || isDeleting) return;
+    const generation = ++inventoryReadGeneration.current;
     setIsDeleting(true);
     setActionError('');
-    const result = await mcpService.deleteServer(pendingDelete.id);
-    if (!result.success) {
-      setActionError(result.error || i18nService.t('mcpDeleteFailed'));
-      setIsDeleting(false);
-      return;
+    try {
+      const result = await mcpService.deleteServer(pendingDelete.id);
+      if (!mounted.current) return;
+      if (!result.success) {
+        setActionError(result.error || i18nService.t('mcpDeleteFailed'));
+        await reconcileFailedMutation(generation);
+        return;
+      }
+      if (result.servers) dispatch(setMcpServers(mcpService.getServers()));
+      if (mcpService.hasServerLoadFailed()) setActionError(i18nService.t('mcpLoadFailed'));
+      setPendingDelete(null);
+    } catch (error) {
+      if (mounted.current) {
+        setActionError(error instanceof Error ? error.message : i18nService.t('mcpDeleteFailed'));
+      }
+    } finally {
+      if (mounted.current) {
+        setIsDeleting(false);
+        if (generation === inventoryReadGeneration.current && !providerReadPending.current) {
+          setIsLoadingServers(false);
+        }
+      }
     }
-    if (result.servers) {
-      dispatch(setMcpServers(result.servers));
-    }
-    setIsDeleting(false);
-    setPendingDelete(null);
   };
 
   const refreshDefaultRequestTimeout = async (): Promise<void> => {
@@ -400,44 +458,52 @@ const McpManager: React.FC<McpManagerProps> = ({
   };
 
   const handleOpenEditForm = async (server: McpServerConfig) => {
+    const generation = ++formGeneration.current;
     await refreshDefaultRequestTimeout();
+    if (!mounted.current || generation !== formGeneration.current) return;
     setEditingServer(server);
     setInstallingRegistry(getRegistryEntryForServer(server) ?? null);
     setIsFormOpen(true);
   };
 
   const handleCloseForm = () => {
+    formGeneration.current += 1;
     setIsFormOpen(false);
     setEditingServer(null);
     setInstallingRegistry(null);
   };
 
   const handleSaveForm = async (data: McpServerFormData) => {
+    const generation = ++inventoryReadGeneration.current;
+    const formRevision = formGeneration.current;
     setActionError('');
-    if (editingServer && editingServer.id) {
-      const result = await mcpService.updateServer(editingServer.id, data);
-      if (!result.success) {
-        setActionError(result.error || i18nService.t('mcpUpdateFailed'));
-        return;
+    try {
+      const result = editingServer?.id
+        ? await mcpService.updateServer(editingServer.id, data)
+        : await mcpService.createServer(data);
+      if (mounted.current && formRevision === formGeneration.current) {
+        if (result.success && result.servers) dispatch(setMcpServers(mcpService.getServers()));
+        if (result.success && mcpService.hasServerLoadFailed()) {
+          setActionError(i18nService.t('mcpLoadFailed'));
+        }
+        if (!result.success) await reconcileFailedMutation(generation);
       }
-      if (result.servers) {
-        dispatch(setMcpServers(result.servers));
-      }
-    } else {
-      const result = await mcpService.createServer(data);
-      if (!result.success) {
-        setActionError(result.error || i18nService.t('mcpCreateFailed'));
-        return;
-      }
-      if (result.servers) {
-        dispatch(setMcpServers(result.servers));
+      return result;
+    } finally {
+      if (
+        mounted.current &&
+        generation === inventoryReadGeneration.current &&
+        !providerReadPending.current
+      ) {
+        setIsLoadingServers(false);
       }
     }
-    handleCloseForm();
   };
 
   const handleOpenCreateForm = async () => {
+    const generation = ++formGeneration.current;
     await refreshDefaultRequestTimeout();
+    if (!mounted.current || generation !== formGeneration.current) return;
     setEditingServer(null);
     setInstallingRegistry(null);
     setIsFormOpen(true);
@@ -749,7 +815,12 @@ const McpManager: React.FC<McpManagerProps> = ({
         </div>
       )}
 
-      {actionError && <ErrorMessage message={actionError} onClose={() => setActionError('')} />}
+      {(actionError || providerLoadFailed) && (
+        <ErrorMessage
+          message={actionError || i18nService.t('mcpLoadFailed')}
+          onClose={actionError ? () => setActionError('') : undefined}
+        />
+      )}
 
       {/* MCP Bridge sync result */}
       {!bridgeSyncing && bridgeSyncResult && (
@@ -805,6 +876,7 @@ const McpManager: React.FC<McpManagerProps> = ({
               )}
               {!isLoadingServers &&
               !serverLoadFailed &&
+              !providerLoadFailed &&
               filteredInstalled.length === 0 &&
               filteredExtensionServers.length === 0 &&
               searchQuery.trim() ? (
@@ -821,7 +893,8 @@ const McpManager: React.FC<McpManagerProps> = ({
                     >
                       {userServerCount === 0 ? (
                         !isLoadingServers &&
-                        !serverLoadFailed && (
+                        !serverLoadFailed &&
+                        !providerLoadFailed && (
                           <p className="px-2 py-3 text-xs text-secondary">
                             {i18nService.t('mcpNoInstalledServers')}
                           </p>
@@ -1017,9 +1090,11 @@ const McpManager: React.FC<McpManagerProps> = ({
               type="button"
               onClick={handleConfirmDelete}
               disabled={isDeleting}
-              className="px-3 py-1.5 text-xs rounded-lg bg-red-500 text-white hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              aria-busy={isDeleting || undefined}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-red-500 text-white hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              {i18nService.t('confirmDelete')}
+              {isDeleting && <ArrowPathIcon aria-hidden="true" className="h-4 w-4 animate-spin" />}
+              <span role={isDeleting ? 'status' : undefined}>{i18nService.t('confirmDelete')}</span>
             </button>
           </div>
         </Modal>
@@ -1027,6 +1102,7 @@ const McpManager: React.FC<McpManagerProps> = ({
 
       {/* Edit / Registry-install form modal */}
       <McpServerFormModal
+        key={formGeneration.current}
         isOpen={isFormOpen}
         server={editingServer}
         registryEntry={installingRegistry}

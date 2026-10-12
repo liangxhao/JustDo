@@ -11,13 +11,19 @@ import { skillService } from './skillService';
 import skillReducer from './skillSlice';
 import SkillsManager from './SkillsManager';
 
-vi.mock('./SkillMarketplace', () => ({ default: () => null }));
+vi.mock('./SkillMarketplace', () => ({
+  default: ({ onInstalled }: { onInstalled: () => Promise<void> }) => (
+    <button onClick={() => void onInstalled()}>finish marketplace install or update</button>
+  ),
+}));
 vi.mock('./skillService', () => ({
   skillService: {
     loadSkills: vi.fn(),
+    refreshInventoryAfterMutation: vi.fn(),
     importSkill: vi.fn(),
     deleteSkill: vi.fn(),
     setSkillEnabled: vi.fn(),
+    subscribeInventory: vi.fn(() => () => undefined),
     isGatewayOffline: vi.fn(() => false),
     getLocalizedSkillDescription: (_id: string, _name: string, description: string) => description,
   },
@@ -66,6 +72,7 @@ beforeEach(() => {
   vi.mocked(skillService.loadSkills).mockReset().mockResolvedValue([skill]);
   vi.mocked(skillService.importSkill).mockReset();
   vi.mocked(skillService.deleteSkill).mockReset();
+  vi.mocked(skillService.setSkillEnabled).mockReset();
 });
 afterEach(() => {
   cleanup();
@@ -247,6 +254,199 @@ const importedSkill: Skill = {
   }),
 };
 
+test.each([true, false])(
+  'applies a card switch with a single click from enabled=%s',
+  async enabled => {
+    const initial = { ...importedSkill, enabled };
+    vi.mocked(skillService.loadSkills).mockResolvedValue([initial]);
+    let finish!: (skills: Skill[]) => void;
+    vi.mocked(skillService.setSkillEnabled).mockReturnValue(
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+    );
+    const store = configureStore({ reducer: { skill: skillReducer } });
+    render(
+      <Provider store={store}>
+        <SkillsManager searchQuery={initial.name} visibility="installed" />
+      </Provider>,
+    );
+    const toggle = await screen.findByRole('switch', {
+      name: enabled ? 'disableSkill' : 'enableSkill',
+    });
+
+    fireEvent.click(toggle);
+
+    expect(skillService.setSkillEnabled).toHaveBeenCalledExactlyOnceWith(initial.id, !enabled);
+    expect(toggle.getAttribute('aria-busy')).toBe('true');
+    expect(toggle.hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(toggle);
+    expect(skillService.setSkillEnabled).toHaveBeenCalledOnce();
+    await act(async () => finish([{ ...initial, enabled: !enabled }]));
+
+    const updated = screen.getByRole('switch', {
+      name: enabled ? 'enableSkill' : 'disableSkill',
+    });
+    expect(updated.getAttribute('aria-checked')).toBe(String(!enabled));
+    expect(updated.hasAttribute('disabled')).toBe(false);
+    expect(store.getState().skill.skills[0].enabled).toBe(!enabled);
+  },
+);
+
+test('an initial list consumed after switching cannot restore the previous card state', async () => {
+  const initial = { ...importedSkill, enabled: true };
+  let finishRead!: (skills: Skill[]) => void;
+  let finishSwitch!: (skills: Skill[]) => void;
+  vi.mocked(skillService.loadSkills).mockReturnValue(
+    new Promise(resolve => {
+      finishRead = resolve;
+    }),
+  );
+  vi.mocked(skillService.setSkillEnabled).mockReturnValue(
+    new Promise(resolve => {
+      finishSwitch = resolve;
+    }),
+  );
+  const store = configureStore({
+    reducer: { skill: skillReducer },
+    preloadedState: { skill: { skills: [initial], activeSkillIds: [] } },
+  });
+  render(
+    <Provider store={store}>
+      <SkillsManager visibility="installed" />
+    </Provider>,
+  );
+  fireEvent.click(screen.getByRole('switch', { name: 'disableSkill' }));
+
+  await act(async () => {
+    finishRead([initial]);
+    finishSwitch([{ ...initial, enabled: false }]);
+  });
+
+  expect(store.getState().skill.skills[0].enabled).toBe(false);
+  expect(screen.getByRole('switch', { name: 'enableSkill' }).getAttribute('aria-checked')).toBe(
+    'false',
+  );
+});
+
+test('a switch finishing after leaving the page cannot overwrite the remounted inventory', async () => {
+  const initial = { ...importedSkill, enabled: true };
+  const fresh = { ...initial, enabled: false, description: 'Fresh native metadata' };
+  let finish!: (skills: Skill[]) => void;
+  vi.mocked(skillService.loadSkills)
+    .mockResolvedValueOnce([initial])
+    .mockResolvedValueOnce([fresh]);
+  vi.mocked(skillService.setSkillEnabled).mockReturnValue(
+    new Promise(resolve => {
+      finish = resolve;
+    }),
+  );
+  const store = configureStore({ reducer: { skill: skillReducer } });
+  const firstPage = render(
+    <Provider store={store}>
+      <SkillsManager visibility="installed" />
+    </Provider>,
+  );
+  fireEvent.click(await screen.findByRole('switch', { name: 'disableSkill' }));
+  firstPage.unmount();
+  render(
+    <Provider store={store}>
+      <SkillsManager visibility="installed" />
+    </Provider>,
+  );
+  await waitFor(() => expect(store.getState().skill.skills).toEqual([fresh]));
+
+  await act(async () => finish([{ ...initial, enabled: false }]));
+
+  expect(store.getState().skill.skills).toEqual([fresh]);
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+test('does not turn a successful switch refresh into a skill-unavailable notice', async () => {
+  vi.mocked(skillService.loadSkills).mockResolvedValue([importedSkill]);
+  vi.mocked(skillService.setSkillEnabled).mockResolvedValue([]);
+  const store = configureStore({ reducer: { skill: skillReducer } });
+  render(
+    <Provider store={store}>
+      <SkillsManager visibility="installed" />
+    </Provider>,
+  );
+  fireEvent.click(await screen.findByRole('switch', { name: 'disableSkill' }));
+
+  await waitFor(() => expect(store.getState().skill.skills).toEqual([]));
+  expect(screen.queryByText('"imported-skill" is currently unavailable.')).toBeNull();
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+test.each(['success', 'failure'] as const)(
+  'a switch ending with %s does not discard an import refresh started during the switch',
+  async outcome => {
+    const initial = { ...importedSkill, enabled: true };
+    const disabled = { ...initial, enabled: false };
+    const added = { ...importedSkill, id: 'another-skill', name: 'another-skill' };
+    const refreshed = [outcome === 'success' ? disabled : initial, added];
+    let finishImport!: (result: { success: boolean; skillId?: string }) => void;
+    let finishRefresh!: (skills: Skill[]) => void;
+    let finishSwitch!: (skills: Skill[]) => void;
+    let failSwitch!: (error: Error) => void;
+    vi.stubGlobal('electron', {
+      dialog: {
+        selectFolders: vi.fn().mockResolvedValue({
+          success: true,
+          paths: ['C:/imports/another-skill'],
+        }),
+      },
+    });
+    vi.mocked(skillService.loadSkills)
+      .mockResolvedValueOnce([initial])
+      .mockReturnValueOnce(
+        new Promise(resolve => {
+          finishRefresh = resolve;
+        }),
+      );
+    vi.mocked(skillService.importSkill).mockReturnValue(
+      new Promise(resolve => {
+        finishImport = resolve;
+      }),
+    );
+    vi.mocked(skillService.setSkillEnabled).mockReturnValue(
+      new Promise((resolve, reject) => {
+        finishSwitch = resolve;
+        failSwitch = reject;
+      }),
+    );
+    const store = configureStore({ reducer: { skill: skillReducer } });
+    render(
+      <Provider store={store}>
+        <SkillsManager visibility="installed" />
+      </Provider>,
+    );
+    await screen.findByRole('switch', { name: 'disableSkill' });
+    fireEvent.click(screen.getByRole('button', { name: 'importSkill' }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: /selectSkillFolders selectSkillFoldersDescription/,
+      }),
+    );
+    await waitFor(() => expect(skillService.importSkill).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('switch', { name: 'disableSkill' }));
+
+    await act(async () => finishImport({ success: true, skillId: added.id }));
+    expect(skillService.loadSkills).toHaveBeenCalledTimes(2);
+    expect(skillService.loadSkills).toHaveBeenLastCalledWith({ force: true });
+    await act(async () => {
+      if (outcome === 'success') finishSwitch([disabled]);
+      else failSwitch(new Error('Save failed'));
+    });
+    if (outcome === 'failure') expect(screen.getByText('Save failed')).toBeTruthy();
+    await act(async () => finishRefresh(refreshed));
+
+    expect(store.getState().skill.skills).toEqual(refreshed);
+    expect(screen.getByRole('button', { name: 'subtaskShowInfo: another-skill' })).toBeTruthy();
+  },
+);
+
 async function startImport(paths: string[], sourceType: 'folders' | 'archives' = 'folders') {
   vi.stubGlobal('electron', {
     dialog: {
@@ -298,6 +498,7 @@ test.each(['folders', 'archives'] as const)(
     expect(skillService.importSkill).toHaveBeenNthCalledWith(1, paths[0]);
     expect(skillService.importSkill).toHaveBeenNthCalledWith(2, paths[1]);
     expect(skillService.loadSkills).toHaveBeenCalledTimes(2);
+    expect(skillService.loadSkills).toHaveBeenLastCalledWith({ force: true });
   },
 );
 
@@ -317,6 +518,7 @@ test('refreshes the list and shows a success dialog when all imports succeed', a
   await screen.findByRole('button', { name: 'subtaskShowInfo: imported-skill' });
   expect(store.getState().skill.skills).toEqual([skill, importedSkill]);
   expect(skillService.loadSkills).toHaveBeenCalledTimes(2);
+  expect(skillService.loadSkills).toHaveBeenLastCalledWith({ force: true });
 });
 
 test('shows every failure and keeps the list when all imports fail', async () => {
@@ -375,4 +577,17 @@ test('confirms deletion and explains the actual same-name fallback', async () =>
   ).toBeTruthy();
   expect(within(dialog).queryByText(/currently unavailable/)).toBeNull();
   expect(store.getState().skill.skills).toEqual([fallback]);
+});
+
+test('marketplace installation and updates start the shared native inventory reconciliation', async () => {
+  const store = configureStore({ reducer: { skill: skillReducer } });
+  render(
+    <Provider store={store}>
+      <SkillsManager visibility="all" />
+    </Provider>,
+  );
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'finish marketplace install or update' }),
+  );
+  expect(skillService.refreshInventoryAfterMutation).toHaveBeenCalledOnce();
 });

@@ -5,11 +5,13 @@ import path from 'path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import {
+  formatManagedDirectoryFailure,
   managedDirectoryFailure,
   managedDirectoryFailureFromError,
   managedDirectoryFailureFromMessage,
   ManagedDirectoryOperationCoordinator,
   managedDirectorySuccess,
+  ManagedDirectoryTargetExistsError,
   removeDirectoryTransactional,
   replaceDirectoryTransactional,
 } from './managedDirectoryOperations';
@@ -70,6 +72,83 @@ test('restores the previous directory when publishing the staged version fails',
     replaceDirectoryTransactional({ sourceDir: source, targetDir: target, stagingParent: root }),
   ).toThrow('publish locked');
   expect(fs.readFileSync(path.join(target, 'version.txt'), 'utf8')).toBe('old');
+});
+
+test('no-replace publishing preserves a target created during staged validation', () => {
+  const root = makeTempDir();
+  const source = path.join(root, 'source');
+  const target = path.join(root, 'target');
+  fs.mkdirSync(source);
+  fs.writeFileSync(path.join(source, 'version.txt'), 'new');
+
+  expect(() =>
+    replaceDirectoryTransactional({
+      sourceDir: source,
+      targetDir: target,
+      stagingParent: root,
+      noReplace: true,
+      validateStaged: () => {
+        fs.mkdirSync(target);
+        fs.writeFileSync(path.join(target, 'version.txt'), 'Other installation');
+      },
+    }),
+  ).toThrow(ManagedDirectoryTargetExistsError);
+  expect(fs.readFileSync(path.join(target, 'version.txt'), 'utf8')).toBe('Other installation');
+  expect(fs.readdirSync(root).some(name => name.startsWith('.justdo-directory-stage-'))).toBe(
+    false,
+  );
+});
+
+test('no-replace retries reject an installation created after a transient rename failure', () => {
+  const root = makeTempDir();
+  const source = path.join(root, 'source');
+  const target = path.join(root, 'target');
+  fs.mkdirSync(source);
+  fs.writeFileSync(path.join(source, 'version.txt'), 'new');
+  const rename = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+    fs.mkdirSync(target);
+    fs.writeFileSync(path.join(target, 'version.txt'), 'Other installation');
+    throw Object.assign(new Error('Publish temporarily busy'), { code: 'EBUSY' });
+  });
+
+  expect(() =>
+    replaceDirectoryTransactional({
+      sourceDir: source,
+      targetDir: target,
+      stagingParent: root,
+      noReplace: true,
+    }),
+  ).toThrow(ManagedDirectoryTargetExistsError);
+  expect(rename).toHaveBeenCalledTimes(1);
+  expect(fs.readFileSync(path.join(target, 'version.txt'), 'utf8')).toBe('Other installation');
+});
+
+test('a no-replace install does not clean another same-ID staging transaction', () => {
+  const root = makeTempDir();
+  const source = path.join(root, 'source');
+  const target = path.join(root, 'target');
+  const otherTransaction = path.join(root, '.hook-stage-other');
+  fs.mkdirSync(source);
+  fs.writeFileSync(path.join(source, 'version.txt'), 'new');
+  fs.mkdirSync(path.join(otherTransaction, 'next'), { recursive: true });
+  fs.writeFileSync(path.join(otherTransaction, 'next', 'version.txt'), 'Other staged install');
+  fs.writeFileSync(
+    path.join(otherTransaction, '.justdo-transaction.json'),
+    JSON.stringify({ targetDir: target }),
+  );
+
+  replaceDirectoryTransactional({
+    sourceDir: source,
+    targetDir: target,
+    stagingParent: root,
+    transactionPrefix: '.hook-stage-',
+    noReplace: true,
+  });
+
+  expect(fs.readFileSync(path.join(target, 'version.txt'), 'utf8')).toBe('new');
+  expect(fs.readFileSync(path.join(otherTransaction, 'next', 'version.txt'), 'utf8')).toBe(
+    'Other staged install',
+  );
 });
 
 test('recovers an interrupted backup before starting the next replacement', () => {
@@ -190,6 +269,54 @@ test('classifies structured and CLI filesystem failures consistently', () => {
       'C:\\extensions\\demo',
     ),
   ).toMatchObject({ reason: 'locked' });
+});
+
+test('keeps captured link permission failures out of directory lock diagnostics', async () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  const message = "EPERM: operation not permitted, symlink 'C:\\host' -> 'C:\\capture\\openclaw'";
+  const failure = managedDirectoryFailureFromMessage(message, 'C:\\extensions\\demo');
+  expect(failure).toMatchObject({ reason: 'permission', code: 'EPERM', syscall: 'symlink' });
+  expect(
+    managedDirectoryFailureFromError(
+      Object.assign(new Error(message), { code: 'EPERM' }),
+      'target',
+    ),
+  ).toMatchObject({ reason: 'permission', syscall: 'symlink' });
+  for (const cause of [
+    Object.assign(new Error('Dependency link rejected'), { code: 'EPERM', syscall: 'symlink' }),
+    { code: 'EPERM', syscall: 'symlink', message: 'Dependency link rejected' },
+    new Error(message),
+  ]) {
+    expect(
+      managedDirectoryFailureFromError(
+        Object.assign(new Error('Directory operation failed', { cause }), { code: 'EPERM' }),
+        'target',
+      ),
+    ).toMatchObject({ reason: 'permission', code: 'EPERM', syscall: 'symlink' });
+  }
+  const findLockingProcesses = vi.fn();
+  const coordinator = new ManagedDirectoryOperationCoordinator({ findLockingProcesses });
+
+  const result = await coordinator.execute({
+    resourceName: 'extension directory',
+    targetPath: 'C:\\extensions\\demo',
+    operation: async () => managedDirectoryFailure(failure),
+  });
+
+  expect(result.success).toBe(false);
+  expect('failure' in result && result.failure.message).toContain(message);
+  expect(findLockingProcesses).not.toHaveBeenCalled();
+});
+
+test('preserves the actual filesystem error when a suspected lock has no identified owner', () => {
+  const message = "EBUSY: resource busy, rmdir 'C:\\extensions\\demo'";
+  const formatted = formatManagedDirectoryFailure(
+    { reason: 'locked', message, targetPath: 'C:\\extensions\\demo', lockingProcesses: [] },
+    'extension directory',
+  );
+  expect(formatted).toContain(message);
+  expect(formatted).not.toContain('该目录仍被其他程序占用');
+  expect(formatted).not.toContain('This directory is still in use');
 });
 
 test('diagnoses a Windows EPERM without syscall as a potential directory lock', async () => {

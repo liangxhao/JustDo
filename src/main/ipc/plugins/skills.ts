@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import fs from 'fs';
 
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
 import {
@@ -12,6 +13,10 @@ import type { PluginInstallationService } from '../../plugins/installation';
 import { PluginInstallOrigin } from '../../plugins/installation';
 import type { OpenClawSkillFileService, OpenClawSkillService } from '../../plugins/skills';
 import { resolveSkillOwnershipScope } from '../../plugins/skills/openclawSkillOwnership';
+import {
+  isGatewaySkillEnabled,
+  SkillStateConfirmationError,
+} from '../../plugins/skills/openclawSkillService';
 
 interface SkillHandlerDependencies {
   skillService: OpenClawSkillService;
@@ -31,8 +36,7 @@ const mapGatewaySkill = (entry: GatewaySkillEntry, manager?: OpenClawEngineManag
   name: entry.name,
   description: entry.description,
   // Skills can require an explicit opt-in even when Gateway does not mark them disabled.
-  enabled:
-    !entry.disabled && !entry.missing.config.includes(`skills.entries.${entry.skillKey}.enabled`),
+  enabled: isGatewaySkillEnabled(entry),
   isOfficial: entry.bundled,
   isBuiltIn: entry.bundled,
   updatedAt: 0,
@@ -65,27 +69,51 @@ export const registerSkillHandlers = ({
 }: SkillHandlerDependencies): void => {
   const mapSkill = (entry: GatewaySkillEntry) =>
     mapGatewaySkill(entry, getOpenClawEngineManager?.());
+  // Keep file discovery and config publication within the same mutation lane.
+  // The file service's config/directory lock remains separate and is not nested.
+  let skillMutation = Promise.resolve();
+  const runSkillMutation = <T>(operation: () => Promise<T>): Promise<T> => {
+    const pending = skillMutation.then(operation);
+    skillMutation = pending.then(
+      (): void => undefined,
+      (): void => undefined,
+    );
+    return pending;
+  };
   installationService.registerInstaller({
     kind: PluginKind.SKILL,
-    install: async request => {
-      if (request.payload.kind !== PluginKind.SKILL) {
-        return { success: false, error: 'Invalid skill installation payload' };
-      }
-      const result = await skillFileService.importPath(request.payload.sourcePath);
-      return {
-        success: result.success,
-        pluginId: result.skillId,
-        installPath: result.skillId
+    install: request =>
+      runSkillMutation(async () => {
+        if (request.payload.kind !== PluginKind.SKILL) {
+          return { success: false, error: 'Invalid skill installation payload' };
+        }
+        const result = await skillFileService.importPath(request.payload.sourcePath);
+        const installPath = result.skillId
           ? skillFileService.getManagedSkillPath?.(result.skillId)
-          : undefined,
-        error: result.error,
-      };
-    },
+          : undefined;
+        if (result.success) {
+          try {
+            await skillService.getStatus(undefined, { connectedOnly: true });
+          } catch (error) {
+            // The import committed; a failed inventory refresh must not relabel it.
+            console.warn(
+              '[Skills] Imported skill, but its status refresh failed:',
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+        }
+        return {
+          success: result.success,
+          pluginId: result.skillId,
+          installPath,
+          error: result.error,
+        };
+      }),
   });
 
   ipcMain.handle('skills:list', async () => {
     try {
-      const status = await skillService.getStatus();
+      const status = await skillService.getStatus(undefined, { connectedOnly: true });
       return {
         success: true,
         skills: status.skills.map(mapSkill),
@@ -102,50 +130,56 @@ export const registerSkillHandlers = ({
     }
   });
 
-  ipcMain.handle('skills:setEnabled', async (_event, options: { id: string; enabled: boolean }) => {
-    try {
-      if (
-        typeof options?.id !== 'string' ||
-        !options.id.trim() ||
-        typeof options.enabled !== 'boolean'
-      ) {
-        return { success: false, error: 'Skill id and enabled state are required' };
-      }
-      const currentStatus = await skillService.getStatus();
-      const currentSkill = currentStatus.skills.find(entry => entry.skillKey === options.id.trim());
-      if (!currentSkill) return { success: false, error: 'Skill not found' };
-      const capabilities = getSkillManagementCapabilities({
-        source: currentSkill.source,
-        bundled: currentSkill.bundled,
-        eligible: currentSkill.eligible,
-        hasPath: Boolean(currentSkill.filePath),
-        filePath: currentSkill.filePath,
-      });
-      const requestedAction = options.enabled ? capabilities.enable : capabilities.disable;
-      if (!requestedAction.allowed) {
+  ipcMain.handle('skills:setEnabled', (_event, options: { id: string; enabled: boolean }) =>
+    runSkillMutation(async () => {
+      try {
+        if (
+          typeof options?.id !== 'string' ||
+          !options.id.trim() ||
+          typeof options.enabled !== 'boolean'
+        ) {
+          return { success: false, error: 'Skill id and enabled state are required' };
+        }
+        const currentStatus = await skillService.getStatus();
+        const currentSkill = currentStatus.skills.find(
+          entry => entry.skillKey === options.id.trim(),
+        );
+        if (!currentSkill) return { success: false, error: 'Skill not found' };
+        const capabilities = getSkillManagementCapabilities({
+          source: currentSkill.source,
+          bundled: currentSkill.bundled,
+          eligible: currentSkill.eligible,
+          hasPath: Boolean(currentSkill.filePath),
+          filePath: currentSkill.filePath,
+        });
+        const requestedAction = options.enabled ? capabilities.enable : capabilities.disable;
+        if (!requestedAction.allowed) {
+          return {
+            success: false,
+            error: requestedAction.reason || 'Skill status cannot be changed',
+          };
+        }
+        const result = await skillService.updateConfig({
+          skillKey: options.id.trim(),
+          enabled: options.enabled,
+        });
+        if (!result.ok) {
+          return { success: false, error: result.error || 'Failed to update skill' };
+        }
+        const status = await skillService.waitForEnabledStatus(options.id.trim(), options.enabled);
+        return { success: true, skills: status.skills.map(mapSkill) };
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : 'Failed to update skill';
         return {
           success: false,
-          error: requestedAction.reason || 'Skill status cannot be changed',
+          error: errorMsg,
+          gatewayOffline:
+            (error instanceof SkillStateConfirmationError && error.gatewayOffline) ||
+            errorMsg.includes('not connected'),
         };
       }
-      const result = await skillService.updateConfig({
-        skillKey: options.id.trim(),
-        enabled: options.enabled,
-      });
-      if (!result.ok) {
-        return { success: false, error: result.error || 'Failed to update skill' };
-      }
-      const status = await skillService.getStatus();
-      return { success: true, skills: status.skills.map(mapSkill) };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to update skill';
-      return {
-        success: false,
-        error: errorMsg,
-        gatewayOffline: errorMsg.includes('not connected'),
-      };
-    }
-  });
+    }),
+  );
 
   ipcMain.handle('skills:import', async (_event, sourcePath: string) => {
     try {
@@ -162,49 +196,62 @@ export const registerSkillHandlers = ({
     }
   });
 
-  ipcMain.handle('skills:delete', async (_event, request: { id?: unknown; source?: unknown }) => {
-    try {
-      const skillId = typeof request?.id === 'string' ? request.id.trim() : '';
-      const requestedSource = request?.source;
-      if (!skillId || !isUserOwnedSkillSource(requestedSource)) {
-        return { success: false, error: 'Skill id and source are required' };
-      }
-
-      const currentStatus = await skillService.getStatus();
-      const skill = currentStatus.skills.find(
-        entry => entry.skillKey === skillId && entry.source === requestedSource,
-      );
-      if (!skill || skill.bundled || !isUserOwnedSkillSource(skill.source)) {
-        return { success: false, error: 'Only user-owned skills can be deleted' };
-      }
-
-      await skillFileService.deleteDirectory(skill.baseDir);
-      onMarketplacePluginDeleted?.(PluginKind.SKILL, skillId, skill.baseDir);
+  ipcMain.handle('skills:delete', (_event, request: { id?: unknown; source?: unknown }) =>
+    runSkillMutation(async () => {
       try {
-        const updatedStatus = await skillService.getStatus();
-        return { success: true, skills: updatedStatus.skills.map(mapSkill) };
-      } catch (error) {
-        console.warn(
-          '[Skills] Deleted skill, but its status refresh failed:',
-          error instanceof Error ? error.message : String(error),
+        const skillId = typeof request?.id === 'string' ? request.id.trim() : '';
+        const requestedSource = request?.source;
+        if (!skillId || !isUserOwnedSkillSource(requestedSource)) {
+          return { success: false, error: 'Skill id and source are required' };
+        }
+
+        const currentStatus = await skillService.getStatus();
+        const skill = currentStatus.skills.find(
+          entry => entry.skillKey === skillId && entry.source === requestedSource,
         );
-        // Deletion is committed. Project only the confirmed removal from this
-        // operation's native inventory; the next read discovers any fallback.
-        return {
-          success: true,
-          skills: currentStatus.skills
-            .filter(
-              entry =>
-                entry.skillKey !== skill.skillKey ||
-                entry.source !== skill.source ||
-                entry.baseDir !== skill.baseDir,
-            )
-            .map(mapSkill),
-        };
+        if (!skill || skill.bundled || !isUserOwnedSkillSource(skill.source)) {
+          return { success: false, error: 'Only user-owned skills can be deleted' };
+        }
+
+        await skillFileService.deleteDirectory(skill.baseDir);
+        onMarketplacePluginDeleted?.(PluginKind.SKILL, skillId, skill.baseDir);
+        try {
+          const updatedStatus = await skillService.getStatus(undefined, { connectedOnly: true });
+          return {
+            success: true,
+            skills: updatedStatus.skills
+              .filter(
+                entry =>
+                  entry.skillKey !== skill.skillKey ||
+                  entry.source !== skill.source ||
+                  entry.baseDir !== skill.baseDir ||
+                  fs.existsSync(skill.filePath),
+              )
+              .map(mapSkill),
+          };
+        } catch (error) {
+          console.warn(
+            '[Skills] Deleted skill, but its status refresh failed:',
+            error instanceof Error ? error.message : String(error),
+          );
+          // Deletion is committed. Project only the confirmed removal from this
+          // operation's native inventory; the next read discovers any fallback.
+          return {
+            success: true,
+            skills: currentStatus.skills
+              .filter(
+                entry =>
+                  entry.skillKey !== skill.skillKey ||
+                  entry.source !== skill.source ||
+                  entry.baseDir !== skill.baseDir,
+              )
+              .map(mapSkill),
+          };
+        }
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : 'Failed to delete skill';
+        return { success: false, error: errorMsg };
       }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Failed to delete skill';
-      return { success: false, error: errorMsg };
-    }
-  });
+    }),
+  );
 };

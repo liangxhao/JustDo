@@ -39,6 +39,14 @@ export function cpRecursiveSync(
       fs.unlinkSync(dest);
     }
     const target = fs.readlinkSync(src);
-    fs.symlinkSync(target, dest);
+    // Windows copies an existing absolute directory junction without requiring
+    // ordinary symlink privileges. Preserve the link rather than its contents.
+    const type =
+      process.platform === 'win32' &&
+      path.isAbsolute(target) &&
+      fs.statSync(src, { throwIfNoEntry: false })?.isDirectory()
+        ? 'junction'
+        : undefined;
+    fs.symlinkSync(target, dest, type);
   }
 }

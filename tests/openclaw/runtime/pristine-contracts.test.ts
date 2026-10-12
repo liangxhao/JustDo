@@ -50,6 +50,8 @@ const EXPECTED_PATCH_FILES = [
   '037-terminal-product-banner.cjs',
   '038-native-compaction-lifecycle.cjs',
   '039-peer-transcript-write-scope.cjs',
+  '040-computer-overlay-activity.cjs',
+  '042-windows-plugin-recovery-junctions.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

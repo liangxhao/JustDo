@@ -74,7 +74,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     selectedModelProviderNotReady: '所选模型的提供商尚未就绪，请检查配置和认证状态。',
     selectedModelRouteChanged: '所选模型的路由已变更，请重新选择模型。',
     extensionConversionNotImplemented: '该扩展需要转换为 OpenClaw 格式，转换功能暂未实现。',
+    extensionImportSourceChanged: '导入准备期间源目录发生变化，请重试。',
     agentTeamSkillSyncFailed: '扩展开关已保存，但 Agent Team 技能同步未完成。请重试同一开关操作。',
+    skillSettingApplyUnconfirmed: '技能设置已保存，暂时无法同步状态。',
     builtinModelAuthenticationUnavailable: '内置模型认证已失效，请等待登录凭据刷新。',
     credentialStorageUnavailable: '操作系统安全凭据存储不可用，无法安全保存内置凭据。',
     credentialDecryptionFailed: '无法使用当前操作系统账户解密应用凭据。',
@@ -102,10 +104,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     skillInvalidFrontmatterName: 'SKILL.md 必须包含有效的 YAML frontmatter 和“name”字段。',
     skillDirectoryResource: '技能目录',
     extensionDirectoryResource: '扩展目录',
+    hookImportValidationFailed: 'Hook 文件在导入过程中发生变化，未能完成安装。请重新导入。',
+    hookAlreadyInstalled: 'Hook "{hookId}" 已安装。请先删除，再导入替代版本。',
     managedDirectoryLockedBy:
       '{resource}：\n{path}\n\n占用程序：\n{processes}\n\n请关闭以上程序后重试。',
     managedDirectoryLockedUnknown:
-      '{resource}：\n{path}\n\n该目录仍被其他程序占用，但 Windows 未能识别占用者。\n\n请关闭可能正在查看、编辑或扫描该目录的程序后重试。',
+      '{resource}：\n{path}\n\n目录操作失败，暂时无法确认是否存在程序占用。请稍后重试。\n\n错误详情：{detail}',
     managedDirectoryLockedByApp: `{resource}：\n{path}\n\n${PRODUCT_NAME} 仍在使用该目录，暂时无法完成操作。\n\n请稍后重试；若问题持续出现，请重启 ${PRODUCT_NAME}。`,
     managedDirectoryPermissionDenied:
       '无法访问{resource}：\n{path}\n\n请检查 Windows 所有者和权限后重试。\n\n详细信息：{detail}',
@@ -219,8 +223,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'The selected model route has changed. Please select the model again.',
     extensionConversionNotImplemented:
       'This extension requires conversion to OpenClaw format. Conversion is not implemented yet.',
+    extensionImportSourceChanged: 'The import source changed during preparation. Please try again.',
     agentTeamSkillSyncFailed:
       'The extension setting was saved, but the Agent Team skill could not be synchronized. Retry the same toggle.',
+    skillSettingApplyUnconfirmed:
+      'The skill setting was saved, but its status could not be synchronized.',
     builtinModelAuthenticationUnavailable:
       'Built-in model authentication is unavailable. Wait for login credentials to refresh.',
     credentialStorageUnavailable: 'Secure operating-system credential storage is unavailable.',
@@ -254,10 +261,14 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'SKILL.md must have valid YAML frontmatter and a valid "name" field.',
     skillDirectoryResource: 'skill directory',
     extensionDirectoryResource: 'extension directory',
+    hookImportValidationFailed:
+      'The Hook files changed during import. Installation could not complete. Import the package again.',
+    hookAlreadyInstalled:
+      'Hook "{hookId}" is already installed. Delete it before importing a replacement.',
     managedDirectoryLockedBy:
       '{resource}:\n{path}\n\nProcesses using this directory:\n{processes}\n\nClose the programs above and try again.',
     managedDirectoryLockedUnknown:
-      '{resource}:\n{path}\n\nThis directory is still in use, but Windows could not identify the process.\n\nClose programs that may be viewing, editing, or scanning it, then try again.',
+      '{resource}:\n{path}\n\nThe directory operation failed. A process lock could not be confirmed. Try again shortly.\n\nDetails: {detail}',
     managedDirectoryLockedByApp: `${PRODUCT_NAME} is still using the {resource}:\n{path}\n\nTry again shortly. If the problem continues, restart ${PRODUCT_NAME}.`,
     managedDirectoryPermissionDenied:
       'Cannot access the {resource}:\n{path}\n\nCheck its Windows owner and permissions, then try again.\n\nDetails: {detail}',

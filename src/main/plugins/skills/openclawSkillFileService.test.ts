@@ -44,6 +44,31 @@ beforeEach(() => {
   vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
 });
 
+test('retains structured link failure details without diagnosing an unrelated directory lock', async () => {
+  const manager = createManager();
+  const findLockingProcesses = vi.fn();
+  const importPath = vi.fn<() => Promise<LocalSkillFileResult>>().mockResolvedValue({
+    success: false,
+    error: 'Dependency link could not be created',
+    errorCode: 'EPERM',
+    errorSyscall: 'symlink',
+    errorPath: 'C:\\capture\\dependency',
+  });
+  const service = new OpenClawSkillFileService({
+    getOpenClawEngineManager: () => manager.manager,
+    createSkillFiles: () => ({ importPath }) as unknown as OpenClawSkillFiles,
+    findLockingProcesses,
+  });
+
+  const result = await service.importPath('C:\\source');
+
+  expect(result).toMatchObject({ success: false, errorCode: 'EPERM', errorSyscall: 'symlink' });
+  expect(result.error).toContain('Dependency link could not be created');
+  expect(findLockingProcesses).not.toHaveBeenCalled();
+  expect(manager.stopGateway).not.toHaveBeenCalled();
+  expect(manager.startGateway).not.toHaveBeenCalled();
+});
+
 test('does not restart the Gateway when a skill import is locked', async () => {
   const manager = createManager();
   const importPath = vi.fn<() => Promise<LocalSkillFileResult>>().mockResolvedValue(lockedResult());

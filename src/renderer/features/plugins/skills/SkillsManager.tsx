@@ -6,7 +6,7 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { PluginHubScope } from '@shared/plugins/management';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -65,24 +65,46 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
   const [updatingSkillIds, setUpdatingSkillIds] = useState<Set<string>>(() => new Set());
   const [marketplaceUpdateIds, setMarketplaceUpdateIds] = useState<Set<string>>(() => new Set());
   const [actionOutcome, setActionOutcome] = useState<OperationResult | null>(null);
+  const mounted = useRef(false);
+  const inventoryReadGeneration = useRef(0);
 
   // Gateway offline state
   const [gatewayOffline, setGatewayOffline] = useState(false);
 
   useEffect(() => {
+    mounted.current = true;
     let isActive = true;
+    const generation = ++inventoryReadGeneration.current;
     const loadSkills = async () => {
       const loadedSkills = await skillService.loadSkills();
-      if (!isActive) return;
+      if (!isActive || generation !== inventoryReadGeneration.current) return;
       dispatch(setSkills(loadedSkills));
       setGatewayOffline(skillService.isGatewayOffline());
     };
+    const stopInventoryUpdates = skillService.subscribeInventory(loadedSkills => {
+      if (!isActive) return;
+      inventoryReadGeneration.current += 1;
+      dispatch(setSkills(loadedSkills));
+      setGatewayOffline(skillService.isGatewayOffline());
+    });
     loadSkills();
 
     return () => {
       isActive = false;
+      mounted.current = false;
+      inventoryReadGeneration.current += 1;
+      stopInventoryUpdates();
     };
   }, [dispatch]);
+
+  const refreshSkillList = async (options: { force?: boolean } = {}) => {
+    if (!mounted.current) return;
+    const generation = ++inventoryReadGeneration.current;
+    const loadedSkills = await skillService.loadSkills(options);
+    if (!mounted.current || generation !== inventoryReadGeneration.current) return;
+    dispatch(setSkills(loadedSkills));
+    setGatewayOffline(skillService.isGatewayOffline());
+  };
 
   const filteredSkills = useMemo(() => {
     const query = skillSearchQuery.trim().toLowerCase();
@@ -173,11 +195,16 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
       ? targetSkill.management.disable
       : targetSkill.management.enable;
     if (!capability.allowed) return;
+    inventoryReadGeneration.current += 1;
     setUpdatingSkillIds(current => new Set(current).add(skillId));
     try {
       const updatedSkills = await skillService.setSkillEnabled(skillId, !targetSkill.enabled);
+      if (!mounted.current) return;
       dispatch(setSkills(updatedSkills));
-      const resolutionMessage = getResolutionChangeMessage(targetSkill, updatedSkills);
+      setGatewayOffline(skillService.isGatewayOffline());
+      const resolutionMessage = updatedSkills.some(skill => skill.name === targetSkill.name)
+        ? getResolutionChangeMessage(targetSkill, updatedSkills)
+        : null;
       if (resolutionMessage) {
         setActionOutcome({
           type: 'success',
@@ -186,17 +213,21 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
         });
       }
     } catch (error) {
+      if (!mounted.current) return;
+      setGatewayOffline(skillService.isGatewayOffline());
       setActionOutcome({
         type: 'error',
         title: i18nService.t('skillUpdateFailed'),
         message: error instanceof Error ? error.message : i18nService.t('skillUpdateFailed'),
       });
     } finally {
-      setUpdatingSkillIds(current => {
-        const next = new Set(current);
-        next.delete(skillId);
-        return next;
-      });
+      if (mounted.current) {
+        setUpdatingSkillIds(current => {
+          const next = new Set(current);
+          next.delete(skillId);
+          return next;
+        });
+      }
     }
   };
 
@@ -291,9 +322,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
       }
 
       if (succeeded.length > 0) {
-        const loadedSkills = await skillService.loadSkills();
-        dispatch(setSkills(loadedSkills));
-        setGatewayOffline(skillService.isGatewayOffline());
+        await refreshSkillList({ force: true });
       }
     } catch (error) {
       setActionOutcome({
@@ -338,7 +367,9 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
         const resolutionMessage = result.skills.some(skill => skill.name === pendingSkill.name)
           ? getResolutionChangeMessage(pendingSkill, result.skills)
           : null;
-        const deleteMessage = i18nService.t('skillDeleteSuccess').replace('{name}', pendingSkill.name);
+        const deleteMessage = i18nService
+          .t('skillDeleteSuccess')
+          .replace('{name}', pendingSkill.name);
         setActionOutcome({
           type: 'success',
           title: i18nService.t('deleteSkill'),
@@ -457,7 +488,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                           {!readOnly && (
                             <SkillWorkshopPanel
                               onSkillsChanged={async () => {
-                                dispatch(setSkills(await skillService.loadSkills()));
+                                await refreshSkillList({ force: true });
                               }}
                             />
                           )}
@@ -591,8 +622,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             onUpdateIdsChange={setMarketplaceUpdateIds}
             readOnly={readOnly}
             onInstalled={async () => {
-              const loadedSkills = await skillService.loadSkills();
-              dispatch(setSkills(loadedSkills));
+              await skillService.refreshInventoryAfterMutation();
             }}
             searchQuery={skillSearchQuery}
             availableOnly={visibility === 'available'}

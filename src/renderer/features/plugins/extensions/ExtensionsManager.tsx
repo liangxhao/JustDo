@@ -1,5 +1,6 @@
 import {
   ArchiveBoxIcon,
+  ArrowPathIcon,
   ArrowUpTrayIcon,
   ChevronDownIcon,
   ClockIcon,
@@ -17,7 +18,7 @@ import type {
   OpenClawPluginCapabilityReview,
 } from '@shared/plugins/extensions';
 import { PluginKind } from '@shared/plugins/marketplace';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { OPEN_TEAM_RECORDS } from '@/features/cowork/components/display/agentTeamHistory';
@@ -138,6 +139,9 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   const [actionOutcome, setActionOutcome] = useState<OperationResult | null>(null);
   const [extensions, setExtensions] = useState<InstalledOpenClawExtension[]>([]);
   const [loadingExtensions, setLoadingExtensions] = useState(true);
+  const inventoryGeneration = useRef(0);
+  const inventoryMounted = useRef(false);
+  const latestInventoryRead = useRef<Promise<InstalledOpenClawExtension[] | null> | null>(null);
   const [importProgress, setImportProgress] = useState<ExtensionImportProgress | null>(null);
   const [importElapsedSeconds, setImportElapsedSeconds] = useState(0);
   const [pendingDelete, setPendingDelete] = useState<InstalledOpenClawExtension | null>(null);
@@ -177,26 +181,47 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     togglingExtensionId !== null ||
     savingConfiguration;
 
-  const loadExtensions = useCallback(async () => {
-    try {
-      const result = await window.electron.extensions.list();
-      if (!result.success) throw new Error(result.error || i18nService.t('extensionListFailed'));
-      setExtensions(result.extensions);
-      return result.extensions;
-    } catch (error) {
-      setActionOutcome({
-        type: 'error',
-        title: i18nService.t('extensionListFailed'),
-        message: error instanceof Error ? error.message : i18nService.t('extensionListFailed'),
-      });
-      return null;
-    } finally {
-      setLoadingExtensions(false);
-    }
+  const loadExtensions = useCallback((): Promise<InstalledOpenClawExtension[] | null> => {
+    if (!inventoryMounted.current) return Promise.resolve(null);
+    const generation = ++inventoryGeneration.current;
+    const isCurrent = () => inventoryMounted.current && generation === inventoryGeneration.current;
+    const pending = (async () => {
+      try {
+        const result = await window.electron.extensions.list();
+        if (!isCurrent()) return inventoryMounted.current ? latestInventoryRead.current : null;
+        if (!result.success) throw new Error(result.error || i18nService.t('extensionListFailed'));
+        setExtensions(result.extensions);
+        return result.extensions;
+      } catch (error) {
+        if (!isCurrent()) return inventoryMounted.current ? latestInventoryRead.current : null;
+        setActionOutcome({
+          type: 'error',
+          title: i18nService.t('extensionListFailed'),
+          message: error instanceof Error ? error.message : i18nService.t('extensionListFailed'),
+        });
+        return null;
+      } finally {
+        if (isCurrent()) setLoadingExtensions(false);
+      }
+    })();
+    // Event and action refreshes can overlap. Their callers join the newest read
+    // instead of using a superseded inventory to update an open details dialog.
+    latestInventoryRead.current = pending;
+    return pending;
   }, []);
 
   useEffect(() => {
+    inventoryMounted.current = true;
     void loadExtensions();
+    const stop = window.electron.extensions.onChanged(() => {
+      if (inventoryMounted.current) void loadExtensions();
+    });
+    return () => {
+      inventoryMounted.current = false;
+      inventoryGeneration.current += 1;
+      latestInventoryRead.current = null;
+      stop();
+    };
   }, [loadExtensions]);
 
   useEffect(() => {
@@ -1263,9 +1288,17 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                 type="button"
                 onClick={() => void handleConfirmDelete()}
                 disabled={deletingExtensionId !== null}
-                className="rounded-lg bg-red-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                aria-busy={deletingExtensionId !== null || undefined}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-red-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {deletingExtensionId ? i18nService.t('extensionDeleting') : i18nService.t('delete')}
+                {deletingExtensionId && (
+                  <ArrowPathIcon aria-hidden="true" className="h-4 w-4 animate-spin" />
+                )}
+                <span role={deletingExtensionId ? 'status' : undefined}>
+                  {deletingExtensionId
+                    ? i18nService.t('extensionDeleting')
+                    : i18nService.t('delete')}
+                </span>
               </button>
             </div>
           </Modal>,

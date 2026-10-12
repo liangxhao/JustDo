@@ -15,7 +15,9 @@ import { OPEN_TEAM_RECORDS } from '@/features/cowork/components/display/agentTea
 import ExtensionsManager from './ExtensionsManager';
 
 vi.mock('@/features/plugins/marketplace/MarketplaceView', () => ({
-  default: () => null,
+  default: ({ onInstalled }: { onInstalled: () => Promise<void> }) => (
+    <button onClick={() => void onInstalled()}>finishMarketplaceInstall</button>
+  ),
 }));
 
 vi.mock('@/services/i18n', () => ({
@@ -76,6 +78,128 @@ describe('ExtensionsManager extension toggle', () => {
     cleanup();
   });
 
+  test.each([true, false])(
+    'keeps the refreshed marketplace inventory when the initial read finishes late (success: %s)',
+    async success => {
+      const oldRead = deferred<{
+        success: boolean;
+        extensions: InstalledOpenClawExtension[];
+        error?: string;
+      }>();
+      const list = vi
+        .fn()
+        .mockReturnValueOnce(oldRead.promise)
+        .mockResolvedValue({ success: true, extensions: [extension] });
+      Object.defineProperty(window, 'electron', {
+        configurable: true,
+        value: {
+          extensions: {
+            list,
+            onChanged: vi.fn(() => vi.fn()),
+            onImportProgress: vi.fn(() => vi.fn()),
+          },
+        },
+      });
+      render(<ExtensionsManager />);
+      fireEvent.click(screen.getByRole('button', { name: 'finishMarketplaceInstall' }));
+      await screen.findByText(extension.name);
+
+      await act(async () => {
+        oldRead.resolve({ success, extensions: [], error: 'Stale list refused' });
+        await oldRead.promise;
+      });
+
+      expect(screen.getByText(extension.name)).toBeTruthy();
+      expect(screen.queryByText('Stale list refused')).toBeNull();
+      expect(list).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  test('refreshes external extension changes and ignores the superseded read after a newer change', async () => {
+    const oldRead = deferred<{ success: boolean; extensions: InstalledOpenClawExtension[] }>();
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({ success: true, extensions: [extension] })
+      .mockReturnValueOnce(oldRead.promise)
+      .mockResolvedValue({ success: true, extensions: [{ ...extension, enabled: true }] });
+    let changed!: () => void;
+    const stop = vi.fn();
+    const onChanged = vi.fn((listener: () => void) => {
+      changed = listener;
+      return stop;
+    });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: { extensions: { list, onChanged, onImportProgress: vi.fn(() => vi.fn()) } },
+    });
+    const view = render(<ExtensionsManager />);
+    await screen.findByRole('switch', { name: 'extensionEnable' });
+    expect(onChanged).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      changed();
+      changed();
+    });
+    await screen.findByRole('switch', { name: 'extensionDisable' });
+    await act(async () => {
+      oldRead.resolve({ success: true, extensions: [extension] });
+      await oldRead.promise;
+    });
+
+    expect(screen.getByRole('switch', { name: 'extensionDisable' })).toBeTruthy();
+    expect(screen.queryByRole('switch', { name: 'extensionEnable' })).toBeNull();
+    view.unmount();
+    expect(stop).toHaveBeenCalledOnce();
+    changed();
+    expect(list).toHaveBeenCalledTimes(3);
+  });
+
+  test('joins a newer event refresh when saving configuration so details use the latest inventory', async () => {
+    const configured = (value: boolean): InstalledOpenClawExtension => ({
+      ...extension,
+      configurationFields: [
+        { path: 'apiKey', label: 'Sample credential', sensitive: true, configured: value },
+      ],
+    });
+    const oldRead = deferred<{ success: boolean; extensions: InstalledOpenClawExtension[] }>();
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({ success: true, extensions: [configured(false)] })
+      .mockReturnValueOnce(oldRead.promise)
+      .mockResolvedValue({ success: true, extensions: [configured(true)] });
+    let changed!: () => void;
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list,
+          updateConfiguration: vi.fn().mockResolvedValue({ success: true }),
+          onChanged: vi.fn((listener: () => void) => {
+            changed = listener;
+            return vi.fn();
+          }),
+          onImportProgress: vi.fn(() => vi.fn()),
+        },
+      },
+    });
+    render(<ExtensionsManager requestedExtensionId={extension.id} />);
+    const input = (await screen.findByLabelText('Sample credential')) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'synthetic-ui-key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'save' }));
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+    await act(async () => changed());
+
+    await act(async () => {
+      oldRead.resolve({ success: true, extensions: [configured(false)] });
+      await oldRead.promise;
+    });
+
+    await waitFor(() => expect(input.placeholder).toBe('extensionConfigurationStored'));
+    expect(input.value).toBe('');
+    expect(screen.getByRole('status').textContent).toBe('extensionConfigurationSaved');
+    expect(list).toHaveBeenCalledTimes(3);
+  });
+
   test('confirms deletion without relabeling the removed extension unavailable', async () => {
     let installed = true;
     const deleteExtension = vi.fn(async () => {
@@ -108,6 +232,60 @@ describe('ExtensionsManager extension toggle', () => {
     expect(deleteExtension).toHaveBeenCalledWith({ extensionId: extension.id });
   });
 
+  test.each([true, false])(
+    'shows deletion progress until the operation ends (success: %s)',
+    async success => {
+      const reply = deferred<{ success: boolean; error?: string }>();
+      let installed = true;
+      const deleteExtension = vi.fn(() => reply.promise);
+      Object.defineProperty(window, 'electron', {
+        configurable: true,
+        value: {
+          extensions: {
+            list: vi.fn(async () => ({ success: true, extensions: installed ? [extension] : [] })),
+            delete: deleteExtension,
+            onChanged: vi.fn(() => vi.fn()),
+            onImportProgress: vi.fn(() => vi.fn()),
+          },
+        },
+      });
+      render(<ExtensionsManager />);
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'subtaskShowInfo: Sample Extension' }),
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'extensionDelete' }));
+      fireEvent.click(screen.getByRole('button', { name: 'delete' }));
+
+      const deleting = screen.getByRole('button', { name: 'extensionDeleting' });
+      expect(deleting.getAttribute('aria-busy')).toBe('true');
+      expect(deleting.hasAttribute('disabled')).toBe(true);
+      expect(deleting.querySelector('.animate-spin')).toBeTruthy();
+      expect(screen.getByRole('status').textContent).toBe('extensionDeleting');
+      expect(screen.getByRole('button', { name: 'cancel' }).hasAttribute('disabled')).toBe(true);
+      fireEvent.click(deleting);
+      expect(deleteExtension).toHaveBeenCalledExactlyOnceWith({ extensionId: extension.id });
+
+      await act(async () => {
+        installed = !success;
+        reply.resolve({ success, error: success ? undefined : 'Delete refused' });
+      });
+
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: 'extensionDeleting' })).toBeNull(),
+      );
+      expect(screen.queryByRole('status')).toBeNull();
+      if (success) {
+        expect(screen.getByText('Extension "Sample Extension" deleted')).toBeTruthy();
+      } else {
+        expect(screen.getByText('Delete refused')).toBeTruthy();
+        const retry = screen.getByRole('button', { name: 'delete' });
+        expect(retry.getAttribute('aria-busy')).toBeNull();
+        expect(retry.hasAttribute('disabled')).toBe(false);
+        expect(retry.querySelector('.animate-spin')).toBeNull();
+      }
+    },
+  );
+
   test.each([false, true])(
     'opens Agent Team records from its card with enabled=%s without toggling the plugin',
     async enabled => {
@@ -122,6 +300,7 @@ describe('ExtensionsManager extension toggle', () => {
               extensions: [{ ...extension, id: 'agent-team', name: 'Agent Team', enabled }],
             })),
             setEnabled,
+            onChanged: vi.fn(() => vi.fn()),
             onImportProgress: vi.fn(() => vi.fn()),
           },
         },
@@ -150,6 +329,7 @@ describe('ExtensionsManager extension toggle', () => {
             success: true,
             extensions: [{ ...extension, id: 'agent-team', name: 'Agent Team' }],
           })),
+          onChanged: vi.fn(() => vi.fn()),
           onImportProgress: vi.fn(() => vi.fn()),
         },
       },
@@ -193,6 +373,7 @@ describe('ExtensionsManager extension toggle', () => {
         extensions: {
           list,
           setEnabled,
+          onChanged: vi.fn(() => vi.fn()),
           onImportProgress: vi.fn(() => vi.fn()),
         },
       },
@@ -257,6 +438,7 @@ describe('ExtensionsManager extension toggle', () => {
             extensions: [extension, systemExtension, bundledExtension],
           })),
           setEnabled: vi.fn(async () => ({ success: true })),
+          onChanged: vi.fn(() => vi.fn()),
           onImportProgress: vi.fn(() => vi.fn()),
         },
         shell: { openPath },
@@ -311,6 +493,7 @@ describe('ExtensionsManager extension toggle', () => {
           extensions: {
             list: vi.fn(async () => ({ success: true, extensions: [computerExtension] })),
             setEnabled,
+            onChanged: vi.fn(() => vi.fn()),
             onImportProgress: vi.fn(() => vi.fn()),
           },
         },
@@ -335,6 +518,7 @@ describe('ExtensionsManager extension toggle', () => {
         extensions: {
           list: vi.fn(async () => ({ success: true, extensions: [extension] })),
           setEnabled: vi.fn(async () => ({ success: true })),
+          onChanged: vi.fn(() => vi.fn()),
           onImportProgress: vi.fn(() => vi.fn()),
         },
         shell: { openPath: vi.fn(async () => ({ success: true })) },
@@ -374,6 +558,7 @@ describe('ExtensionsManager extension toggle', () => {
         extensions: {
           list: vi.fn(async () => ({ success: true, extensions: [managedExtension] })),
           setEnabled,
+          onChanged: vi.fn(() => vi.fn()),
           onImportProgress: vi.fn(() => vi.fn()),
         },
       },
@@ -406,6 +591,7 @@ describe('ExtensionsManager extension toggle', () => {
               },
             ],
           })),
+          onChanged: vi.fn(() => vi.fn()),
           onImportProgress: vi.fn(() => vi.fn()),
         },
       },
@@ -444,6 +630,7 @@ describe('ExtensionsManager extension toggle', () => {
           list: vi.fn(async () => ({ success: true, extensions: [typesafe] })),
           updateConfiguration,
           setEnabled,
+          onChanged: vi.fn(() => vi.fn()),
           onImportProgress: vi.fn(() => vi.fn()),
         },
       },
@@ -490,6 +677,7 @@ describe('ExtensionsManager extension toggle', () => {
         extensions: {
           list: vi.fn(async () => ({ success: true, extensions: [managedExtension] })),
           updateConfiguration,
+          onChanged: vi.fn(() => vi.fn()),
           onImportProgress: vi.fn(() => vi.fn()),
         },
       },
@@ -538,6 +726,7 @@ describe('ExtensionsManager extension toggle', () => {
             ],
           })),
           updateConfiguration,
+          onChanged: vi.fn(() => vi.fn()),
           onImportProgress: vi.fn(() => vi.fn()),
         },
       },
@@ -613,6 +802,7 @@ describe('ExtensionsManager extension toggle', () => {
             ],
           })),
           updateConfiguration,
+          onChanged: vi.fn(() => vi.fn()),
           onImportProgress: vi.fn(() => vi.fn()),
         },
       },
@@ -645,6 +835,7 @@ describe('ExtensionsManager extension toggle', () => {
             success: true,
             extensions: [{ ...extension, error: 'Plugin failed to load' }],
           })),
+          onChanged: vi.fn(() => vi.fn()),
           onImportProgress: vi.fn(() => vi.fn()),
         },
       },
@@ -678,6 +869,7 @@ describe('ExtensionsManager extension toggle', () => {
         extensions: {
           list: vi.fn(async () => ({ success: true, extensions: [] })),
           importPath,
+          onChanged: vi.fn(() => vi.fn()),
           onImportProgress: vi.fn(() => vi.fn()),
         },
         dialog: {

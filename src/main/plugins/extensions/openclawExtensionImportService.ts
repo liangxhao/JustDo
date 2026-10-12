@@ -27,6 +27,7 @@ import type { EffectiveOutboundHeaderPolicySnapshot } from '../../core/network/o
 import { restrictCredentialFile } from '../../openclaw/config/providerSecretFile';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import { prepareExtensionForInstall } from './extensionConversion';
+import { prepareExtensionInstallSource } from './extensionInstallSource';
 import type { ExtensionNetworkPolicyInspection } from './extensionNetworkPolicyManifest';
 import { isExtensionSecretReferenceField, saveExtensionSecrets } from './extensionSecretFile';
 
@@ -290,7 +291,27 @@ const hasRuntimeDependencies = (pluginDir: string): boolean => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
+const isSymbolicLinkCreationError = (error: unknown): boolean => {
+  let current = error;
+  const visited = new Set<unknown>();
+  while ((current instanceof Error || isRecord(current)) && !visited.has(current)) {
+    visited.add(current);
+    const record = current as { syscall?: unknown; message?: unknown; cause?: unknown };
+    const syscall =
+      typeof record.syscall === 'string'
+        ? record.syscall.toLowerCase()
+        : managedDirectoryFailureFromMessage(
+            typeof record.message === 'string' ? record.message : '',
+            '',
+          ).syscall;
+    if (syscall === 'symlink') return true;
+    current = record.cause;
+  }
+  return false;
+};
+
 const isGatewayUnavailableError = (error: unknown): boolean => {
+  if (isSymbolicLinkCreationError(error)) return false;
   if (!isRecord(error) && !(error instanceof Error)) return false;
   const code = 'code' in error && typeof error.code === 'string' ? error.code : '';
   if (['CLIENT_TIMEOUT', 'CLIENT_CLOSED', 'ECONNREFUSED', 'ECONNRESET'].includes(code)) return true;
@@ -301,14 +322,16 @@ const isGatewayUnavailableError = (error: unknown): boolean => {
 };
 
 const isDirectoryLockError = (error: unknown): boolean => {
+  // A native preparation failure must take precedence over a generic outer code.
+  if (isSymbolicLinkCreationError(error)) return false;
   let current = error;
   const visited = new Set<unknown>();
   while ((current instanceof Error || isRecord(current)) && !visited.has(current)) {
     visited.add(current);
     const record = current as { code?: unknown; message?: unknown; cause?: unknown };
     const code = typeof record.code === 'string' ? record.code.toUpperCase() : '';
-    if (code === 'EACCES' || code === 'EPERM' || code === 'EBUSY') return true;
     const message = typeof record.message === 'string' ? record.message : '';
+    if (code === 'EACCES' || code === 'EPERM' || code === 'EBUSY') return true;
     if (
       /failed to remove plugin directory .+; the plugin remains disabled and tracked so uninstall can be retried|\b(?:EACCES|EPERM|EBUSY)\b|resource busy|busy or locked|being used by another process|process cannot access|permission denied|access (?:is )?denied|operation not permitted/i.test(
         message,
@@ -1860,6 +1883,9 @@ export class OpenClawExtensionImportService {
     options?: { trustMarketplaceSource?: boolean },
   ): Promise<ExtensionImportResult> {
     let temporaryDirectory: string | null = null;
+    let cleanupInstallSource: (() => Promise<void>) | undefined;
+    let installSourceInFlight = false;
+    let retainedInstallSourcePath: string | undefined;
     let extensionId: string | undefined;
     let installationAttempted = false;
     let currentStage: ExtensionImportStage = 'preparing';
@@ -1929,11 +1955,23 @@ export class OpenClawExtensionImportService {
         }
       };
       const cli = await manager.buildCliEnvironment();
+      let installSourcePath = prepared.sourcePath;
+      if (stats.isDirectory()) {
+        const installSource = await prepareExtensionInstallSource(pluginDirectory, cli.runtimeRoot);
+        cleanupInstallSource = installSource.cleanup;
+        if (installSource.directory !== pluginDirectory) {
+          pluginDirectory = installSource.directory;
+          installSourcePath = installSource.directory;
+          retainedInstallSourcePath = installSourcePath;
+          extensionId = validateNativePluginDirectory(pluginDirectory);
+          this.deps.outboundHeaderPolicy?.inspectExtension(pluginDirectory);
+        }
+      }
       if (this.deps.requestGateway && !options?.trustMarketplaceSource) {
         const inspected = await this.inspectCapabilityReview({
           cli,
           pluginDirectory,
-          sourcePath: prepared.sourcePath,
+          sourcePath: installSourcePath,
           extensionId,
         });
         extensionId = inspected.extensionId;
@@ -1950,7 +1988,7 @@ export class OpenClawExtensionImportService {
         cli.openclawEntry,
         'plugins',
         'install',
-        prepared.sourcePath,
+        installSourcePath,
         '--force',
         ...(this.deps.requestGateway || options?.trustMarketplaceSource
           ? ['--accept-capabilities']
@@ -1997,6 +2035,7 @@ export class OpenClawExtensionImportService {
       let allowlistError = '';
       installationAttempted = true;
       const command = await this.runDirectoryCommand(targetPath, async () => {
+        installSourceInFlight = true;
         const result = await this.runCommand(process.execPath, installArgs, {
           cwd: cli.runtimeRoot,
           env: installEnv,
@@ -2012,6 +2051,10 @@ export class OpenClawExtensionImportService {
             }
           },
         });
+        // A failed/terminated CLI can have lost the Gateway's response while its
+        // native lifecycle is still reading this source. Retain that one-shot
+        // copy on unknown outcomes; never remove it or replay the install.
+        installSourceInFlight = result.exitCode !== 0 || result.timedOut === true;
         if (result.exitCode === 0 && extensionId && !this.deps.requestGateway) {
           try {
             updateExtensionAllowlist(
@@ -2117,6 +2160,19 @@ export class OpenClawExtensionImportService {
         failedStage: currentStage,
       };
     } finally {
+      try {
+        if (installSourceInFlight && retainedInstallSourcePath) {
+          console.warn(
+            '[OpenClawExtensionImportService] Retaining install source after an unconfirmed CLI outcome:',
+            retainedInstallSourcePath,
+          );
+        } else await cleanupInstallSource?.();
+      } catch (error) {
+        console.warn(
+          '[OpenClawExtensionImportService] Failed to clean temporary install source:',
+          error,
+        );
+      }
       if (temporaryDirectory) {
         try {
           fs.rmSync(temporaryDirectory, {

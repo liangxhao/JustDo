@@ -5,8 +5,12 @@ import os from 'os';
 import path from 'path';
 import * as tar from 'tar';
 
-import { cpRecursiveSync } from '../../core/filesystem/fsCompat';
+import {
+  ManagedDirectoryTargetExistsError,
+  replaceDirectoryTransactional,
+} from '../../core/filesystem/managedDirectoryOperations';
 import { extractZipSafely } from '../../core/filesystem/safeZipExtractor';
+import { t } from '../../core/i18n';
 
 const HOOK_FILE_NAME = 'HOOK.md';
 const HANDLER_FILE_NAMES = ['handler.ts', 'handler.js', 'index.ts', 'index.js'] as const;
@@ -67,16 +71,6 @@ const resolveExtractedHookDirectory = (extractDir: string): string => {
     return path.join(extractDir, entries[0].name);
   }
   return extractDir;
-};
-
-const replaceDirectory = (sourceDir: string, targetDir: string): void => {
-  fs.rmSync(targetDir, {
-    recursive: true,
-    force: true,
-    maxRetries: process.platform === 'win32' ? 5 : 0,
-    retryDelay: process.platform === 'win32' ? 200 : 0,
-  });
-  cpRecursiveSync(sourceDir, targetDir, { force: true });
 };
 
 export class OpenClawHookFiles {
@@ -150,15 +144,41 @@ export class OpenClawHookFiles {
       if (fs.existsSync(targetDir)) {
         return {
           success: false,
-          error: `Hook "${hookId}" is already installed. Delete it before importing a replacement.`,
+          error: t('hookAlreadyInstalled', { hookId }),
         };
       }
-      replaceDirectory(sourceDir, targetDir);
+      replaceDirectoryTransactional({
+        sourceDir,
+        targetDir,
+        noReplace: true,
+        transactionPrefix: '.hook-stage-',
+        stagingParent: path.dirname(this.managedHooksDir),
+        validateStaged: stagedDir => {
+          if (fs.lstatSync(stagedDir).isSymbolicLink()) {
+            throw new Error(t('hookImportValidationFailed'));
+          }
+          assertNoSymbolicLinks(stagedDir);
+          if (
+            readHookId(stagedDir) !== hookId ||
+            !HANDLER_FILE_NAMES.some(name => fs.existsSync(path.join(stagedDir, name)))
+          ) {
+            throw new Error(t('hookImportValidationFailed'));
+          }
+        },
+        onCleanupError: message => {
+          console.warn('[OpenClawHookFiles] Failed to clean Hook transaction files:', message);
+        },
+      });
       return { success: true, hookId };
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to import Hook folder',
+        error:
+          error instanceof ManagedDirectoryTargetExistsError
+            ? t('hookAlreadyInstalled', { hookId: path.basename(error.targetDir) })
+            : error instanceof Error
+              ? error.message
+              : 'Failed to import Hook folder',
       };
     }
   }

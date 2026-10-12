@@ -65,11 +65,22 @@ type ManagedDirectoryOperationCoordinatorDeps = {
 export type ReplaceDirectoryOptions = {
   sourceDir: string;
   targetDir: string;
+  noReplace?: boolean;
   transactionPrefix?: string;
   stagingParent?: string;
   validateStaged?: (stagedDir: string) => void;
   onCleanupError?: (message: string) => void;
 };
+
+export class ManagedDirectoryTargetExistsError extends Error {
+  readonly code = 'EEXIST';
+  readonly syscall = 'rename';
+
+  constructor(readonly targetDir: string) {
+    super(`Directory already exists: ${targetDir}`);
+    this.name = 'ManagedDirectoryTargetExistsError';
+  }
+}
 
 export type RemoveDirectoryOptions = {
   targetDir: string;
@@ -86,7 +97,7 @@ type FileSystemErrorDetails = {
   destinationPath?: string;
 };
 
-const getStringProperty = (value: Error, property: string): string | undefined =>
+const getStringProperty = (value: object, property: string): string | undefined =>
   property in value && typeof (value as unknown as Record<string, unknown>)[property] === 'string'
     ? ((value as unknown as Record<string, unknown>)[property] as string)
     : undefined;
@@ -94,23 +105,39 @@ const getStringProperty = (value: Error, property: string): string | undefined =
 export const findFileSystemErrorDetails = (error: unknown): FileSystemErrorDetails => {
   let current = error;
   const visited = new Set<unknown>();
-  while (current instanceof Error && !visited.has(current)) {
+  let details: FileSystemErrorDetails = {};
+  while (current !== null && typeof current === 'object' && !visited.has(current)) {
     visited.add(current);
     const code = getStringProperty(current, 'code');
-    if (code) {
-      return {
-        code,
-        syscall: getStringProperty(current, 'syscall'),
-        sourcePath: getStringProperty(current, 'path'),
-        destinationPath: getStringProperty(current, 'dest'),
-      };
+    const syscall =
+      getStringProperty(current, 'syscall') ??
+      readFileSystemSyscall(getStringProperty(current, 'message') ?? '');
+    const currentDetails = {
+      code,
+      syscall,
+      sourcePath: getStringProperty(current, 'path'),
+      destinationPath: getStringProperty(current, 'dest'),
+    };
+    if (!details.code && code) details = currentDetails;
+    // Preserve the real failed operation even when a generic outer EPERM wraps it.
+    if (syscall === 'symlink') {
+      return { ...currentDetails, code: code ?? details.code };
     }
-    current = current.cause;
+    current = 'cause' in current ? current.cause : undefined;
   }
-  return {};
+  return details;
 };
 
-const classifyFailure = (code?: string, message = ''): ManagedDirectoryFailureReason => {
+const classifyFailure = (
+  code?: string,
+  message = '',
+  syscall?: string,
+): ManagedDirectoryFailureReason => {
+  // A rejected link creation is unrelated to a handle on the managed directory.
+  // In particular, Windows fs.cpSync can fail while recreating a captured junction.
+  if (syscall === 'symlink') {
+    return code === 'EACCES' || code === 'EPERM' ? 'permission' : 'filesystem';
+  }
   // Node's recursive Windows directory removal can omit `syscall` even when a
   // directory handle is the reason for EPERM/EACCES. Treat these codes as a
   // potential lock first; the coordinator runs Restart Manager diagnostics and
@@ -130,30 +157,38 @@ const classifyFailure = (code?: string, message = ''): ManagedDirectoryFailureRe
   return 'filesystem';
 };
 
+const readFileSystemSyscall = (message: string): string | undefined =>
+  /\bsymlink\s+['"]/i.test(message)
+    ? 'symlink'
+    : message.match(/\b(rename|rmdir|unlink)\b/i)?.[1]?.toLowerCase();
+
 export const managedDirectoryFailureFromError = (
   error: unknown,
   targetPath: string,
 ): ManagedDirectoryFailure => {
   const details = findFileSystemErrorDetails(error);
+  const message = error instanceof Error ? error.message : String(error);
+  const syscall = details.syscall ?? readFileSystemSyscall(message);
   return {
-    reason: classifyFailure(details.code, error instanceof Error ? error.message : String(error)),
-    message: error instanceof Error ? error.message : String(error),
+    reason: classifyFailure(details.code, message, syscall),
+    message,
     targetPath,
     ...(details.code ? { code: details.code } : {}),
-    ...(details.syscall ? { syscall: details.syscall } : {}),
+    ...(syscall ? { syscall } : {}),
   };
 };
 
 export const managedDirectoryFailureFromMessage = (
   message: string,
   targetPath: string,
+  operation?: string,
 ): ManagedDirectoryFailure => {
   const code = message
     .match(/\b(EACCES|EPERM|EBUSY|EEXIST|EXDEV|ENOSPC|EROFS)\b/i)?.[1]
     ?.toUpperCase();
-  const syscall = message.match(/\b(rename|rmdir|unlink)\b/i)?.[1]?.toLowerCase();
+  const syscall = operation ?? readFileSystemSyscall(message);
   return {
-    reason: classifyFailure(code, message),
+    reason: classifyFailure(code, message, syscall),
     message,
     targetPath,
     ...(code ? { code } : {}),
@@ -187,6 +222,7 @@ export const formatManagedDirectoryFailure = (
     return t('managedDirectoryLockedUnknown', {
       resource: resourceName,
       path: failure.targetPath,
+      detail: failure.message,
     });
   }
   if (failure.reason === 'permission') {
@@ -230,12 +266,24 @@ const lacksBasicDirectoryMutationAccess = (targetPath: string): boolean => {
   }
 };
 
-export const renameDirectoryWithRetry = (sourceDir: string, targetDir: string): void => {
+export const renameDirectoryWithRetry = (
+  sourceDir: string,
+  targetDir: string,
+  options: { noReplace?: boolean } = {},
+): void => {
   for (let attempt = 0; ; attempt += 1) {
     try {
+      // Never back up or overwrite a target that appeared while a new package
+      // was staged. Repeat this check if a Windows sharing violation is retried.
+      if (options.noReplace && pathExists(targetDir)) {
+        throw new ManagedDirectoryTargetExistsError(targetDir);
+      }
       fs.renameSync(sourceDir, targetDir);
       return;
     } catch (error) {
+      if (options.noReplace && pathExists(targetDir)) {
+        throw new ManagedDirectoryTargetExistsError(targetDir);
+      }
       const { code } = findFileSystemErrorDetails(error);
       const canRetry =
         attempt < FILE_SYSTEM_RETRY_COUNT &&
@@ -332,6 +380,7 @@ const recoverInterruptedReplaceTransactions = (
 export const replaceDirectoryTransactional = ({
   sourceDir,
   targetDir,
+  noReplace = false,
   transactionPrefix = '.justdo-directory-stage-',
   stagingParent = path.dirname(targetDir),
   validateStaged,
@@ -340,12 +389,16 @@ export const replaceDirectoryTransactional = ({
   // Keep staging on the destination volume so publish and rollback are atomic
   // and cannot fail with EXDEV when the system temp directory is on another drive.
   fs.mkdirSync(stagingParent, { recursive: true });
-  recoverInterruptedReplaceTransactions(
-    stagingParent,
-    transactionPrefix,
-    targetDir,
-    onCleanupError,
-  );
+  // New installs never create a backup. Another same-ID install can still be
+  // staging, so only clean this attempt's own transaction in no-replace mode.
+  if (!noReplace) {
+    recoverInterruptedReplaceTransactions(
+      stagingParent,
+      transactionPrefix,
+      targetDir,
+      onCleanupError,
+    );
+  }
   const transactionDir = fs.mkdtempSync(path.join(stagingParent, transactionPrefix));
   const stagedDir = path.join(transactionDir, 'next');
   const backupDir = path.join(transactionDir, 'backup');
@@ -360,12 +413,13 @@ export const replaceDirectoryTransactional = ({
       'utf8',
     );
     if (pathExists(targetDir)) {
+      if (noReplace) throw new ManagedDirectoryTargetExistsError(targetDir);
       renameDirectoryWithRetry(targetDir, backupDir);
       targetBackedUp = true;
     }
 
     try {
-      renameDirectoryWithRetry(stagedDir, targetDir);
+      renameDirectoryWithRetry(stagedDir, targetDir, { noReplace });
     } catch (error) {
       if (targetBackedUp) {
         try {

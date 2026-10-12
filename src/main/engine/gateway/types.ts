@@ -19,7 +19,7 @@ export type GatewayClientLike = {
   request: <T = Record<string, unknown>>(
     method: string,
     params?: unknown,
-    opts?: { expectFinal?: boolean },
+    opts?: { expectFinal?: boolean; timeoutMs?: number; signal?: AbortSignal },
   ) => Promise<T>;
 };
 

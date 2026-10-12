@@ -1,11 +1,12 @@
 import {
   ArchiveBoxIcon,
+  ArrowPathIcon,
   ArrowUpTrayIcon,
   FolderIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { PluginHubScope } from '@shared/plugins/management';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { HookEntry } from '@/features/plugins/hooks/hook';
@@ -70,14 +71,19 @@ const HookManager: React.FC<HookManagerProps> = ({
   const [hookPendingDelete, setHookPendingDelete] = useState<HookEntry | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteSuccess, setDeleteSuccess] = useState('');
+  const inventoryReadGeneration = useRef(0);
+  const mounted = useRef(false);
 
   useEffect(() => {
+    mounted.current = true;
     let isActive = true;
-    const loadHooks = async () => {
+    const loadHooks = async (force = false) => {
+      const generation = ++inventoryReadGeneration.current;
       setIsLoading(true);
-      const result = await hookService.loadHooks();
-      if (!isActive) return;
+      const result = await hookService.loadHooks({ force });
+      if (!isActive || generation !== inventoryReadGeneration.current) return;
       setHooks(result.hooks ?? []);
+      setSelectedHook(current => result.hooks?.find(hook => hook.id === current?.id) ?? null);
       setWorkspaceDir(result.workspaceDir ?? '');
       setManagedHooksDir(result.managedHooksDir ?? '');
       setGatewayOffline(hookService.isGatewayOffline());
@@ -85,8 +91,14 @@ const HookManager: React.FC<HookManagerProps> = ({
       setIsLoading(false);
     };
     loadHooks();
+    const stop = window.electron.extensions.onChanged(() => {
+      void loadHooks(true);
+    });
     return () => {
       isActive = false;
+      mounted.current = false;
+      inventoryReadGeneration.current += 1;
+      stop();
     };
   }, []);
 
@@ -127,7 +139,20 @@ const HookManager: React.FC<HookManagerProps> = ({
     });
   };
 
+  const reconcileFailedMutation = async (generation: number) => {
+    if (!mounted.current || generation !== inventoryReadGeneration.current) return;
+    const result = await hookService.loadHooks({ force: true });
+    if (!mounted.current || generation !== inventoryReadGeneration.current) return;
+    const currentHooks = hookService.getHooks();
+    setHooks(currentHooks);
+    setSelectedHook(current => currentHooks.find(hook => hook.id === current?.id) ?? null);
+    setWorkspaceDir(result.workspaceDir ?? workspaceDir);
+    setManagedHooksDir(result.managedHooksDir ?? managedHooksDir);
+    setGatewayOffline(hookService.isGatewayOffline());
+  };
+
   const handleToggleHook = async (hook: HookEntry) => {
+    if (updatingHookIds.has(hook.id)) return;
     const capability = hook.enabled ? hook.management?.disable : hook.management?.enable;
     if (capability && !capability.allowed) {
       setActionError(i18nService.t('hookManagedByPlugin'));
@@ -139,22 +164,32 @@ const HookManager: React.FC<HookManagerProps> = ({
     }
 
     setActionError('');
+    const generation = ++inventoryReadGeneration.current;
     setHookUpdating(hook.id, true);
     try {
       const result = await hookService.setHookEnabled(hook.id, !hook.enabled);
-      setHooks(result.hooks ?? hookService.getHooks());
+      if (!mounted.current) return;
+      const currentHooks = hookService.getHooks();
+      setHooks(currentHooks);
+      setGatewayOffline(hookService.isGatewayOffline());
+      if (hookService.hasHookLoadFailed()) setActionError(i18nService.t('hookLoadFailed'));
       setWorkspaceDir(result.workspaceDir ?? workspaceDir);
       setManagedHooksDir(result.managedHooksDir ?? managedHooksDir);
       setRestartNotice(Boolean(result.restartRequired));
       setSelectedHook(current =>
         current?.id === hook.id
-          ? ((result.hooks ?? hookService.getHooks()).find(item => item.id === hook.id) ?? current)
+          ? (currentHooks.find(item => item.id === hook.id) ?? null)
           : current,
       );
     } catch (error) {
+      if (!mounted.current) return;
       setActionError(error instanceof Error ? error.message : i18nService.t('hookUpdateFailed'));
+      await reconcileFailedMutation(generation);
     } finally {
-      setHookUpdating(hook.id, false);
+      if (mounted.current) {
+        setHookUpdating(hook.id, false);
+        if (generation === inventoryReadGeneration.current) setIsLoading(false);
+      }
     }
   };
 
@@ -165,6 +200,7 @@ const HookManager: React.FC<HookManagerProps> = ({
 
   const handleImportHooks = async (sourceType: 'folders' | 'archives') => {
     if (importing) return;
+    let generation: number | undefined;
     try {
       setImportPickerOpen(false);
       setImporting(true);
@@ -186,18 +222,23 @@ const HookManager: React.FC<HookManagerProps> = ({
                 },
               ],
             });
-      if (!selection.success || !selection.paths?.length) return;
+      if (!selection.success || !selection.paths?.length) {
+        if (selection.error) setActionError(selection.error);
+        return;
+      }
+      generation = ++inventoryReadGeneration.current;
 
       const results = [];
       for (const sourcePath of selection.paths) {
         const result = await hookService.importHook(sourcePath);
         results.push({ sourcePath, ...result });
         if (result.success) {
-          setHooks(result.hooks ?? hookService.getHooks());
+          setHooks(hookService.getHooks());
           setWorkspaceDir(result.workspaceDir ?? workspaceDir);
           setManagedHooksDir(result.managedHooksDir ?? managedHooksDir);
         }
       }
+      if (results.some(result => !result.success)) await reconcileFailedMutation(generation);
 
       const importedIds = results
         .filter(result => result.success)
@@ -215,10 +256,20 @@ const HookManager: React.FC<HookManagerProps> = ({
             error: result.error || i18nService.t('hookImportFailed'),
           })),
       );
+      if (mounted.current) {
+        setGatewayOffline(hookService.isGatewayOffline());
+        if (hookService.hasHookLoadFailed()) setActionError(i18nService.t('hookLoadFailed'));
+      }
     } catch (error) {
       setActionError(error instanceof Error ? error.message : i18nService.t('hookImportFailed'));
+      if (generation !== undefined) await reconcileFailedMutation(generation);
     } finally {
-      setImporting(false);
+      if (mounted.current) {
+        setImporting(false);
+        if (generation !== undefined && generation === inventoryReadGeneration.current) {
+          setIsLoading(false);
+        }
+      }
     }
   };
 
@@ -230,11 +281,15 @@ const HookManager: React.FC<HookManagerProps> = ({
 
   const handleConfirmDelete = async () => {
     if (!hookPendingDelete || deleting) return;
+    const generation = ++inventoryReadGeneration.current;
     setDeleting(true);
     setActionError('');
     try {
       const result = await hookService.deleteHook(hookPendingDelete.id);
-      setHooks(result.hooks ?? hookService.getHooks());
+      if (!mounted.current) return;
+      setHooks(hookService.getHooks());
+      setGatewayOffline(hookService.isGatewayOffline());
+      if (hookService.hasHookLoadFailed()) setActionError(i18nService.t('hookLoadFailed'));
       setWorkspaceDir(result.workspaceDir ?? workspaceDir);
       setManagedHooksDir(result.managedHooksDir ?? managedHooksDir);
       setRestartNotice(Boolean(result.restartRequired));
@@ -242,9 +297,14 @@ const HookManager: React.FC<HookManagerProps> = ({
       setHookPendingDelete(null);
       setTimeout(() => setDeleteSuccess(''), 5000);
     } catch (error) {
+      if (!mounted.current) return;
       setActionError(error instanceof Error ? error.message : i18nService.t('hookDeleteFailed'));
+      await reconcileFailedMutation(generation);
     } finally {
-      setDeleting(false);
+      if (mounted.current) {
+        setDeleting(false);
+        if (generation === inventoryReadGeneration.current) setIsLoading(false);
+      }
     }
   };
 
@@ -594,8 +654,7 @@ const HookManager: React.FC<HookManagerProps> = ({
                 </button>
               </Tooltip>
               {(selectedHook.management?.remove.allowed ??
-                (selectedHook.source === 'openclaw-managed' &&
-                  !selectedHook.managedByPlugin)) && (
+                (selectedHook.source === 'openclaw-managed' && !selectedHook.managedByPlugin)) && (
                 <Tooltip content={i18nService.t('deleteHook')} position="top">
                   <button
                     type="button"
@@ -687,9 +746,13 @@ const HookManager: React.FC<HookManagerProps> = ({
                 type="button"
                 onClick={() => void handleConfirmDelete()}
                 disabled={deleting}
-                className="rounded-lg bg-red-500 px-3 py-1.5 text-xs text-white transition-colors hover:bg-red-600 disabled:opacity-50"
+                aria-busy={deleting || undefined}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-red-500 px-3 py-1.5 text-xs text-white transition-colors hover:bg-red-600 disabled:opacity-50"
               >
-                {deleting ? i18nService.t('hookDeleting') : i18nService.t('delete')}
+                {deleting && <ArrowPathIcon aria-hidden="true" className="h-4 w-4 animate-spin" />}
+                <span role={deleting ? 'status' : undefined}>
+                  {deleting ? i18nService.t('hookDeleting') : i18nService.t('delete')}
+                </span>
               </button>
             </div>
           </Modal>,

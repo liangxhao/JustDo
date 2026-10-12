@@ -77,6 +77,7 @@ export class OpenClawSkillFileService {
         const failure = managedDirectoryFailureFromMessage(
           [result.errorSyscall, result.errorCode, result.error].filter(Boolean).join(': '),
           targetPath,
+          result.errorSyscall,
         );
         return managedDirectoryFailure({
           ...failure,

@@ -1,9 +1,10 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterEach, beforeEach, expect, test } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { ZipFile } from 'yazl';
 
+import { t } from '../../core/i18n';
 import { OpenClawHookFiles } from './openclawHookFiles';
 
 let root: string;
@@ -35,6 +36,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -48,6 +50,183 @@ test('imports a valid Hook folder into the managed directory', async () => {
   });
   expect(fs.existsSync(path.join(managed, 'demo-hook', 'HOOK.md'))).toBe(true);
   expect(fs.existsSync(path.join(managed, 'demo-hook', 'handler.js'))).toBe(true);
+});
+
+test.each(['EPERM', 'ENOSPC'])(
+  'a later copy failure %s leaves no installed Hook and allows retry',
+  async code => {
+    const source = path.join(root, 'source');
+    const installed = path.join(managed, 'existing-hook');
+    createHook(source);
+    fs.writeFileSync(path.join(source, 'payload.txt'), 'Hook companion');
+    createHook(installed, 'existing-hook');
+    const originalHandler = fs.readFileSync(path.join(installed, 'handler.js'), 'utf8');
+    const copyFile = fs.copyFileSync;
+    let copied = 0;
+    const copy = vi.spyOn(fs, 'copyFileSync').mockImplementation((from, to, mode) => {
+      copied += 1;
+      if (copied === 3) {
+        throw Object.assign(new Error('A later Hook file could not be copied'), {
+          code,
+          syscall: 'copyfile',
+        });
+      }
+      copyFile(from, to, mode);
+    });
+    const files = new OpenClawHookFiles(managed);
+
+    const failed = await files.importPath(source);
+
+    expect(failed.success).toBe(false);
+    expect(failed.error).toContain('A later Hook file could not be copied');
+    expect(copied).toBe(3);
+    expect(fs.existsSync(path.join(managed, 'demo-hook'))).toBe(false);
+    expect(fs.readFileSync(path.join(installed, 'handler.js'), 'utf8')).toBe(originalHandler);
+    expect(fs.readdirSync(root).some(name => name.startsWith('.hook-stage-'))).toBe(false);
+
+    copy.mockRestore();
+    await expect(files.importPath(source)).resolves.toEqual({
+      success: true,
+      hookId: 'demo-hook',
+    });
+    expect(fs.readFileSync(path.join(managed, 'demo-hook', 'payload.txt'), 'utf8')).toBe(
+      'Hook companion',
+    );
+  },
+);
+
+test('validates the copied Hook identity before publishing the managed directory', async () => {
+  const source = path.join(root, 'source');
+  createHook(source);
+  const copyFile = fs.copyFileSync;
+  vi.spyOn(fs, 'copyFileSync').mockImplementation((from, to, mode) => {
+    copyFile(from, to, mode);
+    if (path.basename(String(from)) === 'HOOK.md') {
+      fs.writeFileSync(to, '---\nname: unexpected-hook\n---\n');
+    }
+  });
+
+  const result = await new OpenClawHookFiles(managed).importPath(source);
+
+  expect(result.success).toBe(false);
+  expect(fs.existsSync(path.join(managed, 'demo-hook'))).toBe(false);
+  expect(fs.existsSync(path.join(managed, 'unexpected-hook'))).toBe(false);
+  expect(fs.readdirSync(root).some(name => name.startsWith('.hook-stage-'))).toBe(false);
+});
+
+test('rejects a directory link introduced during staging without publishing or touching its target', async () => {
+  const source = path.join(root, 'source');
+  const outside = path.join(root, 'outside');
+  createHook(source);
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside, 'kept.txt'), 'Outside data');
+  const copyFile = fs.copyFileSync;
+  let injected = false;
+  vi.spyOn(fs, 'copyFileSync').mockImplementation((from, to, mode) => {
+    copyFile(from, to, mode);
+    if (!injected) {
+      injected = true;
+      fs.symlinkSync(outside, path.join(path.dirname(String(to)), 'injected-link'), 'junction');
+    }
+  });
+
+  const result = await new OpenClawHookFiles(managed).importPath(source);
+
+  expect(result.success).toBe(false);
+  expect(result.error).toContain('symbolic links');
+  expect(fs.existsSync(path.join(managed, 'demo-hook'))).toBe(false);
+  expect(fs.readFileSync(path.join(outside, 'kept.txt'), 'utf8')).toBe('Outside data');
+});
+
+test('rejects an existing Hook without copying or replacing its files', async () => {
+  const source = path.join(root, 'source');
+  const installed = path.join(managed, 'demo-hook');
+  createHook(source);
+  createHook(installed);
+  fs.writeFileSync(path.join(installed, 'handler.js'), 'Original installed handler');
+  const copy = vi.spyOn(fs, 'copyFileSync');
+
+  const result = await new OpenClawHookFiles(managed).importPath(source);
+
+  expect(result.success).toBe(false);
+  expect(result.error).toBe(t('hookAlreadyInstalled', { hookId: 'demo-hook' }));
+  expect(copy).not.toHaveBeenCalled();
+  expect(fs.readFileSync(path.join(installed, 'handler.js'), 'utf8')).toBe(
+    'Original installed handler',
+  );
+});
+
+test.each(['hook', 'empty-directory', 'directory-link'])(
+  'does not replace a same-ID %s that appears during staging',
+  async kind => {
+    const source = path.join(root, 'source');
+    const target = path.join(managed, 'demo-hook');
+    const outside = path.join(root, 'outside');
+    createHook(source);
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'kept.txt'), 'Outside data');
+    const copyFile = fs.copyFileSync;
+    let injected = false;
+    const copy = vi.spyOn(fs, 'copyFileSync').mockImplementation((from, to, mode) => {
+      copyFile(from, to, mode);
+      if (!injected) {
+        injected = true;
+        if (kind === 'hook') {
+          createHook(target);
+          fs.writeFileSync(path.join(target, 'handler.js'), 'Other installation');
+        } else if (kind === 'empty-directory') {
+          fs.mkdirSync(target);
+        } else {
+          fs.symlinkSync(outside, target, 'junction');
+        }
+      }
+    });
+    const files = new OpenClawHookFiles(managed);
+
+    const result = await files.importPath(source);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe(t('hookAlreadyInstalled', { hookId: 'demo-hook' }));
+    expect(fs.lstatSync(target).isSymbolicLink()).toBe(kind === 'directory-link');
+    if (kind === 'hook') {
+      expect(fs.readFileSync(path.join(target, 'handler.js'), 'utf8')).toBe('Other installation');
+    } else if (kind === 'empty-directory') {
+      expect(fs.readdirSync(target)).toEqual([]);
+    }
+    expect(fs.readFileSync(path.join(outside, 'kept.txt'), 'utf8')).toBe('Outside data');
+    expect(fs.readdirSync(root).some(name => name.startsWith('.hook-stage-'))).toBe(false);
+
+    copy.mockRestore();
+    if (kind === 'directory-link') fs.unlinkSync(target);
+    else fs.rmSync(target, { recursive: true });
+    await expect(files.importPath(source)).resolves.toEqual({
+      success: true,
+      hookId: 'demo-hook',
+    });
+  },
+);
+
+test('keeps another completed installation if it appears at the native publish call', async () => {
+  const source = path.join(root, 'source');
+  const target = path.join(managed, 'demo-hook');
+  createHook(source);
+  const rename = fs.renameSync;
+  vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+    if (path.basename(String(from)) === 'next' && String(to) === target) {
+      createHook(target);
+      fs.writeFileSync(path.join(target, 'handler.js'), 'Concurrent installed handler');
+    }
+    rename(from, to);
+  });
+
+  const result = await new OpenClawHookFiles(managed).importPath(source);
+
+  expect(result.success).toBe(false);
+  expect(result.error).toBe(t('hookAlreadyInstalled', { hookId: 'demo-hook' }));
+  expect(fs.readFileSync(path.join(target, 'handler.js'), 'utf8')).toBe(
+    'Concurrent installed handler',
+  );
+  expect(fs.readdirSync(root).some(name => name.startsWith('.hook-stage-'))).toBe(false);
 });
 
 test('requires both Hook metadata and a supported handler entrypoint', async () => {

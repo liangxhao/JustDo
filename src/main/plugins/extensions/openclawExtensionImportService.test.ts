@@ -73,6 +73,69 @@ describe('OpenClawExtensionImportService', () => {
     ).toBe(false);
   });
 
+  it.each([
+    { code: 'EPERM', syscall: 'symlink', message: 'Operation not permitted' },
+    {
+      code: 'UNAVAILABLE',
+      message:
+        "Plugin operation failed during prepare: EPERM: operation not permitted, symlink 'host' -> 'capture'",
+    },
+    {
+      code: 'EPERM',
+      message: 'Operation not permitted',
+      cause: { code: 'EPERM', syscall: 'symlink', message: 'Captured dependency link failed' },
+    },
+    Object.assign(new Error('Gateway client is unavailable'), {
+      code: 'CLIENT_CLOSED',
+      cause: { code: 'EPERM', syscall: 'symlink', message: 'Captured dependency link failed' },
+    }),
+  ])('does not classify a captured link failure as a directory lock: $code', error => {
+    expect(__openClawExtensionImportTestUtils.isDirectoryLockError(error)).toBe(false);
+    expect(__openClawExtensionImportTestUtils.isGatewayUnavailableError(error)).toBe(false);
+  });
+
+  it('returns a native recovery link failure without retrying uninstall or restarting the Gateway', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    const stateDir = path.join(fixtureRoot, 'state');
+    const installedDir = path.join(stateDir, 'extensions', 'demo');
+    fs.mkdirSync(installedDir, { recursive: true });
+    fs.writeFileSync(path.join(installedDir, 'openclaw.plugin.json'), '{"id":"demo"}');
+    const error = Object.assign(
+      new Error(
+        "Plugin operation failed during prepare: EPERM: operation not permitted, symlink 'host' -> 'capture'",
+      ),
+      { code: 'UNAVAILABLE' },
+    );
+    const runCommand = vi.fn();
+    const requestGateway = vi.fn().mockRejectedValue(error);
+    const restartGatewayAfterMutation = vi.fn();
+    const findLockingProcesses = vi.fn();
+    const manager = {
+      getStateDir: () => stateDir,
+      getConfigPath: () => path.join(stateDir, 'openclaw.json'),
+      getStatus: () => ({ phase: 'running' }),
+      buildCliEnvironment: vi.fn(),
+    } as unknown as OpenClawEngineManager;
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () => manager,
+      requestGateway,
+      runCommand,
+      restartGatewayAfterMutation,
+      directoryOperations: new ManagedDirectoryOperationCoordinator({ findLockingProcesses }),
+    });
+
+    await expect(service.delete('demo')).resolves.toEqual({ success: false, error: error.message });
+
+    expect(requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.uninstall', {
+      pluginId: 'demo',
+    });
+    expect(manager.buildCliEnvironment).not.toHaveBeenCalled();
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
+    expect(findLockingProcesses).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(installedDir, 'openclaw.plugin.json'))).toBe(true);
+  });
+
   it.each(['automation-permission', 'cua-computer', 'openai', 'code-mode-quickjs', 'video-openai'])(
     'protects managed %s from user mutation',
     async extensionId => {

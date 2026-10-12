@@ -40,6 +40,40 @@ afterEach(() => {
   }
 });
 
+test.runIf(process.platform === 'win32')(
+  'imports a skill folder with a directory junction when ordinary symlink creation is denied',
+  async () => {
+    const root = makeTempDir();
+    const source = path.join(root, 'source');
+    const dependency = path.join(root, 'dependency');
+    const managed = path.join(root, 'managed');
+    fs.mkdirSync(source);
+    fs.mkdirSync(dependency);
+    fs.writeFileSync(path.join(source, 'SKILL.md'), '---\nname: junction-skill\n---\n# Skill');
+    fs.writeFileSync(path.join(dependency, 'dependency.js'), 'export const value = 1;');
+    fs.symlinkSync(dependency, path.join(source, 'dependency'), 'junction');
+    const symlink = fs.symlinkSync.bind(fs);
+    vi.spyOn(fs, 'symlinkSync').mockImplementation((target, link, type) => {
+      if (type !== 'junction') throw Object.assign(new Error('Not permitted'), { code: 'EPERM' });
+      return symlink(target, link, type);
+    });
+    const files = new OpenClawSkillFiles(managed);
+
+    await expect(files.importPath(source)).resolves.toMatchObject({
+      success: true,
+      skillId: 'junction-skill',
+    });
+    const installed = path.join(managed, 'junction-skill');
+    expect(fs.lstatSync(path.join(installed, 'dependency')).isSymbolicLink()).toBe(true);
+    expect(fs.realpathSync(path.join(installed, 'dependency'))).toBe(fs.realpathSync(dependency));
+    files.deleteDirectory(installed);
+    expect(fs.existsSync(installed)).toBe(false);
+    expect(fs.readFileSync(path.join(dependency, 'dependency.js'), 'utf8')).toBe(
+      'export const value = 1;',
+    );
+  },
+);
+
 test('accepts common skill names that are safe directory names on Windows', () => {
   expect(__openClawSkillFilesTestUtils.validateSkillName('import-smoke-test')).toEqual({
     skillId: 'import-smoke-test',

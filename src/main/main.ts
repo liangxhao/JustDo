@@ -508,6 +508,7 @@ let groupStore: GroupStore | null = null;
 let coworkEngineService: CoworkEngineService | null = null;
 const openClawSkillService = new OpenClawSkillService(
   () => coworkEngineService?.getRuntimeAdapter() ?? null,
+  () => coworkEngineService?.getRuntimeAdapter()?.getGatewayClient() ?? null,
 );
 const pluginInstallationService = new PluginInstallationService();
 const pluginManager = new PluginManager(

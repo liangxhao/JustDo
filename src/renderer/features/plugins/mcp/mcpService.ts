@@ -9,6 +9,9 @@ import {
 class McpService {
   private servers: McpServerConfig[] = [];
   private initialized = false;
+  private serverGeneration = 0;
+  private serverLoad: Promise<McpServerConfig[]> | null = null;
+  private serverLoadFailed = false;
   private extensionServers: ExtensionProvidedMcpServer[] | null = null;
   private extensionLoad: Promise<ExtensionProvidedMcpServer[]> | null = null;
   private extensionGeneration = 0;
@@ -25,22 +28,51 @@ class McpService {
   }
 
   async loadServers(): Promise<McpServerConfig[]> {
+    const generation = ++this.serverGeneration;
+    const pending = this.fetchServers(generation).finally(() => {
+      if (this.serverLoad === pending) this.serverLoad = null;
+    });
+    this.serverLoad = pending;
+    const servers = await pending;
+    return generation === this.serverGeneration ? servers : (this.serverLoad ?? this.servers);
+  }
+
+  private async fetchServers(generation: number): Promise<McpServerConfig[]> {
     try {
       const result = await window.electron.mcp.list();
+      if (generation !== this.serverGeneration) return this.serverLoad ?? this.servers;
       if (result.success && result.servers) {
         this.servers = result.servers;
+        this.serverLoadFailed = false;
       } else {
-        this.servers = [];
+        this.serverLoadFailed = true;
       }
       return this.servers;
     } catch (error) {
+      if (generation !== this.serverGeneration) return this.serverLoad ?? this.servers;
       console.error('Failed to load MCP servers:', error);
-      this.servers = [];
+      this.serverLoadFailed = true;
       return this.servers;
     }
   }
 
-  loadExtensionServers(): Promise<ExtensionProvidedMcpServer[]> {
+  private async applyMutationServers(
+    servers: McpServerConfig[],
+    generation: number,
+  ): Promise<McpServerConfig[]> {
+    if (generation !== this.serverGeneration) return this.loadServers();
+    this.serverGeneration += 1;
+    this.serverLoad = null;
+    this.servers = servers;
+    this.serverLoadFailed = false;
+    return servers;
+  }
+
+  hasServerLoadFailed(): boolean {
+    return this.serverLoadFailed;
+  }
+
+  async loadExtensionServers(): Promise<ExtensionProvidedMcpServer[]> {
     if (!this.watchingExtensions) {
       this.watchingExtensions = true;
       window.electron.extensions.onChanged(() => {
@@ -49,8 +81,10 @@ class McpService {
         this.extensionLoad = null;
       });
     }
-    if (this.extensionLoad) return this.extensionLoad;
     const generation = this.extensionGeneration;
+    if (this.extensionLoad) {
+      return this.consumeExtensionServers(this.extensionLoad, generation);
+    }
     const pending = this.fetchExtensionServers()
       .then(servers => {
         if (generation !== this.extensionGeneration) return this.loadExtensionServers();
@@ -65,7 +99,20 @@ class McpService {
         if (this.extensionLoad === pending) this.extensionLoad = null;
       });
     this.extensionLoad = pending;
-    return pending;
+    return this.consumeExtensionServers(pending, generation);
+  }
+
+  private async consumeExtensionServers(
+    pending: Promise<ExtensionProvidedMcpServer[]>,
+    generation: number,
+  ): Promise<ExtensionProvidedMcpServer[]> {
+    try {
+      const servers = await pending;
+      if (generation === this.extensionGeneration) return servers;
+    } catch (error) {
+      if (generation === this.extensionGeneration) throw error;
+    }
+    return this.extensionLoad ?? this.extensionServers ?? this.loadExtensionServers();
   }
 
   private async fetchExtensionServers(): Promise<ExtensionProvidedMcpServer[]> {
@@ -82,10 +129,11 @@ class McpService {
   async createServer(
     data: McpServerFormData,
   ): Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }> {
+    const generation = this.serverGeneration;
     try {
       const result = await window.electron.mcp.create(data);
       if (result.success && result.servers) {
-        this.servers = result.servers;
+        return { ...result, servers: await this.applyMutationServers(result.servers, generation) };
       }
       return result;
     } catch (error) {
@@ -99,10 +147,11 @@ class McpService {
     id: string,
     data: Partial<McpServerFormData>,
   ): Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }> {
+    const generation = this.serverGeneration;
     try {
       const result = await window.electron.mcp.update(id, data);
       if (result.success && result.servers) {
-        this.servers = result.servers;
+        return { ...result, servers: await this.applyMutationServers(result.servers, generation) };
       }
       return result;
     } catch (error) {
@@ -115,10 +164,11 @@ class McpService {
   async deleteServer(
     id: string,
   ): Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }> {
+    const generation = this.serverGeneration;
     try {
       const result = await window.electron.mcp.delete(id);
       if (result.success && result.servers) {
-        this.servers = result.servers;
+        return { ...result, servers: await this.applyMutationServers(result.servers, generation) };
       }
       return result;
     } catch (error) {
@@ -129,11 +179,11 @@ class McpService {
   }
 
   async setServerEnabled(id: string, enabled: boolean): Promise<McpServerConfig[]> {
+    const generation = this.serverGeneration;
     try {
       const result = await window.electron.mcp.setEnabled({ id, enabled });
       if (result.success && result.servers) {
-        this.servers = result.servers;
-        return this.servers;
+        return this.applyMutationServers(result.servers, generation);
       }
       throw new Error(result.error || 'Failed to update MCP server');
     } catch (error) {

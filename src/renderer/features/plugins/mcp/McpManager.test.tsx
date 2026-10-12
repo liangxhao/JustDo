@@ -17,6 +17,11 @@ vi.mock('./mcpService', () => ({
     loadServers: vi.fn(async () => []),
     loadExtensionServers: vi.fn(async () => []),
     getExtensionServers: vi.fn(() => null),
+    getServers: vi.fn(() => []),
+    hasServerLoadFailed: vi.fn(() => false),
+    setServerEnabled: vi.fn(),
+    createServer: vi.fn(),
+    updateServer: vi.fn(),
     probeServer: vi.fn(),
     deleteServer: vi.fn(),
     onConfigSyncStart: vi.fn(() => () => undefined),
@@ -40,7 +45,9 @@ const demoServer = (scope: 'personal' | 'system', enabled = true): ExtensionProv
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(mcpService.loadServers).mockResolvedValue([]);
+  vi.mocked(mcpService.loadServers).mockReset().mockResolvedValue([]);
+  vi.mocked(mcpService.setServerEnabled).mockReset();
+  vi.mocked(mcpService.getServers).mockReset().mockReturnValue([]);
   Object.defineProperty(window, 'electron', {
     configurable: true,
     value: {
@@ -77,6 +84,226 @@ const renderManager = (searchQuery = '') => {
   );
   return onOpenExtension;
 };
+
+const customServer: McpServerConfig = {
+  id: 'user-mcp',
+  name: 'User MCP',
+  description: 'Custom MCP',
+  enabled: true,
+  transportType: 'stdio',
+  command: 'node',
+  isBuiltIn: false,
+  createdAt: 1,
+  updatedAt: 1,
+};
+
+test('a late initial read cannot restore the old MCP switch state or leave loading active', async () => {
+  let finishRead!: (servers: McpServerConfig[]) => void;
+  let finishSwitch!: (servers: McpServerConfig[]) => void;
+  vi.mocked(mcpService.loadServers).mockReturnValueOnce(
+    new Promise(resolve => (finishRead = resolve)),
+  );
+  vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([]);
+  vi.mocked(mcpService.setServerEnabled).mockReturnValueOnce(
+    new Promise(resolve => (finishSwitch = resolve)),
+  );
+  const store = configureStore({
+    reducer: { mcp: mcpReducer },
+    preloadedState: { mcp: { servers: [customServer] } },
+  });
+  render(
+    <Provider store={store}>
+      <McpManager visibility="installed" />
+    </Provider>,
+  );
+  fireEvent.click(screen.getByRole('switch', { name: 'disableMcpServer' }));
+  await act(async () => {
+    vi.mocked(mcpService.getServers).mockReturnValue([{ ...customServer, enabled: false }]);
+    finishRead([customServer]);
+    finishSwitch([{ ...customServer, enabled: false }]);
+  });
+
+  expect(store.getState().mcp.servers[0].enabled).toBe(false);
+  expect(screen.queryByText('mcpLoadingServers')).toBeNull();
+});
+
+test('an extension refresh started during an MCP switch is consumed after the switch ends', async () => {
+  let finishRead!: (servers: McpServerConfig[]) => void;
+  let finishSwitch!: (servers: McpServerConfig[]) => void;
+  const disabled = { ...customServer, enabled: false };
+  const added = { ...customServer, id: 'added-server', name: 'Added MCP' };
+  vi.mocked(mcpService.loadServers)
+    .mockResolvedValueOnce([customServer])
+    .mockReturnValueOnce(new Promise(resolve => (finishRead = resolve)));
+  vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([]);
+  vi.mocked(mcpService.setServerEnabled).mockReturnValueOnce(
+    new Promise(resolve => (finishSwitch = resolve)),
+  );
+  renderManager();
+  fireEvent.click(await screen.findByRole('switch', { name: 'disableMcpServer' }));
+  await act(async () => {
+    vi.mocked(window.electron.extensions.onChanged).mock.calls[0][0]({
+      extensionId: 'provider',
+      enabled: true,
+    });
+  });
+  await act(async () => {
+    vi.mocked(mcpService.getServers).mockReturnValue([disabled]);
+    finishSwitch([disabled]);
+  });
+  await act(async () => finishRead([disabled, added]));
+
+  expect(screen.getByText('Added MCP')).toBeTruthy();
+  expect(screen.queryByText('mcpLoadingServers')).toBeNull();
+});
+
+test.each([true, false])(
+  'shows MCP deletion progress until it finishes (success: %s)',
+  async success => {
+    let finish!: (result: {
+      success: boolean;
+      servers?: McpServerConfig[];
+      error?: string;
+    }) => void;
+    vi.mocked(mcpService.loadServers).mockResolvedValue([customServer]);
+    vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([]);
+    vi.mocked(mcpService.deleteServer).mockReturnValueOnce(
+      new Promise(resolve => (finish = resolve)),
+    );
+    renderManager();
+    await screen.findByText(customServer.name);
+    fireEvent.click(screen.getByRole('button', { name: 'editMcpServer' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'deleteMcpServer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'confirmDelete' }));
+    const deleting = screen.getByRole('button', { name: 'confirmDelete' });
+    expect(deleting.getAttribute('aria-busy')).toBe('true');
+    expect(deleting.hasAttribute('disabled')).toBe(true);
+    expect(deleting.querySelector('.animate-spin')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'cancel' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(deleting);
+    expect(mcpService.deleteServer).toHaveBeenCalledOnce();
+
+    await act(async () =>
+      finish({ success, servers: success ? [] : undefined, error: 'Delete refused' }),
+    );
+
+    if (success) expect(screen.queryByRole('button', { name: 'confirmDelete' })).toBeNull();
+    else {
+      expect(screen.getAllByText('Delete refused').length).toBeGreaterThan(0);
+      const retry = screen.getByRole('button', { name: 'confirmDelete' });
+      expect(retry.getAttribute('aria-busy')).toBeNull();
+      expect(retry.hasAttribute('disabled')).toBe(false);
+      expect(retry.querySelector('.animate-spin')).toBeNull();
+    }
+  },
+);
+
+test('a late MCP mutation consumes the current projection without erasing newer server metadata', async () => {
+  let finish!: (servers: McpServerConfig[]) => void;
+  const disabled = { ...customServer, enabled: false };
+  const added = { ...customServer, id: 'new-provider-server', name: 'Newer MCP' };
+  vi.mocked(mcpService.loadServers)
+    .mockResolvedValueOnce([customServer])
+    .mockResolvedValueOnce([disabled, added]);
+  vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([]);
+  vi.mocked(mcpService.setServerEnabled).mockReturnValueOnce(
+    new Promise(resolve => (finish = resolve)),
+  );
+  renderManager();
+  fireEvent.click(await screen.findByRole('switch', { name: 'disableMcpServer' }));
+  await act(async () => {
+    vi.mocked(window.electron.extensions.onChanged).mock.calls[0][0]({
+      extensionId: 'provider',
+      enabled: true,
+    });
+  });
+  expect(screen.getByText(added.name)).toBeTruthy();
+  vi.mocked(mcpService.getServers).mockReturnValue([disabled, added]);
+  await act(async () => finish([disabled]));
+
+  expect(screen.getByText(added.name)).toBeTruthy();
+  expect(screen.getByRole('switch', { name: 'enableMcpServer' }).getAttribute('aria-checked')).toBe(
+    'false',
+  );
+});
+
+test('keeps the confirmed servers visible while reporting a native inventory-read failure', async () => {
+  vi.mocked(mcpService.loadServers).mockResolvedValue([customServer]);
+  vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([]);
+  vi.mocked(mcpService.hasServerLoadFailed).mockReturnValueOnce(true);
+  renderManager();
+
+  await screen.findByText(customServer.name);
+  expect(screen.getByText('mcpLoadFailed')).toBeTruthy();
+  expect(screen.queryByText('mcpNoInstalledServers')).toBeNull();
+});
+
+test('a failed creation reconciles the inventory when it superseded the initial page read', async () => {
+  let finishRead!: (servers: McpServerConfig[]) => void;
+  vi.mocked(mcpService.loadServers)
+    .mockReturnValueOnce(new Promise(resolve => (finishRead = resolve)))
+    .mockResolvedValueOnce([customServer]);
+  vi.mocked(mcpService.getServers).mockReturnValue([customServer]);
+  vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([]);
+  vi.mocked(mcpService.createServer).mockResolvedValue({
+    success: false,
+    error: 'Native create refused',
+  });
+  renderManager();
+  fireEvent.click(screen.getByRole('button', { name: /addMcpServer/ }));
+  const name = await screen.findByPlaceholderText('mcpServerNamePlaceholder');
+  fireEvent.change(name, { target: { value: 'Another MCP' } });
+  fireEvent.change(screen.getByPlaceholderText('mcpCommandPlaceholder'), {
+    target: { value: 'node' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'saveMcpServer' }));
+  await screen.findByText('Native create refused');
+  expect(screen.getByText(customServer.name)).toBeTruthy();
+  expect(screen.queryByText('mcpLoadingServers')).toBeNull();
+  await act(async () => finishRead([]));
+
+  expect(screen.getByText(customServer.name)).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'saveMcpServer' }).hasAttribute('disabled')).toBe(
+    false,
+  );
+});
+
+test('saving a user MCP does not discard an in-flight extension-provided inventory', async () => {
+  let finishUserRead!: (servers: McpServerConfig[]) => void;
+  let finishProviderRead!: (servers: ExtensionProvidedMcpServer[]) => void;
+  const provider = { ...demoServer('personal'), name: 'Refreshed provider MCP' };
+  vi.mocked(mcpService.loadServers)
+    .mockResolvedValueOnce([customServer])
+    .mockReturnValueOnce(new Promise(resolve => (finishUserRead = resolve)));
+  vi.mocked(mcpService.loadExtensionServers)
+    .mockResolvedValueOnce([demoServer('personal')])
+    .mockReturnValueOnce(new Promise(resolve => (finishProviderRead = resolve)));
+  vi.mocked(mcpService.getServers).mockReturnValue([customServer]);
+  vi.mocked(mcpService.updateServer).mockResolvedValueOnce({
+    success: true,
+    servers: [customServer],
+  });
+  renderManager();
+  await screen.findByText('personal-mcp');
+  fireEvent.click(screen.getByRole('button', { name: 'editMcpServer' }));
+  await screen.findByRole('button', { name: 'saveMcpServer' });
+  await act(async () => {
+    vi.mocked(window.electron.extensions.onChanged).mock.calls[0][0]({
+      extensionId: 'provider',
+      enabled: true,
+    });
+  });
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'saveMcpServer' })));
+  expect(screen.getByText('mcpLoadingServers')).toBeTruthy();
+  await act(async () => finishProviderRead([provider]));
+
+  expect(screen.getByText(provider.name)).toBeTruthy();
+  expect(screen.queryByText('mcpLoadingServers')).toBeNull();
+  await act(async () => finishUserRead([]));
+  expect(screen.getByText(customServer.name)).toBeTruthy();
+  expect(screen.getByText(provider.name)).toBeTruthy();
+  expect(mcpService.updateServer).toHaveBeenCalledOnce();
+});
 
 test('removes the last user MCP after confirmed deletion without displaying an unavailable error', async () => {
   const server: McpServerConfig = {
@@ -261,4 +488,44 @@ test('does not claim an empty inventory when extension discovery failed', async 
   renderManager();
   await screen.findByText('mcpLoadFailed');
   expect(screen.queryByText('mcpNoInstalledServers')).toBeNull();
+});
+
+test('a successful user switch preserves a provider error until provider discovery recovers', async () => {
+  const disabled = { ...customServer, enabled: false };
+  vi.mocked(mcpService.loadServers).mockResolvedValue([customServer]);
+  vi.mocked(mcpService.loadExtensionServers).mockRejectedValueOnce(
+    new Error('provider unavailable'),
+  );
+  vi.mocked(mcpService.hasServerLoadFailed).mockReturnValue(false);
+  vi.mocked(mcpService.getServers).mockReturnValue([disabled]);
+  vi.mocked(mcpService.setServerEnabled).mockResolvedValue([disabled]);
+  renderManager();
+  await screen.findByText('mcpLoadFailed');
+
+  await act(async () => fireEvent.click(screen.getByRole('switch', { name: 'disableMcpServer' })));
+
+  expect(screen.getByRole('switch', { name: 'enableMcpServer' }).getAttribute('aria-checked')).toBe(
+    'false',
+  );
+  expect(screen.getByText('mcpLoadFailed')).toBeTruthy();
+  expect(mcpService.loadExtensionServers).toHaveBeenCalledTimes(1);
+
+  let finishProviderRead!: (servers: ExtensionProvidedMcpServer[]) => void;
+  vi.mocked(mcpService.loadServers).mockResolvedValue([]);
+  vi.mocked(mcpService.loadExtensionServers).mockReturnValueOnce(
+    new Promise(resolve => (finishProviderRead = resolve)),
+  );
+  await act(async () => {
+    vi.mocked(window.electron.extensions.onChanged).mock.calls[0][0]({
+      extensionId: 'provider',
+      enabled: true,
+    });
+  });
+  expect(screen.getByText('mcpLoadFailed')).toBeTruthy();
+  expect(screen.queryByText('mcpNoInstalledServers')).toBeNull();
+
+  await act(async () => finishProviderRead([]));
+
+  expect(screen.queryByText('mcpLoadFailed')).toBeNull();
+  expect(screen.getByText('mcpNoInstalledServers')).toBeTruthy();
 });

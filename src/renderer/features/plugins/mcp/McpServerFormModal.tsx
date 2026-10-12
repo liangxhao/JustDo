@@ -1,9 +1,10 @@
+import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import {
   DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS,
   isValidMcpRequestTimeoutSeconds,
   MCP_REQUEST_TIMEOUT_LIMITS,
 } from '@shared/plugins/mcp';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 import { McpRegistryEntry, McpServerConfig, McpServerFormData } from '@/features/plugins/mcp/mcp';
 import { i18nService } from '@/services/i18n';
@@ -18,7 +19,7 @@ interface McpServerFormModalProps {
   defaultRequestTimeoutSeconds?: number;
   existingNames: string[];
   onClose: () => void;
-  onSave: (data: McpServerFormData) => void;
+  onSave: (data: McpServerFormData) => Promise<{ success: boolean; error?: string }>;
   onDelete?: () => void;
 }
 
@@ -46,8 +47,14 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
   const [requestTimeoutSeconds, setRequestTimeoutSeconds] = useState('');
   const [error, setError] = useState('');
   const [envErrors, setEnvErrors] = useState<Record<number, boolean>>({});
+  const [isSaving, setIsSaving] = useState(false);
+  const saving = useRef(false);
+  const formGeneration = useRef(0);
 
   useEffect(() => {
+    const generation = ++formGeneration.current;
+    saving.current = false;
+    setIsSaving(false);
     if (!isOpen) return;
     if (server) {
       // Edit mode
@@ -117,9 +124,14 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
     }
     setError('');
     setEnvErrors({});
+    return () => {
+      if (generation === formGeneration.current) formGeneration.current += 1;
+      saving.current = false;
+    };
   }, [defaultRequestTimeoutSeconds, isOpen, server, registryEntry]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (saving.current) return;
     const trimmedName = name.trim();
     if (!trimmedName) {
       setError(i18nService.t('mcpNameRequired'));
@@ -207,7 +219,32 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
       data.registryId = registryEntry.id;
     }
 
-    onSave(data);
+    const generation = formGeneration.current;
+    saving.current = true;
+    setIsSaving(true);
+    setError('');
+    try {
+      const result = await onSave(data);
+      if (generation !== formGeneration.current) return;
+      if (!result.success) {
+        setError(result.error || i18nService.t(isEdit ? 'mcpUpdateFailed' : 'mcpCreateFailed'));
+        return;
+      }
+      onClose();
+    } catch (failure) {
+      if (generation === formGeneration.current) {
+        setError(
+          failure instanceof Error
+            ? failure.message
+            : i18nService.t(isEdit ? 'mcpUpdateFailed' : 'mcpCreateFailed'),
+        );
+      }
+    } finally {
+      if (generation === formGeneration.current) {
+        saving.current = false;
+        setIsSaving(false);
+      }
+    }
   };
 
   const handleAddEnvRow = () => {
@@ -248,7 +285,7 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape' && !saving.current) onClose();
     };
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
@@ -276,7 +313,10 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
 
   return (
     <Modal
-      onClose={onClose}
+      onClose={() => {
+        if (!saving.current) onClose();
+      }}
+      closeOnBackdrop={!isSaving}
       overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
       className="w-full max-w-lg mx-4 rounded-2xl bg-surface border border-border shadow-2xl p-6 max-h-[80vh] overflow-y-auto"
     >
@@ -284,7 +324,7 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
         <div className="text-lg font-semibold text-foreground">{modalTitle}</div>
       </div>
 
-      <div className="space-y-4">
+      <fieldset disabled={isSaving} className="min-w-0 space-y-4">
         {/* Name */}
         <div className="space-y-1.5">
           <label className={labelClass}>{i18nService.t('mcpServerName')}</label>
@@ -520,6 +560,7 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
               <button
                 type="button"
                 onClick={onDelete}
+                disabled={isSaving}
                 className="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-500/10"
                 aria-label={i18nService.t('deleteMcpServer')}
               >
@@ -533,6 +574,7 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
             <button
               type="button"
               onClick={onClose}
+              disabled={isSaving}
               className="px-3 py-1.5 text-xs rounded-lg border border-border text-secondary hover:bg-surface-raised transition-colors"
             >
               {i18nService.t('cancel')}
@@ -540,13 +582,18 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
             <button
               type="button"
               onClick={handleSave}
-              className="px-3 py-1.5 text-xs rounded-lg bg-primary text-white hover:bg-primary/90 transition-colors"
+              disabled={isSaving}
+              aria-busy={isSaving || undefined}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-primary text-white hover:bg-primary/90 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {saveText}
+              {isSaving && <ArrowPathIcon aria-hidden="true" className="h-4 w-4 animate-spin" />}
+              <span role={isSaving ? 'status' : undefined}>
+                {isSaving ? i18nService.t('saving') : saveText}
+              </span>
             </button>
           </div>
         </div>
-      </div>
+      </fieldset>
     </Modal>
   );
 };
