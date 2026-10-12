@@ -585,6 +585,12 @@ plugin; only the Settings switch changes its enablement. Config sync keeps both 
 plugin entry; preserve unrelated policies and sandbox boundaries. Use the current
 conversation's image-capable model without separate computer model configuration.
 Native OpenClaw owns `computer` execution and screenshots.
+Windows 10 2004+ computer presentation uses patch 040's admin-only, content-free
+`computer.activity` events. Main's `core/window/computer/` owns capture-excluded,
+click-through surfaces and expiring display leases, never execution outcomes.
+Draw a physical cursor only for unscoped foreground desktop input; background
+window actions have status only. Do not show local overlays for remote/managed
+desktops or introduce mouse/keyboard IPC. Disconnect and app cleanup retire UI.
 Keep the CUA SDK/image native loaders external during plugin precompilation. Do not
 automatically allow host desktop control in sandboxed sessions. macOS still requires
 the upstream app-owned driver endpoint and OS grants; retaining the plugin is not

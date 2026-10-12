@@ -14,7 +14,8 @@ exit diagnostics; 034 adds opt-in plugin execution settlement and tool cleanup;
 036 adds the shared desktop terminal launch and close contract;
 037 replaces the operator terminal welcome art with the desktop product name;
 038 supplies native compaction lifecycle and operation-scoped cancellation;
-039 separates source and peer transcript writer scopes at native turn dispatch:
+039 separates source and peer transcript writer scopes at native turn dispatch;
+040 publishes content-free local Windows computer activity for desktop presentation:
 
 - **008:** upstream removed the generic durable task registry. Delete its task
   maintenance patch; retain only the application-process boundary on native
@@ -63,9 +64,17 @@ display projection and the ordering of restored messages.
 | 037   | Product terminal welcome              | Welcome text reads validated build-time productName; no lobster art; native buffer seeding and output offsets remain unchanged                                  |
 | 038   | Native compaction lifecycle           | Recovery start/update/end events; admin operation status/cancellation covers preparation and cleanup; bounded native receipts retain no transcript or summary    |
 | 039   | Peer transcript writer scope          | Detach only source transcript/CLI-history ownership after caller snapshot restoration; preserve native authority, target writer admission, guards and cancellation |
+| 040   | Local computer activity presentation | Admin-only transient start/end heartbeats after native admission and idempotency; no input or image payload, no changes to execution, cancellation or results |
 
 Each module header records its scope, native safety boundary and removal condition.
 No upstream issue number is claimed without an actual filed issue.
+
+Patch 040 covers the native service/handler/scope-guard chunks, the recovery
+monolith, and both minified `dist/worker/worker.mjs` and
+`dist/worker/sqlite-store.worker.mjs` copies (four targets per seam before bundling,
+five with `gateway-bundle.mjs`). Minified local names are derived from the native
+AST; the activity callback captures handler options to avoid a shadowed context
+alias. Verify against the complete locked pristine archive, not a subset of dist.
 
 Patch 039 addresses `SessionTranscriptWriterClaimReboundError` during a peer
 turn's automatic context recovery. Native `bindAgentToolGatewayRequest` captures

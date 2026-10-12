@@ -88,6 +88,7 @@ import {
 import { enableSystemCaForCurrentProcess } from './core/network/trustedCertificates';
 import { applyDependencyManagerConfigEnv } from './core/runtime/dependencyManagerConfig';
 import { ensurePythonRuntimeReady } from './core/runtime/pythonRuntime';
+import { bindComputerOverlay } from './core/window/computer/bindComputerOverlay';
 import { registerContentSecurityPolicy } from './core/window/contentSecurityPolicy';
 import {
   createInitializationWindow,
@@ -1134,6 +1135,7 @@ const getAppIconPath = (): string | undefined => {
 
 // 保存对主窗口的引用
 let mainWindow: BrowserWindow | null = null;
+let disposeComputerOverlay: (() => void) | undefined;
 const browserAgentBridge = new BrowserAgentBridge(
   (channel, payload) => {
     if (!mainWindow?.isDestroyed() && !mainWindow?.webContents.isDestroyed()) {
@@ -1908,6 +1910,8 @@ if (multicaBridgeArgv) {
   };
 
   const runAppCleanup = async (): Promise<void> => {
+    disposeComputerOverlay?.();
+    disposeComputerOverlay = undefined;
     openClawEngineManager?.beginApplicationShutdown();
     devSessionLifecycle?.stop();
     console.log('[Main] App is quitting, starting cleanup...');
@@ -2253,6 +2257,7 @@ if (multicaBridgeArgv) {
 
     const coworkEngineRouter = getCoworkEngineRouter();
     bindEmbeddedBrowserGateway();
+    disposeComputerOverlay = bindComputerOverlay(getOpenClawRuntimeAdapter()!);
     bindCollaboration();
     getTeamDiscussionCoordinator().startReconciliation();
     bindSessionPermissionModeRuntime();

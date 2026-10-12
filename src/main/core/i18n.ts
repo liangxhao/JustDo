@@ -16,6 +16,7 @@ export type LanguageType = 'zh' | 'en';
 
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    computerOverlayActive: '正在操作电脑',
     windowMinimize: '最小化',
     windowMaximize: '最大化',
     windowRestore: '还原',
@@ -137,6 +138,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     browserContextSaveImage: '图片另存为…',
   },
   en: {
+    computerOverlayActive: 'Operating your computer',
     windowMinimize: 'Minimize',
     windowMaximize: 'Maximize',
     windowRestore: 'Restore',
