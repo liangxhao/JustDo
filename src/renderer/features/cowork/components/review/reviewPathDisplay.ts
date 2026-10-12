@@ -1,3 +1,7 @@
+export function isReviewExecutionPath(filePath: string) {
+  return filePath.split('/').includes('.agent-tasks');
+}
+
 /** Native Git reads can return directory entries, including nested repositories. */
 export function describeReviewPath(filePath: string) {
   // Git uses forward slashes on every platform; backslashes may be literal filename characters.

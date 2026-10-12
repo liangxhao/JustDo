@@ -39,6 +39,16 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function showFileTree() {
+  fireEvent.click(screen.getByLabelText(t('reviewMoreOptions')));
+  fireEvent.click(screen.getByRole('checkbox', { name: t('reviewShowFileTree') }));
+  fireEvent.click(screen.getByLabelText(t('reviewMoreOptions')));
+}
+
+function showSearch() {
+  fireEvent.click(screen.getByRole('button', { name: t('reviewSearchFiles') }));
+}
+
 function setupResizeLayout(width = 1000) {
   vi.stubGlobal(
     'PointerEvent',
@@ -82,7 +92,7 @@ test('reuses a loaded review when reopening the panel and refreshes only on requ
   expect(screen.getByText('new')).toBeTruthy();
   expect(screen.getByText(t('reviewSnapshot'))).toBeTruthy();
   load.mockResolvedValue(result('fresh.ts'));
-  fireEvent.click(screen.getByText(t('reviewRefresh')));
+  fireEvent.click(screen.getByRole('button', { name: t('reviewRefresh') }));
   await screen.findByText('fresh.ts', { selector: '.review-file-heading *' });
   expect(load).toHaveBeenCalledTimes(2);
 });
@@ -133,7 +143,7 @@ test('keeps the screen mounted and explains restart when the window has an older
   expect(await screen.findByText(t('reviewError_bridge'))).toBeTruthy();
   expect(screen.getByText('Chat remains available')).toBeTruthy();
   expect(load).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByText(t('reviewRefresh')));
+  fireEvent.click(screen.getByRole('button', { name: t('reviewRefresh') }));
   expect(screen.getByText(t('reviewError_bridge'))).toBeTruthy();
 });
 
@@ -144,7 +154,7 @@ test('handles a synchronous bridge failure without unmounting the screen', async
   render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
   expect(await screen.findByText(t('reviewError_unavailable'))).toBeTruthy();
   load.mockResolvedValue(result('recovered.ts'));
-  fireEvent.click(screen.getByText(t('reviewRefresh')));
+  fireEvent.click(screen.getByRole('button', { name: t('reviewRefresh') }));
   expect(
     await screen.findByText('recovered.ts', { selector: '.review-file-heading *' }),
   ).toBeTruthy();
@@ -175,7 +185,7 @@ test('keeps the last snapshot on refresh failure and distinguishes unavailable f
     .mockResolvedValueOnce({ success: false, reason: 'unavailable' });
   render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
   await screen.findByText('kept.ts', { selector: '.review-file-heading *' });
-  fireEvent.click(screen.getByText(t('reviewRefresh')));
+  fireEvent.click(screen.getByRole('button', { name: t('reviewRefresh') }));
   expect(await screen.findByRole('alert')).toHaveProperty(
     'textContent',
     `${t('reviewError_unavailable')} ${t('reviewStale')}`,
@@ -200,7 +210,7 @@ test('preserves expanded patch lines while refreshing and after refresh failure'
   expect(screen.queryByText('line299')).toBeNull();
   fireEvent.click(screen.getByText(t('reviewMoreLines')));
   expect(screen.getByText('line299')).toBeTruthy();
-  fireEvent.click(screen.getByText(t('reviewRefresh')));
+  fireEvent.click(screen.getByRole('button', { name: t('reviewRefresh') }));
   expect(screen.getByText('line299')).toBeTruthy();
   await act(async () => settle({ success: false, reason: 'unavailable' }));
   expect(screen.getByText('line299')).toBeTruthy();
@@ -283,7 +293,9 @@ test('shows absent patches explicitly for binary, truncated and renamed files', 
   render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
   fireEvent.click(await screen.findByText('image.png', { selector: '.review-file-heading *' }));
   expect(screen.getByText(t('reviewBinary'))).toBeTruthy();
-  expect(screen.getByTitle(t('reviewUntracked')).textContent).toBe('U');
+  expect(
+    screen.getByTitle(`${t('reviewStatus_added')} · ${t('reviewUntracked')}`).textContent,
+  ).toBe('A');
   fireEvent.click(screen.getByText('large.txt', { selector: '.review-file-heading *' }));
   expect(screen.getByText(t('reviewTruncatedNoPatch'))).toBeTruthy();
   expect(screen.queryByText(t('reviewTruncated'))).toBeNull();
@@ -292,7 +304,10 @@ test('shows absent patches explicitly for binary, truncated and renamed files', 
 });
 
 test.each([
-  ['.agent-tasks/swarm/flow/task-2/stage/attempt-1/', '.agent-tasks/swarm/flow/task-2/stage'],
+  [
+    '.agent-tasks/swarm-workflow/flow/task-2/stage/attempt-1/',
+    '.agent-tasks/swarm-workflow/flow/task-2/stage',
+  ],
   ['nested/attempt-1///', 'nested'],
   ['attempt-1/', t('reviewWorkspace')],
 ])(
@@ -312,6 +327,15 @@ test.each([
       },
     });
     render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+    if (path.startsWith('.agent-tasks/')) await screen.findByText(t('reviewExecutionDirectories'));
+    else await screen.findByTitle(path);
+    showFileTree();
+    if (path.startsWith('.agent-tasks/'))
+      fireEvent.click(
+        screen.getByText(t('reviewExecutionDirectories'), {
+          selector: '.review-execution-heading span',
+        }),
+      );
     const entry = await screen.findByRole('button', { name: path });
     expect(within(entry).getByText('attempt-1')).toBeTruthy();
     expect(
@@ -353,6 +377,8 @@ test('shows a readable fallback instead of an empty filename for a separator-onl
     },
   });
   render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  await screen.findByTitle('/');
+  showFileTree();
   const entry = await screen.findByRole('button', { name: '/' });
   expect(within(entry).getByText(t('reviewUnknownPath'))).toBeTruthy();
   expect(
@@ -364,6 +390,8 @@ test('preserves literal backslashes in native Git filenames', async () => {
   const path = 'src/name\\with-backslash.ts';
   load.mockResolvedValue(result(path));
   render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  await screen.findByTitle(path);
+  showFileTree();
   const entry = await screen.findByRole('button', { name: path });
   expect(within(entry).getByText('name\\with-backslash.ts')).toBeTruthy();
   expect(within(entry).getByText(t('reviewStatus_modified'))).toBeTruthy();
@@ -393,8 +421,9 @@ test('focuses only the longest matching path and preserves later filtering on re
   expect(content.getByTitle('src/file.ts').closest('button')?.getAttribute('aria-expanded')).toBe(
     'true',
   );
+  showSearch();
   fireEvent.change(screen.getByLabelText(t('reviewFilter')), { target: { value: 'src/' } });
-  fireEvent.click(screen.getByText(t('reviewRefresh')));
+  fireEvent.click(screen.getByRole('button', { name: t('reviewRefresh') }));
   await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
   await waitFor(() =>
     expect(screen.getByLabelText(t('reviewFilter'))).toHaveProperty('value', 'src/'),
@@ -442,9 +471,10 @@ test('does not scroll back to an old focus on refresh but honors a repeated jump
     );
     await screen.findByText('file.ts', { selector: '.review-file-heading *' });
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByText(t('reviewRefresh')));
+    fireEvent.click(screen.getByRole('button', { name: t('reviewRefresh') }));
     await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    showSearch();
     fireEvent.change(screen.getByLabelText(t('reviewFilter')), { target: { value: 'hidden' } });
     view.rerender(
       <SessionReviewPanel
@@ -514,6 +544,8 @@ test('reveals and scrolls to a new focus beyond the initial file page', async ()
 test('opens a diff from the directory index without invoking a file action', async () => {
   load.mockResolvedValue(result('src/nested/change.ts'));
   const { container } = render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  await screen.findByTitle('src/nested/change.ts');
+  showFileTree();
   const navigationFile = await screen.findByRole('button', { name: 'src/nested/change.ts' });
   fireEvent.click(navigationFile);
   expect(navigationFile.getAttribute('aria-current')).toBe('location');
@@ -575,7 +607,8 @@ test('tracks the first visible file while scrolling the diff', async () => {
   response.diff.files.push({ ...response.diff.files[0], path: 'second.ts' });
   load.mockResolvedValue(response);
   const { container } = render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
-  await screen.findByRole('button', { name: 'second.ts' });
+  await screen.findByTitle('second.ts');
+  showFileTree();
   const articles = container.querySelectorAll('article');
   vi.spyOn(articles[0], 'getBoundingClientRect').mockReturnValue({ bottom: -10 } as DOMRect);
   vi.spyOn(articles[1], 'getBoundingClientRect').mockReturnValue({ bottom: 100 } as DOMRect);
@@ -599,8 +632,9 @@ test('opens the workspace folder and keeps truncation details inside the explana
   expect(screen.queryByText('C:/workspace')).toBeNull();
   fireEvent.click(open);
   await waitFor(() => expect(openPath).toHaveBeenCalledWith('C:/workspace'));
-  const notice = screen.getByText(t('reviewTruncated'));
+  const notice = screen.getByText(t('reviewTruncated'), { selector: 'p' });
   expect(notice.closest('.review-explanation')?.hasAttribute('hidden')).toBe(true);
+  fireEvent.click(screen.getByLabelText(t('reviewMoreOptions')));
   fireEvent.click(screen.getByRole('button', { name: t('reviewAbout') }));
   expect(notice.closest('.review-explanation')?.hasAttribute('hidden')).toBe(false);
   openPath.mockResolvedValue({ success: false });
@@ -611,6 +645,7 @@ test('opens the workspace folder and keeps truncation details inside the explana
 test('resizes the review file tree in both directions and keeps space for the diff', () => {
   setupResizeLayout();
   const { container } = render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  showFileTree();
   const divider = screen.getByRole('separator', { name: t('reviewResizeNavigation') });
   const body = container.querySelector<HTMLElement>('.review-body')!;
   expect(divider.getAttribute('aria-valuenow')).toBe('240');
@@ -636,6 +671,7 @@ test('resizes the review file tree in both directions and keeps space for the di
 test('adjusts the review tree by keyboard and retains its requested width across layout changes', () => {
   const resize = setupResizeLayout();
   const view = render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  showFileTree();
   const divider = screen.getByRole('separator', { name: t('reviewResizeNavigation') });
   fireEvent.keyDown(divider, { key: 'End' });
   expect(divider.getAttribute('aria-valuenow')).toBe('674');
@@ -656,31 +692,232 @@ test('adjusts the review tree by keyboard and retains its requested width across
   expect(divider.getAttribute('aria-valuenow')).toBe('160');
 });
 
-test.each(['pointercancel', 'lostpointercapture', 'blur', 'hidden', 'narrow', 'unmount'])(
-  'releases review-tree dragging state on %s',
-  action => {
-    const resize = setupResizeLayout();
-    document.body.style.cursor = 'default';
-    document.body.style.userSelect = 'text';
-    const view = render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
-    const divider = screen.getByRole('separator', { name: t('reviewResizeNavigation') });
-    fireEvent.pointerDown(divider, { button: 0, pointerId: 7, clientX: 760 });
-    expect(document.body.style.cursor).toBe('col-resize');
-    if (action === 'unmount') view.unmount();
-    else if (action === 'hidden')
-      view.rerender(<SessionReviewPanel sessionId="one" visible={false} onOpenFile={vi.fn()} />);
-    else if (action === 'narrow') resize(700);
-    else if (action === 'blur') fireEvent(window, new Event('blur'));
-    else
-      fireEvent(
-        action === 'lostpointercapture' ? divider : window,
-        new PointerEvent(action, { pointerId: 7 }),
-      );
-    expect(document.body.style.cursor).toBe('default');
-    expect(document.body.style.userSelect).toBe('text');
-    fireEvent.pointerMove(window, { pointerId: 7, clientX: 600 });
-    if (action !== 'unmount') expect(divider.getAttribute('aria-valuenow')).toBe('240');
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
+test.each([
+  'pointercancel',
+  'lostpointercapture',
+  'blur',
+  'hidden',
+  'narrow',
+  'tree-off',
+  'unmount',
+])('releases review-tree dragging state on %s', action => {
+  const resize = setupResizeLayout();
+  document.body.style.cursor = 'default';
+  document.body.style.userSelect = 'text';
+  const view = render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  showFileTree();
+  const divider = screen.getByRole('separator', { name: t('reviewResizeNavigation') });
+  fireEvent.pointerDown(divider, { button: 0, pointerId: 7, clientX: 760 });
+  expect(document.body.style.cursor).toBe('col-resize');
+  if (action === 'unmount') view.unmount();
+  else if (action === 'hidden')
+    view.rerender(<SessionReviewPanel sessionId="one" visible={false} onOpenFile={vi.fn()} />);
+  else if (action === 'narrow') resize(700);
+  else if (action === 'tree-off') showFileTree();
+  else if (action === 'blur') fireEvent(window, new Event('blur'));
+  else
+    fireEvent(
+      action === 'lostpointercapture' ? divider : window,
+      new PointerEvent(action, { pointerId: 7 }),
+    );
+  expect(document.body.style.cursor).toBe('default');
+  expect(document.body.style.userSelect).toBe('text');
+  fireEvent.pointerMove(window, { pointerId: 7, clientX: 600 });
+  if (action !== 'unmount') expect(divider.getAttribute('aria-valuenow')).toBe('240');
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+});
+
+test('starts with one collapsed file list and exposes navigation and layouts only in More', async () => {
+  setupResizeLayout();
+  const { container } = render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  const heading = await screen.findByText('change.ts', { selector: '.review-file-heading strong' });
+  expect(container.querySelectorAll('article')).toHaveLength(1);
+  expect(screen.queryByRole('navigation')).toBeNull();
+  expect(screen.queryByRole('separator')).toBeNull();
+  expect(screen.queryByRole('button', { name: t('reviewSplit') })).toBeNull();
+  expect(screen.queryByRole('textbox', { name: t('reviewFilter') })).toBeNull();
+  expect(screen.queryByText('old')).toBeNull();
+  expect(screen.getByText(t('reviewSnapshot')).closest('[hidden]')).toBeTruthy();
+  fireEvent.click(heading);
+  expect(screen.getByText('old')).toBeTruthy();
+  fireEvent.click(heading);
+  expect(screen.queryByText('old')).toBeNull();
+  fireEvent.click(screen.getByLabelText(t('reviewMoreOptions')));
+  expect(screen.getByRole('checkbox', { name: t('reviewShowFileTree') })).toHaveProperty(
+    'checked',
+    false,
+  );
+  expect(
+    screen.getByRole('button', { name: t('reviewUnified') }).getAttribute('aria-pressed'),
+  ).toBe('true');
+  fireEvent.click(screen.getByRole('button', { name: t('reviewSplit') }));
+  fireEvent.click(heading);
+  expect(container.querySelector('.review-split-grid')).toBeTruthy();
+});
+
+test('collects execution folders below ordinary files without hiding their changes or duplicating rows', async () => {
+  const response = result('.agent-tasks/swarm-workflow/batch/stage/attempt-1/');
+  response.diff.files.push(
+    { ...response.diff.files[0], path: '.agent-tasks/browser/report.html' },
+    { ...response.diff.files[0], path: 'news.md' },
+    { ...response.diff.files[0], path: '.agent-tasks-copy/result.md' },
+  );
+  load.mockResolvedValue(response);
+  const { container } = render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  const group = await screen.findByRole('button', {
+    name: new RegExp(t('reviewExecutionDirectories')),
+  });
+  expect(within(group).getByText('2')).toBeTruthy();
+  expect(group.getAttribute('aria-expanded')).toBe('false');
+  expect(container.querySelectorAll('article')).toHaveLength(2);
+  expect(screen.queryByTitle('.agent-tasks/browser/report.html')).toBeNull();
+  expect(screen.getByTitle('news.md')).toBeTruthy();
+  expect(screen.getByTitle('.agent-tasks-copy/result.md')).toBeTruthy();
+  fireEvent.click(group);
+  expect(container.querySelectorAll('article')).toHaveLength(4);
+  expect(screen.getByTitle('.agent-tasks/browser/report.html')).toBeTruthy();
+  expect(screen.queryByText('old')).toBeNull();
+  fireEvent.click(screen.getByTitle('.agent-tasks/browser/report.html'));
+  expect(screen.getByText('old')).toBeTruthy();
+  fireEvent.click(group);
+  expect(container.querySelectorAll('article')).toHaveLength(2);
+  expect(screen.queryByText('old')).toBeNull();
+});
+
+test('search reveals matching execution files and retains native paths for file actions', async () => {
+  const path = '.agent-tasks/browser/中文 报告.html';
+  const response = result(path);
+  load.mockResolvedValue({ ...response, diff: { ...response.diff, root: 'C:/repo' } });
+  file.mockResolvedValue({ success: true, filePath: `C:/repo/${path}`, relativePath: path });
+  const onOpenFile = vi.fn();
+  render(<SessionReviewPanel sessionId="one" visible onOpenFile={onOpenFile} />);
+  await screen.findByText(t('reviewExecutionDirectories'));
+  showSearch();
+  fireEvent.change(screen.getByRole('textbox', { name: t('reviewFilter') }), {
+    target: { value: '报告' },
+  });
+  const row = screen.getByTitle(path).closest('article')!;
+  fireEvent.click(within(row).getByLabelText(t('reviewFileActions')));
+  fireEvent.click(within(row).getByRole('button', { name: t('reviewAction_preview') }));
+  await waitFor(() => expect(onOpenFile).toHaveBeenCalledWith(`C:/repo/${path}`, path, false));
+  expect(file).toHaveBeenCalledWith({ sessionId: 'one', scope: 'all' }, path, 'preview');
+  expect(screen.queryByText(t('reviewEmpty'))).toBeNull();
+});
+
+test('searching ordinary files keeps execution folders collapsed when the filter is cleared', async () => {
+  const response = result('deliverable.md');
+  response.diff.files.push({ ...response.diff.files[0], path: '.agent-tasks/browser/report.html' });
+  load.mockResolvedValue(response);
+  render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  await screen.findByTitle('deliverable.md');
+  showSearch();
+  const search = screen.getByRole('textbox', { name: t('reviewFilter') });
+  fireEvent.change(search, { target: { value: 'deliverable' } });
+  expect(screen.queryByText(t('reviewExecutionDirectories'))).toBeNull();
+  fireEvent.change(search, { target: { value: '' } });
+  const group = screen.getByRole('button', { name: new RegExp(t('reviewExecutionDirectories')) });
+  expect(group.getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByTitle('.agent-tasks/browser/report.html')).toBeNull();
+});
+
+test('reveals execution files for a search entered before the first response arrives', async () => {
+  let settle!: (value: unknown) => void;
+  load.mockImplementation(
+    () =>
+      new Promise(resolve => {
+        settle = resolve;
+      }),
+  );
+  render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  showSearch();
+  fireEvent.change(screen.getByRole('textbox', { name: t('reviewFilter') }), {
+    target: { value: 'report' },
+  });
+  const path = '.agent-tasks/browser/report.html';
+  await act(async () => settle(result(path)));
+  expect(await screen.findByTitle(path)).toBeTruthy();
+  const group = screen.getByRole('button', { name: new RegExp(t('reviewExecutionDirectories')) });
+  expect(group.getAttribute('aria-expanded')).toBe('true');
+});
+
+test.each(['scope', 'refresh'])(
+  'reveals new matching execution files after changing %s with a retained search',
+  async action => {
+    const path = '.agent-tasks/browser/report.html';
+    load.mockResolvedValueOnce(result('report.md')).mockResolvedValue(result(path));
+    render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+    await screen.findByTitle('report.md');
+    showSearch();
+    fireEvent.change(screen.getByRole('textbox', { name: t('reviewFilter') }), {
+      target: { value: 'report' },
+    });
+    if (action === 'scope')
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: 'uncommitted' } });
+    else fireEvent.click(screen.getByRole('button', { name: t('reviewRefresh') }));
+    expect(await screen.findByTitle(path)).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: t('reviewFilter') })).toHaveProperty(
+      'value',
+      'report',
+    );
   },
 );
+
+test('preserves manual folding during a matching search refresh and reveals files on a new search', async () => {
+  const path = '.agent-tasks/browser/report.html';
+  load.mockResolvedValueOnce(result(path));
+  render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  await screen.findByText(t('reviewExecutionDirectories'));
+  showSearch();
+  const search = screen.getByRole('textbox', { name: t('reviewFilter') });
+  fireEvent.change(search, { target: { value: 'report' } });
+  expect(await screen.findByTitle(path)).toBeTruthy();
+  const group = screen.getByRole('button', { name: new RegExp(t('reviewExecutionDirectories')) });
+  fireEvent.click(group);
+  const response = result(path);
+  response.diff.files.push({
+    ...response.diff.files[0],
+    path: '.agent-tasks/browser/report-2.html',
+  });
+  load.mockResolvedValue(response);
+  fireEvent.click(screen.getByRole('button', { name: t('reviewRefresh') }));
+  await within(group).findByText('2');
+  expect(group.getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByTitle(path)).toBeNull();
+  fireEvent.change(search, { target: { value: '' } });
+  fireEvent.change(search, { target: { value: 'report' } });
+  expect(await screen.findByTitle(path)).toBeTruthy();
+});
+
+test('execution entries do not consume the ordinary file page and focused execution files reveal their page', async () => {
+  const response = result('.agent-tasks/swarm-workflow/batch/file-0.ts');
+  response.diff.files.push(
+    ...Array.from({ length: 105 }, (_, index) => ({
+      ...response.diff.files[0],
+      path: `.agent-tasks/swarm-workflow/batch/file-${index + 1}.ts`,
+    })),
+    { ...response.diff.files[0], path: 'deliverable.md' },
+  );
+  load.mockResolvedValue(response);
+  const scroll = vi.fn();
+  const originalScroll = HTMLElement.prototype.scrollIntoView;
+  HTMLElement.prototype.scrollIntoView = scroll;
+  const view = render(<SessionReviewPanel sessionId="one" visible onOpenFile={vi.fn()} />);
+  expect(await screen.findByTitle('deliverable.md')).toBeTruthy();
+  const path = '.agent-tasks/swarm-workflow/batch/file-105.ts';
+  expect(screen.queryByTitle(path)).toBeNull();
+  view.rerender(
+    <SessionReviewPanel
+      sessionId="one"
+      visible
+      focusPath={`C:/repo/${path}`}
+      focusVersion={1}
+      onOpenFile={vi.fn()}
+    />,
+  );
+  const heading = (await screen.findByTitle(path)).closest('button')!;
+  expect(heading.getAttribute('aria-expanded')).toBe('true');
+  expect(scroll).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole('navigation')).toBeNull();
+  HTMLElement.prototype.scrollIntoView = originalScroll;
+});

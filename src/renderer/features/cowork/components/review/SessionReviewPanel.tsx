@@ -27,7 +27,7 @@ import { i18nService } from '@/services/i18n';
 import { useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 import WorkspaceFileIcon from '../shared/WorkspaceFileIcon';
-import { describeReviewPath } from './reviewPathDisplay';
+import { describeReviewPath, isReviewExecutionPath } from './reviewPathDisplay';
 import SessionReviewPatch from './SessionReviewPatch';
 import { useReviewNavigationResize } from './useReviewNavigationResize';
 
@@ -48,7 +48,8 @@ export default function SessionReviewPanel({
   onOpenFile,
 }: Props) {
   const ownerWindow = useOwnerWindow();
-  const navigationResize = useReviewNavigationResize(visible);
+  const [showNavigation, setShowNavigation] = useState(false);
+  const navigationResize = useReviewNavigationResize(visible && showNavigation);
   const navigationId = useId();
   const [scope, setScope] = useState<SessionReviewQuery['scope']>(ReviewScope.All);
   const [commit, setCommit] = useState('');
@@ -59,6 +60,12 @@ export default function SessionReviewPanel({
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState('');
   const [fileLimit, setFileLimit] = useState(100);
+  const [executionLimit, setExecutionLimit] = useState(100);
+  const [executionOpen, setExecutionOpen] = useState(false);
+  const [closedExecutionSearch, setClosedExecutionSearch] = useState<string>();
+  const executionId = useId();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [split, setSplit] = useState(false);
   const [wrap, setWrap] = useState(true);
@@ -124,7 +131,7 @@ export default function SessionReviewPanel({
       focusNode.current.scrollIntoView?.({ block: 'nearest' });
       lastScrolledFocusRequest.current = focusRequest;
     }
-  }, [focusedPath, focusRequest, visible, fileLimit, filter]);
+  }, [focusedPath, focusRequest, visible, fileLimit, executionLimit, executionOpen, filter]);
   useEffect(() => {
     if (wasRunning.current && !running) setUpdated(true);
     wasRunning.current = running;
@@ -132,11 +139,16 @@ export default function SessionReviewPanel({
   useEffect(() => {
     if (!focusPath || lastFocusRequest.current === focusRequest) return;
     setFilter('');
-    const index = diff?.files.findIndex(file => file.path === focusedPath) ?? -1;
-    if (index >= 0 && diff) {
+    const execution = focusedPath ? isReviewExecutionPath(focusedPath) : false;
+    const group = diff?.files.filter(file => isReviewExecutionPath(file.path) === execution);
+    const index = group?.findIndex(file => file.path === focusedPath) ?? -1;
+    if (index >= 0 && group) {
       lastFocusRequest.current = focusRequest;
-      const path = diff.files[index].path;
-      setFileLimit(limit => Math.max(limit, index + 1));
+      const path = group[index].path;
+      if (execution) {
+        setExecutionOpen(true);
+        setExecutionLimit(limit => Math.max(limit, index + 1));
+      } else setFileLimit(limit => Math.max(limit, index + 1));
       setExpanded(current => {
         const next = new Set(current);
         next.add(path);
@@ -258,7 +270,7 @@ export default function SessionReviewPanel({
     diff?.files.filter(file =>
       `${file.oldPath ?? ''} ${file.path}`.toLocaleLowerCase().includes(filter.toLocaleLowerCase()),
     ) ?? [];
-  const visibleEntries = files.slice(0, fileLimit).map(file => {
+  const entries = files.map(file => {
     const display = describeReviewPath(file.path);
     return {
       file,
@@ -266,13 +278,166 @@ export default function SessionReviewPanel({
       name: display.name.trim() ? display.name : i18nService.t('reviewUnknownPath'),
     };
   });
+  const ordinaryEntries = entries.filter(entry => !isReviewExecutionPath(entry.file.path));
+  const executionEntries = entries.filter(entry => isReviewExecutionPath(entry.file.path));
+  const executionSearchKey = JSON.stringify([key, filter]);
+  useEffect(() => {
+    // Search may precede a read or survive a scope change. Reveal matching
+    // results when they arrive, preserving a manual fold for this search.
+    if (filter && executionEntries.length && closedExecutionSearch !== executionSearchKey)
+      setExecutionOpen(true);
+  }, [filter, executionEntries.length, closedExecutionSearch, executionSearchKey]);
+  const visibleOrdinaryEntries = ordinaryEntries.slice(0, fileLimit);
+  const visibleExecutionEntries = executionEntries.slice(0, executionLimit);
+  const visibleEntries = [
+    ...visibleOrdinaryEntries,
+    ...(executionOpen ? visibleExecutionEntries : []),
+  ];
+  const renderFile = ({ file, name, directory, isDirectory }: (typeof entries)[number]) => {
+    const focused = file.path === focusedPath;
+    const isExpanded = expanded.has(file.path) || (focused && !expanded.has(`closed:${file.path}`));
+    return (
+      <article
+        className={`review-file${selectedFile === file.path ? ' review-file-selected' : ''}`}
+        key={file.path}
+        ref={node => {
+          if (focused) focusNode.current = node;
+          if (node) fileNodes.current.set(file.path, node);
+          else fileNodes.current.delete(file.path);
+        }}
+      >
+        <div className="review-file-titlebar">
+          <button
+            className="review-file-heading"
+            aria-expanded={isExpanded}
+            onClick={() =>
+              setExpanded(current => {
+                const next = new Set(current);
+                if (isExpanded) {
+                  next.delete(file.path);
+                  next.add(`closed:${file.path}`);
+                } else {
+                  next.add(file.path);
+                  next.delete(`closed:${file.path}`);
+                }
+                return next;
+              })
+            }
+          >
+            {isDirectory ? (
+              <FolderIcon aria-hidden="true" />
+            ) : (
+              <WorkspaceFileIcon fileName={name} />
+            )}
+            <span
+              className="review-path"
+              title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}
+            >
+              <span className="review-directory">
+                {file.oldPath ? `${file.oldPath} → ` : directory ? `${directory}/` : ''}
+              </span>
+              <strong>{file.oldPath ? file.path : name}</strong>
+            </span>
+            <span
+              className={`review-status review-status-${file.status}`}
+              title={`${i18nService.t(`reviewStatus_${file.status}`)}${file.untracked ? ` · ${i18nService.t('reviewUntracked')}` : ''}`}
+            >
+              {{ added: 'A', modified: 'M', deleted: 'D', renamed: 'R' }[file.status]}
+            </span>
+            {isDirectory ? (
+              <span className="review-file-badge">{i18nService.t('reviewDirectory')}</span>
+            ) : (
+              <span className="review-count">
+                <span className="review-added">+{file.additions}</span>
+                <span className="review-deleted">−{file.deletions}</span>
+              </span>
+            )}
+            <ChevronRightIcon aria-hidden="true" className="review-chevron" />
+          </button>
+          <details
+            className="review-file-menu"
+            onKeyDown={event => {
+              if (event.key === 'Escape') {
+                event.currentTarget.open = false;
+                event.currentTarget.querySelector('summary')?.focus();
+              }
+            }}
+            onBlur={event => {
+              if (!event.currentTarget.contains(event.relatedTarget))
+                event.currentTarget.open = false;
+            }}
+          >
+            <summary
+              title={i18nService.t('reviewFileActions')}
+              aria-label={i18nService.t('reviewFileActions')}
+            >
+              <EllipsisHorizontalIcon aria-hidden="true" />
+            </summary>
+            <div className="review-controls review-file-actions">
+              <button
+                className="review-button"
+                onClick={() => void copy(file.path, `path:${file.path}`)}
+              >
+                {i18nService.t(copied === `path:${file.path}` ? 'reviewCopied' : 'reviewCopyPath')}
+              </button>
+              {file.patch && (
+                <button
+                  className="review-button"
+                  onClick={() => void copy(file.patch!, `patch:${file.path}`)}
+                >
+                  {i18nService.t(
+                    copied === `patch:${file.path}` ? 'reviewCopied' : 'reviewCopyPatch',
+                  )}
+                </button>
+              )}
+              {!isDirectory &&
+                (['preview', 'files', 'editor'] as const)
+                  .filter(action => action !== 'editor' || window.electron.platform === 'win32')
+                  .map(action => (
+                    <button
+                      key={action}
+                      className="review-button"
+                      disabled={!diff?.root || file.status === 'deleted' || actionPending}
+                      onClick={() => void openFile(file.path, action)}
+                    >
+                      {i18nService.t(`reviewAction_${action}`)}
+                    </button>
+                  ))}
+            </div>
+          </details>
+        </div>
+        {isExpanded && (
+          <>
+            {!diff?.root && <p>{i18nService.t('reviewRemote')}</p>}
+            {isDirectory && <p>{i18nService.t('reviewDirectoryNoPatch')}</p>}
+            {!isDirectory && file.status === 'deleted' && <p>{i18nService.t('reviewDeleted')}</p>}
+            {!isDirectory && file.binary && <p>{i18nService.t('reviewBinary')}</p>}
+            {!isDirectory && file.truncated && (file.binary || file.patch) && (
+              <p>{i18nService.t('reviewTruncated')}</p>
+            )}
+            {!isDirectory && !file.binary && !file.patch && (
+              <p>{i18nService.t(file.truncated ? 'reviewTruncatedNoPatch' : 'reviewNoPatch')}</p>
+            )}
+            {!isDirectory && file.patch && (
+              <SessionReviewPatch
+                key={`${key}:${file.path}`}
+                patch={file.patch}
+                path={file.path}
+                split={split}
+                wrap={wrap}
+              />
+            )}
+          </>
+        )}
+      </article>
+    );
+  };
   return (
     <section className="session-review" hidden={!visible} aria-label={i18nService.t('reviewTitle')}>
       <header className="review-toolbar">
         <div className="review-toolbar-row">
           <div className="review-scope">
             <label>
-              <span className="review-scope-label">{i18nService.t('reviewScope')}</span>
               <span className="review-select-wrap">
                 <select
                   aria-label={i18nService.t('reviewScope')}
@@ -318,58 +483,78 @@ export default function SessionReviewPanel({
               className="review-button"
               disabled={loading}
               aria-label={i18nService.t(loading ? 'reviewLoading' : 'reviewRefresh')}
-              title={i18nService.t('reviewRefresh')}
+              title={i18nService.t(updated ? 'reviewUpdated' : 'reviewSnapshot')}
               onClick={() => setRevision(value => value + 1)}
             >
               <ArrowPathIcon aria-hidden="true" className={loading ? 'review-spinning' : ''} />
-              <span className="review-refresh-label">
-                {i18nService.t(loading ? 'reviewLoading' : 'reviewRefresh')}
-              </span>
             </button>
-            <div
-              className="review-view-toggle"
-              role="group"
-              aria-label={i18nService.t('reviewLayout')}
+            <button
+              type="button"
+              className="review-button"
+              title={i18nService.t('reviewSearchFiles')}
+              aria-label={i18nService.t('reviewSearchFiles')}
+              aria-pressed={searchOpen}
+              onClick={() => setSearchOpen(value => !value)}
             >
-              <button
-                className="review-button"
-                aria-pressed={!split}
-                title={i18nService.t('reviewUnified')}
-                aria-label={i18nService.t('reviewUnified')}
-                onClick={() => setSplit(false)}
-              >
-                <Bars3BottomLeftIcon aria-hidden="true" />
-              </button>
-              <button
-                className="review-button"
-                aria-pressed={split}
-                title={i18nService.t('reviewSplit')}
-                aria-label={i18nService.t('reviewSplit')}
-                onClick={() => setSplit(true)}
-              >
-                <ViewColumnsIcon aria-hidden="true" />
-              </button>
-            </div>
+              <MagnifyingGlassIcon aria-hidden="true" />
+            </button>
             <details
-              className="review-more"
+              className={`review-more${diff?.truncated ? ' has-warning' : ''}`}
+              open={moreOpen}
               onKeyDown={event => {
                 if (event.key === 'Escape') {
-                  event.currentTarget.open = false;
+                  setMoreOpen(false);
                   event.currentTarget.querySelector('summary')?.focus();
                 }
               }}
               onBlur={event => {
-                if (!event.currentTarget.contains(event.relatedTarget))
-                  event.currentTarget.open = false;
+                if (!event.currentTarget.contains(event.relatedTarget)) setMoreOpen(false);
               }}
             >
               <summary
                 title={i18nService.t('reviewMoreOptions')}
                 aria-label={i18nService.t('reviewMoreOptions')}
+                onClick={event => {
+                  event.preventDefault();
+                  setMoreOpen(value => !value);
+                }}
               >
                 <EllipsisHorizontalIcon aria-hidden="true" />
               </summary>
-              <div className="review-more-popover">
+              <div className="review-more-popover" hidden={!moreOpen}>
+                <label className="review-menu-toggle">
+                  <input
+                    type="checkbox"
+                    checked={showNavigation}
+                    onChange={event => setShowNavigation(event.target.checked)}
+                  />
+                  {i18nService.t('reviewShowFileTree')}
+                </label>
+                <div className="review-layout-setting">
+                  <span>{i18nService.t('reviewLayout')}</span>
+                  <div
+                    className="review-view-toggle"
+                    role="group"
+                    aria-label={i18nService.t('reviewLayout')}
+                  >
+                    <button
+                      className="review-button"
+                      aria-pressed={!split}
+                      onClick={() => setSplit(false)}
+                    >
+                      <Bars3BottomLeftIcon aria-hidden="true" />
+                      {i18nService.t('reviewUnified')}
+                    </button>
+                    <button
+                      className="review-button"
+                      aria-pressed={split}
+                      onClick={() => setSplit(true)}
+                    >
+                      <ViewColumnsIcon aria-hidden="true" />
+                      {i18nService.t('reviewSplit')}
+                    </button>
+                  </div>
+                </div>
                 <label className="review-wrap-toggle">
                   <input
                     type="checkbox"
@@ -378,20 +563,29 @@ export default function SessionReviewPanel({
                   />
                   {i18nService.t('reviewWrap')}
                 </label>
+                <button
+                  type="button"
+                  className="review-button review-explanation-toggle"
+                  aria-expanded={explanationOpen}
+                  aria-controls={explanationId}
+                  onClick={() => {
+                    setExplanationOpen(value => !value);
+                    setMoreOpen(false);
+                  }}
+                >
+                  <InformationCircleIcon aria-hidden="true" />
+                  {i18nService.t('reviewAbout')}
+                </button>
               </div>
             </details>
           </div>
-          <button
-            type="button"
-            className={`review-explanation-toggle${diff?.truncated ? ' has-warning' : ''}`}
-            title={i18nService.t('reviewAbout')}
-            aria-label={i18nService.t('reviewAbout')}
-            aria-expanded={explanationOpen}
-            aria-controls={explanationId}
-            onClick={() => setExplanationOpen(value => !value)}
-          >
-            <InformationCircleIcon aria-hidden="true" />
-          </button>
+          {diff?.truncated && (
+            <ExclamationTriangleIcon
+              className="review-warning"
+              aria-label={i18nService.t('reviewTruncated')}
+              title={i18nService.t('reviewTruncated')}
+            />
+          )}
         </div>
         <div id={explanationId} className="review-explanation" hidden={!explanationOpen}>
           <div className="review-explanation-note">
@@ -412,6 +606,12 @@ export default function SessionReviewPanel({
               {i18nService.t('reviewBranch')}: <strong>{diff.branch}</strong>
             </p>
           )}
+          {diff?.baseRef && (
+            <p>
+              {i18nService.t('reviewBase')}: <code>{diff.baseRef}</code>
+            </p>
+          )}
+          {diff && <p>{i18nService.t('reviewSnapshot')}</p>}
         </div>
         <div className="review-commit-controls">
           {scope === ReviewScope.Commit && (
@@ -446,15 +646,7 @@ export default function SessionReviewPanel({
             <p className="review-hint">{i18nService.t('reviewCommitLimit')}</p>
           )}
         </div>
-        {diff?.baseRef && (
-          <div className="review-base">
-            {i18nService.t('reviewBase')}: <code>{diff.baseRef}</code>
-          </div>
-        )}
         {updated && <p role="status">{i18nService.t('reviewUpdated')}</p>}
-        {diff && !updated && !error && (
-          <p className="review-hint">{i18nService.t('reviewSnapshot')}</p>
-        )}
         {error && (
           <p role="alert">
             {i18nService.t(`reviewError_${error}`)} {diff && i18nService.t('reviewStale')}
@@ -463,14 +655,21 @@ export default function SessionReviewPanel({
         {actionError && <p role="alert">{i18nService.t('reviewError_file')}</p>}
         {copyError && <p role="alert">{i18nService.t('reviewError_copy')}</p>}
       </header>
-      <div className="review-body" ref={navigationResize.bodyRef} style={navigationResize.style}>
+      <div
+        className={`review-body${showNavigation ? ' review-with-navigation' : ''}`}
+        ref={navigationResize.bodyRef}
+        style={navigationResize.style}
+      >
         <div className="review-main">
-          <div className="review-search">
+          <div className="review-search" hidden={!searchOpen && !filter}>
             <MagnifyingGlassIcon aria-hidden="true" />
             <input
               className="review-filter"
               value={filter}
-              onChange={event => setFilter(event.target.value)}
+              onChange={event => {
+                setFilter(event.target.value);
+                setClosedExecutionSearch(undefined);
+              }}
               placeholder={i18nService.t('reviewFilter')}
               aria-label={i18nService.t('reviewFilter')}
             />
@@ -480,9 +679,10 @@ export default function SessionReviewPanel({
             aria-busy={loading}
             onScroll={event => {
               const top = event.currentTarget.getBoundingClientRect().top;
-              for (const [path, node] of fileNodes.current) {
-                if (node.getBoundingClientRect().bottom > top + 2) {
-                  setSelectedFile(path);
+              for (const { file } of visibleEntries) {
+                const node = fileNodes.current.get(file.path);
+                if (node && node.getBoundingClientRect().bottom > top + 2) {
+                  setSelectedFile(file.path);
                   break;
                 }
               }
@@ -507,245 +707,136 @@ export default function SessionReviewPanel({
                 <p>{i18nService.t(filter ? 'reviewNoMatches' : 'reviewEmpty')}</p>
               </div>
             )}
-            {visibleEntries.map(({ file, name, directory, isDirectory }) => {
-              const focused = file.path === focusedPath;
-              const isExpanded =
-                expanded.has(file.path) || (focused && !expanded.has(`closed:${file.path}`));
-              return (
-                <article
-                  className={`review-file${selectedFile === file.path ? ' review-file-selected' : ''}`}
-                  key={file.path}
-                  ref={node => {
-                    if (focused) focusNode.current = node;
-                    if (node) fileNodes.current.set(file.path, node);
-                    else fileNodes.current.delete(file.path);
-                  }}
-                >
-                  <div className="review-file-titlebar">
-                    <button
-                      className="review-file-heading"
-                      aria-expanded={isExpanded}
-                      onClick={() =>
-                        setExpanded(current => {
-                          const next = new Set(current);
-                          if (isExpanded) {
-                            next.delete(file.path);
-                            next.add(`closed:${file.path}`);
-                          } else {
-                            next.add(file.path);
-                            next.delete(`closed:${file.path}`);
-                          }
-                          return next;
-                        })
-                      }
-                    >
-                      <ChevronRightIcon aria-hidden="true" className="review-chevron" />
-                      {isDirectory ? (
-                        <FolderIcon aria-hidden="true" />
-                      ) : (
-                        <WorkspaceFileIcon fileName={name} />
-                      )}
-                      <span
-                        className={`review-status review-status-${file.status}`}
-                        title={i18nService.t(`reviewStatus_${file.status}`)}
-                      >
-                        {{ added: 'A', modified: 'M', deleted: 'D', renamed: 'R' }[file.status]}
-                      </span>
-                      <span
-                        className="review-path"
-                        title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}
-                      >
-                        <span className="review-directory">
-                          {file.oldPath ? `${file.oldPath} → ` : directory ? `${directory}/` : ''}
-                        </span>
-                        <strong>{file.oldPath ? file.path : name}</strong>
-                      </span>
-                      {isDirectory ? (
-                        <span className="review-file-badge">
-                          {i18nService.t('reviewDirectory')}
-                        </span>
-                      ) : (
-                        <span className="review-count">
-                          <span className="review-added">+{file.additions}</span>
-                          <span className="review-deleted">−{file.deletions}</span>
-                        </span>
-                      )}
-                      {file.untracked && !isDirectory && (
-                        <span
-                          className="review-file-badge"
-                          title={i18nService.t('reviewUntracked')}
-                          aria-label={i18nService.t('reviewUntracked')}
-                        >
-                          U
-                        </span>
-                      )}
-                    </button>
-                    <details
-                      className="review-file-menu"
-                      onKeyDown={event => {
-                        if (event.key === 'Escape') {
-                          event.currentTarget.open = false;
-                          event.currentTarget.querySelector('summary')?.focus();
-                        }
-                      }}
-                      onBlur={event => {
-                        if (!event.currentTarget.contains(event.relatedTarget))
-                          event.currentTarget.open = false;
-                      }}
-                    >
-                      <summary
-                        title={i18nService.t('reviewFileActions')}
-                        aria-label={i18nService.t('reviewFileActions')}
-                      >
-                        <EllipsisHorizontalIcon aria-hidden="true" />
-                      </summary>
-                      <div className="review-controls review-file-actions">
-                        <button
-                          className="review-button"
-                          onClick={() => void copy(file.path, `path:${file.path}`)}
-                        >
-                          {i18nService.t(
-                            copied === `path:${file.path}` ? 'reviewCopied' : 'reviewCopyPath',
-                          )}
-                        </button>
-                        {file.patch && (
-                          <button
-                            className="review-button"
-                            onClick={() => void copy(file.patch!, `patch:${file.path}`)}
-                          >
-                            {i18nService.t(
-                              copied === `patch:${file.path}` ? 'reviewCopied' : 'reviewCopyPatch',
-                            )}
-                          </button>
-                        )}
-                        {!isDirectory &&
-                          (['preview', 'files', 'editor'] as const)
-                            .filter(
-                              action => action !== 'editor' || window.electron.platform === 'win32',
-                            )
-                            .map(action => (
-                              <button
-                                key={action}
-                                className="review-button"
-                                disabled={!diff?.root || file.status === 'deleted' || actionPending}
-                                onClick={() => void openFile(file.path, action)}
-                              >
-                                {i18nService.t(`reviewAction_${action}`)}
-                              </button>
-                            ))}
-                      </div>
-                    </details>
-                  </div>
-                  {isExpanded && (
-                    <>
-                      {!diff?.root && <p>{i18nService.t('reviewRemote')}</p>}
-                      {isDirectory && <p>{i18nService.t('reviewDirectoryNoPatch')}</p>}
-                      {!isDirectory && file.status === 'deleted' && (
-                        <p>{i18nService.t('reviewDeleted')}</p>
-                      )}
-                      {!isDirectory && file.binary && <p>{i18nService.t('reviewBinary')}</p>}
-                      {!isDirectory && file.truncated && (file.binary || file.patch) && (
-                        <p>{i18nService.t('reviewTruncated')}</p>
-                      )}
-                      {!isDirectory && !file.binary && !file.patch && (
-                        <p>
-                          {i18nService.t(
-                            file.truncated ? 'reviewTruncatedNoPatch' : 'reviewNoPatch',
-                          )}
-                        </p>
-                      )}
-                      {!isDirectory && file.patch && (
-                        <SessionReviewPatch
-                          key={`${key}:${file.path}`}
-                          patch={file.patch}
-                          path={file.path}
-                          split={split}
-                          wrap={wrap}
-                        />
-                      )}
-                    </>
-                  )}
-                </article>
-              );
-            })}
-            {files.length > fileLimit && (
+            {visibleOrdinaryEntries.map(renderFile)}
+            {ordinaryEntries.length > fileLimit && (
               <button className="review-button" onClick={() => setFileLimit(value => value + 100)}>
                 {i18nService.t('reviewMoreFiles')}
               </button>
             )}
+            {!!executionEntries.length && (
+              <div className="review-execution-group">
+                <button
+                  className="review-execution-heading"
+                  aria-expanded={executionOpen}
+                  aria-controls={executionId}
+                  onClick={() => {
+                    setExecutionOpen(!executionOpen);
+                    setClosedExecutionSearch(
+                      executionOpen && filter ? executionSearchKey : undefined,
+                    );
+                  }}
+                >
+                  <ChevronRightIcon aria-hidden="true" className="review-chevron" />
+                  <FolderIcon aria-hidden="true" />
+                  <span>{i18nService.t('reviewExecutionDirectories')}</span>
+                  <span className="review-execution-count">{executionEntries.length}</span>
+                </button>
+                <div id={executionId} hidden={!executionOpen}>
+                  {executionOpen && visibleExecutionEntries.map(renderFile)}
+                  {executionOpen && executionEntries.length > executionLimit && (
+                    <button
+                      className="review-button"
+                      onClick={() => setExecutionLimit(value => value + 100)}
+                    >
+                      {i18nService.t('reviewMoreFiles')}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
-        <div
-          className="review-navigation-resizer"
-          role="separator"
-          aria-label={i18nService.t('reviewResizeNavigation')}
-          aria-orientation="vertical"
-          aria-controls={navigationId}
-          aria-valuemin={navigationResize.minWidth}
-          aria-valuemax={navigationResize.maxWidth}
-          aria-valuenow={navigationResize.width}
-          tabIndex={navigationResize.tabIndex}
-          onPointerDown={navigationResize.beginResize}
-          onKeyDown={navigationResize.handleKeyDown}
-        />
-        <nav
-          id={navigationId}
-          className="review-navigation"
-          aria-label={i18nService.t('reviewFileNavigation')}
-        >
-          <div className="review-navigation-title">{i18nService.t('reviewFilesChanged')}</div>
-          {[...new Set(visibleEntries.map(entry => entry.directory))].map(directory => (
-            <details key={directory} open className="review-directory-group">
-              <summary>
-                <ChevronRightIcon aria-hidden="true" />
-                <span>{directory || i18nService.t('reviewWorkspace')}</span>
-              </summary>
-              {visibleEntries
-                .filter(entry => entry.directory === directory)
-                .map(({ file, name, isDirectory }) => (
-                  <button
-                    key={file.path}
-                    className="review-navigation-file"
-                    aria-label={file.path}
-                    title={file.path}
-                    aria-current={selectedFile === file.path ? 'location' : undefined}
-                    onClick={() => {
-                      setSelectedFile(file.path);
-                      setExpanded(current => {
-                        const next = new Set(current);
-                        next.add(file.path);
-                        next.delete(`closed:${file.path}`);
-                        return next;
-                      });
-                      fileNodes.current.get(file.path)?.scrollIntoView?.({ block: 'start' });
-                    }}
-                  >
-                    {isDirectory ? (
-                      <FolderIcon aria-hidden="true" />
-                    ) : (
-                      <WorkspaceFileIcon fileName={name} />
-                    )}
-                    <span>{name}</span>
-                    <span
-                      className={`review-nav-status review-status-${file.status}`}
-                      aria-label={i18nService.t(`reviewStatus_${file.status}`)}
-                    >
-                      {isDirectory
-                        ? i18nService
-                            .t('reviewDirectoryStatus')
-                            .replace('{status}', i18nService.t(`reviewStatus_${file.status}`))
-                        : i18nService.t(`reviewStatus_${file.status}`)}
-                    </span>
-                  </button>
-                ))}
-            </details>
-          ))}
-          {files.length > fileLimit && (
-            <button className="review-button" onClick={() => setFileLimit(value => value + 100)}>
-              {i18nService.t('reviewMoreFiles')}
-            </button>
-          )}
-        </nav>
+        {showNavigation && (
+          <>
+            <div
+              className="review-navigation-resizer"
+              role="separator"
+              aria-label={i18nService.t('reviewResizeNavigation')}
+              aria-orientation="vertical"
+              aria-controls={navigationId}
+              aria-valuemin={navigationResize.minWidth}
+              aria-valuemax={navigationResize.maxWidth}
+              aria-valuenow={navigationResize.width}
+              tabIndex={navigationResize.tabIndex}
+              onPointerDown={navigationResize.beginResize}
+              onKeyDown={navigationResize.handleKeyDown}
+            />
+            <nav
+              id={navigationId}
+              className="review-navigation"
+              aria-label={i18nService.t('reviewFileNavigation')}
+            >
+              <div className="review-navigation-title">{i18nService.t('reviewFilesChanged')}</div>
+              {!!executionEntries.length && !executionOpen && (
+                <button
+                  className="review-navigation-file"
+                  onClick={() => {
+                    setExecutionOpen(true);
+                    setClosedExecutionSearch(undefined);
+                  }}
+                >
+                  <FolderIcon aria-hidden="true" />
+                  <span>{i18nService.t('reviewExecutionDirectories')}</span>
+                  <span className="review-execution-count">{executionEntries.length}</span>
+                </button>
+              )}
+              {[...new Set(visibleEntries.map(entry => entry.directory))].map(directory => (
+                <details key={directory} open className="review-directory-group">
+                  <summary>
+                    <ChevronRightIcon aria-hidden="true" />
+                    <span>{directory || i18nService.t('reviewWorkspace')}</span>
+                  </summary>
+                  {visibleEntries
+                    .filter(entry => entry.directory === directory)
+                    .map(({ file, name, isDirectory }) => (
+                      <button
+                        key={file.path}
+                        className="review-navigation-file"
+                        aria-label={file.path}
+                        title={file.path}
+                        aria-current={selectedFile === file.path ? 'location' : undefined}
+                        onClick={() => {
+                          setSelectedFile(file.path);
+                          setExpanded(current => {
+                            const next = new Set(current);
+                            next.add(file.path);
+                            next.delete(`closed:${file.path}`);
+                            return next;
+                          });
+                          fileNodes.current.get(file.path)?.scrollIntoView?.({ block: 'start' });
+                        }}
+                      >
+                        {isDirectory ? (
+                          <FolderIcon aria-hidden="true" />
+                        ) : (
+                          <WorkspaceFileIcon fileName={name} />
+                        )}
+                        <span>{name}</span>
+                        <span
+                          className={`review-nav-status review-status-${file.status}`}
+                          aria-label={i18nService.t(`reviewStatus_${file.status}`)}
+                        >
+                          {isDirectory
+                            ? i18nService
+                                .t('reviewDirectoryStatus')
+                                .replace('{status}', i18nService.t(`reviewStatus_${file.status}`))
+                            : i18nService.t(`reviewStatus_${file.status}`)}
+                        </span>
+                      </button>
+                    ))}
+                </details>
+              ))}
+              {ordinaryEntries.length > fileLimit && (
+                <button
+                  className="review-button"
+                  onClick={() => setFileLimit(value => value + 100)}
+                >
+                  {i18nService.t('reviewMoreFiles')}
+                </button>
+              )}
+            </nav>
+          </>
+        )}
       </div>
     </section>
   );
