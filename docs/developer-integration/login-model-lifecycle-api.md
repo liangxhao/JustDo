@@ -80,7 +80,7 @@ await dependencies.onLogoutCommitted();
 
 换证请求为 `POST` JSON `{ mtoken, deviceId }`；`deviceId` 只使用当前有效网卡 MAC（去冒号、转大写）。Main 公共模块 [`src/main/core/network/macAddress.ts`](../../src/main/core/network/macAddress.ts) 导出 `getMacAddress(): string`，登录模块与模型换证应共同调用，不能在 Renderer 或 `src/shared` 中直接读取系统网卡。无有效 MAC 或查询失败时函数抛错，调用方应处理失败；不回退 UUID，不保存设备 ID 文件。
 响应包含 `access_token`、`token_type: "Bearer"`、整数 `expires_in`，可选 `uid` 必须匹配登录账号。
-JWT 的 `aud` 必须为字符串 `litellm`，kid 可选。模型请求使用真实 JWT Bearer；换证日志提供脱敏的失败阶段、原因和 HTTP 状态。
+JWT 的 `aud` 必须为字符串 `justdo-litellm`，kid 可选。模型请求使用真实 JWT Bearer；换证日志提供脱敏的失败阶段、原因和 HTTP 状态。
 JWT claims、期限和部署约定见[认证设计](../features/integrations/authentication-builtin-model-lifecycle.md)
 及[客户端部署](../../deploy/client/README.md)。修改编入 Main 的配置后需要重启开发进程或重新打包。
 

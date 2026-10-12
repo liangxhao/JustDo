@@ -22,7 +22,7 @@ const jwt = (account = 'user-1', seconds = 300) => {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
   const now = Math.floor(Date.now() / 1000);
   return [encode({ alg: 'RS256', typ: 'JWT' }), encode({
-    iss: 'https://issuer.test', aud: 'litellm', sub: account, iat: now, exp: now + seconds, jti: `fixture-${now}`,
+    iss: 'https://issuer.test', aud: 'justdo-litellm', sub: account, iat: now, exp: now + seconds, jti: `fixture-${now}`,
   }), 'signature'].join('.');
 };
 const login = (account = 'user-1', mtoken = 'mtoken-fixture') => {

@@ -249,7 +249,7 @@ const setActiveJwt = (): string => {
     encode({ alg: 'RS256', kid: 'login-key-1' }),
     encode({
       iss: 'https://login.example.test',
-      aud: 'litellm',
+      aud: 'justdo-litellm',
       sub: 'user@example.com',
       iat: nowSeconds,
       exp: nowSeconds + 300,

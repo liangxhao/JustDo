@@ -83,7 +83,7 @@ appConfigCredentials 当前兼容读取早期 OS 加密记录并清空旧 builti
 
 内置模型服务端校验 JWT 签名与 Team 授权，X-User-Account 不能独立授权；客户端不持有服务端 master key。登录交接、模型发现、SecretRef 解析及服务端拒绝要分别诊断。
 
-客户端预检要求 `aud: 'litellm'`、账号和有效期一致，允许签发端省略 kid；Main 直发请求及原生 SecretRef 路径均使用真实 JWT Bearer，JWT 不进入 Renderer 或 provider 持久配置。换证诊断仅记录固定阶段、原因和 HTTP 状态，不记录原始异常、URL 或请求/响应内容。
+客户端预检要求 `aud: 'justdo-litellm'`、账号和有效期一致，允许签发端省略 kid；Main 直发请求及原生 SecretRef 路径均使用真实 JWT Bearer，JWT 不进入 Renderer 或 provider 持久配置。换证诊断仅记录固定阶段、原因和 HTTP 状态，不记录原始异常、URL 或请求/响应内容。
 
 ## 8. 网络请求与出站请求头
 

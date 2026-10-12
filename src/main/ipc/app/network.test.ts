@@ -54,7 +54,7 @@ const installJwt = () => {
   const now = Math.floor(Date.now() / 1000);
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
   const token = [encode({ alg: 'RS256', kid: 'fixture' }), encode({
-    sub: 'test-user', iss: 'https://login.test', aud: 'litellm', iat: now, exp: now + 300, jti: 'fixture',
+    sub: 'test-user', iss: 'https://login.test', aud: 'justdo-litellm', iat: now, exp: now + 300, jti: 'fixture',
   }), 'signature'].join('.');
   setActiveBuiltinModelCredential({ accessToken: token, userAccount: 'test-user', expiresAt: now + 300 });
   return token;

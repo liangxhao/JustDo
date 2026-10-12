@@ -21,7 +21,7 @@ test('generateTitle adds the short-lived JWT only for the built-in provider', as
     encode({ alg: 'RS256', kid: 'login-key-1' }),
     encode({
       iss: 'https://login.example.test',
-      aud: 'litellm',
+      aud: 'justdo-litellm',
       sub: 'user-123',
       iat: nowSeconds,
       exp: nowSeconds + 300,

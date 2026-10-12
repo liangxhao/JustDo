@@ -33,7 +33,7 @@ const createJwt = (
     encodeJwtPart({ alg: 'RS256', kid: 'login-key-1', ...headerOverrides }),
     encodeJwtPart({
       iss: 'https://login.example.test',
-      aud: 'litellm',
+      aud: 'justdo-litellm',
       sub: userAccount,
       iat: NOW_SECONDS,
       exp: NOW_SECONDS + 300,
@@ -75,7 +75,7 @@ afterEach(() => {
 describe('built-in model credential', () => {
   test.each([
     { overrides: { aud: 'model-service' }, code: BuiltinModelCredentialFailureCode.Audience },
-    { overrides: { aud: ['litellm'] }, code: BuiltinModelCredentialFailureCode.Audience },
+    { overrides: { aud: ['justdo-litellm'] }, code: BuiltinModelCredentialFailureCode.Audience },
     { overrides: { sub: 'other-user' }, code: BuiltinModelCredentialFailureCode.AccountMismatch },
     { overrides: { sub: '' }, code: BuiltinModelCredentialFailureCode.Subject },
     { overrides: { iss: '' }, code: BuiltinModelCredentialFailureCode.Issuer },
@@ -111,7 +111,7 @@ describe('built-in model credential', () => {
     });
   });
 
-  test.each([undefined, '', 'justdo-litellm', 'LiteLLM', ' litellm ', ['litellm'], 123])(
+  test.each([undefined, '', 'litellm', 'LiteLLM', ' justdo-litellm ', ['justdo-litellm'], 123])(
     'rejects a missing, mismatched, or unsupported audience: %j', aud => {
       expect(validateBuiltinModelCredential(createJwt('user-123', { aud }), 'user-123')).toBeNull();
     },

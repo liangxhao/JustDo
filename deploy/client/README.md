@@ -16,7 +16,7 @@ maxJwtLifetimeSeconds: 10800,
 
 内置模型地址配置在 `src/config/builtinModels.ts`，仓库 `baseUrl` 留空。`src/config/outboundHeaders.ts` 的白名单也留空，部署时填写模型地址并允许 `X-User-Account`、`X-Cookie` 注入；规则只在策略启用且目标匹配协议、主机、端口和路径边界时生效。
 
-JWT 必须使用 `aud: 'litellm'`；RS256 JWT 可以没有 kid，签名由 LiteLLM 校验。Main 的模型发现、标题生成、连接测试及 Gateway 均使用 `Authorization: Bearer <真实JWT>`；Main 同时保留 `X-ACCESS-JWT` 和账号字段。
+JWT 必须使用 `aud: 'justdo-litellm'`；RS256 JWT 可以没有 kid，签名由 LiteLLM 校验。Main 的模型发现、标题生成、连接测试及 Gateway 均使用 `Authorization: Bearer <真实JWT>`；Main 同时保留 `X-ACCESS-JWT` 和账号字段。
 
 开发启动：`npm run electron:dev`。
 Windows 打包：`npm run dist:win`。
@@ -51,7 +51,7 @@ Main 使用应用已保存的直连、系统或自定义代理配置，不能只
 
 | 错误码 | 检查项 |
 | --- | --- |
-| `audience-mismatch` | `aud` 必须是字符串 `litellm`，不接受 `model-service` 或数组 |
+| `audience-mismatch` | `aud` 必须是字符串 `justdo-litellm`，不接受 `model-service` 或数组 |
 | `account-mismatch` / `missing-subject` | `sub` 必须与当前登录文件的 `X-User-Account` 一致 |
 | `missing-issuer` / `missing-token-id` | JWT 必须包含非空 `iss` / `jti` |
 | `unsupported-algorithm` | 使用受支持的非对称算法，如 `RS256`；不接受 `HS256` |

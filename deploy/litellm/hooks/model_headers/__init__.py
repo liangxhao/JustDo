@@ -21,7 +21,7 @@ def valid_cookie(value):
     if any(byte < 32 or byte >= 127 for byte in value):
         return False
 
-    for pair in value.split(b';'):
+    for pair in value.rstrip(b'; ').split(b';'):
         name, separator, content = pair.strip(b' ').partition(b'=')
         if not separator or not COOKIE_NAME.fullmatch(name):
             return False

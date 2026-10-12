@@ -50,7 +50,7 @@ sequenceDiagram
   M->>G: 配置 exec SecretRef / secrets.reload
 ```
 
-换证拒绝 redirect，timeout 15 秒，响应最大 32 KiB。返回必须为 Bearer，uid/sub 与登录账号一致，JWT 期限需满足本地上限和 expires_in。Main 要求非对称算法、非空 iss/jti、整数 iat/exp 和字符串 `aud: 'litellm'`；kid 可选，兼容内网 `RS256`、无 kid 的签发形态。Main 做结构、账号、audience 与时间预检，真正的签名、可信 issuer、audience 和 Team 授权在服务端完成。
+换证拒绝 redirect，timeout 15 秒，响应最大 32 KiB。返回必须为 Bearer，uid/sub 与登录账号一致，JWT 期限需满足本地上限和 expires_in。Main 要求非对称算法、非空 iss/jti、整数 iat/exp 和字符串 `aud: 'justdo-litellm'`；kid 可选，兼容内网 `RS256`、无 kid 的签发形态。Main 做结构、账号、audience 与时间预检，真正的签名、可信 issuer、audience 和 Team 授权在服务端完成。
 
 模型发现 `/models` 必需，`/model/info` 可选增强；区分 chat/embedding 并规范化能力。Main 直发请求使用 `Authorization: Bearer <真实JWT>`，同时保留 `X-ACCESS-JWT` 和 `X-User-Account`；api-key 开发模式只发送 Bearer key。provider 配置中的非秘密占位符仅用于应用内配置投影，不能作为网络请求凭据。Gateway 和 memory search 通过同一 JWT SecretRef 解析真实 JWT 并发送 Bearer 认证。
 

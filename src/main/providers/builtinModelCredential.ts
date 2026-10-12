@@ -3,7 +3,7 @@ import fs from 'fs';
 export const BUILTIN_MODEL_JWT_FIELD = 'X-ACCESS-JWT';
 export const BUILTIN_MODEL_USER_ACCOUNT_FIELD = 'X-User-Account';
 export const BUILTIN_MODEL_AUTHORIZATION_PLACEHOLDER = 'access-jwt-auth';
-export const EXPECTED_JWT_AUDIENCE = 'litellm';
+export const EXPECTED_JWT_AUDIENCE = 'justdo-litellm';
 
 const MAX_JWT_LENGTH = 8_192;
 const MAX_USER_ACCOUNT_LENGTH = 512;

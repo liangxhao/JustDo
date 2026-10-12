@@ -35,7 +35,7 @@ KID = hashlib.sha256(PRIVATE_KEY.public_key().public_bytes(
     serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).hexdigest()[:24]
 PUBLIC_JWK.update(kid=KID, use='sig', alg='RS256')
 ISSUER = os.environ.get('JWT_ISSUER', 'http://localhost:9110')
-AUDIENCE = 'model-service'
+AUDIENCE = 'justdo-litellm'
 USERS_FILE = Path(os.environ.get('JWT_USERS_FILE', '/app/users.json'))
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 

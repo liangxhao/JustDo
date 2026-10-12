@@ -23,7 +23,7 @@ def main():
         'UI_USERNAME': 'admin',
         'UI_PASSWORD': secrets.token_urlsafe(24),
         'LITELLM_JWT_ISSUER': 'http://localhost:9110',
-        'LITELLM_JWT_AUDIENCE': 'model-service',
+        'LITELLM_JWT_AUDIENCE': 'justdo-litellm',
         'LITELLM_JWT_JWKS_URL': 'http://127.0.0.1:9110/.well-known/jwks.json',
         'LITELLM_JWT_ALGORITHMS': 'RS256',
         'LITELLM_JWT_MAX_LIFETIME_SECONDS': '300',

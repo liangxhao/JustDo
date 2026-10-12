@@ -28,7 +28,7 @@
 `tokenExchangeUrl` 填写完整换证接口地址，空值禁用换证。
 `maxJwtLifetimeSeconds` 范围为 30–10800 秒，当前配置 10800；须与签发端和
 LiteLLM 的 `LITELLM_JWT_MAX_LIFETIME_SECONDS` 策略匹配。
-它与模型请求的 `baseUrl` 是两个不同地址。部署时使用可信组织的 HTTPS 地址。JWT audience 必须为字符串 `litellm`，kid 可选；模型请求的 Bearer 携带真实 JWT。
+它与模型请求的 `baseUrl` 是两个不同地址。部署时使用可信组织的 HTTPS 地址。JWT audience 必须为字符串 `justdo-litellm`，kid 可选；模型请求的 Bearer 携带真实 JWT。
 
 只有 API Key 时，可临时编辑 `builtinModelAuth.ts`：
 

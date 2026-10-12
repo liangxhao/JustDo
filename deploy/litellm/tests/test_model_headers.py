@@ -20,15 +20,16 @@ def test_invalid_accounts(account):
 
 
 @pytest.mark.parametrize('cookie', [b'sid=abc', b'sid=abc==; token=a%20b', b'sid="abc="',
-    b'empty=', b'sid=a; sid=b', b'sid=' + b'x' * (MAX_COOKIE_BYTES - 4)])
+    b'empty=', b'sid=a; sid=b', b'sid=' + b'x' * (MAX_COOKIE_BYTES - 4),
+    b'sid=abc;', b'sid=abc; lang=zh; '])
 def test_cookie_pair_syntax(cookie):
     assert valid_cookie(cookie)
 
 
 @pytest.mark.parametrize('cookie', [b'', b' ', b'raw-token', b'=value', b'bad name=value',
     b'sid=a\r\nInjected: value', b'sid=a\x00', b'sid=\xff', b'sid=a,b', b'sid=a\\b',
-    b'sid="unterminated', b'sid=a b', b'sid=a;', b'sid=a;;x=b', b'sid=a; HttpOnly',
-    b'sid=' + b'x' * (MAX_COOKIE_BYTES - 3)])
+    b'sid="unterminated', b'sid=a b', b'sid=a;;x=b', b'sid=a; HttpOnly',
+    b';', b'sid=a;\r\n', b'sid=' + b'x' * (MAX_COOKIE_BYTES - 3)])
 def test_invalid_cookie_syntax(cookie):
     assert not valid_cookie(cookie)
 

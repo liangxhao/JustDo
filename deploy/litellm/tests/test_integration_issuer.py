@@ -30,7 +30,7 @@ def test_exchange_and_public_key(tmp_path, monkeypatch):
         assert 'd' not in key_data
         key = jwt.PyJWK.from_dict(key_data)
         claims = jwt.decode(result['access_token'], key.key, algorithms=['RS256'],
-            audience='model-service', issuer=module.ISSUER)
+            audience='justdo-litellm', issuer=module.ISSUER)
         assert claims['sub'] == 's30023758'
         assert claims['exp'] - claims['iat'] == 300
         assert claims['jti']

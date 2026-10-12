@@ -97,7 +97,7 @@ Docker Compose 会透传给容器；已有 `.env` 需补充后重启服务，Doc
 
 - `kid`：JWT header 中的签名公钥 ID；
 - `iss`：与 `LITELLM_JWT_ISSUER` 完全一致；
-- `aud`：包含 `LITELLM_JWT_AUDIENCE`；
+- `aud`：字符串 `justdo-litellm`，与 `LITELLM_JWT_AUDIENCE` 一致；
 - `sub`：LiteLLM `user_id`，并与 `X-User-Account` 一致；
 - `iat`、`exp`：整数时间戳，生命周期不超过配置上限（默认 300 秒，可配置 30–10800 秒）；
 - `jti`：每枚 token 唯一。
