@@ -14,6 +14,15 @@ def test_docker_passes_configurable_prompt_storage_limit():
     assert 'MAX_STRING_LENGTH_PROMPT_IN_DB=100000' in (ROOT / 'docker/.env.example').read_text()
 
 
+def test_docker_passes_http_jwks_opt_in_with_a_disabled_fallback():
+    compose = yaml.safe_load((ROOT / 'docker/docker-compose.yml').read_text())
+    environment = compose['services']['litellm']['environment']
+
+    assert environment['LITELLM_JWT_ALLOW_HTTP_JWKS'] == '${LITELLM_JWT_ALLOW_HTTP_JWKS:-false}'
+    for name in ('docker', 'native'):
+        assert 'LITELLM_JWT_ALLOW_HTTP_JWKS=true' in (ROOT / name / '.env.example').read_text()
+
+
 @pytest.mark.parametrize('name', ['docker', 'native'])
 def test_logging_forwarding_and_preview_settings(name):
     config = yaml.safe_load((ROOT / name / 'config.yaml').read_text())

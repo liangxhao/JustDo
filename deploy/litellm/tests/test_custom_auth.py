@@ -43,7 +43,8 @@ def request_with_headers(**headers: str) -> Request:
 
 
 @pytest.fixture(autouse=True)
-def clear_settings_cache():
+def clear_settings_cache(monkeypatch):
+    monkeypatch.delenv("LITELLM_JWT_ALLOW_HTTP_JWKS", raising=False)
     custom_auth.load_settings.cache_clear()
     custom_auth._get_jwks_client.cache_clear()
     yield
@@ -64,6 +65,59 @@ def test_load_settings_rejects_symmetric_algorithms_and_remote_http(monkeypatch)
     monkeypatch.setenv("LITELLM_JWT_ALGORITHMS", "RS256")
     monkeypatch.setenv("LITELLM_JWT_JWKS_URL", "http://login.example.test/jwks")
     with pytest.raises(RuntimeError, match="must use HTTPS"):
+        custom_auth.load_settings()
+
+
+@pytest.mark.parametrize("enabled", ["1", "true", "yes", " TRUE ", "Yes"])
+def test_load_settings_accepts_remote_http_jwks_when_explicitly_enabled(monkeypatch, enabled):
+    monkeypatch.setenv("LITELLM_JWT_ISSUER", "https://login.example.test")
+    monkeypatch.setenv("LITELLM_JWT_AUDIENCE", "model-service")
+    monkeypatch.setenv("LITELLM_JWT_JWKS_URL", "http://login.example.test/jwks")
+    monkeypatch.setenv("LITELLM_JWT_ALLOW_HTTP_JWKS", enabled)
+
+    loaded = custom_auth.load_settings()
+
+    assert loaded.jwks_url == "http://login.example.test/jwks"
+    assert loaded.issuer == "https://login.example.test"
+    assert loaded.algorithms == ("RS256",)
+
+
+@pytest.mark.parametrize("disabled", ["", "0", "false", "no", "enabled"])
+def test_load_settings_rejects_remote_http_without_an_enabled_opt_in(monkeypatch, disabled):
+    monkeypatch.setenv("LITELLM_JWT_ISSUER", "https://login.example.test")
+    monkeypatch.setenv("LITELLM_JWT_AUDIENCE", "model-service")
+    monkeypatch.setenv("LITELLM_JWT_JWKS_URL", "http://login.example.test/jwks")
+    monkeypatch.setenv("LITELLM_JWT_ALLOW_HTTP_JWKS", disabled)
+
+    with pytest.raises(RuntimeError, match="LITELLM_JWT_ALLOW_HTTP_JWKS"):
+        custom_auth.load_settings()
+
+
+@pytest.mark.parametrize("hostname", ["127.0.0.1", "[::1]", "localhost"])
+def test_load_settings_preserves_http_loopback_without_opt_in(monkeypatch, hostname):
+    monkeypatch.setenv("LITELLM_JWT_ISSUER", "https://login.example.test")
+    monkeypatch.setenv("LITELLM_JWT_AUDIENCE", "model-service")
+    monkeypatch.setenv("LITELLM_JWT_JWKS_URL", f"http://{hostname}/jwks")
+    monkeypatch.setenv("LITELLM_JWT_ALLOW_HTTP_JWKS", "false")
+
+    assert custom_auth.load_settings().jwks_url == f"http://{hostname}/jwks"
+
+
+@pytest.mark.parametrize("url", ["ftp://login.example.test/jwks", "/jwks", "http:///jwks"])
+def test_http_jwks_opt_in_still_requires_an_absolute_http_or_https_url(monkeypatch, url):
+    monkeypatch.setenv("LITELLM_JWT_JWKS_URL", url)
+    monkeypatch.setenv("LITELLM_JWT_ALLOW_HTTP_JWKS", "true")
+
+    with pytest.raises(RuntimeError, match="absolute HTTP"):
+        custom_auth.load_settings()
+
+
+def test_http_jwks_opt_in_does_not_allow_symmetric_algorithms(monkeypatch):
+    monkeypatch.setenv("LITELLM_JWT_JWKS_URL", "http://login.example.test/jwks")
+    monkeypatch.setenv("LITELLM_JWT_ALLOW_HTTP_JWKS", "true")
+    monkeypatch.setenv("LITELLM_JWT_ALGORITHMS", "HS256")
+
+    with pytest.raises(RuntimeError, match="symmetric"):
         custom_auth.load_settings()
 
 

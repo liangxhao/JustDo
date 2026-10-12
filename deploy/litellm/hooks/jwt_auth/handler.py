@@ -93,6 +93,16 @@ def _bounded_int_env(name: str, default: int, minimum: int, maximum: int) -> int
     return value
 
 
+def _is_http_jwks_allowed(hostname: str) -> bool:
+    if hostname in {"127.0.0.1", "::1", "localhost"}:
+        return True
+    return _auth_env("LITELLM_JWT_ALLOW_HTTP_JWKS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
 @lru_cache(maxsize=1)
 def load_settings() -> JwtSettings:
     algorithms = tuple(
@@ -113,13 +123,11 @@ def load_settings() -> JwtSettings:
     parsed_jwks_url = urlparse(jwks_url)
     if parsed_jwks_url.scheme not in {"http", "https"} or not parsed_jwks_url.hostname:
         raise RuntimeError("LITELLM_JWT_JWKS_URL must be an absolute HTTP(S) URL")
-    if parsed_jwks_url.scheme != "https" and parsed_jwks_url.hostname not in {
-        "127.0.0.1",
-        "::1",
-        "localhost",
-    }:
+    if parsed_jwks_url.scheme != "https" and not _is_http_jwks_allowed(
+        parsed_jwks_url.hostname
+    ):
         raise RuntimeError(
-            "LITELLM_JWT_JWKS_URL must use HTTPS unless it targets loopback"
+            "LITELLM_JWT_JWKS_URL must use HTTPS unless LITELLM_JWT_ALLOW_HTTP_JWKS is set"
         )
 
     return JwtSettings(

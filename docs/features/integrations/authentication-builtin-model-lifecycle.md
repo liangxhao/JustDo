@@ -54,7 +54,7 @@ sequenceDiagram
 
 模型发现 `/models` 必需，`/model/info` 可选增强；区分 chat/embedding 并规范化能力。Main 直发请求使用 `Authorization: Bearer <真实JWT>`，同时保留 `X-ACCESS-JWT` 和 `X-User-Account`；api-key 开发模式只发送 Bearer key。provider 配置中的非秘密占位符仅用于应用内配置投影，不能作为网络请求凭据。Gateway 和 memory search 通过同一 JWT SecretRef 解析真实 JWT 并发送 Bearer 认证。
 
-换证日志只记录受控失败阶段（URL、MAC、网络请求、响应、JWT、身份复核）、固定原因、可选 HTTP 状态，并单独区分超时。不记录原始 Error/cause、URL、请求体、响应体、mtoken、JWT、Cookie 或 MAC；对外继续返回统一失败错误。
+换证日志只记录受控失败阶段（URL、MAC、网络请求、响应、JWT、身份复核）、固定原因、可选 HTTP 状态，并单独区分超时。网络请求异常可附带 `networkCode`，只接受固定白名单中的 DNS、连接和 TLS 错误码；有界读取 Error/cause 和聚合连接异常，不记录其原始内容、未知错误码、URL、请求体、响应体、mtoken、JWT、Cookie 或 MAC。本地凭据校验失败附带受控 `credentialCode`，区分编码、必需字段、账号、audience、算法、时间、期限上限及 `expires_in` 不一致，不记录 claims 的值，也不改变原有校验或表示客户端已验签。对外继续返回统一失败错误。
 
 ## 4. 轮换与并发
 

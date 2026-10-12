@@ -7,8 +7,10 @@ import {
   buildBuiltinModelRequestHeaders,
   BUILTIN_MODEL_JWT_FIELD,
   BUILTIN_MODEL_USER_ACCOUNT_FIELD,
+  BuiltinModelCredentialFailureCode,
   clearActiveBuiltinModelCredential,
   getActiveBuiltinModelCredential,
+  inspectBuiltinModelCredential,
   readBuiltinModelCredential,
   refreshActiveBuiltinModelCredential,
   setActiveBuiltinModelCredential,
@@ -71,6 +73,37 @@ afterEach(() => {
 });
 
 describe('built-in model credential', () => {
+  test.each([
+    { overrides: { aud: 'model-service' }, code: BuiltinModelCredentialFailureCode.Audience },
+    { overrides: { aud: ['litellm'] }, code: BuiltinModelCredentialFailureCode.Audience },
+    { overrides: { sub: 'other-user' }, code: BuiltinModelCredentialFailureCode.AccountMismatch },
+    { overrides: { sub: '' }, code: BuiltinModelCredentialFailureCode.Subject },
+    { overrides: { iss: '' }, code: BuiltinModelCredentialFailureCode.Issuer },
+    { overrides: { jti: '' }, code: BuiltinModelCredentialFailureCode.TokenId },
+    { overrides: { iat: String(NOW_SECONDS) }, code: BuiltinModelCredentialFailureCode.Timestamps },
+    { overrides: { iat: NOW_SECONDS + 31 }, code: BuiltinModelCredentialFailureCode.IssuedInFuture },
+    { overrides: { exp: NOW_SECONDS + 301 }, code: BuiltinModelCredentialFailureCode.LifetimeExceeded },
+    { overrides: { exp: NOW_SECONDS }, code: BuiltinModelCredentialFailureCode.Lifetime },
+    { overrides: { iat: NOW_SECONDS + 30, exp: NOW_SECONDS + 330 }, code: BuiltinModelCredentialFailureCode.ExpiryTooFar },
+    { overrides: { exp: NOW_SECONDS + 14 }, code: BuiltinModelCredentialFailureCode.Expired },
+  ])('classifies local credential rejection without returning claims: $code', ({ overrides, code }) => {
+    const token = createJwt('user-123', overrides);
+    expect(inspectBuiltinModelCredential(token, 'user-123')).toEqual({ credential: null, failureCode: code });
+    expect(validateBuiltinModelCredential(token, 'user-123')).toBeNull();
+  });
+
+  test('classifies invalid token encoding, account, algorithm and lifetime policy', () => {
+    const token = createJwt();
+    expect(inspectBuiltinModelCredential('not-a-jwt', 'user-123').failureCode).toBe(BuiltinModelCredentialFailureCode.TokenFormat);
+    expect(inspectBuiltinModelCredential('bm90LWpzb24.e30.signature', 'user-123').failureCode).toBe(BuiltinModelCredentialFailureCode.TokenJson);
+    expect(inspectBuiltinModelCredential(token, '').failureCode).toBe(BuiltinModelCredentialFailureCode.Account);
+    expect(inspectBuiltinModelCredential(createJwt('user-123', {}, { alg: 'HS256' }), 'user-123').failureCode).toBe(BuiltinModelCredentialFailureCode.Algorithm);
+    expect(inspectBuiltinModelCredential(token, 'user-123', NOW_SECONDS, 10_801).failureCode).toBe(BuiltinModelCredentialFailureCode.LifetimePolicy);
+    expect(inspectBuiltinModelCredential(token, 'user-123')).toEqual({
+      credential: { accessToken: token, userAccount: 'user-123', expiresAt: NOW_SECONDS + 300 }, failureCode: null,
+    });
+  });
+
   test('accepts the intranet RS256 JWT without a key id', () => {
     const accessToken = createJwt('user-123', { name: 'Fixture User' }, { kid: undefined, typ: 'JWT' });
     expect(validateBuiltinModelCredential(accessToken, 'user-123')).toEqual({

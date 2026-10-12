@@ -21,6 +21,51 @@ JWT 必须使用 `aud: 'litellm'`；RS256 JWT 可以没有 kid，签名由 LiteL
 开发启动：`npm run electron:dev`。
 Windows 打包：`npm run dist:win`。
 
+## 换证网络故障排查
+
+`stage: 'request'` 且 `reason: 'Token exchange network request failed'` 表示换证传输失败，
+尚未拿到可处理的 HTTP 响应；不是 JWT claims 校验失败。有可处理的非成功 HTTP 响应时，
+日志会显示 `Token exchange HTTP <状态码>` 和 `httpStatus`。请求异常的 `networkCode`
+只显示受控错误码：`ENOTFOUND` / `EAI_AGAIN` 检查 DNS，`ECONNREFUSED` 检查接口主机、
+端口和服务监听，`ENETUNREACH` / `EHOSTUNREACH` 检查内网路由，`ECONNRESET` 检查服务端
+或代理断连；TLS 错误码检查证书信任和接口协议。15 秒截止时间触发时单独显示超时。
+未知底层错误继续使用通用原因，不打印原始 Error/cause 或登录凭据。
+
+在出错电脑上检查完整 `tokenExchangeUrl` 的主机与端口，并检查应用设置中的网络代理；
+Main 使用应用已保存的直连、系统或自定义代理配置，不能只凭浏览器访问成功判断应用连接成功。
+换证请求禁止跟随重定向，直接请求遇到重定向也可能显示通用网络失败；应配置最终换证地址。
+换证传输不注入出站请求头策略，模型地址白名单不能替代换证地址配置。
+
+如果没有可用模型凭据，换证失败后出现 `auth-logout` 配置同步是清理内置模型授权，
+不代表登录文件被删除或用户主动退出。修正网络问题后后台监控会重试。
+
+产品改名应修改 `package.json.productName` 并重启开发进程或重新打包；`package.json.name`
+保持 `justdo`。改名后的登录文件在 `%APPDATA%/<productName>/huawei/user_info.json`，
+旧品牌目录不会自动迁移。修改项目文件夹名称不改变产品数据目录。
+
+## 换证成功后的本地 JWT 校验
+
+`stage: 'credential'` 表示换证接口已返回可处理的成功响应，客户端随后拒绝了模型凭据。
+`Invalid or expired access token` 不只表示过期，也包含字段、身份和期限不满足本地约定。
+查看附带的 `credentialCode`：
+
+| 错误码 | 检查项 |
+| --- | --- |
+| `audience-mismatch` | `aud` 必须是字符串 `litellm`，不接受 `model-service` 或数组 |
+| `account-mismatch` / `missing-subject` | `sub` 必须与当前登录文件的 `X-User-Account` 一致 |
+| `missing-issuer` / `missing-token-id` | JWT 必须包含非空 `iss` / `jti` |
+| `unsupported-algorithm` | 使用受支持的非对称算法，如 `RS256`；不接受 `HS256` |
+| `invalid-token-format` / `invalid-jwt-json` | `access_token` 必须是完整三段 JWT，不能带 `Bearer ` 前缀；header/payload 必须是 JSON 对象 |
+| `invalid-timestamps` | `iat` / `exp` 必须是整数数字、Unix 秒，不能是字符串 |
+| `issued-in-future` | 签发时间比本机时间晚超过 30 秒；核对客户端与签发服务时钟 |
+| `lifetime-exceeded` / `expiry-too-far` | `exp - iat` 和 `exp - 本机时间` 均不能超过编入 Main 的 `maxJwtLifetimeSeconds` |
+| `invalid-lifetime` / `expired-or-expiring` | `exp` 必须晚于 `iat`，且本机校验时至少还有 15 秒有效期 |
+| `expires-in-mismatch` | `exp` 不能晚于客户端请求时间加响应 `expires_in` 再加 30 秒 |
+
+这些是客户端本地预检结果；JWT 签名由模型服务验证，服务端 HTTP JWKS 开关不改变
+上述客户端校验。修改配置后重启开发 Main 或重新打包。排查时只分享失败代码，不分享
+完整 JWT、mtoken、登录文件或 JWT 身份字段值。
+
 ## 设备标识约定
 
 换证请求中的 `deviceId` 只采用当前首个有效网卡 MAC，去掉冒号并转为 12 位大写十六进制。Main 公共模块 `src/main/core/network/macAddress.ts` 导出 `getMacAddress(): string`，登录和换证共用；没有可用 MAC 或查询失败时抛错，不回退 UUID，也不使用本地设备 ID 文件。

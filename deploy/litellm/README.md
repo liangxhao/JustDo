@@ -46,6 +46,7 @@ JWT 泄露后可在剩余有效期内被重放，应按需设置最短有效期�
 | `UI_USERNAME`、`UI_PASSWORD` | 管理页面登录账号和密码，不用于客户端调用 |
 | Redis 配置 | Docker 填写密码；native 还需填写地址和端口 |
 | `LITELLM_JWT_ISSUER`、`LITELLM_JWT_AUDIENCE`、`LITELLM_JWT_JWKS_URL` | 与真实签发服务一致；JWKS 必须可访问，示例域名不能直接使用 |
+| `LITELLM_JWT_ALLOW_HTTP_JWKS` | 内网 HTTP JWKS 使用 `true`；未设置或 `false` 时只允许 HTTPS 和回环 HTTP，部署模板已显式设为 `true` |
 | `LITELLM_JWT_MAX_LIFETIME_SECONDS` | 不小于签发令牌的有效期，最大 10800 秒 |
 | `LITELLM_DEFAULT_TEAM_ID` | 默认 `standard`，首次创建后在网页管理模型和成员 |
 
@@ -85,8 +86,14 @@ Python 3.11/3.12，并按 native README 安装依赖。首次安装需要软件�
 
 ## 1. 登录服务签发 JWT
 
-登录服务必须使用非对称算法签名并提供 HTTPS JWKS。默认只启用 `RS256`。每枚 JWT 必须
-包含：
+登录服务必须使用非对称算法签名并提供 JWKS。Hook 未设置开关时只接受 HTTPS 或回环
+HTTP；使用内网 HTTP JWKS 时，在所选部署目录的 `.env` 设置
+`LITELLM_JWT_ALLOW_HTTP_JWKS=true`（也接受 `1`、`yes`，忽略大小写和前后空格），
+并将 `LITELLM_JWT_JWKS_URL` 填为实际公钥地址。两种 `.env.example` 已包含此开关，
+Docker Compose 会透传给容器；已有 `.env` 需补充后重启服务，Docker 使用
+`docker compose up -d --build` 重新构建并应用环境变量。
+此开关只控制 JWKS 公钥获取地址的协议，不修改客户端换证地址或 JWT 的 issuer、audience、
+算法及签名校验。默认只启用 `RS256`。每枚 JWT 必须包含：
 
 - `kid`：JWT header 中的签名公钥 ID；
 - `iss`：与 `LITELLM_JWT_ISSUER` 完全一致；

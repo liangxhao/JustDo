@@ -105,6 +105,15 @@ def test_environment_file_overrides_inherited_settings_including_empty_team(laun
     assert environment['LITELLM_DEFAULT_TEAM_ID'] == ''
 
 
+def test_native_launcher_passes_http_jwks_opt_in_from_environment_file(launcher):
+    path = launcher.ROOT / '.env'
+    path.write_text(path.read_text() + '\nLITELLM_JWT_ALLOW_HTTP_JWKS=true\n')
+
+    _, environment = launcher.build_launch('serve', {'LITELLM_JWT_ALLOW_HTTP_JWKS': 'false'})
+
+    assert environment['LITELLM_JWT_ALLOW_HTTP_JWKS'] == 'true'
+
+
 def test_existing_virtualenv_install_does_not_create_an_environment(tmp_path, monkeypatch):
     installer = load_script('install')
     monkeypatch.setattr(installer.sys, 'version_info', (3, 12))

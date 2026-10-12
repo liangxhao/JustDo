@@ -33,6 +33,36 @@ export type BuiltinModelCredential = Readonly<{
   authType?: 'jwt' | 'api-key';
 }>;
 
+export const BuiltinModelCredentialFailureCode = {
+  Account: 'invalid-account',
+  TokenFormat: 'invalid-token-format',
+  TokenJson: 'invalid-jwt-json',
+  LifetimePolicy: 'invalid-lifetime-policy',
+  Algorithm: 'unsupported-algorithm',
+  Subject: 'missing-subject',
+  AccountMismatch: 'account-mismatch',
+  Issuer: 'missing-issuer',
+  TokenId: 'missing-token-id',
+  Audience: 'audience-mismatch',
+  Timestamps: 'invalid-timestamps',
+  IssuedInFuture: 'issued-in-future',
+  LifetimeExceeded: 'lifetime-exceeded',
+  Lifetime: 'invalid-lifetime',
+  ExpiryTooFar: 'expiry-too-far',
+  Expired: 'expired-or-expiring',
+  ResponseLifetime: 'expires-in-mismatch',
+} as const;
+
+export type BuiltinModelCredentialFailureCode =
+  (typeof BuiltinModelCredentialFailureCode)[keyof typeof BuiltinModelCredentialFailureCode];
+
+type CredentialValidationResult =
+  | { credential: BuiltinModelCredential; failureCode: null }
+  | { credential: null; failureCode: BuiltinModelCredentialFailureCode };
+
+const rejectCredential = (failureCode: BuiltinModelCredentialFailureCode): CredentialValidationResult =>
+  ({ credential: null, failureCode });
+
 type JwtHeader = {
   alg?: unknown;
   kid?: unknown;
@@ -72,27 +102,28 @@ const decodeJwtObject = <T>(segment: string): T | null => {
   }
 };
 
-export const validateBuiltinModelCredential = (
+/** Classifies local preflight failures without exposing token or identity values. */
+export const inspectBuiltinModelCredential = (
   accessTokenValue: unknown,
   userAccountValue: unknown,
   nowSeconds = Math.floor(Date.now() / 1000),
   maxLifetime = DEFAULT_MAX_JWT_LIFETIME_SECONDS,
-): BuiltinModelCredential | null => {
+): CredentialValidationResult => {
   const accessToken = normalizeCredentialValue(accessTokenValue, MAX_JWT_LENGTH);
   const userAccount = normalizeCredentialValue(userAccountValue, MAX_USER_ACCOUNT_LENGTH);
   const segments = accessToken.split('.');
   if (
-    !userAccount ||
     segments.length !== 3 ||
     segments.some(segment => !BASE64URL_SEGMENT_PATTERN.test(segment))
   ) {
-    return null;
+    return rejectCredential(BuiltinModelCredentialFailureCode.TokenFormat);
   }
+  if (!userAccount) return rejectCredential(BuiltinModelCredentialFailureCode.Account);
 
   const header = decodeJwtObject<JwtHeader>(segments[0]);
   const payload = decodeJwtObject<JwtPayload>(segments[1]);
   if (!header || !payload) {
-    return null;
+    return rejectCredential(BuiltinModelCredentialFailureCode.TokenJson);
   }
 
   const algorithm = typeof header.alg === 'string' ? header.alg : '';
@@ -102,29 +133,39 @@ export const validateBuiltinModelCredential = (
   const issuedAt = payload.iat;
   const expiresAt = payload.exp;
 
+  if (!Number.isInteger(maxLifetime) || maxLifetime < 30 || maxLifetime > 10_800) {
+    return rejectCredential(BuiltinModelCredentialFailureCode.LifetimePolicy);
+  }
+  if (!ALLOWED_JWT_ALGORITHMS.has(algorithm)) return rejectCredential(BuiltinModelCredentialFailureCode.Algorithm);
+  if (!subject) return rejectCredential(BuiltinModelCredentialFailureCode.Subject);
+  if (subject !== userAccount) return rejectCredential(BuiltinModelCredentialFailureCode.AccountMismatch);
+  if (!issuer) return rejectCredential(BuiltinModelCredentialFailureCode.Issuer);
+  if (!tokenId) return rejectCredential(BuiltinModelCredentialFailureCode.TokenId);
+  if (payload.aud !== EXPECTED_JWT_AUDIENCE) return rejectCredential(BuiltinModelCredentialFailureCode.Audience);
   if (
-    !Number.isInteger(maxLifetime) || maxLifetime < 30 || maxLifetime > 10_800 ||
-    !ALLOWED_JWT_ALGORITHMS.has(algorithm) ||
-    !subject ||
-    subject !== userAccount ||
-    !issuer ||
-    !tokenId ||
-    payload.aud !== EXPECTED_JWT_AUDIENCE ||
     typeof issuedAt !== 'number' ||
     !Number.isInteger(issuedAt) ||
     typeof expiresAt !== 'number' ||
-    !Number.isInteger(expiresAt) ||
-    issuedAt > nowSeconds + CLOCK_SKEW_SECONDS ||
-    expiresAt - issuedAt > maxLifetime ||
-    expiresAt - issuedAt <= 0 ||
-    expiresAt > nowSeconds + maxLifetime ||
-    expiresAt < nowSeconds + MIN_REMAINING_LIFETIME_SECONDS
+    !Number.isInteger(expiresAt)
   ) {
-    return null;
+    return rejectCredential(BuiltinModelCredentialFailureCode.Timestamps);
   }
+  if (issuedAt > nowSeconds + CLOCK_SKEW_SECONDS) return rejectCredential(BuiltinModelCredentialFailureCode.IssuedInFuture);
+  if (expiresAt - issuedAt > maxLifetime) return rejectCredential(BuiltinModelCredentialFailureCode.LifetimeExceeded);
+  if (expiresAt - issuedAt <= 0) return rejectCredential(BuiltinModelCredentialFailureCode.Lifetime);
+  if (expiresAt > nowSeconds + maxLifetime) return rejectCredential(BuiltinModelCredentialFailureCode.ExpiryTooFar);
+  if (expiresAt < nowSeconds + MIN_REMAINING_LIFETIME_SECONDS) return rejectCredential(BuiltinModelCredentialFailureCode.Expired);
 
-  return Object.freeze({ accessToken, userAccount, expiresAt });
+  return { credential: Object.freeze({ accessToken, userAccount, expiresAt }), failureCode: null };
 };
+
+export const validateBuiltinModelCredential = (
+  accessTokenValue: unknown,
+  userAccountValue: unknown,
+  nowSeconds = Math.floor(Date.now() / 1000),
+  maxLifetime = DEFAULT_MAX_JWT_LIFETIME_SECONDS,
+): BuiltinModelCredential | null =>
+  inspectBuiltinModelCredential(accessTokenValue, userAccountValue, nowSeconds, maxLifetime).credential;
 
 export const readBuiltinModelCredential = (userInfoPath: string): BuiltinModelCredential | null => {
   let userInfo: Record<string, unknown>;

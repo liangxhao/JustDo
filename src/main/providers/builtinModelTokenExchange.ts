@@ -5,12 +5,13 @@ import type { BuiltinModelAuthConfig } from '../../config/builtinModelAuth';
 import { getMacAddress } from '../core/network/macAddress';
 import {
   type BuiltinModelCredential,
+  BuiltinModelCredentialFailureCode,
   clearActiveBuiltinModelCredential,
   getActiveBuiltinModelCredential,
   getBuiltinModelCredentialRefreshAtSeconds,
+  inspectBuiltinModelCredential,
   setActiveBuiltinModelCredential,
   setActiveBuiltinModelDevelopmentApiKey,
-  validateBuiltinModelCredential,
 } from './builtinModelCredential';
 
 const MAX_RESPONSE_BYTES = 32_768;
@@ -24,6 +25,32 @@ const EXCHANGE_STAGE_ERRORS = {
   identity: 'Unable to verify current login or configuration',
 } as const;
 type ExchangeStage = keyof typeof EXCHANGE_STAGE_ERRORS;
+
+const NETWORK_ERROR_CODES = new Set([
+  'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT',
+  'EHOSTUNREACH', 'ENETUNREACH', 'EADDRNOTAVAIL', 'EACCES', 'EPIPE',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET',
+  'CERT_HAS_EXPIRED', 'ERR_TLS_CERT_ALTNAME_INVALID', 'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'ERR_SSL_WRONG_VERSION_NUMBER',
+]);
+
+// Fetch wraps transport errors in cause; connection attempts may use AggregateError.
+// Only exact allowlisted codes may leave this bounded traversal, never raw error fields.
+const resolveNetworkErrorCode = (error: unknown): string | undefined => {
+  const pending = [error];
+  const visited = new Set<object>();
+  for (let index = 0; index < pending.length && index < 16; index += 1) {
+    const value = pending[index];
+    if (!value || typeof value !== 'object' || visited.has(value)) continue;
+    visited.add(value);
+    const candidate = value as { code?: unknown; cause?: unknown; errors?: unknown };
+    if (typeof candidate.code === 'string' && NETWORK_ERROR_CODES.has(candidate.code)) return candidate.code;
+    pending.push(candidate.cause);
+    if (Array.isArray(candidate.errors)) pending.push(...candidate.errors.slice(0, 4));
+  }
+  return undefined;
+};
 
 // Only locally constructed messages may enter the diagnostic log.
 class TokenExchangeError extends Error {}
@@ -147,6 +174,7 @@ export class BuiltinModelTokenExchange {
   private async exchange(login: Login, config: BuiltinModelAuthConfig, signal: AbortSignal, generation: number): Promise<BuiltinModelCredential | null> {
     let stage: ExchangeStage = 'url';
     let httpStatus: number | undefined;
+    let credentialCode: BuiltinModelCredentialFailureCode | undefined;
     let timeoutSignal: AbortSignal | undefined;
     try {
       const endpoint = new URL(config.tokenExchangeUrl);
@@ -182,8 +210,14 @@ export class BuiltinModelTokenExchange {
         throw new TokenExchangeError('Invalid token exchange response shape');
       }
       stage = 'credential';
-      const credential = validateBuiltinModelCredential(value.access_token, login.account, undefined, config.maxJwtLifetimeSeconds);
-      if (!credential || credential.expiresAt > requestedAt + value.expires_in + 30) {
+      const validation = inspectBuiltinModelCredential(value.access_token, login.account, undefined, config.maxJwtLifetimeSeconds);
+      const credential = validation.credential;
+      if (!credential) {
+        credentialCode = validation.failureCode ?? undefined;
+        throw new TokenExchangeError(EXCHANGE_STAGE_ERRORS.credential);
+      }
+      if (credential.expiresAt > requestedAt + value.expires_in + 30) {
+        credentialCode = BuiltinModelCredentialFailureCode.ResponseLifetime;
         throw new TokenExchangeError(EXCHANGE_STAGE_ERRORS.credential);
       }
       stage = 'identity';
@@ -198,12 +232,16 @@ export class BuiltinModelTokenExchange {
       return getActiveBuiltinModelCredential();
     } catch (error) {
       if (generation !== this.generation) return null;
+      const networkCode = stage === 'request' && !(error instanceof TokenExchangeError) && !timeoutSignal?.aborted
+        ? resolveNetworkErrorCode(error) : undefined;
       console.error('[BuiltinModelTokenExchange] exchange failed:', {
         stage,
         reason: error instanceof TokenExchangeError
           ? error.message
           : timeoutSignal?.aborted ? 'Token exchange timed out' : EXCHANGE_STAGE_ERRORS[stage],
         ...(httpStatus !== undefined ? { httpStatus } : {}),
+        ...(networkCode !== undefined ? { networkCode } : {}),
+        ...(credentialCode !== undefined ? { credentialCode } : {}),
       });
       try {
         if (JSON.stringify(this.dependencies.getConfig()) !== JSON.stringify(config)) this.invalidate();
