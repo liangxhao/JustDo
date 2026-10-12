@@ -1,0 +1,48 @@
+.external-agents-settings {
+  container: external-agents-settings / inline-size;
+}
+
+.external-agent-runtime-controls {
+  container: external-agent-runtime-controls / inline-size;
+}
+
+.external-agent-runtime-grid,
+.external-agent-setting-row,
+.external-agent-catalog-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Each row follows its own panel, which may be narrower than the settings page. */
+@container external-agent-runtime-controls (min-width: 520px) {
+  .external-agent-setting-row {
+    grid-template-columns: minmax(0, 1fr) minmax(210px, 240px);
+    align-items: center;
+    gap: 1.25rem;
+  }
+}
+
+@container external-agents-settings (min-width: 520px) {
+  .external-agent-catalog-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+@container external-agents-settings (min-width: 640px) {
+  .external-agent-catalog-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container external-agents-settings (min-width: 840px) {
+  .external-agent-runtime-grid {
+    grid-template-columns: minmax(0, 1.08fr) minmax(340px, 0.92fr);
+  }
+}
+
+@container external-agents-settings (min-width: 1000px) {
+  .external-agent-catalog-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

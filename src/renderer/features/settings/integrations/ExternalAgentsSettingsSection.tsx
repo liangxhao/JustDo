@@ -1,3 +1,5 @@
+import './ExternalAgentsSettingsSection.css';
+
 import {
   ArrowPathIcon,
   CheckCircleIcon,
@@ -51,7 +53,7 @@ const SettingRow: React.FC<{
   description: string;
   children: React.ReactNode;
 }> = ({ label, description, children }) => (
-  <div className="grid gap-3 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_minmax(210px,240px)] sm:items-center sm:gap-5">
+  <div className="external-agent-setting-row grid gap-3 px-4 py-4">
     <div className="min-w-0">
       <div className="text-sm font-medium text-foreground">{label}</div>
       <p className="mt-0.5 text-xs leading-5 text-secondary">{description}</p>
@@ -228,7 +230,7 @@ const ExternalAgentsSettingsSection: React.FC<Props> = ({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="external-agents-settings min-w-0 space-y-4">
       <section className="overflow-hidden rounded-2xl border border-border/70 bg-surface shadow-sm">
         <div className="flex items-start gap-3 border-b border-border/70 bg-surface-raised/50 px-5 py-4">
           <div className="flex min-w-0 items-start gap-3">
@@ -245,8 +247,8 @@ const ExternalAgentsSettingsSection: React.FC<Props> = ({
             </div>
           </div>
         </div>
-        <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1.08fr)_minmax(340px,0.92fr)]">
-          <div className="overflow-hidden rounded-xl border border-border/60 bg-surface-raised/20">
+        <div className="external-agent-runtime-grid grid gap-4 p-4">
+          <div className="external-agent-runtime-controls min-w-0 overflow-hidden rounded-xl border border-border/60 bg-surface-raised/20">
             <div className="divide-y divide-border/60">
               <SettingRow
                 label={i18nService.t('externalAgentsPermissionMode')}
@@ -334,7 +336,7 @@ const ExternalAgentsSettingsSection: React.FC<Props> = ({
             </div>
           </div>
 
-          <div className="rounded-xl border border-border/60 bg-surface-raised/20 p-4">
+          <div className="min-w-0 rounded-xl border border-border/60 bg-surface-raised/20 p-4">
             <div className="mb-3">
               <div className="text-sm font-semibold text-foreground">
                 {i18nService.t('externalAgentsToolAccess')}
@@ -372,7 +374,7 @@ const ExternalAgentsSettingsSection: React.FC<Props> = ({
       </section>
 
       <section className="overflow-hidden rounded-2xl border border-border/70 bg-surface shadow-sm">
-        <div className="flex flex-col gap-3 border-b border-border/70 bg-surface-raised/50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="external-agent-catalog-header flex flex-col gap-3 border-b border-border/70 bg-surface-raised/50 px-5 py-4">
           <div className="flex min-w-0 items-start gap-3">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/[0.09] text-primary ring-1 ring-primary/10">
               <CpuChipIcon className="h-5 w-5" aria-hidden="true" />
@@ -403,7 +405,7 @@ const ExternalAgentsSettingsSection: React.FC<Props> = ({
           </button>
         </div>
 
-        <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="external-agent-catalog-grid grid gap-3 p-4">
           {EXTERNAL_AGENT_CATALOG.map(definition => {
             const enabled = settings.agents[definition.id].enabled;
             const testState = testStates[definition.id];
