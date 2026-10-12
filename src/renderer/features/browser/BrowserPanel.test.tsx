@@ -1477,6 +1477,78 @@ describe('BrowserPanel embedded webview', () => {
     expect((webview as HTMLElement | null)?.style.visibility).toBe('visible');
   });
 
+  it.each(['about:blank', 'https://example.com'])(
+    'preserves an address draft across parent updates on %s',
+    url => {
+      const props: ComponentProps<typeof BrowserPanel> = {
+        draftKey: `address-parent-updates-${nextId}`,
+        isOpen: true,
+        embedded: true,
+        width: 520,
+        initialTabs: [{ ...pageTab, url }],
+        activeTargetId: pageTab.targetId,
+        onClose: vi.fn(),
+        onWidthChange: vi.fn(),
+        onActiveTargetChange: vi.fn(),
+        onAddAnnotation: () => true,
+      };
+      const view = render(<BrowserPanel {...props} />);
+      const address = screen.getByLabelText('Browser address');
+      fireEvent.change(address, { target: { value: 'typed.example/path' } });
+
+      view.rerender(<BrowserPanel {...props} onActiveTargetChange={vi.fn()} />);
+      expect(address).toHaveProperty('value', 'typed.example/path');
+
+      const onActiveTargetChange = vi.fn();
+      view.rerender(
+        <BrowserPanel
+          {...props}
+          activeTargetId={null}
+          onActiveTargetChange={onActiveTargetChange}
+        />,
+      );
+      expect(onActiveTargetChange).toHaveBeenCalledWith(pageTab.targetId);
+      expect(address).toHaveProperty('value', 'typed.example/path');
+
+      fireEvent(view.container.querySelector('webview')!, new Event('did-stop-loading'));
+      expect(address).toHaveProperty('value', 'typed.example/path');
+      fireEvent.submit(address.closest('form')!);
+      expect(loadUrl).toHaveBeenCalledWith('https://typed.example/path');
+    },
+  );
+
+  it('resets the address draft when switching to another browser tab', () => {
+    const otherTab: BrowserPanelTab = {
+      id: 'other-address-tab',
+      targetId: 'other-address-tab',
+      title: '',
+      url: 'https://other.example/',
+    };
+    const props: ComponentProps<typeof BrowserPanel> = {
+      draftKey: `address-tab-switch-${nextId}`,
+      isOpen: true,
+      embedded: true,
+      width: 520,
+      initialTabs: [pageTab, otherTab],
+      activeTargetId: pageTab.targetId,
+      onClose: vi.fn(),
+      onWidthChange: vi.fn(),
+      onActiveTargetChange: vi.fn(),
+      onAddAnnotation: () => true,
+    };
+    const view = render(<BrowserPanel {...props} />);
+    const address = screen.getByLabelText('Browser address');
+    fireEvent.change(address, { target: { value: 'typed.example/path' } });
+
+    view.rerender(<BrowserPanel {...props} activeTargetId={otherTab.targetId} />);
+    expect(address).toHaveProperty('value', otherTab.url);
+
+    const webview = view.container.querySelectorAll('webview')[1]!;
+    webview.setAttribute('src', 'https://other.example/loaded');
+    fireEvent(webview, new Event('did-stop-loading'));
+    expect(address).toHaveProperty('value', 'https://other.example/loaded');
+  });
+
   it('does not overwrite an address being edited when page metadata changes', async () => {
     const { container } = render(<BrowserPanelHarness />);
     const address = screen.getByLabelText('Browser address');

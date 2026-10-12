@@ -758,11 +758,16 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     ) {
       onActiveTargetChange(activeTabTargetId);
     }
+  }, [activeTabTargetId, activeTargetId, onActiveTargetChange]);
+
+  useEffect(() => {
+    // Parent callbacks can change during ordinary chat updates. Only a real
+    // tab change should discard the address draft and its dirty state.
     const selectedTab = tabsRef.current.find(tab => tab.targetId === activeTabTargetId);
     addressDirtyRef.current = false;
     setError(null);
     setUrlDraft(getBrowserTabAddress(selectedTab));
-  }, [activeTabTargetId, activeTargetId, onActiveTargetChange]);
+  }, [activeTabTargetId]);
 
   useEffect(() => {
     const noticeTargetId = annotationNoticeTargetRef.current;
