@@ -3,9 +3,11 @@
 // Electron 42's Windows synchronous recursive rm follows directory junctions.
 // Keep native leaf operations, but never pass a recursive directory to it.
 // This function is serialized into the standalone Gateway launcher.
-function installWindowsRecursiveRemove() {
+function installWindowsRecursiveRemove(preloadPath) {
   if (process.platform !== 'win32' || !process.versions.electron) return;
   const fs = require('node:fs');
+  const installed = Symbol.for('runtime.windowsRecursiveRemove');
+  if (fs[installed]) return;
   const path = require('node:path');
   const { fileURLToPath } = require('node:url');
   const original = fs.rmSync;
@@ -52,6 +54,28 @@ function installWindowsRecursiveRemove() {
       }
     }
   };
+  if (preloadPath) {
+    // Native pools explicitly pass execArgv: []; process.execArgv inheritance
+    // alone cannot protect those workers. Preload before their entry modules,
+    // and install the same constructor in nested workers.
+    const threads = require('node:worker_threads');
+    const NativeWorker = threads.Worker;
+    threads.Worker = class Worker extends NativeWorker {
+      constructor(filename, options = {}) {
+        const execArgv = options.execArgv ?? process.execArgv;
+        if (!Array.isArray(execArgv)) {
+          super(filename, options);
+          return;
+        }
+        const preload = `--require=${preloadPath}`;
+        super(filename, {
+          ...options,
+          execArgv: [preload, ...execArgv.filter(arg => arg !== preload)],
+        });
+      }
+    };
+  }
+  Object.defineProperty(fs, installed, { value: true });
   require('node:module').syncBuiltinESMExports();
 }
 

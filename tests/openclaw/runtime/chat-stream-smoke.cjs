@@ -80,6 +80,11 @@ const { pathToFileURL } = require('node:url');
     assert.ok(streams.has('thinking'), 'live Thinking'); assert.ok(streams.has('tool') || events.some(event => event.event === 'session.tool' && event.payload?.runId === runId), 'live Tool'); assert.ok(streams.has('assistant'), 'live Content');
     const history = await client.request('chat.history', { sessionKey: key, limit: 50 });
     assert.ok(JSON.stringify(history.messages).includes('native-tool-read-evidence'), 'persisted history');
+    for (let round = 0; round < 3; round++) {
+      await client.request('chat.history', { sessionKey: key, limit: 50 });
+      await client.request('progressCard.get', { sessionKey: key });
+      await client.request('cron.runs', { scope: 'all', limit: 10, offset: 0, sortDir: 'desc' });
+    }
     console.log(JSON.stringify({ ok: true, requests, streams: [...streams], nativeRead: toolResultSeen, liveSessionTool: events.some(event => event.event === 'session.tool' && event.payload?.runId === runId), historyMessages: history.messages.length, state }));
   } finally {
     clearTimeout(deadline); if(client) await client.stopAndWait().catch(() => client.stop()); child.kill(); provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve));

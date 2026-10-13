@@ -5,6 +5,7 @@ const path = require('path');
 const { installWindowsRecursiveRemove } = require('./windowsRecursiveRemove.cjs');
 
 const GATEWAY_LAUNCHER_FILENAME = 'gateway-launcher.cjs';
+const WINDOWS_RUNTIME_PRELOAD_FILENAME = 'windows-runtime-preload.cjs';
 const GATEWAY_BUNDLE_FILENAME = 'gateway-bundle.mjs';
 const GATEWAY_READY_MESSAGE = 'justdo:gateway:ready';
 
@@ -50,7 +51,7 @@ function buildOpenClawGatewayBundleLauncherSource() {
     `const { pathToFileURL } = require('node:url');\n` +
     `const path = require('node:path');\n` +
     `const fs = require('node:fs');\n` +
-    `(${installWindowsRecursiveRemove.toString()})();\n` +
+    `require('./${WINDOWS_RUNTIME_PRELOAD_FILENAME}');\n` +
     `const _log = (msg) => process.stderr.write('[openclaw-launcher] ' + msg + '\\n');\n` +
     `const _t0 = Date.now();\n` +
     `const _elapsed = () => (Date.now() - _t0) + 'ms';\n` +
@@ -114,6 +115,11 @@ function ensureOpenClawGatewayBundleLauncher(runtimeRoot) {
   }
 
   const launcherPath = path.join(runtimeRoot, GATEWAY_LAUNCHER_FILENAME);
+  const preloadPath = path.join(runtimeRoot, WINDOWS_RUNTIME_PRELOAD_FILENAME);
+  const preloadContent = `(${installWindowsRecursiveRemove.toString()})(__filename);\n`;
+  const preloadChanged = !fs.existsSync(preloadPath) ||
+    fs.readFileSync(preloadPath, 'utf8') !== preloadContent;
+  if (preloadChanged) fs.writeFileSync(preloadPath, preloadContent, 'utf8');
   const expectedContent = buildOpenClawGatewayBundleLauncherSource();
   const existingContent = fs.existsSync(launcherPath)
     ? fs.readFileSync(launcherPath, 'utf8')
@@ -124,7 +130,7 @@ function ensureOpenClawGatewayBundleLauncher(runtimeRoot) {
   }
 
   return {
-    changed,
+    changed: changed || preloadChanged,
     launcherPath,
     replaced: changed && existingContent.length > 0,
   };

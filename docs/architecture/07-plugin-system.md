@@ -20,7 +20,10 @@
 Windows Electron 42 宿主的同步递归 `fs.rmSync` 会跟随目录 junction，导致原生插件
 capture 清理误删 `node_modules/openclaw` 指向的真实运行时。Gateway bundle launcher
 在加载原生代码前安装宿主修正：逐级 `lstat`，链接仅 `unlink`，真实目录逐级删除，
-保留缺失文件与重试语义，并同步 ESM 的 fs 导出。异步删除、普通 Node 和非 Windows
+保留缺失文件与重试语义，并同步 ESM 的 fs 导出。宿主修正通过独立 preload 在
+Worker 入口加载前安装；包装 Worker 构造器，为原生显式 `execArgv: []` 以及嵌套
+Worker 同样加入 preload，保留其余参数和线程选项。launcher 与 preload 一同生成、打包校验，
+不依赖父线程的 fs 修改跨线程传播。异步删除、普通 Node 和非 Windows
 宿主保持原实现。该修正随构建配方校验，不改变插件启停、恢复副本或配置校验协议。
 已经缺失入口或 worker 的开发运行时须退出应用后重新构建；补回单个入口不足以恢复完整性。
 

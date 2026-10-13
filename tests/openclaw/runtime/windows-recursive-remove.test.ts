@@ -94,3 +94,62 @@ test.skipIf(process.platform !== 'win32')('Electron plugin capture cleanup prese
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test.skipIf(process.platform !== 'win32')('protects ESM, explicit-argv and nested workers before capture cleanup', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'worker-cleanup-中文 空格-'));
+  try {
+    const cleanup = [
+      "const host = path.join(root, 'host-' + id);",
+      "const capture = path.join(root, 'capture-' + id);",
+      'fs.mkdirSync(host);',
+      "fs.writeFileSync(path.join(host, 'sentinel'), 'keep');",
+      'fs.mkdirSync(capture);',
+      "fs.symlinkSync(host, path.join(capture, 'host-link'), 'junction');",
+      'rmSync(capture, { recursive: true, force: true });',
+      "assert.equal(fs.readFileSync(path.join(host, 'sentinel'), 'utf8'), 'keep');",
+      'assert.equal(fs.existsSync(capture), false);',
+    ].join('\n');
+    fs.writeFileSync(path.join(root, 'leaf.cjs'), [
+      "const fs = require('node:fs'), { rmSync } = fs;",
+      "const path = require('node:path'), assert = require('node:assert/strict');",
+      "const { workerData: { root, id }, parentPort } = require('node:worker_threads');",
+      cleanup,
+      'parentPort.postMessage(id);',
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, 'worker.mjs'), [
+      "import fs, { rmSync } from 'node:fs';",
+      "import path from 'node:path';",
+      "import assert from 'node:assert/strict';",
+      "import { Worker, workerData, parentPort } from 'node:worker_threads';",
+      'const { root, id } = workerData;',
+      cleanup,
+      "const nested = new Worker(new URL('./leaf.cjs', import.meta.url), { execArgv: [], workerData: { root, id: id + '-nested' } });",
+      "nested.on('error', error => { throw error; });",
+      "nested.on('message', () => parentPort.postMessage(id));",
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, 'gateway-bundle.mjs'), [
+      "import { Worker } from 'node:worker_threads';",
+      "import assert from 'node:assert/strict';",
+      `const root = ${JSON.stringify(root)};`,
+      'for (const [id, extra] of [["inherited", {}], ["explicit", { execArgv: [] }], ["flags", { execArgv: ["--no-warnings"] }]]) {',
+      '  await new Promise((resolve, reject) => {',
+      "    const worker = new Worker(new URL('./worker.mjs', import.meta.url), { ...extra, workerData: { root, id } });",
+      "    worker.on('error', reject);",
+      "    worker.on('message', value => { assert.equal(value, id); resolve(); });",
+      "    worker.on('exit', code => { if (code) reject(new Error('worker exit ' + code)); });",
+      '  });',
+      '}',
+      "console.log('worker cleanup passed');",
+    ].join('\n'));
+    const { launcherPath } = ensureOpenClawGatewayBundleLauncher(root);
+    const output = execFileSync(require('electron'), [launcherPath], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NODE_DISABLE_COMPILE_CACHE: '1' },
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 30_000,
+    });
+    expect(output).toContain('worker cleanup passed');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

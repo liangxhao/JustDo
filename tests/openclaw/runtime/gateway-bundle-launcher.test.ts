@@ -137,6 +137,17 @@ describe('OpenClaw gateway bundle launcher', () => {
     expect(unchanged).toMatchObject({ changed: false, replaced: false });
   });
 
+  test('restores a missing worker preload even when the launcher is current', () => {
+    const runtimeRoot = createRuntime();
+    ensureOpenClawGatewayBundleLauncher(runtimeRoot);
+    const preloadPath = path.join(runtimeRoot, 'windows-runtime-preload.cjs');
+    fs.rmSync(preloadPath);
+
+    expect(ensureOpenClawGatewayBundleLauncher(runtimeRoot).changed).toBe(true);
+    expect(() => execFileSync(process.execPath, ['--check', preloadPath])).not.toThrow();
+    expect(ensureOpenClawGatewayBundleLauncher(runtimeRoot).changed).toBe(false);
+  });
+
   test('normalizes Electron Node argv before loading one-shot CLI commands', () => {
     const runtimeRoot = createArgvRuntime();
     const { launcherPath } = ensureOpenClawGatewayBundleLauncher(runtimeRoot);
