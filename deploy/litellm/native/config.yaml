@@ -19,6 +19,8 @@ general_settings:
   store_prompts_in_spend_logs: true
   disable_spend_logs: false
   disable_error_logs: false
+  maximum_spend_logs_retention_period: '30d'
+  maximum_spend_logs_retention_interval: '1d'
 
   forward_client_headers_to_llm_api: true
   always_include_stream_usage: true

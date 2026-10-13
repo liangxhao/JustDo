@@ -136,6 +136,8 @@ custom_auth_run_common_checks: true
 | `general_settings.database_connection_pool_limit` | 4 | 每个 worker 的 Prisma 数据库连接上限 |
 | `general_settings.database_connection_timeout` | 30 | 等待获取 Prisma 池连接的超时（秒），不是模型请求超时 |
 | `general_settings.disable_error_logs` | false | 开启原生失败请求记录落库，便于查询和分析 |
+| `general_settings.maximum_spend_logs_retention_period` | 30d | 保留最近 30 天的消费日志，过期记录分批删除 |
+| `general_settings.maximum_spend_logs_retention_interval` | 1d | 每 24 小时执行一次消费日志清理，不是固定在午夜执行 |
 | `general_settings.always_include_stream_usage` | true | 请求流式用量信息，具体返回取决于上游支持 |
 | `litellm_settings.drop_params` | true | 丢弃上游不支持的参数，调用方应注意相关功能可能不生效 |
 | `litellm_settings.json_logs` | true | LiteLLM 日志使用 JSON 格式 |
@@ -150,6 +152,12 @@ Router 设置可能覆盖默认值；部署时检查是否残留较短超时或�
 30 分钟不是包含重试的总耗时上限，发生重试时总体等待时间可能更长。
 
 失败请求记录受批量写入延迟影响，不一定立即出现在网页或数据库中。
+消费日志清理覆盖 `LiteLLM_SpendLogs` 及其关联工具索引，不清理 `LiteLLM_ErrorLogs`；
+错误日志表需单独配置数据库维护任务。`disable_error_logs` 仅控制错误记录落库，
+不控制程序日志输出；Docker 收集容器标准输出/错误，systemd 服务由 journal 收集，
+前台运行时输出到终端，本部署不单独配置错误日志文件。
+修改保留配置后重启服务；间隔调度首次清理通常在启动约 24 小时后执行，积压记录可能需要多轮清理。
+删除记录后 PostgreSQL 通常保留空间供后续写入复用，不保证磁盘文件立即缩小。
 请求头 Hook 在进入 LiteLLM 前拒绝的请求不生成原生消费记录，使用程序日志中的
 错误码和请求 ID 定位；开启错误落库不等于覆盖所有入口拒绝或数据库故障。
 
