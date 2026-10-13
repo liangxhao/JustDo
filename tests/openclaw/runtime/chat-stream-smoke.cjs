@@ -6,7 +6,8 @@ const path = require('node:path');
 const os = require('node:os');
 const http = require('node:http');
 const net = require('node:net');
-const { spawn } = require('node:child_process');
+const { spawn, execFile } = require('node:child_process');
+const { promisify } = require('node:util');
 const { randomBytes } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 (async () => {
@@ -51,7 +52,7 @@ const { pathToFileURL } = require('node:url');
     models: { catalogRefresh: { enabled: false }, mode: 'replace', providers: { fixture: { baseUrl: `http://127.0.0.1:${modelPort}/v1`, api: 'openai-completions', apiKey: 'isolated-fixture-key', models: [{ id: 'review-model', name: 'Fixture', reasoning: true, input: ['text'], contextWindow: 32768, maxTokens: 1024 }] } } },
     agents: { entries: { main: {} }, defaults: { workspace, model: { primary: 'fixture/review-model' }, thinkingDefault: 'high', verboseDefault: 'full', systemAgent: { agentId: 'main' } } },
     tools: { codeMode: { enabled: false } },
-    plugins: { allow: ['memory-core'], entries: { 'memory-core': { enabled: true } } },
+    plugins: { allow: ['memory-core', ...(process.argv.includes('--browser-pairing') ? ['browser'] : [])], entries: { 'memory-core': { enabled: true } } },
   };
   fs.writeFileSync(path.join(state, 'openclaw.json'), JSON.stringify(config));
   const env = { ...process.env, OPENCLAW_HOME: state, OPENCLAW_STATE_DIR: state, OPENCLAW_CONFIG_PATH: path.join(state, 'openclaw.json'), OPENCLAW_NO_RESPAWN: '1' };
@@ -80,6 +81,35 @@ const { pathToFileURL } = require('node:url');
     assert.ok(streams.has('thinking'), 'live Thinking'); assert.ok(streams.has('tool') || events.some(event => event.event === 'session.tool' && event.payload?.runId === runId), 'live Tool'); assert.ok(streams.has('assistant'), 'live Content');
     const history = await client.request('chat.history', { sessionKey: key, limit: 50 });
     assert.ok(JSON.stringify(history.messages).includes('native-tool-read-evidence'), 'persisted history');
+    if (process.argv.includes('--browser-pairing')) {
+      // The production pairing command uses the public CLI, not the Gateway bundle.
+      const { prepareWindowsRuntimeCleanup } = require('../../../src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs');
+      const preload = prepareWindowsRuntimeCleanup(root);
+      const cliEnv = { ...env };
+      if (preload) cliEnv.NODE_OPTIONS = [cliEnv.NODE_OPTIONS, `--require="${preload.replace(/\\/g, '/')}"`].filter(Boolean).join(' ');
+      let paired;
+      try {
+        const result = await promisify(execFile)(process.execPath, [
+          '-e', "process.argv[0]='node';import(require('node:url').pathToFileURL(process.argv[1]).href)",
+          path.join(root, 'openclaw.mjs'), 'browser', 'extension', 'pair', '--local-gateway', '--json',
+        ], { env: cliEnv, windowsHide: true, timeout: 30_000, maxBuffer: 1024 * 1024 });
+        paired = JSON.parse(result.stdout);
+      } catch (error) {
+        // CLI stdout contains the pairing credential; never print the child error.
+        throw new Error(`Isolated browser pairing CLI failed (code=${error.code ?? 'parse'}, killed=${error.killed === true})`);
+      }
+      assert.equal(typeof paired.pairingString, 'string');
+      const snapshot = await client.request('config.get', {});
+      await client.request('config.patch', {
+        baseHash: snapshot.hash,
+        raw: JSON.stringify({ browser: { enabled: true, defaultProfile: 'chrome', profiles: { chrome: { driver: 'extension' } } } }),
+      });
+      const effective = await client.request('config.get', {});
+      assert.equal(effective.valid, true);
+      assert.equal(effective.config.browser.defaultProfile, 'chrome');
+      // Allow asynchronous config reload/retirement to run before reading again.
+      await new Promise(resolve => setTimeout(resolve, 5_000));
+    }
     for (let round = 0; round < 3; round++) {
       await client.request('chat.history', { sessionKey: key, limit: 50 });
       await client.request('progressCard.get', { sessionKey: key });

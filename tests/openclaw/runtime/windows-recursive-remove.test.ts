@@ -4,8 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { expect, test, vi } from 'vitest';
+import {
+  buildBrowserExtensionPairingCommandArgs,
+  buildBrowserPairingCommandEnvironment,
+} from '../../../src/main/browser/extension/browserExtensionPairing';
 
-const { ensureOpenClawGatewayBundleLauncher } =
+const { ensureOpenClawGatewayBundleLauncher, ensureWindowsRuntimePreload } =
   require('../../../src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs');
 const { installWindowsRecursiveRemove } =
   require('../../../src/main/openclaw/runtime/windowsRecursiveRemove.cjs');
@@ -149,6 +153,38 @@ test.skipIf(process.platform !== 'win32')('protects ESM, explicit-argv and neste
       timeout: 30_000,
     });
     expect(output).toContain('worker cleanup passed');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(process.platform !== 'win32')('browser pairing CLI preserves the runtime when its exit handler removes a plugin capture', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pairing-cleanup-中文 空格-'));
+  try {
+    const host = path.join(root, 'runtime');
+    const capture = path.join(root, 'capture');
+    fs.mkdirSync(host);
+    fs.mkdirSync(capture);
+    const sentinel = path.join(host, 'worker.js');
+    fs.writeFileSync(sentinel, 'runtime worker');
+    fs.symlinkSync(host, path.join(capture, 'openclaw'), 'junction');
+    const entry = path.join(root, 'openclaw.mjs');
+    fs.writeFileSync(entry, [
+      "import { rmSync } from 'node:fs';",
+      `process.once('exit', () => rmSync(${JSON.stringify(capture)}, { recursive: true, force: true }));`,
+      "console.log('pairing fixture completed');",
+    ].join('\n'));
+    const { preloadPath } = ensureWindowsRuntimePreload(host);
+    const env = buildBrowserPairingCommandEnvironment({
+      env: { ...process.env, NODE_OPTIONS: `--require="${preloadPath.replace(/\\/g, '/')}"` },
+      runtimeRoot: host, openclawEntry: entry, port: 0, token: '',
+    });
+    const output = execFileSync(require('electron'), buildBrowserExtensionPairingCommandArgs(entry), {
+      env, encoding: 'utf8', windowsHide: true, timeout: 30_000,
+    });
+    expect(output).toContain('pairing fixture completed');
+    expect(fs.existsSync(capture)).toBe(false);
+    expect(fs.readFileSync(sentinel, 'utf8')).toBe('runtime worker');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

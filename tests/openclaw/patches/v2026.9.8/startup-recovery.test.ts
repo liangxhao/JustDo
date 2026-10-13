@@ -20,7 +20,7 @@ test('settles a previous host epoch before native recovery and retains same-epoc
  const recovered: string[] = [];
  const run = vm.runInNewContext(source + ';recoverStore', {
   process:{env:{JUSTDO_APP_STARTED_AT_MS:'100'}},
-  applySessionEntryReplacements: async (params: { update: (entries: unknown[]) => unknown }) => params.update(entries),
+  applySessionEntryExactReplacements: async (params: { update: (entries: unknown[]) => unknown }) => params.update(entries),
   buildRestartRecoveryClaimCleanupPatch:()=>({}), buildMainSessionRecoveryClearPatch:()=>({}),
   resolveRestartRecoveryTerminalClientRunId:()=> 'terminal', mainSessionRecoveryLog:{info:()=>{}},
   commitMainSessionRecovery: async ({entry}:{entry:{sessionId:string}})=>recovered.push(entry.sessionId),
@@ -29,5 +29,6 @@ test('settles a previous host epoch before native recovery and retains same-epoc
  expect(oldEntry).toMatchObject({status:'failed', abortedLastRun:false});
  expect(recovered).toEqual(['new']);
  expect(transformMain(source,'fixture.mjs')).toBe(source);
+ expect(()=>transformMain(source.replace('await applySessionEntryExactReplacements(', 'await applySessionEntryReplacements('),'fixture.mjs')).toThrow(/rebuild from pristine/);
  expect(()=>transformMain(source.replaceAll('V2026_9_8','V2026_9_6'),'fixture.mjs')).toThrow();
 });

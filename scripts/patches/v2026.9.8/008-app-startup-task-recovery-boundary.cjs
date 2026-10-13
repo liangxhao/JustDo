@@ -36,7 +36,7 @@ function ${MAIN_PRIOR_HELPER}(entry) {
 async function ${MAIN_SETTLE_HELPER}(params) {
   const endedAt = Date.now();
   let settled = false;
-  await applySessionEntryReplacements({
+  await applySessionEntryExactReplacements({
     sessionKeys: [params.sessionKey],
     storePath: params.storePath,
     update: (entries) => {
@@ -178,6 +178,14 @@ function findRecoverStoreRange(content, filePath) {
 }
 
 function assertMainContracts(content, filePath) {
+  const helperStart = content.indexOf(`async function ${MAIN_SETTLE_HELPER}(`);
+  const helperBody = content.indexOf('{', helperStart);
+  const helperEnd = findMatchingDelimiter(content, helperBody, '{', '}', `${filePath}: settle helper`);
+  const helper = content.slice(helperBody, helperEnd);
+  if (!helper.includes('await applySessionEntryExactReplacements({') ||
+      /\bapplySessionEntryReplacements\s*\(/u.test(helper)) {
+    throw new Error(`${filePath}: historical or partial app-start main recovery patch detected; rebuild from pristine`);
+  }
   for (const required of [
     MAIN_CONTRACT,
     `process.env.${APP_STARTED_AT_ENV}`,

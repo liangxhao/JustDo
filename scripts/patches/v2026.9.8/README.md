@@ -30,7 +30,9 @@ exit diagnostics; 034 adds opt-in plugin execution settlement and tool cleanup;
 - **008:** upstream removed the generic durable task registry. Delete its task
   maintenance patch; retain only the application-process boundary on native
   main-session restart recovery. Gateway restarts within one app epoch retain
-  native recovery semantics.
+  native recovery semantics. Prior-app settlement calls the native
+  `applySessionEntryExactReplacements` binding; verification rejects the historical
+  unbound `applySessionEntryReplacements` helper and requires a pristine rebuild.
 - **021:** upstream removed the OpenAI video-generation provider. Retain isolated
   image-provider configuration only. Video providers register outside this patch:
   the application bundles `video-openai`; Kie, Z.AI and Novita are available only

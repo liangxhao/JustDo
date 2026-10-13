@@ -108,6 +108,23 @@ function buildOpenClawGatewayBundleLauncherSource() {
   );
 }
 
+function ensureWindowsRuntimePreload(runtimeRoot) {
+  const preloadPath = path.join(runtimeRoot, WINDOWS_RUNTIME_PRELOAD_FILENAME);
+  const preloadContent = `(${installWindowsRecursiveRemove.toString()})(__filename);\n`;
+  const changed = !fs.existsSync(preloadPath) ||
+    fs.readFileSync(preloadPath, 'utf8') !== preloadContent;
+  if (changed) fs.writeFileSync(preloadPath, preloadContent, 'utf8');
+  return { preloadPath, changed };
+}
+
+function prepareWindowsRuntimeCleanup(runtimeRoot) {
+  if (process.platform !== 'win32') return null;
+  const { preloadPath } = ensureWindowsRuntimePreload(runtimeRoot);
+  // Main also loads native modules directly, without the Gateway launcher.
+  installWindowsRecursiveRemove(preloadPath);
+  return preloadPath;
+}
+
 function ensureOpenClawGatewayBundleLauncher(runtimeRoot) {
   const bundlePath = path.join(runtimeRoot, GATEWAY_BUNDLE_FILENAME);
   if (!fs.existsSync(bundlePath)) {
@@ -115,11 +132,7 @@ function ensureOpenClawGatewayBundleLauncher(runtimeRoot) {
   }
 
   const launcherPath = path.join(runtimeRoot, GATEWAY_LAUNCHER_FILENAME);
-  const preloadPath = path.join(runtimeRoot, WINDOWS_RUNTIME_PRELOAD_FILENAME);
-  const preloadContent = `(${installWindowsRecursiveRemove.toString()})(__filename);\n`;
-  const preloadChanged = !fs.existsSync(preloadPath) ||
-    fs.readFileSync(preloadPath, 'utf8') !== preloadContent;
-  if (preloadChanged) fs.writeFileSync(preloadPath, preloadContent, 'utf8');
+  const { changed: preloadChanged } = ensureWindowsRuntimePreload(runtimeRoot);
   const expectedContent = buildOpenClawGatewayBundleLauncherSource();
   const existingContent = fs.existsSync(launcherPath)
     ? fs.readFileSync(launcherPath, 'utf8')
@@ -144,4 +157,6 @@ module.exports = {
   buildOpenClawCompileCacheSetupSource,
   buildOpenClawGatewayBundleLauncherSource,
   ensureOpenClawGatewayBundleLauncher,
+  ensureWindowsRuntimePreload,
+  prepareWindowsRuntimeCleanup,
 };

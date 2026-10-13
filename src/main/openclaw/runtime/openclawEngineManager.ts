@@ -43,6 +43,7 @@ import {
   buildOpenClawCompileCacheSetupSource,
   ensureOpenClawGatewayBundleLauncher,
   GATEWAY_READY_MESSAGE,
+  prepareWindowsRuntimeCleanup,
 } from './openclawGatewayBundleLauncher.cjs';
 import {
   ensureGatewayShutdownPreload,
@@ -679,6 +680,7 @@ export class OpenClawEngineManager extends EventEmitter {
     }
 
     this.ensureBareEntryFiles(runtime.root);
+    const runtimeCleanupPreload = prepareWindowsRuntimeCleanup(runtime.root);
     const openclawEntry = resolveOpenClawCliEntry(runtime.root);
     if (!openclawEntry) {
       throw new Error(`OpenClaw CLI entry file is missing in runtime: ${runtime.root}.`);
@@ -778,6 +780,11 @@ export class OpenClawEngineManager extends EventEmitter {
       env.JUSTDO_NPM_BIN_DIR = npmBinDir || '';
     }
 
+    if (runtimeCleanupPreload) {
+      // Public CLI (including browser pairing) bypasses gateway-launcher.cjs.
+      // NODE_OPTIONS also reaches native Electron subprocess entry points.
+      env.NODE_OPTIONS = appendNodeRequireOption(env.NODE_OPTIONS, runtimeCleanupPreload);
+    }
     const resolvedEnv = applyOpenClawCliNetworkMode(
       env,
       options.networkMode ?? OpenClawCliNetworkMode.Inherit,
@@ -1665,6 +1672,7 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   private resolveGatewayClientEntry(runtimeRoot: string): string | null {
+    prepareWindowsRuntimeCleanup(runtimeRoot);
     const distRoots = [
       path.join(runtimeRoot, 'dist'),
       path.join(runtimeRoot, 'gateway.asar', 'dist'),
