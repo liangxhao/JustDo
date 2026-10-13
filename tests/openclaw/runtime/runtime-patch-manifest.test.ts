@@ -151,6 +151,10 @@ function createFixture() {
     path.join(repoRoot, 'src', 'main', 'openclaw', 'runtime', 'openclawGatewayBundleLauncher.cjs'),
     '// fixture\n',
   );
+  fs.writeFileSync(
+    path.join(repoRoot, 'src', 'main', 'openclaw', 'runtime', 'windowsRecursiveRemove.cjs'),
+    '// fixture\n',
+  );
   fs.mkdirSync(path.join(repoRoot, 'src', 'shared', 'security'), { recursive: true });
   fs.mkdirSync(path.join(repoRoot, 'src', 'shared', 'openclaw'), { recursive: true });
   fs.writeFileSync(

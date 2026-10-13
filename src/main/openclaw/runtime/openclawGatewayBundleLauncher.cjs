@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { installWindowsRecursiveRemove } = require('./windowsRecursiveRemove.cjs');
 
 const GATEWAY_LAUNCHER_FILENAME = 'gateway-launcher.cjs';
 const GATEWAY_BUNDLE_FILENAME = 'gateway-bundle.mjs';
@@ -49,6 +50,7 @@ function buildOpenClawGatewayBundleLauncherSource() {
     `const { pathToFileURL } = require('node:url');\n` +
     `const path = require('node:path');\n` +
     `const fs = require('node:fs');\n` +
+    `(${installWindowsRecursiveRemove.toString()})();\n` +
     `const _log = (msg) => process.stderr.write('[openclaw-launcher] ' + msg + '\\n');\n` +
     `const _t0 = Date.now();\n` +
     `const _elapsed = () => (Date.now() - _t0) + 'ms';\n` +

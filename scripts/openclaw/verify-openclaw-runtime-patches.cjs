@@ -39,6 +39,7 @@ const BUILD_RECIPE_FILES = [
   'scripts/openclaw/prune-openclaw-runtime.cjs',
   'scripts/openclaw/pack-openclaw-tar.cjs',
   'src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs',
+  'src/main/openclaw/runtime/windowsRecursiveRemove.cjs',
   'src/shared/openclaw/cliRuntimeFiles.json',
   'src/shared/security/mxcNativeBinaries.json',
   'resources/openclaw-extension-prune.json',
