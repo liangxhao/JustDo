@@ -8,6 +8,7 @@ import React, { useEffect, useState } from 'react';
 
 import ExtensionsManager from '@/features/plugins/extensions/ExtensionsManager';
 import HookManager from '@/features/plugins/hooks/HookManager';
+import { MarketplaceToolbarSlot } from '@/features/plugins/marketplace/MarketplaceToolbarSlot';
 import McpManager from '@/features/plugins/mcp/McpManager';
 import { mcpService } from '@/features/plugins/mcp/mcpService';
 import SkillsManager from '@/features/plugins/skills/SkillsManager';
@@ -61,6 +62,7 @@ const PluginsView: React.FC<PluginsViewProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<PluginTab>('extensions');
   const [searchQuery, setSearchQuery] = useState('');
+  const [toolbarSlot, setToolbarSlot] = useState<HTMLDivElement | null>(null);
   const [requestedExtensionId, setRequestedExtensionId] = useState<string>();
   useEffect(() => {
     void mcpService.loadExtensionServers().catch(() => undefined);
@@ -138,62 +140,69 @@ const PluginsView: React.FC<PluginsViewProps> = ({
                 className="w-full rounded-xl border border-border bg-surface py-2.5 pl-9 pr-3 text-sm text-foreground shadow-sm placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
-            <nav
-              className="mt-3 flex flex-wrap items-center gap-1"
-              aria-label={i18nService.t('pluginHubTypeFilter')}
-            >
-              {PLUGIN_TABS.map(tab => {
-                const presentation = TAB_PRESENTATION[tab];
-                const Icon = presentation.icon;
-                const active = activeTab === tab;
-                return (
-                  <button
-                    key={tab}
-                    type="button"
-                    onClick={() => setActiveTab(tab)}
-                    aria-pressed={active}
-                    title={tabDescriptions[tab]}
-                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                      active
-                        ? presentation.activeTone
-                        : 'border-transparent text-secondary hover:bg-surface-raised hover:text-foreground'
-                    }`}
-                  >
-                    <Icon
-                      className={`h-3.5 w-3.5 ${presentation.tone.split(' ').slice(1).join(' ')}`}
-                    />
-                    {tabLabels[tab]}
-                  </button>
-                );
-              })}
-            </nav>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+              <nav
+                className="flex flex-wrap items-center gap-1"
+                aria-label={i18nService.t('pluginHubTypeFilter')}
+              >
+                {PLUGIN_TABS.map(tab => {
+                  const presentation = TAB_PRESENTATION[tab];
+                  const Icon = presentation.icon;
+                  const active = activeTab === tab;
+                  return (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => setActiveTab(tab)}
+                      aria-pressed={active}
+                      title={tabDescriptions[tab]}
+                      className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                        active
+                          ? presentation.activeTone
+                          : 'border-transparent text-secondary hover:bg-surface-raised hover:text-foreground'
+                      }`}
+                    >
+                      <Icon
+                        className={`h-3.5 w-3.5 ${presentation.tone.split(' ').slice(1).join(' ')}`}
+                      />
+                      {tabLabels[tab]}
+                    </button>
+                  );
+                })}
+              </nav>
+              <div ref={setToolbarSlot} className="ml-auto" />
+            </div>
           </div>
 
           <div className="mt-5">
-            {activeTab === 'extensions' && (
-              <ExtensionsManager
-                onOpenRuntime={onOpenRuntime}
-                searchQuery={searchQuery}
-                visibility="all"
-                requestedExtensionId={requestedExtensionId}
-                onRequestedExtensionHandled={() => setRequestedExtensionId(undefined)}
-              />
-            )}
-            {activeTab === 'skills' && <SkillsManager searchQuery={searchQuery} visibility="all" />}
-            {activeTab === 'mcp' && (
-              <McpManager
-                searchQuery={searchQuery}
-                visibility="all"
-                onOpenExtension={openExtensionDetail}
-              />
-            )}
-            {activeTab === 'hooks' && (
-              <HookManager
-                searchQuery={searchQuery}
-                visibility="all"
-                onOpenExtension={openExtensionDetail}
-              />
-            )}
+            <MarketplaceToolbarSlot.Provider value={toolbarSlot}>
+              {activeTab === 'extensions' && (
+                <ExtensionsManager
+                  onOpenRuntime={onOpenRuntime}
+                  searchQuery={searchQuery}
+                  visibility="all"
+                  requestedExtensionId={requestedExtensionId}
+                  onRequestedExtensionHandled={() => setRequestedExtensionId(undefined)}
+                />
+              )}
+              {activeTab === 'skills' && (
+                <SkillsManager searchQuery={searchQuery} visibility="all" />
+              )}
+              {activeTab === 'mcp' && (
+                <McpManager
+                  searchQuery={searchQuery}
+                  visibility="all"
+                  onOpenExtension={openExtensionDetail}
+                />
+              )}
+              {activeTab === 'hooks' && (
+                <HookManager
+                  searchQuery={searchQuery}
+                  visibility="all"
+                  onOpenExtension={openExtensionDetail}
+                />
+              )}
+            </MarketplaceToolbarSlot.Provider>
           </div>
         </div>
       </main>
