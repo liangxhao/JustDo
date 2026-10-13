@@ -4,6 +4,8 @@
 
 产品只对接一个市场。工厂第三参数注入单一 Provider，页面不提供来源选择或聚合。SDK 实施步骤、示例和验收见 [插件市场接入指南](../developer-integration/plugin-marketplace-integration.md)。
 
+市场网络接入应遵循应用代理，浏览器代理独立。Provider 注册不会自动接管 SDK 的网络客户端；目录请求可复用 Main 的 `mainProcessFetch`，独立认证与下载客户端需要显式适配。现有方法在代理模式下缓冲完整响应，且直连与代理的重定向、大小限制行为不同，不能直接视为通用 SDK Fetch 或流式下载器。具体适配和代理验收要求见接入指南的“应用代理与 SDK 网络接入”。
+
 ## 1. 最小接入面
 
 `PluginMarketplaceProvider` 位于 `src/main/plugins/marketplace/types.ts`。公司 SDK 只需提供搜索与下载，其他能力按实际支持暴露。
