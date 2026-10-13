@@ -10,7 +10,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import {
   buildSwarmWorkflowInstruction,
   SwarmWorkflowGateway,
-} from '../../../src/shared/cowork/swarmWorkflow';
+} from '../../../src/shared/cowork/swarm-workflow';
 import { OpenClawExtensionId } from '../../../src/shared/plugins/nativeIds';
 const requireNative = createRequire(import.meta.url);
 const code = buildSync({

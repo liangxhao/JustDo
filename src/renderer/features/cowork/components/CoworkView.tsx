@@ -332,6 +332,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const currentSessionId = currentSession?.id ?? null;
   const { enabled: agentTeamEnabled, disabledRevision: agentTeamDisabledRevision } =
     useExtensionAvailability(OpenClawExtensionId.AGENT_TEAM);
+  const { enabled: swarmWorkflowEnabled, disabledRevision: swarmWorkflowDisabledRevision } =
+    useExtensionAvailability(OpenClawExtensionId.SWARM_WORKFLOW);
   const [isWorkspaceDetached, setIsWorkspaceDetached] = useState(false);
   const [teamPanelSelection, setTeamPanelSelection] = useState<{ key?: string; version: number }>({
     version: 0,
@@ -374,6 +376,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     }
   }, [agentTeamEnabled]);
   const [swarmWorkflowSessionId, setSwarmWorkflowSessionId] = useState<string | null>(null);
+  useEffect(() => {
+    setSwarmWorkflowSessionId(null);
+  }, [swarmWorkflowDisabledRevision]);
+  useEffect(() => {
+    if (!swarmWorkflowEnabled) setSwarmWorkflowSessionId(null);
+  }, [swarmWorkflowEnabled]);
   const [isInitialized, setIsInitialized] = useState(false);
   const [greetingPeriod, setGreetingPeriod] = useState(() =>
     getGreetingPeriod(new Date().getHours()),
@@ -650,7 +658,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       ...(agentTeamEnabled && collaborationSessionId && collaborationSessionId === currentSessionId
         ? [COLLABORATION_DISPLAY_TAB_ID]
         : []),
-      ...(swarmWorkflowSessionId && swarmWorkflowSessionId === currentSessionId
+      ...(swarmWorkflowEnabled &&
+      swarmWorkflowSessionId &&
+      swarmWorkflowSessionId === currentSessionId
         ? [SWARM_WORKFLOW_DISPLAY_TAB_ID]
         : []),
       ...(isReviewOpen ? [REVIEW_TAB_ID] : []),
@@ -661,6 +671,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       agentTeamEnabled,
       collaborationSessionId,
       swarmWorkflowSessionId,
+      swarmWorkflowEnabled,
       currentSessionId,
       browserTabs,
       filePreviews,
@@ -716,13 +727,22 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     return () => window.removeEventListener(REVIEW_OPEN_EVENT, listener);
   }, [currentSessionId, openReview]);
   const openSwarmWorkflow = useCallback(() => {
-    if (!currentSessionId) return;
+    if (!swarmWorkflowEnabled || !currentSessionId) return;
     setSwarmWorkflowSessionId(currentSessionId);
     setPreferredDisplayTabId(SWARM_WORKFLOW_DISPLAY_TAB_ID);
     setIsDisplayPanelOpen(true);
     setIsWorkspaceFilesOpen(false);
-  }, [currentSessionId, setPreferredDisplayTabId, setIsDisplayPanelOpen, setIsWorkspaceFilesOpen]);
-  const swarmWorkflowDiscovery = useSwarmWorkflowDiscovery(currentSessionId);
+  }, [
+    swarmWorkflowEnabled,
+    currentSessionId,
+    setPreferredDisplayTabId,
+    setIsDisplayPanelOpen,
+    setIsWorkspaceFilesOpen,
+  ]);
+  const swarmWorkflowDiscovery = useSwarmWorkflowDiscovery(currentSessionId, undefined, {
+    enabled: swarmWorkflowEnabled,
+    disabledRevision: swarmWorkflowDisabledRevision,
+  });
   const activeDisplayTabId =
     preferredDisplayTabId && availableDisplayTabIds.includes(preferredDisplayTabId)
       ? preferredDisplayTabId
@@ -2875,7 +2895,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           },
         };
       }),
-      ...(swarmWorkflowSessionId === currentSession.id
+      ...(swarmWorkflowEnabled && swarmWorkflowSessionId === currentSession.id
         ? [
             {
               id: SWARM_WORKFLOW_DISPLAY_TAB_ID,
@@ -3467,7 +3487,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 </div>
               ))}
               {recordingReviewTabs.panels(activeDisplayTabId)}
-              {swarmWorkflowSessionId === currentSession.id && (
+              {swarmWorkflowEnabled && swarmWorkflowSessionId === currentSession.id && (
                 <div
                   className="absolute inset-0"
                   hidden={activeDisplayTabId !== SWARM_WORKFLOW_DISPLAY_TAB_ID}
@@ -3480,8 +3500,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     active={
                       activeDisplayTabId === SWARM_WORKFLOW_DISPLAY_TAB_ID && isWorkspaceVisible
                     }
-                    tasks={subtasks}
-                    onOpenTask={openSubtask}
                   />
                 </div>
               )}

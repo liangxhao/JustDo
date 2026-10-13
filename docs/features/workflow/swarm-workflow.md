@@ -2,7 +2,41 @@
 
 Swarm Workflow 是本产品的独立任务流插件，与 OpenClaw 原生 collector 分组、SubAgent 控制树、agent-team 长期协作和 Workboard 工作事项分别管理。本文统一维护普通阶段、主会话管理和人工介入；批次参数与调度见[批量执行契约](swarm-workflow-batches.md)。
 
-Renderer 的 Workflow 面板、节点历史、介入与图形视口辅助位于 `features/cowork/components/swarm-workflow/`，与原生子任务的 `subagents/` 平级。两者复用的图形样式和会话连接辅助位于 Cowork 的 `shared/`；Workflow 专属样式留在插件界面目录。目录归位不增加应用工作流或消息缓存，原生插件服务继续拥有持久 DAG 和执行状态。
+Renderer 的 Workflow 面板、节点历史和介入呈现位于 `features/cowork/components/swarm-workflow/`，与原生子任务的 `subagents/` 平级。两者复用的图形样式和会话连接辅助位于 Cowork 的 `shared/`；Workflow 专属样式留在插件界面目录。目录归位不增加应用工作流或消息缓存，原生插件服务继续拥有持久 DAG 和执行状态。
+
+## 模块归属与依赖
+
+流程协议和提示是插件能力的一部分，应用不再维护第二份实现。插件的 `contracts/` 提供内部流程/批次模型、对外视图和校验，`prompt/` 统一请求标记解析和发起提示；应用通过浏览器安全的 `src/shared/cowork/swarm-workflow/` 门面复用它们，API 契约也由插件维护，门面只额外声明 Electron 通道名。内部和对外协议共享 Gateway 方法、节点类型及介入上限，主会话准入与显示清理使用同一精确标记解析器。
+
+`execution/` 拥有 DAG 推进、规划、策略、介入和结果提交；`batch/` 拥有输入冻结、单项目录、结果分页及批次存储操作；`data/` 管理插件流程库；`management/` 提供主会话工具与通知。`service/` 绑定这些能力与原生 Gateway：context 提供身份、权限、当前引擎和原生会话准备，state 保留进程共享状态，lifecycle 管理启动实例的代次、循环与停止，hooks、gateway、tools 各自注册原生入口。`index.ts` 仅组合注册，域模块通过同一个 context 访问实时状态，不复制引擎或服务代次。各助手注册实例仍共享同一服务，同时保持独立调用授权。
+
+原生 managed-subagent 的通用运行终态/清理契约属于 Runtime Services `execution/`；Workflow 专属的未调用启动本地证明归 `execution/launch-admission.ts`，引擎和生命周期复用同一 class 身份，不以错误名称推断未发送；通用权限指纹、真实目录身份和可信文件系统准入属于其 `filesystem/`，纯准入类型属于 `contracts/`。Workflow 单向复用这些能力，Runtime Services 不依赖可选 Workflow，也不持有流程库。两个插件都不导入应用 `src`。资源同步从仓库源代码打包 Workflow 的这些相邻依赖，发布后的插件入口不需要解析相邻插件的 TypeScript。
+
+产品会话仍由 Main 持有，但 Workflow 专属协调实现归插件 `host/coordinator.ts`，通过 `host/ports.ts` 获得实时 runtime getter、会话存在性、父键与规划状态能力。Main `cowork/swarm-workflow/` 只保留稳定门面，IPC 只绑定 Electron 通道；插件不导入 Main 控制器或 native SDK。宿主继续提供真实产品助手名单和资源可用性，`host/config.ts` 负责启用/软删除过滤及配置投影，不能以原生名单替代产品已禁用/删除状态。`contracts/api.ts` 声明应用访问能力，shared 门面只追加 Electron 通道名。
+
+插件 `browser/` 拥有主图选择/动作状态、批次过滤与游标、详情读取、人工介入幂等 ID 对账、发现轮询、图形布局/视口、输入框准备与消息键、双语字典。业务 hook 通过结构型 browser ports 访问实际 preload，既不读取 `window.electron`，也不导入 `src`。React 组件继续组合共享聊天渲染、菜单、图标、i18n 服务、原生连接和 Tab；产品 Goal 状态只由宿主翻译为当前提交是否被旧 Goal 占用。Browser 状态只保留当前界面所需投影和草稿，原生会话正文仍归 Gateway，不新增持久化/Redux transcript 缓存。原生注册入口不导入 host/browser，shared 契约门面不导入 browser，Main 和 Renderer 入口不能相互打包。
+
+关闭 Workflow 后，应用立即隐藏摘要入口并退休已打开 Tab，browser discovery 清空当前投影、停止轮询并拒绝旧响应。每次 disable revision 也使快速关开时的旧快照失效；重新启用后重新读取保留的流程。临时 Gateway 故障仍保留最近一次成功数量，不能把故障误当显式禁用。插件停止并不证明原生运行已取消，现有 DAG 和未知运行证据继续保留，恢复时仍不自动重放不确定派发。原生 collector 快照和子任务控制继续走独立 subtasks 入口。
+
+```mermaid
+flowchart LR
+  UI[React Workflow 界面] --> Browser[Workflow browser 状态与提示]
+  Browser --> Port[Renderer preload ports]
+  Port --> IPC[Electron Workflow IPC]
+  IPC --> Host[Workflow host 协调与配置]
+  Main[Main 会话与运行时资源] -.实时 typed ports.-> Host
+  Host --> Gateway[原生 Gateway]
+  Gateway --> Service[Workflow service]
+  Service --> Execution[execution / batch / management]
+  Execution --> Data[(Workflow data)]
+  Service --> Runtime[Runtime Services 通用执行与文件系统]
+  Execution --> Runtime
+  UI -.纯协议与提示.-> Contracts[Workflow contracts / prompt]
+  Host -.纯协议与提示.-> Contracts
+  Service --> Contracts
+```
+
+## 名称与功能入口
 
 插件显示名和用户界面的功能名称统一为 **Swarm Workflow**，中文和英文界面的功能菜单、输入框标签及右侧 Tab 均使用此英文名称，强调持久化任务工作流，区别于 Agent Team 和原生 Swarm 分组。内部命名同步统一，首次发布前不保留旧名称别名或迁移逻辑：
 

@@ -11,5 +11,6 @@ export { registerSessionGroupHandlers } from './sessionGroups';
 export { registerCoworkSessionRuntimeHandlers } from './sessionRuntime';
 export { registerCoworkSessionHandlers } from './sessions';
 export { registerCoworkSubtaskHandlers } from './subtasks';
+export { registerSwarmWorkflowHandlers } from './swarm-workflow';
 export { registerCoworkUtilityHandlers } from './utilities';
 export { registerWindowsSandboxHandlers } from './windowsSandbox';

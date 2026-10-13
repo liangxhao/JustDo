@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { lastStartError, startInstructions } from '../../../openclaw-extensions/swarm-workflow/start';
+import { lastStartError, startInstructions } from '../../../openclaw-extensions/swarm-workflow/prompt/start';
 
 it('gives launch-only instructions and named direct and Code Mode arguments without losing context resolution', () => {
   const instruction = startInstructions('review', 'request:user');

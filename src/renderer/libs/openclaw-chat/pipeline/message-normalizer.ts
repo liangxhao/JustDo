@@ -10,7 +10,7 @@ import { stripAgentTeamInstruction } from '@shared/cowork/agent-team/agentTeamPr
 import { TEAM_DISCUSSION_CHANNEL } from '@shared/cowork/agent-team/teamDiscussion';
 import { parseCoworkSessionKey } from '@shared/cowork/sessionKey';
 import { stripSwarmInstruction } from '@shared/cowork/swarm';
-import { stripSwarmWorkflowInstruction } from '@shared/cowork/swarmWorkflow';
+import { stripSwarmWorkflowInstruction } from '@shared/cowork/swarm-workflow';
 import { modelRefFromIdentity, normalizeModelRef } from '@shared/providers/modelRef';
 
 import { stripOpenClawLogHintText } from '@/libs/openclaw-chat/pipeline/system-message-display';

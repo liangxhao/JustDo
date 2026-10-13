@@ -2,7 +2,7 @@ import { parseBrowserAnnotationPrompt } from '@shared/browser/browser';
 import { stripAgentTeamInstruction } from '@shared/cowork/agent-team/agentTeamPrompt';
 import { parseGoalStartObjective } from '@shared/cowork/slashCommands';
 import { stripSwarmInstruction } from '@shared/cowork/swarm';
-import { stripSwarmWorkflowInstruction } from '@shared/cowork/swarmWorkflow';
+import { stripSwarmWorkflowInstruction } from '@shared/cowork/swarm-workflow';
 
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 

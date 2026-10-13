@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { buildManagedSwarmWorkflowPluginEntries as buildWorkflowEntries } from '../../../../openclaw-extensions/swarm-workflow/host/config';
 import { normalizeOpenClawAgentId } from '../../../shared/agents/agentId';
 import {
   AgentRuntimeCodeMode,
@@ -2194,22 +2195,7 @@ export const buildManagedCapabilityPluginEntries = (
 export const buildManagedSwarmWorkflowPluginEntries = (
   agents: Pick<Agent, 'id' | 'enabled' | 'deletedAt'>[],
   isAvailable: (id: string) => boolean = isBundledPluginAvailable,
-): Record<string, unknown> =>
-  isAvailable(OpenClawExtensionId.SWARM_WORKFLOW)
-    ? {
-        [OpenClawExtensionId.SWARM_WORKFLOW]: {
-          enabled: true,
-          config: {
-            availableAgentIds: [
-              ...new Set([
-                'main',
-                ...agents.filter(agent => agent.enabled && !agent.deletedAt).map(agent => agent.id),
-              ]),
-            ],
-          },
-        },
-      }
-    : {};
+): Record<string, unknown> => buildWorkflowEntries(agents, isAvailable);
 
 export const isUserToggleableBundledPlugin = (pluginId: string): boolean =>
   pluginId === OpenClawExtensionId.MEMORY_CORE ||

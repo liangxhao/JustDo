@@ -1,26 +1,14 @@
+import { handoffContent } from '../../../../../../openclaw-extensions/swarm-workflow/browser/handoff';
+import { useSwarmWorkflowDetailState } from './workflowBrowserState';
+export { handoffContent } from '../../../../../../openclaw-extensions/swarm-workflow/browser/handoff';
 import { ArrowLeftIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
-import type { SwarmWorkflowDetail, SwarmWorkflowNode } from '@shared/cowork/swarmWorkflow';
-import { useEffect, useState } from 'react';
+import type { SwarmWorkflowNode } from '@shared/cowork/swarm-workflow';
 
 import { i18nService } from '@/services/i18n';
 
 import ChatMessageDisplay from '../chat/ChatMessageDisplay';
 import SwarmWorkflowNodeHistory from './SwarmWorkflowNodeHistory';
 import SwarmWorkflowNodeIntervention from './SwarmWorkflowNodeIntervention';
-
-export function handoffContent(message: string, sourceId: string) {
-  try {
-    const value = JSON.parse(message);
-    const input = Array.isArray(value?.inputs)
-      ? value.inputs.find((item: { id?: string } | null) => item?.id === sourceId)
-      : undefined;
-    if (typeof value?.assignedTask !== 'string' || typeof input?.result !== 'string')
-      return undefined;
-    return { result: input.result as string, task: value.assignedTask as string };
-  } catch {
-    return undefined;
-  }
-}
 
 export default function SwarmWorkflowDetailPanel({
   sessionId,
@@ -44,36 +32,13 @@ export default function SwarmWorkflowDetailPanel({
   const t = (key: string) => i18nService.t(key);
   const label = (n: SwarmWorkflowNode) =>
     ['work', 'batch'].includes(n.kind) ? n.title : t('swarmWorkflowKind_' + n.kind);
-  const [detail, setDetail] = useState<SwarmWorkflowDetail>();
-  const [error, setError] = useState(false);
-  const [retry, setRetry] = useState(0);
-  useEffect(() => {
-    if (!active) return;
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const read = async () => {
-      try {
-        const result = await window.electron.cowork.getSwarmWorkflowDetail(
-          sessionId,
-          flowId,
-          node.id,
-          source?.id,
-        );
-        if (disposed) return;
-        setError(!result.success);
-        if (result.success) setDetail(result.detail);
-      } catch {
-        if (!disposed) setError(true);
-      } finally {
-        if (!disposed) timer = setTimeout(() => void read(), 2500);
-      }
-    };
-    void read();
-    return () => {
-      disposed = true;
-      clearTimeout(timer);
-    };
-  }, [sessionId, flowId, node.id, node.status, source?.id, active, retry]);
+  const { detail, error, retry, setRetry } = useSwarmWorkflowDetailState({
+    sessionId,
+    flowId,
+    node,
+    source,
+    active,
+  });
   const handoff =
     source && detail?.dispatch ? handoffContent(detail.dispatch.message, source.id) : undefined;
   const title = source ? label(source) + ' → ' + label(node) : label(node);
@@ -142,7 +107,9 @@ export default function SwarmWorkflowDetailPanel({
                 {handoff ? (
                   <>
                     <div className="mx-3 mt-2 max-h-32 shrink-0 overflow-auto rounded-lg bg-surface-raised p-3 text-sm">
-                      <p className="mb-1 text-xs text-secondary">{t('swarmWorkflowDownstreamTask')}</p>
+                      <p className="mb-1 text-xs text-secondary">
+                        {t('swarmWorkflowDownstreamTask')}
+                      </p>
                       <p className="whitespace-pre-wrap break-words">{handoff.task}</p>
                     </div>
                     <ChatMessageDisplay

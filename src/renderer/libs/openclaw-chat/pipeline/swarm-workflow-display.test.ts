@@ -1,5 +1,8 @@
 import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
-import { buildSwarmWorkflowInstruction, stripSwarmWorkflowInstruction } from '@shared/cowork/swarmWorkflow';
+import {
+  buildSwarmWorkflowInstruction,
+  stripSwarmWorkflowInstruction,
+} from '@shared/cowork/swarm-workflow';
 import { expect, test } from 'vitest';
 
 import { parseEditorDraftPayload } from '../model/editor-draft';
@@ -7,7 +10,9 @@ import { normalizeMessage } from './message-normalizer';
 
 test('keeps native instructions out of user message display and editor drafts', () => {
   const text =
-    'Review this project' + '\n\n' + buildSwarmWorkflowInstruction({ mode: 'review', verify: true });
+    'Review this project' +
+    '\n\n' +
+    buildSwarmWorkflowInstruction({ mode: 'review', verify: true });
   expect(stripSwarmWorkflowInstruction(text)).toBe('Review this project');
   expect(parseEditorDraftPayload(text, []).text).toBe('Review this project');
   expect(normalizeMessage({ role: 'user', content: text }).content).toEqual(

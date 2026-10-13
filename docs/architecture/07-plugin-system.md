@@ -465,6 +465,7 @@ artifact when it changes; never edit their source or proof manifests in place.
 ## Swarm Workflow：独立持久化任务流
 
 `openclaw-extensions/swarm-workflow` 使用插件 service 生命周期及原生 Gateway / subagent API。
+协议、视图校验和请求标记由插件的 `contracts/`、`prompt/` 统一维护，应用 shared 只提供浏览器安全的桥接入口和 Electron IPC 契约。插件内部将 DAG 执行、批次、持久化、聊天管理与原生注册分别交给 `execution/`、`batch/`、`data/`、`management/`、`service/`；注册实例通过同一实时 context 使用进程共享服务状态，生命周期仍由启动实例持有。通用原生运行契约和文件系统准入归 Runtime Services，Workflow 单向复用，两个插件均不引用应用实现，必需的 Runtime Services 不依赖可选 Workflow。资源同步从仓库源码打包 Workflow，避免发布时依赖相邻插件的未编译源码。产品会话归属、响应校验及助手名单投影的实现归插件 `host/`，Main `cowork/swarm-workflow/` 只提供薄门面和 live typed ports；API 归插件 contracts，Electron 通道名及 handler 留应用。图形/视口、选择、发现轮询、批次/详情/介入状态、输入框准入和翻译归插件 `browser/`，通过注入的 preload ports 访问产品能力；Renderer 保留 React 呈现和共享聊天、i18n/菜单、Tab 接线。原生入口不导入 host/browser，Main/shared 不导入 browser，插件不导入 src。Workflow 专属未调用 launch 证明归 execution，通用 describe/cancel SDK 和文件系统底座仍在 Runtime Services。禁用后隐藏入口、退休 Tab、停止轮询并清空浏览器投影，disable revision 也拒绝快速关开间旧响应；重新启用读取保留的 DAG，不据服务停止推断原生取消。原生子任务入口独立。
 `swarm_workflow_start` 提供明确请求的工具入口；输入框的精确标记通过提示钩子限定发起工具，主会话利用历史和附件整理完整说明后建立流程。工具从当前原生用户条目派生幂等键，并单独保留原始指派依据，后台不缓存聊天历史。
 发起轮只整理任务说明并调用启动工具，规划、执行和进度由工作流服务负责，通用任务规则不扩展这一轮的工具权限；提供直接调用与 Code Mode 参数示例。尚未接受时，原生 `before_agent_finalize` 可反馈本轮有界工具错误并请求最多三轮安全纠正；每轮仍绑定原始用户请求并收窄工具面。父身份、项目、权限或当前请求变化后不继续纠正，接受后按原始请求去重。短期准入元数据不包含聊天内容；原生取消、超时、潜在副作用或未知结果仍禁止回放，无需增加运行时补丁。
 插件拥有规划、DAG 校验、节点准入、运行核对、独立验收和主聊天交付，服务不依赖 Renderer 存活。

@@ -158,6 +158,7 @@ import {
   registerCoworkUtilityHandlers,
   registerDefaultModelHandlers,
   registerSessionGroupHandlers,
+  registerSwarmWorkflowHandlers,
   registerWindowsSandboxHandlers,
   waitForCoworkConfigUpdates,
 } from './ipc/cowork';
@@ -1683,6 +1684,10 @@ if (multicaBridgeArgv) {
   registerSessionDiagnosticsHandlers(getSessionDiagnosticsService);
 
   registerCoworkSubtaskHandlers({
+    getRuntime: getOpenClawRuntimeAdapter,
+    hasSession: sessionId => Boolean(getCoworkStore().getSession(sessionId)),
+  });
+  registerSwarmWorkflowHandlers({
     getRuntime: getOpenClawRuntimeAdapter,
     hasSession: sessionId => Boolean(getCoworkStore().getSession(sessionId)),
   });

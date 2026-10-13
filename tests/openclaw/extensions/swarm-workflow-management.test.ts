@@ -4,14 +4,14 @@ import path from 'node:path';
 
 import { afterEach, expect, it, vi } from 'vitest';
 
-import { FLOW_LIMITS } from '../../../openclaw-extensions/swarm-workflow/contract';
-import { FlowEngine, type FlowHost } from '../../../openclaw-extensions/swarm-workflow/engine';
+import { FLOW_LIMITS } from '../../../openclaw-extensions/swarm-workflow/contracts/flow';
+import { FlowEngine, type FlowHost } from '../../../openclaw-extensions/swarm-workflow/execution/engine';
 import {
   createManagementTools,
   managementStatus,
-} from '../../../openclaw-extensions/swarm-workflow/management';
-import { FlowNotifier } from '../../../openclaw-extensions/swarm-workflow/notifications';
-import { FlowStore } from '../../../openclaw-extensions/swarm-workflow/store';
+} from '../../../openclaw-extensions/swarm-workflow/management/tools';
+import { FlowNotifier } from '../../../openclaw-extensions/swarm-workflow/management/notifications';
+import { FlowStore } from '../../../openclaw-extensions/swarm-workflow/data/store';
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {

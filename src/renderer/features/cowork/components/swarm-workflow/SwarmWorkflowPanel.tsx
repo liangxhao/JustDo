@@ -1,3 +1,13 @@
+import {
+  edgePath,
+  layoutFlow,
+  routeFlowEdge,
+} from '../../../../../../openclaw-extensions/swarm-workflow/browser/graph/layout';
+import { useSwarmWorkflowPanelState } from './workflowBrowserState';
+export {
+  layoutFlow,
+  routeFlowEdge,
+} from '../../../../../../openclaw-extensions/swarm-workflow/browser/graph/layout';
 import '../shared/swarmGraph.css';
 import './swarmWorkflow.css';
 
@@ -14,18 +24,12 @@ import {
   StopIcon,
   ViewfinderCircleIcon,
 } from '@heroicons/react/24/outline';
-import type {
-  SwarmWorkflowAction,
-  SwarmWorkflowNode,
-  SwarmWorkflowResult,
-  SwarmWorkflowView,
-} from '@shared/cowork/swarmWorkflow';
+import type { SwarmWorkflowResult } from '@shared/cowork/swarm-workflow';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
 import { useOwnerWindow } from '@/shared/dom/ownerDocument';
 
-import type { Subtask } from '../subagents/subtaskPresentation';
 import SwarmWorkflowBatchPanel from './SwarmWorkflowBatchPanel';
 import SwarmWorkflowDetailPanel from './SwarmWorkflowDetailPanel';
 import { useSwarmWorkflowGraphViewport } from './useSwarmWorkflowGraphViewport';
@@ -47,71 +51,6 @@ const flowIcons = {
   cancelled: StopIcon,
   completed: CheckCircleIcon,
 };
-export function layoutFlow(nodes: SwarmWorkflowNode[], columns = 3) {
-  const levels = new Map<string, number>();
-  for (let i = 0; i < nodes.length; i++)
-    for (const node of nodes) {
-      if (!levels.has(node.id) && node.deps.every(d => levels.has(d)))
-        levels.set(
-          node.id,
-          node.deps.length ? Math.max(...node.deps.map(d => levels.get(d)!)) + 1 : 0,
-        );
-    }
-  const rows = new Map<number, SwarmWorkflowNode[]>();
-  for (const node of nodes) {
-    const level = levels.get(node.id) ?? nodes.length;
-    const row = rows.get(level) ?? [];
-    row.push(node);
-    rows.set(level, row);
-  }
-  // Size the graph to its widest row, and center every partial row on that axis.
-  const count = Math.max(
-    1,
-    Math.min(columns, Math.max(0, ...[...rows.values()].map(row => row.length))),
-  );
-  const width = count * 190 + 30;
-  const points = new Map<string, { x: number; y: number }>();
-  let y = 35;
-  for (const [, row] of [...rows].sort(([a], [b]) => a - b)) {
-    row.forEach((node, i) => {
-      const rowCount = Math.min(count, row.length - Math.floor(i / count) * count);
-      const left = (width - ((rowCount - 1) * 190 + 160)) / 2;
-      points.set(node.id, { x: left + (i % count) * 190, y: y + Math.floor(i / count) * 132 });
-    });
-    y += Math.ceil(row.length / count) * 132;
-  }
-  return { points, height: y + 20, width, nodes };
-}
-export function routeFlowEdge(
-  layout: ReturnType<typeof layoutFlow>,
-  sourceId: string,
-  targetId: string,
-) {
-  const source = layout.points.get(sourceId);
-  const target = layout.points.get(targetId);
-  if (!source || !target) return [];
-  const start = { x: source.x + 80, y: source.y + 72 };
-  const end = { x: target.x + 80, y: target.y };
-  // Direct connections avoid boxed elbows between adjacent parallel stages.
-  if (target.y - source.y <= 132) return [start, end];
-  // Skip intervening rows outside the cards, including wrapped parallel rows.
-  const lane = start.x <= layout.width / 2 ? 10 : layout.width - 10;
-  return [
-    start,
-    { x: start.x, y: start.y + 12 },
-    { x: lane, y: start.y + 12 },
-    { x: lane, y: end.y - 14 },
-    { x: end.x, y: end.y - 14 },
-    end,
-  ];
-}
-
-function edgePath(points: Array<{ x: number; y: number }>) {
-  return points
-    .map((point, index) => (index === 0 ? `M ${point.x} ${point.y}` : `L ${point.x} ${point.y}`))
-    .join(' ');
-}
-
 export default function SwarmWorkflowPanel({
   sessionId,
   active = true,
@@ -120,24 +59,35 @@ export default function SwarmWorkflowPanel({
 }: {
   sessionId: string;
   active?: boolean;
-  tasks: readonly Subtask[];
-  onOpenTask: (task: Subtask) => void;
   snapshot?: SwarmWorkflowResult;
   onRefresh?: () => void;
 }) {
   const ownerWindow = useOwnerWindow();
   const t = (key: string) => i18nService.t(key);
-  const [flows, setFlows] = useState<SwarmWorkflowView[]>([]);
-  const [chosen, setChosen] = useState<string>();
-  const seenFlows = useRef(new Set<string>());
-  const [selected, setSelected] = useState<string>();
-  const [selectedEdge, setSelectedEdge] = useState<string>();
-  const [stale, setStale] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(false);
-  const [revision, refresh] = useState(0);
   const viewport = useSwarmWorkflowGraphViewport();
   const resetViewport = viewport.reset;
+  const {
+    flows,
+    flow,
+    node,
+    source,
+    selected,
+    stale,
+    busy,
+    error,
+    actions,
+    control,
+    refreshFlows,
+    selectFlow,
+    setSelected,
+    setSelectedEdge,
+  } = useSwarmWorkflowPanelState({
+    sessionId,
+    active,
+    snapshot,
+    onRefresh,
+    resetViewport,
+  });
   const container = useRef<HTMLElement>(null);
   const tabsRef = useRef<HTMLElement>(null);
   const [columns, setColumns] = useState(2);
@@ -150,61 +100,6 @@ export default function SwarmWorkflowPanel({
     return () => observer.disconnect();
   }, [ownerWindow]);
   const marker = useId().replace(/:/g, '');
-  useEffect(() => {
-    seenFlows.current = new Set();
-    setFlows([]);
-    setChosen(undefined);
-    setSelected(undefined);
-    setSelectedEdge(undefined);
-    setError(false);
-    resetViewport();
-  }, [sessionId, resetViewport]);
-  useEffect(() => {
-    const discovered = flows.find(flow => !seenFlows.current.has(flow.id));
-    flows.forEach(flow => seenFlows.current.add(flow.id));
-    if (discovered) {
-      setChosen(discovered.id);
-      setSelected(undefined);
-      setSelectedEdge(undefined);
-      resetViewport();
-    }
-  }, [flows, resetViewport]);
-  useEffect(() => {
-    if (!active || snapshot !== undefined) return;
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const read = async () => {
-      try {
-        const result = await window.electron.cowork.getSwarmWorkflows(sessionId);
-        if (disposed) return;
-        if (result.success) {
-          setFlows(result.flows);
-          setStale(false);
-        } else setStale(true);
-      } catch {
-        if (!disposed) setStale(true);
-      } finally {
-        if (!disposed) timer = setTimeout(() => void read(), 2500);
-      }
-    };
-    void read();
-    return () => {
-      disposed = true;
-      clearTimeout(timer);
-    };
-  }, [sessionId, active, revision, snapshot]);
-  useEffect(() => {
-    if (snapshot === undefined) return;
-    if (snapshot.success) {
-      setFlows(snapshot.flows);
-      setStale(false);
-    } else setStale(true);
-  }, [snapshot]);
-  const refreshFlows = () => {
-    if (onRefresh) onRefresh();
-    else refresh(v => v + 1);
-  };
-  const flow = flows.find(f => f.id === chosen) ?? flows[0];
   useLayoutEffect(() => {
     const tabs = tabsRef.current;
     if (!active || !tabs) return;
@@ -227,36 +122,7 @@ export default function SwarmWorkflowPanel({
     return () => observer.disconnect();
   }, [active, flow?.id, flows.length, ownerWindow]);
   const StatusIcon = flow ? flowIcons[flow.status] : ClockIcon;
-  const node = flow?.nodes.find(n => n.id === selected);
-  const source = flow?.nodes.find(n => n.id === selectedEdge);
   const layout = layoutFlow(flow?.nodes ?? [], columns);
-  const actions = flow?.actions ?? {
-    pause: flow?.status === 'running',
-    resume:
-      flow?.status === 'paused' &&
-      !flow.nodes.some(item => ['failed', 'uncertain'].includes(item.status)),
-    stop: !!flow && !['completed', 'cancelled', 'stopping'].includes(flow.status),
-    retry: flow?.canRetry ?? false,
-  };
-  const control = async (action: SwarmWorkflowAction) => {
-    if (!flow || busy || stale || !actions[action]) return;
-    setBusy(true);
-    setError(false);
-    try {
-      const result = await window.electron.cowork.controlSwarmWorkflow(
-        sessionId,
-        flow.id,
-        flow.revision,
-        action,
-      );
-      setError(!result.success);
-    } catch {
-      setError(true);
-    } finally {
-      setBusy(false);
-      refreshFlows();
-    }
-  };
   const button = (label: string, Icon: typeof PauseIcon, action: () => void, disabled = false) => (
     <button
       type="button"
@@ -288,10 +154,7 @@ export default function SwarmWorkflowPanel({
               className="inline-flex h-7 max-w-56 shrink-0 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-[13px] font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary aria-pressed:border-border-input aria-pressed:bg-primary-muted aria-pressed:text-primary"
               aria-pressed={flow?.id === item.id}
               onClick={() => {
-                setChosen(item.id);
-                resetViewport();
-                setSelected(undefined);
-                setSelectedEdge(undefined);
+                selectFlow(item.id);
               }}
             >
               <ShareIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />

@@ -10,10 +10,8 @@ import {
 import {
   SWARM_WORKFLOW_INTERVENTION_LIMITS,
   type SwarmWorkflowDetail,
-  type SwarmWorkflowIntervention,
-  type SwarmWorkflowInterventionAction,
   type SwarmWorkflowInterventionNote,
-} from '@shared/cowork/swarmWorkflow';
+} from '@shared/cowork/swarm-workflow';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
@@ -22,8 +20,7 @@ import { UserMessageContent } from '../chat/UserMessageContent';
 import ComposerFeatureMenu, { type ComposerFeatureItem } from '../composer/ComposerFeatureMenu';
 import { COMPOSER_SURFACE_CLASS, COMPOSER_TEXTAREA_CLASS } from '../composer/composerStyles';
 import { RunControlButton } from '../composer/RunControlButton';
-
-const EMPTY_NOTES: SwarmWorkflowInterventionNote[] = [];
+import { useSwarmWorkflowInterventionState } from './workflowBrowserState';
 
 function InterventionMessage({
   note,
@@ -71,15 +68,16 @@ export default function SwarmWorkflowNodeIntervention({
 }) {
   const t = (key: string) => i18nService.t(key);
   const [expanded, setExpanded] = useState(false);
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const [acceptedAction, setAcceptedAction] = useState<SwarmWorkflowInterventionAction>();
+  const { text, setText, busy, failed, acceptedAction, setAcceptedAction, notes, send } =
+    useSwarmWorkflowInterventionState({
+      sessionId,
+      detail,
+      disabled,
+      onChanged,
+    });
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const notesRef = useRef<HTMLUListElement>(null);
   const hintId = useId();
-  const pending = useRef<SwarmWorkflowIntervention>();
-  const notes = detail.interventions ?? EMPTY_NOTES;
   useEffect(() => {
     if (detail.canContinue) setExpanded(true);
   }, [detail.canContinue]);
@@ -92,58 +90,6 @@ export default function SwarmWorkflowNodeIntervention({
   useEffect(() => {
     if (notesRef.current) notesRef.current.scrollTop = notesRef.current.scrollHeight;
   }, [notes.length, expanded]);
-  useEffect(() => {
-    // A response can be lost after acceptance. Reconcile using the persisted ID.
-    if (pending.current && notes.some(note => note.id === pending.current?.id)) {
-      if (text.trim() === pending.current.text) setText('');
-      setAcceptedAction(pending.current.action);
-      pending.current = undefined;
-      setFailed(false);
-    }
-  }, [notes, text]);
-  const send = async (action: SwarmWorkflowInterventionAction) => {
-    if (
-      busy ||
-      disabled ||
-      !detail.revision ||
-      (action === 'note' && !detail.canNote) ||
-      (action === 'continue' && !detail.canContinue) ||
-      (action === 'retry' && !detail.canRetry) ||
-      (action !== 'retry' && !text.trim())
-    )
-      return;
-    const body = text.trim();
-    const request =
-      pending.current?.action === action && pending.current.text === body
-        ? pending.current
-        : { id: crypto.randomUUID(), action, text: body };
-    pending.current = request;
-    setBusy(true);
-    setFailed(false);
-    setAcceptedAction(undefined);
-    try {
-      const result = await window.electron.cowork.interveneSwarmWorkflow(
-        sessionId,
-        detail.flowId,
-        detail.nodeId,
-        detail.revision,
-        request,
-      );
-      // Polling may have confirmed persistence before this reply arrives.
-      if (!result.success) {
-        if (pending.current?.id === request.id) setFailed(true);
-      } else {
-        setText('');
-        pending.current = undefined;
-        setAcceptedAction(action);
-      }
-    } catch {
-      if (pending.current?.id === request.id) setFailed(true);
-    } finally {
-      setBusy(false);
-      onChanged();
-    }
-  };
   if (!detail.canNote && !notes.length && !failed) return null;
   const moreActions: ComposerFeatureItem[] = [];
   if (detail.canContinue)
@@ -187,11 +133,17 @@ export default function SwarmWorkflowNodeIntervention({
             <span
               id={hintId}
               title={t(
-                detail.canContinue ? 'swarmWorkflowInterventionContinueHint' : 'swarmWorkflowInterventionNoteHint',
+                detail.canContinue
+                  ? 'swarmWorkflowInterventionContinueHint'
+                  : 'swarmWorkflowInterventionNoteHint',
               )}
               className="min-w-0 flex-1 truncate text-left text-[11px] font-normal text-muted"
             >
-              {t(detail.canContinue ? 'swarmWorkflowInterventionContinueHint' : 'swarmWorkflowInterventionNoteHint')}
+              {t(
+                detail.canContinue
+                  ? 'swarmWorkflowInterventionContinueHint'
+                  : 'swarmWorkflowInterventionNoteHint',
+              )}
             </span>
           )}
           <ChevronDownIcon
@@ -262,7 +214,9 @@ export default function SwarmWorkflowNodeIntervention({
                   canSubmit={!disabled && !busy && !!text.trim() && !!detail.revision}
                   size="normal"
                   sendLabel={t(
-                    detail.canContinue ? 'swarmWorkflowInterventionContinue' : 'swarmWorkflowInterventionSave',
+                    detail.canContinue
+                      ? 'swarmWorkflowInterventionContinue'
+                      : 'swarmWorkflowInterventionSave',
                   )}
                   sendText={t(
                     detail.canContinue
@@ -270,8 +224,11 @@ export default function SwarmWorkflowNodeIntervention({
                       : 'swarmWorkflowInterventionSendNote',
                   )}
                   sendTitle={
-                    t(detail.canContinue ? 'swarmWorkflowInterventionContinue' : 'swarmWorkflowInterventionSave') +
-                    ' · Ctrl/⌘ + Enter'
+                    t(
+                      detail.canContinue
+                        ? 'swarmWorkflowInterventionContinue'
+                        : 'swarmWorkflowInterventionSave',
+                    ) + ' · Ctrl/⌘ + Enter'
                   }
                   onSend={() => void send(detail.canContinue ? 'continue' : 'note')}
                 />

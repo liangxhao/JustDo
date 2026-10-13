@@ -19,7 +19,7 @@ import {
   parseGoalStartObjective,
   shouldClearSlashCommandComposerBeforeExecution,
 } from '@shared/cowork/slashCommands';
-import type { SwarmWorkflowOptions } from '@shared/cowork/swarmWorkflow';
+import type { SwarmWorkflowOptions } from '@shared/cowork/swarm-workflow';
 import type { OpenClawModelChoice } from '@shared/openclaw/models';
 import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 import { isLocalAudioAttachment } from '@shared/speech/localAsr';
@@ -128,6 +128,7 @@ import Modal from '@/shared/components/ui/Modal';
 import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 import { type RootState, store } from '@/store';
 
+import { prepareWorkflowComposerSubmission } from '../../../../../../openclaw-extensions/swarm-workflow/browser/composer';
 import { buildAgentTeamFeature } from './AgentTeamSelector';
 import {
   type AgentTeamMode,
@@ -415,48 +416,31 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         if (!submit) return false;
         let instruction: string | undefined;
         if (swarmWorkflowOptions) {
-          if (!isCurrentSwarmWorkflow(draftKey, swarmWorkflowOptions)) return false;
-          if (planModeEnabled || prompt.trimStart().startsWith('/')) {
-            window.dispatchEvent(
-              new CustomEvent('app:showToast', {
-                detail: i18nService.t(
-                  planModeEnabled ? 'swarmWorkflowPlan' : 'swarmWorkflowInvalid',
-                ),
-              }),
-            );
-            return false;
-          }
-          try {
-            const prepared = await window.electron.cowork.prepareSwarmWorkflow(
-              swarmWorkflowOptions,
-              sessionId,
-            );
-            if (!prepared.success) {
-              const key = {
-                disabled: 'swarmWorkflowDisabled',
-                plan: 'swarmWorkflowPlan',
-                invalid: 'swarmWorkflowInvalid',
-                unavailable: 'swarmWorkflowPrepareUnavailable',
-              }[prepared.reason];
+          const prepared = await prepareWorkflowComposerSubmission({
+            options: swarmWorkflowOptions,
+            sessionId,
+            prompt,
+            planModeEnabled,
+            isSelectionCurrent: () => isCurrentSwarmWorkflow(draftKey, swarmWorkflowOptions),
+            isDraftCurrent: () => currentDraftKeyRef.current === draftKey,
+            prepare: (options, id) => window.electron.cowork.prepareSwarmWorkflow(options, id),
+          });
+          if (!prepared.success) {
+            if (prepared.messageKey)
               window.dispatchEvent(
-                new CustomEvent('app:showToast', { detail: i18nService.t(key) }),
+                new CustomEvent('app:showToast', {
+                  detail: i18nService.t(prepared.messageKey),
+                }),
               );
-              return false;
-            }
-            instruction = prepared.instruction;
-          } catch {
-            window.dispatchEvent(
-              new CustomEvent('app:showToast', {
-                detail: i18nService.t('swarmWorkflowPrepareUnavailable'),
-              }),
-            );
             return false;
           }
+          // The draft can retire between the helper resolving and this continuation.
           if (
             currentDraftKeyRef.current !== draftKey ||
             !isCurrentSwarmWorkflow(draftKey, swarmWorkflowOptions)
           )
             return false;
+          instruction = prepared.instruction;
         }
         const submittedQuotes = [...submittedMessageQuotes(prompt, messageQuotes, isSideChat)];
         const label = i18nService.t('messageQuoteContext');

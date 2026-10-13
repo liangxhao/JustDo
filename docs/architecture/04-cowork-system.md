@@ -179,6 +179,8 @@ Main 从 `ipc/cowork/sessionExecution.ts`、`sessions.ts`、`sessionRuntime.ts`�
 
 Cowork 界面保持单层领域结构：`display` 组合标签、选择和会话面板状态，`preview` 渲染文件并浏览工作区，`terminal` 承载 Gateway 终端，`review` 展示工作区差异，`approvals` 处理执行与计划审核。`subagents` 展示原生子任务和 collector 分组；独立插件的工作流图、节点历史及介入界面归 `swarm-workflow`。跨领域的文件图标、文档样式、图形样式和连接辅助归 `shared`；这些公共模块不持有新的运行或 transcript 状态。
 
+Swarm Workflow 的产品会话协调、返回值验证和助手名单投影归插件 `host/`，通过 live ports 读取 Main 的真实会话、运行时和助手资源。Main `cowork/swarm-workflow/` 是薄门面，`ipc/cowork/swarm-workflow/` 只绑定 Electron。API 归插件 contracts，shared 门面仅追加 Electron 通道名；浏览器图形、选择、轮询、批次/详情/介入与输入框准入逻辑归插件 `browser/`，Renderer 负责 preload ports、共享聊天和 UI/Tab。禁用后隐藏 Workflow 入口、退休 Tab 并停止读取，快速关开和迟到响应受 disable revision 约束；重新启用从原有 DAG 读取，不推断停止服务等于原生取消。DAG、批次状态、运行生命周期和未调用 launch 的证明由可选 Workflow 插件持有，通用原生 SDK 契约和文件系统准入由 Runtime Services 提供，原生子任务入口独立。
+
 回归应覆盖准入前取消、重复 clientTurn、原生先完成后响应、停止失败、会话切换迟到事件、Plan reset、Goal fence、协作删除部分成功和历史恢复。对应 handler、Store、Adapter 与 controller 都有领域测试；一次正常发送不能替代这些边界验证。
 
 ## Agent Team 的群组讨论

@@ -2,9 +2,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FlowStore } from '../../../openclaw-extensions/swarm-workflow/store';
-import type { Flow, FlowNode } from '../../../openclaw-extensions/swarm-workflow/contract';
-import { RESULT_TRANSPORT_BYTES, resultTransportCost } from '../../../openclaw-extensions/swarm-workflow/batch-contract';
+import { FlowStore } from '../../../openclaw-extensions/swarm-workflow/data/store';
+import type { Flow, FlowNode } from '../../../openclaw-extensions/swarm-workflow/contracts/flow';
+import { RESULT_TRANSPORT_BYTES, resultTransportCost } from '../../../openclaw-extensions/swarm-workflow/contracts/batch';
 
 const cleanups: Array<() => void> = [];
 afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()));

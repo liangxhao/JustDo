@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { SwarmWorkflowView } from '@shared/cowork/swarmWorkflow';
+import type { SwarmWorkflowView } from '@shared/cowork/swarm-workflow';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
@@ -227,12 +227,7 @@ test('reveals the selected workflow subtab when the panel becomes narrower', asy
   );
   const old = { ...flow, id: 'old', goal: 'Older flow' };
   render(
-    <SwarmWorkflowPanel
-      sessionId="product"
-      tasks={[]}
-      onOpenTask={() => {}}
-      snapshot={{ success: true, flows: [flow, old] }}
-    />,
+    <SwarmWorkflowPanel sessionId="product" snapshot={{ success: true, flows: [flow, old] }} />,
   );
   const tabs = await screen.findByRole('navigation', { name: 'Task flows' });
   const olderTab = screen.getByRole('button', { name: old.goal });
@@ -294,12 +289,7 @@ test.each([
       ),
     };
     render(
-      <SwarmWorkflowPanel
-        sessionId="product"
-        tasks={[]}
-        onOpenTask={() => {}}
-        snapshot={{ success: true, flows: [flow, other] }}
-      />,
+      <SwarmWorkflowPanel sessionId="product" snapshot={{ success: true, flows: [flow, other] }} />,
     );
     fireEvent.click(await screen.findByRole('button', { name: entry }));
     expect(screen.getByText(detail)).toBeTruthy();
@@ -351,8 +341,6 @@ test('keeps workflow subtabs available in batch item details and returns to the 
   render(
     <SwarmWorkflowPanel
       sessionId="product"
-      tasks={[]}
-      onOpenTask={() => {}}
       snapshot={{ success: true, flows: [batchFlow, other] }}
     />,
   );
@@ -376,12 +364,7 @@ test('shows assigned agents and uses Team-style line weights while keeping strai
     ),
   };
   const { container } = render(
-    <SwarmWorkflowPanel
-      sessionId="product"
-      tasks={[]}
-      onOpenTask={() => {}}
-      snapshot={{ success: true, flows: [assigned] }}
-    />,
+    <SwarmWorkflowPanel sessionId="product" snapshot={{ success: true, flows: [assigned] }} />,
   );
   await screen.findByText('@ReviewBot');
   const edges = container.querySelectorAll('path[marker-end]');
@@ -395,7 +378,7 @@ test('shows assigned agents and uses Team-style line weights while keeping strai
 });
 test('shows stages and sends revision-bound controls without rewriting native state', async () => {
   const f = fixture();
-  render(<SwarmWorkflowPanel sessionId="product" tasks={[]} onOpenTask={() => {}} />);
+  render(<SwarmWorkflowPanel sessionId="product" />);
   await screen.findByRole('button', { name: 'Security review: Running' });
   fireEvent.click(screen.getByRole('button', { name: 'Pause new task dispatch' }));
   await waitFor(() => expect(f.control).toHaveBeenCalledWith('product', 'flow', 8, 'pause'));
@@ -407,7 +390,7 @@ test('shows stages and sends revision-bound controls without rewriting native st
 });
 test('keeps prior graph on disconnect and prevents controls on a stale snapshot', async () => {
   const f = fixture();
-  render(<SwarmWorkflowPanel sessionId="product" tasks={[]} onOpenTask={() => {}} />);
+  render(<SwarmWorkflowPanel sessionId="product" />);
   await screen.findByRole('button', { name: 'Security review: Running' });
   f.read.mockResolvedValue({ success: false });
   fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
@@ -419,9 +402,7 @@ test('keeps prior graph on disconnect and prevents controls on a stale snapshot'
 });
 test('does not poll while the tab is hidden', async () => {
   const f = fixture();
-  render(
-    <SwarmWorkflowPanel sessionId="product" active={false} tasks={[]} onOpenTask={() => {}} />,
-  );
+  render(<SwarmWorkflowPanel sessionId="product" active={false} />);
   await act(async () => {});
   expect(f.read).not.toHaveBeenCalled();
 });
@@ -432,8 +413,6 @@ test('uses the workspace snapshot without duplicate polling and refreshes it aft
   render(
     <SwarmWorkflowPanel
       sessionId="product"
-      tasks={[]}
-      onOpenTask={() => {}}
       snapshot={{ success: true, flows: [flow] }}
       onRefresh={refresh}
     />,
@@ -447,7 +426,7 @@ test('uses the workspace snapshot without duplicate polling and refreshes it aft
 
 test('opens the selected edge and returns to graph for node history', async () => {
   fixture();
-  render(<SwarmWorkflowPanel sessionId="product" tasks={[]} onOpenTask={() => {}} />);
+  render(<SwarmWorkflowPanel sessionId="product" />);
   const edge = await screen.findByRole('button', {
     name: 'Task message sent downstream: Plan → Security review',
   });
@@ -494,8 +473,6 @@ test('disables pause and stop during confirmed final delivery according to the s
   render(
     <SwarmWorkflowPanel
       sessionId="product"
-      tasks={[]}
-      onOpenTask={() => {}}
       snapshot={{
         success: true,
         flows: [{ ...flow, actions: { pause: false, resume: false, stop: false, retry: false } }],
@@ -516,8 +493,6 @@ test('allows stopping an unknown final delivery once the service marks it blocke
   render(
     <SwarmWorkflowPanel
       sessionId="product"
-      tasks={[]}
-      onOpenTask={() => {}}
       snapshot={{
         success: true,
         flows: [

@@ -138,7 +138,7 @@ import {
   type SwarmWorkflowIntervention,
   SwarmWorkflowIpc,
   type SwarmWorkflowOptions,
-} from '../shared/cowork/swarmWorkflow';
+} from '../shared/cowork/swarm-workflow';
 import {
   type WorkspaceWindowControl,
   WorkspaceWindowIpc,
@@ -1024,7 +1024,7 @@ contextBridge.exposeInMainWorld('electron', {
       sessionId: string,
       flowId: string,
       stageId: string,
-      options: import('../shared/cowork/swarmWorkflow').SwarmWorkflowBatchOptions,
+      options: import('../shared/cowork/swarm-workflow').SwarmWorkflowBatchOptions,
     ) => ipcRenderer.invoke(SwarmWorkflowIpc.Batch, sessionId, flowId, stageId, options),
     retrySwarmWorkflowBatch: (
       sessionId: string,

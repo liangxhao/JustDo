@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
-import type { Flow, FlowNode } from '../../../openclaw-extensions/swarm-workflow/contract';
-import { resultPage } from '../../../openclaw-extensions/swarm-workflow/result-page';
-import { RESULT_TRANSPORT_BYTES, resultTransportBudget, resultTransportCost } from '../../../openclaw-extensions/swarm-workflow/batch-contract';
+import type { Flow, FlowNode } from '../../../openclaw-extensions/swarm-workflow/contracts/flow';
+import { resultPage } from '../../../openclaw-extensions/swarm-workflow/batch/result-page';
+import { RESULT_TRANSPORT_BYTES, resultTransportBudget, resultTransportCost } from '../../../openclaw-extensions/swarm-workflow/contracts/batch';
 const result = JSON.stringify({ summary: 'Detailed findings', evidence: Array(16).fill('真实产物😀'.repeat(400)) });
 const source = { id: 'work', kind: 'work', status: 'done', result, runId: 'exact-run', attempt: 1 } as FlowNode;
 const reader = { id: 'verify', kind: 'verify', deps: ['work'] } as FlowNode;

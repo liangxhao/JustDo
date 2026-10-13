@@ -8,17 +8,12 @@ import {
   ExclamationCircleIcon,
   MagnifyingGlassIcon,
 } from '@heroicons/react/24/outline';
-import type {
-  SwarmWorkflowBatchItem,
-  SwarmWorkflowBatchPage,
-  SwarmWorkflowNode,
-  SwarmWorkflowView,
-} from '@shared/cowork/swarmWorkflow';
-import { useEffect, useRef, useState } from 'react';
+import type { SwarmWorkflowNode, SwarmWorkflowView } from '@shared/cowork/swarm-workflow';
 
 import { i18nService } from '@/services/i18n';
 
 import SwarmWorkflowDetailPanel from './SwarmWorkflowDetailPanel';
+import { useSwarmWorkflowBatchState } from './workflowBrowserState';
 
 const statusIcon = (status: SwarmWorkflowNode['status']) =>
   status === 'done'
@@ -45,93 +40,35 @@ export default function SwarmWorkflowBatchPanel({
   onChanged(): void;
 }) {
   const t = (key: string) => i18nService.t(key);
-  const [page, setPage] = useState<SwarmWorkflowBatchPage>();
-  const [filter, setFilter] = useState('');
-  const [search, setSearch] = useState('');
-  const [cursors, setCursors] = useState<Array<string | undefined>>([undefined]);
-  const [selected, setSelected] = useState<SwarmWorkflowBatchItem>();
-  const [checked, setChecked] = useState<string[]>([]);
-  const [revision, refresh] = useState(0);
-  const [error, setError] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [receipt, setReceipt] = useState<{
-    retried: number;
-    skipped: number;
-    reasons?: string[];
-  }>();
-  const sequence = useRef(0);
-  const cursor = cursors[cursors.length - 1];
-  const ready = Boolean(stage.batchCounts);
-  useEffect(() => {
-    if (!active || !ready) return;
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const load = async () => {
-      const request = ++sequence.current;
-      setLoading(true);
-      try {
-        const result = await window.electron.cowork.getSwarmWorkflowBatch(sessionId, flow.id, stage.id, {
-          search,
-          status: filter ? (filter as SwarmWorkflowNode['status']) : undefined,
-          cursor,
-        });
-        if (disposed || request !== sequence.current) return;
-        if (result.success) {
-          setPage(result.page);
-          setError(false);
-        } else {
-          setError(true);
-        }
-      } catch {
-        if (!disposed) setError(true);
-      }
-      if (!disposed && request === sequence.current) setLoading(false);
-      if (!disposed && !cursor) timer = setTimeout(load, 3000);
-    };
-    timer = setTimeout(() => void load(), 200);
-    return () => {
-      disposed = true;
-      clearTimeout(timer);
-    };
-  }, [sessionId, flow.id, stage.id, ready, active, cursor, filter, search, revision]);
-  const reset = () => {
-    setLoading(true);
-    setPage(undefined);
-    setCursors([undefined]);
-    setChecked([]);
-    refresh(n => n + 1);
-    onChanged();
-  };
-  const retry = async () => {
-    if (!page || busy) return;
-    setBusy(true);
-    setError(false);
-    setReceipt(undefined);
-    try {
-      const result = await window.electron.cowork.retrySwarmWorkflowBatch(
-        sessionId,
-        flow.id,
-        stage.id,
-        page.revision,
-        crypto.randomUUID(),
-        checked.length ? checked : undefined,
-      );
-      if (result.success)
-        setReceipt({
-          retried: result.retried ?? 0,
-          skipped: result.skipped ?? 0,
-          reasons: result.reasons,
-        });
-      else setError(true);
-    } catch {
-      setError(true);
-    } finally {
-      setBusy(false);
-      reset();
-    }
-  };
-  const counts = page?.counts ?? stage.batchCounts;
+  const {
+    page,
+    filter,
+    setFilter,
+    search,
+    setSearch,
+    cursors,
+    setCursors,
+    selected,
+    setSelected,
+    checked,
+    setChecked,
+    error,
+    busy,
+    loading,
+    receipt,
+    retry,
+    counts,
+    ready,
+    reset,
+    setLoading,
+    setPage,
+  } = useSwarmWorkflowBatchState({
+    sessionId,
+    flow,
+    stage,
+    active,
+    onChanged,
+  });
   return (
     <>
       <div className={selected ? 'hidden' : 'flex h-full min-h-0 flex-col'}>
@@ -226,7 +163,8 @@ export default function SwarmWorkflowBatchPanel({
             className="px-3 pb-2 text-xs text-secondary"
             title={receipt.reasons?.join('\n')}
           >
-            {t('swarmWorkflowBatchRetried')} {receipt.retried} · {t('swarmWorkflowBatchSkipped')} {receipt.skipped}
+            {t('swarmWorkflowBatchRetried')} {receipt.retried} · {t('swarmWorkflowBatchSkipped')}{' '}
+            {receipt.skipped}
           </p>
         )}
         <div className="min-h-0 flex-1 overflow-auto px-2">
@@ -290,7 +228,9 @@ export default function SwarmWorkflowBatchPanel({
                       )}
                     </span>
                   )}
-                  <span className="text-[10px] text-muted">{t('swarmWorkflowNode_' + item.status)}</span>
+                  <span className="text-[10px] text-muted">
+                    {t('swarmWorkflowNode_' + item.status)}
+                  </span>
                   <ChevronRightIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
                 </button>
               </div>
@@ -307,7 +247,11 @@ export default function SwarmWorkflowBatchPanel({
                 className="flex items-center gap-1.5 rounded-lg bg-primary-muted px-2.5 py-1.5 text-xs text-primary disabled:opacity-40"
               >
                 <ArrowPathIcon className="h-3.5 w-3.5" />
-                {t(checked.length ? 'swarmWorkflowBatchRetrySelected' : 'swarmWorkflowBatchRetryFailed')}
+                {t(
+                  checked.length
+                    ? 'swarmWorkflowBatchRetrySelected'
+                    : 'swarmWorkflowBatchRetryFailed',
+                )}
                 {checked.length ? ` (${checked.length})` : ''}
               </button>
             )}

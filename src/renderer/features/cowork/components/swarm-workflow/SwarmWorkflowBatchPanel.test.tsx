@@ -1,5 +1,9 @@
 // @vitest-environment jsdom
-import type { SwarmWorkflowBatchPage, SwarmWorkflowNode, SwarmWorkflowView } from '@shared/cowork/swarmWorkflow';
+import type {
+  SwarmWorkflowBatchPage,
+  SwarmWorkflowNode,
+  SwarmWorkflowView,
+} from '@shared/cowork/swarm-workflow';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 

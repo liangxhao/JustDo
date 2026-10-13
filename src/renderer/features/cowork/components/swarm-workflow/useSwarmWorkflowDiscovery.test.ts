@@ -24,6 +24,54 @@ const tick = () =>
     await vi.advanceTimersByTimeAsync(2500);
   });
 
+test('clears the projection and stops polling after disable, then reads retained flows on enable', async () => {
+  const { read, open } = fixture();
+  read.mockResolvedValue({ success: true, flows: [flow('retained', 'completed')] });
+  const hook = renderHook(
+    ({ enabled, disabledRevision }) =>
+      useSwarmWorkflowDiscovery('chat', open, { enabled, disabledRevision }),
+    {
+      initialProps: { enabled: true, disabledRevision: 0 },
+    },
+  );
+  await tick();
+  expect(hook.result.current.count).toBe(1);
+  hook.rerender({ enabled: false, disabledRevision: 1 });
+  expect(hook.result.current.count).toBe(0);
+  expect(hook.result.current.hasFlows).toBe(false);
+  expect(hook.result.current.running).toBe(false);
+  const calls = read.mock.calls.length;
+  await tick();
+  expect(read).toHaveBeenCalledTimes(calls);
+  hook.rerender({ enabled: true, disabledRevision: 1 });
+  await tick();
+  expect(hook.result.current.count).toBe(1);
+  expect(open).not.toHaveBeenCalled();
+});
+
+test('retire old responses and snapshots across a rapid disable-enable revision', async () => {
+  const { read, open } = fixture();
+  let resolve!: (result: unknown) => void;
+  read.mockImplementationOnce(
+    () =>
+      new Promise(done => {
+        resolve = done;
+      }),
+  );
+  const hook = renderHook(
+    ({ disabledRevision }) =>
+      useSwarmWorkflowDiscovery('chat', open, { enabled: true, disabledRevision }),
+    {
+      initialProps: { disabledRevision: 0 },
+    },
+  );
+  hook.rerender({ disabledRevision: 1 });
+  await act(async () => resolve({ success: true, flows: [flow('retired')] }));
+  expect(hook.result.current.count).toBe(0);
+  expect(hook.result.current.hasFlows).toBe(false);
+  expect(open).not.toHaveBeenCalled();
+});
+
 test('opens only after a flow exists and does not reopen the same flow after the Tab is closed', async () => {
   const { read, open } = fixture();
   const hook = renderHook(() => useSwarmWorkflowDiscovery('chat', open));

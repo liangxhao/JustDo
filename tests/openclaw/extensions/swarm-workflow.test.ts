@@ -4,9 +4,9 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { FlowEngine, type FlowHost } from '../../../openclaw-extensions/swarm-workflow/engine';
-import { parseJson, PlanFormatError, validatePlan, validateStageAssignments, verdict } from '../../../openclaw-extensions/swarm-workflow/plan';
-import { FlowStore } from '../../../openclaw-extensions/swarm-workflow/store';
+import { FlowEngine, type FlowHost } from '../../../openclaw-extensions/swarm-workflow/execution/engine';
+import { parseJson, PlanFormatError, validatePlan, validateStageAssignments, verdict } from '../../../openclaw-extensions/swarm-workflow/execution/plan';
+import { FlowStore } from '../../../openclaw-extensions/swarm-workflow/data/store';
 const cleanups: Array<() => void> = [];
 afterEach(() => {
   for (const clean of cleanups.splice(0)) clean();

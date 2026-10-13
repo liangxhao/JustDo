@@ -489,6 +489,28 @@ Do not duplicate transcripts or retry uncertain launches. No Workboard/agent-tea
 dependency; Workboard defaults off, preserving explicit user choices for both plugins.
 Batch snapshots and attempts use the parent project's `.agent-tasks/swarm-workflow/`;
 do not add compatibility or migration for the old Swarm directory layout.
+Workflow protocol and validators belong to its `contracts/`, request/launch prompts to
+`prompt/`, DAG execution and submission to `execution/`, snapshots and item results to
+`batch/`, persistence to `data/`, and chat management/notices to `management/`.
+`service/` composes native lifecycle, Gateway, hooks and tools through one live context;
+`index.ts` only registers these domains. Generic managed-subagent and filesystem
+admission capabilities belong to Runtime Services `execution/`, `filesystem/` and
+`contracts/`. Neither plugin imports application src; Runtime Services does not depend
+on the optional Workflow implementation. Workflow-specific preflight launch proof belongs
+in `execution/launch-admission.ts`, preserving one class identity for the engine and lifecycle.
+Product-session coordination and managed roster projection belong to plugin `host/`,
+using live structural `host/ports.ts`; Main `cowork/swarm-workflow/` is a stable thin facade.
+API contracts belong to plugin `contracts/api.ts`; `shared/cowork/swarm-workflow/` reuses
+pure contracts/prompts and only owns Electron channel names. Browser discovery, graph,
+selection, batch/detail/intervention state, composer admission and translations belong to
+plugin `browser/`, using injected preload and operation-ID ports. React presentation,
+shared chat rendering, tab wiring and product goal-status translation stay in Renderer.
+Never import `host/` or `browser/` from native plugin registration, or browser code from
+shared contract facades. Disable revisions retire Workflow tabs and projections, stop
+polling and reject old responses; re-enabling reads retained flow metadata without
+replaying uncertain native launches. Electron handlers stay in `ipc/cowork/swarm-workflow/`.
+Native collector/subtask handlers remain separate. Bundle Workflow from repository
+sources during resource sync so sibling Runtime Services imports survive packaging.
 See `docs/features/workflow/swarm-workflow.md`.
 
 Local audio attachment transcription is the `openclaw-extensions/stt-local-cli`

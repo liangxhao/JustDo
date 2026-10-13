@@ -6,7 +6,7 @@ import {
 import { stripAgentTeamInstruction } from '@shared/cowork/agent-team/agentTeamPrompt';
 import type { CoworkAttachmentPayload } from '@shared/cowork/attachments';
 import { stripSwarmInstruction } from '@shared/cowork/swarm';
-import { stripSwarmWorkflowInstruction } from '@shared/cowork/swarmWorkflow';
+import { stripSwarmWorkflowInstruction } from '@shared/cowork/swarm-workflow';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 
 import { splitMediaFromOutput } from '@/libs/openclaw-chat/shims/backend-helpers';
