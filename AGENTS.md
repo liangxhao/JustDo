@@ -259,8 +259,10 @@ See `docs/architecture/10-data-storage.md`.
   Agent identity/settings, model identity, external-agent integration, permissions,
   prompt rules and plugin management belong to their corresponding shared domains.
   Cowork interactions and diagnostics live in `shared/cowork/interactions/` and
-  `shared/cowork/diagnostics/`; Agent Team contracts live in `shared/cowork/agent-team/`.
-  Plugin/tool IDs live in `shared/plugins/nativeIds.ts`.
+  `shared/cowork/diagnostics/`; Agent Team application contract entry points live in
+  `shared/cowork/agent-team/`, reusing browser-safe plugin contracts and prompts.
+  Plugin/tool IDs and managed session-key protocol live in Runtime Services pure
+  `contracts/`; `shared/plugins/nativeIds.ts` and `shared/cowork/sessionKey.ts` are application facades.
 - JustDo owns UX, persistence, permissions, packaging, app shell, and product flows.
 - OpenClaw owns agent execution, Gateway capabilities, tool semantics, and skill runtime behavior.
 - `openclawSkillService.ts` talks to Gateway skill APIs.
@@ -450,14 +452,34 @@ See `docs/features/chat/interactive-answers.md` for the current feature contract
 Persistent peer collaboration is the optional `openclaw-extensions/agent-team`
 extension, disabled by default and user-toggleable. Keep its tools, native-send
 hooks and skill together; do not inject a roster or collaboration instructions
-on every turn. Runtime Services owns receipt history reads and blocks managed
-peer sends when the extension is disabled. Config sync must preserve the user's
+on every turn. The optional extension owns collaboration message and public discussion
+history RPCs. Runtime Services blocks managed peer sends after disable and retains
+receipt reconciliation and cleanup. Config sync must preserve the user's
 explicit extension state.
-Agent Team Main handlers and metadata stores live in `ipc/cowork/agent-team/`
-and `data/agent-team/`. The optional extension composes `collaboration/` and
-`discussion/`; required history, holding custody, receipt ledgers and launch
-protection live in `runtime-services/agent-team/`. Required Runtime Services must
-not import the optional Agent Team implementation to remain operational when disabled.
+Agent Team owns Main coordination, queue, user attachment staging and metadata/settings
+implementations in `openclaw-extensions/agent-team/host/{collaboration,discussion,launch,data}/`.
+Main `cowork/agent-team/` and `data/agent-team/` retain stable thin facades;
+`ipc/cowork/agent-team/` only wires Electron requests/events and the unique coordinator instances.
+Typed `host/ports.ts` exposes live host resources without importing application implementation.
+Main supplies the original SQLite connection, session/agent access and runtime methods;
+preserve same-database transactions and cleanup/reconciliation after optional disable.
+The optional native extension owns `contracts/`, `prompt/`, `collaboration/` and `discussion/`.
+Renderer draft state, continuation evidence, queue eligibility, mention parsing and export formatting
+belong to plugin `browser/`; application UI/preload/Redux wiring remains in Renderer.
+Never import `host/` or `browser/` from the native plugin registration entry.
+Required send protection, holding custody, receipt ledgers, offline control and
+launch protection live in
+`runtime-services/agent-team/{collaboration,discussion,launch}/`; its `contracts/`
+owns shared native identities and inert-input protocol. Generic permissions and
+FIFO permits belong to Runtime Services `contracts/` and `concurrency/`.
+Neither plugin imports application src; required Runtime Services must not import
+the optional Agent Team implementation. Application shared facades only import
+pure plugin contracts/prompts, never plugin registration or native SDK modules.
+Browser implementation entry points are separate from shared facades and never import Main.
+Disabled Agent Team hides application history, team navigation and resource-setting
+entrances and closes open history/settings dialogs. Team history RPCs are unavailable
+while disabled; retain native transcripts and required cleanup services. Re-enabling
+restores history reads and entrances from retained metadata.
 
 Swarm Workflow is the independent `openclaw-extensions/swarm-workflow` plugin, with a
 per-submit composer option and a dependency graph Tab. Its Gateway service owns
@@ -481,9 +503,9 @@ Agent Team also provides optional local group discussions through the public
 Discussion metadata lives in `team_discussion_rooms`, `team_discussion_runs`,
 `team_discussion_executions`, `team_discussion_task_links`, and
 `team_discussion_deleted_rooms`; never persist message bodies there.
-Runtime Services owns native public discussion history reads when Agent Team is
-disabled. Native execution receipts contain identities and status only. The
-Renderer keeps a mounted timeline projection, not a Redux transcript cache.
+Agent Team owns native public discussion history reads; Runtime Services retains
+offline status/stop/close after disable. Native execution receipts contain identities
+and status only. The Renderer keeps a mounted timeline projection, not a Redux transcript cache.
 Group discussions default to native read-only permissions; task Plan approval
 state is not carried across modes. Product extensions marked `justdo.bundle`
 are bundled during resource sync so shared product contracts are packaged.

@@ -9,10 +9,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 
-import {
-  isTeamDiscussionId,
-  type TeamDiscussionHoldingIdentity,
-} from '../../../src/shared/cowork/agent-team/teamDiscussion';
+import { isTeamDiscussionId, type TeamDiscussionHoldingIdentity } from '../contracts/discussion';
 
 export interface HoldingReceipt {
   roomId: string;

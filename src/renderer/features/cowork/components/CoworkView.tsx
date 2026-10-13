@@ -40,7 +40,7 @@ import { REVIEW_OPEN_EVENT, REVIEW_TAB_ID } from '@shared/cowork/sessionReview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { isGoalEditCommand } from '@shared/cowork/slashCommands';
 import { type ProgressCard, type ProgressCardViewState } from '@shared/openclaw/progressCard';
-import { OpenClawToolName } from '@shared/plugins/nativeIds';
+import { OpenClawExtensionId, OpenClawToolName } from '@shared/plugins/nativeIds';
 import {
   forwardRef,
   useCallback,
@@ -172,6 +172,7 @@ import {
   createSessionExportDocument,
 } from '@/features/cowork/sessionExport';
 import { type CoworkSessionListActionDetail } from '@/features/cowork/sessionListActions';
+import { useExtensionAvailability } from '@/features/plugins/extensions/useExtensionEnablement';
 import { clearActiveSkills } from '@/features/plugins/skills/skillSlice';
 import type { SettingsOpenOptions } from '@/features/settings/Settings';
 import type {
@@ -329,6 +330,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const dispatch = useDispatch();
   const currentSession = useSelector(selectCurrentSession);
   const currentSessionId = currentSession?.id ?? null;
+  const { enabled: agentTeamEnabled, disabledRevision: agentTeamDisabledRevision } =
+    useExtensionAvailability(OpenClawExtensionId.AGENT_TEAM);
   const [isWorkspaceDetached, setIsWorkspaceDetached] = useState(false);
   const [teamPanelSelection, setTeamPanelSelection] = useState<{ key?: string; version: number }>({
     version: 0,
@@ -341,6 +344,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const collaborationRooms = useCollaborationRooms({
     activeSessionId: currentSessionId,
     onFirstCollaboration: sessionId => {
+      if (!agentTeamEnabled) return;
       selectTeamPanel();
       setCollaborationSessionId(sessionId);
       setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID);
@@ -349,7 +353,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     },
   });
   const discussionRooms = useTeamDiscussionRooms(room => {
-    if (room.sourceSessionId !== currentSessionId) return;
+    if (!agentTeamEnabled || room.sourceSessionId !== currentSessionId) return;
     selectTeamPanel(groupTeamKey(room.id));
     setCollaborationSessionId(currentSessionId);
     setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID);
@@ -359,6 +363,16 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const sessions = useSelector(selectCoworkSessions);
   const config = useSelector(selectCoworkConfig);
   const [collaborationSessionId, setCollaborationSessionId] = useState<string | null>(null);
+  useEffect(() => {
+    setCollaborationSessionId(null);
+    setCollaborationMemberId(undefined);
+  }, [agentTeamDisabledRevision]);
+  useEffect(() => {
+    if (!agentTeamEnabled) {
+      setCollaborationSessionId(null);
+      setCollaborationMemberId(undefined);
+    }
+  }, [agentTeamEnabled]);
   const [swarmWorkflowSessionId, setSwarmWorkflowSessionId] = useState<string | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const [greetingPeriod, setGreetingPeriod] = useState(() =>
@@ -595,6 +609,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       retainedPlanInteraction?.requestId === visiblePlanInteraction.requestId);
   useEffect(() => {
     const open = (event: Event) => {
+      if (!agentTeamEnabled) return;
       const { sessionId, roomId, teamKey } = (
         event as CustomEvent<{ sessionId: string; roomId: string; teamKey?: string }>
       ).detail;
@@ -606,7 +621,13 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     };
     window.addEventListener(OPEN_TEAM_PANEL, open);
     return () => window.removeEventListener(OPEN_TEAM_PANEL, open);
-  }, [selectTeamPanel, setIsDisplayPanelOpen, setIsWorkspaceFilesOpen, setPreferredDisplayTabId]);
+  }, [
+    agentTeamEnabled,
+    selectTeamPanel,
+    setIsDisplayPanelOpen,
+    setIsWorkspaceFilesOpen,
+    setPreferredDisplayTabId,
+  ]);
   const recordingReviewTabs = useRecordingReviewTabs(
     displaySessionKey,
     id => {
@@ -626,7 +647,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       ...(selectedSubagent ? [SUBAGENT_DISPLAY_TAB_ID] : []),
       ...(isSubagentsTabOpen ? [SUBAGENTS_DISPLAY_TAB_ID] : []),
       ...summaryResourceTabs.map(kind => SUMMARY_RESOURCE_DISPLAY_TAB_IDS[kind]),
-      ...(collaborationSessionId && collaborationSessionId === currentSessionId
+      ...(agentTeamEnabled && collaborationSessionId && collaborationSessionId === currentSessionId
         ? [COLLABORATION_DISPLAY_TAB_ID]
         : []),
       ...(swarmWorkflowSessionId && swarmWorkflowSessionId === currentSessionId
@@ -637,6 +658,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       ...recordingReviewTabs.tabs.map(tab => tab.id),
     ],
     [
+      agentTeamEnabled,
       collaborationSessionId,
       swarmWorkflowSessionId,
       currentSessionId,
@@ -910,11 +932,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     summaryResources?.sessionKey === currentGatewaySessionKey ? summaryResources : null;
   const summaryObjective =
     goalPresence.sessionId === currentSessionId ? goalPresence.objective : undefined;
-  const summaryTeamEntries = currentSessionId
-    ? buildAgentTeamEntries(currentSessionId, collaborationRooms, discussionRooms, key =>
-        i18nService.t(key),
-      )
-    : [];
+  const summaryTeamEntries =
+    agentTeamEnabled && currentSessionId
+      ? buildAgentTeamEntries(currentSessionId, collaborationRooms, discussionRooms, key =>
+          i18nService.t(key),
+        )
+      : [];
   const progressCard =
     progressCardState?.sessionKey === currentGatewaySessionKey ? progressCardState.card : null;
   const summaryVisibility = useSessionSummaryVisibility(
@@ -2866,7 +2889,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             },
           ]
         : []),
-      ...(collaborationSessionId === currentSession.id
+      ...(agentTeamEnabled && collaborationSessionId === currentSession.id
         ? [
             {
               id: COLLABORATION_DISPLAY_TAB_ID,
@@ -3052,6 +3075,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     resources={currentSummaryResources}
                     workflowCount={swarmWorkflowDiscovery.count}
                     teamEntries={summaryTeamEntries}
+                    teamEnabled={agentTeamEnabled}
                     onClose={summaryVisibility.close}
                     onOpenSubagents={() => {
                       summaryVisibility.close();
@@ -3065,6 +3089,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                       openSwarmWorkflow();
                     }}
                     onOpenTeam={() => {
+                      if (!agentTeamEnabled) return;
                       summaryVisibility.close();
                       selectTeamPanel();
                       setCollaborationSessionId(currentSession.id);
@@ -3460,7 +3485,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   />
                 </div>
               )}
-              {collaborationSessionId === currentSession.id &&
+              {agentTeamEnabled &&
+                collaborationSessionId === currentSession.id &&
                 activeDisplayTabId === COLLABORATION_DISPLAY_TAB_ID && (
                   <AgentTeamPanel
                     key={currentSession.id}

@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import { appendAgentTeamInstruction } from '../../../shared/cowork/agent-team/agentTeamPrompt';
+import { appendAgentTeamInstruction } from '../../../../openclaw-extensions/agent-team/prompt/agentTeamPrompt';
 import { CoworkSessionCopyIpc } from '../../../shared/cowork/sessionCopy';
 import { CoworkSessionForkIpc } from '../../../shared/cowork/sessionFork';
 import { SessionRunBeginErrorCode } from '../../../shared/cowork/sessionRun';
 import { SessionRunIpc } from '../../../shared/cowork/sessionRun';
 import { CoworkSessionSearchIpc } from '../../../shared/cowork/sessionSearch';
-import type { AgentTeamLaunchCoordinator } from '../../cowork/agentTeamLaunchCoordinator';
+import type { AgentTeamLaunchCoordinator } from '../../cowork/agent-team/agentTeamLaunchCoordinator';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 
@@ -20,7 +20,7 @@ vi.mock('electron', () => ({
   },
 }));
 
-import type { CollaborationCoordinator } from './agent-team/collaboration';
+import type { CollaborationCoordinator } from '../../cowork/agent-team/collaborationCoordinator';
 import { registerCoworkSessionHandlers } from './sessions';
 
 type IpcHandler = (...args: unknown[]) => Promise<unknown>;

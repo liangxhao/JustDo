@@ -10,11 +10,16 @@ import {
   CollaborationReviewState,
 } from '@shared/cowork/agent-team/collaboration';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
+import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useSelector } from 'react-redux';
 
 import type { CoworkSession, CoworkSessionStatus } from '@/features/cowork/coworkTypes';
 import AgentTeamSettingsDialog from '@/features/plugins/extensions/AgentTeamSettingsDialog';
+import {
+  useExtensionAvailability,
+  useExtensionEnabled,
+} from '@/features/plugins/extensions/useExtensionEnablement';
 import { i18nService } from '@/services/i18n';
 import { useOwnerDocument } from '@/shared/dom/ownerDocument';
 import type { RootState } from '@/store';
@@ -196,10 +201,12 @@ export function CollaborationMemberLinks({
   sessionId: string;
   onOpen: (entry: AgentTeamEntry) => void;
 }) {
+  const enabled = useExtensionEnabled(OpenClawExtensionId.AGENT_TEAM);
   const rooms = useCollaborationRooms();
   const discussions = useTeamDiscussionRooms();
   const ownerDocument = useOwnerDocument();
   const entries = buildAgentTeamEntries(sessionId, rooms, discussions, key => i18nService.t(key));
+  if (!enabled) return null;
   return (
     <AgentTeamMenu
       key={sessionId}
@@ -239,6 +246,7 @@ export default function CollaborationPanel({
     input: CollaborationContinueRequest,
   ) => Promise<CollaborationContinueStatus>;
 }) {
+  const { enabled, disabledRevision } = useExtensionAvailability(OpenClawExtensionId.AGENT_TEAM);
   const agents = useSelector((state: RootState) => state.agent.agents);
   const sessions = useSelector((state: RootState) => state.cowork?.sessions ?? EMPTY_SESSIONS);
   const sourceRunTimings = useSelector(
@@ -247,6 +255,12 @@ export default function CollaborationPanel({
   const timingsEvidenceKey = continueTimingsEvidenceKey(sourceRunTimings);
   const continueRequestsRevision = useContinueRequestsRevision();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  useEffect(() => {
+    setSettingsOpen(false);
+  }, [disabledRevision]);
+  useEffect(() => {
+    if (!enabled) setSettingsOpen(false);
+  }, [enabled]);
   const [loaded, setLoaded] = useState<{
     sessionId: string;
     snapshot: CollaborationSnapshot;
@@ -360,7 +374,7 @@ export default function CollaborationPanel({
       className="flex h-full min-h-0 flex-col bg-surface"
       aria-label={i18nService.t('collaborationTab')}
     >
-      {room && settingsOpen && (
+      {enabled && room && settingsOpen && (
         <AgentTeamSettingsDialog
           key={room.id}
           team={{ kind: 'collaboration', roomId: room.id }}
@@ -399,7 +413,9 @@ export default function CollaborationPanel({
                 disabled={room.deleting === true}
                 stop={() => window.electron.collaboration.stop(room.anchorSessionId)}
               />
-              <DiscussionActionsMenu compact onSettings={() => setSettingsOpen(true)} />
+              {enabled && (
+                <DiscussionActionsMenu compact onSettings={() => setSettingsOpen(true)} />
+              )}
             </div>
           )}
         </div>
@@ -430,7 +446,9 @@ export default function CollaborationPanel({
                   },
                 }}
                 headerMenu={
-                  <DiscussionActionsMenu compact onSettings={() => setSettingsOpen(true)} />
+                  enabled ? (
+                    <DiscussionActionsMenu compact onSettings={() => setSettingsOpen(true)} />
+                  ) : undefined
                 }
                 headerAction={
                   onFocusComposer && source.id === room.anchorSessionId ? (

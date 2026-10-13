@@ -1,6 +1,7 @@
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import { parseTeamDiscussionSessionKey } from '@shared/cowork/agent-team/teamDiscussion';
 import { CoworkInteractionKind } from '@shared/cowork/interactions/interactions';
+import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 import { BuiltinModelIpc } from '@shared/providers/builtinModels';
 import {
   type ApprovalDecision,
@@ -68,6 +69,7 @@ import {
   getEnabledProviderModels,
 } from '@/features/models/modelConfig';
 import { setConfiguredModels } from '@/features/models/modelSlice';
+import { useExtensionAvailability } from '@/features/plugins/extensions/useExtensionEnablement';
 import PluginsView from '@/features/plugins/PluginsView';
 import { CronView } from '@/features/scheduled-tasks/components';
 import { scheduledTaskService } from '@/features/scheduled-tasks/scheduledTaskService';
@@ -89,12 +91,19 @@ import { type RootState, store } from '@/store';
 import AppInitializationGate from './shell/AppInitializationGate';
 
 const InitializedApp: React.FC = () => {
+  const { enabled: agentTeamEnabled, disabledRevision: agentTeamDisabledRevision } =
+    useExtensionAvailability(OpenClawExtensionId.AGENT_TEAM);
   const [teamHistoryDocument, setTeamHistoryDocument] = useState<Document | null>(null);
   const [teamEntry, setTeamEntry] = useAgentTeamEntry();
   const teamEntryRef = useRef(teamEntry);
   teamEntryRef.current = teamEntry;
   useEffect(() => {
+    setTeamHistoryDocument(null);
+    setTeamEntry(null);
+  }, [agentTeamDisabledRevision, setTeamEntry]);
+  useEffect(() => {
     const open = () => {
+      if (!agentTeamEnabled) return;
       setTeamHistoryDocument(null);
       setTeamEntry(null);
       setMainView('cowork');
@@ -107,7 +116,7 @@ const InitializedApp: React.FC = () => {
       window.removeEventListener(OPEN_TEAM_PANEL, open);
       window.removeEventListener(TEAM_ROOM_FOCUSED, focus);
     };
-  }, [setTeamEntry]);
+  }, [agentTeamEnabled, setTeamEntry]);
   const [focusedTeamRoomId, setFocusedTeamRoomId] = useState<string | null>(null);
   const teamAgents = useSelector((state: RootState) => state.agent.agents);
   useEffect(() => {
@@ -124,10 +133,18 @@ const InitializedApp: React.FC = () => {
   )
     teamNavigationContext.current = { mainView, showSettings, teamEntry };
   useEffect(() => {
-    const open = (event: Event) => setTeamHistoryDocument((event as CustomEvent<Document>).detail);
+    const open = (event: Event) => {
+      if (agentTeamEnabled) setTeamHistoryDocument((event as CustomEvent<Document>).detail);
+    };
     window.addEventListener(OPEN_TEAM_RECORDS, open);
     return () => window.removeEventListener(OPEN_TEAM_RECORDS, open);
-  }, []);
+  }, [agentTeamEnabled]);
+  useEffect(() => {
+    if (!agentTeamEnabled) {
+      setTeamHistoryDocument(null);
+      if (teamEntry) setTeamEntry(null);
+    }
+  }, [agentTeamEnabled, teamEntry, setTeamEntry]);
   useEffect(() => {
     setTeamHistoryDocument(null);
   }, [teamEntry, showSettings, mainView]);
@@ -1029,7 +1046,7 @@ const InitializedApp: React.FC = () => {
                 onNewChat={handleNewChat}
               />
             )}
-            {teamEntry && (
+            {agentTeamEnabled && teamEntry && (
               <div className="h-full">
                 <TeamDiscussionView
                   key={teamEntry.roomId ?? teamEntry.sourceSessionId ?? 'new'}
@@ -1104,7 +1121,7 @@ const InitializedApp: React.FC = () => {
           </div>
         </div>
       </div>
-      {teamHistoryDocument && (
+      {agentTeamEnabled && teamHistoryDocument && (
         <OwnerDocumentContext.Provider value={teamHistoryDocument}>
           <AgentTeamHistoryDialog
             onClose={() => setTeamHistoryDocument(null)}

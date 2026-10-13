@@ -4,12 +4,8 @@ import path from 'node:path';
 
 import { afterEach, expect, it, vi } from 'vitest';
 
-vi.mock('openclaw/plugin-sdk/session-transcript-runtime', () => ({
-  readVisibleSessionTranscriptMessageEntries: vi.fn(),
-}));
-
-import { registerDiscussionHistory } from '../../../../openclaw-extensions/runtime-services/agent-team/discussion-history';
-import { DiscussionLedger } from '../../../../openclaw-extensions/runtime-services/agent-team/discussion-ledger';
+import { registerDiscussionOfflineControl } from '../../../../openclaw-extensions/runtime-services/agent-team/discussion/discussion-offline-control';
+import { DiscussionLedger } from '../../../../openclaw-extensions/runtime-services/agent-team/discussion/discussion-ledger';
 import { TeamDiscussionGateway } from '../../../../src/shared/cowork/agent-team/teamDiscussion';
 
 const roots: string[] = [];
@@ -22,9 +18,10 @@ function harness() {
   let handle:
     | ((input: { params: Record<string, unknown>; respond: ReturnType<typeof vi.fn> }) => void)
     | undefined;
-  registerDiscussionHistory({
+  registerDiscussionOfflineControl({
     runtime: { config: { current: () => ({}) }, state: { resolveStateDir: () => root } },
     registerGatewayMethod: (name: string, handler: typeof handle) => {
+      expect(name).toBe(TeamDiscussionGateway.OfflineControl);
       if (name === TeamDiscussionGateway.OfflineControl) handle = handler;
     },
   } as never);

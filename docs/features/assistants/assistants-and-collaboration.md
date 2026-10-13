@@ -36,7 +36,7 @@ Git 初始化由产品单独执行：普通会话通过原生工程根目录和�
 
 普通对话默认发给 main；显式开启助手切换后可选择其他已启用助手。模型先发现助手，再按需为任务准备成员；侧边栏以锚点会话展示一条任务。聊天右上角「摘要」的 Agent Team 条目按当前会话关联房间数显示，点击可重新打开协作 Tab，选择成员查看其原生历史，主输入框不切换收件人。新团队的发现可触发摘要首次展开，不自动切换到协作图。Subagent 使用摘要中的独立子智能体列表 Tab，不混入平级协作图。
 
-禁用扩展后保留档案、成员关系和历史。Runtime Services 继续提供历史回执读取，同时阻止受管会话的 peer send；禁用不是删除任务。
+禁用扩展后保留档案、成员关系和原生历史，隐藏团队历史与参数入口，并停用 Team 历史 RPC。Runtime Services 继续核对执行回执、清理并阻止受管会话的 peer send；重新启用后恢复原有历史读取。
 
 ## SubAgent 与平级 Team 的独立适配
 
@@ -122,7 +122,7 @@ stateDiagram-v2
 
 ## 展示与正文读取
 
-图只绘制实际投递关系，失败和未知状态分别展示。选择一对成员展示两个方向的往来；节点详情读取原生消息，不改变主会话。消息读取每批最多 16 条，Main 先验证所有 delivery 属于当前房间，再交给 Runtime Services 按 receipt 索引和 provenance 核对。
+图只绘制实际投递关系，失败和未知状态分别展示。选择一对成员展示两个方向的往来；节点详情读取原生消息，不改变主会话。消息读取每批最多 16 条，Main 先验证所有 delivery 属于当前房间，再交给可选 Agent Team 按 receipt 索引和 provenance 核对。
 
 图、搜索和虚拟滚动使用 Renderer 投影；不新增持久正文缓存。没有原生精确定位证据时，只打开成员历史，不伪造 transcript entry。成员共享项目目录并不共享上下文，也不提供文件写入隔离。
 
@@ -130,7 +130,7 @@ stateDiagram-v2
 
 ## 维护和验证入口
 
-- `src/main/ipc/cowork/agent-team/collaboration.test.ts`：成员准备、可信来源、原生回执、停止和删除流程。
+- `src/main/cowork/agent-team/collaborationCoordinator.test.ts`：成员准备、可信来源、原生回执、停止和删除流程。
 - `src/main/data/agent-team/collaborationStore.test.ts`：唯一约束、预算、状态迁移及恢复。
 - `src/shared/cowork/agent-team/collaboration.test.ts`：参数、路由和状态合约。
 - `tests/openclaw/extensions/agent-team/collaboration.test.ts`：扩展工具、hooks 和原生通信接入。

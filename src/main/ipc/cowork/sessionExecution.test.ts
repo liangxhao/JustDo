@@ -3,9 +3,9 @@ import { EventEmitter } from 'node:events';
 import path from 'path';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { appendAgentTeamInstruction } from '../../../shared/cowork/agent-team/agentTeamPrompt';
+import { appendAgentTeamInstruction } from '../../../../openclaw-extensions/agent-team/prompt/agentTeamPrompt';
 import { SessionStartIpc } from '../../../shared/cowork/sessionStart';
-import type { AgentTeamLaunchCoordinator } from '../../cowork/agentTeamLaunchCoordinator';
+import type { AgentTeamLaunchCoordinator } from '../../cowork/agent-team/agentTeamLaunchCoordinator';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 

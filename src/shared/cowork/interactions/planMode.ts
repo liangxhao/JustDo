@@ -1,3 +1,8 @@
+export {
+  parsePlanModeState,
+  type PlanModeState,
+} from '../../../../openclaw-extensions/plan-mode/contracts/state';
+
 import { OpenClawToolName } from '../../plugins/nativeIds';
 
 export const PlanModeGateway = {
@@ -14,16 +19,6 @@ export const PlanModeDecision = {
 } as const;
 
 export type PlanModeDecision = (typeof PlanModeDecision)[keyof typeof PlanModeDecision];
-
-export type PlanModeState = {
-  enabled: boolean;
-  updatedAt: number;
-  awaitingReview?: {
-    version: 1;
-    requestId: string;
-    persistedAt: number;
-  };
-};
 
 export type PlanModeRequest = {
   requestId: string;
@@ -55,15 +50,6 @@ export const parsePlanModeRequest = (value: unknown): PlanModeRequest | null => 
   const title = value.title === undefined ? undefined : readRequiredString(value.title);
   if (!requestId || !sessionKey || !plan || (value.title !== undefined && !title)) return null;
   return { requestId, sessionKey, plan, ...(title ? { title } : {}) };
-};
-
-export const parsePlanModeState = (value: unknown): PlanModeState => {
-  if (!isRecord(value) || value.enabled !== true) return { enabled: false, updatedAt: 0 };
-  return {
-    enabled: true,
-    updatedAt:
-      typeof value.updatedAt === 'number' && Number.isFinite(value.updatedAt) ? value.updatedAt : 0,
-  };
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

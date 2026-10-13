@@ -6,7 +6,7 @@ import {
   appendAgentTeamInstruction,
   recognizeAgentTeamMode,
   stripAgentTeamInstruction,
-} from './agentTeamPrompt';
+} from '../../../../openclaw-extensions/agent-team/prompt/agentTeamPrompt';
 
 it.each(Object.values(AGENT_TEAM_MODE))(
   'keeps browser context intact and strips only the exact %s display suffix',

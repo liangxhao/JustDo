@@ -11,11 +11,11 @@ import {
   type TeamDiscussionRoom,
   type TeamDiscussionSource,
   type TeamDiscussionMessage,
-} from '../../../src/shared/cowork/agent-team/teamDiscussion';
+} from '../contracts/teamDiscussion';
 import {
   DiscussionLedger,
   type DiscussionReceipt,
-} from '../../runtime-services/agent-team/discussion-ledger';
+} from '../../runtime-services/agent-team/discussion/discussion-ledger';
 import { assertDiscussionRuntime } from './discussion-source-policy';
 
 /** One consumed native admission per batch. Receipts never contain result text. */

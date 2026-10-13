@@ -6,7 +6,7 @@ import {
   AgentTeamSettingsIpc,
   settingsRecord,
 } from '../../../../shared/cowork/agent-team/agentTeamSettings';
-import { AgentTeamSettingsService } from '../../../plugins/extensions/agentTeamSettingsService';
+import { AgentTeamSettingsService } from '../../../data/agent-team/agentTeamSettingsService';
 
 export function registerAgentTeamSettingsHandlers(getDatabase: () => Database.Database): void {
   const invoke = async (operation: (service: AgentTeamSettingsService) => unknown) => {

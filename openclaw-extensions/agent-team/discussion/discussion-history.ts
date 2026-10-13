@@ -1,5 +1,3 @@
-import path from 'node:path';
-
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import { readVisibleSessionTranscriptMessageEntries } from 'openclaw/plugin-sdk/session-transcript-runtime';
 
@@ -10,8 +8,7 @@ import {
   TeamDiscussionGateway,
   type TeamDiscussionMessage,
   teamDiscussionSessionKey,
-} from '../../../src/shared/cowork/agent-team/teamDiscussion';
-import { DiscussionLedger } from './discussion-ledger';
+} from '../contracts/teamDiscussion';
 
 type RecordValue = Record<string, unknown>;
 const asRecord = (value: unknown): RecordValue =>
@@ -28,99 +25,20 @@ const messageText = (value: unknown): string => {
     : '';
 };
 
-/** Required Runtime Services retains history reads while Agent Team is disabled. */
+/** Project native public discussion messages while Agent Team is enabled. */
 export function registerDiscussionHistory(api: OpenClawPluginApi): void {
-  api.registerGatewayMethod(
-    TeamDiscussionGateway.OfflineControl,
-    ({ params, respond }) => {
-      try {
-        if (api.runtime.config.current().plugins?.entries?.['agent-team']?.enabled === true)
-          throw new Error('teamDiscussionBusy');
-        if (!isTeamDiscussionId(params.roomId)) throw new Error('teamDiscussionInvalidInput');
-        if (params.operation === 'summary-status' || params.operation === 'summary-stop') {
-          if (!isTeamDiscussionId(params.discussionId))
-            throw new Error('teamDiscussionInvalidInput');
-          const summaries = new DiscussionLedger(
-            path.join(api.runtime.state.resolveStateDir(), 'agent-team', 'summary-receipts'),
-            true,
-          );
-          let receipt = summaries.read(params.discussionId);
-          if (receipt && receipt.roomId !== params.roomId)
-            throw new Error('teamDiscussionInvalidInput');
-          if (params.operation === 'summary-stop' && !receipt) {
-            receipt = {
-              roomId: params.roomId,
-              discussionId: params.discussionId,
-              fingerprint: 'cancelled-before-admission',
-              owner: summaries.owner,
-              state: 'cancelled',
-              executions: [],
-            };
-            summaries.write(receipt);
-          }
-          respond(true, {
-            state:
-              !receipt || receipt.interrupted
-                ? 'unknown'
-                : receipt.state === 'completed'
-                  ? 'delivered'
-                  : receipt.state,
-            runId: receipt?.executions[0]?.runId,
-          });
-          return;
-        }
-        const ledger = new DiscussionLedger(
-          path.join(api.runtime.state.resolveStateDir(), 'agent-team', 'discussion-receipts'),
-        );
-        if (params.operation === 'close') {
-          ledger.closeRoom(params.roomId);
-          respond(true, { closed: true });
-          return;
-        }
-        if (
-          !['status', 'stop'].includes(String(params.operation)) ||
-          !isTeamDiscussionId(params.discussionId)
-        )
-          throw new Error('teamDiscussionInvalidInput');
-        let receipt = ledger.read(params.discussionId);
-        if (receipt && receipt.roomId !== params.roomId)
-          throw new Error('teamDiscussionInvalidInput');
-        if (!receipt && params.operation === 'stop') {
-          receipt = {
-            roomId: params.roomId,
-            discussionId: params.discussionId,
-            fingerprint: 'cancelled-before-admission',
-            owner: ledger.owner,
-            state: 'cancelled',
-            executions: [],
-          };
-          ledger.write(receipt);
-        }
-        respond(
-          true,
-          receipt
-            ? {
-                roomId: receipt.roomId,
-                discussionId: receipt.discussionId,
-                state: receipt.state,
-                executions: receipt.executions,
-              }
-            : { state: 'unknown' },
-        );
-      } catch (error) {
-        respond(false, undefined, {
-          code: 'invalid_request',
-          message: error instanceof Error ? error.message : 'teamDiscussionUnavailable',
-        });
-      }
-    },
-    { scope: 'operator.admin' },
-  );
-
   api.registerGatewayMethod(
     TeamDiscussionGateway.History,
     async ({ params, respond }) => {
       try {
+        const plugins = api.runtime.config.current().plugins;
+        if (
+          plugins?.enabled === false ||
+          plugins?.entries?.['agent-team']?.enabled !== true ||
+          plugins?.deny?.includes('agent-team') ||
+          (plugins?.allow?.length && !plugins.allow.includes('agent-team'))
+        )
+          throw new Error('Agent Team is disabled.');
         if (
           !isTeamDiscussionId(params.roomId) ||
           !Array.isArray(params.members) ||

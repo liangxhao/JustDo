@@ -1,42 +1,25 @@
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import { withCodexSessionTranscriptMirrorWriteLock } from 'openclaw/plugin-sdk/codex-session-transcript-runtime';
-import { isAcpSessionKey, isSubagentSessionKey } from 'openclaw/plugin-sdk/routing';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 
 const managed = (key?: string) => Boolean(key && /^agent:[^:]+:justdo:[^:]+$/.test(key));
 
-// History remains readable even when the optional agent-team extension is disabled.
-export function registerCollaborationHistory(api: OpenClawPluginApi) {
-  // An old transcript can still contain peer keys. Do not let a broad native
-  // session-visibility setting bypass the user's disabled extension choice.
-  api.on('before_tool_call', (event, ctx) => {
-    if (event.toolName !== 'sessions_send' || !managed(ctx.sessionKey)) return;
-    if (
-      typeof event.params?.sessionKey === 'string' &&
-      (isSubagentSessionKey(event.params.sessionKey) || isAcpSessionKey(event.params.sessionKey))
-    )
-      return;
-    const plugins = api.runtime.config.current().plugins;
-    if (
-      plugins?.enabled === false ||
-      plugins?.entries?.['agent-team']?.enabled !== true ||
-      plugins?.deny?.includes('agent-team') ||
-      (plugins?.allow?.length && !plugins.allow.includes('agent-team'))
-    ) {
-      return {
-        block: true,
-        blockReason:
-          'Agent Team is disabled. For a SubAgent, use its exact sessionKey; do not send peer tasks.',
-      };
-    }
-  });
-
+/** Read exact native receipt bodies while Agent Team is enabled. */
+export function registerCollaborationHistory(api: OpenClawPluginApi): void {
   const rpc = (method: string, params: Record<string, unknown>) =>
     api.runtime.gateway.request(method, params, { scopes: ['operator.admin', 'operator.read'] });
   api.registerGatewayMethod(
     'collaboration.messages',
     async ({ params, respond }) => {
       try {
+        const plugins = api.runtime.config.current().plugins;
+        if (
+          plugins?.enabled === false ||
+          plugins?.entries?.['agent-team']?.enabled !== true ||
+          plugins?.deny?.includes('agent-team') ||
+          (plugins?.allow?.length && !plugins.allow.includes('agent-team'))
+        )
+          throw new Error('Agent Team is disabled.');
         const lookups = Array.isArray(params.lookups) ? params.lookups : [];
         if (!lookups.length || lookups.length > 16)
           throw new Error('Invalid collaboration message lookup.');

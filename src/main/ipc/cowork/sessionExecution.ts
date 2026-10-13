@@ -9,7 +9,7 @@ import { type CancelSessionStartInput, SessionStartIpc } from '../../../shared/c
 import { resolvePermissionMode } from '../../../shared/security/approvals';
 import { resolveTaskWorkingDirectory } from '../../core/filesystem/taskWorkspace';
 import { t } from '../../core/i18n';
-import type { AgentTeamLaunchCoordinator } from '../../cowork/agentTeamLaunchCoordinator';
+import type { AgentTeamLaunchCoordinator } from '../../cowork/agent-team/agentTeamLaunchCoordinator';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import type { OpenClawEngineStatus } from '../../openclaw/runtime/openclawEngineManager';

@@ -8,13 +8,13 @@ import vm from 'node:vm';
 import { buildSync } from 'esbuild';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
-import { normalizeAgentTeamLaunchText } from '../../../../src/shared/cowork/agent-team/agentTeamLaunchText';
-import { appendAgentTeamInstruction } from '../../../../src/shared/cowork/agent-team/agentTeamPrompt';
+import { normalizeAgentTeamLaunchText } from '../../../../openclaw-extensions/agent-team/prompt/agentTeamLaunchText';
+import { appendAgentTeamInstruction } from '../../../../openclaw-extensions/agent-team/prompt/agentTeamPrompt';
 
 const nativeRequire = createRequire(import.meta.url);
 const code = buildSync({
   entryPoints: [
-    path.resolve('openclaw-extensions/runtime-services/agent-team/agent-team-launch-guard.ts'),
+    path.resolve('openclaw-extensions/runtime-services/agent-team/launch/agent-team-launch-guard.ts'),
   ],
   bundle: true,
   platform: 'node',

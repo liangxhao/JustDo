@@ -1,10 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import {
-  isTeamDiscussionId,
-  type TeamDiscussionExecution,
-} from '../../../src/shared/cowork/agent-team/teamDiscussion';
+import { isTeamDiscussionId, type TeamDiscussionExecution } from '../contracts/discussion';
 
 export interface DiscussionReceipt {
   roomId: string;

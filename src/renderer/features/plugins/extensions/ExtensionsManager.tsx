@@ -18,6 +18,7 @@ import type {
   OpenClawPluginCapabilityReview,
 } from '@shared/plugins/extensions';
 import { PluginKind } from '@shared/plugins/marketplace';
+import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -148,6 +149,14 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   const [extensions, setExtensions] = useState<InstalledOpenClawExtension[]>([]);
   const [loadingExtensions, setLoadingExtensions] = useState(true);
   const [inventoryReady, setInventoryReady] = useState(false);
+  const agentTeamEnabled =
+    inventoryReady &&
+    extensions.some(
+      extension => extension.id === OpenClawExtensionId.AGENT_TEAM && extension.enabled,
+    );
+  useEffect(() => {
+    if (!agentTeamEnabled) setTeamSettingsOpen(false);
+  }, [agentTeamEnabled]);
   const inventoryGeneration = useRef(0);
   const inventoryMounted = useRef(false);
   const latestInventoryRead = useRef<Promise<InstalledOpenClawExtension[] | null> | null>(null);
@@ -223,8 +232,16 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   useEffect(() => {
     inventoryMounted.current = true;
     void loadExtensions();
-    const stop = window.electron.extensions.onChanged(() => {
-      if (inventoryMounted.current) void loadExtensions();
+    const stop = window.electron.extensions.onChanged(event => {
+      if (!inventoryMounted.current) return;
+      if (event.extensionId === OpenClawExtensionId.AGENT_TEAM && !event.enabled)
+        setTeamSettingsOpen(false);
+      setExtensions(current =>
+        current.map(extension =>
+          extension.id === event.extensionId ? { ...extension, enabled: event.enabled } : extension,
+        ),
+      );
+      void loadExtensions();
     });
     return () => {
       inventoryMounted.current = false;
@@ -716,7 +733,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
               id={extension.id}
               disabled={extensionActionBusy}
             />
-            {extension.id === 'agent-team' && (
+            {extension.id === OpenClawExtensionId.AGENT_TEAM && agentTeamEnabled && (
               <>
                 <button
                   type="button"
@@ -923,7 +940,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         </section>
       )}
 
-      {teamSettingsOpen && (
+      {agentTeamEnabled && teamSettingsOpen && (
         <AgentTeamSettingsDialog
           onClose={() => setTeamSettingsOpen(false)}
           onOpenRuntime={onOpenRuntime}
@@ -1209,7 +1226,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                       </button>
                     </Tooltip>
                   )}
-                {selectedExtension.id === 'agent-team' && (
+                {selectedExtension.id === OpenClawExtensionId.AGENT_TEAM && agentTeamEnabled && (
                   <>
                     <button
                       type="button"

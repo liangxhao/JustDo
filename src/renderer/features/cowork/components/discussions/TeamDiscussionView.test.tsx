@@ -154,10 +154,17 @@ afterEach(() => {
 it('preserves the scroll position on unchanged polls and follows new replies only near the bottom', async () => {
   vi.useFakeTimers();
   try {
-    const messages = [{
-      id: 'first', discussionId: 'batch', role: 'user', text: 'First message',
-      sequence: 1, timestamp: 1, mediaUrls: [],
-    }];
+    const messages = [
+      {
+        id: 'first',
+        discussionId: 'batch',
+        role: 'user',
+        text: 'First message',
+        sequence: 1,
+        timestamp: 1,
+        mediaUrls: [],
+      },
+    ];
     read.mockImplementation(async () => ({
       success: true,
       value: { room, messages: structuredClone(messages), historyUnavailable: false },
@@ -168,11 +175,15 @@ it('preserves the scroll position on unchanged polls and follows new replies onl
     const scroll = vi.mocked(HTMLElement.prototype.scrollTo);
     scroll.mockClear();
     const reads = read.mock.calls.length;
-    await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1501);
+    });
     expect(read.mock.calls.length).toBeGreaterThan(reads);
     expect(scroll).not.toHaveBeenCalled();
     messages.push({ ...messages[0], id: 'second', sequence: 2, text: 'New message' });
-    await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1501);
+    });
     expect(scroll).toHaveBeenCalledOnce();
     scroll.mockClear();
     const timeline = screen.getByText('First message').closest('[data-discussion-message]')!
@@ -184,7 +195,9 @@ it('preserves the scroll position on unchanged polls and follows new replies onl
     timeline.scrollTop = 10;
     fireEvent.scroll(timeline);
     messages.push({ ...messages[0], id: 'third', sequence: 3, text: 'Later message' });
-    await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1501);
+    });
     expect(screen.getByText('Later message')).toBeTruthy();
     expect(scroll).not.toHaveBeenCalled();
   } finally {
@@ -1001,6 +1014,8 @@ it('renders native public history while the extension is disabled', async () => 
   render(<TeamDiscussionView entry={{ roomId: 'room' }} onClose={vi.fn()} />);
   expect(await screen.findByText('Durable native answer')).toBeTruthy();
   expect(screen.getByText('teamDiscussionDisabled')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'teamMore' }));
+  expect(screen.queryByRole('menuitem', { name: 'agentTeamLocalSettings' })).toBeNull();
   expect((screen.getByRole('button', { name: 'teamSend' }) as HTMLButtonElement).disabled).toBe(
     true,
   );

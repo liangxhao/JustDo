@@ -162,7 +162,8 @@ describe('local extension packaging', () => {
     const secondBuild = fs.readFileSync(path.join(outputDir, 'index.js'), 'utf8');
     expect(secondBuild).not.toBe(firstBuild);
     expect(secondBuild).toContain('testBuildRevision');
-    expect(secondBuild).toContain('teamDiscussion.history');
+    expect(secondBuild).toContain('teamDiscussion.offlineControl');
+    expect(secondBuild).not.toContain('teamDiscussion.history');
     expect(secondBuild).not.toMatch(/from ["']\.\.\/.*src\//);
     expect(secondBuild).toContain('openclaw/plugin-sdk/session-store-runtime');
     expect(fs.readFileSync(path.join(outputDir, 'setup-api.js'), 'utf8')).toContain('revision = 2');

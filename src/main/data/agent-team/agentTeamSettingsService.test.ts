@@ -2,15 +2,9 @@ import Database from 'better-sqlite3';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 
 import { defaultAgentTeamSettings } from '../../../shared/cowork/agent-team/agentTeamSettings';
-import {
-  CollaborationStore,
-  initializeCollaborationTables,
-} from '../../data/agent-team/collaborationStore';
-import {
-  initializeTeamDiscussionTables,
-  TeamDiscussionStore,
-} from '../../data/agent-team/teamDiscussionStore';
 import { AgentTeamSettingsService } from './agentTeamSettingsService';
+import { CollaborationStore, initializeCollaborationTables } from './collaborationStore';
+import { initializeTeamDiscussionTables, TeamDiscussionStore } from './teamDiscussionStore';
 
 let db: Database.Database;
 let service: AgentTeamSettingsService;

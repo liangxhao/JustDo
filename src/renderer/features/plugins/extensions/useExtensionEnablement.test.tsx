@@ -4,7 +4,12 @@ import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { getExtensionEnabled, useExtensionEnablement } from './useExtensionEnablement';
+import {
+  getExtensionEnabled,
+  useExtensionAvailability,
+  useExtensionEnabled,
+  useExtensionEnablement,
+} from './useExtensionEnablement';
 
 afterEach(() => {
   cleanup();
@@ -34,6 +39,45 @@ function fixture() {
 const catalog = (enabled: boolean) => ({
   success: true,
   extensions: [{ id: OpenClawExtensionId.SWARM_WORKFLOW, enabled }],
+});
+
+test('retains disable revisions across a batched disable and enable for open UI retirement', async () => {
+  const f = fixture();
+  f.list.mockResolvedValue({
+    success: true,
+    extensions: [{ id: OpenClawExtensionId.AGENT_TEAM, enabled: true }],
+  });
+  const { result } = renderHook(() => useExtensionAvailability(OpenClawExtensionId.AGENT_TEAM));
+  await waitFor(() => expect(result.current.enabled).toBe(true));
+  act(() => {
+    f.changed(false, OpenClawExtensionId.AGENT_TEAM);
+    f.changed(true, OpenClawExtensionId.AGENT_TEAM);
+  });
+  expect(result.current).toEqual({ enabled: true, disabledRevision: 1 });
+});
+
+test('hides feature entrances until enabled and applies disable events immediately', async () => {
+  const f = fixture();
+  let resolve!: (value: {
+    success: boolean;
+    extensions: { id: string; enabled: boolean }[];
+  }) => void;
+  f.list.mockImplementation(
+    () =>
+      new Promise(done => {
+        resolve = done;
+      }),
+  );
+  const { result } = renderHook(() => useExtensionEnabled(OpenClawExtensionId.AGENT_TEAM));
+  expect(result.current).toBe(false);
+  act(() => f.changed(true, OpenClawExtensionId.AGENT_TEAM));
+  expect(result.current).toBe(true);
+  act(() => f.changed(false, OpenClawExtensionId.AGENT_TEAM));
+  expect(result.current).toBe(false);
+  await act(async () =>
+    resolve({ success: true, extensions: [{ id: OpenClawExtensionId.AGENT_TEAM, enabled: true }] }),
+  );
+  expect(result.current).toBe(false);
 });
 
 test.each([true, false, undefined])(

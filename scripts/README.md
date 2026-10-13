@@ -94,7 +94,10 @@ No real provider credentials or user sessions are used.
 `node scripts/openclaw/agent-team/probe-agent-team-gateway.mjs <runtime-directory>` additionally
 exercises the production team extension with Main coordinators: model-created
 rooms, automatic summaries, source participation/mentions, public native history
-surviving source deletion, disabled-extension history, and settings resource limits.
+surviving source deletion, history rejection after disable and restoration after re-enable,
+and settings resource limits.
+Use `--history-toggle-only` to isolate history RPC registration, disabled receipt
+reconciliation and restored native history after re-enabling.
 Concurrency metrics use public native lifecycle events; queued cancellation and
 source participation share the production permit pool. `node
 scripts/test/agent-team/probe-agent-team-ui.cjs` captures isolated desktop/narrow/draft views

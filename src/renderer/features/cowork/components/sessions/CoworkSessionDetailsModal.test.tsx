@@ -1,12 +1,42 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { coworkService } from '@/features/cowork/coworkService';
 import { i18nService } from '@/services/i18n';
 
 import CoworkSessionDetailsModal from './CoworkSessionDetailsModal';
+
+const team = vi.hoisted(() => ({ enabled: false, disabledRevision: 0 }));
+vi.mock('@/features/plugins/extensions/useExtensionEnablement', () => ({
+  useExtensionAvailability: () => team,
+}));
+vi.mock('../collaboration/CollaborationPanel', () => ({
+  useCollaborationRooms: () => [{ id: 'team', anchorSessionId: 'source', members: [] }],
+}));
+vi.mock('./CollaborationTaskDetails', () => ({
+  default: ({ onSelect }: { onSelect: (session: unknown) => void }) => (
+    <button
+      onClick={() =>
+        onSelect({
+          id: 'peer',
+          title: 'Reviewer',
+          status: 'completed',
+          pinned: false,
+          createdAt: 1,
+          updatedAt: 2,
+        })
+      }
+    >
+      Team member
+    </button>
+  ),
+}));
+beforeEach(() => {
+  team.enabled = false;
+  team.disabledRevision = 0;
+});
 
 afterEach(() => {
   cleanup();
@@ -15,6 +45,34 @@ afterEach(() => {
 });
 
 describe('CoworkSessionDetailsModal', () => {
+  it('hides team member navigation on disable while retaining ordinary source details', () => {
+    vi.spyOn(coworkService, 'getSessionDetails').mockReturnValue(new Promise(() => undefined));
+    const props = {
+      sessionSummary: {
+        id: 'source',
+        title: 'Source task',
+        status: 'completed' as const,
+        pinned: false,
+        createdAt: 1,
+        updatedAt: 2,
+      },
+      groups: [],
+      isRuntimeRunning: false,
+      onClose: vi.fn(),
+    };
+    const view = render(<CoworkSessionDetailsModal {...props} />);
+    expect(screen.queryByRole('button', { name: 'Team member' })).toBeNull();
+    team.enabled = true;
+    view.rerender(<CoworkSessionDetailsModal {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Team member' }));
+    expect(screen.getByRole('button', { name: i18nService.t('back') })).toBeTruthy();
+    team.enabled = false;
+    team.disabledRevision++;
+    view.rerender(<CoworkSessionDetailsModal {...props} />);
+    expect(screen.queryByRole('button', { name: 'Team member' })).toBeNull();
+    expect(screen.queryByRole('button', { name: i18nService.t('back') })).toBeNull();
+    expect(screen.getByRole('button', { name: i18nService.t('close') })).toBeTruthy();
+  });
   it('keeps returning to the assistant list separate from closing details', () => {
     vi.spyOn(coworkService, 'getSessionDetails').mockReturnValue(new Promise(() => undefined));
     const onBack = vi.fn();

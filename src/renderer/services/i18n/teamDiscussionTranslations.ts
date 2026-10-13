@@ -232,7 +232,7 @@ export const teamDiscussionTranslations = {
     teamState_running: '成员正在讨论…',
     teamState_stopping: '正在停止，等待原生执行确认…',
     teamState_interrupted: '执行状态尚待确认，正在核对。不会自动重发。',
-    teamDiscussionDisabled: '请在插件 → 扩展中启用 Agent Team 后发起讨论。已有历史仍可阅读。',
+    teamDiscussionDisabled: '请在插件 → 扩展中启用 Agent Team 后使用团队功能。',
     teamDiscussionInvalidInput: '请检查目录、消息和讨论轮数。',
     teamDiscussionInvalidMembers: '成员选择无效，或有助手已被停用。',
     teamDiscussionNotFound: '讨论不存在。',
@@ -257,7 +257,8 @@ export const teamDiscussionTranslations = {
     teamHistoryFilter: 'Team type',
     teamHistoryAll: 'All',
     teamHistorySearch: 'Search teams or members',
-    teamRecordsUnavailable: 'Some team records could not be loaded. Check the connection and reopen.',
+    teamRecordsUnavailable:
+      'Some team records could not be loaded. Check the connection and reopen.',
     teamHistoryOpenFailed: 'Unable to open this team. Check the source chat and connection.',
     agentTeamSettings: 'Agent Team settings',
     agentTeamLocalSettings: 'Team settings',
@@ -503,8 +504,7 @@ export const teamDiscussionTranslations = {
     teamState_running: 'Members are discussing…',
     teamState_stopping: 'Stopping; waiting for native execution to settle…',
     teamState_interrupted: 'Execution state awaits confirmation. Checking without resending.',
-    teamDiscussionDisabled:
-      'Enable Agent Team in Plugins → Extensions to start a discussion. Existing history remains readable.',
+    teamDiscussionDisabled: 'Enable Agent Team in Plugins → Extensions to use team features.',
     teamDiscussionInvalidInput: 'Check the directory, message, and round limit.',
     teamDiscussionInvalidMembers: 'Invalid members, or an assistant has been disabled.',
     teamDiscussionNotFound: 'Discussion not found.',

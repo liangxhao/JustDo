@@ -5,6 +5,7 @@ import {
   InformationCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { coworkService } from '@/features/cowork/coworkService';
@@ -16,6 +17,7 @@ import type {
   SessionGroup,
 } from '@/features/cowork/coworkTypes';
 import type { SessionDetailStats } from '@/features/cowork/sessionPresentation';
+import { useExtensionAvailability } from '@/features/plugins/extensions/useExtensionEnablement';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
 
@@ -68,11 +70,18 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
   onBack,
   memberView = false,
 }) => {
+  const { enabled: agentTeamEnabled, disabledRevision } = useExtensionAvailability(
+    OpenClawExtensionId.AGENT_TEAM,
+  );
   const rooms = useCollaborationRooms();
-  const room = !memberView
-    ? rooms.find(room => room.anchorSessionId === sessionSummary.id)
-    : undefined;
+  const room =
+    agentTeamEnabled && !memberView
+      ? rooms.find(room => room.anchorSessionId === sessionSummary.id)
+      : undefined;
   const [selectedMember, setSelectedMember] = useState<CoworkSessionSummary>();
+  useEffect(() => {
+    setSelectedMember(undefined);
+  }, [agentTeamEnabled, disabledRevision]);
   const [session, setSession] = useState<CoworkSession | null>(null);
   const [stats, setStats] = useState<SessionDetailStats | null>(null);
   const [gatewaySessionId, setGatewaySessionId] = useState<string | null>(null);
@@ -256,7 +265,7 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
       ]
     : [];
 
-  if (selectedMember)
+  if (agentTeamEnabled && selectedMember)
     return (
       <CoworkSessionDetailsModal
         key={selectedMember.id}

@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
+import { defaultAgentTeamSettings } from '@shared/cowork/agent-team/agentTeamSettings';
 import type {
+  ExtensionChangedEvent,
   ExtensionImportResult,
   ExtensionSetEnabledResult,
   InstalledOpenClawExtension,
@@ -146,9 +148,9 @@ describe('ExtensionsManager extension toggle', () => {
       .mockResolvedValueOnce({ success: true, extensions: [extension] })
       .mockReturnValueOnce(oldRead.promise)
       .mockResolvedValue({ success: true, extensions: [{ ...extension, enabled: true }] });
-    let changed!: () => void;
+    let changed!: (event: ExtensionChangedEvent) => void;
     const stop = vi.fn();
-    const onChanged = vi.fn((listener: () => void) => {
+    const onChanged = vi.fn((listener: typeof changed) => {
       changed = listener;
       return stop;
     });
@@ -161,8 +163,8 @@ describe('ExtensionsManager extension toggle', () => {
     expect(onChanged).toHaveBeenCalledOnce();
 
     await act(async () => {
-      changed();
-      changed();
+      changed({ extensionId: extension.id, enabled: true });
+      changed({ extensionId: extension.id, enabled: true });
     });
     await screen.findByRole('switch', { name: 'extensionDisable' });
     await act(async () => {
@@ -174,7 +176,7 @@ describe('ExtensionsManager extension toggle', () => {
     expect(screen.queryByRole('switch', { name: 'extensionEnable' })).toBeNull();
     view.unmount();
     expect(stop).toHaveBeenCalledOnce();
-    changed();
+    changed({ extensionId: extension.id, enabled: true });
     expect(list).toHaveBeenCalledTimes(3);
   });
 
@@ -191,14 +193,14 @@ describe('ExtensionsManager extension toggle', () => {
       .mockResolvedValueOnce({ success: true, extensions: [configured(false)] })
       .mockReturnValueOnce(oldRead.promise)
       .mockResolvedValue({ success: true, extensions: [configured(true)] });
-    let changed!: () => void;
+    let changed!: (event: ExtensionChangedEvent) => void;
     Object.defineProperty(window, 'electron', {
       configurable: true,
       value: {
         extensions: {
           list,
           updateConfiguration: vi.fn().mockResolvedValue({ success: true }),
-          onChanged: vi.fn((listener: () => void) => {
+          onChanged: vi.fn((listener: typeof changed) => {
             changed = listener;
             return vi.fn();
           }),
@@ -211,7 +213,7 @@ describe('ExtensionsManager extension toggle', () => {
     fireEvent.change(input, { target: { value: 'synthetic-ui-key' } });
     fireEvent.click(screen.getByRole('button', { name: 'save' }));
     await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
-    await act(async () => changed());
+    await act(async () => changed({ extensionId: extension.id, enabled: false }));
 
     await act(async () => {
       oldRead.resolve({ success: true, extensions: [configured(false)] });
@@ -311,7 +313,7 @@ describe('ExtensionsManager extension toggle', () => {
   );
 
   test.each([false, true])(
-    'opens Agent Team records from its card with enabled=%s without toggling the plugin',
+    'exposes Agent Team records and settings only with enabled=%s',
     async enabled => {
       const setEnabled = vi.fn();
       const received = vi.fn();
@@ -332,6 +334,15 @@ describe('ExtensionsManager extension toggle', () => {
       window.addEventListener(OPEN_TEAM_RECORDS, received);
       try {
         render(<ExtensionsManager />);
+        await screen.findByText('Agent Team');
+        if (!enabled) {
+          expect(screen.queryByRole('button', { name: 'teamAllRecords' })).toBeNull();
+          expect(screen.queryByRole('button', { name: 'agentTeamSettings' })).toBeNull();
+          expect(received).not.toHaveBeenCalled();
+          expect(setEnabled).not.toHaveBeenCalled();
+          return;
+        }
+        expect(screen.getByRole('button', { name: 'agentTeamSettings' })).toBeTruthy();
         fireEvent.click(await screen.findByRole('button', { name: 'teamAllRecords' }));
         expect(received).toHaveBeenCalledTimes(1);
         expect(received.mock.calls[0][0].detail).toBe(document);
@@ -351,7 +362,7 @@ describe('ExtensionsManager extension toggle', () => {
         extensions: {
           list: vi.fn(async () => ({
             success: true,
-            extensions: [{ ...extension, id: 'agent-team', name: 'Agent Team' }],
+            extensions: [{ ...extension, id: 'agent-team', name: 'Agent Team', enabled: true }],
           })),
           onChanged: vi.fn(() => vi.fn()),
           onImportProgress: vi.fn(() => vi.fn()),
@@ -370,6 +381,76 @@ describe('ExtensionsManager extension toggle', () => {
     } finally {
       window.removeEventListener(OPEN_TEAM_RECORDS, received);
     }
+  });
+
+  test('hides disabled Agent Team actions in its details', async () => {
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn(async () => ({
+            success: true,
+            extensions: [{ ...extension, id: 'agent-team', name: 'Agent Team', enabled: false }],
+          })),
+          onChanged: vi.fn(() => vi.fn()),
+          onImportProgress: vi.fn(() => vi.fn()),
+        },
+      },
+    });
+    render(<ExtensionsManager requestedExtensionId="agent-team" />);
+    await screen.findByRole('heading', { name: 'Agent Team', level: 2 });
+    expect(screen.queryByRole('button', { name: 'teamAllRecords' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'agentTeamSettings' })).toBeNull();
+  });
+
+  test('closes Team settings immediately on disable and does not reopen them on enable', async () => {
+    let changed!: (event: ExtensionChangedEvent) => void;
+    const disabledRead = deferred<{ success: boolean; extensions: InstalledOpenClawExtension[] }>();
+    const team = { ...extension, id: 'agent-team', name: 'Agent Team', enabled: true };
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({ success: true, extensions: [team] })
+      .mockReturnValueOnce(disabledRead.promise)
+      .mockResolvedValue({ success: true, extensions: [team] });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list,
+          onChanged: (listener: typeof changed) => {
+            changed = listener;
+            return vi.fn();
+          },
+          onImportProgress: vi.fn(() => vi.fn()),
+        },
+        agentTeamSettings: {
+          read: vi.fn(async () => ({
+            success: true,
+            value: { version: 1, revision: 0, value: defaultAgentTeamSettings() },
+          })),
+        },
+      },
+    });
+    render(<ExtensionsManager />);
+    fireEvent.click(await screen.findByRole('button', { name: 'agentTeamSettings' }));
+    await screen.findByRole('dialog');
+    act(() => changed({ extensionId: team.id, enabled: false }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'teamAllRecords' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'agentTeamSettings' })).toBeNull();
+    await act(async () => changed({ extensionId: team.id, enabled: true }));
+    await act(async () =>
+      disabledRead.resolve({ success: true, extensions: [{ ...team, enabled: false }] }),
+    );
+    expect(screen.getByRole('button', { name: 'teamAllRecords' })).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'agentTeamSettings' }));
+    await screen.findByRole('dialog');
+    await act(async () => {
+      changed({ extensionId: team.id, enabled: false });
+      changed({ extensionId: team.id, enabled: true });
+    });
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   test('animates toward the requested state while the change is being applied', async () => {

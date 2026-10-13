@@ -9,12 +9,12 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   TeamDiscussionGateway as Gateway,
   type TeamDiscussionRoom,
-} from '../../../../shared/cowork/agent-team/teamDiscussion';
-import { initializeTeamDiscussionTables } from '../../../data/agent-team/teamDiscussionStore';
-import type { CoworkStore } from '../../../data/coworkStore';
+} from '../../../shared/cowork/agent-team/teamDiscussion';
+import { initializeTeamDiscussionTables } from '../../data/agent-team/teamDiscussionStore';
+import type { CoworkStore } from '../../data/coworkStore';
 
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));
-import { TeamDiscussionCoordinator } from './teamDiscussion';
+import { TeamDiscussionCoordinator } from './teamDiscussionCoordinator';
 
 let db: DatabaseSync;
 let coordinator: TeamDiscussionCoordinator;
@@ -434,7 +434,7 @@ it('blocks dispatch with an actionable reason when global resources tighten', as
   await coordinator.enqueue(send);
   db.exec('CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT,updated_at INTEGER)');
   const { defaultAgentTeamSettings } =
-    await import('../../../../shared/cowork/agent-team/agentTeamSettings');
+    await import('../../../shared/cowork/agent-team/agentTeamSettings');
   const settings = defaultAgentTeamSettings();
   settings.discussion.maxRounds = 1;
   settings.discussion.defaultRounds = 1;
@@ -1221,7 +1221,7 @@ it('rechecks the current member cap when committing organizer participation afte
   await description.reached;
   db.exec('CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT,updated_at INTEGER)');
   const { defaultAgentTeamSettings } =
-    await import('../../../../shared/cowork/agent-team/agentTeamSettings');
+    await import('../../../shared/cowork/agent-team/agentTeamSettings');
   const settings = defaultAgentTeamSettings();
   settings.discussion.maxMembers = 2;
   db.prepare('INSERT INTO kv VALUES (?,?,?)').run(
@@ -1477,7 +1477,7 @@ it('does not enqueue a summary when source-bound attachment staging fails before
 it('freezes per-batch settings and applies tighter defaults only to the next distinct request', async () => {
   db.exec('CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT,updated_at INTEGER)');
   const { defaultAgentTeamSettings } =
-    await import('../../../../shared/cowork/agent-team/agentTeamSettings');
+    await import('../../../shared/cowork/agent-team/agentTeamSettings');
   const settings = defaultAgentTeamSettings();
   settings.discussion.maxConcurrent = 1;
   settings.discussion.maxTurns = 3;
@@ -1527,7 +1527,7 @@ it('applies a reduced member cap to new direct sends while retaining accepted ru
   const resources = coordinator.metadata.resources('room', original.requestId);
   db.exec('CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT,updated_at INTEGER)');
   const { defaultAgentTeamSettings } =
-    await import('../../../../shared/cowork/agent-team/agentTeamSettings');
+    await import('../../../shared/cowork/agent-team/agentTeamSettings');
   const settings = defaultAgentTeamSettings();
   settings.discussion.maxMembers = 2;
   db.prepare('INSERT INTO kv VALUES (?,?,?)').run(
@@ -1552,7 +1552,7 @@ it('applies a reduced member cap to new direct sends while retaining accepted ru
 it('rejects over-limit new rosters without changing old room members or launching Gateway', async () => {
   db.exec('CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT,updated_at INTEGER)');
   const { defaultAgentTeamSettings } =
-    await import('../../../../shared/cowork/agent-team/agentTeamSettings');
+    await import('../../../shared/cowork/agent-team/agentTeamSettings');
   const settings = defaultAgentTeamSettings();
   settings.discussion.maxMembers = 2;
   db.prepare('INSERT INTO kv VALUES (?,?,?)').run(
@@ -1712,7 +1712,7 @@ it('replays exact accepted input after a roster revision without reading the Gat
 it('uses configured model defaults, counts the source as a member and freezes omitted arguments on replay', async () => {
   db.exec('CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT,updated_at INTEGER)');
   const { defaultAgentTeamSettings } =
-    await import('../../../../shared/cowork/agent-team/agentTeamSettings');
+    await import('../../../shared/cowork/agent-team/agentTeamSettings');
   const settings = defaultAgentTeamSettings();
   Object.assign(settings.discussion, {
     maxMembers: 2,
@@ -1776,7 +1776,7 @@ it('legacy admitted model send retains its omitted rounds when defaults change',
     'UPDATE team_discussion_runs SET requested_rounds = NULL, resources_json = NULL WHERE id = ?',
   ).run(admitted.discussionId);
   const { defaultAgentTeamSettings } =
-    await import('../../../../shared/cowork/agent-team/agentTeamSettings');
+    await import('../../../shared/cowork/agent-team/agentTeamSettings');
   const settings = defaultAgentTeamSettings();
   settings.discussion.defaultRounds = 1;
   db.prepare('INSERT INTO kv VALUES (?,?,?)').run(

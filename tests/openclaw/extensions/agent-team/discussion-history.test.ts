@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 
-import { registerDiscussionHistory } from '../../../../openclaw-extensions/runtime-services/agent-team/discussion-history';
+import { registerDiscussionHistory } from '../../../../openclaw-extensions/agent-team/discussion/discussion-history';
 import { TeamDiscussionGateway } from '../../../../src/shared/cowork/agent-team/teamDiscussion';
 
 const sdk = vi.hoisted(() => ({ transcript: vi.fn() }));
@@ -8,12 +8,53 @@ vi.mock('openclaw/plugin-sdk/session-transcript-runtime', () => ({
   readVisibleSessionTranscriptMessageEntries: sdk.transcript,
 }));
 
+it('rejects a retained history handler after disable and restores native history on re-enable', async () => {
+  let enabled = true;
+  const methods = new Map<
+    string,
+    (call: { params: unknown; respond: ReturnType<typeof vi.fn> }) => Promise<void>
+  >();
+  registerDiscussionHistory({
+    runtime: {
+      config: { current: () => ({ plugins: { entries: { 'agent-team': { enabled } } } }) },
+    },
+    registerGatewayMethod: (name: string, handler: never) => methods.set(name, handler),
+  } as never);
+  expect(methods.has(TeamDiscussionGateway.OfflineControl)).toBe(false);
+  sdk.transcript.mockClear().mockResolvedValue([]);
+  const handler = methods.get(TeamDiscussionGateway.History)!;
+  const respond = vi.fn();
+  const params = {
+    roomId: 'room',
+    discussionIds: ['batch'],
+    members: [{ agentId: 'alice', sessionId: 'native' }],
+  };
+  enabled = false;
+  await handler({ params, respond });
+  expect(respond).toHaveBeenLastCalledWith(false, undefined, {
+    code: 'invalid_request',
+    message: 'teamDiscussionHistoryUnavailable',
+  });
+  expect(sdk.transcript).not.toHaveBeenCalled();
+  enabled = true;
+  await handler({ params, respond });
+  expect(respond).toHaveBeenLastCalledWith(true, { messages: [] });
+  expect(sdk.transcript).toHaveBeenCalledWith({
+    agentId: 'alice',
+    sessionId: 'native',
+    sessionKey: 'agent:alice:justdo-team:group:room',
+  });
+});
+
 it('retains native inbound attachments and public delivery attachments without leaking other turns', async () => {
   const methods = new Map<
     string,
     (call: { params: unknown; respond: ReturnType<typeof vi.fn> }) => Promise<void>
   >();
   registerDiscussionHistory({
+    runtime: {
+      config: { current: () => ({ plugins: { entries: { 'agent-team': { enabled: true } } } }) },
+    },
     registerGatewayMethod: (name: string, handler: never) => methods.set(name, handler),
   } as never);
   sdk.transcript.mockResolvedValue([

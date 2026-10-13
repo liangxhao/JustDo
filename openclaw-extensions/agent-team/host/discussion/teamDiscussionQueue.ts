@@ -1,19 +1,19 @@
 import { createHash } from 'node:crypto';
 
-import type { DiscussionResources } from '../../../../shared/cowork/agent-team/agentTeamSettings';
+import type { DiscussionResources } from '../../contracts/agentTeamSettings';
 import {
   parseTeamDiscussionSend,
   TeamDiscussionGateway,
   type TeamDiscussionHoldingIdentity,
   type TeamDiscussionRoom,
   type TeamDiscussionSend,
-} from '../../../../shared/cowork/agent-team/teamDiscussion';
+} from '../../contracts/teamDiscussion';
 import {
   pendingInputFingerprint,
   type PendingInputRecord,
   type TeamDiscussionQueueStore,
-} from '../../../data/agent-team/teamDiscussionQueueStore';
-import type { TeamDiscussionStore } from '../../../data/agent-team/teamDiscussionStore';
+} from '../data/teamDiscussionQueueStore';
+import type { TeamDiscussionStore } from '../data/teamDiscussionStore';
 import {
   discussionAttachmentFingerprint,
   stageDiscussionAttachments,

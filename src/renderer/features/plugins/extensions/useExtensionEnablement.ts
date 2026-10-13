@@ -13,6 +13,20 @@ export function getExtensionEnabled(
   return settings.enabled.get(extensionId) ?? (settings.loaded ? false : undefined);
 }
 
+/** Feature entrances require positively observed enablement. */
+export function useExtensionEnabled(extensionId: string): boolean {
+  return useExtensionAvailability(extensionId).enabled;
+}
+
+/** Disable revisions also retire open UI across batched disable/enable changes. */
+export function useExtensionAvailability(extensionId: string) {
+  const settings = useExtensionEnablement();
+  return {
+    enabled: getExtensionEnabled(settings, extensionId) === true,
+    disabledRevision: settings.disabledRevisions.get(extensionId) ?? 0,
+  };
+}
+
 /** One catalog read/subscription for all entries; newer toggles override in-flight reads by ID. */
 export function useExtensionEnablement(): ExtensionEnablement {
   const [settings, setSettings] = useState<ExtensionEnablement>(() => ({

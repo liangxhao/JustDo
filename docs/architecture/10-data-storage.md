@@ -277,6 +277,8 @@ Gateway stateDir 中 summary-receipts 保存指纹、执行与可见输出 entry
 
 数据库不保存检查标准、交付物、证据、结论正文或文件版本；这些留在原生任务/验收历史。confirmed 是该助手对列出的确切执行报告完成，不是文件散列证明、全任务质量门禁或对后来返工的自动认可。丢失 whole-run 证据时保留待确认，不靠 chat final、空闲或重启猜测通过。
 
+Agent Team 的表初始化、房间/投递/验收/待发输入及资源偏好事务由 `openclaw-extensions/agent-team/host/data/` 持有实现，Main 的原模块只转出稳定入口。实际 SQLite 连接及通用产品表仍由宿主提供；同一连接内的成员会话创建与团队记录写入保持原子事务。此归属调整不移动数据库或变更表、外键、持久化路径和恢复契约，也不创建插件 transcript 缓存。
+
 ### Agent Team 参数元数据
 
 全局默认存储于 `kv` 键 `agentTeam.settings`，含 version、revision 和严格限定的数值/布尔值。`collaboration_rooms.settings_json` 与 `team_discussion_rooms.settings_json` 保存独立 revision 的团队覆盖；不改变 roster 的 revision。删除团队时随房间行清理。

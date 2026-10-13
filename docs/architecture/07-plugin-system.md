@@ -278,7 +278,11 @@ Tool Search 分发器由原生对实际目标再次执行策略。动作型工�
 
 agent-team 默认关闭，禁用保留历史；Runtime Services 仍读回执并阻止受管 peer send。两个发送 hook 均避让原生 SubAgent 与 ACP 子会话，由 OpenClaw 判断子会话归属和可见性；这些发送不计入平级协作预算。stt-local-cli 保留显式 disable，附件转录独立于麦克风开关；sandboxed session 不注册该 host tool，文件访问遵循有效 fs policy，无云端 fallback。
 
-新版 Gateway 可以为执行 hook、工具工厂和服务创建不同的插件注册实例。Team 的临时 scoped grant 因此由 `collaboration.dispatch` 所在的 Gateway 实例统一登记，不能仅保存在执行 hook 的局部 Map。登记前固定目标 sessionId，授权继续受源会话、运行、准确目标及有效期限制。`collaboration.release` 提前撤销，`native-result` 回报路径再次撤销；前者 RPC 失败不得阻止真实发送结果回报 Main。禁用插件仍可通过 Runtime Services 读取历史，不通过扩大全局会话可见性实现平级交流。
+Agent Team 关闭时，应用隐藏摘要、插件卡片／详情中的历史与参数设置入口，以及团队导航；已打开的历史／设置弹窗随禁用关闭。未知启用状态不展示入口，禁用事件立即覆盖在途目录读取。重新启用恢复保留记录入口。协作消息详情与群聊历史 RPC 归可选 Agent Team，禁用后不可用；重新启用恢复读取保留的原生 transcript。托管清理、离线回执核对和发起守卫仍由常驻 Runtime Services 提供。
+
+Agent Team 的规则、资源参数校验和发起提示随插件分别放在 `contracts/`、`prompt/`；可选执行及各自历史读取由 `collaboration/` 与 `discussion/` 组合。Runtime Services 的 `agent-team/` 按成员发送保护、讨论离线控制／托管／回执、发起保护分域，独立的 `contracts/` 持有关闭插件后仍需读取／清理的身份与输入协议。通用权限、插件/tool ID 与受管 session-key 协议属于 Runtime Services 的纯 `contracts/`，FIFO 许可属于 `concurrency/`；Plan 状态解析归 Plan Mode 的纯 `contracts/`。两个插件不导入应用 `src`，Runtime Services 不导入可选插件；应用 shared 入口只复用浏览器安全的纯合约，Main 通过 typed ports 使用 Team `host/` 的协调及同库元数据事务，Renderer 使用 Team `browser/` 的草稿与规则。数据库连接、Electron IPC、Redux/preload 和界面组合由应用持有。host/browser 模块保持各自进程，原生插件入口不加载它们；禁用后的合法 Main 清理和核对仍保留。资源同步在预打包阶段消除纯合约的相对路径，SDK 保持 external。见 [Agent Team 模块边界](../features/assistants/agent-team.md#模块边界)。
+
+新版 Gateway 可以为执行 hook、工具工厂和服务创建不同的插件注册实例。Team 的临时 scoped grant 因此由 `collaboration.dispatch` 所在的 Gateway 实例统一登记，不能仅保存在执行 hook 的局部 Map。登记前固定目标 sessionId，授权继续受源会话、运行、准确目标及有效期限制。`collaboration.release` 提前撤销，`native-result` 回报路径再次撤销；前者 RPC 失败不得阻止真实发送结果回报 Main。历史读取归可选插件，禁用后的发送阻断归 Runtime Services，不通过扩大全局会话可见性实现平级交流。
 
 服务停止会推进生命周期代次并清空临时状态，旧请求即使随后返回，也不能重新写入授权。发送授权最长 60 秒；结果回报使用独立的准入身份记录（最长 10 分钟、最多 512 条），校验源会话、toolCallId、runId、deliveryId 和目标。该记录不授予会话访问权限，不保存正文；撤销授权后仍允许准确关联的迟到结果更新 Main 回执。取消准入时，即使 release RPC 失败，也通过绑定的取消结果撤权并结束 dispatching 状态。
 
@@ -415,7 +419,7 @@ Workboard 仍使用 OpenClaw 插件的 `workboard.cards.*` / `workboard.boards.*
 
 配置同步固定 `surfaces.justdo-team.silentReply.group: allow`，允许群成员按原生规则静默，避免 `NO_REPLY` 被空回答恢复强迫重试。该策略写入实际运行时配置，覆盖正常、最小及登录／登出同步；保留其他 surfaces 与显式插件状态，不改变主会话或来源汇总的回复要求，也不增加运行时补丁。
 
-agent-team 同时承载旧任务协作和 justdo-team 群组 Channel，保持默认关闭及用户开关。它提供 bundled-channel-entry 合约；Runtime Services 注册只读 teamDiscussion.history，使禁用 Agent Team 后仍可查看历史。群聊调用 AskUserQuestion 时沿用同一扩展和取消信号，Renderer 根据完整原生 room key 显示提问者。agent-team 与 runtime-services 的 package.json 声明 justdo.bundle，资源同步从产品源码预先 bundle 共享纯合约，SDK 保持 external；不增加 OpenClaw patch。
+agent-team 同时承载旧任务协作和 justdo-team 群组 Channel，保持默认关闭及用户开关。它提供 bundled-channel-entry 合约；Agent Team 注册只读 teamDiscussion.history，禁用后不可用，重新启用读取保留的原生历史；Runtime Services 保留 teamDiscussion.offlineControl，完成状态核对和关闭准入。群聊调用 AskUserQuestion 时沿用同一扩展和取消信号，Renderer 根据完整原生 room key 显示提问者。agent-team 与 runtime-services 的 package.json 声明 justdo.bundle，资源同步从产品源码预先 bundle 共享纯合约，SDK 保持 external；不增加 OpenClaw patch。
 
 详见 [Agent Team 现行契约](../features/assistants/agent-team.md)。
 
@@ -496,7 +500,7 @@ Gateway 单文件打包与动态 SDK 必须共享原生运行授权及私有会�
 
 共享模块使 esbuild 为多处权限 resolver 导入生成数字后缀。现有 metadata 补丁的 bundle 检查接受此编译形态，原生文件仍要求锁定的精确函数名；缺失或重复的 transport authority assertion 继续报错。验收须覆盖从 pristine 安装、打包后的完整补丁复核到 Gateway 启动，单独重打包与 SDK 用例不能代替该流程。
 
-Agent Team 的 `team_discussion` 新增 `configure`/`organizerParticipates` 与精确 `discussionIds`。模型工具/skill、群运行服务及总结服务仍同属可选扩展。来源 snapshot 由可信 Gateway 查询，不接受 Renderer 指定 native key。总结使用独立 native admission ledger，工具完全禁用；Runtime Services 提供禁用后的历史及 summary status/stop。用户显式 disable 保留。
+Agent Team 的 `team_discussion` 新增 `configure`/`organizerParticipates` 与精确 `discussionIds`。模型工具/skill、群运行服务及总结服务仍同属可选扩展。来源 snapshot 由可信 Gateway 查询，不接受 Renderer 指定 native key。总结使用独立 native admission ledger，工具完全禁用；历史读取属于 Agent Team；Runtime Services 提供禁用后的 summary status/stop。用户显式 disable 保留。
 
 `task_assistants({seal:true})` 使用既有原生工具身份绑定，只允许组织者收束当前批次；不是新的 peer 调度器。普通用户对话不自动注入 roster 或团队说明。见[最新实现](../features/assistants/agent-team.md)。
 

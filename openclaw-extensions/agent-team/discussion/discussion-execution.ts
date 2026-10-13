@@ -14,7 +14,7 @@ import { appendSessionTranscriptMessageByIdentity } from 'openclaw/plugin-sdk/se
 import {
   type DiscussionResources,
   parseDiscussionResources,
-} from '../../../src/shared/cowork/agent-team/agentTeamSettings';
+} from '../contracts/agentTeamSettings';
 import {
   assertTeamDiscussionRecipients,
   discussionMemberSessionKey,
@@ -25,7 +25,7 @@ import {
   type TeamDiscussionRoom,
   type TeamDiscussionSend,
   teamDiscussionSessionKey,
-} from '../../../src/shared/cowork/agent-team/teamDiscussion';
+} from '../contracts/teamDiscussion';
 import { DiscussionPermits } from './discussion-permits';
 import { assertDiscussionRuntime } from './discussion-source-policy';
 

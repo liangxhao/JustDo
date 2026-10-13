@@ -17,10 +17,19 @@ import {
 } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { Provider } from 'react-redux';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CoworkSession } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
+
+const availability = vi.hoisted(() => ({ enabled: true }));
+vi.mock('@/features/plugins/extensions/useExtensionEnablement', () => ({
+  useExtensionEnabled: () => availability.enabled,
+  useExtensionAvailability: () => ({ enabled: availability.enabled, disabledRevision: 0 }),
+}));
+beforeEach(() => {
+  availability.enabled = true;
+});
 
 vi.mock('@/features/cowork/coworkService', () => ({
   coworkService: { loadSessions: vi.fn().mockResolvedValue(undefined) },

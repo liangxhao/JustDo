@@ -27,6 +27,7 @@ const runtimeSource = path.resolve(
 );
 // Narrow launch regressions can omit the already independent capacity matrix.
 const skipConcurrencyMatrix = process.argv.includes('--skip-concurrency-matrix');
+const historyToggleOnly = process.argv.includes('--history-toggle-only');
 const state = mkdtempSync(path.join(os.tmpdir(), 'justdo-team-gateway-'));
 const workspace = path.join(state, 'workspace');
 const project = path.join(state, 'project');
@@ -269,19 +270,19 @@ writeFileSync(
     configSchema: { type: 'object', additionalProperties: false, properties: {} },
   }),
 );
-const historyPath = path.join(bundledPath, 'runtime-services');
-mkdirSync(historyPath);
+const runtimeServicesPath = path.join(bundledPath, 'runtime-services');
+mkdirSync(runtimeServicesPath);
 buildSync({
   absWorkingDir: repoRoot,
-  entryPoints: ['tests/openclaw/fixtures/team-history-probe.ts'],
-  outfile: path.join(historyPath, 'index.mjs'),
+  entryPoints: ['tests/openclaw/fixtures/team-runtime-services-probe.ts'],
+  outfile: path.join(runtimeServicesPath, 'index.mjs'),
   bundle: true,
   platform: 'node',
   format: 'esm',
   external: ['openclaw/plugin-sdk/*'],
 });
 writeFileSync(
-  path.join(historyPath, 'package.json'),
+  path.join(runtimeServicesPath, 'package.json'),
   JSON.stringify({
     name: 'runtime-services',
     type: 'module',
@@ -289,10 +290,10 @@ writeFileSync(
   }),
 );
 writeFileSync(
-  path.join(historyPath, 'openclaw.plugin.json'),
+  path.join(runtimeServicesPath, 'openclaw.plugin.json'),
   JSON.stringify({
     id: 'runtime-services',
-    name: 'Independent history fixture',
+    name: 'Independent runtime services fixture',
     activation: { onStartup: true },
     configSchema: { type: 'object', additionalProperties: false, properties: {} },
   }),
@@ -362,7 +363,7 @@ const cfg = {
   plugins: {
     slots: { memory: 'none' },
     allow: ['agent-team', 'runtime-services', 'plan-mode'],
-    load: { paths: [pluginPath, historyPath, planPath] },
+    load: { paths: [pluginPath, runtimeServicesPath, planPath] },
     entries: {
       'agent-team': { enabled: true },
       'runtime-services': { enabled: true },
@@ -407,7 +408,103 @@ let hostLifecycleObserver;
 let nativeSourceRun;
 let gatewayConnections = 0;
 const watchdog = setTimeout(() => child.kill(), 360000);
-try {
+async function verifyHistoryToggle(serviceInput, members) {
+  const collaborationHistoryInput = {
+    lookups: [
+      {
+        deliveryId: 'history-availability',
+        receiptId: 'absent-receipt',
+        sessionId: 'history-probe',
+        sessionKey: 'agent:alice:justdo:history-probe',
+        sourceSessionKey: 'agent:bob:justdo:source-probe',
+      },
+    ],
+  };
+  const missingReceipt = { messages: [{ deliveryId: 'history-availability' }] };
+  assert.deepEqual(
+    await client.request('collaboration.messages', collaborationHistoryInput),
+    missingReceipt,
+  );
+  const config = await client.request('config.get', {});
+  await client.request('config.patch', {
+    baseHash: config.hash,
+    raw: JSON.stringify({ plugins: { entries: { 'agent-team': { enabled: false } } } }),
+    restartDelayMs: 0,
+  });
+  let offlineReceipt;
+  const disabledDeadline = Date.now() + 25000;
+  while (Date.now() < disabledDeadline) {
+    try {
+      offlineReceipt = await client.request(
+        'teamDiscussion.offlineControl',
+        { operation: 'status', roomId: 'service', discussionId: 'service-discussion' },
+        { timeoutMs: 2000 },
+      );
+      break;
+    } catch {
+      // Wait for the independent receipt service after plugin replacement.
+    }
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+  assert.equal(
+    offlineReceipt?.state,
+    'completed',
+    'independent runtime services must reconcile receipts when Agent Team is disabled',
+  );
+  const historyInput = {
+    roomId: 'service',
+    discussionIds: ['service-discussion'],
+    members: members.map(member => ({
+      agentId: member.agentId,
+      sessionId: member.sessionId,
+    })),
+  };
+  await assert.rejects(() => client.request('teamDiscussion.history', historyInput));
+  await assert.rejects(() => client.request('collaboration.messages', collaborationHistoryInput));
+  await assert.rejects(() => client.request('teamDiscussion.start', serviceInput));
+  // Retain a disabled discovery source, then follow the application toggle's
+  // native write -> skill sync -> safe restart ordering. Old discovery inputs
+  // must not remove the enabled skill when another file watch refreshes later.
+  const publishedSkill = path.join(state, 'plugin-skills/agent-team/SKILL.md');
+  await client.request('skills.status', { agentId: 'alice' });
+  assert.equal(existsSync(publishedSkill), false);
+  const enableConfig = await client.request('config.get', {});
+  await client.request('config.patch', {
+    baseHash: enableConfig.hash,
+    raw: JSON.stringify({ plugins: { entries: { 'agent-team': { enabled: true } } } }),
+    restartDelayMs: 0,
+  });
+  await client.request('skills.update', { skillKey: 'agent-team', enabled: true });
+  const connectionsBeforeRestart = gatewayConnections;
+  await client.request('gateway.restart.request', {
+    reason: 'extension-status-change',
+    skipDeferral: false,
+  });
+  const restartDeadline = Date.now() + 45000;
+  while (gatewayConnections === connectionsBeforeRestart && Date.now() < restartDeadline)
+    await new Promise(resolve => setTimeout(resolve, 100));
+  assert.ok(gatewayConnections > connectionsBeforeRestart, 'safe native restart must reconnect');
+  const restoredHistory = await client.request('teamDiscussion.history', historyInput);
+  assert.equal(restoredHistory.messages.filter(message => message.role === 'assistant').length, 2);
+  assert.deepEqual(
+    await client.request('collaboration.messages', collaborationHistoryInput),
+    missingReceipt,
+  );
+  await client.request('skills.status', { agentId: 'alice' });
+  assert.equal(existsSync(publishedSkill), true);
+  const watchSkill = path.join(workspace, 'skills/publication-probe');
+  mkdirSync(watchSkill, { recursive: true });
+  for (let revision = 0; revision < 3; revision++) {
+    writeFileSync(
+      path.join(watchSkill, 'SKILL.md'),
+      `---\nname: publication-probe\ndescription: Synthetic publication regression.\n---\n# Revision ${revision}\n`,
+    );
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    await client.request('skills.update', { skillKey: 'agent-team', enabled: true });
+    assert.equal(existsSync(publishedSkill), true, 'refresh must retain the enabled native skill');
+  }
+}
+async function runChecks() {
   const deadline = Date.now() + 45000;
   let healthy = false;
   while (Date.now() < deadline) {
@@ -551,6 +648,19 @@ try {
   const afterService = modelRequests;
   await client.request('teamDiscussion.start', serviceInput);
   assert.equal(modelRequests, afterService, 'replaying admission must not call models');
+  if (historyToggleOnly) {
+    await verifyHistoryToggle(serviceInput, prepared.members);
+    console.log(
+      JSON.stringify({
+        ok: true,
+        disabledHistoryUnavailableVerified: true,
+        reenabledHistoryPreservedVerified: true,
+        disabledReceiptReconciliationVerified: true,
+        scope: 'isolated Gateway history registration and toggle checks',
+      }),
+    );
+    return;
+  }
   const cancelled = await client.request('teamDiscussion.stop', {
     roomId: 'service',
     discussionId: 'cancel-before-start',
@@ -726,7 +836,7 @@ try {
     absWorkingDir: repoRoot,
     stdin: {
       contents:
-        "export {AgentTeamSettingsService} from './src/main/plugins/extensions/agentTeamSettingsService'; export {TeamDiscussionCoordinator} from './src/main/ipc/cowork/agent-team/teamDiscussion'; export {CollaborationCoordinator} from './src/main/ipc/cowork/agent-team/collaboration'; export {initializeTeamDiscussionTables} from './src/main/data/agent-team/teamDiscussionStore'; export {initializeCollaborationTables,CollaborationStore} from './src/main/data/agent-team/collaborationStore';",
+        "export {AgentTeamSettingsService} from './src/main/data/agent-team/agentTeamSettingsService'; export {TeamDiscussionCoordinator} from './src/main/cowork/agent-team/teamDiscussionCoordinator'; export {CollaborationCoordinator} from './src/main/cowork/agent-team/collaborationCoordinator'; export {initializeTeamDiscussionTables} from './src/main/data/agent-team/teamDiscussionStore'; export {initializeCollaborationTables,CollaborationStore} from './src/main/data/agent-team/collaborationStore';",
       resolveDir: repoRoot,
     },
     outfile: hostBundle,
@@ -1184,77 +1294,7 @@ try {
   );
   hostHandler = undefined;
   hostDb.close();
-  const config = await client.request('config.get', {});
-  await client.request('config.patch', {
-    baseHash: config.hash,
-    raw: JSON.stringify({ plugins: { entries: { 'agent-team': { enabled: false } } } }),
-    restartDelayMs: 0,
-  });
-  let offlineReceipt;
-  const disabledDeadline = Date.now() + 25000;
-  while (Date.now() < disabledDeadline) {
-    try {
-      offlineReceipt = await client.request(
-        'teamDiscussion.offlineControl',
-        { operation: 'status', roomId: 'service', discussionId: 'service-discussion' },
-        { timeoutMs: 2000 },
-      );
-      break;
-    } catch {
-      // Wait for the independent receipt service after plugin replacement.
-    }
-    await new Promise(resolve => setTimeout(resolve, 300));
-  }
-  assert.equal(
-    offlineReceipt?.state,
-    'completed',
-    'independent runtime services must reconcile receipts when Agent Team is disabled',
-  );
-  const disabledHistory = await client.request('teamDiscussion.history', {
-    roomId: 'service',
-    discussionIds: ['service-discussion'],
-    members: prepared.members.map(member => ({
-      agentId: member.agentId,
-      sessionId: member.sessionId,
-    })),
-  });
-  assert.equal(disabledHistory.messages.filter(message => message.role === 'assistant').length, 2);
-  await assert.rejects(() => client.request('teamDiscussion.start', serviceInput));
-  // Retain a disabled discovery source, then follow the application toggle's
-  // native write -> skill sync -> safe restart ordering. Old discovery inputs
-  // must not remove the enabled skill when another file watch refreshes later.
-  const publishedSkill = path.join(state, 'plugin-skills/agent-team/SKILL.md');
-  await client.request('skills.status', { agentId: 'alice' });
-  assert.equal(existsSync(publishedSkill), false);
-  const enableConfig = await client.request('config.get', {});
-  await client.request('config.patch', {
-    baseHash: enableConfig.hash,
-    raw: JSON.stringify({ plugins: { entries: { 'agent-team': { enabled: true } } } }),
-    restartDelayMs: 0,
-  });
-  await client.request('skills.update', { skillKey: 'agent-team', enabled: true });
-  const connectionsBeforeRestart = gatewayConnections;
-  await client.request('gateway.restart.request', {
-    reason: 'extension-status-change',
-    skipDeferral: false,
-  });
-  const restartDeadline = Date.now() + 45000;
-  while (gatewayConnections === connectionsBeforeRestart && Date.now() < restartDeadline)
-    await new Promise(resolve => setTimeout(resolve, 100));
-  assert.ok(gatewayConnections > connectionsBeforeRestart, 'safe native restart must reconnect');
-  await client.request('skills.status', { agentId: 'alice' });
-  assert.equal(existsSync(publishedSkill), true);
-  const watchSkill = path.join(workspace, 'skills/publication-probe');
-  mkdirSync(watchSkill, { recursive: true });
-  for (let revision = 0; revision < 3; revision++) {
-    writeFileSync(
-      path.join(watchSkill, 'SKILL.md'),
-      `---\nname: publication-probe\ndescription: Synthetic publication regression.\n---\n# Revision ${revision}\n`,
-    );
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    await client.request('skills.update', { skillKey: 'agent-team', enabled: true });
-    assert.equal(existsSync(publishedSkill), true, 'refresh must retain the enabled native skill');
-  }
+  await verifyHistoryToggle(serviceInput, prepared.members);
   console.log(
     JSON.stringify(
       {
@@ -1270,7 +1310,8 @@ try {
         productionServiceVerified: true,
         admissionReplayVerified: true,
         messageToolVerified: true,
-        disabledHistoryVerified: true,
+        disabledHistoryUnavailableVerified: true,
+        reenabledHistoryPreservedVerified: true,
         modelOrganizedTeamVerified: true,
         nativeSkillPublicationAfterToggleVerified: true,
         organizerNativeContextsVerified: true,
@@ -1288,6 +1329,9 @@ try {
       2,
     ),
   );
+}
+try {
+  await runChecks();
 } catch (error) {
   console.error(error.stack ?? error.message);
   console.error(JSON.stringify({ modelRequests, toolObservations }));

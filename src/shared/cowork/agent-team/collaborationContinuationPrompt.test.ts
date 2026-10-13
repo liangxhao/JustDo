@@ -1,10 +1,13 @@
 import { expect, it } from 'vitest';
 
-import { recognizeAgentTeamMode, stripAgentTeamInstruction } from './agentTeamPrompt';
+import {
+  recognizeAgentTeamMode,
+  stripAgentTeamInstruction,
+} from '../../../../openclaw-extensions/agent-team/prompt/agentTeamPrompt';
 import {
   appendCollaborationContinuation,
   stripCollaborationContinuation,
-} from './collaborationContinuationPrompt';
+} from '../../../../openclaw-extensions/agent-team/prompt/collaborationContinuationPrompt';
 
 const target = {
   sourceSessionId: 'source',

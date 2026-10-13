@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeAgentTeamLaunchText } from './agentTeamLaunchText';
+import { normalizeAgentTeamLaunchText } from '../../../../openclaw-extensions/agent-team/prompt/agentTeamLaunchText';
 
 describe('explicit Team native input fingerprint text', () => {
   it('binds canonically equivalent Unicode to the same native text', () => {

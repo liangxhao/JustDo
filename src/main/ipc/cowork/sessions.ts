@@ -29,7 +29,8 @@ import {
   toOpenClawSessionPermissionMode,
 } from '../../../shared/security/approvals';
 import { t } from '../../core/i18n';
-import type { AgentTeamLaunchCoordinator } from '../../cowork/agentTeamLaunchCoordinator';
+import type { AgentTeamLaunchCoordinator } from '../../cowork/agent-team/agentTeamLaunchCoordinator';
+import type { CollaborationCoordinator } from '../../cowork/agent-team/collaborationCoordinator';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import { isWorkspacePathWithin } from '../../engine/openclaw/runtimeAdapterSupport';
@@ -44,7 +45,6 @@ import {
   parseCoworkSessionSearchOptions,
   searchCoworkSessionMessages,
 } from '../../openclaw/sessions/openclawSessionSearch';
-import type { CollaborationCoordinator } from './agent-team/collaboration';
 
 interface SessionHandlerDependencies {
   getAgentTeamLaunch?: () => AgentTeamLaunchCoordinator;

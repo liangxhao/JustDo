@@ -9,7 +9,7 @@ import {
   parseAgentTeamSettings,
   settingsInteger,
   settingsRecord,
-} from '../../../shared/cowork/agent-team/agentTeamSettings';
+} from '../../contracts/agentTeamSettings';
 
 const KEY = 'agentTeam.settings';
 const tables = {

@@ -15,9 +15,11 @@ const code = buildSync({
   write: false,
   external: ['openclaw/plugin-sdk/*', 'typebox'],
 }).outputFiles[0].text;
-const historyCode = buildSync({
+const guardCode = buildSync({
   entryPoints: [
-    path.resolve('openclaw-extensions/runtime-services/agent-team/collaboration-history.ts'),
+    path.resolve(
+      'openclaw-extensions/runtime-services/agent-team/collaboration/managed-peer-send-guard.ts',
+    ),
   ],
   bundle: true,
   platform: 'node',
@@ -115,11 +117,11 @@ function fixture(teamEnabled = true, separateHooks = false) {
                   : nativeRequire(name),
   };
   new vm.Script(code).runInNewContext(context);
-  const historyModule = { exports: {} as Record<string, any> };
-  new vm.Script(historyCode).runInNewContext({
+  const guardModule = { exports: {} as Record<string, any> };
+  new vm.Script(guardCode).runInNewContext({
     ...context,
-    exports: historyModule.exports,
-    module: historyModule,
+    exports: guardModule.exports,
+    module: guardModule,
   });
   const runtime = {
     config: {
@@ -193,7 +195,7 @@ function fixture(teamEnabled = true, separateHooks = false) {
       respond: vi.fn(),
     });
   });
-  historyModule.exports.registerCollaborationHistory({
+  guardModule.exports.registerManagedPeerSendGuard({
     runtime,
     config: { plugins: { entries: { 'agent-team': { enabled: teamEnabled } } } },
     on: (name: string, callback: (...args: any[]) => any) => {
@@ -240,8 +242,16 @@ describe('native peer tool authority', () => {
       'operator run authority must be issued by the host',
       'host-authority-owner-mismatch',
     ],
-    ['collaboration.bind', 'In-process gateway dispatch requires a gateway request scope or instance binding (method: collaboration.bind).', 'gateway-context-unavailable'],
-    ['collaboration.dispatch', 'agent tool caller authority is no longer active', 'caller-authority-expired'],
+    [
+      'collaboration.bind',
+      'In-process gateway dispatch requires a gateway request scope or instance binding (method: collaboration.bind).',
+      'gateway-context-unavailable',
+    ],
+    [
+      'collaboration.dispatch',
+      'agent tool caller authority is no longer active',
+      'caller-authority-expired',
+    ],
   ])('reports %s failure without reserving a delivery', async (method, message, reason) => {
     const h = fixture();
     const request = h.runtime.gateway.request;
@@ -250,7 +260,10 @@ describe('native peer tool authority', () => {
     );
 
     const result = await h.hooks.get('before_tool_call')!(
-      { toolName: 'sessions_send', params: { sessionKey: 'agent:review:justdo:b', message: 'Review' } },
+      {
+        toolName: 'sessions_send',
+        params: { sessionKey: 'agent:review:justdo:b', message: 'Review' },
+      },
       { sessionKey: 'agent:research:justdo:a', runId: 'peer-run', toolCallId: 'send' },
     );
 
@@ -457,15 +470,17 @@ describe('native peer tool authority', () => {
     expect(h.hooks.has('before_prompt_build')).toBe(false);
     h.stop();
   });
-  it('keeps receipt history available without team tools or send grants', () => {
+  it('omits team history and tools while the required send guard remains registered', () => {
     const h = fixture(false);
-    expect(h.methods.has('collaboration.messages')).toBe(true);
+    expect(h.methods.has('collaboration.messages')).toBe(false);
+    expect(h.methods.has('teamDiscussion.history')).toBe(false);
     expect(h.factories.size).toBe(0);
     expect(h.providers).toEqual([]);
     expect(h.hooks.has('agent_turn_prepare')).toBe(false);
+    expect(h.hooks.has('before_tool_call')).toBe(true);
   });
-  it.each([true, false])('resolves receipt history with agent-team enabled=%s', async enabled => {
-    const h = fixture(enabled);
+  it('resolves receipt history while agent-team is enabled', async () => {
+    const h = fixture();
     h.setTranscriptEntries([
       {
         idempotencyKey: 'receipt:user',
@@ -517,6 +532,34 @@ describe('native peer tool authority', () => {
         },
       ],
     });
+    h.stop();
+  });
+  it('rejects a retained history handler after disable and restores it on re-enable', async () => {
+    const h = fixture();
+    const request = vi.spyOn(h.runtime.gateway, 'request');
+    const handler = h.methods.get('collaboration.messages')!;
+    const params = {
+      lookups: [
+        {
+          deliveryId: 'delivery',
+          receiptId: 'receipt',
+          sessionId: 'b',
+          sessionKey: 'agent:b:justdo:b',
+          sourceSessionKey: 'agent:a:justdo:a',
+        },
+      ],
+    };
+    const respond = vi.fn();
+    h.setTeamEnabled(false);
+    await handler({ params, respond });
+    expect(respond).toHaveBeenLastCalledWith(false, undefined, {
+      code: 'invalid_request',
+      message: 'Agent Team is disabled.',
+    });
+    expect(request).not.toHaveBeenCalled();
+    h.setTeamEnabled(true);
+    await handler({ params, respond });
+    expect(respond).toHaveBeenLastCalledWith(true, { messages: [{ deliveryId: 'delivery' }] });
     h.stop();
   });
   it.each(['missing native session', 'different sender'])(

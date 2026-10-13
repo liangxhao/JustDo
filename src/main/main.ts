@@ -103,7 +103,7 @@ import {
   getWorkspaceWindowManager,
   isWorkspaceBrowserHost,
 } from './core/window/workspaceWindowManager';
-import { AgentTeamLaunchCoordinator } from './cowork/agentTeamLaunchCoordinator';
+import { AgentTeamLaunchCoordinator } from './cowork/agent-team/agentTeamLaunchCoordinator';
 import { orderDiagnosticMainLogs } from './cowork/diagnostics/logSources';
 import { SessionDiagnosticsService } from './cowork/diagnostics/service';
 import { CoworkStore } from './data/coworkStore';

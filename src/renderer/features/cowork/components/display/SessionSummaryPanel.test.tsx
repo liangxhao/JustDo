@@ -51,6 +51,18 @@ it('shows per-mode counts and opens team tabs directly without a second summary 
   expect(screen.queryByRole('button', { name: '全部团队记录' })).toBeNull();
 });
 
+it('hides retained team records in the summary while the plugin is disabled', () => {
+  const { props, onOpenTeam } = fixture();
+  const { rerender } = render(<SessionSummaryPanel {...props} />);
+  expect(screen.getByRole('button', { name: /Agent Team/ })).toBeTruthy();
+  rerender(<SessionSummaryPanel {...props} teamEnabled={false} />);
+  expect(screen.queryByRole('button', { name: /Agent Team/ })).toBeNull();
+  expect(screen.getByRole('button', { name: '2 running 1 completed 2 failed' })).toBeTruthy();
+  expect(onOpenTeam).not.toHaveBeenCalled();
+  rerender(<SessionSummaryPanel {...props} />);
+  expect(screen.getByRole('button', { name: /Agent Team/ })).toBeTruthy();
+});
+
 it.each([
   ['zh', AgentTeamKind.TASK, 'Agent Team 协作 × 2'],
   ['zh', AgentTeamKind.GROUP, 'Agent Team 群聊 × 3'],
@@ -131,6 +143,7 @@ function fixture() {
       omittedOversized: false,
     },
     workflowCount: 2,
+    teamEnabled: true,
     teamEntries: [
       {
         kind: AgentTeamKind.TASK,

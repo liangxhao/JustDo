@@ -44,6 +44,7 @@ interface Props {
   resources: SessionSummaryResources | null;
   workflowCount: number;
   teamEntries: readonly AgentTeamEntry[];
+  teamEnabled: boolean;
   onClose: () => void;
   onOpenSubagents: () => void;
   onOpenWorkflow: () => void;
@@ -287,7 +288,7 @@ export default function SessionSummaryPanel(props: Props) {
             <span className="text-secondary">{props.workflowCount}</span>
           </button>
         )}
-        {props.teamEntries.length > 0 && (
+        {props.teamEnabled && props.teamEntries.length > 0 && (
           <div className="flex min-w-0 items-center gap-1">
             <button
               type="button"

@@ -15,7 +15,7 @@ import {
   TeamDiscussionGateway,
   type TeamDiscussionHoldingIdentity,
   type TeamDiscussionSend,
-} from '../../../src/shared/cowork/agent-team/teamDiscussion';
+} from '../contracts/discussion';
 import {
   DiscussionHoldingLedger,
   type HoldingReceipt,

@@ -6,7 +6,7 @@ import type { OpenClawConfig, OpenClawPluginApi } from 'openclaw/plugin-sdk/core
 import type { ReplyPayload } from 'openclaw/plugin-sdk/reply-payload';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 
-import { parseDiscussionResources } from '../../../src/shared/cowork/agent-team/agentTeamSettings';
+import { parseDiscussionResources } from '../contracts/agentTeamSettings';
 import {
   assertTeamDiscussionRecipients,
   discussionMemberSessionKey,
@@ -18,9 +18,9 @@ import {
   TeamDiscussionGateway,
   type TeamDiscussionRoom,
   teamDiscussionSessionKey,
-} from '../../../src/shared/cowork/agent-team/teamDiscussion';
-import { toOpenClawSessionPermissionMode } from '../../../src/shared/security/approvals';
-import { DiscussionLedger } from '../../runtime-services/agent-team/discussion-ledger';
+} from '../contracts/teamDiscussion';
+import { toOpenClawSessionPermissionMode } from '../../runtime-services/contracts/permissions';
+import { DiscussionLedger } from '../../runtime-services/agent-team/discussion/discussion-ledger';
 import { bindDiscussionTransport, discussionChannel } from './discussion-channel';
 import { executeGroupDiscussion, type PreparedDiscussionMember } from './discussion-execution';
 import {

@@ -2,16 +2,13 @@ import { createHash } from 'node:crypto';
 
 import type Database from 'better-sqlite3';
 
-import { normalizeAgentTeamLaunchText } from '../../shared/cowork/agent-team/agentTeamLaunchText';
-import {
-  AGENT_TEAM_MODE,
-  recognizeAgentTeamMode,
-} from '../../shared/cowork/agent-team/agentTeamPrompt';
-import { parsePlanModeState } from '../../shared/cowork/interactions/planMode';
-import { buildCoworkSessionKey } from '../../shared/cowork/sessionKey';
-import { OpenClawExtensionId } from '../../shared/plugins/nativeIds';
-import type { CoworkStore } from '../data/coworkStore';
-import type { CoworkEngineRouter } from '../engine/cowork/coworkEngineRouter';
+import { parsePlanModeState } from '../../../plan-mode/contracts/state';
+import { OpenClawExtensionId } from '../../../runtime-services/contracts/native-ids';
+import { buildCoworkSessionKey } from '../../../runtime-services/contracts/session-key';
+import { normalizeAgentTeamLaunchText } from '../../prompt/agentTeamLaunchText';
+import { AGENT_TEAM_MODE, recognizeAgentTeamMode } from '../../prompt/agentTeamPrompt';
+import type { TeamHostStore as CoworkStore } from '../ports';
+import type { TeamHostRouter as CoworkEngineRouter } from '../ports';
 
 const PREFIX = 'agentTeam.launch.receipt.';
 const RPC = {
@@ -61,7 +58,13 @@ interface LaunchReceipt {
   confirmReceiptId?: string;
 }
 interface Dependencies {
-  getStore: () => CoworkStore;
+  getStore: () => Pick<
+    CoworkStore,
+    | 'getSession'
+    | 'getSessionByNativeKey'
+    | 'getGoalExecutionSnapshot'
+    | 'getSessionRunByClientTurnId'
+  >;
   getDatabase: () => Database.Database;
   getRouter: () => Pick<CoworkEngineRouter, 'prepareSession' | 'getSessionRuntimeStatus'>;
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;

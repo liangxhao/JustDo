@@ -5,10 +5,10 @@ vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));
 import {
   CollaborationStore,
   initializeCollaborationTables,
-} from '../../../data/agent-team/collaborationStore';
-import type { CoworkStore } from '../../../data/coworkStore';
-import type { CoworkEngineRouter, OpenClawRuntimeAdapter } from '../../../engine';
-import { CollaborationCoordinator } from './collaboration';
+} from '../../data/agent-team/collaborationStore';
+import type { CoworkStore } from '../../data/coworkStore';
+import type { CoworkEngineRouter, OpenClawRuntimeAdapter } from '../../engine';
+import { CollaborationCoordinator } from './collaborationCoordinator';
 
 let db: Database.Database;
 let metadata: CollaborationStore;

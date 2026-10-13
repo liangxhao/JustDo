@@ -22,6 +22,7 @@ import {
 } from '@shared/cowork/agent-team/teamDiscussion';
 import { discussionMemberSessionKey } from '@shared/cowork/agent-team/teamDiscussion';
 import { buildCoworkSessionKey } from '@shared/cowork/sessionKey';
+import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
@@ -30,6 +31,7 @@ import { addDraftMessageQuote } from '@/features/cowork/coworkSlice';
 import AgentTeamSettingsDialog, {
   AGENT_TEAM_SETTINGS_CHANGED,
 } from '@/features/plugins/extensions/AgentTeamSettingsDialog';
+import { useExtensionAvailability } from '@/features/plugins/extensions/useExtensionEnablement';
 import { i18nService } from '@/services/i18n';
 import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 import type { RootState } from '@/store';
@@ -212,7 +214,13 @@ export default function TeamDiscussionView({
   const [summary, setSummary] = useState<TeamDiscussionSummary>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [enabled, setEnabled] = useState(false);
+  const { enabled, disabledRevision } = useExtensionAvailability(OpenClawExtensionId.AGENT_TEAM);
+  useEffect(() => {
+    setSettingsOpen(false);
+  }, [disabledRevision]);
+  useEffect(() => {
+    if (!enabled) setSettingsOpen(false);
+  }, [enabled]);
   const [historyUnavailable, setHistoryUnavailable] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const [queueExpanded, setQueueExpanded] = useState(false);
@@ -302,25 +310,6 @@ export default function TeamDiscussionView({
         ...result.value.messages,
       ]);
     }
-  }, []);
-  useEffect(() => {
-    let live = true;
-    const check = async () => {
-      const result = await window.electron.extensions.list();
-      if (live)
-        setEnabled(
-          result.success &&
-            result.extensions.some(extension => extension.id === 'agent-team' && extension.enabled),
-        );
-    };
-    void check();
-    const off = window.electron.extensions.onChanged(() => {
-      void check();
-    });
-    return () => {
-      live = false;
-      off();
-    };
   }, []);
   useEffect(() => {
     const id = room?.id ?? entry.roomId;
@@ -749,7 +738,7 @@ export default function TeamDiscussionView({
             )}
             <DiscussionActionsMenu
               compact
-              onSettings={() => setSettingsOpen(true)}
+              onSettings={enabled ? () => setSettingsOpen(true) : undefined}
               onExport={() => void exportHistory()}
               onDelete={() => setConfirmDelete(true)}
               onSummarize={
@@ -770,7 +759,7 @@ export default function TeamDiscussionView({
           </>
         )}
       </header>
-      {room && settingsOpen && (
+      {enabled && room && settingsOpen && (
         <AgentTeamSettingsDialog
           key={room.id}
           team={{ kind: 'discussion', roomId: room.id }}

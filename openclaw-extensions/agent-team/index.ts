@@ -1,7 +1,9 @@
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 
+import { registerCollaborationHistory } from './collaboration/collaboration-history';
 import { registerCollaborationService } from './collaboration/service';
 import { discussionChannel } from './discussion/discussion-channel';
+import { registerDiscussionHistory } from './discussion/discussion-history';
 import { registerDiscussionService } from './discussion/discussion-service';
 
 const plugin = {
@@ -14,6 +16,8 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     registerDiscussionService(api);
     registerCollaborationService(api);
+    registerCollaborationHistory(api);
+    registerDiscussionHistory(api);
   },
 };
 export default plugin;

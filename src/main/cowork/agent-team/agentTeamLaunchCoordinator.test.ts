@@ -4,8 +4,8 @@ import { DatabaseSync } from 'node:sqlite';
 import type Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { appendAgentTeamInstruction } from '../../shared/cowork/agent-team/agentTeamPrompt';
-import type { CoworkSession, CoworkStore } from '../data/coworkStore';
+import { appendAgentTeamInstruction } from '../../../../openclaw-extensions/agent-team/prompt/agentTeamPrompt';
+import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import { AgentTeamLaunchCoordinator } from './agentTeamLaunchCoordinator';
 
 const databases: DatabaseSync[] = [];
