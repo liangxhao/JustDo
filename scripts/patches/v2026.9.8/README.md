@@ -74,7 +74,7 @@ display projection and the ordering of restored messages.
 | 037   | Product terminal welcome              | Welcome text reads validated build-time productName; no lobster art; native buffer seeding and output offsets remain unchanged                                     |
 | 038   | Native compaction lifecycle           | Recovery start/update/end events; admin operation status/cancellation covers preparation and cleanup; bounded native receipts retain no transcript or summary      |
 | 039   | Peer transcript writer scope          | Detach only source transcript/CLI-history ownership after caller snapshot restoration; preserve native authority, target writer admission, guards and cancellation |
-| 040   | Local computer activity presentation  | Admin-only transient start/end heartbeats after native admission and idempotency; no input or image payload, no changes to execution, cancellation or results      |
+| 040   | Local computer activity presentation  | Admin-only v2 start/end heartbeats and execution release; opaque presentation identity, no input/image/coordinate payload, unchanged native execution and results |
 | 042   | Windows plugin recovery junctions     | Preserve accepted absolute directory links as junctions in recovery copies; keep native file references, hardlink checks, admission and lifecycle unchanged        |
 
 Each module header records its scope, native safety boundary and removal condition.

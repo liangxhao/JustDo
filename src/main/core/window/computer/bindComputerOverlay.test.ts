@@ -10,6 +10,8 @@ vi.mock('electron', async () => {
 });
 vi.mock('./computerOverlayWindow', () => ({
   ComputerOverlayWindow: class {
+    prepare = vi.fn();
+    dispose = vi.fn();
     show = mocks.show;
     hide = mocks.hide;
   },
@@ -22,7 +24,8 @@ import { bindComputerOverlay } from './bindComputerOverlay';
 const event = {
   event: 'computer.activity',
   payload: {
-    v: 1,
+    v: 2,
+    execution: '00000000-0000-0000-0000-000000000001',
     id: '00000000-0000-0000-0000-000000000001',
     phase: 'start',
     cursor: true,

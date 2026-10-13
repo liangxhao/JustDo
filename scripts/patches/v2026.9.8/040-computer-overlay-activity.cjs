@@ -33,7 +33,7 @@ function canonical(source) {
       const visit = node => {
         if (ts.isIdentifier(node)) {
           const name = node.text.replace(
-            /^(request|desktopTarget|invoke|id|input|desktop|clicks|cursor|emit|phase|click|heartbeat|result|value|activity)\d+$/,
+            /^(request|desktopTarget|invoke|id|input|desktop|clicks|cursor|emit|phase|click|heartbeat|result|value|activity|execution|slot|state|close|release|ownerSignal)\d+$/,
             '$1',
           );
           if (name !== node.text) return ts.factory.createIdentifier(name);
@@ -136,6 +136,15 @@ function transformService(source, file = '<runtime>') {
     ),
     file,
   ).initializer.getText(ast);
+  unique(
+    collect(
+      ast,
+      node =>
+        (ts.isPropertyAssignment(node) || ts.isMethodDeclaration(node)) &&
+        node.name?.getText(ast) === 'releaseOwner',
+    ),
+    file,
+  );
   if (
     !/^[A-Za-z_$][\w$]*$/.test(requestName) ||
     !/^[A-Za-z_$][\w$]*$/.test(runtimeName ?? '') ||
@@ -144,7 +153,7 @@ function transformService(source, file = '<runtime>') {
     !owner.text.includes(`${executionName}.settled.has(${requestName}.idempotencyKey)`)
   )
     throw new Error(`${file}: native computer admission boundary changed`);
-  const expected = `computerOverlayInvoke(${requestName}, ${runtimeName}.desktopTarget, () => ${native}, ${uuid})`;
+  const expected = `computerOverlayInvoke(${requestName}, ${runtimeName}.desktopTarget, () => ${native}, ${uuid}, ${executionName})`;
   const wrapped = collect(
     ast,
     node => ts.isCallExpression(node) && node.expression.getText(ast) === 'computerOverlayInvoke',

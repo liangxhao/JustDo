@@ -41,6 +41,7 @@ export interface OnlineModelConfig {
 
 // 配置类型定义
 export interface AppConfig {
+  computerOverlayRemotePreview: boolean;
   browserMode: BrowserModeValue;
   browserSearchEngine: BrowserSearchEngineValue;
   browserWebLinkTarget: BrowserLinkTargetValue;
@@ -211,6 +212,7 @@ export const defaultConfig: AppConfig = {
   proxy: defaultProxySettings,
   browserProxy: defaultBrowserProxySettings,
   developerMode: false,
+  computerOverlayRemotePreview: false,
   sidebarPinnedItems: [],
   voice: defaultLocalSpeechSettings,
   app: {

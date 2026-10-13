@@ -3,21 +3,30 @@ import {
   parseComputerActivity,
 } from '../../../../shared/security/computerActivity';
 
+export type ComputerOverlayPresentation = {
+  waiting: boolean;
+  hold: boolean;
+  capture: boolean;
+};
+
 export interface ComputerOverlayView {
-  show(cursor: boolean, click: boolean): void;
-  hide(): void;
+  show(cursor: boolean, click: boolean, presentation: ComputerOverlayPresentation): void;
+  hide(animate?: boolean): void;
 }
 
-const SETTLE_MS = 650;
+const FEEDBACK_MS = 4_000;
+const IDLE_MS = 12_000;
 const MAX_ACTIVE = 32;
 const MAX_RETIRED = 256;
 
-/** Presentation leases only. Expiration never establishes an execution outcome. */
+/** Visual idle deadlines are independent of native execution ownership. */
 export class ComputerOverlayController {
-  private active = new Map<string, { cursor: boolean; expiresAt: number }>();
+  private active = new Map<string, { execution: string; cursor: boolean; expiresAt: number }>();
+  private idle = new Map<string, number>();
   private retired = new Set<string>();
+  private closed = new Set<string>();
+  private feedback: { execution: string; until: number } | undefined;
   private timer: ReturnType<typeof setTimeout> | undefined;
-  private settleTimer: ReturnType<typeof setTimeout> | undefined;
   private lastSequence = -1;
 
   constructor(private readonly view: ComputerOverlayView) {}
@@ -29,76 +38,101 @@ export class ComputerOverlayController {
       if (!Number.isSafeInteger(sequence) || sequence <= this.lastSequence) return;
       this.lastSequence = sequence;
     }
+    if (this.closed.has(event.execution)) return;
+    if (event.phase === 'close') {
+      this.remember(this.closed, event.execution);
+      for (const [id, value] of this.active) {
+        if (value.execution === event.execution) {
+          this.active.delete(id);
+          this.remember(this.retired, id);
+        }
+      }
+      this.idle.delete(event.execution);
+      if (this.feedback?.execution === event.execution) this.feedback = undefined;
+      this.render();
+      this.schedule();
+      return;
+    }
     if (this.retired.has(event.id)) return;
+    const previous = this.active.get(event.id);
+    if (previous && previous.execution !== event.execution) return;
     if (event.phase === 'start') {
-      if (!this.active.has(event.id) && this.active.size >= MAX_ACTIVE) return;
-      clearTimeout(this.settleTimer);
-      this.settleTimer = undefined;
+      if (!previous && this.active.size >= MAX_ACTIVE) return;
+      this.idle.delete(event.execution);
       this.active.set(event.id, {
+        execution: event.execution,
         cursor: event.cursor,
         expiresAt: Date.now() + COMPUTER_ACTIVITY_LEASE_MS,
       });
-      this.view.show(this.hasCursor(), false);
+      if (event.cursor) this.feedback = undefined;
+      this.render();
     } else {
-      const previous = this.active.get(event.id);
       this.active.delete(event.id);
-      this.retire(event.id);
-      if (previous) {
-        this.view.show(
-          this.hasCursor() || (previous.cursor && event.click),
-          previous.cursor && event.click,
-        );
-        clearTimeout(this.settleTimer);
-        if (!this.active.size || (previous.cursor && event.click)) {
-          this.settleTimer = setTimeout(() => {
-            this.settleTimer = undefined;
-            if (this.active.size) this.view.show(this.hasCursor(), false);
-            else this.view.hide();
-          }, SETTLE_MS);
-        }
-      }
+      this.remember(this.retired, event.id);
+      if (!previous) return;
+      this.idle.set(event.execution, Date.now() + IDLE_MS);
+      if (this.idle.size > MAX_ACTIVE) this.idle.delete(this.idle.keys().next().value!);
+      if (previous.cursor)
+        this.feedback = { execution: event.execution, until: Date.now() + FEEDBACK_MS };
+      this.render(previous.cursor && event.click, previous.cursor);
     }
-    this.scheduleExpiry();
+    this.schedule();
   }
 
   clear(): void {
     clearTimeout(this.timer);
-    clearTimeout(this.settleTimer);
     this.timer = undefined;
-    this.settleTimer = undefined;
     this.active.clear();
+    this.idle.clear();
     this.retired.clear();
+    this.closed.clear();
+    this.feedback = undefined;
     this.lastSequence = -1;
     this.view.hide();
   }
 
-  private hasCursor(): boolean {
-    return [...this.active.values()].some(value => value.cursor);
+  private render(click = false, capture = false): void {
+    if (!this.active.size && !this.idle.size) {
+      this.view.hide(true);
+      return;
+    }
+    const live = [...this.active.values()].some(value => value.cursor);
+    this.view.show(live || !!this.feedback, click, {
+      waiting: !this.active.size,
+      hold: !live,
+      capture,
+    });
   }
 
-  private retire(id: string): void {
-    this.retired.add(id);
-    if (this.retired.size > MAX_RETIRED) this.retired.delete(this.retired.values().next().value!);
+  private remember(values: Set<string>, id: string): void {
+    values.add(id);
+    if (values.size > MAX_RETIRED) values.delete(values.values().next().value!);
   }
 
-  private scheduleExpiry(): void {
+  private schedule(): void {
     clearTimeout(this.timer);
     this.timer = undefined;
-    if (!this.active.size) return;
-    const earliest = Math.min(...[...this.active.values()].map(value => value.expiresAt));
+    const deadlines = [
+      ...[...this.active.values()].map(value => value.expiresAt),
+      ...this.idle.values(),
+      ...(this.feedback ? [this.feedback.until] : []),
+    ];
+    if (!deadlines.length) return;
     this.timer = setTimeout(
       () => {
+        const now = Date.now();
         for (const [id, value] of this.active) {
-          if (value.expiresAt <= Date.now()) {
+          if (value.expiresAt <= now) {
             this.active.delete(id);
-            this.retire(id);
+            this.remember(this.retired, id);
           }
         }
-        if (this.active.size) this.view.show(this.hasCursor(), false);
-        else this.view.hide();
-        this.scheduleExpiry();
+        for (const [id, deadline] of this.idle) if (deadline <= now) this.idle.delete(id);
+        if (this.feedback && this.feedback.until <= now) this.feedback = undefined;
+        this.render();
+        this.schedule();
       },
-      Math.max(0, earliest - Date.now()),
+      Math.max(0, Math.min(...deadlines) - Date.now()),
     );
     this.timer.unref?.();
   }

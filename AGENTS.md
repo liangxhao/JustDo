@@ -588,6 +588,10 @@ Native OpenClaw owns `computer` execution and screenshots.
 Windows 10 2004+ computer presentation uses patch 040's admin-only, content-free
 `computer.activity` events. Main's `core/window/computer/` owns capture-excluded,
 click-through surfaces and expiring display leases, never execution outcomes.
+The v2 event carries an opaque presentation execution identity and native release;
+keep action feedback (1.2s), quiet between-action display (12s), and native resource
+lifetime separate. Prewarm/reuse hidden surfaces; destroy them on main-window close
+or app cleanup. Freeze pointer feedback and click coordinates after each action.
 Draw a physical cursor only for unscoped foreground desktop input; background
 window actions have status only. Do not show local overlays for remote/managed
 desktops or introduce mouse/keyboard IPC. Disconnect and app cleanup retire UI.

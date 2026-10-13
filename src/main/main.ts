@@ -1907,6 +1907,9 @@ if (multicaBridgeArgv) {
 
     mainWindow.on('closed', () => {
       mainWindow = null;
+      // Cached invisible presentation windows must not keep the app alive.
+      disposeComputerOverlay?.();
+      disposeComputerOverlay = undefined;
     });
   };
 
@@ -2258,7 +2261,12 @@ if (multicaBridgeArgv) {
 
     const coworkEngineRouter = getCoworkEngineRouter();
     bindEmbeddedBrowserGateway();
-    disposeComputerOverlay = bindComputerOverlay(getOpenClawRuntimeAdapter()!);
+    disposeComputerOverlay = bindComputerOverlay(
+      getOpenClawRuntimeAdapter()!,
+      () =>
+        getStore().get<{ computerOverlayRemotePreview?: unknown }>('app_config')
+          ?.computerOverlayRemotePreview === true,
+    );
     bindCollaboration();
     getTeamDiscussionCoordinator().startReconciliation();
     bindSessionPermissionModeRuntime();

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
 
+import { ComputerOverlayPreviewSetting } from './ComputerOverlayPreviewSetting';
+
 const t = (key: string) => i18nService.t(key);
 
 export default function ComputerControlSettingsPage() {
@@ -106,6 +108,7 @@ export default function ComputerControlSettingsPage() {
         </button>
       </div>
       <p className="text-sm leading-6 text-secondary">{t('computerControlModelRequirement')}</p>
+      {enabled === true && <ComputerOverlayPreviewSetting />}
       {error && (
         <div
           role="alert"

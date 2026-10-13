@@ -15,6 +15,10 @@ export const settingsTranslations = {
     settingsSearchClear: '清除搜索',
     settingsLanguageDescription: '选择应用界面使用的语言。',
     settingsGeneralBehavior: '启动与运行',
+    computerOverlayRemotePreview: '远程显示电脑操作效果',
+    computerOverlayRemotePreviewDescription:
+      '仅适用于 Windows。开启后，远程控制、屏幕共享和录屏可捕获鼠标光晕及屏幕边框。提示层也可能进入 AI 截图。自动保存，下次电脑操作生效；查看效果后建议关闭。',
+    computerOverlayRemotePreviewError: '保存失败，请重试。',
     settingsDescription_general: '语言、启动与更新，安排应用的日常行为。',
     settingsDescription_appearance: '调整主题、配色与界面显示。',
     settingsDescription_pet: '调整桌面宠物的显示与动画。',
@@ -1354,6 +1358,10 @@ export const settingsTranslations = {
     settingsSearchClear: 'Clear search',
     settingsLanguageDescription: 'Choose the language used throughout the app.',
     settingsGeneralBehavior: 'Startup and behavior',
+    computerOverlayRemotePreview: 'Show computer effects in remote viewing',
+    computerOverlayRemotePreviewDescription:
+      'Windows only. Allows remote control, screen sharing and recordings to capture the cursor halo and screen border. These effects may also appear in AI screenshots. Saved automatically; applies on the next computer action. Turn off after previewing.',
+    computerOverlayRemotePreviewError: 'Could not save. Please try again.',
     settingsDescription_general: 'Language, startup and updates for your everyday workflow.',
     settingsDescription_appearance: 'Customize themes, colors and display preferences.',
     settingsDescription_pet: 'Adjust desktop pet visibility and animation.',

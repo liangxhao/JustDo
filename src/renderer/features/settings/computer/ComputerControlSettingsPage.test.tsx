@@ -8,6 +8,13 @@ import { translations } from '@/services/i18n/translations';
 
 import ComputerControlSettingsPage from './ComputerControlSettingsPage';
 
+vi.mock('@/services/config', () => ({
+  configService: {
+    getConfig: () => ({ computerOverlayRemotePreview: false }),
+    updateConfig: vi.fn(async () => {}),
+  },
+}));
+
 vi.mock('@/services/i18n', () => ({
   i18nService: { t: (key: string) => translations.zh[key] ?? key },
 }));
@@ -59,8 +66,14 @@ test('shows only one switch and the current-conversation image requirement', asy
   fireEvent.click(toggle);
   await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('true'));
   await waitFor(() => expect(toggle.getAttribute('aria-busy')).toBe('false'));
+  expect(
+    screen.getByRole('switch', { name: translations.zh.computerOverlayRemotePreview }),
+  ).toBeTruthy();
   fireEvent.click(toggle);
   await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('false'));
+  expect(
+    screen.queryByRole('switch', { name: translations.zh.computerOverlayRemotePreview }),
+  ).toBeNull();
   expect(api.setEnabled.mock.calls).toEqual([[true], [false]]);
 });
 

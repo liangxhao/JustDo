@@ -1,13 +1,45 @@
 'use strict';
 
 // Serialized into the native Gateway service. Keep this function self-contained.
-async function computerOverlayInvoke(request, desktopTarget, invoke, id) {
+async function computerOverlayInvoke(request, desktopTarget, invoke, id, execution) {
   if (
     process.platform !== 'win32' ||
     desktopTarget !== 'native' ||
     typeof request.onComputerActivity !== 'function'
   )
     return await invoke();
+  // This identity belongs only to presentation, never to the native execution.
+  const slot = Symbol.for('computer-overlay.activity');
+  if (!execution[slot]) {
+    const state = { id, closed: false, publish: request.onComputerActivity };
+    const ownerSignal = request.ownerSignal;
+    const close = () => {
+      if (state.closed) return;
+      state.closed = true;
+      ownerSignal?.removeEventListener('abort', close);
+      try {
+        state.publish({
+          v: 2,
+          id: state.id,
+          execution: state.id,
+          phase: 'close',
+          cursor: false,
+          click: false,
+        });
+      } catch {
+        /* Presentation cannot interfere with native cleanup. */
+      }
+    };
+    const release = execution.releaseOwner;
+    execution.releaseOwner = () => {
+      close();
+      return release();
+    };
+    execution[slot] = state;
+    ownerSignal?.addEventListener('abort', close, { once: true });
+    if (ownerSignal?.aborted) close();
+  }
+  const state = execution[slot];
   const input = request.params;
   const desktop =
     request.command === 'computer.act' &&
@@ -17,11 +49,11 @@ async function computerOverlayInvoke(request, desktopTarget, invoke, id) {
     !input.pageRef;
   const clicks = ['left_click', 'right_click', 'middle_click', 'double_click', 'triple_click'];
   const cursor =
-    desktop &&
-    [...clicks, 'mouse_move', 'left_click_drag', 'scroll', 'type', 'key'].includes(input.action);
+    desktop && [...clicks, 'mouse_move', 'left_click_drag', 'scroll'].includes(input.action);
   const emit = (phase, click = false) => {
     try {
-      request.onComputerActivity({ v: 1, id, phase, cursor, click });
+      if (!state.closed)
+        request.onComputerActivity({ v: 2, id, execution: state.id, phase, cursor, click });
     } catch {
       /* Presentation must never change native execution. */
     }

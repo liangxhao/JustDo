@@ -10,7 +10,7 @@ const { computerOverlayInvoke } = require('../../../../scripts/patches/v2026.9.8
 const { transformService, transformHandler, transformGuard, SERVICE, HANDLER, GUARD } = require('../../../../scripts/patches/v2026.9.8/040-computer-overlay-activity.cjs').__testing;
 const { applyPatch, verifyPatch } = require('../../../../scripts/patches/v2026.9.8/040-computer-overlay-activity.cjs');
 const service = `function createGatewayComputerService(options) {
-  const execution = { settled: options.settled, physicalId: randomUUID() };
+  const execution = { settled: options.settled, physicalId: randomUUID(), releaseOwner() {} };
   return { async invoke(request) {
     request.assertCurrent();
     if (execution.settled.has(request.idempotencyKey)) throw new Error('settled');
@@ -30,14 +30,51 @@ const handler = `const computerHandlers = { "computer.invoke": async (options) =
 const guard = `const EVENT_SCOPE_GUARDS = { "chat": ["operator.read"] }; function hasEventScope() {}`;
 
 function invokeFor(platform: string) {
-  return vm.runInNewContext(`(${computerOverlayInvoke.toString()})`, {
+  const native = vm.runInNewContext(`(${computerOverlayInvoke.toString()})`, {
     process: { platform }, setInterval, clearInterval,
-  }) as (request: object, desktop: string, invoke: () => Promise<unknown>, id: string) => Promise<unknown>;
+  }) as (request: object, desktop: string, invoke: () => Promise<unknown>, id: string, execution: object) => Promise<unknown>;
+  return (request: object, desktop: string, invoke: () => Promise<unknown>, id: string, execution = { releaseOwner() {} }) => native(request, desktop, invoke, id, execution);
 }
 
 describe('native computer presentation observer', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
+
+  it('keeps one presentation identity across actions and closes it on native release', async () => {
+    const onComputerActivity = vi.fn();
+    const releaseOwner = vi.fn();
+    const execution = { releaseOwner };
+    const request = { command: 'screen.snapshot', params: {}, onComputerActivity };
+    await invokeFor('win32')(request, 'native', async () => 'one', 'first', execution);
+    await invokeFor('win32')(request, 'native', async () => 'two', 'second', execution);
+    expect(onComputerActivity.mock.calls.every(([event]) => event.execution === 'first')).toBe(true);
+    execution.releaseOwner();
+    expect(releaseOwner).toHaveBeenCalledOnce();
+    expect(onComputerActivity).toHaveBeenLastCalledWith({ v: 2, id: 'first', execution: 'first', phase: 'close', cursor: false, click: false });
+  });
+
+  it('owner cancellation fences heartbeats and late completion without changing the native result', async () => {
+    const owner = new AbortController();
+    const onComputerActivity = vi.fn();
+    const execution = { releaseOwner: vi.fn() };
+    let finish!: (result: string) => void;
+    const pending = invokeFor('win32')({ command: 'screen.snapshot', params: {}, ownerSignal: owner.signal, onComputerActivity },
+      'native', () => new Promise<string>(resolve => { finish = resolve; }), 'id', execution);
+    owner.abort();
+    expect(onComputerActivity.mock.calls.map(([event]) => event.phase)).toEqual(['start', 'close']);
+    vi.advanceTimersByTime(10_000);
+    finish('exact-result');
+    expect(await pending).toBe('exact-result');
+    execution.releaseOwner();
+    expect(onComputerActivity).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['type', 'key'])('does not pretend %s occurs under the physical mouse', async action => {
+    const onComputerActivity = vi.fn();
+    await invokeFor('win32')({ command: 'computer.act', params: { action }, onComputerActivity }, 'native', async () => ({}), 'id');
+    expect(onComputerActivity.mock.calls.every(([event]) => !event.cursor)).toBe(true);
+  });
 
   it('publishes only closed metadata and preserves the exact native result', async () => {
     const onComputerActivity = vi.fn();
@@ -45,8 +82,8 @@ describe('native computer presentation observer', () => {
     const result = { ok: true, details: { scope: 'desktop' } };
     expect(await invokeFor('win32')(request, 'native', async () => result, 'id')).toBe(result);
     expect(onComputerActivity.mock.calls.map(([value]) => value)).toEqual([
-      { v: 1, id: 'id', phase: 'start', cursor: true, click: false },
-      { v: 1, id: 'id', phase: 'end', cursor: true, click: true },
+      { v: 2, id: 'id', execution: 'id', phase: 'start', cursor: true, click: false },
+      { v: 2, id: 'id', execution: 'id', phase: 'end', cursor: true, click: true },
     ]);
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -83,7 +120,7 @@ describe('native computer presentation observer', () => {
     const onComputerActivity = vi.fn();
     const request = { command: 'computer.act', params: { action: 'left_click' }, onComputerActivity };
     expect(await invokeFor('win32')(request, 'native', async () => result, 'id')).toBe(result);
-    expect(onComputerActivity).toHaveBeenLastCalledWith({ v: 1, id: 'id', phase: 'end', cursor: true, click: false });
+    expect(onComputerActivity).toHaveBeenLastCalledWith({ v: 2, id: 'id', execution: 'id', phase: 'end', cursor: true, click: false });
   });
 
   it('renews in-flight presentation and always clears its timer on failure', async () => {
@@ -96,7 +133,7 @@ describe('native computer presentation observer', () => {
     expect(onComputerActivity).toHaveBeenCalledTimes(3);
     reject(failure);
     await expect(pending).rejects.toBe(failure);
-    expect(onComputerActivity).toHaveBeenLastCalledWith({ v: 1, id: 'id', phase: 'end', cursor: false, click: false });
+    expect(onComputerActivity).toHaveBeenLastCalledWith({ v: 2, id: 'id', execution: 'id', phase: 'end', cursor: false, click: false });
     expect(vi.getTimerCount()).toBe(0);
   });
 
