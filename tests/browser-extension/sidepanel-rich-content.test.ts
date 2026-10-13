@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { composeBrowserGatewayPrompt } from '../../src/shared/browser/browser';
 import {
+  pendingInputLabel,
   renderRichContent,
   retryRichImages,
 } from '../../resources/browser-extension/conversation-overlay/modules/sidepanel-rich-content.js';
@@ -53,6 +54,18 @@ function mount(rawMessage: unknown) {
 }
 
 describe('side panel desktop rich content', () => {
+  it.each([
+    ['zh-CN', '输入已接收，等待处理'],
+    ['en-US', 'Input received, waiting for processing'],
+  ])('shows a readable pending input status for %s', (language, expected) => {
+    const locale = vi.spyOn(navigator, 'language', 'get').mockReturnValue(language);
+    try {
+      expect(pendingInputLabel('queued')).toBe(expected);
+    } finally {
+      locale.mockRestore();
+    }
+  });
+
   it('loads all six recording screenshots from canonical managed inbound media', async () => {
     const paths = Array.from({ length: 6 }, (_, i) => `media://inbound/shot-${i}.jpg`);
     const { host, load } = mount({

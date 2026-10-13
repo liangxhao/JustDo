@@ -151,7 +151,7 @@ main {
 }
 .message {
   max-width: 92%;
-  margin: 0 0 16px;
+  margin: 0 0 8px;
   padding: 11px 13px;
   border-radius: 16px;
   white-space: pre-wrap;
@@ -228,7 +228,7 @@ main {
   background: var(--chat-bubble);
 }
 .message.assistant {
-  padding-left: 3px;
+  padding: 4px 13px 4px 3px;
   background: transparent;
 }
 .message.system {
@@ -238,7 +238,7 @@ main {
 }
 .message.process-cluster {
   max-width: 100%;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
   padding: 0;
   color: var(--chat-muted);
   background: transparent;
@@ -249,7 +249,7 @@ main {
   align-items: center;
   gap: 7px;
   width: fit-content;
-  padding: 6px 9px;
+  padding: 4px 9px;
   border-radius: 8px;
   cursor: pointer;
   color: var(--chat-muted);
