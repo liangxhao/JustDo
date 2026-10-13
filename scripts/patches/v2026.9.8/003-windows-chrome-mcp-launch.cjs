@@ -2,10 +2,10 @@
 
 // Capability: launch Chrome MCP through Electron's embedded Node on Windows without showing the
 // nested npm command shell.
-// Target: pristine openclaw@2026.9.8, which already captures stderr before connecting but still
-// launches the configured npm/npx command shim directly.
-// Scope: adapts only npm/npx Chrome MCP launch arguments. Native commands and non-Windows hosts
-// retain the upstream transport path and diagnostics.
+// Target: pristine openclaw@2026.9.8, which launches its bundled server via process.execPath
+// without inheriting Electron Node mode, and launches configured npm/npx shims directly.
+// Scope: adapts npm/npx and the bundled direct Electron Chrome MCP launch.
+// Native commands and non-Windows hosts retain the upstream transport path and diagnostics.
 // Safety: only app-provided executable/bin/preload paths are consumed; the preload path is
 // constrained to the expected absolute hide-child-process-windows.cjs filename.
 // Remove when: upstream provides an Electron-safe Windows Chrome MCP package runner.
@@ -26,11 +26,19 @@ function resolveJustDoChromeMcpLaunch(command, args, platform, environment) {
       : null;
   const npmBinDir = environment?.JUSTDO_NPM_BIN_DIR;
   const electronPath = environment?.JUSTDO_ELECTRON_PATH;
-  if (!packageRunner || !npmBinDir || !electronPath) {
+  const bundledElectronServer =
+    platform === 'win32' &&
+    typeof command === 'string' &&
+    typeof electronPath === 'string' &&
+    command.replace(/\\/g, '/').toLowerCase() === electronPath.replace(/\\/g, '/').toLowerCase() &&
+    Array.isArray(args) &&
+    typeof args[0] === 'string' &&
+    /[\\/]chrome-devtools-mcp[\\/]build[\\/]src[\\/]bin[\\/]chrome-devtools-mcp\.js$/i.test(
+      args[0],
+    );
+  if ((!packageRunner || !npmBinDir || !electronPath) && !bundledElectronServer) {
     return { command, args, env: undefined };
   }
-  const runnerName = packageRunner[1].toLowerCase();
-  const normalizedBinDir = npmBinDir.replace(/[\\/]+$/, '');
   const windowsHidePreloadCandidate = environment?.JUSTDO_WINDOWS_HIDE_PRELOAD?.trim() ?? '';
   const windowsHidePreload =
     /^(?:[A-Za-z]:[\\/]|\\\\)[^"\r\n]+[\\/]hide-child-process-windows\.cjs$/i.test(
@@ -38,18 +46,31 @@ function resolveJustDoChromeMcpLaunch(command, args, platform, environment) {
     )
       ? windowsHidePreloadCandidate
       : '';
+  const requireOption = windowsHidePreload ? `--require="${windowsHidePreload}"` : '';
+  const nodeOptions = typeof environment?.NODE_OPTIONS === 'string' ? environment.NODE_OPTIONS : '';
   return {
-    command: electronPath,
-    args: [`${normalizedBinDir}\\${runnerName}-cli.js`, ...args],
+    command: bundledElectronServer ? command : electronPath,
+    args: bundledElectronServer
+      ? args
+      : [`${npmBinDir.replace(/[\\/]+$/, '')}\\${packageRunner[1].toLowerCase()}-cli.js`, ...args],
     env: Object.fromEntries([
       ...Object.entries(environment).filter(entry => typeof entry[1] === 'string'),
       ['ELECTRON_RUN_AS_NODE', '1'],
-      ...(windowsHidePreload ? [['NODE_OPTIONS', `--require="${windowsHidePreload}"`]] : []),
+      ...(requireOption
+        ? [
+            [
+              'NODE_OPTIONS',
+              nodeOptions.includes(requireOption)
+                ? nodeOptions
+                : [nodeOptions.trim(), requireOption].filter(Boolean).join(' '),
+            ],
+          ]
+        : []),
     ]),
   };
 }
 
-const CONTRACT = 'JUSTDO_WINDOWS_CHROME_MCP_LAUNCH_V2026_9_8';
+const CONTRACT = 'JUSTDO_WINDOWS_CHROME_MCP_LAUNCH_V2026_9_8_DIRECT_NODE_V1';
 const SESSION_ANCHOR = 'async function createRealSession(';
 const NATIVE_TRANSPORT_PATTERN =
   /new StdioClientTransport\(\{\s*command:\s*([A-Za-z_$][\w$]*)\.command,\s*args:\s*\1\.args,\s*env:\s*\1\.env,\s*stderr:\s*(["'`])pipe\2\s*\}\)/;
@@ -107,7 +128,7 @@ function applyPatch(runtimeDir) {
           `new StdioClientTransport(buildJustDoChromeMcpTransportOptions(${options}))`,
         'Chrome MCP Windows package runner transport',
       );
-    } else if (!hasHelper || !hasPatchedTransport) {
+    } else if (!hasHelper || !hasPatchedTransport || !original.includes(WINDOWS_HELPER)) {
       throw new Error(`historical or partially applied Chrome MCP launch contract: ${filePath}`);
     }
     return { filePath, original, updated };
@@ -122,12 +143,16 @@ function applyPatch(runtimeDir) {
 function verifyPatch(runtimeDir) {
   for (const filePath of targets(runtimeDir)) {
     const content = fs.readFileSync(filePath, 'utf8');
+    if (!content.includes(WINDOWS_HELPER)) {
+      throw new Error(`historical or partially applied Chrome MCP launch contract: ${filePath}`);
+    }
     for (const contract of [
       CONTRACT,
       'function resolveJustDoChromeMcpLaunch(',
       'JUSTDO_NPM_BIN_DIR',
       'JUSTDO_ELECTRON_PATH',
       'JUSTDO_WINDOWS_HIDE_PRELOAD',
+      'bundledElectronServer',
       "['ELECTRON_RUN_AS_NODE', '1']",
       'buildJustDoChromeMcpTransportOptions(',
     ]) {

@@ -42,6 +42,8 @@ Plugin Hub 有四类插件概念；市场当前只开放 extension、skill、mcp
 
 ## 2. 从页面到运行时
 
+日常 Chrome 沿用原生 existing-session driver 和随包 Chrome MCP，设置页通过 Gateway 请求原生 Tab 查询来触发浏览器授权。Windows 构建补丁 003 同时处理随包服务器的直接 Electron 启动与 npm/npx 启动；只对受管 Electron 服务器显式携带 Node 模式环境，保留原生参数、调用方环境、进程身份核验及清理约束。Chrome 授权仍由原生连接和浏览器负责，应用不读取授权状态或代替用户批准。
+
 ```mermaid
 flowchart LR
   UI[PluginsView 与领域面板] --> Preload[显式插件 IPC]

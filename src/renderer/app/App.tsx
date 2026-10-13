@@ -288,12 +288,10 @@ const InitializedApp: React.FC = () => {
         setIsInitialized(true);
         console.info('[App] initializeApp: shell ready');
 
-        // 初始化定时任务服务，但不阻塞首屏
-        void waitWithTimeout(scheduledTaskService.init(), 10000, 'scheduledTaskService.init').catch(
-          error => {
-            console.error('[App] initializeApp: scheduledTaskService.init failed:', error);
-          },
-        );
+        // 定时任务列表会等待 Gateway 就绪；启动超时由 Main 管理，不阻塞首屏。
+        void scheduledTaskService.init().catch(error => {
+          console.error('[App] initializeApp: scheduledTaskService.init failed:', error);
+        });
 
         // 加载 agents 列表，不阻塞首屏
         void agentService.loadAgents();
