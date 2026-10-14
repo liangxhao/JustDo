@@ -135,6 +135,7 @@ import {
 import { SwarmIpc } from '../shared/cowork/swarm';
 import {
   type SwarmWorkflowAction,
+  type SwarmWorkflowChangedEvent,
   type SwarmWorkflowIntervention,
   SwarmWorkflowIpc,
   type SwarmWorkflowOptions,
@@ -1020,6 +1021,12 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.Status, sessionId, forceRefresh),
     getSwarmSnapshot: (sessionId: string) => ipcRenderer.invoke(SwarmIpc.Snapshot, sessionId),
     getSwarmWorkflows: (sessionId: string) => ipcRenderer.invoke(SwarmWorkflowIpc.List, sessionId),
+    onSwarmWorkflowsChanged: (callback: (event: SwarmWorkflowChangedEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, event: SwarmWorkflowChangedEvent) =>
+        callback(event);
+      ipcRenderer.on(SwarmWorkflowIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(SwarmWorkflowIpc.Changed, handler);
+    },
     getSwarmWorkflowBatch: (
       sessionId: string,
       flowId: string,

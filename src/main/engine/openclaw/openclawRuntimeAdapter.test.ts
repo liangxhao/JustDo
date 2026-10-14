@@ -661,6 +661,68 @@ test('publishes Workboard revision invalidations without projecting card data', 
   expect(listener).toHaveBeenCalledWith({ epoch: 'epoch-1', revision: 7 });
 });
 
+test('validates workflow notices and resolves only owned parent sessions', () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const listener = vi.fn();
+  adapter.on('swarmWorkflowChanged', listener);
+  const change = { parentKey: 'agent:main:justdo:session-1', flowId: 'flow', revision: 7 };
+  for (const payload of [
+    null, [], {}, { ...change, revision: 0 }, { ...change, revision: 1.5 },
+    { ...change, flowId: 'x'.repeat(81) },
+    { ...change, parentKey: 'agent:review:justdo:session-1' },
+    { ...change, parentKey: 'agent:main:justdo:missing' },
+  ]) {
+    adapter.handleGatewayEvent({ event: 'plugin.swarm-workflow.changed', payload });
+  }
+  expect(listener).not.toHaveBeenCalled();
+  adapter.handleGatewayEvent({ event: 'plugin.swarm-workflow.changed', payload: {
+    ...change, content: 'must not be forwarded',
+  } });
+  expect(listener).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session-1', flowId: 'flow', revision: 7 });
+  adapter.handleGatewayEvent({ event: 'plugin.swarm-workflow.reset', payload: {} });
+  expect(listener).toHaveBeenLastCalledWith({});
+});
+
+test('invalidates workflows only when the current replacement Gateway client is usable', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const listener = vi.fn();
+  adapter.on('swarmWorkflowChanged', listener);
+  const hellos: Array<() => void> = [];
+  class Client {
+    constructor(options: { onHelloOk: () => void }) { hellos.push(options.onHelloOk); }
+    start = vi.fn();
+    stop = vi.fn();
+    request = vi.fn().mockResolvedValue({});
+  }
+  const internals = adapter as unknown as {
+    gatewayClientGeneration: number;
+    loadGatewayClientCtor: () => Promise<typeof Client>;
+    createGatewayClient: (connection: { url: string; clientEntryPath: string }) => Promise<void>;
+    startTickWatchdog: () => void;
+    handleGatewayReady: () => Promise<void>;
+    reconcilePendingApprovals: () => Promise<void>;
+    reconcilePendingAskUserInteractions: () => Promise<void>;
+  };
+  internals.loadGatewayClientCtor = async () => Client;
+  internals.startTickWatchdog = vi.fn();
+  internals.handleGatewayReady = vi.fn().mockResolvedValue(undefined);
+  internals.reconcilePendingApprovals = vi.fn().mockResolvedValue(undefined);
+  internals.reconcilePendingAskUserInteractions = vi.fn().mockResolvedValue(undefined);
+  const connection = { url: 'ws://127.0.0.1', clientEntryPath: '/fixture/client.js' };
+  await internals.createGatewayClient(connection);
+  expect(listener).not.toHaveBeenCalled();
+  hellos[0]();
+  expect(listener).toHaveBeenCalledExactlyOnceWith({});
+  internals.gatewayClientGeneration++;
+  await internals.createGatewayClient(connection);
+  hellos[0]();
+  expect(listener).toHaveBeenCalledTimes(1);
+  hellos[1]();
+  expect(listener).toHaveBeenCalledTimes(2);
+});
+
 test('getSessionKeysForSession prefers channel keys before managed fallback', () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});

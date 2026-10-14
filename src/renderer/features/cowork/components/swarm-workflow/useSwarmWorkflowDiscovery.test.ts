@@ -1,27 +1,41 @@
 // @vitest-environment jsdom
+import type { SwarmWorkflowChangedEvent } from '@shared/cowork/swarm-workflow';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { useSwarmWorkflowDiscovery } from './useSwarmWorkflowDiscovery';
 
+let notify: (event: SwarmWorkflowChangedEvent) => void = () => {};
+
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
 });
-const flow = (id: string, status = 'running') => ({ id, status, nodes: [] });
+const flow = (id: string, status = 'running') => ({ id, revision: 1, status, nodes: [] });
 function fixture() {
   vi.useFakeTimers();
   const read = vi.fn().mockResolvedValue({ success: true, flows: [] });
   Object.defineProperty(window, 'electron', {
     configurable: true,
-    value: { cowork: { getSwarmWorkflows: read } },
+    value: {
+      cowork: {
+        getSwarmWorkflows: read,
+        onSwarmWorkflowsChanged: (callback: typeof notify) => {
+          notify = callback;
+          return () => {
+            notify = () => {};
+          };
+        },
+      },
+    },
   });
   const open = vi.fn();
   return { read, open };
 }
 const tick = () =>
   act(async () => {
-    await vi.advanceTimersByTimeAsync(2500);
+    notify({});
+    await vi.advanceTimersByTimeAsync(50);
   });
 
 test('clears the projection and stops polling after disable, then reads retained flows on enable', async () => {
@@ -156,4 +170,74 @@ test('keeps the reopen entry on a temporary failure but never carries it into an
   expect(hook.result.current.count).toBe(0);
   await tick();
   expect(hook.result.current.hasFlows).toBe(false);
+});
+
+test('does not query on elapsed time, filters other chats, and coalesces revision notices', async () => {
+  const { read, open } = fixture();
+  const hook = renderHook(() => useSwarmWorkflowDiscovery('chat', open));
+  await act(async () => {});
+  expect(read).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(60_000);
+  });
+  expect(read).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    notify({ sessionId: 'other', flowId: 'one', revision: 1 });
+    await vi.advanceTimersByTimeAsync(50);
+  });
+  expect(read).toHaveBeenCalledTimes(1);
+  read.mockResolvedValue({ success: true, flows: [{ ...flow('one'), revision: 2 }] });
+  await act(async () => {
+    notify({ sessionId: 'chat', flowId: 'one', revision: 1 });
+    notify({ sessionId: 'chat', flowId: 'one', revision: 2 });
+    notify({ sessionId: 'chat', flowId: 'one', revision: 2 });
+    await vi.advanceTimersByTimeAsync(50);
+  });
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(hook.result.current.count).toBe(1);
+  await act(async () => {
+    notify({ sessionId: 'chat', flowId: 'one', revision: 1 });
+    await vi.advanceTimersByTimeAsync(50);
+  });
+  expect(read).toHaveBeenCalledTimes(2);
+});
+
+test('catches up a change during the initial read and rejects its stale response', async () => {
+  const { read, open } = fixture();
+  let resolve!: (value: unknown) => void;
+  read.mockImplementationOnce(
+    () =>
+      new Promise(done => {
+        resolve = done;
+      }),
+  );
+  const hook = renderHook(() => useSwarmWorkflowDiscovery('chat', open));
+  await act(async () => {
+    notify({ sessionId: 'chat', flowId: 'new', revision: 1 });
+    await vi.advanceTimersByTimeAsync(50);
+  });
+  expect(read).toHaveBeenCalledTimes(1);
+  read.mockResolvedValue({ success: true, flows: [flow('new')] });
+  await act(async () => resolve({ success: true, flows: [flow('stale')] }));
+  expect(hook.result.current.count).toBe(0);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(50);
+  });
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(hook.result.current.count).toBe(1);
+  expect(open).toHaveBeenCalledTimes(1);
+});
+
+test('recovers after a disconnected read when a reconnect notice arrives', async () => {
+  const { read, open } = fixture();
+  read.mockResolvedValueOnce({ success: false });
+  const hook = renderHook(() => useSwarmWorkflowDiscovery('chat', open));
+  await act(async () => {});
+  expect(hook.result.current.result.success).toBe(false);
+  read.mockResolvedValue({ success: true, flows: [flow('retained', 'completed')] });
+  await tick();
+  expect(hook.result.current.count).toBe(1);
+  hook.unmount();
+  await tick();
+  expect(read).toHaveBeenCalledTimes(2);
 });

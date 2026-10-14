@@ -3,10 +3,14 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { Flow, FlowNode } from '../contracts/flow.js';
 import { BatchStore, stagePayload } from '../batch/store.js';
+import type { WorkflowNativeChange } from '../contracts/events.js';
 export class FlowStore {
   private db: DatabaseSync;
   readonly batches: BatchStore;
-  constructor(directory: string) {
+  constructor(
+    directory: string,
+    private readonly onChanged: (change: WorkflowNativeChange) => void = () => {},
+  ) {
     mkdirSync(directory, { recursive: true });
     this.db = new DatabaseSync(path.join(directory, 'flows.sqlite'));
     this.db.exec(
@@ -33,6 +37,7 @@ export class FlowStore {
       this.batches.persist(flow);
       if (flow.status === 'stopping') this.batches.cancelQueued(flow.id);
     });
+    this.notifyChanged(flow);
   }
   put(flow: Flow): void {
     const next = { ...flow, revision: flow.revision + 1, updatedAt: Date.now() };
@@ -46,6 +51,7 @@ export class FlowStore {
     });
     Object.assign(flow, next);
     this.batches.acknowledge(flow);
+    this.notifyChanged(flow);
   }
   expandBatch(flow: Flow, stage: FlowNode, items: FlowNode[], assertCurrent: () => void): void {
     const next = { ...flow, revision: flow.revision + 1, updatedAt: Date.now() };
@@ -59,6 +65,10 @@ export class FlowStore {
       assertCurrent();
     });
     Object.assign(flow, next);
+    this.notifyChanged(flow);
+  }
+  private notifyChanged(flow: Flow): void {
+    this.onChanged({ parentKey: flow.parentKey, flowId: flow.id, revision: flow.revision });
   }
   private transaction<T>(operation: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');

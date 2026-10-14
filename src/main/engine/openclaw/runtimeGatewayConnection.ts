@@ -269,6 +269,7 @@ export async function createGatewayClient(
       // Invalidate the Workboard once the replacement client is actually usable
       // so its renderer clears stale disconnect errors and reloads canonical data.
       this.emit('workboardChanged', {});
+      this.emit('swarmWorkflowChanged', {});
       this.lastTickTimestamp = Date.now();
       this.startTickWatchdog();
       void this.handleGatewayReady(generation);

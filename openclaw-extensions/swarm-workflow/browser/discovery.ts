@@ -1,10 +1,11 @@
 import type { WorkflowBrowserPorts, WorkflowAvailability } from './ports';
 import type { SwarmWorkflowResult } from '../contracts/workflow';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { observeWorkflows } from './observe';
 
 /** Observe the selected chat independently of whether its workflow Tab is open. */
 export function useSwarmWorkflowDiscovery(
-  api: Pick<WorkflowBrowserPorts, 'getSwarmWorkflows'>,
+  api: Pick<WorkflowBrowserPorts, 'getSwarmWorkflows' | 'onSwarmWorkflowsChanged'>,
   sessionId: string | null | undefined,
   onDiscover?: () => void,
   availability: WorkflowAvailability = { enabled: true, disabledRevision: 0 },
@@ -34,16 +35,7 @@ export function useSwarmWorkflowDiscovery(
       return;
     }
     if (!sessionId) return;
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const read = async () => {
-      let result: SwarmWorkflowResult;
-      try {
-        result = await api.getSwarmWorkflows(sessionId);
-      } catch {
-        result = { success: false };
-      }
-      if (disposed) return;
+    return observeWorkflows(api, sessionId, result => {
       setSnapshot(previous => ({
         sessionId,
         disabledRevision,
@@ -71,13 +63,7 @@ export function useSwarmWorkflowDiscovery(
         seen.current.set(sessionId, next);
         if (discovered) onDiscoverRef.current();
       }
-      timer = setTimeout(() => void read(), 2500);
-    };
-    void read();
-    return () => {
-      disposed = true;
-      clearTimeout(timer);
-    };
+    });
   }, [api, sessionId, revision, enabled, disabledRevision]);
   const current =
     enabled &&

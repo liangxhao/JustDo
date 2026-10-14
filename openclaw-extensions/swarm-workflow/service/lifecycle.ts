@@ -5,6 +5,7 @@ import { FlowEngine } from '../execution/engine';
 import { FlowStore } from '../data/store';
 import { FlowNotifier } from '../management/notifications';
 import { FLOW_RPC } from '../contracts/flow';
+import { WorkflowEventName, type WorkflowNativeChange } from '../contracts/events';
 import { freezeBatch, verifyItemResult, readBatchManifest } from '../batch/snapshot';
 import { assertCrossAgentPolicy } from '../execution/policy';
 import { lastSubmissionError, submissionCorrectionInstructions } from '../execution/submission';
@@ -33,9 +34,24 @@ export function registerWorkflowLifecycle(context: WorkflowContext): void {
     id: 'swarm-workflow',
     start(ctx) {
       if (state.engine) throw new Error('Swarm Workflow service is already running.');
+      const events = ctx.gatewayEvents;
+      if (!events) throw new Error('Swarm Workflow requires plugin Gateway events.');
       const epoch = ++state.generation;
       ownedGeneration = epoch;
-      state.store = new FlowStore(path.join(ctx.stateDir, 'swarm-workflow'));
+      const publishChange = (change?: WorkflowNativeChange) => {
+        if (epoch !== state.generation) return;
+        try {
+          events.emit(
+            change ? WorkflowEventName.Changed : WorkflowEventName.Reset,
+            change ? { ...change } : {},
+            { scope: 'operator.read' },
+          );
+        } catch {
+          // The transaction is already committed; a notice cannot turn it into a failed write.
+          ctx.logger.error('[SwarmWorkflow] Failed to publish workflow change.');
+        }
+      };
+      state.store = new FlowStore(path.join(ctx.stateDir, 'swarm-workflow'), publishChange);
       state.engine = new FlowEngine(state.store, {
         capacity: () => {
           const config = api.runtime.config.current();
@@ -182,6 +198,7 @@ export function registerWorkflowLifecycle(context: WorkflowContext): void {
           });
       };
       tick();
+      publishChange();
     },
     async stop() {
       if (ownedGeneration !== state.generation) return;

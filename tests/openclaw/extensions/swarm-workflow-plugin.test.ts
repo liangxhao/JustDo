@@ -27,6 +27,7 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 async function fixture() {
+  const emit = vi.fn();
   const root = mkdtempSync(path.join(os.tmpdir(), 'flow-plugin-'));
   const parentKey = 'agent:main:justdo:parent';
   const parent = { sessionId: 'native-parent', sessionRoot: root, permissionMode: 'workspace' };
@@ -110,7 +111,7 @@ async function fixture() {
     on: (name: string, fn: any) => hooks.set(name, fn),
   };
   moduleBox.exports.default.register(api);
-  await service.start({ stateDir: root, logger: { error: vi.fn() } });
+  await service.start({ stateDir: root, gatewayEvents: { emit }, logger: { error: vi.fn() } });
   cleanup.push(async () => {
     await service.stop();
     rmSync(root, { recursive: true, force: true });
@@ -128,7 +129,7 @@ async function fixture() {
     });
     return { hooks: agentHooks, tools: agentTools, service: agentService };
   };
-  return { root, parent, parentKey, request, run, messages, nodeMessages, getSessionMessages, agents, config, tool, toolFactories, hooks, wait, hook: hooks.get('before_prompt_build'), service, registerAgent, api, methods, registeredToolNames, plugin: moduleBox.exports.default };
+  return { emit, root, parent, parentKey, request, run, messages, nodeMessages, getSessionMessages, agents, config, tool, toolFactories, hooks, wait, hook: hooks.get('before_prompt_build'), service, registerAgent, api, methods, registeredToolNames, plugin: moduleBox.exports.default };
 }
 it('loads the manifest, tools, application RPCs and durable store under one Swarm Workflow namespace', async () => {
   const manifest = JSON.parse(readFileSync('openclaw-extensions/swarm-workflow/openclaw.plugin.json', 'utf8'));
@@ -141,6 +142,23 @@ it('loads the manifest, tools, application RPCs and durable store under one Swar
   expect([...f.registeredToolNames].sort()).toEqual([...manifest.contracts.tools].sort());
   for (const method of Object.values(SwarmWorkflowGateway)) expect(f.methods.has(method)).toBe(true);
   expect(existsSync(path.join(f.root, 'swarm-workflow', 'flows.sqlite'))).toBe(true);
+});
+it('publishes workflow changes through the active Gateway service without leaking bodies', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  expect(f.emit).toHaveBeenCalledWith('reset', {}, { scope: 'operator.read' });
+  const created = await f.request('swarmWorkflow.start', {
+    parentKey: f.parentKey, requestId: 'event-test', goal: 'Private task text', mode: 'auto',
+  }) as any;
+  expect(f.emit).toHaveBeenLastCalledWith('changed', {
+    parentKey: f.parentKey, flowId: created.id, revision: created.revision,
+  }, { scope: 'operator.read' });
+  f.emit.mockImplementationOnce(() => { throw new Error('Transport unavailable'); });
+  await expect(f.request('swarmWorkflow.control', {
+    parentKeys: [f.parentKey], id: created.id, revision: created.revision, action: 'pause',
+  })).resolves.toBeDefined();
+  const listed = await f.request('swarmWorkflow.list', { parentKeys: [f.parentKey] }) as any;
+  expect(listed.flows[0].status).toBe('paused');
 });
 it('classifies a local launch preflight failure before the SDK invocation as conclusively unstarted', async () => {
   vi.useFakeTimers(); const f = await fixture();
@@ -379,7 +397,7 @@ it.each(['stop', 'restart', 'planning', 'expired', 'identity', 'project', 'permi
       if (method === 'agents.list') {
         if (change === 'stop' || change === 'restart') {
           await f.service.stop();
-          if (change === 'restart') await f.service.start({ stateDir: f.root, logger: { error: vi.fn() } });
+          if (change === 'restart') await f.service.start({ stateDir: f.root, gatewayEvents: { emit: f.emit }, logger: { error: vi.fn() } });
         } else if (change === 'expired') vi.setSystemTime(Date.now() + 30001);
         else if (change === 'planning') Object.assign(f.parent, { pluginExtensions: { 'plan-mode': { state: { enabled: true } } } });
         else if (change === 'identity') f.parent.sessionId = 'changed';
@@ -392,7 +410,7 @@ it.each(['stop', 'restart', 'planning', 'expired', 'identity', 'project', 'permi
     await expect(f.tool.execute('launch', {
       goal: 'Inspect', mode: 'auto', sourceRequestId: 'roster-race:user',
     })).rejects.toThrow('before flow creation');
-    if (change === 'stop') await f.service.start({ stateDir: f.root, logger: { error: vi.fn() } });
+    if (change === 'stop') await f.service.start({ stateDir: f.root, gatewayEvents: { emit: f.emit }, logger: { error: vi.fn() } });
     expect((await f.request('swarmWorkflow.list', { parentKeys: [f.parentKey] }) as any).flows).toEqual([]);
     expect(f.run).not.toHaveBeenCalled();
   },
@@ -529,7 +547,7 @@ it.each([
       if (change === 'expired') vi.setSystemTime(Date.now() + 30 * 60 * 1000 + 1);
       else {
         await f.service.stop();
-        if (change === 'restart') await f.service.start({ stateDir: f.root, logger: { error: vi.fn() } });
+        if (change === 'restart') await f.service.start({ stateDir: f.root, gatewayEvents: { emit: f.emit }, logger: { error: vi.fn() } });
       }
     }
     return result;
@@ -589,7 +607,7 @@ it('rejects control through a different parent and preserves flow state on servi
     }),
   ).rejects.toThrow();
   await f.service.stop();
-  await f.service.start({ stateDir: f.root, logger: { error: vi.fn() } });
+  await f.service.start({ stateDir: f.root, gatewayEvents: { emit: f.emit }, logger: { error: vi.fn() } });
   const list = (await f.request('swarmWorkflow.list', { parentKeys: [f.parentKey] })) as any;
   expect(list.flows[0].id).toBe(started.id);
 });

@@ -5,6 +5,7 @@ import type {
   SwarmWorkflowView,
 } from '../contracts/workflow';
 import type { WorkflowBrowserPorts } from './ports';
+import { observeWorkflows } from './observe';
 
 export interface WorkflowPanelOptions {
   sessionId: string;
@@ -14,7 +15,10 @@ export interface WorkflowPanelOptions {
   resetViewport: () => void;
 }
 export function useWorkflowPanel(
-  api: Pick<WorkflowBrowserPorts, 'getSwarmWorkflows' | 'controlSwarmWorkflow'>,
+  api: Pick<
+    WorkflowBrowserPorts,
+    'getSwarmWorkflows' | 'controlSwarmWorkflow' | 'onSwarmWorkflowsChanged'
+  >,
   { sessionId, active, snapshot, onRefresh, resetViewport }: WorkflowPanelOptions,
 ) {
   const [flows, setFlows] = useState<SwarmWorkflowView[]>([]);
@@ -48,28 +52,13 @@ export function useWorkflowPanel(
   }, [flows, resetViewport]);
   useEffect(() => {
     if (!active || snapshot !== undefined) return;
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const read = async () => {
-      try {
-        const result = await api.getSwarmWorkflows(sessionId);
-        if (disposed) return;
-        if (result.success) {
-          setFlows(result.flows);
-          setStale(false);
-        } else setStale(true);
-      } catch {
-        if (!disposed) setStale(true);
-      } finally {
-        if (!disposed) timer = setTimeout(() => void read(), 2500);
-      }
-    };
-    void read();
-    return () => {
-      disposed = true;
-      clearTimeout(timer);
-    };
-  }, [sessionId, active, revision, snapshot]);
+    return observeWorkflows(api, sessionId, result => {
+      if (result.success) {
+        setFlows(result.flows);
+        setStale(false);
+      } else setStale(true);
+    });
+  }, [api, sessionId, active, revision, snapshot]);
   useEffect(() => {
     if (snapshot === undefined) return;
     if (snapshot.success) {

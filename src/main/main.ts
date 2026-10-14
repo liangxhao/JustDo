@@ -24,6 +24,7 @@ import { normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../share
 import { EmbeddedBrowserGateway } from '../shared/browser/embeddedBrowser';
 import { buildCoworkSessionKey } from '../shared/cowork/sessionKey';
 import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
+import { SwarmWorkflowIpc } from '../shared/cowork/swarm-workflow';
 import {
   WORKSPACE_WINDOW_BOUNDS_KEY,
   type WorkspaceWindowBounds,
@@ -2294,6 +2295,13 @@ if (multicaBridgeArgv) {
       BrowserWindow.getAllWindows().forEach(window => {
         if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
           window.webContents.send(CoworkSubagentDetailsIpc.Changed, event);
+        }
+      });
+    });
+    coworkEngineRouter.on('swarmWorkflowChanged', event => {
+      BrowserWindow.getAllWindows().forEach(window => {
+        if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+          window.webContents.send(SwarmWorkflowIpc.Changed, event);
         }
       });
     });

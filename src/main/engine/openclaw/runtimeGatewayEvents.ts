@@ -4,6 +4,10 @@ import { AskUserQuestionGateway } from '../../../shared/cowork/interactions/askU
 import { PlanModeGateway } from '../../../shared/cowork/interactions/planMode';
 import { SessionGoalIpc } from '../../../shared/cowork/sessionGoal';
 import {
+  isWorkflowNativeChange,
+  SwarmWorkflowGatewayEvent,
+} from '../../../shared/cowork/swarm-workflow';
+import {
   normalizeAgentEvent,
   normalizeChatEvent,
   type NormalizedAgentEvent,
@@ -93,6 +97,18 @@ export function handleGatewayEvent(
   event: GatewayEventFrame,
 ): void {
   this.emit('gatewayEvent', event);
+  if (event.event === SwarmWorkflowGatewayEvent.Reset) {
+    this.emit('swarmWorkflowChanged', {});
+    return;
+  }
+  if (event.event === SwarmWorkflowGatewayEvent.Changed) {
+    if (!isWorkflowNativeChange(event.payload)) return;
+    const { parentKey, flowId, revision } = event.payload;
+    const sessionId = this.resolveSessionIdBySessionKey(parentKey);
+    if (!sessionId || !this.store.getSession(sessionId)) return;
+    this.emit('swarmWorkflowChanged', { sessionId, flowId, revision });
+    return;
+  }
   if (event.event === 'tick') {
     this.lastTickTimestamp = Date.now();
     return;

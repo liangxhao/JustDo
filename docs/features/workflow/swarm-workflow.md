@@ -16,7 +16,9 @@ Renderer 的 Workflow 面板、节点历史和介入呈现位于 `features/cowor
 
 插件 `browser/` 拥有主图选择/动作状态、批次过滤与游标、详情读取、人工介入幂等 ID 对账、发现轮询、图形布局/视口、输入框准备与消息键、双语字典。业务 hook 通过结构型 browser ports 访问实际 preload，既不读取 `window.electron`，也不导入 `src`。React 组件继续组合共享聊天渲染、菜单、图标、i18n 服务、原生连接和 Tab；产品 Goal 状态只由宿主翻译为当前提交是否被旧 Goal 占用。Browser 状态只保留当前界面所需投影和草稿，原生会话正文仍归 Gateway，不新增持久化/Redux transcript 缓存。原生注册入口不导入 host/browser，shared 契约门面不导入 browser，Main 和 Renderer 入口不能相互打包。
 
-关闭 Workflow 后，应用立即隐藏摘要入口并退休已打开 Tab，browser discovery 清空当前投影、停止轮询并拒绝旧响应。每次 disable revision 也使快速关开时的旧快照失效；重新启用后重新读取保留的流程。临时 Gateway 故障仍保留最近一次成功数量，不能把故障误当显式禁用。插件停止并不证明原生运行已取消，现有 DAG 和未知运行证据继续保留，恢复时仍不自动重放不确定派发。原生 collector 快照和子任务控制继续走独立 subtasks 入口。
+流程列表通过 Gateway 插件事件刷新，不再每 2.5 秒定时查询。FlowStore 在创建、更新和批次展开事务成功提交后发布 `plugin.swarm-workflow.changed`，只携带父会话键、流程 ID 和 revision；回滚不发布。Main 校验通知并映射真实产品会话，再通过显式 preload 订阅转发无正文变更通知。首次进入和切换会话先订阅、再读取快照；同会话连续通知在 50 毫秒窗口内合并，旧 revision 和其他会话通知不触发读取，读取途中再有变化则串行补读，旧响应不能覆盖最新状态。插件服务启动和 Gateway 连接恢复发送全量失效通知，补齐断线期间遗漏的变化；查询失败保留原有失败呈现，等待下一次通知或手动刷新。工作流面板复用聊天页的同一快照，独立使用面板时也沿用相同订阅逻辑。节点详情和批次分页仍保持各自按需读取契约；事件不替代原生运行终态证据。
+
+关闭 Workflow 后，应用立即隐藏摘要入口并退休已打开 Tab，browser discovery 清空当前投影、取消订阅和待处理刷新并拒绝旧响应。每次 disable revision 也使快速关开时的旧快照失效；重新启用后重新读取保留的流程。临时 Gateway 故障仍保留最近一次成功数量，不能把故障误当显式禁用。插件停止并不证明原生运行已取消，现有 DAG 和未知运行证据继续保留，恢复时仍不自动重放不确定派发。原生 collector 快照和子任务控制继续走独立 subtasks 入口。
 
 ```mermaid
 flowchart LR

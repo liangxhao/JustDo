@@ -63,7 +63,13 @@ function fixture() {
   const control = vi.fn().mockResolvedValue({ success: true });
   Object.defineProperty(window, 'electron', {
     configurable: true,
-    value: { cowork: { getSwarmWorkflows: read, controlSwarmWorkflow: control } },
+    value: {
+      cowork: {
+        getSwarmWorkflows: read,
+        controlSwarmWorkflow: control,
+        onSwarmWorkflowsChanged: vi.fn(() => () => {}),
+      },
+    },
   });
   return { read, control };
 }
