@@ -560,7 +560,8 @@ export class OpenClawConfigSync {
         // which would not match `gateway-client`. Use wildcard so all senders that
         // pass the per-channel allowFrom gate are also recognised as owners.
         ownerAllowFrom: ['gateway-client', '*'],
-        mcp: true,
+        // MCP servers remain available; manage their config through the plugin UI.
+        mcp: false,
         plugins: true,
       },
       mcp: {
