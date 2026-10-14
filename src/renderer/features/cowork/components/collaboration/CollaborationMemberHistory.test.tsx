@@ -45,6 +45,9 @@ vi.mock('../chat/ChatMessageDisplay', () => ({
     return <div>Native messages</div>;
   },
 }));
+vi.mock('../subagents/SessionSubtaskButton', () => ({
+  default: ({ sessionId }: { sessionId: string }) => <button>Subtasks for {sessionId}</button>,
+}));
 vi.mock('@/libs/openclaw-chat/gateway/chat-controller', () => ({
   ChatController: class {
     state = {
@@ -133,6 +136,49 @@ const mount = () =>
   );
 
 describe('peer native history lifecycle', () => {
+  it('keeps a member-keyed header action distinct from subtask navigation across updates', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      render(
+        <CollaborationMemberHistory
+          anchorSessionId="main"
+          roomId="room"
+          member={member}
+          name="Review"
+          workingDirectory=""
+          headerAction={<button key={member.sessionId}>Reference member</button>}
+          onOpenSubtask={vi.fn()}
+        />,
+      );
+      await act(async () => {});
+      const referenceButton = screen.getByRole('button', { name: 'Reference member' });
+      const subtaskButton = screen.getByRole('button', {
+        name: `Subtasks for ${member.sessionId}`,
+      });
+      const controller = mocks.instances[0];
+
+      act(() => {
+        controller.state.initialHistoryReady = true;
+        controller.state.transcript.activeTurn = {
+          status: 'running',
+          runId: 'peer-run',
+          sessionId: 'native-peer',
+          sessionKey: member.sessionKey,
+        };
+        controller.notifyStream();
+      });
+      expect(screen.getByRole('button', { name: 'Reference member' })).toBe(referenceButton);
+      expect(screen.getByRole('button', { name: `Subtasks for ${member.sessionId}` })).toBe(
+        subtaskButton,
+      );
+      expect(consoleError.mock.calls.some(args => String(args[0]).includes('same key'))).toBe(
+        false,
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it('shows member Stop when a native execution starts through stream notifications', async () => {
     const view = render(
       <CollaborationMemberHistory

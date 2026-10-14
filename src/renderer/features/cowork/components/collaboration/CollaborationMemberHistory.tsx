@@ -246,7 +246,7 @@ export default function CollaborationMemberHistory({
           )}
           {!receipt && onOpenSubtask && (
             <SessionSubtaskButton
-              key={member.sessionId}
+              key={`subtasks:${member.sessionId}`}
               sessionId={member.sessionId}
               parentRunning={running}
               onOpenSubtask={onOpenSubtask}
