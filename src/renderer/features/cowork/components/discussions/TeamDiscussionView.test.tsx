@@ -990,6 +990,47 @@ it('serializes double clicks and preserves explicitly selected recipients', asyn
   expect(send.mock.calls[0][0]).toMatchObject({ selectedAgentIds: ['bob'], rounds: 2 });
 });
 
+it('does not show a disabled warning while initial extension enablement is still unknown', async () => {
+  updateDiscussionDraft('room', { text: 'Next topic' });
+  let resolve!: (value: Awaited<ReturnType<typeof window.electron.extensions.list>>) => void;
+  vi.mocked(window.electron.extensions.list).mockImplementationOnce(
+    () =>
+      new Promise(done => {
+        resolve = done;
+      }),
+  );
+  render(<TeamDiscussionView entry={{ roomId: 'room' }} embedded onClose={vi.fn()} />);
+  expect(screen.queryByText('teamDiscussionDisabled')).toBeNull();
+  await screen.findByRole('heading', { name: room.title });
+  expect(screen.queryByText('teamDiscussionDisabled')).toBeNull();
+  expect(screen.getByRole('button', { name: 'teamSend' })).toHaveProperty('disabled', true);
+  await act(async () =>
+    resolve({
+      success: true,
+      extensions: [
+        {
+          id: 'agent-team',
+          name: 'Agent Team',
+          description: '',
+          enabled: true,
+          missingRequirements: [],
+          configurationFields: [],
+        },
+      ],
+    }),
+  );
+  expect(screen.queryByText('teamDiscussionDisabled')).toBeNull();
+  expect(screen.getByRole('button', { name: 'teamSend' })).toHaveProperty('disabled', false);
+});
+
+it('does not claim the extension is disabled when the initial catalog read fails', async () => {
+  vi.mocked(window.electron.extensions.list).mockRejectedValueOnce(new Error('unavailable'));
+  render(<TeamDiscussionView entry={{ roomId: 'room' }} embedded onClose={vi.fn()} />);
+  await screen.findByRole('heading', { name: room.title });
+  expect(screen.queryByText('teamDiscussionDisabled')).toBeNull();
+  expect(screen.getByRole('button', { name: 'teamSend' })).toHaveProperty('disabled', true);
+});
+
 it('renders native public history while the extension is disabled', async () => {
   vi.mocked(window.electron.extensions.list).mockResolvedValue({ success: true, extensions: [] });
   read.mockResolvedValue({

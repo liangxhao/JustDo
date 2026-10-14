@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 
 export interface ExtensionEnablement {
   loaded: boolean;
@@ -21,68 +21,95 @@ export function useExtensionEnabled(extensionId: string): boolean {
 /** Disable revisions also retire open UI across batched disable/enable changes. */
 export function useExtensionAvailability(extensionId: string) {
   const settings = useExtensionEnablement();
+  const enabled = getExtensionEnabled(settings, extensionId);
   return {
-    enabled: getExtensionEnabled(settings, extensionId) === true,
+    loaded: enabled !== undefined,
+    enabled: enabled === true,
     disabledRevision: settings.disabledRevisions.get(extensionId) ?? 0,
   };
 }
 
-/** One catalog read/subscription for all entries; newer toggles override in-flight reads by ID. */
-export function useExtensionEnablement(): ExtensionEnablement {
-  const [settings, setSettings] = useState<ExtensionEnablement>(() => ({
-    loaded: false,
-    enabled: new Map(),
-    disabledRevisions: new Map(),
-  }));
-  useEffect(() => {
-    let active = true;
-    let requestRevision = 0;
-    let changeRevision = 0;
-    const changes = new Map<string, { revision: number; enabled: boolean }>();
-    const refresh = async () => {
-      const request = ++requestRevision;
-      const observedChange = changeRevision;
-      try {
-        const result = await window.electron.extensions.list();
-        if (!active || request !== requestRevision || !result.success) return;
-        const enabled = new Map(result.extensions.map(item => [item.id, item.enabled]));
-        for (const [id, change] of changes) {
-          if (change.revision > observedChange) enabled.set(id, change.enabled);
-        }
-        setSettings(current => {
-          const disabledRevisions = new Map(current.disabledRevisions);
-          for (const [id, wasEnabled] of current.enabled) {
-            if (wasEnabled && enabled.get(id) !== true) {
-              disabledRevisions.set(id, (disabledRevisions.get(id) ?? 0) + 1);
-            }
-          }
-          return { loaded: true, enabled, disabledRevisions };
-        });
-      } catch {
-        // Keep observed settings while the runtime is temporarily unavailable.
+const EMPTY_SETTINGS: ExtensionEnablement = {
+  loaded: false,
+  enabled: new Map(),
+  disabledRevisions: new Map(),
+};
+let settingsSnapshot = EMPTY_SETTINGS;
+let stopObserving: (() => void) | undefined;
+const subscribers = new Set<() => void>();
+
+function publishSettings(settings: ExtensionEnablement): void {
+  settingsSnapshot = settings;
+  for (const subscriber of subscribers) subscriber();
+}
+
+function startObserving(): void {
+  if (stopObserving) return;
+  let active = true;
+  let requestRevision = 0;
+  let changeRevision = 0;
+  const changes = new Map<string, { revision: number; enabled: boolean }>();
+  const refresh = async () => {
+    const request = ++requestRevision;
+    const observedChange = changeRevision;
+    try {
+      const result = await window.electron.extensions.list();
+      if (!active || request !== requestRevision || !result.success) return;
+      const enabled = new Map(result.extensions.map(item => [item.id, item.enabled]));
+      for (const [id, change] of changes) {
+        if (change.revision > observedChange) enabled.set(id, change.enabled);
       }
-    };
-    const stop = window.electron.extensions.onChanged(event => {
-      if (!active) return;
-      changes.set(event.extensionId, { revision: ++changeRevision, enabled: event.enabled });
-      setSettings(current => ({
-        loaded: current.loaded,
-        enabled: new Map(current.enabled).set(event.extensionId, event.enabled),
-        disabledRevisions: event.enabled
-          ? current.disabledRevisions
-          : new Map(current.disabledRevisions).set(
-              event.extensionId,
-              (current.disabledRevisions.get(event.extensionId) ?? 0) + 1,
-            ),
-      }));
+      const disabledRevisions = new Map(settingsSnapshot.disabledRevisions);
+      for (const [id, wasEnabled] of settingsSnapshot.enabled) {
+        if (wasEnabled && enabled.get(id) !== true) {
+          disabledRevisions.set(id, (disabledRevisions.get(id) ?? 0) + 1);
+        }
+      }
+      publishSettings({ loaded: true, enabled, disabledRevisions });
+    } catch {
+      // Keep observed settings while the runtime is temporarily unavailable.
+    }
+  };
+  const stop = window.electron.extensions.onChanged(event => {
+    if (!active) return;
+    changes.set(event.extensionId, { revision: ++changeRevision, enabled: event.enabled });
+    publishSettings({
+      loaded: settingsSnapshot.loaded,
+      enabled: new Map(settingsSnapshot.enabled).set(event.extensionId, event.enabled),
+      disabledRevisions: event.enabled
+        ? settingsSnapshot.disabledRevisions
+        : new Map(settingsSnapshot.disabledRevisions).set(
+            event.extensionId,
+            (settingsSnapshot.disabledRevisions.get(event.extensionId) ?? 0) + 1,
+          ),
     });
-    window.addEventListener('focus', refresh);
-    void refresh();
-    return () => {
-      active = false;
-      stop();
-      window.removeEventListener('focus', refresh);
-    };
-  }, []);
-  return settings;
+  });
+  window.addEventListener('focus', refresh);
+  stopObserving = () => {
+    active = false;
+    stop();
+    window.removeEventListener('focus', refresh);
+  };
+  void refresh();
+}
+
+function subscribeSettings(subscriber: () => void): () => void {
+  subscribers.add(subscriber);
+  startObserving();
+  return () => {
+    subscribers.delete(subscriber);
+    if (subscribers.size) return;
+    stopObserving?.();
+    stopObserving = undefined;
+    settingsSnapshot = EMPTY_SETTINGS;
+  };
+}
+
+/** Share one observed catalog across entrances and mounted panels; newer toggles win by ID. */
+export function useExtensionEnablement(): ExtensionEnablement {
+  return useSyncExternalStore(
+    subscribeSettings,
+    () => settingsSnapshot,
+    () => EMPTY_SETTINGS,
+  );
 }

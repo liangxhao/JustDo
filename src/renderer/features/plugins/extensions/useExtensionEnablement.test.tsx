@@ -19,21 +19,27 @@ afterEach(() => {
 function fixture() {
   const list = vi.fn();
   const unsubscribe = vi.fn();
-  let changed!: (event: ExtensionChangedEvent) => void;
+  const callbacks = new Set<(event: ExtensionChangedEvent) => void>();
+  const onChanged = vi.fn((callback: (event: ExtensionChangedEvent) => void) => {
+    callbacks.add(callback);
+    return () => {
+      callbacks.delete(callback);
+      unsubscribe();
+    };
+  });
   vi.stubGlobal('electron', {
     extensions: {
       list,
-      onChanged: (callback: typeof changed) => {
-        changed = callback;
-        return unsubscribe;
-      },
+      onChanged,
     },
   });
   return {
     list,
+    onChanged,
     unsubscribe,
-    changed: (enabled: boolean, extensionId = OpenClawExtensionId.SWARM_WORKFLOW as string) =>
-      changed({ extensionId, enabled }),
+    changed: (enabled: boolean, extensionId = OpenClawExtensionId.SWARM_WORKFLOW as string) => {
+      for (const callback of callbacks) callback({ extensionId, enabled });
+    },
   };
 }
 const catalog = (enabled: boolean) => ({
@@ -53,7 +59,67 @@ test('retains disable revisions across a batched disable and enable for open UI 
     f.changed(false, OpenClawExtensionId.AGENT_TEAM);
     f.changed(true, OpenClawExtensionId.AGENT_TEAM);
   });
-  expect(result.current).toEqual({ enabled: true, disabledRevision: 1 });
+  expect(result.current).toEqual({ loaded: true, enabled: true, disabledRevision: 1 });
+});
+
+test('distinguishes unknown enablement from a confirmed disabled plugin', async () => {
+  const f = fixture();
+  f.list.mockReturnValue(new Promise(() => {}));
+  const { result } = renderHook(() => useExtensionAvailability(OpenClawExtensionId.AGENT_TEAM));
+  expect(result.current).toMatchObject({ loaded: false, enabled: false });
+  act(() => f.changed(false, OpenClawExtensionId.AGENT_TEAM));
+  expect(result.current).toMatchObject({ loaded: true, enabled: false });
+});
+
+test('shares observed settings with newly mounted views and unsubscribes after the last view', async () => {
+  const f = fixture();
+  f.list.mockResolvedValue({
+    success: true,
+    extensions: [{ id: OpenClawExtensionId.AGENT_TEAM, enabled: true }],
+  });
+  const entrance = renderHook(() => useExtensionAvailability(OpenClawExtensionId.AGENT_TEAM));
+  await waitFor(() => expect(entrance.result.current.enabled).toBe(true));
+  const panel = renderHook(() => useExtensionAvailability(OpenClawExtensionId.AGENT_TEAM));
+  expect(panel.result.current).toMatchObject({ loaded: true, enabled: true });
+  expect(f.list).toHaveBeenCalledOnce();
+  expect(f.onChanged).toHaveBeenCalledOnce();
+
+  act(() => f.changed(false, OpenClawExtensionId.AGENT_TEAM));
+  expect(entrance.result.current.enabled).toBe(false);
+  expect(panel.result.current.enabled).toBe(false);
+  entrance.unmount();
+  expect(f.unsubscribe).not.toHaveBeenCalled();
+  act(() => f.changed(true, OpenClawExtensionId.AGENT_TEAM));
+  expect(panel.result.current.enabled).toBe(true);
+  panel.unmount();
+  expect(f.unsubscribe).toHaveBeenCalledOnce();
+  window.dispatchEvent(new Event('focus'));
+  expect(f.list).toHaveBeenCalledOnce();
+});
+
+test('discards settings and late reads after the last subscriber leaves', async () => {
+  const f = fixture();
+  let resolve!: (value: ReturnType<typeof catalog>) => void;
+  f.list
+    .mockImplementationOnce(
+      () =>
+        new Promise(done => {
+          resolve = done;
+        }),
+    )
+    .mockResolvedValueOnce(catalog(false));
+  const first = renderHook(useExtensionEnablement);
+  act(() => f.changed(true));
+  first.unmount();
+  const second = renderHook(useExtensionEnablement);
+  expect(
+    getExtensionEnabled(second.result.current, OpenClawExtensionId.SWARM_WORKFLOW),
+  ).toBeUndefined();
+  await waitFor(() => expect(second.result.current.loaded).toBe(true));
+  await act(async () => resolve(catalog(true)));
+  expect(getExtensionEnabled(second.result.current, OpenClawExtensionId.SWARM_WORKFLOW)).toBe(
+    false,
+  );
 });
 
 test('hides feature entrances until enabled and applies disable events immediately', async () => {

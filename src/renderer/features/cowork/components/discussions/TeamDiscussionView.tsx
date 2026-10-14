@@ -214,7 +214,11 @@ export default function TeamDiscussionView({
   const [summary, setSummary] = useState<TeamDiscussionSummary>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const { enabled, disabledRevision } = useExtensionAvailability(OpenClawExtensionId.AGENT_TEAM);
+  const {
+    loaded: extensionLoaded,
+    enabled,
+    disabledRevision,
+  } = useExtensionAvailability(OpenClawExtensionId.AGENT_TEAM);
   useEffect(() => {
     setSettingsOpen(false);
   }, [disabledRevision]);
@@ -766,7 +770,7 @@ export default function TeamDiscussionView({
           onClose={() => setSettingsOpen(false)}
         />
       )}
-      {!enabled && (
+      {extensionLoaded && !enabled && (
         <p className="border-b border-border p-3 text-sm" role="status">
           {t('teamDiscussionDisabled')}
         </p>
