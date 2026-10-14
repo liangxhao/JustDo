@@ -378,33 +378,33 @@ test('round-trips the decision provider catalog and its default selection', () =
   expect(parsed.onlineModelProviders?.decision?.providers[0].apiKey).toEqual(encryptedApiKey);
 });
 
-test('round-trips native video identity and encrypted credentials without activating legacy endpoints', () => {
-  const payload = createProvidersExportPayload([], {
-    video: {
-      defaultProviderId: 'native',
-      providers: [
-        {
-          key: 'native',
-          config: {
-            displayName: 'Kie AI',
-            nativeVideoProvider: 'kie',
-            baseUrl: 'https://api.kie.ai',
-            apiKey: 'plaintext-test-value',
-            defaultModel: 'kling-2.6/text-to-video',
-            models: [{ id: 'kling-2.6/text-to-video', name: 'Kling' }],
+test.each(['kie', 'zai', 'novita'])(
+  'rejects importing unsupported video provider %s',
+  nativeVideoProvider => {
+    expect(() =>
+      parseModelProvidersImportPayload({
+        type: EXPORT_FORMAT_TYPE,
+        version: PROVIDERS_EXPORT_VERSION,
+        providers: [],
+        onlineModelProviders: {
+          video: {
+            defaultProvider: 'Video API',
+            providers: [
+              {
+                displayName: 'Video API',
+                nativeVideoProvider,
+                baseUrl: 'http://video.lan/v1',
+                apiKey: encryptedApiKey,
+                defaultModel: 'internal-video',
+                models: [{ id: 'internal-video', name: 'Video' }],
+              },
+            ],
           },
-          apiKey: encryptedApiKey,
         },
-      ],
-    },
-  });
-  const parsed = parseModelProvidersImportPayload(payload);
-  expect(parsed.onlineModelProviders.video?.providers[0]).toMatchObject({
-    nativeVideoProvider: 'kie',
-    apiKey: encryptedApiKey,
-  });
-  expect(JSON.stringify(payload)).not.toContain('plaintext-test-value');
-});
+      }),
+    ).toThrow('Invalid native video provider');
+  },
+);
 
 test('round-trips the intranet video adapter and custom model with encrypted credentials', () => {
   const payload = createProvidersExportPayload([], {
@@ -443,7 +443,6 @@ test.each([
     defaultModel: undefined,
     models: [{ id: 'video-discovered', name: 'Discovered video' }],
   },
-  { nativeVideoProvider: 'zai' as const, defaultModel: undefined, models: [] },
 ])(
   'round-trips an unselected $nativeVideoProvider catalog with portable credential encryption',
   async draft => {

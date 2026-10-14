@@ -6,12 +6,12 @@ import path from 'path';
 const LOCAL_EXTENSIONS_DIR = 'openclaw-extensions';
 const AGENT_PLUGIN_MANIFEST_SCHEMA = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
 
-// Build-time entry compositions are not independently loadable source plugins.
-// Only the bundled native plugin manifest can establish their availability.
-const isNativeExtensionOverlaySource = (extensionDir: string): boolean => {
+// Runtime replacements are assembled with locked dependencies at build time.
+// Only their compiled runtime manifest establishes availability.
+const isRuntimeBundledSource = (extensionDir: string): boolean => {
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(extensionDir, 'package.json'), 'utf8'));
-    return pkg?.justdo?.nativeOverlay === true;
+    return pkg?.openclaw?.runtimeBundled === true;
   } catch {
     return false;
   }
@@ -108,7 +108,7 @@ export const inspectOpenClawExtensionCandidate = (
 
 export const inspectOpenClawExtensionDirectory = (
   extensionsDir: string,
-  options: { excludeNativeOverlaySources?: boolean } = {},
+  options: { excludeRuntimeBundledSources?: boolean } = {},
 ): OpenClawExtensionInventory => {
   let entries: fs.Dirent[];
   try {
@@ -135,8 +135,7 @@ export const inspectOpenClawExtensionDirectory = (
       complete = false;
       continue;
     }
-    if (options.excludeNativeOverlaySources && isNativeExtensionOverlaySource(extensionDir))
-      continue;
+    if (options.excludeRuntimeBundledSources && isRuntimeBundledSource(extensionDir)) continue;
     const candidate = inspectOpenClawExtensionCandidate(extensionDir);
     candidate.ids.forEach(id => ids.add(id));
     if (!candidate.complete) complete = false;
@@ -221,7 +220,7 @@ export const syncLocalOpenClawExtensionsIntoRuntime = async (
 
   const copied: string[] = [];
   for (const entry of await fs.promises.readdir(sourceDir, { withFileTypes: true })) {
-    if (!entry.isDirectory() || isNativeExtensionOverlaySource(path.join(sourceDir, entry.name))) {
+    if (!entry.isDirectory() || isRuntimeBundledSource(path.join(sourceDir, entry.name))) {
       continue;
     }
     const destDir = path.join(targetExtensionsDir, entry.name);
@@ -268,7 +267,7 @@ export const inspectBundledOpenClawExtensions = (): OpenClawExtensionInventory =
 export const inspectLocalOpenClawExtensions = (): OpenClawExtensionInventory => {
   const sourceDir = findLocalExtensionsSourceDir();
   return sourceDir
-    ? inspectOpenClawExtensionDirectory(sourceDir, { excludeNativeOverlaySources: true })
+    ? inspectOpenClawExtensionDirectory(sourceDir, { excludeRuntimeBundledSources: true })
     : { complete: true, ids: [] };
 };
 

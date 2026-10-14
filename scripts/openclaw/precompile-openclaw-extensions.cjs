@@ -36,7 +36,7 @@ const NATIVE_EXTERNALS = ['@trycua/cua-driver', '@trycua/cua-driver-*', 'rasterm
 const openclawInternalsPlugin = {
   name: 'externalize-openclaw-internals',
   setup(build) {
-    build.onResolve({ filter: /^\.\.\/.*\/src\// }, (args) => ({
+    build.onResolve({ filter: /^\.\.\/.*\/src\// }, args => ({
       path: args.path,
       external: true,
     }));
@@ -90,7 +90,8 @@ async function precompileOpenClawExtensions(runtimeDir, options = {}) {
   }
   const esbuild = require('esbuild');
   const t0 = Date.now();
-  const dirs = fs.readdirSync(extensionsDir, { withFileTypes: true })
+  const dirs = fs
+    .readdirSync(extensionsDir, { withFileTypes: true })
     .filter(d => d.isDirectory())
     .map(d => d.name)
     .sort();
@@ -107,10 +108,37 @@ async function precompileOpenClawExtensions(runtimeDir, options = {}) {
     // an already compiled index.js may still have a TypeScript setup module.
     for (const directory of ['', 'dist']) {
       for (const extension of ['ts', 'mts', 'cts']) {
-        const entryRel = `./${directory ? directory + '/' : ''}setup-api.${extension}`;
-        const entryAbs = path.join(pluginDir, entryRel);
-        if (fs.existsSync(entryAbs)) entries.push({ entryAbs, entryRel, hasPkg: false });
+        for (const module of ['setup-api', 'provider-policy-api', 'provider-contract-api']) {
+          const entryRel = `./${directory ? directory + '/' : ''}${module}.${extension}`;
+          const entryAbs = path.join(pluginDir, entryRel);
+          if (fs.existsSync(entryAbs)) entries.push({ entryAbs, entryRel, hasPkg: false });
+        }
       }
+    }
+
+    const pkgPath = path.join(pluginDir, 'package.json');
+    const manifestPath = path.join(pluginDir, 'openclaw.plugin.json');
+    const pkg = fs.existsSync(pkgPath) ? JSON.parse(fs.readFileSync(pkgPath, 'utf8')) : {};
+    const manifest = fs.existsSync(manifestPath)
+      ? JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+      : {};
+    const declaredEntries = [
+      manifest.capabilityCatalogEntry,
+      ...(pkg.openclaw?.runtimeBundled === true ? (pkg.openclaw?.build?.workerEntries ?? []) : []),
+    ];
+    for (const entryRel of declaredEntries) {
+      if (typeof entryRel !== 'string' || !/\.(?:ts|mts|cts)$/.test(entryRel)) continue;
+      const entryAbs = path.resolve(pluginDir, entryRel);
+      const relative = path.relative(pluginDir, entryAbs);
+      if (
+        !relative ||
+        relative.startsWith('..') ||
+        path.isAbsolute(relative) ||
+        !fs.existsSync(entryAbs)
+      )
+        throw new Error(`[precompile-extensions] Invalid declared entry for ${name}: ${entryRel}`);
+      if (!entries.some(entry => entry.entryAbs === entryAbs))
+        entries.push({ entryAbs, entryRel, hasPkg: false });
     }
 
     if (entries.length === 0) {
@@ -120,8 +148,11 @@ async function precompileOpenClawExtensions(runtimeDir, options = {}) {
 
     try {
       for (const entry of entries) {
-        const outputExtension = entry.entryAbs.endsWith('.mts') ? '.mjs'
-          : entry.entryAbs.endsWith('.cts') ? '.cjs' : '.js';
+        const outputExtension = entry.entryAbs.endsWith('.mts')
+          ? '.mjs'
+          : entry.entryAbs.endsWith('.cts')
+            ? '.cjs'
+            : '.js';
         const outFile = entry.entryAbs.replace(/\.(?:tsx?|mts|cts)$/, outputExtension);
         const outRel = entry.entryRel.replace(/\.(?:tsx?|mts|cts)$/, outputExtension);
         await esbuild.build({
@@ -135,6 +166,7 @@ async function precompileOpenClawExtensions(runtimeDir, options = {}) {
           // This inlines typebox and other small deps so the runtime
           // doesn't need them in node_modules.
           external: [...SDK_EXTERNALS, ...NATIVE_EXTERNALS],
+          ...(pkg.openclaw?.runtimeBundled === true ? { packages: 'external' } : {}),
           plugins: [openclawInternalsPlugin],
           // Silence warnings about __dirname/__filename in ESM
           logLevel: 'warning',
@@ -150,6 +182,18 @@ async function precompileOpenClawExtensions(runtimeDir, options = {}) {
             );
             fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
           }
+        }
+
+        if (manifest.capabilityCatalogEntry === entry.entryRel) {
+          manifest.capabilityCatalogEntry = outRel;
+          fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+        }
+        if (pkg.openclaw?.build?.workerEntries?.includes(entry.entryRel)) {
+          const updated = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+          updated.openclaw.build.workerEntries = updated.openclaw.build.workerEntries.map(e =>
+            e === entry.entryRel ? outRel : e,
+          );
+          fs.writeFileSync(pkgPath, JSON.stringify(updated, null, 2) + '\n');
         }
 
         // Remove source only after the package entry was updated successfully.
@@ -168,7 +212,7 @@ async function precompileOpenClawExtensions(runtimeDir, options = {}) {
   const elapsed = Date.now() - t0;
   console.log(
     `[precompile-extensions] Done in ${elapsed}ms: ` +
-    `${compiled} compiled, ${skipped} skipped, ${errors} errors`,
+      `${compiled} compiled, ${skipped} skipped, ${errors} errors`,
   );
 
   if (errors > 0) {
@@ -176,7 +220,9 @@ async function precompileOpenClawExtensions(runtimeDir, options = {}) {
       throw new Error(`[precompile-extensions] Failed to compile ${errors} extension(s).`);
     }
     // Non-fatal — plugins will fall back to jiti runtime compilation
-    console.warn('[precompile-extensions] Some plugins failed to compile. They will use jiti fallback.');
+    console.warn(
+      '[precompile-extensions] Some plugins failed to compile. They will use jiti fallback.',
+    );
   }
   return { compiled, skipped, errors };
 }
@@ -186,7 +232,9 @@ if (require.main === module) {
     ? path.resolve(process.argv[2])
     : path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
   precompileOpenClawExtensions(runtimeDir).catch(error => {
-    console.error(`[precompile-extensions] ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `[precompile-extensions] ${error instanceof Error ? error.message : String(error)}`,
+    );
     process.exitCode = 1;
   });
 }

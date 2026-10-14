@@ -1,7 +1,6 @@
 import type { InstalledOpenClawExtension } from '@shared/plugins/extensions';
 import { PluginActionReason } from '@shared/plugins/management';
 import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
-import { findNativeVideoProvider } from '@shared/providers/nativeVideoProviders';
 
 import { i18nService } from '@/services/i18n';
 
@@ -17,7 +16,6 @@ export const getExtensionManagementLabel = (extension: InstalledOpenClawExtensio
     : extension.managed === true;
   if (!managedBySystem) return i18nService.t('extensionToggleUnavailable');
 
-  if (findNativeVideoProvider(extension.id)) return i18nService.t('extensionManagedVideoModels');
   switch (extension.id) {
     case OpenClawExtensionId.OPENAI:
       return i18nService.t('extensionManagedModelAdapter');

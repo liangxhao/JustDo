@@ -140,7 +140,8 @@ test('locks required adapters while keeping document and web extraction user-tog
   expect(managedIds).toEqual(expect.arrayContaining(['openai', 'code-mode-quickjs']));
   expect(managedIds).not.toContain('document-extract');
   expect(managedIds).not.toContain('web-readability');
-  expect(managedIds).toContain('video-openai');
+  expect(managedIds).toContain('openai');
+  expect(managedIds).not.toContain('video-openai');
 });
 
 test.each([
@@ -2711,7 +2712,7 @@ test.each(['full', 'minimal'])(
         apiKey: { source: 'file' },
         request: { allowPrivateNetwork: true },
       });
-      expect(config.plugins.entries['video-openai'].enabled).toBe(true);
+      expect(config.plugins.entries.openai.enabled).toBe(true);
       expect(JSON.stringify(config)).not.toContain('isolated-video-key');
     }
     category = {
@@ -2721,7 +2722,7 @@ test.each(['full', 'minimal'])(
     expect(sync.sync('app-config-change').ok).toBe(true);
     const cleared = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(cleared.agents.defaults.mediaModels.video).toBeUndefined();
-    expect(cleared.plugins.entries['video-openai'].enabled).toBe(false);
+    expect(cleared.plugins.entries.openai.enabled).toBe(true);
     for (const reason of [
       'startup',
       BuiltinModelSyncReason.AuthLogin,
@@ -2730,7 +2731,7 @@ test.each(['full', 'minimal'])(
       expect(sync.sync(reason).ok).toBe(true);
       const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       expect(config.agents.defaults.mediaModels.video).toBeUndefined();
-      expect(config.plugins.entries['video-openai'].enabled).toBe(false);
+      expect(config.plugins.entries.openai.enabled).toBe(true);
     }
     category = {
       defaultProviderId: 'lan',
@@ -2741,7 +2742,7 @@ test.each(['full', 'minimal'])(
     expect(restored.agents.defaults.mediaModels.video.primary).toBe(
       'video-openai/Wan-AI/internal-video',
     );
-    expect(restored.plugins.entries['video-openai'].enabled).toBe(true);
+    expect(restored.plugins.entries.openai.enabled).toBe(true);
   },
 );
 
@@ -2755,9 +2756,9 @@ test.each(['full', 'minimal'])(
     fs.writeFileSync(pluginPath, 'export default { id: "standalone-plugin" };');
     const existingPlugins = {
       load: { paths: [pluginPath] },
-      allow: ['video-openai', 'standalone-plugin'],
+      allow: ['openai', 'standalone-plugin'],
       deny: ['standalone-plugin'],
-      entries: { 'video-openai': { enabled: true }, 'standalone-plugin': { enabled: false } },
+      entries: { openai: { enabled: true }, 'standalone-plugin': { enabled: false } },
     };
     fs.writeFileSync(
       configPath,
@@ -2807,7 +2808,7 @@ test.each(['full', 'minimal'])(
       expect(sync.sync(reason).ok).toBe(true);
       const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       expect(config.agents.defaults.mediaModels.video).toBeUndefined();
-      expect(config.plugins.entries['video-openai'].enabled).toBe(false);
+      expect(config.plugins.entries.openai.enabled).toBe(true);
       expect(config.plugins.entries['standalone-plugin']).toEqual({ enabled: false });
       expect(config.plugins.allow).toContain('standalone-plugin');
       expect(config.plugins.deny).toEqual(['standalone-plugin']);
@@ -2817,7 +2818,7 @@ test.each(['full', 'minimal'])(
 );
 
 test.each(['full', 'minimal'])(
-  '%s sync does not reactivate video plugins absent from the intranet runtime',
+  '%s sync rejects unsupported video catalogs before changing runtime configuration',
   mode => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-native-video-sync-'));
     temporaryDirectories.push(stateDir);
@@ -2880,12 +2881,14 @@ test.each(['full', 'minimal'])(
       BuiltinModelSyncReason.AuthLogin,
       BuiltinModelSyncReason.AuthLogout,
     ]) {
-      expect(sync.sync(reason).ok).toBe(true);
+      expect(sync.sync(reason).ok).toBe(false);
       const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      expect(config.agents.defaults.mediaModels?.video).toBeUndefined();
-      expect(config.plugins.entries.kie).toBeUndefined();
-      expect(config.plugins.allow).not.toContain('kie');
-      expect(config.models?.providers?.kie).toBeUndefined();
+      expect(config).toEqual({
+        agents: {
+          defaults: { mediaModels: { video: { primary: 'kie/kling-2.6/text-to-video' } } },
+        },
+        plugins: { allow: ['kie'], entries: { kie: { enabled: true } } },
+      });
       expect(fs.existsSync(path.join(stateDir, 'extension-secrets.json'))).toBe(false);
       expect(JSON.stringify(config)).not.toContain('video-test-key');
     }

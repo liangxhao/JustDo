@@ -47,6 +47,10 @@ test('prunes public-cloud plugins while retaining the intranet OpenAI adapter an
       fs.writeFileSync(path.join(extensionRoot, 'index.js'), 'export default {};');
     }
     const computerRoot = path.join(extensionsRoot, 'cua-computer');
+    fs.writeFileSync(
+      path.join(extensionsRoot, 'openai', 'package.json'),
+      JSON.stringify({ version: '2026.9.8', openclaw: { runtimeBundled: true } }),
+    );
     const nativeRoot = path.join(
       computerRoot,
       'node_modules',
@@ -66,6 +70,13 @@ test('prunes public-cloud plugins while retaining the intranet OpenAI adapter an
     expect(stats.extensionDirsRemoved).toBe(6);
     expect(fs.readdirSync(extensionsRoot).sort()).toEqual([...retained].sort());
     expect(fs.readdirSync(nativeRoot).sort()).toEqual([...nativeFiles].sort());
+    fs.writeFileSync(
+      path.join(extensionsRoot, 'openai', 'package.json'),
+      JSON.stringify({ version: '2026.9.8' }),
+    );
+    expect(() => pruneRuntimeExtensions(runtimeRoot, stats, { repoRoot, label: 'test' })).toThrow(
+      /Missing local source replacement: openai/,
+    );
   } finally {
     log.mockRestore();
     fs.rmSync(runtimeRoot, { recursive: true, force: true });

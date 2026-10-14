@@ -99,7 +99,7 @@ describe('NonLanguageModelSettings', () => {
         extensions: {
           list: vi.fn().mockResolvedValue({
             success: true,
-            extensions: ['kie', 'zai', 'novita'].map(id => ({ id, enabled: false })),
+            extensions: [{ id: 'openai', enabled: true }],
           }),
           onChanged: vi.fn(() => () => undefined),
         },
@@ -107,7 +107,7 @@ describe('NonLanguageModelSettings', () => {
     });
   });
 
-  const addVideoProvider = async (name: string, adapter?: string) => {
+  const addVideoProvider = async (name: string) => {
     const addButton = screen.getByRole('button', { name: 'addCustomProvider' });
     await waitFor(() => expect(addButton.hasAttribute('disabled')).toBe(false));
     fireEvent.click(addButton);
@@ -115,11 +115,6 @@ describe('NonLanguageModelSettings', () => {
     fireEvent.change(within(dialog).getByLabelText('customDisplayName'), {
       target: { value: name },
     });
-    if (adapter) {
-      fireEvent.change(within(dialog).getByLabelText('nativeVideoService'), {
-        target: { value: adapter },
-      });
-    }
     fireEvent.click(within(dialog).getByRole('button', { name: 'confirm' }));
   };
 
@@ -132,40 +127,38 @@ describe('NonLanguageModelSettings', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'confirm' }));
   };
 
-  it('offers only installed video adapters when adding a provider', async () => {
-    renderSettings('video');
-    const addButton = screen.getByRole('button', { name: 'addCustomProvider' });
-    await waitFor(() => expect(addButton.hasAttribute('disabled')).toBe(false));
-    fireEvent.click(addButton);
-    expect(screen.getAllByRole('option').map(option => option.getAttribute('value'))).toEqual([
-      'kie',
-      'zai',
-      'novita',
-    ]);
+  it('uses only OpenAI even when unsupported vendor extensions are installed', async () => {
+    vi.mocked(window.electron.extensions.list).mockResolvedValue({
+      success: true,
+      extensions: ['openai', 'kie', 'zai', 'novita'].map(id => ({ id, enabled: true })),
+    } as Awaited<ReturnType<typeof window.electron.extensions.list>>);
+    const { getCategory } = renderSettings('video');
+    await addVideoProvider('Video API');
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(Object.values(getCategory().providers)[0]).toMatchObject({
+      nativeVideoProvider: 'video-openai',
+      baseUrl: '',
+      models: [],
+    });
     expect(fetch).not.toHaveBeenCalled();
   });
 
   it('switches video provider cards without selecting a default or exposing their keys', async () => {
     const { getCategory } = renderSettings('video');
-    await addVideoProvider('Kie API', 'kie');
-    expect(screen.getByText('kling-2.6/text-to-video')).toBeTruthy();
-    expect(screen.getByLabelText('baseUrl *')).toHaveProperty('value', 'https://api.kie.ai');
-    fireEvent.change(screen.getByLabelText('apiKey *'), { target: { value: 'typed-test-key' } });
+    await addVideoProvider('Video API');
+    addVideoModel('internal-video');
+    expect(screen.getByLabelText('baseUrl *')).toHaveProperty('value', '');
+    fireEvent.change(screen.getByLabelText('apiKey'), { target: { value: 'typed-test-key' } });
     fireEvent.click(screen.getByRole('button', { name: 'voiceOnlineShowApiKey' }));
-    expect(screen.getByLabelText('apiKey *').getAttribute('type')).toBe('text');
-    const firstModel = screen.getByText('kling-2.6/text-to-video').closest('div.flex')!;
-    fireEvent.click(
-      within(firstModel as HTMLElement).getByRole('button', { name: 'mediaModelSetDefault' }),
-    );
+    expect(screen.getByLabelText('apiKey').getAttribute('type')).toBe('text');
     const defaultProviderId = getCategory().defaultProviderId;
 
-    await addVideoProvider('ZAI API', 'zai');
-    expect(screen.getByText('cogvideox-3')).toBeTruthy();
-    expect(screen.getByLabelText('apiKey *')).toHaveProperty('value', '');
-    expect(screen.getByLabelText('apiKey *').getAttribute('type')).toBe('password');
-    fireEvent.click(screen.getByRole('button', { name: 'Kie API', pressed: false }));
-    expect(screen.getByLabelText('apiKey *')).toHaveProperty('value', 'typed-test-key');
-    expect(screen.getByLabelText('apiKey *').getAttribute('type')).toBe('password');
+    await addVideoProvider('Second API');
+    expect(screen.getByLabelText('apiKey')).toHaveProperty('value', '');
+    expect(screen.getByLabelText('apiKey').getAttribute('type')).toBe('password');
+    fireEvent.click(screen.getByRole('button', { name: 'Video API', pressed: false }));
+    expect(screen.getByLabelText('apiKey')).toHaveProperty('value', 'typed-test-key');
+    expect(screen.getByLabelText('apiKey').getAttribute('type')).toBe('password');
     expect(getCategory().defaultProviderId).toBe(defaultProviderId);
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -178,10 +171,10 @@ describe('NonLanguageModelSettings', () => {
         providers: {
           native: {
             displayName: 'Unavailable API',
-            nativeVideoProvider: 'kie',
-            baseUrl: 'https://api.kie.ai',
+            nativeVideoProvider: 'video-openai',
+            baseUrl: 'http://video.lan/v1',
             apiKey: 'retained-key',
-            defaultModel: 'kling-2.6/text-to-video',
+            defaultModel: 'internal-video',
             models: [],
           },
         },
@@ -201,7 +194,7 @@ describe('NonLanguageModelSettings', () => {
   it('adds, edits and selects video models through the shared provider and model editor', async () => {
     vi.mocked(window.electron.extensions.list).mockResolvedValue({
       success: true,
-      extensions: [{ id: 'video-openai', enabled: false }],
+      extensions: [{ id: 'openai', enabled: true }],
     } as Awaited<ReturnType<typeof window.electron.extensions.list>>);
     const { getCategory } = renderSettings('video');
     await addVideoProvider('Video API');
@@ -242,7 +235,7 @@ describe('NonLanguageModelSettings', () => {
   it('discovers video models only on request from the configured endpoint', async () => {
     vi.mocked(window.electron.extensions.list).mockResolvedValue({
       success: true,
-      extensions: [{ id: 'video-openai', enabled: false }],
+      extensions: [{ id: 'openai', enabled: true }],
     } as Awaited<ReturnType<typeof window.electron.extensions.list>>);
     renderSettings('video');
     await addVideoProvider('Video API');
@@ -273,7 +266,7 @@ describe('NonLanguageModelSettings', () => {
   it('falls back to multipart OpenAPI models when the model directory contains no valid video IDs', async () => {
     vi.mocked(window.electron.extensions.list).mockResolvedValue({
       success: true,
-      extensions: [{ id: 'video-openai', enabled: false }],
+      extensions: [{ id: 'openai', enabled: true }],
     } as Awaited<ReturnType<typeof window.electron.extensions.list>>);
     renderSettings('video');
     await addVideoProvider('Video API');
@@ -315,7 +308,7 @@ describe('NonLanguageModelSettings', () => {
   it('cancels pending model discovery when adding another video provider', async () => {
     vi.mocked(window.electron.extensions.list).mockResolvedValue({
       success: true,
-      extensions: [{ id: 'video-openai', enabled: false }],
+      extensions: [{ id: 'openai', enabled: true }],
     } as Awaited<ReturnType<typeof window.electron.extensions.list>>);
     const { getCategory } = renderSettings('video');
     await addVideoProvider('First Video');
@@ -347,7 +340,7 @@ describe('NonLanguageModelSettings', () => {
   it('clears video selection when deleting its last model or provider', async () => {
     vi.mocked(window.electron.extensions.list).mockResolvedValue({
       success: true,
-      extensions: [{ id: 'video-openai', enabled: false }],
+      extensions: [{ id: 'openai', enabled: true }],
     } as Awaited<ReturnType<typeof window.electron.extensions.list>>);
     const { getCategory } = renderSettings('video');
     await addVideoProvider('Video API');

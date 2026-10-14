@@ -36,12 +36,6 @@ const BUILD_RECIPE_FILES = [
   'scripts/openclaw/ensure-openclaw-plugins.cjs',
   'scripts/openclaw/patch-mxc-sandbox-plugin.cjs',
   'scripts/openclaw/sync-openclaw-runtime-resources.cjs',
-  'scripts/openclaw/sync-native-extension-overlay.cjs',
-  'openclaw-extensions/openai/package.json',
-  'openclaw-extensions/openai/native-source.json',
-  'openclaw-extensions/openai/index.ts',
-  'openclaw-extensions/openai/capability-catalog.ts',
-  'openclaw-extensions/openai/media-adapters.ts',
   'src/shared/providers/mediaGenerationModels.ts',
   'scripts/openclaw/precompile-openclaw-extensions.cjs',
   'scripts/openclaw/prune-openclaw-runtime.cjs',
@@ -305,7 +299,27 @@ function buildOpenClawPatchSetFingerprint(repoRoot, version) {
 }
 
 function listBuildRecipeFiles(repoRoot) {
-  return BUILD_RECIPE_FILES.map(relativePath => path.join(repoRoot, relativePath));
+  const replacementRoot = path.join(repoRoot, 'openclaw-extensions', 'openai');
+  const replacementFiles = fs.existsSync(replacementRoot)
+    ? fs
+        .readdirSync(replacementRoot, { recursive: true, withFileTypes: true })
+        .filter(
+          entry =>
+            entry.isFile() &&
+            !path
+              .relative(replacementRoot, entry.parentPath)
+              .split(path.sep)
+              .includes('node_modules') &&
+            !entry.name.includes('.test.') &&
+            !entry.name.endsWith('.md'),
+        )
+        .map(entry => path.join(entry.parentPath, entry.name))
+        .sort()
+    : [];
+  return [
+    ...BUILD_RECIPE_FILES.map(relativePath => path.join(repoRoot, relativePath)),
+    ...replacementFiles,
+  ];
 }
 
 function buildOpenClawBuildRecipeFingerprint(repoRoot, version) {

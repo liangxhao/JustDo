@@ -222,7 +222,13 @@ function pruneExtensionDependencies(extensionDir, options = {}) {
 }
 
 function shouldPreserveExtensionLegalFiles(extensionId) {
-  return extensionId === 'acpx' || extensionId === 'mxc' || extensionId === 'stt-local-cli' || extensionId === 'typesafe';
+  return (
+    extensionId === 'acpx' ||
+    extensionId === 'openai' ||
+    extensionId === 'mxc' ||
+    extensionId === 'stt-local-cli' ||
+    extensionId === 'typesafe'
+  );
 }
 
 // ─── Extension pruning policy ───
@@ -317,6 +323,20 @@ function pruneRuntimeExtensions(runtimeRoot, stats, options = {}) {
   }
 
   const keep = new Set([...policy.keep, ...policy.protected]);
+  // A local replacement must actually have been assembled. Merely having the
+  // same directory name must never protect the public upstream implementation.
+  for (const id of policy.protected) {
+    const sourcePackage = path.join(repoRoot, 'openclaw-extensions', id, 'package.json');
+    if (!fs.existsSync(sourcePackage)) continue;
+    const source = JSON.parse(fs.readFileSync(sourcePackage, 'utf8'));
+    if (source.openclaw?.runtimeBundled !== true) continue;
+    const targetPackage = path.join(extensionsDir, id, 'package.json');
+    const target = fs.existsSync(targetPackage)
+      ? JSON.parse(fs.readFileSync(targetPackage, 'utf8'))
+      : null;
+    if (target?.openclaw?.runtimeBundled !== true || target.version !== source.version)
+      throw new Error(`[${label}] Missing local source replacement: ${id}`);
+  }
   const reviewed = new Set([...policy.keep, ...policy.remove, ...policy.protected]);
   const removed = [];
   const protectedKept = [];

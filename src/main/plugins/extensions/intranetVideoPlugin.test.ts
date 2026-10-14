@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import plugin from '../../../../openclaw-extensions/video-openai/index';
 import {
   buildIntranetVideoProvider,
   PROVIDER_ID,
-} from '../../../../openclaw-extensions/video-openai/video-provider';
+} from '../../../../openclaw-extensions/openai/video-provider';
 
 const sdk = vi.hoisted(() => ({
   requests: [] as Array<{ url: string; init: RequestInit; timeout: number; options?: unknown }>,
@@ -108,9 +107,7 @@ afterEach(() => {
 
 describe('intranet video provider', () => {
   it('registers the native provider and requires an explicit endpoint without public defaults', () => {
-    const api = { registerVideoGenerationProvider: vi.fn() };
-    plugin.register(api as Parameters<typeof plugin.register>[0]);
-    const provider = api.registerVideoGenerationProvider.mock.calls[0][0];
+    const provider = buildIntranetVideoProvider();
     expect(provider.id).toBe(PROVIDER_ID);
     expect(provider.models).toBeUndefined();
     expect(provider.isConfigured({ cfg: {} })).toBe(false);

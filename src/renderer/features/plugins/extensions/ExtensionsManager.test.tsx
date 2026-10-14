@@ -645,7 +645,6 @@ describe('ExtensionsManager extension toggle', () => {
     ['openai', 'extensionManagedModelAdapter'],
     ['code-mode-quickjs', 'extensionManagedCodeMode'],
     ['typesafe', 'extensionManagedDecisionModels'],
-    ['video-openai', 'extensionManagedVideoModels'],
   ])('explains where managed %s is controlled in the card and details', async (id, label) => {
     const managedExtension: InstalledOpenClawExtension = {
       ...extension,
@@ -678,7 +677,7 @@ describe('ExtensionsManager extension toggle', () => {
     expect(setEnabled).not.toHaveBeenCalled();
   });
 
-  test('keeps the disabled video adapter locked and explains Settings ownership', async () => {
+  test('keeps the disabled shared OpenAI adapter locked and explains Settings ownership', async () => {
     Object.defineProperty(window, 'electron', {
       configurable: true,
       value: {
@@ -688,7 +687,7 @@ describe('ExtensionsManager extension toggle', () => {
             extensions: [
               {
                 ...extension,
-                id: 'video-openai',
+                id: 'openai',
                 enabled: false,
                 managed: true,
                 origin: 'bundled',
@@ -702,16 +701,16 @@ describe('ExtensionsManager extension toggle', () => {
       },
     });
 
-    render(<ExtensionsManager searchQuery="video-openai" />);
+    render(<ExtensionsManager searchQuery="openai" />);
 
     expect(
       await screen.findByRole('img', {
-        name: 'pluginStatusDisabled · extensionManagedVideoModels',
+        name: 'pluginStatusDisabled · extensionManagedModelAdapter',
       }),
     ).toBeTruthy();
     expect(screen.queryByRole('switch')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'subtaskShowInfo: Sample Extension' }));
-    expect(screen.getByText('extensionManagedVideoModels')).toBeTruthy();
+    expect(screen.getByText('extensionManagedModelAdapter')).toBeTruthy();
   });
 
   test('saves a bundled Jev key without enabling the extension or retaining it in the input', async () => {

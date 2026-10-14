@@ -262,7 +262,6 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
   );
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [providerName, setProviderName] = useState('');
-  const [videoProviderId, setVideoProviderId] = useState('');
   const [modelDialog, setModelDialog] = useState<{ previousId?: string } | null>(null);
   const [modelId, setModelId] = useState('');
   const [modelName, setModelName] = useState('');
@@ -361,8 +360,8 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
   const activeProvider = activeProviderVisible ? category.providers[activeProviderId] : undefined;
   const nativeVideoProvider =
     kind === 'video' ? findNativeVideoProvider(activeProvider?.nativeVideoProvider) : undefined;
-  const canEditModels = kind !== 'video' || nativeVideoProvider?.customModel;
-  const requiresApiKey = kind === 'decision' || nativeVideoProvider?.apiKeyRequired;
+  const canEditModels = kind !== 'video' || Boolean(nativeVideoProvider);
+  const requiresApiKey = kind === 'decision';
   const supportsCatalogDefault = kind === 'image' || kind === 'video' || kind === 'decision';
   const defaultRef =
     supportsCatalogDefault &&
@@ -398,7 +397,7 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
   };
 
   const addProvider = (): void => {
-    const videoProvider = videoProviders.find(entry => entry.id === videoProviderId);
+    const videoProvider = videoProviders[0];
     if (kind === 'video' && !videoProvider) return;
     const name = providerName.trim();
     if (!name) {
@@ -420,15 +419,10 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
         ...current.providers,
         [id]: {
           displayName: name,
-          baseUrl: videoProvider?.baseUrl ?? '',
+          baseUrl: '',
           apiKey: '',
-          models: videoProvider?.models.map(model => ({ id: model, name: model })) ?? [],
-          ...(videoProvider
-            ? {
-                nativeVideoProvider: videoProvider.id,
-                defaultModel: videoProvider.models[0],
-              }
-            : {}),
+          models: [],
+          ...(videoProvider ? { nativeVideoProvider: videoProvider.id } : {}),
         },
       },
     }));
@@ -793,7 +787,6 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                 document.activeElement instanceof HTMLElement ? document.activeElement : null;
               setProviderDialogOpen(true);
               setProviderName('');
-              setVideoProviderId(videoProviders[0]?.id ?? '');
               setFormError('');
             }}
             disabled={kind === 'video' && (!videoProvidersLoaded || videoProviders.length === 0)}
@@ -853,11 +846,7 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                     {i18nService.t('providerCredentials')}
                   </h3>
                   <span className="truncate text-[10px] text-muted">
-                    {i18nService.t(
-                      kind === 'video' && !canEditModels
-                        ? 'nativeVideoCredentialsHint'
-                        : PROTOCOL_HINT_KEYS[kind],
-                    )}
+                    {i18nService.t(PROTOCOL_HINT_KEYS[kind])}
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2.5">
@@ -878,7 +867,7 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                         setDetectionMessage('');
                       }}
                       onBlur={event => {
-                        if (nativeVideoProvider?.customModel) {
+                        if (nativeVideoProvider) {
                           updateProvider({
                             baseUrl: normalizeNonLanguageModelBaseUrl(kind, event.target.value),
                           });
@@ -1100,24 +1089,6 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
                 className={inputClass}
               />
             </label>
-            {kind === 'video' && videoProviders.length > 1 ? (
-              <label className="mt-3 block text-xs text-secondary">
-                {i18nService.t('nativeVideoService')}
-                <select
-                  value={videoProviderId}
-                  onChange={event => setVideoProviderId(event.target.value)}
-                  className={inputClass}
-                >
-                  {videoProviders.map(provider => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.customModel
-                        ? i18nService.t('intranetVideoProvider')
-                        : provider.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
             {formError ? <p className="mt-2 text-xs text-red-500">{formError}</p> : null}
             <div className="mt-5 flex justify-end gap-2">
               <button
@@ -1158,37 +1129,18 @@ const NonLanguageModelEditor: React.FC<NonLanguageModelEditorProps> = ({
             <div className="mt-4 grid gap-3">
               <label className="text-xs text-secondary">
                 {i18nService.t('mediaModelId')}
-                {kind === 'video' && nativeVideoProvider && !nativeVideoProvider.customModel ? (
-                  <select
-                    autoFocus
-                    value={modelId}
-                    onChange={event => {
-                      setModelId(event.target.value);
-                      setFormError('');
-                    }}
-                    className={inputClass}
-                  >
-                    <option value="">{i18nService.t('nativeVideoModel')}</option>
-                    {nativeVideoProvider.models.map(id => (
-                      <option key={id} value={id}>
-                        {id}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    autoFocus
-                    value={modelId}
-                    onChange={event => {
-                      invalidateVoiceDetection();
-                      setModelId(event.target.value);
-                      setDetectedVoices([]);
-                      setVoiceDetectionMessage('');
-                      setFormError('');
-                    }}
-                    className={inputClass}
-                  />
-                )}
+                <input
+                  autoFocus
+                  value={modelId}
+                  onChange={event => {
+                    invalidateVoiceDetection();
+                    setModelId(event.target.value);
+                    setDetectedVoices([]);
+                    setVoiceDetectionMessage('');
+                    setFormError('');
+                  }}
+                  className={inputClass}
+                />
               </label>
               <label className="text-xs text-secondary">
                 {i18nService.t('modelName')}

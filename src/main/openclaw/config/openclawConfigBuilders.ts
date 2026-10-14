@@ -33,7 +33,6 @@ import {
   ProviderName,
 } from '../../../shared/providers';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
-import { OpenAiCompatibleMediaConfigProviderIds } from '../../../shared/providers/mediaGenerationModels';
 import { PermissionMode } from '../../../shared/security/approvals';
 import { WINDOWS_SANDBOX_BACKEND_ID } from '../../../shared/security/windowsSandbox';
 import { LOCAL_TTS_PROVIDER_ID } from '../../../shared/speech/localTts';
@@ -2248,9 +2247,6 @@ export const listManagedOpenClawPluginIds = (): string[] => [
       ? [OpenClawExtensionId.CUA_COMPUTER]
       : []),
     ...Object.keys(buildManagedCapabilityPluginEntries()),
-    ...(isBundledPluginAvailable(OpenAiCompatibleMediaConfigProviderIds.video)
-      ? [OpenAiCompatibleMediaConfigProviderIds.video]
-      : []),
     ...readPreinstalledPluginIds().filter(
       id => !isUserToggleableBundledPlugin(id) && isBundledPluginAvailable(id),
     ),

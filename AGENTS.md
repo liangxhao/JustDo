@@ -133,6 +133,10 @@ npm test
 
 ## Runtime and Configuration Guardrails
 
+- Before any OpenClaw version upgrade or local OpenAI fork refresh, read
+  [upgrade checklist](docs/openclaw-upgrade-checklist.md). Validate patches, SDK
+  contracts, complete source replacement and the freshly rebuilt artifact.
+
 - Apply current patches to the locked pristine OpenClaw package.
   Historical/partial patch shapes must fail clearly; do not add compatibility,
   migration or in-place upgrades for older application patch revisions.

@@ -14,7 +14,6 @@
     "memory-wiki",
     "mxc",
     "oc-path",
-    "openai",
     "policy",
     "tts-local-cli",
     "web-readability",
@@ -22,6 +21,11 @@
     "code-mode-quickjs"
   ],
   "remove": [
+    {
+      "category": "local-source-replacements",
+      "reason": "The upstream OpenAI directory is replaced completely by the version-locked local intranet plugin. Local extension protection retains the replacement, with one openai plugin ID.",
+      "extensions": ["openai"]
+    },
     {
       "category": "unused-http-administration",
       "reason": "The desktop application uses Gateway WebSocket RPC and does not integrate the optional HTTP administration endpoint.",

@@ -9,7 +9,9 @@ type Props = Omit<NonLanguageModelEditorProps, 'kind' | 'videoProviders' | 'vide
 
 export const NativeVideoModelSettings: React.FC<Props> = props => {
   const extensions = useExtensionEnablement();
-  const providers = NATIVE_VIDEO_PROVIDERS.filter(entry => extensions.enabled.has(entry.id));
+  const providers = NATIVE_VIDEO_PROVIDERS.filter(entry =>
+    extensions.enabled.has(entry.extensionId),
+  );
   return (
     <NonLanguageModelEditor
       {...props}

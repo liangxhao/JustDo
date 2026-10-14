@@ -1,24 +1,10 @@
 import type { PluginCapabilityCatalogHostEntry } from 'openclaw/plugin-sdk/plugin-entry';
+import { buildOpenAIRealtimeTranscriptionProvider } from './realtime-transcription-provider-factory.js';
+import { buildOpenAISpeechProvider } from './speech-provider.js';
 
-import { configureTranscriptionProvider } from './media-adapters';
-import native from './native-capability-catalog.mjs';
-
-const catalog: PluginCapabilityCatalogHostEntry = context => {
-  const baseline = native(context);
-  return {
-    ...baseline,
-    realtimeTranscriptionProviders: baseline.realtimeTranscriptionProviders?.map(provider => {
-      if (provider.id !== 'openai') return provider;
-      const factory = configureTranscriptionProvider(sessionContext => {
-        const selected = native(sessionContext).realtimeTranscriptionProviders?.find(
-          entry => entry.id === 'openai',
-        );
-        if (!selected) throw new Error('Native OpenAI transcription catalog is unavailable');
-        return selected;
-      });
-      return factory(context);
-    }),
-  };
-};
+const catalog: PluginCapabilityCatalogHostEntry = context => ({
+  speechProviders: [buildOpenAISpeechProvider()],
+  realtimeTranscriptionProviders: [buildOpenAIRealtimeTranscriptionProvider(context)],
+});
 
 export default catalog;

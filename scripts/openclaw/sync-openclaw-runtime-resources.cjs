@@ -4,7 +4,6 @@ const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { syncNativeExtensionOverlay } = require('./sync-native-extension-overlay.cjs');
 const {
   pruneExtensionDependencies,
   pruneRuntimeExtensions,
@@ -426,21 +425,23 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
 
     const extensionSourceDir = path.join(sourceDir, entry.name);
     const extensionTargetDir = path.join(targetDir, entry.name);
-    if (
-      readJsonFile(path.join(extensionSourceDir, 'package.json'))?.justdo?.nativeOverlay === true
-    ) {
-      const stagingRoot = fs.mkdtempSync(path.join(targetDir, `.native-extension-${entry.name}-`));
-      const stagingDir = path.join(stagingRoot, entry.name);
-      try {
-        fs.cpSync(extensionTargetDir, stagingDir, { recursive: true, verbatimSymlinks: true });
-        syncNativeExtensionOverlay(extensionSourceDir, stagingDir);
-        fs.rmSync(extensionTargetDir, { recursive: true, force: true });
-        renameExtensionIntoPlace(stagingDir, extensionTargetDir);
-        copied.push(entry.name);
-      } finally {
-        fs.rmSync(stagingRoot, { recursive: true, force: true });
+    const sourcePackage = readJsonFile(path.join(extensionSourceDir, 'package.json'));
+    if (sourcePackage?.openclaw?.runtimeBundled === true) {
+      const baseline = readJsonFile(path.join(extensionSourceDir, 'upstream-source.json'));
+      const runtimePackage = readJsonFile(path.join(runtimeRoot, 'package.json'));
+      const manifest = readJsonFile(path.join(extensionSourceDir, 'openclaw.plugin.json'));
+      if (
+        !baseline ||
+        baseline.version !== runtimePackage?.version ||
+        sourcePackage.version !== baseline.version ||
+        manifest?.id !== entry.name ||
+        baseline.id !== entry.name
+      ) {
+        throw new Error(
+          'Runtime source replacement requires review against the locked OpenClaw version: ' +
+            entry.name,
+        );
       }
-      continue;
     }
     const usesProductionDependencies = hasProductionDependencies(extensionSourceDir);
     if (usesProductionDependencies && !installTarget) {
@@ -475,7 +476,7 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
       replaceExtensionSources(extensionSourceDir, extensionTargetDir);
       bundleProductExtension(extensionSourceDir, extensionTargetDir);
       pruneExtensionDependencies(extensionTargetDir, {
-        preserveLegalFiles: ['acpx', 'stt-local-cli', 'typesafe'].includes(entry.name),
+        preserveLegalFiles: ['acpx', 'openai', 'stt-local-cli', 'typesafe'].includes(entry.name),
       });
       console.log(`[${label}] Reused locked production dependencies: ${entry.name}`);
       copied.push(entry.name);
@@ -497,7 +498,7 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
         verifyDeclaredDependencies(stagingDir);
         verifyAcpxTargetDependencies(stagingDir, installTarget);
         pruneExtensionDependencies(stagingDir, {
-          preserveLegalFiles: ['acpx', 'stt-local-cli', 'typesafe'].includes(entry.name),
+          preserveLegalFiles: ['acpx', 'openai', 'stt-local-cli', 'typesafe'].includes(entry.name),
         });
         fs.writeFileSync(
           path.join(stagingDir, EXTENSION_ASSEMBLY_MANIFEST),

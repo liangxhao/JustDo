@@ -15,13 +15,13 @@ artifact. Do not merge unrelated patches merely to reduce the file count.
 
 ### Capabilities moved out of patches
 
-| Former patch | Ordinary implementation                                                                                       | Contract                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ------------ | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 002          | `src/main/openclaw/runtime/mcpPackageRunner.ts` and the managed MCP config builder                            | Windows bare npm/npx commands become direct Electron Node argv with the trusted child-window preload. Windows shims embed absolute preload/Node paths so nested npm package-bin wrappers cannot resolve them against the caller's cwd. User settings, arguments, credentials and native process custody stay intact. Other native/plugin MCP launchers can still use the self-contained application shims. |
-| 003          | The same launchers and `src/main/openclaw/config/openclawConfigBuilders.ts`                                   | Existing-session Windows profiles use `chrome-mcp.cmd`, which starts the pinned bundled server with vision and update checks disabled. Explicit custom commands remain selected; native Chrome handshake and process cleanup own the connection.                                                                                                                                                           |
-| 020          | `openclaw-extensions/openai/media-adapters.ts`, composed through registration and the cold capability catalog | A request-local host context supplies the configured transcription URL and matching header policy. Native factory, protocol, session lifecycle and default URL remain native; simultaneous sessions never mutate shared context.                                                                                                                                                                           |
-| 021          | The same OpenAI composition                                                                                   | The native image provider receives a cloned config view of `justdo-image-openai`. Chat config is never changed. Video stays in `video-openai` and separately installed provider plugins.                                                                                                                                                                                                                   |
-| 027          | `scripts/openclaw/openclaw-shared-sdk-modules.cjs`                                                            | The bundle externalizes the native session-access state owner reached through `plugin-sdk/session-visibility`. SDK registration and Gateway reads share the original module instance; no global registry replacement is injected.                                                                                                                                                                          |
+| Former patch | Ordinary implementation                                                            | Contract                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------ | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 002          | `src/main/openclaw/runtime/mcpPackageRunner.ts` and the managed MCP config builder | Windows bare npm/npx commands become direct Electron Node argv with the trusted child-window preload. Windows shims embed absolute preload/Node paths so nested npm package-bin wrappers cannot resolve them against the caller's cwd. User settings, arguments, credentials and native process custody stay intact. Other native/plugin MCP launchers can still use the self-contained application shims. |
+| 003          | The same launchers and `src/main/openclaw/config/openclawConfigBuilders.ts`        | Existing-session Windows profiles use `chrome-mcp.cmd`, which starts the pinned bundled server with vision and update checks disabled. Explicit custom commands remain selected; native Chrome handshake and process cleanup own the connection.                                                                                                                                                           |
+| 020          | `openclaw-extensions/openai/realtime-transcription-provider-factory.ts`            | Explicit per-session intranet transcription URL and matching header policy; cold catalog uses the same factory. Native protocol, reconnect and transcript ordering remain; missing URL fails without public fallback.                                                                                                                                                                                      |
+| 021          | `openclaw-extensions/openai/image-generation-provider.ts` and `intranet-config.ts` | Request-local `justdo-image-openai` configuration never changes chat. Video keeps the `video-openai` provider/config ID, registered by this same OpenAI source fork.                                                                                                                                                                                                                                       |
+| 027          | `scripts/openclaw/openclaw-shared-sdk-modules.cjs`                                 | The bundle externalizes the native session-access state owner reached through `plugin-sdk/session-visibility`. SDK registration and Gateway reads share the original module instance; no global registry replacement is injected.                                                                                                                                                                          |
 
 033 and 035 are retired by product choice, not absorbed upstream. Diagnostic
 projection uses ordinary native lifecycle and bounded Gateway history evidence;
@@ -29,16 +29,17 @@ private loop exits are no longer reported. Workflow observes the already-public 
 source and sizes the exact serialized result envelope. The before_prompt_build
 budget extension is not required; missing observations use a conservative fallback.
 
-The OpenAI composition retains the native plugin ID, manifest, package metadata,
-auth and other capabilities. Resource sync verifies both native entry SHA-256s,
-saves their original bytes beside the entry, then bundles ordinary TypeScript
-wrappers. Registration runs once. The cold catalog is composed too, so discovery
-and registration apply the same transcription configuration. This is a required
-adapter over the existing managed OpenAI plugin, not another provider with a
-colliding ID. A changed upstream entry fails and requires a pristine rebuild.
-Development inventory excludes these composition sources; availability comes
-from the bundled native manifest. Startup source copying never overwrites that
-native plugin with the raw TypeScript composition.
+The local OpenAI extension is a complete, version-locked source replacement of
+upstream OpenAI, with one plugin ID and no directory merging or native-* backup
+entries. The prune policy disables the upstream copy; local protection retains
+the replacement. Public account onboarding/catalog/usage and public endpoint
+fallbacks are removed; explicit intranet credentials remain supported. Image,
+TTS, realtime transcription, file transcription and video share one extension
+but retain separate configuration domains. Clearing video never disables OpenAI.
+Main excludes build-only source replacements from source discovery/copying.
+All production source, manifests, dependency locks and workers are fingerprinted.
+See [the mandatory upgrade checklist](../../../docs/openclaw-upgrade-checklist.md)
+for baseline comparison, native SDK checks and fresh-artifact validation.
 
 034 and 038 retain only their native bindings, control-flow edits, schema/type
 seams and exact verification. Their execution/receipt/cleanup and compaction
@@ -179,9 +180,9 @@ Windows concurrency passed 9,571 tests (77 skipped).
 `tests/openclaw/runtime/windows-mcp-launch.test.ts` exercises real Electron/native
 npm/npx MCP and both a Unicode-path fixture and the bundled Chrome server,
 including handshake and cleanup. `tests/openclaw/plugins/openai-native-composition.test.ts`
-loads byte-preserved native registration and cold catalog with native SDK aliases,
-and checks simultaneous URLs/header policy, default routing, reconnect settings
-and native transcript ordering without remote provider calls. Shared SDK tests
+compiles the local source fork and loads registration/setup/policy/cold catalog with native SDK aliases.
+It checks explicit URLs, missing-config rejection, reconnect/transcript ordering, and image generation/edit,
+TTS, file STT and video against a local service with isolated credentials; no public service is called. Shared SDK tests
 exercise grant/read/revoke across the real bundling boundary. Native execution
 and compaction tests cover settlement, cancellation, custody and exact support
 bytes; historical/partial implementations still fail and require a pristine rebuild.

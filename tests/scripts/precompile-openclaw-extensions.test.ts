@@ -53,3 +53,30 @@ test('keeps CUA native SDK and image loaders external when precompiling its Type
     fs.rmSync(runtimeRoot, { recursive: true, force: true });
   }
 });
+
+test('leaves compiled upstream worker build hints untouched when their original TS source is not published', async () => {
+  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'upstream-worker-hint-'));
+  const pluginRoot = path.join(runtimeRoot, 'dist/extensions/code-mode-quickjs');
+  const metadata = {
+    type: 'module',
+    openclaw: {
+      extensions: ['./index.js'],
+      build: { workerEntries: ['./src/code-mode.worker.ts'] },
+    },
+  };
+  try {
+    fs.mkdirSync(pluginRoot, { recursive: true });
+    fs.writeFileSync(path.join(pluginRoot, 'package.json'), JSON.stringify(metadata));
+    fs.writeFileSync(path.join(pluginRoot, 'index.js'), 'export default {};');
+    expect(await precompileOpenClawExtensions(runtimeRoot, { required: true })).toMatchObject({
+      compiled: 0,
+      skipped: 1,
+      errors: 0,
+    });
+    expect(JSON.parse(fs.readFileSync(path.join(pluginRoot, 'package.json'), 'utf8'))).toEqual(
+      metadata,
+    );
+  } finally {
+    fs.rmSync(runtimeRoot, { recursive: true, force: true });
+  }
+});

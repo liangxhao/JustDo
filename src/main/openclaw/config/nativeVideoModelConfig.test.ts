@@ -4,7 +4,6 @@ import path from 'node:path';
 
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { NATIVE_VIDEO_PROVIDERS } from '../../../shared/providers/nativeVideoProviders';
 import { t } from '../../core/i18n';
 import {
   applyNativeVideoConfiguration,
@@ -20,58 +19,6 @@ afterEach(() =>
     .forEach(directory => fs.rmSync(directory, { recursive: true, force: true })),
 );
 
-test.each(NATIVE_VIDEO_PROVIDERS.filter(provider => !provider.customModel))(
-  'projects $id video via native provider and restricted SecretRef',
-  provider => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-video-'));
-    directories.push(stateDir);
-    const category = {
-      defaultProviderId: 'selected',
-      providers: {
-        selected: {
-          nativeVideoProvider: provider.id,
-          baseUrl: provider.baseUrl,
-          apiKey: 'video-test-secret',
-          defaultModel: provider.models[0],
-        },
-      },
-    };
-    const selection = resolveNativeVideoSelection(category);
-    const config: Record<string, unknown> = {
-      agents: { defaults: { model: 'chat/model' } },
-      plugins: { allow: ['other'], deny: [provider.id], entries: { other: { enabled: false } } },
-    };
-    expect(applyNativeVideoConfiguration(config, selection, stateDir, [provider.id])).toBe(true);
-    expect(config).toMatchObject({
-      agents: {
-        defaults: {
-          model: 'chat/model',
-          mediaModels: { video: { primary: `${provider.id}/${provider.models[0]}` } },
-        },
-      },
-      models: {
-        providers: { [provider.id]: { apiKey: { source: 'file' }, baseUrl: provider.baseUrl } },
-      },
-      plugins: {
-        allow: ['other', provider.id],
-        deny: [],
-        entries: { [provider.id]: { enabled: true }, other: { enabled: false } },
-      },
-    });
-    expect(JSON.stringify(config)).not.toContain('video-test-secret');
-    expect(fs.readFileSync(path.join(stateDir, 'extension-secrets.json'), 'utf8')).toContain(
-      'video-test-secret',
-    );
-    expect(applyNativeVideoConfiguration(config, selection, stateDir, [provider.id])).toBe(false);
-    expect(resolveNativeVideoSelection({ ...category, defaultProviderId: undefined })).toBeNull();
-    applyNativeVideoConfiguration(config, null, stateDir, [provider.id]);
-    expect(config).toMatchObject({
-      agents: { defaults: { mediaModels: {} } },
-      plugins: { entries: { [provider.id]: { enabled: true } } },
-    });
-  },
-);
-
 test('rejects unsupported video providers and restores unmanaged settings after rollback', () => {
   expect(() =>
     resolveNativeVideoSelection({ providers: { legacy: { apiKey: 'retained' } } }),
@@ -80,93 +27,112 @@ test('rejects unsupported video providers and restores unmanaged settings after 
   expect(resolveNativeVideoSelection({ providers: {} })).toBeNull();
   const config = {
     agents: { defaults: { mediaModels: { video: 'custom/video' } } },
-    models: { providers: { kie: { apiKey: 'pre-existing' } } },
-    plugins: { allow: ['other'], deny: ['kie'] },
+    models: { providers: { 'video-openai': { apiKey: 'pre-existing' } } },
+    plugins: { allow: ['other'], deny: ['other'] },
   };
   const restore = captureNativeVideoConfiguration(config);
   const next: Record<string, unknown> = {
-    agents: { defaults: { model: 'chat/model', mediaModels: { video: 'kie/changed' } } },
-    plugins: { allow: ['other', 'kie'], deny: [] },
+    agents: { defaults: { model: 'chat/model', mediaModels: { video: 'video-openai/changed' } } },
+    plugins: { allow: ['other'], deny: ['other'] },
   };
   restore(next);
   expect(next).toMatchObject({
     agents: { defaults: { model: 'chat/model', mediaModels: { video: 'custom/video' } } },
-    models: { providers: { kie: { apiKey: 'pre-existing' } } },
-    plugins: { allow: ['other'], deny: ['kie'] },
+    models: { providers: { 'video-openai': { apiKey: 'pre-existing' } } },
+    plugins: { allow: ['other'], deny: ['other'] },
   });
-});
-
-test.each(NATIVE_VIDEO_PROVIDERS.filter(provider => !provider.customModel))('does not publish credentials or enable missing $id video plugins', provider => {
-  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'missing-native-video-'));
-  directories.push(stateDir);
-  const selection = resolveNativeVideoSelection({ defaultProviderId: 'selected', providers: {
-    selected: { nativeVideoProvider: provider.id, baseUrl: provider.baseUrl, apiKey: 'unused-secret', defaultModel: provider.models[0] },
-  } });
-  const config: Record<string, unknown> = {
-    agents: { defaults: { model: 'chat/model', mediaModels: { video: `${provider.id}/old`, image: 'custom/image' } } },
-    models: { providers: { [provider.id]: { apiKey: 'existing-chat-key' } } },
-    plugins: { allow: ['other', provider.id], deny: [provider.id], entries: { [provider.id]: { enabled: true }, other: { enabled: true } } },
-  };
-  expect(applyNativeVideoConfiguration(config, selection, stateDir, ['other'])).toBe(false);
-  expect(config).toEqual({
-    agents: { defaults: { model: 'chat/model', mediaModels: { image: 'custom/image' } } },
-    models: { providers: { [provider.id]: { apiKey: 'existing-chat-key' } } },
-    plugins: { allow: ['other'], deny: [], entries: { other: { enabled: true } } },
-  });
-  expect(fs.existsSync(path.join(stateDir, 'extension-secrets.json'))).toBe(false);
 });
 
 test('cleans unavailable video fallbacks without a managed selection and preserves uncertain inventory', () => {
   const config: Record<string, unknown> = {
-    agents: { defaults: { mediaModels: { video: { primary: 'custom/video', fallbacks: ['kie/model', 'other/video'] } } } },
-    plugins: { entries: { kie: { enabled: true } } },
+    agents: {
+      defaults: {
+        mediaModels: {
+          video: { primary: 'custom/video', fallbacks: ['video-openai/model', 'other/video'] },
+        },
+      },
+    },
+    plugins: { entries: { openai: { enabled: true } } },
   };
   const original = structuredClone(config);
   expect(applyNativeVideoConfiguration(config, undefined, os.tmpdir(), null)).toBe(false);
   expect(config).toEqual(original);
   applyNativeVideoConfiguration(config, undefined, os.tmpdir(), ['custom', 'other']);
   expect(config).toMatchObject({
-    agents: { defaults: { mediaModels: { video: { primary: 'custom/video', fallbacks: ['other/video'] } } } },
+    agents: {
+      defaults: { mediaModels: { video: { primary: 'custom/video', fallbacks: ['other/video'] } } },
+    },
     plugins: { entries: {} },
   });
 });
 
 test('retains the available video fallback and transport options when the primary plugin is missing', () => {
   const config: Record<string, unknown> = {
-    agents: { defaults: { mediaModels: { video: {
-      primary: 'kie/model', fallbacks: ['novita/model', 'custom/internal-video', 'other/video'], timeoutMs: 60000,
-    } } } },
+    agents: {
+      defaults: {
+        mediaModels: {
+          video: {
+            primary: 'video-openai/model',
+            fallbacks: ['custom/internal-video', 'other/video'],
+            timeoutMs: 60000,
+          },
+        },
+      },
+    },
   };
   applyNativeVideoConfiguration(config, undefined, os.tmpdir(), ['custom', 'other']);
-  expect(config).toMatchObject({ agents: { defaults: { mediaModels: { video: {
-    primary: 'custom/internal-video', fallbacks: ['other/video'], timeoutMs: 60000,
-  } } } } });
+  expect(config).toMatchObject({
+    agents: {
+      defaults: {
+        mediaModels: {
+          video: {
+            primary: 'custom/internal-video',
+            fallbacks: ['other/video'],
+            timeoutMs: 60000,
+          },
+        },
+      },
+    },
+  });
 });
 
+test.each(['kie', 'zai', 'novita', 'openai'])(
+  'rejects unsupported video provider %s even with otherwise valid settings',
+  nativeVideoProvider => {
+    expect(() =>
+      resolveNativeVideoSelection({
+        defaultProviderId: 'selected',
+        providers: {
+          selected: {
+            nativeVideoProvider,
+            defaultModel: 'internal-video',
+            apiKey: '',
+            baseUrl: 'http://video.lan/v1',
+          },
+        },
+      }),
+    ).toThrow(t('nativeVideoConfigurationInvalid'));
+  },
+);
+
 test.each([
-  { nativeVideoProvider: 'openai' },
-  {
-    nativeVideoProvider: 'kie',
-    defaultModel: 'unregistered',
-    apiKey: 'key',
-    baseUrl: 'https://api.kie.ai',
-  },
-  {
-    nativeVideoProvider: 'kie',
-    defaultModel: 'kling-2.6/text-to-video',
-    apiKey: '',
-    baseUrl: 'https://api.kie.ai',
-  },
-  {
-    nativeVideoProvider: 'kie',
-    defaultModel: 'kling-2.6/text-to-video',
-    apiKey: 'key',
-    baseUrl: 'https://user:password@api.kie.ai',
-  },
-])('rejects invalid native video settings in Main', selected => {
+  'https://user:password@video.lan/v1',
+  'http://video.lan/v1?key=value',
+  'ftp://video.lan/v1',
+])('rejects invalid video service URL %s', baseUrl => {
   expect(() =>
-    resolveNativeVideoSelection({ defaultProviderId: 'selected', providers: { selected } }),
-  ).toThrow();
+    resolveNativeVideoSelection({
+      defaultProviderId: 'lan',
+      providers: {
+        lan: {
+          nativeVideoProvider: 'video-openai',
+          defaultModel: 'internal-video',
+          apiKey: '',
+          baseUrl,
+        },
+      },
+    }),
+  ).toThrow(t('nativeVideoUrlInvalid'));
 });
 
 test('translates malformed video service URLs instead of leaking URL parser errors', () => {
@@ -175,8 +141,8 @@ test('translates malformed video service URLs instead of leaking URL parser erro
       defaultProviderId: 'native',
       providers: {
         native: {
-          nativeVideoProvider: 'kie',
-          defaultModel: 'kling-2.6/text-to-video',
+          nativeVideoProvider: 'video-openai',
+          defaultModel: 'internal-video',
           apiKey: 'test-key',
           baseUrl: 'not a URL',
         },
@@ -185,32 +151,50 @@ test('translates malformed video service URLs instead of leaking URL parser erro
   ).toThrow(t('nativeVideoUrlInvalid'));
 });
 
-test.each([
-  { providers: {} },
-  { providers: { lan: { nativeVideoProvider: 'video-openai' } } },
-])('clearing the default video model disables the adapter while preserving other models: %j', category => {
-  const config: Record<string, unknown> = {
-    agents: { defaults: { model: 'chat/model', mediaModels: {
-      video: { primary: 'video-openai/video-v1', fallbacks: [] }, image: 'image/model',
-    } } },
-    plugins: { entries: { 'video-openai': { enabled: true, config: { retained: true } }, other: { enabled: true } } },
-  };
-  applyNativeVideoConfiguration(config, resolveNativeVideoSelection(category), os.tmpdir(), ['video-openai']);
-  expect(config).toEqual({
-    agents: { defaults: { model: 'chat/model', mediaModels: { image: 'image/model' } } },
-    plugins: { entries: { 'video-openai': { enabled: false, config: { retained: true } }, other: { enabled: true } } },
-  });
-});
+test.each([{ providers: {} }, { providers: { lan: { nativeVideoProvider: 'video-openai' } } }])(
+  'clearing the default video model keeps the shared OpenAI extension enabled while preserving other models: %j',
+  category => {
+    const config: Record<string, unknown> = {
+      agents: {
+        defaults: {
+          model: 'chat/model',
+          mediaModels: {
+            video: { primary: 'video-openai/video-v1', fallbacks: [] },
+            image: 'image/model',
+          },
+        },
+      },
+      plugins: {
+        entries: {
+          openai: { enabled: true, config: { retained: true } },
+          other: { enabled: true },
+        },
+      },
+    };
+    applyNativeVideoConfiguration(config, resolveNativeVideoSelection(category), os.tmpdir(), [
+      'openai',
+    ]);
+    expect(config).toEqual({
+      agents: { defaults: { model: 'chat/model', mediaModels: { image: 'image/model' } } },
+      plugins: {
+        entries: {
+          openai: { enabled: true, config: { retained: true } },
+          other: { enabled: true },
+        },
+      },
+    });
+  },
+);
 
-test('keeps the adapter disabled before video settings are configured without disabling other native providers', () => {
+test('clears the managed video model before video settings are configured while keeping OpenAI enabled', () => {
   const config: Record<string, unknown> = {
-    agents: { defaults: { mediaModels: { video: 'kie/model' } } },
-    plugins: { entries: { 'video-openai': { enabled: true }, kie: { enabled: true } } },
+    agents: { defaults: { mediaModels: { video: 'video-openai/model' } } },
+    plugins: { entries: { openai: { enabled: true } } },
   };
-  applyNativeVideoConfiguration(config, undefined, os.tmpdir(), ['video-openai', 'kie']);
+  applyNativeVideoConfiguration(config, undefined, os.tmpdir(), ['openai']);
   expect(config).toMatchObject({
-    agents: { defaults: { mediaModels: { video: 'kie/model' } } },
-    plugins: { entries: { 'video-openai': { enabled: false }, kie: { enabled: true } } },
+    agents: { defaults: { mediaModels: {} } },
+    plugins: { entries: { openai: { enabled: true } } },
   });
 });
 
@@ -220,9 +204,9 @@ test.each([null, undefined])(
     const config: Record<string, unknown> = {
       agents: { defaults: { mediaModels: { video: 'video-openai/old', image: 'other/image' } } },
       plugins: {
-        allow: ['video-openai', 'unknown'],
+        allow: ['openai', 'unknown'],
         deny: ['unknown'],
-        entries: { 'video-openai': { enabled: true }, unknown: { enabled: true } },
+        entries: { openai: { enabled: true }, unknown: { enabled: true } },
       },
       models: { providers: { unknown: { baseUrl: 'http://other.lan/v1' } } },
     };
@@ -232,16 +216,16 @@ test.each([null, undefined])(
     expect(config).toEqual({
       agents: { defaults: { mediaModels: { image: 'other/image' } } },
       plugins: {
-        allow: ['video-openai', 'unknown'],
+        allow: ['openai', 'unknown'],
         deny: ['unknown'],
-        entries: { 'video-openai': { enabled: false }, unknown: { enabled: true } },
+        entries: { openai: { enabled: true }, unknown: { enabled: true } },
       },
       models: { providers: { unknown: { baseUrl: 'http://other.lan/v1' } } },
     });
   },
 );
 
-test.each([{}, { 'video-openai': { enabled: false } }])(
+test.each([{}, { openai: { enabled: false } }])(
   'does not add or enable a video provider when the inventory is incomplete: %j',
   entries => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'uncertain-native-video-'));
@@ -267,8 +251,19 @@ test.each([{}, { 'video-openai': { enabled: false } }])(
   },
 );
 
-test.each([null, [], 'invalid', {}, { providers: null }, { providers: [] }, { providers: 'invalid' }, { providers: {}, defaultProviderId: 'missing' }, { providers: {}, defaultProviderId: 123 }])(
-  'rejects malformed video categories rather than treating them as an explicit clear: %j', value => {
+test.each([
+  null,
+  [],
+  'invalid',
+  {},
+  { providers: null },
+  { providers: [] },
+  { providers: 'invalid' },
+  { providers: {}, defaultProviderId: 'missing' },
+  { providers: {}, defaultProviderId: 123 },
+])(
+  'rejects malformed video categories rather than treating them as an explicit clear: %j',
+  value => {
     expect(() => resolveNativeVideoSelection(value)).toThrow(t('nativeVideoConfigurationInvalid'));
   },
 );
@@ -283,39 +278,146 @@ test('configures an intranet model with isolated credentials and private-network
     baseUrl: 'http://video.lan:8091/v1/videos/',
   };
   const config: Record<string, unknown> = {
-    models: { providers: { openai: { baseUrl: 'http://chat.lan/v1', apiKey: 'chat-key' }, 'justdo-image-openai': { apiKey: 'image-key' } } },
+    models: {
+      providers: {
+        openai: { baseUrl: 'http://chat.lan/v1', apiKey: 'chat-key' },
+        'justdo-image-openai': { apiKey: 'image-key' },
+      },
+    },
+    plugins: { allow: ['other'], deny: ['openai'], entries: { other: { enabled: false } } },
   };
-  const selection = resolveNativeVideoSelection({ defaultProviderId: 'lan', providers: { lan: selected } });
-  applyNativeVideoConfiguration(config, selection, stateDir, ['video-openai']);
+  const selection = resolveNativeVideoSelection({
+    defaultProviderId: 'lan',
+    providers: { lan: selected },
+  });
+  expect(applyNativeVideoConfiguration(config, selection, stateDir, ['openai'])).toBe(true);
   expect(config).toMatchObject({
-    agents: { defaults: { mediaModels: { video: { primary: 'video-openai/' + selected.defaultModel } } } },
-    models: { providers: {
-      'video-openai': { baseUrl: 'http://video.lan:8091/v1', apiKey: { source: 'file' }, request: { allowPrivateNetwork: true } },
-      openai: { apiKey: 'chat-key' }, 'justdo-image-openai': { apiKey: 'image-key' },
-    } },
+    agents: {
+      defaults: { mediaModels: { video: { primary: 'video-openai/' + selected.defaultModel } } },
+    },
+    models: {
+      providers: {
+        'video-openai': {
+          baseUrl: 'http://video.lan:8091/v1',
+          apiKey: { source: 'file' },
+          request: { allowPrivateNetwork: true },
+        },
+        openai: { apiKey: 'chat-key' },
+        'justdo-image-openai': { apiKey: 'image-key' },
+      },
+    },
+    plugins: {
+      allow: ['other', 'openai'],
+      deny: [],
+      entries: { openai: { enabled: true }, other: { enabled: false } },
+    },
   });
   expect(JSON.stringify(config)).not.toContain('intranet-video-key');
+  expect(applyNativeVideoConfiguration(config, selection, stateDir, ['openai'])).toBe(false);
 
-  const noAuth = resolveNativeVideoSelection({ defaultProviderId: 'lan', providers: { lan: { ...selected, apiKey: '' } } });
-  applyNativeVideoConfiguration(config, noAuth, stateDir, ['video-openai']);
-  expect((config.models as { providers: Record<string, { apiKey?: unknown }> }).providers['video-openai'].apiKey).toBeUndefined();
+  const noAuth = resolveNativeVideoSelection({
+    defaultProviderId: 'lan',
+    providers: { lan: { ...selected, apiKey: '' } },
+  });
+  applyNativeVideoConfiguration(config, noAuth, stateDir, ['openai']);
+  expect(
+    (config.models as { providers: Record<string, { apiKey?: unknown }> }).providers['video-openai']
+      .apiKey,
+  ).toBeUndefined();
 });
 
-test.each(['', 'bad model', '../model\nheader', 'x'.repeat(449)])('rejects invalid intranet model IDs', model => {
-  expect(() => resolveNativeVideoSelection({
-    defaultProviderId: 'lan', providers: { lan: {
-      nativeVideoProvider: 'video-openai', baseUrl: 'http://video.lan/v1', apiKey: '', defaultModel: model,
-    } },
-  })).toThrow(t('nativeVideoConfigurationInvalid'));
+test('removes the retired video plugin entry while preserving the provider domain and shared OpenAI', () => {
+  const config: Record<string, unknown> = {
+    models: { providers: { 'video-openai': { baseUrl: 'http://video.lan/v1' } } },
+    plugins: {
+      allow: ['openai', 'video-openai', 'other'],
+      deny: ['video-openai', 'other'],
+      entries: {
+        openai: { enabled: true },
+        'video-openai': { enabled: true },
+        other: { enabled: false },
+      },
+    },
+  };
+  applyNativeVideoConfiguration(config, null, os.tmpdir(), ['openai']);
+  expect(config).toMatchObject({
+    models: { providers: { 'video-openai': { baseUrl: 'http://video.lan/v1' } } },
+    plugins: {
+      allow: ['openai', 'other'],
+      deny: ['other'],
+      entries: { openai: { enabled: true }, other: { enabled: false } },
+    },
+  });
+  expect(
+    (config.plugins as { entries: Record<string, unknown> }).entries['video-openai'],
+  ).toBeUndefined();
 });
+
+test('rolling back video settings does not overwrite shared OpenAI state or chat configuration', () => {
+  const restore = captureNativeVideoConfiguration({
+    plugins: { allow: [], entries: { openai: { enabled: false, config: { personality: 'off' } } } },
+  });
+  const next: Record<string, unknown> = {
+    models: {
+      providers: {
+        openai: { baseUrl: 'http://chat.lan/v1' },
+        'video-openai': { baseUrl: 'http://video.lan/v1' },
+      },
+    },
+    plugins: {
+      allow: ['openai'],
+      entries: { openai: { enabled: true, config: { personality: 'friendly' } } },
+    },
+  };
+  restore(next);
+  expect(next).toMatchObject({
+    models: { providers: { openai: { baseUrl: 'http://chat.lan/v1' } } },
+    plugins: {
+      allow: ['openai'],
+      entries: { openai: { enabled: true, config: { personality: 'friendly' } } },
+    },
+  });
+  expect(
+    (next.models as { providers: Record<string, unknown> }).providers['video-openai'],
+  ).toBeUndefined();
+});
+
+test.each(['', 'bad model', '../model\nheader', 'x'.repeat(449)])(
+  'rejects invalid intranet model IDs',
+  model => {
+    expect(() =>
+      resolveNativeVideoSelection({
+        defaultProviderId: 'lan',
+        providers: {
+          lan: {
+            nativeVideoProvider: 'video-openai',
+            baseUrl: 'http://video.lan/v1',
+            apiKey: '',
+            defaultModel: model,
+          },
+        },
+      }),
+    ).toThrow(t('nativeVideoConfigurationInvalid'));
+  },
+);
 
 test('does not publish intranet credentials when the adapter is absent', () => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'missing-intranet-video-'));
   directories.push(stateDir);
-  const selection = resolveNativeVideoSelection({ defaultProviderId: 'lan', providers: { lan: {
-    nativeVideoProvider: 'video-openai', baseUrl: 'http://video.lan/v1', apiKey: 'unused', defaultModel: 'internal-video',
-  } } });
-  const config: Record<string, unknown> = { agents: { defaults: { mediaModels: { video: 'video-openai/old' } } } };
+  const selection = resolveNativeVideoSelection({
+    defaultProviderId: 'lan',
+    providers: {
+      lan: {
+        nativeVideoProvider: 'video-openai',
+        baseUrl: 'http://video.lan/v1',
+        apiKey: 'unused',
+        defaultModel: 'internal-video',
+      },
+    },
+  });
+  const config: Record<string, unknown> = {
+    agents: { defaults: { mediaModels: { video: 'video-openai/old' } } },
+  };
   applyNativeVideoConfiguration(config, selection, stateDir, []);
   expect(config).toMatchObject({ agents: { defaults: { mediaModels: {} } } });
   expect(fs.existsSync(path.join(stateDir, 'extension-secrets.json'))).toBe(false);

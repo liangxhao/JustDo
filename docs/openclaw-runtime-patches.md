@@ -2,7 +2,7 @@
 
 ## 1. 定位
 
-JustDo 是 OpenClaw 的桌面前端和运行时宿主，不是 OpenClaw 的长期 fork。Runtime patch 只用于当前锁定 npm 版本缺失、且无法在 JustDo Adapter/UI/config 层正确补齐的兼容能力。每个 patch 必须可审计、原子、可验证并有明确删除条件。幂等只适用于当前精确补丁形态；遇到历史或部分应用标记必须失败，从锁定 pristine 包重建，不能添加就地升级兼容逻辑。
+JustDo 是 OpenClaw 的桌面前端和运行时宿主，不维护 OpenClaw 核心的长期 fork。内网 OpenAI provider 使用版本锁定的本地源码替换，单独记录上游基线及升级差异。Runtime patch 只用于当前锁定 npm 版本缺失、且无法在 JustDo Adapter/UI/config 层正确补齐的兼容能力。每个 patch 必须可审计、原子、可验证并有明确删除条件。幂等只适用于当前精确补丁形态；遇到历史或部分应用标记必须失败，从锁定 pristine 包重建，不能添加就地升级兼容逻辑。
 
 当前版本来自 `package.json.openclaw.version`：
 
@@ -15,6 +15,8 @@ v2026.9.8
 ```text
 scripts/patches/v2026.9.8/
 ```
+
+升级前必须先读[OpenClaw 升级检查清单](openclaw-upgrade-checklist.md)，包括补丁、SDK 共享、本地 OpenAI 源码替换与产物验收。
 
 该目录的 `README.md` 是能力、上游原始证据、依赖关系、测试和删除条件的唯一权威总账。本文只说明工程流程，不能维护另一份逐文件行为副本。
 
@@ -42,8 +44,8 @@ Thinking/history、工具发现、原生 task queue/join、审批和 compaction 
 需要原生 actor/authority 的较大实现放在 `src/main/openclaw/runtime/native-support/`，
 patch 只接入显式原生依赖。支持模块通过事务工具复制并校验精确字节，最终 bundle
 校验完整实现和绑定；普通源码也必须纳入 build recipe，不能因移出补丁目录而绕过
-构建证明。应用插件入口组合必须保留原生身份并校验锁定入口，不能注册同名 provider
-或用文本替换维持另一份上游实现。
+构建证明。OpenAI 使用版本锁定的完整本地源码替换，保留唯一插件身份，并在裁剪清单
+明确禁用上游副本；不能合并目录或依赖对编译产物做文本替换。
 
 ## 4. 何时允许增加 Patch
 

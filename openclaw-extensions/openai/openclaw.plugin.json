@@ -1,0 +1,93 @@
+{
+  "id": "openai",
+  "categories": ["models"],
+  "capabilityCatalogEntry": "./capability-catalog.ts",
+  "sessionRouteStateOwners": [
+    {
+      "id": "openai",
+      "label": "OpenAI",
+      "providerIds": ["openai"],
+      "authProfilePrefixes": ["openai:"]
+    }
+  ],
+  "activation": {
+    "onStartup": true
+  },
+  "enabledByDefault": true,
+  "providers": ["openai", "video-openai"],
+  "modelSupport": {
+    "modelPrefixes": ["gpt-", "o1", "o3", "o4"]
+  },
+  "providerEndpoints": [
+    {
+      "endpointClass": "openai-public",
+      "hosts": ["api.openai.com"],
+      "hostSuffixes": [".api.openai.com"]
+    },
+    {
+      "endpointClass": "openai",
+      "hosts": ["chatgpt.com"]
+    },
+    {
+      "endpointClass": "azure-openai",
+      "hostSuffixes": [".openai.azure.com"]
+    }
+  ],
+  "providerRequest": {
+    "providers": {
+      "openai": {
+        "family": "openai-family"
+      }
+    }
+  },
+  "contracts": {
+    "speechProviders": ["openai"],
+    "realtimeTranscriptionProviders": ["openai"],
+    "embeddingProviders": ["openai"],
+    "mediaUnderstandingProviders": ["openai"],
+    "imageGenerationProviders": ["openai"],
+    "videoGenerationProviders": ["video-openai"]
+  },
+  "imageGenerationProviderMetadata": {
+    "openai": {
+      "authSignals": [
+        {
+          "provider": "justdo-image-openai"
+        }
+      ]
+    }
+  },
+  "mediaUnderstandingProviderMetadata": {
+    "openai": {
+      "capabilities": ["image", "audio"],
+      "defaultModels": {
+        "image": "gpt-6-astra",
+        "audio": "gpt-4o-transcribe"
+      },
+      "autoPriority": {
+        "image": 20,
+        "audio": 20
+      }
+    }
+  },
+  "configGroups": [
+    {
+      "id": "response-style",
+      "title": "Response style",
+      "order": 10,
+      "properties": ["personality"]
+    }
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "personality": {
+        "type": "string",
+        "enum": ["friendly", "on", "off"],
+        "default": "friendly",
+        "description": "Controls the canonical OpenAI-family GPT-5 friendly interaction style. Defaults to `friendly`; `on` aliases `friendly`; `off` removes only the style layer while shared stable behavior remains."
+      }
+    }
+  }
+}

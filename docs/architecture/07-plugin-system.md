@@ -44,13 +44,19 @@ Plugin Hub 有四类插件概念；市场当前只开放 extension、skill、mcp
 
 日常 Chrome 沿用原生 existing-session driver 和随包 Chrome MCP，设置页通过 Gateway 请求原生 Tab 查询来触发浏览器授权。Windows 的应用配置选择 `chrome-mcp.cmd`，Main 生成的 UTF-8 启动器用 Electron Node 模式启动锁定服务器；`npm.cmd`、`npx.cmd` 和 `node.cmd` 同样位于应用 PATH 前端。启动器内的 Node／可信预加载文件引用使用绝对路径，避免真实 npm 包的 `.cmd` 嵌套调用裸 `node` 时将 `%~dp0` 解析到调用方工作目录。受管 MCP 的裸 `npm/npx` 命令由 Main 配置投影为 Electron Node 的直接启动参数，显式加载可信窗口隐藏模块；用户保存的命令、参数、环境和其它原生字段不被改写，绝对路径自定义命令保留原样。配置投影与启动器共享 npm 路径解析，打包后继续使用逻辑 `app.asar` 路径。原生 MCP 仍过滤不安全环境变量，负责连接授权、进程身份核验与清理。普通插件来源仍可使用应用 PATH 中的自包含启动器。002/003 补丁已移除；真实 npm/npx 与原生配置解析器对照测试验证连接、工具发现、调用和清理，受管配置不产生批处理空帧诊断。真实本地包二进制启动另验证嵌套批处理和中文／空格启动器路径。批处理对照虽有空帧诊断仍能完成普通 Client 连接，不能把该诊断直接等同于功能不可用。
 
-OpenAI 媒体适配由 `openclaw-extensions/openai` 的普通 TypeScript 组合原生插件入口实现。
-资源同步校验原包注册入口和冷启动能力目录的 SHA-256，保留原始字节在同一目录，
-再编译应用入口；原生插件 ID、manifest、鉴权、聊天和其它能力继续由上游实现。
-图片请求得到独立 provider 的配置副本，实时转录在每个会话的 host context 中调整
-WebSocket 地址及对应请求头策略；冷启动能力发现应用相同适配，并发会话不共享可变
-地址。开发期发现排除这种构建组合源码，由运行时原生清单决定可用性，启动源码
-复制也不覆盖原生插件。不注册第二个同名 provider，移除 020/021 补丁。Gateway bundle 和动态 SDK
+OpenAI 媒体适配由 `openclaw-extensions/openai` 的完整本地源码实现，基线为原生
+v2026.9.8。资源同步完整替换原包目录；裁剪策略明确移除上游插件，本地保护只保留
+替换后的唯一 `openai`。不合并源码、不备份 native-* 入口、不注册第二个同名插件。
+本地 manifest 和 setup 删除官网登录/API Key 引导、公网 catalog 和 usage；内网服务
+仍可配置 API Key/SecretRef，缺失能力地址时拒绝请求，不读取环境 Key 回退。
+图像使用 `justdo-image-openai` 的请求级配置副本；实时 STT 在自身源码中持有每个
+会话的地址、请求头及原生协议/生命周期。冷发现和注册共用同一 factory。
+源码替换只在构建时组装；开发库存和启动源码复制排除该目录，由已编译 manifest
+决定可用性。来源版本不匹配时构建失败，全部源码/依赖锁/worker 纳入 build recipe。
+保留图像、TTS、实时 STT、文件转录、embedding 和配置模型的原生协议能力，视频
+也由同一插件注册。官网账号/RTC 专属 Realtime Voice 不注册，不影响现有 TTS/STT。
+更新时先读[升级检查清单](../openclaw-upgrade-checklist.md)，再三方比较上游基线、
+新上游与本地差异。020/021 补丁保持删除。Gateway bundle 和动态 SDK
 通过构建时共享原生会话访问模块实例完成授权注册表共享，移除 027 补丁。
 
 执行结算及压缩的普通实现放在 Main 领域的 `runtime/native-support/`，构建时作为
@@ -108,7 +114,7 @@ OpenAI Provider 和 QuickJS Code Mode 是应用托管适配器，通用插件入
 保留其他配置和权限。模型、图像及语音功能仍由各自设置与凭据控制；Code Mode 是否使用由运行参数控制。
 Document Extraction 和 Web Readability Extraction 保持上游默认启用，允许用户关闭；
 协作、记忆和本地语音可选插件继续保留用户明确禁用状态。TypeSafe 沿用模型设置的有条件托管；
-Video models 始终由视频模型设置托管，有有效默认模型时启用，未设置或清空默认模型时关闭。
+视频由同一个 OpenAI 适配器提供；清空默认视频模型只停止视频使用，不关闭整个插件。
 
 OpenClaw v2026.9.8 的插件管理 RPC 会直接应用运行时变更。CLI 导入等待最终运行时回执：Gateway 已应用则无需额外操作，仅保存到磁盘时调用 `plugins.reload`。卸载 RPC 仍请求重启时，以及 CLI 卸载和启停回退后，优先调用 `plugins.refresh`；原生确认已热应用且无需重启时直接完成，仍需重启、热加载失败或出站代理策略变化时再申请 Gateway 重启。配置应用与重启协调见[引擎](05-agent-engine.md)；保留原生对活动任务的重启延迟，不能与宿主冷重启竞争。运行时代码、凭据/网络策略和 Agent Team 技能发现代次的必要重启不能等同于文件操作的目录锁恢复。
 
@@ -145,17 +151,18 @@ GitHub、Kie、Z.AI 和 Novita 插件；运行时资源准备与安装包构建�
 Transcription（PCMU 8 kHz），朗读需要兼容 Audio Speech。模型目录仍由用户配置，
 不会以插件内置模型元数据填充语音设置。ElevenLabs 不再列入受管语音提供方。
 
-视频服务由应用插件 `openclaw-extensions/video-openai` 注册原生视频 provider，
-经现有本地扩展复制、预编译和裁剪保护流程打包。插件默认关闭，设置页保存后由 Main
-配置同步器启用并投影 `agents.defaults.mediaModels.video`；模型 ID 和基础地址由用户填写。
+视频服务由本地 `openclaw-extensions/openai` 注册 `video-openai` provider，
+由同一插件的完整替换、预编译和裁剪保护流程打包。设置页保存后由 Main
+配置同步器投影 `agents.defaults.mediaModels.video`；模型 ID 和基础地址由用户填写。
 `models.providers.video-openai` 独立于聊天和图像配置；非空 API Key 写入受限的
 `extension-secrets.json`，通过 file SecretRef 引用；空 Key 不发布凭据引用。
 原生 `video_generate` 工具负责权限、参考图片读取和结果交付，插件只实现 multipart
 提交、状态轮询和视频内容下载。三阶段共用总超时与原生有界响应读取；使用配置地址和
 HTTP 策略、允许显式配置的私有网络地址、拒绝重定向和不确定提交的重试，没有公网地址或凭据回退。
 
-Kie、Z.AI、Novita 原生契约仍保留，但插件不随当前发行版打包；仅实际安装的提供方
-显示在设置中。配置同步按插件库存清除缺失注册和视频选择，不写入对应新凭据。
+视频设置只支持本地 OpenAI 适配器；Kie、Z.AI、Novita 的目录和配置支持已移除，
+安装对应插件也不会加入视频选项。配置同步按 OpenAI 插件库存清除缺失的视频选择，
+不写入对应新凭据。
 完整和最小同步遵循相同规则。新视频插件通过原生 provider 扩展接入，不恢复 9.6
 旧自定义视频配置或迁移。具体协议与输入限制见 [模型管理](../features/models/model-management.md)。
 

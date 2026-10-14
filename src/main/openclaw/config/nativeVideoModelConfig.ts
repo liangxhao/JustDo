@@ -14,8 +14,7 @@ type Selection =
   | undefined;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === 'object' && !Array.isArray(value));
-const record = (value: unknown): Record<string, unknown> =>
-  isRecord(value) ? value : {};
+const record = (value: unknown): Record<string, unknown> => (isRecord(value) ? value : {});
 
 /** Only supported native providers participate in managed video configuration. */
 export function resolveNativeVideoSelection(value: unknown): Selection {
@@ -50,7 +49,6 @@ export function resolveNativeVideoSelection(value: unknown): Selection {
     !provider ||
     !isNativeVideoModelSupported(provider, selected.defaultModel) ||
     typeof selected.apiKey !== 'string' ||
-    (provider.apiKeyRequired && !selected.apiKey.trim()) ||
     selected.apiKey.length > 16384 ||
     /[\r\n]/.test(selected.apiKey)
   ) {
@@ -72,9 +70,7 @@ export function resolveNativeVideoSelection(value: unknown): Selection {
     url.hash
   )
     throw new Error(t('nativeVideoUrlInvalid'));
-  if (provider.customModel) {
-    url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/videos$/i, '') || '/';
-  }
+  url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/videos$/i, '') || '/';
   return {
     providerId: provider.id,
     model: selected.defaultModel,
@@ -90,11 +86,12 @@ export function applyNativeVideoConfiguration(
   availableExtensionIds: readonly string[] | null,
 ): boolean {
   // An incomplete inventory cannot establish absence or admit a new provider,
-  // but explicit Settings clears must still disable the existing managed adapter.
+  // but explicit Settings clears must still remove the managed video selection.
   const inventoryComplete = availableExtensionIds !== null;
   const unavailable = new Set<string>(
     NATIVE_VIDEO_PROVIDERS.filter(
-      provider => availableExtensionIds !== null && !availableExtensionIds.includes(provider.id),
+      provider =>
+        availableExtensionIds !== null && !availableExtensionIds.includes(provider.extensionId),
     ).map(provider => provider.id),
   );
   const isUnavailableModel = (model: unknown) =>
@@ -106,7 +103,9 @@ export function applyNativeVideoConfiguration(
   const fallbacks = Array.isArray(video.fallbacks)
     ? video.fallbacks.filter(id => !isUnavailableModel(id))
     : [];
-  if (isUnavailableModel(typeof mediaModels.video === 'string' ? mediaModels.video : video.primary)) {
+  if (
+    isUnavailableModel(typeof mediaModels.video === 'string' ? mediaModels.video : video.primary)
+  ) {
     if (fallbacks.length) {
       mediaModels.video = { ...video, primary: fallbacks[0], fallbacks: fallbacks.slice(1) };
     } else {
@@ -117,46 +116,33 @@ export function applyNativeVideoConfiguration(
     mediaModels.video = { ...video, fallbacks };
     config.agents = { ...agents, defaults: { ...defaults, mediaModels } };
   }
+  const unavailableExtensions = new Set<string>(
+    NATIVE_VIDEO_PROVIDERS.filter(provider => unavailable.has(provider.id)).map(
+      provider => provider.extensionId,
+    ),
+  );
+  // This former plugin ID now identifies only a provider owned by OpenAI.
+  unavailableExtensions.add(OpenAiCompatibleMediaConfigProviderIds.video);
   const currentPlugins = record(config.plugins);
   const currentEntries = record(currentPlugins.entries);
-  if (Object.keys(currentEntries).some(id => unavailable.has(id))) {
+  if (Object.keys(currentEntries).some(id => unavailableExtensions.has(id))) {
     currentPlugins.entries = Object.fromEntries(
-      Object.entries(currentEntries).filter(([id]) => !unavailable.has(id)),
+      Object.entries(currentEntries).filter(([id]) => !unavailableExtensions.has(id)),
     );
   }
   for (const field of ['allow', 'deny'] as const) {
     const ids = currentPlugins[field];
-    if (Array.isArray(ids)) currentPlugins[field] = ids.filter(id => !unavailable.has(id));
+    if (Array.isArray(ids))
+      currentPlugins[field] = ids.filter(id => !unavailableExtensions.has(id));
   }
-  // The application-owned adapter has no preset model; Settings owns its enablement.
+  // Video is one capability of the shared OpenAI extension. Clearing a video
+  // selection must never disable chat, images, speech or transcription.
   const adapterId = OpenAiCompatibleMediaConfigProviderIds.video;
-  if (
-    !unavailable.has(adapterId) &&
-    (inventoryComplete ||
-      (selection?.providerId !== adapterId && isRecord(currentEntries[adapterId])))
-  ) {
-    const plugins = record(config.plugins);
-    const entries = record(plugins.entries);
-    config.plugins = {
-      ...plugins,
-      entries: {
-        ...entries,
-        [adapterId]: {
-          ...record(entries[adapterId]),
-          enabled: selection?.providerId === adapterId,
-        },
-      },
-    };
-  }
   if (selection && (!inventoryComplete || unavailable.has(selection.providerId))) return false;
   if (!selection) {
     const primary =
       typeof mediaModels.video === 'string' ? mediaModels.video : record(mediaModels.video).primary;
-    const clearsVideo =
-      typeof primary === 'string' &&
-      (selection === null
-        ? NATIVE_VIDEO_PROVIDERS.some(provider => primary.startsWith(`${provider.id}/`))
-        : primary.startsWith(`${adapterId}/`));
+    const clearsVideo = typeof primary === 'string' && primary.startsWith(`${adapterId}/`);
     if (clearsVideo) delete mediaModels.video;
     if (clearsVideo || selection === null) {
       config.agents = { ...agents, defaults: { ...defaults, mediaModels } };
@@ -181,9 +167,7 @@ export function applyNativeVideoConfiguration(
         models: existing.models ?? [],
         baseUrl: selection.baseUrl,
         apiKey: secrets.references['nativeVideo.apiKey'],
-        ...(findNativeVideoProvider(selection.providerId)?.customModel
-          ? { request: { ...record(existing.request), allowPrivateNetwork: true } }
-          : {}),
+        request: { ...record(existing.request), allowPrivateNetwork: true },
       },
     },
   };
@@ -197,19 +181,18 @@ export function applyNativeVideoConfiguration(
       },
     },
   };
+  const extensionId = findNativeVideoProvider(selection.providerId)!.extensionId;
   const plugins = record(config.plugins);
   const entries = record(plugins.entries);
   config.plugins = {
     ...plugins,
     ...(Array.isArray(plugins.allow)
-      ? { allow: [...new Set([...plugins.allow, selection.providerId])] }
+      ? { allow: [...new Set([...plugins.allow, extensionId])] }
       : {}),
-    ...(Array.isArray(plugins.deny)
-      ? { deny: plugins.deny.filter(id => id !== selection.providerId) }
-      : {}),
+    ...(Array.isArray(plugins.deny) ? { deny: plugins.deny.filter(id => id !== extensionId) } : {}),
     entries: {
       ...entries,
-      [selection.providerId]: { ...record(entries[selection.providerId]), enabled: true },
+      [extensionId]: { ...record(entries[extensionId]), enabled: true },
     },
   };
   return secrets.changed;
@@ -228,28 +211,12 @@ export function captureNativeVideoConfiguration(
     if (previous === undefined) delete mediaModels.video;
     else mediaModels.video = structuredClone(previous);
     target.agents = { ...agents, defaults: { ...defaults, mediaModels } };
-    for (const section of ['models', 'plugins'] as const) {
-      const field = section === 'models' ? 'providers' : 'entries';
-      const current = record(target[section]);
-      const children = { ...record(current[field]) };
-      const old = record(record(saved[section])[field]);
-      for (const provider of NATIVE_VIDEO_PROVIDERS) {
-        if (old[provider.id] === undefined) delete children[provider.id];
-        else children[provider.id] = structuredClone(old[provider.id]);
-      }
-      target[section] = { ...current, [field]: children };
-    }
-    const plugins = record(target.plugins);
-    const originalPlugins = record(saved.plugins);
-    const isNative = (id: unknown) => Boolean(findNativeVideoProvider(id));
-    for (const field of ['allow', 'deny'] as const) {
-      const current = plugins[field];
-      const original = originalPlugins[field];
-      if (!Array.isArray(current) && !Array.isArray(original)) continue;
-      const retained = Array.isArray(current) ? current.filter(id => !isNative(id)) : [];
-      if (Array.isArray(original)) plugins[field] = [...retained, ...original.filter(isNative)];
-      else if (retained.length) plugins[field] = retained;
-      else delete plugins[field];
-    }
+    const models = record(target.models);
+    const providers = { ...record(models.providers) };
+    const id = OpenAiCompatibleMediaConfigProviderIds.video;
+    const previousProvider = record(record(saved.models).providers)[id];
+    if (previousProvider === undefined) delete providers[id];
+    else providers[id] = structuredClone(previousProvider);
+    target.models = { ...models, providers };
   };
 }

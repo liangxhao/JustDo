@@ -322,16 +322,11 @@ export const settingsTranslations = {
       '选择视频服务商和模型，保存后可在对话中请求生成视频。模型支持的文字、图片、音频输入和生成参数由服务商决定。',
     nativeVideoDisabled: '不指定默认视频模型',
     nativeVideoProvidersUnavailable: '当前没有可用的视频生成服务。',
-    nativeVideoModel: '视频模型',
-    nativeVideoService: '视频服务',
-    intranetVideoProvider: '视频模型',
     intranetVideoCredentialsHint:
       '填写服务的 API 基础地址和模型 ID。API Key 可选，视频凭据独立于聊天和图像模型。',
     intranetVideoProtocolHint:
       '服务需支持 /videos 异步提交、状态查询和内容下载。支持文生视频和单张参考图片；保存设置不会提交生成任务。',
     nativeVideoShowKey: '显示 API Key',
-    nativeVideoCredentialsHint:
-      '保存将启用所选服务商，并安全保存凭据。该服务商的地址和凭据也适用于使用同一服务商的其他模型。',
     nativeVideoConfigurationInvalid: '请选择受支持的视频服务商和模型。',
     nativeVideoApiKeyRequired: '请输入有效的 API Key。',
     customVideoProtocolHint: '接口需兼容 OpenAI Videos API（含状态轮询和内容下载）',
@@ -1695,16 +1690,11 @@ export const settingsTranslations = {
       'Choose a video provider and model, then save to generate videos from chat. Supported text, image, audio inputs and generation options depend on the provider.',
     nativeVideoDisabled: 'No default video model',
     nativeVideoProvidersUnavailable: 'No video generation services are currently available.',
-    nativeVideoModel: 'Video model',
-    nativeVideoService: 'Video service',
-    intranetVideoProvider: 'Video models',
     intranetVideoCredentialsHint:
       'Enter the API base URL and model ID. The API key is optional; video credentials are separate from chat and image models.',
     intranetVideoProtocolHint:
       'Requires /videos job submission, status polling and content download. Supports text and one reference image; saving does not start a generation job.',
     nativeVideoShowKey: 'Show API key',
-    nativeVideoCredentialsHint:
-      'Saving enables the selected provider and securely stores its credentials. The endpoint and credentials also apply to other models using the same provider.',
     nativeVideoConfigurationInvalid: 'Choose a supported video provider and model.',
     nativeVideoApiKeyRequired: 'Enter a valid API key.',
     customVideoProtocolHint:

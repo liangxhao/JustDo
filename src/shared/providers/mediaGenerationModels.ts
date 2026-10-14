@@ -5,10 +5,7 @@ export const MediaGenerationModelsIpc = {
 
 export type MediaGenerationModelKind = 'image' | 'video' | 'music';
 
-export const OpenAiCompatibleMediaConfigProviderIds = {
-  image: 'justdo-image-openai',
-  video: 'video-openai',
-} as const;
+export { OpenAiCompatibleMediaConfigProviderIds } from '../../../openclaw-extensions/openai/contracts/media-config';
 
 export interface MediaGenerationModelConfiguration {
   primary: string;

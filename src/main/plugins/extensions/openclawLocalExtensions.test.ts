@@ -81,7 +81,7 @@ describe('openclawLocalExtensions', () => {
     expect(hasBundledOpenClawExtension('legacy-directory-name')).toBe(false);
   });
 
-  it('keeps native entry compositions out of source inventory and runtime source copying', async () => {
+  it('keeps runtime source replacements out of source inventory and runtime source copying', async () => {
     electronApp.isPackaged = false;
     electronApp.getAppPath.mockReturnValue(resourcesDir);
     const source = path.join(resourcesDir, 'openclaw-extensions');
@@ -91,7 +91,7 @@ describe('openclawLocalExtensions', () => {
     fs.mkdirSync(plugin, { recursive: true });
     fs.writeFileSync(
       path.join(overlay, 'package.json'),
-      JSON.stringify({ justdo: { nativeOverlay: true } }),
+      JSON.stringify({ openclaw: { runtimeBundled: true } }),
     );
     fs.writeFileSync(path.join(overlay, 'index.ts'), 'export default {};');
     fs.writeFileSync(

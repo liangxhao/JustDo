@@ -187,11 +187,7 @@ export const getNonLanguageModelCategoryValidationError = (
     const provider = findNativeVideoProvider(selected.nativeVideoProvider);
     if (!provider || !isNativeVideoModelSupported(provider, selected.defaultModel))
       return i18nService.t('nativeVideoConfigurationInvalid');
-    if (
-      (provider.apiKeyRequired && !selected.apiKey.trim()) ||
-      selected.apiKey.length > 16384 ||
-      /[\r\n]/.test(selected.apiKey)
-    )
+    if (selected.apiKey.length > 16384 || /[\r\n]/.test(selected.apiKey))
       return i18nService.t('nativeVideoApiKeyRequired');
     try {
       const url = new URL(selected.baseUrl);

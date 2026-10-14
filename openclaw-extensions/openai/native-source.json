@@ -1,8 +1,0 @@
-{
-  "id": "openai",
-  "version": "2026.9.8",
-  "entries": {
-    "index.js": "d97b87483c5ebb46e86eb3caaca3ae0115d3630d50309334cc96c6a6122362bb",
-    "capability-catalog.js": "f77db2086649f8aecf205cbc0360d8137bf0ff306edb8e02b15d26f9ef0e82c1"
-  }
-}
