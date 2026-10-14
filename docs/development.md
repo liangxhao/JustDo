@@ -23,6 +23,13 @@ npm run electron:dev:openclaw
 
 默认 Vite 端口是 43127。隔离预览的目录及启动参数由 `scripts/electron/run-isolated-dev.cjs` 管理；不要把真实用户数据库、凭据或原生日志复制进仓库。
 
+开发期的 `react-hooks-refresh` 插件为 Renderer 和扩展 `browser/` 中的普通 `.ts`
+Hook 模块补充 React Refresh 签名；Vite 默认只为 JSX 模块生成这些签名。
+嵌套 Hook 的调用结构改变时，React 会重新挂载消费组件；结构不变的编辑仍保留状态。
+该处理不进入生产构建或 Main/Shared。旧开发进程尚未加载此配置时，Hook 从
+`useState/useEffect` 改为 `useSyncExternalStore` 等结构变化可能导致
+“change in the order of Hooks” 警告；重启开发进程并重新加载 Renderer 后再验证。
+
 ## 2. 更新运行时
 
 Gateway 由锁定的 pristine OpenClaw 包、当前补丁及扩展构建，产物位于 vendor 运行时目录。更换声明版本会重建；同版本补丁或构建输入变化可能触发冻结快照拒绝，需要显式重新安装。

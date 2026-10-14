@@ -7,6 +7,7 @@ import renderer from 'vite-plugin-electron-renderer';
 
 import packageJson from './package.json';
 import { pdfAssetsPlugin } from './scripts/build/vite-pdf-assets.mjs';
+import { reactHooksRefreshPlugin } from './scripts/build/vite-react-hooks-refresh.mjs';
 
 // https://vitejs.dev/config/
 const devPort = Number(process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port);
@@ -32,6 +33,7 @@ export default defineConfig({
         return html.replaceAll('%PRODUCT_NAME%', escapedProductName);
       },
     },
+    reactHooksRefreshPlugin(projectRoot),
     react(),
     electron([
       {
