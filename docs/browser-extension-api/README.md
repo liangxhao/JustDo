@@ -5,7 +5,9 @@
 JSON-RPC v2 形态为基线，并实现侧栏对话所需的兼容子集。Native Messaging 启动协议来自
 对本机 ChatGPT 扩展 `1.26.901.11451` 的静态分析，不属于 OpenAI 公开 API。
 
-检查基线：2026-09-18。
+历史协议参考基线为 2026-09-18；当前支持范围以本目录和仓库实际注册代码为准，
+不将当时观察的外部客户端版本作为现行兼容保证。实时消息已接入产品
+`thread/stream`，`thread/updated` 继续承担权威历史校准；两者均不是完整官方 API。
 
 ## 文档导航
 
@@ -60,6 +62,7 @@ flowchart LR
 - Native Host：`src/main/browser/extension/browserExtensionNativeMessaging.ts`
 - WebSocket server：`src/main/browser/extension/browserExtensionChatServer.ts`
 - 业务适配：`src/main/browser/extension/browserExtensionChatController.ts`
+- 实时事件外形：`src/shared/browser/browserExtensionStream.ts`
 - 扩展 bootstrap：`resources/browser-extension/conversation-overlay/modules/app-server-background.js`
 - WebSocket client：`resources/browser-extension/conversation-overlay/modules/conversation-client.js`
 - Side Panel：`resources/browser-extension/conversation-overlay/sidepanel.js`

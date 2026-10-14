@@ -21,7 +21,7 @@ type Thread = {
   modelProvider: string;
   permissionMode: 'ask' | 'auto' | 'full';
   canAcceptDirectInput: true;
-  cliVersion: 'JustDo';
+  cliVersion: string; // package.json.productName 的运行时值
   ephemeral: false;
   historyMode: 'legacy';
   isPinned: false;
@@ -71,17 +71,19 @@ type Turn = {
 };
 ```
 
-实时 turn 的 `id` 是运行 ID。历史没有稳定的 OpenClaw turn ID 时，适配层生成
+实时 turn 的 `id` 是该次提交的运行关联 ID。历史按显示消息分组，适配层生成
 `<threadId>-history-<ordinal>`，只能用于当前读取结果中的展示，客户端不应持久化或拿它调用
-控制方法。
+控制方法。历史 Turn 当前统一输出 `status:'completed'` 且 timing 为 null，只表示
+这份历史分组已生成，不是原生执行结论；真实运行状态来自实时 turn 与原生生命周期。
 
 ## Item
 
 当前历史输出以下 item。Side Panel 会把同一 Turn 中连续的 reasoning 和 toolCall 聚合成一个
 折叠时间线，摘要按实际数量显示 `Thinking × M · Tool × N`；普通 assistant 或 system 消息会
 结束当前聚合段。展开聚合段后仍按原始顺序列出 Thinking 和工具，单个工具的输入输出可继续
-独立展开，避免大量过程消息挤占整个对话区域。完整快照刷新会使用首个 process item ID 作为
-稳定分组 key，保留已展开的分组、工具详情以及用户离开底部后的滚动位置。
+独立展开，避免大量过程消息挤占整个对话区域。展开状态属于当前客户端的显示状态；
+实时到历史的接管需使用可靠的消息/工具身份，不能将按顺序生成的历史 item ID 当作
+永久原生身份。刷新保持可核对的展开选择与阅读位置，不跨会话沿用旧分组。
 
 用户消息：
 
@@ -141,9 +143,34 @@ System 消息：
 ```
 
 一个新的 `userMessage` 会开启新的历史 Turn；后续 Thinking、工具活动及非用户消息归入该
-Turn。若历史以非用户消息开头，也会形成一个独立 Turn。当前通过完整历史快照同步这些 item，
-尚未实现逐 token 或逐 item 的官方增量通知；命令执行和文件变更如果由 OpenClaw 表示为普通
-工具调用，会以 `toolCall` 展示，审批仍由桌面端负责。
+Turn。若历史以非用户消息开头，也会形成一个独立 Turn。上述 item 是 `thread/read` /
+`thread/updated` 的完整显示投影；实时 Thinking、正文与工具增量通过产品
+`thread/stream` 通知，尚未实现官方逐 item 增量 API。命令执行和文件变更如果由
+OpenClaw 表示为普通工具调用，会以 `toolCall` 展示，审批仍由桌面端负责。
+
+用户/助手 item 可带 `rawMessage`，仅供共享展示解析器读取原生 content/媒体；
+工具参数和任意路径不授予图片读取权限。用户 item 还可带：
+
+```ts
+type PendingInput = {
+  id: string;
+  state: string;
+  runId?: string;
+  incomplete?: boolean;
+};
+```
+
+它表示原生已接收、尚未进入正式 transcript 的输入，不是新建执行队列。
+取消/中断状态、截断占位与消费回执分别投影；读取不完整不能认定输入已撤回。
+当前 `turn/start` 仍拒绝活动会话的新提交，不因支持 pending 展示就宣称侧栏支持 followup 发送。
+
+## 实时流通知
+
+`thread/stream.params` 是 `{threadId,kind,event}`，kind 为 `agent` 或 `chat`，
+event 使用 `src/shared/openclaw/agentEvent.ts` 的 NormalizedAgentEvent /
+NormalizedChatEvent。具体字段随共享契约维护，不复制第二份原生事件 schema。
+显示控制器校验会话/run/序号，历史接管不会再次追加已显示的消息；重连重新读取
+权威历史，不重放不确定输入。外形见[通知协议](app-server.md#通知)。
 
 ## PageContext
 

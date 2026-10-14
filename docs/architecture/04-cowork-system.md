@@ -90,16 +90,16 @@ stateDiagram-v2
   Preparing --> Cancelled: 用户取消 / 准入失败
   Running --> Waiting: 问答 / 审批 / 计划审核
   Waiting --> Running: 有效响应
-  Running --> Terminal: 原生终态
+  Running --> Terminal: 精确整轮执行结算
   Running --> Stopping: 用户停止
   Waiting --> Stopping: 用户停止
-  Stopping --> Terminal: 原生取消确认
+  Stopping --> Terminal: 原生取消结算与必要清理
   Running --> Unknown: 连接失去且尚未对账
   Unknown --> Running: 原生仍活动
-  Unknown --> Terminal: 原生已结束
+  Unknown --> Terminal: 精确执行终态已核实
 ```
 
-该图是产品处理阶段，不是新增数据库 enum。实际 run 状态、Goal 阶段和交互状态各自有共享契约。
+该图是产品处理阶段，不是新增数据库 enum。实际 run 状态、Goal 阶段和交互状态各自有共享契约；Stop ACK 或 chat final 可收敛请求/显示，不能单独建立整轮执行结论。只有匹配 run 的 whole-run `executionSettled:true` 终态才结算；受管理工具 cleanup 另行核对。
 
 停止交给原生取消语义，包含队列、后代和审批清理，Main 保留产品 stop latch 与回执。协作任务还冻结用户轮次并停止成员，防止迟到 peer send 重启旧工作。错误事件只有匹配运行及终态语义才结算，不能将任意工具错误视作整个会话结束。
 

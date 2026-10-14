@@ -25,7 +25,7 @@ Gateway 是受管组件，但其可加载的 Node Extension 与宿主工具仍�
 
 当前生产源码没有主动追加 no-sandbox。发布检查仍需查看实际启动参数和平台环境，不能仅凭 BrowserWindow preference 宣称 OS 级隔离始终可用。
 
-应用 CSP 针对应用 origin/file 页面生效，允许 PDF.js 所需 wasm-unsafe-eval，生产不允许普通 JS eval；style 保留 inline，connect-src 仍为 self + 通配，frame 允许 self/http/https。它不是网络访问白名单。Markdown、Mermaid 和公式输出仍需统一清洗。
+安装版应用由只读 loopback HTTP 宿主加载，主窗口不再使用 file 页面；资源清单、Host/来源、真实路径和文件版本在宿主边界校验。应用 CSP 允许 PDF.js 所需 wasm-unsafe-eval，生产脚本仅允许 self 和可信打包入口的 SHA-256 内联哈希，不允许普通 JS eval 或任意 inline script；禁止 object、表单提交和被其他页面嵌入。style 保留 inline，connect-src 仍为 self + 通配，frame 允许 self/http/https，因此 CSP 不是网络访问白名单。Widget 与本地 HTML 使用各自隔离 origin、认证或资源根规则，不能借应用壳 CSP 获得权限。Markdown、Mermaid 和公式输出仍需统一清洗。
 
 外链、guest 导航、子 frame、下载和权限请求分别验证。应用自己的认证弹窗不能被网页或 Agent 输入锁劫持；导航、超时和窗口销毁应取消所属请求。
 
@@ -58,7 +58,7 @@ ask/auto/full 映射原生 guarded/workspace/full。权限期望先保存产品�
 
 浏览器 Agent 上传限任务工作区内真实普通文件；PDF/下载目标验证真实父目录、拒绝覆盖并做 canonical reservation，防止并发争抢同一产物。取消和窗口销毁释放 reservation 并清理部分文件。
 
-`localfile://` 当前转换成 net.fetch(file://...)，保留文件名转义和 UNC host，只规范化 Windows 盘符分隔符；没有内建 allow-root/token。它是敏感展示入口，不能描述成通用安全文件服务器。
+`localfile://` 当前转换成 net.fetch(file://...)，保留文件名转义和 UNC host，只规范化 Windows 盘符分隔符；没有内建 allow-root/token。音视频使用独立 `localmedia://local/` 流式协议，支持单段 Range、MIME 与按范围读取，但没有增加会话根目录或 token 授权。两者都是敏感展示入口，不能描述成通用安全文件服务器；路径准入仍需由上层可信原生媒体/文件动作完成。
 
 ## 6. 插件包与代码信任
 

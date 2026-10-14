@@ -30,6 +30,8 @@ sequenceDiagram
   A->>G: startSession
   G-->>A: accepted
   A-->>P: turn + turn/started
+  G-->>A: 原生 Agent / Chat 流
+  A-->>P: thread/stream
   loop 运行期间
     A->>G: read status and history
     A-->>P: thread/updated
@@ -40,8 +42,10 @@ sequenceDiagram
 ```
 
 Server 每 500 ms 从 JustDo/OpenClaw 权威状态刷新活动 turn，并以 Gateway runtime 状态而非
-可能短暂滞后的持久化 session 状态判断本轮是否仍在运行。此轮询是服务端实现细节，不是
-客户端协议保证；客户端只应依据通知和显式读取结果。
+可能短暂滞后的持久化 session 状态判断本轮是否仍在运行。实时文本、Thinking 和工具
+来自独立 `thread/stream` 订阅；轮询负责历史校准及兼容层完成通知，不能代替消息流。
+活动阶段复用原生增量游标，每 20 次轮询读取完整快照，终态期间强制完整读取。
+这些频率是实现细节，不是客户端协议保证；异步读取耗时也计入实际间隔。
 
 ## 停止生成
 
@@ -53,16 +57,24 @@ Side Panel 在当前所选线程收到 `turn/started` 后把 Send 按钮切换�
 
 ## 完成判定
 
-| 条件                                            | `turn/completed.status` | error                            |
-| ----------------------------------------------- | ----------------------- | -------------------------------- |
-| Gateway runtime 已停止且存在最终 assistant 回复 | `completed`             | `null`                           |
-| Gateway runtime 已停止且捕获到本轮错误          | `failed`                | 当前运行的真实 `Error.message`   |
-| runtime 已停止、无最终回复且 session 为 `error` | `failed`                | 无真实错误时使用通用失败文案     |
-| 连续 3 次找不到 thread                          | `failed`                | `Thread is no longer available.` |
-| 连续 120 次刷新抛错                             | `failed`                | `Unable to refresh the thread.`  |
-| 用户停止                                        | `interrupted`           | `null`                           |
+以下是侧栏兼容层 `turn/completed` 的展示收敛规则，不是原生执行结果判定。
+Main 的运行 owner 仍只有精确 whole-run `executionSettled:true` 才能结算；
+会话 idle、停止请求成功和客户端刷新失败不能证明工具清理或整个任务完成。
 
-正常轮询间隔为 500 ms，因此持续刷新异常大约 60 秒后终止；单次异步刷新不会重叠执行。
+| 条件                                             | `turn/completed.status` | error                            |
+| ------------------------------------------------ | ----------------------- | -------------------------------- |
+| Gateway runtime 已停止且存在最终 assistant 回复  | `completed`             | `null`                           |
+| Gateway runtime 已停止且捕获到本轮错误           | `failed`                | 当前运行的真实 `Error.message`   |
+| runtime 已停止、无最终回复且 session 为 `error`  | `failed`                | 无真实错误时使用通用失败文案     |
+| 连续 3 次找不到 thread                           | `failed`                | `Thread is no longer available.` |
+| 连续 120 次刷新抛错                              | `failed`                | `Unable to refresh the thread.`  |
+| 用户停止                                         | `interrupted`           | `null`                           |
+| 已知不再运行、无本轮终态正文，等待到上限且无错误 | `completed`             | `null`；不保证存在最终回复       |
+
+非活动状态至少连续稳定 3 次，并已取得本轮新助手内容或记录的错误后，才结束轮询；
+缺少终态历史时最多等待 20 次非活动轮询。读取失败不广播空历史，也不推进该计数。
+连续 120 次读取异常结束的是兼容层刷新；500 ms 是每次异步读取之后的等待，因此
+实际耗时可能超过 60 秒。单次刷新不重叠，历史合成 Turn 状态也不作为执行结论。
 
 ## WebSocket 错误码
 

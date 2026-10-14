@@ -269,7 +269,7 @@ flowchart LR
   Readback --> Result[结果与配置更新]
 ```
 
-原生 openclaw.plugin.json 包交由原生安装器验证。其他 bundle 格式虽可能被上游识别，产品共用 conversion 入口当前仍会提示未支持并停止；不能把上游格式能力直接宣传为产品已完成转换。临时目录始终清理，CLI 输出和 timeout 有界，失败不伪造 runtime id。
+原生 openclaw.plugin.json 包交由原生安装器验证。其他 bundle 格式虽可能被上游识别，产品共用 conversion 入口当前仍会提示未支持并停止；不能把上游格式能力直接宣传为产品已完成转换。CLI 输出和 timeout 有界，失败不伪造 runtime id。临时资源按来源与原生阶段清理：未提交或已确认结束才释放需要原生读取的隔离副本，原生安装已发起且结果不明时保留该副本，先查 inventory，不重放安装。
 
 ## 7. 产品扩展各有生命周期
 

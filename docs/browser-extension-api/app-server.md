@@ -190,7 +190,9 @@ Main 还会校验编码后的附件总量。
 ## `composer/options`
 
 读取输入区当前应展示的权限和模型选项。`threadId` 省略时返回桌面端默认值，指定时返回该会话
-当前值。模型来自已启用 agent；当前会话已有的模型也会保留在选项中。
+当前值。优先读取原生 `models.list({agentId,view:'provider-config'})` 的已配置模型目录；
+启用的非 main 助手、应用默认和当前会话的已存模型作为补充及启动/重连兜底，不是完整目录。
+模型引用去重后保留当前选择，读取失败不凭空补厂商 preset。
 
 ```json
 {
@@ -286,19 +288,33 @@ Main 还会校验编码后的附件总量。
 
 ## 通知
 
-| method           | params                 | 触发条件                                 |
-| ---------------- | ---------------------- | ---------------------------------------- |
-| `thread/started` | `{ thread }`           | `thread/start` 创建成功                  |
-| `turn/started`   | `{ threadId, turn }`   | `turn/start` 已被 Gateway 接受           |
-| `thread/updated` | `{ threadId, thread }` | JustDo 扩展通知；轮询到权威消息历史变化  |
-| `turn/completed` | `{ threadId, turn }`   | 完成、失败、中断、线程消失或持续刷新失败 |
+| method           | params                      | 触发条件                                 |
+| ---------------- | --------------------------- | ---------------------------------------- |
+| `thread/started` | `{ thread }`                | `thread/start` 创建成功                  |
+| `turn/started`   | `{ threadId, turn }`        | `turn/start` 已被 Gateway 接受           |
+| `thread/stream`  | `{ threadId, kind, event }` | 当前订阅会话的已归一化原生 Agent/Chat 流 |
+| `thread/updated` | `{ threadId, thread }`      | JustDo 扩展通知；轮询到权威消息历史变化  |
+| `turn/completed` | `{ threadId, turn }`        | 完成、失败、中断、线程消失或持续刷新失败 |
 
-`thread/updated` 是 JustDo 为当前非增量历史桥接增加的扩展，不是需要其他 Codex
-app-server 客户端依赖的官方核心事件。`turn/completed.turn.items` 当前为空；客户端应在完成后调用
+`thread/stream` 与 `thread/updated` 都是产品扩展，不是官方逐 item 协议。
+`thread/stream.kind` 为 `agent` 或 `chat`，`event` 为共享契约的已归一化事件；
+Main 按实际会话 key 过滤，客户端仍按 run、owner、序号和连接代次准入，不因缺身份
+或子会话后缀猜归属。Thinking/Content/Tool 的实时显示消费这条流，历史快照用于校准。
+首条原生流可能早于 `turn/start` 的成功响应，客户端须按身份接管，而非再次追加用户气泡。
+
+`turn/completed.turn.items` 当前为空；客户端应在完成后调用
 `thread/read(includeTurns: true)` 获取最终历史。运行期间优先复用按 session 隔离的 Gateway delta
 cursor，并以较低频率执行完整快照校准；进入终态后改用完整快照做最终 reconciliation。历史读取失败
 不会广播空 transcript，也不会推进完成判定。服务端要求终态历史包含本轮 assistant 内容并连续稳定，
 或到达有界的最大等待时间后，才发送 `turn/completed`。
+
+历史用户 item 可带 `pendingInput`，投影原生已接收但尚未进入 transcript 的输入。
+待处理分页与回执读取绑定同一物理 sessionId；正式历史为空、没有 cursor 不必然是
+错误，但必须再次确认身份、所有待处理页与可见性稳定。读取失败不伪装为空历史；
+pending 正文不加入 Main 持久快照，消费后按原生身份与正式用户消息去重。
+
+`turn/completed` 是该兼容层的显示/轮询结果，不能作为通用 whole-run 结算证明。
+Stop ACK、轮询耗尽或 idle 不授予新工具权限，也不证明后代和工具 cleanup 已完成。
 
 通知按连接订阅过滤。`thread/read`、`thread/start` 和 `turn/start` 会订阅；
 `thread/unsubscribe` 会退订。

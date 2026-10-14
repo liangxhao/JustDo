@@ -1,12 +1,12 @@
 # MoA 独立扩展实施与交接方案
 
-日期：2026-10-04。状态：待实现；下述公开 SDK 接口已做源码及打包声明核对，尚未完成 MoA 原型运行验证。
+状态：待实现。公开 SDK 接口曾做源码与打包声明核对，尚未完成 MoA 原型；实施前重新核对当前锁定版本。
 
 ## 1. 接手方式与目标
 
-给新会话的任务：读取本文和仓库 AGENTS.md，从最新 dev 创建独立 git worktree，先验证公开 Provider SDK 的完整调用链，再实现默认关闭的 MoA 扩展。本文在 `E:/workspace/JustDo-agent-team-dual-mode/docs/plans/moa-extension-plan.md`；可以直接读取该绝对路径，不必合并整个 Agent Team 分支。Agent Team 正在同一分支继续开发，MoA 会话不要修改它的工具、群调度、数据库和 UI。
+实施前读取本文和仓库 AGENTS.md，依据当前分支与 `package.json.openclaw.version` 确认基线，在独立 worktree 验证公开 Provider SDK 完整调用链后再实现默认关闭的扩展。本文路径相对仓库为 `docs/plans/moa-extension-plan.md`，不依赖某台机器的绝对工作树路径、已合并提交或仍在开发的旧分支。不要顺带修改 Team 工具、群调度、数据库和 UI。
 
-交接时的已验证基线是 dev `4777ebe60`、Agent Team 合并提交 `266cfe9da`、OpenClaw v2026.9.8。dev 仍在推进，接手时重新确认锁定版本、公开接口和已有模型配置机制，不照搬旧版本运行时。上游源码在 `../openclaw`；只查看源码，不修改用户使用的运行时。
+以下 `src/plugins/`、`src/plugin-sdk/`、`extensions/deepseek/` 指锁定 tag 的上游 OpenClaw 源码路径，不是本应用 `src`。上游 checkout 位置由实际环境决定；同时核对发布包 SDK，不修改用户正在使用的运行时。
 
 目标：让用户按需把一个模型选择替换为“多个参考模型分析，再由一个聚合模型回答”的预设。普通会话可以使用，助手和团队可以复用；不创建群聊，不新增 Agent Team 模式，不引入 Hermes 运行时。
 
@@ -110,4 +110,4 @@ MoA 分支独立实现；不要顺带修改 Agent Team、原生决策模型 Type
 - [Hermes MoA 官方文档](https://hermes-agent.nousresearch.com/docs/user-guide/features/mixture-of-agents/)：虚拟 Provider、参考模型无工具、聚合模型执行、默认每用户回合征询及不同 cadence。
 - 本地 OpenClaw v2026.9.8：`src/plugins/provider-plugin.types.ts`、`src/plugins/provider-transport.types.ts`、`src/plugin-sdk/provider-entry.ts`、`extensions/deepseek/index.ts`。
 
-截至本文写成，只完成候选接口核对，没有实现 MoA，也没有进行付费真实模型调用。SDK 原型是新会话的第一项工程工作。
+截至本文写成，只完成候选接口核对，没有实现 MoA，也没有进行付费真实模型调用。若开始实施，先完成 SDK 原型的关键门槛，再推进产品接入。

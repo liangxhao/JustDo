@@ -12,7 +12,7 @@
 
 同一页面展示三种状态是正常的；问题在于把 UI 临时值写回权威层，或在 Main/Redux 中复制另一份原生消息，以掩盖同步错误。
 
-当前聊天使用原生 history 和实时 reducer，Subagent 使用原生 tasks，Goal 使用原生目标加产品续跑阶段，Skill 和 Extension 以原生状态与 inventory 为准，协作消息经原生 `sessions_send`，cron 由原生调度。产品 run receipt、readAt、成员关系及执行快照有独立用户意义，可持久化，但必须明确身份、过期、恢复和删除语义。
+当前聊天使用原生 history 和实时 reducer，Subagent 使用 `sessions.list/describe` 的会话投影，Goal 使用原生目标加产品续跑阶段，Skill 和 Extension 以原生状态与 inventory 为准，协作消息经原生 `sessions_send`，cron 由原生调度。9.8 的 `tasks.*` 账本已移除，现有产品 taskId 字段承载原生 session key。产品 run receipt、readAt、成员关系及执行快照有独立用户意义，可持久化，但必须明确身份、过期、恢复和删除语义。
 
 ## 2. 命令、查询、事件不是同一种确认
 
@@ -23,7 +23,7 @@ flowchart LR
   Intent[用户意图] --> Admission[产品准入]
   Admission --> Command[原生命令]
   Command --> Native[原生事实]
-  Native --> Query[history / describe / tasks 查询]
+  Native --> Query[history / sessions 查询]
   Native --> Event[实时事件]
   Query --> Reconcile[身份与代次校验]
   Event --> Reconcile
@@ -38,7 +38,7 @@ flowchart LR
 
 Thinking、工具、正文属于同一 turn 的有序 item。原生历史到达时接管对应临时投影，不把每个刷新页重新追加成消息。工具结果未必跟 assistant message 同时持久化，恢复逻辑必须允许填空而不是重排整个 turn。
 
-终态按 run 身份建立 fence。停止确认也进入同一 reducer，即使 aborted stream 丢失仍可结束正确运行；迟到 delta 不得重新打开已停止 turn。
+显示终态按 run 身份建立 fence。停止确认进入同一 Renderer reducer，即使 aborted stream 丢失仍可收敛正确 turn 的显示；迟到 delta 不得重新打开已停止 turn。该显示动作不补造 Main 执行结论：精确 whole-run `executionSettled:true` 与必要工具清理证据仍需分别核对。
 
 ## 4. 界面状态不能代替执行状态
 

@@ -1,7 +1,7 @@
 # Multica integration
 
-JustDo exposes a local Codex-compatible app-server to Multica. The installed
-Multica 0.6.1 adapter can consume tool activity and final answers without changes
+JustDo exposes a local Codex-compatible app-server to Multica. The Multica 0.6.1 adapter used for the recorded integration checks consumed tool
+activity and final answers without changes
 to its code. OpenClaw remains the execution engine and transcript authority.
 The previous external OpenClaw CLI command interface has been removed.
 
@@ -120,74 +120,32 @@ The reported version is the actual application version.
 Multica receives tool names, arguments, start/completion status and streamed
 assistant text. Its current Codex adapter reduces MCP results to
 status/duration/error. Reasoning events update its activity watchdog but are not
-rendered by the installed 0.6.1 adapter. No fabricated reasoning or usage is sent.
+rendered by the 0.6.1 adapter used in those checks. Other client versions require a fresh compatibility check. No fabricated reasoning or usage is sent.
 Task-specific Codex MCP configuration and shell environment injection are not
 implemented; configure execution tools in the application. Task credentials
 are used for integration identity validation and are not copied into prompts or
 the shared Gateway environment. This verification covers local tool tasks, not
 Multica API tool calls from the executing model.
 
-## Verification
+## Verification and remaining scope
 
-On 2026-10-05, the installed Multica 0.6.1 daemon ran the production launcher,
-bridge client/server, Codex session/backend and Gateway execution modules through
-an isolated test host with its own product SQLite database. The host connected
-to the user-started application's Gateway. The harness replaced application
-startup and router preparation, not the stdio protocol or event projection.
+Recorded Windows checks used Multica 0.6.1 with isolated and later real development
+launchers. They covered initialization, tool start/result events, final text,
+conversation resume, exact-run cancellation, model discovery/selection and model
+switching without changing the application default. Those checks apply to their
+versions and environments; they do not prove current packaged-install behavior
+or compatibility with a newer Multica client.
 
-Multica recorded `write` then `read` tool events before the final answer
-`PRODUCTION VERIFIED maple-4816`. A subsequent task resumed the conversation,
-read the same file and returned `PRODUCTION RESUMED maple-4816`. This validates
-installed-adapter event ingestion; it is not a visual UI inspection or a packaged
-installer test. See the exploration report for the earlier protocol investigation.
+Regression tests in `src/main/integrations/multica/` and `tests/scripts/` cover
+launcher/pipe framing, split UTF-8, bounded queues and backpressure, stdin EOF,
+environment filtering, session ownership, model confirmation, stable text items,
+guard rollback, cancellation and recovery. A test file existing does not mean it
+was rerun for a later change; record the commit, commands and actual outcomes.
 
-Cancellation was also verified: the adapter received the exact active-run abort
-and native execution settled 245 ms later; Multica reported the task cancelled.
-
-The initial isolated host did not cover the Windows Electron stdio entry. On
-2026-10-08, a real development launcher exposed both stale generated launcher
-paths and the Electron stdin EOF. The Windows launcher now uses the local pipe
-directly; compiled-executable regression tests cover initialize before stdin EOF,
-split UTF-8 input, environment filtering, model discovery and unexpected disconnect.
-Multica's static GPT catalog is a discovery-failure fallback, not the application's
-catalog. Refresh the Codex runtime's models after rebuilding a stale launcher.
-
-The subsequent real Windows run initialized successfully but exposed the
-60-second first-event watchdog: the native model request had not produced any
-thinking, text or tool event when Multica closed the connection, which correctly
-aborted the native run. The admission item and live text/reasoning projection
-cover that protocol gap. Focused tests also cover snapshot-to-delta conversion,
-stable final item identity, native guard rollback/token isolation and interrupted
-partial output.
-
-After restarting the actual development application on 2026-10-08, the installed
-Multica daemon completed a 114-second task through the Windows launcher and
-application bridge. It recorded `write`, a 75-second foreground `exec`, then
-`read`, each with start/result events, before the single final text
-`ACTUAL VERIFIED stream-6491`. Its first-item diagnostic recorded progress at
-8.5 seconds, before the first tool event. A second task resumed the same thread
-and directory, read the file and returned `ACTUAL RESUMED stream-6491` once.
-These checks used Multica's stored task events and chat results, without a
-replacement application host or changes to Multica.
-
-For the subsequent reported display delay, the application emitted assistant
-text at 23:42:15.319 and the installed Multica daemon recorded the text at
-23:42:15.321. The local bridge added about 2 ms. Multica's cloud task-message
-upload then hit its five-second HTTP deadline; its completion upload finished
-later at 23:42:38.275. Local event receipt does not imply cloud persistence or
-UI refresh. The bridge cannot remove downstream network/upload delays.
-
-On 2026-10-09, after restarting the actual application, forced model discovery
-through the installed Multica daemon returned `opencode/glm-5.3-flash` and
-`opencode/mimo-v2.5-pro` with model/provider labels. The verification agent
-explicitly selected the first model and returned `MODEL VERIFIED glm-5.3-flash`.
-Changing its model and resuming the same thread returned
-`MODEL RESUMED mimo-v2.5-pro`. Native Gateway run-start records confirmed both
-models on the same native session, and Multica stored one text message for each
-completed task. These checks verify model discovery, selection and switching;
-neither changed the application-wide default.
-
-Transport regression tests also exercise the real Codex session/progress path
-over a local pipe with a 7 MiB escaped input. Both admission items arrive intact
-in bounded frames, including Unicode. A separate paused-reader test confirms
-stdin EOF cancels the native execution before the reader resumes.
+Release validation should use the final launcher and application, with an explicit
+allowed model: discover models, create a task, observe tools and streamed text,
+resume, switch model, interrupt, disconnect and restart. Check Windows console
+stdio separately from POSIX, and confirm deleted conversations cannot resume.
+Local event delivery and Multica cloud persistence/UI refresh are separate stages;
+a downstream upload timeout is not proof that the local bridge withheld output.
+Do not commit task transcripts, credentials or raw daemon/native logs as evidence.

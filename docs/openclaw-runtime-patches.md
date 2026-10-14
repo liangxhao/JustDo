@@ -288,10 +288,10 @@ Patch 失败时保留完整错误中的 patch label、target file、anchor count
 
 ## 20. 测试层级与不能互相替代的证据
 
-1. `openclawPristineContracts.test.ts`：证明目标原包与缺口。
-2. `openclawV202671*.test.ts`：证明单项能力、负例和补丁安全。
-3. `openclawPatchUtilsIndex.test.ts`：证明索引/写入工具约束。
-4. `openclawRuntimePatchManifest.test.ts`：证明manifest绑定与篡改检测。
+1. `tests/openclaw/runtime/pristine-contracts.test.ts`：证明锁定原包与原生契约。
+2. `tests/openclaw/patches/v2026.9.8/` 与目标版本总账对应测试：证明单项能力、负例和补丁安全；历史目录不作目标版本通过证据。
+3. 当前版本 `_patch-utils.js` 的写入/索引回归：证明唯一 anchor、幂等及事务约束，具体入口以总账为准。
+4. `tests/openclaw/runtime/runtime-patch-manifest.test.ts`：证明 manifest 绑定与篡改检测。
 5. Runtime staging/freeze/prune tests：证明供应链与最终文件集。
 6. Main adapter/shared/Renderer tests：证明JustDo consumer理解patched wire contract。
 7. Packaged runtime smoke：证明目标OS、Node、bundle、child process和真实Gateway协作。

@@ -12,9 +12,11 @@
 - 在正常应用会话中显式启用 Interactive UI，核对实际工具 schema，而不是仅看
   插件源文件或模拟模型通过。用下方矩阵记录真实模型的形式选择、首次可见耗时、
   一次成功率、工具次数、数字和交互，不读取或提交用户原始 transcript/log。
-- 对签名安装包检查 ASAR/HTTP 主页面与工作区加载、受限 preload、首条提交、
+- 对最终安装包检查 ASAR/HTTP 主页面与工作区加载、受限 preload、首条提交、
   实时/历史卡片、重启恢复、禁用与失败操作。独立 Electron/ASAR 探针的旧环境
   结果不能替代当前安装包；Windows/macOS/Linux 分别记录实际覆盖与剩余问题。
+  当前 Windows 发行未启用 Authenticode 发布者验证；如后续接入签名，再另验签名与
+  更新验证，不能把安装包 hash/freeze 当作已签名。
 - 工作区侧聊检查卡片在拆出/收回、移除/重新挂载、主题与尺寸变化后的加载和草稿，
   保留 dev 的窗口控制、菜单、宠物位置与终端状态。设备及多显示器验收另见
   [独立工作区](../features/workspace/detached-workspace.md)。

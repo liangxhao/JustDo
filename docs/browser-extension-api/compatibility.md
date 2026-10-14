@@ -18,29 +18,31 @@ wire conventions，以降低扩展客户端适配成本。
 
 ## 当前支持矩阵
 
-| 能力                                         | JustDo      | 备注                                        |
-| -------------------------------------------- | ----------- | ------------------------------------------- |
-| WebSocket request/response/notification 外形 | 支持        | payload 省略 `jsonrpc`                      |
-| initialize/initialized                       | 支持        | notification opt-out 支持精确方法名         |
-| thread/list                                  | 支持子集    | cursor/limit；不支持官方筛选参数            |
-| thread/read                                  | 支持        | `includeTurns`                              |
-| thread/start                                 | 支持子集    | title；忽略模型、沙盒等高级覆盖项           |
-| thread/unsubscribe                           | 支持        | 每连接订阅                                  |
-| composer/options                             | JustDo 扩展 | 权限模式与已配置模型                        |
-| browser/extension/pair                        | JustDo 扩展 | 已鉴权的本地自动化配对，不创建聊天会话       |
-| turn/start                                   | 支持子集    | 文本、附件、权限、模型和 JustDo pageContext |
-| turn/interrupt                               | 支持        | 实际按 thread 停止                          |
-| thread/started                               | 支持        | 订阅过滤                                    |
-| turn/started、turn/completed                 | 支持        | 订阅过滤                                    |
-| thread/updated                               | JustDo 扩展 | 传输完整聚合历史                            |
-| Thinking (`reasoning`) 历史 item             | 支持        | 通过 `thread/updated` 完整快照同步          |
-| Tool / system 历史 item                      | JustDo 扩展 | 使用 `toolCall` / `systemMessage`           |
-| item 增量事件                                | 未实现      | 无逐 token、tool 或 command delta           |
-| 审批 server requests                         | 未实现      | 审批继续由桌面 UI 处理                      |
-| thread/resume                                | 未实现      | 现有线程直接 `turn/start` 可继续对话        |
-| thread/fork/archive/delete/unarchive         | 未实现      | 不属于当前侧栏范围                          |
-| turn/steer                                   | 未实现      | 运行中线程拒绝新的 turn/start               |
-| account/model/config/MCP API                 | 未实现      | 桌面端仍是配置入口                          |
+| 能力                                         | JustDo      | 备注                                            |
+| -------------------------------------------- | ----------- | ----------------------------------------------- |
+| WebSocket request/response/notification 外形 | 支持        | payload 省略 `jsonrpc`                          |
+| initialize/initialized                       | 支持        | notification opt-out 支持精确方法名             |
+| thread/list                                  | 支持子集    | cursor/limit；不支持官方筛选参数                |
+| thread/read                                  | 支持        | `includeTurns`                                  |
+| thread/start                                 | 支持子集    | title；忽略模型、沙盒等高级覆盖项               |
+| thread/unsubscribe                           | 支持        | 每连接订阅                                      |
+| composer/options                             | JustDo 扩展 | 权限模式与已配置模型                            |
+| browser/extension/pair                       | JustDo 扩展 | 已鉴权的本地自动化配对，不创建聊天会话          |
+| turn/start                                   | 支持子集    | 文本、附件、权限、模型和 JustDo pageContext     |
+| turn/interrupt                               | 支持        | 实际按 thread 停止                              |
+| thread/started                               | 支持        | 订阅过滤                                        |
+| turn/started、turn/completed                 | 支持        | 订阅过滤                                        |
+| thread/updated                               | JustDo 扩展 | 传输完整聚合历史及可见待处理输入                |
+| thread/stream                                | JustDo 扩展 | 转发经会话过滤的原生 Agent/Chat 实时事件        |
+| thread/image                                 | JustDo 扩展 | 读取原生授权媒体或历史明确引用的本地图片        |
+| Thinking (`reasoning`) 历史 item             | 支持        | 通过 `thread/updated` 完整快照同步              |
+| Tool / system 历史 item                      | JustDo 扩展 | 使用 `toolCall` / `systemMessage`               |
+| 官方 item 增量事件                           | 未实现      | 当前实时增量经 thread/stream，非官方逐 item API |
+| 审批 server requests                         | 未实现      | 审批继续由桌面 UI 处理                          |
+| thread/resume                                | 未实现      | 现有线程直接 `turn/start` 可继续对话            |
+| thread/fork/archive/delete/unarchive         | 未实现      | 不属于当前侧栏范围                              |
+| turn/steer                                   | 未实现      | 运行中线程拒绝新的 turn/start                   |
+| account/model/config/MCP API                 | 未实现      | 桌面端仍是配置入口                              |
 
 ## JustDo 特有扩展
 
@@ -49,7 +51,10 @@ wire conventions，以降低扩展客户端适配成本。
 - `composer/options`
 - `browser/extension/pair`
 - `thread/updated`
+- `thread/stream`
+- `thread/image`
 - 历史 `toolCall|systemMessage` item
+- 用户历史 item 的 `rawMessage|pendingInput` 展示字段
 - Native Host `codexRuntime/hello|ensure|restart`
 - Native Host 返回 `runtimeConfig.protocolVersion`
 - 扩展内部 `connection/closed|connection/reconnected`
@@ -80,6 +85,7 @@ wire conventions，以降低扩展客户端适配成本。
 - `src/main/browser/extension/browserExtensionNativeMessaging.test.ts`
 - `src/main/browser/extension/browserExtensionChatServer.test.ts`
 - `src/main/browser/extension/browserExtensionChatController.test.ts`
+- `src/shared/browser/browserExtensionStream.ts` 及聊天库 `browser-extension-stream` 回归
 - `src/main/ipc/app/browser.test.ts`
 - `tests/scripts/prepare-browser-extension.test.ts`
 - `tests/scripts/prepare-browser-extension-dev-host.test.ts`

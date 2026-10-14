@@ -240,7 +240,7 @@ Renderer 通过显式 preload 方法 `listSubTaskChildren(sessionId, parentTaskI
 
 Main 先检查产品会话仍存在，再用 `sessions.describe` 读取精确原生 session key。子任务产品 ID 就是该 key，`spawnedBy` 表示原生执行控制归属；`parentSessionKey` 仅为导航关系，不能用于授权。嵌套任务最多逐级核对 64 层控制归属，并拒绝循环、跨产品会话、缺失节点或已删除会话。Renderer 提交的 ID、显示名称及 session key 不能单独充当归属证明。
 
-子树读取使用 `sessions.list({ spawnedBy, archived: 'all', limit: 50, offset })`，游标绑定当前根集合，并再次过滤原生控制归属。分页不前进、缺少继续偏移量或归属验证失败按错误返回，不伪装为空列表。取消只接受原生明确的 aborted/no-active-run 回执；超时不自动重发。UI 在后续操作前重新核对精确子会话状态。执行、完成通知与持久化仍由 OpenClaw 管理，不新增 SQLite 任务或 transcript 缓存。
+子树读取使用 `sessions.list({ archived: 'all', limit: 50, offset })`，按返回行的 `spawnedBy` 精确筛选当前层；原生请求的 spawnedBy 过滤依赖有保留期限的控制关系，不能用于完整历史发现。游标绑定当前根集合，不匹配的原生页面可继续跳读，直到找到成员或读取结束。分页不前进、缺少继续偏移量或归属验证失败按错误返回，不伪装为空列表。取消只接受原生明确的 aborted/no-active-run 回执；超时不自动重发。UI 在后续操作前重新核对精确子会话状态，取消 ACK 不补造执行结论。执行、完成通知与持久化仍由 OpenClaw 管理，不新增 SQLite 任务或 transcript 缓存。
 
 ## 6. 注册、订阅与重连
 

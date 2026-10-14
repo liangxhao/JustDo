@@ -30,7 +30,7 @@ flowchart TB
     Adapter <--> Process
   end
   Chat <-->|本地认证 WS / HTTP| Process
-  Process --> Native[(原生 transcript / tasks / cron)]
+  Process --> Native[(原生 transcript / 会话执行 / cron)]
   Process --> Runtime[模型 / 工具 / Extension]
 ```
 

@@ -32,11 +32,16 @@
 
 ## 3. 身份与终态核对
 
-原生 session key、实例 ID、run ID、task ID、entry ID 和产品 sessionId 各有用途。升级重点不是名字没变，而是返回值是否仍能证明目标身份、分支和 generation。
+原生 session key、物理 sessionId/incarnation、run ID、entry ID 和产品 sessionId 各有用途。当前 SubAgent 的产品 taskId 就是原生 session key，不是已移除账本的 task ID；完整历史发现按会话记录的 spawnedBy 筛选，导航 parentSessionKey 不用于授权。升级重点不是名字没变，而是返回值能否证明目标身份、分支和 generation。
 
-Stop 需覆盖 native queue、已完成祖先下的活动后代、部分取消失败、立即终态与审批撤销。required-child join 不能由 Renderer “还有子任务”提示替代。completed+blocked 必须保持 blocked。
+Stop 需覆盖 native queue、已完成祖先下的活动后代、部分取消失败、立即终态与审批撤销。required-child join 不能由 Renderer “还有子任务”提示替代。会话执行终态、Goal blocked 状态和产品 busy 展示分别核对，不恢复旧 tasks 账本的组合状态推断。
 
 tool_calls finish reason 不能被当作最终回答完成；一次 tool error 也不是 run terminal。实时、回执、历史和恢复 snapshot 必须对同一身份收敛。
+
+只有精确 whole-run lifecycle terminal 且 `executionSettled:true` 建立执行结果；
+Stop ACK、chat final、attempt 结束和 idle 不替代该证据。插件 managed runs 还需独立
+核对 cleanupSettled，不能据 registry terminal 释放未知工具占用。当前子任务取消用
+sessions.abort，不恢复已移除的结果重投递/忽略接口。
 
 ## 4. 持久数据与恢复
 

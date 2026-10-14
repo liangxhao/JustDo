@@ -37,7 +37,7 @@ PluginsView 组合 skills、mcp、hooks、extensions、marketplace，各域服�
 
 原生 openclaw.plugin.json 包进入原生安装器；异构格式转换尚未交付，会明确停止。上游能识别 Codex/Claude 等 bundle 不代表产品已经提供可用转换。
 
-安装期间的进度属于当前操作，不应因关闭页面重复触发安装。临时目录 finally 清理，Windows 文件锁需受管进程协调，不指引用户任意杀进程。
+安装期间的进度属于当前操作，不因关闭页面重复触发安装。临时源按原生提交阶段和结束证据清理；Windows 文件夹隔离副本在原生安装已发起但结果不明时保留，不能以超时认定未安装或安全删除。文件锁/链接错误如实报告，不停止 Gateway 重放破坏性操作，也不指引用户任意杀进程。具体事务见[插件系统](../../architecture/07-plugin-system.md)。
 
 ## 5. 市场查询、推荐与更新
 
@@ -59,4 +59,4 @@ Runtime Services、必要审批和产品桥接的保护由后端检查。配置�
 
 ## 8. 验收
 
-检查来源分组与管理 scope、同名 fallback、父插件托管动作、受保护项、取消审查、换包 token 失效、更新后双列表收敛、多市场同名、无 Provider 和 Windows 锁失败。行为测试分布在插件服务、installation、marketplace 与 Renderer 各领域。
+检查来源分组与管理 scope、同名 fallback、父插件托管动作、受保护项、取消审查、换包 token 失效、更新后市场/原生双列表收敛、市场与本地导入同名冲突、无 Provider 和 Windows 锁/链接失败。产品只接入一个业务市场，不将协议保留的 sourceId 解释成已支持多市场。行为测试分布在插件服务、installation、marketplace 与 Renderer 各领域。

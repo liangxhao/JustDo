@@ -4,21 +4,31 @@
 
 ## 1. 配置分组
 
-| 分组                               | 默认    | 含义                             |
-| ---------------------------------- | ------- | -------------------------------- |
-| 主 Agent thinking                  | null    | 保留继承/未指定语义              |
-| 主 Agent run timeout               | 0       | 未设置正向运行时限，不是立刻超时 |
-| 主 Agent 并发                      | null    | 不强制产品覆盖                   |
-| AskUserQuestion                    | 10 分钟 | 结构化问答等待                   |
-| automation approval                | 2 分钟  | 允许 2/5/10 三档                 |
-| MCP request timeout                | 60 秒   | 用户 server 的默认请求等待       |
-| session visibility                 | tree    | 原生跨会话可见范围               |
-| Subagent model/thinking/delegation | null    | 继承或未指定                     |
-| Subagent 并发                      | 3       | 原生全局并发限制                 |
-| 每 Agent children                  | 5       | 子任务容量                       |
-| Subagent run timeout               | 7200 秒 | 原生运行时限                     |
-| spawn depth                        | 1       | 嵌套深度                         |
-| archiveAfterMinutes                | 0       | 不提供正向自动归档期限           |
+| 分组                               | 默认    | 含义                                      |
+| ---------------------------------- | ------- | ----------------------------------------- |
+| 主 Agent thinking                  | null    | 保留继承/未指定语义                       |
+| 主 Agent run timeout               | 0       | 未设置正向运行时限，不是立刻超时          |
+| 主 Agent 并发                      | null    | 不强制产品覆盖                            |
+| AskUserQuestion                    | 10 分钟 | 结构化问答等待                            |
+| automation approval                | 2 分钟  | 允许 2/5/10 三档                          |
+| MCP request timeout                | 60 秒   | 用户 server 的默认请求等待                |
+| session visibility                 | tree    | 原生跨会话可见范围                        |
+| Subagent model/thinking/delegation | null    | 继承或未指定                              |
+| Subagent 并发                      | 3       | 原生全局并发限制                          |
+| 每 Agent children                  | 5       | 子任务容量                                |
+| Subagent run timeout               | 7200 秒 | 原生运行时限                              |
+| spawn depth                        | 1       | 嵌套深度                                  |
+| archiveAfterMinutes                | 0       | 不提供正向自动归档期限                    |
+| Code Mode                          | off     | 原生工具编排；显式 auto/on 与关闭分别保存 |
+| 原生 Swarm enabled                 | true    | 批量委派容量开关，不是 Workflow 插件开关  |
+| Swarm maxConcurrent                | 8       | 当前原生组并发，范围 1–64                 |
+| Swarm maxChildrenPerGroup          | 50      | 组内存活子任务容量，范围 1–200            |
+| Swarm maxTotalPerGroup             | 200     | 组内累计子任务容量，范围 1–1000           |
+
+同页还有两个产品设置，不属于 AgentRuntimeSettings 原生配置投影：后台侧栏标签保留
+上限默认 30、范围 0–200；Goal 自动续跑回合上限默认 25、范围 0–1000，0 表示不允许
+自动追加续跑，用户仍可显式手动继续，并非无限续跑。它们沿现有 Cowork 配置保存，
+不能将标签隐藏/淘汰解释为停止原生任务。
 
 ## 2. 验证与旧值
 
@@ -52,6 +62,12 @@ flowchart LR
 visibility 的 self/tree/agent/all 是原生访问配置，不等于文件权限；sandbox 的有效 clamp 可能进一步收窄。增加并发、修改 delegation 或选择助手模型不会自动授予跨 Agent 发送或 spawn allowlist。
 
 MCP request timeout 是已连接 server 的请求时限，不是连接建立超时，也不自动覆盖 Extension 托管 server。
+
+Code Mode 保存 off/auto/on，并投影到 `tools.codeMode.enabled=false/"auto"/true`，
+executor 为 QuickJS。当前表单保留但禁选 auto，新配置缺字段补 off；已有显式 auto
+保留并如实展示，是否启用取决于原生模型的 compat.codeMode，不按模型名推断。
+worker/WASM、exec/wait、取消与内部工具审批由原生管理，执行器缺失不降级到 Node VM。
+实际运行与产物入口见[引擎](../../architecture/05-agent-engine.md#code-mode-工具编排)。
 
 ## 6. 修改与验证
 

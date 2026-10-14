@@ -93,7 +93,7 @@ SqliteStore.create 先检查已知 legacy schema，再打开连接，设置 PRAG
 
 ## 3. 核心产品表全表清单
 
-SqliteStore 直接建 14 张表，并委派 CollaborationStore 建 6 张，共 20 张。
+产品表由 SqliteStore、会话诊断初始化器及 Agent Team 的协作/验收/群聊/待发初始化器共同建立。下表列出现行产品表；插件扩展复用 Main 提供的连接，schema 实现在各自 owning domain，不从旧版固定表数推断完整性。独立 Swarm 流程库、浏览器数据库和原生 transcript 不属于此表。
 
 | 表                                   | 责任与关键身份                          |
 | ------------------------------------ | --------------------------------------- |
@@ -120,6 +120,16 @@ SqliteStore 直接建 14 张表，并委派 CollaborationStore 建 6 张，共 2
 | `collaboration_review_deliveries`    | 验收报告到具体工作回执的关联            |
 | `collaboration_deletions`            | 删除冻结记录                            |
 | `collaboration_deleted_members`      | 已确认原生删除的成员                    |
+| `cowork_run_diagnostic_coverage`     | 诊断采集起点、覆盖及裁剪计数            |
+| `cowork_run_diagnostic_events`       | 有界、闭合值的运行诊断元数据            |
+| `team_discussion_rooms`              | 固定成员、来源身份及房间状态            |
+| `team_discussion_runs`               | 请求指纹、批次身份与汇总抑制            |
+| `team_discussion_executions`         | 成员精确原生执行、结算和清理证据        |
+| `team_discussion_summaries`          | 来源汇总的 outbox 与执行回执            |
+| `team_discussion_task_links`         | 获准读取群历史的关联产品任务            |
+| `team_discussion_deleted_rooms`      | 已删除房间的持久墓碑                    |
+| `team_discussion_queue_control`      | 每群待发控制 generation                 |
+| `team_discussion_pending_inputs`     | holding 引用、请求指纹与 FIFO 状态      |
 
 ## 4. 会话与运行回执
 
@@ -190,7 +200,7 @@ browser-import.sqlite 独立保存导入历史、safeStorage 加密密码、下�
 
 按时间清理历史记录与清空 Chromium 存储的能力不同，后者可能全量清除，UI 必须说明。删除下载记录不等于删除磁盘文件。
 
-LiteLLM 活动记录是服务端 EndUser metadata，不计入本地 20 表。客户端开关控制上报，JWT 负责身份校验；未收到活动不能证明用户没启动。服务端部署与字段保留见[认证专题](../features/integrations/authentication-builtin-model-lifecycle.md)。
+LiteLLM 活动记录是服务端 EndUser metadata，不属于本地产品表。客户端开关控制上报，JWT 负责身份校验；未收到活动不能证明用户没启动。服务端部署与字段保留见[认证专题](../features/integrations/authentication-builtin-model-lifecycle.md)。
 
 ## 10. 备份、修复与变更验收
 
@@ -219,8 +229,9 @@ flowchart LR
 聊天导出仍是当前已加载快照，不能充当全会话备份；历史读取失败或未完成时禁止导出。仅复制 `justdo.sqlite` 无法恢复原生历史，完整备份还需包含原生数据库和关联冷归档文件，并按需求包含角色文件、项目及附件。在线备份应使用原生快照或正确的 SQLite 备份流程，不能遗漏 WAL。归档文件引用存在不代表附件实体已被备份。
 
 技能提炼提案及其草稿、支持文件、状态和 revisionHash 全部由 OpenClaw Workshop 持久化。
-应用不新增提案表或历史正文缓存。手动学习复用 cowork_sessions / cowork_session_runs 的产品身份与运行记录，
-内容仍从原生会话读取；审核页仅持有页面级快照，重启或重进页面通过 skills.proposals.* 恢复。
+应用不新增提案表或历史正文缓存，也不另建学习会话。用户在当前聊天发起原生 `/learn`，
+执行内容仍由该原生会话拥有；提案弹窗仅持有 main 的页面级快照，重启或重进页面通过
+skills.proposals.* 恢复。审核写入绑定 proposalId 与 expectedRevisionHash，不改变全局学习策略。
 
 正常备份先退出应用再复制产品数据；在线备份使用 SQLite backup/checkpoint 机制，不能只复制主文件忽略 WAL。原生 transcript、角色文件、模型派生凭据和项目文件要按需求另行纳入，不能把整套数据默认作为 issue 附件。
 
