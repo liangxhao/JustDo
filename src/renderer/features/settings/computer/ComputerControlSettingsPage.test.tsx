@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ExtensionChangedEvent } from '@shared/plugins/extensions';
 import type { ComputerControlResult } from '@shared/security/computerControl';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { translations } from '@/services/i18n/translations';
@@ -75,6 +75,84 @@ test('shows only one switch and the current-conversation image requirement', asy
     screen.queryByRole('switch', { name: translations.zh.computerOverlayRemotePreview }),
   ).toBeNull();
   expect(api.setEnabled.mock.calls).toEqual([[true], [false]]);
+  expect(api.get).toHaveBeenCalledOnce();
+});
+
+test.each([false, true])('shows immediate saving feedback from enabled=%s', async initial => {
+  const api = setup(initial);
+  let completeSave!: (result: ComputerControlResult) => void;
+  api.setEnabled.mockReturnValueOnce(
+    new Promise(resolve => {
+      completeSave = resolve;
+    }),
+  );
+  render(<ComputerControlSettingsPage />);
+  const toggle = screen.getByRole('switch', { name: translations.zh.computerControlEnable });
+  await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(false));
+
+  fireEvent.click(toggle);
+  fireEvent.click(toggle);
+
+  expect(screen.getByRole('status').textContent).toBe(translations.zh.computerControlSaving);
+  expect(toggle.getAttribute('aria-busy')).toBe('true');
+  expect(toggle.getAttribute('aria-checked')).toBe(String(initial));
+  expect((toggle as HTMLButtonElement).disabled).toBe(true);
+  expect(api.setEnabled).toHaveBeenCalledExactlyOnceWith(!initial);
+
+  await act(async () => completeSave({ success: true, enabled: !initial }));
+
+  await waitFor(() => expect(toggle.getAttribute('aria-busy')).toBe('false'));
+  expect(toggle.getAttribute('aria-checked')).toBe(String(!initial));
+  expect((toggle as HTMLButtonElement).disabled).toBe(false);
+  expect(screen.queryByRole('status')).toBeNull();
+  expect(api.get).toHaveBeenCalledOnce();
+});
+
+test('defers and combines refreshes during a save, then shows the observed state', async () => {
+  const api = setup();
+  let completeSave!: (result: ComputerControlResult) => void;
+  api.setEnabled.mockReturnValueOnce(
+    new Promise(resolve => {
+      completeSave = resolve;
+    }),
+  );
+  render(<ComputerControlSettingsPage />);
+  const toggle = screen.getByRole('switch');
+  await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(toggle);
+
+  act(() => api.change(false));
+  fireEvent(window, new Event('focus'));
+  fireEvent(window, new Event('focus'));
+  expect(api.get).toHaveBeenCalledOnce();
+  expect(toggle.getAttribute('aria-busy')).toBe('true');
+
+  await act(async () => completeSave({ success: true, enabled: true }));
+
+  await waitFor(() => expect(toggle.getAttribute('aria-busy')).toBe('false'));
+  expect(toggle.getAttribute('aria-checked')).toBe('false');
+  expect(api.get).toHaveBeenCalledTimes(2);
+});
+
+test('ignores a refresh started before a successful save', async () => {
+  const api = setup();
+  render(<ComputerControlSettingsPage />);
+  const toggle = screen.getByRole('switch');
+  await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(false));
+  let completeRefresh!: (result: ComputerControlResult) => void;
+  api.get.mockReturnValueOnce(
+    new Promise(resolve => {
+      completeRefresh = resolve;
+    }),
+  );
+  fireEvent(window, new Event('focus'));
+  fireEvent.click(toggle);
+  await waitFor(() => expect(toggle.getAttribute('aria-busy')).toBe('false'));
+
+  await act(async () => completeRefresh({ success: true, enabled: false }));
+
+  expect(toggle.getAttribute('aria-checked')).toBe('true');
+  expect(api.get).toHaveBeenCalledTimes(2);
 });
 
 test('keeps the observed choice after a failed write and displays a readable error', async () => {

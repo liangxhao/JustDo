@@ -12,6 +12,8 @@ export default function ComputerControlSettingsPage() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const savingRef = useRef(false);
+  const refreshPending = useRef(false);
   const revision = useRef(0);
   const active = useRef(true);
   const invalidate = useCallback(() => {
@@ -19,6 +21,10 @@ export default function ComputerControlSettingsPage() {
   }, []);
 
   const load = useCallback(async (clearError = true) => {
+    if (savingRef.current) {
+      refreshPending.current = true;
+      return;
+    }
     const request = ++revision.current;
     if (clearError) setError(null);
     try {
@@ -56,23 +62,34 @@ export default function ComputerControlSettingsPage() {
   }, [invalidate, load]);
 
   const toggle = async () => {
-    if (enabled === null || saving) return;
+    if (enabled === null || saving || savingRef.current) return;
     const desired = !enabled;
-    ++revision.current;
+    const request = ++revision.current;
+    savingRef.current = true;
+    refreshPending.current = false;
     setSaving(true);
     setError(null);
+    let reload = false;
     try {
       const result = await window.electron.openclaw.computerControl.setEnabled(desired);
-      if (!active.current) return;
+      if (!active.current || request !== revision.current) return;
       if (result.success) setEnabled(result.enabled);
-      else setError(t('computerControlSaveFailed'));
+      else {
+        reload = true;
+        setError(t('computerControlSaveFailed'));
+      }
     } catch {
-      if (active.current) setError(t('computerControlSaveFailed'));
+      reload = true;
+      if (active.current && request === revision.current) setError(t('computerControlSaveFailed'));
     } finally {
-      if (active.current) {
-        // An apply error can follow a committed write; show the observed choice.
-        await load(false);
-        setSaving(false);
+      savingRef.current = false;
+      if (active.current && request === revision.current) {
+        // Reconcile uncertain writes or deferred changes, without rereading every successful save.
+        if (reload || refreshPending.current) {
+          refreshPending.current = false;
+          await load(false);
+        }
+        if (active.current) setSaving(false);
       }
     }
   };
@@ -88,7 +105,13 @@ export default function ComputerControlSettingsPage() {
             {t('computerControlEnable')}
           </div>
           <p id="computer-control-description" className="mt-1 text-xs leading-5 text-secondary">
-            {t('computerControlEnableDescription')}
+            {saving ? (
+              <span role="status" className="text-primary">
+                {t('computerControlSaving')}
+              </span>
+            ) : (
+              t('computerControlEnableDescription')
+            )}
           </p>
         </div>
         <button
@@ -100,11 +123,16 @@ export default function ComputerControlSettingsPage() {
           aria-busy={saving}
           disabled={enabled === null || saving}
           onClick={() => void toggle()}
-          className={`relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${enabled ? 'bg-primary' : 'bg-border'}`}
+          className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 ease-out motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${saving ? 'cursor-wait' : 'disabled:cursor-not-allowed disabled:opacity-50'} ${enabled ? 'bg-primary' : 'bg-border'}`}
         >
           <span
-            className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${enabled ? 'translate-x-5' : 'translate-x-0'}`}
-          />
+            aria-hidden="true"
+            className={`absolute left-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-white shadow-sm transition-transform duration-200 ease-out motion-reduce:transition-none ${enabled ? 'translate-x-5' : 'translate-x-0'}`}
+          >
+            {saving && (
+              <span className="h-3 w-3 rounded-full border-2 border-primary/25 border-t-primary motion-safe:animate-spin" />
+            )}
+          </span>
         </button>
       </div>
       <p className="text-sm leading-6 text-secondary">{t('computerControlModelRequirement')}</p>
