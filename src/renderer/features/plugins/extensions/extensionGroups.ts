@@ -1,5 +1,7 @@
 import type { InstalledOpenClawExtension } from '@shared/plugins/extensions';
 
+import { comparePluginNames } from '@/features/plugins/shared/pluginOrdering';
+
 export const ExtensionGroupId = {
   SYSTEM: 'system',
   USER: 'user',
@@ -25,7 +27,7 @@ const resolveExtensionGroup = (extension: InstalledOpenClawExtension): Extension
     : ExtensionGroupId.USER;
 };
 
-/** Separates ownership groups and places locked system plugins after toggleable ones. */
+/** Sorts ownership groups by name, with toggleable system plugins before locked ones. */
 export const groupExtensionsByOwnership = (
   extensions: InstalledOpenClawExtension[],
 ): ExtensionGroup[] => {
@@ -39,12 +41,13 @@ export const groupExtensionsByOwnership = (
   return groupOrder.flatMap(id => {
     const groupedExtensions = groups.get(id);
     if (!groupedExtensions) return [];
-    const orderedExtensions =
-      id === ExtensionGroupId.SYSTEM
-        ? [...groupedExtensions].sort(
-            (a, b) => Number(canToggleExtension(b)) - Number(canToggleExtension(a)),
-          )
-        : groupedExtensions;
+    const orderedExtensions = [...groupedExtensions].sort((a, b) => {
+      const toggleOrder =
+        id === ExtensionGroupId.SYSTEM
+          ? Number(canToggleExtension(b)) - Number(canToggleExtension(a))
+          : 0;
+      return toggleOrder || comparePluginNames(a, b);
+    });
     return [{ id, extensions: orderedExtensions }];
   });
 };

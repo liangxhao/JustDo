@@ -28,6 +28,7 @@ import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
 import PluginGroupSection from '@/features/plugins/shared/PluginGroupSection';
 import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubTypes';
 import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownDescription';
+import { comparePluginNames } from '@/features/plugins/shared/pluginOrdering';
 import PluginStateButton, {
   PluginLockedIndicator,
 } from '@/features/plugins/shared/PluginStateButton';
@@ -152,12 +153,12 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
     ),
   );
   const skillOwnershipGroups = useMemo(() => {
-    const userSkills = filteredSkills.filter(
-      skill => skill.ownershipScope !== PluginHubScope.SYSTEM,
-    );
-    const systemSkills = filteredSkills.filter(
-      skill => skill.ownershipScope === PluginHubScope.SYSTEM,
-    );
+    const userSkills = filteredSkills
+      .filter(skill => skill.ownershipScope !== PluginHubScope.SYSTEM)
+      .sort(comparePluginNames);
+    const systemSkills = filteredSkills
+      .filter(skill => skill.ownershipScope === PluginHubScope.SYSTEM)
+      .sort(comparePluginNames);
     return [
       ...(userSkills.length > 0 || !skillSearchQuery.trim()
         ? [{ id: 'user' as const, skills: userSkills }]

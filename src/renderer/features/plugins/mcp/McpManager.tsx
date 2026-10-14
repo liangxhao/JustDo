@@ -35,6 +35,7 @@ import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
 import PluginGroupSection from '@/features/plugins/shared/PluginGroupSection';
 import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubTypes';
 import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownDescription';
+import { comparePluginNames } from '@/features/plugins/shared/pluginOrdering';
 import PluginStateButton from '@/features/plugins/shared/PluginStateButton';
 import { i18nService } from '@/services/i18n';
 import ClockIcon from '@/shared/components/icons/ClockIcon';
@@ -378,10 +379,11 @@ const McpManager: React.FC<McpManagerProps> = ({
   const userExtensionServers = filteredExtensionServers.filter(
     server => server.scope !== PluginHubScope.SYSTEM,
   );
-  const systemExtensionServers = filteredExtensionServers.filter(
-    server => server.scope === PluginHubScope.SYSTEM,
-  );
-  const userServerCount = filteredInstalled.length + userExtensionServers.length;
+  const systemExtensionServers = filteredExtensionServers
+    .filter(server => server.scope === PluginHubScope.SYSTEM)
+    .sort(comparePluginNames);
+  const userServers = [...filteredInstalled, ...userExtensionServers].sort(comparePluginNames);
+  const userServerCount = userServers.length;
   const testableServers = [
     ...servers,
     ...extensionServers.filter(server => server.enabled && server.supported),
@@ -1023,20 +1025,23 @@ const McpManager: React.FC<McpManagerProps> = ({
                           )
                         ) : (
                           <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
-                            {filteredInstalled.map(renderInstalledCard)}
-                            {userExtensionServers.map((server, visualIndex) => (
-                              <ExtensionMcpCard
-                                key={server.id}
-                                server={server}
-                                visualIndex={filteredInstalled.length + visualIndex}
-                                group="user"
-                                onOpenExtension={onOpenExtension}
-                                onOpenDetail={() => void handleProbeServer(server, true)}
-                                probing={probingServerIds.has(server.id)}
-                                statusLabel={getServerStatusLabel(server)}
-                                statusClass={getServerStatusClass(server)}
-                              />
-                            ))}
+                            {userServers.map((server, visualIndex) =>
+                              'providerId' in server ? (
+                                <ExtensionMcpCard
+                                  key={server.id}
+                                  server={server}
+                                  visualIndex={visualIndex}
+                                  group="user"
+                                  onOpenExtension={onOpenExtension}
+                                  onOpenDetail={() => void handleProbeServer(server, true)}
+                                  probing={probingServerIds.has(server.id)}
+                                  statusLabel={getServerStatusLabel(server)}
+                                  statusClass={getServerStatusClass(server)}
+                                />
+                              ) : (
+                                renderInstalledCard(server, visualIndex)
+                              ),
+                            )}
                           </div>
                         )}
                       </PluginGroupSection>

@@ -15,6 +15,7 @@ import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
 import PluginGroupSection from '@/features/plugins/shared/PluginGroupSection';
 import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubTypes';
 import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownDescription';
+import { comparePluginNames } from '@/features/plugins/shared/pluginOrdering';
 import PluginStateButton, {
   PluginLockedIndicator,
 } from '@/features/plugins/shared/PluginStateButton';
@@ -117,8 +118,8 @@ const HookManager: React.FC<HookManagerProps> = ({
   const groupedHooks = useMemo(() => {
     const isSystemHook = (hook: HookEntry) =>
       hook.scope === PluginHubScope.SYSTEM || hook.source === 'openclaw-bundled';
-    const userHooks = filteredHooks.filter(hook => !isSystemHook(hook));
-    const systemHooks = filteredHooks.filter(isSystemHook);
+    const userHooks = filteredHooks.filter(hook => !isSystemHook(hook)).sort(comparePluginNames);
+    const systemHooks = filteredHooks.filter(isSystemHook).sort(comparePluginNames);
     return [
       ...(userHooks.length > 0 || !searchQuery.trim()
         ? [{ id: 'user' as const, hooks: userHooks }]
