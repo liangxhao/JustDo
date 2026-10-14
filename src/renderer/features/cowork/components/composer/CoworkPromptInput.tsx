@@ -1888,7 +1888,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const containerClass = isLarge
       ? COMPOSER_SURFACE_CLASS
-      : 'relative flex flex-wrap items-end gap-2 p-3 rounded-xl border border-border bg-surface';
+      : 'relative flex flex-wrap items-end gap-2 p-3 rounded-xl border border-border bg-[var(--composer-bg)]';
 
     const textareaClass = isLarge
       ? COMPOSER_TEXTAREA_CLASS

@@ -1,9 +1,43 @@
 /* Base resets that work with the theme system */
 
+/* The chat shadow DOM inherits the active palette through its existing slots. */
+:root {
+  --shell-chrome-bg: var(--justdo-surface-raised);
+  --shell-sidebar-bg: var(--justdo-surface-raised);
+  --shell-titlebar-bg: var(--justdo-background);
+  --composer-bg: var(--justdo-surface);
+  --justdo-chat-bg: var(--justdo-background);
+  --justdo-chat-text: var(--justdo-foreground);
+  --justdo-chat-text-secondary: var(--justdo-text-secondary);
+  --justdo-chat-muted: var(--justdo-text-secondary);
+  --justdo-chat-accent: var(--justdo-primary-hover);
+  --justdo-chat-border: var(--justdo-border);
+  --justdo-chat-process-bg: transparent;
+  --justdo-chat-thinking-bg: var(--justdo-surface);
+  --justdo-chat-code-bg: var(--justdo-surface-raised);
+  --justdo-chat-danger: color-mix(in srgb, var(--justdo-destructive) 80%, var(--justdo-foreground));
+  --justdo-chat-user-bg: var(--justdo-chat-user);
+  --justdo-chat-user-text: var(--justdo-chat-user-foreground);
+  --justdo-chat-assistant-bg: var(--justdo-chat-bot);
+  --justdo-chat-assistant-text: var(--justdo-chat-bot-foreground);
+  --justdo-chat-user-avatar-bg: var(--justdo-surface-raised);
+  --justdo-chat-user-avatar-text: var(--justdo-text-secondary);
+  --justdo-chat-assistant-avatar-bg: var(--justdo-primary-muted);
+  --justdo-chat-assistant-avatar-text: var(--justdo-primary-hover);
+}
+
 /* Smooth theme transitions */
 .justdo-theme-transition,
 .justdo-theme-transition *,
 .justdo-theme-transition *::before,
 .justdo-theme-transition *::after {
   transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease !important;
+}
+
+/* Region surfaces for the neutral dark workspace. Other palettes keep their defaults. */
+[data-theme="classic-dark"] {
+  --shell-chrome-bg: #1c2028;
+  --shell-sidebar-bg: #191b1f;
+  --shell-titlebar-bg: #1e2128;
+  --composer-bg: #353535;
 }

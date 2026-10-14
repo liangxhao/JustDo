@@ -328,7 +328,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         id={homePanelId}
         aria-label={i18nService.t('sidebarHome')}
         hidden={!isHomePanelVisible}
-        className={`col-start-2 row-start-2 w-60 min-h-0 shrink-0 flex-col bg-surface-raised overflow-hidden ${isHomePanelVisible ? 'flex' : 'hidden'}`}
+        className={`col-start-2 row-start-2 w-60 min-h-0 shrink-0 flex-col border-r border-border bg-[var(--shell-sidebar-bg)] overflow-hidden ${isHomePanelVisible ? 'flex' : 'hidden'}`}
       >
         {sessionListStatus !== 'loading' && (
           <div className="px-2.5 pt-2 pb-1.5">

@@ -1,4 +1,5 @@
 .window-header {
+  background-color: var(--shell-titlebar-bg);
   -webkit-app-region: drag;
   app-region: drag;
 }

@@ -193,7 +193,7 @@ const NavigationRail: React.FC<NavigationRailProps> = ({
   return (
     <nav
       aria-label={i18nService.t('sidebarNavigation')}
-      className={`col-start-1 row-start-1 row-span-2 flex w-11 min-h-0 shrink-0 flex-col items-center border-r border-border-subtle bg-surface-raised pb-3 ${isMac ? 'pt-12' : 'pt-5'}`}
+      className={`col-start-1 row-start-1 row-span-2 flex w-11 min-h-0 shrink-0 flex-col items-center border-r border-border-subtle bg-[var(--shell-chrome-bg)] pb-3 ${isMac ? 'pt-12' : 'pt-5'}`}
     >
       <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-2 overflow-y-auto pb-3">
         <button

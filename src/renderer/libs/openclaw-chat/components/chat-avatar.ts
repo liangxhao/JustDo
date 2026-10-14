@@ -7,15 +7,17 @@ import { html, type TemplateResult } from 'lit';
 import { normalizeRoleForGrouping } from '@/libs/openclaw-chat/pipeline/role-normalizer';
 
 const USER_SVG = html`
-  <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
-    <circle cx="12" cy="8" r="4" />
-    <path d="M20 21a8 8 0 1 0-16 0" />
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+    stroke-linecap="round" stroke-linejoin="round" width="18" height="18" aria-hidden="true">
+    <circle cx="12" cy="8" r="3.25" />
+    <path d="M5.5 20v-1.25a6.5 6.5 0 0 1 13 0V20" />
   </svg>
 `;
 
 const ASSISTANT_SVG = html`
-  <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
-    <path d="M12 2l2.4 7.2H22l-6 4.8 2.4 7.2L12 16l-6.4 5.2L8 14 2 9.2h7.6z" />
+  <svg viewBox="0 0 24 24" fill="currentColor" width="19" height="19" aria-hidden="true">
+    <path d="M10.5 3C11.8 8.8 13.2 10.2 19 11.5C13.2 12.8 11.8 14.2 10.5 20C9.2 14.2 7.8 12.8 2 11.5C7.8 10.2 9.2 8.8 10.5 3Z" />
+    <path d="M19 2L19.9 4.6L22.5 5.5L19.9 6.4L19 9L18.1 6.4L15.5 5.5L18.1 4.6Z" opacity="0.65" />
   </svg>
 `;
 

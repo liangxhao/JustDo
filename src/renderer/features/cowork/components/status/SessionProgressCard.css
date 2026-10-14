@@ -79,7 +79,7 @@
 }
 
 .cowork-progress-card__title {
-  color: var(--justdo-text-muted);
+  color: var(--justdo-text-secondary);
   font-size: 12px;
   font-weight: 500;
   line-height: 16px;

@@ -546,7 +546,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
         tabIndex={isRenaming ? -1 : 0}
         className={`group relative min-h-8 rounded-lg pl-7 pr-2 py-1.5 cursor-pointer transition-all duration-150 ${
           isActive
-            ? 'bg-primary/[0.12] text-primary shadow-sm ring-1 ring-inset ring-primary/25 hover:bg-primary/[0.16]'
+            ? 'bg-surface-raised text-foreground'
             : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.05]'
         }`}
       >
@@ -638,7 +638,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                   >
                     <h3
                       className={`cowork-session-title truncate text-xs leading-5 ${
-                        isActive ? 'font-semibold text-primary' : 'font-normal text-foreground'
+                        isActive ? 'font-semibold text-foreground' : 'font-normal text-foreground'
                       }`}
                     >
                       {session.title}

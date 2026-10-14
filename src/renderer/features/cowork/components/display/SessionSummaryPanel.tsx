@@ -168,7 +168,7 @@ export default function SessionSummaryPanel(props: Props) {
   }, [visible, anchorRef, onClose, ownerDocument]);
   if (!visible) return null;
   const heading = (key: string) => (
-    <h3 className="px-2 pb-1 text-xs font-medium text-muted">{i18nService.t(key)}</h3>
+    <h3 className="px-2 pb-1 text-xs font-medium text-secondary">{i18nService.t(key)}</h3>
   );
   return (
     <aside
@@ -176,16 +176,16 @@ export default function SessionSummaryPanel(props: Props) {
       id="cowork-session-summary"
       role="dialog"
       aria-label={i18nService.t('coworkSummaryTitle')}
-      className="absolute right-0 top-full z-[90] mt-2 flex max-h-[min(42rem,calc(100dvh-5rem))] w-80 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-surface/95 shadow-popover backdrop-blur-xl"
+      className="absolute right-0 top-full z-[90] mt-2 flex max-h-[min(42rem,calc(100dvh-5rem))] w-80 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-popover dark:shadow-[0_16px_48px_rgba(0,0,0,0.4)]"
     >
-      <div className="flex items-center justify-between border-b border-border px-4 py-2">
+      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
         <h2 className="text-sm font-semibold text-foreground">
           {i18nService.t('coworkSummaryTitle')}
         </h2>
         <button
           type="button"
           aria-label={i18nService.t('close')}
-          className="rounded-md p-1 text-secondary hover:bg-surface-raised"
+          className="flex h-7 w-7 items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface-raised hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           onClick={onClose}
         >
           <XMarkIcon className="h-4 w-4" />
@@ -235,13 +235,13 @@ export default function SessionSummaryPanel(props: Props) {
         )}
         <section>
           <div className="flex items-center justify-between gap-2 px-2 pb-1">
-            <h3 className="text-xs font-medium text-muted">
+            <h3 className="text-xs font-medium text-secondary">
               {i18nService.t('coworkSummaryOutputs')}
             </h3>
             {!props.resources?.outputs.length &&
               !props.resources?.outputsUnavailable &&
               !props.resources?.omittedOversized && (
-                <span className="shrink-0 text-[9px] leading-4 text-muted">
+                <span className="shrink-0 text-[11px] leading-4 text-secondary">
                   {i18nService.t('coworkSummaryOutputsNone')}
                 </span>
               )}

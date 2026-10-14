@@ -2502,7 +2502,7 @@ export const chatStyles = [
     /* Use CSS custom properties controlled by the app's data-theme,
        NOT prefers-color-scheme which follows the OS setting. */
     :host(.dark) {
-      color: #e5e7eb;
+      color: var(--justdo-chat-text, #e5e7eb);
     }
     :host(.dark) .chat-bubble--assistant {
       background: color-mix(
@@ -2511,10 +2511,6 @@ export const chatStyles = [
           var(--justdo-assistant-bubble-background-strength, 100%),
         transparent
       );
-      border-color: rgba(255, 255, 255, 0.06);
-    }
-    :host(.dark) .chat-thinking__content {
-      background: rgba(255, 255, 255, 0.06);
       border-color: rgba(255, 255, 255, 0.06);
     }
 
@@ -2583,7 +2579,7 @@ export const chatStyles = [
       border: 1px solid var(--justdo-chat-border, rgba(148, 163, 184, 0.32));
       border-radius: 12px;
       padding: 9px 11px;
-      background: var(--justdo-chat-process-bg, rgba(248, 250, 252, 0.72));
+      background: var(--justdo-surface, rgba(248, 250, 252, 0.72));
       color: var(--justdo-chat-text, #1e293b);
       font: inherit;
       text-align: left;
@@ -2664,15 +2660,18 @@ export const chatStyles = [
       color: var(--justdo-chat-muted, #64748b);
       font: inherit;
       font-size: 13px;
-      font-style: italic;
       font-weight: 500;
       cursor: pointer;
     }
     .process-summary:hover,
     .process-summary:focus-visible {
-      background: rgba(59, 130, 246, 0.08);
-      color: #2563eb;
+      background: color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 8%, transparent);
+      color: var(--justdo-chat-accent, #2563eb);
       outline: none;
+    }
+    .process-summary:focus-visible {
+      outline: 2px solid var(--justdo-chat-accent, #2563eb);
+      outline-offset: 2px;
     }
     .process-summary__icon {
       font-size: 16px;
@@ -2690,7 +2689,7 @@ export const chatStyles = [
       display: grid;
       grid-template-columns: minmax(0, 1fr);
       min-width: 0;
-      gap: 8px;
+      gap: 12px;
       margin: 2px 0 8px 18px;
       padding: 0 0 0 14px;
       border-left: 1px solid var(--justdo-chat-border, rgba(148, 163, 184, 0.32));
@@ -2698,9 +2697,9 @@ export const chatStyles = [
     }
     .process-summary__item {
       min-width: 0;
-      border-radius: 8px;
-      padding: 7px 9px;
-      background: var(--justdo-chat-process-bg, rgba(248, 250, 252, 0.58));
+      padding: 4px 2px;
+      border: 0;
+      background: transparent;
       font-size: 12px;
       font-style: normal;
     }
@@ -2734,16 +2733,18 @@ export const chatStyles = [
     .process-summary__item-heading strong {
       overflow: hidden;
       color: var(--justdo-chat-text, #111827);
+      font-weight: 600;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
     .process-summary__thinking {
-      margin-top: 5px;
-      padding: 6px 8px;
-      border-radius: 6px;
+      margin: 6px 0 0 16px;
+      padding: 8px 10px;
+      border-radius: 8px;
       background: var(--justdo-chat-code-bg, rgba(15, 23, 42, 0.05));
-      color: var(--justdo-chat-muted, #64748b);
-      line-height: 1.5;
+      color: var(--justdo-chat-text-secondary, #64748b);
+      font-size: 13px;
+      line-height: 1.65;
       max-height: 18em;
       overflow-y: auto;
     }
@@ -2777,6 +2778,25 @@ export const chatStyles = [
       cursor: pointer;
       list-style-position: outside;
     }
+    .process-summary__tool-title::after {
+      content: '';
+      flex: 0 0 5px;
+      width: 5px;
+      height: 5px;
+      margin-left: 4px;
+      border-right: 1.5px solid currentColor;
+      border-bottom: 1.5px solid currentColor;
+      color: var(--justdo-chat-muted, #64748b);
+      transform: rotate(-45deg);
+    }
+    .process-summary__tool[open] > .process-summary__tool-title::after {
+      transform: rotate(45deg);
+    }
+    .process-summary__tool-title:focus-visible {
+      outline: 2px solid var(--justdo-chat-accent, #2563eb);
+      outline-offset: 4px;
+      border-radius: 3px;
+    }
     .process-summary__tool-status {
       width: 7px;
       height: 7px;
@@ -2804,6 +2824,7 @@ export const chatStyles = [
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      font-weight: 600;
     }
     .process-summary__tool-input {
       flex: 1 1 0;
@@ -3069,9 +3090,10 @@ export const chatStyles = [
     }
     .process-live {
       width: min(100%, 680px);
-      border-radius: 8px;
-      padding: 8px 10px;
-      background: var(--justdo-chat-process-bg, rgba(248, 250, 252, 0.58));
+      box-sizing: border-box;
+      padding: 4px 2px;
+      border: 0;
+      background: transparent;
       font-size: 12px;
     }
     .process-live--edit {

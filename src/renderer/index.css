@@ -3,6 +3,13 @@
 @import './theme/css/base.css';
 
 @tailwind base;
+
+/* Bare borders and dividers must inherit the palette, not Tailwind's light gray. */
+@layer base {
+  *, ::before, ::after {
+    border-color: var(--justdo-border);
+  }
+}
 @tailwind components;
 @tailwind utilities;
 
@@ -444,19 +451,24 @@ select::-ms-expand {
 }
 
 /* Session group styles */
-/* 分组头部 - 明显可区分的视觉层级 */
+/* Quiet group rows blend into the sidebar until interacted with. */
 .session-group-header {
   @apply flex items-center gap-2 rounded-lg border px-2.5 py-1.5 cursor-pointer transition-colors;
   position: relative;
-  background-color: var(--justdo-surface-raised);
+  background-color: transparent;
   margin-bottom: 2px;
   margin-top: 0;
   border-color: transparent;
 }
 
 .session-group-header:hover {
-  @apply bg-black/[0.06] dark:bg-white/[0.08];
-  border-color: rgba(128, 128, 128, 0.15);
+  background-color: var(--justdo-surface);
+  border-color: transparent;
+}
+
+.session-group-header:focus-visible {
+  outline: 2px solid var(--justdo-primary);
+  outline-offset: -2px;
 }
 
 .session-group-header .group-indicator {
