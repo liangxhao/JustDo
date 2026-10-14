@@ -84,6 +84,7 @@ export const settingsTranslations = {
     computerControlEnable: '允许电脑操控',
     computerControlEnableDescription: '允许助手查看屏幕并操作电脑上的应用。开关修改后自动保存。',
     computerControlSaving: '正在保存电脑操控设置，请稍候…',
+    computerControlLoading: '正在读取电脑操控设置…',
     computerControlModelRequirement: '使用时，当前会话的模型需要支持图像。',
     computerControlLoadFailed: '暂时无法读取电脑操控设置，请重试。',
     computerControlSaveFailed: '电脑操控设置未能完成更新，请重试读取当前状态。',
@@ -1432,6 +1433,7 @@ export const settingsTranslations = {
     computerControlEnableDescription:
       'Allow the assistant to view the screen and operate applications. Changes are saved automatically.',
     computerControlSaving: 'Saving computer control settings. Please wait…',
+    computerControlLoading: 'Loading computer control settings…',
     computerControlModelRequirement:
       'The model used in the current conversation must support images.',
     computerControlLoadFailed: 'Unable to read computer control settings. Please try again.',

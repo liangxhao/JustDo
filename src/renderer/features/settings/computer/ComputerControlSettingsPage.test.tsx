@@ -2,6 +2,7 @@
 import type { ExtensionChangedEvent } from '@shared/plugins/extensions';
 import type { ComputerControlResult } from '@shared/security/computerControl';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { translations } from '@/services/i18n/translations';
@@ -53,10 +54,59 @@ function setup(initial = false) {
   };
 }
 
+test.each([false, true])('loads enabled=%s without showing a default-off switch', async enabled => {
+  const api = setup(enabled);
+  let completeLoad!: (result: ComputerControlResult) => void;
+  api.get.mockReturnValueOnce(
+    new Promise(resolve => {
+      completeLoad = resolve;
+    }),
+  );
+  render(
+    <StrictMode>
+      <ComputerControlSettingsPage />
+    </StrictMode>,
+  );
+
+  expect(screen.queryByRole('switch')).toBeNull();
+  expect(screen.getByRole('status').textContent).toBe(translations.zh.computerControlLoading);
+  fireEvent(window, new Event('focus'));
+  fireEvent(window, new Event('focus'));
+  expect(api.get).toHaveBeenCalledOnce();
+  expect(api.setEnabled).not.toHaveBeenCalled();
+
+  await act(async () => completeLoad({ success: true, enabled }));
+
+  const toggle = await screen.findByRole('switch', { name: translations.zh.computerControlEnable });
+  expect(toggle.getAttribute('aria-checked')).toBe(String(enabled));
+  expect((toggle as HTMLButtonElement).disabled).toBe(false);
+  expect(screen.queryByRole('status')).toBeNull();
+});
+
+test('does not reuse an initial snapshot after an extension change', async () => {
+  const api = setup();
+  let completeLoad!: (result: ComputerControlResult) => void;
+  api.get.mockReturnValueOnce(
+    new Promise(resolve => {
+      completeLoad = resolve;
+    }),
+  );
+  render(<ComputerControlSettingsPage />);
+
+  act(() => api.change(true));
+  const toggle = await screen.findByRole('switch', { name: translations.zh.computerControlEnable });
+  expect(toggle.getAttribute('aria-checked')).toBe('true');
+
+  await act(async () => completeLoad({ success: true, enabled: false }));
+
+  expect(toggle.getAttribute('aria-checked')).toBe('true');
+  expect(api.get).toHaveBeenCalledTimes(2);
+});
+
 test('shows only one switch and the current-conversation image requirement', async () => {
   const api = setup();
   render(<ComputerControlSettingsPage />);
-  const toggle = screen.getByRole('switch', { name: '允许电脑操控' });
+  const toggle = await screen.findByRole('switch', { name: '允许电脑操控' });
   await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(false));
   expect(toggle.getAttribute('aria-checked')).toBe('false');
   expect(screen.getAllByRole('switch')).toHaveLength(1);
@@ -87,7 +137,7 @@ test.each([false, true])('shows immediate saving feedback from enabled=%s', asyn
     }),
   );
   render(<ComputerControlSettingsPage />);
-  const toggle = screen.getByRole('switch', { name: translations.zh.computerControlEnable });
+  const toggle = await screen.findByRole('switch', { name: translations.zh.computerControlEnable });
   await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(false));
 
   fireEvent.click(toggle);
@@ -117,7 +167,7 @@ test('defers and combines refreshes during a save, then shows the observed state
     }),
   );
   render(<ComputerControlSettingsPage />);
-  const toggle = screen.getByRole('switch');
+  const toggle = await screen.findByRole('switch');
   await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(toggle);
 
@@ -137,7 +187,7 @@ test('defers and combines refreshes during a save, then shows the observed state
 test('ignores a refresh started before a successful save', async () => {
   const api = setup();
   render(<ComputerControlSettingsPage />);
-  const toggle = screen.getByRole('switch');
+  const toggle = await screen.findByRole('switch');
   await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(false));
   let completeRefresh!: (result: ComputerControlResult) => void;
   api.get.mockReturnValueOnce(
@@ -159,7 +209,7 @@ test('keeps the observed choice after a failed write and displays a readable err
   const api = setup();
   api.setEnabled.mockResolvedValue({ success: false, code: 'conflict' });
   render(<ComputerControlSettingsPage />);
-  const toggle = screen.getByRole('switch');
+  const toggle = await screen.findByRole('switch');
   await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(toggle);
   expect(await screen.findByRole('alert')).toBeTruthy();
@@ -174,29 +224,40 @@ test('reloads persisted state when the native apply fails after a successful wri
     return { success: false, code: 'unavailable' };
   });
   render(<ComputerControlSettingsPage />);
-  const toggle = screen.getByRole('switch');
+  const toggle = await screen.findByRole('switch');
   await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(toggle);
   await screen.findByRole('alert');
   await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('true'));
 });
 
-test('disables the switch when loading fails and allows retry', async () => {
+test('shows an unknown state when loading fails and a loading state while retrying', async () => {
   const api = setup();
   api.get.mockRejectedValueOnce(new Error('disconnected'));
   render(<ComputerControlSettingsPage />);
   await screen.findByRole('alert');
-  const toggle = screen.getByRole('switch');
-  expect((toggle as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.queryByRole('switch')).toBeNull();
+  expect(screen.queryByRole('status')).toBeNull();
+  let completeRetry!: (result: ComputerControlResult) => void;
+  api.get.mockReturnValueOnce(
+    new Promise(resolve => {
+      completeRetry = resolve;
+    }),
+  );
   fireEvent.click(screen.getByRole('button', { name: translations.zh.retry }));
-  await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(false));
+  expect(screen.queryByRole('switch')).toBeNull();
+  expect(screen.getByRole('status').textContent).toBe(translations.zh.computerControlLoading);
+  await act(async () => completeRetry({ success: true, enabled: true }));
+  const toggle = await screen.findByRole('switch', { name: translations.zh.computerControlEnable });
+  expect((toggle as HTMLButtonElement).disabled).toBe(false);
+  expect(toggle.getAttribute('aria-checked')).toBe('true');
   expect(screen.queryByRole('alert')).toBeNull();
 });
 
 test('tracks external extension changes and unsubscribes on leaving the page', async () => {
   const api = setup();
   const view = render(<ComputerControlSettingsPage />);
-  const toggle = screen.getByRole('switch');
+  const toggle = await screen.findByRole('switch');
   await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(false));
   api.change(true);
   await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('true'));

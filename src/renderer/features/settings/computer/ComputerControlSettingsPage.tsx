@@ -1,5 +1,6 @@
 import { ComputerDesktopIcon } from '@heroicons/react/24/outline';
 import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
+import type { ComputerControlResult } from '@shared/security/computerControl';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
@@ -10,10 +11,12 @@ const t = (key: string) => i18nService.t(key);
 
 export default function ComputerControlSettingsPage() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const savingRef = useRef(false);
   const refreshPending = useRef(false);
+  const readInFlight = useRef<Promise<ComputerControlResult> | null>(null);
   const revision = useRef(0);
   const active = useRef(true);
   const invalidate = useCallback(() => {
@@ -26,9 +29,14 @@ export default function ComputerControlSettingsPage() {
       return;
     }
     const request = ++revision.current;
+    setLoading(true);
     if (clearError) setError(null);
+    let pending: Promise<ComputerControlResult> | null = null;
     try {
-      const result = await window.electron.openclaw.computerControl.get();
+      // Reuse only an in-flight read, never a cached permission result.
+      pending = readInFlight.current ?? window.electron.openclaw.computerControl.get();
+      readInFlight.current = pending;
+      const result = await pending;
       if (!active.current || request !== revision.current) return;
       if (result.success) setEnabled(result.enabled);
       else {
@@ -40,6 +48,9 @@ export default function ComputerControlSettingsPage() {
         setEnabled(null);
         setError(t('computerControlLoadFailed'));
       }
+    } finally {
+      if (readInFlight.current === pending) readInFlight.current = null;
+      if (active.current && request === revision.current) setLoading(false);
     }
   }, []);
 
@@ -49,7 +60,11 @@ export default function ComputerControlSettingsPage() {
       void load();
     };
     const stop = window.electron.extensions.onChanged(change => {
-      if (change.extensionId === OpenClawExtensionId.CUA_COMPUTER) refresh();
+      if (change.extensionId === OpenClawExtensionId.CUA_COMPUTER) {
+        // A change notification must not reuse a snapshot taken before the change.
+        readInFlight.current = null;
+        refresh();
+      }
     });
     window.addEventListener('focus', refresh);
     void load();
@@ -65,6 +80,7 @@ export default function ComputerControlSettingsPage() {
     if (enabled === null || saving || savingRef.current) return;
     const desired = !enabled;
     const request = ++revision.current;
+    readInFlight.current = null;
     savingRef.current = true;
     refreshPending.current = false;
     setSaving(true);
@@ -105,35 +121,48 @@ export default function ComputerControlSettingsPage() {
             {t('computerControlEnable')}
           </div>
           <p id="computer-control-description" className="mt-1 text-xs leading-5 text-secondary">
-            {saving ? (
+            {saving || (loading && enabled === null) ? (
               <span role="status" className="text-primary">
-                {t('computerControlSaving')}
+                {t(saving ? 'computerControlSaving' : 'computerControlLoading')}
               </span>
             ) : (
               t('computerControlEnableDescription')
             )}
           </p>
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-labelledby="computer-control-label"
-          aria-describedby="computer-control-description"
-          aria-checked={enabled === true}
-          aria-busy={saving}
-          disabled={enabled === null || saving}
-          onClick={() => void toggle()}
-          className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 ease-out motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${saving ? 'cursor-wait' : 'disabled:cursor-not-allowed disabled:opacity-50'} ${enabled ? 'bg-primary' : 'bg-border'}`}
-        >
-          <span
+        {enabled === null ? (
+          <div
             aria-hidden="true"
-            className={`absolute left-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-white shadow-sm transition-transform duration-200 ease-out motion-reduce:transition-none ${enabled ? 'translate-x-5' : 'translate-x-0'}`}
+            className="flex h-6 w-11 shrink-0 items-center justify-center rounded-full bg-border/50 text-secondary"
           >
-            {saving && (
-              <span className="h-3 w-3 rounded-full border-2 border-primary/25 border-t-primary motion-safe:animate-spin" />
+            {loading ? (
+              <span className="h-4 w-4 rounded-full border-2 border-primary/25 border-t-primary motion-safe:animate-spin" />
+            ) : (
+              <span>—</span>
             )}
-          </span>
-        </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            role="switch"
+            aria-labelledby="computer-control-label"
+            aria-describedby="computer-control-description"
+            aria-checked={enabled === true}
+            aria-busy={saving}
+            disabled={enabled === null || saving}
+            onClick={() => void toggle()}
+            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 ease-out motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${saving ? 'cursor-wait' : 'disabled:cursor-not-allowed disabled:opacity-50'} ${enabled ? 'bg-primary' : 'bg-border'}`}
+          >
+            <span
+              aria-hidden="true"
+              className={`absolute left-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-white shadow-sm transition-transform duration-200 ease-out motion-reduce:transition-none ${enabled ? 'translate-x-5' : 'translate-x-0'}`}
+            >
+              {saving && (
+                <span className="h-3 w-3 rounded-full border-2 border-primary/25 border-t-primary motion-safe:animate-spin" />
+              )}
+            </span>
+          </button>
+        )}
       </div>
       <p className="text-sm leading-6 text-secondary">{t('computerControlModelRequirement')}</p>
       {enabled === true && <ComputerOverlayPreviewSetting />}
