@@ -18,29 +18,6 @@ export const sessionDiagnosticsTranslations = {
       'The last reply stored for this run contains answer text, a normal end marker and no tool call or request to continue generating.',
     diagnosticsModelReplyEndedAdvice:
       'If work remains, ask the model to execute the remaining steps. If it repeatedly answers without taking action, check its tool-call support. Saying “I will continue” in the reply does not execute a tool.',
-    diagnosticsLoopExitEvidence:
-      'The system recorded this exact exit condition when the turn ended.',
-    diagnosticsLoopExit_no_pending_work: 'No further steps were pending, so this turn ended.',
-    diagnosticsLoopAdvice_no_pending_work:
-      'No tool work, continuation request or pending message remained. The system therefore stopped requesting more output. This does not mean it checked that your task was complete; send a follow-up if work remains.',
-    diagnosticsLoopExit_abort_signal: 'Execution received a cancellation request.',
-    diagnosticsLoopAdvice_abort_signal:
-      'Check the stop or timeout records below before restarting.',
-    diagnosticsLoopExit_model_aborted: 'The model response was interrupted.',
-    diagnosticsLoopAdvice_model_aborted:
-      'Check the model connection and cancellation records before retrying.',
-    diagnosticsLoopExit_tool_loop_guard: 'Repeated tool calls triggered loop protection.',
-    diagnosticsLoopAdvice_tool_loop_guard:
-      'Check repeated tool errors or unchanged results, then correct the task or tool setup before retrying.',
-    diagnosticsLoopExit_model_error: 'The model request failed.',
-    diagnosticsLoopAdvice_model_error:
-      'Check the model error details below, including credentials, quota and connection issues.',
-    diagnosticsLoopExit_policy_stop: 'An execution rule instructed the system to end this turn.',
-    diagnosticsLoopAdvice_policy_stop:
-      'The stop came from an execution rule, not simply from the absence of tool calls. Inspect the rule and related records.',
-    diagnosticsLoopExit_handoff: 'Execution left this loop for the next scheduling step.',
-    diagnosticsLoopAdvice_handoff:
-      'Check subsequent runs or messages to see whether execution resumed.',
     diagnosticsStopBasis_completed:
       'The records do not show whether the model finished its answer, returned no usable output, or stopped for another reason.',
     diagnosticsStop_reasoning_only:
@@ -558,24 +535,6 @@ export const sessionDiagnosticsTranslations = {
       '本轮保存的最后一条模型回复有正文，带有正常结束标记，没有工具调用，也没有要求继续生成。',
     diagnosticsModelReplyEndedAdvice:
       '如果任务未完成，请明确要求继续执行剩余步骤。如果反复只回复、不操作，请检查该模型是否支持工具调用。正文说“接下来继续”不等于实际执行工具。',
-    diagnosticsLoopExitEvidence: '系统在本轮结束时记录了这个具体条件。',
-    diagnosticsLoopExit_no_pending_work: '没有后续步骤可执行，系统结束了本轮。',
-    diagnosticsLoopAdvice_no_pending_work:
-      '结束时没有待执行的工具、继续生成要求或待处理消息，所以系统没有再向模型请求下一步。这不表示系统检查过任务是否完成；如果还有工作，可发送新消息要求继续。',
-    diagnosticsLoopExit_abort_signal: '执行收到了取消请求。',
-    diagnosticsLoopAdvice_abort_signal: '继续前，请查看下方的停止或超时记录。',
-    diagnosticsLoopExit_model_aborted: '模型回复被中断。',
-    diagnosticsLoopAdvice_model_aborted: '检查模型连接和取消记录后再重试。',
-    diagnosticsLoopExit_tool_loop_guard: '工具反复调用，触发了防止死循环的保护。',
-    diagnosticsLoopAdvice_tool_loop_guard:
-      '查看是否反复出现相同工具错误或没有进展的结果，调整任务或工具配置后再重试。',
-    diagnosticsLoopExit_model_error: '模型请求失败，执行结束。',
-    diagnosticsLoopAdvice_model_error: '查看下方的模型错误，检查凭据、额度和连接。',
-    diagnosticsLoopExit_policy_stop: '执行规则要求结束本轮。',
-    diagnosticsLoopAdvice_policy_stop:
-      '本次停止由执行规则触发，不是仅仅因为没有工具调用。请结合相关记录检查执行规则。',
-    diagnosticsLoopExit_handoff: '当前执行循环结束，交由后续调度处理。',
-    diagnosticsLoopAdvice_handoff: '检查后续运行或消息，确认是否继续执行。',
     diagnosticsStopBasis_completed:
       '现有记录没有说明：是模型回答完了、没有生成有效回复，还是其他原因。不能据此判断任务已经完成。',
     diagnosticsStop_reasoning_only: '最后一次模型回复只有 thinking，没有正文或工具调用。',

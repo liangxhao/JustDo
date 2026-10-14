@@ -1,16 +1,17 @@
-import { parseSwarmWorkflowRequest } from '../prompt/request';
 import { randomUUID } from 'node:crypto';
-import { FLOW_LIMITS, FLOW_MANAGEMENT_TOOLS, FLOW_RPC, FLOW_TOOLS } from '../contracts/flow';
-import { createManagementTools } from '../management/tools';
-import { candidateItemResult } from '../batch/snapshot';
-import { registerBatchApi, RESULT_TOOL } from '../batch/api';
+
 import {
   captureFilesystemAdmission,
   type FilesystemAdmission,
 } from '../../runtime-services/filesystem/admission';
+import { registerBatchApi, RESULT_TOOL } from '../batch/api';
+import { candidateItemResult } from '../batch/snapshot';
+import { FLOW_LIMITS, FLOW_MANAGEMENT_TOOLS, FLOW_RPC, FLOW_TOOLS } from '../contracts/flow';
 import { SUBMISSION_LIMITS, validateSubmission } from '../execution/submission';
-import { entry, managed, object } from './native-context';
+import { createManagementTools } from '../management/tools';
+import { parseSwarmWorkflowRequest } from '../prompt/request';
 import type { WorkflowContext } from './context';
+import { entry, managed, object } from './native-context';
 
 export function registerWorkflowSubmissionTools(context: WorkflowContext): void {
   const {
@@ -196,7 +197,7 @@ export function registerWorkflowResultTools(context: WorkflowContext): void {
         throw new Error('Native result query authority is unavailable or expired.');
       return {
         runId: bound.runId,
-        contextTokens: resultBudgets.get(sessionKey + '\n' + bound.runId),
+        resultBudget: resultBudgets.read(sessionKey, bound.runId, bound.budgetAttempt),
         assertCurrent: () => {
           if (bound.signal?.aborted || generation !== state.generation)
             throw new Error('Native result query cancelled or service replaced.');

@@ -38,6 +38,13 @@ Patch 工具拒绝：
 
 Thinking/history、工具发现、原生 task queue/join、审批和 compaction 等能力优先使用锁定版本的原生契约；Runtime Services 承接产品需要的受限读取和投影。新增缺口前先核对公开 plugin/Gateway API，再判断是否确实需要补丁。
 
+可组合的 provider 行为放在普通 Extension 源码；宿主启动和配置行为放在 Main；
+需要原生 actor/authority 的较大实现放在 `src/main/openclaw/runtime/native-support/`，
+patch 只接入显式原生依赖。支持模块通过事务工具复制并校验精确字节，最终 bundle
+校验完整实现和绑定；普通源码也必须纳入 build recipe，不能因移出补丁目录而绕过
+构建证明。应用插件入口组合必须保留原生身份并校验锁定入口，不能注册同名 provider
+或用文本替换维持另一份上游实现。
+
 ## 4. 何时允许增加 Patch
 
 只有以下类型通常成立：

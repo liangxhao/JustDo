@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import type { McpServerRecord } from '../../plugins/mcp';
@@ -18,9 +20,11 @@ const record = (overrides: Partial<McpServerRecord>): McpServerRecord => ({
 describe('buildOpenClawMcpServers', () => {
   it('maps stdio configuration to OpenClaw native MCP configuration', () => {
     expect(
-      buildOpenClawMcpServers([
-        record({ command: 'npx', args: ['-y', 'example-mcp'], env: { TOKEN: 'secret' } }),
-      ]),
+      buildOpenClawMcpServers(
+        [record({ command: 'npx', args: ['-y', 'example-mcp'], env: { TOKEN: 'secret' } })],
+        60,
+        null,
+      ),
     ).toEqual({
       server: {
         enabled: true,
@@ -30,6 +34,62 @@ describe('buildOpenClawMcpServers', () => {
         env: { TOKEN: 'secret' },
       },
     });
+  });
+
+  it('projects the effective Windows package command without mutating stored MCP settings', () => {
+    const runtime = {
+      electronPath: 'C:\\App 中文\\desktop.exe',
+      npmBinDir: 'C:\\App 中文\\resources\\app.asar\\node_modules\\npm\\bin',
+      preloadPath: 'C:\\User Data\\cowork\\bin\\hide-child-process-windows.cjs',
+    };
+    const server = record({
+      command: 'npm',
+      args: ['ignored'],
+      openClawConfig: {
+        command: 'NPX.cmd',
+        args: ['-y', 'example-mcp', 'argument with spaces'],
+        env: { TOKEN: 'fixture-token', RETRY_COUNT: 3 },
+        cwd: 'C:\\Project 中文',
+        toolFilter: { include: ['search_*'] },
+      },
+    });
+    const before = structuredClone(server);
+    const config = buildOpenClawMcpServers([server], 60, runtime).server;
+    expect(config).toMatchObject({
+      command: runtime.electronPath,
+      args: [
+        '--require',
+        runtime.preloadPath,
+        path.join(runtime.npmBinDir, 'npx-cli.js'),
+        '-y',
+        'example-mcp',
+        'argument with spaces',
+      ],
+      env: { TOKEN: 'fixture-token', RETRY_COUNT: 3, ELECTRON_RUN_AS_NODE: '1' },
+      cwd: 'C:\\Project 中文',
+      toolFilter: { include: ['search_*'] },
+    });
+    expect(server).toEqual(before);
+  });
+
+  it('keeps explicit executables and remote transports out of package-runner projection', () => {
+    const runtime = {
+      electronPath: 'electron.exe',
+      npmBinDir: 'npm-bin',
+      preloadPath: 'preload.cjs',
+    };
+    const configs = buildOpenClawMcpServers(
+      [
+        record({ name: 'custom', command: 'C:\\Custom\\npx.cmd', args: ['custom'] }),
+        record({ name: 'remote', transportType: 'http', url: 'https://example.com/mcp' }),
+      ],
+      60,
+      runtime,
+    );
+    expect(configs.custom).toMatchObject({ command: 'C:\\Custom\\npx.cmd', args: ['custom'] });
+    expect(configs.custom).not.toHaveProperty('env');
+    expect(configs.remote).not.toHaveProperty('command');
+    expect(configs.remote).not.toHaveProperty('env');
   });
 
   it('maps remote transports to OpenClaw transport names', () => {

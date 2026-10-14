@@ -6,7 +6,7 @@ const path = require('node:path');
 /** Preserve native module identity between the Gateway bundle and dynamically loaded SDKs. */
 function createSharedSdkModulesPlugin(runtimeDir, esbuild) {
   const runtimeRoot = fs.realpathSync(runtimeDir);
-  const entries = ['secret-input-runtime', 'reply-runtime'].map(name => {
+  const entries = ['secret-input-runtime', 'reply-runtime', 'session-visibility'].map(name => {
     const entry = path.join(runtimeRoot, 'dist', 'plugin-sdk', `${name}.js`);
     if (!fs.existsSync(entry)) throw new Error(`Missing native ${name} SDK entry.`);
     return entry;
@@ -55,6 +55,8 @@ function createSharedSdkModulesPlugin(runtimeDir, esbuild) {
     // Native detach also clears CLI history ownership. Its producer/consumer
     // must share the same carrier as the external transcript scope helper.
     'getCliHistoryWriter',
+    // Scoped grants must be issued and checked by the same module instance.
+    'registerScopedSessionAccessProvider',
   ];
   const inputs = Object.keys(analysis.metafile.inputs).map(input => {
     const absolute = fs.realpathSync(path.resolve(runtimeRoot, input));
@@ -63,7 +65,8 @@ function createSharedSdkModulesPlugin(runtimeDir, esbuild) {
   const shared = new Map();
   for (const contract of ownerContracts) {
     const matches = inputs.filter(input => input.content.includes(`function ${contract}(`));
-    if (matches.length !== 1) throw new Error(`Expected one native SDK state owner for ${contract}.`);
+    if (matches.length !== 1)
+      throw new Error(`Expected one native SDK state owner for ${contract}.`);
     const input = matches[0].absolute;
     const absolute = fs.realpathSync(path.resolve(runtimeRoot, input));
     const relative = path.relative(runtimeRoot, absolute);

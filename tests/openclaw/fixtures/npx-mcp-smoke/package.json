@@ -1,0 +1,14 @@
+{
+  "name": "mcp-npx-smoke",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Offline stdio fixture for testing the managed npx MCP launcher",
+  "bin": {
+    "mcp-npx-smoke": "server.mjs"
+  },
+  "files": [
+    "server.mjs"
+  ],
+  "license": "MIT"
+}

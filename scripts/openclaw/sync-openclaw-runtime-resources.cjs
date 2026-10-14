@@ -4,6 +4,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { syncNativeExtensionOverlay } = require('./sync-native-extension-overlay.cjs');
 const {
   pruneExtensionDependencies,
   pruneRuntimeExtensions,
@@ -425,6 +426,22 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
 
     const extensionSourceDir = path.join(sourceDir, entry.name);
     const extensionTargetDir = path.join(targetDir, entry.name);
+    if (
+      readJsonFile(path.join(extensionSourceDir, 'package.json'))?.justdo?.nativeOverlay === true
+    ) {
+      const stagingRoot = fs.mkdtempSync(path.join(targetDir, `.native-extension-${entry.name}-`));
+      const stagingDir = path.join(stagingRoot, entry.name);
+      try {
+        fs.cpSync(extensionTargetDir, stagingDir, { recursive: true, verbatimSymlinks: true });
+        syncNativeExtensionOverlay(extensionSourceDir, stagingDir);
+        fs.rmSync(extensionTargetDir, { recursive: true, force: true });
+        renameExtensionIntoPlace(stagingDir, extensionTargetDir);
+        copied.push(entry.name);
+      } finally {
+        fs.rmSync(stagingRoot, { recursive: true, force: true });
+      }
+      continue;
+    }
     const usesProductionDependencies = hasProductionDependencies(extensionSourceDir);
     if (usesProductionDependencies && !installTarget) {
       installTarget = resolveRuntimeInstallTarget(runtimeRoot);

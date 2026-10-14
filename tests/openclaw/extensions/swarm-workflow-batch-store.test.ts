@@ -1,30 +1,121 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
 import { afterEach, describe, expect, it } from 'vitest';
-import { FlowStore } from '../../../openclaw-extensions/swarm-workflow/data/store';
+
+import {
+  batchResultPage,
+  RESULT_PAGE_TRANSPORT_BUDGET,
+  RESULT_TRANSPORT_BYTES,
+  resultTransportCost,
+} from '../../../openclaw-extensions/swarm-workflow/contracts/batch';
 import type { Flow, FlowNode } from '../../../openclaw-extensions/swarm-workflow/contracts/flow';
-import { RESULT_TRANSPORT_BYTES, resultTransportCost } from '../../../openclaw-extensions/swarm-workflow/contracts/batch';
+import { FlowStore } from '../../../openclaw-extensions/swarm-workflow/data/store';
 
 const cleanups: Array<() => void> = [];
 afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()));
 function fixture(count = 100) {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'swarm-batch-store-'));
   const store = new FlowStore(directory);
-  const stage: FlowNode = { id: 'task-1', title: 'Process inputs', task: 'Process one file', kind: 'batch', access: 'write',
-    deps: [], status: 'queued', sessionKey: '', agentId: 'main', agentName: 'Main', batchInput: { version: 'version-one', manifestPath: 'manifest.json' } };
-  const flow: Flow = { id: 'flow-one', requestId: 'request-one', parentKey: 'agent:main:justdo:parent', parentId: 'parent', agentId: 'main',
-    agents: [{ id: 'main', name: 'Main' }], cwd: directory, permissionMode: 'workspace', mode: 'auto', goal: 'Process data',
-    revision: 1, createdAt: 1, updatedAt: 1, status: 'running', nodes: [stage] };
+  const stage: FlowNode = {
+    id: 'task-1',
+    title: 'Process inputs',
+    task: 'Process one file',
+    kind: 'batch',
+    access: 'write',
+    deps: [],
+    status: 'queued',
+    sessionKey: '',
+    agentId: 'main',
+    agentName: 'Main',
+    batchInput: { version: 'version-one', manifestPath: 'manifest.json' },
+  };
+  const flow: Flow = {
+    id: 'flow-one',
+    requestId: 'request-one',
+    parentKey: 'agent:main:justdo:parent',
+    parentId: 'parent',
+    agentId: 'main',
+    agents: [{ id: 'main', name: 'Main' }],
+    cwd: directory,
+    permissionMode: 'workspace',
+    mode: 'auto',
+    goal: 'Process data',
+    revision: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    status: 'running',
+    nodes: [stage],
+  };
   store.insert(flow);
-  const items = Array.from({ length: count }, (_, ordinal): FlowNode => ({ ...stage, id: 'item-' + ordinal, kind: 'work',
-    title: 'File ' + ordinal, sessionKey: 'agent:main:subagent:item-' + ordinal,
-    batchItem: { stageId: stage.id, manifestVersion: 'version-one', ordinal, key: 'file-' + ordinal, workspace: directory }, batchInput: undefined }));
+  const items = Array.from({ length: count }, (_, ordinal): FlowNode => ({
+    ...stage,
+    id: 'item-' + ordinal,
+    kind: 'work',
+    title: 'File ' + ordinal,
+    sessionKey: 'agent:main:subagent:item-' + ordinal,
+    batchItem: {
+      stageId: stage.id,
+      manifestVersion: 'version-one',
+      ordinal,
+      key: 'file-' + ordinal,
+      workspace: directory,
+    },
+    batchInput: undefined,
+  }));
   store.expandBatch(flow, stage, items, () => {});
-  cleanups.push(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
+  cleanups.push(() => {
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
   return { store, flow, stage, items, directory };
 }
 describe('durable batch working sets', () => {
+  it('reads every accepted item and cursor under the plugin page policy without a native budget field', () => {
+    const { store, flow, stage, items } = fixture();
+    for (const item of items) {
+      const current = store.get(flow.id, item.id)!;
+      const node = current.nodes.find(candidate => candidate.id === item.id)!;
+      node.status = 'done';
+      node.cleanupSettled = true;
+      node.artifacts = {
+        flowId: flow.id,
+        stageId: stage.id,
+        itemId: node.id,
+        manifestVersion: 'version-one',
+        attempt: 1,
+        runId: 'run-' + node.id,
+        inputKey: node.batchItem!.key,
+        summary: 'done',
+        artifacts: [{ path: 'output/result.json', bytes: 100, sha256: 'a'.repeat(64) }],
+      };
+      store.put(current);
+    }
+    const loaded = store.get(flow.id)!;
+    const loadedStage = loaded.nodes.find(node => node.id === stage.id)!;
+    let after = -1;
+    const seen: string[] = [];
+    do {
+      const page = store.batches.results(loaded, stage.id, after, RESULT_PAGE_TRANSPORT_BUDGET);
+      const delivered = batchResultPage(loaded, loadedStage, page.items, page.after);
+      expect(resultTransportCost(delivered)).toBeLessThanOrEqual(RESULT_PAGE_TRANSPORT_BUDGET);
+      seen.push(...(page.items as Array<{ id: string }>).map(item => item.id));
+      if (page.after === undefined) {
+        expect(delivered).not.toHaveProperty('cursor');
+        break;
+      }
+      expect(JSON.parse(Buffer.from(delivered.cursor!, 'base64url').toString())).toEqual([
+        flow.id,
+        stage.id,
+        'version-one',
+        page.after,
+      ]);
+      expect(page.after).toBeGreaterThan(after);
+      after = page.after;
+    } while (true);
+    expect(seen).toEqual(items.map(item => item.id));
+  });
   it('keeps 100 items out of flow snapshots and pages them without results', () => {
     const { store, flow, stage } = fixture();
     const loaded = store.get(flow.id)!;
@@ -42,31 +133,44 @@ describe('durable batch working sets', () => {
     const { store, flow, stage } = fixture();
     const loaded = store.get(flow.id)!;
     const item = loaded.nodes[1];
-    item.status = 'uncertain'; item.intendedRunId = 'run-one';
+    item.status = 'uncertain';
+    item.intendedRunId = 'run-one';
     store.put(loaded);
     expect(store.batches.occupiedCount()).toBe(1);
-    expect(store.batches.owner(item.sessionKey, 'run-one')).toEqual({ flowId: flow.id, nodeId: item.id });
+    expect(store.batches.owner(item.sessionKey, 'run-one')).toEqual({
+      flowId: flow.id,
+      nodeId: item.id,
+    });
     const next = store.get(flow.id)!;
     expect(next.nodes).toHaveLength(3);
     const active = next.nodes.find(node => node.id === item.id)!;
-    active.status = 'done'; active.cleanupSettled = true; active.result = 'large result';
+    active.status = 'done';
+    active.cleanupSettled = true;
+    active.result = 'large result';
     store.put(next);
     expect(store.batches.occupiedCount()).toBe(0);
     expect(store.batches.counts(flow.id, stage.id)).toMatchObject({ done: 1, queued: 99 });
-    expect(store.get(flow.id, item.id)!.nodes.find(node => node.id === item.id)?.result).toBe('large result');
+    expect(store.get(flow.id, item.id)!.nodes.find(node => node.id === item.id)?.result).toBe(
+      'large result',
+    );
   });
   it('rejects stale pages and rolls back item writes together with flow revisions', () => {
     const { store, flow, stage } = fixture();
     const stale = store.get(flow.id)!;
     const page = store.batches.page(stale, stage.id);
     const current = store.get(flow.id)!;
-    current.nodes[1].status = 'running'; current.nodes[1].runId = 'owned-run';
+    current.nodes[1].status = 'running';
+    current.nodes[1].runId = 'owned-run';
     store.put(current);
     stale.nodes[1].status = 'failed';
     expect(() => store.put(stale)).toThrow('revision conflict');
     expect(store.batches.counts(flow.id, stage.id).failed).toBe(0);
-    expect(() => store.batches.page(store.get(flow.id)!, stage.id, { cursor: page.cursor })).toThrow('Refresh');
-    expect(() => store.batches.page(store.get(flow.id)!, stage.id, { status: 'failed', cursor: page.cursor })).toThrow('Refresh');
+    expect(() =>
+      store.batches.page(store.get(flow.id)!, stage.id, { cursor: page.cursor }),
+    ).toThrow('Refresh');
+    expect(() =>
+      store.batches.page(store.get(flow.id)!, stage.id, { status: 'failed', cursor: page.cursor }),
+    ).toThrow('Refresh');
   });
   it('does not expose a partially expanded queue when the admission is revoked', () => {
     const { store, flow, stage, items } = fixture(1);
@@ -74,8 +178,22 @@ describe('durable batch working sets', () => {
     const other = { ...stage, id: 'task-2' };
     loaded.nodes.unshift(other);
     let checks = 0;
-    expect(() => store.expandBatch(loaded, other, [{ ...items[0], id: 'item-other', batchItem: { ...items[0].batchItem!, stageId: other.id } }],
-      () => { if (++checks === 2) throw new Error('revoked'); })).toThrow('revoked');
+    expect(() =>
+      store.expandBatch(
+        loaded,
+        other,
+        [
+          {
+            ...items[0],
+            id: 'item-other',
+            batchItem: { ...items[0].batchItem!, stageId: other.id },
+          },
+        ],
+        () => {
+          if (++checks === 2) throw new Error('revoked');
+        },
+      ),
+    ).toThrow('revoked');
     expect(store.batches.counts(flow.id, other.id).total).toBe(0);
     expect(store.get(flow.id)?.nodes.some(node => node.id === other.id)).toBe(false);
   });
@@ -84,21 +202,43 @@ describe('durable batch working sets', () => {
     for (const item of items) {
       const current = store.get(flow.id, item.id)!;
       const node = current.nodes.find(node => node.id === item.id)!;
-      node.status = 'done'; node.cleanupSettled = true;
-      node.artifacts = { flowId: flow.id, stageId: stage.id, itemId: node.id, manifestVersion: 'version-one',
-        attempt: 1, runId: 'run-' + node.id, inputKey: node.batchItem!.key, summary: '分析完成'.repeat(10),
-        artifacts: [{ path: 'E:\\项目\u9fa6\\'.repeat(12) + 'result.json', bytes: 100, sha256: 'a'.repeat(64) }] };
+      node.status = 'done';
+      node.cleanupSettled = true;
+      node.artifacts = {
+        flowId: flow.id,
+        stageId: stage.id,
+        itemId: node.id,
+        manifestVersion: 'version-one',
+        attempt: 1,
+        runId: 'run-' + node.id,
+        inputKey: node.batchItem!.key,
+        summary: '分析完成'.repeat(10),
+        artifacts: [
+          {
+            path: 'E:\\项目\u9fa6\\'.repeat(12) + 'result.json',
+            bytes: 100,
+            sha256: 'a'.repeat(64),
+          },
+        ],
+      };
       store.put(current);
     }
-    let after = -1; const seen: string[] = [];
+    let after = -1;
+    const seen: string[] = [];
     do {
-      const page = store.batches.results(store.get(flow.id)!, stage.id, after);
-      const payload = { flowId: flow.id, stageId: stage.id, manifestVersion: 'version-one', total: 100,
-        items: page.items, ...(page.after === undefined ? {} : { cursor: 'a'.repeat(512) }) };
+      const loaded = store.get(flow.id)!;
+      const page = store.batches.results(loaded, stage.id, after);
+      const payload = batchResultPage(
+        loaded,
+        loaded.nodes.find(node => node.id === stage.id)!,
+        page.items,
+        page.after,
+      );
       expect(resultTransportCost(payload)).toBeLessThanOrEqual(RESULT_TRANSPORT_BYTES);
       seen.push(...(page.items as Array<{ id: string }>).map(item => item.id));
       if (page.after === undefined) break;
-      expect(page.after).toBeGreaterThan(after); after = page.after;
+      expect(page.after).toBeGreaterThan(after);
+      after = page.after;
     } while (true);
     expect(seen).toEqual(items.map(item => item.id));
   });

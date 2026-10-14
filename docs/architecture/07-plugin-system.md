@@ -42,7 +42,21 @@ Plugin Hub 有四类插件概念；市场当前只开放 extension、skill、mcp
 
 ## 2. 从页面到运行时
 
-日常 Chrome 沿用原生 existing-session driver 和随包 Chrome MCP，设置页通过 Gateway 请求原生 Tab 查询来触发浏览器授权。Windows 构建补丁 003 同时处理随包服务器的直接 Electron 启动与 npm/npx 启动；只对受管 Electron 服务器显式携带 Node 模式环境，保留原生参数、调用方环境、进程身份核验及清理约束。Chrome 授权仍由原生连接和浏览器负责，应用不读取授权状态或代替用户批准。
+日常 Chrome 沿用原生 existing-session driver 和随包 Chrome MCP，设置页通过 Gateway 请求原生 Tab 查询来触发浏览器授权。Windows 的应用配置选择 `chrome-mcp.cmd`，Main 生成的 UTF-8 启动器用 Electron Node 模式启动锁定服务器；`npm.cmd`、`npx.cmd` 和 `node.cmd` 同样位于应用 PATH 前端。启动器内的 Node／可信预加载文件引用使用绝对路径，避免真实 npm 包的 `.cmd` 嵌套调用裸 `node` 时将 `%~dp0` 解析到调用方工作目录。受管 MCP 的裸 `npm/npx` 命令由 Main 配置投影为 Electron Node 的直接启动参数，显式加载可信窗口隐藏模块；用户保存的命令、参数、环境和其它原生字段不被改写，绝对路径自定义命令保留原样。配置投影与启动器共享 npm 路径解析，打包后继续使用逻辑 `app.asar` 路径。原生 MCP 仍过滤不安全环境变量，负责连接授权、进程身份核验与清理。普通插件来源仍可使用应用 PATH 中的自包含启动器。002/003 补丁已移除；真实 npm/npx 与原生配置解析器对照测试验证连接、工具发现、调用和清理，受管配置不产生批处理空帧诊断。真实本地包二进制启动另验证嵌套批处理和中文／空格启动器路径。批处理对照虽有空帧诊断仍能完成普通 Client 连接，不能把该诊断直接等同于功能不可用。
+
+OpenAI 媒体适配由 `openclaw-extensions/openai` 的普通 TypeScript 组合原生插件入口实现。
+资源同步校验原包注册入口和冷启动能力目录的 SHA-256，保留原始字节在同一目录，
+再编译应用入口；原生插件 ID、manifest、鉴权、聊天和其它能力继续由上游实现。
+图片请求得到独立 provider 的配置副本，实时转录在每个会话的 host context 中调整
+WebSocket 地址及对应请求头策略；冷启动能力发现应用相同适配，并发会话不共享可变
+地址。开发期发现排除这种构建组合源码，由运行时原生清单决定可用性，启动源码
+复制也不覆盖原生插件。不注册第二个同名 provider，移除 020/021 补丁。Gateway bundle 和动态 SDK
+通过构建时共享原生会话访问模块实例完成授权注册表共享，移除 027 补丁。
+
+执行结算及压缩的普通实现放在 Main 领域的 `runtime/native-support/`，构建时作为
+原生运行时模块导入，并由构建配方和最终 bundle 校验绑定。034/038 仅保留原生接入
+和验证；原生恢复、worker 及准备/清理阶段需要这些能力，不能依赖可关闭插件的注册
+时机。Runtime Services 继续通过受限 SDK 消费能力，不接管原生状态所有权。
 
 ```mermaid
 flowchart LR
@@ -493,7 +507,7 @@ Gateway 启动的流程服务在同一进程内由各助手的独立工具/钩�
 
 原生 034 为通用插件 SDK 增加每次运行的 timeoutSeconds、可选 managedToolsLifetime='run'、精确 describeRun 和 owned cancelRun，复用原生 registry、whole-run lifecycle 与 process supervisor。未知旧 epoch 或缺少清理证据保留占用，不自动启动替代执行。普通插件仍沿用原有工具生命周期，不能把此模式等同于沙盒或 OS 文件隔离。
 
-原生 035 将已解析的 attempt.contextTokenBudget 填入已有的 before_prompt_build 上下文字段。结果分页以当前运行的有效预算计算完整工具包装大小；不使用模型窗口代替实际预算，缺证据时保持保守额度。该补丁只暴露元数据，不改变原生模型解析、截断或上下文守卫。
+035 补丁已移除。Workflow 普通插件源码通过原生 model_call_started 事件观察有效 contextTokenBudget，以最多 512 条 session/run/trace/尝试 span/额度元数据维护保守上限。模型事件的 trace.parentSpanId 必须匹配本次 before_tool_call 的 trace.spanId；缺失或不匹配时回退 2000 成本单位，不把迟到旧尝试的额度用于当前尝试。同一尝试保留最保守额度；agent_end 和服务停止仅清理观测，不建立执行结算。trace 也不授予执行权限，原有一次性工具身份检查保持独立。结果页取观测预算一半并限于 12,000；按最终 metadata、游标以及 details/content 重复包装计算大小，长结果通过游标完整读取。不依赖 before_prompt_build 的补丁字段，不改变原生模型解析、截断、压缩或上下文守卫。
 
 通用扩展配置表单支持 manifest 明确声明的有界 integer/number 字段。Swarm 的五个参数使用精确 hotPrefixes；并发影响后续准入，其他默认值保存于新流程。数值保存不因 reload ACK 缺失自动重启。manifest 可声明 configurationStatusMethod，保存后核对服务实际配置；Swarm health 返回有限数值配置、hash、生效并发和服务代际。未确认或未运行时显示待生效，重复保存不能伪装已应用。助手名单归应用所有，其余用户数值和显式禁用状态保留。
 

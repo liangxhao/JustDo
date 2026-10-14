@@ -260,34 +260,54 @@ await preparation(); assertRequestCurrent(); emitCompactionEnd(true); respond(tr
 const recovery = `async function compactEmbeddedRunForRecovery(input,recovery) {
 const owner=input.prepareRecoveryOwner();const result=await compactContextEngineWithSafetyTimeout(input);
 input.assertRecoveryActive();return {result};}`;
-const producer = 'function producer(){return {result:{sessionTarget: resultSessionTarget,summary: clientResult.summary}};}';
-const forward = 'function forward(){return {tokensBefore: result.result.tokensBefore,summary: result.result.summary};}';
-const descriptors = 'const coreMethods=[ ["sessions.compact","sessions-compact","operator.admin","<=2026.7"] ];';
-const policies = 'const SESSION_TARGET_POLICY_BY_METHOD = new Map([["sessions.compact", {fields: ["key"],required: true}]]);';
+const producer =
+  'function producer(){return {result:{sessionTarget: resultSessionTarget,summary: clientResult.summary}};}';
+const forward =
+  'function forward(){return {tokensBefore: result.result.tokensBefore,summary: result.result.summary};}';
+const descriptors =
+  'const coreMethods=[ ["sessions.compact","sessions-compact","operator.admin","<=2026.7"] ];';
+const policies =
+  'const SESSION_TARGET_POLICY_BY_METHOD = new Map([["sessions.compact", {fields: ["key"],required: true}]]);';
 
 describe('compaction pristine build contract', () => {
-  it('includes serialized native helpers in the immutable patch fingerprint', () => {
+  it('includes ordinary native support modules in the immutable build recipe fingerprint', () => {
     const proof = require('../../../../scripts/openclaw/verify-openclaw-runtime-patches.cjs');
     const repo = path.resolve(__dirname, '../../../..');
-    const support = 'native-compaction-lifecycle.js';
-    expect(proof.listPatchInputFiles(repo, 'v2026.9.8')).toContain(path.join(repo, 'scripts/patches/v2026.9.8', support));
+    const support = 'src/main/openclaw/runtime/native-support/compaction-lifecycle.mjs';
+    expect(proof.listBuildRecipeFiles(repo)).toContain(path.join(repo, support));
     const isolated = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-compaction-fingerprint-'));
     try {
       const inputs = path.join(isolated, 'scripts/patches/v2026.9.8');
       fs.mkdirSync(inputs, { recursive: true });
-      fs.writeFileSync(path.join(inputs, '038-native-compaction-lifecycle.cjs'), 'fixture transformer');
-      fs.writeFileSync(path.join(inputs, support), 'fixture helper revision 1');
-      const before = proof.buildOpenClawPatchSetFingerprint(isolated, 'v2026.9.8');
-      fs.writeFileSync(path.join(inputs, support), 'fixture helper revision 2');
-      expect(proof.buildOpenClawPatchSetFingerprint(isolated, 'v2026.9.8')).not.toBe(before);
-    } finally { fs.rmSync(isolated, { recursive: true, force: true }); }
+      fs.writeFileSync(
+        path.join(inputs, '038-native-compaction-lifecycle.cjs'),
+        'fixture transformer',
+      );
+      for (const file of proof.listBuildRecipeFiles(isolated)) {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, 'fixture recipe input');
+      }
+      const before = proof.buildOpenClawBuildRecipeFingerprint(isolated, 'v2026.9.8');
+      fs.writeFileSync(path.join(isolated, support), 'fixture helper revision 2');
+      expect(proof.buildOpenClawBuildRecipeFingerprint(isolated, 'v2026.9.8')).not.toBe(before);
+    } finally {
+      fs.rmSync(isolated, { recursive: true, force: true });
+    }
   });
 
   it('verifies exact current source and production syntax while rejecting partial or historical capability', () => {
     const source = [schemas, manual, recovery, producer, forward, descriptors, policies].join('\n');
     const patched = transform(source);
     expect(transform(patched)).toBe(patched);
-    const bundled = transformSync(patched, { target: 'node24', format: 'esm', minifySyntax: true, legalComments: 'none' }).code;
+    const helperSource = [justDoCreateCompactionHandlers, justDoRunRecoveryCompaction]
+      .map(fn => fn.toString())
+      .join('\n');
+    const bundled = transformSync(
+      patched.replace(/import \{ [^}]+ \} from "[^"]+compaction-lifecycle.mjs";/g, '') +
+        '\n' +
+        helperSource,
+      { target: 'node24', format: 'esm', minifySyntax: true, legalComments: 'none' },
+    ).code;
     expect(transform(bundled, 'gateway-bundle.mjs')).toBe(bundled);
     const renamed = bundled
       .replace('params.operationId ?? randomUUID()', 'params.operationId ?? randomUUID242()')
@@ -295,11 +315,25 @@ describe('compaction pristine build contract', () => {
       .replaceAll('result.result.markerExpected', 'result3.result.markerExpected')
       .replaceAll('result.result.tokensBefore', 'result3.result.tokensBefore');
     expect(transform(renamed, 'gateway-bundle.mjs')).toBe(renamed);
-    expect(() => transform(renamed.replace('randomUUID: randomUUID242,', 'randomUUID: randomUUID243,'), 'gateway-bundle.mjs')).toThrow(/bindings/);
-    expect(() => transform(patched.replace(CONTRACT, 'JUSTDO_NATIVE_COMPACTION_LIFECYCLE_V2026_8_2'))).toThrow(/historical/);
+    expect(() =>
+      transform(
+        renamed.replace('randomUUID: randomUUID242,', 'randomUUID: randomUUID243,'),
+        'gateway-bundle.mjs',
+      ),
+    ).toThrow(/bindings/);
+    expect(() =>
+      transform(patched.replace(CONTRACT, 'JUSTDO_NATIVE_COMPACTION_LIFECYCLE_V2026_8_2')),
+    ).toThrow(/historical/);
     expect(() => transform(patched.replace('signal?.throwIfAborted();', ''))).toThrow(/Partial/);
-    expect(() => transform(patched.replace('capacity = 4096', 'capacity = 4095'))).toThrow(/partial/);
-    expect(() => transform(patched.replace('required:true,readOnly:true', 'required:false,readOnly:true'))).toThrow(/partial/);
+    expect(() =>
+      transform(bundled.replace('capacity = 4096', 'capacity = 4095'), 'gateway-bundle.mjs'),
+    ).toThrow(/partial/);
+    expect(() =>
+      transform(patched.replace(/import \{ justDoRunRecoveryCompaction \}[^;]+;/, '')),
+    ).toThrow(/partial/);
+    expect(() =>
+      transform(patched.replace('required:true,readOnly:true', 'required:false,readOnly:true')),
+    ).toThrow(/partial/);
   });
 
   it('preflights every native copy before writes and rejects a mixed partial runtime', () => {
@@ -309,7 +343,15 @@ describe('compaction pristine build contract', () => {
       fs.mkdirSync(dist);
       const fixtures: Record<string, string> = {
         'embedded.mjs': recovery + forward,
-        'package-update-activation-recovery.mjs': [schemas, manual, recovery, producer, forward, descriptors, policies].join('\n'),
+        'package-update-activation-recovery.mjs': [
+          schemas,
+          manual,
+          recovery,
+          producer,
+          forward,
+          descriptors,
+          policies,
+        ].join('\n'),
         'worker.mjs': recovery,
         'sqlite-worker.mjs': recovery,
         'compact.mjs': producer,
@@ -320,16 +362,29 @@ describe('compaction pristine build contract', () => {
         'relay.mjs': descriptors,
         'policies.mjs': policies,
       };
-      for (const [name, content] of Object.entries(fixtures)) fs.writeFileSync(path.join(dist, name), content);
-      fs.writeFileSync(path.join(dist, 'worker.mjs'), recovery.replace('input.assertRecoveryActive()', 'input.untrusted()'));
+      for (const [name, content] of Object.entries(fixtures))
+        fs.writeFileSync(path.join(dist, name), content);
+      fs.writeFileSync(
+        path.join(dist, 'worker.mjs'),
+        recovery.replace('input.assertRecoveryActive()', 'input.untrusted()'),
+      );
       expect(() => patch.applyPatch(root)).toThrow(/custody/);
       expect(fs.readFileSync(path.join(dist, 'schemas.mjs'), 'utf8')).toBe(schemas);
       fs.writeFileSync(path.join(dist, 'worker.mjs'), recovery);
       expect(patch.applyPatch(root)).toHaveLength(11);
       expect(patch.applyPatch(root)).toEqual([]);
       expect(() => patch.verifyPatch(root)).not.toThrow();
+      const support = path.join(dist, 'native-support/compaction-lifecycle.mjs');
+      const baseline = fs.readFileSync(support, 'utf8');
+      fs.writeFileSync(support, baseline.replace('capacity = 4096', 'capacity = 4095'));
+      expect(() => patch.verifyPatch(root)).toThrow(/support/);
+      fs.writeFileSync(support, '');
+      expect(() => patch.applyPatch(root)).toThrow(/Historical native support/);
+      fs.writeFileSync(support, baseline);
       fs.writeFileSync(path.join(dist, 'worker.mjs'), recovery);
       expect(() => patch.applyPatch(root)).toThrow(/Mixed pristine/);
-    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

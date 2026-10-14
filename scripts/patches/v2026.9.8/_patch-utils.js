@@ -247,6 +247,28 @@ function writeIfChanged(filePath, original, updated) {
   return true;
 }
 
+function nativeSupportModule(runtimeDir, name, sourcePath, verify = false) {
+  const target = path.join(runtimeDir, 'dist', 'native-support', name);
+  const expected = fs.readFileSync(sourcePath, 'utf8');
+  const exists = fs.existsSync(target);
+  const original = exists ? fs.readFileSync(target, 'utf8') : '';
+  if (verify && original !== expected)
+    throw new Error(`Native support module missing or stale: ${name}`);
+  if (!verify) {
+    if (exists && original !== expected)
+      throw new Error(`Historical native support module: ${name}; rebuild pristine runtime`);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    writeIfChanged(target, original, expected);
+  }
+  return target;
+}
+
+function nativeSupportImport(filePath, name) {
+  return (
+    (path.basename(path.dirname(filePath)) === 'worker' ? '../' : './') + `native-support/${name}`
+  );
+}
+
 function replaceNamedFunction(content, functionName, replacement, description = functionName) {
   const signature = `function ${functionName}(`;
   const signatureIndex = content.indexOf(signature);
@@ -359,6 +381,8 @@ function assertCurrentPatchContract(content, contract, description, required = t
 }
 
 module.exports = {
+  nativeSupportModule,
+  nativeSupportImport,
   assertCurrentPatchContract,
   assertSingleFile,
   beginRuntimePatchPhase,

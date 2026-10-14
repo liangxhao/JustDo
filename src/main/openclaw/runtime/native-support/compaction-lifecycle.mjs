@@ -1,8 +1,6 @@
-'use strict';
-
-// Serialized into the native module. Dependencies are explicit so the same
-// helper remains verifiable after the Gateway bundler renames native imports.
-function justDoCreateCompactionHandlers(nativeHandlers, dependencies) {
+// Gateway operation custody and recovery observations. Native handlers retain
+// execution ownership; their dependencies are supplied at the import seam.
+export function justDoCreateCompactionHandlers(nativeHandlers, dependencies) {
   const owners = new WeakMap();
   const capacity = 4096;
   const operationPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
@@ -247,7 +245,7 @@ function justDoCreateCompactionHandlers(nativeHandlers, dependencies) {
   };
 }
 
-async function justDoRunRecoveryCompaction(nativeCompact, input, recovery) {
+export async function justDoRunRecoveryCompaction(nativeCompact, input, recovery) {
   const { runParams } = input;
   const itemId = `recovery:${globalThis.crypto.randomUUID()}`;
   const startedAt = Date.now();
@@ -357,5 +355,3 @@ async function justDoRunRecoveryCompaction(nativeCompact, input, recovery) {
     emit('end', terminal);
   }
 }
-
-module.exports = { justDoCreateCompactionHandlers, justDoRunRecoveryCompaction };

@@ -7,19 +7,209 @@ The sibling source checkout was audited at tag `v2026.9.8` against `v2026.9.6`.
 
 ## Disposition
 
+The current set contains **25 numbered patches**, down from 32. Code in this
+directory drops from 9,141 to 7,533 lines (17.6%); ordinary source modules own
+the relocated implementation. The audit uses
+the sibling `../openclaw` source at tag `v2026.9.8` and the integrity-locked npm
+artifact. Do not merge unrelated patches merely to reduce the file count.
+
+### Capabilities moved out of patches
+
+| Former patch | Ordinary implementation                                                                                       | Contract                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------ | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 002          | `src/main/openclaw/runtime/mcpPackageRunner.ts` and the managed MCP config builder                            | Windows bare npm/npx commands become direct Electron Node argv with the trusted child-window preload. Windows shims embed absolute preload/Node paths so nested npm package-bin wrappers cannot resolve them against the caller's cwd. User settings, arguments, credentials and native process custody stay intact. Other native/plugin MCP launchers can still use the self-contained application shims. |
+| 003          | The same launchers and `src/main/openclaw/config/openclawConfigBuilders.ts`                                   | Existing-session Windows profiles use `chrome-mcp.cmd`, which starts the pinned bundled server with vision and update checks disabled. Explicit custom commands remain selected; native Chrome handshake and process cleanup own the connection.                                                                                                                                                           |
+| 020          | `openclaw-extensions/openai/media-adapters.ts`, composed through registration and the cold capability catalog | A request-local host context supplies the configured transcription URL and matching header policy. Native factory, protocol, session lifecycle and default URL remain native; simultaneous sessions never mutate shared context.                                                                                                                                                                           |
+| 021          | The same OpenAI composition                                                                                   | The native image provider receives a cloned config view of `justdo-image-openai`. Chat config is never changed. Video stays in `video-openai` and separately installed provider plugins.                                                                                                                                                                                                                   |
+| 027          | `scripts/openclaw/openclaw-shared-sdk-modules.cjs`                                                            | The bundle externalizes the native session-access state owner reached through `plugin-sdk/session-visibility`. SDK registration and Gateway reads share the original module instance; no global registry replacement is injected.                                                                                                                                                                          |
+
+033 and 035 are retired by product choice, not absorbed upstream. Diagnostic
+projection uses ordinary native lifecycle and bounded Gateway history evidence;
+private loop exits are no longer reported. Workflow observes the already-public model_call_started event in ordinary plugin
+source and sizes the exact serialized result envelope. The before_prompt_build
+budget extension is not required; missing observations use a conservative fallback.
+
+The OpenAI composition retains the native plugin ID, manifest, package metadata,
+auth and other capabilities. Resource sync verifies both native entry SHA-256s,
+saves their original bytes beside the entry, then bundles ordinary TypeScript
+wrappers. Registration runs once. The cold catalog is composed too, so discovery
+and registration apply the same transcription configuration. This is a required
+adapter over the existing managed OpenAI plugin, not another provider with a
+colliding ID. A changed upstream entry fails and requires a pristine rebuild.
+Development inventory excludes these composition sources; availability comes
+from the bundled native manifest. Startup source copying never overwrites that
+native plugin with the raw TypeScript composition.
+
+034 and 038 retain only their native bindings, control-flow edits, schema/type
+seams and exact verification. Their execution/receipt/cleanup and compaction
+implementations are imported from
+`src/main/openclaw/runtime/native-support/{plugin-owned-execution,compaction-lifecycle}.mjs`.
+Live native accessors retain current registry ownership across replacement and
+restart; the support modules create no transcript store. The build recipe binds
+their bytes and patch verification checks both copied modules and bundled code.
+They cannot live in optional Runtime Services: native restart recovery and worker
+copies need them before plugin registration, and public hooks do not grant the
+native actor, mutation authority or cleanup-owner bindings they require.
+
+### Remaining patch audit — user impact, 2026-10-14
+
+审计最初检查 27 个 transformer、产品调用方及锁定版本的原生接口；
+按用户本轮指定，只移除 033 和 035，当前其余 25 项保留。
+**无法在 src 中完全等价复现，不等于补丁必须保留。** 下表分别说明功能价值、
+迁移障碍和退回原生行为的代价。下表是其余能力的审计建议，实际构建为 25 项。
+删除的比较对象是从锁定 pristine 包重新构建的运行时，并同步修改产品调用方；
+不是直接从已经应用补丁的 vendor 目录中删除文件。
+
+`src/main` 通常运行在 Electron Main，不能改变另一个 Gateway 进程的局部变量、
+SQLite 事务或 admission。`runtime-services` 虽在 Gateway 中运行，但公开 hook/SDK
+只授予指定入口的能力；把核心实现移到插件文件，并不会自动获得执行时机和原生
+所有权。普通 `.mjs` 支持模块可以放进 src 并被 Gateway 导入，034/038 已这样做，
+但导入和传入原生依赖的接线仍需要补丁。这个限制只解释等价迁移的困难，
+不能代替用户影响判断。
+
+| 编号与实际用途                                                                                              | src / 插件能承载什么，当前缺什么                                                                                                                                                                                                                                                                                               | 从 pristine 构建时删除后的用户变化                                                                                                                                                                                                             | 建议                                                                                                                                                                          |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **001** 执行 Python/pip 时保留宿主管理的 pip 配置和 Python 用户安装目录。                                   | Main 已生成两组环境值；原生 spawn 前的 sanitizer 又会删除它们。普通插件提前设置环境仍会被过滤。可以研究在自有 Python 启动器/启动模块中固定配置，但必须覆盖 `python -m pip`、pip、绝对解释器路径和 native hook，不能仅给模型加提示。                                                                                            | Python 本身和已打包依赖不因此消失。pip 可能改用默认源，`--user` 安装可能落到默认用户目录；自有 sitecustomize 仍读取应用用户 site，因此新装包可能无法被后续 Python 找到。只用预装依赖的任务通常不受影响。                                       | **迁移候选**，先以真实 pip 安装、随后 import 和只读安装目录验证替代方案；不是所有 Python 功能都依赖此补丁。                                                                   |
+| **005** 对最终 system prompt 做正则替换：品牌、冗余说明、版本行、Runtime 段和自定义规则。                   | src 已拥有规则和持久化。原生有 `transformSystemPrompt`、`registerTextTransforms`、provider `wrapStreamFn`，因此“没有提示词替换接口”不准确。前者在后续 prompt hook/模型身份追加之前运行；全局 input 替换还会改用户消息、历史和工具参数。单 provider stream 可以只改最终 system prompt，但跨所有 provider/harness 需要分别组合。 | 普通聊天、工具执行继续使用原生提示词。自定义最终替换不生效，品牌和部分 OpenClaw 指令恢复，prompt 稍长；模型对产品身份和维护命令的回答可能变化。没有证据表明删除必然使聊天不可用。                                                              | **可按产品取舍删除或缩减**。优先将品牌/指导放角色文件与插件；若只要求内置 provider 的替换，可迁普通 provider 源码，不要求保留“所有最终段落均替换”的契约。                     |
+| **006** 为内置模型请求补 session/parent/purpose、人类首次发起标记；另给内部 `chat.send` 增加隐藏用户轮次。  | payload 包装可以迁 provider；隐藏轮次要在 native chat admission 传 `transcript.display=false`，排队输入还要将一次性标记从 source turn 转到执行 run。Main/Renderer 不拥有这些入口；用事后 UI 过滤不能改变原生显示投影。                                                                                                         | 直接删会让 Main 和 Renderer 发送的 `justdoUserInitiated` 等字段不通过原生 closed schema，影响普通发送；同步去字段后标准 provider 可继续聊天。内置服务少请求分类字段；计划实施提示会显示为用户消息。服务端是否强制要求 metadata，仓库无法证明。 | **拆职责缩减**。保留当前消费者需要的 schema/隐藏轮次接线；将较大 payload 实现移普通 provider 或 native-support。不能凭 metadata 名称推断内置模型、计费必坏。                  |
+| **007** 区分内置模型的上下文压缩和 exec review 请求，并去掉它们的 human initiation 标记。                   | provider 可以包 payload，但当前公共 wrapper 未提供每个维护调用的用途和原生 reviewer 会话身份；普通 turn hook 不能准确分类所有内部调用。分类小接线留下，包装/注册辅助实现可迁普通模块。                                                                                                                                         | 原生压缩和审查调用仍存在；内置服务收到普通/缺少用途的请求。第三方 provider 不受该补丁影响。后端统计、配额或策略的变化需要服务端契约验证，不能声称压缩本身必坏。                                                                                | **缩减候选**；若后端不消费这些字段可以删除，先核对内置服务。与 006 的 stream 标记依赖一起处理。                                                                               |
+| **008** 完整退出再启动应用时，不自动恢复上一应用进程遗留的主会话任务；同一应用内 Gateway 重启仍可恢复。     | Main 提供启动时间，但原生 recovery 自己扫描、认领并派发任务。连接后再 list/abort 有竞态，不能保证任务未先执行。若接受上游自动恢复策略，则不需要等价替代。                                                                                                                                                                      | 聊天功能仍可用；在原生恢复条件满足时，上次中断任务可能重新调用模型或继续执行工具。不是“删了不能启动”，而是重启后的执行策略改变。                                                                                                               | **产品策略取舍**。接受原生恢复可清理；要保证重开应用不继续旧任务则保留小接线，辅助结算逻辑可移 native-support。                                                               |
+| **013** 暂停 Goal 后，允许恢复此前被主动 abort 的空闲会话。                                                 | Native Goal resume admission 在运行前因 `abortedLastRun` 拒绝；后续插件 hook 没有机会运行。Main 用 reset 绕过会改上下文/Goal 状态，用新会话绕过会丢同一 Goal 的续接。                                                                                                                                                          | 普通聊天和创建 Goal 不受影响；触发这种状态组合的“暂停→继续”会失败。                                                                                                                                                                            | **保留**；只有取消同一会话的 Goal 恢复能力，才可随产品功能一起删除。实际运行修改已很小。                                                                                      |
+| **014** 回放历史时，排除无法送给模型的 assistant display block，保留文本、思考和 tool call。                | 过滤发生在原生 transport message 转换中，provider payload hook 来得更晚。只给某个 provider 写自有安全转换可以覆盖部分路径；Main 的 UI 投影无法改变 Gateway 发出的历史。                                                                                                                                                        | 没有此类 block 的对话通常正常。含不受支持的显示 block 的会话，在后续模型转换/请求时可能失败。关闭 interactive-ui 不能证明其他原生显示 block 全部消失。                                                                                         | **保留窄修复**，运行时主要是一个 skip 分支；无需为减少文件数另造通用 transcript 回放器。                                                                                      |
+| **015** 给可信本地未知 MIME 文件兜底 `application/octet-stream`；保留 assistant 原始 MEDIA 路径供桌面预览。 | 两件事可分开。未知 MIME 在 native attachment admission 就被拒绝，Renderer 后补不了。原始路径保留则有替代：src 支持 native attachment 和带认证的 `/api/chat/media/outgoing/` 下载，不再要求 Gateway 回传本地路径。无需复制历史。                                                                                                | 直接删两部分：未知类型本地文件可能不能作为附件发出；历史显示仍有原生 managed attachment，但当前桌面本地预览/伴随附件合并依赖原路径，可能无法打开或显示重复。不是所有文件下载都消失。                                                           | **优先缩减**：迁桌面附件访问到原生认证下载，删路径保留部分；留下小 MIME 兜底。若改用明确支持的 MIME/普通项目文件入口，后者也可按范围放弃。                                    |
+| **016** 插件库存读取使用离线官方目录，不自动刷新 hosted catalog。                                           | 原生 loader 本身支持内部 `offline` 参数，但 `plugins.list/inspect` 没公开这个选项，Main 发普通 RPC 不能禁止那次 fetch。无需在 src 复制插件库存才能删除：直接接受原生联网和 fallback 即可。                                                                                                                                     | 插件列表通常仍可用；可能联网更新官方 metadata，网络差时有加载等待。原生有本地快照/打包目录 fallback，不应把目录 fetch 等同插件下载安装。                                                                                                       | **可删除候选**，接受目录联网与等待即可；它不是插件基本功能的必要补丁。                                                                                                        |
+| **019** 禁止配置驱动的启动/Doctor 插件自动安装或修复，保留显式安装。                                        | Main 的插件安装管理可以继续存在，但 native repair 在自己的 install lease 下启动，后来的插件不能取消已发生下载；简单配置项不能表达当前范围的 host policy。                                                                                                                                                                      | 现有已安装插件通常照常运行。遇缺失/需修复插件时，原生可能联网安装、更改安装记录；用户显式安装能力没有因为补丁存在而被关闭。                                                                                                                    | **策略补丁**，不能称为聊天硬依赖；若允许原生自动修复可以删。当前打包可重复性和产品安装流程仍依赖禁止隐式修复，建议保留。                                                      |
+| **022** 产品会话 reset 清模型上下文时，聊天仍显示 reset 前历史。                                            | 原生 SQLite history reader 已按 boundary 截掉展示范围，Main 收不到此前数据，不能靠 Renderer 排版恢复；禁止另建 transcript 缓存。另一路是改产品流程为“reset 即新对话”，旧历史留在旧会话。                                                                                                                                       | 普通执行不受影响；当前对话中 reset 前消息不再可见，并非从原生数据库物理删除。                                                                                                                                                                  | **显示语义取舍**。保留同一聊天完整历史则留窄接线；接受新对话/原生 reset 显示规则可删并改 src 流程。                                                                           |
+| **023** 原子 fork 指定产品管理 key，并包括选中的完整助手回复。                                              | key 部分可通过 Main 保存原生返回 key、停止各域推导固定产品 key 来替代；成本是联动会话、权限、插件识别。选中助手回复的 fork 不同：原生 `resolveMessageCut` 只接受 user entry，不能直接 fork 最后一条 assistant。两次 RPC/重新发送文本也不等价原生事务。                                                                         | 当前复制/分支调用带 `targetKey/includeEntry`，直接删会校验失败。改调用方后可退回原生 user-message fork；“从这条助手回复继续”仍失去，除非改产品入口/语义。                                                                                      | **可部分缩减**。不要将指定 key 说成绝对无法在 src 改；保留助手回复 fork 则仍需原生 seam。                                                                                     |
+| **025** MXC 隔离环境的技能提示/读取路径使用已物化的 Windows host skills 目录。                              | MXC 插件能物化和授权目录，路径选择却在 native `resolveSandboxSkillRuntimeInputs`。插件改容器 cwd 来冒充技能目录会改变项目执行目录；简单复制不能保证当前只读映射/所有入口。                                                                                                                                                     | 非 MXC 不受影响。MXC 中相关技能仍可被发现，但模型拿到的技能读取路径可能不存在，导致无法读取/使用技能说明。                                                                                                                                     | **保留 MXC 窄接线**。若不再提供 MXC 技能能力可删除；已有独立 MXC 插件构建修正也要一起核对。                                                                                   |
+| **026** 浏览器等外部上下文只给 agent，当次可见用户消息仍保持原文。                                          | Main 已构建网页上下文。原生 `agent_turn_prepare`/next-turn injection 可添加 context，但不能直接接收这个受认证的 `chat.send` 字段并绑定特定排队用户轮次；next-turn 与 exact submitted turn 语义不同。直接把上下文拼到 message 可以完全用 src 实现。                                                                             | 当前浏览器发送含 `justdoUntrustedContext`，直接删会校验失败；同步删字段后会失去自动网页上下文。改成普通 message 附上下文后功能可恢复，但网页正文进入用户历史，UI 也会显示或需要产品投影。                                                      | **可通过改变语义清理**，不能把“agent-only 且准确当次”与“普通可见文本”当成等价迁移。也可研究插件精确 turn admission，未证明前不是零代价替代。                                  |
+| **028** 项目 cwd 可在独立助手角色 workspace 之外，避免已获 admin 授权后再次被 containment 拒绝。            | Main 已传 admin/cwd；第二次检查仍在 `sessions.create` 中。把角色 home 设置到项目虽能绕开，却会破坏独立助手文件与项目 AGENTS 的层次和隔离执行目录。                                                                                                                                                                             | 在 sandbox containment 生效且项目位于角色 home 外的会话创建场景失败；不是所有非 sandbox 聊天都坏。                                                                                                                                             | **保留**，运行修改仅增加已有 admin 判定。取消独立角色 home/项目隔离是更大产品改变。                                                                                           |
+| **030** 定时任务保存并执行每个 job 的 read-only/full 权限及正确工作区。                                     | Main 已投影设置。原生 cron closed schema、payload merge、异步准备后 session permission 和授权事务都缺字段；任务开始后再 patch session 有竞态。全局 full 或插件 prompt 限制不能提供每个 job 的原生权限约束。                                                                                                                    | 当前 cron add/update 带 permissionMode，直接删会失败；删调用字段后基础 cron 可用，但任务权限选择失效，写文件/命令可能被拒绝或要求后台无法完成的审批。                                                                                          | **保留当前能力**；若固定所有任务为同一原生权限，可删并移除任务权限入口。不要为省补丁复制一个产品调度执行器。                                                                  |
+| **031** Windows 内置凭证的 SecretRef 允许精确系统 PowerShell 的 TrustedInstaller ACL。                      | Main 已拥有加密凭证和 resolver，命令路径却由 native SecretRef validator 拒绝。可研究改为符合原生 ACL 的自有可执行启动器，从 src/打包实现；普通 `.cmd`/改模型参数不自动满足 secure-exec 验证。                                                                                                                                  | 触发该 ACL 检查的 Windows 内置账号凭证无法解析，内置模型会不可用；手填 API key 的其他 provider 并非都受影响。                                                                                                                                  | **保留或先替换启动器**。这是可替代的凭证架构选择，不是所有登录方式必须修改 OpenClaw；不用明文配置或放宽通用 ACL 作替代。                                                      |
+| **032** 修复 Windows session creation 发布时普通路径与 `\\?\` SQLite 文件名不相等。                         | native 事务内部一边使用 SQLite filename，一边使用已授权路径集合；Main 在收到创建结果前已被拒绝。只改外部传入路径不保证内部两侧 canonicalization，插件也不拥有 publication guard。                                                                                                                                              | 触发 namespaced 路径组合时创建会话失败，连普通聊天/子会话入口都可能被挡住。                                                                                                                                                                    | **保留硬故障修复**。补丁约 72 行，实际运行改动仅规范化比较两侧；搬动文件没有必要。                                                                                            |
+| **034** 插件受管运行的 describe/cancel、超时、完整执行结算和 run-owned 工具进程清理。                       | 实现已移 `src/main/openclaw/runtime/native-support/plugin-owned-execution.mjs`。剩余是 SDK 方法、registry 持久事实、dispatcher admission、harness/exec policy 与 cleanup finally 的原生接线。插件 hook 能看到结束事件，但不能证明 supervisor 中工具已退出，也不能授予自己 registry 所有权。                                    | 普通非受管聊天未必受影响。当前 Swarm Workflow 明确检查 describeRun/cancelRun，缺失会拒绝运行；去掉检查强行推进，会失去准确取消/恢复/进程清理和何时安全重试的证据。Agent Team 使用的 SDK timeout 投影也须同步检查。                             | **保留 Workflow 能力的接线**。不保留相关插件/受管执行契约时可整体删；不要退回“看最终回复就当整个任务完成”。大量代码是 AST 变换与验证，可共用工具，但不能把移目录当删除 seam。 |
+| **036** 桌面共享终端支持项目 cwd、选定 shell/args，以及关闭时显式终止共享 PTY。                             | Main 已选 launch 参数、管理窗口，实际 PTY/agent viewer/权限由 native 持有。独立 Main PTY 能做终端，但会丢 agent 与用户共享同一 buffer 的能力。原生 RPC closed schema 和 manager launch/close 路径没有对应选项。                                                                                                                | 当前 terminal.open/close 带扩展字段，直接删会校验失败；同步删参数后仍可用原生默认终端，但起始目录/PowerShell 参数不能定制，关闭已被 agent 接管的终端可能只是 detach。                                                                          | **保留共享终端契约**；愿意采用 native 默认目录、shell、关闭语义可删并改 src。                                                                                                 |
+| **037** 终端欢迎文字用 productName，去掉原生龙虾 ASCII。                                                    | 字符从 native shared PTY buffer 种入。Renderer 过滤会影响 offsets/reconnect，无法等价修改；但根本不需要等价修改它。                                                                                                                                                                                                            | 只恢复 `Welcome to the Claw` 与原生 ASCII。终端输入、cwd、agent 共享、审批、断线附着均照常。                                                                                                                                                   | **最明确的删除候选**。无需在 src 重新实现欢迎文字；产品名已有终端外围 UI。                                                                                                    |
+| **038** 自动 recovery compaction 的进度/结果；手动 compact 的 operation ID、状态查询和覆盖准备/清理的取消。 | 实现已移 `native-support/compaction-lifecycle.mjs`。一般 compaction hook 不能看到绕过它的恢复入口，`sessions.abort` 也不证明压缩准备/cleanup 已结束。插件不能重定义核心 RPC 或取得 mutation-authority。                                                                                                                        | 原生压缩能力仍在。当前手动入口发送 operationId 并调用 status/abort，直接删会失败；改调用方后可以保留基础 compact，失去准确停止/不确定提交处理和部分自动压缩进度。                                                                              | **可拆分缩减**：自动进度只是体验，可以去掉 recovery observer；保留现有可取消手动压缩则需其窄接线。若取消 Stop/状态查询契约，可改 src 使用基础 RPC 再删。                      |
+| **039** 原生 agent-tool RPC 进入 peer 会话时，解除 sender transcript/CLI writer scope，保留调用权限。       | 调用插件先 detach 仍会被 native `AsyncLocalStorage.snapshot()` 恢复 sender scope；必须在 snapshot 还原后、实际 peer dispatch 前退出 writer carrier。不能用 Main 重发不确定请求或删原生 fence 代替。                                                                                                                            | 普通单会话可能正常；peer 会话的恢复压缩/最终持久化可报 `SessionTranscriptWriterClaimReboundError`，目标任务可能失败或结果无法落盘。                                                                                                            | **保留已定位故障修复**。不是纯日志/展示补丁；放弃相关 agent-tool peer 执行路径才可移除。                                                                                      |
+| **040** Windows 原生电脑操作的活动、光标/点击提示、心跳与执行释放通知。                                     | Main 已画 overlay。工具 before/after hook 可做近似提示，但覆盖不到直接 computer RPC、dedup 和 execution release，因此不能等价恢复精确通知。现有实现只观察原生执行，不实现输入执行器。                                                                                                                                          | 自动点击、键盘、截图与权限检查继续走 native；用户少“正在操作电脑”悬浮提示、光标/点击表现。若退近似 tool hook，长 Code Mode 和 RPC 路径可能提示不准。                                                                                           | **可删除候选**，同步停用/清理依赖 overlay；不是电脑执行能力的必要补丁。若保留精确提示，可像 034 一样将 observer 放普通支持模块，但仍有接线。                                  |
+| **042** Windows 插件热卸载/恢复捕获时保留 host 目录 junction，不当普通 symlink 重建。                       | src 安装时能调整链接布局，但 native `captureRecoverySource` 持有恢复快照，插件运行前就 cpSync。native uninstall keepFiles、CLI force 均不跳过捕获。可研究不使用 host junction 的完整打包依赖布局；仅删除链接会使 SDK/native shared owner 解析失败。                                                                            | 无 junction 或非 Windows 通常不受影响。受影响插件卸载/热替换可能 EPERM，留下插件不能正常卸载；关 Gateway 再离线删属于中断任务的操作退化。                                                                                                      | **保留已复现的 Windows 管理故障修复**，先有真实无 junction 打包替代才能删除。                                                                                                 |
+
+本轮只处理 **033 / 035**：033 及其 live event、展示和导出字段已移除，
+停止判断继续复用 src 中已有的原生终态和有限历史观察。035 由 Workflow 普通源码
+读取已有的 model_call_started.contextTokenBudget 替代；该字段由原生
+attempt.contextWindowInfo.tokens 提供，时机晚于 prompt hook，但早于本次模型
+发出的结果读取工具。只缓存有界 session/run/trace/尝试 span/额度元数据；
+model-call trace 的 parentSpanId 必须与 before_tool_call 的原生 spanId 匹配，
+一份旧尝试的迟到事件不能给新尝试提供额度。缺失或不匹配时回退 2000 成本单位。
+同一尝试保留最保守的已观测额度；agent_end 和服务停止只清理观测，不建立执行结算。
+批次页按最终 metadata/cursor/details/content 包装
+计算大小，避免固定预留量把本来可读的小页拒绝；极长单项索引明确提示缩短路径或
+发布紧凑产物清单，不截断 JSON。其余 037/040/016 仅是候选，本轮不删除。
+005、008、019、022、026 也不是普遍的执行硬依赖，但改变的是提示词、自动恢复、
+隐式安装、历史可见性或网页上下文契约；必须将这些变化具体说明。
+
+优先迁移/缩减的实现是 015 的本地媒体投影、006/007 的 payload 辅助模块，
+以及 038 的自动压缩进度部分。023 的 key 绑定、001 的 Python 配置和 031 的
+凭证启动器有普通代码替代方向，但需要消费者/打包重构与原生负例验证；
+目前未完成等价替代，不作为“已证明能无损删除”。
+
+原生接口的审计证据包括 OpenClaw 源码中的
+`plugins/{provider-plugin.types,provider-transport.types,provider-runtime,host-hook-turn-types}.ts`、
+`agents/embedded-agent-runner/run/{attempt-system-prompt,attempt-prompt-build}.ts`、
+`gateway/chat-display-projection.{helpers,sanitize}.ts` 和
+`plugins/plugin-generation-source-lookup.ts`。产品消费者是
+[提示词规则](../../../src/main/openclaw/runtime/systemPromptReplacementRegistry.ts)、
+[chat send](../../../src/main/engine/openclaw/openclawRuntimeAdapter.ts)、
+[fork 调用](../../../src/main/ipc/cowork/sessions.ts)、
+[附件投影](../../../src/renderer/libs/openclaw-chat/pipeline/history-display-normalizer.ts)、
+[Workflow 预算](../../../openclaw-extensions/swarm-workflow/contracts/batch.ts)、
+[受管运行要求](../../../openclaw-extensions/runtime-services/execution/managed-subagent.ts)、
+[手动压缩](../../../src/renderer/libs/openclaw-chat/gateway/chat-controller-compaction.ts) 和
+[电脑提示消费者](../../../src/main/core/window/computer/bindComputerOverlay.ts)。
+
+033/035 退休后的相关回归为 31 个文件、453 项通过，覆盖未扩展的原生终态、
+历史输出观察、无回复证据的未知判断、诊断导出脱敏、原生事件预算与保守回退下的
+完整结果/游标读取，以及 25 项 pristine inventory。应用构建和修改文件的 lint 通过。
+运行时已从锁定原始 npm 包重新构建，冻结验证通过；生产 bundle 和保留的 JS
+文件均不含 justDoLoopExit / justDoResponseShape。
+真实 Workflow fixture 同时检查 prompt hook 字段缺失、model-call 事件报告实际
+32768 上限（不同于模型标称 131072），以及结果读取确实使用高于回退的额度。
+最终完整一轮通过：100 项处理、3 项显式重试、20 次索引读取、独立校验和交付；
+aggregate.json 为 count=100 / sum=10100，受管工具清理完成且执行 lease 为零。
+最大结果包装成本为 10,472，超过回退 2000 且低于原生事件支持的 12,000 上限。
+fixture 在启动阶段等待原生 sidecar 就绪；长汇总脚本经原生 write 保存后用短命令
+执行，避开 Windows 命令长度限制。只认 exec 的成功退出码和实际 stdout 标记，
+不将写文件的代码预览当作执行证据。
+
+原生批次压力验证也有一轮停在 96 项完成、3 项预设失败、1 项运行中：最后一项
+已有工具提交和可见的结束回复，但受管 SDK 未提供完整结算证据，工作流因此保留
+占用。没有以 chat final 或 agent.wait 的回复结束状态强制结算；本轮未修改 034。
+这项间歇性的结算等待仍需单独追查，不能将预算替代验证解读为所有结算时序均已稳定。
+
+The unnumbered `computer-overlay-activity.js` remains the self-contained native
+observer used by 040. `_patch-utils.js` provides transactional writes, exact
+support-module staging and native topology helpers; `source-lock.json` pins the
+pristine artifact. Neither is a separately removable capability patch.
+
+### Refactor validation
+
+合并提交前由三个 Agent 分别审查 MCP/OpenAI、构建与原生接线、Workflow/诊断。
+审查修复了两个问题：Windows 非 user 模式以及认证刷新时的隐式 user profile
+必须走应用启动器；异步模型事件必须按原生 trace/尝试 span 关联，防止同一 run
+中迟到的旧尝试扩大当前结果预算。三方复审均未发现新的 P1/P2。相关浏览器
+实际序列化、原生配置解析和 MCP 握手回归共 210 项通过。
+最终 Windows 全量回归为 852 个文件、9,587 项通过（4 个文件、53 项按条件跳过），
+无失败；lint、应用构建、Electron 类型检查、OpenAI 适配器和预算模块的严格
+类型检查通过。最终 runtime 从锁定 pristine 包重建，25 项冻结验证通过；
+两个支持模块在源码、dist、gateway.asar 中字节一致，OpenAI 保持单一扩展 ID。
+加入尝试 trace 关联检查后的真实 Gateway 批次也通过：100 项、3 项显式重试、
+20 次索引读取、独立汇总校验与交付，产物 count=100 / sum=10100，执行 lease
+为零且工具清理完成。每次结果读取都匹配原生模型事件的 run/trace/尝试 span；
+退休的 prompt 预算字段仍缺失，实际模型额度为 32768，最大结果包装成本为
+10,472，证明普通插件替代在匹配尝试中确实使用了高于 2000 回退的额度。
+
+The earlier 32-to-27 refactor rebuilt the integrity-locked package, verified its
+27 native seams in source and the production bundle, assembled provider overlays,
+precompiled plugins and pruned the payload. Final artifact proof passed.
+`npm run lint`, `npm run build`, Main TypeScript compilation and strict OpenAI
+adapter checking against the package SDK passed. That refactor's full suite with bounded
+Windows concurrency passed 9,571 tests (77 skipped).
+
+`tests/openclaw/runtime/windows-mcp-launch.test.ts` exercises real Electron/native
+npm/npx MCP and both a Unicode-path fixture and the bundled Chrome server,
+including handshake and cleanup. `tests/openclaw/plugins/openai-native-composition.test.ts`
+loads byte-preserved native registration and cold catalog with native SDK aliases,
+and checks simultaneous URLs/header policy, default routing, reconnect settings
+and native transcript ordering without remote provider calls. Shared SDK tests
+exercise grant/read/revoke across the real bundling boundary. Native execution
+and compaction tests cover settlement, cancellation, custody and exact support
+bytes; historical/partial implementations still fail and require a pristine rebuild.
+
+The Windows MCP test uses the unmodified native transport and its actual config
+resolver. Both synthetic runners and real offline npm/npx complete a Client
+handshake, tool discovery, invocation and cleanup in paths containing Chinese
+and spaces. Managed config projection produces no protocol diagnostic; the batch
+control reports `Unexpected end of JSON input` but continues to the valid response.
+Unsafe NODE_OPTIONS is dropped while explicit preload argv retains child-window
+suppression. The earlier first-error probe did not establish a connection failure;
+002 is retired rather than retained on that inference. These tests do not claim
+compatibility for every third-party server or strict custom client.
+
 041 (explicit skill discovery refresh) is retired. Use ordinary skills.status
 reads with native file watching. The proposed 043 preventive package-copy patch is withdrawn; no alternate
 native install protocol is introduced.
 
 Prefer existing native APIs and application-layer fixes. Retain a runtime patch only
 for a demonstrated core-function blocker with no reasonable native alternative.
-Bounded discovery delays do not justify a patch. This review covers 041–043;
-existing product integration patches, including terminal branding 037, are retained.
+Bounded discovery delays do not justify a patch. The earlier 041–043 review
+left existing integration patches in place. The user-impact audit above now
+identifies optional presentation/diagnostic/offline behaviors, including 037,
+as removal candidates; the current built set still contains them.
 
 The retained integration seams include these scope reductions.
-032 fixes a Windows session-creation path comparison in 9.8; 033 records loop
-exit diagnostics; 034 adds opt-in plugin execution settlement and tool cleanup;
-035 populates the existing prompt-hook field with the actual attempt context budget;
+032 fixes a Windows session-creation path comparison in 9.8;
+034 adds opt-in plugin execution settlement and tool cleanup;
 036 adds the shared desktop terminal launch and close contract;
 037 replaces the operator terminal welcome art with the desktop product name;
 038 supplies native compaction lifecycle and operation-scoped cancellation;
@@ -33,51 +223,38 @@ exit diagnostics; 034 adds opt-in plugin execution settlement and tool cleanup;
   native recovery semantics. Prior-app settlement calls the native
   `applySessionEntryExactReplacements` binding; verification rejects the historical
   unbound `applySessionEntryReplacements` helper and requires a pristine rebuild.
-- **021:** upstream removed the OpenAI video-generation provider. Retain isolated
-  image-provider configuration only. Video providers register outside this patch:
-  the application bundles `video-openai`; Kie, Z.AI and Novita are available only
-  when installed separately. Compatibility handling for unreleased custom `/videos`
-  settings has been removed.
-  no replacement video transport is injected into OpenClaw.
 
 Previously retired 009/024 (native reindex and ACP admission reload) and 017/018
 (custom live recovery/order projections) stay retired. Native history owns the
 display projection and the ordering of restored messages.
 
-| Patch | Retained capability                   | 9.8 boundary                                                                                                                                                       |
-| ----- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 001   | Managed pip environment provenance    | Host and native-hook environment sanitizers                                                                                                                        |
-| 002   | Windows MCP npm runner under Electron | Native stdio spawn options                                                                                                                                         |
-| 003   | Windows Chrome MCP launcher           | Run bundled direct Electron server and npm/npx runners in Node mode; preserve caller-provided environment and native arguments                                      |
-| 005   | Final system prompt replacements      | Final model-aware prompt before routing observation                                                                                                                |
-| 006   | Agent metadata and hidden turns       | Chat admission, queued source-to-execution human initiation transfer, and provider transport; native read worker checks parent identity                            |
-| 007   | Request-purpose metadata              | Compaction and reviewer provider payloads; async native reviewer identity reads                                                                                    |
-| 008   | App-process recovery boundary         | Native main-session restart recovery only                                                                                                                          |
-| 013   | Explicit Goal resume after pause      | Goal resume admission only                                                                                                                                         |
-| 014   | Provider-safe replay                  | Native assistant transport projection                                                                                                                              |
-| 015   | Trusted local file delivery           | MIME fallback and native media display projection                                                                                                                  |
-| 016   | Offline official plugin catalog       | Native catalog loader with explicit offline intent                                                                                                                 |
-| 019   | No automatic plugin repair downloads  | Installed-index lease writer; explicit installs remain native                                                                                                      |
-| 020   | Configured realtime ASR URL           | Native OpenAI realtime provider factory                                                                                                                            |
-| 021   | Independent image provider            | Native OpenAI image provider; video seam retired                                                                                                                   |
-| 022   | Planning history after reset          | Native display-history boundary; model reset unchanged                                                                                                             |
-| 023   | Managed atomic fork                   | Current fork schema/handler and native atomic transcript fork                                                                                                      |
-| 025   | MXC external skill paths              | Canonical host read-only materialization                                                                                                                           |
-| 026   | Private untrusted turn context        | Authorized agent-only input, raw transcript unchanged                                                                                                              |
-| 027   | Shared session-access providers       | Process-wide registry for bundle and SDK instances                                                                                                                 |
-| 028   | Managed session cwd                   | Already-authorized operator.admin cwd path; native non-admin containment unchanged                                                                                 |
-| 030   | Scheduled task permissions            | Cron schema, job persistence and selected workspace after async preparation                                                                                        |
-| 031   | Windows credential launcher ACL       | Exact system launcher/provider and verified TrustedInstaller SID                                                                                                   |
-| 032   | Windows session creation publication  | Canonicalize admitted and SQLite namespaced paths; preserve exact case, database identity and current-owner checks                                                 |
-| 033   | Content-free loop exit diagnostics    | Record the selected loop exit branch and final response kind; carry through deferred settlement without changing execution or retries                              |
-| 034   | Owned plugin execution and cleanup    | General SDK run timeout and managed tool lifetime; exact native registry ownership, whole-run lifecycle, supervisor cleanup and trusted Code Mode wait metadata    |
-| 035   | Actual prompt-hook context budget     | Expose the resolved native attempt budget through the existing contextTokenBudget hook field; model selection and context guards remain native                     |
-| 036   | Shared desktop terminal               | Admin terminal launch accepts project cwd and shell/args; explicit termination retains native viewer ownership checks                                              |
-| 037   | Product terminal welcome              | Welcome text reads validated build-time productName; no lobster art; native buffer seeding and output offsets remain unchanged                                     |
-| 038   | Native compaction lifecycle           | Recovery start/update/end events; admin operation status/cancellation covers preparation and cleanup; bounded native receipts retain no transcript or summary      |
-| 039   | Peer transcript writer scope          | Detach only source transcript/CLI-history ownership after caller snapshot restoration; preserve native authority, target writer admission, guards and cancellation |
-| 040   | Local computer activity presentation  | Admin-only v2 start/end heartbeats and execution release; opaque presentation identity, no input/image/coordinate payload, unchanged native execution and results |
-| 042   | Windows plugin recovery junctions     | Preserve accepted absolute directory links as junctions in recovery copies; keep native file references, hardlink checks, admission and lifecycle unchanged        |
+| Patch | Retained capability                  | 9.8 boundary                                                                                                                                                       |
+| ----- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 001   | Managed pip environment provenance   | Host and native-hook environment sanitizers                                                                                                                        |
+| 005   | Final system prompt replacements     | Final model-aware prompt before routing observation                                                                                                                |
+| 006   | Agent metadata and hidden turns      | Chat admission, queued source-to-execution human initiation transfer, and provider transport; native read worker checks parent identity                            |
+| 007   | Request-purpose metadata             | Compaction and reviewer provider payloads; async native reviewer identity reads                                                                                    |
+| 008   | App-process recovery boundary        | Native main-session restart recovery only                                                                                                                          |
+| 013   | Explicit Goal resume after pause     | Goal resume admission only                                                                                                                                         |
+| 014   | Provider-safe replay                 | Native assistant transport projection                                                                                                                              |
+| 015   | Trusted local file delivery          | MIME fallback and native media display projection                                                                                                                  |
+| 016   | Offline official plugin catalog      | Native catalog loader with explicit offline intent                                                                                                                 |
+| 019   | No automatic plugin repair downloads | Installed-index lease writer; explicit installs remain native                                                                                                      |
+| 022   | Planning history after reset         | Native display-history boundary; model reset unchanged                                                                                                             |
+| 023   | Managed atomic fork                  | Current fork schema/handler and native atomic transcript fork                                                                                                      |
+| 025   | MXC external skill paths             | Canonical host read-only materialization                                                                                                                           |
+| 026   | Private untrusted turn context       | Authorized agent-only input, raw transcript unchanged                                                                                                              |
+| 028   | Managed session cwd                  | Already-authorized operator.admin cwd path; native non-admin containment unchanged                                                                                 |
+| 030   | Scheduled task permissions           | Cron schema, job persistence and selected workspace after async preparation                                                                                        |
+| 031   | Windows credential launcher ACL      | Exact system launcher/provider and verified TrustedInstaller SID                                                                                                   |
+| 032   | Windows session creation publication | Canonicalize admitted and SQLite namespaced paths; preserve exact case, database identity and current-owner checks                                                 |
+| 034   | Owned plugin execution and cleanup   | General SDK run timeout and managed tool lifetime; exact native registry ownership, whole-run lifecycle, supervisor cleanup and trusted Code Mode wait metadata    |
+| 036   | Shared desktop terminal              | Admin terminal launch accepts project cwd and shell/args; explicit termination retains native viewer ownership checks                                              |
+| 037   | Product terminal welcome             | Welcome text reads validated build-time productName; no lobster art; native buffer seeding and output offsets remain unchanged                                     |
+| 038   | Native compaction lifecycle          | Recovery start/update/end events; admin operation status/cancellation covers preparation and cleanup; bounded native receipts retain no transcript or summary      |
+| 039   | Peer transcript writer scope         | Detach only source transcript/CLI-history ownership after caller snapshot restoration; preserve native authority, target writer admission, guards and cancellation |
+| 040   | Local computer activity presentation | Admin-only v2 start/end heartbeats and execution release; opaque presentation identity, no input/image/coordinate payload, unchanged native execution and results  |
+| 042   | Windows plugin recovery junctions    | Preserve accepted absolute directory links as junctions in recovery copies; keep native file references, hardlink checks, admission and lifecycle unchanged        |
 
 Each module header records its scope, native safety boundary and removal condition.
 No upstream issue number is claimed without an actual filed issue.
@@ -192,8 +369,8 @@ the missing recovery lifecycle, so this capability belongs at the native seam.
 Rebuild from the locked pristine package; partial and historical shapes fail
 closed. Remove 038 when upstream exposes equivalent operation-scoped settlement
 and cancellation covering preparation, plus complete recovery events and marker
-provenance. The adjacent `native-compaction-lifecycle.js` contains the serialized
-native helpers and is included in the patch input/build-recipe fingerprints;
+provenance. `src/main/openclaw/runtime/native-support/compaction-lifecycle.mjs`
+contains the ordinary imported implementation and is included in the build recipe;
 038 owns all transformations and exact verification. Tests:
 `tests/openclaw/patches/v2026.9.8/native-compaction-lifecycle.test.ts`.
 
@@ -256,17 +433,17 @@ Managed runs require local native execution; unverified remote, ACP, alternate
 harness and sandbox tool backends fail closed. SDK declarations and all four
 native code copies are checked, then the production bundle is verified after
 esbuild normalization. Historical or partial versions require a pristine rebuild.
-The current set passed a full isolated production build (real dependency lock,
+Before this refactor, the execution capability passed a full isolated production build (real dependency lock,
 asar and artifact metadata), native Code Mode async wait and cleanup probes, and
 a real execution lasting over one hour. See the Swarm batch feature plan for
 the exact test scope and remaining recovery limits.
 
-035 repairs a missing value, not a new budget policy. The 9.8 public hook type
-declares `contextTokenBudget`, but the native prompt assembly did not populate
-it. Plugins receive `attempt.contextTokenBudget`, which the native result guards
-also consume; they must retain a conservative fallback when it is unavailable.
-All four native copies and the production bundle are verified against the
-current exact field expression. No model window is guessed from its name.
+The retired 035 patch populated an optional public hook field. Workflow no longer
+requires it: the public model_call_started event already exposes the effective
+context budget at the result-reader boundary. Bounded plugin metadata observes
+that event; absent evidence uses the conservative page fallback. Native admission,
+model context caps and compaction remain unchanged. The native batch fixture
+asserts the prompt field is absent and actual result reads use the public event.
 
 ## MXC
 

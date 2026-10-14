@@ -1,12 +1,12 @@
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 
-import { verifyItemResult } from './snapshot.js';
-import { resultTransportBudget, resultTransportCost } from '../contracts/batch.js';
+import { batchResultPage, resultTransportCost } from '../contracts/batch.js';
 import type { Flow, NodeStatus } from '../contracts/flow.js';
 import { FLOW_RPC } from '../contracts/flow.js';
+import type { FlowStore } from '../data/store.js';
 import type { FlowEngine } from '../execution/engine.js';
 import { resultPage } from './result-page.js';
-import type { FlowStore } from '../data/store.js';
+import { verifyItemResult } from './snapshot.js';
 
 export const RESULT_TOOL = 'swarm_workflow_results';
 export function registerBatchApi(
@@ -17,7 +17,7 @@ export function registerBatchApi(
     bound(
       sessionKey: string,
       callId: string,
-    ): { runId: string; contextTokens?: number; assertCurrent(): void };
+    ): { runId: string; resultBudget: number; assertCurrent(): void };
   },
 ) {
   for (const method of [FLOW_RPC.batch, FLOW_RPC.retryBatch])
@@ -121,7 +121,7 @@ export function registerBatchApi(
               )
                 throw new Error('Invalid result index arguments.');
               const authority = host.bound(ctx.sessionKey!, callId);
-              const budget = resultTransportBudget(authority.contextTokens);
+              const budget = authority.resultBudget;
               const guard = () => {
                 signal?.throwIfAborted();
                 ctx.assertInvocationCurrent();
@@ -190,22 +190,9 @@ export function registerBatchApi(
                 );
               }
               guard();
-              const result = {
-                flowId: active.flow.id,
-                stageId: stage.id,
-                manifestVersion: stage.batchInput?.version,
-                total: stage.batchCounts?.total,
-                items: page.items,
-                ...(page.after === undefined
-                  ? {}
-                  : {
-                      cursor: Buffer.from(JSON.stringify([...identity, page.after])).toString(
-                        'base64url',
-                      ),
-                    }),
-              };
+              const result = batchResultPage(active.flow, stage, page.items, page.after);
               if (resultTransportCost(result) > budget)
-                throw new Error('Result transport envelope exceeds this model context budget.');
+                throw new Error('Result transport envelope exceeds the result page budget.');
               return {
                 details: result,
                 content: [{ type: 'text' as const, text: JSON.stringify(result) }],

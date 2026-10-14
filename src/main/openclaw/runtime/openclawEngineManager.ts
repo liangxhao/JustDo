@@ -31,7 +31,7 @@ import {
   appendNodeRequireOption,
   ensureElectronNodeShim,
   getElectronNodeRuntimePath,
-  resolvePackagedNpmBinDir,
+  resolveElectronNpmBinDir,
 } from './electronNodeRuntime';
 import { GatewayConfigReloadMonitor } from './gatewayConfigReloadMonitor';
 import { buildGatewayLaunchArgs, buildGatewayLaunchEnvironment } from './gatewayLaunchArgs';
@@ -751,33 +751,33 @@ export class OpenClawEngineManager extends EventEmitter {
       env.NODE_EXTRA_CA_CERTS || buildTrustedCaBundle(app.getPath('userData')),
     );
 
-    const npmBinDir = app.isPackaged
-      ? resolvePackagedNpmBinDir(process.resourcesPath)
-      : (() => {
-          const npmExecPath = process.env.npm_execpath?.trim();
-          if (npmExecPath) {
-            return path.dirname(npmExecPath);
-          }
-          const projectNpmBin = path.join(app.getAppPath(), 'node_modules', 'npm', 'bin');
-          return fs.existsSync(projectNpmBin) ? projectNpmBin : undefined;
-        })();
-    const nodeShimDir = ensureElectronNodeShim(electronNodeRuntimePath, npmBinDir);
+    const npmBinDir = resolveElectronNpmBinDir();
+    const nodeShimDir = ensureElectronNodeShim(
+      electronNodeRuntimePath,
+      npmBinDir,
+      path.join(
+        runtime.root,
+        'node_modules',
+        'chrome-devtools-mcp',
+        'build',
+        'src',
+        'bin',
+        'chrome-devtools-mcp.js',
+      ),
+    );
     if (nodeShimDir) {
       const curPath = env.PATH || env.Path || '';
       env.PATH = [nodeShimDir, curPath].filter(Boolean).join(path.delimiter);
       if (process.platform === 'win32') {
         env.Path = env.PATH;
-        const windowsHidePreload = path.join(
-          nodeShimDir,
-          'hide-child-process-windows.cjs',
-        ).replace(/\\/g, '/');
-        env.JUSTDO_WINDOWS_HIDE_PRELOAD = windowsHidePreload;
+        const windowsHidePreload = path
+          .join(nodeShimDir, 'hide-child-process-windows.cjs')
+          .replace(/\\/g, '/');
         // Load this before OpenClaw imports child_process so direct Gateway
-        // launches are covered. The Windows MCP package-runner patch also
-        // restores this exact preload after the MCP environment sanitizer.
+        // launches are covered. Child package-runner shims load it through
+        // explicit argv after the native MCP environment sanitizer.
         env.NODE_OPTIONS = appendNodeRequireOption(env.NODE_OPTIONS, windowsHidePreload);
       }
-      env.JUSTDO_NPM_BIN_DIR = npmBinDir || '';
     }
 
     if (runtimeCleanupPreload) {

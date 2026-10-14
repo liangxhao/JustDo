@@ -1,4 +1,4 @@
-import type { FlowNode, NodeStatus } from './flow.js';
+import type { Flow, FlowNode, NodeStatus } from './flow.js';
 
 export type BatchSource =
   { kind: 'files'; path: string; pattern?: string } | { kind: 'jsonl'; path: string };
@@ -86,11 +86,30 @@ export const BATCH_LIMITS = {
 // Deferred tool_call serializes both details and content. Fit its complete,
 // pretty-printed envelope below the native 16,000-character producer cap.
 export const RESULT_TRANSPORT_BYTES = 12000;
-export function resultTransportBudget(contextTokens?: number): number {
-  // Native prompt admission also counts ASCII with a minimum raw weight of
-  // two. Reserving half the effective context covers that independent guard.
-  const tokens = Number.isFinite(contextTokens) && contextTokens! > 0 ? contextTokens! : 4000;
-  return Math.min(RESULT_TRANSPORT_BYTES, Math.floor(tokens / 2));
+// Conservative fallback when the public model-call event has no budget evidence.
+// Cost includes both copies in the tool envelope and worst-case text weights.
+export const RESULT_PAGE_TRANSPORT_BUDGET = 2000;
+/** Use the exact delivered envelope when selecting a result page. */
+export function batchResultPage(
+  flow: Pick<Flow, 'id'>,
+  stage: Pick<FlowNode, 'id' | 'batchInput' | 'batchCounts'>,
+  items: unknown[],
+  after?: number,
+) {
+  return {
+    flowId: flow.id,
+    stageId: stage.id,
+    manifestVersion: stage.batchInput?.version,
+    total: stage.batchCounts?.total,
+    items,
+    ...(after === undefined
+      ? {}
+      : {
+          cursor: Buffer.from(
+            JSON.stringify([flow.id, stage.id, stage.batchInput?.version, after]),
+          ).toString('base64url'),
+        }),
+  };
 }
 export function resultTransportBytes(value: unknown): number {
   return Buffer.byteLength(resultTransportText(value));

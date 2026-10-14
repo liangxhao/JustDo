@@ -8,7 +8,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const ts = require('typescript');
-const esbuild = require('esbuild');
+const { canonicalHelper } = require('../../openclaw/native-support-contract.cjs');
 const {
   assertCurrentPatchContract,
   findFilesContaining,
@@ -16,13 +16,88 @@ const {
   isGatewayBundlePath,
   normalizeJustDoGatewayBundle,
   writeIfChanged,
+  nativeSupportModule,
+  nativeSupportImport,
 } = require('./_patch-utils.js');
-const helpers = require('./plugin-owned-execution.js');
+const {
+  createPluginOwnedExecutionRuntime,
+} = require('../../../src/main/openclaw/runtime/native-support/plugin-owned-execution.mjs');
+const helpers = createPluginOwnedExecutionRuntime(null);
 const CONTRACT = 'JUSTDO_PLUGIN_OWNED_EXECUTION_V2026_9_8';
 const names = Object.keys(helpers);
-const helperSource = Object.values(helpers)
-  .map(fn => fn.toString())
-  .join('\n\n');
+const nativeDependencies = [
+  'loadSubagentSessionEntry',
+  'prepareSubagentRunsByRunIds',
+  'getAgentEventLifecycleGeneration',
+  'subagentRuns',
+  'classifySubagentTerminalOutcome',
+  'buildAgentRunTerminalOutcomeFromLifecycleEvent',
+  'captureOpenClawStateWorkerContext',
+  'isDeepStrictEqual',
+  'persistSubagentRunsAsyncOrThrow',
+  'SubagentRegistryWriteError',
+];
+const nativeBinding = `createPluginOwnedExecutionRuntime({ ${nativeDependencies
+  .map(name => `get ${name}() { return ${name}; }`)
+  .join(', ')} })`;
+const helperSource = `const justDoPluginExecutionBindings = ${nativeBinding};\nconst { ${names.join(', ')} } = justDoPluginExecutionBindings;`;
+
+function assertSupportBinding(source, file) {
+  const ast = ts.createSourceFile(
+    'binding.mjs',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  const binding = one(
+    ast,
+    node =>
+      ts.isVariableDeclaration(node) &&
+      /^justDoPluginExecutionBindings\d*$/.test(node.name.getText(ast)),
+    'native execution support binding',
+  );
+  const aliases =
+    source
+      .match(/import\s*\{\s*isDeepStrictEqual\s+as\s+([\w$]+)\s*\}\s*from\s*["']node:util["']/g)
+      ?.map(declaration => declaration.match(/as\s+([\w$]+)/)[1]) ?? [];
+  const initializer =
+    binding.initializer ??
+    (isGatewayBundlePath(file)
+      ? one(
+          ast,
+          node =>
+            ts.isBinaryExpression(node) &&
+            node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+            node.left.getText(ast) === binding.name.getText(ast),
+          'native execution support initialization',
+        ).right
+      : undefined);
+  if (!initializer) throw new Error(`${file}: native execution support initializer missing`);
+  const actual = initializer
+    .getText(ast)
+    .replace(/\bisDeepStrictEqual\d+\b/g, alias =>
+      aliases.includes(alias) ? 'isDeepStrictEqual' : alias,
+    );
+  if (
+    canonicalHelper(`function binding(){return ${actual};}`) !==
+    canonicalHelper(`function binding(){return ${nativeBinding};}`)
+  )
+    throw new Error(`${file}: historical or partial native execution support binding`);
+  if (isGatewayBundlePath(file)) {
+    editFunction(source, 'createPluginOwnedExecutionRuntime', body => {
+      if (canonicalHelper(body) !== canonicalHelper(createPluginOwnedExecutionRuntime.toString()))
+        throw new Error(`${file}: native execution support implementation changed`);
+      return body;
+    });
+  } else if (
+    !source.includes(
+      `import { createPluginOwnedExecutionRuntime } from "${nativeSupportImport(file, 'plugin-owned-execution.mjs')}";`,
+    )
+  ) {
+    throw new Error(`${file}: native execution support import changed`);
+  }
+}
 const signatures = [
   'createGatewaySubagentRuntime',
   'createSubagentRegistrationRecord',
@@ -80,78 +155,6 @@ function editFunction(source, name, edit) {
   const open = source.indexOf('{', close);
   const end = findMatchingDelimiter(source, open, '{', '}', name);
   return source.slice(0, start) + edit(source.slice(start, end + 1)) + source.slice(end + 1);
-}
-
-// esbuild removes comments, changes quotes and renames local bindings in the
-// Gateway bundle. Compare the complete helper semantics after deterministic
-// alpha-renaming, rather than accepting a marker or a few substrings.
-function canonicalHelper(body, normalizeAfterMinify = true) {
-  const sf = ts.createSourceFile(
-    'helper.mjs',
-    body,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.JS,
-  );
-  const bindings = new Map();
-  const bind = name => {
-    if (ts.isIdentifier(name) && !bindings.has(name.text))
-      bindings.set(name.text, `local${bindings.size}`);
-    else if (ts.isBindingPattern(name))
-      for (const element of name.elements) if (ts.isBindingElement(element)) bind(element.name);
-  };
-  nodes(sf, node => {
-    if (ts.isParameter(node) || ts.isVariableDeclaration(node)) bind(node.name);
-    return false;
-  });
-  const result = ts.transform(sf, [
-    context => {
-      const visit = node => {
-        if (
-          ts.isBindingElement(node) &&
-          !node.propertyName &&
-          !node.dotDotDotToken &&
-          ts.isIdentifier(node.name) &&
-          ts.isObjectBindingPattern(node.parent)
-        )
-          return ts.factory.updateBindingElement(
-            node,
-            node.dotDotDotToken,
-            ts.factory.createIdentifier(node.name.text),
-            ts.factory.createIdentifier(bindings.get(node.name.text) ?? node.name.text),
-            node.initializer && ts.visitNode(node.initializer, visit),
-          );
-        if (ts.isShorthandPropertyAssignment(node))
-          return ts.factory.createPropertyAssignment(
-            node.name.text,
-            ts.factory.createIdentifier(bindings.get(node.name.text) ?? node.name.text),
-          );
-        if (ts.isStringLiteral(node)) return ts.factory.createStringLiteral(node.text);
-        if (ts.isIdentifier(node) && node.text === 'undefined') return ts.factory.createVoidZero();
-        if (
-          ts.isIdentifier(node) &&
-          bindings.has(node.text) &&
-          !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) &&
-          !(ts.isPropertyAssignment(node.parent) && node.parent.name === node) &&
-          !(ts.isBindingElement(node.parent) && node.parent.propertyName === node)
-        )
-          return ts.factory.createIdentifier(bindings.get(node.text));
-        return ts.visitEachChild(node, visit, context);
-      };
-      return root => ts.visitNode(root, visit);
-    },
-  ]);
-  try {
-    const normalized = esbuild.transformSync(
-      ts.createPrinter({ removeComments: true }).printFile(result.transformed[0]),
-      { minifySyntax: true, minifyWhitespace: true, minifyIdentifiers: false, target: 'node24' },
-    ).code;
-    // Syntax minification can remove intermediate bindings. Renumber the
-    // retained bindings once more so source and already-minified code agree.
-    return normalizeAfterMinify ? canonicalHelper(normalized, false) : normalized;
-  } finally {
-    result.dispose();
-  }
 }
 
 // AST-selected offset edits retain upstream code and minified local names.
@@ -997,31 +1000,16 @@ function transform(source, file, registryFile) {
     : `import("./${registryFile}")`;
   let value = source;
   if (embedded) {
-    if (!value.includes('function justDoCreatePluginExecution('))
+    if (!value.includes('justDoPluginExecutionBindings')) {
+      if (source.includes(CONTRACT) || source.includes('function justDoCreatePluginExecution('))
+        throw new Error(`${file}: historical native execution helpers; rebuild pristine runtime`);
       value = value.replace(
         'function persistSubagentRuns(',
         `${helperSource}\nfunction persistSubagentRuns(`,
       );
-    else if (!isGatewayBundlePath(file) && !value.includes(helperSource))
-      throw new Error(`${file}: partial native helpers`);
-    else if (isGatewayBundlePath(file))
-      for (const [name, helper] of Object.entries(helpers)) {
-        editFunction(value, name, body => {
-          const actual = (helper.toString().startsWith('async ') ? 'async ' : '') + body;
-          const nativeEquality =
-            value
-              .match(
-                /import\s*\{\s*isDeepStrictEqual\s+as\s+([\w$]+)\s*\}\s*from\s*["']node:util["']/g,
-              )
-              ?.map(declaration => declaration.match(/as\s+([\w$]+)/)[1]) ?? [];
-          const normalizedActual = actual.replace(/\bisDeepStrictEqual\d+\b/g, alias =>
-            nativeEquality.includes(alias) ? 'isDeepStrictEqual' : alias,
-          );
-          if (canonicalHelper(normalizedActual) !== canonicalHelper(helper.toString()))
-            throw new Error(`${file}: partial bundled helper ${name}`);
-          return body;
-        });
-      }
+      value = `import { createPluginOwnedExecutionRuntime } from "${nativeSupportImport(file, 'plugin-owned-execution.mjs')}";\n${value}`;
+    }
+    assertSupportBinding(value, file);
     if (path.basename(file) === registryFile) {
       const exported = `export { ${names.join(', ')} };`;
       if (!value.includes(exported)) value += `\n${exported}\n`;
@@ -1029,7 +1017,7 @@ function transform(source, file, registryFile) {
   }
   const verifyCurrent =
     source.includes(CONTRACT) ||
-    (isGatewayBundlePath(file) && source.includes('function justDoCreatePluginExecution('));
+    (isGatewayBundlePath(file) && source.includes('justDoPluginExecutionBindings'));
   for (const name of signatures)
     if (value.includes(`function ${name}(`))
       value = editFunction(value, name, body => {
@@ -1146,6 +1134,15 @@ function processTargets(root, verify) {
   if (declarations.filter(item => item.content.includes('type SubagentRunParams = {')).length !== 6)
     throw new Error(`Plugin execution declaration copies changed: ${declarations.length}`);
   changes.push(...declarations);
+  nativeSupportModule(
+    root,
+    'plugin-owned-execution.mjs',
+    path.resolve(
+      __dirname,
+      '../../../src/main/openclaw/runtime/native-support/plugin-owned-execution.mjs',
+    ),
+    verify,
+  );
   return changes.flatMap(({ file, content, next }) =>
     !verify && writeIfChanged(file, content, next) ? [file] : [],
   );
@@ -1161,6 +1158,7 @@ module.exports = {
     assertCurrentFunction,
     canonicalHelper,
     helpers,
+    testingHelperSource: createPluginOwnedExecutionRuntime.toString() + '\n' + helperSource,
     CONTRACT,
     signatures,
   },

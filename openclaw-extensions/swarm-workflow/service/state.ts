@@ -1,9 +1,15 @@
 import type { FilesystemAdmission } from '../../runtime-services/contracts/filesystem';
+import type { FlowStore } from '../data/store';
 import type { FlowEngine } from '../execution/engine';
 import type { FlowNotifier } from '../management/notifications';
-import type { FlowStore } from '../data/store';
+import type { createResultBudgetTracker, ResultBudgetAttempt } from './result-budget';
 
-type SubmissionCall = { runId: string; expiresAt: number; signal?: AbortSignal };
+type SubmissionCall = {
+  runId: string;
+  expiresAt: number;
+  signal?: AbortSignal;
+  budgetAttempt?: ResultBudgetAttempt;
+};
 export type StartAdmission = {
   parentKey: string;
   parentId: string;
@@ -38,7 +44,7 @@ type SharedService = {
   managementCalls: Map<string, SubmissionCall>;
   startAdmissions: Map<string, StartAdmission>;
   startTurns: Map<string, StartTurn>;
-  resultBudgets?: Map<string, number>;
+  resultBudgets?: ReturnType<typeof createResultBudgetTracker>;
 };
 // Native agent registries register separate tool/hook instances in this process.
 // They must all address the service started by the Gateway registry, while each

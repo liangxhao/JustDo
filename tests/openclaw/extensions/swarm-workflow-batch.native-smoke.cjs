@@ -24,10 +24,13 @@ fs.writeFileSync(path.join(project, 'AGENTS.md'), 'Preserve source data. Write e
 buildSync({ entryPoints: ['openclaw-extensions/swarm-workflow/index.ts'], outfile: path.join(plugin, 'index.js'), bundle: true, platform: 'node', format: 'esm', external: ['openclaw/plugin-sdk/*'] });
 fs.copyFileSync('openclaw-extensions/swarm-workflow/openclaw.plugin.json', path.join(plugin, 'openclaw.plugin.json'));
 fs.writeFileSync(path.join(plugin, 'package.json'), JSON.stringify({ name: 'batch-proof-plugin', type: 'module', openclaw: { extensions: ['./index.js'] } }));
+const budgetModule = path.join(base, 'result-budget.cjs');
+buildSync({ entryPoints: ['openclaw-extensions/swarm-workflow/contracts/batch.ts'], outfile: budgetModule, bundle: true, platform: 'node', format: 'cjs' });
+const { RESULT_TRANSPORT_BYTES, RESULT_PAGE_TRANSPORT_BUDGET, resultTransportCost } = require(budgetModule);
 const observer = path.join(base, 'extensions', 'budget-observer');
 const observedBudgetsPath = path.join(base, 'observed-budgets.jsonl');
 fs.mkdirSync(observer, { recursive: true });
-fs.writeFileSync(path.join(observer, 'index.js'), 'import fs from "node:fs"; export default { id: "budget-observer", register(api) { api.on("before_prompt_build", (_, ctx) => { if (ctx.sessionKey?.includes("swarm-workflow-")) fs.appendFileSync(' + JSON.stringify(observedBudgetsPath) + ', JSON.stringify({ runId: ctx.runId, budget: ctx.contextTokenBudget }) + "\\n"); }); } };');
+fs.writeFileSync(path.join(observer, 'index.js'), 'import fs from "node:fs"; export default { id: "budget-observer", register(api) { api.on("before_prompt_build", (_, ctx) => { if (ctx.sessionKey?.includes("swarm-workflow-")) fs.appendFileSync(' + JSON.stringify(observedBudgetsPath) + ', JSON.stringify({ source: "prompt", runId: ctx.runId, budget: ctx.contextTokenBudget }) + "\\n"); }); api.on("model_call_started", (event, ctx) => { if (event.sessionKey?.includes("swarm-workflow-")) fs.appendFileSync(' + JSON.stringify(observedBudgetsPath) + ', JSON.stringify({ source: "model", runId: event.runId, budget: event.contextTokenBudget, traceId: ctx.trace?.traceId, attemptSpan: ctx.trace?.parentSpanId }) + "\\n"); }); api.on("before_tool_call", (event, ctx) => { if (event.toolName === "swarm_workflow_results") fs.appendFileSync(' + JSON.stringify(observedBudgetsPath) + ', JSON.stringify({ source: "result-tool", runId: ctx.runId, traceId: ctx.trace?.traceId, attemptSpan: ctx.trace?.spanId }) + "\\n"); }); } };');
 fs.writeFileSync(path.join(observer, 'openclaw.plugin.json'), JSON.stringify({ id: 'budget-observer', name: 'Native budget proof', activation: { onStartup: true, onCapabilities: ['hook'] }, configSchema: { type: 'object', additionalProperties: false, properties: {} } }));
 fs.writeFileSync(path.join(observer, 'package.json'), JSON.stringify({ name: 'native-budget-observer', type: 'module', openclaw: { extensions: ['./index.js'] } }));
 const goal = 'Process all 100 data/*.json inputs independently, multiply each value by 2, then aggregate all results into aggregate.json and independently verify count 100 and sum 10100. Preserve original input files.';
@@ -49,7 +52,7 @@ function envelope(text) {
     else if (c === '"') quoted = true; else if (c === '{') depth++; else if (c === '}' && !--depth) return JSON.parse(text.slice(start, i + 1));
   }
 }
-let calls = 0; const failedOnce = new Set(); const processed = new Set(); let maxPromptBytes = 0; let indexReads = 0; let fixtureFailure;
+let calls = 0; const failedOnce = new Set(); const processed = new Set(); let maxPromptBytes = 0; let indexReads = 0; let maxResultPageCost = 0; let fixtureFailure;
 const provider = http.createServer((req, res) => {
   let body = ''; req.on('data', chunk => { body += chunk; }); req.on('end', () => {
     try {
@@ -60,10 +63,15 @@ const provider = http.createServer((req, res) => {
       if (task) maxPromptBytes = Math.max(maxPromptBytes, Buffer.byteLength(JSON.stringify(task)));
       const toolMessages = messages.filter(message => message.role === 'tool');
       const toolValues = toolMessages.map(message => unwrap(message.content));
-      const rejected = toolMessages.find(message => /^Error:/u.test(textOf(message.content)) || unwrap(message.content)?.accepted === false);
+      for (const page of toolValues.filter(value => (value?.stageId && Array.isArray(value.items)) || value?.format === 'text-fragment')) {
+        const cost = resultTransportCost(page); maxResultPageCost = Math.max(maxResultPageCost, cost);
+        assert.ok(cost <= RESULT_TRANSPORT_BYTES, 'Result page exceeded the observed native budget policy.');
+      }
+      const rejected = toolMessages.find(message => { const value = unwrap(message.content); return /^Error:/u.test(textOf(message.content)) || value?.accepted === false || (typeof value?.exitCode === 'number' && value.exitCode !== 0); });
       if (rejected) throw new Error('Unexpected native tool rejection: ' + textOf(rejected.content).slice(0, 1000));
       const accepted = toolMessages.some(message => textOf(message.content).includes('Submission persisted.'));
-      const inspectionDone = toolMessages.some(message => /item-written|aggregate-written|verified-100/.test(textOf(message.content)));
+      // File diffs may contain these literals; only successful exec stdout proves execution.
+      const inspectionDone = toolValues.some(value => value?.status === 'completed' && value.exitCode === 0 && typeof value.aggregated === 'string' && /^(?:item-written|aggregate-written|verified-100)$/m.test(value.aggregated));
       let name, args, content = 'Native batch proof stage complete.';
       if (!task && !toolMessages.length) { name = 'swarm_workflow_start'; args = { goal, mode: 'auto', concurrency: 5 }; }
       else if (task?.instruction.includes('Return only JSON')) content = JSON.stringify({ tasks: [
@@ -87,7 +95,10 @@ const provider = http.createServer((req, res) => {
           const items = pages.flatMap(page => page.items); assert.equal(new Set(items.map(item => item.id)).size, 100);
           const paths = items.map(item => item.result.artifacts[0].path);
           const script = 'const f=require("fs");const p=' + JSON.stringify(paths) + ';const a=p.map(n=>JSON.parse(f.readFileSync(n,"utf8")));if(a.length!==100||new Set(a.map(x=>x.id)).size!==100)throw Error("incomplete coverage");f.writeFileSync("aggregate.json",JSON.stringify({count:a.length,sum:a.reduce((s,x)=>s+x.value,0)}));console.log("aggregate-written")';
-          name = 'exec'; args = { command: 'node -e "eval(Buffer.from(\'' + Buffer.from(script).toString('base64') + '\',\'base64\').toString())"', workdir: project };
+          const scriptPath = path.join(project, 'aggregate-proof.cjs');
+          // Persist the long index through native write, not a Windows command line.
+          if (!fs.existsSync(scriptPath)) { name = 'write'; args = { path: scriptPath, content: script }; }
+          else { name = 'exec'; args = { command: 'node aggregate-proof.cjs', workdir: project }; }
         } else { name = 'swarm_workflow_complete'; args = { summary: 'All 100 result files aggregated into aggregate.json.', evidence: ['aggregate.json'] }; }
       } else if (task?.instruction.includes('Produce the final')) content = 'Processed and verified all 100 inputs. Deliverable: aggregate.json (count 100, sum 10100).';
       const deferred = (input.tools ?? []).some(tool => tool.function?.name === 'tool_call');
@@ -100,13 +111,24 @@ const provider = http.createServer((req, res) => {
 });
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 let child, socket, log = '';
-async function connect() {
+async function connectOnce() {
   for (let i = 0; i < 80; i++) { try { socket = await new Promise((resolve, reject) => { const ws = new WebSocket('ws://127.0.0.1:43243'); ws.once('open', () => resolve(ws)); ws.once('error', reject); }); break; } catch { if (child.exitCode !== null) throw new Error('Isolated Gateway exited.'); await delay(1000); } }
   const pending = new Map(); let seq = 0;
   socket.on('message', raw => { const msg = JSON.parse(raw); if (msg.type === 'res') { const entry = pending.get(msg.id); if (entry) { pending.delete(msg.id); msg.ok ? entry.resolve(msg.payload) : entry.reject(new Error(JSON.stringify(msg.error))); } } });
   const rpc = (method, params) => new Promise((resolve, reject) => { const id = String(++seq); const timer = setTimeout(() => { pending.delete(id); reject(new Error('Timed out: ' + method)); }, 30000); pending.set(id, { resolve: value => { clearTimeout(timer); resolve(value); }, reject: error => { clearTimeout(timer); reject(error); } }); socket.send(JSON.stringify({ type: 'req', id, method, params })); });
   await rpc('connect', { minProtocol: 4, maxProtocol: 4, client: { id: 'cli', version: 'proof', platform: 'win32', mode: 'cli' }, role: 'operator', scopes: ['operator.admin', 'operator.read', 'operator.write'], auth: { token: 'isolated-batch-proof' } });
   return rpc;
+}
+async function connect() {
+  for (let i = 0; i < 80; i++) {
+    try { return await connectOnce(); }
+    catch (error) {
+      socket?.close(); socket = undefined;
+      if (child.exitCode !== null || !String(error).includes('startup-sidecars')) throw error;
+      await delay(1000);
+    }
+  }
+  throw new Error('Isolated Gateway did not finish startup.');
 }
 (async () => {
   try {
@@ -130,8 +152,9 @@ async function connect() {
           if (counts.done >= 1 && !budgetChecked) {
             assert.ok(fs.existsSync(observedBudgetsPath), 'Native budget observer was not activated.');
             const observed = fs.readFileSync(observedBudgetsPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
-            assert.ok(observed.length && observed.every(value => value.budget === 32768), 'Hook did not expose the resolved native budget.');
-            budgetChecked = true; console.log('PASS effective native context budget 32768 versus model window 131072');
+            assert.ok(observed.some(value => value.source === 'prompt') && observed.filter(value => value.source === 'prompt').every(value => value.budget === undefined), 'Retired prompt-hook budget field is still present.');
+            assert.ok(observed.some(value => value.source === 'model') && observed.filter(value => value.source === 'model').every(value => value.budget === 32768), 'Public model-call events lack the resolved cap.');
+            budgetChecked = true; console.log('PASS public model-call budget 32768 without the retired prompt-hook field');
           }
           if (counts.done >= 5 && !hotChanged) {
             config.plugins.entries['swarm-workflow'].config = { availableAgentIds: ['main'], globalConcurrency: 2, maxBatchItems: 50, executionTimeoutSeconds: 600, maxAttempts: 1, snapshotBudgetMiB: 16 };
@@ -155,9 +178,14 @@ async function connect() {
       const rows = db.prepare('SELECT payload FROM batch_items WHERE flow_id=?').all(done.id).map(row => JSON.parse(row.payload)); assert.equal(rows.length, 100); assert.equal(rows.filter(row => row.attempt === 2).length, 3); assert.ok(rows.every(row => row.status === 'done' && row.cleanupSettled && row.artifacts.artifacts.length === 1)); assert.equal(db.prepare('SELECT count(*) AS count FROM execution_leases').get().count, 0);
     } finally { db.close(); }
     const observedBudgets = fs.readFileSync(observedBudgetsPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
-    assert.ok(observedBudgets.length >= 100, 'Missing native budget hook evidence.');
-    assert.ok(observedBudgets.every(value => value.budget === 32768), 'Hook did not expose the effective cap distinct from the 131072 model window.');
-    fs.writeFileSync(path.join(base, 'result.json'), JSON.stringify({ passed: true, calls, maxOccupied, maxPromptBytes, indexReads, items: 100, failedThenRetried: 3, hotChanged, observedNativeContextBudget: 32768, modelContextWindow: 131072, budgetObservations: observedBudgets.length }, null, 2));
+    assert.ok(observedBudgets.filter(value => value.source === 'prompt').length >= 100, 'Missing prompt hook evidence.');
+    assert.ok(observedBudgets.filter(value => value.source === 'prompt').every(value => value.budget === undefined), 'Retired prompt-hook metadata appeared.');
+    assert.ok(observedBudgets.filter(value => value.source === 'model').length >= 100, 'Missing public model-call evidence.');
+    assert.ok(observedBudgets.filter(value => value.source === 'model').every(value => value.budget === 32768), 'Public model-call cap does not match the effective budget.');
+    const resultQueries = observedBudgets.filter(value => value.source === 'result-tool');
+    assert.ok(resultQueries.length >= indexReads && resultQueries.every(query => query.traceId && query.attemptSpan && observedBudgets.some(model => model.source === 'model' && model.runId === query.runId && model.traceId === query.traceId && model.attemptSpan === query.attemptSpan)), 'Result reads lack an exact native attempt trace match.');
+    assert.ok(maxResultPageCost > RESULT_PAGE_TRANSPORT_BUDGET, 'Result reads never used the observed native cap above fallback.');
+    fs.writeFileSync(path.join(base, 'result.json'), JSON.stringify({ passed: true, calls, maxOccupied, maxPromptBytes, indexReads, items: 100, failedThenRetried: 3, hotChanged, observedNativeContextBudget: 32768, modelContextWindow: 131072, promptBudgetFieldAbsent: true, attemptTraceMatched: true, maxResultPageCost, budgetObservations: observedBudgets.length }, null, 2));
     console.log('PASS actual 100-item native batch, durable artifacts, bounded aggregation, verification and delivery');
   } catch (error) { console.error(error); console.error(log.slice(-5000)); process.exitCode = 1; }
   finally { socket?.close(); if (child && child.exitCode === null) await new Promise(resolve => { child.once('exit', resolve); if (process.platform === 'win32') execFile('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {}); else child.kill(); }); provider.close(); fs.writeFileSync(path.join(base, 'gateway.log'), log); console.log('FIXTURE ' + base); }

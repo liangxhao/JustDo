@@ -31,7 +31,7 @@ Main 分别应用两个偏好：非浏览器代理变化更新默认 session、�
 
 新配置以及缺失、未知的模式值默认使用 embedded；已保存的 isolated、user 或 extension 选择保持不变。写入 IPC 严格拒绝未知值。切换同时更新产品 app_config 和原生配置，失败恢复原模式。原生 Browser 和 embedded-browser 互斥，任何时刻只有一个名为 browser 的 Tool；插件页与 Main 都禁止绕过模式开关单独启停。
 
-日常 Chrome 的“测试连接并触发授权”通过 Gateway 原生 `browser.request` 查询 user profile 的 Tab，实际连接由 Chrome MCP 发起；Chrome 自己展示并处理授权。Windows 下原生 9.8 直接用当前可执行文件启动随包 Chrome MCP，构建补丁 003 为受管 Electron 路径显式传递 `ELECTRON_RUN_AS_NODE=1`，保留原生参数及调用方环境，不能只适配旧 npm/npx 启动方式。握手失败会发生在授权提示之前；本地端口可达只代表可以尝试连接，不代表已经授权。历史补丁运行时必须从锁定 pristine 包重建，不能原地修补。
+日常 Chrome 的“测试连接并触发授权”通过 Gateway 原生 `browser.request` 查询 user profile 的 Tab，实际连接由 Chrome MCP 发起；Chrome 自己展示并处理授权。Windows 由 Main 的配置投影选择 `chrome-mcp.cmd`，启动器显式启用 Electron Node 模式并启动锁定的随包 Chrome MCP；003 补丁已移除。原生在其他模式也会生成 user profile，配置投影为这个缺失的隐式 profile 同样补齐启动器，保留所选 default profile、已有自定义 launcher 和其它 profile。首次 full/minimal 写入、后续更新和认证刷新均经过投影；合法原生配置缺少 browser 根时仅补齐 user 启动器，不指定原生默认选择。原生参数、调用方环境及连接授权继续由 native 持有。握手失败会发生在授权提示之前；本地端口可达只代表可以尝试连接，不代表已经授权。历史补丁运行时必须从锁定 pristine 包重建，不能原地修补。
 
 Chrome 扩展安装入口作为独立区域始终显示，位于浏览器选择上方，安装说明默认收起。通过“应用名称 / Chrome”下拉框选择环境，应用名称从 package.json.productName 读取，再显示对应的连接内容。浏览器选择和连接内容合并在同一区域；Chrome 下用紧凑选项保留隔离、日常和扩展三种连接方式，只显示所选方式的说明。同一次打开设置期间切回 Chrome 会恢复上次选择的连接方式，未选择过时使用 isolated。搜索、历史和下载设置始终显示。环境与连接方式切换均遵循现有任务检查、应用进度和失败回退。切换进度复用标题下方的固定高度说明行，使用简短状态与图标；下拉框按最长选项自适应宽度，长名称受窗口宽度限制；保留右侧锚点，状态变化和选项切换不改变布局，不追加提示行。
 

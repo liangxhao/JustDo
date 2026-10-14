@@ -1,17 +1,19 @@
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
-import { DEFAULT_FLOW_AGENT, type Flow, type FlowAgent, type FlowNode } from '../contracts/flow';
+
+import { managedSubagent } from '../../runtime-services/execution/managed-subagent';
 import {
   assertFilesystemAdmission,
   permissionFingerprint,
 } from '../../runtime-services/filesystem/admission';
-import { managedSubagent } from '../../runtime-services/execution/managed-subagent';
-import { assertCrossAgentPolicy, parentPolicy } from '../execution/policy';
 import { prepareItemWorkspace } from '../batch/snapshot';
+import { DEFAULT_FLOW_AGENT, type Flow, type FlowAgent, type FlowNode } from '../contracts/flow';
+import { assertCrossAgentPolicy, parentPolicy } from '../execution/policy';
 import { entry, inPlanMode } from './native-context';
+import { createResultBudgetTracker } from './result-budget';
 import { state } from './state';
 
 export function createWorkflowContext(api: OpenClawPluginApi) {
-  const resultBudgets = (state.resultBudgets ??= new Map<string, number>());
+  const resultBudgets = (state.resultBudgets ??= createResultBudgetTracker());
   const submissionCalls = state.submissionCalls;
   const managementCalls = state.managementCalls;
   const callKey = (sessionKey: string, toolCallId: string, name: string) =>

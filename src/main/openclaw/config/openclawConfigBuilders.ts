@@ -56,6 +56,11 @@ import {
   isActiveBuiltinModelDevelopmentApiKey,
 } from '../../providers/builtinModelCredential';
 import type { ProviderRawConfig } from '../../providers/providerApiConfig';
+import {
+  type McpPackageRuntime,
+  projectMcpPackageRunner,
+  resolveWindowsMcpPackageRuntime,
+} from '../runtime/mcpPackageRunner';
 import { resolveManagedAgentWorkspace } from './agentWorkspace';
 import {
   MANAGED_PROVIDER_SECRET_SOURCE,
@@ -67,7 +72,19 @@ import {
 export const buildOpenClawMcpServers = (
   servers: McpServerRecord[],
   requestTimeoutSeconds = DEFAULT_AGENT_RUNTIME_SETTINGS.mcp.requestTimeoutSeconds,
+  packageRuntime?: McpPackageRuntime | null,
 ): Record<string, Record<string, unknown>> => {
+  const runtime =
+    packageRuntime === undefined &&
+    servers.some(
+      server =>
+        server.transportType === 'stdio' &&
+        /^(npm|npx)(?:\.cmd)?$/i.test(
+          String(server.openClawConfig?.command ?? server.command ?? ''),
+        ),
+    )
+      ? resolveWindowsMcpPackageRuntime()
+      : (packageRuntime ?? null);
   return Object.fromEntries(
     servers.map(server => {
       const config: Record<string, unknown> = {
@@ -101,7 +118,10 @@ export const buildOpenClawMcpServers = (
           config.headers = server.headers;
         }
       }
-      return [server.name, config];
+      return [
+        server.name,
+        server.transportType === 'stdio' ? projectMcpPackageRunner(config, runtime) : config,
+      ];
     }),
   );
 };
@@ -551,15 +571,28 @@ export const sanitizeOpenClawV2026_9_8Config = (
     next.models = models;
   }
 
-  if (isRecord(config.browser)) {
-    const browser = { ...config.browser };
+  if (isRecord(config.browser) || (process.platform === 'win32' && config.browser === undefined)) {
+    const browser = isRecord(config.browser) ? { ...config.browser } : {};
     delete browser.color;
-    if (isRecord(browser.profiles)) {
+    const profiles = isRecord(browser.profiles) ? { ...browser.profiles } : {};
+    // Native Browser also synthesizes user outside User mode. Materialize only
+    // that missing profile so every Windows attach uses the managed launcher.
+    if (process.platform === 'win32' && profiles.user === undefined) {
+      profiles.user = { driver: 'existing-session', attachOnly: true };
+    }
+    if (isRecord(browser.profiles) || Object.keys(profiles).length > 0) {
       browser.profiles = Object.fromEntries(
-        Object.entries(browser.profiles).map(([profileId, rawProfile]) => {
+        Object.entries(profiles).map(([profileId, rawProfile]) => {
           if (!isRecord(rawProfile)) return [profileId, rawProfile];
           const profile = { ...rawProfile };
           delete profile.color;
+          if (
+            process.platform === 'win32' &&
+            profile.driver === 'existing-session' &&
+            (profile.mcpCommand === undefined || profile.mcpCommand === 'npx')
+          ) {
+            profile.mcpCommand = 'chrome-mcp.cmd';
+          }
           return [profileId, profile];
         }),
       );
@@ -1786,6 +1819,7 @@ export const buildManagedOpenClawConnectivityConfig = (
             user: {
               driver: 'existing-session',
               attachOnly: true,
+              ...(process.platform === 'win32' ? { mcpCommand: 'chrome-mcp.cmd' } : {}),
             },
           },
         }

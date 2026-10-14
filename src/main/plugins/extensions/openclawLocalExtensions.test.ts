@@ -14,6 +14,7 @@ vi.mock('electron', () => ({
 
 import {
   hasBundledOpenClawExtension,
+  inspectLocalOpenClawExtensions,
   inspectOpenClawExtensionDirectory,
   listBundledOpenClawExtensionIds,
   syncLocalOpenClawExtensionsIntoRuntime,
@@ -78,6 +79,33 @@ describe('openclawLocalExtensions', () => {
     expect(listBundledOpenClawExtensionIds()).toContain('current-extension-id');
     expect(hasBundledOpenClawExtension('current-extension-id')).toBe(true);
     expect(hasBundledOpenClawExtension('legacy-directory-name')).toBe(false);
+  });
+
+  it('keeps native entry compositions out of source inventory and runtime source copying', async () => {
+    electronApp.isPackaged = false;
+    electronApp.getAppPath.mockReturnValue(resourcesDir);
+    const source = path.join(resourcesDir, 'openclaw-extensions');
+    const overlay = path.join(source, 'openai');
+    const plugin = path.join(source, 'runtime-services');
+    fs.mkdirSync(overlay, { recursive: true });
+    fs.mkdirSync(plugin, { recursive: true });
+    fs.writeFileSync(
+      path.join(overlay, 'package.json'),
+      JSON.stringify({ justdo: { nativeOverlay: true } }),
+    );
+    fs.writeFileSync(path.join(overlay, 'index.ts'), 'export default {};');
+    fs.writeFileSync(
+      path.join(plugin, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'runtime-services' }),
+    );
+    expect(inspectLocalOpenClawExtensions()).toEqual({ complete: true, ids: ['runtime-services'] });
+    expect(inspectOpenClawExtensionDirectory(source).complete).toBe(false);
+    const runtime = path.join(resourcesDir, 'runtime');
+    fs.mkdirSync(path.join(runtime, 'dist/extensions'), { recursive: true });
+    expect((await syncLocalOpenClawExtensionsIntoRuntime(runtime)).copied).toEqual([
+      'runtime-services',
+    ]);
+    expect(fs.existsSync(path.join(runtime, 'dist/extensions/openai'))).toBe(false);
   });
 
   it('discovers compatible bundle manifests using OpenClaw id normalization', () => {

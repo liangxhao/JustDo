@@ -89,8 +89,6 @@ export interface DiagnosticEvent {
   timeoutPhase?: DiagnosticTimeoutPhase;
   responseIssue?: DiagnosticResponseIssue;
   replyDisposition?: 'visible' | 'silent' | 'empty';
-  loopExit?: DiagnosticLoopExit;
-  responseShape?: DiagnosticResponseShape;
 }
 
 export interface DiagnosticConclusion {
@@ -227,25 +225,6 @@ export interface DiagnosticLogRecord {
     >
   >;
 }
-
-export const diagnosticLoopExits = [
-  'abort_signal',
-  'model_aborted',
-  'tool_loop_guard',
-  'model_error',
-  'policy_stop',
-  'handoff',
-  'no_pending_work',
-] as const;
-export type DiagnosticLoopExit = (typeof diagnosticLoopExits)[number];
-export const diagnosticResponseShapes = [
-  'thinking_only',
-  'empty',
-  'text',
-  'tool_call',
-  'other',
-] as const;
-export type DiagnosticResponseShape = (typeof diagnosticResponseShapes)[number];
 
 export const diagnosticResponseIssues = [
   'reasoning_only',

@@ -1,20 +1,34 @@
-import { parseSwarmWorkflowRequest } from '../prompt/request';
-import { FLOW_MANAGEMENT_TOOLS, FLOW_TOOLS } from '../contracts/flow';
 import { RESULT_TOOL } from '../batch/api';
-import { MANAGEMENT_GUIDANCE } from '../management/tools';
+import { FLOW_MANAGEMENT_TOOLS, FLOW_TOOLS } from '../contracts/flow';
 import { parentPolicy } from '../execution/policy';
-import { lastStartError, START_LIMITS, START_TOOL, startInstructions } from '../prompt/start';
 import {
   lastSubmissionError,
   submissionCorrectionInstructions,
   submissionInstructions,
 } from '../execution/submission';
-import { entry, inPlanMode, managed } from './native-context';
+import { MANAGEMENT_GUIDANCE } from '../management/tools';
+import { parseSwarmWorkflowRequest } from '../prompt/request';
+import { lastStartError, START_LIMITS, START_TOOL, startInstructions } from '../prompt/start';
 import type { WorkflowContext } from './context';
+import { entry, inPlanMode, managed } from './native-context';
+import { resultBudgetAttempt } from './result-budget';
 
 export function registerWorkflowExecutionHooks(context: WorkflowContext): void {
-  const { api, state, submissionCalls, managementCalls, ensure, assertParent, callKey, rpc } =
-    context;
+  const {
+    api,
+    state,
+    resultBudgets,
+    submissionCalls,
+    managementCalls,
+    ensure,
+    assertParent,
+    callKey,
+    rpc,
+  } = context;
+  api.on('model_call_started', (event, ctx) => resultBudgets.observe(event, ctx.trace));
+  api.on('agent_end', (event, ctx) =>
+    resultBudgets.release(ctx.sessionKey, event.runId ?? ctx.runId),
+  );
   api.on('before_tool_call', (event, ctx) => {
     const intake =
       ctx.sessionKey && ctx.runId
@@ -112,6 +126,7 @@ export function registerWorkflowExecutionHooks(context: WorkflowContext): void {
       submissionCalls.set(callKey(ctx.sessionKey, ctx.toolCallId, event.toolName), {
         runId: ctx.runId,
         signal: ctx.abortSignal,
+        budgetAttempt: resultBudgetAttempt(ctx.trace),
         expiresAt: Date.now() + 30000,
       });
     } catch (error) {
@@ -212,7 +227,7 @@ export function registerWorkflowExecutionHooks(context: WorkflowContext): void {
 }
 
 export function registerWorkflowPromptHooks(context: WorkflowContext): void {
-  const { api, state, resultBudgets, ensure, rpc } = context;
+  const { api, state, ensure, rpc } = context;
   api.on('before_prompt_build', async (event, ctx) => {
     const flows = state.store?.all() ?? [];
     const assigned = flows
@@ -222,20 +237,6 @@ export function registerWorkflowPromptHooks(context: WorkflowContext): void {
       try {
         if (!ctx.runId) throw new Error('Missing run identity.');
         ensure().engine.submissionOwner(ctx.sessionKey!, ctx.runId);
-        const active = new Set(
-          flows.flatMap(flow =>
-            flow.nodes
-              .filter(node => ['preparing', 'running', 'uncertain'].includes(node.status))
-              .flatMap(node =>
-                [node.runId, node.intendedRunId, node.submissionRepair?.runId]
-                  .filter((runId): runId is string => Boolean(runId))
-                  .map(runId => node.sessionKey + '\n' + runId),
-              ),
-          ),
-        );
-        for (const key of resultBudgets.keys())
-          if (!active.has(key) || key.startsWith(ctx.sessionKey! + '\n')) resultBudgets.delete(key);
-        resultBudgets.set(ctx.sessionKey! + '\n' + ctx.runId, ctx.contextTokenBudget ?? 4000);
         return {
           ...(assigned.submissionRepair?.runId === ctx.runId
             ? {

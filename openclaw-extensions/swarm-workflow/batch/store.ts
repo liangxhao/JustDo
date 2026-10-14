@@ -1,10 +1,12 @@
 import type { DatabaseSync } from 'node:sqlite';
+
 import {
   BATCH_LIMITS,
-  RESULT_TRANSPORT_BYTES,
-  resultTransportCost,
   type BatchCounts,
   type BatchPage,
+  batchResultPage,
+  RESULT_TRANSPORT_BYTES,
+  resultTransportCost,
 } from '../contracts/batch.js';
 import type { Flow, FlowIntervention, FlowNode, NodeStatus } from '../contracts/flow.js';
 import { FLOW_LIMITS } from '../contracts/flow.js';
@@ -237,9 +239,17 @@ export class BatchStore {
       const node = JSON.parse(String(row.payload)) as FlowNode;
       const item = { id: node.id, title: node.title, result: node.artifacts };
       const size = Buffer.byteLength(JSON.stringify(item));
+      const candidate = [...items, item];
       if (
         bytes + size > BATCH_LIMITS.resultPageBytes - 1024 ||
-        resultTransportCost({ items: [...items, item] }) > transportBudget - 1024
+        resultTransportCost(
+          batchResultPage(
+            flow,
+            stage,
+            candidate,
+            rows.length > candidate.length ? Number(row.ordinal) : undefined,
+          ),
+        ) > transportBudget
       )
         break;
       bytes += size;
@@ -248,7 +258,7 @@ export class BatchStore {
     }
     if (rows.length && !items.length)
       throw new Error(
-        'Result index entry exceeds this model context budget. Use a model with a larger effective context or publish a compact artifact manifest.',
+        'Result index entry exceeds the result page budget. Publish a compact artifact manifest with shorter paths or fewer references.',
       );
     return { items, ...(rows.length > items.length ? { after: last } : {}) };
   }

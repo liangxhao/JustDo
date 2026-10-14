@@ -257,16 +257,26 @@ fs.mkdirSync(extractDir, { recursive: true });
     fs.mkdirSync(path.dirname(outDir), { recursive: true });
     fs.cpSync(pkgDir, stagingOutDir, { recursive: true, force: true });
 
+    // Native postinstall prunes dist files absent from its upstream inventory.
+    // Complete it before adding application-owned native support modules.
+    console.log(`[install-openclaw-runtime] [4/8] Installing production dependencies...`);
+    installProdDeps(
+      stagingOutDir,
+      npmTargetPlatform,
+      targetArch,
+      path.join(tmpDir, 'install-state'),
+    );
+
     // ---------------------------------------------------------------------------
     // 6. Patch facade-runtime JS dist (critical for esbuild bundling)
     // ---------------------------------------------------------------------------
-    console.log(`[install-openclaw-runtime] [4/8] Patching facade-runtime for esbuild bundling...`);
+    console.log(`[install-openclaw-runtime] [5/8] Patching facade-runtime for esbuild bundling...`);
     patchFacadeRuntime(stagingOutDir);
 
     // ---------------------------------------------------------------------------
     // 7. Patch compiled OpenClaw dist for JustDo integration
     // ---------------------------------------------------------------------------
-    console.log(`[install-openclaw-runtime] [5/8] Patching OpenClaw integration...`);
+    console.log(`[install-openclaw-runtime] [6/8] Patching OpenClaw integration...`);
     patchOpenClawRuntime(stagingOutDir, {
       label: 'install-openclaw-runtime',
       pristineInstallPass: true,
@@ -275,19 +285,8 @@ fs.mkdirSync(extractDir, { recursive: true });
     // ---------------------------------------------------------------------------
     // 8. Process skills
     // ---------------------------------------------------------------------------
-    console.log(`[install-openclaw-runtime] [6/8] Processing skills...`);
+    console.log(`[install-openclaw-runtime] [7/8] Processing skills...`);
     processSkills(rootDir, stagingOutDir);
-
-    // ---------------------------------------------------------------------------
-    // 9. Install production dependencies
-    // ---------------------------------------------------------------------------
-    console.log(`[install-openclaw-runtime] [7/8] Installing production dependencies...`);
-    installProdDeps(
-      stagingOutDir,
-      npmTargetPlatform,
-      targetArch,
-      path.join(tmpDir, 'install-state'),
-    );
 
     // ---------------------------------------------------------------------------
     // 10. Pack gateway.asar

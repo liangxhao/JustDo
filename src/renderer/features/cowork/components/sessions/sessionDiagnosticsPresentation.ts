@@ -14,9 +14,7 @@ const t = (key: string) => i18nService.t(key);
 export function presentDiagnosticStop(report: DiagnosticReport) {
   const assessment = assessDiagnosticStop(report);
   const explained =
-    !!assessment.loopExit ||
-    !!assessment.modelReplyEnded ||
-    !['completed', 'unknown'].includes(assessment.reason);
+    !!assessment.modelReplyEnded || !['completed', 'unknown'].includes(assessment.reason);
   const certainty =
     !explained || assessment.basis === 'unknown'
       ? 'unknown'
@@ -32,11 +30,9 @@ export function presentDiagnosticStop(report: DiagnosticReport) {
   );
   const title = assessment.modelReplyEnded
     ? t('diagnosticsModelReplyEnded')
-    : assessment.loopExit
-      ? t(`diagnosticsLoopExit_${assessment.loopExit}`)
-      : ['reasoning_only', 'empty_response', 'incomplete_response'].includes(assessment.reason)
-        ? t(`diagnosticsStop_${assessment.reason}`)
-        : t(`diagnosticsReason_${assessment.reason}`);
+    : ['reasoning_only', 'empty_response', 'incomplete_response'].includes(assessment.reason)
+      ? t(`diagnosticsStop_${assessment.reason}`)
+      : t(`diagnosticsReason_${assessment.reason}`);
   return {
     ...assessment,
     certainty,
@@ -46,11 +42,9 @@ export function presentDiagnosticStop(report: DiagnosticReport) {
       t(
         assessment.modelReplyEnded
           ? 'diagnosticsModelReplyEndedEvidence'
-          : assessment.loopExit
-            ? 'diagnosticsLoopExitEvidence'
-            : assessment.reason === 'completed'
-              ? 'diagnosticsStopBasis_completed'
-              : `diagnosticsStopBasis_${assessment.basis}`,
+          : assessment.reason === 'completed'
+            ? 'diagnosticsStopBasis_completed'
+            : `diagnosticsStopBasis_${assessment.basis}`,
       ),
       ...(assessment.timeoutPhase ? [t(`diagnosticsTimeout_${assessment.timeoutPhase}`)] : []),
       ...(assessment.outputIssue && assessment.outputIssue !== assessment.reason
@@ -62,9 +56,7 @@ export function presentDiagnosticStop(report: DiagnosticReport) {
     advice: t(
       assessment.modelReplyEnded
         ? 'diagnosticsModelReplyEndedAdvice'
-        : assessment.loopExit
-          ? `diagnosticsLoopAdvice_${assessment.loopExit}`
-          : `diagnosticsStopAdvice_${assessment.reason}`,
+        : `diagnosticsStopAdvice_${assessment.reason}`,
     ),
   };
 }

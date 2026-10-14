@@ -21,8 +21,6 @@ const temporaryRoots: string[] = [];
 
 const EXPECTED_PATCH_FILES = [
   '001-managed-pip-config-environment.cjs',
-  '002-windows-mcp-package-runner.cjs',
-  '003-windows-chrome-mcp-launch.cjs',
   '005-final-system-prompt-replacements.cjs',
   '006-agent-request-metadata.cjs',
   '007-request-purpose-metadata.cjs',
@@ -32,20 +30,15 @@ const EXPECTED_PATCH_FILES = [
   '015-trusted-local-file-media.cjs',
   '016-offline-official-plugin-catalog.cjs',
   '019-disable-configured-plugin-auto-install.cjs',
-  '020-openai-realtime-transcription-base-url.cjs',
-  '021-isolated-openai-compatible-media-providers.cjs',
   '022-justdo-reset-display-history.cjs',
   '023-managed-session-fork-target-key.cjs',
   '025-mxc-external-skill-paths.cjs',
   '026-private-untrusted-context.cjs',
-  '027-shared-session-access-registry.cjs',
   '028-admin-session-cwd.cjs',
   '030-cron-session-permission.cjs',
   '031-windows-servicing-credential-launcher.cjs',
   '032-windows-session-creation-path.cjs',
-  '033-loop-exit-diagnostics.cjs',
   '034-plugin-owned-execution.cjs',
-  '035-hook-context-budget.cjs',
   '036-shared-terminal-launch.cjs',
   '037-terminal-product-banner.cjs',
   '038-native-compaction-lifecycle.cjs',
@@ -69,21 +62,26 @@ const UPSTREAM_CONTRACTS = [
 ] as const;
 
 const NATIVE_STOP_FIXTURES = {
-  'session-stop.js': '"sessions.abort": if (clearQueued && canonicalKey !== "global") clearSessionQueues(queueKeys); ' +
+  'session-stop.js':
+    '"sessions.abort": if (clearQueued && canonicalKey !== "global") clearSessionQueues(queueKeys); ' +
     '!requestedRunId ? { cascadeDescendants: true } : {};',
-  'session-stop-cascade.js': 'if (params.cascadeDescendants && plan.canCascade) ' +
+  'session-stop-cascade.js':
+    'if (params.cascadeDescendants && plan.canCascade) ' +
     'descendants = await abortControlledSubagents({ beforeKill() { result = plan.abort(); } }); ' +
     'descendant cancellation was incomplete',
-  'session-stop-tree.js': 'async function killSubagentRunTree() { ' +
+  'session-stop-tree.js':
+    'async function killSubagentRunTree() { ' +
     'if (!tree.entry.execution.endedAt) stop(); result.descendants = true; ' +
     'if (result.descendants && tree.canTraverse()) tree.children.map((child) => visit(child, suppressDescendantWakes)); }',
-  'session-stop-run.js': 'function abortChatRunById() { ' +
+  'session-stop-run.js':
+    'function abortChatRunById() { ' +
     'releaseAgentRunDelegatedAuthority(active.agentRunDelegatedAuthority); ' +
     'ops.onRunAborted?.(runId); active.controller.abort(createChatAbortSignalReason(stopReason)); ' +
     'broadcastChatAborted(ops); status: "cancelled"; }',
-  'session-stop-ops.js': 'function createChatAbortOps() { ' +
-    'context.cancelRunBoundApprovals?.(runId).catch; }',
-  'session-stop-approvals.js': 'function cancelAgentRuntimeBoundApprovals() {} ' +
+  'session-stop-ops.js':
+    'function createChatAbortOps() { ' + 'context.cancelRunBoundApprovals?.(runId).catch; }',
+  'session-stop-approvals.js':
+    'function cancelAgentRuntimeBoundApprovals() {} ' +
     'function cancelUnboundRunApprovals() {} ' +
     'params.manager.forceDenyDetailed(pending.id, "run-aborted"); ' +
     'pending.request.runId === params.runId; registerAgentRunDelegatedAuthorityClosedHandler;',
@@ -149,11 +147,7 @@ function createPristineFixture(): string {
     'subagent-lane.js',
     'setCommandLaneConcurrency("subagent", concurrency.subagent);',
   );
-  writeDistFile(
-    root,
-    'subagent-spawn.js',
-    'lane: AGENT_LANE_SUBAGENT; status: "accepted";',
-  );
+  writeDistFile(root, 'subagent-spawn.js', 'lane: AGENT_LANE_SUBAGENT; status: "accepted";');
   writeDistFile(
     root,
     'agents-wait.js',
@@ -226,8 +220,9 @@ describe('OpenClaw pristine artifact contracts', () => {
       const root = createPristineFixture();
       fs.unlinkSync(path.join(root, 'dist', name));
 
-      expect(() => verifyPristineOpenClawContracts(root, { patchFiles: [] }))
-        .toThrow(/Pristine OpenClaw contract is missing: .*Stop/);
+      expect(() => verifyPristineOpenClawContracts(root, { patchFiles: [] })).toThrow(
+        /Pristine OpenClaw contract is missing: .*Stop/,
+      );
     },
   );
 
@@ -236,8 +231,9 @@ describe('OpenClaw pristine artifact contracts', () => {
     writeDistFile(root, 'session-stop-ops.js', 'function createChatAbortOps() {}');
     writeDistFile(root, 'unrelated-stop.js', 'context.cancelRunBoundApprovals?.(runId).catch');
 
-    expect(() => verifyNativeSessionStopContracts(root))
-      .toThrow(/run Stop connects native approval cancellation/);
+    expect(() => verifyNativeSessionStopContracts(root)).toThrow(
+      /run Stop connects native approval cancellation/,
+    );
   });
 
   test('keeps the independently auditable v2026.9.8 patch inventory exact', () => {

@@ -225,7 +225,6 @@ export function DiagnosticOverview({ report }: { report: DiagnosticReport }) {
 function DiagnosticFindings({ report }: { report: DiagnosticReport }) {
   const stop = presentDiagnosticStop(report);
   const explained =
-    !!stop.loopExit ||
     !!stop.modelReplyEnded ||
     ['reasoning_only', 'empty_response', 'incomplete_response'].includes(stop.reason);
   const findings = visibleDiagnosticFindings(report);

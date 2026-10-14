@@ -215,7 +215,14 @@ export class OpenClawConfigSync {
       const videoSelection = resolveNativeVideoSelection(this.getNativeVideoCategory());
       if (videoSelection !== undefined && this.nativeVideoSelection === undefined) {
         let existing: Record<string, unknown> = {};
-        try { const parsed: unknown = JSON.parse(fs.readFileSync(this.engineManager.getConfigPath(), 'utf8')); if (isRecord(parsed)) existing = parsed; } catch { /* Fresh installation. */ }
+        try {
+          const parsed: unknown = JSON.parse(
+            fs.readFileSync(this.engineManager.getConfigPath(), 'utf8'),
+          );
+          if (isRecord(parsed)) existing = parsed;
+        } catch {
+          /* Fresh installation. */
+        }
         this.restoreUnmanagedVideo = captureNativeVideoConfiguration(existing);
       }
       this.nativeVideoSelection = videoSelection;
@@ -241,7 +248,8 @@ export class OpenClawConfigSync {
       return {
         ...result,
         changed: result.changed || this.decisionSecretsChanged || this.videoSecretsChanged,
-        secretsChanged: result.secretsChanged || this.decisionSecretsChanged || this.videoSecretsChanged,
+        secretsChanged:
+          result.secretsChanged || this.decisionSecretsChanged || this.videoSecretsChanged,
       };
     } catch {
       return {
@@ -250,7 +258,11 @@ export class OpenClawConfigSync {
         configChanged: false,
         requiresGatewayRestart: false,
         configPath: this.engineManager.getConfigPath(),
-        error: t(videoConfigurationFailed ? 'nativeVideoConfigurationInvalid' : 'decisionModelConfigurationInvalid'),
+        error: t(
+          videoConfigurationFailed
+            ? 'nativeVideoConfigurationInvalid'
+            : 'decisionModelConfigurationInvalid',
+        ),
       };
     }
   }
@@ -259,7 +271,8 @@ export class OpenClawConfigSync {
     // Reply preparation consumes admitted runtime configuration, not a
     // channel dispatcher's temporary projection. Set the surface policy here.
     config.surfaces = buildManagedOpenClawSurfaces(config.surfaces);
-    if (this.nativeVideoSelection === undefined && this.restoreUnmanagedVideo) this.restoreUnmanagedVideo(config);
+    if (this.nativeVideoSelection === undefined && this.restoreUnmanagedVideo)
+      this.restoreUnmanagedVideo(config);
     const availableExtensionIds = listAvailableOpenClawExtensionIds(
       this.engineManager.getStateDir(),
       isRecord(config.plugins) ? config.plugins : {},
@@ -271,7 +284,10 @@ export class OpenClawConfigSync {
       }),
     );
     const videoSecretsChanged = applyNativeVideoConfiguration(
-      config, this.nativeVideoSelection, this.engineManager.getStateDir(), availableExtensionIds,
+      config,
+      this.nativeVideoSelection,
+      this.engineManager.getStateDir(),
+      availableExtensionIds,
     );
     this.videoSecretsChanged ||= videoSecretsChanged;
     if (this.decisionSelection === undefined && this.restoreUnmanagedDecision) {
@@ -279,7 +295,9 @@ export class OpenClawConfigSync {
       return;
     }
     const changed = applyDecisionModelConfiguration(
-      config, this.decisionSelection, this.engineManager.getStateDir(),
+      config,
+      this.decisionSelection,
+      this.engineManager.getStateDir(),
     );
     this.decisionSecretsChanged ||= changed;
   }
@@ -572,12 +590,17 @@ export class OpenClawConfigSync {
       tools: {
         ...connectivityTools,
         ...mergeManagedOptionalToolPolicy(existingConfig?.tools),
-        deny: [...new Set([
-          ...(Array.isArray(connectivityTools.deny) ? connectivityTools.deny : []),
-          ...(isRecord(existingConfig?.tools) && Array.isArray(existingConfig.tools.deny)
-            ? existingConfig.tools.deny.filter(value => typeof value === 'string' && value !== 'skill_workshop' && value !== 'tts')
-            : []),
-        ])],
+        deny: [
+          ...new Set([
+            ...(Array.isArray(connectivityTools.deny) ? connectivityTools.deny : []),
+            ...(isRecord(existingConfig?.tools) && Array.isArray(existingConfig.tools.deny)
+              ? existingConfig.tools.deny.filter(
+                  value =>
+                    typeof value === 'string' && value !== 'skill_workshop' && value !== 'tts',
+                )
+              : []),
+          ]),
+        ],
         codeMode: mergeManagedOpenClawCodeModeConfig(
           isRecord(existingConfig?.tools) ? existingConfig.tools.codeMode : undefined,
           agentRuntimeSettings,
@@ -674,7 +697,9 @@ export class OpenClawConfigSync {
         error: 'Failed to prepare managed model provider credentials.',
       };
     }
-    const configToPersist = withComputerControlPolicy(preparedSecrets.config);
+    const configToPersist = sanitizeOpenClawV2026_9_8Config(
+      withComputerControlPolicy(preparedSecrets.config),
+    );
     this.applyManagedRuntimeConfiguration(configToPersist);
     const nextContent = `${JSON.stringify(configToPersist, null, 2)}\n`;
     const configChanged = hasOpenClawConfigChanged(currentContent, configToPersist);
@@ -1016,7 +1041,7 @@ export class OpenClawConfigSync {
       );
     }
     this.applyManagedRuntimeConfiguration(minimalConfig);
-    minimalConfig = withComputerControlPolicy(minimalConfig);
+    minimalConfig = sanitizeOpenClawV2026_9_8Config(withComputerControlPolicy(minimalConfig));
     const nextContent = `${JSON.stringify(minimalConfig, null, 2)}\n`;
     const buildMinimalSyncResult = (
       expectedConfig: Record<string, unknown>,

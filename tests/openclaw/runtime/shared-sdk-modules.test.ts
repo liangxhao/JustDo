@@ -9,9 +9,8 @@ import { afterEach, expect, test } from 'vitest';
 const {
   createSharedSdkModulesPlugin,
 } = require('../../../scripts/openclaw/openclaw-shared-sdk-modules.cjs');
-const {
-  transform: detachPeerDispatcher,
-} = require('../../../scripts/patches/v2026.9.8/039-peer-transcript-write-scope.cjs').__testing;
+const { transform: detachPeerDispatcher } =
+  require('../../../scripts/patches/v2026.9.8/039-peer-transcript-write-scope.cjs').__testing;
 const roots: string[] = [];
 afterEach(() => roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true })));
 
@@ -53,6 +52,20 @@ test('Gateway and separately loaded SDK share activation, rotation, revocation a
     export * from '../config-state.js';
     export * from '../auth-owners.js';
   `,
+  );
+  const accessSource = `const providers = new Map();
+    export function registerScopedSessionAccessProvider(provider) {
+      const registration = { provider };
+      providers.set(provider, registration);
+      return () => { if (providers.get(provider) === registration) providers.delete(provider); };
+    }
+    export function resolveAccess(request) {
+      for (const provider of providers.keys()) { const grant = provider(request); if (grant) return grant; }
+    }`;
+  fs.writeFileSync(path.join(root, 'dist/session-access.js'), accessSource);
+  fs.writeFileSync(
+    path.join(root, 'dist/plugin-sdk/session-visibility.js'),
+    `export * from '../session-access.js';`,
   );
   fs.writeFileSync(
     path.join(root, 'dist/config.js'),
@@ -135,7 +148,8 @@ test('Gateway and separately loaded SDK share activation, rotation, revocation a
   );
   fs.writeFileSync(
     path.join(root, 'dist/peer-dispatch.js'),
-    detachPeerDispatcher(`import { AsyncLocalStorage } from 'node:async_hooks';
+    detachPeerDispatcher(
+      `import { AsyncLocalStorage } from 'node:async_hooks';
     const runBoundInProcessGatewayCall = run => run();
     const withInProcessAgentRuntimeIdentity = () => undefined;
     const dispatchGatewayMethodInProcess = (method, params) => params.run();
@@ -151,7 +165,10 @@ test('Gateway and separately loaded SDK share activation, rotation, revocation a
     export function bindPeerDispatcher() {
       const snapshot = AsyncLocalStorage.snapshot();
       return request => snapshot(() => callAgentToolGatewayRequestBound(request, {}, {}, () => undefined));
-    }`, '<fixture>', { module: './transcript-write-context.js', exportName: 'withoutWriter' }),
+    }`,
+      '<fixture>',
+      { module: './transcript-write-context.js', exportName: 'withoutWriter' },
+    ),
   );
   fs.writeFileSync(
     path.join(root, 'dist/gateway-context-binding-owner.js'),
@@ -197,6 +214,7 @@ test('Gateway and separately loaded SDK share activation, rotation, revocation a
     export * from './transcript-write-context.js';
     export * from './cli-history-boundary.js';
     export * from './peer-dispatch.js';
+    export * from './session-access.js';
   `,
   );
   const original = fs.readFileSync(path.join(root, 'dist/state.js'), 'utf8');
@@ -216,10 +234,18 @@ test('Gateway and separately loaded SDK share activation, rotation, revocation a
     import assert from 'node:assert/strict';
     import * as sdk from './dist/plugin-sdk/secret-input-runtime.js';
     import * as replySdk from './dist/plugin-sdk/reply-runtime.js';
+    import * as accessSdk from './dist/plugin-sdk/session-visibility.js';
     import * as broken from './broken-bundle.mjs';
     import * as host from './gateway-bundle.mjs';
     import * as nativeOwners from './dist/owners.js';
     import * as nativeErrors from './dist/errors.js';
+    const revokeAccess = accessSdk.registerScopedSessionAccessProvider(request =>
+      request.target === 'peer' ? { expectedSessionId: 'exact-peer-sid' } : undefined);
+    assert.equal(broken.resolveAccess({ target: 'peer' }), undefined);
+    assert.deepEqual(host.resolveAccess({ target: 'peer' }), { expectedSessionId: 'exact-peer-sid' });
+    assert.equal(host.resolveAccess({ target: 'other' }), undefined);
+    revokeAccess();
+    assert.equal(host.resolveAccess({ target: 'peer' }), undefined);
     const sourceTarget = { agentId:'main', sessionId:'source-sid', sessionKey:'agent:main:source', storePath:'source-store' };
     const peerTarget = { agentId:'peer', sessionId:'peer-sid', sessionKey:'agent:peer:target', storePath:'peer-store' };
     let sourceActive = true;
@@ -354,13 +380,15 @@ test('Gateway and separately loaded SDK share activation, rotation, revocation a
   );
   execFileSync(process.execPath, [path.join(root, 'verify.mjs')], { windowsHide: true });
   expect(fs.readFileSync(path.join(root, 'dist/state.js'), 'utf8')).toBe(original);
+  expect(fs.readFileSync(path.join(root, 'dist/session-access.js'), 'utf8')).toBe(accessSource);
   expect(fs.readFileSync(path.join(root, 'gateway-bundle.mjs'), 'utf8')).not.toContain(
     'let snapshot',
   );
 });
 
 test.each(['secret-input-runtime', 'reply-runtime'])(
-  'fails clearly when the pinned %s SDK entry is missing', missing => {
+  'fails clearly when the pinned %s SDK entry is missing',
+  missing => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'missing-native-sdk-'));
     roots.push(root);
     fs.mkdirSync(path.join(root, 'dist/plugin-sdk'), { recursive: true });

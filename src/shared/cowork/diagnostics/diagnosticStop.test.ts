@@ -50,7 +50,7 @@ function report(): DiagnosticReport {
 }
 
 describe('why a run stopped', () => {
-  it('uses the old database reply stop marker even without the new runtime fields', () => {
+  it('uses the native history reply stop marker without inventing a loop exit', () => {
     const value = report();
     value.history!.lastResponse!.text = true;
     expect(assessDiagnosticStop(value)).toMatchObject({
@@ -67,47 +67,34 @@ describe('why a run stopped', () => {
     value.history!.lastResponse!.toolCall = true;
     expect(assessDiagnosticStop(value).modelReplyEnded).toBeUndefined();
   });
-  it('uses the settled native exit branch without depending on history', () => {
+  it('keeps settlement separate from the unknown internal loop exit when history is unavailable', () => {
     const value = report();
     value.history = undefined;
-    value.events[0].loopExit = 'no_pending_work';
     value.events[0].stopReason = 'stop';
-    value.events[0].responseShape = 'text';
     expect(assessDiagnosticStop(value)).toMatchObject({
       reason: 'completed',
-      loopExit: 'no_pending_work',
-      basis: 'terminal',
-    });
-    value.events[0].executionSettled = false;
-    expect(assessDiagnosticStop(value).loopExit).toBeUndefined();
-  });
-  it('diagnoses settled thinking-only output without history but preserves model errors', () => {
-    const value = report();
-    value.history = undefined;
-    Object.assign(value.events[0], {
-      stopReason: 'stop',
-      responseShape: 'thinking_only',
-      loopExit: 'no_pending_work',
-    });
-    expect(assessDiagnosticStop(value)).toMatchObject({
-      reason: 'reasoning_only',
       basis: 'terminal',
       confidence: 'confirmed',
     });
+    expect(assessDiagnosticStop(value)).not.toHaveProperty('loopExit');
+    expect(assessDiagnosticStop(value).modelReplyEnded).toBeUndefined();
+    expect(assessDiagnosticStop(value).outputIssue).toBeUndefined();
+    value.events[0].executionSettled = false;
+    expect(assessDiagnosticStop(value).confidence).toBe('unknown');
+  });
+  it('keeps native model errors authoritative over an earlier thinking-only history reply', () => {
+    const value = report();
     value.conclusion.reason = 'failed';
     Object.assign(value.events[0], {
       phase: 'error',
       stopReason: 'error',
-      responseShape: 'empty',
       errorCategory: 'auth',
-      loopExit: 'model_error',
     });
     expect(assessDiagnosticStop(value)).toMatchObject({
       reason: 'failed',
-      loopExit: 'model_error',
+      basis: 'terminal',
     });
     expect(assessDiagnosticStop(value).outputIssue).toBeUndefined();
-    delete value.events[0].loopExit;
     value.events[0].phase = 'end';
     value.events[0].stopReason = 'stop';
     expect(assessDiagnosticStop(value).reason).toBe('failed');

@@ -1,0 +1,13 @@
+{
+  "name": "openai",
+  "private": true,
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "justdo": {
+    "nativeOverlay": true
+  }
+}

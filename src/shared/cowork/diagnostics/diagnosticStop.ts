@@ -1,6 +1,5 @@
 import { diagnosticResponseIssue } from './diagnosticResponse';
 import type {
-  DiagnosticLoopExit,
   DiagnosticReason,
   DiagnosticReport,
   DiagnosticResponseIssue,
@@ -18,7 +17,6 @@ export interface DiagnosticStopAssessment {
   outputIssue?: DiagnosticResponseIssue;
   outputLimited?: boolean;
   recoveryExhausted?: boolean;
-  loopExit?: DiagnosticLoopExit;
   modelReplyEnded?: boolean;
 }
 
@@ -39,23 +37,15 @@ export function assessDiagnosticStop(report: DiagnosticReport): DiagnosticStopAs
     terminals.some(
       event => event.replyDisposition === 'silent' || event.replyDisposition === 'visible',
     );
-  const shape =
-    settled && ['completed', 'length'].includes(conclusion.reason)
-      ? terminals.find(
-          event =>
-            event.responseShape &&
-            ['stop', 'end_turn', 'completed', 'length', 'max_tokens'].includes(
-              event.stopReason ?? '',
-            ) &&
-            event.phase === 'end',
-        )?.responseShape
-      : undefined;
-  const nativeOutputIssue =
-    shape === 'thinking_only' ? 'reasoning_only' : shape === 'empty' ? 'empty_response' : undefined;
-  const hasNativeShape = settled && terminals.some(event => event.responseShape);
-  const outputIssue = resolvedReply
-    ? undefined
-    : (nativeOutputIssue ?? (hasNativeShape ? undefined : diagnosticResponseIssue(response)));
+  // A failed final attempt may have no assistant row. Do not blame an earlier
+  // thinking-only reply from the same run when its native terminal reports an error.
+  const nativeFailure =
+    settled &&
+    terminals.some(
+      event => event.phase === 'error' || event.errorCategory || event.stopReason === 'error',
+    );
+  const outputIssue =
+    resolvedReply || nativeFailure ? undefined : diagnosticResponseIssue(response);
   const result: DiagnosticStopAssessment = {
     reason: conclusion.reason,
     basis: settled ? 'terminal' : 'unknown',
@@ -93,18 +83,6 @@ export function assessDiagnosticStop(report: DiagnosticReport): DiagnosticStopAs
       reason: terminalIssue.responseIssue,
       outputIssue: terminalIssue.responseIssue,
     };
-  if (nativeOutputIssue && !resolvedReply && conclusion.reason === 'completed')
-    return { ...result, reason: nativeOutputIssue, outputIssue: nativeOutputIssue };
-  // Only the published whole-run terminal owns the exit branch; attempt events
-  // can be followed by native recovery or fallback under the same run.
-  const loopExit = settled ? terminals.find(event => event.loopExit)?.loopExit : undefined;
-  if (
-    loopExit &&
-    (conclusion.reason === 'completed' ||
-      (conclusion.reason === 'failed' &&
-        ['tool_loop_guard', 'model_error', 'policy_stop', 'handoff'].includes(loopExit)))
-  )
-    return { ...result, loopExit };
   // Only an ended run can be described as stopping after an empty response.
   // A database state alone cannot confirm execution settlement.
   if (
@@ -116,7 +94,7 @@ export function assessDiagnosticStop(report: DiagnosticReport): DiagnosticStopAs
   ) {
     return { ...result, reason: outputIssue, basis: 'history', confidence: 'observed' };
   }
-  // Old runs already retain the model's own stop decision in native history.
+  // Native history retains the model's own stop decision.
   // Describe that fact without inventing a core-loop exit or pending queue state.
   if (
     conclusion.reason === 'completed' &&

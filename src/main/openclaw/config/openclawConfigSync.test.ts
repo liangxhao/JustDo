@@ -436,6 +436,68 @@ describe('OpenClaw managed model catalog config', () => {
 });
 
 describe('OpenClaw v2026.9.8 config sanitization', () => {
+  test('projects a missing Windows browser root without overriding native defaults or invalid input', () => {
+    const input = { gateway: { mode: 'local' } };
+    const projected = sanitizeOpenClawV2026_9_8Config(input);
+    expect(input).not.toHaveProperty('browser');
+    if (process.platform === 'win32') {
+      expect(projected.browser).toEqual({
+        profiles: {
+          user: { driver: 'existing-session', attachOnly: true, mcpCommand: 'chrome-mcp.cmd' },
+        },
+      });
+    } else {
+      expect(projected).not.toHaveProperty('browser');
+    }
+    expect(sanitizeOpenClawV2026_9_8Config({ browser: null }).browser).toBeNull();
+  });
+  test.each([BrowserMode.Isolated, BrowserMode.Extension, BrowserMode.Embedded])(
+    'projects the implicit user launcher in %s mode without changing its default',
+    mode => {
+      const input = buildManagedOpenClawConnectivityConfig(mode);
+      const projected = sanitizeOpenClawV2026_9_8Config(input);
+      expect(projected.browser.defaultProfile).toBe(input.browser.defaultProfile);
+      if (process.platform === 'win32') {
+        expect(projected.browser.profiles.user).toMatchObject({
+          driver: 'existing-session',
+          attachOnly: true,
+          mcpCommand: 'chrome-mcp.cmd',
+        });
+        expect(input.browser.profiles?.user).toBeUndefined();
+      }
+    },
+  );
+  test('selects the application Chrome launcher while preserving custom MCP commands', () => {
+    const config = sanitizeOpenClawV2026_9_8Config({
+      browser: {
+        profiles: {
+          user: { driver: 'existing-session' },
+          defaultRunner: { driver: 'existing-session', mcpCommand: 'npx' },
+          custom: { driver: 'existing-session', mcpCommand: 'company-browser.cmd' },
+        },
+      },
+    });
+    expect(config.browser.profiles.user.mcpCommand).toBe(
+      process.platform === 'win32' ? 'chrome-mcp.cmd' : undefined,
+    );
+    expect(config.browser.profiles.defaultRunner.mcpCommand).toBe(
+      process.platform === 'win32' ? 'chrome-mcp.cmd' : 'npx',
+    );
+    expect(config.browser.profiles.custom.mcpCommand).toBe('company-browser.cmd');
+  });
+  test('preserves an explicit user launcher while projecting the implicit Windows profile', () => {
+    const user = {
+      driver: 'existing-session',
+      mcpCommand: 'company-browser.cmd',
+      mcpArgs: ['--owned'],
+    };
+    const projected = sanitizeOpenClawV2026_9_8Config({
+      browser: { defaultProfile: 'openclaw', profiles: { user, chrome: { driver: 'extension' } } },
+    });
+    expect(projected.browser.defaultProfile).toBe('openclaw');
+    expect(projected.browser.profiles.user).toEqual(user);
+    expect(projected.browser.profiles.chrome).toEqual({ driver: 'extension' });
+  });
   test('removes retired fields and converts legacy managed surfaces', () => {
     const config = sanitizeOpenClawV2026_9_8Config({
       meta: {
@@ -643,6 +705,7 @@ describe('OpenClaw managed connectivity config', () => {
         user: {
           driver: 'existing-session',
           attachOnly: true,
+          ...(process.platform === 'win32' ? { mcpCommand: 'chrome-mcp.cmd' } : {}),
         },
       },
       ssrfPolicy: {

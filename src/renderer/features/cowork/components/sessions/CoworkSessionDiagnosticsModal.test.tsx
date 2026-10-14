@@ -56,7 +56,7 @@ const open = () =>
   );
 
 describe('session diagnostics', () => {
-  it('explains a normal model stop using old database history without patched runtime metadata', async () => {
+  it('explains a normal model stop using native history', async () => {
     bridge.read.mockResolvedValue({
       success: true,
       report: report({
@@ -83,7 +83,7 @@ describe('session diagnostics', () => {
     expect(screen.getByText(i18nService.t('diagnosticsModelReplyEndedEvidence'))).toBeTruthy();
     expect(screen.queryByText(i18nService.t('diagnosticsStopBasis_completed'))).toBeNull();
   });
-  it('shows the recorded loop exit as the conclusion rather than saying the reason is missing', async () => {
+  it('asks for more evidence when native settlement has no final reply observation', async () => {
     bridge.read.mockResolvedValue({
       success: true,
       report: report({
@@ -103,18 +103,14 @@ describe('session diagnostics', () => {
             phase: 'end',
             executionSettled: true,
             stopReason: 'stop',
-            loopExit: 'no_pending_work',
-            responseShape: 'text',
           },
         ],
       }),
     });
     open();
-    expect(
-      await screen.findByText(i18nService.t('diagnosticsLoopExit_no_pending_work')),
-    ).toBeTruthy();
-    expect(screen.getByText(i18nService.t('diagnosticsLoopAdvice_no_pending_work'))).toBeTruthy();
-    expect(screen.queryByText(i18nService.t('diagnosticsStopBasis_completed'))).toBeNull();
+    expect(await screen.findByText(i18nService.t('diagnosticsStopBasis_completed'))).toBeTruthy();
+    expect(screen.getByText(i18nService.t('diagnosticsAnswer_unknown'))).toBeTruthy();
+    expect(screen.queryByText(i18nService.t('diagnosticsModelReplyEnded'))).toBeNull();
   });
   it('explains thinking-only stops and output limits without showing reasoning text', async () => {
     bridge.read.mockResolvedValue({

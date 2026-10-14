@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import vm from 'node:vm';
 import { isDeepStrictEqual } from 'node:util';
+import vm from 'node:vm';
+
 import { describe, expect, it, vi } from 'vitest';
 
 const patch = require('../../../../scripts/patches/v2026.9.8/034-plugin-owned-execution.cjs');
-const helpers = patch.__testing.helpers;
 const pristine = process.env.JUSTDO_EXECUTION_PRISTINE_DIR;
 
 function harness() {
@@ -62,9 +62,8 @@ function harness() {
     }),
   });
   vm.runInContext(
-    Object.values(helpers)
-      .map((fn: any) => fn.toString())
-      .join('\n'),
+    patch.__testing.testingHelperSource +
+      '\nObject.assign(globalThis, justDoPluginExecutionBindings);',
     context,
   );
   const run = (id = 'run-one') => {
@@ -282,9 +281,9 @@ describe('exact plugin execution evidence', () => {
     await expect(failed[0]()).rejects.toThrow('still alive');
     h.runs.get('run-one').justDoPluginExecution.executionSettled = true;
     await expect(h.context.justDoFinishManagedRun('run-one')).rejects.toThrow('still alive');
-    expect((await h.context.justDoDescribePluginRun('run-one', 'swarm-workflow')).cleanupSettled).toBe(
-      false,
-    );
+    expect(
+      (await h.context.justDoDescribePluginRun('run-one', 'swarm-workflow')).cleanupSettled,
+    ).toBe(false);
   });
 
   it('keeps failed persistence out of accepted settlement evidence', async () => {
@@ -292,9 +291,9 @@ describe('exact plugin execution evidence', () => {
     h.run().justDoPluginExecution.executionSettled = true;
     h.persist.mockRejectedValueOnce(new Error('disk unavailable'));
     await expect(h.context.justDoFinishManagedRun('run-one')).rejects.toThrow('disk unavailable');
-    expect((await h.context.justDoDescribePluginRun('run-one', 'swarm-workflow')).cleanupSettled).toBe(
-      false,
-    );
+    expect(
+      (await h.context.justDoDescribePluginRun('run-one', 'swarm-workflow')).cleanupSettled,
+    ).toBe(false);
   });
 
   it('accepts a native cloned rollback but never overwrites another row mutation', async () => {
@@ -337,9 +336,9 @@ describe('exact plugin execution evidence', () => {
     h.persist.mockResolvedValueOnce(undefined);
     await expect(h.context.justDoFinishManagedRun('run-one')).rejects.toThrow('superseded');
     expect(h.persist).toHaveBeenCalledTimes(2);
-    expect((await h.context.justDoDescribePluginRun('run-one', 'swarm-workflow')).cleanupSettled).toBe(
-      false,
-    );
+    expect(
+      (await h.context.justDoDescribePluginRun('run-one', 'swarm-workflow')).cleanupSettled,
+    ).toBe(false);
   });
 
   it('rechecks epoch and session custody at ACK publication', async () => {
@@ -428,7 +427,7 @@ describe.skipIf(!pristine)('locked native dist topology', () => {
         ),
       ).toThrow();
     }
-  }, 60_000);
+  }, 120_000);
 });
 
 const seamFixture = `
@@ -496,13 +495,23 @@ describe('current execution seam custody', () => {
           .replace(/(?<!\.)\bcontext\b(?!\s*:)/g, 'nativeContext'),
       );
     expect(patch.__testing.transform(renamed, file, registry)).toBe(renamed);
-    const bundled = require('esbuild').transformSync(current, {
-      target: 'node24',
-      minifySyntax: false,
-      minifyWhitespace: true,
-      minifyIdentifiers: false,
-    }).code;
+    const bundled = require('esbuild').transformSync(
+      current.replace(
+        /import \{ createPluginOwnedExecutionRuntime \} from "[^"]+";/,
+        patch.__testing.testingHelperSource.split('\nconst justDoPluginExecutionBindings')[0],
+      ),
+      {
+        target: 'node24',
+        minifySyntax: false,
+        minifyWhitespace: true,
+        minifyIdentifiers: false,
+      },
+    ).code;
     expect(patch.__testing.transform(bundled, 'gateway-bundle.mjs', registry)).toBe(bundled);
+    const initialized = bundled.replace(/const (justDoPluginExecutionBindings\d*)\s*=/,
+      'let $1; $1 =');
+    expect(initialized).not.toBe(bundled);
+    expect(patch.__testing.transform(initialized, 'gateway-bundle.mjs', registry)).toBe(initialized);
   });
   it.each([
     [

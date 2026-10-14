@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { afterEach, describe, expect, test } from 'vitest';
+
 import cliRuntimeFiles from '../../../src/shared/openclaw/cliRuntimeFiles.json';
 
 const {
@@ -13,10 +14,12 @@ const {
   normalizeOpenClawVersion,
   readOpenClawSourceLock,
   verifyFrozenOpenClawRuntime,
+  listBuildRecipeFiles,
   verifyOpenClawPatchManifest,
   writeOpenClawPatchManifest,
 } = require('../../../scripts/openclaw/verify-openclaw-runtime-patches.cjs') as {
   PATCH_MANIFEST_FILENAME: string;
+  listBuildRecipeFiles: (repoRoot: string) => string[];
   buildOpenClawBuildRecipeFingerprint: (repoRoot: string, version: string) => string;
   buildOpenClawPatchSetFingerprint: (repoRoot: string, version: string) => string;
   normalizeOpenClawVersion: (version: string) => string;
@@ -173,6 +176,12 @@ function createFixture() {
   fs.mkdirSync(path.join(repoRoot, 'resources'), { recursive: true });
   fs.writeFileSync(path.join(repoRoot, 'resources', 'openclaw-extension-prune.json'), '{}\n');
   fs.writeFileSync(path.join(repoRoot, 'resources', 'builtin-skills.json'), '{}\n');
+  for (const file of listBuildRecipeFiles(repoRoot)) {
+    if (!fs.existsSync(file)) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, '// fixture recipe input\n');
+    }
+  }
   fs.writeFileSync(path.join(runtimeRoot, 'gateway-bundle.mjs'), 'const patched = true;\n');
   fs.writeFileSync(path.join(runtimeRoot, 'gateway.asar'), 'fixture asar\n');
   fs.writeFileSync(path.join(runtimeRoot, 'package.json'), '{}\n');

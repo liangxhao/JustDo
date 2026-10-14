@@ -24,22 +24,27 @@ describe('Electron Node runtime', () => {
 
     const npmBinDir = resolvePackagedNpmBinDir(resourcesPath);
 
-    expect(npmBinDir).toBe(
-      path.join(resourcesPath, 'app.asar', 'node_modules', 'npm', 'bin'),
-    );
+    expect(npmBinDir).toBe(path.join(resourcesPath, 'app.asar', 'node_modules', 'npm', 'bin'));
     expect(npmBinDir).not.toContain('app.asar.unpacked');
   });
 
   it('builds self-contained Electron Node and package runner shims', () => {
     const scripts = buildElectronNodeShimScripts(
       'C:\\Program Files\\JustDo 100%\\JustDo.exe',
+      'C:\\Users\\测试用户 100%\\cowork\\bin',
       'C:\\Program Files\\JustDo\\resources\\app.asar\\node_modules\\npm\\bin',
     );
 
-    expect(scripts.nodeCmd).toContain('"C:\\Program Files\\JustDo 100%%\\JustDo.exe" %*');
+    expect(scripts.nodeCmd).toContain(
+      '"C:\\Program Files\\JustDo 100%%\\JustDo.exe" --require "C:\\Users\\测试用户 100%%\\cowork\\bin\\hide-child-process-windows.cjs" %*',
+    );
     expect(scripts.packageCmd('npx')).toContain(
       '"C:\\Program Files\\JustDo\\resources\\app.asar\\node_modules\\npm\\bin\\npx-cli.js"',
     );
+    expect(scripts.packageCmd('npx')).toContain(
+      '"C:\\Users\\测试用户 100%%\\cowork\\bin\\node.cmd"',
+    );
+    expect(scripts.nodeCmd).not.toContain('%~dp0');
     expect(scripts.nodeSh).toContain("'C:\\Program Files\\JustDo 100%\\JustDo.exe'");
     expect(scripts.packageSh('npm')).toContain(
       "'C:\\Program Files\\JustDo\\resources\\app.asar\\node_modules\\npm\\bin\\npm-cli.js'",
@@ -58,7 +63,7 @@ describe('Electron Node runtime', () => {
   });
 
   it('rejects line breaks in generated shim paths', () => {
-    expect(() => buildElectronNodeShimScripts('C:\\Electron.exe\r\nwhoami')).toThrow(
+    expect(() => buildElectronNodeShimScripts('C:\\Electron.exe\r\nwhoami', 'C:\\bin')).toThrow(
       'cannot contain line breaks',
     );
   });
@@ -113,7 +118,9 @@ describe('Electron Node runtime', () => {
       })().catch(error => { console.error(error); process.exitCode = 1; });
     `;
     execFileSync(process.execPath, ['-e', script], {
-      windowsHide: true, timeout: 15_000, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      windowsHide: true,
+      timeout: 15_000,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
     });
   });
 });

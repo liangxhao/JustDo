@@ -588,6 +588,64 @@ const writeMinimalConfig = (
   ).writeMinimalConfig(configPath, reason);
 };
 
+test.each(
+  (['full', 'minimal'] as const).flatMap(mode =>
+    [BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout].map(reason => ({
+      mode,
+      reason,
+    })),
+  ),
+)(
+  '$mode $reason projects a missing native browser root without selecting a managed default',
+  ({ mode, reason }) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-auth-projection-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    fs.writeFileSync(configPath, JSON.stringify({ gateway: { mode: 'local' } }));
+    const appConfig =
+      mode === 'full'
+        ? {
+            model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+            providers: {
+              'custom-provider': {
+                enabled: true,
+                apiKey: 'fixture-key',
+                baseUrl: 'https://custom.example.test/v1',
+                apiFormat: 'openai',
+                models: [{ id: 'custom-model' }],
+              },
+            },
+          }
+        : {};
+    setStoreGetter(() => ({ get: () => appConfig }) as never);
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath,
+        getStateDir: () => directory,
+        getDesiredVersion: () => '2026.9.8',
+      },
+      getCoworkConfig: () => ({
+        workingDirectory: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+      }),
+      getAgents: () => [],
+      getBrowserMode: () => BrowserMode.Extension,
+    } as never);
+    expect(sync.sync(reason).ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    if (process.platform === 'win32') {
+      expect(config.browser).toEqual({
+        profiles: {
+          user: { driver: 'existing-session', attachOnly: true, mcpCommand: 'chrome-mcp.cmd' },
+        },
+      });
+    } else {
+      expect(config).not.toHaveProperty('browser');
+    }
+  },
+);
+
 test.each([true, false])(
   'preserves cold storage through minimal startup and subsequent runtime saves (enabled=%s)',
   enabled => {
@@ -1667,6 +1725,22 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.plugins.allow).toContain('compatible-plugin');
   });
 
+  test.each(['missing', 'malformed'] as const)(
+    'minimal startup projects the implicit launcher from %s config',
+    prior => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-startup-projection-'));
+      temporaryDirectories.push(directory);
+      const configPath = path.join(directory, 'openclaw.json');
+      if (prior === 'malformed') fs.writeFileSync(configPath, '{invalid');
+      expect(writeMinimalConfig(configPath, 'startup', 'ask', BrowserMode.Extension).ok).toBe(true);
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(config.browser.defaultProfile).toBe('chrome');
+      expect(config.browser.profiles.chrome.driver).toBe('extension');
+      if (process.platform === 'win32')
+        expect(config.browser.profiles.user.mcpCommand).toBe('chrome-mcp.cmd');
+    },
+  );
+
   test('a second no-model sync replaces the managed browser profile', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-browser-switch-'));
     temporaryDirectories.push(directory);
@@ -1738,6 +1812,13 @@ describe('OpenClaw auth logout config sync', () => {
     expect(sync.sync('startup').ok).toBe(true);
     const nativeConfig = readConfig();
     expect(Boolean(nativeConfig.models.providers?.['custom-provider'])).toBe(configMode === 'full');
+    if (process.platform === 'win32') {
+      expect(nativeConfig.browser.profiles.user).toMatchObject({
+        driver: 'existing-session',
+        attachOnly: true,
+        mcpCommand: 'chrome-mcp.cmd',
+      });
+    }
 
     browserMode = BrowserMode.Embedded;
     expect(sync.sync('browser-mode-change')).toMatchObject({

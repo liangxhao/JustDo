@@ -14,11 +14,9 @@ import {
 } from '../../../shared/cowork/diagnostics/diagnosticLogDetails';
 import { assessDiagnosticStop } from '../../../shared/cowork/diagnostics/diagnosticStop';
 import {
-  diagnosticLoopExits,
   DiagnosticReason,
   type DiagnosticReport,
   diagnosticResponseIssues,
-  diagnosticResponseShapes,
   diagnosticTimeoutPhases,
 } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import type { DiagnosticExportLogBundle } from './exportLogs';
@@ -192,8 +190,6 @@ export function buildDiagnosticArchive(
   const safe = {
     stopAssessment: {
       modelReplyEnded: boolean(stop.modelReplyEnded),
-      loopExit:
-        stop.loopExit === undefined ? undefined : member(stop.loopExit, diagnosticLoopExits),
       reason: member(stop.reason, [
         ...Object.values(DiagnosticReason),
         ...diagnosticResponseIssues,
@@ -263,12 +259,6 @@ export function buildDiagnosticArchive(
       ),
     },
     events: report.events.slice(0, 232).map(event => ({
-      loopExit:
-        event.loopExit === undefined ? undefined : member(event.loopExit, diagnosticLoopExits),
-      responseShape:
-        event.responseShape === undefined
-          ? undefined
-          : member(event.responseShape, diagnosticResponseShapes),
       id: alias(event.id),
       run: alias(event.runId),
       nativeRun: alias(event.nativeRunId),

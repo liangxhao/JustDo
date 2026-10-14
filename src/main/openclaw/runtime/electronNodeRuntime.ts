@@ -1,6 +1,6 @@
 import { app } from 'electron';
 import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { dirname, join, win32 } from 'path';
 
 import { coworkLog } from '../../cowork/coworkLogger';
 
@@ -94,7 +94,10 @@ export const buildWindowsChildProcessPreload = (): string =>
     '',
   ].join('\r\n');
 
-export const appendNodeRequireOption = (nodeOptions: string | undefined, filePath: string): string => {
+export const appendNodeRequireOption = (
+  nodeOptions: string | undefined,
+  filePath: string,
+): string => {
   const safePath = assertSafeShimPath(filePath).replace(/\\/g, '/').replace(/"/g, '\\"');
   const requireOption = `--require="${safePath}"`;
   if (nodeOptions?.includes(requireOption)) return nodeOptions;
@@ -103,15 +106,24 @@ export const appendNodeRequireOption = (nodeOptions: string | undefined, filePat
 
 export const buildElectronNodeShimScripts = (
   electronPath: string,
+  shimDir: string,
   npmBinDir?: string,
+  chromeMcpServerPath?: string,
 ): {
   nodeSh: string;
   nodeCmd: string;
   packageSh: (command: 'npm' | 'npx') => string;
   packageCmd: (command: 'npm' | 'npx') => string;
+  chromeMcpCmd?: string;
 } => {
   const quotedElectronSh = quotePosixLiteral(electronPath);
   const quotedElectronCmd = quoteWindowsBatchArgument(electronPath);
+  // npm bin wrappers can invoke bare `node` from inside another .cmd. In that
+  // case %~dp0 can resolve to the caller's cwd rather than this shim's directory.
+  const quotedNodeCmd = quoteWindowsBatchArgument(win32.join(shimDir, 'node.cmd'));
+  const quotedPreload = quoteWindowsBatchArgument(
+    win32.join(shimDir, 'hide-child-process-windows.cjs'),
+  );
   const resolveCliPath = (command: 'npm' | 'npx'): string => {
     if (!npmBinDir) throw new Error('npm bin directory is required for package runner shims.');
     return join(npmBinDir, `${command}-cli.js`);
@@ -123,21 +135,37 @@ export const buildElectronNodeShimScripts = (
       `exec env ELECTRON_RUN_AS_NODE=1 ${quotedElectronSh} "$@"`,
       '',
     ].join('\n'),
-    nodeCmd: ['@echo off', 'set ELECTRON_RUN_AS_NODE=1', `${quotedElectronCmd} %*`, ''].join(
-      '\r\n',
-    ),
-    packageSh: command => [
-      '#!/usr/bin/env bash',
-      'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"',
-      `exec "$SCRIPT_DIR/node" ${quotePosixLiteral(resolveCliPath(command))} "$@"`,
+    nodeCmd: [
+      '@echo off',
+      'chcp 65001 >nul',
+      'set ELECTRON_RUN_AS_NODE=1',
+      `${quotedElectronCmd} --require ${quotedPreload} %*`,
       '',
-    ].join('\n'),
+    ].join('\r\n'),
+    packageSh: command =>
+      [
+        '#!/usr/bin/env bash',
+        'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"',
+        `exec "$SCRIPT_DIR/node" ${quotePosixLiteral(resolveCliPath(command))} "$@"`,
+        '',
+      ].join('\n'),
     packageCmd: command =>
       [
         '@echo off',
-        `"%~dp0node.cmd" ${quoteWindowsBatchArgument(resolveCliPath(command))} %*`,
+        'chcp 65001 >nul',
+        `${quotedNodeCmd} ${quoteWindowsBatchArgument(resolveCliPath(command))} %*`,
         '',
       ].join('\r\n'),
+    chromeMcpCmd: chromeMcpServerPath
+      ? [
+          '@echo off',
+          'chcp 65001 >nul',
+          'set ELECTRON_RUN_AS_NODE=1',
+          'set CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS=1',
+          `${quotedElectronCmd} --require ${quotedPreload} ${quoteWindowsBatchArgument(chromeMcpServerPath)} --experimentalVision %*`,
+          '',
+        ].join('\r\n')
+      : undefined,
   };
 };
 
@@ -191,11 +219,28 @@ export function resolvePackagedNpmBinDir(resourcesPath: string): string {
   return join(resourcesPath, 'app.asar', 'node_modules', 'npm', 'bin');
 }
 
-export function ensureElectronNodeShim(electronPath: string, npmBinDir?: string): string | null {
+export function resolveElectronNpmBinDir(): string | undefined {
+  if (app.isPackaged) return resolvePackagedNpmBinDir(process.resourcesPath);
+  const npmExecPath = process.env.npm_execpath?.trim();
+  if (npmExecPath) return dirname(npmExecPath);
+  const projectNpmBin = join(app.getAppPath(), 'node_modules', 'npm', 'bin');
+  return existsSync(projectNpmBin) ? projectNpmBin : undefined;
+}
+
+export function ensureElectronNodeShim(
+  electronPath: string,
+  npmBinDir?: string,
+  chromeMcpServerPath?: string,
+): string | null {
   try {
     const shimDir = join(app.getPath('userData'), 'cowork', 'bin');
     mkdirSync(shimDir, { recursive: true });
-    const shimScripts = buildElectronNodeShimScripts(electronPath, npmBinDir);
+    const shimScripts = buildElectronNodeShimScripts(
+      electronPath,
+      shimDir,
+      npmBinDir,
+      chromeMcpServerPath,
+    );
 
     const nodeSh = join(shimDir, 'node');
     writeFileSync(nodeSh, shimScripts.nodeSh, 'utf8');
@@ -209,11 +254,10 @@ export function ensureElectronNodeShim(electronPath: string, npmBinDir?: string)
       const hideChildProcessPreload = join(shimDir, 'hide-child-process-windows.cjs');
       writeFileSync(hideChildProcessPreload, buildWindowsChildProcessPreload(), 'utf8');
 
-      writeFileSync(
-        join(shimDir, 'node.cmd'),
-        shimScripts.nodeCmd,
-        'utf8',
-      );
+      writeFileSync(join(shimDir, 'node.cmd'), shimScripts.nodeCmd, 'utf8');
+      if (shimScripts.chromeMcpCmd) {
+        writeFileSync(join(shimDir, 'chrome-mcp.cmd'), shimScripts.chromeMcpCmd, 'utf8');
+      }
     }
 
     if (npmBinDir && existsSync(npmBinDir)) {
@@ -230,11 +274,7 @@ export function ensureElectronNodeShim(electronPath: string, npmBinDir?: string)
         }
 
         if (process.platform === 'win32') {
-          writeFileSync(
-            join(shimDir, `${command}.cmd`),
-            shimScripts.packageCmd(command),
-            'utf8',
-          );
+          writeFileSync(join(shimDir, `${command}.cmd`), shimScripts.packageCmd(command), 'utf8');
         }
       }
     }

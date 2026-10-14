@@ -78,6 +78,14 @@ bundle and its dynamic TypeSafe SDK with an isolated file SecretRef and local
 synthetic provider. It covers first use, rotation, unavailable-owner denial and
 recovery without a chat model or user credentials.
 
+`node scripts/test/prepare-npx-mcp-smoke.cjs` packs the dependency-free local
+`tests/openclaw/fixtures/npx-mcp-smoke/` package and primes an isolated offline npm
+cache. On Windows it verifies real npx package-bin startup through Main's command
+projection and the bundled native MCP transport, including Unicode/space shim
+paths and tool calls. It writes form arguments, configuration and verification
+evidence under `.agent-tasks/npx-mcp-smoke/` for manual product testing; it never
+changes the application's MCP entries or live Gateway state.
+
 `packaging/windows-installer-script.cjs` composes upstream NSIS templates at the
 project-scoped final-script build seam. It retains electron-builder's two-pass
 uninstaller generation/signing, extracts the shell under the selected installation

@@ -11,7 +11,7 @@
 const {
   justDoCreateCompactionHandlers,
   justDoRunRecoveryCompaction,
-} = require('./native-compaction-lifecycle.js');
+} = require('../../../src/main/openclaw/runtime/native-support/compaction-lifecycle.mjs');
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -23,8 +23,10 @@ const {
   runtimeJavaScriptFiles,
   readRuntimeTextFile,
   writeIfChanged,
+  nativeSupportModule,
+  nativeSupportImport,
 } = require('./_patch-utils.js');
-const { canonicalHelper } = require('./034-plugin-owned-execution.cjs').__testing;
+const { canonicalHelper } = require('../../openclaw/native-support-contract.cjs');
 const CONTRACT = 'JUSTDO_NATIVE_COMPACTION_LIFECYCLE_V2026_9_8';
 const factory = justDoCreateCompactionHandlers.toString();
 const recoveryHelper = justDoRunRecoveryCompaction.toString();
@@ -85,6 +87,15 @@ function assertHelper(source, name, expected, bundled = false) {
   if (canonical(actual) !== canonical(expected))
     throw new Error(`${name}: historical or partial compaction helper`);
 }
+function supportImport(source, file, name, current) {
+  const declaration = `import { ${name} } from "${nativeSupportImport(file, 'compaction-lifecycle.mjs')}";`;
+  if (current) {
+    if (!source.includes(declaration))
+      throw new Error(`${file}: historical or partial compaction support import`);
+    return source;
+  }
+  return declaration + '\n' + source;
+}
 function editObject(source, anchor, edit) {
   const start = source.indexOf(anchor);
   if (start < 0 || source.indexOf(anchor, start + 1) >= 0)
@@ -144,10 +155,12 @@ function transformSchemas(source) {
   });
   return result;
 }
-function transformManual(source, bundled = false) {
+function transformManual(source, file) {
+  const bundled = isGatewayBundlePath(file);
   const native = source.includes('justDoNativeSessionCompactHandlers =');
   if (native) {
-    assertHelper(source, 'justDoCreateCompactionHandlers', factory, bundled);
+    if (bundled) assertHelper(source, 'justDoCreateCompactionHandlers', factory, true);
+    else supportImport(source, file, 'justDoCreateCompactionHandlers', true);
     const start = source.indexOf('justDoNativeSessionCompactHandlers =');
     const open = source.indexOf('{', start);
     const end = findMatchingDelimiter(source, open, '{', '}', 'manual custody');
@@ -240,7 +253,7 @@ function transformManual(source, bundled = false) {
   result =
     result.slice(0, open) +
     body +
-    `;\n${factory}\nconst sessionCompactHandlers = justDoCreateCompactionHandlers(justDoNativeSessionCompactHandlers,{randomUUID,assertValidParams,validateSessionsCompactParams,readGatewayRequestMutationAuthority,bindGatewayRequestHandlerMutationAuthority,emitSessionOperation,errorShape,ErrorCodes})` +
+    `;\nconst sessionCompactHandlers = justDoCreateCompactionHandlers(justDoNativeSessionCompactHandlers,{randomUUID,assertValidParams,validateSessionsCompactParams,readGatewayRequestMutationAuthority,bindGatewayRequestHandlerMutationAuthority,emitSessionOperation,errorShape,ErrorCodes})` +
     result.slice(end + 1);
   if (!declared) {
     result = result.replace(
@@ -248,7 +261,7 @@ function transformManual(source, bundled = false) {
       'sessionCompactHandlers = justDoCreateCompactionHandlers(',
     );
   }
-  return result;
+  return supportImport(result, file, 'justDoCreateCompactionHandlers', false);
 }
 function prependExact(source, anchor, additions, label) {
   const matches = [...source.matchAll(new RegExp(anchor.source, 'g'))];
@@ -274,9 +287,11 @@ function prependExact(source, anchor, additions, label) {
   }
   return source.slice(0, position) + additions + source.slice(position);
 }
-function transformRecovery(source, bundled = false) {
+function transformRecovery(source, file) {
+  const bundled = isGatewayBundlePath(file);
   if (source.includes(`function ${nativeName}(`)) {
-    assertHelper(source, 'justDoRunRecoveryCompaction', recoveryHelper, bundled);
+    if (bundled) assertHelper(source, 'justDoRunRecoveryCompaction', recoveryHelper, true);
+    else supportImport(source, file, 'justDoRunRecoveryCompaction', true);
     assertHelper(source, 'compactEmbeddedRunForRecovery', recoveryWrapper, bundled);
     return source;
   }
@@ -287,14 +302,15 @@ function transformRecovery(source, bundled = false) {
     !/\.assertRecoveryActive\(\)/.test(original.text)
   )
     throw new Error('Native recovery custody changed');
-  return (
+  return supportImport(
     source.slice(0, original.start) +
-    recoveryHelper +
-    '\n' +
-    recoveryWrapper +
-    '\n' +
-    original.text.replace('function compactEmbeddedRunForRecovery(', `function ${nativeName}(`) +
-    source.slice(original.end)
+      recoveryWrapper +
+      '\n' +
+      original.text.replace('function compactEmbeddedRunForRecovery(', `function ${nativeName}(`) +
+      source.slice(original.end),
+    file,
+    'justDoRunRecoveryCompaction',
+    false,
   );
 }
 function transform(source, file = '<runtime>') {
@@ -311,10 +327,9 @@ function transform(source, file = '<runtime>') {
     throw new Error(`${file}: missing compaction contract marker`);
   let result = source;
   if (result.includes('SessionsCompactParamsSchema =')) result = transformSchemas(result);
-  if (result.includes('sessionCompactHandlers ='))
-    result = transformManual(result, isGatewayBundlePath(file));
+  if (result.includes('sessionCompactHandlers =')) result = transformManual(result, file);
   if (result.includes('function compactEmbeddedRunForRecovery('))
-    result = transformRecovery(result, isGatewayBundlePath(file));
+    result = transformRecovery(result, file);
   if (result.includes('sessionTarget: resultSessionTarget')) {
     const field = 'markerExpected: !!clientResult && !memoryTranscript,';
     const existing = result.match(/markerExpected:([^,]+),\s*sessionTarget: resultSessionTarget,/);
@@ -405,6 +420,15 @@ function processTargets(root, verify) {
   }
   // Plan every source and bundle transformation before committing any bytes.
   const plans = entries.map(entry => ({ ...entry, next: transform(entry.source, entry.file) }));
+  nativeSupportModule(
+    root,
+    'compaction-lifecycle.mjs',
+    path.resolve(
+      __dirname,
+      '../../../src/main/openclaw/runtime/native-support/compaction-lifecycle.mjs',
+    ),
+    verify,
+  );
   if (verify) {
     if (plans.some(entry => entry.source !== entry.next))
       throw new Error('Native compaction capability is not applied');

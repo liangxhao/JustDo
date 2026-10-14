@@ -32,14 +32,27 @@ const BUILD_RECIPE_FILES = [
   'scripts/openclaw/sync-openclaw-runtime-current.cjs',
   'scripts/openclaw/bundle-openclaw-gateway.cjs',
   'scripts/openclaw/openclaw-shared-sdk-modules.cjs',
+  'scripts/openclaw/native-support-contract.cjs',
   'scripts/openclaw/ensure-openclaw-plugins.cjs',
   'scripts/openclaw/patch-mxc-sandbox-plugin.cjs',
   'scripts/openclaw/sync-openclaw-runtime-resources.cjs',
+  'scripts/openclaw/sync-native-extension-overlay.cjs',
+  'openclaw-extensions/openai/package.json',
+  'openclaw-extensions/openai/native-source.json',
+  'openclaw-extensions/openai/index.ts',
+  'openclaw-extensions/openai/capability-catalog.ts',
+  'openclaw-extensions/openai/media-adapters.ts',
+  'src/shared/providers/mediaGenerationModels.ts',
   'scripts/openclaw/precompile-openclaw-extensions.cjs',
   'scripts/openclaw/prune-openclaw-runtime.cjs',
   'scripts/openclaw/pack-openclaw-tar.cjs',
   'src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs',
   'src/main/openclaw/runtime/windowsRecursiveRemove.cjs',
+  'src/main/openclaw/runtime/electronNodeRuntime.ts',
+  'src/main/openclaw/runtime/mcpPackageRunner.ts',
+  'src/main/openclaw/config/openclawConfigBuilders.ts',
+  'src/main/openclaw/runtime/native-support/plugin-owned-execution.mjs',
+  'src/main/openclaw/runtime/native-support/compaction-lifecycle.mjs',
   'src/shared/openclaw/cliRuntimeFiles.json',
   'src/shared/security/mxcNativeBinaries.json',
   'resources/openclaw-extension-prune.json',
@@ -291,8 +304,12 @@ function buildOpenClawPatchSetFingerprint(repoRoot, version) {
   return hashFileSet(repoRoot, listPatchInputFiles(repoRoot, version));
 }
 
+function listBuildRecipeFiles(repoRoot) {
+  return BUILD_RECIPE_FILES.map(relativePath => path.join(repoRoot, relativePath));
+}
+
 function buildOpenClawBuildRecipeFingerprint(repoRoot, version) {
-  const recipeFiles = BUILD_RECIPE_FILES.map(relativePath => path.join(repoRoot, relativePath));
+  const recipeFiles = listBuildRecipeFiles(repoRoot);
   const missing = recipeFiles.filter(filePath => !fs.existsSync(filePath));
   if (missing.length > 0) {
     throw new Error(
@@ -556,6 +573,7 @@ module.exports = {
   buildOpenClawPatchSetFingerprint,
   hashFile,
   listPatchFiles,
+  listBuildRecipeFiles,
   listPatchInputFiles,
   normalizeOpenClawVersion,
   readOpenClawSourceLock,

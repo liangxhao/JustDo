@@ -6,6 +6,17 @@ import path from 'path';
 const LOCAL_EXTENSIONS_DIR = 'openclaw-extensions';
 const AGENT_PLUGIN_MANIFEST_SCHEMA = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
 
+// Build-time entry compositions are not independently loadable source plugins.
+// Only the bundled native plugin manifest can establish their availability.
+const isNativeExtensionOverlaySource = (extensionDir: string): boolean => {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(extensionDir, 'package.json'), 'utf8'));
+    return pkg?.justdo?.nativeOverlay === true;
+  } catch {
+    return false;
+  }
+};
+
 const isPathInside = (parentDir: string, childPath: string): boolean => {
   const relative = path.relative(parentDir, childPath);
   return relative.length > 0 && !relative.startsWith('..') && !path.isAbsolute(relative);
@@ -97,6 +108,7 @@ export const inspectOpenClawExtensionCandidate = (
 
 export const inspectOpenClawExtensionDirectory = (
   extensionsDir: string,
+  options: { excludeNativeOverlaySources?: boolean } = {},
 ): OpenClawExtensionInventory => {
   let entries: fs.Dirent[];
   try {
@@ -123,6 +135,8 @@ export const inspectOpenClawExtensionDirectory = (
       complete = false;
       continue;
     }
+    if (options.excludeNativeOverlaySources && isNativeExtensionOverlaySource(extensionDir))
+      continue;
     const candidate = inspectOpenClawExtensionCandidate(extensionDir);
     candidate.ids.forEach(id => ids.add(id));
     if (!candidate.complete) complete = false;
@@ -207,7 +221,7 @@ export const syncLocalOpenClawExtensionsIntoRuntime = async (
 
   const copied: string[] = [];
   for (const entry of await fs.promises.readdir(sourceDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) {
+    if (!entry.isDirectory() || isNativeExtensionOverlaySource(path.join(sourceDir, entry.name))) {
       continue;
     }
     const destDir = path.join(targetExtensionsDir, entry.name);
@@ -236,8 +250,7 @@ export const syncLocalOpenClawExtensionsIntoRuntime = async (
 };
 
 export const listLocalOpenClawExtensionIds = (): string[] => {
-  const sourceDir = findLocalExtensionsSourceDir();
-  return sourceDir ? inspectOpenClawExtensionDirectory(sourceDir).ids : [];
+  return inspectLocalOpenClawExtensions().ids;
 };
 
 export const listBundledOpenClawExtensionIds = (): string[] => {
@@ -254,7 +267,9 @@ export const inspectBundledOpenClawExtensions = (): OpenClawExtensionInventory =
 
 export const inspectLocalOpenClawExtensions = (): OpenClawExtensionInventory => {
   const sourceDir = findLocalExtensionsSourceDir();
-  return sourceDir ? inspectOpenClawExtensionDirectory(sourceDir) : { complete: true, ids: [] };
+  return sourceDir
+    ? inspectOpenClawExtensionDirectory(sourceDir, { excludeNativeOverlaySources: true })
+    : { complete: true, ids: [] };
 };
 
 export const hasBundledOpenClawExtension = (extensionId: string): boolean => {

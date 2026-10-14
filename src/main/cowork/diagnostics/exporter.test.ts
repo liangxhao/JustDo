@@ -70,7 +70,7 @@ it('exports only response shape and aliased stop evidence, never model text', ()
   expect(JSON.stringify(archive)).not.toContain('SECRET');
 });
 
-it('exports the recorded exit branch and closed response kind', () => {
+it('exports native settlement without inventing a loop branch or response observation', () => {
   const input = report();
   input.conclusion = {
     reason: 'completed',
@@ -82,13 +82,13 @@ it('exports the recorded exit branch and closed response kind', () => {
     phase: 'end',
     executionSettled: true,
     stopReason: 'stop',
-    loopExit: 'no_pending_work',
-    responseShape: 'text',
   });
   const archive = buildDiagnosticArchive(input, '2026.9.8', 'zh');
   const exported = JSON.parse(archive['report.json']);
-  expect(exported.stopAssessment.loopExit).toBe('no_pending_work');
-  expect(exported.events[0]).toMatchObject({ loopExit: 'no_pending_work', responseShape: 'text' });
+  expect(exported.stopAssessment).toMatchObject({ reason: 'completed', basis: 'terminal' });
+  expect(exported.events[0]).toMatchObject({ executionSettled: true, stopReason: 'stop' });
+  expect(exported.stopAssessment).not.toHaveProperty('loopExit');
+  expect(exported.events[0]).not.toHaveProperty('responseShape');
   Object.assign(input.events[0], { loopExit: 'SECRET', responseShape: 'SECRET' });
   expect(JSON.stringify(buildDiagnosticArchive(input, '2026.9.8', 'zh'))).not.toContain('SECRET');
 });
