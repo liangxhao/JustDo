@@ -8,9 +8,10 @@ import {
   GlobeAltIcon,
   MagnifyingGlassIcon,
   Square2StackIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { isBrowserFaviconDataUrl, resolveBrowserAddressInput } from '@shared/browser/browser';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { defaultConfig } from '@/app/config';
 import { configService } from '@/services/config';
@@ -130,6 +131,11 @@ const DisplayPanelLauncher = ({
   const [address, setAddress] = useState('');
   const [visits, setVisits] = useState<RecentBrowserVisit[] | null>(null);
   const [historyFailed, setHistoryFailed] = useState(false);
+  const [deleteFailed, setDeleteFailed] = useState(false);
+  const [deletingUrl, setDeletingUrl] = useState<string | null>(null);
+  const pendingDeletion = useRef<string | null>(null);
+  const historyEpoch = useRef(0);
+  const historyVisible = useRef(false);
   const shortcuts = { ...defaultConfig.shortcuts, ...config.shortcuts };
   const navigationDisabled = browserDisabled && !onNavigateBrowser;
   const openAddress = onNavigateBrowser ?? onCreateBrowser;
@@ -140,27 +146,54 @@ const DisplayPanelLauncher = ({
     return () => window.removeEventListener('config-updated', changed);
   }, []);
 
+  const loadHistory = useCallback(async () => {
+    const epoch = ++historyEpoch.current;
+    try {
+      const result = await window.electron.browser.listHistory();
+      if (epoch !== historyEpoch.current) return;
+      setVisits(selectRecentBrowserVisits(result.entries ?? []));
+      setHistoryFailed(!result.success);
+    } catch {
+      if (epoch !== historyEpoch.current) return;
+      setVisits([]);
+      setHistoryFailed(true);
+    }
+  }, []);
+
   useEffect(() => {
+    historyVisible.current = visible;
     if (!visible) return;
-    let cancelled = false;
     setVisits(null);
     setHistoryFailed(false);
-    void window.electron.browser.listHistory().then(
-      result => {
-        if (cancelled) return;
-        setVisits(selectRecentBrowserVisits(result.entries ?? []));
-        setHistoryFailed(!result.success);
-      },
-      () => {
-        if (cancelled) return;
-        setVisits([]);
-        setHistoryFailed(true);
-      },
-    );
+    setDeleteFailed(false);
+    void loadHistory();
     return () => {
-      cancelled = true;
+      historyVisible.current = false;
+      historyEpoch.current += 1;
     };
-  }, [visible]);
+  }, [loadHistory, visible]);
+
+  const deleteVisit = async (url: string) => {
+    if (pendingDeletion.current) return;
+    pendingDeletion.current = url;
+    setDeletingUrl(url);
+    setDeleteFailed(false);
+    try {
+      const result = await window.electron.browser.deleteHistory([url]);
+      if (!historyVisible.current) return;
+      if (!result.success) {
+        setDeleteFailed(true);
+        return;
+      }
+      setVisits(current => current?.filter(visit => visit.url !== url) ?? null);
+      await loadHistory();
+    } catch {
+      if (historyVisible.current) setDeleteFailed(true);
+    } finally {
+      pendingDeletion.current = null;
+      setDeletingUrl(null);
+    }
+  };
 
   return (
     <div className="display-launcher h-full overflow-y-auto bg-background text-foreground">
@@ -239,20 +272,38 @@ const DisplayPanelLauncher = ({
           <h2 className="mb-4 text-xs font-semibold">
             {i18nService.t('coworkLauncherRecentVisits')}
           </h2>
+          {deleteFailed && (
+            <p className="mb-3 text-xs leading-5 text-red-500" role="alert">
+              {i18nService.t('browserHistoryDeleteFailed')}
+            </p>
+          )}
           {visits && visits.length > 0 && !historyFailed ? (
             <div className="display-launcher__visits">
               {visits.map(visit => (
-                <button
-                  key={visit.url}
-                  type="button"
-                  disabled={navigationDisabled}
-                  onClick={() => openAddress(visit.url)}
-                  title={`${visit.title}\n${visit.url}`}
-                  className="flex min-w-0 flex-col items-center gap-3 rounded-xl px-2 py-3 text-center transition-colors hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <RecentVisitIcon key={visit.faviconUrl} visit={visit} visible={visible} />
-                  <span className="w-full truncate text-xs font-medium">{visit.title}</span>
-                </button>
+                <div key={visit.url} className="group relative min-w-0">
+                  <button
+                    type="button"
+                    disabled={navigationDisabled || deletingUrl === visit.url}
+                    onClick={() => openAddress(visit.url)}
+                    title={`${visit.title}\n${visit.url}`}
+                    className="flex w-full min-w-0 flex-col items-center gap-3 rounded-xl px-2 py-3 text-center transition-colors hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <RecentVisitIcon key={visit.faviconUrl} visit={visit} visible={visible} />
+                    <span className="w-full truncate text-xs font-medium">{visit.title}</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={deletingUrl !== null}
+                    onClick={() => void deleteVisit(visit.url)}
+                    aria-label={i18nService
+                      .t('coworkLauncherDeleteRecentVisit')
+                      .replace('{title}', visit.title)}
+                    title={i18nService.t('browserHistoryDeleteOne')}
+                    className="display-launcher__delete-visit absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-md bg-surface text-secondary opacity-0 transition-opacity hover:bg-surface-overlay hover:text-red-500 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed"
+                  >
+                    <XMarkIcon className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                </div>
               ))}
             </div>
           ) : (

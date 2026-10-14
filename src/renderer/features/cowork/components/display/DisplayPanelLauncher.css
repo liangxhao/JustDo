@@ -14,6 +14,12 @@
   gap: 8px;
 }
 
+@media (hover: none) {
+  .display-launcher__delete-visit {
+    opacity: 1;
+  }
+}
+
 @container display-launcher (min-width: 440px) {
   .display-launcher__tools {
     grid-template-columns: repeat(2, minmax(0, 1fr));

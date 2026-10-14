@@ -9,21 +9,24 @@ import { i18nService } from '@/services/i18n';
 import DisplayPanelLauncher from './DisplayPanelLauncher';
 
 const listHistory = vi.fn();
+const deleteHistory = vi.fn();
 const loadHistoryFavicon = vi.fn();
 const faviconDataUrl = 'data:image/png;base64,aWNvbg==';
 beforeEach(() => {
   i18nService.setLanguage('en', { persist: false });
   listHistory.mockResolvedValue({ success: true, entries: [] });
+  deleteHistory.mockResolvedValue({ success: true });
   loadHistoryFavicon.mockResolvedValue({ success: true, dataUrl: faviconDataUrl });
   Object.defineProperty(window, 'electron', {
     configurable: true,
-    value: { browser: { listHistory, loadHistoryFavicon } },
+    value: { browser: { listHistory, deleteHistory, loadHistoryFavicon } },
   });
 });
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   listHistory.mockReset();
+  deleteHistory.mockReset();
   loadHistoryFavicon.mockReset();
 });
 
@@ -105,6 +108,148 @@ describe('DisplayPanelLauncher', () => {
     render(<DisplayPanelLauncher onCreateBrowser={createBrowser} onCreateTerminal={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Project docs' }));
     expect(createBrowser).toHaveBeenCalledWith('https://example.com/docs');
+  });
+
+  it('deletes a recent page from history, fills its place, and keeps it removed on reopening', async () => {
+    let entries = [5, 4, 3, 2, 1].map(lastVisitAt => ({
+      url: `https://example.com/${lastVisitAt}`,
+      title: `Page ${lastVisitAt}`,
+      lastVisitAt,
+      visitCount: 1,
+    }));
+    listHistory.mockImplementation(async () => ({ success: true, entries }));
+    deleteHistory.mockImplementation(async (urls: string[]) => {
+      entries = entries.filter(entry => !urls.includes(entry.url));
+      return { success: true };
+    });
+    const props = { onCreateBrowser: vi.fn(), onCreateTerminal: vi.fn() };
+    const view = render(<DisplayPanelLauncher {...props} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete visit to Page 5' }));
+
+    expect(deleteHistory).toHaveBeenCalledWith(['https://example.com/5']);
+    expect(await screen.findByRole('button', { name: 'Page 1' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Page 5' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: /^Delete visit to / })).toHaveLength(4);
+    expect(props.onCreateBrowser).not.toHaveBeenCalled();
+
+    view.rerender(<DisplayPanelLauncher {...props} visible={false} />);
+    view.rerender(<DisplayPanelLauncher {...props} visible />);
+    expect(await screen.findByRole('button', { name: 'Page 1' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Page 5' })).toBeNull();
+  });
+
+  it.each(['declined', 'rejected'])(
+    'retains visits and allows retry when deletion is %s',
+    async failure => {
+      listHistory.mockResolvedValue({
+        success: true,
+        entries: [{ url: 'https://example.com/', title: 'Example', lastVisitAt: 1, visitCount: 1 }],
+      });
+      if (failure === 'declined') deleteHistory.mockResolvedValueOnce({ success: false });
+      else deleteHistory.mockRejectedValueOnce(new Error('unavailable'));
+      const createBrowser = vi.fn();
+      render(<DisplayPanelLauncher onCreateBrowser={createBrowser} onCreateTerminal={vi.fn()} />);
+      fireEvent.click(await screen.findByRole('button', { name: 'Delete visit to Example' }));
+
+      expect((await screen.findByRole('alert')).textContent).toBe(
+        i18nService.t('browserHistoryDeleteFailed'),
+      );
+      expect(listHistory).toHaveBeenCalledTimes(1);
+      fireEvent.click(screen.getByRole('button', { name: 'Example' }));
+      expect(createBrowser).toHaveBeenCalledWith('https://example.com/');
+
+      listHistory.mockResolvedValue({ success: true, entries: [] });
+      fireEvent.click(screen.getByRole('button', { name: 'Delete visit to Example' }));
+      expect(
+        await screen.findByText(i18nService.t('coworkLauncherRecentVisitsEmpty')),
+      ).toBeTruthy();
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(deleteHistory).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it('prevents repeated deletion while pending, including when navigation is unavailable', async () => {
+    listHistory.mockResolvedValue({
+      success: true,
+      entries: [{ url: 'https://example.com/', title: 'Example', lastVisitAt: 1, visitCount: 1 }],
+    });
+    let resolve!: (value: { success: boolean }) => void;
+    deleteHistory.mockImplementationOnce(
+      () =>
+        new Promise(done => {
+          resolve = done;
+        }),
+    );
+    const createBrowser = vi.fn();
+    render(
+      <DisplayPanelLauncher
+        browserDisabled
+        onCreateBrowser={createBrowser}
+        onCreateTerminal={vi.fn()}
+      />,
+    );
+    const remove = await screen.findByRole('button', { name: 'Delete visit to Example' });
+    expect(remove.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(remove);
+    fireEvent.click(remove);
+    expect(remove.hasAttribute('disabled')).toBe(true);
+    expect(deleteHistory).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: 'Example' })).toBeTruthy();
+    expect(createBrowser).not.toHaveBeenCalled();
+
+    listHistory.mockResolvedValue({ success: true, entries: [] });
+    await act(async () => resolve({ success: true }));
+    expect(screen.getByText(i18nService.t('coworkLauncherRecentVisitsEmpty'))).toBeTruthy();
+  });
+
+  it('refreshes the reopened launcher when an earlier deletion completes', async () => {
+    listHistory.mockResolvedValue({
+      success: true,
+      entries: [{ url: 'https://example.com/', title: 'Example', lastVisitAt: 1, visitCount: 1 }],
+    });
+    let resolve!: (value: { success: boolean }) => void;
+    deleteHistory.mockImplementationOnce(
+      () =>
+        new Promise(done => {
+          resolve = done;
+        }),
+    );
+    const props = { onCreateBrowser: vi.fn(), onCreateTerminal: vi.fn() };
+    const view = render(<DisplayPanelLauncher {...props} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete visit to Example' }));
+    view.rerender(<DisplayPanelLauncher {...props} visible={false} />);
+    view.rerender(<DisplayPanelLauncher {...props} visible />);
+    expect(await screen.findByRole('button', { name: 'Example' })).toBeTruthy();
+
+    listHistory.mockResolvedValue({ success: true, entries: [] });
+    await act(async () => resolve({ success: true }));
+    expect(screen.queryByRole('button', { name: 'Example' })).toBeNull();
+    expect(listHistory).toHaveBeenCalledTimes(3);
+  });
+
+  it('ignores an older history read after reopening and deleting a visit', async () => {
+    const entries = [
+      { url: 'https://example.com/', title: 'Example', lastVisitAt: 1, visitCount: 1 },
+    ];
+    let resolve!: (value: { success: boolean; entries: typeof entries }) => void;
+    listHistory.mockImplementationOnce(
+      () =>
+        new Promise(done => {
+          resolve = done;
+        }),
+    );
+    listHistory.mockResolvedValue({ success: true, entries });
+    const props = { onCreateBrowser: vi.fn(), onCreateTerminal: vi.fn() };
+    const view = render(<DisplayPanelLauncher {...props} />);
+    view.rerender(<DisplayPanelLauncher {...props} visible={false} />);
+    view.rerender(<DisplayPanelLauncher {...props} visible />);
+    const remove = await screen.findByRole('button', { name: 'Delete visit to Example' });
+    listHistory.mockResolvedValue({ success: true, entries: [] });
+    fireEvent.click(remove);
+    expect(await screen.findByText(i18nService.t('coworkLauncherRecentVisitsEmpty'))).toBeTruthy();
+
+    await act(async () => resolve({ success: true, entries }));
+    expect(screen.queryByRole('button', { name: 'Example' })).toBeNull();
   });
 
   it('shows the stored inline website icon without another renderer network request', async () => {

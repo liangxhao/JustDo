@@ -760,6 +760,7 @@ export const settingsTranslations = {
     coworkDisplayPanelOpen: '打开侧边栏',
     coworkLauncherTools: '工具',
     coworkLauncherRecentVisits: '最近访问',
+    coworkLauncherDeleteRecentVisit: '删除 {title} 的访问记录',
     coworkLauncherRecentVisitsEmpty: '浏览过的网页会显示在这里，方便下次继续。',
     coworkLauncherOpenAddress: '打开网址或搜索',
     coworkDisplayPanelClose: '关闭侧边栏',
@@ -2153,6 +2154,7 @@ export const settingsTranslations = {
     coworkDisplayPanelOpen: 'Open sidebar',
     coworkLauncherTools: 'Tools',
     coworkLauncherRecentVisits: 'Recently visited',
+    coworkLauncherDeleteRecentVisit: 'Delete visit to {title}',
     coworkLauncherRecentVisitsEmpty:
       'Pages you visit will appear here so you can pick up where you left off.',
     coworkLauncherOpenAddress: 'Open address or search',
