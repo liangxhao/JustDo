@@ -4,6 +4,7 @@ import {
   projectChatMinimapTailEntry,
 } from './chat-minimap';
 import { coalesceAdjacentProcessSummaries } from './coalesce-process-summaries';
+import { foldCompletedProcessRows, type ProcessFoldOptions } from './completed-process';
 import type { PersistedTimelineItem } from './project-history-timeline';
 import type { ActiveTurnTimelineItem } from './project-turn-items';
 import {
@@ -77,6 +78,7 @@ function mergeProcessSummaries(
  */
 export class PersistedTimelineRenderCache {
   private source: readonly PersistedTimelineItem[] | null = null;
+  private protectTrailingTurn = false;
   private cached: PersistedTimelineView | null = null;
   private buildRevision = 0;
 
@@ -84,17 +86,26 @@ export class PersistedTimelineRenderCache {
     return this.buildRevision;
   }
 
-  get(timeline: readonly PersistedTimelineItem[]): PersistedTimelineView {
-    if (this.source === timeline && this.cached) return this.cached;
+  get(
+    timeline: readonly PersistedTimelineItem[],
+    options: ProcessFoldOptions = {},
+  ): PersistedTimelineView {
+    const protectTrailingTurn = options.protectTrailingTurn ?? false;
+    if (this.source === timeline && this.protectTrailingTurn === protectTrailingTurn && this.cached)
+      return this.cached;
 
     const coalesced = coalesceAdjacentProcessSummaries(timeline);
-    const rows = prepareVisibleTimelineRows(coalesced);
-    const suppressedRows = prepareVisibleTimelineRows(coalesced, {
-      suppressTrailingAssistantFooter: true,
-    });
+    const rows = foldCompletedProcessRows(prepareVisibleTimelineRows(coalesced), options);
+    const suppressedRows = foldCompletedProcessRows(
+      prepareVisibleTimelineRows(coalesced, {
+        suppressTrailingAssistantFooter: true,
+      }),
+      options,
+    );
     const minimapEntries = projectChatMinimapEntries(coalesced);
     const minimapTail = minimapEntries[minimapEntries.length - 1] ?? null;
     this.source = timeline;
+    this.protectTrailingTurn = protectTrailingTurn;
     this.cached = {
       timeline: coalesced,
       rows,
@@ -113,6 +124,7 @@ export class PersistedTimelineRenderCache {
 
   clear(): void {
     this.source = null;
+    this.protectTrailingTurn = false;
     this.cached = null;
     this.buildRevision += 1;
   }

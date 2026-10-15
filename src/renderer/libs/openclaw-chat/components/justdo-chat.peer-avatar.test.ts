@@ -114,7 +114,13 @@ test.each([false, true])(
     expect(groups.map(group => !!group.querySelector('.chat-avatar'))).toEqual(
       processFirst ? [false, false, true] : [true, false, true],
     );
-    const avatars = [...chat.shadowRoot!.querySelectorAll('.chat-group--assistant .chat-avatar')];
+    const process = chat.shadowRoot!.querySelector('.completed-process')!;
+    expect(groups[0].closest('.completed-process')).toBe(process);
+    expect(groups[1].closest('.completed-process')).toBeNull();
+    expect(process.querySelector('summary > .chat-group__avatar .chat-avatar')).not.toBeNull();
+    const avatars = [
+      ...chat.shadowRoot!.querySelectorAll('.chat-group--assistant .chat-avatar'),
+    ].filter(avatar => !avatar.closest('.completed-process__items'));
     expect(avatars).toHaveLength(2);
     for (const avatar of avatars) {
       expect(avatar.getAttribute('title')).toBe('实现助手');

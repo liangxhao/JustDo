@@ -141,4 +141,29 @@ describe('PersistedTimelineRenderCache', () => {
 
     expect(view.activeRows[0]?.showAvatar).toBe(true);
   });
+
+  test('invalidates folding when the live-tail protection changes without a history revision', () => {
+    const cache = new PersistedTimelineRenderCache();
+    const timeline: PersistedTimelineItem[] = [
+      { kind: 'history-message', key: 'user', message: { role: 'user', content: 'request' } },
+      summary('process'),
+      { kind: 'history-message', key: 'final', message: { role: 'assistant', content: 'answer' } },
+    ];
+    const live = cache.get(timeline, { protectTrailingTurn: true });
+    expect(live.rows.map(row => row.item.kind)).toEqual([
+      'history-message',
+      'process-summary',
+      'history-message',
+    ]);
+    expect(cache.get(timeline, { protectTrailingTurn: true })).toBe(live);
+
+    const historical = cache.get(timeline, { protectTrailingTurn: false });
+    expect(historical.rows.map(row => row.item.kind)).toEqual([
+      'history-message',
+      'completed-process',
+      'history-message',
+    ]);
+    expect(historical).not.toBe(live);
+    expect(cache.get(timeline)).toBe(historical);
+  });
 });

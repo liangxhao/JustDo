@@ -2,7 +2,15 @@ import { isFailedRunMessage } from './failed-run-message';
 import type { PersistedTimelineItem } from './project-history-timeline';
 import type { ActiveTurnTimelineItem } from './project-turn-items';
 
-export type VisibleTimelineItem = PersistedTimelineItem | ActiveTurnTimelineItem;
+export type SourceTimelineItem = PersistedTimelineItem | ActiveTurnTimelineItem;
+
+export interface CompletedProcessTimelineItem {
+  kind: 'completed-process';
+  key: string;
+  items: readonly SourceTimelineItem[];
+}
+
+export type VisibleTimelineItem = SourceTimelineItem | CompletedProcessTimelineItem;
 
 export interface VisibleTimelineRow {
   item: VisibleTimelineItem;

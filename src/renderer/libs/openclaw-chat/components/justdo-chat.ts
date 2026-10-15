@@ -19,6 +19,7 @@ import {
   renderTerminalTimelineMessage,
   renderTimelineItem,
 } from '@/libs/openclaw-chat/components/active-turn-timeline';
+import { renderCompletedProcess } from '@/libs/openclaw-chat/components/completed-process';
 import {
   renderMessageBlock,
   renderMessageBlockWithTrailingStream,
@@ -61,6 +62,7 @@ import {
   type AssistantTurnTiming,
   normalizeTranscriptSessionKey,
 } from '@/libs/openclaw-chat/model/chat-transcript-state';
+import { unfoldProcessItems } from '@/libs/openclaw-chat/model/completed-process';
 import {
   isFailedRunMessage,
   readFailedRunMessageModelRef,
@@ -84,7 +86,7 @@ import {
   projectTurnItems,
 } from '@/libs/openclaw-chat/model/project-turn-items';
 import { projectWaitingStatus } from '@/libs/openclaw-chat/model/run-activity';
-import { prepareVisibleTimelineRows } from '@/libs/openclaw-chat/model/timeline-avatar-state';
+import type { VisibleTimelineItem } from '@/libs/openclaw-chat/model/timeline-avatar-state';
 import {
   PersistedTimelineRenderCache,
   projectIncrementalTimelineView,
@@ -623,6 +625,11 @@ export class JustDoChatElement extends LitElement {
             .join('\n')}`
       : 'idle';
     const currentRunTiming = this.runTimings[this.runTimings.length - 1] ?? null;
+    const processFoldOptions = {
+      protectTrailingTurn: Boolean(
+        activeTurn || isStreaming || currentRunTiming?.state === 'running',
+      ),
+    };
     const persistedRunTimings = this.runTimings;
     const runTimingSignature = this.runTimings
       .map(
@@ -663,7 +670,7 @@ export class JustDoChatElement extends LitElement {
           ? projectActiveTurnFooter(activeFooterTiming)
           : null;
       const timelineView = projectIncrementalTimelineView({
-        persisted: this.persistedTimelineRenderCache.get(historyTimeline),
+        persisted: this.persistedTimelineRenderCache.get(historyTimeline, processFoldOptions),
         activeTimeline,
         suppressTrailingAssistantFooter: activeTurnFooter !== null || isStreaming,
       });
@@ -811,7 +818,10 @@ export class JustDoChatElement extends LitElement {
 
     if (!isStreaming && !stream) {
       const historyTimeline = getHistoryTimeline();
-      const visibleRows = prepareVisibleTimelineRows(historyTimeline);
+      const visibleRows = this.persistedTimelineRenderCache.get(
+        historyTimeline,
+        processFoldOptions,
+      ).rows;
       const minimapEntries = projectChatMinimapEntries(historyTimeline);
       this.resolveOpenProcessSummaryKey(
         visibleRows.map(row => row.item),
@@ -1109,7 +1119,7 @@ export class JustDoChatElement extends LitElement {
   }
 
   private resolveOpenProcessSummaryKey(
-    items: ReadonlyArray<PersistedTimelineItem | ActiveTurnTimelineItem>,
+    items: readonly VisibleTimelineItem[],
     sessionIdentity: string,
   ): void {
     if (this.processSummarySessionIdentity !== sessionIdentity) {
@@ -1120,12 +1130,16 @@ export class JustDoChatElement extends LitElement {
       this.renderedCollapsedProcessSummaryKeys = new Set();
       return;
     }
+    const sourceItems = unfoldProcessItems(items);
     this.renderedOpenProcessSummaryKey = this.processSummaryTakeoverTracker.resolve(
       this.openProcessSummaryKey,
-      items,
+      sourceItems,
     );
     this.renderedCollapsedProcessSummaryKeys = this.processSummariesExpanded
-      ? this.collapsedProcessSummaryTakeoverTracker.resolve(this.collapsedProcessSummaryKeys, items)
+      ? this.collapsedProcessSummaryTakeoverTracker.resolve(
+          this.collapsedProcessSummaryKeys,
+          sourceItems,
+        )
       : new Set();
   }
 
@@ -1134,6 +1148,11 @@ export class JustDoChatElement extends LitElement {
     if (handleMessageLinkClick(event, this.workingDirectory)) return;
     const element = event.composedPath().find(node => isDomHTMLElement(node)) as
       HTMLElement | undefined;
+    const completedProcessSummary = element?.closest<HTMLElement>('.completed-process > summary');
+    if (completedProcessSummary) {
+      this.chatScrollController.preserveAnchorForInteraction(completedProcessSummary);
+      return;
+    }
     const summaryButton = element?.closest<HTMLElement>('[data-process-summary-key]');
     if (summaryButton) {
       const summaryKey = summaryButton.dataset.processSummaryKey ?? null;
@@ -1206,6 +1225,7 @@ export class JustDoChatElement extends LitElement {
         event.target
           .querySelectorAll<ToolOutput>('justdo-tool-output')
           .forEach(output => output.cancelLoad());
+      else this.handleMermaidVisibilityScroll();
     }
     this.scheduleEditDiffMonacoSync();
   };
@@ -1298,6 +1318,7 @@ export class JustDoChatElement extends LitElement {
       '.mermaid-block:not([data-mermaid-rendered])',
     );
     for (const block of blocks) {
+      if (block.closest('details:not([open])')) continue;
       const hostRect = this.getBoundingClientRect();
       const blockRect = block.getBoundingClientRect();
       if (blockRect.bottom < hostRect.top || blockRect.top > hostRect.bottom) continue;
@@ -1484,6 +1505,7 @@ export class JustDoChatElement extends LitElement {
     const rows = this.renderRoot.querySelectorAll<HTMLElement>('.chat-history-row[data-entry-id]');
     const target = [...rows].find(row => row.dataset.entryId === normalizedEntryId);
     if (!target) return false;
+    this.expandSearchMatchContainers(target);
     target.classList.remove('chat-history-row--revealed');
     target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
     this.animationWindow.requestAnimationFrame(() =>
@@ -1773,10 +1795,20 @@ export class JustDoChatElement extends LitElement {
   }
 
   private renderVisibleTimelineItem(
-    item: PersistedTimelineItem | ActiveTurnTimelineItem,
+    item: VisibleTimelineItem,
     showAvatar: boolean,
     showFooter: boolean,
   ): TemplateResult | typeof nothing {
+    if (item.kind === 'completed-process') {
+      return renderCompletedProcess(item, {
+        sessionIdentity: this.processSummarySessionIdentity,
+        showAvatar,
+        expanded: this.processSummariesExpanded,
+        assistantAvatar: this.assistantAvatar,
+        renderItem: (child, childShowsAvatar) =>
+          this.renderVisibleTimelineItem(child, childShowsAvatar, false),
+      });
+    }
     if (item.kind === 'phase-boundary') {
       return html`
         <div class="phase-boundary" data-history-key=${item.key} role="separator">

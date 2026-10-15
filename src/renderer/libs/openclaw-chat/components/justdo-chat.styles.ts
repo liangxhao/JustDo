@@ -632,18 +632,28 @@ export const chatStyles = [
     }
 
     .chat-group--content + .chat-group--content,
-    .chat-container > .chat-history-row + .chat-history-row {
+    :is(.chat-container, .completed-process__items) > .chat-history-row + .chat-history-row {
       margin-top: max(var(--justdo-message-gap, 8px), var(--justdo-assistant-row-gap, 0px));
     }
 
-    .chat-container > .chat-group--timeline + .chat-group--timeline {
+    :is(.chat-container, .completed-process__items)
+      > :is(.chat-group--timeline, .completed-process)
+      + :is(.chat-group--timeline, .completed-process) {
       margin-top: max(var(--justdo-timeline-gap, 4px), var(--justdo-assistant-row-gap, 0px));
     }
 
-    .chat-container > .chat-group--timeline + .chat-group--content,
-    .chat-container > .chat-group--content + .chat-group--timeline,
-    .chat-container > .chat-history-row + .chat-group--timeline,
-    .chat-container > .chat-group--timeline + .chat-history-row {
+    :is(.chat-container, .completed-process__items)
+      > :is(.chat-group--timeline, .completed-process)
+      + .chat-group--content,
+    :is(.chat-container, .completed-process__items)
+      > .chat-group--content
+      + :is(.chat-group--timeline, .completed-process),
+    :is(.chat-container, .completed-process__items)
+      > .chat-history-row
+      + :is(.chat-group--timeline, .completed-process),
+    :is(.chat-container, .completed-process__items)
+      > :is(.chat-group--timeline, .completed-process)
+      + .chat-history-row {
       margin-top: var(--justdo-assistant-row-gap, 0px);
     }
 
@@ -1118,6 +1128,12 @@ export const chatStyles = [
       width: fit-content;
     }
 
+    :host(.dark) .chat-bubble--user,
+    :host([data-theme='dark']) .chat-bubble--user {
+      padding: 10px 16px;
+      border-radius: 20px;
+    }
+
     .chat-bubble--user .message-copy {
       background: color-mix(in srgb, var(--justdo-chat-user-bg, #eaf1fc) 86%, transparent);
     }
@@ -1143,9 +1159,19 @@ export const chatStyles = [
       margin-top: 8px;
     }
 
+    :host(.dark) .chat-bubble--user .chat-bubble__text > p + p,
+    :host([data-theme='dark']) .chat-bubble--user .chat-bubble__text > p + p {
+      margin-top: 16px;
+    }
+
     .chat-bubble--user a {
       color: inherit;
       text-decoration: underline;
+    }
+
+    :host(.dark) .chat-bubble--user a,
+    :host([data-theme='dark']) .chat-bubble--user a {
+      color: inherit;
     }
 
     .chat-bubble__content {
@@ -1408,11 +1434,12 @@ export const chatStyles = [
     }
 
     .markdown-content :not(pre) > code {
-      padding: 0.2em 0.4em;
-      color: var(--code-block-text);
+      padding: 0.08em 0.28em;
+      color: inherit;
+      font-weight: 400;
       background: var(--justdo-chat-inline-code-bg, rgba(175, 184, 193, 0.2));
       border: 0;
-      border-radius: 6px;
+      border-radius: 4px;
     }
 
     .code-block-wrapper {
@@ -2320,7 +2347,7 @@ export const chatStyles = [
 
     :host(.dark) .markdown-content :not(pre) > code,
     :host([data-theme='dark']) .markdown-content :not(pre) > code {
-      background: rgba(110, 118, 129, 0.4);
+      background: rgba(110, 118, 129, 0.14);
     }
 
     :host(.dark) .hljs-comment,
@@ -2712,6 +2739,73 @@ export const chatStyles = [
     }
     .process-summary[aria-expanded='true'] .process-summary__chevron {
       transform: rotate(90deg);
+    }
+    .completed-process > summary {
+      list-style: none;
+      cursor: pointer;
+    }
+    .completed-process__trigger {
+      display: inline-flex;
+      box-sizing: border-box;
+      min-height: 32px;
+      max-width: 100%;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 0;
+      color: var(--justdo-chat-muted, #64748b);
+      font-size: 13px;
+      font-weight: 500;
+      line-height: 20px;
+      transition: color 120ms ease;
+    }
+    .completed-process__trigger:hover,
+    .completed-process > summary:focus-visible .completed-process__trigger {
+      color: var(--justdo-chat-text, #1e293b);
+    }
+    .completed-process > summary:focus-visible {
+      outline: none;
+    }
+    .completed-process > summary:focus-visible .completed-process__trigger {
+      text-decoration: underline;
+      text-decoration-thickness: 2px;
+      text-underline-offset: 4px;
+    }
+    .completed-process__label--expanded,
+    .completed-process[open] > summary .completed-process__label--collapsed {
+      display: none;
+    }
+    .completed-process[open] > summary .completed-process__label--expanded {
+      display: inline;
+    }
+    .completed-process__icon,
+    .completed-process__chevron {
+      flex: 0 0 auto;
+      width: 15px;
+      height: 15px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.65;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .completed-process__chevron {
+      width: 13px;
+      height: 13px;
+      transition: transform 120ms ease;
+    }
+    .completed-process > summary::-webkit-details-marker {
+      display: none;
+    }
+    .completed-process[open] > summary .completed-process__chevron {
+      transform: rotate(90deg);
+    }
+    .completed-process__items .chat-group__avatar {
+      /* Keep native row dimensions while the header owns the visible avatar. */
+      visibility: hidden;
+    }
+    .completed-process__items {
+      min-width: 0;
+      margin-top: var(--justdo-message-gap, 8px);
     }
     .process-summary__items {
       display: grid;
