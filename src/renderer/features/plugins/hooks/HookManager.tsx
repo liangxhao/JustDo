@@ -3,6 +3,7 @@ import {
   ArrowPathIcon,
   ArrowUpTrayIcon,
   FolderIcon,
+  LockClosedIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { PluginHubScope } from '@shared/plugins/management';
@@ -11,7 +12,15 @@ import { createPortal } from 'react-dom';
 
 import { HookEntry } from '@/features/plugins/hooks/hook';
 import { hookService } from '@/features/plugins/hooks/hookService';
+import ExtensionBadge from '@/features/plugins/shared/ExtensionBadge';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
+import PluginCard from '@/features/plugins/shared/PluginCard';
+import {
+  PLUGIN_DETAIL_BODY_CLASS_NAME,
+  PLUGIN_DETAIL_FOOTER_CLASS_NAME,
+  PLUGIN_DETAIL_MODAL_CLASS_NAME,
+  PluginDetailHeader,
+} from '@/features/plugins/shared/PluginDetail';
 import PluginGroupSection from '@/features/plugins/shared/PluginGroupSection';
 import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubTypes';
 import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownDescription';
@@ -64,6 +73,9 @@ const HookManager: React.FC<HookManagerProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [updatingHookIds, setUpdatingHookIds] = useState<Set<string>>(() => new Set());
   const [selectedHook, setSelectedHook] = useState<HookEntry | null>(null);
+  const [detailArtworkTone, setDetailArtworkTone] = useState(() =>
+    getPluginArtworkTone('hooks:user'),
+  );
   const [restartNotice, setRestartNotice] = useState(false);
   const [importPickerOpen, setImportPickerOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -449,93 +461,62 @@ const HookManager: React.FC<HookManagerProps> = ({
                         {i18nService.t('noHooksAvailable')}
                       </p>
                     ) : (
-                      <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
+                      <div className="grid min-w-0 auto-rows-fr grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-4">
                         {group.hooks.map((hook, visualIndex) => {
-                          const missingSummary = getMissingSummary(hook);
+                          const artworkTone = getPluginArtworkTone(
+                            `hooks:${group.id}`,
+                            visualIndex,
+                          );
                           return (
-                            <article
+                            <PluginCard
                               key={`${group.id}:${hook.id}`}
-                              className="group relative min-h-16 min-w-0 cursor-pointer rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-border/70 hover:bg-surface-raised/70"
-                              onClick={() => setSelectedHook(hook)}
-                            >
-                              <button
-                                type="button"
-                                className="absolute inset-0 z-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
-                                aria-label={`${i18nService.t('subtaskShowInfo')}: ${hook.name}`}
-                                onClick={event => {
-                                  event.stopPropagation();
-                                  setSelectedHook(hook);
-                                }}
-                              />
-                              <div className="pointer-events-none relative z-10 flex items-center justify-between gap-2 [&_button]:pointer-events-auto">
-                                <div className="flex min-w-0 items-center gap-2">
-                                  <div
-                                    className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-sm ${getPluginArtworkTone(`hooks:${group.id}`, visualIndex)}`}
-                                  >
-                                    {hook.emoji || <ConnectorIcon className="h-4 w-4" />}
-                                  </div>
-                                  <span className="truncate text-sm font-medium text-foreground">
-                                    {hook.name}
-                                  </span>
+                              onOpen={() => {
+                                setSelectedHook(hook);
+                                setDetailArtworkTone(artworkTone);
+                              }}
+                              openLabel={`${i18nService.t('subtaskShowInfo')}: ${hook.name}`}
+                              icon={
+                                <div
+                                  className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-sm ${artworkTone}`}
+                                >
+                                  {hook.emoji || <ConnectorIcon className="h-4 w-4" />}
                                 </div>
-                                <div className="flex shrink-0 items-center gap-2">
-                                  {renderToggle(hook)}
-                                </div>
-                              </div>
-                              <Tooltip
-                                content={hook.description}
-                                position="bottom"
-                                maxWidth="360px"
-                                className="ml-10 block min-w-0 pr-2"
-                              >
-                                <p className="truncate text-xs text-secondary">
-                                  {hook.description}
-                                </p>
-                              </Tooltip>
-                              <div className="ml-10 mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden">
-                                {hook.managedByPlugin && hook.pluginId && (
-                                  <button
-                                    type="button"
-                                    onClick={event => {
-                                      event.stopPropagation();
-                                      onOpenExtension?.(hook.pluginId as string);
-                                    }}
-                                    disabled={!onOpenExtension}
-                                    aria-label={i18nService
-                                      .t('openExtensionDetails')
-                                      .replace('{name}', hook.pluginId)}
-                                    className="relative z-10 min-w-0 max-w-28 truncate text-[10px] font-medium text-purple-600 transition-colors enabled:hover:text-primary disabled:cursor-default dark:text-purple-400"
-                                  >
-                                    {hook.pluginId}
-                                  </button>
-                                )}
-                                {hook.events.slice(0, 2).map(event => (
-                                  <span
-                                    key={event}
-                                    className="min-w-0 max-w-24 truncate rounded bg-surface-raised px-1.5 py-0.5 text-[10px] text-secondary"
-                                  >
-                                    {event}
-                                  </span>
-                                ))}
-                                {hook.events.length > 2 && (
-                                  <span className="shrink-0 rounded bg-surface-raised px-1.5 py-0.5 text-[10px] text-secondary">
-                                    +{hook.events.length - 2}
-                                  </span>
-                                )}
-                                {missingSummary && (
-                                  <Tooltip
-                                    content={missingSummary}
-                                    position="bottom"
-                                    maxWidth="360px"
-                                    className="shrink-0"
-                                  >
-                                    <span className="rounded bg-yellow-500/10 px-1.5 py-0.5 text-[10px] font-medium text-yellow-600 dark:text-yellow-400">
-                                      {i18nService.t('hookStatusMissing')}
-                                    </span>
-                                  </Tooltip>
-                                )}
-                              </div>
-                            </article>
+                              }
+                              iconBadge={
+                                hook.managedByPlugin ? (
+                                  <ExtensionBadge
+                                    label={
+                                      hook.pluginId
+                                        ? i18nService
+                                            .t('openExtensionDetails')
+                                            .replace('{name}', hook.pluginId)
+                                        : undefined
+                                    }
+                                    onOpen={
+                                      hook.pluginId && onOpenExtension
+                                        ? () => onOpenExtension(hook.pluginId as string)
+                                        : undefined
+                                    }
+                                  />
+                                ) : undefined
+                              }
+                              title={
+                                <span className="block truncate text-sm font-medium text-foreground">
+                                  {hook.name}
+                                </span>
+                              }
+                              actions={renderToggle(hook)}
+                              description={
+                                <Tooltip
+                                  content={hook.description}
+                                  position="bottom"
+                                  maxWidth="360px"
+                                  className="block w-full"
+                                >
+                                  <p className="line-clamp-2 break-words">{hook.description}</p>
+                                </Tooltip>
+                              }
+                            />
                           );
                         })}
                       </div>
@@ -568,108 +549,120 @@ const HookManager: React.FC<HookManagerProps> = ({
           <Modal
             onClose={() => setSelectedHook(null)}
             overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-            className="w-full max-w-lg mx-4 rounded-2xl bg-surface border border-border shadow-2xl p-6"
+            className={PLUGIN_DETAIL_MODAL_CLASS_NAME}
           >
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-background text-lg">
-                  {selectedHook.emoji || <ConnectorIcon className="h-5 w-5 text-secondary" />}
-                </div>
-                <div className="min-w-0">
-                  <div className="truncate text-base font-semibold text-foreground">
-                    {selectedHook.name}
+            <PluginDetailHeader
+              title={selectedHook.name}
+              icon={selectedHook.emoji || <ConnectorIcon className="h-5 w-5" />}
+              artworkTone={detailArtworkTone}
+              onClose={() => setSelectedHook(null)}
+            />
+
+            <div className={PLUGIN_DETAIL_BODY_CLASS_NAME}>
+              <PluginMarkdownDescription content={selectedHook.description} />
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <div className="text-[11px] font-medium text-secondary">
+                    {i18nService.t('hookEvents')}
                   </div>
-                  {!selectedHook.requirementsSatisfied && (
-                    <div className="mt-1 flex flex-wrap gap-1.5">
-                      <span className="rounded bg-yellow-500/10 px-1.5 py-0.5 text-[10px] font-medium text-yellow-600 dark:text-yellow-400">
-                        {i18nService.t('hookStatusMissing')}
-                      </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedHook.events.length > 0 ? (
+                      selectedHook.events.map(event => (
+                        <span
+                          key={event}
+                          className="max-w-full break-all rounded-md bg-surface-raised px-2 py-1 font-mono text-[11px] leading-4 text-secondary"
+                        >
+                          {event}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-secondary">{i18nService.t('none')}</span>
+                    )}
+                  </div>
+                </div>
+
+                {(getMissingSummary(selectedHook) || selectedHook.blockedReason) && (
+                  <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-3">
+                    <div className="mb-1 text-xs font-medium text-yellow-700 dark:text-yellow-300">
+                      {i18nService.t('hookMissingRequirements')}
                     </div>
-                  )}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedHook(null)}
-                className="flex-shrink-0 rounded-lg p-1.5 text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
-              >
-                <XMarkIcon className="h-5 w-5" />
-              </button>
-            </div>
-
-            <PluginMarkdownDescription className="mb-4" content={selectedHook.description} />
-
-            <div className="mb-5 space-y-3">
-              <div>
-                <div className="mb-1 text-xs font-medium text-foreground">
-                  {i18nService.t('hookEvents')}
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {selectedHook.events.length > 0 ? (
-                    selectedHook.events.map(event => (
-                      <span
-                        key={event}
-                        className="rounded bg-surface-raised px-1.5 py-0.5 text-[10px] text-secondary"
-                      >
-                        {event}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-xs text-secondary">{i18nService.t('none')}</span>
-                  )}
-                </div>
-              </div>
-
-              {(getMissingSummary(selectedHook) || selectedHook.blockedReason) && (
-                <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-3">
-                  <div className="mb-1 text-xs font-medium text-yellow-700 dark:text-yellow-300">
-                    {i18nService.t('hookMissingRequirements')}
+                    {selectedHook.blockedReason && (
+                      <p className="text-xs text-secondary">{selectedHook.blockedReason}</p>
+                    )}
+                    {getMissingSummary(selectedHook) && (
+                      <p className="mt-1 break-words font-mono text-xs text-secondary">
+                        {getMissingSummary(selectedHook)}
+                      </p>
+                    )}
                   </div>
-                  {selectedHook.blockedReason && (
-                    <p className="text-xs text-secondary">{selectedHook.blockedReason}</p>
-                  )}
-                  {getMissingSummary(selectedHook) && (
-                    <p className="mt-1 break-words font-mono text-xs text-secondary">
-                      {getMissingSummary(selectedHook)}
-                    </p>
-                  )}
-                </div>
-              )}
-
+                )}
+              </div>
               {selectedHook.managedByPlugin && (
-                <div className="rounded-xl border border-border bg-background p-3 text-xs text-secondary">
-                  {i18nService.t('hookManagedByPlugin')}
-                </div>
+                <p className="flex min-w-0 items-start gap-1.5 text-[11px] leading-5 text-secondary">
+                  <LockClosedIcon aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{i18nService.t('hookManagedByPlugin')}</span>
+                </p>
               )}
             </div>
 
-            <div className="flex items-center justify-between gap-3">
-              <Tooltip content={i18nService.t('openFolder')} position="top">
-                <button
-                  type="button"
-                  onClick={() => handleOpenFolder(selectedHook)}
-                  className="rounded-lg border border-border p-2 text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
-                  aria-label={i18nService.t('openFolder')}
-                >
-                  <FolderIcon className="h-4 w-4" />
-                </button>
-              </Tooltip>
-              {(selectedHook.management?.remove.allowed ??
-                (selectedHook.source === 'openclaw-managed' && !selectedHook.managedByPlugin)) && (
-                <Tooltip content={i18nService.t('deleteHook')} position="top">
+            <div
+              className={`${PLUGIN_DETAIL_FOOTER_CLASS_NAME} mt-3 justify-between border-t border-border/60`}
+            >
+              <div className="flex shrink-0 items-center gap-2">
+                <Tooltip content={i18nService.t('openFolder')} position="top">
                   <button
                     type="button"
-                    onClick={() => {
-                      const hook = selectedHook;
-                      setSelectedHook(null);
-                      handleDeleteClick(hook);
-                    }}
-                    className="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-500/10"
-                    aria-label={i18nService.t('deleteHook')}
+                    onClick={() => handleOpenFolder(selectedHook)}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    aria-label={i18nService.t('openFolder')}
                   >
-                    <TrashIcon className="h-4 w-4" />
+                    <FolderIcon className="h-4 w-4" />
                   </button>
                 </Tooltip>
+                {(selectedHook.management?.remove.allowed ??
+                  (selectedHook.source === 'openclaw-managed' &&
+                    !selectedHook.managedByPlugin)) && (
+                  <Tooltip content={i18nService.t('deleteHook')} position="top">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const hook = selectedHook;
+                        setSelectedHook(null);
+                        handleDeleteClick(hook);
+                      }}
+                      className="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-500/10"
+                      aria-label={i18nService.t('deleteHook')}
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                    </button>
+                  </Tooltip>
+                )}
+              </div>
+              {selectedHook.managedByPlugin && selectedHook.pluginId && (
+                <div className="min-w-0 flex-1 text-right text-[11px] leading-4 text-purple-700 dark:text-purple-300">
+                  {onOpenExtension ? (
+                    <button
+                      type="button"
+                      title={i18nService
+                        .t('openExtensionDetails')
+                        .replace('{name}', selectedHook.pluginId)}
+                      onClick={() => {
+                        const pluginId = selectedHook.pluginId;
+                        if (!pluginId) return;
+                        setSelectedHook(null);
+                        onOpenExtension(pluginId);
+                      }}
+                      className="max-w-full rounded-sm text-right [overflow-wrap:anywhere] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      {i18nService.t('pluginScope.extension')} · {selectedHook.pluginId}
+                    </button>
+                  ) : (
+                    <span className="[overflow-wrap:anywhere]">
+                      {i18nService.t('pluginScope.extension')} · {selectedHook.pluginId}
+                    </span>
+                  )}
+                </div>
               )}
             </div>
           </Modal>,

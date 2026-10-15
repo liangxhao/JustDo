@@ -203,6 +203,10 @@ import {
   type MarketplaceResolveRequest,
   type MarketplaceUpdateCheckRequest,
 } from '../shared/plugins/marketplace';
+import {
+  type ExtensionMcpEnabledInput,
+  ExtensionMcpIpc,
+} from '../shared/plugins/mcp';
 import type { OpenClawSkillSource } from '../shared/plugins/skills';
 import { type SkillWorkshopDecision, SkillWorkshopIpc } from '../shared/plugins/skillWorkshop';
 import {
@@ -355,6 +359,9 @@ contextBridge.exposeInMainWorld('electron', {
   mcp: {
     list: () => ipcRenderer.invoke('mcp:list'),
     listExtensionServers: () => ipcRenderer.invoke('mcp:listExtensionServers'),
+    setExtensionEnabled: (input: ExtensionMcpEnabledInput) =>
+      ipcRenderer.invoke(ExtensionMcpIpc.SetEnabled, input),
+    readExtensionSettings: (id: string) => ipcRenderer.invoke(ExtensionMcpIpc.ReadSettings, id),
     create: (data: unknown) => ipcRenderer.invoke('mcp:create', data),
     update: (id: string, data: unknown) => ipcRenderer.invoke('mcp:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('mcp:delete', id),

@@ -89,6 +89,33 @@ test('keeps Hooks local without exposing an unsupported marketplace', async () =
   expect(screen.queryByText('hookMarketplace')).toBeNull();
 });
 
+test('opens the provider from the extension badge and keeps event tags in details', async () => {
+  const onOpenExtension = vi.fn();
+  const hook: HookEntry = {
+    id: 'extension-hook',
+    name: 'Extension Hook',
+    description: 'Provided by an extension',
+    enabled: true,
+    eligible: true,
+    requirementsSatisfied: true,
+    loadable: true,
+    source: 'openclaw-plugin',
+    managedByPlugin: true,
+    pluginId: 'provider',
+    events: ['command:new'],
+    missing: { bins: [], env: [], config: [], os: [] },
+  };
+  vi.mocked(hookService.loadHooks).mockResolvedValue({ success: true, hooks: [hook] });
+  render(<HookManager onOpenExtension={onOpenExtension} />);
+  await screen.findByText(hook.name);
+  expect(screen.queryByText('command:new')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'openExtensionDetails' }));
+  expect(onOpenExtension).toHaveBeenCalledExactlyOnceWith('provider');
+  expect(screen.queryByRole('button', { name: 'close' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: `subtaskShowInfo: ${hook.name}` }));
+  expect(screen.getByText('command:new')).toBeTruthy();
+});
+
 test('confirms custom Hook deletion and removes its row without an unavailable warning', async () => {
   const hook: HookEntry = {
     id: 'custom-hook',

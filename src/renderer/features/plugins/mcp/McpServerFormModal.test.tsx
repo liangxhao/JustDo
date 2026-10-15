@@ -8,7 +8,7 @@ import type { McpServerConfig } from '@/features/plugins/mcp/mcp';
 import McpServerFormModal from './McpServerFormModal';
 
 vi.mock('@/services/i18n', () => ({
-  i18nService: { t: (key: string) => key },
+  i18nService: { t: (key: string) => key, getLanguage: () => 'en' },
 }));
 
 const server: McpServerConfig = {
@@ -26,6 +26,24 @@ const server: McpServerConfig = {
 
 describe('McpServerFormModal request timeout override', () => {
   afterEach(cleanup);
+
+  test('offers a collapsed sanitized Markdown preview without duplicating the editor by default', () => {
+    const { container } = render(
+      <McpServerFormModal
+        isOpen
+        server={{ ...server, description: '**Useful**\n\n- one\n\n<script>alert(1)</script>' }}
+        existingNames={[server.name]}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+    const preview = screen.getByText('mcpDescriptionPreview').closest('details')!;
+    expect(preview.open).toBe(false);
+    fireEvent.click(screen.getByText('mcpDescriptionPreview'));
+    expect(screen.getByText('Useful').tagName).toBe('STRONG');
+    expect(screen.getByText('one').tagName).toBe('LI');
+    expect(container.querySelector('script')).toBeNull();
+  });
 
   test('edits an override and restores the visible default when cleared', async () => {
     const onSave = vi.fn().mockResolvedValue({ success: true });
@@ -149,6 +167,7 @@ describe('McpServerFormModal request timeout override', () => {
       .mockResolvedValueOnce({ success: true });
     const onClose = vi.fn();
     const onDelete = vi.fn();
+    const onProbe = vi.fn();
     const view = render(
       <McpServerFormModal
         isOpen
@@ -156,6 +175,7 @@ describe('McpServerFormModal request timeout override', () => {
         existingNames={[server.name]}
         onClose={onClose}
         onDelete={onDelete}
+        onProbe={onProbe}
         onSave={onSave}
       />,
     );
@@ -178,6 +198,11 @@ describe('McpServerFormModal request timeout override', () => {
     expect(onSave).toHaveBeenCalledOnce();
     expect(onClose).not.toHaveBeenCalled();
     expect(onDelete).not.toHaveBeenCalled();
+    const testButton = screen.getByRole('button', { name: 'mcpTestSavedConfiguration' });
+    expect(testButton.textContent).toBe('mcpTestShort');
+    expect((testButton as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(testButton);
+    expect(onProbe).not.toHaveBeenCalled();
 
     await act(async () => finish({ success: false, error: 'Native save refused' }));
     expect(screen.getByText('Native save refused')).toBeTruthy();

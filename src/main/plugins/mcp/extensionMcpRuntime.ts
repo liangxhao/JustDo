@@ -32,81 +32,127 @@ const manifestRegistry = loadRegistry({ config: cfg, workspaceDir });
 const bundle = loadMcp({ cfg, manifestRegistry, workspaceDir });
 const loaded = mergeMcp({ cfg, manifestRegistry, workspaceDir });
 const mode = process.env.JUSTDO_EXTENSION_MCP_MODE;
-if (mode === 'list') {
-  const inspectBundle = await load('bundle-mcp-', 'inspectBundleMcpRuntimeSupport');
-  const inspectNative = await load('bundle-mcp-', 'inspectNativePluginMcpRuntimeSupport');
-  const inventory = manifestRegistry.plugins.flatMap(plugin => {
+const inspectBundle = await load('bundle-mcp-', 'inspectBundleMcpRuntimeSupport');
+const inspectNative = await load('bundle-mcp-', 'inspectNativePluginMcpRuntimeSupport');
+const inspected = manifestRegistry.plugins.flatMap(plugin => {
     const support = plugin.format === 'bundle' && plugin.bundleFormat
       ? inspectBundle({ pluginId: plugin.id, rootDir: plugin.rootDir, bundleFormat: plugin.bundleFormat })
       : plugin.mcpServers ? inspectNative({ rootDir: plugin.rootDir, mcpServers: plugin.mcpServers }) : null;
-    if (!support) return [];
+    return support ? [{ plugin, support }] : [];
+});
+const declaredOwners = new Map();
+for (const { plugin, support } of inspected) {
+  for (const name of [...support.supportedServerNames, ...support.unsupportedServerNames]) {
+    const owners = declaredOwners.get(name) ?? new Set();
+    owners.add(plugin.id); declaredOwners.set(name, owners);
+  }
+}
+const ownsServer = (plugin, name) => {
+  const owner = bundle.pluginIdsByServer[name];
+  if (owner === plugin.id) return true;
+  const override = cfg.mcp?.servers?.[name];
+  // An explicit native connection override is independent of plugin enablement.
+  // Attribute it only when the manifest declaration is unique and no other active owner wins.
+  return !!(!owner && declaredOwners.get(name)?.size === 1 && override &&
+    (typeof override.command === 'string' || typeof override.url === 'string'));
+};
+const resolveDefinition = (name) => {
+  if (Object.hasOwn(loaded.config.mcpServers, name)) return loaded.config.mcpServers[name];
+  const override = cfg.mcp?.servers?.[name];
+  const disableOnly = override && typeof override === 'object' && !Array.isArray(override) &&
+    override.enabled === false && Object.keys(override).length === 1;
+  return !disableOnly && override ? override : bundle.config.mcpServers[name];
+};
+if (mode === 'list') {
+  const inventory = inspected.flatMap(({ plugin, support }) => {
     const stdio = new Set(support.stdioServerNames);
     return [{ plugin: { id: plugin.id, name: plugin.name, description: plugin.description,
       format: plugin.format, origin: plugin.origin },
       mcpServers: [...support.supportedServerNames, ...support.unsupportedServerNames].map(name => {
-        const owned = bundle.pluginIdsByServer[name] === plugin.id;
+        const owned = ownsServer(plugin, name);
         const effective = owned && Object.hasOwn(loaded.config.mcpServers, name);
-        const transport = effective ? resolveTransport(name, loaded.config.mcpServers[name], { logWarnings: false }) : null;
+        const definition = owned ? resolveDefinition(name) : null;
+        const transport = definition ? resolveTransport(name, definition, { logWarnings: false }) : null;
         return { name, hasStdioTransport: stdio.has(name), unsupported: effective ? !transport : support.unsupportedServerNames.includes(name),
           enabled: effective && loaded.config.mcpServers[name]?.enabled !== false,
+          toggleable: owned && !!transport,
+          configurable: !!owned || (!bundle.pluginIdsByServer[name] && declaredOwners.get(name)?.size === 1),
           transportType: transport?.transportType === 'streamable-http' ? 'http' : transport?.transportType,
           connectionSummary: transport?.description,
+          connectionTimeoutMs: transport?.connectionTimeoutMs,
+          requestTimeoutMs: transport?.requestTimeoutMs,
         };
       }) }];
   });
   process.stdout.write('${OUTPUT_PREFIX}' + JSON.stringify(inventory));
 } else {
   const id = process.env.JUSTDO_EXTENSION_MCP_ID;
-  const match = manifestRegistry.plugins.flatMap(plugin => Object.entries(bundle.pluginIdsByServer)
-    .filter(([name, owner]) => owner === plugin.id && 'extension:' + owner + ':' + name === id)
-    .map(([name]) => ({ name, plugin })))[0];
-  if (!match || !Object.hasOwn(loaded.config.mcpServers, match.name) || loaded.config.mcpServers[match.name]?.enabled === false) throw new Error('Extension MCP server is unavailable or disabled');
+  const match = inspected.flatMap(({ plugin, support }) =>
+    [...support.supportedServerNames, ...support.unsupportedServerNames]
+      .filter(name => (ownsServer(plugin, name) ||
+        (mode === 'settings' && !bundle.pluginIdsByServer[name] && declaredOwners.get(name)?.size === 1)) &&
+        'extension:' + plugin.id + ':' + name === id)
+      .map(name => ({ name, plugin })))[0];
+  if (!match) throw new Error('Extension MCP server is unavailable');
   const { name } = match;
-  if (!resolveTransport(name, loaded.config.mcpServers[name], { logWarnings: false })) throw new Error('Extension MCP transport is unsupported');
-  const { createSessionMcpRuntime } = await import(pathToFileURL(path.join(dist, 'agents/agent-bundle-mcp-runtime.js')).href);
-  const runtime = createSessionMcpRuntime({ sessionId: 'justdo-extension-mcp-probe', workspaceDir, cfg,
-    loaded: { mcpServers: { [name]: { ...loaded.config.mcpServers[name], connectionTimeoutMs: 8000, requestTimeoutMs: 3000 } },
-      diagnostics: [], prepareDataDirsByServer: loaded.prepareDataDirsByServer },
-  });
-  const startedAt = Date.now();
-  // Retire the native runtime before the outer process timeout can interrupt cleanup.
-  const deadline = setTimeout(() => { void runtime.dispose().catch(() => undefined); }, 15000);
-  let result;
-  try {
-    const catalog = await runtime.getCatalog();
-    const server = catalog.servers[name];
-    if (!server) throw new Error(catalog.diagnostics?.[0]?.message || 'MCP connection failed');
-    if (mode === 'read') result = await runtime.readResource(name, process.env.JUSTDO_EXTENSION_MCP_URI);
-    else {
-      const resources = server.resources ? await runtime.listResources(name) : [];
-      const prompts = server.prompts ? await runtime.listPrompts(name) : [];
-      result = { available: true, latencyMs: Date.now() - startedAt,
-        tools: catalog.tools.filter(tool => tool.serverName === name).map(tool => ({
-          name: tool.toolName, title: tool.title, description: tool.description,
-          inputSchema: tool.inputSchema, outputSchema: tool.outputSchema,
-        })), resources, prompts,
-        capabilities: { tools: Boolean(server.tools), resources: Boolean(server.resources), prompts: Boolean(server.prompts) },
-      };
+  const definition = resolveDefinition(name);
+  if (mode === 'settings') {
+    const buildSchema = await load('schema-', 'buildConfigSchemaCore');
+    const hints = buildSchema().uiHints;
+    const wrap = server => ({ mcp: { servers: { [name]: server } } });
+    const redact = await load('redact-snapshot-', 'redactConfigObject');
+    const redacted = definition ? redact(wrap(definition), hints).mcp.servers[name] : null;
+    process.stdout.write('${OUTPUT_PREFIX}' + JSON.stringify(redacted));
+  } else {
+    if (!definition || !resolveTransport(name, definition, { logWarnings: false })) throw new Error('Extension MCP transport is unsupported');
+    const preparation = loaded.prepareDataDirsByServer?.[name] ??
+      (definition === bundle.config.mcpServers[name] ? bundle.prepareDataDirsByServer?.[name] : undefined);
+    const { createSessionMcpRuntime } = await import(pathToFileURL(path.join(dist, 'agents/agent-bundle-mcp-runtime.js')).href);
+    // Explicit diagnostics use an isolated native connection, without changing saved enablement.
+    const runtime = createSessionMcpRuntime({ sessionId: 'justdo-extension-mcp-probe', workspaceDir, cfg,
+      loaded: { mcpServers: { [name]: { ...definition, connectionTimeoutMs: 8000, requestTimeoutMs: 3000 } },
+        diagnostics: [], prepareDataDirsByServer: preparation ? { [name]: preparation } : {} },
+    });
+    const startedAt = Date.now();
+    // Retire the native runtime before the outer process timeout can interrupt cleanup.
+    const deadline = setTimeout(() => { void runtime.dispose().catch(() => undefined); }, 15000);
+    let result;
+    try {
+      const catalog = await runtime.getCatalog();
+      const server = catalog.servers[name];
+      if (!server) throw new Error(catalog.diagnostics?.[0]?.message || 'MCP connection failed');
+      if (mode === 'read') result = await runtime.readResource(name, process.env.JUSTDO_EXTENSION_MCP_URI);
+      else {
+        const resources = server.resources ? await runtime.listResources(name) : [];
+        const prompts = server.prompts ? await runtime.listPrompts(name) : [];
+        result = { available: true, latencyMs: Date.now() - startedAt,
+          tools: catalog.tools.filter(tool => tool.serverName === name).map(tool => ({
+            name: tool.toolName, title: tool.title, description: tool.description,
+            inputSchema: tool.inputSchema, outputSchema: tool.outputSchema,
+          })), resources, prompts,
+          capabilities: { tools: Boolean(server.tools), resources: Boolean(server.resources), prompts: Boolean(server.prompts) },
+        };
+      }
+    } catch (error) {
+      if (mode === 'read') throw error;
+      result = { available: false, tools: [], resources: [], prompts: [], latencyMs: Date.now() - startedAt, error: redactError(error) };
+    } finally {
+      clearTimeout(deadline);
+      await runtime.dispose();
+      await runtime.joinCleanup?.();
     }
-  } catch (error) {
-    if (mode === 'read') throw error;
-    result = { available: false, tools: [], resources: [], prompts: [], latencyMs: Date.now() - startedAt, error: redactError(error) };
-  } finally {
-    clearTimeout(deadline);
-    await runtime.dispose();
-    await runtime.joinCleanup?.();
+    process.stdout.write('${OUTPUT_PREFIX}' + JSON.stringify(result));
   }
-  process.stdout.write('${OUTPUT_PREFIX}' + JSON.stringify(result));
 }
 `;
 
-const execFileAsync = promisify(execFile);
 export type ExtensionMcpCommandRunner = (
   executable: string,
   args: string[],
   options: { cwd: string; env: NodeJS.ProcessEnv },
 ) => Promise<{ stdout: string }>;
 
+const execFileAsync = promisify(execFile);
 const runCommand: ExtensionMcpCommandRunner = async (executable, args, options) => {
   try {
     const result = await execFileAsync(executable, args, {
@@ -125,7 +171,7 @@ const runCommand: ExtensionMcpCommandRunner = async (executable, args, options) 
 
 export const runExtensionMcpOperation = async <T>(
   manager: OpenClawEngineManager,
-  mode: 'list' | 'probe' | 'read',
+  mode: 'list' | 'probe' | 'read' | 'settings',
   id = '',
   uri = '',
   runner: ExtensionMcpCommandRunner = runCommand,

@@ -653,9 +653,10 @@ describe('ExtensionsManager extension toggle', () => {
       enabled: true,
       managed: true,
       origin: 'bundled',
-      ...getExtensionManagement({ managed: true }),
+      ...getExtensionManagement({ managed: true, installPath: extension.installPath }),
     };
     const setEnabled = vi.fn();
+    const openPath = vi.fn(async () => ({ success: true }));
     Object.defineProperty(window, 'electron', {
       configurable: true,
       value: {
@@ -665,6 +666,7 @@ describe('ExtensionsManager extension toggle', () => {
           onChanged: vi.fn(() => vi.fn()),
           onImportProgress: vi.fn(() => vi.fn()),
         },
+        shell: { openPath },
       },
     });
 
@@ -674,6 +676,10 @@ describe('ExtensionsManager extension toggle', () => {
     expect(screen.queryByRole('switch')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: `subtaskShowInfo: ${id}` }));
     expect(screen.getByText(label)).toBeTruthy();
+    const openFolder = screen.getByRole('button', { name: 'openFolder' });
+    expect(openFolder.textContent).toBe('');
+    fireEvent.click(openFolder);
+    await waitFor(() => expect(openPath).toHaveBeenCalledWith(extension.installPath));
     expect(setEnabled).not.toHaveBeenCalled();
   });
 

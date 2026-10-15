@@ -8,7 +8,6 @@ import {
   ExclamationTriangleIcon,
   FolderIcon,
   QuestionMarkCircleIcon,
-  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type {
   ExtensionImportProgress,
@@ -43,6 +42,12 @@ import OperationResultModal, {
   type OperationResult,
 } from '@/features/plugins/shared/OperationResultModal';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
+import {
+  PLUGIN_DETAIL_BODY_CLASS_NAME,
+  PLUGIN_DETAIL_FOOTER_CLASS_NAME,
+  PLUGIN_DETAIL_MODAL_CLASS_NAME,
+  PluginDetailHeader,
+} from '@/features/plugins/shared/PluginDetail';
 import PluginGroupSection from '@/features/plugins/shared/PluginGroupSection';
 import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubTypes';
 import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownDescription';
@@ -186,6 +191,9 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   const [selectedExtension, setSelectedExtension] = useState<InstalledOpenClawExtension | null>(
     null,
   );
+  const [detailArtworkTone, setDetailArtworkTone] = useState(() =>
+    getPluginArtworkTone('extensions'),
+  );
   const [configurationValues, setConfigurationValues] = useState<Record<string, string>>({});
   const [configurationVariables, setConfigurationVariables] = useState<Record<string, string>>({});
   const [configurationError, setConfigurationError] = useState('');
@@ -256,6 +264,15 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     const requested = extensions.find(extension => extension.id === requestedExtensionId);
     if (!requested) return;
     setSelectedExtension(requested);
+    const group = groupExtensionsByOwnership(extensions).find(group =>
+      group.extensions.some(extension => extension.id === requested.id),
+    );
+    setDetailArtworkTone(
+      getPluginArtworkTone(
+        `extensions:${requested.origin}`,
+        group?.extensions.findIndex(extension => extension.id === requested.id),
+      ),
+    );
     onRequestedExtensionHandled?.();
   }, [extensions, onRequestedExtensionHandled, requestedExtensionId]);
 
@@ -610,8 +627,9 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     }
   };
 
-  const openExtensionDetails = (extension: InstalledOpenClawExtension) => {
+  const openExtensionDetails = (extension: InstalledOpenClawExtension, artworkTone: string) => {
     setSelectedExtension(extension);
+    setDetailArtworkTone(artworkTone);
     setConfigurationValues({});
     setConfigurationVariables({});
     setConfigurationError('');
@@ -703,11 +721,12 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
 
   const renderInstalledCard = (extension: InstalledOpenClawExtension, visualIndex: number) => {
     const canToggle = canToggleExtension(extension);
+    const artworkTone = getPluginArtworkTone(`extensions:${extension.origin}`, visualIndex);
     return (
       <article
         key={extension.id}
-        onClick={() => openExtensionDetails(extension)}
-        className="group relative flex min-h-16 min-w-0 cursor-pointer flex-col rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-border/70 hover:bg-surface-raised/70"
+        onClick={() => openExtensionDetails(extension, artworkTone)}
+        className="group relative flex min-h-16 min-w-0 cursor-pointer flex-col rounded-xl px-2 py-2 transition-colors hover:bg-surface-raised focus-within:bg-surface-raised"
       >
         <button
           type="button"
@@ -715,13 +734,13 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
           aria-label={`${i18nService.t('subtaskShowInfo')}: ${extension.name}`}
           onClick={event => {
             event.stopPropagation();
-            openExtensionDetails(extension);
+            openExtensionDetails(extension, artworkTone);
           }}
         />
         <div className="pointer-events-none relative z-10 flex items-center justify-between gap-2 [&_button]:pointer-events-auto">
           <div className="flex min-w-0 items-center gap-2">
             <div
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${getPluginArtworkTone(`extensions:${extension.origin}`, visualIndex)}`}
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${artworkTone}`}
             >
               <PuzzleIcon className="h-4 w-4" />
             </div>
@@ -790,7 +809,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                   aria-label={extension.error}
                   onClick={event => {
                     event.stopPropagation();
-                    openExtensionDetails(extension);
+                    openExtensionDetails(extension, artworkTone);
                   }}
                 >
                   <ExclamationTriangleIcon className="h-4 w-4" />
@@ -810,7 +829,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                   aria-label={i18nService.t('extensionMissingConfiguration')}
                   onClick={event => {
                     event.stopPropagation();
-                    openExtensionDetails(extension);
+                    openExtensionDetails(extension, artworkTone);
                   }}
                 >
                   <ExclamationTriangleIcon className="h-4 w-4" />
@@ -998,219 +1017,207 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
               if (!savingConfiguration) setSelectedExtension(null);
             }}
             overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-            className="mx-4 max-h-[calc(100dvh-3rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface p-6 shadow-2xl"
+            className={PLUGIN_DETAIL_MODAL_CLASS_NAME}
           >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-raised">
-                  <PuzzleIcon className="h-5 w-5 text-secondary" />
-                </div>
-                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                  <h2 className="break-words text-base font-semibold text-foreground">
-                    {selectedExtension.name}
-                  </h2>
-                  {selectedExtension.version && (
-                    <span className="shrink-0 rounded-md bg-surface-raised px-1.5 py-0.5 text-[11px] text-secondary">
-                      v{selectedExtension.version}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedExtension(null)}
-                disabled={savingConfiguration}
-                className="rounded-lg p-1.5 text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:opacity-50"
-                aria-label={i18nService.t('close')}
-              >
-                <XMarkIcon className="h-5 w-5" />
-              </button>
-            </div>
+            <PluginDetailHeader
+              title={selectedExtension.name}
+              version={selectedExtension.version}
+              icon={<PuzzleIcon className="h-5 w-5" />}
+              artworkTone={detailArtworkTone}
+              onClose={() => setSelectedExtension(null)}
+              busy={savingConfiguration}
+            />
+            <div className={PLUGIN_DETAIL_BODY_CLASS_NAME}>
+              {selectedExtension.description && (
+                <PluginMarkdownDescription
+                  className="text-[13px] leading-relaxed"
+                  content={selectedExtension.description}
+                />
+              )}
 
-            {selectedExtension.description && (
-              <PluginMarkdownDescription
-                className="mt-3 text-[13px] leading-relaxed"
-                content={selectedExtension.description}
-              />
-            )}
-
-            {!canToggleExtension(selectedExtension) && (
-              <div className="mt-3 rounded-xl bg-surface-raised px-3 py-2 text-xs text-secondary">
-                {getExtensionManagementLabel(selectedExtension)}
-              </div>
-            )}
-
-            <div className="mt-6">
-              {selectedExtension.error && (
-                <div
-                  role="alert"
-                  className="mb-4 rounded-xl bg-red-500/10 px-3 py-2 text-sm text-red-500"
-                >
-                  {selectedExtension.error}
+              {!canToggleExtension(selectedExtension) && (
+                <div className="mt-3 rounded-xl bg-surface-raised px-3 py-2 text-xs text-secondary">
+                  {getExtensionManagementLabel(selectedExtension)}
                 </div>
               )}
-              {selectedExtension.missingRequirements.length > 0 && (
-                <div className="mb-4 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
-                  <ExclamationTriangleIcon className="h-3.5 w-3.5 shrink-0" />
-                  <span>{i18nService.t('extensionMissingConfiguration')}</span>
-                </div>
-              )}
-              {selectedExtension.configurationFields.length > 0 &&
-                (selectedExtension.management?.configure.allowed ?? true) && (
-                  <div className="space-y-5">
-                    {selectedExtension.configurationFields.map(field => {
-                      const label = field.labelKey ? i18nService.t(field.labelKey) : field.label;
-                      const help = field.helpKey ? i18nService.t(field.helpKey) : field.help;
-                      const variable = getConfigurationVariable(field, configurationVariables);
-                      const configured =
-                        variable && field.configuredEnvironmentVariables
-                          ? field.configuredEnvironmentVariables.includes(variable)
-                          : field.configured;
-                      const inherited = Boolean(
-                        variable && field.inheritedEnvironmentVariables?.includes(variable),
-                      );
-                      return (
-                        <div
-                          key={field.path}
-                          className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] items-center gap-3"
-                        >
-                          <div className="flex min-w-0 items-center justify-end gap-1 text-right text-xs font-medium text-foreground">
-                            {field.environmentVariables && field.environmentVariables.length > 1 ? (
-                              <div className="relative min-w-0 flex-1">
-                                <select
-                                  aria-label={i18nService.t('extensionConfigurationCredentialType')}
-                                  title={variable}
-                                  value={variable}
-                                  disabled={savingConfiguration}
-                                  onChange={event => {
-                                    setConfigurationVariables(current => ({
-                                      ...current,
-                                      [field.path]: event.target.value,
-                                    }));
-                                    setConfigurationValues(current => ({
-                                      ...current,
-                                      [field.path]: '',
-                                    }));
-                                    setConfigurationSaved(false);
-                                    setConfigurationError('');
-                                  }}
-                                  className="h-10 w-full appearance-none rounded-lg border border-border bg-background pl-2 pr-7 text-[11px] text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-[var(--justdo-primary-muted)] disabled:opacity-60"
+
+              <div className="space-y-4">
+                {selectedExtension.error && (
+                  <div
+                    role="alert"
+                    className="mb-4 rounded-xl bg-red-500/10 px-3 py-2 text-sm text-red-500"
+                  >
+                    {selectedExtension.error}
+                  </div>
+                )}
+                {selectedExtension.missingRequirements.length > 0 && (
+                  <div className="mb-4 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                    <ExclamationTriangleIcon className="h-3.5 w-3.5 shrink-0" />
+                    <span>{i18nService.t('extensionMissingConfiguration')}</span>
+                  </div>
+                )}
+                {selectedExtension.configurationFields.length > 0 &&
+                  (selectedExtension.management?.configure.allowed ?? true) && (
+                    <div className="space-y-5">
+                      {selectedExtension.configurationFields.map(field => {
+                        const label = field.labelKey ? i18nService.t(field.labelKey) : field.label;
+                        const help = field.helpKey ? i18nService.t(field.helpKey) : field.help;
+                        const variable = getConfigurationVariable(field, configurationVariables);
+                        const configured =
+                          variable && field.configuredEnvironmentVariables
+                            ? field.configuredEnvironmentVariables.includes(variable)
+                            : field.configured;
+                        const inherited = Boolean(
+                          variable && field.inheritedEnvironmentVariables?.includes(variable),
+                        );
+                        return (
+                          <div
+                            key={field.path}
+                            className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] items-center gap-3"
+                          >
+                            <div className="flex min-w-0 items-center justify-end gap-1 text-right text-xs font-medium text-foreground">
+                              {field.environmentVariables &&
+                              field.environmentVariables.length > 1 ? (
+                                <div className="relative min-w-0 flex-1">
+                                  <select
+                                    aria-label={i18nService.t(
+                                      'extensionConfigurationCredentialType',
+                                    )}
+                                    title={variable}
+                                    value={variable}
+                                    disabled={savingConfiguration}
+                                    onChange={event => {
+                                      setConfigurationVariables(current => ({
+                                        ...current,
+                                        [field.path]: event.target.value,
+                                      }));
+                                      setConfigurationValues(current => ({
+                                        ...current,
+                                        [field.path]: '',
+                                      }));
+                                      setConfigurationSaved(false);
+                                      setConfigurationError('');
+                                    }}
+                                    className="h-10 w-full appearance-none rounded-lg border border-border bg-background pl-2 pr-7 text-[11px] text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-[var(--justdo-primary-muted)] disabled:opacity-60"
+                                  >
+                                    {field.environmentVariables.map(name => (
+                                      <option key={name} value={name}>
+                                        {name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <ChevronDownIcon className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-secondary" />
+                                </div>
+                              ) : (
+                                <label
+                                  htmlFor={`extension-config-${field.path}`}
+                                  className="min-w-0 leading-5 [overflow-wrap:anywhere]"
+                                  title={field.requirement || field.label}
                                 >
-                                  {field.environmentVariables.map(name => (
-                                    <option key={name} value={name}>
-                                      {name}
-                                    </option>
-                                  ))}
-                                </select>
-                                <ChevronDownIcon className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-secondary" />
-                              </div>
-                            ) : (
-                              <label
-                                htmlFor={`extension-config-${field.path}`}
-                                className="min-w-0 leading-5 [overflow-wrap:anywhere]"
-                                title={field.requirement || field.label}
-                              >
-                                {label}
-                              </label>
-                            )}
-                            {field.requirement && !configured && (
-                              <span aria-hidden="true" className="leading-5 text-red-500">
-                                *
-                              </span>
-                            )}
-                            {help && (
-                              <Tooltip
-                                content={help}
-                                position="bottom"
-                                maxWidth="320px"
-                                className="mt-0.5 shrink-0"
-                                renderInPortal
-                              >
-                                <button
-                                  type="button"
-                                  aria-label={help}
-                                  className="rounded text-secondary hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                                >
-                                  <QuestionMarkCircleIcon className="h-3.5 w-3.5" />
-                                </button>
-                              </Tooltip>
-                            )}
-                          </div>
-                          <div className="min-w-0">
-                            <input
-                              id={`extension-config-${field.path}`}
-                              aria-label={variable || label}
-                              type={field.type ? 'number' : field.sensitive ? 'password' : 'text'}
-                              min={field.minimum}
-                              max={field.maximum}
-                              step={field.type === 'integer' ? 1 : undefined}
-                              value={
-                                configurationValues[field.path] ??
-                                (field.type ? String(field.value ?? field.defaultValue ?? '') : '')
-                              }
-                              onChange={event => {
-                                setConfigurationSaved(false);
-                                setConfigurationValues(current => ({
-                                  ...current,
-                                  [field.path]: event.target.value,
-                                }));
-                              }}
-                              disabled={savingConfiguration || inherited}
-                              required={Boolean(field.requirement) && !configured}
-                              autoComplete="new-password"
-                              spellCheck={false}
-                              placeholder={i18nService.t(
-                                inherited
-                                  ? 'extensionConfigurationInherited'
-                                  : configured
-                                    ? 'extensionConfigurationStored'
-                                    : field.sensitive
-                                      ? 'extensionConfigurationEnterSecret'
-                                      : 'extensionConfigurationEnterValue',
+                                  {label}
+                                </label>
                               )}
-                              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground placeholder-secondary transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-[var(--justdo-primary-muted)] disabled:opacity-60"
-                            />
-                            {inherited && (
-                              <p className="mt-1.5 text-xs text-secondary">
-                                {i18nService.t('extensionConfigurationInheritedHelp')}
-                              </p>
-                            )}
-                            {!inherited && Boolean(field.inheritedEnvironmentVariables?.length) && (
-                              <p className="mt-1.5 text-xs text-secondary">
-                                {i18nService.t('extensionConfigurationInheritedAlternatives')}
-                              </p>
-                            )}
+                              {field.requirement && !configured && (
+                                <span aria-hidden="true" className="leading-5 text-red-500">
+                                  *
+                                </span>
+                              )}
+                              {help && (
+                                <Tooltip
+                                  content={help}
+                                  position="bottom"
+                                  maxWidth="320px"
+                                  className="mt-0.5 shrink-0"
+                                  renderInPortal
+                                >
+                                  <button
+                                    type="button"
+                                    aria-label={help}
+                                    className="rounded text-secondary hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                                  >
+                                    <QuestionMarkCircleIcon className="h-3.5 w-3.5" />
+                                  </button>
+                                </Tooltip>
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <input
+                                id={`extension-config-${field.path}`}
+                                aria-label={variable || label}
+                                type={field.type ? 'number' : field.sensitive ? 'password' : 'text'}
+                                min={field.minimum}
+                                max={field.maximum}
+                                step={field.type === 'integer' ? 1 : undefined}
+                                value={
+                                  configurationValues[field.path] ??
+                                  (field.type
+                                    ? String(field.value ?? field.defaultValue ?? '')
+                                    : '')
+                                }
+                                onChange={event => {
+                                  setConfigurationSaved(false);
+                                  setConfigurationValues(current => ({
+                                    ...current,
+                                    [field.path]: event.target.value,
+                                  }));
+                                }}
+                                disabled={savingConfiguration || inherited}
+                                required={Boolean(field.requirement) && !configured}
+                                autoComplete="new-password"
+                                spellCheck={false}
+                                placeholder={i18nService.t(
+                                  inherited
+                                    ? 'extensionConfigurationInherited'
+                                    : configured
+                                      ? 'extensionConfigurationStored'
+                                      : field.sensitive
+                                        ? 'extensionConfigurationEnterSecret'
+                                        : 'extensionConfigurationEnterValue',
+                                )}
+                                className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground placeholder-secondary transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-[var(--justdo-primary-muted)] disabled:opacity-60"
+                              />
+                              {inherited && (
+                                <p className="mt-1.5 text-xs text-secondary">
+                                  {i18nService.t('extensionConfigurationInheritedHelp')}
+                                </p>
+                              )}
+                              {!inherited &&
+                                Boolean(field.inheritedEnvironmentVariables?.length) && (
+                                  <p className="mt-1.5 text-xs text-secondary">
+                                    {i18nService.t('extensionConfigurationInheritedAlternatives')}
+                                  </p>
+                                )}
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              {selectedExtension.configurationFields.length > 0 &&
-                selectedExtension.management?.configure.allowed === false &&
-                canToggleExtension(selectedExtension) && (
-                  <div className="rounded-xl bg-surface-raised px-3 py-2 text-xs text-secondary">
-                    {i18nService.t('pluginManagedActionUnavailable')}
-                  </div>
-                )}
-
-              {configurationError && (
-                <div className="mt-3 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-500">
-                  {configurationError}
-                </div>
-              )}
-              {configurationSaved && (
-                <p role="status" className="mt-3 text-xs text-emerald-600 dark:text-emerald-400">
-                  {i18nService.t(
-                    configurationPending
-                      ? 'extensionConfigurationPending'
-                      : 'extensionConfigurationSaved',
+                        );
+                      })}
+                    </div>
                   )}
-                </p>
-              )}
-            </div>
+                {selectedExtension.configurationFields.length > 0 &&
+                  selectedExtension.management?.configure.allowed === false &&
+                  canToggleExtension(selectedExtension) && (
+                    <div className="rounded-xl bg-surface-raised px-3 py-2 text-xs text-secondary">
+                      {i18nService.t('pluginManagedActionUnavailable')}
+                    </div>
+                  )}
 
-            <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+                {configurationError && (
+                  <div className="mt-3 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-500">
+                    {configurationError}
+                  </div>
+                )}
+                {configurationSaved && (
+                  <p role="status" className="mt-3 text-xs text-emerald-600 dark:text-emerald-400">
+                    {i18nService.t(
+                      configurationPending
+                        ? 'extensionConfigurationPending'
+                        : 'extensionConfigurationSaved',
+                    )}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className={PLUGIN_DETAIL_FOOTER_CLASS_NAME + ' justify-between'}>
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 {selectedExtension.installPath &&
                   (selectedExtension.management?.revealInFolder.allowed ?? true) && (

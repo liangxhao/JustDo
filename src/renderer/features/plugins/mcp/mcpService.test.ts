@@ -3,6 +3,35 @@ import { expect, test, vi } from 'vitest';
 
 import type { McpServerConfig } from './mcp';
 
+test('an old extension inventory read cannot restore state after a native switch', async () => {
+  vi.resetModules();
+  let finishInitial!: (result: unknown) => void;
+  const disabled = { id: 'extension:plugin:server', name: 'server', enabled: false };
+  const listExtensionServers = vi
+    .fn()
+    .mockReturnValueOnce(
+      new Promise(resolve => {
+        finishInitial = resolve;
+      }),
+    )
+    .mockResolvedValue({ success: true, extensionServers: [disabled] });
+  const setExtensionEnabled = vi.fn(async () => ({ success: true, extensionServers: [disabled] }));
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: {
+      extensions: { onChanged: () => () => undefined },
+      mcp: { listExtensionServers, setExtensionEnabled },
+    },
+  });
+  const { mcpService } = await import('./mcpService');
+  const initial = mcpService.loadExtensionServers();
+  await mcpService.setExtensionServerEnabled(disabled.id, false);
+  finishInitial({ success: true, extensionServers: [{ ...disabled, enabled: true }] });
+  expect(await initial).toEqual([disabled]);
+  expect(mcpService.getExtensionServers()).toEqual([disabled]);
+  expect(setExtensionEnabled).toHaveBeenCalledTimes(1);
+});
+
 test.each(['create', 'update', 'delete', 'setEnabled'])(
   'a list started before MCP %s cannot overwrite its confirmed inventory',
   async operation => {

@@ -77,15 +77,19 @@ vi.mock('node:child_process', async importOriginal => {
 const temporaryDirectories: string[] = [];
 
 test.each(['full', 'minimal'])(
-  '%s sync preserves Gateway-owned worktree settings across startup and auth changes',
+  '%s sync preserves Gateway-owned worktree and extension MCP settings across startup and auth changes',
   mode => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-worktree-sync-'));
     temporaryDirectories.push(stateDir);
     const configPath = path.join(stateDir, 'openclaw.json');
     const root = path.join(stateDir, '工作目录 with spaces');
+    const nativeMcp = {
+      'extension-server': { command: 'node', args: ['native.mjs'], env: { TOKEN: 'fixture' }, requestTimeoutMs: 12000 },
+      'disabled-server': { enabled: false },
+    };
     fs.writeFileSync(
       configPath,
-      JSON.stringify({ worktreeRoot: root, worktreeAcceleration: false }),
+      JSON.stringify({ worktreeRoot: root, worktreeAcceleration: false, mcp: { servers: nativeMcp } }),
     );
     const appConfig =
       mode === 'full'
@@ -122,12 +126,23 @@ test.each(['full', 'minimal'])(
       BuiltinModelSyncReason.AuthLogin,
       BuiltinModelSyncReason.AuthLogout,
     ]) {
-      expect(sync.sync(reason).ok).toBe(true);
+      expect(sync.sync(reason, new Set(['extension-server', 'disabled-server'])).ok).toBe(true);
       expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toMatchObject({
         worktreeRoot: root,
         worktreeAcceleration: false,
+        mcp: { servers: nativeMcp },
       });
     }
+    expect(sync.sync(
+      'mcp-server-changed',
+      new Set(['extension-server', 'disabled-server']),
+      new Set(['extension-server']),
+    ).ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).mcp.servers).toEqual({
+      'disabled-server': { enabled: false },
+    });
+    expect(sync.sync('app-config-change', new Set(['extension-server', 'disabled-server'])).ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).mcp.servers).not.toHaveProperty('extension-server');
   },
 );
 

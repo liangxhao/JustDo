@@ -126,6 +126,26 @@ class McpService {
     }
   }
 
+  async setExtensionServerEnabled(
+    id: string,
+    enabled: boolean,
+  ): Promise<ExtensionProvidedMcpServer[]> {
+    const generation = ++this.extensionGeneration;
+    this.extensionLoad = null;
+    const result = await window.electron.mcp.setExtensionEnabled({ id, enabled });
+    if (!result.success) {
+      if (generation === this.extensionGeneration) this.extensionServers = null;
+      throw new Error(`mcpExtensionMutation.${result.code}`);
+    }
+    if (generation !== this.extensionGeneration) return this.loadExtensionServers();
+    this.extensionServers = result.extensionServers;
+    return result.extensionServers;
+  }
+
+  async readExtensionSettings(id: string) {
+    return window.electron.mcp.readExtensionSettings(id);
+  }
+
   async createServer(
     data: McpServerFormData,
   ): Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }> {

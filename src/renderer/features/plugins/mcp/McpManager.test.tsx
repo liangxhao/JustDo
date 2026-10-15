@@ -23,6 +23,8 @@ vi.mock('./mcpService', () => ({
     getServers: vi.fn(() => []),
     hasServerLoadFailed: vi.fn(() => false),
     setServerEnabled: vi.fn(),
+    setExtensionServerEnabled: vi.fn(),
+    readExtensionSettings: vi.fn(),
     createServer: vi.fn(),
     updateServer: vi.fn(),
     probeServer: vi.fn(),
@@ -69,6 +71,9 @@ const demoServer = (scope: 'personal' | 'system', enabled = true): ExtensionProv
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(mcpService.setExtensionServerEnabled).mockReset();
+  vi.mocked(mcpService.readExtensionSettings).mockReset();
+  vi.mocked(mcpService.getExtensionServers).mockReset().mockReturnValue(null);
   vi.mocked(mcpService.loadServers).mockReset().mockResolvedValue([]);
   vi.mocked(mcpService.setServerEnabled).mockReset();
   vi.mocked(mcpService.getServers).mockReset().mockReturnValue([]);
@@ -109,6 +114,11 @@ const renderManager = (searchQuery = '') => {
   return onOpenExtension;
 };
 
+const findCardProbe = async (name = 'personal-mcp') => {
+  const card = (await screen.findByText(name)).closest('article')!;
+  return within(card).getByRole('button', { name: 'mcpTestServer' });
+};
+
 const customServer: McpServerConfig = {
   id: 'user-mcp',
   name: 'User MCP',
@@ -120,6 +130,201 @@ const customServer: McpServerConfig = {
   createdAt: 1,
   updatedAt: 1,
 };
+
+const editableExtensionServer = (): ExtensionProvidedMcpServer => {
+  const server = demoServer('personal');
+  return {
+    ...server,
+    transportType: 'stdio',
+    connectionSummary: 'node server.mjs [REDACTED]',
+    connectionTimeoutMs: 30000,
+    requestTimeoutMs: 60000,
+    management: {
+      ...server.management!,
+      enable: { allowed: true },
+      disable: { allowed: true },
+      configure: { allowed: true },
+    },
+  };
+};
+
+test('switches an extension MCP independently and consumes the confirmed native inventory', async () => {
+  const server = editableExtensionServer();
+  vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([server]);
+  vi.mocked(mcpService.setExtensionServerEnabled).mockResolvedValue([
+    { ...server, enabled: false },
+  ]);
+  renderManager();
+  await screen.findByText(server.name);
+  fireEvent.click(screen.getByRole('switch', { name: 'disableMcpServer' }));
+  await screen.findByRole('switch', { name: 'enableMcpServer' });
+  expect(mcpService.setExtensionServerEnabled).toHaveBeenCalledWith(server.id, false);
+  expect(mcpService.setServerEnabled).not.toHaveBeenCalled();
+  expect(mcpService.readExtensionSettings).not.toHaveBeenCalled();
+  expect(screen.queryByText('stdio')).toBeNull();
+});
+
+test('an extension switch supersedes a late initial provider read and finishes loading', async () => {
+  const server = editableExtensionServer();
+  let finishInitial!: (servers: ExtensionProvidedMcpServer[]) => void;
+  vi.mocked(mcpService.getExtensionServers).mockReturnValue([server]);
+  vi.mocked(mcpService.loadExtensionServers).mockReturnValue(
+    new Promise(resolve => {
+      finishInitial = resolve;
+    }),
+  );
+  vi.mocked(mcpService.setExtensionServerEnabled).mockResolvedValue([
+    { ...server, enabled: false },
+  ]);
+  renderManager();
+  fireEvent.click(screen.getByRole('switch', { name: 'disableMcpServer' }));
+  await screen.findByRole('switch', { name: 'enableMcpServer' });
+  expect(screen.queryByText('mcpLoadingServers')).toBeNull();
+  await act(async () => finishInitial([server]));
+  expect(screen.getByRole('switch', { name: 'enableMcpServer' })).toBeTruthy();
+});
+
+test('views parameters of a locked extension MCP without launching a probe', async () => {
+  const server = { ...demoServer('personal'), connectionSummary: 'node server.mjs [REDACTED]' };
+  vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([server]);
+  vi.mocked(mcpService.readExtensionSettings).mockResolvedValue({
+    success: true,
+    value: { server, revision: 'native-revision', definition: null, override: null },
+  });
+  renderManager();
+  await screen.findByText(server.name);
+  fireEvent.click(screen.getByText('mcpProvidedByExtension'));
+  expect(
+    ((await screen.findByDisplayValue(server.connectionSummary)) as HTMLTextAreaElement).readOnly,
+  ).toBe(true);
+  expect((screen.getByLabelText('mcpServerName') as HTMLInputElement).value).toBe(server.name);
+  expect(screen.queryByText('mcpDetailStatus')).toBeNull();
+  expect(screen.queryByLabelText('mcpNativeOverride')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'saveMcpServer' })).toBeNull();
+  expect(mcpService.probeServer).not.toHaveBeenCalled();
+});
+
+test('opens the user MCP editor by clicking the card description without testing the connection', async () => {
+  vi.mocked(mcpService.loadServers).mockResolvedValue([customServer]);
+  renderManager();
+  fireEvent.click(await screen.findByText(customServer.description));
+  expect(await screen.findByDisplayValue(customServer.name)).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'saveMcpServer' })).toBeTruthy();
+  expect(screen.queryByTitle('editMcpServer')).toBeNull();
+  expect(mcpService.probeServer).not.toHaveBeenCalled();
+  expect(mcpService.setServerEnabled).not.toHaveBeenCalled();
+});
+
+test('tests saved user MCP settings from the editor and preserves unsaved input when Escape closes the result', async () => {
+  vi.mocked(mcpService.loadServers).mockResolvedValue([customServer]);
+  renderManager();
+  fireEvent.click(await screen.findByText(customServer.description));
+  const command = await screen.findByPlaceholderText('mcpCommandPlaceholder');
+  fireEvent.change(command, { target: { value: 'unsaved-command' } });
+  fireEvent.click(screen.getByRole('button', { name: 'mcpTestSavedConfiguration' }));
+  await screen.findByText('echo');
+
+  expect(mcpService.probeServer).toHaveBeenCalledExactlyOnceWith(customServer.id);
+  expect(mcpService.updateServer).not.toHaveBeenCalled();
+  expect(mcpService.setServerEnabled).not.toHaveBeenCalled();
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(screen.queryByText('echo')).toBeNull();
+  expect((screen.getByPlaceholderText('mcpCommandPlaceholder') as HTMLInputElement).value).toBe(
+    'unsaved-command',
+  );
+  expect(screen.getByRole('button', { name: 'saveMcpServer' })).toBeTruthy();
+});
+
+test('tests an extension MCP from the read-only parameter window without changing its definition', async () => {
+  const server = editableExtensionServer();
+  vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([server]);
+  vi.mocked(mcpService.readExtensionSettings).mockResolvedValue({
+    success: true,
+    value: {
+      server,
+      revision: 'native-revision',
+      definition: { command: 'node', args: ['original.mjs'] },
+      override: null,
+    },
+  });
+  renderManager();
+  fireEvent.click(await screen.findByText(server.name));
+  const editor = await screen.findByLabelText('mcpRawParametersJson');
+  const original = (editor as HTMLTextAreaElement).value;
+  fireEvent.click(screen.getByText('mcpRawParameters'));
+  fireEvent.click(screen.getByRole('button', { name: 'mcpTestSavedConfiguration' }));
+  await screen.findByText('echo');
+  expect(mcpService.probeServer).toHaveBeenCalledExactlyOnceWith(server.id);
+  expect(mcpService.setExtensionServerEnabled).not.toHaveBeenCalled();
+
+  const overlays = document.querySelectorAll<HTMLElement>('[data-workspace-overlay]');
+  fireEvent.click(within(overlays[overlays.length - 1]).getByRole('button', { name: 'close' }));
+  expect((screen.getByLabelText('mcpRawParametersJson') as HTMLTextAreaElement).value).toBe(
+    original,
+  );
+  expect(screen.queryByRole('button', { name: 'saveMcpServer' })).toBeNull();
+});
+
+test('allows testing a disabled extension MCP from the read-only parameter window', async () => {
+  const server = demoServer('personal', false);
+  vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([server]);
+  vi.mocked(mcpService.readExtensionSettings).mockResolvedValue({
+    success: true,
+    value: { server, revision: 'native-revision', definition: null, override: null },
+  });
+  renderManager();
+  fireEvent.click(await screen.findByText(server.name));
+  await screen.findByLabelText('mcpServerName');
+  fireEvent.click(screen.getByRole('button', { name: 'mcpTestSavedConfiguration' }));
+  await screen.findByText('echo');
+  expect(mcpService.probeServer).toHaveBeenCalledExactlyOnceWith(server.id);
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect((screen.getByLabelText('mcpServerName') as HTMLInputElement).readOnly).toBe(true);
+  expect(screen.queryByRole('button', { name: 'saveMcpServer' })).toBeNull();
+});
+
+test('clears stale probe progress after an extension toggle', async () => {
+  const server = editableExtensionServer();
+  let finish!: (value: Awaited<ReturnType<typeof mcpService.probeServer>>) => void;
+  vi.mocked(mcpService.probeServer).mockReturnValueOnce(
+    new Promise(resolve => {
+      finish = resolve;
+    }),
+  );
+  vi.mocked(mcpService.loadServers).mockResolvedValue([customServer]);
+  vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([server]);
+  vi.mocked(mcpService.setExtensionServerEnabled).mockResolvedValue([
+    { ...server, enabled: false },
+  ]);
+  vi.mocked(mcpService.readExtensionSettings).mockResolvedValue({
+    success: true,
+    value: { server, revision: 'native-revision', definition: null, override: null },
+  });
+  renderManager();
+  const userCard = (await screen.findByText(customServer.name)).closest('.group')!;
+  const testButton = within(userCard as HTMLElement).getByRole('button', {
+    name: 'mcpTestServer',
+  });
+  fireEvent.click(testButton);
+  expect((testButton as HTMLButtonElement).disabled).toBe(true);
+  // A different server remains editable while this connection test is pending.
+  fireEvent.click(screen.getByRole('button', { name: 'close' }));
+  await act(async () =>
+    fireEvent.click(
+      within(screen.getByText(server.name).closest('.group')! as HTMLElement).getByRole('switch'),
+    ),
+  );
+  expect((testButton as HTMLButtonElement).disabled).toBe(false);
+  await act(async () =>
+    finish({
+      success: true,
+      result: { available: true, tools: [], resources: [], prompts: [], latencyMs: 1 },
+    }),
+  );
+  expect(screen.queryByText('mcpProbeStatusAvailable')).toBeNull();
+  expect(testButton.getAttribute('title')).not.toContain('mcpProbeStatusAvailable');
+  expect((testButton as HTMLButtonElement).disabled).toBe(false);
+});
 
 test('a late initial read cannot restore the old MCP switch state or leave loading active', async () => {
   let finishRead!: (servers: McpServerConfig[]) => void;
@@ -196,7 +401,7 @@ test.each([true, false])(
     );
     renderManager();
     await screen.findByText(customServer.name);
-    fireEvent.click(screen.getByRole('button', { name: 'editMcpServer' }));
+    fireEvent.click(screen.getByRole('button', { name: `editMcpServer: ${customServer.name}` }));
     fireEvent.click(await screen.findByRole('button', { name: 'deleteMcpServer' }));
     fireEvent.click(screen.getByRole('button', { name: 'confirmDelete' }));
     const deleting = screen.getByRole('button', { name: 'confirmDelete' });
@@ -309,7 +514,7 @@ test('saving a user MCP does not discard an in-flight extension-provided invento
   });
   renderManager();
   await screen.findByText('personal-mcp');
-  fireEvent.click(screen.getByRole('button', { name: 'editMcpServer' }));
+  fireEvent.click(screen.getByRole('button', { name: `editMcpServer: ${customServer.name}` }));
   await screen.findByRole('button', { name: 'saveMcpServer' });
   await act(async () => {
     vi.mocked(window.electron.extensions.onChanged).mock.calls[0][0]({
@@ -347,7 +552,7 @@ test('removes the last user MCP after confirmed deletion without displaying an u
   renderManager();
   await screen.findByText('User MCP');
 
-  fireEvent.click(screen.getByRole('button', { name: 'editMcpServer' }));
+  fireEvent.click(screen.getByRole('button', { name: `editMcpServer: ${customServer.name}` }));
   fireEvent.click(await screen.findByRole('button', { name: 'deleteMcpServer' }));
   fireEvent.click(screen.getByRole('button', { name: 'confirmDelete' }));
 
@@ -369,6 +574,7 @@ test('shows imported extension MCP immediately under user installs while keeping
   expect(within(userSection).queryByRole('switch')).toBeNull();
   fireEvent.click(within(userSection).getByRole('button', { name: 'openExtensionDetails' }));
   expect(onOpenExtension).toHaveBeenCalledWith('personal-plugin');
+  expect(mcpService.readExtensionSettings).not.toHaveBeenCalled();
   const expand = within(systemSection).getByRole('button', { expanded: false });
   expect(within(systemSection).getByText('system-mcp').closest('[hidden]')).toBeTruthy();
   fireEvent.click(expand);
@@ -379,7 +585,10 @@ test('keeps disabled imported MCP visible and searches by its parent extension',
   vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([demoServer('personal', false)]);
   renderManager('personal-plugin');
   await screen.findByText('personal-mcp');
-  expect(screen.getByText('mcpExtensionDisabled')).toBeTruthy();
+  expect(screen.queryByText('pluginStatusDisabled')).toBeNull();
+  expect(
+    screen.getByRole('img', { name: 'pluginStatusDisabled · mcpExtensionToggleUnavailable' }),
+  ).toBeTruthy();
   expect(screen.queryByText('pluginGroup.system.label')).toBeNull();
   expect(screen.queryByText('mcpNoInstalledServers')).toBeNull();
 });
@@ -405,7 +614,7 @@ test.each(['', 'personal'])(
 
 test('retesting replaces cached results with animated connection progress', async () => {
   renderManager();
-  fireEvent.click(await screen.findByRole('button', { name: 'personal-mcp' }));
+  fireEvent.click(await findCardProbe());
   await screen.findByText('echo');
   fireEvent.click(screen.getByRole('button', { name: 'close' }));
   let finish!: (value: Awaited<ReturnType<typeof mcpService.probeServer>>) => void;
@@ -414,7 +623,7 @@ test('retesting replaces cached results with animated connection progress', asyn
       finish = resolve;
     }),
   );
-  fireEvent.click(screen.getByRole('button', { name: 'personal-mcp' }));
+  fireEvent.click(await findCardProbe());
   expect(screen.getByText('mcpTestingServer')).toBeTruthy();
   expect(screen.getByRole('status').querySelector('.animate-spin')).toBeTruthy();
   expect(screen.queryByText('echo')).toBeNull();
@@ -455,31 +664,66 @@ test('an older load failure cannot end a refresh or display an empty inventory',
   expect(screen.getByText('personal-mcp')).toBeTruthy();
 });
 
-test('opens imported MCP details from the name and tests the native extension id', async () => {
+test('opens test details from the MCP test icon without opening parameters', async () => {
   renderManager();
-  fireEvent.click(await screen.findByRole('button', { name: 'personal-mcp' }));
+  fireEvent.click(await findCardProbe());
   await screen.findByText('echo');
+  expect(screen.getByRole('button', { name: 'mcpTestServer' }).getAttribute('title')).toContain(
+    'mcpProbeStatusAvailable',
+  );
   fireEvent.click(screen.getByRole('button', { name: /echo/ }));
   expect(mcpService.probeServer).toHaveBeenCalledWith('extension:personal:demo');
+  expect(mcpService.readExtensionSettings).not.toHaveBeenCalled();
   expect(screen.getByText('mcpDetailInputSchema')).toBeTruthy();
 });
 
-test('includes enabled imported MCP in all tests and exposes a per-server test button', async () => {
+test('includes disabled supported extension MCP in all tests without enabling them', async () => {
+  vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([
+    demoServer('personal', false),
+    demoServer('system', false),
+  ]);
   renderManager();
   await screen.findByText('personal-mcp');
   const section = screen.getByText('pluginGroup.user.label').closest('section')!;
-  expect(within(section).getByRole('button', { name: 'mcpTestShort' })).toBeTruthy();
+  const testButton = within(section).getByRole('button', { name: 'mcpTestServer' });
+  expect(testButton.textContent).toBe('');
+  expect((testButton as HTMLButtonElement).disabled).toBe(false);
   fireEvent.click(screen.getByRole('button', { name: 'mcpTestAll' }));
   await screen.findAllByText('mcpProbeStatusAvailable');
   expect(mcpService.probeServer).toHaveBeenCalledWith('extension:personal:demo');
   expect(mcpService.probeServer).toHaveBeenCalledWith('extension:system:demo');
+  expect(mcpService.setExtensionServerEnabled).not.toHaveBeenCalled();
+  expect(mcpService.setServerEnabled).not.toHaveBeenCalled();
 });
 
-test('allows details for disabled MCP without opening its transport', async () => {
+test('tests a disabled extension MCP independently of its saved enabled state', async () => {
   vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([demoServer('personal', false)]);
   renderManager();
-  fireEvent.click(await screen.findByRole('button', { name: 'personal-mcp' }));
-  await screen.findByText('mcpDetailErrorReason');
+  const testButton = await findCardProbe();
+  expect((testButton as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.click(testButton);
+  await screen.findByText('echo');
+  expect(testButton.getAttribute('title')).toContain('mcpProbeStatusAvailable');
+  expect(
+    screen.getByRole('img', { name: 'pluginStatusDisabled · mcpExtensionToggleUnavailable' }),
+  ).toBeTruthy();
+  expect(mcpService.probeServer).toHaveBeenCalledWith('extension:personal:demo');
+  expect(mcpService.setExtensionServerEnabled).not.toHaveBeenCalled();
+  expect(mcpService.setServerEnabled).not.toHaveBeenCalled();
+});
+
+test('opens read-only parameters from a disabled MCP card without opening its transport', async () => {
+  const server = { ...demoServer('personal', false), connectionSummary: 'node server.mjs' };
+  vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([server]);
+  vi.mocked(mcpService.readExtensionSettings).mockResolvedValue({
+    success: true,
+    value: { server, revision: 'native-revision', definition: null, override: null },
+  });
+  renderManager();
+  fireEvent.click(await screen.findByText(server.name));
+  expect(
+    ((await screen.findByDisplayValue(server.connectionSummary)) as HTMLTextAreaElement).readOnly,
+  ).toBe(true);
   expect(mcpService.probeServer).not.toHaveBeenCalled();
 });
 
@@ -491,13 +735,16 @@ test('does not mark a disabled extension available when an earlier probe finishe
     }),
   );
   renderManager();
-  fireEvent.click(await screen.findByRole('button', { name: 'personal-mcp' }));
+  fireEvent.click(await findCardProbe());
   vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([demoServer('personal', false)]);
   const changed = vi.mocked(window.electron.extensions.onChanged).mock.calls[0][0];
   await act(async () => {
     changed({ extensionId: 'personal-plugin', enabled: false });
   });
-  expect(screen.getByText('mcpExtensionDisabled')).toBeTruthy();
+  expect(screen.queryByText('pluginStatusDisabled')).toBeNull();
+  expect(
+    screen.getByRole('img', { name: 'pluginStatusDisabled · mcpExtensionToggleUnavailable' }),
+  ).toBeTruthy();
   await act(async () => {
     finish({
       success: true,

@@ -670,6 +670,12 @@ interface IElectronAPI {
       extensionServers?: import('@shared/plugins/mcp').ExtensionProvidedMcpServer[];
       error?: string;
     }>;
+    setExtensionEnabled: (
+      input: import('@shared/plugins/mcp').ExtensionMcpEnabledInput,
+    ) => Promise<import('@shared/plugins/mcp').ExtensionMcpMutationResult>;
+    readExtensionSettings: (
+      id: string,
+    ) => Promise<import('@shared/plugins/mcp').ExtensionMcpSettingsResult>;
     create: (
       data: McpServerFormData,
     ) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;

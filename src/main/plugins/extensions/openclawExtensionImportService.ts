@@ -1204,7 +1204,7 @@ export class OpenClawExtensionImportService {
           name: plugin.name || plugin.id,
           description,
           version: plugin.version ?? local?.version,
-          installPath: local?.installPath,
+          installPath: local?.installPath ?? bundledDirectory,
           enabled: plugin.enabled,
           state: plugin.state === 'not-installed' ? 'disabled' : plugin.state,
           origin: plugin.origin,

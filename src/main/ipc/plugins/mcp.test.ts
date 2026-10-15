@@ -4,10 +4,8 @@ import path from 'node:path';
 
 import { beforeEach, expect, test, vi } from 'vitest';
 
-import {
-  MarketplaceInstallOperation,
-  PluginKind,
-} from '../../../shared/plugins/marketplace';
+import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
+import { mergeNativeMcpOverrides } from '../../openclaw/config/nativeMcpOverrides';
 import { OpenClawConfigSyncService } from '../../openclaw/config/openclawConfigSyncService';
 import { PluginInstallationService, PluginInstallOrigin } from '../../plugins/installation';
 import type { McpServerRecord, McpStore } from '../../plugins/mcp';
@@ -50,6 +48,9 @@ const register = (
   const installationService = new PluginInstallationService();
   registerMcpHandlers({
     getStore: () => store as unknown as McpStore,
+    requestGateway: vi.fn(),
+    readExtensionDefinition: vi.fn(async () => null),
+    getManagedPluginIds: () => [],
     runConfigMutationExclusive: operation => operation(vi.fn(async () => ({ tools: 0 }))),
     probeServer: vi.fn(),
     readResource: vi.fn(),
@@ -59,6 +60,14 @@ const register = (
   });
   return installationService;
 };
+
+test('exposes extension parameter reads and native switches without an arbitrary parameter write endpoint', () => {
+  handlers.clear();
+  register(createStore());
+  expect(handlers.has('mcp:extension:readSettings')).toBe(true);
+  expect(handlers.has('mcp:extension:setEnabled')).toBe(true);
+  expect(handlers.has('mcp:extension:saveSettings')).toBe(false);
+});
 
 test('lists user-configured MCP servers without waiting for extension discovery', async () => {
   const store = createStore();
@@ -75,7 +84,11 @@ test('lists user-configured MCP servers without waiting for extension discovery'
 test('discovers OpenClaw-managed MCP servers before returning the list', async () => {
   const store = createStore();
   const discoverExternalServers = vi.fn();
-  register(store, vi.fn(async () => []), discoverExternalServers);
+  register(
+    store,
+    vi.fn(async () => []),
+    discoverExternalServers,
+  );
 
   await expect(handlers.get('mcp:list')?.()).resolves.toMatchObject({
     success: true,
@@ -87,9 +100,13 @@ test('discovers OpenClaw-managed MCP servers before returning the list', async (
 test('keeps stored MCP servers visible when external discovery fails', async () => {
   const store = createStore();
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-  register(store, vi.fn(async () => []), () => {
-    throw new Error('invalid native config');
-  });
+  register(
+    store,
+    vi.fn(async () => []),
+    () => {
+      throw new Error('invalid native config');
+    },
+  );
 
   await expect(handlers.get('mcp:list')?.()).resolves.toMatchObject({
     success: true,
@@ -115,21 +132,32 @@ test('lists extension-provided MCP servers through a separate handler', async ()
       scope: 'personal' as const,
     },
   ];
-  register(store, vi.fn(async () => extensionServers));
+  register(
+    store,
+    vi.fn(async () => extensionServers),
+  );
 
   await expect(handlers.get('mcp:listExtensionServers')?.()).resolves.toMatchObject({
     success: true,
     extensionServers,
   });
   await expect(handlers.get('mcp:listExtensionServers')?.()).resolves.toMatchObject({
-    extensionServers: [{ scope: 'personal', management: { disable: { allowed: false, reason: 'managed-by-extension' } } }],
+    extensionServers: [
+      {
+        scope: 'personal',
+        management: { disable: { allowed: false, reason: 'managed-by-extension' } },
+      },
+    ],
   });
 });
 
 test('keeps extension discovery failure isolated from the user-configured list', async () => {
   const store = createStore();
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-  register(store, vi.fn(async () => Promise.reject(new Error('discovery failed'))));
+  register(
+    store,
+    vi.fn(async () => Promise.reject(new Error('discovery failed'))),
+  );
 
   await expect(handlers.get('mcp:listExtensionServers')?.()).resolves.toEqual({
     success: false,
@@ -228,6 +256,7 @@ test('does not report success when an MCP mutation target is missing', async () 
 
 const createMutationHarness = (
   runExclusive?: Parameters<typeof registerMcpHandlers>[0]['runConfigMutationExclusive'],
+  nativeNames: { extension?: readonly string[]; configured?: readonly string[] } = {},
 ) => {
   const original: McpServerRecord = {
     id: 'server',
@@ -273,11 +302,25 @@ const createMutationHarness = (
   const installationService = new PluginInstallationService();
   registerMcpHandlers({
     getStore: () => store as unknown as McpStore,
+    requestGateway: vi.fn(),
+    readExtensionDefinition: vi.fn(async () => null),
+    getManagedPluginIds: () => [],
     runConfigMutationExclusive: runExclusive ?? (operation => operation(syncConfig)),
     probeServer: vi.fn(),
     readResource: vi.fn(),
     installationService,
-    listExtensionServers: vi.fn(async () => []),
+    listExtensionServers: vi.fn(async () =>
+      (nativeNames.extension ?? []).map(name => ({
+        id: `extension:provider:${name}`,
+        name,
+        providerId: 'provider',
+        providerName: 'Provider',
+        providerDescription: '',
+        enabled: true,
+        supported: true,
+      })),
+    ),
+    getNativeMcpServerNames: () => new Set(nativeNames.configured),
     discoverExternalServers,
     onMarketplacePluginDeleted,
   });
@@ -423,7 +466,7 @@ test('the shared MCP installer waits for synchronization too', async () => {
 });
 
 test.each(['delete', 'update'])(
-  'does not resurrect an MCP server during %s behind an already queued settings sync',
+  'removes a retired product connection sharing an extension name during %s behind a queued sync',
   async operation => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-mcp-config-race-'));
     const configPath = path.join(directory, 'openclaw.json');
@@ -435,7 +478,11 @@ test.each(['delete', 'update'])(
     let mcpSync!: McpConfigSyncService;
     const harness = createMutationHarness(mutate =>
       globalSync.runConfigMutationExclusive(({ syncConfig }) =>
-        mutate(() => mcpSync.syncConfigAfterExclusiveMutation(syncConfig)),
+        mutate(retiredMcpServerNames =>
+          mcpSync.syncConfigAfterExclusiveMutation(options =>
+            syncConfig({ ...options, retiredMcpServerNames }),
+          ),
+        ),
       ),
     );
     const discoveryStore = {
@@ -449,6 +496,7 @@ test.each(['delete', 'update'])(
     globalSync = new OpenClawConfigSyncService({
       getCoworkStore: () => ({ getConfig: () => ({ executionMode: 'local' }) }),
       getMcpStore: () => discoveryStore,
+      getExtensionMcpServerNames: async () => new Set(['Docs']),
       getOpenClawEngineManager: () => ({
         getStatus: () => ({ phase: 'ready' }),
         getConfigPath: () => configPath,
@@ -460,15 +508,25 @@ test.each(['delete', 'update'])(
     Object.assign(globalSync, {
       configSync: {
         collectGatewayLaunchEnvVars: () => ({}),
-        sync: () => {
+        sync: (
+          _reason: string,
+          extensionNames: ReadonlySet<string>,
+          retiredNames: ReadonlySet<string>,
+        ) => {
+          const previous = JSON.parse(fs.readFileSync(configPath, 'utf8'));
           fs.writeFileSync(
             configPath,
             JSON.stringify({
               mcp: {
-                servers: Object.fromEntries(
-                  harness.store
-                    .listServers()
-                    .map(server => [server.name, { url: server.url, enabled: server.enabled }]),
+                servers: mergeNativeMcpOverrides(
+                  previous,
+                  Object.fromEntries(
+                    harness.store
+                      .listServers()
+                      .map(server => [server.name, { url: server.url, enabled: server.enabled }]),
+                  ),
+                  extensionNames,
+                  retiredNames,
                 ),
               },
             }),
@@ -515,3 +573,66 @@ test.each(['delete', 'update'])(
     }
   },
 );
+
+test.each(['create', 'update'])(
+  'retires colliding native connections introduced by a failed %s before rollback',
+  async operation => {
+    let native = { mcp: { servers: { Docs: { url: 'https://example.com/mcp', enabled: true } } } };
+    let syncCount = 0;
+    const harness = createMutationHarness(mutate =>
+      mutate(async retiredNames => {
+        native = {
+          mcp: {
+            servers: mergeNativeMcpOverrides(
+              native,
+              Object.fromEntries(
+                harness.store.listServers().map(server => [
+                  server.name,
+                  {
+                    url: server.url,
+                    enabled: server.enabled,
+                  },
+                ]),
+              ),
+              new Set(['Docs', 'Attempted']),
+              new Set(retiredNames),
+            ) as typeof native.mcp.servers,
+          },
+        };
+        syncCount += 1;
+        return syncCount === 1 ? { tools: 0, error: 'application unconfirmed' } : { tools: 1 };
+      }),
+    );
+    const config = {
+      name: 'Attempted',
+      transportType: 'http',
+      url: 'https://example.com/attempted',
+    };
+    const args = operation === 'create' ? [config] : ['server', config];
+    await expect(handlers.get(`mcp:${operation}`)!(undefined, ...args)).resolves.toMatchObject({
+      success: false,
+    });
+    expect(syncCount).toBe(2);
+    expect(harness.records.get('server')).toEqual(harness.original);
+    expect(native.mcp.servers).toEqual({ Docs: { url: harness.original.url, enabled: true } });
+  },
+);
+
+test.each([
+  ['create', { extension: ['Reserved'] }],
+  ['update', { extension: ['Reserved'] }],
+  ['create', { configured: ['Reserved'] }],
+  ['update', { configured: ['Reserved'] }],
+] as const)('rejects %s before modifying a native-owned name', async (operation, names) => {
+  const harness = createMutationHarness(undefined, names);
+  const config = { name: ' Reserved ', transportType: 'http', url: 'https://example.com/new' };
+  const args = operation === 'create' ? [config] : ['server', config];
+  await expect(handlers.get(`mcp:${operation}`)!(undefined, ...args)).resolves.toMatchObject({
+    success: false,
+    error: 'mcpNameExists',
+  });
+  expect(harness.store.createServer).not.toHaveBeenCalled();
+  expect(harness.store.updateServer).not.toHaveBeenCalled();
+  expect(harness.syncConfig).not.toHaveBeenCalled();
+  expect(harness.records.get('server')).toEqual(harness.original);
+});

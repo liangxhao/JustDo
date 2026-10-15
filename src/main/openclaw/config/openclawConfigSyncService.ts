@@ -33,6 +33,7 @@ type OpenClawConfigSyncServiceDeps = {
   getCoworkStore: () => CoworkStore;
   getOpenClawEngineManager: () => OpenClawEngineManager;
   getMcpStore: () => McpStore;
+  getExtensionMcpServerNames?: () => Promise<ReadonlySet<string>>;
   getHookStore: () => OpenClawHookStore;
   disconnectGatewayClient: () => void;
   connectGatewayClient: () => Promise<void>;
@@ -51,6 +52,7 @@ type SyncOpenClawConfigOptions = {
   reason: string;
   restartGatewayIfRunning?: boolean;
   discoverExternalMcpServers?: boolean;
+  retiredMcpServerNames?: readonly string[];
   retiredProviderIds?: readonly string[];
 };
 
@@ -424,11 +426,21 @@ export class OpenClawConfigSyncService {
     }
 
     const engineManager = this.deps.getOpenClawEngineManager();
+    let extensionMcpNames: ReadonlySet<string>;
+    try {
+      extensionMcpNames = (await this.deps.getExtensionMcpServerNames?.()) ?? new Set<string>();
+    } catch {
+      return this.failClosedConfigApplication(
+        { success: false, changed: false, configSynced: false },
+        'Native extension MCP ownership could not be read; configuration was preserved.',
+      );
+    }
     if (options.discoverExternalMcpServers !== false) {
       try {
         const discovered = discoverOpenClawManagedMcpServers(
           engineManager.getConfigPath(),
           this.deps.getMcpStore(),
+          extensionMcpNames,
         );
         if (discovered > 0) {
           console.log(`[OpenClawMcp] discovered ${discovered} externally installed server(s)`);
@@ -496,7 +508,11 @@ export class OpenClawConfigSyncService {
         );
       }
     }
-    const syncResult = this.getConfigSync().sync(options.reason);
+    const syncResult = this.getConfigSync().sync(
+      options.reason,
+      extensionMcpNames,
+      new Set(options.retiredMcpServerNames),
+    );
     if (!syncResult.ok) {
       return this.failClosedConfigApplication({
         success: false,

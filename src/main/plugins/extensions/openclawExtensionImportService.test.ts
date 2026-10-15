@@ -355,7 +355,7 @@ describe('OpenClawExtensionImportService', () => {
     expect(requestGateway).toHaveBeenCalledWith('plugins.list', {});
   });
 
-  it('fills a blank Gateway description from bundled extension package metadata', async () => {
+  it('projects bundled extension paths and fills blank Gateway descriptions from package metadata', async () => {
     const stateDir = path.join(fixtureRoot, 'state');
     const runtimeRoot = path.join(fixtureRoot, 'runtime');
     const bundledDir = path.join(runtimeRoot, 'dist', 'extensions', 'memory-core');
@@ -399,6 +399,7 @@ describe('OpenClawExtensionImportService', () => {
       expect.objectContaining({
         id: 'memory-core',
         description: 'Search and retrieve persistent memory.',
+        installPath: bundledDir,
       }),
     ]);
 
@@ -427,7 +428,7 @@ describe('OpenClawExtensionImportService', () => {
     });
 
     await expect(externalService.listCatalog()).resolves.toEqual([
-      expect.objectContaining({ id: 'memory-core', description: '' }),
+      expect.objectContaining({ id: 'memory-core', description: '', installPath: undefined }),
     ]);
   });
 

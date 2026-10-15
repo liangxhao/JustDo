@@ -1,4 +1,8 @@
-export { discoverExtensionMcpServers } from './extensionMcpDiscovery';
+export {
+  discoverExtensionMcpOverrideNames,
+  discoverExtensionMcpServers,
+  readNativeMcpServerNames,
+} from './extensionMcpDiscovery';
 export { McpConfigSyncService } from './mcpConfigSyncService';
 export type {
   McpProbePrompt,

@@ -96,3 +96,21 @@ describe('discoverOpenClawManagedMcpServers', () => {
     );
   });
 });
+test('keeps extension-owned native overrides out of the product MCP store', () => {
+  const configPath = writeConfig({
+    mcp: {
+      servers: {
+        plugin: { command: 'node', args: ['plugin.mjs'] },
+        user: { command: 'user-command' },
+      },
+    },
+  });
+  const store = { listServers: () => [], createDiscoveredServer: vi.fn(() => true) };
+  expect(discoverOpenClawManagedMcpServers(configPath, store as never, new Set(['plugin']))).toBe(
+    1,
+  );
+  expect(store.createDiscoveredServer).toHaveBeenCalledWith(
+    expect.objectContaining({ name: 'user' }),
+  );
+  expect(store.createDiscoveredServer).toHaveBeenCalledTimes(1);
+});

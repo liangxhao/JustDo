@@ -16,6 +16,7 @@ import {
   usePluginMarketplace,
 } from '@/features/plugins/marketplace/usePluginMarketplace';
 import ExtensionMcpCard from '@/features/plugins/mcp/ExtensionMcpCard';
+import ExtensionMcpParametersModal from '@/features/plugins/mcp/ExtensionMcpParametersModal';
 import {
   ExtensionProvidedMcpServer,
   McpProbePrompt,
@@ -28,9 +29,11 @@ import {
   McpServerFormData,
 } from '@/features/plugins/mcp/mcp';
 import { mcpRegistry } from '@/features/plugins/mcp/mcpRegistry';
+import McpServerCard from '@/features/plugins/mcp/McpServerCard';
 import McpServerFormModal from '@/features/plugins/mcp/McpServerFormModal';
 import { mcpService } from '@/features/plugins/mcp/mcpService';
 import { setMcpServers } from '@/features/plugins/mcp/mcpSlice';
+import { MCP_TRANSPORT_BADGE_COLORS } from '@/features/plugins/mcp/mcpTransport';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
 import PluginGroupSection from '@/features/plugins/shared/PluginGroupSection';
 import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubTypes';
@@ -40,18 +43,11 @@ import PluginStateButton from '@/features/plugins/shared/PluginStateButton';
 import { i18nService } from '@/services/i18n';
 import ClockIcon from '@/shared/components/icons/ClockIcon';
 import ConnectorIcon from '@/shared/components/icons/ConnectorIcon';
-import PencilIcon from '@/shared/components/icons/PencilIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import ErrorMessage from '@/shared/components/ui/ErrorMessage';
 import Modal from '@/shared/components/ui/Modal';
 import Tooltip from '@/shared/components/ui/Tooltip';
 import { RootState } from '@/store';
-
-const TRANSPORT_BADGE_COLORS: Record<string, string> = {
-  stdio: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
-  sse: 'bg-green-500/10 text-green-600 dark:text-green-400',
-  http: 'bg-purple-500/10 text-purple-600 dark:text-purple-400',
-};
 
 const formatSchema = (schema?: unknown): string => {
   if (!schema) return '';
@@ -177,6 +173,9 @@ const McpManager: React.FC<McpManagerProps> = ({
   const [updatingServerIds, setUpdatingServerIds] = useState<Set<string>>(() => new Set());
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingServer, setEditingServer] = useState<McpServerConfig | null>(null);
+  const [detailArtworkTone, setDetailArtworkTone] = useState(() =>
+    getPluginArtworkTone('mcp:user'),
+  );
   const [installingRegistry, setInstallingRegistry] = useState<McpRegistryEntry | null>(null);
   const [defaultRequestTimeoutSeconds, setDefaultRequestTimeoutSeconds] = useState(
     DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS,
@@ -188,6 +187,7 @@ const McpManager: React.FC<McpManagerProps> = ({
   const [bulkProbeServerId, setBulkProbeServerId] = useState<string | null>(null);
   const [bulkProbeResults, setBulkProbeResults] = useState<Record<string, McpProbeResult>>({});
   const [detailServer, setDetailServer] = useState<McpDetailServer | null>(null);
+  const [parameterServer, setParameterServer] = useState<ExtensionProvidedMcpServer | null>(null);
   const [expandedToolNames, setExpandedToolNames] = useState<Set<string>>(() => new Set());
   const [expandedPromptNames, setExpandedPromptNames] = useState<Set<string>>(() => new Set());
   const [expandedResourceUris, setExpandedResourceUris] = useState<Set<string>>(() => new Set());
@@ -196,6 +196,17 @@ const McpManager: React.FC<McpManagerProps> = ({
     {},
   );
   const [resourceErrors, setResourceErrors] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!detailServer) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      setDetailServer(null);
+    };
+    document.addEventListener('keydown', handleEscape, true);
+    return () => document.removeEventListener('keydown', handleEscape, true);
+  }, [detailServer]);
   // Using local registry only (no remote marketplace)
   const dynamicRegistry = mcpRegistry;
   const [bridgeSyncing, setBridgeSyncing] = useState(false);
@@ -203,6 +214,20 @@ const McpManager: React.FC<McpManagerProps> = ({
     tools: number;
     error?: string;
   } | null>(null);
+  const invalidateConnectionResults = useCallback(() => {
+    inventoryGeneration.current += 1;
+    detailGeneration.current += 1;
+    setDetailServer(null);
+    setProbeResults({});
+    setProbingServerIds(new Set());
+    setReadingResourceUris(new Set());
+    setResourceContents({});
+    setResourceErrors({});
+    setIsBulkProbing(false);
+    setIsBulkProbeOpen(false);
+    setBulkProbeServerId(null);
+    setBulkProbeResults({});
+  }, []);
   useEffect(() => {
     mounted.current = true;
     let isActive = true;
@@ -249,16 +274,9 @@ const McpManager: React.FC<McpManagerProps> = ({
     void loadServers();
     const stop = window.electron.extensions.onChanged(() => {
       if (isActive) {
-        inventoryGeneration.current += 1;
+        invalidateConnectionResults();
         setExtensionServers([]);
-        setProbeResults({});
-        setDetailServer(null);
-        setProbingServerIds(new Set());
-        setReadingResourceUris(new Set());
-        setIsBulkProbing(false);
-        setIsBulkProbeOpen(false);
-        setBulkProbeServerId(null);
-        setBulkProbeResults({});
+        setParameterServer(null);
         void loadServers();
       }
     });
@@ -272,7 +290,7 @@ const McpManager: React.FC<McpManagerProps> = ({
       inventoryGeneration.current += 1;
       stop();
     };
-  }, [dispatch]);
+  }, [dispatch, invalidateConnectionResults]);
 
   const getRegistryEntryForServer = (server: McpServerConfig): McpRegistryEntry | undefined => {
     if (server.registryId) {
@@ -306,7 +324,7 @@ const McpManager: React.FC<McpManagerProps> = ({
           ? 'mcpDetailConnectionDetail'
           : server.transportType
             ? 'mcpDetailEndpoint'
-            : 'mcpExtensionBadge',
+            : 'pluginScope.extension',
       );
     return server.transportType === 'stdio'
       ? i18nService.t('mcpDetailConnectionDetail')
@@ -316,26 +334,6 @@ const McpManager: React.FC<McpManagerProps> = ({
   const getInstalledDescription = useCallback((server: McpServerConfig): string => {
     return server.description?.trim() ?? '';
   }, []);
-
-  const getServerStatusLabel = (server: McpDetailServer): string | null => {
-    const probeResult = probeResults[server.id];
-    if (probeResult) {
-      return probeResult.available
-        ? i18nService.t('mcpProbeStatusAvailable')
-        : i18nService.t('mcpProbeUnavailable');
-    }
-    return null;
-  };
-
-  const getServerStatusClass = (server: McpDetailServer): string | null => {
-    const probeResult = probeResults[server.id];
-    if (probeResult) {
-      return probeResult.available
-        ? 'bg-green-500/10 text-green-600 dark:text-green-400'
-        : 'bg-red-500/10 text-red-600 dark:text-red-400';
-    }
-    return null;
-  };
 
   const installedMarketplaceServers = useMemo(
     () =>
@@ -384,10 +382,7 @@ const McpManager: React.FC<McpManagerProps> = ({
     .sort(comparePluginNames);
   const userServers = [...filteredInstalled, ...userExtensionServers].sort(comparePluginNames);
   const userServerCount = userServers.length;
-  const testableServers = [
-    ...servers,
-    ...extensionServers.filter(server => server.enabled && server.supported),
-  ];
+  const testableServers = [...servers, ...extensionServers.filter(server => server.supported)];
 
   const reconcileFailedMutation = async (generation: number) => {
     if (!mounted.current || generation !== inventoryReadGeneration.current) return;
@@ -423,6 +418,50 @@ const McpManager: React.FC<McpManagerProps> = ({
         if (generation === inventoryReadGeneration.current && !providerReadPending.current) {
           setIsLoadingServers(false);
         }
+      }
+    }
+  };
+
+  const handleToggleExtensionEnabled = async (server: ExtensionProvidedMcpServer) => {
+    if (updatingServerIds.has(server.id)) return;
+    const generation = ++providerReadGeneration.current;
+    providerReadPending.current = false;
+    invalidateConnectionResults();
+    setParameterServer(null);
+    setUpdatingServerIds(current => new Set(current).add(server.id));
+    const isCurrent = () => mounted.current && generation === providerReadGeneration.current;
+    try {
+      const loaded = await mcpService.setExtensionServerEnabled(server.id, !server.enabled);
+      if (isCurrent()) {
+        setExtensionServers(loaded);
+        setIsLoadingServers(false);
+        setProviderLoadFailed(false);
+        setActionError('');
+      }
+    } catch (error) {
+      if (isCurrent()) {
+        const key =
+          error instanceof Error && error.message.startsWith('mcpExtensionMutation.')
+            ? error.message
+            : 'mcpExtensionMutation.unknown';
+        setActionError(i18nService.t(key));
+      }
+      try {
+        const loaded = await mcpService.loadExtensionServers();
+        if (isCurrent()) {
+          setExtensionServers(loaded);
+          setProviderLoadFailed(false);
+        }
+      } catch {
+        if (isCurrent()) setProviderLoadFailed(true);
+      }
+    } finally {
+      if (mounted.current) {
+        setUpdatingServerIds(current => {
+          const next = new Set(current);
+          next.delete(server.id);
+          return next;
+        });
       }
     }
   };
@@ -479,11 +518,12 @@ const McpManager: React.FC<McpManagerProps> = ({
     }
   };
 
-  const handleOpenEditForm = async (server: McpServerConfig) => {
+  const handleOpenEditForm = async (server: McpServerConfig, artworkTone: string) => {
     const generation = ++formGeneration.current;
     await refreshDefaultRequestTimeout();
     if (!mounted.current || generation !== formGeneration.current) return;
     setEditingServer(server);
+    setDetailArtworkTone(artworkTone);
     setInstallingRegistry(getRegistryEntryForServer(server) ?? null);
     setIsFormOpen(true);
   };
@@ -527,6 +567,7 @@ const McpManager: React.FC<McpManagerProps> = ({
     await refreshDefaultRequestTimeout();
     if (!mounted.current || generation !== formGeneration.current) return;
     setEditingServer(null);
+    setDetailArtworkTone(getPluginArtworkTone('mcp:user'));
     setInstallingRegistry(null);
     setIsFormOpen(true);
   };
@@ -556,7 +597,7 @@ const McpManager: React.FC<McpManagerProps> = ({
       setResourceContents({});
       setResourceErrors({});
     }
-    if (isExtensionServer(server) && (!server.enabled || !server.supported)) {
+    if (isExtensionServer(server) && !server.supported) {
       setProbeResults(current => ({
         ...current,
         [server.id]: {
@@ -565,7 +606,7 @@ const McpManager: React.FC<McpManagerProps> = ({
           resources: [],
           prompts: [],
           latencyMs: 0,
-          error: i18nService.t(server.enabled ? 'mcpExtensionUnsupported' : 'mcpExtensionDisabled'),
+          error: i18nService.t('mcpExtensionUnsupported'),
         },
       }));
       return;
@@ -742,7 +783,10 @@ const McpManager: React.FC<McpManagerProps> = ({
     return probeResults[detailServer.id] ?? null;
   };
 
-  const existingNames = useMemo(() => servers.map(s => s.name), [servers]);
+  const existingNames = useMemo(
+    () => [...servers, ...extensionServers].map(server => server.name),
+    [servers, extensionServers],
+  );
 
   /**
    * Listen for MCP bridge sync events from the main process.
@@ -805,100 +849,53 @@ const McpManager: React.FC<McpManagerProps> = ({
   );
 
   const renderInstalledCard = (server: McpServerConfig, visualIndex: number) => {
-    const registryEntry = getRegistryEntryForServer(server);
     const installedDescription = getInstalledDescription(server);
-    const statusLabel = getServerStatusLabel(server);
-    const statusClass = getServerStatusClass(server);
     return (
-      <div
+      <McpServerCard
         key={server.id}
-        className="group min-h-16 min-w-0 rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-border/70 hover:bg-surface-raised/70"
-      >
-        <div className="flex items-start justify-between mb-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <div
-              className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${getPluginArtworkTone('mcp:user', visualIndex)}`}
-            >
-              <ConnectorIcon className="h-4 w-4" />
-            </div>
-            <span className="text-sm font-medium text-foreground truncate">{server.name}</span>
-          </div>
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            <InstalledMarketplaceAction
-              controller={marketplace}
-              id={server.id}
-              disabled={
-                updatingServerIds.has(server.id) || marketplace.operationFor(server.id)?.busy
-              }
-            />
-            <button
-              type="button"
-              disabled={marketplace.operationFor(server.id)?.busy}
-              onClick={() => void handleOpenEditForm(server)}
-              className="p-1 rounded-lg text-secondary hover:text-primary dark:hover:text-primary transition-colors"
-              title={i18nService.t('editMcpServer')}
-            >
-              <PencilIcon className="h-3.5 w-3.5" />
-            </button>
-            <PluginStateButton
-              checked={server.enabled}
-              label={i18nService.t(server.enabled ? 'disableMcpServer' : 'enableMcpServer')}
-              disabled={
-                updatingServerIds.has(server.id) || marketplace.operationFor(server.id)?.busy
-              }
-              busy={updatingServerIds.has(server.id)}
-              onToggle={() => handleToggleEnabled(server.id)}
-            />
-          </div>
-        </div>
-
-        <Tooltip
-          content={installedDescription}
-          position="bottom"
-          maxWidth="360px"
-          className="block w-full"
-        >
-          <p className="line-clamp-2 text-xs text-secondary">{installedDescription}</p>
-        </Tooltip>
-
-        <div className="mt-3 flex items-center justify-between gap-3 text-[10px] text-secondary">
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <span
-              className={`px-1.5 py-0.5 rounded font-medium ${TRANSPORT_BADGE_COLORS[server.transportType] || ''}`}
-            >
-              {server.transportType}
-            </span>
-            {registryEntry?.requiredEnvKeys && registryEntry.requiredEnvKeys.length > 0 && (
-              <>
-                <span>·</span>
-                <span className="text-amber-500 dark:text-amber-400">
-                  {registryEntry.requiredEnvKeys.length} key
-                  {registryEntry.requiredEnvKeys.length > 1 ? 's' : ''}
-                </span>
-              </>
-            )}
-            {statusLabel && statusClass && (
-              <span
-                title={probeResults[server.id]?.error}
-                className={`shrink-0 rounded-full px-2 py-0.5 font-medium ${statusClass}`}
-              >
-                {statusLabel}
-              </span>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => handleProbeServer(server, true)}
-            disabled={probingServerIds.has(server.id)}
-            className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15 disabled:cursor-wait disabled:opacity-60"
-            title={i18nService.t('mcpTestServer')}
+        visualIndex={visualIndex}
+        group="user"
+        onOpen={
+          marketplace.operationFor(server.id)?.busy
+            ? undefined
+            : () => void handleOpenEditForm(server, getPluginArtworkTone('mcp:user', visualIndex))
+        }
+        openLabel={`${i18nService.t('editMcpServer')}: ${server.name}`}
+        onProbe={() => void handleProbeServer(server, true)}
+        probeDisabled={probingServerIds.has(server.id)}
+        probing={probingServerIds.has(server.id)}
+        probeResult={probeResults[server.id]}
+        title={
+          <span className="block truncate text-sm font-medium text-foreground">{server.name}</span>
+        }
+        actions={
+          <InstalledMarketplaceAction
+            controller={marketplace}
+            id={server.id}
+            disabled={updatingServerIds.has(server.id) || marketplace.operationFor(server.id)?.busy}
+          />
+        }
+        stateAction={
+          <PluginStateButton
+            checked={server.enabled}
+            label={i18nService.t(server.enabled ? 'disableMcpServer' : 'enableMcpServer')}
+            disabled={updatingServerIds.has(server.id) || marketplace.operationFor(server.id)?.busy}
+            busy={updatingServerIds.has(server.id)}
+            onToggle={() => handleToggleEnabled(server.id)}
+          />
+        }
+        description={
+          <Tooltip
+            content={installedDescription}
+            position="bottom"
+            maxWidth="360px"
+            className="block w-full"
           >
-            <ClockIcon className="h-3.5 w-3.5" />
-            <span>{i18nService.t('mcpTestShort')}</span>
-          </button>
-        </div>
-        <MarketplaceFeedback controller={marketplace} id={server.id} />
-      </div>
+            <p className="line-clamp-2 break-words">{installedDescription}</p>
+          </Tooltip>
+        }
+        feedback={<MarketplaceFeedback controller={marketplace} id={server.id} />}
+      />
     );
   };
 
@@ -1024,7 +1021,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                             </p>
                           )
                         ) : (
-                          <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
+                          <div className="grid min-w-0 auto-rows-fr grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-4">
                             {userServers.map((server, visualIndex) =>
                               'providerId' in server ? (
                                 <ExtensionMcpCard
@@ -1034,9 +1031,16 @@ const McpManager: React.FC<McpManagerProps> = ({
                                   group="user"
                                   onOpenExtension={onOpenExtension}
                                   onOpenDetail={() => void handleProbeServer(server, true)}
+                                  onOpenParameters={() => {
+                                    setParameterServer(server);
+                                    setDetailArtworkTone(
+                                      getPluginArtworkTone('mcp:user', visualIndex),
+                                    );
+                                  }}
+                                  onToggle={() => void handleToggleExtensionEnabled(server)}
+                                  updating={updatingServerIds.has(server.id)}
                                   probing={probingServerIds.has(server.id)}
-                                  statusLabel={getServerStatusLabel(server)}
-                                  statusClass={getServerStatusClass(server)}
+                                  probeResult={probeResults[server.id]}
                                 />
                               ) : (
                                 renderInstalledCard(server, visualIndex)
@@ -1056,7 +1060,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                         defaultExpanded={false}
                         forceExpanded={Boolean(searchQuery.trim())}
                       >
-                        <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
+                        <div className="grid min-w-0 auto-rows-fr grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-4">
                           {systemExtensionServers.map((server, visualIndex) => (
                             <ExtensionMcpCard
                               key={server.id}
@@ -1065,9 +1069,16 @@ const McpManager: React.FC<McpManagerProps> = ({
                               group="system"
                               onOpenExtension={onOpenExtension}
                               onOpenDetail={() => void handleProbeServer(server, true)}
+                              onOpenParameters={() => {
+                                setParameterServer(server);
+                                setDetailArtworkTone(
+                                  getPluginArtworkTone('mcp:system', visualIndex),
+                                );
+                              }}
+                              onToggle={() => void handleToggleExtensionEnabled(server)}
+                              updating={updatingServerIds.has(server.id)}
                               probing={probingServerIds.has(server.id)}
-                              statusLabel={getServerStatusLabel(server)}
-                              statusClass={getServerStatusClass(server)}
+                              probeResult={probeResults[server.id]}
                             />
                           ))}
                         </div>
@@ -1132,15 +1143,30 @@ const McpManager: React.FC<McpManagerProps> = ({
       )}
 
       {/* Edit / Registry-install form modal */}
+      {parameterServer && (
+        <ExtensionMcpParametersModal
+          key={parameterServer.id}
+          server={parameterServer}
+          artworkTone={detailArtworkTone}
+          onClose={() => setParameterServer(null)}
+          onProbe={server => void handleProbeServer(server, true)}
+          probing={probingServerIds.has(parameterServer.id)}
+          probeResult={probeResults[parameterServer.id]}
+        />
+      )}
       <McpServerFormModal
         key={formGeneration.current}
         isOpen={isFormOpen}
         server={editingServer}
+        artworkTone={detailArtworkTone}
         registryEntry={installingRegistry}
         defaultRequestTimeoutSeconds={defaultRequestTimeoutSeconds}
         existingNames={existingNames}
         onClose={handleCloseForm}
         onSave={handleSaveForm}
+        onProbe={editingServer ? () => void handleProbeServer(editingServer, true) : undefined}
+        probing={editingServer ? probingServerIds.has(editingServer.id) : false}
+        probeResult={editingServer ? probeResults[editingServer.id] : undefined}
         onDelete={
           editingServer
             ? () => {
@@ -1212,9 +1238,9 @@ const McpManager: React.FC<McpManagerProps> = ({
                           {server.name}
                         </span>
                         <span
-                          className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${TRANSPORT_BADGE_COLORS[server.transportType ?? ''] || ''}`}
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${server.transportType ? MCP_TRANSPORT_BADGE_COLORS[server.transportType] : ''}`}
                         >
-                          {server.transportType || i18nService.t('mcpExtensionBadge')}
+                          {server.transportType || i18nService.t('pluginScope.extension')}
                         </span>
                       </div>
                       {result && (
@@ -1337,11 +1363,13 @@ const McpManager: React.FC<McpManagerProps> = ({
                       <div className="min-w-0">
                         <span
                           className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                            TRANSPORT_BADGE_COLORS[detailServer.transportType ?? '']
+                            detailServer.transportType
+                              ? MCP_TRANSPORT_BADGE_COLORS[detailServer.transportType]
+                              : ''
                           }`}
                         >
                           {detailServer.transportType?.toUpperCase() ||
-                            i18nService.t('mcpExtensionBadge')}
+                            i18nService.t('pluginScope.extension')}
                         </span>
                       </div>
                     </div>

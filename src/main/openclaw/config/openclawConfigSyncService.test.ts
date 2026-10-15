@@ -287,6 +287,7 @@ describe('OpenClawConfigSyncService', () => {
     permissionMode?: 'ask' | 'auto' | 'full';
     reportedPermissionMode?: 'ask' | 'auto' | 'full';
     configChanged?: boolean;
+    getExtensionMcpServerNames?: () => Promise<ReadonlySet<string>>;
     syncError?: string;
     nativeRestartStatus?: string;
     secretsChanged?: boolean;
@@ -424,6 +425,7 @@ describe('OpenClawConfigSyncService', () => {
       }),
       getOpenClawEngineManager: () => engineManager,
       getMcpStore: vi.fn(),
+      getExtensionMcpServerNames: options.getExtensionMcpServerNames,
       getHookStore: vi.fn(),
       disconnectGatewayClient,
       connectGatewayClient,
@@ -488,7 +490,7 @@ describe('OpenClawConfigSyncService', () => {
       changed: true,
     });
     expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledWith(7);
-    expect(harness.configSync.sync).toHaveBeenCalledWith('test');
+    expect(harness.configSync.sync).toHaveBeenCalledWith('test', new Set(), new Set());
     expect(harness.stopGateway).not.toHaveBeenCalled();
     expect(harness.startGateway).not.toHaveBeenCalled();
   });
@@ -515,8 +517,33 @@ describe('OpenClawConfigSyncService', () => {
       configSynced: true,
     });
     expect(result).not.toHaveProperty('hostPolicyVerified');
-    expect(harness.configSync.sync).toHaveBeenCalledWith('startup');
+    expect(harness.configSync.sync).toHaveBeenCalledWith('startup', new Set(), new Set());
   });
+
+  it('passes authoritative native extension names through configuration projection', async () => {
+    const names = new Set(['extension-server']);
+    const harness = createHarness({ getExtensionMcpServerNames: async () => names });
+    await expect(harness.service.syncConfig({ reason: 'preserve-extension', retiredMcpServerNames: ['old-user-server'] })).resolves.toMatchObject({ success: true });
+    expect(harness.configSync.sync).toHaveBeenCalledWith('preserve-extension', names, new Set(['old-user-server']));
+  });
+
+  it.each(['preserve-extension', 'auth-logout'])(
+    'preserves configuration and stops the runtime when ownership cannot be read during %s',
+    async reason => {
+      const harness = createHarness({
+        getExtensionMcpServerNames: async () => {
+          throw new Error('metadata unavailable');
+        },
+      });
+      await expect(harness.service.syncConfig({ reason })).resolves.toMatchObject({
+        success: false,
+        configSynced: false,
+      });
+      expect(harness.configSync.sync).not.toHaveBeenCalled();
+      expect(harness.disconnectGatewayClient).toHaveBeenCalledOnce();
+      expect(harness.stopGateway).toHaveBeenCalledOnce();
+    },
+  );
 
   it('restarts when a running Gateway needs a newly added environment secret', async () => {
     const harness = createHarness({

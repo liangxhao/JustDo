@@ -1,7 +1,55 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
-import { discoverExtensionMcpServers, parseExtensionMcpInventory } from './extensionMcpDiscovery';
+import {
+  discoverExtensionMcpOverrideNames,
+  discoverExtensionMcpServers,
+  parseExtensionMcpInventory,
+} from './extensionMcpDiscovery';
+
+it('does not prepare or inspect the native runtime when there are no extension overrides to retain', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-ownership-'));
+  try {
+    const configPath = path.join(directory, 'openclaw.json');
+    const manager = { getConfigPath: () => configPath } as OpenClawEngineManager;
+    const discover = vi.fn();
+    expect(await discoverExtensionMcpOverrideNames(manager, new Set(), discover)).toEqual(
+      new Set(),
+    );
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ mcp: { servers: { user: { command: 'node' } } } }),
+    );
+    expect(await discoverExtensionMcpOverrideNames(manager, new Set(['user']), discover)).toEqual(
+      new Set(),
+    );
+    expect(discover).not.toHaveBeenCalled();
+    fs.writeFileSync(configPath, '{ damaged JSON');
+    expect(await discoverExtensionMcpOverrideNames(manager, new Set(), discover)).toEqual(
+      new Set(),
+    );
+    expect(discover).not.toHaveBeenCalled();
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ mcp: { servers: { user: { command: 'node' } } } }),
+    );
+    discover.mockResolvedValue([{ name: 'plugin-server' }]);
+    expect(await discoverExtensionMcpOverrideNames(manager, new Set(), discover)).toEqual(
+      new Set(['plugin-server']),
+    );
+    discover.mockRejectedValue(new Error('metadata unavailable'));
+    await expect(discoverExtensionMcpOverrideNames(manager, new Set(), discover)).rejects.toThrow(
+      'metadata unavailable',
+    );
+  } finally {
+    expect(path.dirname(path.resolve(directory))).toBe(path.resolve(os.tmpdir()));
+    expect(path.basename(directory).startsWith('mcp-ownership-')).toBe(true);
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 describe('parseExtensionMcpInventory', () => {
   it('returns MCP servers from enabled bundle extensions', () => {

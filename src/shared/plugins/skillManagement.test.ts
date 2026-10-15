@@ -88,11 +88,10 @@ describe('skill management projection', () => {
     });
 
     expect(getSkillScope('openclaw-extra', filePath)).toBe(PluginHubScope.EXTENSION);
-    expect(capabilities.disable).toEqual({
-      allowed: false,
-      reason: PluginActionReason.MANAGED_BY_EXTENSION,
-    });
+    expect(capabilities.enable.allowed).toBe(true);
+    expect(capabilities.disable.allowed).toBe(true);
     expect(capabilities.remove.reason).toBe(PluginActionReason.MANAGED_BY_EXTENSION);
+    expect(capabilities.configure.reason).toBe(PluginActionReason.MANAGED_BY_EXTENSION);
     expect(getSkillScope('openclaw-extra', 'C:/shared-skills/example/SKILL.md')).toBe(
       PluginHubScope.OTHER,
     );

@@ -223,6 +223,7 @@ import { acquireOpenClawRuntimeDevLease } from './openclaw/runtime/openclawRunti
 import { justDoSlashCommandPolicy } from './openclaw/slashCommands/slashCommandPolicies';
 import {
   createPluginMarketplaceService,
+  discoverExtensionMcpOverrideNames,
   discoverExtensionMcpServers,
   discoverOpenClawManagedMcpServers,
   McpServices,
@@ -232,6 +233,7 @@ import {
   OpenClawSkillService,
   PluginInstallationService,
   PluginManager,
+  readNativeMcpServerNames,
 } from './plugins';
 import { SkillWorkshopService } from './plugins/skills/skillWorkshopService';
 import {
@@ -616,27 +618,28 @@ const getOpenClawDirectoryOperations = (): ManagedDirectoryOperationCoordinator 
   return openClawDirectoryOperations;
 };
 
+const getApplicationManagedPluginIds = (): string[] => {
+  const managed = listManagedOpenClawPluginIds();
+  const decision = getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.decision;
+  let videoProviderId: string | undefined;
+  try {
+    videoProviderId = resolveNativeVideoSelection(
+      getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.video,
+    )?.providerId;
+  } catch {
+    /* Invalid draft settings do not change plugin ownership. */
+  }
+  return [
+    ...managed,
+    ...(decision === undefined ? [] : [OpenClawExtensionId.TYPESAFE]),
+    ...(videoProviderId ? [videoProviderId] : []),
+  ];
+};
+
 const getOpenClawExtensionImportService = (): OpenClawExtensionImportService => {
   openClawExtensionImportService ??= new OpenClawExtensionImportService({
     getOpenClawEngineManager,
-    getManagedPluginIds: () => {
-      const managed = listManagedOpenClawPluginIds();
-      const decision =
-        getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.decision;
-      let videoProviderId: string | undefined;
-      try {
-        videoProviderId = resolveNativeVideoSelection(
-          getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.video,
-        )?.providerId;
-      } catch {
-        /* Invalid draft settings do not change plugin ownership. */
-      }
-      return [
-        ...managed,
-        ...(decision === undefined ? [] : [OpenClawExtensionId.TYPESAFE]),
-        ...(videoProviderId ? [videoProviderId] : []),
-      ];
-    },
+    getManagedPluginIds: getApplicationManagedPluginIds,
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
     runConfigMutationExclusive: operation =>
@@ -781,6 +784,15 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
       getCoworkStore,
       getOpenClawEngineManager,
       getMcpStore,
+      getExtensionMcpServerNames: () =>
+        discoverExtensionMcpOverrideNames(
+          getOpenClawEngineManager(),
+          new Set(
+            getMcpStore()
+              .listServers()
+              .map(server => server.name),
+          ),
+        ),
       getHookStore,
       disconnectGatewayClient: () => getCoworkEngineService().disconnectGatewayClient(),
       connectGatewayClient: () => getCoworkEngineService().connectGatewayClient(),
@@ -1570,17 +1582,36 @@ if (multicaBridgeArgv) {
 
   registerMcpHandlers({
     getStore: getMcpStore,
+    getManagedPluginIds: getApplicationManagedPluginIds,
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
     runConfigMutationExclusive: operation =>
       getOpenClawConfigSyncService().runConfigMutationExclusive(({ syncConfig }) =>
-        operation(() => getMcpServices().syncConfigAfterExclusiveMutation(syncConfig)),
+        operation(retiredMcpServerNames =>
+          getMcpServices().syncConfigAfterExclusiveMutation(options =>
+            syncConfig({ ...options, retiredMcpServerNames }),
+          ),
+        ),
       ),
     probeServer: probeMcpServer,
     readResource: readMcpResource,
     listExtensionServers: () => discoverExtensionMcpServers(getOpenClawEngineManager()),
-    discoverExternalServers: () => {
+    readExtensionDefinition: id => getMcpServices().readExtensionDefinition(id),
+    getNativeMcpServerNames: () =>
+      readNativeMcpServerNames(getOpenClawEngineManager().getConfigPath()),
+    discoverExternalServers: async () => {
+      const extensionNames = await discoverExtensionMcpOverrideNames(
+        getOpenClawEngineManager(),
+        new Set(
+          getMcpStore()
+            .listServers()
+            .map(server => server.name),
+        ),
+      );
       const discovered = discoverOpenClawManagedMcpServers(
         getOpenClawEngineManager().getConfigPath(),
         getMcpStore(),
+        extensionNames,
       );
       if (discovered > 0) {
         console.log(`[OpenClawMcp] discovered ${discovered} externally installed server(s)`);

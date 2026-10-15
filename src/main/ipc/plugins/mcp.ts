@@ -1,14 +1,14 @@
 import { ipcMain } from 'electron';
 
-import {
-  getExtensionProvidedManagement,
-  getUserMcpManagement,
-} from '../../../shared/plugins/management';
+import { getUserMcpManagement } from '../../../shared/plugins/management';
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
 import {
+  ExtensionMcpIpc,
   type ExtensionProvidedMcpServer,
   isValidMcpRequestTimeoutSeconds,
+  MCP_NAME_CONFLICT_ERROR,
 } from '../../../shared/plugins/mcp';
+import { listManagedOpenClawPluginIds } from '../../openclaw/config/openclawConfigBuilders';
 import type { PluginInstallationService } from '../../plugins/installation';
 import { PluginInstallOrigin } from '../../plugins/installation';
 import type {
@@ -17,8 +17,14 @@ import type {
   McpServerFormData,
   McpStore,
 } from '../../plugins/mcp';
+import {
+  ExtensionMcpSettingsService,
+  withExtensionMcpManagement,
+} from '../../plugins/mcp/extensionMcpSettingsService';
 
-type SyncMcpConfig = () => Promise<{ tools: number; error?: string }>;
+type SyncMcpConfig = (
+  retiredMcpServerNames?: readonly string[],
+) => Promise<{ tools: number; error?: string }>;
 
 interface McpHandlerDependencies {
   getStore: () => McpStore;
@@ -29,7 +35,11 @@ interface McpHandlerDependencies {
   readResource: (id: string, uri: string) => Promise<McpReadResourceResult>;
   installationService: PluginInstallationService;
   listExtensionServers: () => Promise<ExtensionProvidedMcpServer[]>;
-  discoverExternalServers: () => void;
+  readExtensionDefinition: (id: string) => Promise<Record<string, unknown> | null>;
+  getNativeMcpServerNames?: () => ReadonlySet<string>;
+  requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
+  getManagedPluginIds?: () => string[];
+  discoverExternalServers: () => void | Promise<void>;
   onMarketplacePluginDeleted?: (kind: typeof PluginKind.MCP, runtimeId: string) => void;
 }
 
@@ -40,6 +50,10 @@ export const registerMcpHandlers = ({
   readResource,
   installationService,
   listExtensionServers,
+  readExtensionDefinition,
+  getNativeMcpServerNames = () => new Set(),
+  requestGateway,
+  getManagedPluginIds = listManagedOpenClawPluginIds,
   discoverExternalServers,
   onMarketplacePluginDeleted,
 }: McpHandlerDependencies): void => {
@@ -47,7 +61,25 @@ export const registerMcpHandlers = ({
   const runMcpOperationExclusive = <T>(
     operation: (syncConfig: SyncMcpConfig) => Promise<T>,
   ): Promise<T> => {
-    const result = mutationTail.then(() => runConfigMutationExclusive(operation));
+    const result = mutationTail.then(() =>
+      runConfigMutationExclusive(syncConfig => {
+        const projectionNames = new Set(
+          getStore()
+            .listServers()
+            .map(server => server.name),
+        );
+        return operation(() => {
+          const currentNames = new Set(
+            getStore()
+              .listServers()
+              .map(server => server.name),
+          );
+          // A rollback must also retire names projected by the failed attempt.
+          for (const name of currentNames) projectionNames.add(name);
+          return syncConfig([...projectionNames].filter(name => !currentNames.has(name)));
+        });
+      }),
+    );
     mutationTail = result.then(
       (): void => undefined,
       (): void => undefined,
@@ -95,6 +127,32 @@ export const registerMcpHandlers = ({
     getStore()
       .listServers()
       .map(server => ({ ...server, ...getUserMcpManagement() }));
+  const listManagedExtensionServers = async () => {
+    const protectedIds = new Set(getManagedPluginIds());
+    const userNames = new Set(
+      getStore()
+        .listServers()
+        .map(server => server.name),
+    );
+    return (await listExtensionServers()).map(server =>
+      withExtensionMcpManagement(server, userNames, protectedIds),
+    );
+  };
+  const extensionSettings = new ExtensionMcpSettingsService({
+    request: requestGateway,
+    listServers: listManagedExtensionServers,
+    readDefinition: readExtensionDefinition,
+  });
+  const conflictsWithNativeName = async (name: string) => {
+    if (
+      getStore()
+        .listServers()
+        .some(server => server.name === name)
+    )
+      return false;
+    if (getNativeMcpServerNames().has(name)) return true;
+    return (await listExtensionServers()).some(server => server.name === name);
+  };
   installationService.registerInstaller({
     kind: PluginKind.MCP,
     install: request =>
@@ -125,6 +183,14 @@ export const registerMcpHandlers = ({
           const previousState = store.getServer(targetId);
           if (!previousState)
             return { success: false, error: 'Installed MCP server was not found' };
+          const nextName = request.payload.config.name?.trim();
+          if (
+            nextName &&
+            nextName !== previousState.name &&
+            (await conflictsWithNativeName(nextName))
+          ) {
+            return { success: false, error: MCP_NAME_CONFLICT_ERROR };
+          }
           const updated = store.updateServer(targetId, {
             ...request.payload.config,
             registryId:
@@ -143,6 +209,9 @@ export const registerMcpHandlers = ({
         }
         if (!config.transportType) {
           return { success: false, error: 'MCP transport type is required' };
+        }
+        if (await conflictsWithNativeName(config.name.trim())) {
+          return { success: false, error: MCP_NAME_CONFLICT_ERROR };
         }
         if (
           request.origin === PluginInstallOrigin.MARKETPLACE &&
@@ -170,7 +239,7 @@ export const registerMcpHandlers = ({
     runMcpOperationExclusive(async () => {
       try {
         try {
-          discoverExternalServers();
+          await discoverExternalServers();
         } catch (error) {
           console.warn(
             '[OpenClawMcp] Failed to discover externally installed MCP servers:',
@@ -189,17 +258,10 @@ export const registerMcpHandlers = ({
 
   ipcMain.handle('mcp:listExtensionServers', async () => {
     try {
-      const extensionServers = await listExtensionServers();
+      const extensionServers = await listManagedExtensionServers();
       return {
         success: true,
-        extensionServers: extensionServers.map(server => ({
-          ...server,
-          ...getExtensionProvidedManagement({
-            id: server.providerId,
-            name: server.providerName,
-            scope: server.scope,
-          }),
-        })),
+        extensionServers,
       };
     } catch (error) {
       console.warn(
@@ -209,6 +271,13 @@ export const registerMcpHandlers = ({
       return { success: false, extensionServers: [] };
     }
   });
+
+  ipcMain.handle(ExtensionMcpIpc.SetEnabled, (_event, input: unknown) =>
+    runMcpOperationExclusive(syncConfig => extensionSettings.setEnabled(input, syncConfig)),
+  );
+  ipcMain.handle(ExtensionMcpIpc.ReadSettings, (_event, id: unknown) =>
+    runMcpOperationExclusive(() => extensionSettings.readSettings(id)),
+  );
 
   ipcMain.handle('mcp:create', async (_event, data: McpServerFormData) => {
     try {

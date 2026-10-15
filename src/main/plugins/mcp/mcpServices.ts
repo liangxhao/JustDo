@@ -63,6 +63,10 @@ export class McpServices {
     return probeMcpServer(server);
   }
 
+  readExtensionDefinition(id: string): Promise<Record<string, unknown> | null> {
+    return runExtensionMcpOperation(this.deps.getManager(), 'settings', id);
+  }
+
   async readResource(id: string, uri: string): Promise<McpReadResourceResult> {
     if (id.startsWith('extension:')) {
       return runExtensionMcpOperation(this.deps.getManager(), 'read', id, uri);

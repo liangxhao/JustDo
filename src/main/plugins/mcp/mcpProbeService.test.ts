@@ -99,3 +99,12 @@ test('keeps ordinary MCP resource reads outside the probe-only outbound-header p
 
   expect(mocks.transportFetch).toBeUndefined();
 });
+
+test('tests a disabled user MCP without changing its saved definition', async () => {
+  const server = { ...buildServer('http'), enabled: false };
+  const before = structuredClone(server);
+  const result = await probeMcpServer(server);
+
+  expect(result.available).toBe(true);
+  expect(server).toEqual(before);
+});

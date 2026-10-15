@@ -163,6 +163,7 @@ import { getElectronNodeRuntimePath } from '../runtime/electronNodeRuntime';
 import { resolveManagedAgentWorkspace, resolveManagedAgentWorkspaceRoot } from './agentWorkspace';
 import { syncBuiltinCredentialFile } from './builtinCredentialFile';
 import { seedMainRoleFiles } from './mainRoleFiles';
+import { mergeNativeMcpOverrides } from './nativeMcpOverrides';
 import { restrictCredentialFile, syncProviderSecretFile } from './providerSecretFile';
 
 export class OpenClawConfigSync {
@@ -207,7 +208,11 @@ export class OpenClawConfigSync {
     this.getWindowsSandboxEnvironment = deps.getWindowsSandboxEnvironment ?? (() => ({}));
   }
 
-  sync(reason: string): OpenClawConfigSyncResult {
+  sync(
+    reason: string,
+    extensionMcpNames: ReadonlySet<string> = new Set(),
+    retiredMcpNames: ReadonlySet<string> = new Set(),
+  ): OpenClawConfigSyncResult {
     this.decisionSecretsChanged = false;
     this.videoSecretsChanged = false;
     let videoConfigurationFailed = true;
@@ -241,7 +246,7 @@ export class OpenClawConfigSync {
         this.restoreUnmanagedDecision = captureDecisionModelConfiguration(existing);
       }
       this.decisionSelection = selection;
-      const result = this.syncConfiguration(reason);
+      const result = this.syncConfiguration(reason, extensionMcpNames, retiredMcpNames);
       if (!result.ok) return result;
       if (selection === undefined) this.restoreUnmanagedDecision = undefined;
       if (videoSelection === undefined) this.restoreUnmanagedVideo = undefined;
@@ -302,7 +307,11 @@ export class OpenClawConfigSync {
     this.decisionSecretsChanged ||= changed;
   }
 
-  private syncConfiguration(reason: string): OpenClawConfigSyncResult {
+  private syncConfiguration(
+    reason: string,
+    extensionMcpNames: ReadonlySet<string>,
+    retiredMcpNames: ReadonlySet<string>,
+  ): OpenClawConfigSyncResult {
     const configPath = this.engineManager.getConfigPath();
     const isAuthLifecycleSync =
       reason === BuiltinModelSyncReason.AuthLogin || reason === BuiltinModelSyncReason.AuthLogout;
@@ -349,7 +358,7 @@ export class OpenClawConfigSync {
       // No API/model configured yet (fresh install). Write a minimal config so
       // the gateway can start; it just won't have a model provider until the
       // user configures one.
-      return this.writeMinimalConfig(configPath, reason);
+      return this.writeMinimalConfig(configPath, reason, extensionMcpNames, retiredMcpNames);
     }
 
     const allProvidersMap: Record<string, OpenClawProviderSelection['providerConfig']> =
@@ -474,9 +483,11 @@ export class OpenClawConfigSync {
       ...buildManagedSwarmWorkflowPluginEntries(this.getAgents?.() ?? []),
     };
     const defaultPluginEntries = buildDefaultOpenClawPluginEntries();
-    const mcpServers = buildOpenClawMcpServers(
-      mcpServerRecords,
-      agentRuntimeSettings.mcp.requestTimeoutSeconds,
+    const mcpServers = mergeNativeMcpOverrides(
+      existingConfig,
+      buildOpenClawMcpServers(mcpServerRecords, agentRuntimeSettings.mcp.requestTimeoutSeconds),
+      extensionMcpNames,
+      retiredMcpNames,
     );
     const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
       this.engineManager.getStateDir(),
@@ -873,7 +884,12 @@ export class OpenClawConfigSync {
    * model/provider configured.  The full config will be synced once the
    * user sets up a model in the UI.
    */
-  private writeMinimalConfig(configPath: string, reason: string): OpenClawConfigSyncResult {
+  private writeMinimalConfig(
+    configPath: string,
+    reason: string,
+    extensionMcpNames: ReadonlySet<string>,
+    retiredMcpNames: ReadonlySet<string>,
+  ): OpenClawConfigSyncResult {
     const coworkConfig = this.getCoworkConfig();
     const configuredWorkspaceDir = (coworkConfig.workingDirectory || '').trim();
     const resolvedWorkspaceDir = configuredWorkspaceDir
@@ -1022,6 +1038,9 @@ export class OpenClawConfigSync {
       // Only malformed JSON follows the minimal-config recovery path.
     }
     if (isRecord(previousConfig)) {
+      minimalConfig.mcp = {
+        servers: mergeNativeMcpOverrides(previousConfig, mcpServers, extensionMcpNames, retiredMcpNames),
+      };
       for (const key of ['worktreeRoot', 'worktreeAcceleration']) {
         if (previousConfig[key] !== undefined) minimalConfig[key] = previousConfig[key];
       }
@@ -1200,7 +1219,7 @@ export class OpenClawConfigSync {
                   acp: buildManagedOpenClawAcpConfig(externalAgentSettings),
                   session: buildManagedOpenClawSessionConfig(canonicalExisting.session),
                   mcp: {
-                    servers: mcpServers,
+                    servers: mergeNativeMcpOverrides(canonicalExisting, mcpServers, extensionMcpNames, retiredMcpNames),
                   },
                   update: connectivityConfig.update,
                   browser: connectivityConfig.browser,

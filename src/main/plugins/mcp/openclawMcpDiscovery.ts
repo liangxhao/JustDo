@@ -11,9 +11,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const stringRecord = (value: unknown): Record<string, string> | undefined => {
   if (!isRecord(value)) return undefined;
-  return Object.fromEntries(
-    Object.entries(value).map(([key, item]) => [key, String(item)]),
-  );
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, String(item)]));
 };
 
 const parseServer = (
@@ -51,6 +49,7 @@ const parseServer = (
 export const discoverOpenClawManagedMcpServers = (
   configPath: string,
   store: DiscoveryStore,
+  extensionNames: ReadonlySet<string> = new Set(),
 ): number => {
   if (!fs.existsSync(configPath)) return 0;
   const parsed = JSON5.parse(fs.readFileSync(configPath, 'utf8')) as unknown;
@@ -59,7 +58,8 @@ export const discoverOpenClawManagedMcpServers = (
   const knownNames = new Set(store.listServers().map(server => server.name));
   let discovered = 0;
   for (const [name, raw] of Object.entries(parsed.mcp.servers)) {
-    if (!name.trim() || knownNames.has(name) || !isRecord(raw)) continue;
+    if (!name.trim() || knownNames.has(name) || extensionNames.has(name) || !isRecord(raw))
+      continue;
     const server = parseServer(name, raw);
     if (!server) continue;
     if (store.createDiscoveredServer(server)) {

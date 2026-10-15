@@ -3,7 +3,6 @@ import {
   ArrowUpTrayIcon,
   FolderIcon,
   SparklesIcon,
-  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { PluginHubScope } from '@shared/plugins/management';
 import { PluginKind } from '@shared/plugins/marketplace';
@@ -21,10 +20,18 @@ import {
   MarketplaceFilter,
   usePluginMarketplace,
 } from '@/features/plugins/marketplace/usePluginMarketplace';
+import ExtensionBadge from '@/features/plugins/shared/ExtensionBadge';
 import OperationResultModal, {
   type OperationResult,
 } from '@/features/plugins/shared/OperationResultModal';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
+import PluginCard from '@/features/plugins/shared/PluginCard';
+import {
+  PLUGIN_DETAIL_BODY_CLASS_NAME,
+  PLUGIN_DETAIL_FOOTER_CLASS_NAME,
+  PLUGIN_DETAIL_MODAL_CLASS_NAME,
+  PluginDetailHeader,
+} from '@/features/plugins/shared/PluginDetail';
 import PluginGroupSection from '@/features/plugins/shared/PluginGroupSection';
 import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubTypes';
 import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownDescription';
@@ -64,6 +71,9 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   const skillSearchQuery = sharedSearchQuery ?? localSearchQuery;
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
+  const [detailArtworkTone, setDetailArtworkTone] = useState(() =>
+    getPluginArtworkTone('skills:personal'),
+  );
   const selectedSkill = skills.find(skill => skill.id === selectedSkillId);
   const selectedSkillMissing = selectedSkill
     ? getMissingSkillDependencies(selectedSkill)
@@ -470,43 +480,36 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
     ) : undefined;
 
   const renderInstalledCard = (skill: Skill, visualIndex: number) => {
+    const artworkTone = getPluginArtworkTone(`skills:${skill.ownershipScope}`, visualIndex);
     const toggleAllowed = skill.enabled
       ? skill.management.disable.allowed
       : skill.management.enable.allowed;
+    const status = renderSkillStatus(skill);
+    const showScope =
+      skill.scope !== PluginHubScope.EXTENSION &&
+      skill.scope !== PluginHubScope.PERSONAL &&
+      skill.scope !== PluginHubScope.SYSTEM;
     return (
-      <article
+      <PluginCard
         key={skill.id}
-        className="group relative min-h-16 min-w-0 cursor-pointer rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-border/70 hover:bg-surface-raised/70"
-        onClick={() => setSelectedSkillId(skill.id)}
-      >
-        <button
-          type="button"
-          className="absolute inset-0 z-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
-          aria-label={`${i18nService.t('subtaskShowInfo')}: ${skill.name}`}
-          onClick={event => {
-            event.stopPropagation();
-            setSelectedSkillId(skill.id);
-          }}
-        />
-        <div className="pointer-events-none relative z-10 grid min-w-0 grid-cols-[2rem_minmax(0,1fr)_auto] gap-x-2 [&_button]:pointer-events-auto">
+        onOpen={() => {
+          setSelectedSkillId(skill.id);
+          setDetailArtworkTone(artworkTone);
+        }}
+        openLabel={`${i18nService.t('subtaskShowInfo')}: ${skill.name}`}
+        icon={
           <div
-            className={`row-span-3 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${getPluginArtworkTone(`skills:${skill.ownershipScope}`, visualIndex)}`}
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${artworkTone}`}
           >
             <SparklesIcon className="h-4 w-4" />
           </div>
-          <div className="flex min-w-0 items-center gap-1.5 self-center">
-            <span className="min-w-0 truncate text-sm font-medium text-foreground">
-              {skill.name}
-            </span>
-            {/* Status badge */}
-            {renderSkillStatus(skill)}
-            {skill.scope !== PluginHubScope.PERSONAL && (
-              <span className="shrink-0 rounded-full bg-surface-raised px-1.5 py-0.5 text-[10px] font-medium text-secondary">
-                {getScopeLabel(skill.scope)}
-              </span>
-            )}
-          </div>
-          <div className="flex shrink-0 items-center gap-1 self-center">
+        }
+        iconBadge={skill.scope === PluginHubScope.EXTENSION ? <ExtensionBadge /> : undefined}
+        title={
+          <span className="block truncate text-sm font-medium text-foreground">{skill.name}</span>
+        }
+        actions={
+          <>
             <InstalledMarketplaceAction
               controller={marketplace}
               id={skill.id}
@@ -536,7 +539,9 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                 }}
               />
             )}
-          </div>
+          </>
+        }
+        description={
           <Tooltip
             content={skillService.getLocalizedSkillDescription(
               skill.id,
@@ -545,25 +550,32 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             )}
             position="bottom"
             maxWidth="360px"
-            className="col-start-2 block min-w-0"
+            className="block w-full"
           >
-            <p className="truncate text-xs text-secondary">
+            <p className="line-clamp-2 break-words">
               {skillService.getLocalizedSkillDescription(skill.id, skill.name, skill.description)}
             </p>
           </Tooltip>
-
-          {skill.version && (
-            <div className="col-start-2 mt-1 flex min-w-0 items-center text-[10px] text-secondary">
-              <div className="flex items-center gap-2">
+        }
+        footer={
+          status || showScope || skill.version ? (
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              {status}
+              {showScope && (
+                <span className="shrink-0 rounded-full bg-surface-raised px-1.5 py-0.5 font-medium">
+                  {getScopeLabel(skill.scope)}
+                </span>
+              )}
+              {skill.version && (
                 <span className="px-1.5 py-0.5 rounded bg-surface-raised font-medium">
                   v{skill.version}
                 </span>
-              </div>
+              )}
             </div>
-          )}
-        </div>
-        <MarketplaceFeedback controller={marketplace} id={skill.id} />
-      </article>
+          ) : undefined
+        }
+        feedback={<MarketplaceFeedback controller={marketplace} id={skill.id} />}
+      />
     );
   };
 
@@ -628,7 +640,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                           {i18nService.t('noSkillsAvailable')}
                         </p>
                       ) : (
-                        <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
+                        <div className="grid min-w-0 auto-rows-fr grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-4">
                           {group.skills.map(renderInstalledCard)}
                         </div>
                       )}
@@ -660,85 +672,73 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
           <Modal
             onClose={() => setSelectedSkillId(null)}
             overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-            className="w-full max-w-md mx-4 rounded-2xl bg-surface border border-border shadow-2xl p-6"
+            className={PLUGIN_DETAIL_MODAL_CLASS_NAME}
           >
-            <div className="flex items-start justify-between mb-4">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-9 h-9 rounded-lg bg-background flex items-center justify-center flex-shrink-0">
-                  <SparklesIcon className="h-5 w-5 text-secondary" />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-base font-semibold text-foreground truncate">
-                    {selectedSkill.name}
-                  </div>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedSkillId(null)}
-                className="p-1.5 rounded-lg text-secondary hover:text-foreground hover:bg-surface-raised transition-colors flex-shrink-0"
-              >
-                <XMarkIcon className="h-5 w-5" />
-              </button>
-            </div>
-
-            <PluginMarkdownDescription
-              className="mb-4"
-              content={skillService.getLocalizedSkillDescription(
-                selectedSkill.id,
-                selectedSkill.name,
-                selectedSkill.description,
-              )}
+            <PluginDetailHeader
+              title={selectedSkill.name}
+              icon={<SparklesIcon className="h-5 w-5" />}
+              artworkTone={detailArtworkTone}
+              onClose={() => setSelectedSkillId(null)}
             />
 
-            {/* Eligibility info */}
-            {selectedSkillMissing && getMissingRequirementCount(selectedSkillMissing) > 0 && (
-              <div className="p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/30 mb-4">
-                <p className="text-xs text-yellow-600 font-medium mb-1">
-                  {i18nService.t('skillMissingRequirements')}
-                </p>
-                {selectedSkillMissing.bins.length > 0 && (
-                  <p className="text-xs text-secondary">
-                    {i18nService.t('missingBins')}: {selectedSkillMissing.bins.join(', ')}
-                  </p>
+            <div className={PLUGIN_DETAIL_BODY_CLASS_NAME}>
+              <PluginMarkdownDescription
+                content={skillService.getLocalizedSkillDescription(
+                  selectedSkill.id,
+                  selectedSkill.name,
+                  selectedSkill.description,
                 )}
-                {Boolean(selectedSkillMissing.anyBins?.length) && (
-                  <p className="text-xs text-secondary">
-                    {i18nService.t('missingAnyBins')}: {selectedSkillMissing.anyBins?.join(', ')}
-                  </p>
-                )}
-                {selectedSkillMissing.env.length > 0 && (
-                  <p className="text-xs text-secondary">
-                    {i18nService.t('missingEnv')}: {selectedSkillMissing.env.join(', ')}
-                  </p>
-                )}
-                {selectedSkillMissing.config.length > 0 && (
-                  <p className="text-xs text-secondary">
-                    {i18nService.t('missingConfig')}: {selectedSkillMissing.config.join(', ')}
-                  </p>
-                )}
-                {selectedSkillMissing.os.length > 0 && (
-                  <p className="text-xs text-secondary">
-                    {i18nService.t('missingOs')}: {selectedSkillMissing.os.join(', ')}
-                  </p>
-                )}
-              </div>
-            )}
+              />
 
-            <div className="space-y-2 mb-5">
-              {selectedSkill.version && (
-                <div className="flex items-center text-xs">
-                  <span className="w-16 flex-shrink-0 text-secondary">
-                    {i18nService.t('skillDetailVersion')}
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-surface-raised text-foreground font-medium">
-                    v{selectedSkill.version}
-                  </span>
+              {/* Eligibility info */}
+              {selectedSkillMissing && getMissingRequirementCount(selectedSkillMissing) > 0 && (
+                <div className="p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/30">
+                  <p className="text-xs text-yellow-600 font-medium mb-1">
+                    {i18nService.t('skillMissingRequirements')}
+                  </p>
+                  {selectedSkillMissing.bins.length > 0 && (
+                    <p className="text-xs text-secondary">
+                      {i18nService.t('missingBins')}: {selectedSkillMissing.bins.join(', ')}
+                    </p>
+                  )}
+                  {Boolean(selectedSkillMissing.anyBins?.length) && (
+                    <p className="text-xs text-secondary">
+                      {i18nService.t('missingAnyBins')}: {selectedSkillMissing.anyBins?.join(', ')}
+                    </p>
+                  )}
+                  {selectedSkillMissing.env.length > 0 && (
+                    <p className="text-xs text-secondary">
+                      {i18nService.t('missingEnv')}: {selectedSkillMissing.env.join(', ')}
+                    </p>
+                  )}
+                  {selectedSkillMissing.config.length > 0 && (
+                    <p className="text-xs text-secondary">
+                      {i18nService.t('missingConfig')}: {selectedSkillMissing.config.join(', ')}
+                    </p>
+                  )}
+                  {selectedSkillMissing.os.length > 0 && (
+                    <p className="text-xs text-secondary">
+                      {i18nService.t('missingOs')}: {selectedSkillMissing.os.join(', ')}
+                    </p>
+                  )}
                 </div>
               )}
+
+              <div className="space-y-2">
+                {selectedSkill.version && (
+                  <div className="flex items-center text-xs">
+                    <span className="w-16 flex-shrink-0 text-secondary">
+                      {i18nService.t('skillDetailVersion')}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded bg-surface-raised text-foreground font-medium">
+                      v{selectedSkill.version}
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className={PLUGIN_DETAIL_FOOTER_CLASS_NAME}>
               <Tooltip content={i18nService.t('openFolder')} position="top">
                 <button
                   type="button"
@@ -765,41 +765,6 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                   </button>
                 </Tooltip>
               )}
-              <div className="ml-auto">
-                {(selectedSkill.enabled
-                  ? selectedSkill.management.disable
-                  : selectedSkill.management.enable
-                ).allowed ? (
-                  <Tooltip
-                    content={i18nService.t(
-                      selectedSkill.enabled ? 'pluginStatusEnabled' : 'pluginStatusDisabled',
-                    )}
-                    position="top"
-                  >
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-label={`${i18nService.t(selectedSkill.enabled ? 'disableSkill' : 'enableSkill')}: ${selectedSkill.name}`}
-                      aria-checked={selectedSkill.enabled}
-                      disabled={
-                        readOnly || gatewayOffline || updatingSkillIds.has(selectedSkill.id)
-                      }
-                      aria-busy={updatingSkillIds.has(selectedSkill.id) || undefined}
-                      onClick={() => void handleToggleSkill(selectedSkill.id)}
-                      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${selectedSkill.enabled ? 'bg-primary' : 'bg-border'}`}
-                    >
-                      <span
-                        className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${selectedSkill.enabled ? 'translate-x-5' : 'translate-x-0'}`}
-                      />
-                    </button>
-                  </Tooltip>
-                ) : (
-                  <PluginLockedIndicator
-                    checked={selectedSkill.enabled}
-                    label={i18nService.t('pluginManagedActionUnavailable')}
-                  />
-                )}
-              </div>
             </div>
           </Modal>,
           document.body,

@@ -138,7 +138,7 @@ async function openDetails(readOnly = false, skillName = skill.name) {
   return store;
 }
 
-test('enables an opt-in skill from its details and refreshes the open dialog', async () => {
+test('enables an opt-in skill from its card and refreshes the open details', async () => {
   let finish!: (skills: Skill[]) => void;
   vi.mocked(skillService.setSkillEnabled).mockReturnValue(
     new Promise(resolve => {
@@ -148,7 +148,12 @@ test('enables an opt-in skill from its details and refreshes the open dialog', a
   const store = await openDetails();
   expect(screen.queryByText('skillMissingRequirements')).toBeNull();
   expect(screen.queryByText('1 missing')).toBeNull();
-  const enable = screen.getByRole('switch', { name: 'enableSkill: coding-agent' });
+  const close = screen.getByRole('button', { name: 'close' });
+  expect(
+    within(close.closest<HTMLElement>('[data-workspace-overlay]')!).queryByRole('switch'),
+  ).toBeNull();
+  fireEvent.click(close);
+  const enable = screen.getByRole('switch', { name: 'enableSkill' });
   expect(enable.getAttribute('aria-checked')).toBe('false');
   expect(enable.textContent).toBe('');
 
@@ -158,6 +163,7 @@ test('enables an opt-in skill from its details and refreshes the open dialog', a
   expect(enable.getAttribute('aria-busy')).toBe('true');
   fireEvent.click(enable);
   expect(skillService.setSkillEnabled).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByRole('button', { name: 'subtaskShowInfo: coding-agent' }));
   await act(async () =>
     finish([
       {
@@ -169,14 +175,15 @@ test('enables an opt-in skill from its details and refreshes the open dialog', a
     ]),
   );
 
-  const disable = await screen.findByRole('switch', { name: 'disableSkill: coding-agent' });
+  const disable = await screen.findByRole('switch', { name: 'disableSkill' });
   expect(disable.getAttribute('aria-checked')).toBe('true');
   expect(screen.queryByText('skillMissingRequirements')).toBeNull();
   expect(store.getState().skill.skills[0].enabled).toBe(true);
 
   vi.mocked(skillService.setSkillEnabled).mockResolvedValue([skill]);
+  fireEvent.click(screen.getByRole('button', { name: 'close' }));
   fireEvent.click(disable);
-  const disabled = await screen.findByRole('switch', { name: 'enableSkill: coding-agent' });
+  const disabled = await screen.findByRole('switch', { name: 'enableSkill' });
   expect(skillService.setSkillEnabled).toHaveBeenLastCalledWith('coding-agent', false);
   expect(disabled.getAttribute('aria-checked')).toBe('false');
 });
@@ -195,17 +202,19 @@ test('keeps the original state and allows retrying after enabling fails', async 
   ]);
   vi.mocked(skillService.setSkillEnabled).mockRejectedValue(new Error('Save failed'));
   await openDetails();
-  fireEvent.click(screen.getByRole('switch', { name: 'enableSkill: coding-agent' }));
+  fireEvent.click(screen.getByRole('button', { name: 'close' }));
+  fireEvent.click(screen.getByRole('switch', { name: 'enableSkill' }));
 
   await screen.findByText('Save failed');
   await waitFor(() =>
-    expect(
-      screen.getByRole('switch', { name: 'enableSkill: coding-agent' }).hasAttribute('disabled'),
-    ).toBe(false),
+    expect(screen.getByRole('switch', { name: 'enableSkill' }).hasAttribute('disabled')).toBe(
+      false,
+    ),
   );
-  expect(
-    screen.getByRole('switch', { name: 'enableSkill: coding-agent' }).getAttribute('aria-checked'),
-  ).toBe('false');
+  expect(screen.getByRole('switch', { name: 'enableSkill' }).getAttribute('aria-checked')).toBe(
+    'false',
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'subtaskShowInfo: coding-agent' }));
   expect(screen.getByText('missingConfig: tools.exec.enabled')).toBeTruthy();
   expect(screen.getByText('missingBins: codex')).toBeTruthy();
   expect(screen.getByText('2 missing')).toBeTruthy();
@@ -242,38 +251,56 @@ test('keeps alternative tool requirements visible before and after enabling a sk
   );
   fireEvent.mouseLeave(badge);
 
-  fireEvent.click(screen.getByRole('switch', { name: 'enableSkill: coding-agent' }));
-  await screen.findByRole('switch', { name: 'disableSkill: coding-agent' });
+  fireEvent.click(screen.getByRole('button', { name: 'close' }));
+  fireEvent.click(screen.getByRole('switch', { name: 'enableSkill' }));
+  await screen.findByRole('switch', { name: 'disableSkill' });
+  fireEvent.click(screen.getByRole('button', { name: 'subtaskShowInfo: coding-agent' }));
   expect(screen.getByText('missingAnyBins: claude, codex, opencode')).toBeTruthy();
   expect(screen.getByText('1 missing')).toBeTruthy();
 });
 
-test('keeps extension-managed skills locked in their details', async () => {
-  vi.mocked(skillService.loadSkills).mockResolvedValue([
-    {
-      ...skill,
-      management: getSkillManagementCapabilities({
-        source: 'openclaw-extra',
-        bundled: false,
-        eligible: false,
-        hasPath: true,
-        filePath: 'C:/state/plugin-skills/coding-agent/SKILL.md',
-      }),
-    },
-  ]);
-  await openDetails();
+test('switches an extension skill from its card while keeping details free of switches and removal', async () => {
+  const extensionSkill = {
+    ...skill,
+    isBuiltIn: false,
+    source: 'openclaw-extra' as const,
+    scope: 'extension' as const,
+    skillPath: 'C:/state/plugin-skills/coding-agent/SKILL.md',
+    management: getSkillManagementCapabilities({
+      source: 'openclaw-extra',
+      bundled: false,
+      eligible: false,
+      hasPath: true,
+      filePath: 'C:/state/plugin-skills/coding-agent/SKILL.md',
+    }),
+  };
+  vi.mocked(skillService.loadSkills).mockResolvedValue([extensionSkill]);
+  vi.mocked(skillService.setSkillEnabled).mockResolvedValue([{ ...extensionSkill, enabled: true }]);
+  const store = await openDetails();
 
-  expect(screen.queryByRole('switch', { name: 'enableSkill: coding-agent' })).toBeNull();
+  const close = screen.getByRole('button', { name: 'close' });
   expect(
-    screen.getAllByRole('img', { name: 'pluginStatusDisabled · pluginManagedActionUnavailable' }),
-  ).toHaveLength(2);
-  expect(skillService.setSkillEnabled).not.toHaveBeenCalled();
+    within(close.closest<HTMLElement>('[data-workspace-overlay]')!).queryByRole('switch'),
+  ).toBeNull();
+  expect(screen.queryByRole('button', { name: 'deleteSkill' })).toBeNull();
+  fireEvent.click(close);
+  const toggle = screen.getByRole('switch', { name: 'enableSkill' });
+  expect(toggle.hasAttribute('disabled')).toBe(false);
+  await act(async () => fireEvent.click(toggle));
+  expect(skillService.setSkillEnabled).toHaveBeenCalledWith(extensionSkill.id, true);
+  expect(store.getState().skill.skills[0].enabled).toBe(true);
+  expect(screen.getByRole('switch', { name: 'disableSkill' })).toBeTruthy();
 });
 
 test('does not expose mutations in read-only skill details', async () => {
   await openDetails(true);
 
-  const toggle = screen.getByRole('switch', { name: 'enableSkill: coding-agent' });
+  const close = screen.getByRole('button', { name: 'close' });
+  expect(
+    within(close.closest<HTMLElement>('[data-workspace-overlay]')!).queryByRole('switch'),
+  ).toBeNull();
+  fireEvent.click(close);
+  const toggle = screen.getByRole('switch', { name: 'enableSkill' });
   expect(toggle.hasAttribute('disabled')).toBe(true);
   expect(toggle.getAttribute('aria-checked')).toBe('false');
   fireEvent.click(toggle);
