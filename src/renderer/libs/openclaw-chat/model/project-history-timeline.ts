@@ -13,7 +13,12 @@ import {
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
 import { type ThinkingItem, type ToolItem } from './chat-transcript-state';
-import { isFailedRunMessage } from './failed-run-message';
+import {
+  FAILED_RUN_MESSAGE_FLAG,
+  isFailedRunMessage,
+  readAssistantFailureDetail,
+  readUncoveredFailureDetail,
+} from './failed-run-message';
 import { deterministicHistoryKey } from './history-reconciler';
 import type {
   LiveProcessTimelineItem,
@@ -589,6 +594,15 @@ export function projectPersistedTimeline(
   };
 
   const visibleMessages = collapseRepeatedFailures(messages);
+  const failureDetailOwners = new Map<string, GatewayMessage>();
+  for (const value of visibleMessages) {
+    if (!readAssistantFailureDetail(value)) continue;
+    const source = unwrapToolMessage(value);
+    const marker = asToolRecord(source?.__openclaw) ?? asToolRecord(value.__openclaw);
+    if (typeof marker?.id === 'string' && marker.id.trim()) {
+      failureDetailOwners.set(marker.id, value);
+    }
+  }
   let visibleMessageIndex = 0;
   messages.forEach((outerMessage, messageIndex) => {
     if (visibleMessages[visibleMessageIndex] !== outerMessage) return;
@@ -678,6 +692,34 @@ export function projectPersistedTimeline(
       ...attachedToolMessages(message),
       ...(message === outer ? [] : attachedToolMessages(outer)),
     ];
+    const emitFailureDetail = () => {
+      // Native history may admit multiple commentary/content projections for
+      // one source message. Its final visible sibling owns the diagnostic.
+      if (typeof marker?.id === 'string' && failureDetailOwners.get(marker.id) !== outerMessage) {
+        return;
+      }
+      const detail = readUncoveredFailureDetail(outerMessage, messages);
+      if (!detail) return;
+      // Emit once per native source, after all of its Content/Thinking/Tool
+      // segments, including sources that have no visible Content blocks.
+      const failureMessage = {
+        ...message,
+        role: 'system',
+        content: detail,
+        isError: true,
+        [FAILED_RUN_MESSAGE_FLAG]: true,
+      };
+      emitMessage(
+        (message === outer
+          ? failureMessage
+          : { ...outer, message: failureMessage }) as GatewayMessage,
+        `${messageKey}:failure`,
+        durationMs,
+        completedAt,
+        modelRef,
+        runState,
+      );
+    };
 
     if (TOOL_RESULT_ROLES.has(role) || TOOL_CALL_ROLES.has(role)) {
       applyToolOnlyMessage(message, `${messageKey}:tool`, runId, messageIndex, timestamp);
@@ -715,6 +757,7 @@ export function projectPersistedTimeline(
           timestamp,
         );
       }
+      emitFailureDetail();
       return;
     }
 
@@ -785,6 +828,7 @@ export function projectPersistedTimeline(
         timestamp,
       );
     }
+    emitFailureDetail();
   });
   flushSummary();
 

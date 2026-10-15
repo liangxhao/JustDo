@@ -4,10 +4,88 @@ import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
 import { reduceAgentEvent } from './agent-event-reducer';
 import { createChatTranscriptState } from './chat-transcript-state';
+import { FAILED_RUN_MESSAGE_FLAG } from './failed-run-message';
 import { projectPersistedTimeline } from './project-history-timeline';
 import { projectTurnItems } from './project-turn-items';
 
 describe('projectPersistedTimeline', () => {
+  test('retains native identity and emits a split message diagnostic once after its content', () => {
+    const marker = { id: 'native-failure', runId: 'run-1' };
+    const message = {
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'Before tool' },
+        { type: 'toolCall', id: 'call-1', name: 'read', arguments: {} },
+        { type: 'text', text: 'After tool' },
+      ],
+      stopReason: 'error',
+      errorMessage: 'Deployment is paused',
+      __openclaw: marker,
+    };
+    const before = structuredClone(message);
+    const timeline = projectPersistedTimeline([message]);
+    expect(timeline.filter(item => item.kind === 'history-message')).toHaveLength(3);
+    expect(timeline[timeline.length - 1]).toMatchObject({
+      kind: 'history-message',
+      message: {
+        role: 'system',
+        content: message.errorMessage,
+        [FAILED_RUN_MESSAGE_FLAG]: true,
+        __openclaw: marker,
+      },
+    });
+    expect(message).toEqual(before);
+  });
+
+  test('reuses an existing same-run error row that already includes the diagnostic', () => {
+    const detail = 'Deployment is paused';
+    const timeline = projectPersistedTimeline([
+      {
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'Partial reasoning' }],
+          stopReason: 'error',
+          errorMessage: detail,
+        },
+        __openclaw: { id: 'native-failure', runId: 'run-1' },
+      },
+      {
+        role: 'system',
+        content: `Provider request failed. ${detail}`,
+        runId: 'run-1',
+        [FAILED_RUN_MESSAGE_FLAG]: true,
+      },
+    ] as GatewayMessage[]);
+    expect(timeline.filter(item => item.kind === 'history-message')).toHaveLength(1);
+    expect(timeline[timeline.length - 1]).toMatchObject({
+      kind: 'history-message',
+      message: { content: `Provider request failed. ${detail}` },
+    });
+  });
+
+  test('keeps one diagnostic after the last native commentary sibling', () => {
+    const failure = {
+      role: 'assistant',
+      stopReason: 'error',
+      errorMessage: 'Deployment is paused',
+      __openclaw: { id: 'native-failure', runId: 'run-1', seq: 1 },
+    };
+    const timeline = projectPersistedTimeline([
+      {
+        ...failure,
+        content: 'Commentary before tool',
+        openclawStreamFallback: { source: 'segment', itemId: 'progress-1' },
+      },
+      { ...failure, content: 'Partial answer' },
+    ]);
+    const rows = timeline.filter(item => item.kind === 'history-message');
+    expect(rows.map(item => item.message.content)).toEqual([
+      'Commentary before tool',
+      'Partial answer',
+      'Deployment is paused',
+    ]);
+  });
+
   test('preserves native commentary fallback order even when live block order differs', () => {
     const thinking = 'Check the returned subagent results.';
     const commentary = 'All five agents have returned; inspect their messages.';

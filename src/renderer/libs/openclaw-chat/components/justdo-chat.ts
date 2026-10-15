@@ -68,6 +68,7 @@ import {
   readFailedRunMessageModelRef,
   readFailedRunMessageText,
   readFailedRunMessageTimestamp,
+  withFailureDetailsForDisplay,
 } from '@/libs/openclaw-chat/model/failed-run-message';
 import { projectPersistedMessagesForActiveTurn } from '@/libs/openclaw-chat/model/optimistic-history-tail';
 import { mergePendingUserMessageForDisplay } from '@/libs/openclaw-chat/model/optimistic-user-message';
@@ -551,7 +552,7 @@ export class JustDoChatElement extends LitElement {
   render(): TemplateResult {
     // Use controller state if available, otherwise use direct properties
     const ctrl = this._controller;
-    const activeTurn = this.activeTurnForDisplay(ctrl);
+    const sourceActiveTurn = this.activeTurnForDisplay(ctrl);
     const terminalProjection =
       ctrl &&
       !ctrl.state.transcript.activeTurn &&
@@ -564,6 +565,7 @@ export class JustDoChatElement extends LitElement {
             (ctrl.state.visibleChatMessages as GatewayMessage[]))
         : this.messages,
     );
+    const activeTurn = withFailureDetailsForDisplay(sourceActiveTurn, activePersistedMessages);
     let pendingMessage = (ctrl?.state.pendingUserMessage as GatewayMessage | null) ?? null;
     const activeTurnHistoryKey = activeTurn
       ? `${activeTurn.runId}:${activeTurn.status}:${[...activeTurn.toolById.keys()].join(

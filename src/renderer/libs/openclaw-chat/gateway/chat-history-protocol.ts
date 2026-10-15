@@ -1,4 +1,6 @@
+import { appendErrorDisplayDetail } from '@shared/openclaw/errorDisplay';
 import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
+import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 
 import {
   isPersistedFailedAssistantMessage,
@@ -104,11 +106,7 @@ const needsFailureDetail = (message: unknown): boolean => {
   return (
     raw !== null &&
     (isPersistedFailedAssistantMessage(raw) ||
-      (raw.role === 'assistant' &&
-        (raw.stopReason ?? raw.stop_reason) === 'error' &&
-        (typeof raw.content === 'string' ||
-          (Array.isArray(raw.content) &&
-            raw.content.every(block => asRecord(block)?.type === 'text'))))) &&
+      (raw.role === 'assistant' && (raw.stopReason ?? raw.stop_reason) === 'error')) &&
     !(typeof raw.errorMessage === 'string' && raw.errorMessage.trim())
   );
 };
@@ -141,6 +139,7 @@ async function hydrateFailureDetails(
           failureMessageIds: batch,
         }),
       );
+      if (!isCurrent()) return messages;
       const details = asRecord(response?.failureDetails);
       for (const id of batch) {
         const detail = asRecord(details?.[id]);
@@ -168,7 +167,9 @@ async function hydrateFailureDetails(
       return {
         ...raw,
         content: [],
-        errorMessage: extractText(raw)?.trim() || detail.errorMessage,
+        errorMessage: isInternalManagedSubagentHandoffError(detail.errorMessage)
+          ? detail.errorMessage
+          : appendErrorDisplayDetail(extractText(raw)?.trim() || '', detail.errorMessage),
       };
     }
     return { ...raw, errorMessage: detail.errorMessage };

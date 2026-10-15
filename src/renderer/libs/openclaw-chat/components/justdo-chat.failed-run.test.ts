@@ -14,6 +14,50 @@ afterEach(() => {
 });
 
 describe('justdo-chat failed runs', () => {
+  test.each([
+    [{ type: 'thinking', thinking: 'Partial reasoning' }],
+    [{ type: 'toolCall', id: 'call-1', name: 'read', arguments: {} }],
+    [
+      { type: 'text', text: 'Before tool' },
+      { type: 'toolCall', id: 'call-1', name: 'read', arguments: {} },
+      { type: 'text', text: 'After tool' },
+    ],
+  ])('shows exactly one native failure detail for content shape %#', async (...content) => {
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.messages = [
+      {
+        role: 'assistant',
+        content,
+        stopReason: 'error',
+        errorMessage: 'Provider finish_reason: unsupported_terminal',
+        __openclaw: { id: 'failure-1', runId: 'run-1' },
+      },
+    ];
+    document.body.append(chat);
+    await chat.updateComplete;
+    const errors = chat.shadowRoot?.querySelectorAll('.process-terminal--error');
+    expect(errors).toHaveLength(1);
+    expect(errors?.[0].textContent).toContain('Provider finish_reason: unsupported_terminal');
+  });
+
+  test('shows the native diagnostic after a partial reply without requiring a local failure cache', async () => {
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.messages = [
+      {
+        role: 'assistant',
+        content: 'Partial reply',
+        stopReason: 'error',
+        errorMessage: 'Provider finish_reason: unsupported_terminal',
+        __openclaw: { id: 'failure-1', runId: 'run-1' },
+      },
+    ];
+    document.body.append(chat);
+    await chat.updateComplete;
+    expect(chat.shadowRoot?.textContent).toContain('Partial reply');
+    expect(chat.shadowRoot?.querySelector('.process-terminal--error')?.textContent).toContain(
+      'Provider finish_reason: unsupported_terminal',
+    );
+  });
   test('keeps a persisted failed run in the terminal error presentation', async () => {
     const chat = document.createElement('justdo-chat') as JustDoChatElement;
     chat.runTimings = [

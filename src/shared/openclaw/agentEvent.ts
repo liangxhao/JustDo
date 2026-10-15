@@ -1,3 +1,6 @@
+import { appendErrorDisplayDetail, readErrorDisplayDetail } from './errorDisplay';
+import { isInternalManagedSubagentHandoffError } from './internalRunError';
+
 export type AgentDeliveryEvent = 'agent' | 'session.tool';
 
 export const TERMINAL_GUARD_OBSERVATION_KEY = 'justdoTerminalGuardObservation';
@@ -150,23 +153,25 @@ export function normalizeChatEvent(params: {
   const sessionKey = nonEmptyString(payload.sessionKey);
   if (!sessionKey) return null;
   const sourceSeq = safeInteger(payload.seq);
+  const errorMessage = typeof payload.errorMessage === 'string' ? payload.errorMessage : undefined;
+  const displayError =
+    state === 'error' && !isInternalManagedSubagentHandoffError(errorMessage)
+      ? appendErrorDisplayDetail(errorMessage ?? '', readErrorDisplayDetail(payload.errorDetail))
+      : errorMessage;
 
   return {
     runId: nonEmptyString(payload.runId),
     sessionKey,
     sessionId: nonEmptyString(payload.sessionId),
-    lifecycleGeneration: firstString(
-      payload.lifecycleGeneration,
-      payload.gatewayGeneration,
-    ),
+    lifecycleGeneration: firstString(payload.lifecycleGeneration, payload.gatewayGeneration),
     frameSeq: safeInteger(params.frameSeq),
     state,
     ...(sourceSeq !== null ? { sourceSeq } : {}),
     ...(payload.message !== undefined ? { message: payload.message } : {}),
     ...(typeof payload.deltaText === 'string' ? { deltaText: payload.deltaText } : {}),
     replace: payload.replace === true,
-    ...(typeof payload.errorMessage === 'string'
-      ? { errorMessage: payload.errorMessage }
+    ...(typeof displayError === 'string' && (displayError || errorMessage !== undefined)
+      ? { errorMessage: displayError }
       : {}),
   };
 }

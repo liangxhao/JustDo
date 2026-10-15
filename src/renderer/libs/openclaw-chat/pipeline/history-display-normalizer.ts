@@ -1,5 +1,6 @@
 import { parseBrowserAnnotationPrompt } from '@shared/browser/browser';
 import { stripAgentTeamInstruction } from '@shared/cowork/agent-team/agentTeamPrompt';
+import { appendErrorDisplayDetail } from '@shared/openclaw/errorDisplay';
 import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
@@ -9,6 +10,7 @@ import { normalizeTranscriptSessionKey } from '@/libs/openclaw-chat/model/chat-t
 import {
   FAILED_RUN_MESSAGE_FLAG,
   FAILED_RUN_MESSAGE_ID,
+  readNativeFailureDetails,
 } from '@/libs/openclaw-chat/model/failed-run-message';
 import { isAssistantHeartbeatAckForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
 import {
@@ -717,9 +719,12 @@ function mergeMissingFailedRunMessages(
     });
     if (hasAlternateAssistantReply) continue;
 
+    // Only exact native run identities can attach a model diagnostic to this
+    // display overlay. Keep the persisted whole-run explanation unchanged.
+    const detail = record.runId ? readNativeFailureDetails(result, record.runId) : '';
     const overlay = {
       role: 'system',
-      content: record.error,
+      content: appendErrorDisplayDetail(record.error, detail),
       isError: true,
       [FAILED_RUN_MESSAGE_FLAG]: true,
       [FAILED_RUN_MESSAGE_ID]: id,

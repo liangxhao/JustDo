@@ -58,13 +58,17 @@ describe('OpenClaw chat history protocol', () => {
         if (emptyContent) {
           expect(rows[1].message).toMatchObject({
             role: 'system',
-            content: error,
+            content: `${error}\nConnection error.`,
             isError: true,
             __justdoFailedRunMessage: true,
           });
         } else {
           expect(rows[1].message).toMatchObject(reply);
-          expect(rows[2].message).toMatchObject({ role: 'system', isError: true });
+          expect(rows[2].message).toMatchObject({
+            role: 'system',
+            content: expect.stringContaining('Connection error.'),
+            isError: true,
+          });
         }
       }
     } finally {
@@ -235,7 +239,7 @@ describe('OpenClaw chat history protocol', () => {
     ).toHaveLength(1);
   });
 
-  test('checks text-only failures but preserves their content when source details are unavailable', async () => {
+  test('checks failed assistant messages of every content shape and preserves unavailable details', async () => {
     const messages = [
       'Partial answer before the failure',
       'Context overflow: try /compact',
@@ -256,8 +260,84 @@ describe('OpenClaw chat history protocol', () => {
     ).toEqual(messages);
     expect(request).toHaveBeenCalledExactlyOnceWith('runtimeServices.historyDetails', {
       sessionKey: 'session-1',
-      failureMessageIds: ['m0', 'm1'],
+      failureMessageIds: ['m0', 'm1', 'm2'],
     });
+  });
+
+  test.each([
+    'Provider finish_reason: content_filter',
+    'Provider finish_reason: unsupported_terminal',
+    'Deployment is paused',
+  ])('retains the native cause after replacing generated failure copy: %s', errorMessage => {
+    const input = [
+      {
+        role: 'assistant',
+        stopReason: 'error',
+        content: [{ type: 'text', text: '⚠️ Agent run failed (model: provider/model).' }],
+        __openclaw: { id: 'failure', runId: 'run-1' },
+      },
+    ];
+    const request = vi
+      .fn()
+      .mockResolvedValue({ failureDetails: { failure: { errorMessage, emptyContent: true } } });
+    return hydrateTruncatedHistoryMessages(
+      { request } as unknown as GatewayClient,
+      input,
+      'session-1',
+    ).then(hydrated => {
+      expect(hydrated[0]).toMatchObject({
+        content: [],
+        errorMessage: expect.stringContaining(errorMessage),
+        __openclaw: input[0].__openclaw,
+      });
+      expect(input[0].content).toHaveLength(1);
+    });
+  });
+
+  test('discards late failure details after the history generation changes', async () => {
+    const input = [
+      { role: 'assistant', stopReason: 'error', content: [], __openclaw: { id: 'failure' } },
+    ];
+    let current = true;
+    const request = vi.fn(async () => {
+      current = false;
+      return { failureDetails: { failure: { errorMessage: 'Stale error', emptyContent: true } } };
+    });
+    expect(
+      await hydrateTruncatedHistoryMessages(
+        { request } as unknown as GatewayClient,
+        input,
+        'session-1',
+        () => current,
+      ),
+    ).toEqual(input);
+  });
+
+  test('keeps a restored internal handoff failure suppressible after generated copy is removed', async () => {
+    const input = [
+      {
+        role: 'assistant',
+        stopReason: 'error',
+        content: 'Agent run failed (model: provider/model).',
+        __openclaw: { id: 'failure', runId: 'run-1' },
+      },
+    ];
+    const request = vi.fn().mockResolvedValue({
+      failureDetails: {
+        failure: {
+          errorMessage: 'Managed subagent terminal handoff could not be persisted.',
+          emptyContent: true,
+        },
+      },
+    });
+    const hydrated = await hydrateTruncatedHistoryMessages(
+      { request } as unknown as GatewayClient,
+      input,
+      'internal-session',
+    );
+    expect(
+      await normalizeGatewayHistoryForDisplay(hydrated, { sessionKey: 'internal-session' }),
+    ).toEqual([]);
   });
 
   test('bounds failure batches and preserves later results when a batch fails', async () => {
