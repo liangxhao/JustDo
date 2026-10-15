@@ -18,6 +18,11 @@ export const SwarmWorkflowGateway = {
   Batch: FLOW_RPC.batch,
   RetryBatch: FLOW_RPC.retryBatch,
 } as const;
+
+/** Workflow parents use the existing managed native session identity. */
+export const isSwarmWorkflowParentKey = (key: unknown): key is string =>
+  typeof key === 'string' && /^agent:[^:]+:justdo:[^:]+$/.test(key);
+
 export type SwarmWorkflowAction = FlowAction;
 export type SwarmWorkflowActions = FlowActions;
 export const SWARM_WORKFLOW_INTERVENTION_LIMITS = {

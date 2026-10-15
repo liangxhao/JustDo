@@ -1,7 +1,7 @@
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
+import { isSwarmWorkflowParentKey } from '../contracts/workflow';
 
-export const managed = (key: unknown): key is string =>
-  typeof key === 'string' && /^agent:[^:]+:justdo:[^:]+$/.test(key);
+export const managed = isSwarmWorkflowParentKey;
 export const object = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 export const entry = (key: string) =>

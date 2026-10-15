@@ -7,21 +7,107 @@ import { SwarmWorkflowIpc, validFlowDetail } from '../../../../shared/cowork/swa
 import { registerSwarmWorkflowHandlers } from './index';
 beforeEach(() => mocks.handle.mockReset());
 const handler = (key: string) => mocks.handle.mock.calls.find(call => call[0] === key)![1];
+const ownedParent = 'agent:main:justdo:product';
+test('queries workflow parents without forwarding channel or worker aliases', async () => {
+  const parents = ['agent:main:justdo:product', 'agent:assistant:justdo:product'];
+  const request = vi.fn(async (_method: string, params: { parentKeys: string[] }) => {
+    if (!params.parentKeys.every(key => parents.includes(key))) {
+      throw new Error('Invalid parent identities.');
+    }
+    return { flows: [], running: true };
+  });
+  const runtime = {
+    getGatewayClient: () => ({ request }),
+    getSessionKeysForSession: () => [
+      'agent:main:openai-user:telegram:channel',
+      parents[0],
+      'agent:main:subagent:worker',
+      parents[1],
+      parents[0],
+    ],
+  } as unknown as OpenClawRuntimeAdapter;
+  registerSwarmWorkflowHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
+
+  expect(await handler(SwarmWorkflowIpc.List)({}, 'product')).toEqual({
+    success: true,
+    flows: [],
+    running: true,
+  });
+  expect(request).toHaveBeenCalledExactlyOnceWith('swarmWorkflow.list', { parentKeys: parents });
+});
+
+test.each([
+  ['agent:main:subagent:worker'],
+  ['agent:main:openai-user:telegram:channel'],
+  ['agent:main:cron:scheduled'],
+  ['agent:main:external:conversation'],
+])('returns no workflows for unsupported native parents %j without issuing RPCs', async key => {
+  const request = vi.fn();
+  const runtime = {
+    getGatewayClient: () => ({ request }),
+    getSessionKeysForSession: () => [key],
+  } as unknown as OpenClawRuntimeAdapter;
+  registerSwarmWorkflowHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
+
+  expect(await handler(SwarmWorkflowIpc.List)({}, 'product')).toEqual({
+    success: true,
+    flows: [],
+    running: false,
+  });
+  expect(await handler(SwarmWorkflowIpc.List)({}, 'foreign')).toEqual({ success: false });
+  expect(await handler(SwarmWorkflowIpc.Detail)({}, 'product', 'flow', 'node')).toEqual({
+    success: false,
+  });
+  expect(await handler(SwarmWorkflowIpc.Control)({}, 'product', 'flow', 1, 'stop')).toEqual({
+    success: false,
+  });
+  expect(await handler(SwarmWorkflowIpc.Batch)({}, 'product', 'flow', 'batch', {})).toEqual({
+    success: false,
+  });
+  expect(
+    await handler(SwarmWorkflowIpc.RetryBatch)({}, 'product', 'flow', 'batch', 1, 'operation', [
+      'item',
+    ]),
+  ).toEqual({ success: false });
+  expect(
+    await handler(SwarmWorkflowIpc.Intervene)({}, 'product', 'flow', 'node', 1, {
+      id: 'operation',
+      action: 'note',
+      text: 'Additional input',
+    }),
+  ).toEqual({ success: false });
+  expect(request).not.toHaveBeenCalled();
+});
+
+test('keeps unresolved native identity as a failure instead of successful empty history', async () => {
+  const request = vi.fn();
+  const runtime = {
+    getGatewayClient: () => ({ request }),
+    getSessionKeysForSession: () => [],
+  } as unknown as OpenClawRuntimeAdapter;
+  registerSwarmWorkflowHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
+
+  expect(await handler(SwarmWorkflowIpc.List)({}, 'product')).toEqual({ success: false });
+  expect(request).not.toHaveBeenCalled();
+});
+
 test('preserves all-history workflow activity and rejects malformed native summaries', async () => {
   const request = vi.fn().mockResolvedValue({ flows: [], running: true });
   const runtime = {
     getGatewayClient: () => ({ request }),
-    getSessionKeysForSession: () => ['owned'],
+    getSessionKeysForSession: () => [ownedParent],
   } as unknown as OpenClawRuntimeAdapter;
   registerSwarmWorkflowHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
   const read = handler(SwarmWorkflowIpc.List);
   expect(await read({}, 'product')).toEqual({ success: true, flows: [], running: true });
-  expect(request).toHaveBeenCalledWith('swarmWorkflow.list', { parentKeys: ['owned'] });
+  expect(request).toHaveBeenCalledWith('swarmWorkflow.list', { parentKeys: [ownedParent] });
   request.mockResolvedValue({ flows: [], running: false });
   expect(await read({}, 'product')).toEqual({ success: true, flows: [], running: false });
   request.mockResolvedValue({ flows: [] });
   expect(await read({}, 'product')).toEqual({ success: true, flows: [] });
   request.mockResolvedValue({ flows: [], running: 'true' });
+  expect(await read({}, 'product')).toEqual({ success: false });
+  request.mockRejectedValue(new Error('Gateway disconnected'));
   expect(await read({}, 'product')).toEqual({ success: false });
 });
 
@@ -49,7 +135,7 @@ test('binds batch reads to product identity and rejects mismatched or oversized 
   const request = vi.fn().mockResolvedValue(page);
   const runtime = {
     getGatewayClient: () => ({ request }),
-    getSessionKeysForSession: () => ['owned'],
+    getSessionKeysForSession: () => [ownedParent],
   } as unknown as OpenClawRuntimeAdapter;
   registerSwarmWorkflowHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
   const read = handler(SwarmWorkflowIpc.Batch);
@@ -57,7 +143,7 @@ test('binds batch reads to product identity and rejects mismatched or oversized 
   expect(request).not.toHaveBeenCalled();
   expect(await read({}, 'product', 'flow', 'batch', {})).toEqual({ success: true, page });
   expect(request).toHaveBeenCalledWith('swarmWorkflow.batch', {
-    parentKeys: ['owned'],
+    parentKeys: [ownedParent],
     id: 'flow',
     stageId: 'batch',
   });
@@ -77,7 +163,7 @@ test('rejects forged batch retry payloads and preserves skipped reasons', async 
   });
   const runtime = {
     getGatewayClient: () => ({ request }),
-    getSessionKeysForSession: () => ['owned'],
+    getSessionKeysForSession: () => [ownedParent],
   } as unknown as OpenClawRuntimeAdapter;
   registerSwarmWorkflowHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
   const retry = handler(SwarmWorkflowIpc.RetryBatch);
@@ -97,7 +183,7 @@ test('forwards only explicit human input under a product-owned parent and reject
   const request = vi.fn().mockResolvedValue({});
   const runtime = {
     getGatewayClient: () => ({ request }),
-    getSessionKeysForSession: () => ['owned'],
+    getSessionKeysForSession: () => [ownedParent],
   } as unknown as OpenClawRuntimeAdapter;
   registerSwarmWorkflowHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
   const intervene = handler(SwarmWorkflowIpc.Intervene);
@@ -114,7 +200,7 @@ test('forwards only explicit human input under a product-owned parent and reject
     await intervene({}, 'product', 'flow', 'verify', 5, { ...note, sessionKey: 'foreign' }),
   ).toEqual({ success: true });
   expect(request).toHaveBeenCalledWith('swarmWorkflow.intervene', {
-    parentKeys: ['owned'],
+    parentKeys: [ownedParent],
     id: 'flow',
     nodeId: 'verify',
     revision: 5,
@@ -160,7 +246,7 @@ test('rejects plan-mode execution using the runtime authority', async () => {
   const request = vi.fn().mockResolvedValue({ ready: true });
   const runtime = {
     getGatewayClient: () => ({ request }),
-    getSessionKeysForSession: () => ['owned'],
+    getSessionKeysForSession: () => [ownedParent],
     getPlanMode: vi.fn().mockResolvedValue({ enabled: true }),
   } as unknown as OpenClawRuntimeAdapter;
   registerSwarmWorkflowHandlers({
@@ -206,7 +292,7 @@ test('resolves detail parents from product authority and rejects mismatched repl
   const request = vi.fn().mockResolvedValue(detail);
   const runtime = {
     getGatewayClient: () => ({ request }),
-    getSessionKeysForSession: () => ['owned'],
+    getSessionKeysForSession: () => [ownedParent],
   } as unknown as OpenClawRuntimeAdapter;
   registerSwarmWorkflowHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
   const read = handler('cowork:swarm-workflow:detail');
@@ -214,7 +300,7 @@ test('resolves detail parents from product authority and rejects mismatched repl
   expect(request).not.toHaveBeenCalled();
   expect(await read({}, 'product', 'flow', 'work', 'source')).toEqual({ success: true, detail });
   expect(request).toHaveBeenCalledWith('swarmWorkflow.detail', {
-    parentKeys: ['owned'],
+    parentKeys: [ownedParent],
     id: 'flow',
     nodeId: 'work',
     sourceId: 'source',
@@ -243,7 +329,7 @@ test('accepts complete dispatch envelopes after bounded inputs expand during JSO
   const request = vi.fn().mockResolvedValue(detail);
   const runtime = {
     getGatewayClient: () => ({ request }),
-    getSessionKeysForSession: () => ['owned'],
+    getSessionKeysForSession: () => [ownedParent],
   } as unknown as OpenClawRuntimeAdapter;
   registerSwarmWorkflowHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
   expect(await handler('cowork:swarm-workflow:detail')({}, 'product', 'flow', 'verify')).toEqual({
@@ -266,7 +352,7 @@ test('allows revision-bound retry only through an owned product conversation', a
   );
   const runtime = {
     getGatewayClient: () => ({ request }),
-    getSessionKeysForSession: () => ['owned'],
+    getSessionKeysForSession: () => [ownedParent],
   } as unknown as OpenClawRuntimeAdapter;
   registerSwarmWorkflowHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
   const control = handler('cowork:swarm-workflow:control');
@@ -275,7 +361,7 @@ test('allows revision-bound retry only through an owned product conversation', a
   expect(request).not.toHaveBeenCalled();
   expect(await control({}, 'product', 'flow', 5, 'retry')).toEqual({ success: true });
   expect(request).toHaveBeenCalledWith('swarmWorkflow.control', {
-    parentKeys: ['owned'],
+    parentKeys: [ownedParent],
     id: 'flow',
     revision: 5,
     action: 'retry',

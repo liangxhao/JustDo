@@ -1,4 +1,5 @@
 import {
+  isSwarmWorkflowParentKey,
   SwarmWorkflowGateway,
   validBatchOptions,
   validBatchPage,
@@ -23,7 +24,15 @@ export function createSwarmWorkflowCoordinator({
     const runtime = getRuntime();
     const client = runtime?.getGatewayClient();
     if (!runtime || !client) throw new Error('Gateway client not connected');
-    return { runtime, client, keys: runtime.getSessionKeysForSession(sessionId) };
+    const nativeKeys = runtime.getSessionKeysForSession(sessionId);
+    if (!nativeKeys.length) throw new Error('Native session identity is unavailable');
+    const keys = [...new Set(nativeKeys)].filter(isSwarmWorkflowParentKey);
+    return { runtime, client, keys };
+  };
+  const resolveWorkflowRoot = (sessionId: unknown) => {
+    const root = resolveOwnedRoot(sessionId);
+    if (!root.keys.length) throw new Error('Conversation does not support workflow parents');
+    return root;
   };
 
   const operations: SwarmWorkflowApi = {
@@ -47,7 +56,7 @@ export function createSwarmWorkflowCoordinator({
       }
       if (typeof sessionId === 'string') {
         try {
-          const { runtime } = resolveOwnedRoot(sessionId);
+          const { runtime } = resolveWorkflowRoot(sessionId);
           if ((await runtime.getPlanMode(sessionId)).enabled)
             return { success: false, reason: 'plan' };
           if (!hasSession(sessionId)) return { success: false, reason: 'invalid' };
@@ -74,7 +83,7 @@ export function createSwarmWorkflowCoordinator({
           !validBatchOptions(options)
         )
           return { success: false };
-        const { client, keys } = resolveOwnedRoot(sessionId);
+        const { client, keys } = resolveWorkflowRoot(sessionId);
         const page = await client.request<unknown>(SwarmWorkflowGateway.Batch, {
           parentKeys: keys,
           id,
@@ -121,7 +130,7 @@ export function createSwarmWorkflowCoordinator({
               itemIds.some(id => typeof id !== 'string' || !id || id.length > 80)))
         )
           return { success: false };
-        const { client, keys } = resolveOwnedRoot(sessionId);
+        const { client, keys } = resolveWorkflowRoot(sessionId);
         const result = await client.request<{
           retried?: unknown;
           skipped?: unknown;
@@ -170,6 +179,8 @@ export function createSwarmWorkflowCoordinator({
     getSwarmWorkflows: async (sessionId: unknown) => {
       try {
         const { client, keys } = resolveOwnedRoot(sessionId);
+        // Unsupported native conversations cannot own workflows; avoid RPC retries.
+        if (!keys.length) return { success: true, flows: [], running: false };
         const result = await client.request<unknown>(SwarmWorkflowGateway.List, {
           parentKeys: keys,
         });
@@ -198,7 +209,7 @@ export function createSwarmWorkflowCoordinator({
           (sourceId !== undefined && typeof sourceId !== 'string')
         )
           return { success: false };
-        const { client, keys } = resolveOwnedRoot(sessionId);
+        const { client, keys } = resolveWorkflowRoot(sessionId);
         const detail = await client.request<unknown>(SwarmWorkflowGateway.Detail, {
           parentKeys: keys,
           id,
@@ -235,7 +246,7 @@ export function createSwarmWorkflowCoordinator({
           !validSwarmWorkflowIntervention(intervention)
         )
           return { success: false };
-        const { client, keys } = resolveOwnedRoot(sessionId);
+        const { client, keys } = resolveWorkflowRoot(sessionId);
         // The Gateway resolves the node session and rechecks parent policy and revision.
         if (!hasSession(sessionId as string)) return { success: false };
         await client.request(SwarmWorkflowGateway.Intervene, {
@@ -267,7 +278,7 @@ export function createSwarmWorkflowCoordinator({
           !['pause', 'resume', 'stop', 'retry'].includes(String(action))
         )
           return { success: false };
-        const { client, keys } = resolveOwnedRoot(sessionId);
+        const { client, keys } = resolveWorkflowRoot(sessionId);
         const result = await client.request<unknown>(SwarmWorkflowGateway.List, {
           parentKeys: keys,
         });
