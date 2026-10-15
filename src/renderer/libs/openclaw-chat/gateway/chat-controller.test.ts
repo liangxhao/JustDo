@@ -2563,83 +2563,165 @@ test('fences a confirmed Main-started run stopped before its first stream frame'
   expect(controller.state.chatMessages).toEqual([]);
 });
 
-test('refreshes progress without replacing the saved card, draft, or transcript', async () => {
+function createProgressRefreshController() {
   const controller = new ChatController();
-  const sessionKey = 'agent:main:justdo:refresh';
-  const request = vi
-    .fn()
-    .mockResolvedValue({ status: 'accepted', runId: 'refresh-run', revision: 7 });
-  controller.state.client = { request } as never;
-  controller.state.connected = true;
-  controller.state.sessionKey = sessionKey;
-  controller.state.hello = {
-    type: 'hello-ok',
-    protocol: 4,
-    features: { methods: ['progressCard.refresh'] },
-  };
+  const sessionKey = 'agent:main:progress-refresh';
   const card = { sessionKey, revision: 7, updatedAt: 2000, markdown: 'Saved progress' };
-  controller.state.progressCard = card;
-  const before = controller.state.chatMessages;
-  await expect(controller.refreshProgressCard()).resolves.toBe(true);
-  await expect(controller.refreshProgressCard()).resolves.toBe(true);
-  expect(request).toHaveBeenNthCalledWith(1, 'progressCard.refresh', {
-    sessionKey,
-    idempotencyKey: expect.any(String),
-  });
-  expect(request.mock.calls[1]).toEqual(request.mock.calls[0]);
-  expect(controller.state.progressCard).toBe(card);
-  expect(controller.state.chatMessages).toBe(before);
-});
-
-test('ignores a progress refresh acknowledgement after switching sessions', async () => {
-  const controller = new ChatController();
-  let resolve!: (value: unknown) => void;
-  controller.state.client = {
-    request: vi.fn(
-      () =>
-        new Promise(done => {
-          resolve = done;
-        }),
-    ),
-  } as never;
-  controller.state.connected = true;
-  controller.state.sessionKey = 'agent:main:justdo:refresh';
-  controller.state.hello = {
-    type: 'hello-ok',
-    protocol: 4,
-    features: { methods: ['progressCard.refresh'] },
-  };
-  controller.state.progressCard = {
-    sessionKey: controller.state.sessionKey,
-    revision: 7,
-    updatedAt: 2000,
-  };
-  const pending = controller.refreshProgressCard();
-  controller.state.sessionKey = 'agent:main:justdo:other';
-  resolve({ status: 'accepted', runId: 'refresh-run', revision: 7 });
-  await expect(pending).resolves.toBe(false);
-});
-
-test('reuses uncertain progress refreshes but replaces a confirmed failed intent', async () => {
-  const controller = new ChatController();
-  const sessionKey = 'agent:main:justdo:refresh-retry';
-  const request = vi
-    .fn()
-    .mockRejectedValueOnce(new Error('lost acknowledgement'))
-    .mockRejectedValueOnce({ details: { code: 'PROGRESS_CARD_REFRESH_TERMINAL' } })
-    .mockResolvedValue({ status: 'accepted', runId: 'retry-run', revision: 7 });
+  const request = vi.fn().mockResolvedValue({ card });
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = sessionKey;
   controller.state.hello = {
     type: 'hello-ok',
     protocol: 4,
-    features: { methods: ['progressCard.refresh'] },
+    features: { methods: ['progressCard.get', 'progressCard.refresh'] },
   };
-  controller.state.progressCard = { sessionKey, revision: 7, updatedAt: 2000 };
-  await expect(controller.refreshProgressCard()).resolves.toBe(false);
-  await expect(controller.refreshProgressCard()).resolves.toBe(false);
+  controller.state.progressCard = card;
+  return { controller, request, sessionKey, card };
+}
+
+test('refreshes saved progress with read-only requests without starting or steering a run', async () => {
+  const { controller, request, sessionKey, card } = createProgressRefreshController();
+  const before = controller.state.chatMessages;
+  const transcript = controller.state.transcript;
+  const pendingUserMessage = {
+    role: 'user',
+    content: 'Existing input',
+    text: 'Existing input',
+    timestamp: 1,
+  };
+  controller.state.pendingUserMessage = pendingUserMessage;
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'active-run';
+
   await expect(controller.refreshProgressCard()).resolves.toBe(true);
-  expect(request.mock.calls[1]).toEqual(request.mock.calls[0]);
-  expect(request.mock.calls[2][1].idempotencyKey).not.toBe(request.mock.calls[0][1].idempotencyKey);
+  const updated = { ...card, revision: 8, markdown: 'Latest saved progress' };
+  request.mockResolvedValue({ card: updated });
+  await expect(controller.refreshProgressCard()).resolves.toBe(true);
+
+  expect(request.mock.calls).toEqual([
+    ['progressCard.get', { sessionKey }],
+    ['progressCard.get', { sessionKey }],
+  ]);
+  expect(controller.state.progressCard).toEqual(updated);
+  expect(controller.state.chatMessages).toBe(before);
+  expect(controller.state.transcript).toBe(transcript);
+  expect(controller.state.pendingUserMessage).toBe(pendingUserMessage);
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.chatRunId).toBe('active-run');
+});
+
+test('keeps saved progress visible while reading and accepts an unchanged revision', async () => {
+  const { controller, request, card } = createProgressRefreshController();
+  let resolve!: (value: unknown) => void;
+  request.mockImplementationOnce(
+    () =>
+      new Promise(done => {
+        resolve = done;
+      }),
+  );
+
+  const pending = controller.refreshProgressCard();
+  expect(controller.state.progressCard).toBe(card);
+  expect(controller.state.progressCardLoading).toBe(true);
+  resolve({ card });
+
+  await expect(pending).resolves.toBe(true);
+  expect(controller.state.progressCard).toEqual(card);
+  expect(controller.state.progressCardLoading).toBe(false);
+});
+
+test.each(['session', 'connection'])('ignores a progress read after changing %s', async change => {
+  const { controller, request, card } = createProgressRefreshController();
+  let resolve!: (value: unknown) => void;
+  request.mockImplementationOnce(
+    () =>
+      new Promise(done => {
+        resolve = done;
+      }),
+  );
+  const pending = controller.refreshProgressCard();
+  const selected = { ...card, sessionKey: 'agent:main:other', revision: 9 };
+  if (change === 'session') controller.state.sessionKey = selected.sessionKey;
+  else controller.state.client = { request: vi.fn() } as never;
+  controller.state.progressCard = selected;
+  resolve({ card });
+
+  await expect(pending).resolves.toBe(false);
+  expect(controller.state.progressCard).toBe(selected);
+});
+
+test.each([null, 8])(
+  'does not overwrite a progress change to revision %s with an older read',
+  async revision => {
+    const { controller, request, sessionKey, card } = createProgressRefreshController();
+    let resolve!: (value: unknown) => void;
+    const updated = { ...card, revision: 8, markdown: 'Newer progress' };
+    request
+      .mockImplementationOnce(
+        () =>
+          new Promise(done => {
+            resolve = done;
+          }),
+      )
+      .mockResolvedValueOnce({ card: updated });
+    const pending = controller.refreshProgressCard();
+    (
+      controller as unknown as {
+        handleEvent(event: { event: string; payload: unknown }): void;
+      }
+    ).handleEvent({ event: 'progressCard.changed', payload: { sessionKey, revision } });
+    await vi.waitFor(() =>
+      expect(controller.state.progressCard).toEqual(revision === null ? null : updated),
+    );
+    resolve({ card });
+
+    await expect(pending).resolves.toBe(false);
+    expect(controller.state.progressCard).toEqual(revision === null ? null : updated);
+  },
+);
+
+test('reports a failed progress read while retaining saved progress for a read-only retry', async () => {
+  const { controller, request, sessionKey, card } = createProgressRefreshController();
+  request.mockRejectedValueOnce(new Error('read timed out'));
+
+  await expect(controller.refreshProgressCard()).resolves.toBe(false);
+  expect(controller.state.progressCard).toBe(card);
+  expect(controller.state.progressCardLoading).toBe(false);
+  expect(controller.state.progressCardError).toBe('unavailable');
+  await expect(controller.refreshProgressCard()).resolves.toBe(true);
+  expect(controller.state.progressCardError).toBeNull();
+  expect(request.mock.calls).toEqual([
+    ['progressCard.get', { sessionKey }],
+    ['progressCard.get', { sessionKey }],
+  ]);
+});
+
+test.each([
+  { gatewayCode: 'SESSION_PARTICIPATION_REQUIRED' },
+  { details: { code: 'SESSION_PARTICIPATION_REQUIRED' } },
+])('hides saved progress when a refresh loses access: %j', async error => {
+  const { controller, request } = createProgressRefreshController();
+  request.mockRejectedValueOnce(error);
+
+  await expect(controller.refreshProgressCard()).resolves.toBe(false);
+  expect(controller.state.progressCard).toBeNull();
+  expect(controller.state.progressCardError).toBe('access-denied');
+});
+
+test('clears saved progress when the read confirms the card was removed', async () => {
+  const { controller, request } = createProgressRefreshController();
+  request.mockResolvedValueOnce({ card: null });
+
+  await expect(controller.refreshProgressCard()).resolves.toBe(true);
+  expect(controller.state.progressCard).toBeNull();
+  expect(controller.state.progressCardLoading).toBe(false);
+});
+
+test('does not fall back to an execution request when progress reads are unavailable', async () => {
+  const { controller, request } = createProgressRefreshController();
+  controller.state.hello!.features!.methods = ['progressCard.refresh'];
+
+  await expect(controller.refreshProgressCard()).resolves.toBe(false);
+  expect(request).not.toHaveBeenCalled();
 });

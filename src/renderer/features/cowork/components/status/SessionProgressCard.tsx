@@ -16,10 +16,12 @@ import {
   type ProgressCardStep,
   ProgressCardStepStatus,
 } from '@shared/openclaw/progressCard';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
 import { i18nService } from '@/services/i18n';
+
+const PROGRESS_NOTE_PREVIEW_HEIGHT_PX = 279;
 
 interface SessionProgressCardProps {
   card: ProgressCard;
@@ -51,6 +53,58 @@ const stepStatusLabel = (
   return i18nService.t('coworkProgressCardPending');
 };
 
+function ProgressCardNote({ html, id }: { html: string; id: string }) {
+  const noteRef = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+
+  useLayoutEffect(() => {
+    const note = noteRef.current;
+    if (!note) return;
+    const measure = () => setOverflows(note.scrollHeight > PROGRESS_NOTE_PREVIEW_HEIGHT_PX + 1);
+    measure();
+    const ownerWindow = note.ownerDocument.defaultView;
+    const observer = ownerWindow?.ResizeObserver ? new ownerWindow.ResizeObserver(measure) : null;
+    observer?.observe(note);
+    return () => observer?.disconnect();
+  }, [html]);
+
+  return (
+    <div className="cowork-progress-card__note">
+      <div
+        id={id}
+        className={`cowork-progress-card__note-preview${overflows && !expanded ? ' cowork-progress-card__note-preview--clamped' : ''}`}
+        style={
+          expanded ? undefined : { maxHeight: PROGRESS_NOTE_PREVIEW_HEIGHT_PX, overflow: 'hidden' }
+        }
+        onFocusCapture={() => {
+          if (overflows) setExpanded(true);
+        }}
+      >
+        <div
+          ref={noteRef}
+          className="cowork-progress-card__markdown"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      </div>
+      {overflows && (
+        <button
+          type="button"
+          className={`cowork-progress-card__note-toggle${expanded ? ' cowork-progress-card__note-toggle--collapse' : ''}`}
+          aria-controls={id}
+          aria-expanded={expanded}
+          onClick={() => setExpanded(value => !value)}
+        >
+          {i18nService.t(
+            expanded ? 'coworkProgressCardNoteCollapse' : 'coworkProgressCardNoteExpand',
+          )}
+          <ChevronDownIcon className={expanded ? 'rotate-180' : ''} aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 const SessionProgressCard = ({ card, runState, onRefresh }: SessionProgressCardProps) => {
   const complete = progressCardIsComplete(card);
   const steps = card.steps ?? [];
@@ -68,18 +122,21 @@ const SessionProgressCard = ({ card, runState, onRefresh }: SessionProgressCardP
     return () => {
       refreshGeneration.current += 1;
     };
-  }, [card.sessionKey, card.revision]);
+  }, [card.sessionKey]);
   useEffect(() => {
     if (refreshState !== 'pending') return;
-    const timer = window.setTimeout(() => setRefreshState('failed'), 60_000);
+    const timer = window.setTimeout(() => {
+      refreshGeneration.current += 1;
+      setRefreshState('failed');
+    }, 60_000);
     return () => window.clearTimeout(timer);
   }, [refreshState]);
   const refresh = async () => {
     if (!onRefresh || refreshState === 'pending') return;
     const generation = ++refreshGeneration.current;
     setRefreshState('pending');
-    const accepted = await onRefresh().catch(() => false);
-    if (!accepted && generation === refreshGeneration.current) setRefreshState('failed');
+    const refreshed = await onRefresh().catch(() => false);
+    if (generation === refreshGeneration.current) setRefreshState(refreshed ? 'idle' : 'failed');
   };
   useEffect(() => {
     if (initialSessionKeyRef.current === card.sessionKey) return;
@@ -187,6 +244,7 @@ const SessionProgressCard = ({ card, runState, onRefresh }: SessionProgressCardP
             type="button"
             className="cowork-progress-card__action"
             disabled={refreshState === 'pending'}
+            aria-busy={refreshState === 'pending'}
             onClick={() => void refresh()}
             aria-label={i18nService.t('coworkProgressCardRefresh')}
             title={i18nService.t('coworkProgressCardRefresh')}
@@ -204,10 +262,7 @@ const SessionProgressCard = ({ card, runState, onRefresh }: SessionProgressCardP
       {expanded && (
         <div id={bodyId} className="cowork-progress-card__body">
           {markdownHtml && (
-            <div
-              className="cowork-progress-card__markdown"
-              dangerouslySetInnerHTML={{ __html: markdownHtml }}
-            />
+            <ProgressCardNote key={card.sessionKey} id={`${bodyId}-note`} html={markdownHtml} />
           )}
           {steps.length > 0 && (
             <ol className="cowork-progress-card__steps">

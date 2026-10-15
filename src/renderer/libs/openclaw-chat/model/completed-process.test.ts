@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 
 import { foldCompletedProcessRows } from './completed-process';
 import type { PersistedTimelineItem } from './project-history-timeline';
-import type { ProcessSummaryTimelineItem } from './project-turn-items';
+import type { ProcessSummaryTimelineItem, ProgressReceiptTimelineItem } from './project-turn-items';
 import { prepareVisibleTimelineRows } from './timeline-avatar-state';
 
 function message(key: string, role = 'assistant', completed = false): PersistedTimelineItem {
@@ -27,7 +27,69 @@ function summary(key: string): ProcessSummaryTimelineItem {
   };
 }
 
+function progressReceipt(
+  key: string,
+  status: ProgressReceiptTimelineItem['item']['status'] = 'completed',
+): ProgressReceiptTimelineItem {
+  return {
+    kind: 'progress-receipt',
+    key,
+    item: {
+      id: key,
+      runId: 'run-1',
+      type: 'tool',
+      name: 'progress_card',
+      toolCallId: key,
+      firstSeq: 1,
+      lastSeq: 1,
+      startedAt: 1,
+      updatedAt: 1,
+      status,
+      input: { plan: [{ step: 'Verify results', status: 'in_progress' }] },
+    },
+  };
+}
+
 describe('foldCompletedProcessRows', () => {
+  test.each(['completed', 'failed', 'cancelled', 'interrupted'] as const)(
+    'folds a %s progress receipt together with adjacent process records',
+    status => {
+      const progress = progressReceipt('progress', status);
+      const source = [
+        summary('before-progress'),
+        progress,
+        summary('after-progress'),
+        message('commentary'),
+        message('final', 'assistant', true),
+      ];
+
+      const result = foldCompletedProcessRows(prepareVisibleTimelineRows(source));
+
+      expect(result.map(row => row.item.kind)).toEqual(['completed-process', 'history-message']);
+      const group = result[0].item;
+      if (group.kind !== 'completed-process') throw new Error('Missing process group');
+      expect(group.items).toEqual(source.slice(0, -1));
+      expect(group.items[1]).toBe(progress);
+      expect(progress.item.status).toBe(status);
+      expect(result[1].item).toBe(source[4]);
+    },
+  );
+
+  test('keeps an unfinished progress receipt visible as a boundary between folded records', () => {
+    const pending = progressReceipt('updating', 'running');
+    const source = [summary('before'), pending, summary('after'), message('final')];
+
+    const result = foldCompletedProcessRows(prepareVisibleTimelineRows(source));
+
+    expect(result.map(row => row.item.kind)).toEqual([
+      'completed-process',
+      'progress-receipt',
+      'completed-process',
+      'history-message',
+    ]);
+    expect(result[1].item).toBe(pending);
+  });
+
   test('folds all intermediate content in order and preserves the complete final block', () => {
     const source = [
       message('prompt', 'user'),
@@ -61,7 +123,12 @@ describe('foldCompletedProcessRows', () => {
       const final = message('final', 'assistant', true);
       if (final.kind !== 'history-message') throw new Error('Invalid fixture');
       final.runState = state;
-      const rows = prepareVisibleTimelineRows([summary('process'), message('commentary'), final]);
+      const rows = prepareVisibleTimelineRows([
+        summary('process'),
+        progressReceipt('progress'),
+        message('commentary'),
+        final,
+      ]);
 
       expect(foldCompletedProcessRows(rows)).toEqual(rows);
     },
@@ -94,6 +161,7 @@ describe('foldCompletedProcessRows', () => {
       message('old final'),
       message('new user', 'user'),
       liveProcess,
+      progressReceipt('live-progress'),
       message('new commentary'),
       message('new partial', 'assistant', true),
     ];
@@ -103,7 +171,7 @@ describe('foldCompletedProcessRows', () => {
 
     expect(result.filter(row => row.item.kind === 'completed-process')).toHaveLength(1);
     expect(result[1].item).toMatchObject({ kind: 'completed-process', items: [oldProcess] });
-    expect(result.slice(-3).map(row => row.item)).toEqual(source.slice(-3));
+    expect(result.slice(-4).map(row => row.item)).toEqual(source.slice(-4));
   });
 
   test('keeps approval cards, interactive deliveries, and pending tools outside disclosures', () => {
@@ -221,20 +289,23 @@ describe('foldCompletedProcessRows', () => {
   });
 
   test('does not hide process-only replies or trailing records after the final answer', () => {
-    const onlyProcess = prepareVisibleTimelineRows([summary('process')]);
+    const progress = progressReceipt('progress');
+    const onlyProcess = prepareVisibleTimelineRows([summary('process'), progress]);
     expect(foldCompletedProcessRows(onlyProcess)).toEqual(onlyProcess);
     const trailing = summary('trailing');
     const final = message('final', 'assistant', true);
     const result = foldCompletedProcessRows(
-      prepareVisibleTimelineRows([message('commentary'), final, trailing]),
+      prepareVisibleTimelineRows([message('commentary'), final, trailing, progress]),
     );
     expect(result.map(row => row.item.kind)).toEqual([
       'completed-process',
       'history-message',
       'process-summary',
+      'progress-receipt',
     ]);
     expect(result[1].item).toBe(final);
     expect(result[2].item).toBe(trailing);
+    expect(result[3].item).toBe(progress);
   });
 
   test('groups display rows across native run boundaries without merging or rewriting their ownership', () => {

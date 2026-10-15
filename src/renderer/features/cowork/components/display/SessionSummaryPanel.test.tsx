@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { type ProgressCard, ProgressCardStepStatus } from '@shared/openclaw/progressCard';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createRef } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 
@@ -215,12 +215,12 @@ it('refreshes through the existing progress callback and shows completed progres
   const onRefresh = vi.fn().mockResolvedValue(true);
   const progress = { card: progressCard, runState: 'running' as const, onRefresh };
   const { rerender } = render(<SessionSummaryPanel {...props} progress={progress} />);
-  const refresh = screen.getByRole('button', { name: 'Update task progress' }) as HTMLButtonElement;
+  const refresh = screen.getByRole('button', { name: 'Refresh task progress' }) as HTMLButtonElement;
   fireEvent.click(refresh);
   expect(onRefresh).toHaveBeenCalledTimes(1);
   expect(refresh.disabled).toBe(true);
   expect(screen.getByText('1/4 completed')).toBeTruthy();
-  await Promise.resolve();
+  await waitFor(() => expect(refresh.disabled).toBe(false));
 
   const completedCard = {
     ...progressCard,

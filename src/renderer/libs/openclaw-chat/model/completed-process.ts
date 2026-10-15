@@ -18,6 +18,7 @@ function canFold(item: VisibleTimelineItem): item is SourceTimelineItem {
   if (item.kind === 'process-summary') {
     return item.items.every(process => process.status !== 'running');
   }
+  if (item.kind === 'progress-receipt') return item.item.status !== 'running';
   const message = assistantMessage(item);
   if (item.kind !== 'history-message' || !message || isFailedRunMessage(item.message)) return false;
   if (item.runState && item.runState !== 'completed') return false;

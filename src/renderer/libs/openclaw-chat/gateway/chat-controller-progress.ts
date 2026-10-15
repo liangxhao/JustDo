@@ -12,7 +12,6 @@ import {
   PROGRESS_CARD_CACHE_LIMIT,
   PROGRESS_CARD_GET_METHOD,
   PROGRESS_CARD_PUT_METHOD,
-  PROGRESS_CARD_REFRESH_METHOD,
 } from './chat-controller-support';
 export interface ChatControllerProgressContext {
   readonly state: ChatState;
@@ -24,16 +23,7 @@ export interface ChatControllerProgressContext {
   readonly loadProgressCard: (sessionKey: string, force?: boolean) => Promise<void>;
 }
 
-const refreshIntents = new WeakMap<
-  ChatControllerProgressContext,
-  {
-    sessionKey: string;
-    revision: number;
-    idempotencyKey: string;
-  }
->();
-
-/** Retry uncertain delivery with the same intent; terminal failures permit a new run. */
+/** Read saved progress without asking the agent to start or steer a turn. */
 export async function refreshProgressCard(this: ChatControllerProgressContext): Promise<boolean> {
   const { client, sessionKey, progressCard: card } = this.state;
   if (
@@ -41,62 +31,10 @@ export async function refreshProgressCard(this: ChatControllerProgressContext): 
     !this.state.connected ||
     !card ||
     card.sessionKey !== sessionKey ||
-    !this.isGatewayMethodAdvertised(PROGRESS_CARD_REFRESH_METHOD)
+    !this.isGatewayMethodAdvertised(PROGRESS_CARD_GET_METHOD)
   )
     return false;
-  const previous = refreshIntents.get(this);
-  const retry = previous?.sessionKey === sessionKey && previous.revision === card.revision;
-  const intent = retry
-    ? previous
-    : { sessionKey, revision: card.revision, idempotencyKey: crypto.randomUUID() };
-  refreshIntents.set(this, intent);
-  const current = () => client === this.state.client && sessionKey === this.state.sessionKey;
-  try {
-    const response = await client.request<{ status: string; runId: string; revision: number }>(
-      PROGRESS_CARD_REFRESH_METHOD,
-      { sessionKey, idempotencyKey: intent.idempotencyKey },
-    );
-    const accepted =
-      current() &&
-      response.status === 'accepted' &&
-      typeof response.runId === 'string' &&
-      !!response.runId &&
-      Number.isInteger(response.revision) &&
-      response.revision > 0;
-    if (accepted && retry) {
-      // A replayed ACK does not replay a missed changed event. Keep the old card
-      // if this read fails, and never let an older read replace a newer revision.
-      void client
-        .request(PROGRESS_CARD_GET_METHOD, { sessionKey })
-        .then(value => {
-          const saved = parseProgressCardGetResult(value, sessionKey);
-          if (
-            !current() ||
-            !saved ||
-            !this.state.progressCard ||
-            saved.revision <= this.state.progressCard.revision
-          )
-            return;
-          this.rememberProgressCard(sessionKey, saved);
-          this.state.progressCard = saved;
-          this.notify();
-        })
-        .catch(() => undefined);
-    }
-    return accepted;
-  } catch (error) {
-    const details = error && typeof error === 'object' && 'details' in error ? error.details : null;
-    if (
-      details &&
-      typeof details === 'object' &&
-      'code' in details &&
-      details.code === 'PROGRESS_CARD_REFRESH_TERMINAL' &&
-      refreshIntents.get(this) === intent
-    ) {
-      refreshIntents.delete(this);
-    }
-    return false;
-  }
+  return loadProgressCard.call(this, sessionKey, true, { preserveSavedCard: true });
 }
 
 export async function dismissProgressCard(this: ChatControllerProgressContext): Promise<boolean> {
@@ -168,7 +106,8 @@ export async function loadProgressCard(
   this: ChatControllerProgressContext,
   sessionKey: string,
   force = false,
-): Promise<void> {
+  { preserveSavedCard = false }: { preserveSavedCard?: boolean } = {},
+): Promise<boolean> {
   const client = this.state.client;
   const available =
     !!client && this.state.connected && this.isGatewayMethodAdvertised(PROGRESS_CARD_GET_METHOD);
@@ -182,7 +121,7 @@ export async function loadProgressCard(
       this.state.progressCardError = null;
       this.notify();
     }
-    return;
+    return false;
   }
 
   if (!force && this.progressCardCache.has(sessionKey)) {
@@ -194,12 +133,12 @@ export async function loadProgressCard(
       this.state.progressCardError = null;
       this.notify();
     }
-    return;
+    return true;
   }
 
   const generation = ++this.progressCardLoadGeneration;
   if (this.state.sessionKey === sessionKey) {
-    if (force) this.state.progressCard = null;
+    if (force && !preserveSavedCard) this.state.progressCard = null;
     this.state.progressCardLoading = true;
     this.state.progressCardError = null;
     this.notify();
@@ -211,7 +150,7 @@ export async function loadProgressCard(
       client !== this.state.client ||
       sessionKey !== this.state.sessionKey
     ) {
-      return;
+      return false;
     }
     const card = parseProgressCardGetResult(response, sessionKey);
     if (card === undefined) throw new Error('invalid progress card response');
@@ -220,13 +159,14 @@ export async function loadProgressCard(
     this.state.progressCardLoading = false;
     this.state.progressCardError = null;
     this.notify();
+    return true;
   } catch (error) {
     if (
       generation !== this.progressCardLoadGeneration ||
       client !== this.state.client ||
       sessionKey !== this.state.sessionKey
     ) {
-      return;
+      return false;
     }
     const gatewayCode =
       error && typeof error === 'object' && 'gatewayCode' in error
@@ -241,14 +181,17 @@ export async function loadProgressCard(
         ? (details as { code?: unknown }).code
         : undefined;
     this.progressCardCache.delete(sessionKey);
-    this.state.progressCard = null;
     this.state.progressCardLoading = false;
     this.state.progressCardError =
       gatewayCode === 'SESSION_PARTICIPATION_REQUIRED' ||
       detailCode === 'SESSION_PARTICIPATION_REQUIRED'
         ? 'access-denied'
         : 'unavailable';
+    if (!preserveSavedCard || this.state.progressCardError === 'access-denied') {
+      this.state.progressCard = null;
+    }
     this.notify();
+    return false;
   }
 }
 

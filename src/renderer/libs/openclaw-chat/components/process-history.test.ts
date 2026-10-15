@@ -64,6 +64,80 @@ function createChat(state: 'running' | 'completed' = 'completed') {
 }
 
 describe('completed chat process history', () => {
+  test('includes saved progress updates in one collapsed process and retains the compact receipt when expanded', async () => {
+    const chat = createChat();
+    const messages: GatewayMessage[] = [
+      ...chat.messages.slice(0, -1),
+      {
+        role: 'assistant',
+        timestamp: 1_300,
+        __openclaw: { id: 'progress-call', runId: 'run-1' },
+        content: [
+          {
+            type: 'toolCall',
+            id: 'progress-1',
+            name: 'progress_card',
+            arguments: {
+              plan: [
+                { step: 'Inspect configuration', status: 'completed' },
+                { step: 'Verify results', status: 'in_progress' },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        role: 'toolResult',
+        timestamp: 1_400,
+        toolCallId: 'progress-1',
+        toolName: 'progress_card',
+        content: [{ type: 'text', text: 'Updated' }],
+        __openclaw: { id: 'progress-result', runId: 'run-1' },
+      },
+      {
+        role: 'assistant',
+        timestamp: 1_500,
+        __openclaw: { id: 'after-progress', runId: 'run-1' },
+        content: [
+          { type: 'thinking', thinking: 'Checking the updated progress' },
+          { type: 'text', text: 'Continuing verification' },
+          { type: 'toolCall', id: 'verify-1', name: 'read', arguments: { path: 'result.json' } },
+        ],
+      },
+      {
+        role: 'toolResult',
+        timestamp: 1_600,
+        toolCallId: 'verify-1',
+        toolName: 'read',
+        content: [{ type: 'text', text: 'Verified' }],
+        __openclaw: { id: 'verify-result', runId: 'run-1' },
+      },
+      chat.messages[chat.messages.length - 1],
+    ];
+    chat.messages = messages;
+    await chat.updateComplete;
+
+    const root = chat.shadowRoot!;
+    const disclosures = root.querySelectorAll<HTMLDetailsElement>('.completed-process');
+    expect(disclosures).toHaveLength(1);
+    const disclosure = disclosures[0];
+    expect(disclosure.open).toBe(false);
+    const receipt = root.querySelector('.progress-card-receipt')!;
+    expect(receipt.closest('.completed-process')).toBe(disclosure);
+    expect(root.querySelectorAll('.progress-card-receipt')).toHaveLength(1);
+    expect(disclosure.textContent).toContain('Intermediate explanation');
+    expect(disclosure.textContent).toContain('Continuing verification');
+    expect(disclosure.textContent).not.toContain('Final answer');
+    expect(root.querySelector('[data-entry-id="final"]')!.closest('.completed-process')).toBeNull();
+
+    disclosure.open = true;
+    chat.requestUpdate();
+    await chat.updateComplete;
+    expect(root.querySelector('.progress-card-receipt')).toBe(receipt);
+    expect(receipt.textContent).toContain('Verify results');
+    expect(chat.messages).toBe(messages);
+  });
+
   test('defaults to collapsed, keeps the final answer outside, and retains expansion on rerender', async () => {
     const chat = createChat();
     await chat.updateComplete;

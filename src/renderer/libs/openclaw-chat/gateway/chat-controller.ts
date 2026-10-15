@@ -458,11 +458,12 @@ export class ChatController {
     this.notify();
   }
 
-  /** Safely dismiss an unchanged, fully completed progress card. */
+  /** Reload the saved progress card without starting an agent turn. */
   refreshProgressCard(): Promise<boolean> {
     return chatControllerProgress.refreshProgressCard.call(this.chatControllerProgressContext);
   }
 
+  /** Safely dismiss an unchanged, fully completed progress card. */
   dismissProgressCard(): Promise<boolean> {
     return chatControllerProgress.dismissProgressCard.call(this.chatControllerProgressContext);
   }
@@ -1398,8 +1399,8 @@ export class ChatController {
     );
   }
 
-  private loadProgressCard(sessionKey: string, force = false): Promise<void> {
-    return chatControllerProgress.loadProgressCard.call(
+  private async loadProgressCard(sessionKey: string, force = false): Promise<void> {
+    await chatControllerProgress.loadProgressCard.call(
       this.chatControllerProgressContext,
       sessionKey,
       force,
