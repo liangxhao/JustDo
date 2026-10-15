@@ -21,7 +21,11 @@ function canFold(item: VisibleTimelineItem): item is SourceTimelineItem {
   if (item.kind === 'progress-receipt') return item.item.status !== 'running';
   const message = assistantMessage(item);
   if (item.kind !== 'history-message' || !message || isFailedRunMessage(item.message)) return false;
-  if (item.runState && item.runState !== 'completed') return false;
+  // A settled run receipt can annotate ordinary commentary as well as its last reply.
+  // Preserve explicit native failures below; do not treat the receipt as a content error.
+  if (item.runState === 'running') return false;
+  const stopReason = message.stopReason ?? message.stop_reason;
+  if (stopReason === 'error' || stopReason === 'aborted') return false;
   // Interactive and media deliveries remain directly accessible.
   if (getTranscriptMedia(message).length > 0) return false;
   if (
@@ -55,12 +59,7 @@ export function foldCompletedProcessRows(
       }
     }
     const final = turn[finalIndex]?.item;
-    if (
-      final?.kind !== 'history-message' ||
-      protectedTurn ||
-      (final.runState !== undefined && final.runState !== 'completed') ||
-      isFailedRunMessage(final.message)
-    ) {
+    if (final?.kind !== 'history-message' || protectedTurn || final.runState === 'running') {
       result.push(...turn);
       turn = [];
       return;

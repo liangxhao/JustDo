@@ -117,22 +117,77 @@ describe('foldCompletedProcessRows', () => {
     expect(result[2].showFooter).toBe(true);
   });
 
-  test.each(['running', 'failed', 'aborted'] as const)(
-    'leaves explicitly %s outcomes unfolded',
+  test('leaves explicitly running outcomes unfolded', () => {
+    const final = message('final', 'assistant', true);
+    if (final.kind !== 'history-message') throw new Error('Invalid fixture');
+    final.runState = 'running';
+    const rows = prepareVisibleTimelineRows([
+      summary('process'),
+      progressReceipt('progress'),
+      message('commentary'),
+      final,
+    ]);
+
+    expect(foldCompletedProcessRows(rows)).toEqual(rows);
+  });
+
+  test.each(['failed', 'aborted'] as const)(
+    'folds settled process records before a %s reply without changing its outcome',
     state => {
       const final = message('final', 'assistant', true);
       if (final.kind !== 'history-message') throw new Error('Invalid fixture');
       final.runState = state;
-      const rows = prepareVisibleTimelineRows([
-        summary('process'),
-        progressReceipt('progress'),
-        message('commentary'),
-        final,
-      ]);
+      const commentary = message('commentary', 'assistant', true);
+      if (commentary.kind !== 'history-message') throw new Error('Invalid fixture');
+      commentary.runState = state;
+      const source = [summary('process'), progressReceipt('progress'), commentary, final];
+      const before = structuredClone(source);
 
-      expect(foldCompletedProcessRows(rows)).toEqual(rows);
+      const result = foldCompletedProcessRows(prepareVisibleTimelineRows(source));
+
+      expect(result.map(row => row.item.kind)).toEqual(['completed-process', 'history-message']);
+      expect(result[0].item).toMatchObject({ items: source.slice(0, -1) });
+      expect(result[1].item).toBe(final);
+      expect(final.runState).toBe(state);
+      expect(source).toEqual(before);
     },
   );
+
+  test.each([
+    { stopReason: 'error' },
+    { stop_reason: 'error' },
+    { stopReason: 'aborted' },
+    { stop_reason: 'aborted' },
+    { __justdoFailedRunMessage: true },
+  ])('keeps an explicit failed reply visible between process groups: %o', failure => {
+    const failed = message('failure');
+    if (failed.kind !== 'history-message') throw new Error('Invalid fixture');
+    failed.message = { ...failed.message, ...failure };
+    const source = [summary('before-failure'), failed, summary('after-failure'), message('final')];
+
+    const result = foldCompletedProcessRows(prepareVisibleTimelineRows(source));
+
+    expect(result.map(row => row.item.kind)).toEqual([
+      'completed-process',
+      'history-message',
+      'completed-process',
+      'history-message',
+    ]);
+    expect(result[1].item).toBe(failed);
+    expect(result[3].item).toBe(source[3]);
+  });
+
+  test('keeps a final failure message visible while folding its earlier process', () => {
+    const final = message('failure');
+    if (final.kind !== 'history-message') throw new Error('Invalid fixture');
+    final.message = { ...final.message, __justdoFailedRunMessage: true };
+    const process = summary('process');
+
+    const result = foldCompletedProcessRows(prepareVisibleTimelineRows([process, final]));
+
+    expect(result[0].item).toMatchObject({ kind: 'completed-process', items: [process] });
+    expect(result[1].item).toBe(final);
+  });
 
   test('folds historical rows without local timing receipts while retaining their native identities', () => {
     const final = message('final');

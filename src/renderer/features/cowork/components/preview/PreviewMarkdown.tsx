@@ -10,11 +10,7 @@ interface PreviewMarkdownProps {
   mermaidIdPrefix: string;
 }
 
-const COPY_FEEDBACK_DURATION_MS = 1600;
-const COPY_ICON =
-  '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0 2 2v7a2 2 0 0 0 2 2h3"/></svg>';
-const COPY_DONE_ICON =
-  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
+const COPY_FEEDBACK_DURATION_MS = 1300;
 
 const PreviewMarkdown = ({ html, mermaidIdPrefix }: PreviewMarkdownProps) => {
   const ownerDocument = useOwnerDocument();
@@ -40,14 +36,6 @@ const PreviewMarkdown = ({ html, mermaidIdPrefix }: PreviewMarkdownProps) => {
     const root = rootRef.current;
     if (!root) return;
 
-    root.querySelectorAll<HTMLElement>('.code-block-copy__idle').forEach(label => {
-      label.innerHTML = COPY_ICON;
-      label.style.display = 'inline-flex';
-    });
-    root.querySelectorAll<HTMLElement>('.code-block-copy__done').forEach(label => {
-      label.innerHTML = COPY_DONE_ICON;
-      label.style.display = 'none';
-    });
     root.querySelectorAll<HTMLButtonElement>('.code-block-copy').forEach(button => {
       const label = i18nService.t('copyToClipboard');
       button.setAttribute('aria-label', label);
@@ -95,20 +83,14 @@ const PreviewMarkdown = ({ html, mermaidIdPrefix }: PreviewMarkdownProps) => {
         const code = copyButton.dataset.code;
         if (code === undefined) return;
         await ownerWindow.navigator.clipboard.writeText(code);
-        const idleIcon = copyButton.querySelector<HTMLElement>('.code-block-copy__idle');
-        const doneIcon = copyButton.querySelector<HTMLElement>('.code-block-copy__done');
         const activeTimer = copyFeedbackTimersRef.current.get(copyButton);
         if (activeTimer !== undefined) window.clearTimeout(activeTimer);
         const copiedLabel = i18nService.t('copied');
         const copyLabel = i18nService.t('copyToClipboard');
-        if (idleIcon) idleIcon.style.display = 'none';
-        if (doneIcon) doneIcon.style.display = 'inline-flex';
         copyButton.classList.add('copied');
         copyButton.setAttribute('aria-label', copiedLabel);
         copyButton.title = copiedLabel;
         const timer = window.setTimeout(() => {
-          if (idleIcon) idleIcon.style.display = 'inline-flex';
-          if (doneIcon) doneIcon.style.display = 'none';
           copyButton.classList.remove('copied');
           copyButton.setAttribute('aria-label', copyLabel);
           copyButton.title = copyLabel;

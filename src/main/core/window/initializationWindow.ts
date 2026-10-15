@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'path';
 
+import { DEFAULT_MAIN_WINDOW_SIZE } from '../../../shared/app/windowGeometry';
 import { isAllowedMainWindowNavigation } from './browserPanelSecurity';
 import { registerContentSecurityPolicy } from './contentSecurityPolicy';
 import { loadPackagedRenderer } from './renderer/packagedRendererLoader';
@@ -19,8 +20,7 @@ export function createInitializationWindow(options: {
   onReady: (window: BrowserWindow) => void;
 }): InitializationWindow {
   const window = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    ...DEFAULT_MAIN_WINDOW_SIZE,
     minWidth: 800,
     minHeight: 600,
     title: options.appName,

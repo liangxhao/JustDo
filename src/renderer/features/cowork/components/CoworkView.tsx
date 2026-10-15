@@ -3279,7 +3279,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               runTimings={sessionRunTimings[currentSession.id] ?? []}
             />
             {/* Input */}
-            <div className="shrink-0 pb-4 pt-2">
+            <div className="cowork-composer-viewport shrink-0 pb-4 pt-2">
               <div className="cowork-content-width mx-auto min-w-0 space-y-1.5">
                 {!currentSession.external?.readOnly && (
                   <CoworkPet
@@ -3370,6 +3370,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   {i18nService.t('aiGeneratedDisclaimer')}
                 </p>
               </div>
+              <div className="cowork-composer-scrollbar-gutter" aria-hidden="true" />
             </div>
           </div>
           {(isDisplayPanelOpen ||

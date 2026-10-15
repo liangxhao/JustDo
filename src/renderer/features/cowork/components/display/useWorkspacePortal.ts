@@ -1,13 +1,12 @@
-import {
-  type WorkspaceNativeWindowState,
-  WorkspaceWindowControl,
-  type WorkspaceWindowGrant,
-} from '@shared/cowork/workspaceWindow';
+import type { WorkspaceWindowGrant } from '@shared/cowork/workspaceWindow';
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { observeChatContentWidth } from '@/app/chatContentWidth';
 import { setDockedWorkspaceSurface } from '@/app/shell/dockedWorkspaceSurface';
 import { setWorkspaceNotificationDocument } from '@/app/shell/WorkspaceNotifications';
 import { i18nService } from '@/services/i18n';
+
+import { createWorkspaceWindowControls } from './workspaceWindowControls';
 
 export const WORKSPACE_PRESENTATION_EVENT = 'cowork:workspace-presentation-changed';
 
@@ -36,8 +35,12 @@ const readOcclusion = (rect: DOMRect) => {
   return { blocked, occluded };
 };
 
-const copyAppearance = (target: Document): (() => void) => {
+const copyAppearance = (
+  target: Document,
+  controls: Window['electron']['window'],
+): (() => void) => {
   const copies = new Map<Element, Element>();
+  const widthObserver = observeChatContentWidth(target.documentElement, controls);
   const sync = () => {
     const sources = new Set(document.head.querySelectorAll('style, link[rel="stylesheet"]'));
     for (const [source, copy] of copies) {
@@ -64,6 +67,7 @@ const copyAppearance = (target: Document): (() => void) => {
     }
     target.documentElement.className = document.documentElement.className;
     target.documentElement.style.cssText = document.documentElement.style.cssText;
+    widthObserver.update();
     target.documentElement.lang = document.documentElement.lang;
     target.documentElement.dir = document.documentElement.dir;
     // Theme tokens and appearance switches are selected by root data attributes.
@@ -92,6 +96,7 @@ const copyAppearance = (target: Document): (() => void) => {
   observer.observe(document.documentElement, { attributes: true });
   return () => {
     observer.disconnect();
+    widthObserver.dispose();
     copies.forEach(copy => copy.remove());
   };
 };
@@ -114,18 +119,7 @@ export function useWorkspacePortal(slot: RefObject<HTMLElement>, open: boolean) 
   const windowControls = useMemo<Window['electron']['window'] | undefined>(() => {
     const generation = grantRef.current?.generation;
     if (!api || !target || !generation) return undefined;
-    return {
-      minimize: () => api.control(generation, WorkspaceWindowControl.Minimize),
-      toggleMaximize: () => api.control(generation, WorkspaceWindowControl.ToggleMaximize),
-      close: () => api.control(generation, WorkspaceWindowControl.Close),
-      showSystemMenu: position =>
-        api.control(generation, WorkspaceWindowControl.ShowSystemMenu, position),
-      isMaximized: async () => (await api.getWindowState(generation))?.isMaximized ?? false,
-      onStateChanged: (callback: (state: WorkspaceNativeWindowState) => void) =>
-        api.onStateChanged(state => {
-          if (state.generation === generation && state.windowState) callback(state.windowState);
-        }),
-    };
+    return createWorkspaceWindowControls(api, generation);
   }, [api, target]);
 
   const publishDetached = useCallback((value: boolean) => {
@@ -180,7 +174,10 @@ export function useWorkspacePortal(slot: RefObject<HTMLElement>, open: boolean) 
             return;
           }
           const targetDocument = root.ownerDocument;
-          cleanupAppearance = copyAppearance(targetDocument);
+          cleanupAppearance = copyAppearance(
+            targetDocument,
+            createWorkspaceWindowControls(api, grant.generation),
+          );
           const keydown = (event: KeyboardEvent) => {
             if (event.defaultPrevented || event.isComposing) return;
             const forwarded = new KeyboardEvent('keydown', {

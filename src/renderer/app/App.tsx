@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux';
 
 import { applyAppearanceConfig } from '@/app/appearance';
+import { observeChatContentWidth } from '@/app/chatContentWidth';
 import { defaultConfig, getProviderDisplayName } from '@/app/config';
 import BottomRightStatusStack from '@/app/shell/BottomRightStatusStack';
 import Sidebar from '@/app/shell/Sidebar';
@@ -91,6 +92,11 @@ import { type RootState, store } from '@/store';
 import AppInitializationGate from './shell/AppInitializationGate';
 
 const InitializedApp: React.FC = () => {
+  useEffect(() => {
+    const widthObserver = observeChatContentWidth(document.documentElement, window.electron?.window);
+    return widthObserver.dispose;
+  }, []);
+
   const { enabled: agentTeamEnabled, disabledRevision: agentTeamDisabledRevision } =
     useExtensionAvailability(OpenClawExtensionId.AGENT_TEAM);
   const [teamHistoryDocument, setTeamHistoryDocument] = useState<Document | null>(null);

@@ -247,6 +247,66 @@ const HIGHLIGHT_ALIASES: Record<string, string> = {
   tsx: 'typescript',
 };
 
+const CODE_LANGUAGE_LABELS: ReadonlyMap<string, string> = new Map(
+  Object.entries({
+    bash: 'Bash',
+    sh: 'Shell',
+    shell: 'Shell',
+    c: 'C',
+    cpp: 'C++',
+    'c++': 'C++',
+    cxx: 'C++',
+    csharp: 'C#',
+    cs: 'C#',
+    'c#': 'C#',
+    css: 'CSS',
+    diff: 'Diff',
+    patch: 'Diff',
+    dockerfile: 'Dockerfile',
+    docker: 'Dockerfile',
+    go: 'Go',
+    golang: 'Go',
+    java: 'Java',
+    javascript: 'JavaScript',
+    js: 'JavaScript',
+    jsx: 'JSX',
+    json: 'JSON',
+    kotlin: 'Kotlin',
+    kt: 'Kotlin',
+    kts: 'Kotlin',
+    markdown: 'Markdown',
+    md: 'Markdown',
+    php: 'PHP',
+    powershell: 'PowerShell',
+    ps1: 'PowerShell',
+    pwsh: 'PowerShell',
+    python: 'Python',
+    py: 'Python',
+    ruby: 'Ruby',
+    rb: 'Ruby',
+    rust: 'Rust',
+    rs: 'Rust',
+    sql: 'SQL',
+    swift: 'Swift',
+    typescript: 'TypeScript',
+    ts: 'TypeScript',
+    tsx: 'TSX',
+    xml: 'XML',
+    html: 'HTML',
+    svg: 'SVG',
+    yaml: 'YAML',
+    yml: 'YAML',
+  }),
+);
+
+function renderCodeBlockTitle(language: string): string {
+  // An absent language stays generic even when auto-highlighting finds a match.
+  const label = language
+    ? (CODE_LANGUAGE_LABELS.get(language.toLowerCase()) ?? language)
+    : i18nService.t('messageCode');
+  return `<div class="code-block-title"><span class="code-block-icon" aria-hidden="true"></span><span class="code-block-lang">${escapeHtml(label)}</span></div>`;
+}
+
 // ── Utility functions ───────────────────────────────────────────────────────
 
 function escapeHtml(value: string): string {
@@ -361,6 +421,11 @@ function installHooks(): void {
 
   DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
     const tagName = node.nodeName.toLowerCase();
+    if (tagName === 'button' && data.attrName === 'data-code') {
+      // DOMPurify trims attributes by default; code indentation and final
+      // newlines are part of the copy payload. It still validates this value.
+      data.attrValue = node.getAttribute('data-code') ?? data.attrValue;
+    }
     if (tagName === 'a' && data.attrName === 'href') {
       const localLink = parseLocalHtmlLink(data.attrValue);
       if (localLink) {
@@ -804,10 +869,7 @@ md.renderer.rules.fence = (tokens, idx, _options, env) => {
   const copiedLabel = escapeHtml(i18nService.t('copied'));
   const copyAriaLabel = escapeHtml(i18nService.t('copyToClipboard'));
   const copyBtn = `<button type="button" class="code-block-copy" data-code="${attrSafe}" aria-label="${copyAriaLabel}"><span class="code-block-copy__idle">${copyLabel}</span><span class="code-block-copy__done">${copiedLabel}</span></button>`;
-  const langLabel = lang
-    ? `<span class="code-block-lang">${escapeHtml(lang.toLowerCase())}</span>`
-    : '';
-  const header = `<div class="code-block-header">${langLabel}${copyBtn}</div>`;
+  const header = `<div class="code-block-header">${renderCodeBlockTitle(lang)}${copyBtn}</div>`;
 
   const wrapperClass = [
     'code-block-wrapper',
@@ -835,7 +897,7 @@ md.renderer.rules.code_block = (tokens, idx, _options, env) => {
   const copiedLabel = escapeHtml(i18nService.t('copied'));
   const copyAriaLabel = escapeHtml(i18nService.t('copyToClipboard'));
   const copyBtn = `<button type="button" class="code-block-copy" data-code="${attrSafe}" aria-label="${copyAriaLabel}"><span class="code-block-copy__idle">${copyLabel}</span><span class="code-block-copy__done">${copiedLabel}</span></button>`;
-  const header = `<div class="code-block-header">${copyBtn}</div>`;
+  const header = `<div class="code-block-header">${renderCodeBlockTitle('')}${copyBtn}</div>`;
   return `<div class="code-block-wrapper">${header}${codeBlock}</div>`;
 };
 

@@ -2034,8 +2034,8 @@ export class JustDoChatElement extends LitElement {
   private renderMinimapEntry(entry: ChatMinimapEntry): TemplateResult {
     const active = entry.key === this.currentMinimapKey;
     const lineWidth = Math.min(
-      12,
-      5 + Math.ceil((entry.userText.length + entry.assistantText.length) / 64),
+      8,
+      3 + Math.ceil((entry.userText.length + entry.assistantText.length) / 96),
     );
     return html`
       <button

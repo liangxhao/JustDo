@@ -5,6 +5,9 @@ import { type JsonSourceNode, parseJsonSource, tableToTsv } from './json-source-
 import { downloadText, type ToolOutput } from './tool-output';
 
 type Preference = { wrap?: boolean; expanded?: boolean; tree?: boolean };
+type CopyOperation = { labelKey: string; timer?: { window: Window; id: number } };
+const COPY_FEEDBACK_DURATION_MS = 1300;
+
 export class RichMessageControls {
   private get document(): Document {
     return this.root.ownerDocument;
@@ -13,6 +16,7 @@ export class RichMessageControls {
     return (this.document.defaultView ?? window) as Window & typeof globalThis;
   }
   private preferences = new Map<string, Preference>();
+  private copyOperations = new Map<HTMLButtonElement, CopyOperation>();
   onQuote: MessageQuoteHandler | undefined;
   private selectionBar: HTMLElement | null = null;
   private scope = '';
@@ -37,6 +41,7 @@ export class RichMessageControls {
     this.document.addEventListener('scroll', this.dismissSelection, true);
   }
   dispose() {
+    this.clearCopyFeedback();
     this.close();
     this.dismissSelection();
     this.root.removeEventListener('contextmenu', this.selectQuote);
@@ -198,6 +203,7 @@ export class RichMessageControls {
   };
   reset(scope: string) {
     if (scope !== this.scope) {
+      this.clearCopyFeedback();
       this.scope = scope;
       this.preferences.clear();
       this.toolOpen.clear();
@@ -216,6 +222,7 @@ export class RichMessageControls {
   private button(key: string, action: () => void): HTMLButtonElement {
     const button = this.document.createElement('button');
     button.type = 'button';
+    button.dataset.actionLabel = key;
     button.textContent = i18nService.t(key);
     button.addEventListener('click', event => {
       event.preventDefault();
@@ -244,17 +251,48 @@ export class RichMessageControls {
     if (button.dataset.iconOnly) {
       button.title = i18nService.t(key);
       button.setAttribute('aria-label', button.title);
+      if (key === 'copied') button.dataset.copyState = 'copied';
+      else if (key === 'messageCopyFailed') button.dataset.copyState = 'error';
+      else delete button.dataset.copyState;
     } else button.textContent = i18nService.t(key);
   }
+  private clearCopyFeedback() {
+    for (const [button, operation] of this.copyOperations) {
+      if (operation.timer) operation.timer.window.clearTimeout(operation.timer.id);
+      this.copyFeedback(button, operation.labelKey);
+    }
+    this.copyOperations.clear();
+  }
   private copy(button: HTMLButtonElement, text: string) {
-    void this.window.navigator.clipboard
-      .writeText(text)
-      .then(() => {
+    const previous = this.copyOperations.get(button);
+    if (previous?.timer) previous.timer.window.clearTimeout(previous.timer.id);
+    const operation: CopyOperation = { labelKey: button.dataset.actionLabel ?? 'copy' };
+    this.copyOperations.set(button, operation);
+    this.copyFeedback(button, operation.labelKey);
+    const ownerWindow = button.ownerDocument.defaultView ?? this.window;
+    void (async () => {
+      try {
+        await ownerWindow.navigator.clipboard.writeText(text);
+        if (this.copyOperations.get(button) !== operation) return;
+        if (!button.isConnected) {
+          this.copyOperations.delete(button);
+          return;
+        }
         this.copyFeedback(button, 'copied');
-      })
-      .catch(() => {
+        operation.timer = {
+          window: ownerWindow,
+          id: ownerWindow.setTimeout(() => {
+            if (this.copyOperations.get(button) !== operation) return;
+            this.copyFeedback(button, operation.labelKey);
+            this.copyOperations.delete(button);
+          }, COPY_FEEDBACK_DURATION_MS),
+        };
+      } catch {
+        if (this.copyOperations.get(button) !== operation) return;
         this.copyFeedback(button, 'messageCopyFailed');
-      });
+        this.copyOperations.delete(button);
+      }
+    })();
   }
   private expand(source: HTMLElement) {
     this.close();
@@ -437,9 +475,12 @@ export class RichMessageControls {
         '';
       const mermaid = block.classList.contains('mermaid-block');
       block.querySelector('.code-block-copy')?.remove();
-      const copy = this.iconButton('copy', 'M9 9h11v11H9z M15 9V4H4v11h5', () =>
-        this.copy(copy, raw),
+      const copy = this.iconButton(
+        'copy',
+        'M10 8h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2',
+        () => this.copy(copy, raw),
       );
+      copy.classList.add('message-code-copy');
       actions.append(copy);
       if (mermaid) {
         actions.append(

@@ -205,7 +205,7 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
                       }`}
                     />
                     <span className="text-xs font-semibold text-foreground/80">{label}</span>
-                    <span className="ml-auto min-w-5 rounded-full bg-surface-raised px-1.5 py-0.5 text-center text-[10px] font-medium tabular-nums text-secondary">
+                    <span className="ml-auto min-w-5 px-1.5 py-0.5 text-center text-[10px] font-medium tabular-nums text-secondary">
                       {group.sessions.length}
                     </span>
                   </button>

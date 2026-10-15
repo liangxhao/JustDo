@@ -14,7 +14,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function createChat(state: 'running' | 'completed' = 'completed') {
+function createChat(state: 'running' | 'completed' | 'failed' | 'aborted' = 'completed') {
   const chat = document.createElement('justdo-chat') as JustDoChatElement;
   chat.messages = [
     {
@@ -55,7 +55,7 @@ function createChat(state: 'running' | 'completed' = 'completed') {
       clientTurnId: 'turn-1',
       sessionId: 'session-1',
       startedAt: 1_000,
-      ...(state === 'completed' ? { endedAt: 3_000 } : {}),
+      ...(state !== 'running' ? { endedAt: 3_000 } : {}),
       state,
     },
   ];
@@ -64,6 +64,53 @@ function createChat(state: 'running' | 'completed' = 'completed') {
 }
 
 describe('completed chat process history', () => {
+  test.each(['failed', 'aborted'] as const)(
+    'collapses settled history with a %s receipt and keeps native errors and the last reply visible',
+    async state => {
+      const chat = createChat(state);
+      const messages = [
+        chat.messages[0],
+        {
+          role: 'assistant',
+          timestamp: 1_050,
+          content: [{ type: 'text', text: 'Earlier request failed' }],
+          stopReason: 'error',
+          __openclaw: { id: 'native-error', runId: 'run-1' },
+        },
+        ...chat.messages.slice(1),
+      ];
+      chat.messages = messages;
+      chat.runTimings = [
+        ...chat.runTimings,
+        {
+          id: 'recovery-receipt',
+          rootRunId: 'recovery-run',
+          clientTurnId: 'recovery-turn',
+          sessionId: 'session-1',
+          state: 'completed',
+          startedAt: 4_000,
+          endedAt: 5_000,
+        },
+      ];
+      const receipts = structuredClone(chat.runTimings);
+      await chat.updateComplete;
+
+      const root = chat.shadowRoot!;
+      const disclosures = root.querySelectorAll<HTMLDetailsElement>('.completed-process');
+      expect(disclosures).toHaveLength(1);
+      expect(disclosures[0].open).toBe(false);
+      expect(disclosures[0].textContent).toContain('Intermediate explanation');
+      expect(disclosures[0].querySelector('.process-summary')).not.toBeNull();
+      for (const entryId of ['native-error', 'final']) {
+        const message = root.querySelector(`[data-entry-id="${entryId}"]`)!;
+        expect(message).not.toBeNull();
+        expect(message.closest('.completed-process')).toBeNull();
+      }
+      expect(chat.messages).toBe(messages);
+      expect(chat.runTimings).toEqual(receipts);
+    },
+  );
+
   test('includes saved progress updates in one collapsed process and retains the compact receipt when expanded', async () => {
     const chat = createChat();
     const messages: GatewayMessage[] = [

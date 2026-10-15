@@ -546,7 +546,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
         tabIndex={isRenaming ? -1 : 0}
         className={`group relative min-h-8 rounded-lg pl-7 pr-2 py-1.5 cursor-pointer transition-all duration-150 ${
           isActive
-            ? 'bg-surface-raised text-foreground'
+            ? 'bg-black/[0.08] text-foreground dark:bg-surface-raised'
             : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.05]'
         }`}
       >

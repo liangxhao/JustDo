@@ -4,6 +4,8 @@ import monacoEditorStyles from 'monaco-editor/min/vs/editor/editor.main.css?inli
 
 import browserRecordingStyles from '@/features/browser/recording/browserRecording.css?inline';
 
+import codeBlockStyles from './code-block.css?inline';
+
 export const chatStyles = [
   css`
     .tool-agent-link {
@@ -301,11 +303,11 @@ export const chatStyles = [
       cursor: default;
     }
     .code-block-wrapper:not(.is-expanded) > pre {
-      max-height: 320px;
+      max-height: 640px;
       overflow: auto;
     }
     .code-block-wrapper.is-expanded > pre {
-      max-height: 75vh;
+      max-height: none;
       overflow: auto;
     }
     .code-block-wrapper.is-wrapped {
@@ -407,10 +409,10 @@ export const chatStyles = [
     }
 
     .chat-container {
-      width: var(--justdo-chat-content-width, 70%);
-      /* Match the composer: adapt to the viewport without a fixed pixel cap. */
-      max-width: calc(100% - 32px);
-      min-width: min(320px, calc(100% - 32px));
+      width: calc(100% - (100% - var(--justdo-chat-content-width, 60%)) * var(--chat-content-width-progress, 0));
+      /* Match the composer's continuous window-size adaptation. */
+      max-width: calc(100% - 96px);
+      min-width: min(320px, calc(100% - 96px));
       box-sizing: border-box;
       margin: 0 auto;
       padding: 16px 0;
@@ -441,19 +443,24 @@ export const chatStyles = [
       z-index: 20;
       float: left;
       display: flex;
-      width: 32px;
+      width: 20px;
       max-height: min(68vh, 560px);
       box-sizing: border-box;
-      margin-left: 16px;
+      margin-left: 12px;
       transform: translateY(-50%);
       color: #a3a3a3;
+      transition: width 120ms ease;
+    }
+
+    .chat-minimap:is(:hover, :has(:focus-visible)) {
+      width: 28px;
     }
 
     .chat-minimap__track {
-      width: 32px;
+      width: 100%;
       max-height: min(68vh, 560px);
       box-sizing: border-box;
-      padding: 7px 0 7px 8px;
+      padding: 7px 0 7px 4px;
       overflow-y: auto;
       border-left: 1px solid rgba(163, 163, 163, 0.28);
       scrollbar-width: none;
@@ -466,7 +473,7 @@ export const chatStyles = [
     .chat-minimap__item {
       display: flex;
       align-items: center;
-      width: 23px;
+      width: 100%;
       height: 14px;
       margin: 0;
       padding: 0;
@@ -478,7 +485,7 @@ export const chatStyles = [
 
     .chat-minimap__line {
       display: block;
-      width: var(--minimap-line-width, 7px);
+      width: var(--minimap-line-width, 5px);
       height: 1px;
       border-radius: 999px;
       background: currentColor;
@@ -488,6 +495,10 @@ export const chatStyles = [
         height 120ms ease,
         color 120ms ease,
         opacity 120ms ease;
+    }
+
+    .chat-minimap:is(:hover, :has(:focus-visible)) .chat-minimap__line {
+      width: min(14px, calc(var(--minimap-line-width, 5px) * 2));
     }
 
     .chat-minimap__item:hover .chat-minimap__line,
@@ -502,7 +513,6 @@ export const chatStyles = [
     }
 
     .chat-minimap__item--active .chat-minimap__line {
-      width: 18px;
       height: 2px;
       opacity: 1;
     }
@@ -513,7 +523,7 @@ export const chatStyles = [
 
     .chat-minimap__preview {
       position: absolute;
-      left: 38px;
+      left: calc(100% + 8px);
       top: 0;
       width: min(320px, calc(100vw - 96px));
       box-sizing: border-box;
@@ -592,6 +602,12 @@ export const chatStyles = [
       max-width: 100%;
       padding-left: 8px;
       padding-right: 8px;
+    }
+
+    @media (min-width: 761px) {
+      :host(.full-width) .chat-shell:has(.chat-minimap) .chat-container {
+        max-width: calc(100% - 96px);
+      }
     }
 
     /* ── Chat Group ─────────────────────────────────────────────────── */
@@ -1466,18 +1482,6 @@ export const chatStyles = [
       padding: 0;
       background: transparent;
       border: 0;
-    }
-
-    .code-block-wrapper:not(.mermaid-block):has(.code-block-lang) .code-block-header {
-      inset: 0 0 auto;
-      justify-content: space-between;
-      min-height: 36px;
-      padding: 0 8px 0 16px;
-      border-bottom: 1px solid var(--code-block-border);
-    }
-
-    .code-block-wrapper:not(.mermaid-block):has(.code-block-lang) pre {
-      padding-top: 52px;
     }
 
     .code-block-wrapper pre {
@@ -3455,6 +3459,8 @@ export const chatStyles = [
       }
     }
     @media (prefers-reduced-motion: reduce) {
+      .chat-minimap,
+      .chat-minimap__line,
       .message-attachment,
       .message-attachment__open {
         transition: none;
@@ -3546,4 +3552,5 @@ export const chatStyles = [
       display: none;
     }
   `,
+  unsafeCSS(codeBlockStyles),
 ];

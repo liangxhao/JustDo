@@ -9,7 +9,7 @@ import {
 describe('appearance configuration', () => {
   test('migrates a legacy config with no appearance section to current defaults', () => {
     expect(normalizeAppearanceConfig(undefined)).toEqual(defaultAppearanceConfig);
-    expect(defaultAppearanceConfig.chatContentWidth).toBe(80);
+    expect(defaultAppearanceConfig.chatContentWidth).toBe(60);
     expect(defaultAppearanceConfig.messageLayout).toBe('bubble');
     expect(defaultAppearanceConfig.petEnabled).toBe(true);
     expect(defaultAppearanceConfig.petAnimationEnabled).toBe(true);

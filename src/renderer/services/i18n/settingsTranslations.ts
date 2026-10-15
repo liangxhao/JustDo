@@ -673,7 +673,7 @@ export const settingsTranslations = {
     messageLayoutDocument: '文档模式',
     restoreDefaults: '恢复默认值',
     chatContentWidth: '消息区域宽度',
-    chatContentWidthDescription: '按当前窗口可用宽度调整对话内容和输入框，窗口变化时自动适配',
+    chatContentWidthDescription: '设置窗口最大化时对话内容和输入框的宽度比例；较小窗口自动加宽，并预留消息导航空间',
     interfaceFontSize: '界面字号',
     interfaceFontSizeDescription: '同时调整界面和聊天正文的文字大小',
     interfaceFont: '界面字体',
@@ -1640,7 +1640,7 @@ export const settingsTranslations = {
     restoreDefaults: 'Restore Defaults',
     chatContentWidth: 'Message Area Width',
     chatContentWidthDescription:
-      'Size the conversation and composer from the available window width and adapt automatically',
+      'Set the conversation and composer width when maximized; smaller windows widen automatically while leaving room for the message minimap',
     interfaceFontSize: 'Interface Font Size',
     interfaceFontSizeDescription: 'Adjust text size across the interface and chat content',
     interfaceFont: 'Interface Font',

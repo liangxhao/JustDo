@@ -15,6 +15,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { MediaCaptureIpc, MediaCaptureSurface } from '../../../shared/app/mediaCapture';
+import { DEFAULT_MAIN_WINDOW_SIZE } from '../../../shared/app/windowGeometry';
 import {
   BROWSER_GUEST_COMMAND_CHANNEL,
   BROWSER_IMPORTED_PROFILE_PARTITION,
@@ -130,8 +131,7 @@ const isSameCaptureFrame = (
 export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWindow => {
   let workspaceManager: WorkspaceWindowManager | undefined;
   const mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    ...DEFAULT_MAIN_WINDOW_SIZE,
     title: options.appName,
     icon: options.getIconPath(),
     ...getWindowChromeOptions(options.isMac, options.isWindows, options.getTitleBarOverlay()),

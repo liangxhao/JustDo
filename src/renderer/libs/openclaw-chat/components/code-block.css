@@ -1,0 +1,338 @@
+/* Shared by the Lit message surface and Markdown document previews.
+ * Light syntax/font tokens: @openai/apps-sdk-ui 0.2.2 CodeBlock.
+ * Dark syntax/card tokens: sampled from the supplied ChatGPT App screenshot.
+ * The SDK's plugin CodeBlock uses a different dark palette than chat messages.
+ */
+:is(.markdown-content, .file-preview-markdown) .code-block-wrapper:not(.mermaid-block) {
+  --code-surface: #fcfcfc;
+  --code-border: color-mix(in oklab, #0d0d0d 10%, transparent);
+  --code-text: #0d0d0d;
+  --code-muted: #5d5d5d;
+  --code-hover: color-mix(in oklab, var(--code-text) 8%, transparent);
+  --code-comment: #6e6e73;
+  --code-comment-style: normal;
+  --code-keyword: #0169cc;
+  --code-string: #008635;
+  --code-number: #8046d9;
+  --code-title: #c0660d;
+  --code-property: #e04c91;
+  --code-builtin: var(--code-title);
+  --code-addition: #e0f1e5;
+  --code-deletion: #fbe5e9;
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 12px 0;
+  overflow: hidden;
+  color: var(--code-text);
+  background: var(--code-surface);
+  border: 1px solid var(--code-border);
+  border-radius: 20px;
+  box-shadow: none;
+  container-type: inline-size;
+  container-name: code-block;
+}
+
+:host(.dark) .markdown-content .code-block-wrapper:not(.mermaid-block),
+:host([data-theme='dark']) .markdown-content .code-block-wrapper:not(.mermaid-block),
+:is(.dark, [data-theme='dark']) .file-preview-markdown .code-block-wrapper:not(.mermaid-block) {
+  --code-surface: #2a2a2a;
+  --code-border: #333333;
+  --code-text: #ffffff;
+  --code-muted: #afafaf;
+  --code-comment: #b9b9b9;
+  --code-comment-style: italic;
+  --code-keyword: #f8a6c8;
+  --code-string: #83d197;
+  --code-number: #f1a275;
+  --code-title: #b897f4;
+  --code-property: #f9dc78;
+  --code-builtin: var(--code-number);
+  --code-addition: #263f30;
+  --code-deletion: #4a2b33;
+  color-scheme: dark;
+}
+
+:is(.markdown-content, .file-preview-markdown)
+  .code-block-wrapper:not(.mermaid-block)
+  > .code-block-header {
+  position: relative;
+  inset: auto;
+  z-index: 1;
+  display: flex;
+  flex-wrap: var(--code-header-wrap, nowrap);
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 48px;
+  box-sizing: border-box;
+  padding: 8px 12px 8px 20px;
+  color: var(--code-text);
+  background: transparent;
+  border: 0;
+}
+
+.code-block-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+:is(.markdown-content, .file-preview-markdown) .code-block-title .code-block-lang {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--code-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code-block-icon {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 8-4 4 4 4m10-8 4 4-4 4m-4-10-2 12'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+:is(.markdown-content, .file-preview-markdown) .code-block-wrapper:not(.mermaid-block) > pre {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 20px 20px;
+  overflow: auto;
+  color: var(--code-text);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  tab-size: 4;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--code-text) 30%, transparent) transparent;
+}
+
+:is(.markdown-content, .file-preview-markdown)
+  .code-block-wrapper:not(.mermaid-block)
+  > pre
+  > code {
+  display: block;
+  width: var(--justdo-code-width, max-content);
+  min-width: 100%;
+  box-sizing: border-box;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font-family:
+    ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono',
+    'DejaVu Sans Mono', 'Courier New', monospace;
+  font-size: inherit;
+  font-weight: 400;
+  font-variant-ligatures: none;
+  line-height: inherit;
+}
+
+:is(.markdown-content, .file-preview-markdown)
+  .code-block-wrapper:not(.mermaid-block)
+  > pre.markdown-box-drawing-code,
+:is(.markdown-content, .file-preview-markdown)
+  .code-block-wrapper:not(.mermaid-block)
+  > pre.markdown-box-drawing-code
+  > code {
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, 'Segoe UI', Roboto,
+    sans-serif;
+  font-size: 15px;
+  line-height: 24px;
+}
+
+:is(.markdown-content, .file-preview-markdown)
+  .code-block-wrapper:not(.mermaid-block)
+  .code-block-copy,
+:is(.markdown-content, .file-preview-markdown)
+  .code-block-wrapper:not(.mermaid-block)
+  .message-reader-actions
+  button {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0;
+  color: var(--code-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  opacity: 1;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    opacity 120ms ease;
+}
+
+:is(.markdown-content, .file-preview-markdown)
+  .code-block-wrapper:not(.mermaid-block)
+  button:hover {
+  color: var(--code-text);
+  background: var(--code-hover);
+}
+
+:is(.markdown-content, .file-preview-markdown)
+  .code-block-wrapper:not(.mermaid-block)
+  button:focus-visible {
+  outline: 2px solid var(--code-text);
+  outline-offset: 2px;
+}
+
+:is(.markdown-content, .file-preview-markdown)
+  .code-block-wrapper:not(.mermaid-block)
+  .message-reader-actions {
+  flex-wrap: var(--code-actions-wrap, nowrap);
+  flex-shrink: var(--code-actions-shrink, 0);
+  gap: 2px;
+  margin-inline-start: auto;
+}
+
+/* Keep copy at the outer edge; other reading actions appear on intent. */
+.code-block-wrapper:not(.mermaid-block) .message-code-copy {
+  order: 1;
+}
+
+.code-block-wrapper:not(.mermaid-block) .code-block-copy::before {
+  content: '';
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='8' y='8' width='12' height='12' rx='3'/%3E%3Cpath d='M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+.code-block-wrapper:not(.mermaid-block) .code-block-copy.copied::before,
+.code-block-wrapper:not(.mermaid-block) .message-code-copy[data-copy-state='copied']::before {
+  content: '';
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 4 4L19 6'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+.code-block-wrapper:not(.mermaid-block) .message-code-copy[data-copy-state='copied'] svg {
+  display: none;
+}
+
+.code-block-wrapper:not(.mermaid-block) .code-block-copy > span {
+  display: none;
+}
+
+.code-block-wrapper:not(.mermaid-block) pre .hljs-comment,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-quote {
+  color: var(--code-comment);
+  font-style: var(--code-comment-style);
+}
+.code-block-wrapper:not(.mermaid-block) pre .hljs-keyword,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-selector-tag,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-doctag {
+  color: var(--code-keyword);
+}
+.code-block-wrapper:not(.mermaid-block) pre .hljs-string,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-regexp,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-char,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-template-variable {
+  color: var(--code-string);
+}
+.code-block-wrapper:not(.mermaid-block) pre .hljs-number,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-literal {
+  color: var(--code-number);
+}
+.code-block-wrapper:not(.mermaid-block) pre .hljs-type,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-built_in,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-builtin-name {
+  color: var(--code-builtin);
+}
+.code-block-wrapper:not(.mermaid-block) pre .hljs-title,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-section,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-selector-id,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-meta {
+  color: var(--code-title);
+  font-weight: inherit;
+}
+.code-block-wrapper:not(.mermaid-block) pre .hljs-variable.language_ {
+  color: var(--code-title);
+}
+.code-block-wrapper:not(.mermaid-block) pre .hljs-attr,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-attribute,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-property,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-variable,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-symbol,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-bullet {
+  color: var(--code-property);
+}
+.code-block-wrapper:not(.mermaid-block) pre .hljs-tag,
+.code-block-wrapper:not(.mermaid-block) pre .hljs-name {
+  color: var(--code-keyword);
+}
+.code-block-wrapper:not(.mermaid-block) pre .hljs-subst {
+  color: var(--code-text);
+}
+.code-block-wrapper:not(.mermaid-block) pre .hljs-addition {
+  color: var(--code-string);
+  background: var(--code-addition);
+}
+.code-block-wrapper:not(.mermaid-block) pre .hljs-deletion {
+  color: var(--code-keyword);
+  background: var(--code-deletion);
+}
+
+@media (hover: hover) {
+  .code-block-wrapper:not(.mermaid-block):not(:hover):not(:focus-within)
+    .message-reader-actions
+    button:not(.message-code-copy) {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+
+@container code-block (max-width: 280px) {
+  .code-block-header {
+    --code-header-wrap: wrap;
+    --code-actions-wrap: wrap;
+    --code-actions-shrink: 1;
+  }
+
+  .code-block-header .message-reader-actions {
+    max-width: 100%;
+    justify-content: flex-end;
+  }
+
+  @media (hover: hover) {
+    .code-block-wrapper:not(.mermaid-block):not(:hover):not(:focus-within)
+      .message-reader-actions
+      button:not(.message-code-copy) {
+      display: none;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :is(.markdown-content, .file-preview-markdown)
+    .code-block-wrapper:not(.mermaid-block)
+    :is(.code-block-copy, .message-reader-actions button) {
+    transition: none;
+  }
+}

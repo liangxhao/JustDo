@@ -111,10 +111,25 @@ blockquote {
 }
 
 .cowork-content-width {
-  width: var(--justdo-chat-content-width, 80%);
-  /* The viewport is the only cap so every slider step remains visible. */
-  max-width: calc(100% - 32px);
-  min-width: min(320px, calc(100% - 32px));
+  width: calc(100% - (100% - var(--justdo-chat-content-width, 60%)) * var(--chat-content-width-progress, 0));
+  /* Keep the minimap's expanded track clear of message avatars. */
+  max-width: calc(100% - 96px);
+  min-width: min(320px, calc(100% - 96px));
+  box-sizing: border-box;
+  padding-inline: 44px;
+}
+
+.cowork-composer-viewport {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.cowork-composer-scrollbar-gutter {
+  /* Reserve the chat host's native gutter without clipping composer popovers. */
+  height: 0;
+  overflow-y: scroll;
+  scrollbar-width: thin;
+  visibility: hidden;
 }
 
 .cowork-display-host {

@@ -500,29 +500,48 @@ describe('Code fence syntax highlighting', () => {
   });
 
   test.each([
-    ['python', 'def greet(name):', 'hljs-keyword'],
-    ['typescript', 'const answer: number = 42;', 'hljs-keyword'],
-    ['c++', 'std::vector<int> values;', 'hljs-type'],
-    ['powershell', 'Get-ChildItem | Where-Object { $_.Length -gt 0 }', 'hljs-built_in'],
-  ])('highlights an explicitly labelled %s fence', (language, source, highlightClass) => {
+    ['python', 'Python', 'def greet(name):', 'hljs-keyword'],
+    ['typescript', 'TypeScript', 'const answer: number = 42;', 'hljs-keyword'],
+    ['c++', 'C++', 'std::vector<int> values;', 'hljs-type'],
+    [
+      'powershell',
+      'PowerShell',
+      'Get-ChildItem | Where-Object { $_.Length -gt 0 }',
+      'hljs-built_in',
+    ],
+  ])('highlights an explicitly labelled %s fence', (language, label, source, highlightClass) => {
     const html = md.render(`\`\`\`${language}\n${source}\n\`\`\``);
 
-    expect(html).toContain(`<span class="code-block-lang">${language}</span>`);
+    expect(html).toContain(`<span class="code-block-lang">${label}</span>`);
     expect(html).toContain(`class="hljs language-${language === 'c++' ? 'cpp' : language}`);
     expect(html).toContain(highlightClass);
   });
 
-  test('does not show a language label for an unlabelled fence', () => {
+  test('uses a generic title without claiming an inferred language for an unlabelled fence', () => {
     const html = md.render('```\nplain text\n```');
 
-    expect(html).not.toContain('code-block-lang');
+    expect(html).toContain('code-block-title');
+    expect(html).toContain('code-block-lang');
+    expect(html).not.toContain('language-');
   });
 
-  test('renders an explicitly labelled language name in lowercase', () => {
-    const html = md.render('```TypeScript\nconst answer = 42;\n```');
+  test.each([
+    ['TypeScript', 'TypeScript', 'typescript'],
+    ['ts', 'TypeScript', 'typescript'],
+    ['tsx', 'TSX', 'typescript'],
+    ['js', 'JavaScript', 'javascript'],
+    ['jsx', 'JSX', 'javascript'],
+    ['html', 'HTML', 'html'],
+  ])('displays %s with its readable language label', (language, label, className) => {
+    const root = document.createElement('div');
+    const source = 'const title = "你好 <world> & friends";\n';
+    root.innerHTML = toSanitizedMarkdownHtml(`\`\`\`${language}\n${source}\`\`\``);
 
-    expect(html).toContain('<span class="code-block-lang">typescript</span>');
-    expect(html).not.toContain('<span class="code-block-lang">TypeScript</span>');
+    expect(root.querySelector('.code-block-lang')?.textContent).toBe(label);
+    expect(root.querySelector('code')?.classList.contains(`language-${className}`)).toBe(true);
+    expect(root.querySelector('.code-block-icon')?.getAttribute('aria-hidden')).toBe('true');
+    expect(root.querySelector<HTMLButtonElement>('.code-block-copy')?.dataset.code).toBe(source);
+    expect(root.querySelector('code')?.textContent).toBe(source);
   });
 
   test('keeps unknown languages escaped and unhighlighted', () => {
@@ -532,4 +551,18 @@ describe('Code fence syntax highlighting', () => {
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     expect(html).not.toContain('class="hljs language-custom-lang');
   });
+
+  test.each(['constructor', 'custom"><img'])(
+    'keeps the unknown %s label as escaped text',
+    language => {
+      const root = document.createElement('div');
+      root.innerHTML = toSanitizedMarkdownHtml(
+        `\`\`\`${language}\n<script>alert(1)</script>\n\`\`\``,
+      );
+
+      expect(root.querySelector('.code-block-lang')?.textContent).toBe(language);
+      expect(root.querySelector('code')?.textContent).toBe('<script>alert(1)</script>\n');
+      expect(root.querySelector('script, img')).toBeNull();
+    },
+  );
 });

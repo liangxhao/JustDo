@@ -64,7 +64,7 @@ test('supports image previews, code reader actions and diagram source switching'
     expect((preview.mock.calls[0][0] as CustomEvent).detail.src).toBe('https://example.com/screenshot.png');
     const code = shadow.querySelector('.code-block-wrapper:not(.mermaid-block)')!;
     fireEvent.click(code.querySelector(`button[aria-label="${i18nService.t('copy')}"]`)!);
-    await waitFor(() => expect(clipboard).toHaveBeenCalledWith('const value = 1;'));
+    await waitFor(() => expect(clipboard).toHaveBeenCalledWith('const value = 1;\n'));
     fireEvent.click(code.querySelector(`button[aria-label="${i18nService.t('messageWrap')}"]`)!);
     expect(code.classList.contains('is-wrapped')).toBe(true);
     await waitFor(() => expect(shadow.querySelector('.mermaid-preview svg')).not.toBeNull());

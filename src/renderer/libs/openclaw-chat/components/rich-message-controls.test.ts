@@ -2,6 +2,7 @@
 import { describe, expect, test, vi } from 'vitest';
 
 import { parseJsonSource, tableToTsv } from './json-source-tree';
+import { toSanitizedMarkdownHtml } from './markdown';
 import { RichMessageControls } from './rich-message-controls';
 import { terminalSegments } from './terminal-output';
 import { OUTPUT_PAGE_CHARS, outputPageRanges, ToolOutput } from './tool-output';
@@ -380,4 +381,85 @@ test('groups JSON copy and all reading actions as labeled icons in one header to
     ),
   ).toBe(true);
   controls.dispose();
+});
+
+test('keeps the titled code card and exact copy payload after reader enhancement', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  const root = document.createElement('div');
+  const source = '  const title = "你好 <world> & friends";\n\n';
+  root.innerHTML = toSanitizedMarkdownHtml(`\`\`\`ts\n${source}\`\`\``);
+  document.body.append(root);
+  const controls = new RichMessageControls(root, vi.fn());
+  controls.sync();
+  controls.sync();
+
+  expect(root.querySelector('.code-block-lang')?.textContent).toBe('TypeScript');
+  expect(root.querySelectorAll('.message-reader-actions')).toHaveLength(1);
+  const copy = root.querySelector<HTMLButtonElement>('.message-code-copy')!;
+  copy.click();
+  await Promise.resolve();
+  expect(writeText).toHaveBeenCalledWith(source);
+  expect(copy.dataset.copyState).toBe('copied');
+  controls.dispose();
+  root.remove();
+});
+
+test('restores the copy icon after the official feedback interval and cancels it on dispose', async () => {
+  vi.useFakeTimers();
+  const root = document.createElement('div');
+  root.innerHTML = toSanitizedMarkdownHtml('```ts\nconst value = 1;\n```');
+  document.body.append(root);
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  const controls = new RichMessageControls(root, vi.fn());
+  try {
+    controls.sync();
+    const copy = root.querySelector<HTMLButtonElement>('.message-code-copy')!;
+    const originalLabel = copy.getAttribute('aria-label');
+    copy.click();
+    await Promise.resolve();
+    expect(copy.dataset.copyState).toBe('copied');
+    vi.advanceTimersByTime(1300);
+    expect(copy.dataset.copyState).toBeUndefined();
+    expect(copy.getAttribute('aria-label')).toBe(originalLabel);
+    copy.click();
+    await Promise.resolve();
+    controls.dispose();
+    expect(copy.dataset.copyState).toBeUndefined();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    controls.dispose();
+    root.remove();
+    vi.useRealTimers();
+  }
+});
+
+test('does not let an older clipboard success override a newer failure', async () => {
+  let finishEarlier!: () => void;
+  const writeText = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<void>(resolve => {
+          finishEarlier = resolve;
+        }),
+    )
+    .mockRejectedValueOnce(new Error('clipboard unavailable'));
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  const root = document.createElement('div');
+  root.innerHTML = toSanitizedMarkdownHtml('```ts\nconst value = 1;\n```');
+  document.body.append(root);
+  const controls = new RichMessageControls(root, vi.fn());
+  controls.sync();
+  const copy = root.querySelector<HTMLButtonElement>('.message-code-copy')!;
+  copy.click();
+  copy.click();
+  await Promise.resolve();
+  expect(copy.dataset.copyState).toBe('error');
+  finishEarlier();
+  await Promise.resolve();
+  expect(copy.dataset.copyState).toBe('error');
+  controls.dispose();
+  root.remove();
 });

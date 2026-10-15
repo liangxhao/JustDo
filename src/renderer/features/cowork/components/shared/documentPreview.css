@@ -1,3 +1,5 @@
+@import '../../../../libs/openclaw-chat/components/code-block.css';
+
 .file-preview-shell {
   isolation: isolate;
   container-type: inline-size;
@@ -921,20 +923,6 @@
   border: 0;
 }
 
-.file-preview-markdown
-  .code-block-wrapper:not(.mermaid-block):has(.code-block-lang)
-  .code-block-header {
-  inset: 0 0 auto;
-  justify-content: space-between;
-  min-height: 2.25rem;
-  padding: 0 0.5rem 0 1rem;
-  border-bottom: 1px solid var(--preview-code-border);
-}
-
-.file-preview-markdown .code-block-wrapper:not(.mermaid-block):has(.code-block-lang) pre {
-  padding-top: 3.25rem !important;
-}
-
 .file-preview-markdown .code-block-lang {
   min-width: 0;
   overflow: hidden;
@@ -1010,7 +998,7 @@
   min-width: 0;
   max-width: 100%;
   margin: 0 !important;
-  padding: 1rem !important;
+  padding: 1rem;
   overflow-x: auto !important;
   overflow-y: hidden;
   color: var(--preview-code-text);
@@ -1019,7 +1007,7 @@
   word-break: normal;
   background: var(--preview-code-bg);
   border: 0;
-  border-radius: 0 !important;
+  border-radius: 0;
   box-sizing: border-box;
   font-size: 14px;
   line-height: 1.5;
