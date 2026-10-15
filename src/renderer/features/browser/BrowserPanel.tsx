@@ -2117,7 +2117,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   return (
     <aside
       ref={panelRef}
-      className={`${isOpen ? 'flex' : 'hidden'} flex-col bg-surface ${
+      className={`${isOpen ? 'flex' : 'hidden'} flex-col bg-surface outline-none ${
         embedded
           ? 'absolute inset-0 min-h-0 min-w-0'
           : 'absolute inset-y-0 right-0 z-50 w-[min(var(--browser-panel-width),calc(100vw-32px))] max-w-[calc(100%-2rem)] border-l border-border shadow-xl min-[900px]:relative min-[900px]:inset-auto min-[900px]:z-auto min-[900px]:min-w-[320px] min-[900px]:max-w-[760px] min-[900px]:shrink-0 min-[900px]:shadow-none'

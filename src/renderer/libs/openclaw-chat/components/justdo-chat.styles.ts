@@ -1584,7 +1584,7 @@ export const chatStyles = [
     .message-attachments {
       display: flex;
       flex-flow: row wrap;
-      gap: 6px;
+      gap: 8px;
       max-width: 100%;
       margin: 0;
     }
@@ -1792,7 +1792,7 @@ export const chatStyles = [
       align-items: center;
       justify-content: flex-end;
       min-width: 1.25em;
-      height: 32px;
+      height: 42px;
     }
 
     .message-attachment-list-item__content {
@@ -1804,26 +1804,44 @@ export const chatStyles = [
     .message-attachment {
       display: flex;
       align-items: center;
-      gap: 6px;
+      box-sizing: border-box;
+      gap: 10px;
       min-width: 0;
       width: fit-content;
-      max-width: min(320px, 100%);
-      padding: 4px 7px 4px 5px;
-      color: var(--text-primary);
+      max-width: min(360px, 100%);
+      min-height: 42px;
+      padding: 6px 10px 6px 8px;
+      color: var(--justdo-chat-text, #1a1a1a);
+      font: inherit;
       text-align: left;
-      background: color-mix(in srgb, var(--surface-raised, #ffffff) 45%, transparent);
-      border: 1px solid color-mix(in srgb, currentColor 10%, transparent);
-      border-radius: 7px;
+      background: color-mix(
+        in srgb,
+        var(--justdo-chat-text, #1a1a1a) 4%,
+        var(--justdo-chat-bg, #ffffff)
+      );
+      border: 1px solid color-mix(in srgb, var(--justdo-chat-text, #1a1a1a) 10%, transparent);
+      border-radius: 10px;
       cursor: pointer;
       transition:
-        border-color 120ms ease,
-        background 120ms ease,
-        color 120ms ease;
+        border-color 150ms ease,
+        background-color 150ms ease;
     }
 
     .message-attachment:hover:not(:disabled):not(.message-attachment--unavailable) {
-      background: var(--surface-hover, rgba(127, 127, 127, 0.1));
-      border-color: color-mix(in srgb, var(--accent, #4f7cff) 28%, transparent);
+      background: color-mix(
+        in srgb,
+        var(--justdo-chat-text, #1a1a1a) 7%,
+        var(--justdo-chat-bg, #ffffff)
+      );
+      border-color: color-mix(in srgb, var(--justdo-chat-accent, #4f7cff) 40%, transparent);
+    }
+
+    .message-attachment:active:not(:disabled):not(.message-attachment--unavailable) {
+      background: color-mix(
+        in srgb,
+        var(--justdo-chat-text, #1a1a1a) 10%,
+        var(--justdo-chat-bg, #ffffff)
+      );
     }
 
     .message-attachment:disabled,
@@ -1833,18 +1851,18 @@ export const chatStyles = [
     }
 
     .message-attachment:focus-visible {
-      outline: 2px solid var(--accent, #4f7cff);
+      outline: 2px solid var(--justdo-chat-accent, #4f7cff);
       outline-offset: 2px;
     }
 
     .message-attachment__icon {
       display: grid;
-      flex: 0 0 22px;
-      width: 22px;
-      height: 22px;
-      color: var(--accent, #4f7cff);
-      background: color-mix(in srgb, currentColor 8%, transparent);
-      border-radius: 6px;
+      flex: 0 0 28px;
+      width: 28px;
+      height: 28px;
+      color: var(--justdo-chat-accent, #4f7cff);
+      background: color-mix(in srgb, currentColor 10%, transparent);
+      border-radius: 7px;
       place-items: center;
     }
 
@@ -1878,10 +1896,12 @@ export const chatStyles = [
     }
 
     .message-attachment__name {
+      display: block;
       overflow: hidden;
       min-width: 0;
-      font-size: 12px;
+      font-size: 13px;
       font-weight: 500;
+      line-height: 20px;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
@@ -1905,7 +1925,7 @@ export const chatStyles = [
       width: 9px;
       height: 9px;
       margin-right: 3px;
-      color: var(--text-secondary);
+      color: var(--justdo-chat-text-secondary, #6b7280);
       font-size: 7px;
       font-weight: 700;
       line-height: 1;
@@ -1921,15 +1941,23 @@ export const chatStyles = [
     }
 
     .message-attachment__open {
+      display: grid;
       flex: 0 0 auto;
-      color: var(--text-secondary);
-      font-size: 11px;
-      opacity: 0.45;
-      transition: opacity 120ms ease;
+      width: 16px;
+      height: 16px;
+      margin-left: 2px;
+      color: var(--justdo-chat-text-secondary, #6b7280);
+      opacity: 0.65;
+      place-items: center;
+      transition:
+        color 150ms ease,
+        opacity 150ms ease;
     }
 
-    .message-attachment:hover .message-attachment__open {
-      opacity: 0.9;
+    .message-attachment:hover:not(:disabled) .message-attachment__open,
+    .message-attachment:focus-visible .message-attachment__open {
+      color: var(--justdo-chat-accent, #4f7cff);
+      opacity: 1;
     }
 
     .mermaid-toggle {
@@ -3333,6 +3361,11 @@ export const chatStyles = [
       }
     }
     @media (prefers-reduced-motion: reduce) {
+      .message-attachment,
+      .message-attachment__open {
+        transition: none;
+      }
+
       /* Keep the active-run spark and label animated as execution feedback. */
       .chat-thinking--streaming .chat-thinking__label,
       .chat-reading-indicator span,

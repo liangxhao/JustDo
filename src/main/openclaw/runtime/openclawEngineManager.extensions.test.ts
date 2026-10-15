@@ -60,20 +60,23 @@ function createManager() {
 afterEach(() => vi.restoreAllMocks());
 
 describe('Gateway source extension preparation', () => {
-  it('keeps readiness and healthy Gateway reuse free of resource copies', async () => {
-    const { manager, harness } = createManager();
-    const sync = vi.mocked(syncLocalOpenClawExtensionsIntoRuntime);
-    sync.mockReset();
-    await manager.ensureReady();
-    harness.status = { ...harness.status, phase: 'running' };
-    harness.gatewayProcess = { pid: 1234, exitCode: null };
+  it.each(['starting', 'running'] as const)(
+    'keeps readiness and healthy Gateway reuse free of resource copies while %s',
+    async phase => {
+      const { manager, harness } = createManager();
+      const sync = vi.mocked(syncLocalOpenClawExtensionsIntoRuntime);
+      sync.mockReset();
+      await manager.ensureReady();
+      harness.status = { ...harness.status, phase };
+      harness.gatewayProcess = { pid: 1234, exitCode: null };
 
-    await manager.ensureReady();
-    await manager.startGateway();
+      await manager.ensureReady();
+      await manager.startGateway();
 
-    expect(sync).not.toHaveBeenCalled();
-    expect(harness.status.phase).toBe('running');
-  });
+      expect(sync).not.toHaveBeenCalled();
+      expect(harness.status.phase).toBe('running');
+    },
+  );
 
   it('shares one slow cold preparation and repeats it on an explicit restart', async () => {
     const { manager } = createManager();

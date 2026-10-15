@@ -62,6 +62,8 @@ Main 不接管 transcript 或重试转发。
 
 Manager 对外 phase 为 ready、starting、running、error；canRetry 与 message 用于产品反馈。它们不是单个 Agent run 的状态。
 
+运行时文件就绪检查与 CLI 环境读取不改变正在启动或运行中的 Gateway phase；CLI 读取复用该进程已选定的端口，不因端口已被启动进程占用而重新分配。页面切换触发这些读取时，右下角继续显示启动提示，直到进程健康验证成功后隐藏，或按实际失败状态显示错误。资源缺失或版本元数据无效仍报告 error。
+
 ```mermaid
 stateDiagram-v2
   [*] --> ready

@@ -617,7 +617,9 @@ export class OpenClawEngineManager extends EventEmitter {
       return this.getStatus();
     }
 
-    if (this.status.phase === 'running') {
+    // Runtime files can be inspected while Gateway startup is still in flight.
+    // That check must not reset the process lifecycle or its startup notice.
+    if (this.status.phase === 'starting' || this.status.phase === 'running') {
       return this.getStatus();
     }
 
@@ -667,7 +669,7 @@ export class OpenClawEngineManager extends EventEmitter {
     options: OpenClawCliEnvironmentOptions = {},
   ): Promise<OpenClawCliEnvironment> {
     const ensured = await this.ensureReady();
-    if (ensured.phase !== 'ready' && ensured.phase !== 'running') {
+    if (ensured.phase === 'error') {
       throw new Error(ensured.message || 'OpenClaw runtime is not ready');
     }
 
@@ -688,7 +690,7 @@ export class OpenClawEngineManager extends EventEmitter {
 
     const token = this.ensureGatewayToken();
     const port =
-      this.status.phase === 'running'
+      this.status.phase === 'starting' || this.status.phase === 'running'
         ? (this.gatewayPort ?? this.readGatewayPort() ?? DEFAULT_OPENCLAW_GATEWAY_PORT)
         : await this.resolveGatewayPort();
     this.gatewayPort = port;
@@ -941,7 +943,7 @@ export class OpenClawEngineManager extends EventEmitter {
 
     const ensured = await this.ensureReady();
     console.log(`[OpenClaw] startGateway: ensureReady done (${elapsed()}), phase=${ensured.phase}`);
-    if (ensured.phase !== 'ready' && ensured.phase !== 'running') {
+    if (ensured.phase === 'error') {
       return ensured;
     }
 
