@@ -43,7 +43,6 @@ export const teamDiscussionTranslations = {
     agentTeamSettingsUnavailable: '暂时无法读取 Agent Team 设置。',
     agentTeamFirstRoundBudget: '响应预算不足以覆盖所有成员的首轮响应，将按成员顺序执行。',
     teamDiscussionExecutionUnknown: '执行终态暂未确认，已停止派发后续成员。',
-    composerFeatures: '功能',
     teamFeatureBack: '返回功能菜单',
     teamFeatureRemove: '移除 Agent Team 模式',
     teamFeatureDisabled: '请先在扩展中启用 Agent Team，再发送。',
@@ -68,9 +67,6 @@ export const teamDiscussionTranslations = {
     teamReviewState_unconfirmed: '验收执行尚未确认',
     teamReviewState_failed: '验收执行失败，结论未确认',
     teamReviewState_cancelled: '验收已停止，结论未确认',
-    collaborationInvalidReview:
-      '验收必须由本批独立助手针对成功完成的具体执行报告，请检查执行回执。',
-    collaborationReviewConflict: '本次验收已报告不同结论。请发起新的验收回合，不要覆盖已有记录。',
     teamStopSummary: '停止汇总',
     teamOrganizerParticipates: '主助手参与讨论（沿用主会话）',
     teamOrganizerAutoHelp:
@@ -180,8 +176,6 @@ export const teamDiscussionTranslations = {
     teamContinue_not_forwarded: '主助手未发起该成员执行，可查看主会话回复。',
     teamContinue_unknown: '提交结果待核实，已保留请求，不会重复发送。',
     teamContinue_rejected: '请求未接纳，补充内容已保留，请检查主会话和成员状态。',
-    collaborationContinuationUnavailable:
-      '暂时无法继续协作，补充内容已保留。请检查主会话和成员状态，并在执行、目标及计划流程结束后重试。',
     teamPendingInputs: '待发消息',
     teamQueueExpand: '展开',
     teamQueueCollapse: '收起',
@@ -297,7 +291,6 @@ export const teamDiscussionTranslations = {
       'The response budget cannot cover every member in the first round. Members run in roster order.',
     teamDiscussionExecutionUnknown:
       'Execution has no confirmed terminal outcome. Further member dispatch has stopped.',
-    composerFeatures: 'Features',
     teamFeatureBack: 'Back to features',
     teamFeatureRemove: 'Remove Agent Team mode',
     teamFeatureDisabled: 'Enable Agent Team in Extensions before sending.',
@@ -323,10 +316,6 @@ export const teamDiscussionTranslations = {
     teamReviewState_unconfirmed: 'Review execution is unconfirmed',
     teamReviewState_failed: 'Review failed; verdict is unconfirmed',
     teamReviewState_cancelled: 'Review stopped; verdict is unconfirmed',
-    collaborationInvalidReview:
-      'An independent assistant in this batch must review exact completed executions. Check the execution receipts.',
-    collaborationReviewConflict:
-      'This review run already reported a different verdict. Start a new review turn without overwriting its report.',
     teamStopSummary: 'Stop summary',
     teamOrganizerParticipates: 'Organizer participates (uses source conversation)',
     teamOrganizerAutoHelp:
@@ -446,8 +435,6 @@ export const teamDiscussionTranslations = {
       'Submission is unconfirmed. The request is preserved and will not be resent.',
     teamContinue_rejected:
       'Request not accepted. Your input is preserved; check the source and member status.',
-    collaborationContinuationUnavailable:
-      'Collaboration cannot continue yet. Your input is preserved. Check the source and members, and retry after active work, Goal, and Plan workflows finish.',
     teamPendingInputs: 'Pending messages',
     teamQueueExpand: 'Expand',
     teamQueueCollapse: 'Collapse',

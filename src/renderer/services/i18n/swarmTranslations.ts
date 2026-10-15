@@ -1,6 +1,5 @@
 export const swarmTranslations = {
   zh: {
-    composerFeatures: '添加',
     swarmTitle: 'Swarm 协作',
     swarmAuto: '自动分工',
     swarmResearch: '分头研究',
@@ -38,7 +37,6 @@ export const swarmTranslations = {
     swarmPreparingHint: '尚未确认实际启动。若工具不可用或无法拆分，请查看主会话说明。',
   },
   en: {
-    composerFeatures: 'Add',
     swarmTitle: 'Swarm collaboration',
     swarmAuto: 'Auto split',
     swarmResearch: 'Parallel research',

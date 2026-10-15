@@ -3,10 +3,15 @@ import { browserRecordingTranslations } from '@/features/browser/recording/brows
 import type { LanguageType } from '@/services/i18n';
 
 import { appTranslations } from './appTranslations';
+import { assistantTranslations } from './assistantTranslations';
 import { authTranslations } from './authTranslations';
+import { browserTranslations } from './browserTranslations';
 import { chatTranslations } from './chatTranslations';
+import { collaborationTranslations } from './collaborationTranslations';
+import { filePreviewTranslations } from './filePreviewTranslations';
 import { getHomeGreetingTranslations } from './homeGreetings';
 import { initializationTranslations } from './initializationTranslations';
+import { memoryTranslations } from './memoryTranslations';
 import { pluginsTranslations } from './pluginsTranslations';
 import { scheduledTaskTranslations } from './scheduledTaskTranslations';
 import { sessionDiagnosticsTranslations } from './sessionDiagnosticsTranslations';
@@ -17,44 +22,63 @@ import { skillWorkshopTranslations } from './skillWorkshopTranslations';
 import { swarmTranslations } from './swarmTranslations';
 import { swarmWorkflowTranslations } from './swarmWorkflowTranslations';
 import { teamDiscussionTranslations } from './teamDiscussionTranslations';
+import { terminalTranslations } from './terminalTranslations';
+import { workboardTranslations } from './workboardTranslations';
+import { workspaceDisplayTranslations } from './workspaceDisplayTranslations';
 
 export const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
-    ...initializationTranslations.zh,
+    ...appTranslations.zh,
+    ...assistantTranslations.zh,
     ...authTranslations.zh,
-    ...swarmTranslations.zh,
-    ...swarmWorkflowTranslations.zh,
-    ...teamDiscussionTranslations.zh,
+    ...browserTranslations.zh,
+    ...browserInterventionTranslations.zh,
+    ...browserRecordingTranslations.zh,
+    ...chatTranslations.zh,
+    ...collaborationTranslations.zh,
+    ...filePreviewTranslations.zh,
+    ...getHomeGreetingTranslations('zh'),
+    ...initializationTranslations.zh,
+    ...memoryTranslations.zh,
+    ...pluginsTranslations.zh,
+    ...scheduledTaskTranslations.zh,
     ...sessionDiagnosticsTranslations.zh,
     ...sessionReviewTranslations.zh,
     ...sessionStorageTranslations.zh,
-    ...browserInterventionTranslations.zh,
-    ...skillWorkshopTranslations.zh,
-    ...browserRecordingTranslations.zh,
-    ...getHomeGreetingTranslations('zh'),
-    ...appTranslations.zh,
     ...settingsTranslations.zh,
-    ...chatTranslations.zh,
-    ...pluginsTranslations.zh,
-    ...scheduledTaskTranslations.zh,
+    ...skillWorkshopTranslations.zh,
+    ...swarmTranslations.zh,
+    ...swarmWorkflowTranslations.zh,
+    ...teamDiscussionTranslations.zh,
+    ...terminalTranslations.zh,
+    ...workboardTranslations.zh,
+    ...workspaceDisplayTranslations.zh,
   },
   en: {
-    ...initializationTranslations.en,
+    ...appTranslations.en,
+    ...assistantTranslations.en,
     ...authTranslations.en,
-    ...swarmTranslations.en,
-    ...swarmWorkflowTranslations.en,
-    ...teamDiscussionTranslations.en,
+    ...browserTranslations.en,
+    ...browserInterventionTranslations.en,
+    ...browserRecordingTranslations.en,
+    ...chatTranslations.en,
+    ...collaborationTranslations.en,
+    ...filePreviewTranslations.en,
+    ...getHomeGreetingTranslations('en'),
+    ...initializationTranslations.en,
+    ...memoryTranslations.en,
+    ...pluginsTranslations.en,
+    ...scheduledTaskTranslations.en,
     ...sessionDiagnosticsTranslations.en,
     ...sessionReviewTranslations.en,
     ...sessionStorageTranslations.en,
-    ...browserInterventionTranslations.en,
-    ...skillWorkshopTranslations.en,
-    ...browserRecordingTranslations.en,
-    ...getHomeGreetingTranslations('en'),
-    ...appTranslations.en,
     ...settingsTranslations.en,
-    ...chatTranslations.en,
-    ...pluginsTranslations.en,
-    ...scheduledTaskTranslations.en,
+    ...skillWorkshopTranslations.en,
+    ...swarmTranslations.en,
+    ...swarmWorkflowTranslations.en,
+    ...teamDiscussionTranslations.en,
+    ...terminalTranslations.en,
+    ...workboardTranslations.en,
+    ...workspaceDisplayTranslations.en,
   },
 };

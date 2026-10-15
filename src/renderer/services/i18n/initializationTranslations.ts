@@ -12,6 +12,7 @@ export const initializationTranslations = {
     initializationRetry: '重新启动并重试',
     initializationSteps: '已完成步骤',
     initializationLogPath: '详细日志位置：',
+    initializationError: '初始化应用程序失败。请检查您的配置。',
   },
   en: {
     firstLaunchTitle: 'Initializing your first installation',
@@ -28,5 +29,6 @@ export const initializationTranslations = {
     initializationRetry: 'Restart and retry',
     initializationSteps: 'Steps completed',
     initializationLogPath: 'Detailed log location:',
+    initializationError: 'Failed to initialize application. Please check your configuration.',
   },
 };
