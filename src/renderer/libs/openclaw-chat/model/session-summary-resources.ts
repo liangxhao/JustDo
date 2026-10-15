@@ -281,24 +281,35 @@ function webToolResults(message: Record<string, unknown>): Record<string, unknow
   });
 }
 
+function parseWebToolPayload(text: string, name: string): Record<string, unknown> {
+  if (text.length > 500_000) return {};
+  try {
+    return record(JSON.parse(text));
+  } catch {
+    if (name !== 'web_fetch' || !text.endsWith('\n…(truncated)…')) return {};
+    // Native tool display clipping can cut the final text string. Only parse
+    // complete metadata preceding that field; provenance is still checked below.
+    const body = /,\s*"text"\s*:\s*"/u.exec(text);
+    if (!body) return {};
+    try {
+      return record(JSON.parse(`${text.slice(0, body.index)}}`));
+    } catch {
+      return {};
+    }
+  }
+}
+
 /** Read successful native web tool evidence, never arbitrary URLs in tool prose. */
 function webSources(message: Record<string, unknown>): SummaryResource[] {
   const name = readToolName(message);
   if (!['web_search', 'web_fetch'].includes(String(name)) || message.isError === true) return [];
   let payload = record(message.details);
   if (!Object.keys(payload).length) {
-    const text = readToolOutput(message) ?? '';
-    if (text.length > 500_000) return [];
-    try {
-      payload = record(JSON.parse(text));
-      if (Object.keys(record(payload.details)).length) payload = record(payload.details);
-      else if (Array.isArray(payload.content)) {
-        const nested = record(payload.content[0]).text;
-        if (typeof nested === 'string' && nested.length <= 500_000)
-          payload = record(JSON.parse(nested));
-      }
-    } catch {
-      return [];
+    payload = parseWebToolPayload(readToolOutput(message) ?? '', name);
+    if (Object.keys(record(payload.details)).length) payload = record(payload.details);
+    else if (Array.isArray(payload.content)) {
+      const nested = record(payload.content[0]).text;
+      if (typeof nested === 'string') payload = parseWebToolPayload(nested, name);
     }
   }
   const external = record(payload.externalContent);

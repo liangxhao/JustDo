@@ -456,6 +456,9 @@ const nestedWeb = (payload: unknown, name = 'web_fetch') => ({
     },
   ],
 });
+const truncatedWebContent = (payload: unknown) => [
+  { type: 'text', text: `${JSON.stringify(payload, null, 2).slice(0, 8000)}\n…(truncated)…` },
+];
 
 describe('session summary resources', () => {
   it('separates uploaded inputs and delivered files, without listing tool-written paths or citation links as outputs', () => {
@@ -622,6 +625,103 @@ describe('session summary resources', () => {
       ['example.com', { kind: 'url', url: 'https://example.com/news-feed' }],
     ]);
     expect(projection.outputs).toEqual([]);
+  });
+
+  it.each(['direct', 'nested'] as const)(
+    'keeps both fetched sources when the %s result JSON is cut inside the webpage body',
+    kind => {
+      const payload = {
+        url: 'https://example.com/news',
+        finalUrl: 'https://example.com/news#headlines',
+        status: 200,
+        title: frame('News homepage'),
+        externalContent: { ...evidence, source: 'web_fetch' },
+        text: `${'Webpage content '.repeat(1000)} https://unconfirmed.example/`,
+      };
+      const activity = nestedWeb(payload);
+      const message =
+        kind === 'direct'
+          ? { ...web(payload, 'web_fetch'), content: truncatedWebContent(payload) }
+          : {
+              ...activity,
+              content: [
+                activity.content[0],
+                { ...activity.content[1], content: truncatedWebContent(payload) },
+              ],
+            };
+
+      const projection = projectSessionSummaryResources(
+        [
+          message,
+          nestedWeb({
+            url: 'https://other.example/news',
+            status: 200,
+            externalContent: { ...evidence, source: 'web_fetch' },
+            text: 'Short webpage',
+          }),
+        ],
+        [],
+      );
+
+      expect(projection.sources.map(item => [item.title, item.target])).toEqual([
+        ['other.example', { kind: 'url', url: 'https://other.example/news' }],
+        ['News homepage', { kind: 'url', url: 'https://example.com/news#headlines' }],
+      ]);
+      expect(projection.outputs).toEqual([]);
+    },
+  );
+
+  it.each([
+    { status: 404 },
+    { externalContent: undefined },
+    { externalContent: { ...evidence, source: 'web_search' } },
+    { externalContent: { ...evidence, source: 'web_fetch', wrapped: false } },
+    { url: 'javascript:alert(1)' },
+    { url: 'https://user:password@example.com/' },
+  ])('rejects unconfirmed fetch metadata before a truncated body: %j', overrides => {
+    const payload = {
+      url: 'https://example.com/news',
+      status: 200,
+      externalContent: { ...evidence, source: 'web_fetch' },
+      ...overrides,
+      text: 'Webpage content '.repeat(1000),
+    };
+    const message = { ...web(payload, 'web_fetch'), content: truncatedWebContent(payload) };
+
+    expect(projectSessionSummaryResources([message], []).sources).toEqual([]);
+  });
+
+  it('does not recover malformed JSON, incomplete provenance or links inside the truncated body', () => {
+    const payload = {
+      url: 'https://example.com/news',
+      status: 200,
+      externalContent: { ...evidence, source: 'web_fetch' },
+      text: 'Webpage content '.repeat(1000),
+    };
+    const truncated = truncatedWebContent(payload);
+    const { text, ...metadata } = payload;
+    const messages = [
+      {
+        ...web(payload, 'web_fetch'),
+        content: [{ type: 'text', text: truncated[0].text.slice(0, 8000) }],
+      },
+      {
+        ...web(payload, 'web_fetch'),
+        content: truncatedWebContent({ text, ...metadata }),
+      },
+      {
+        ...web(payload, 'web_fetch'),
+        content: truncatedWebContent({
+          ...payload,
+          externalContent: { ...payload.externalContent, text: payload.text },
+        }),
+      },
+      { ...web(payload, 'web_fetch'), role: 'assistant', content: truncated },
+      { ...web(payload, 'web_fetch'), role: 'user', content: truncated },
+      { ...web(payload, 'web_fetch'), isError: true, content: truncated },
+    ];
+
+    expect(projectSessionSummaryResources(messages, []).sources).toEqual([]);
   });
 
   it('deduplicates nested search results and citations against direct native web results', () => {
