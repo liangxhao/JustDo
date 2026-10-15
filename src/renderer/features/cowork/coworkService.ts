@@ -104,6 +104,7 @@ export class CoworkService {
   private readonly sessionModelReadVersions = new Map<string, number>();
   private readonly runtimeIdleConfirmations = new Map<string, number>();
   private readonly runtimeStatusRequestVersions = new Map<string, number>();
+  private readonly runtimeActivityVersions = new Map<string, number>();
   private readonly terminalIdleConfirmationTimers = new Map<string, number>();
   private readonly terminalIdleConfirmationTokens = new Map<string, symbol>();
   private readonly sessionPermissionModeUpdates = new Map<
@@ -415,9 +416,22 @@ export class CoworkService {
     return next;
   }
 
+  /** Unknown reads order responses without taking ownership of provisional activity. */
+  private advanceRuntimeActivityVersion(sessionId: string): void {
+    this.runtimeActivityVersions.set(
+      sessionId,
+      (this.runtimeActivityVersions.get(sessionId) ?? 0) + 1,
+    );
+  }
+
+  private invalidateRuntimeActivity(sessionId: string): void {
+    this.nextRuntimeStatusRequestVersion(sessionId);
+    this.advanceRuntimeActivityVersion(sessionId);
+  }
+
   markSessionInProgress(sessionId: string): void {
     this.cancelTerminalIdleConfirmation(sessionId);
-    this.nextRuntimeStatusRequestVersion(sessionId);
+    this.invalidateRuntimeActivity(sessionId);
     this.runtimeIdleConfirmations.delete(sessionId);
     store.dispatch(setSessionMainRuntimeActivity({ sessionId, running: true }));
     store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));
@@ -425,7 +439,7 @@ export class CoworkService {
 
   clearSessionInProgress(sessionId: string): void {
     this.cancelTerminalIdleConfirmation(sessionId);
-    this.nextRuntimeStatusRequestVersion(sessionId);
+    this.invalidateRuntimeActivity(sessionId);
     this.runtimeIdleConfirmations.delete(sessionId);
     store.dispatch(setSessionMainRuntimeActivity({ sessionId, running: false }));
     store.dispatch(setSessionRuntimeActivity({ sessionId, running: false }));
@@ -446,6 +460,7 @@ export class CoworkService {
       this.runtimeIdleConfirmations.delete(sessionId);
       return true;
     }
+    this.advanceRuntimeActivityVersion(sessionId);
     // Older preload mocks and downgrade-compatible bridges do not carry a
     // main-process revision. Keep their previous two-snapshot guard locally.
     if (status.revision === 0) {
@@ -469,7 +484,7 @@ export class CoworkService {
 
   private confirmTerminalSessionIdle(sessionId: string): void {
     this.cancelTerminalIdleConfirmation(sessionId);
-    this.nextRuntimeStatusRequestVersion(sessionId);
+    this.invalidateRuntimeActivity(sessionId);
     this.runtimeIdleConfirmations.delete(sessionId);
     const token = Symbol(sessionId);
     this.terminalIdleConfirmationTokens.set(sessionId, token);
@@ -522,11 +537,11 @@ export class CoworkService {
 
   async beginSessionRun(input: BeginSessionRunInput): Promise<SessionRunTiming> {
     this.cancelTerminalIdleConfirmation(input.sessionId);
-    this.nextRuntimeStatusRequestVersion(input.sessionId);
+    this.invalidateRuntimeActivity(input.sessionId);
     const result = await window.electron.cowork.beginSessionRun(input);
     if (!result.success || !result.timing) {
       if (result.snapshot) {
-        this.nextRuntimeStatusRequestVersion(input.sessionId);
+        this.invalidateRuntimeActivity(input.sessionId);
         store.dispatch(
           setSessionRuntimeSnapshot({
             sessionId: input.sessionId,
@@ -542,7 +557,7 @@ export class CoworkService {
             : result.error;
       throw new Error(localizedError || 'Failed to begin session run');
     }
-    this.nextRuntimeStatusRequestVersion(input.sessionId);
+    this.invalidateRuntimeActivity(input.sessionId);
     store.dispatch(
       setSessionRuntimeSnapshot({
         sessionId: input.sessionId,
@@ -582,9 +597,9 @@ export class CoworkService {
   }
 
   async markSessionRunUnknown(input: SessionRunUnknownInput): Promise<void> {
-    this.nextRuntimeStatusRequestVersion(input.sessionId);
+    this.invalidateRuntimeActivity(input.sessionId);
     const result = await window.electron.cowork.markSessionRunUnknown(input);
-    this.nextRuntimeStatusRequestVersion(input.sessionId);
+    this.invalidateRuntimeActivity(input.sessionId);
     if (!result.success) throw new Error(result.error || 'Failed to record unknown run admission');
     if (result.snapshot) {
       store.dispatch(
@@ -594,13 +609,13 @@ export class CoworkService {
   }
 
   async failSessionRun(sessionId: string, id: string): Promise<void> {
-    this.nextRuntimeStatusRequestVersion(sessionId);
+    this.invalidateRuntimeActivity(sessionId);
     const result = await window.electron.cowork.failSessionRun({
       sessionId,
       id,
       endedAt: Date.now(),
     });
-    this.nextRuntimeStatusRequestVersion(sessionId);
+    this.invalidateRuntimeActivity(sessionId);
     if (result.success && result.snapshot) {
       store.dispatch(setSessionRuntimeSnapshot({ sessionId, snapshot: result.snapshot }));
     }
@@ -695,9 +710,7 @@ export class CoworkService {
             // Promotion can beat the asynchronous session-activity hydration.
             // Preserve Stop while this exact initial submission awaits admission.
             this.markSessionInProgress(preparedSession.id);
-            const provisionalActivityVersion = this.runtimeStatusRequestVersions.get(
-              preparedSession.id,
-            );
+            const provisionalActivityVersion = this.runtimeActivityVersions.get(preparedSession.id);
             store.dispatch(addSession({ session: preparedSession, select: true }));
             store.dispatch(
               setPlanModeState({
@@ -712,8 +725,7 @@ export class CoworkService {
               // A newer activity claim or observation owns any replacement run.
               if (
                 (error as { requestSent?: unknown } | null)?.requestSent === false &&
-                this.runtimeStatusRequestVersions.get(preparedSession.id) ===
-                  provisionalActivityVersion
+                this.runtimeActivityVersions.get(preparedSession.id) === provisionalActivityVersion
               ) {
                 this.clearSessionInProgress(preparedSession.id);
               }

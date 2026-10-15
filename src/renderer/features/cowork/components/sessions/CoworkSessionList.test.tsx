@@ -4,11 +4,16 @@ import { configureStore } from '@reduxjs/toolkit';
 import type { CollaborationRoomEntry } from '@shared/cowork/agent-team/collaboration';
 import type { TeamDiscussionRoom } from '@shared/cowork/agent-team/teamDiscussion';
 import { CoworkSessionSource } from '@shared/cowork/sessionSource';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import coworkReducer, { setGroups, toggleGroupExpanded } from '@/features/cowork/coworkSlice';
+import coworkReducer, {
+  setGroups,
+  setSessionRuntimeSnapshot,
+  setSessions,
+  toggleGroupExpanded,
+} from '@/features/cowork/coworkSlice';
 import type { CoworkSessionSummary } from '@/features/cowork/coworkTypes';
 import { translations } from '@/services/i18n/translations';
 
@@ -84,7 +89,7 @@ it('shows source activity for background Team, discussions and Swarm without cha
     {
       id: 'team',
       anchorSessionId: 'Team',
-      members: [],
+      members: [{ agentId: 'worker', sessionId: 'peer', sessionKey: 'peer-key' }],
       rounds: [{ id: 'batch', state: 'open', pending: 1 }],
     },
   ];
@@ -93,6 +98,18 @@ it('shows source activity for background Team, discussions and Swarm without cha
   ];
   activities.workflows = { Swarm: true };
   const store = createStore();
+  store.dispatch(
+    setSessionRuntimeSnapshot({
+      sessionId: 'peer',
+      snapshot: {
+        revision: 1,
+        known: true,
+        mainRunning: false,
+        subagentRunning: true,
+        running: true,
+      },
+    }),
+  );
   const props = createProps(['Team', 'Discussion', 'Swarm', 'Idle'].map(id => summary(id, 1)));
   const view = () => (
     <Provider store={store}>
@@ -119,6 +136,70 @@ it('shows source activity for background Team, discussions and Swarm without cha
   rerender(view());
   expect(screen.queryByTitle(translations.en.coworkStatusRunning)).toBeNull();
 });
+
+it.each(['open', 'closing'] as const)(
+  'follows actual Team activity while preserving a historical %s delivery without its terminal receipt',
+  state => {
+    const historical: CollaborationRoomEntry = {
+      id: 'team',
+      anchorSessionId: 'Team',
+      members: [
+        { agentId: 'source', sessionId: 'Team', sessionKey: 'source-key' },
+        { agentId: 'worker', sessionId: 'peer', sessionKey: 'peer-key' },
+      ],
+      rounds: [{ id: 'historical', state, pending: 1 }],
+    };
+    activities.collaborations = [historical];
+    const store = createStore();
+    store.dispatch(setSessions([summary('Team', 1), summary('peer', 1)]));
+    const props = createProps([summary('Team', 1)]);
+    render(
+      <Provider store={store}>
+        <CoworkSessionList {...props} />
+      </Provider>,
+    );
+    const indicator = () =>
+      within(screen.getByRole('button', { name: 'Team' })).queryByTitle(
+        translations.en.coworkStatusRunning,
+      );
+    expect(indicator()).toBeNull();
+
+    act(() => {
+      store.dispatch(
+        setSessionRuntimeSnapshot({
+          sessionId: 'peer',
+          snapshot: {
+            revision: 1,
+            known: true,
+            mainRunning: true,
+            subagentRunning: false,
+            running: true,
+          },
+        }),
+      );
+    });
+    expect(indicator()).toBeTruthy();
+    expect(store.getState().cowork.sessionMainRuntimeActivity.Team).toBeUndefined();
+
+    act(() => {
+      store.dispatch(
+        setSessionRuntimeSnapshot({
+          sessionId: 'peer',
+          snapshot: {
+            revision: 2,
+            known: true,
+            mainRunning: false,
+            subagentRunning: false,
+            running: false,
+          },
+        }),
+      );
+    });
+    expect(indicator()).toBeNull();
+    expect(historical.rounds).toEqual([{ id: 'historical', state, pending: 1 }]);
+    expect(store.getState().cowork.sessionMainRuntimeActivity).toEqual({});
+  },
+);
 
 describe('sidebar browser extension group', () => {
   it('defaults to collapsed, keeps browser sessions out of recent and user groups, and leaves Multica separate', () => {

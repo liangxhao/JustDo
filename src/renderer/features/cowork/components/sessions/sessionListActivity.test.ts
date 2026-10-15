@@ -14,14 +14,25 @@ const room = (pending: number): CollaborationRoomEntry => ({
   rounds: [{ id: 'round', state: 'open', pending }],
 });
 
-test('projects native member activity and unsettled deliveries onto their source only', () => {
+test('projects native member activity onto its source only', () => {
   expect([...collectRelatedRunningSessionIds([room(0)], [], { peer: true })]).toEqual(['source']);
-  expect([...collectRelatedRunningSessionIds([room(1)], [], {})]).toEqual(['source']);
   expect([...collectRelatedRunningSessionIds([room(0)], [], {})]).toEqual([]);
-  const stopped = room(1);
-  stopped.rounds[0].state = 'stopped';
-  expect([...collectRelatedRunningSessionIds([stopped], [], {})]).toEqual([]);
+  expect([...collectRelatedRunningSessionIds([room(1)], [], { unrelated: true })]).toEqual([]);
 });
+
+test.each(['open', 'closing', 'settled', 'failed', 'stopped'] as const)(
+  'keeps %s receipt state separate from current member activity',
+  state => {
+    const historical = room(1);
+    historical.rounds[0].state = state;
+    expect([...collectRelatedRunningSessionIds([historical], [], {})]).toEqual([]);
+    expect([...collectRelatedRunningSessionIds([historical], [], { peer: true })]).toEqual([
+      'source',
+    ]);
+    expect([...collectRelatedRunningSessionIds([historical], [], { peer: false })]).toEqual([]);
+    expect(historical.rounds[0]).toEqual({ id: 'round', state, pending: 1 });
+  },
+);
 
 test.each(Object.values(TeamDiscussionState))('projects a source discussion in state %s', state => {
   const discussion = { id: 'group', sourceSessionId: 'source', state } as TeamDiscussionRoom;

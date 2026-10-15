@@ -179,6 +179,103 @@ describe('actual service initial native handoff', () => {
     expect(store.getState().cowork.sessionRuntimeActivity[canonical.id]).toBe(true);
   });
 
+  it.each(['single', 'batch'] as const)(
+    'clears an unsent initial claim after an unknown %s status query',
+    async query => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const fixture = setup(false);
+      const unknown = {
+        revision: 1,
+        known: false,
+        mainRunning: false,
+        subagentRunning: false,
+        running: false,
+      };
+      Object.assign(window.electron.cowork, {
+        getSessionRuntimeStatus: vi.fn().mockResolvedValue({ success: true, ...unknown }),
+        getSessionRuntimeStatuses: vi.fn().mockResolvedValue({
+          success: true,
+          statuses: { [canonical.id]: unknown },
+        }),
+      });
+      const pending = coworkService.startSession(
+        { prompt: 'Synthetic', clientTurnId: request.clientTurnId },
+        {
+          dispatchInitialTurn: async () => {
+            if (query === 'single') await coworkService.refreshSessionRuntimeActivity(canonical.id);
+            else await coworkService.refreshSessionRuntimeActivities([canonical.id]);
+            throw Object.assign(new Error('Not ready'), { requestSent: false });
+          },
+        },
+      );
+      fixture.deliver();
+      await expect(pending).resolves.toMatchObject({ session: null });
+      expect(selectCurrentSessionMainRuntimeRunning(store.getState())).toBe(false);
+      expect(store.getState().cowork.sessionRuntimeActivity[canonical.id]).toBeUndefined();
+    },
+  );
+
+  it('clears an unsent initial claim while a status read is still pending', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fixture = setup(false);
+    let finishStatus!: (result: { success: false }) => void;
+    const status = new Promise<{ success: false }>(resolve => {
+      finishStatus = resolve;
+    });
+    Object.assign(window.electron.cowork, { getSessionRuntimeStatus: vi.fn(() => status) });
+    let refresh!: Promise<unknown>;
+    const pending = coworkService.startSession(
+      { prompt: 'Synthetic', clientTurnId: request.clientTurnId },
+      {
+        dispatchInitialTurn: async () => {
+          refresh = coworkService.refreshSessionRuntimeActivity(canonical.id);
+          throw Object.assign(new Error('Cancelled before ready'), { requestSent: false });
+        },
+      },
+    );
+    fixture.deliver();
+    try {
+      await expect(pending).resolves.toMatchObject({ session: null });
+      expect(selectCurrentSessionMainRuntimeRunning(store.getState())).toBe(false);
+      expect(store.getState().cowork.sessionRuntimeActivity[canonical.id]).toBeUndefined();
+    } finally {
+      finishStatus({ success: false });
+      await refresh;
+    }
+    expect(selectCurrentSessionMainRuntimeRunning(store.getState())).toBe(false);
+  });
+
+  it.each([true, false])(
+    'preserves a confirmed runtime observation with mainRunning=%s after an old unsent failure',
+    async mainRunning => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const fixture = setup(false);
+      Object.assign(window.electron.cowork, {
+        getSessionRuntimeStatus: vi.fn().mockResolvedValue({
+          success: true,
+          revision: 1,
+          known: true,
+          mainRunning,
+          subagentRunning: !mainRunning,
+          running: true,
+        }),
+      });
+      const pending = coworkService.startSession(
+        { prompt: 'Synthetic', clientTurnId: request.clientTurnId },
+        {
+          dispatchInitialTurn: async () => {
+            await coworkService.refreshSessionRuntimeActivity(canonical.id);
+            throw Object.assign(new Error('Old viewer cancelled'), { requestSent: false });
+          },
+        },
+      );
+      fixture.deliver();
+      await expect(pending).resolves.toMatchObject({ session: null });
+      expect(selectCurrentSessionMainRuntimeRunning(store.getState())).toBe(mainRunning);
+      expect(store.getState().cowork.sessionRuntimeActivity[canonical.id]).toBe(true);
+    },
+  );
+
   it('preserves newer activity when an old initial dispatch fails before sending', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const fixture = setup(false);

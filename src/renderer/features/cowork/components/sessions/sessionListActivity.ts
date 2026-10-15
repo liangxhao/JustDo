@@ -12,12 +12,8 @@ export function collectRelatedRunningSessionIds(
 ): Set<string> {
   const running = new Set<string>();
   for (const room of collaborations) {
-    if (
-      room.members.some(member => runtimeActivity[member.sessionId]) ||
-      room.rounds.some(
-        round => (round.state === 'open' || round.state === 'closing') && round.pending > 0,
-      )
-    ) {
+    // A missing terminal receipt keeps a round unsettled, but does not prove live execution.
+    if (room.members.some(member => runtimeActivity[member.sessionId])) {
       running.add(room.anchorSessionId);
     }
   }
