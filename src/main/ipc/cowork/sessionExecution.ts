@@ -17,6 +17,7 @@ import {
   createSessionWorktree,
   discardPreparedWorktreeSession,
 } from '../../openclaw/sessions/worktreeSession';
+import { cancelAgentTeamLaunchWithoutWaiting } from './agentTeamLaunchCancellation';
 import { captureInitialDispatchLease, NativeSessionDispatcher } from './nativeSessionDispatch';
 
 interface SessionExecutionHandlerDependencies {
@@ -97,9 +98,11 @@ export const registerCoworkSessionExecutionHandlers = ({
         return { success: false, error: 'The start operation is no longer current.' };
       }
       try {
-        await getAgentTeamLaunch?.()
-          .cancel(timing.sessionId, input.clientTurnId)
-          .catch((): void => undefined);
+        cancelAgentTeamLaunchWithoutWaiting(
+          getAgentTeamLaunch,
+          timing.sessionId,
+          input.clientTurnId,
+        );
         await getCoworkEngineRouter().stopSession(timing.sessionId, {
           diagnosticUserInitiated: true,
         });
@@ -119,9 +122,11 @@ export const registerCoworkSessionExecutionHandlers = ({
     if (operation.stopping) return operation.stopping;
     const stopping = (async () => {
       try {
-        await getAgentTeamLaunch?.()
-          .cancel(operation.sessionId!, input.clientTurnId)
-          .catch((): void => undefined);
+        cancelAgentTeamLaunchWithoutWaiting(
+          getAgentTeamLaunch,
+          operation.sessionId!,
+          input.clientTurnId,
+        );
         await getCoworkEngineRouter().stopSession(operation.sessionId!, {
           diagnosticUserInitiated: true,
         });

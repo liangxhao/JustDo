@@ -35,35 +35,40 @@ export function useSwarmWorkflowDiscovery(
       return;
     }
     if (!sessionId) return;
-    return observeWorkflows(api, sessionId, result => {
-      setSnapshot(previous => ({
-        sessionId,
-        disabledRevision,
-        result,
-        hasFlows: result.success
-          ? result.flows.length > 0
-          : previous?.sessionId === sessionId &&
-            previous.disabledRevision === disabledRevision &&
-            previous.hasFlows,
-        count: result.success
-          ? result.flows.length
-          : previous?.sessionId === sessionId && previous.disabledRevision === disabledRevision
-            ? previous.count
-            : 0,
-      }));
-      if (result.success && onDiscoverRef.current) {
-        const known = seen.current.get(sessionId);
-        const discovered = result.flows.some(
-          flow =>
-            !known?.has(flow.id) &&
-            (known !== undefined || !['completed', 'cancelled'].includes(flow.status)),
-        );
-        const next = known ?? new Set<string>();
-        result.flows.forEach(flow => next.add(flow.id));
-        seen.current.set(sessionId, next);
-        if (discovered) onDiscoverRef.current();
-      }
-    });
+    return observeWorkflows(
+      api,
+      sessionId,
+      result => {
+        setSnapshot(previous => ({
+          sessionId,
+          disabledRevision,
+          result,
+          hasFlows: result.success
+            ? result.flows.length > 0
+            : previous?.sessionId === sessionId &&
+              previous.disabledRevision === disabledRevision &&
+              previous.hasFlows,
+          count: result.success
+            ? result.flows.length
+            : previous?.sessionId === sessionId && previous.disabledRevision === disabledRevision
+              ? previous.count
+              : 0,
+        }));
+        if (result.success && onDiscoverRef.current) {
+          const known = seen.current.get(sessionId);
+          const discovered = result.flows.some(
+            flow =>
+              !known?.has(flow.id) &&
+              (known !== undefined || !['completed', 'cancelled'].includes(flow.status)),
+          );
+          const next = known ?? new Set<string>();
+          result.flows.forEach(flow => next.add(flow.id));
+          seen.current.set(sessionId, next);
+          if (discovered) onDiscoverRef.current();
+        }
+      },
+      { generation: disabledRevision, refresh: revision > 0 },
+    );
   }, [api, sessionId, revision, enabled, disabledRevision]);
   const current =
     enabled &&

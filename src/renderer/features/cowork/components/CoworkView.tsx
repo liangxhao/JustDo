@@ -109,7 +109,7 @@ import {
 import { useSessionSummaryVisibility } from '@/features/cowork/components/display/useSessionSummaryVisibility';
 import { WORKSPACE_PRESENTATION_EVENT } from '@/features/cowork/components/display/useWorkspacePortal';
 import { inferInitialGoalObjective } from '@/features/cowork/components/goals/goalPendingObjective';
-import type { GoalRunProgress } from '@/features/cowork/components/goals/goalRunProgress';
+import { useSessionRunProgress } from '@/features/cowork/components/goals/useSessionRunProgress';
 import FilePreviewDrawer, {
   type FilePreviewDrawerHandle,
 } from '@/features/cowork/components/preview/FilePreviewDrawer';
@@ -139,6 +139,7 @@ import {
   selectCoworkConfig,
   selectCoworkSessions,
   selectCurrentSession,
+  selectCurrentSessionMainRuntimeRunning,
   selectDraftBrowserAnnotations,
   selectIsOpenClawEngine,
   selectIsStreaming,
@@ -480,7 +481,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     planPreviewReducer,
     initialPlanPreviewState,
   );
-  const [goalRunProgress, setGoalRunProgress] = useState<GoalRunProgress | null>(null);
   const [queuedInputs, setQueuedInputs] = useState<QueuedInputSnapshot | null>(null);
   const [goalPresence, setGoalPresence] = useState<{
     sessionId: string | undefined;
@@ -918,6 +918,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const currentAgentId = config.allowMainAgentSwitch
     ? agentState.currentAgentId
     : MAIN_USER_AGENT_ID;
+  const currentSessionMainRunning = useSelector(selectCurrentSessionMainRuntimeRunning);
   const currentSessionRuntimeRunning = currentSession
     ? currentSession.id.startsWith('temp-')
       ? currentSession.status === 'running'
@@ -940,6 +941,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       : canonicalGatewaySessionKey;
   const currentGatewaySessionKeyRef = useRef(currentGatewaySessionKey);
   currentGatewaySessionKeyRef.current = currentGatewaySessionKey;
+  const { progress: goalRunProgress, onActivityChange } =
+    useSessionRunProgress(currentGatewaySessionKey);
   const summaryNavigationScope = useRef({ sessionKey: currentGatewaySessionKey, generation: 0 });
   if (summaryNavigationScope.current.sessionKey !== currentGatewaySessionKey) {
     summaryNavigationScope.current = {
@@ -1347,12 +1350,20 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     const pendingSubmission = pendingMessageSubmissionsRef.current.get(currentSession.id);
     if (pendingSubmission?.unknown && pendingSubmission.receiptId) {
       pendingSubmission.cancelled = true;
-      await coworkService.markSessionRunUnknown({
-        sessionId: currentSession.id,
-        id: pendingSubmission.receiptId,
-        cancelled: true,
-      });
-      pendingSubmission.unknownMarked = true;
+      // Persist cancellation intent without delaying the actual native abort.
+      // A late unknown-admission report is fenced by the Main stop handler too.
+      void coworkService
+        .markSessionRunUnknown({
+          sessionId: currentSession.id,
+          id: pendingSubmission.receiptId,
+          cancelled: true,
+        })
+        .then(() => {
+          pendingSubmission.unknownMarked = true;
+        })
+        .catch(() => {
+          // Keep the operation unknown and retryable if persistence is unavailable.
+        });
     }
     const stopping = stopSessionSubmission(pendingSubmission, async () => {
       const results = await Promise.allSettled([
@@ -1511,10 +1522,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     backgroundSessionIdsKey,
     backgroundDiscoverySessionIdsKey,
   });
-
-  useEffect(() => {
-    setGoalRunProgress(null);
-  }, [currentSession?.id]);
 
   const requestFilePreviewTransition = useCallback(
     async (options?: FilePreviewNavigationOptions): Promise<boolean> => {
@@ -3250,7 +3257,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               searchNavigationDirection={sessionSearchNavigation.direction}
               processSummariesExpanded={areProcessSummariesExpanded}
               onSearchMatchCountChange={handleSessionSearchMatchCountChange}
-              onActivityChange={setGoalRunProgress}
+              onActivityChange={onActivityChange}
               onQueuedInputsChange={setQueuedInputs}
               onContextUsageChange={setContextUsage}
               onProgressCardChange={setProgressCardState}
@@ -3326,7 +3333,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                           currentSession.id,
                           pendingStartRef.current,
                         )}
-                        isStreaming={currentSessionRuntimeRunning}
+                        isStreaming={currentSessionMainRunning}
                         disabled={
                           !isEngineReady ||
                           isQuestionInputBlocked ||

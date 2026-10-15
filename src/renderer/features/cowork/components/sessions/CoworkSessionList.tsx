@@ -9,6 +9,7 @@ import {
   useSensors,
 } from '@dnd-kit/core';
 import { ChatBubbleLeftRightIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -41,10 +42,14 @@ import {
   partitionSidebarSessions,
   type SessionDateGroupKey,
 } from '@/features/cowork/sessionPresentation';
+import { useExtensionAvailability } from '@/features/plugins/extensions/useExtensionEnablement';
 import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
 
 import { useCollaborationRooms } from '../collaboration/CollaborationPanel';
+import { useTeamDiscussionRooms } from '../discussions/teamDiscussionNavigation';
+import { useSwarmWorkflowActivity } from '../swarm-workflow/useSwarmWorkflowActivity';
+import { collectRelatedRunningSessionIds } from './sessionListActivity';
 
 interface UngroupedDroppableZoneProps {
   unGroupedSessions: CoworkSessionSummary[];
@@ -262,6 +267,12 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
 }) => {
   const dispatch = useDispatch();
   const rooms = useCollaborationRooms();
+  const discussions = useTeamDiscussionRooms();
+  const swarmAvailability = useExtensionAvailability(OpenClawExtensionId.SWARM_WORKFLOW);
+  const workflowActivity = useSwarmWorkflowActivity(
+    inputSessions.map(session => session.id),
+    swarmAvailability,
+  );
   const allSessions = useSelector((state: RootState) => state.cowork.sessions);
   const unreadSessionIds = useSelector(selectUnreadSessionIds);
   const sessionRuntimeActivity = useSelector(
@@ -299,8 +310,10 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
           .filter(([, running]) => running)
           .map(([sessionId]) => sessionId),
         ...sessions.filter(session => session.status === 'running').map(session => session.id),
+        ...collectRelatedRunningSessionIds(rooms, discussions, sessionRuntimeActivity),
+        ...Object.keys(workflowActivity).filter(sessionId => workflowActivity[sessionId]),
       ]),
-    [sessionRuntimeActivity, sessions],
+    [sessionRuntimeActivity, sessions, rooms, discussions, workflowActivity],
   );
   const groups = useSelector(selectGroups);
   const expandedGroupIds = useSelector(selectExpandedGroupIds);

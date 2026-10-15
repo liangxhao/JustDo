@@ -141,8 +141,30 @@ export type SwarmWorkflowView = {
   nodes: SwarmWorkflowNode[];
   error?: string;
 };
+/** Pausing prevents dispatch but cannot establish that accepted execution has settled. */
+export function isSwarmWorkflowActive(
+  flow: Pick<SwarmWorkflowView, 'status'> & {
+    nodes: readonly Pick<SwarmWorkflowNode, 'status' | 'batchCounts'>[];
+  },
+): boolean {
+  if (flow.status === 'completed' || flow.status === 'cancelled') return false;
+  return (
+    flow.status === 'running' ||
+    flow.status === 'stopping' ||
+    flow.nodes.some(
+      node =>
+        node.status === 'preparing' ||
+        node.status === 'running' ||
+        node.status === 'uncertain' ||
+        Boolean(
+          node.batchCounts &&
+          (node.batchCounts.preparing || node.batchCounts.running || node.batchCounts.uncertain),
+        ),
+    )
+  );
+}
 export type SwarmWorkflowResult =
-  { success: true; flows: SwarmWorkflowView[] } | { success: false };
+  { success: true; flows: SwarmWorkflowView[]; running?: boolean } | { success: false };
 export interface SwarmWorkflowDetail {
   flowId: string;
   nodeId: string;
@@ -190,9 +212,12 @@ export function validFlowDetail(value: unknown): value is SwarmWorkflowDetail {
       (typeof d.dispatch?.message === 'string' && Number.isFinite(d.dispatch.createdAt)))
   );
 }
-export function validFlowList(value: unknown): value is { flows: SwarmWorkflowView[] } {
+export function validFlowList(
+  value: unknown,
+): value is { flows: SwarmWorkflowView[]; running?: boolean } {
   if (!value || typeof value !== 'object' || !Array.isArray((value as { flows?: unknown }).flows))
     return false;
+  if ('running' in value && typeof value.running !== 'boolean') return false;
   const flows = (value as { flows: unknown[] }).flows;
   return (
     flows.length <= 20 &&

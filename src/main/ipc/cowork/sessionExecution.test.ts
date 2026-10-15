@@ -207,6 +207,7 @@ describe('initial admission cancellation', () => {
     const createSession = vi.fn(() => createdSession);
     const startSession = vi.fn(() => new Promise<void>(() => undefined));
     const stopSession = vi.fn().mockResolvedValue(undefined);
+    const cancelLaunch = vi.fn().mockResolvedValue(undefined);
     const store = {
       getConfig: () => ({ workingDirectory: 'C:/project', permissionMode: 'ask' }),
       getAgent: () => ({ enabled: true, model: '' }),
@@ -230,6 +231,7 @@ describe('initial admission cancellation', () => {
         : Promise.resolve({ phase: 'running' as const, message: '' }),
     );
     registerCoworkSessionExecutionHandlers({
+      getAgentTeamLaunch: () => ({ cancel: cancelLaunch }) as unknown as AgentTeamLaunchCoordinator,
       ensureEngineRunning: ensureEngineRunning as never,
       waitForConfigUpdates: () =>
         preparation === 'config' ? new Promise<void>(() => undefined) : Promise.resolve(),
@@ -248,7 +250,16 @@ describe('initial admission cancellation', () => {
       ) as Promise<unknown>;
     const cancel = () =>
       handlers.get(SessionStartIpc.Cancel)!({}, { clientTurnId: 'client-1' }) as Promise<unknown>;
-    return { start, cancel, startSession, stopSession, createSession, store, ensureEngineRunning };
+    return {
+      start,
+      cancel,
+      startSession,
+      stopSession,
+      cancelLaunch,
+      createSession,
+      store,
+      ensureEngineRunning,
+    };
   };
 
   test('cancels an initial run without waiting for a lost admission acknowledgement', async () => {
@@ -261,6 +272,34 @@ describe('initial admission cancellation', () => {
     });
     await expect(starting).resolves.toMatchObject({ success: true, timing: { state: 'aborted' } });
   });
+
+  test.each([false, true])(
+    'stops an initial run while Team guard cancellation is pending (admitted=%s)',
+    async admitted => {
+      const fixture = setup();
+      let finishGuard!: () => void;
+      fixture.cancelLaunch.mockImplementation(
+        () =>
+          new Promise<void>(resolve => {
+            finishGuard = resolve;
+          }),
+      );
+      if (admitted) fixture.startSession.mockResolvedValueOnce(undefined);
+      const starting = fixture.start();
+      await vi.waitFor(() => expect(fixture.startSession).toHaveBeenCalled());
+      if (admitted) await starting;
+      const stopping = fixture.cancel();
+      await vi.waitFor(() =>
+        expect(fixture.stopSession).toHaveBeenCalledWith('session-1', {
+          diagnosticUserInitiated: true,
+        }),
+      );
+      expect(fixture.cancelLaunch).toHaveBeenCalledWith('session-1', 'client-1');
+      await expect(stopping).resolves.toEqual({ success: true });
+      await starting;
+      finishGuard();
+    },
+  );
 
   test.each(['config', 'engine'] as const)(
     'cancels during %s preparation without creating a run',

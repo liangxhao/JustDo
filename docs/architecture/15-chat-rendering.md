@@ -235,6 +235,10 @@ activeTurn 记录原生 run/session/lifecycle generation 与序列。最近 24 �
 
 Main 的 lifecycle 完成兜底仅接受 `executionSettled:true` 的 `end`／`error`，随后才启动延迟收敛。attempt finishing 或没有整轮执行确认的 terminal 不能结束产品运行状态；压缩阶段继续暂停兜底计时。`chat.final` 的显示收敛与原生整轮执行结论保持区分。
 
+会话列表的旋转图标汇总本会话的主运行、原生子任务、Agent Team 未结算投递／成员和关联群聊，以及 Swarm 流程。该汇总只参与列表展示，不用于主输入框的发送准入。主输入框读取所选会话的 `sessionMainRuntimeActivity`（原生 `mainRunning`），并保留压缩、Goal 续跑和在途停止控制；只有后台 Team／Swarm／子任务活动时仍显示发送。结果未知的快照保留此前已知的主运行状态，不能据缺少确认收走停止入口。
+
+首轮 Renderer 发送将临时会话提升为正式身份时，先同步建立对应主运行活动再选择会话，避免异步列表刷新尚未到达而丢失停止入口。只有发送端明确确认未提交时才能清理该暂态；未知结果或取消 ACK 不代替执行核验。压缩等即时进度按真实原生 session key 有界保存、只投影当前会话；切换后的 passive effect 不再覆盖控制器刚恢复的活动，旧会话清理也不能抹掉新会话进度。
+
 ## 3. 事件准入与顺序
 
 连接 generation 防旧 socket，session 身份防切换串消息，run/lifecycle 防旧运行，sequence 防重复和乱序。不能只用时间戳或“当前页面是否忙”判断。
@@ -296,6 +300,8 @@ stateDiagram-v2
 停止成功回执通过 settleConfirmedRun 收敛当前 Renderer turn 的显示，不依赖 aborted stream 恰好送达。首个流事件尚未到达时只保存 fence，不制造空消息或结束别的 run。重复 receipt/abort/lifecycle 共用显示终态行及结束时间。这里的停止显示与 Main 的整轮执行结论分开：Stop ACK 不补造 execution outcome，后者仍要求匹配 run 的 `executionSettled:true` 生命周期证据。
 
 普通 send 尚未获得原生 handle 时，取消需要等待迟到 admission；UI 等待有界，超时不能假装原生已空闲。后台继续处理原操作取消，同一操作重试共用取消任务，完成前保留发送隔离。
+
+停止先同步关闭本地 Team 发起准入，并立即向 Gateway 发出原生停止；Team 守卫的异步清理和未知发送的取消意图回写不作为原生停止的前置等待。辅助回写失败仍保留未知操作与重试栅栏，不妨碍尝试停止主运行，也不补造原生终态。
 
 手动压缩以客户端生成的 `operationId` 绑定一次 `sessions.compact` 提交。原生操作状态覆盖排队和准备阶段；`sessions.compaction.abort` 取消这个操作，`sessions.compaction.status` 用于重连核对。会话级 `no-active-run`、请求超时和断线都不是压缩终态，不能据此重发或解除发送隔离；只有匹配操作与会话的权威终态可收敛。Gateway 重启后未知结果不能伪装为成功或已取消：先建立迟到提交取消围栏，再明确提示无法确认原结果。原生记录只保存有界、无内容的操作状态，不建立另一份 transcript 或持久压缩账本。
 

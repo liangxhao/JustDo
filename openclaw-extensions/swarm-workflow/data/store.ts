@@ -25,6 +25,16 @@ export class FlowStore {
       .all()
       .map(row => this.batches.hydrate(JSON.parse(String(row.payload))));
   }
+  forParents(parentKeys: readonly string[]): Flow[] {
+    const keys = [...new Set(parentKeys)];
+    if (!keys.length) return [];
+    return this.db
+      .prepare(
+        `SELECT payload FROM flows WHERE parent_key IN (${keys.map(() => '?').join(',')}) ORDER BY rowid DESC`,
+      )
+      .all(...keys)
+      .map(row => this.batches.hydrate(JSON.parse(String(row.payload))));
+  }
   get(id: string, itemId?: string): Flow | undefined {
     const row = this.db.prepare('SELECT payload FROM flows WHERE id=?').get(id);
     return row ? this.batches.hydrate(JSON.parse(String(row.payload)), itemId) : undefined;

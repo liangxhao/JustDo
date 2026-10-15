@@ -506,8 +506,13 @@ const coworkSlice = createSlice({
     ) {
       const { sessionId, snapshot } = action.payload;
       if (snapshot.mainRunning) state.sessionMainRuntimeActivity[sessionId] = true;
-      else delete state.sessionMainRuntimeActivity[sessionId];
-      if (snapshot.running) state.sessionRuntimeActivity[sessionId] = true;
+      // Unconfirmed admission/Stop cannot retire the last known main activity.
+      else if (snapshot.known) delete state.sessionMainRuntimeActivity[sessionId];
+      const running =
+        snapshot.running ||
+        state.sessionMainRuntimeActivity[sessionId] === true ||
+        (!snapshot.known && state.sessionRuntimeActivity[sessionId] === true);
+      if (running) state.sessionRuntimeActivity[sessionId] = true;
       else delete state.sessionRuntimeActivity[sessionId];
       if (snapshot.timing) {
         const timings = state.sessionRunTimings[sessionId] ?? [];
@@ -516,16 +521,12 @@ const coworkSlice = createSlice({
         else timings.push(snapshot.timing);
         state.sessionRunTimings[sessionId] = timings;
       }
-      const status = snapshot.running
-        ? 'running'
-        : snapshot.timing?.state === 'failed'
-          ? 'error'
-          : 'idle';
+      const status = running ? 'running' : snapshot.timing?.state === 'failed' ? 'error' : 'idle';
       const sessionIndex = state.sessions.findIndex(session => session.id === sessionId);
       if (sessionIndex >= 0) state.sessions[sessionIndex].status = status;
       if (state.currentSession?.id === sessionId) {
         state.currentSession.status = status;
-        state.isStreaming = snapshot.mainRunning;
+        state.isStreaming = state.sessionMainRuntimeActivity[sessionId] === true;
       }
     },
 

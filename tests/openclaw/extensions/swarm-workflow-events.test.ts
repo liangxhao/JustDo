@@ -45,6 +45,22 @@ test('publishes committed inserts and updates, with no notice for failed writes 
   expect(changed).toHaveBeenCalledTimes(2);
 });
 
+test('reads only owned parents in newest-first order without hydrating other histories', () => {
+  const { flow, store } = fixture();
+  store.insert(flow);
+  store.insert({ ...flow, id: 'foreign', requestId: 'foreign', parentKey: 'foreign-parent' });
+  store.insert({ ...flow, id: 'newer', requestId: 'newer' });
+  const hydrate = vi.spyOn(store.batches, 'hydrate');
+  expect(store.forParents([flow.parentKey, flow.parentKey]).map(item => item.id)).toEqual([
+    'newer', 'flow',
+  ]);
+  expect(hydrate).toHaveBeenCalledTimes(2);
+  hydrate.mockClear();
+  expect(store.forParents([])).toEqual([]);
+  expect(store.forParents(['missing'])).toEqual([]);
+  expect(hydrate).not.toHaveBeenCalled();
+});
+
 test('notifies batch expansion only after the whole transaction commits', () => {
   const { flow, store, changed } = fixture();
   const stage: FlowNode = {

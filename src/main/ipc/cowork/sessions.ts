@@ -45,6 +45,7 @@ import {
   parseCoworkSessionSearchOptions,
   searchCoworkSessionMessages,
 } from '../../openclaw/sessions/openclawSessionSearch';
+import { cancelAgentTeamLaunchWithoutWaiting } from './agentTeamLaunchCancellation';
 
 interface SessionHandlerDependencies {
   getAgentTeamLaunch?: () => AgentTeamLaunchCoordinator;
@@ -494,10 +495,7 @@ export const registerCoworkSessionHandlers = ({
     if (existing) return existing;
     const pending = Promise.resolve().then(async () => {
       try {
-        if (getAgentTeamLaunch)
-          await getAgentTeamLaunch()
-            .cancel(sessionId)
-            .catch((): void => undefined);
+        cancelAgentTeamLaunchWithoutWaiting(getAgentTeamLaunch, sessionId);
         await getCoworkEngineRouter().stopSession(sessionId, { diagnosticUserInitiated: true });
         if (unknownAdmissions.has(sessionId)) {
           return {

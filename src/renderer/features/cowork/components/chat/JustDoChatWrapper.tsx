@@ -81,7 +81,7 @@ interface JustDoChatWrapperProps {
   searchNavigationDirection?: 1 | -1;
   processSummariesExpanded?: boolean;
   onSearchMatchCountChange?: (total: number, index: number) => void;
-  onActivityChange?: (progress: GoalRunProgress | null) => void;
+  onActivityChange?: (progress: GoalRunProgress | null, sessionKey: string) => void;
   onQueuedInputsChange?: (snapshot: QueuedInputSnapshot | null) => void;
   onContextUsageChange?: (usage: ChatContextUsageSnapshot | null) => void;
   onProgressCardChange?: (state: ProgressCardViewState | null) => void;
@@ -564,10 +564,10 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           onSessionKeyChangeRef.current?.(controller.state.sessionKey);
         }
         const progress = buildGoalRunProgress(controller.state);
-        const key = goalRunProgressKey(progress);
+        const key = `${controller.state.sessionKey}:${goalRunProgressKey(progress)}`;
         if (key !== lastActivityKeyRef.current) {
           lastActivityKeyRef.current = key;
-          onActivityChangeRef.current?.(progress);
+          onActivityChangeRef.current?.(progress, controller.state.sessionKey);
         }
         const usage = controller.state.contextUsage;
         const contextKey = usage
@@ -689,7 +689,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         lastContextUsageKeyRef.current = '';
         lastProgressCardKeyRef.current = '';
         lastReportedSessionKeyRef.current = '';
-        onActivityChangeRef.current?.(null);
+        onActivityChangeRef.current?.(null, controller.state.sessionKey);
         queuedInputsCallback.current?.(null);
         onContextUsageChangeRef.current?.(null);
         onProgressCardChangeRef.current?.(null);

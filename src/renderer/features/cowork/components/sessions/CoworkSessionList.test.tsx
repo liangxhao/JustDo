@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import { configureStore } from '@reduxjs/toolkit';
+import type { CollaborationRoomEntry } from '@shared/cowork/agent-team/collaboration';
+import type { TeamDiscussionRoom } from '@shared/cowork/agent-team/teamDiscussion';
 import { CoworkSessionSource } from '@shared/cowork/sessionSource';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
@@ -12,15 +14,34 @@ import { translations } from '@/services/i18n/translations';
 
 import CoworkSessionList from './CoworkSessionList';
 
-vi.mock('@/features/cowork/components/chat/CollaborationPanel', () => ({
-  useCollaborationRooms: () => [],
+const activities = vi.hoisted(() => ({
+  collaborations: [] as CollaborationRoomEntry[],
+  discussions: [] as TeamDiscussionRoom[],
+  workflows: {} as Record<string, boolean>,
+}));
+vi.mock('@/features/cowork/components/collaboration/CollaborationPanel', () => ({
+  useCollaborationRooms: () => activities.collaborations,
+}));
+vi.mock('@/features/cowork/components/discussions/teamDiscussionNavigation', () => ({
+  useTeamDiscussionRooms: () => activities.discussions,
+}));
+vi.mock('@/features/plugins/extensions/useExtensionEnablement', () => ({
+  useExtensionAvailability: () => ({ enabled: false, disabledRevision: 0 }),
+}));
+vi.mock('@/features/cowork/components/swarm-workflow/useSwarmWorkflowActivity', () => ({
+  useSwarmWorkflowActivity: () => activities.workflows,
 }));
 vi.mock('@/features/cowork/coworkService', () => ({ coworkService: {} }));
 vi.mock('@/services/i18n', () => ({
   i18nService: { t: (key: string) => translations.en[key] ?? key },
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  activities.collaborations = [];
+  activities.discussions = [];
+  activities.workflows = {};
+});
 
 const summary = (id: string, updatedAt: number): CoworkSessionSummary => ({
   id,
@@ -57,6 +78,47 @@ const createStore = () =>
   configureStore({
     reducer: { cowork: coworkReducer, agent: () => ({ agents: [] }) },
   });
+
+it('shows source activity for background Team, discussions and Swarm without changing main execution state', () => {
+  activities.collaborations = [
+    {
+      id: 'team',
+      anchorSessionId: 'Team',
+      members: [],
+      rounds: [{ id: 'batch', state: 'open', pending: 1 }],
+    },
+  ];
+  activities.discussions = [
+    { id: 'group', sourceSessionId: 'Discussion', state: 'running' } as TeamDiscussionRoom,
+  ];
+  activities.workflows = { Swarm: true };
+  const store = createStore();
+  const props = createProps(['Team', 'Discussion', 'Swarm', 'Idle'].map(id => summary(id, 1)));
+  const view = () => (
+    <Provider store={store}>
+      <CoworkSessionList {...props} />
+    </Provider>
+  );
+  const { rerender } = render(view());
+  for (const id of ['Team', 'Discussion', 'Swarm']) {
+    expect(
+      within(screen.getByRole('button', { name: id })).getByTitle(
+        translations.en.coworkStatusRunning,
+      ),
+    ).toBeTruthy();
+  }
+  expect(
+    within(screen.getByRole('button', { name: 'Idle' })).queryByTitle(
+      translations.en.coworkStatusRunning,
+    ),
+  ).toBeNull();
+  expect(store.getState().cowork.sessionMainRuntimeActivity).toEqual({});
+  activities.collaborations = [];
+  activities.discussions = [];
+  activities.workflows = {};
+  rerender(view());
+  expect(screen.queryByTitle(translations.en.coworkStatusRunning)).toBeNull();
+});
 
 describe('sidebar browser extension group', () => {
   it('defaults to collapsed, keeps browser sessions out of recent and user groups, and leaves Multica separate', () => {

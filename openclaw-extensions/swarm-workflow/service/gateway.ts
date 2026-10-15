@@ -6,6 +6,7 @@ import {
   type FlowAction,
   viewFlow,
 } from '../contracts/flow';
+import { isSwarmWorkflowActive } from '../contracts/workflow';
 import { managedSubagent } from '../../runtime-services/execution/managed-subagent';
 import { permissionFingerprint } from '../../runtime-services/filesystem/admission';
 import { interventionAvailability } from '../execution/intervention';
@@ -138,12 +139,10 @@ export function registerWorkflowGateway(context: WorkflowContext): void {
           !params.parentKeys.every(managed)
         )
           throw new Error('Invalid parent identities.');
+        const flows = ensure().store.forParents(params.parentKeys as string[]);
         respond(true, {
-          flows: ensure()
-            .store.all()
-            .filter(f => (params.parentKeys as string[]).includes(f.parentKey))
-            .slice(0, 20)
-            .map(viewFlow),
+          flows: flows.slice(0, 20).map(viewFlow),
+          running: flows.some(isSwarmWorkflowActive),
         });
       } catch (error) {
         respond(false, undefined, { code: 'swarm_workflow_error', message: String(error) });

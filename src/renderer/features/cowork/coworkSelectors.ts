@@ -21,6 +21,13 @@ export const selectThinkingExpanded = (state: RootState) => state.cowork.thinkin
 export const selectToolExpanded = (state: RootState) => state.cowork.toolExpanded;
 export const selectSessionRuntimeActivity = (state: RootState) =>
   state.cowork.sessionRuntimeActivity;
+export const selectCurrentSessionMainRuntimeRunning = (state: RootState): boolean => {
+  const session = state.cowork.currentSession;
+  if (!session) return state.cowork.isStreaming;
+  return session.id.startsWith('temp-')
+    ? session.status === 'running'
+    : state.cowork.sessionMainRuntimeActivity[session.id] === true;
+};
 export const selectSessionRunTimings = (state: RootState) => state.cowork.sessionRunTimings;
 
 // Session Group selectors

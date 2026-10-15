@@ -765,6 +765,34 @@ test('does not let a failed guard cancellation prevent stopping the actual sourc
   expect(stopSession).toHaveBeenCalledWith('source', { diagnosticUserInitiated: true });
 });
 
+test('stops the source immediately while guard cancellation is still awaiting Gateway', async () => {
+  let finishGuard!: () => void;
+  const cancel = vi.fn(
+    () =>
+      new Promise<void>(resolve => {
+        finishGuard = resolve;
+      }),
+  );
+  const stopSession = vi.fn().mockResolvedValue(undefined);
+  registerCoworkSessionHandlers({
+    getAgentTeamLaunch: () => ({ cancel }) as unknown as AgentTeamLaunchCoordinator,
+    getCoworkStore: () => ({}) as CoworkStore,
+    getCoworkEngineRouter: () => ({ stopSession }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([name]) => name === 'cowork:session:stop',
+  )![1] as IpcHandler;
+  const stopping = handler(null, 'source');
+  await vi.waitFor(() =>
+    expect(stopSession).toHaveBeenCalledWith('source', { diagnosticUserInitiated: true }),
+  );
+  expect(cancel).toHaveBeenCalledExactlyOnceWith('source', undefined);
+  expect(cancel.mock.invocationCallOrder[0]).toBeLessThan(stopSession.mock.invocationCallOrder[0]);
+  await expect(stopping).resolves.toEqual({ success: true });
+  finishGuard();
+});
+
 test('releases a closed pre-send sender only through the exact guard client contract', async () => {
   const abortBeforeSend = vi.fn().mockResolvedValue(true);
   registerCoworkSessionHandlers({

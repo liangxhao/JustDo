@@ -692,6 +692,12 @@ export class CoworkService {
             nativeStart.sessionId = preparedSession.id;
             hooks.beforeSessionSelected?.(preparedSession);
             dispatchedSessionId = preparedSession.id;
+            // Promotion can beat the asynchronous session-activity hydration.
+            // Preserve Stop while this exact initial submission awaits admission.
+            this.markSessionInProgress(preparedSession.id);
+            const provisionalActivityVersion = this.runtimeStatusRequestVersions.get(
+              preparedSession.id,
+            );
             store.dispatch(addSession({ session: preparedSession, select: true }));
             store.dispatch(
               setPlanModeState({
@@ -700,7 +706,19 @@ export class CoworkService {
                 ...(pendingTemporarySessionId ? { promoteFrom: pendingTemporarySessionId } : {}),
               }),
             );
-            return hooks.dispatchInitialTurn!(request, () => nativeStart.cancelled);
+            try {
+              return await hooks.dispatchInitialTurn!(request, () => nativeStart.cancelled);
+            } catch (error) {
+              // A newer activity claim or observation owns any replacement run.
+              if (
+                (error as { requestSent?: unknown } | null)?.requestSent === false &&
+                this.runtimeStatusRequestVersions.get(preparedSession.id) ===
+                  provisionalActivityVersion
+              ) {
+                this.clearSessionInProgress(preparedSession.id);
+              }
+              throw error;
+            }
           })
         : undefined;
     if (stopDispatch && options.clientTurnId)
@@ -798,7 +816,14 @@ export class CoworkService {
       if (
         store.getState().cowork.currentSession?.id === (dispatchedSessionId ?? temporarySessionId)
       ) {
-        store.dispatch(setStreaming(false));
+        // A failed handoff response can still have reached Gateway. Only the
+        // sender's definite pre-send failure above retires provisional activity.
+        store.dispatch(
+          setStreaming(
+            dispatchedSessionId !== undefined &&
+              store.getState().cowork.sessionMainRuntimeActivity[dispatchedSessionId] === true,
+          ),
+        );
       }
       if (!result.cancelled) console.error('Failed to start session:', result.error);
       return { session: null, error: result.error, cancelled: result.cancelled };

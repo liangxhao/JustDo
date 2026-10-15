@@ -52,12 +52,17 @@ export function useWorkflowPanel(
   }, [flows, resetViewport]);
   useEffect(() => {
     if (!active || snapshot !== undefined) return;
-    return observeWorkflows(api, sessionId, result => {
-      if (result.success) {
-        setFlows(result.flows);
-        setStale(false);
-      } else setStale(true);
-    });
+    return observeWorkflows(
+      api,
+      sessionId,
+      result => {
+        if (result.success) {
+          setFlows(result.flows);
+          setStale(false);
+        } else setStale(true);
+      },
+      { refresh: revision > 0 },
+    );
   }, [api, sessionId, active, revision, snapshot]);
   useEffect(() => {
     if (snapshot === undefined) return;

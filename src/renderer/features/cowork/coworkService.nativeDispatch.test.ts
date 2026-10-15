@@ -4,6 +4,7 @@ import type {
 } from '@shared/cowork/nativeSessionDispatch';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { selectCurrentSessionMainRuntimeRunning } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
 import {
   clearCurrentSession,
@@ -86,6 +87,31 @@ afterEach(() => {
 });
 
 describe('actual service initial native handoff', () => {
+  it('keeps the main Stop control available after promotion while the initial dispatch is pending', async () => {
+    const fixture = setup();
+    let acknowledge!: () => void;
+    const admission = new Promise<void>(resolve => {
+      acknowledge = resolve;
+    });
+    const dispatch = vi.fn(async () => {
+      await admission;
+      return { runId: request.clientTurnId };
+    });
+    const pending = coworkService.startSession(
+      { prompt: 'Synthetic', clientTurnId: request.clientTurnId },
+      { dispatchInitialTurn: dispatch },
+    );
+    fixture.deliver();
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalled());
+
+    expect(store.getState().cowork.currentSessionId).toBe(canonical.id);
+    expect(selectCurrentSessionMainRuntimeRunning(store.getState())).toBe(true);
+    expect(store.getState().cowork.sessionRuntimeActivity[canonical.id]).toBe(true);
+
+    acknowledge();
+    await pending;
+  });
+
   it('promotes the native session before one real transport call, even if the handoff repeats', async () => {
     const fixture = setup();
     const before = vi.fn(() =>
@@ -127,6 +153,96 @@ describe('actual service initial native handoff', () => {
     );
     expect(store.getState().cowork.currentSession?.id).toBe(canonical.id);
     expect(store.getState().cowork.isStreaming).toBe(false);
+    expect(selectCurrentSessionMainRuntimeRunning(store.getState())).toBe(false);
+    expect(store.getState().cowork.sessionRuntimeActivity[canonical.id]).toBeUndefined();
+  });
+
+  it('retains the main Stop control when the initial dispatch outcome is unknown', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fixture = setup(false);
+    const pending = coworkService.startSession(
+      { prompt: 'Synthetic', clientTurnId: request.clientTurnId },
+      {
+        dispatchInitialTurn: async () => {
+          throw Object.assign(new Error('request timeout: chat.send'), { requestSent: true });
+        },
+      },
+    );
+    fixture.deliver();
+    await expect(pending).resolves.toMatchObject({ session: null });
+
+    expect(fixture.respond).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false, requestSent: true }),
+    );
+    expect(selectCurrentSessionMainRuntimeRunning(store.getState())).toBe(true);
+    expect(store.getState().cowork.isStreaming).toBe(true);
+    expect(store.getState().cowork.sessionRuntimeActivity[canonical.id]).toBe(true);
+  });
+
+  it('preserves newer activity when an old initial dispatch fails before sending', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fixture = setup(false);
+    let failDispatch!: () => void;
+    const preparation = new Promise<void>(resolve => {
+      failDispatch = resolve;
+    });
+    const dispatch = vi.fn(async () => {
+      await preparation;
+      throw Object.assign(new Error('Old viewer cancelled'), { requestSent: false });
+    });
+    const pending = coworkService.startSession(
+      { prompt: 'Synthetic', clientTurnId: request.clientTurnId },
+      { dispatchInitialTurn: dispatch },
+    );
+    fixture.deliver();
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalled());
+
+    coworkService.markSessionInProgress(canonical.id);
+    failDispatch();
+    await expect(pending).resolves.toMatchObject({ session: null });
+
+    expect(fixture.respond).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false, requestSent: false }),
+    );
+    expect(selectCurrentSessionMainRuntimeRunning(store.getState())).toBe(true);
+    expect(store.getState().cowork.sessionRuntimeActivity[canonical.id]).toBe(true);
+    expect(store.getState().cowork.isStreaming).toBe(true);
+  });
+
+  it('clears the promoted main activity after cancellation confirms no native send was issued', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fixture = setup(false);
+    const cancel = vi.fn().mockResolvedValue({ success: true });
+    Object.assign(window.electron.cowork, { cancelSessionStart: cancel });
+    let ready!: () => void;
+    const barrier = new Promise<void>(resolve => {
+      ready = resolve;
+    });
+    const nativeSend = vi.fn();
+    const dispatch = vi.fn(
+      async (_request: NativeSessionDispatchRequest, isCancelled: () => boolean) => {
+        await barrier;
+        if (isCancelled())
+          throw Object.assign(new Error('Cancelled before ready'), { requestSent: false });
+        return nativeSend();
+      },
+    );
+    const pending = coworkService.startSession(
+      { prompt: 'Synthetic', clientTurnId: request.clientTurnId },
+      { dispatchInitialTurn: dispatch },
+    );
+    fixture.deliver();
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalled());
+    expect(selectCurrentSessionMainRuntimeRunning(store.getState())).toBe(true);
+
+    await expect(coworkService.cancelSessionStart(request.clientTurnId)).resolves.toBe(true);
+    expect(selectCurrentSessionMainRuntimeRunning(store.getState())).toBe(true);
+    ready();
+    await pending;
+
+    expect(nativeSend).not.toHaveBeenCalled();
+    expect(selectCurrentSessionMainRuntimeRunning(store.getState())).toBe(false);
+    expect(store.getState().cowork.sessionRuntimeActivity[canonical.id]).toBeUndefined();
   });
 
   it('does not submit or take over a different selected conversation', async () => {

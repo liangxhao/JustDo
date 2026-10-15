@@ -12,6 +12,7 @@ import {
   SwarmWorkflowGateway,
 } from '../../../src/shared/cowork/swarm-workflow';
 import { OpenClawExtensionId } from '../../../src/shared/plugins/nativeIds';
+import { FlowStore } from '../../../openclaw-extensions/swarm-workflow/data/store';
 const requireNative = createRequire(import.meta.url);
 const code = buildSync({
   entryPoints: [path.resolve('openclaw-extensions/swarm-workflow/index.ts')],
@@ -143,6 +144,74 @@ it('loads the manifest, tools, application RPCs and durable store under one Swar
   for (const method of Object.values(SwarmWorkflowGateway)) expect(f.methods.has(method)).toBe(true);
   expect(existsSync(path.join(f.root, 'swarm-workflow', 'flows.sqlite'))).toBe(true);
 });
+it('reports active older flows beyond the twenty visible histories for owned parents only', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  await f.request('swarmWorkflow.start', {
+    parentKey: f.parentKey, requestId: 'old-active', goal: 'Long-running task', mode: 'auto',
+  });
+  const store = new FlowStore(path.join(f.root, 'swarm-workflow'));
+  try {
+    const active = store.forParents([f.parentKey])[0];
+    for (let index = 0; index < 20; index++) {
+      store.insert({ ...active, id: `history-${index}`, requestId: `history-${index}`,
+        status: 'completed', nodes: [] });
+    }
+    const params = { parentKeys: [f.parentKey] };
+    expect(await f.request('swarmWorkflow.list', params)).toMatchObject({ running: true });
+    const listed = await f.request('swarmWorkflow.list', params) as any;
+    expect(listed.flows).toHaveLength(20);
+    expect(listed.flows.every((flow: any) => flow.status === 'completed')).toBe(true);
+    active.status = 'completed';
+    store.put(active);
+    store.insert({ ...active, id: 'foreign-active', requestId: 'foreign-active',
+      parentKey: 'agent:main:justdo:foreign', status: 'running' });
+    expect(await f.request('swarmWorkflow.list', params)).toMatchObject({ running: false });
+  } finally {
+    store.close();
+  }
+});
+
+it.each(['paused', 'blocked'] as const)(
+  'preserves %s batch activity until its accepted item settles',
+  async status => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    await f.request('swarmWorkflow.start', {
+      parentKey: f.parentKey, requestId: 'batch-activity', goal: 'Batch task', mode: 'auto',
+    });
+    const store = new FlowStore(path.join(f.root, 'swarm-workflow'));
+    try {
+      const active = store.forParents([f.parentKey])[0];
+      const stage = {
+        ...active.nodes[0], id: 'batch', kind: 'batch' as const, sessionKey: '',
+        batchInput: { version: 'v1', manifestPath: 'manifest.json' },
+      };
+      active.status = status;
+      active.nodes.push(stage);
+      store.put(active);
+      const item = {
+        ...stage, id: 'item', kind: 'work' as const, status: 'uncertain' as const,
+        sessionKey: 'agent:main:subagent:activity-item', batchInput: undefined,
+        batchItem: { stageId: stage.id, manifestVersion: 'v1', ordinal: 0, key: 'input',
+          workspace: f.root },
+      };
+      store.expandBatch(active, stage, [item], () => {});
+      const params = { parentKeys: [f.parentKey] };
+      const listed = await f.request('swarmWorkflow.list', params) as any;
+      expect(listed.running).toBe(true);
+      expect(listed.flows[0].nodes.find((node: any) => node.id === 'batch').batchCounts)
+        .toMatchObject({ uncertain: 1 });
+      const settled = store.get(active.id, item.id)!;
+      settled.nodes.find(node => node.id === item.id)!.status = 'done';
+      store.put(settled);
+      expect(await f.request('swarmWorkflow.list', params)).toMatchObject({ running: false });
+    } finally {
+      store.close();
+    }
+  },
+);
+
 it('publishes workflow changes through the active Gateway service without leaking bodies', async () => {
   vi.useFakeTimers();
   const f = await fixture();

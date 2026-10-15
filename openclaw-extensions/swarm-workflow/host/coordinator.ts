@@ -174,7 +174,11 @@ export function createSwarmWorkflowCoordinator({
           parentKeys: keys,
         });
         if (!hasSession(sessionId as string) || !validFlowList(result)) return { success: false };
-        return { success: true, flows: result.flows };
+        return {
+          success: true,
+          flows: result.flows,
+          ...(result.running === undefined ? {} : { running: result.running }),
+        };
       } catch {
         return { success: false };
       }

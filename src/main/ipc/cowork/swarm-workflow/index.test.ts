@@ -7,6 +7,24 @@ import { SwarmWorkflowIpc, validFlowDetail } from '../../../../shared/cowork/swa
 import { registerSwarmWorkflowHandlers } from './index';
 beforeEach(() => mocks.handle.mockReset());
 const handler = (key: string) => mocks.handle.mock.calls.find(call => call[0] === key)![1];
+test('preserves all-history workflow activity and rejects malformed native summaries', async () => {
+  const request = vi.fn().mockResolvedValue({ flows: [], running: true });
+  const runtime = {
+    getGatewayClient: () => ({ request }),
+    getSessionKeysForSession: () => ['owned'],
+  } as unknown as OpenClawRuntimeAdapter;
+  registerSwarmWorkflowHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
+  const read = handler(SwarmWorkflowIpc.List);
+  expect(await read({}, 'product')).toEqual({ success: true, flows: [], running: true });
+  expect(request).toHaveBeenCalledWith('swarmWorkflow.list', { parentKeys: ['owned'] });
+  request.mockResolvedValue({ flows: [], running: false });
+  expect(await read({}, 'product')).toEqual({ success: true, flows: [], running: false });
+  request.mockResolvedValue({ flows: [] });
+  expect(await read({}, 'product')).toEqual({ success: true, flows: [] });
+  request.mockResolvedValue({ flows: [], running: 'true' });
+  expect(await read({}, 'product')).toEqual({ success: false });
+});
+
 test('binds batch reads to product identity and rejects mismatched or oversized pages', async () => {
   const counts = {
     total: 100,
