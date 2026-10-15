@@ -3,6 +3,7 @@
 部署完整的 `deploy/litellm` 目录，在本目录执行命令。Compose 只启动一个 LiteLLM 服务，
 以及 PostgreSQL、Redis；模型、管理页面和活动接口使用同一端口。
 需要 Docker Engine/Desktop 和 Compose v2；复制范围和必填配置见[公共部署清单](../README.md#复制与首次启动)。
+已有服务更新代码或重启时，按[存量部署更新与重启](../UPGRADE.md)执行停服备份、显式初始化和容器更新。
 
 1. 复制 `.env.example` 为 `.env`，填写数据库、Redis、JWT、管理密钥及稳定加密盐。
 2. 复用旧库时先备份，保留原盐及数据卷名称；配置说明见[公共 README](../README.md)。
@@ -26,4 +27,6 @@ Compose 等待数据库健康后执行 `init`，成功后才启动 LiteLLM；`in
 禁止使用 `prisma db push --accept-data-loss`。镜像固定为 LiteLLM 1.99.1。
 
 修改 Python Hook 后重新构建镜像；修改环境后执行 `docker compose up -d --force-recreate`。
+原生表结构已就绪、只补活动字段和默认组时，可用镜像内的 `upgrade.py` 增量更新，
+不执行原生迁移；只读检查和运行命令见[更新步骤](../UPGRADE.md#使用增量更新脚本)。
 停止服务使用 `docker compose down`，不要加 `-v`，以免删除数据库和 Redis 数据卷。

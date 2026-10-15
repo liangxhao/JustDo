@@ -4,9 +4,11 @@
 
 - [Docker 部署](docker/README.md)：Compose 管理 PostgreSQL、Redis 和单个 LiteLLM 服务。
 - [普通机器部署](native/README.md)：Python 虚拟环境、独立基础服务及 systemd 模板。
+- [存量部署更新与重启](UPGRADE.md)：重启前执行的更新脚本、保留原数据的手动增列与默认组 SQL，以及已有用户检查清单。
 - [本地认证联调](tests/integration/README.md)：独立 JWT 签发服务、模拟模型和测试 Virtual Key。
 
 每种 Hook 位于独立的 `hooks/` 子目录，根目录 `register.py` 统一注册，`start.py` 负责启动和初始化。
+已有原生表结构、只需补活动字段和默认组时，使用 [upgrade.py](upgrade.py)；命令见[增量更新步骤](UPGRADE.md#使用增量更新脚本)。
 环境变量使用 `LITELLM_JWT_*` 和 `LITELLM_DEFAULT_TEAM_ID`。
 
 | 客户端      | 请求凭证                                | LiteLLM 授权主体                   | 有效期                         |

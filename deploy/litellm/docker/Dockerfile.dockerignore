@@ -1,6 +1,12 @@
 **
-!shared/
-!shared/**
-!custom_auth.py
-shared/**/__pycache__/
-shared/**/*.pyc
+!requirements.txt
+!start.py
+!register.py
+!upgrade.py
+!hooks/
+!hooks/**
+**/.env
+**/.env.*
+**/__pycache__/
+**/*.pyc
+**/*.log

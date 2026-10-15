@@ -10,6 +10,6 @@ COPY --from=hook-dependencies /opt/hook-vendor /opt/litellm-hooks/vendor
 ARG PYTHONPATH
 ENV PYTHONPATH=/opt/litellm-hooks/vendor:${PYTHONPATH}
 COPY hooks /opt/litellm-hooks/hooks
-COPY start.py register.py /opt/litellm-hooks/
+COPY start.py register.py upgrade.py /opt/litellm-hooks/
 ENTRYPOINT ["python", "-m", "uvicorn", "start:create_app", "--factory", "--app-dir", "/opt/litellm-hooks"]
 CMD ["--host", "0.0.0.0", "--port", "9108", "--workers", "2"]

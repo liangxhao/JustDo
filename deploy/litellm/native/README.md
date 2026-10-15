@@ -3,6 +3,7 @@
 需要 Python 3.11/3.12、PostgreSQL 和 Redis，不需要 Docker。部署完整目录，
 下面以 Linux 的 `/opt/litellm` 为例。使用专用服务账号运行。
 复制范围和必填配置见[公共部署清单](../README.md#复制与首次启动)，不能只复制 `native/` 子目录。
+已有服务更新代码或重启时，按[存量部署更新与重启](../UPGRADE.md)核对初始化、默认组和已有用户，无需重走首次安装。
 
 ## 安装和配置
 
@@ -76,6 +77,8 @@ sudo systemctl status litellm
 ```
 
 日志使用 `journalctl -u litellm` 查看。修改配置后重启该服务。
-升级前备份数据库、停止服务，安装依赖并运行 `start.py init`，成功后重新启动。
+更新前停止服务、备份数据库并安装有变化的依赖。只补活动字段和默认组时，运行
+`.venv/bin/python ../upgrade.py --env-file .env`；需要原生版本迁移时运行 `start.py init`。
+成功后重新启动服务；只读检查可在增量命令后加 `--check`，详见[更新步骤](../UPGRADE.md#使用增量更新脚本)。
 禁止使用 `prisma db push --accept-data-loss`。认证适配固定支持 LiteLLM 1.99.1，
 升级版本须先验证认证、数据库和模型请求。
