@@ -24,6 +24,42 @@ do not rely on the caller's working directory when locating repository assets.
 Versioned patches remain under `patches/`; runtime orchestration belongs in
 `openclaw/`.
 
+### Inspect one native session's stored content
+
+For explicitly requested storage forensics, `openclaw/inspect-session-storage.cjs`
+uses Node.js 24's built-in SQLite reader to open only the selected native database
+in read-only/query-only mode. It reads committed WAL data in one snapshot, decodes
+current zstd event rows, and reports each record's run identity, persisted active
+branch membership, Thinking/Content sizes, tool argument validity and error size.
+It never starts Gateway, imports its store, migrates schemas or changes records.
+
+```powershell
+$productName = (Get-Content .\package.json -Raw | ConvertFrom-Json).productName
+$databasePath = Join-Path $env:APPDATA "$productName\openclaw\state\agents\main\agent\openclaw-agent.sqlite"
+node .\scripts\openclaw\inspect-session-storage.cjs --db $databasePath --session-id '<native-session-id>' --run-id '<run-id>' --include-content
+```
+
+Use the physical native `sessionId` from Gateway logs, not the product conversation
+ID. The shown path is the default main-agent location; use the actual agent database
+path for another assistant or a custom state directory. The standalone script can
+also be copied to another computer and run with an explicit `--db` path.
+
+Reports go under `.agent-tasks/session-storage/` in the working directory.
+`--include-content` includes the exact stored event JSON, including task text;
+omit it for a metadata-only report. Raw events describe what OpenClaw persisted,
+not the original provider HTTP/SSE payload. `--run-id` highlights exact matches
+without assigning unbound rows to that run or hiding other runs. Identical stored
+text alone does not prove duplicate rendering. Active-branch membership is only
+an index observation; consult `activeIndexReliable` before interpreting it.
+
+Exit 0 means all current event rows were decoded. Exit 2 means a missing session,
+unreadable rows or unexamined cold/reset archives prevent a complete conclusion;
+check `coverage` rather than interpreting zero counts as absence. Exit 1 means
+the inspection could not run. Archive metadata is reported without opening archive
+files or restoring them; a standalone copy of a live database without its matching
+WAL can omit committed data. These files are local diagnostic artifacts and must
+not be committed.
+
 `test/interactive-ui/verify-gateway.mjs <runtime-dir>` verifies the locked native
 Gateway with an isolated local synthetic provider. It checks real widget tools,
 authenticated document views, history/restart, prompt bridges and explicit plugin
