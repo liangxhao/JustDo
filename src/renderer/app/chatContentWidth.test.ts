@@ -21,6 +21,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanups.splice(0).forEach(dispose => dispose());
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('adaptive chat content width', () => {
@@ -36,6 +37,61 @@ describe('adaptive chat content width', () => {
     // The same layout factor respects custom settings as well as the 60% default.
     expect(progress.map(value => 100 - (100 - 60) * value)).toEqual([100, 90, 80, 70, 60]);
     expect(progress.map(value => 100 - (100 - 80) * value)).toEqual([100, 95, 90, 85, 80]);
+  });
+
+  test('widens the message proportion as a docked sidebar consumes the maximized window', () => {
+    const progress = [0, 160, 320, 480, 640, 800].map(sidebarWidth =>
+      resolveChatContentWidthProgress(1920, 1920, true, sidebarWidth),
+    );
+    expect(progress).toEqual([1, 0.75, 0.5, 0.25, 0, 0]);
+    expect(progress.map(value => 100 - 40 * value)).toEqual([60, 70, 80, 90, 100, 100]);
+    expect(resolveChatContentWidthProgress(1600, 1920, false, 160)).toBe(0.25);
+    expect(resolveChatContentWidthProgress(1280, 1280, true, 360)).toBe(0);
+    expect(resolveChatContentWidthProgress(1920, 1920, true, -100)).toBe(1);
+  });
+
+  test('tracks pane resize without window resize and restores the ratio when docking space is released', async () => {
+    resize(1920);
+    const observers: Array<{ callback: () => void; observe: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }> = [];
+    vi.stubGlobal('ResizeObserver', class {
+      observe = vi.fn();
+      disconnect = vi.fn();
+      constructor(readonly callback: () => void) { observers.push(this); }
+    } as unknown as typeof ResizeObserver);
+    const viewport = document.createElement('div');
+    const pane = document.createElement('div');
+    const adjacentPane = document.createElement('div');
+    viewport.append(pane, adjacentPane);
+    vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({ width: 1636 } as DOMRect);
+    let paneWidth = 1636;
+    vi.spyOn(pane, 'getBoundingClientRect').mockImplementation(() => ({ width: paneWidth }) as DOMRect);
+    const observer = observeChatContentWidth(pane, {
+      isMaximized: async () => true,
+      onStateChanged: () => () => undefined,
+    }, viewport);
+    cleanups.push(observer.dispose);
+    await Promise.resolve();
+
+    expect(observers[0].observe.mock.calls).toEqual([[viewport], [pane]]);
+    expect(pane.style.getPropertyValue(progressProperty)).toBe('1');
+    paneWidth = 1316;
+    observers[0].callback();
+    expect(window.innerWidth).toBe(1920);
+    expect(pane.style.getPropertyValue(progressProperty)).toBe('0.5');
+    paneWidth = 836;
+    observers[0].callback();
+    expect(pane.style.getPropertyValue(progressProperty)).toBe('0');
+    paneWidth = 1636;
+    observers[0].callback();
+    expect(pane.style.getPropertyValue(progressProperty)).toBe('1');
+    expect(adjacentPane.style.getPropertyValue(progressProperty)).toBe('');
+    expect(document.documentElement.style.getPropertyValue(progressProperty)).toBe('');
+
+    observer.dispose();
+    expect(observers[0].disconnect).toHaveBeenCalledOnce();
+    paneWidth = 836;
+    observers[0].callback();
+    expect(pane.style.getPropertyValue(progressProperty)).toBe('1');
   });
 
   test('distinguishes maximized and restored windows on smaller displays', () => {

@@ -9,15 +9,22 @@ export const resolveChatContentWidthProgress = (
   windowWidth: number,
   availableWidth: number,
   isMaximized = false,
+  reservedWidth = 0,
 ): number => {
-  if (isMaximized) return 1;
+  const reserved = Number.isFinite(reservedWidth) ? Math.max(0, reservedWidth) : 0;
+  if (isMaximized && reserved === 0) return 1;
   if (!Number.isFinite(windowWidth) || !Number.isFinite(availableWidth)) return 0;
   const expansionRange = availableWidth - DEFAULT_MAIN_WINDOW_SIZE.width;
   if (expansionRange <= 0) return 0;
-  return Math.min(1, Math.max(0, (windowWidth - DEFAULT_MAIN_WINDOW_SIZE.width) / expansionRange));
+  const effectiveWidth = (isMaximized ? availableWidth : windowWidth) - reserved;
+  return Math.min(1, Math.max(0, (effectiveWidth - DEFAULT_MAIN_WINDOW_SIZE.width) / expansionRange));
 };
 
-export const observeChatContentWidth = (root: HTMLElement, controls?: WindowControls) => {
+export const observeChatContentWidth = (
+  root: HTMLElement,
+  controls?: WindowControls,
+  layoutViewport?: HTMLElement,
+) => {
   const view = root.ownerDocument.defaultView;
   let isMaximized = false;
   let stateRevision = 0;
@@ -28,6 +35,9 @@ export const observeChatContentWidth = (root: HTMLElement, controls?: WindowCont
       view.innerWidth,
       view.screen.availWidth,
       isMaximized,
+      layoutViewport
+        ? layoutViewport.getBoundingClientRect().width - root.getBoundingClientRect().width
+        : 0,
     ));
     if (root.style.getPropertyValue(WIDTH_PROGRESS_PROPERTY) !== progress) {
       root.style.setProperty(WIDTH_PROGRESS_PROPERTY, progress);
@@ -44,6 +54,13 @@ export const observeChatContentWidth = (root: HTMLElement, controls?: WindowCont
     isMaximized = value;
     update();
   }).catch(() => undefined);
+  const resizeObserver = layoutViewport && view?.ResizeObserver
+    ? new view.ResizeObserver(update)
+    : undefined;
+  if (resizeObserver && layoutViewport) {
+    resizeObserver.observe(layoutViewport);
+    resizeObserver.observe(root);
+  }
   view?.addEventListener('resize', update);
   update();
   return {
@@ -52,6 +69,7 @@ export const observeChatContentWidth = (root: HTMLElement, controls?: WindowCont
       if (disposed) return;
       disposed = true;
       view?.removeEventListener('resize', update);
+      resizeObserver?.disconnect();
       unsubscribe?.();
     },
   };

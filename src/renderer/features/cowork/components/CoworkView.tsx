@@ -53,6 +53,7 @@ import {
 } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
+import { observeChatContentWidth } from '@/app/chatContentWidth';
 import StartupLoading from '@/app/shell/StartupLoading';
 import {
   BROWSER_ANNOTATION_MAX_COUNT,
@@ -331,6 +332,14 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const dispatch = useDispatch();
   const currentSession = useSelector(selectCurrentSession);
   const currentSessionId = currentSession?.id ?? null;
+  const chatWidthCleanupRef = useRef<(() => void) | null>(null);
+  const bindChatContentWidth = useCallback((pane: HTMLDivElement | null): void => {
+    chatWidthCleanupRef.current?.();
+    chatWidthCleanupRef.current = null;
+    if (!pane?.parentElement) return;
+    const observer = observeChatContentWidth(pane, window.electron?.window, pane.parentElement);
+    chatWidthCleanupRef.current = observer.dispose;
+  }, []);
   const { enabled: agentTeamEnabled, disabledRevision: agentTeamDisabledRevision } =
     useExtensionAvailability(OpenClawExtensionId.AGENT_TEAM);
   const { enabled: swarmWorkflowEnabled, disabledRevision: swarmWorkflowDisabledRevision } =
@@ -2943,7 +2952,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     return (
       <div className="relative flex-1 flex flex-col h-full">
         <div className="cowork-display-host relative flex min-h-0 flex-1">
-          <div className="relative flex min-w-0 flex-1 flex-col">
+          <div ref={bindChatContentWidth} className="relative flex min-w-0 flex-1 flex-col">
             <div className="cowork-workspace-header relative flex shrink-0 items-center justify-between border-b border-border px-2">
               <div className="non-draggable flex h-7 min-w-0 flex-1 items-center overflow-hidden">
                 <h1
