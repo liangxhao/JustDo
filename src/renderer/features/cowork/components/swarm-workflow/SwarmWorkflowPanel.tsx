@@ -64,8 +64,6 @@ export default function SwarmWorkflowPanel({
 }) {
   const ownerWindow = useOwnerWindow();
   const t = (key: string) => i18nService.t(key);
-  const viewport = useSwarmWorkflowGraphViewport();
-  const resetViewport = viewport.reset;
   const {
     flows,
     flow,
@@ -86,7 +84,6 @@ export default function SwarmWorkflowPanel({
     active,
     snapshot,
     onRefresh,
-    resetViewport,
   });
   const container = useRef<HTMLElement>(null);
   const tabsRef = useRef<HTMLElement>(null);
@@ -123,6 +120,12 @@ export default function SwarmWorkflowPanel({
   }, [active, flow?.id, flows.length, ownerWindow]);
   const StatusIcon = flow ? flowIcons[flow.status] : ClockIcon;
   const layout = layoutFlow(flow?.nodes ?? [], columns);
+  const viewport = useSwarmWorkflowGraphViewport({
+    key: JSON.stringify([sessionId, flow?.id]),
+    width: layout.width,
+    height: layout.height,
+    active,
+  });
   const button = (label: string, Icon: typeof PauseIcon, action: () => void, disabled = false) => (
     <button
       type="button"

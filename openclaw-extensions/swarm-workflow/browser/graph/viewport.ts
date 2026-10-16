@@ -1,5 +1,5 @@
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 3;
@@ -20,9 +20,15 @@ export function zoomGraphAt(
 }
 
 /** Canvas navigation is independent of workflow state and node/edge selection. */
-export function useSwarmWorkflowGraphViewport() {
+export function useSwarmWorkflowGraphViewport(graph?: {
+  key: string;
+  width: number;
+  height: number;
+  active: boolean;
+}) {
   const [element, setElement] = useState<HTMLDivElement | null>(null);
   const [view, setView] = useState(INITIAL_VIEW);
+  const [autoFit, setAutoFit] = useState(true);
   const [dragging, setDragging] = useState(false);
   const gesture = useRef<{
     pointerId: number;
@@ -44,6 +50,7 @@ export function useSwarmWorkflowGraphViewport() {
         event.deltaY *
         (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? element.clientHeight : 1);
       const factor = Math.exp(-Math.max(-300, Math.min(300, delta)) * 0.002);
+      setAutoFit(false);
       setView(current =>
         zoomGraphAt(current, current.zoom * factor, {
           x: event.clientX - rect.left,
@@ -62,10 +69,43 @@ export function useSwarmWorkflowGraphViewport() {
     gesture.current = undefined;
     suppressClick.current = false;
     setDragging(false);
+    setAutoFit(true);
     setView(INITIAL_VIEW);
   }, []);
+  const fit = useCallback(
+    (width: number, height: number) => {
+      if (!element || !element.clientWidth || !element.clientHeight || width <= 0 || height <= 0)
+        return;
+      const baseWidth = Math.max(360, element.clientWidth);
+      const baseHeight = (baseWidth * height) / width;
+      const zoom = Math.min(element.clientWidth / baseWidth, element.clientHeight / baseHeight);
+      setAutoFit(true);
+      setView({
+        zoom,
+        x: (element.clientWidth - baseWidth * zoom) / 2,
+        y: (element.clientHeight - baseHeight * zoom) / 2,
+      });
+    },
+    [element],
+  );
+  const graphKey = graph?.key;
+  const width = graph?.width;
+  const height = graph?.height;
+  const active = graph?.active;
+  useLayoutEffect(reset, [graphKey, reset]);
+  useLayoutEffect(() => {
+    if (!element || !active || !autoFit || !width || !height) return;
+    const fitGraph = () => fit(width, height);
+    fitGraph();
+    const ResizeObserver = element.ownerDocument.defaultView?.ResizeObserver;
+    if (!ResizeObserver) return;
+    const observer = new ResizeObserver(fitGraph);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [element, active, autoFit, graphKey, width, height, fit]);
   const zoomBy = (factor: number) => {
     if (!element) return;
+    setAutoFit(false);
     setView(current =>
       zoomGraphAt(current, current.zoom * factor, {
         x: element.clientWidth / 2,
@@ -86,17 +126,7 @@ export function useSwarmWorkflowGraphViewport() {
     reset,
     zoomIn: () => zoomBy(1.2),
     zoomOut: () => zoomBy(1 / 1.2),
-    fit: (width: number, height: number) => {
-      if (!element || !element.clientWidth || !element.clientHeight) return;
-      const baseWidth = Math.max(360, element.clientWidth);
-      const baseHeight = (baseWidth * height) / width;
-      const zoom = Math.min(element.clientWidth / baseWidth, element.clientHeight / baseHeight);
-      setView({
-        zoom,
-        x: (element.clientWidth - baseWidth * zoom) / 2,
-        y: (element.clientHeight - baseHeight * zoom) / 2,
-      });
-    },
+    fit,
     svgStyle: {
       width: '100%',
       minWidth: 360,
@@ -127,6 +157,7 @@ export function useSwarmWorkflowGraphViewport() {
           return;
         if (!current.moved) {
           current.moved = true;
+          setAutoFit(false);
           event.currentTarget.setPointerCapture?.(event.pointerId);
           setDragging(true);
         }

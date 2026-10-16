@@ -1,25 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
+
 import type {
   SwarmWorkflowAction,
   SwarmWorkflowResult,
   SwarmWorkflowView,
 } from '../contracts/workflow';
-import type { WorkflowBrowserPorts } from './ports';
 import { observeWorkflows } from './observe';
+import type { WorkflowBrowserPorts } from './ports';
 
 export interface WorkflowPanelOptions {
   sessionId: string;
   active: boolean;
   snapshot?: SwarmWorkflowResult;
   onRefresh?: () => void;
-  resetViewport: () => void;
 }
 export function useWorkflowPanel(
   api: Pick<
     WorkflowBrowserPorts,
     'getSwarmWorkflows' | 'controlSwarmWorkflow' | 'onSwarmWorkflowsChanged'
   >,
-  { sessionId, active, snapshot, onRefresh, resetViewport }: WorkflowPanelOptions,
+  { sessionId, active, snapshot, onRefresh }: WorkflowPanelOptions,
 ) {
   const [flows, setFlows] = useState<SwarmWorkflowView[]>([]);
   const [chosen, setChosen] = useState<string>();
@@ -38,8 +38,7 @@ export function useWorkflowPanel(
     setSelected(undefined);
     setSelectedEdge(undefined);
     setError(false);
-    resetViewport();
-  }, [sessionId, resetViewport]);
+  }, [sessionId]);
   useEffect(() => {
     const discovered = flows.find(flow => !seenFlows.current.has(flow.id));
     flows.forEach(flow => seenFlows.current.add(flow.id));
@@ -47,9 +46,8 @@ export function useWorkflowPanel(
       setChosen(discovered.id);
       setSelected(undefined);
       setSelectedEdge(undefined);
-      resetViewport();
     }
-  }, [flows, resetViewport]);
+  }, [flows]);
   useEffect(() => {
     if (!active || snapshot !== undefined) return;
     return observeWorkflows(
@@ -104,7 +102,6 @@ export function useWorkflowPanel(
 
   const selectFlow = (id: string) => {
     setChosen(id);
-    resetViewport();
     setSelected(undefined);
     setSelectedEdge(undefined);
   };

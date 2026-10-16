@@ -79,6 +79,67 @@ test('lays out actual dependencies before downstream tasks', () => {
   expect(points.get('a')!.y).toBeLessThan(points.get('verify')!.y);
 });
 
+test('fits on entry and workflow switches while preserving navigation through updates and details', () => {
+  fixture();
+  const observers = new Map<Element, ResizeObserverCallback>();
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      private target?: Element;
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) {
+        this.target = target;
+        observers.set(target, this.callback);
+      }
+      disconnect() {
+        if (this.target) observers.delete(this.target);
+      }
+    },
+  );
+  let width = 0;
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => width);
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400);
+  const other = { ...flow, id: 'other', goal: 'Another workflow' };
+  const snapshot = { success: true as const, flows: [flow, other] };
+  const view = render(
+    <SwarmWorkflowPanel sessionId="product" active={false} snapshot={snapshot} />,
+  );
+  const graph = () => screen.getByRole('group', { name: 'Task dependency graph' });
+  const transform = () => graph().style.transform;
+  expect(transform()).toBe('translate(0px, 0px) scale(1)');
+
+  width = 400;
+  view.rerender(<SwarmWorkflowPanel sessionId="product" snapshot={snapshot} />);
+  const fitted = transform();
+  expect(fitted).not.toBe('translate(0px, 0px) scale(1)');
+  fireEvent.click(screen.getByRole('button', { name: 'Fit to canvas' }));
+  expect(transform()).toBe(fitted);
+
+  const canvas = graph().parentElement!;
+  width = 320;
+  act(() => observers.get(canvas)!([], {} as ResizeObserver));
+  expect(transform()).not.toBe(fitted);
+  fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }));
+  const zoomed = transform();
+  expect(observers.has(canvas)).toBe(false);
+  width = 400;
+  view.rerender(
+    <SwarmWorkflowPanel
+      sessionId="product"
+      snapshot={{ success: true, flows: [{ ...flow, revision: 9 }, other] }}
+    />,
+  );
+  expect(transform()).toBe(zoomed);
+  fireEvent.click(screen.getByRole('button', { name: 'Security review: Running' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+  expect(transform()).toBe(zoomed);
+
+  fireEvent.click(screen.getByRole('button', { name: other.goal }));
+  expect(transform()).toBe(fitted);
+  fireEvent.click(screen.getByRole('button', { name: flow.goal }));
+  expect(transform()).toBe(fitted);
+});
+
 test('centers parallel stages and uses direct connections without boxed elbows', () => {
   const nodes = [
     flow.nodes[0],
