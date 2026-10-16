@@ -1262,6 +1262,7 @@ export const chatStyles = [
     }
 
     .chat-bubble__text.markdown-content {
+      display: flow-root;
       white-space: normal;
     }
 
@@ -1272,13 +1273,14 @@ export const chatStyles = [
       --code-block-muted: #656d76;
       min-width: 0;
       max-width: 100%;
+      line-height: 1.65;
       overflow-wrap: anywhere;
     }
 
     /* ── Markdown Content ───────────────────────────────────────────── */
 
     .markdown-content p {
-      margin: 0 0 4px 0;
+      margin: 0 0 0.9em;
     }
 
     .markdown-content p:last-child {
@@ -1288,36 +1290,80 @@ export const chatStyles = [
     .markdown-content h1,
     .markdown-content h2,
     .markdown-content h3,
-    .markdown-content h4 {
-      margin: 10px 0 4px 0;
+    .markdown-content h4,
+    .markdown-content h5,
+    .markdown-content h6 {
+      margin: 1.5em 0 0.6em;
       font-weight: 600;
+      line-height: 1.35;
     }
 
     .markdown-content h1 {
-      font-size: 1.3em;
+      font-size: 1.75em;
     }
     .markdown-content h2 {
-      font-size: 1.2em;
+      font-size: 1.5em;
     }
     .markdown-content h3 {
-      font-size: 1.1em;
+      font-size: 1.25em;
+    }
+    .markdown-content h4,
+    .markdown-content h5,
+    .markdown-content h6 {
+      font-size: 1em;
     }
 
     .markdown-content ul,
     .markdown-content ol {
-      padding-left: 20px;
-      margin: 2px 0;
+      padding-inline-start: 1.65em;
+      margin: 0.6em 0 0.9em;
     }
 
     .markdown-content li {
-      margin: 1px 0;
+      padding-inline-start: 0.15em;
+      margin: 0.35em 0;
+    }
+
+    .markdown-content li > ul,
+    .markdown-content li > ol {
+      margin: 0.3em 0 0;
+    }
+
+    .markdown-content li > p {
+      margin: 0.5em 0;
+    }
+
+    .markdown-content li > p:first-child {
+      margin-top: 0;
+    }
+
+    .markdown-content li > :last-child {
+      margin-bottom: 0;
     }
 
     .markdown-content blockquote {
       border-left: 3px solid var(--justdo-chat-border, #d1d5db);
-      margin: 4px 0;
-      padding: 3px 12px;
+      margin: 0.9em 0;
+      padding: 0.15em 1em;
       color: var(--justdo-chat-text-secondary, #6b7280);
+    }
+
+    .markdown-content blockquote p {
+      margin: 0.6em 0;
+    }
+
+    .markdown-content blockquote > :first-child {
+      margin-top: 0;
+    }
+
+    .markdown-content blockquote > :last-child {
+      margin-bottom: 0;
+    }
+
+    .markdown-content hr {
+      margin: 1.5em 0;
+      border: 0;
+      border-top: 1px solid var(--justdo-chat-border, #e5e7eb);
     }
 
     .message-table-wrapper {
@@ -1343,12 +1389,15 @@ export const chatStyles = [
       opacity: 1;
       pointer-events: auto;
     }
+    .markdown-content .message-table-wrapper {
+      margin: 0.9em 0;
+    }
     .markdown-content .message-table-wrapper > .markdown-table-scroll {
       margin: 0;
     }
     .markdown-content .markdown-table-scroll {
       max-width: 100%;
-      margin: 4px 0;
+      margin: 0.9em 0;
       overflow-x: auto;
       overflow-y: hidden;
       overscroll-behavior-inline: contain;
@@ -1396,6 +1445,14 @@ export const chatStyles = [
     .markdown-content .markdown-plain-text-fallback {
       white-space: pre-wrap;
       font: inherit;
+    }
+
+    .markdown-content > :first-child {
+      margin-top: 0;
+    }
+
+    .markdown-content > :last-child {
+      margin-bottom: 0;
     }
 
     .markdown-box-drawing-diagram {
