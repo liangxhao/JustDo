@@ -115,7 +115,7 @@
 }
 
 .cowork-progress-card__action:hover {
-  background: var(--justdo-surface-raised);
+  background: var(--summary-panel-hover, var(--justdo-surface-raised));
   color: var(--justdo-foreground);
 }
 
@@ -143,7 +143,7 @@
   bottom: 0;
   left: 0;
   height: 24px;
-  background: linear-gradient(transparent, var(--justdo-surface));
+  background: linear-gradient(transparent, var(--summary-panel-surface, var(--justdo-surface)));
   content: '';
   pointer-events: none;
 }
@@ -160,7 +160,7 @@
   padding: 0 5px;
   border: 0;
   border-radius: 4px;
-  background: var(--justdo-surface);
+  background: var(--summary-panel-surface, var(--justdo-surface));
   color: var(--justdo-primary);
   font-size: 11px;
   line-height: 16px;
@@ -179,7 +179,7 @@
 }
 
 .cowork-progress-card__note-toggle:hover {
-  background: var(--justdo-surface-raised);
+  background: var(--summary-panel-hover, var(--justdo-surface-raised));
   color: var(--justdo-primary-hover);
 }
 

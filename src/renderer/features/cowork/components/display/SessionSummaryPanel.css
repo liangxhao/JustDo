@@ -1,0 +1,27 @@
+.session-summary-panel {
+  --summary-panel-surface: var(--justdo-surface);
+  --summary-panel-hover: var(--justdo-surface-raised);
+  background-color: var(--summary-panel-surface);
+}
+
+.dark .session-summary-panel {
+  --summary-panel-surface: color-mix(in srgb, var(--justdo-surface) 95%, var(--justdo-foreground));
+  --summary-panel-hover: color-mix(
+    in srgb,
+    var(--summary-panel-surface) 92%,
+    var(--justdo-foreground)
+  );
+  border-color: color-mix(in srgb, var(--justdo-border) 80%, var(--justdo-foreground));
+}
+
+.dark .session-summary-panel__header {
+  border-bottom-color: color-mix(
+    in srgb,
+    var(--summary-panel-surface) 90%,
+    var(--justdo-foreground)
+  );
+}
+
+.session-summary-panel__action:hover {
+  background-color: var(--summary-panel-hover);
+}

@@ -1,3 +1,5 @@
+import './SessionSummaryPanel.css';
+
 import {
   ChatBubbleLeftEllipsisIcon,
   LinkIcon,
@@ -54,7 +56,7 @@ interface Props {
 }
 
 const rowClass =
-  'flex w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left text-foreground transition-colors hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary';
+  'session-summary-panel__action flex w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary';
 
 const subagentIconColors = [
   'text-amber-500',
@@ -104,7 +106,7 @@ function ResourceRows({
       {items.length > 3 && (
         <button
           type="button"
-          className="mt-1 flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs text-secondary transition-colors hover:bg-surface-raised hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          className="session-summary-panel__action mt-1 flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs text-secondary transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           onClick={onViewAll}
         >
           <LinkIcon aria-hidden="true" className="h-4 w-4 shrink-0 text-muted" />
@@ -176,16 +178,16 @@ export default function SessionSummaryPanel(props: Props) {
       id="cowork-session-summary"
       role="dialog"
       aria-label={i18nService.t('coworkSummaryTitle')}
-      className={`absolute right-0 top-full z-[90] mt-2 flex max-h-[min(42rem,calc(100dvh-5rem))] ${props.progress?.card.markdown?.trim() ? 'w-[26rem]' : 'w-80'} max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-popover dark:shadow-[0_16px_48px_rgba(0,0,0,0.4)]`}
+      className={`session-summary-panel absolute right-0 top-full z-[90] mt-2 flex max-h-[min(42rem,calc(100dvh-5rem))] ${props.progress?.card.markdown?.trim() ? 'w-[26rem]' : 'w-80'} max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-border shadow-popover dark:shadow-[0_16px_48px_rgba(0,0,0,0.4)]`}
     >
-      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+      <div className="session-summary-panel__header flex items-center justify-between border-b border-border px-4 py-2.5">
         <h2 className="text-sm font-semibold text-foreground">
           {i18nService.t('coworkSummaryTitle')}
         </h2>
         <button
           type="button"
           aria-label={i18nService.t('close')}
-          className="flex h-7 w-7 items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface-raised hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          className="session-summary-panel__action flex h-7 w-7 items-center justify-center rounded-md text-secondary transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           onClick={onClose}
         >
           <XMarkIcon className="h-4 w-4" />
@@ -211,7 +213,7 @@ export default function SessionSummaryPanel(props: Props) {
             {heading('coworkSummarySubagents')}
             <button
               type="button"
-              className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-secondary transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="session-summary-panel__action flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-secondary transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               aria-label={subagentsLabel}
               onClick={props.onOpenSubagents}
             >

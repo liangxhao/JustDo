@@ -3013,7 +3013,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     </span>
                   ))}
               </div>
-              <div className="non-draggable flex shrink-0 items-center gap-1">
+              <div className="non-draggable relative flex shrink-0 items-center gap-1">
                 {currentSessionFolderPath && currentSessionFolderName && (
                   <button
                     type="button"
@@ -3069,7 +3069,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 >
                   <SearchIcon className="h-4 w-4" />
                 </button>
-                <div className="relative">
+                <div>
                   <button
                     ref={summaryToggleRef}
                     type="button"
