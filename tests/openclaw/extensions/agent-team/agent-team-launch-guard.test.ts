@@ -14,7 +14,9 @@ import { appendAgentTeamInstruction } from '../../../../openclaw-extensions/agen
 const nativeRequire = createRequire(import.meta.url);
 const code = buildSync({
   entryPoints: [
-    path.resolve('openclaw-extensions/runtime-services/agent-team/launch/agent-team-launch-guard.ts'),
+    path.resolve(
+      'openclaw-extensions/runtime-services/agent-team/launch/agent-team-launch-guard.ts',
+    ),
   ],
   bundle: true,
   platform: 'node',
@@ -57,6 +59,7 @@ function fixture(persisted?: Record<string, unknown>, existingStateDir?: string)
     `${createHash('sha256').update(key).digest('hex')}.json`,
   );
   const hooks = new Map<string, (...args: any[]) => any>();
+  const hookOptions = new Map<string, any>();
   const methods = new Map<string, (...args: any[]) => any>();
   const policies: Array<{ evaluate: (...args: any[]) => any }> = [];
   const listeners: Array<(event: any) => void> = [];
@@ -81,6 +84,7 @@ function fixture(persisted?: Record<string, unknown>, existingStateDir?: string)
   let nativeOwner = true;
   let currentAuthority = true;
   let mirrorFails = false;
+  let entryReadFails = false;
   let anchorId = 'entry-1';
   let generation = 'transcript-1';
   let blockRead: Promise<void> | undefined;
@@ -135,7 +139,10 @@ function fixture(persisted?: Record<string, unknown>, existingStateDir?: string)
     },
     registerGatewayMethod: (name: string, handler: any) => methods.set(name, handler),
     registerTrustedToolPolicy: (policy: any) => policies.push(policy),
-    on: (name: string, handler: any) => hooks.set(name, handler),
+    on: (name: string, handler: any, options: any) => {
+      hooks.set(name, handler);
+      hookOptions.set(name, options);
+    },
   };
   const exported: Record<string, any> = {};
   const moduleBox = { exports: exported };
@@ -144,7 +151,12 @@ function fixture(persisted?: Record<string, unknown>, existingStateDir?: string)
     module: moduleBox,
     require: (name: string) =>
       name === 'openclaw/plugin-sdk/session-store-runtime'
-        ? { getSessionEntry: () => entry }
+        ? {
+            getSessionEntry: () => {
+              if (entryReadFails) throw new Error('Native identity unavailable');
+              return entry;
+            },
+          }
         : name === 'openclaw/plugin-sdk/codex-session-transcript-runtime'
           ? {
               withCodexSessionTranscriptMirrorWriteLock: async (_target: any, run: any) => {
@@ -204,6 +216,8 @@ function fixture(persisted?: Record<string, unknown>, existingStateDir?: string)
     policy,
     verify,
     hooks,
+    finalizeApplies: (identity: Record<string, unknown> = ctx) =>
+      hookOptions.get('before_agent_finalize').appliesToAgentRun(identity),
     gateway,
     api,
     listeners,
@@ -231,6 +245,9 @@ function fixture(persisted?: Record<string, unknown>, existingStateDir?: string)
     set mirrorFails(value: boolean) {
       mirrorFails = value;
     },
+    set entryReadFails(value: boolean) {
+      entryReadFails = value;
+    },
     set anchorId(value: string) {
       anchorId = value;
     },
@@ -248,6 +265,63 @@ const request = {
   nativeSessionId: 'native-source',
   clientTurnId: 'explicit-input',
 };
+
+describe('Agent Team finalize run admission', () => {
+  it('does not hold ordinary confirmed native turns without a launch ledger', () => {
+    const f = fixture();
+    expect(f.finalizeApplies()).toBe(false);
+    expect(f.finalizeApplies({ ...ctx, runId: 'ordinary-followup' })).toBe(false);
+    expect(f.gateway).not.toHaveBeenCalled();
+  });
+
+  it('retains protection for missing or changed native identity and failed identity reads', () => {
+    const f = fixture();
+    expect(f.finalizeApplies({ ...ctx, runId: undefined })).toBe(true);
+    expect(f.finalizeApplies({ ...ctx, sessionId: undefined })).toBe(true);
+    expect(f.finalizeApplies({ ...ctx, sessionId: 'other-incarnation' })).toBe(true);
+    f.entryReadFails = true;
+    expect(f.finalizeApplies()).toBe(true);
+  });
+
+  it('keeps an admitted launch guarded through verification and native revision', async () => {
+    const f = fixture();
+    await f.call('register', intent);
+    expect(f.finalizeApplies()).toBe(true);
+    expect(f.finalizeApplies({ ...ctx, runId: 'not-the-admitted-turn' })).toBe(true);
+    await f.verify();
+    expect(f.finalizeApplies()).toBe(true);
+    expect(await f.hooks.get('before_agent_finalize')!({}, ctx)).toMatchObject({
+      action: 'revise',
+      retry: { idempotencyKey: 'agent-team-launch:explicit-input' },
+    });
+    f.entry.lifecycleRevision = 'replaced';
+    expect(f.finalizeApplies()).toBe(true);
+    expect(await f.hooks.get('before_agent_finalize')!({}, ctx)).toBeUndefined();
+  });
+
+  it('does not turn unknown durable state or predecessor ownership into a streaming bypass', async () => {
+    const f = fixture();
+    await f.call('register', intent);
+    const fresh = fixture(f.entry, f.stateDir);
+    expect(fresh.finalizeApplies()).toBe(true);
+    expect(await fresh.hooks.get('before_agent_finalize')!({}, ctx)).toBeUndefined();
+    writeFileSync(f.ledgerFile, '{incomplete');
+    expect(f.finalizeApplies()).toBe(true);
+    expect(await f.hooks.get('before_agent_finalize')!({}, ctx)).toBeUndefined();
+  });
+
+  it('excludes released tombstones only for a confirmed current native incarnation', async () => {
+    const f = fixture();
+    await f.call('register', intent);
+    f.inputPresent = false;
+    expect((await f.call('abandon', { ...request, neverSubmitted: true })).ok).toBe(true);
+    expect(f.finalizeApplies()).toBe(false);
+    f.entry.sessionId = 'new-native';
+    f.entry.lifecycleRevision = 'new-revision';
+    expect(f.finalizeApplies()).toBe(true);
+    expect(f.finalizeApplies({ ...ctx, sessionId: 'new-native', runId: 'new-run' })).toBe(false);
+  });
+});
 
 describe('explicit Team launch protection', () => {
   it.each(['collaboration', 'discussion'])(
@@ -500,8 +574,10 @@ describe('explicit Team launch protection', () => {
     await f.call('register', intent);
     await f.verify();
     const later = { ...ctx, runId: 'automatic-summary' };
+    expect(f.finalizeApplies(later)).toBe(true);
     expect(await f.policy('write', {}, later)).toMatchObject({ allow: false });
     await f.call('confirm', { ...request, mode: 'discussion', receiptId: 'accepted-discussion' });
+    expect(f.finalizeApplies(later)).toBe(true);
     expect(await f.policy('write', {}, later)).toMatchObject({ allow: false });
     f.listeners[0]({
       sessionKey: key,
@@ -512,6 +588,8 @@ describe('explicit Team launch protection', () => {
       seq: 3,
     });
     await vi.waitFor(() => expect(f.state().wholeSettled?.runId).toBe(ctx.runId));
+    expect(f.finalizeApplies(later)).toBe(false);
+    expect(f.finalizeApplies()).toBe(true);
     expect(await f.policy('write', {}, later)).toBeUndefined();
     expect(f.state().state).toBe('launched');
     expect(await f.policy('write')).toMatchObject({ allow: false });
@@ -522,6 +600,7 @@ describe('explicit Team launch protection', () => {
     f.enabled = false;
     expect(await f.policy('write', {}, later)).toBeUndefined();
     const restarted = fixture(f.entry);
+    expect(restarted.finalizeApplies(later)).toBe(true);
     expect(await restarted.policy('write', {}, later)).toMatchObject({ allow: false });
     await f.call('cancel', request);
     expect(await f.policy('write', {}, later)).toMatchObject({ allow: false });

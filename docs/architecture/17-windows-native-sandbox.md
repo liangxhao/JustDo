@@ -27,13 +27,13 @@ flowchart LR
 
 真实探针只授命令处理器所在 System32 目录只读与单次独立临时目录读写，将工作目录和 TEMP/TMP 指向该临时目录，并在成功或失败后清理。显式环境只传必要 Windows 路径变量；BaseContainer API 需要 LOCALAPPDATA，但此变量不增加文件授权。不能将整个系统盘设为只读，或授整个用户临时目录读写：DACL 兼容隔离可能因此要求普通用户修改系统盘根目录的 ACL，造成错误拒绝。设置页保留有界的原生错误摘要，不显示执行参数中的配置编码及请求 envelope。
 
-IsoEnvBroker 属于 Windows 的实验性 IsolationSession，不能作为 ProcessContainer 的准入条件。OpenClaw 2026.9.8 插件原包仍有此检查，构建补丁将它替换为同一个实际执行器的 `--probe`，同时保留层级警告与探测失败拒绝注册的边界。显式 mxcBinaryPath 覆盖也必须探测该覆盖路径。这个后端不要求启用 Windows 可选功能中的 Windows Sandbox，不能提供安装无关服务的按钮来处理误判。
+IsoEnvBroker 属于 Windows 的实验性 IsolationSession，不能作为 ProcessContainer 的准入条件。OpenClaw 2026.10.4 插件原生通过同一个实际执行器的 `--probe` 核对就绪状态，旧构建替换已删除，同时保留层级警告与探测失败拒绝注册的边界。显式 mxcBinaryPath 覆盖也必须探测该覆盖路径。这个后端不要求启用 Windows 可选功能中的 Windows Sandbox，不能提供安装无关服务的按钮来处理误判。
 
 系统盘准备仅针对 appcontainer-dacl 隔离层级，通过沙盒内读取根目录属性判断，不解析本地化 icacls 字符串。属性探针不额外授权系统盘根目录，不枚举目录内容，也不重定向到 NUL：原生 helper 仅授元数据 ACE，不授 FILE_LIST_DIRECTORY，NUL 则有独立的准备要求。base-container 和 appcontainer-bfs 无须系统盘 ACL 准备。缺少相关 ACE 可以是建议准备而不是完全不可用；UI 应区别“可运行但元数据访问受限”和“无法创建隔离进程”。
 
 ## 3. 文件与网络能力
 
-工作区可读写，物化 Skill 与必要系统路径只读，未授权宿主路径不可见。命令结束销毁容器，不创建长期本地沙盒账号。取消、超时和子进程清理必须作用到原生隔离执行，不能只关闭等待 Promise。
+工作区可读写，物化 Skill 与必要系统路径只读，未授权宿主路径不可见。命令结束销毁容器，不创建长期本地沙盒账号。SDK 0.8.0 使用原生 `destroyOnExit:true`、`preservePolicy:false`，不再保留重复生命周期 build patch。取消、超时和子进程清理必须作用到原生隔离执行，不能只关闭等待 Promise。
 
 默认 network=none。用户显式允许联网后使用 default 和 internetClient capability；当前没有域名白名单。开启网络不改变文件系统授权，也不等于允许访问所有宿主文件。
 
@@ -59,7 +59,9 @@ DACL 根目录属性探针失败时，Main 以只读 PowerShell/.NET ACL 检查�
 
 ## 6. 构建和升级责任
 
-Windows runtime 携带 @openclaw/mxc-sandbox@2026.9.8 与锁定 SDK 0.8.0。需检查插件 ID、backend 注册、执行器、host-prep、launcher、目标架构 node-pty 和第三方许可证。二进制清单在 shared/security/mxcNativeBinaries.json。
+Windows runtime 携带 @openclaw/mxc-sandbox@2026.10.4 与锁定 SDK 0.8.0。需检查插件 ID、backend 注册、执行器、host-prep、launcher、目标架构 node-pty 和第三方许可证。二进制清单在 shared/security/mxcNativeBinaries.json。
+
+Windows 合并资源归档保留 MXC 插件及依赖的 LICENSE/NOTICE/README 等法律信息，与 ACPX 使用相同保留规则；打包阶段核对归档内实际存在 SDK 的 `LICENSE.md`，不能仅以源目录文件存在为证据。
 
 运行时从 pristine 包构建并应用当前 skill path 补丁；不能在历史补丁产物上补字符串。macOS/Linux 不携带或启用 mxc，文档和 UI 不应显示跨平台通用沙盒承诺。
 

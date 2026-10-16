@@ -245,7 +245,7 @@ it('anchors the dynamically loaded binding repair companion to dist after bundli
   );
 });
 
-it('anchors the 9.8 shared entrypoint factory and inventories every native worker', () => {
+it('anchors the shared entrypoint factory and inventories every referenced native worker', () => {
   const source =
     'function runtimeProcessEntrypoint(modulePath) { return { currentModuleUrl: import.meta.url, sourceWorkerName: modulePath, distWorkerPath: modulePath + ".js" }; } const entries = { readonly: runtimeProcessEntrypoint("infra/sqlite-readonly-location.worker"), state: runtimeProcessEntrypoint("state/openclaw-state.worker"), memory: runtimeProcessEntrypoint("worker/memory-worker-entry") };';
   expect(hasStaleRuntimeWorkerImportMetaUrl(source)).toBe(true);
@@ -262,6 +262,25 @@ it('anchors the 9.8 shared entrypoint factory and inventories every native worke
     'dist/worker/memory-worker-entry.js',
   ]);
   expect(rewriteRuntimeWorkerImportMetaUrls(rewritten, replacement)).toBe(rewritten);
+});
+it('excludes only the two dormant unpublished 10.4 remote workspace declarations', () => {
+  const declarations = `const runtimeProcessEntrypoints = {
+    workspaceMemory: runtimeProcessEntrypoint("worker/memory-worker-entry"),
+    workspaceSkills: runtimeProcessEntrypoint("worker/skills-worker-entry"),
+    native: runtimeProcessEntrypoint("infra/sqlite-store.worker")
+  };`;
+  expect(getRuntimeCompanionPathsReferencedByBundle(declarations)).toEqual([
+    'dist/infra/sqlite-store.worker.js',
+  ]);
+  expect(getRuntimeCompanionPathsReferencedByBundle(
+    declarations + 'resolve(runtimeProcessEntrypoints.workspaceMemory);',
+  )).toContain('dist/worker/memory-worker-entry.js');
+  expect(getRuntimeCompanionPathsReferencedByBundle(
+    declarations + 'resolve("workspaceSkills");',
+  )).toContain('dist/worker/skills-worker-entry.js');
+  expect(getRuntimeCompanionPathsReferencedByBundle(
+    'other: runtimeProcessEntrypoint("worker/memory-worker-entry")',
+  )).toContain('dist/worker/memory-worker-entry.js');
 });
 it.each(['facade-activation-check', 'plugin-metadata-readers', 'telegram-ingress-worker'])(
   'anchors the %s companion to its original module',

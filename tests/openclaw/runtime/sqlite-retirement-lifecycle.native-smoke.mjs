@@ -223,10 +223,17 @@ async function backupUpdate() {
   );
   await closeAll();
   const generations = await native('update-database-generations-', 'readUpdateDatabaseGenerations');
-  updateBackup.postMigrationGenerations = generations([
-    ...updateBackup.databases.map(entry => entry.path),
-    ...updateBackup.missingPaths,
-  ]);
+  // 10.4 rollback binds the complete before/after write receipt to this
+  // backup. The fixture owns the synthetic candidate writes above.
+  updateBackup.migration = {
+    name: 'synthetic candidate writes',
+    backup: updateBackup.directory,
+    from: updateBackup.sourceGenerations,
+    to: generations([
+      ...updateBackup.databases.map(entry => entry.path),
+      ...updateBackup.missingPaths,
+    ]),
+  };
   const restore = await native('update-command-post-update-', 'restoreFailedUpdateDatabases');
   const params = {
     backup: updateBackup,
@@ -250,12 +257,17 @@ async function backupUpdate() {
     assert.deepEqual(values(reader), ['before-reader']);
     reader.close();
 
-    // Releasing the final reader can checkpoint the WAL and change the exact
-    // file generation. Native recovery must keep refusing stale authorization.
+    // 10.4 fingerprints logical writes, so checkpoint-only file changes do
+    // not revoke a receipt. An unreceipted writer must still revoke it.
+    const laterWriter = await agent();
+    laterWriter.db.exec("INSERT INTO retirement_witness VALUES(71, 'unknown-later-writer')");
+    await closeAll();
     assert.equal(await restore(params), false);
     assert.equal(params.result.reason, 'state-migrated-no-rollback');
     const preserved = await agent();
-    assert.deepEqual(values(preserved.db), ['before-reader', 'after-reader', 'candidate']);
+    assert.deepEqual(values(preserved.db), [
+      'before-reader', 'after-reader', 'candidate', 'unknown-later-writer',
+    ]);
     integrity(preserved.db);
     await closeAll();
     return;
@@ -288,15 +300,29 @@ async function backupUpdate() {
     ...params,
     backup: {
       ...updateBackup,
-      postMigrationGenerations: {
-        ...updateBackup.postMigrationGenerations,
-        [database.path]: '0'.repeat(64),
+      migration: {
+        ...updateBackup.migration,
+        to: {
+          ...updateBackup.migration.to,
+          [database.path]: '0'.repeat(64),
+        },
       },
     },
     result: { steps: [] },
   };
   assert.equal(await restore(stale), false);
   assert.equal(stale.result.reason, 'state-migrated-no-rollback');
+  assertUntouched(unchanged);
+  const wrongBackup = {
+    ...params,
+    backup: {
+      ...updateBackup,
+      migration: { ...updateBackup.migration, backup: updateBackup.directory + '-other' },
+    },
+    result: { steps: [] },
+  };
+  assert.equal(await restore(wrongBackup), false);
+  assert.equal(wrongBackup.result.reason, 'state-migrated-no-rollback');
   assertUntouched(unchanged);
   const damaged = {
     ...params,

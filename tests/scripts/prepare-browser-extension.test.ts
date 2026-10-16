@@ -84,6 +84,10 @@ describe('browser extension preparation', () => {
           'utf8',
         );
         const background = fs.readFileSync(path.join(prepared.outputDir, 'background.js'), 'utf8');
+        const strictJson = fs.readFileSync(path.join(prepared.outputDir, 'modules/strict-json.js'), 'utf8');
+        const { hasExactKeys } = vm.runInNewContext(
+          strictJson.replace(/\bexport /g, '') + ';({ hasExactKeys })',
+        );
         expect(background).toContain('requestBootstrap: requestLocalBootstrap');
         const createController = vm.runInNewContext(
           source.replace(/^import .*;$/gm, '').replace(/\bexport /g, '') +
@@ -93,6 +97,7 @@ describe('browser extension preparation', () => {
             parsePairingString: () => ({ relayUrl: 'fixture' }),
             ACCESS_MODE_ALL: 'all',
             crypto: {},
+            hasExactKeys,
           },
         );
         const stored: Record<string, unknown> = {};
@@ -140,13 +145,13 @@ describe('browser extension preparation', () => {
       }
     },
   );
-  test('keeps the native 9.8 strict authentication JSON parser in the shipped baseline', () => {
+  test('keeps the native strict authentication JSON parser and exact-key helper in the shipped baseline', () => {
     const source = fs.readFileSync(
       path.join(projectRoot, 'resources/browser-extension/openclaw/modules/strict-json.js'),
       'utf8',
     );
     const parse = vm.runInNewContext(
-      source.replace('export function parseStrictJsonObject', 'function parseStrictJsonObject') +
+      source.replace(/\bexport /g, '') +
         ';parseStrictJsonObject',
     );
     expect(parse('{"type":"challenge","nonce":"test"}')).toEqual({

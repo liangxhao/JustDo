@@ -48,10 +48,13 @@ test('extracts nested workers even when all CLI entry files already exist', asyn
   }
 
   expect(extractRuntimeEntryFiles(runtimeRoot)).toBe(2);
-  for (const name of Object.keys(files).filter(name => name.includes('worker'))) {
+  for (const name of Object.keys(files).filter(name => name.startsWith('dist/') && name.includes('worker'))) {
     expect(fs.readFileSync(path.join(runtimeRoot, name), 'utf8')).toBe(
       files[name as keyof typeof files],
     );
+  }
+  for (const name of cliRuntimeFiles) {
+    expect(fs.readFileSync(path.join(runtimeRoot, name), 'utf8')).toBe('existing frozen file');
   }
   expect(fs.readFileSync(path.join(runtimeRoot, 'dist/entry.js'), 'utf8')).toBe(
     'existing frozen file',

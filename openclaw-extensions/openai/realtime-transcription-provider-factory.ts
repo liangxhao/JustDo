@@ -89,9 +89,7 @@ function appendedUtf8ByteLength(previous: string, appended: string): number {
   return joinsSurrogatePair ? appendedBytes - 2 : appendedBytes;
 }
 
-function normalizeProviderConfig(
-  config: RealtimeTranscriptionProviderConfig,
-): OpenAIRealtimeTranscriptionProviderConfig {
+function normalizeProviderConfig(config: RealtimeTranscriptionProviderConfig) {
   const raw = resolveOpenAIProviderConfigRecord(config);
   return {
     baseUrl: normalizeOptionalString(raw?.baseUrl),

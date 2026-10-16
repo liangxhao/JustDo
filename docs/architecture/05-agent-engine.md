@@ -1,6 +1,6 @@
 # 执行引擎：配置、准入与 Gateway 恢复
 
-当前 Cowork 执行引擎是 OpenClaw。Router 提供稳定产品接口，Adapter 隔离原生 wire 与生命周期，Manager 托管运行时进程。本文按当前 v2026.9.8 集成组织，运行时补丁清单只维护在[版本目录](../../scripts/patches/v2026.9.8/README.md)。
+当前 Cowork 执行引擎是 OpenClaw。Router 提供稳定产品接口，Adapter 隔离原生 wire 与生命周期，Manager 托管运行时进程。本文按当前 v2026.10.4 集成组织，运行时补丁清单只维护在[版本目录](../../scripts/patches/v2026.10.4/README.md)。
 
 ## Code Mode 工具编排
 
@@ -50,13 +50,38 @@ Gateway bundle 位于运行时根目录，构建流程必须把原始 `dist/buil
 
 原生助手向其它会话转发新任务时，调用者授权与 transcript 写入归属具有不同的寿命。
 Gateway 保留发送者的授权、目标校验和取消信号，但目标任务必须取得自己的原生写入归属。
-9.8 的转发入口会恢复调用者的完整异步上下文；补丁 039 在恢复之后，仅退出发送者的
+10.4 原生转发入口在恢复调用者上下文并核对当前授权之后，退出发送者的
 transcript/CLI-history 写入上下文，避免目标任务在自动压缩后的恢复或终止记录保存时
-误用发送者的写入归属。其它 RPC 和目标写入保护保持原生行为。
+误用发送者的写入归属。旧补丁 039 已移除；其它 RPC 和目标写入保护保持原生行为。
 构建同时使 bundle 与动态 SDK 共用原生 `transcript-write-context` 和其依赖的
 `cli-history-boundary` 状态模块；否则上下文清理函数与 CLI 写入者可能操作不同的
 AsyncLocalStorage。异步工作载体已经由上游的全局 singleton 共享，保持原生行为。
 Main 不接管 transcript 或重试转发。
+
+### 轮末修订与流式交付
+
+10.4 的原生 `before_agent_finalize` 默认会延迟整轮正文。补丁 026 为该钩子增加
+`appliesToAgentRun` 身份选择器；在 `before_prompt_build` 完成并核对宿主仍有效之后、
+模型输出之前，冻结本次 attempt 的 registration 与原 handler 引用。正文等待和轮末
+调度共用该集合，reset/修订不重新选择，新的 attempt 才重新核对。身份缺失、读取异常、
+异步或非布尔结果均保留保护；只有精确身份上的同步 `false` 能解除该钩子的等待。
+最终身份失配拒绝修订，不在已经输出正文后重新纳入钩子。
+
+Runtime Services 的 Team 发起保护及可选 Workflow 分别按原生当前 SID 和自身持久归属
+声明适用范围，普通非所属会话可直接流式交付。此准入只控制交付等待，不授予工具、
+发起或修订权限，也不构成整轮结算；原生 reasoning 延迟规则和执行终态证据保持原样。
+
+### 原生历史读取的准备与响应
+
+新会话的 `chat.startup` 与历史读取均使用原生 canonical 准备边界。Windows 下 SQLite
+位置可能带 `\\?\` 命名空间前缀；补丁 027 让准备 locator 与缺省校验回执使用数据库
+打开时已经登记的规范 filename，避免同一物理文件出现两个缓存键。显式路径、agent、
+物理 generation 和撤销校验保持不变，不重新解析文件别名或制造 ready 事实。
+
+内层读取可能捕获原生 deferred signal，但外层同步 frame 仍为 pending。补丁 028 在
+history/startup 的响应发布前检查同一 frame；pending 时交回原生准备流程，真正完成
+后才发布。权限、共享范围及取消仍在原有 read view 中核对，不跨 await 保留失效视图，
+也不通过消息缓存、响应去重或重试次数上限掩盖无法准备的问题。
 
 ## 3. 启动与重启状态
 
@@ -146,7 +171,7 @@ Adapter 接收产品会话身份，准备原生 session、模型和权限，再�
 
 Worktree 设置页同时接入 Gateway 全局 `worktreeRoot` / `worktreeAcceleration`。Main 通过原生 `config.get` 读取并仅投影目录、加速、配置版本和应用状态；保存通过与应用配置同步共享的排他队列及带 `baseHash` 的 `config.patch`，回读核对结果。超时/断线不重试写入，配置版本冲突要求重新读取。完整、无模型与认证配置同步保留这两项原生设置。目录变更和加速开关只影响新分配，已登记目录、快照和恢复路径保持原生所有权；页面显示默认目录与固定 `openclaw/<名称>` 分支规则，不将全局目录解释为项目同级布局。
 
-原生 WS 中的文本流由 Renderer 消费；Adapter 只将运行状态、交互、审批、Goal 和会话变化映射为产品事件。wire validator 固定到 v2026.9.8，未知或不合法字段不能在各调用方随意猜测。
+原生 WS 中的文本流由 Renderer 消费；Adapter 只将运行状态、交互、审批、Goal 和会话变化映射为产品事件。wire validator 固定到 v2026.10.4，未知或不合法字段不能在各调用方随意猜测。
 
 网络超时可能发生在原生接收之后。run receipt 需要保留未知状态并查询原生事实；无条件重发将造成重复工具副作用。工具错误不必然是运行终态，late terminal 也不能结束新的 generation。
 
@@ -156,7 +181,7 @@ Goal coordinator 在原生目标仍 active 时安排续跑，保存产品 phase�
 
 Plan-mode 通过原生 session extension、turn hook、工具和 scoped RPC 实现。Main 持久化计划文件及 handoff，批准后用原生 reset 建立实施上下文；这是产品交接，不是另一套原生恢复状态机。
 
-子任务查询分页读取 `sessions.list({ archived:'all' })`，按返回记录的 `spawnedBy` 精确筛选，并通过 `sessions.describe` 核对详情；`sessions.changed` 使产品快照失效。原生请求的 `spawnedBy` 过滤使用有保留期限的控制关系，不能用于完整历史发现，否则已结束子会话会被遗漏。OpenClaw v2026.9.8 已移除旧任务账本与 `tasks.*` RPC，原生会话投影统一拥有委派执行与控制归属。原生仍负责 admission、队列、required-child join 与完成通知。平级协作发送使用原生 sessions_send，产品只负责任务范围和回执。SubAgent 与平级协作有独立生命周期；上游 `agents team create` 是角色预设与原生委派配置，不能直接替代产品 room。跨助手原生委派须同时设计目标授权与助手创建、禁用、软删除的同步；当前不自动将受管 roster 扩展为 `subagents.allowAgents`。
+子任务查询分页读取 `sessions.list({ archived:'all' })`，按返回记录的 `spawnedBy` 精确筛选，并通过 `sessions.describe` 核对详情；`sessions.changed` 使产品快照失效。原生请求的 `spawnedBy` 过滤使用有保留期限的控制关系，不能用于完整历史发现，否则已结束子会话会被遗漏。OpenClaw 从 v2026.9.8 起已移除旧任务账本与 `tasks.*` RPC，原生会话投影统一拥有委派执行与控制归属。原生仍负责 admission、队列、required-child join 与完成通知。平级协作发送使用原生 sessions_send，产品只负责任务范围和回执。SubAgent 与平级协作有独立生命周期；上游 `agents team create` 是角色预设与原生委派配置，不能直接替代产品 room。跨助手原生委派须同时设计目标授权与助手创建、禁用、软删除的同步；当前不自动将受管 roster 扩展为 `subagents.allowAgents`。
 
 展示保留原生 queued、running、done、failed、interrupted、killed、timeout 的区别；interrupted 在产品中显示为已停止。缺少终态证据不能显示成功。详情核对精确原生 session key，再使用同一会话投影中的累计 usage/runtime、activeRunIds 和 lastRunId；新活动运行清除旧终态时间与错误。主模型结束或 UI busy 消失不证明 required child 已被父运行消费。结果不确定时先查原生会话与运行身份，不能重发整个子任务；它可能已经产生文件、网络或 spawn 副作用。
 
@@ -263,3 +288,7 @@ for session-marker ownership, setup and supported protocol boundaries.
 含组织者的群由公开 `runGroupThread` 调度，来源回合经 `dispatchReplyWithBufferedBlockDispatcher` 使用 webchat/direct/inter_session，保持原 canonical delivery；普通成员仍走 Channel。最终 dispatch 边界重新校验原生身份并恢复 expectedExistingSessionId/pinExpectedExistingSession。群内来源只允许 read，总结 disableTools；不临时更改源权限。只读流程拒绝 ACP/未验证 runtime。
 
 公开来源发言镜像到 room-owned 原生历史，并保存 speaker 身份，保证源历史删除后群公开时间线仍可读。独立 summary receipt 固定 source incarnation、批次和输出 entryId，支持先于 admission 的取消墓碑及 exact AbortSignal；旧 owner 中断不盲重跑。见[验证边界](../features/assistants/agent-team.md)。
+
+### 目标版本 registry 发布边界
+
+v2026.10.4 的运行记录是不可变 postimage。产品 owned-run 元数据通过原生 `mutateSubagentRuns` 事务发布，保持物理 owner/generation、sessionId、epoch、revision 和提交回执核对；不直接修改已发布记录，也不调用已移除的持久化 API。取消、终态与清理继续依赖同一原生 owner；相同 runId 的新 owner 不继承旧回执。未知提交不启动第二次执行。

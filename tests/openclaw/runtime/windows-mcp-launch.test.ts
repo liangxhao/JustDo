@@ -12,7 +12,7 @@ vi.mock('electron', () => ({
 }));
 import {
   buildManagedOpenClawConnectivityConfig,
-  sanitizeOpenClawV2026_9_8Config,
+  sanitizeOpenClawV2026_10_4Config,
 } from '../../../src/main/openclaw/config/openclawConfigBuilders';
 import {
   buildElectronNodeShimScripts,
@@ -62,7 +62,7 @@ test.skipIf(
   'implicit user profiles in other modes resolve to the application launcher through the native browser resolver',
   () => {
     const configs = [BrowserMode.Isolated, BrowserMode.Extension].map(mode =>
-      sanitizeOpenClawV2026_9_8Config(buildManagedOpenClawConnectivityConfig(mode)),
+      sanitizeOpenClawV2026_10_4Config(buildManagedOpenClawConnectivityConfig(mode)),
     );
     const script = `
       import assert from 'node:assert/strict';

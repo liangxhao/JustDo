@@ -1638,6 +1638,25 @@ async function verifyPackagedOpenClawRuntime(context) {
           },
         }),
       );
+      // Discover companions from the actual archived bundle, then extract those
+      // exact files before the normal filesystem verifier checks their presence.
+      // The subsequent manifest check still authenticates the bundle itself.
+      const companionEntries = new Set(
+        getRuntimeCompanionPathsReferencedByBundle(
+          path.join(temporaryRoot, 'cfmind', 'gateway-bundle.mjs'),
+        ).map(entry => `cfmind/${entry}`),
+      );
+      if (companionEntries.size > 0) {
+        await pipeline(
+          createReadStream(tarPath),
+          createZstdDecompress(),
+          tarModule.extract({
+            cwd: temporaryRoot,
+            filter: entryPath =>
+              companionEntries.has(entryPath.replace(/^\.\//, '').replace(/\\/g, '/')),
+          }),
+        );
+      }
       verifyOpenClawPatchManifest(path.join(temporaryRoot, 'cfmind'), {
         expectedTarget: resolveOpenClawRuntimeTargetId(context),
         allowOmittedGatewayAsar: true,

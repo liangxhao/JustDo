@@ -21,7 +21,7 @@ const {
 } = require('./_patch-utils.js');
 const {
   createPluginOwnedExecutionRuntime,
-} = require('../../../src/main/openclaw/runtime/native-support/plugin-owned-execution.mjs');
+} = require('./plugin-owned-execution.js');
 const helpers = createPluginOwnedExecutionRuntime(null);
 const CONTRACT = 'JUSTDO_PLUGIN_OWNED_EXECUTION_V2026_9_8';
 const names = Object.keys(helpers);
@@ -1139,7 +1139,7 @@ function processTargets(root, verify) {
     'plugin-owned-execution.mjs',
     path.resolve(
       __dirname,
-      '../../../src/main/openclaw/runtime/native-support/plugin-owned-execution.mjs',
+      './plugin-owned-execution.js',
     ),
     verify,
   );

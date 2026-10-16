@@ -5,8 +5,10 @@
   "gateway-shutdown-budget.mjs",
   "node-compile-cache.mjs",
   "node-host-launcher.mjs",
+  "node-runtime-env.mjs",
   "node-runtime-recovery.mjs",
   "node-runtime-update.mjs",
   "node-sqlite.mjs",
-  "node-version.mjs"
+  "node-version.mjs",
+  "worker-heap-flag.mjs"
 ]

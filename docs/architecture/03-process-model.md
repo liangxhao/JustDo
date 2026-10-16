@@ -318,7 +318,7 @@ PTY。附着失败会提示终端不可用，需要用户新开标签，不会�
 当前原生接口缺少指定工程目录/PowerShell 参数和明确结束已共享 PTY的能力，
 由当前版本补丁 036 补齐 operator.admin 的 launch 和 terminate 参数。沙箱全隔离
 会话仍由原生终端策略拒绝，不通过主进程另建宿主终端绕过它。构建契约见
-[运行时补丁总账](../../scripts/patches/v2026.9.8/README.md)。
+[运行时补丁总账](../../scripts/patches/v2026.10.4/README.md)。
 
 新操作终端的欢迎句由补丁 037 在构建时读取 `package.json.productName`，显示
 `Welcome to the <productName>.` 并去掉原生龙虾 ASCII 图。软件图标缩成紧凑字符图后

@@ -546,7 +546,7 @@ export const buildManagedOpenClawSurfaces = (existing: unknown): Record<string, 
  * two renamed config surfaces. This is deliberately narrow: unrelated
  * operator-owned config remains untouched and is still validated by Gateway.
  */
-export const sanitizeOpenClawV2026_9_8Config = (
+export const sanitizeOpenClawV2026_10_4Config = (
   config: Record<string, unknown>,
 ): Record<string, unknown> => {
   const next = { ...config };
@@ -851,7 +851,7 @@ export const buildAuthScopedOpenClawConfig = (
   managedConfig: Record<string, unknown>,
   reason: string,
 ): Record<string, unknown> => {
-  const canonicalExistingConfig = sanitizeOpenClawV2026_9_8Config(existingConfig);
+  const canonicalExistingConfig = sanitizeOpenClawV2026_10_4Config(existingConfig);
   const isLogin = reason === BuiltinModelSyncReason.AuthLogin;
   const existingModels = isRecord(canonicalExistingConfig.models)
     ? canonicalExistingConfig.models
@@ -1103,7 +1103,7 @@ export const buildAuthScopedOpenClawConfig = (
     delete models.providers;
   }
 
-  const result = sanitizeOpenClawV2026_9_8Config({
+  const result = sanitizeOpenClawV2026_10_4Config({
     ...canonicalExistingConfig,
     skills: mergeOpenClawSkillConfig(
       isRecord(canonicalExistingConfig.skills) ? canonicalExistingConfig.skills : {},

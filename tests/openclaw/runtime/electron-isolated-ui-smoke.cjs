@@ -18,6 +18,13 @@ const { _electron: electron } = require(process.env.PLAYWRIGHT_MODULE || 'playwr
   const localAppData = path.join(fixture, 'local');
   const profile = path.join(fixture, 'profile');
   for (const directory of [home, appData, localAppData, profile]) fs.mkdirSync(directory);
+  // Exercise the optional board with an explicit choice in this disposable
+  // profile. The native default remains disabled in ordinary fresh profiles.
+  const nativeConfigDirectory = path.join(profile, 'openclaw', 'state');
+  fs.mkdirSync(nativeConfigDirectory, { recursive: true });
+  fs.writeFileSync(path.join(nativeConfigDirectory, 'openclaw.json'), JSON.stringify({
+    plugins: { entries: { workboard: { enabled: true } } },
+  }));
   const dist = path.join(root, 'dist');
   const server = http.createServer((request, response) => {
     const pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname);
@@ -62,7 +69,7 @@ const { _electron: electron } = require(process.env.PLAYWRIGHT_MODULE || 'playwr
     while (true) {
       const status = await page.evaluate(() => globalThis.electron.openclaw.engine.getStatus());
       if (status.success && status.status?.phase === 'running') {
-        assert.equal(status.status.version?.replace(/^v/, ''), '2026.9.8');
+        assert.equal(status.status.version?.replace(/^v/, ''), '2026.10.4');
         result.engine = { phase: status.status.phase, version: status.status.version };
         break;
       }
@@ -83,7 +90,8 @@ const { _electron: electron } = require(process.env.PLAYWRIGHT_MODULE || 'playwr
     }
     await snapshot('01-permission-options');
     await page.getByRole('button', { name: /^(执行权限|Execution permissions)$/ }).click();
-    await page.getByRole('button', { name: /^(记忆|Memory)$/ }).click();
+    await page.getByRole('button', { name: /^(更多|More)$/ }).click();
+    await page.getByRole('dialog', { name: /^(更多|More)$/ }).getByRole('button', { name: /^(记忆|Memory)$/ }).click();
     await snapshot('02-memory');
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: /^(设置|Settings)$/ }).click();
@@ -91,17 +99,18 @@ const { _electron: electron } = require(process.env.PLAYWRIGHT_MODULE || 'playwr
     await page.getByRole('button', { name: /^(模型|Model)$/ }).click();
     await page.getByRole('heading', { name: /^(模型|Model)$/ }).waitFor();
     await snapshot('04-models');
-    await page.getByRole('button', { name: /^(安全|Security)$/ }).click();
-    await page.getByRole('heading', { name: /^(安全|Security)$/ }).waitFor();
+    await page.getByRole('button', { name: /^(沙箱与隔离|Sandbox & isolation)$/ }).click();
+    await page.getByRole('heading', { name: /^(沙箱与隔离|Sandbox & isolation)$/ }).waitFor();
     await snapshot('05-permissions');
     await page.getByRole('button', { name: /^(返回|Back)$/ }).click();
     await page.getByRole('button', { name: /^(插件|Plugins)$/ }).click();
-    await page.getByText(/^(系统与内置|System & built-in)$/).waitFor({ timeout: 45000 });
+    await page.getByText(/^(系统内置|System & built-in)$/).waitFor({ timeout: 45000 });
     await snapshot('06-plugins');
     await page.getByRole('button', { name: /^(定时任务|Scheduled Tasks)/ }).click();
     await page.getByRole('button', { name: /^(新建任务|New task|Create task)$/i }).waitFor();
     await snapshot('07-tasks');
-    await page.getByRole('button', { name: /^(任务看板|Workboard)$/ }).click();
+    await page.getByRole('button', { name: /^(更多|More)$/ }).click();
+    await page.getByRole('dialog', { name: /^(更多|More)$/ }).getByRole('button', { name: /^(任务看板|Workboard)$/ }).click();
     await page.getByText(/^(暂无卡片|No cards)$/).first().waitFor({ timeout: 45000 });
     await snapshot('08-workboard');
     const finalStatus = await page.evaluate(() => globalThis.electron.openclaw.engine.getStatus());

@@ -58,7 +58,7 @@ Builder 显式 npmRebuild=false，是因为项目自己准备 SQLite，node-pty 
 
 运行时从 source-lock 固定的 npm 包及完整性开始，验证 pristine contracts，再应用当前补丁。构建 recipe 变化会使冻结快照失效；同版本修改也需重建。历史/部分补丁形态明确拒绝，不做就地修补。
 
-平台脚本执行安装、current 同步、Gateway bundle、官方插件、产品资源、扩展预编译和裁剪。必须对最终 bundle 验证能力，不能只验证邻近源码仓库。当前补丁职责、依赖和上游删除条件只维护在[版本目录](../../scripts/patches/v2026.9.8/README.md)。
+平台脚本执行安装、current 同步、Gateway bundle、官方插件、产品资源、扩展预编译和裁剪。必须对最终 bundle 验证能力，不能只验证邻近源码仓库。当前补丁职责、依赖和上游删除条件只维护在[版本目录](../../scripts/patches/v2026.10.4/README.md)。
 
 ## 6. 平台资源和安装器
 

@@ -8,12 +8,14 @@ import type {
 import type { OAuthCredential } from 'openclaw/plugin-sdk/provider-auth';
 import {
   buildFirstTemplateModel,
-  buildManifestModelProviderConfig,
   DEFAULT_CONTEXT_TOKENS,
   matchesExactOrPrefix,
   normalizeProviderId,
 } from 'openclaw/plugin-sdk/provider-model-metadata';
-import type { ProviderPlugin } from 'openclaw/plugin-sdk/provider-model-shared';
+import type {
+  ModelDefinitionConfig,
+  ProviderPlugin,
+} from 'openclaw/plugin-sdk/provider-model-shared';
 import { resolveOpenAICodexAuthIdentity } from 'openclaw/plugin-sdk/provider-oauth-runtime';
 import {
   normalizeLowercaseStringOrEmpty,
@@ -38,15 +40,13 @@ import {
   OPENAI_GPT_56_VARIANT_MODEL_IDS as OPENAI_CODEX_GPT_56_MODEL_IDS,
   OPENAI_GPT_6_MODEL_IDS,
 } from './model-route-contract.js';
-import manifest from './openclaw.plugin.json' with { type: 'json' };
 import { OPENAI_DEFAULT_RUNTIME_CONTEXT_TOKENS } from './shared.js';
 import { fetchOpenAIUsage, resolveOpenAIUsageAuth } from './usage.js';
 
 const PROVIDER_ID = 'openai';
-const OPENAI_MANIFEST_MODELS = buildManifestModelProviderConfig({
-  providerId: PROVIDER_ID,
-  catalog: manifest.modelCatalog.providers.openai,
-}).models;
+// This upstream helper is not registered by the intranet plugin. Its public
+// offline catalog is deliberately absent from the local manifest.
+const OPENAI_MANIFEST_MODELS: ModelDefinitionConfig[] = [];
 const OPENAI_CODEX_GPT_56_THINKING_LEVEL_MAP = {
   off: null,
   xhigh: 'xhigh',
@@ -126,13 +126,6 @@ function isOpenAIProvider(provider: string | undefined): boolean {
   return normalized === PROVIDER_ID;
 }
 
-function isLegacyCodexCompatBaseUrl(baseUrl?: string): boolean {
-  const trimmed = baseUrl?.trim();
-  return (
-    trimmed !== undefined && /^https?:\/\/api\.githubcopilot\.com(?:\/v1)?\/?$/iu.test(trimmed)
-  );
-}
-
 function normalizeCodexTransportFields(params: {
   api?: ProviderRuntimeModel['api'] | null;
   baseUrl?: string;
@@ -141,10 +134,7 @@ function normalizeCodexTransportFields(params: {
   baseUrl?: string;
 } {
   const useCodexTransport =
-    !params.baseUrl ||
-    isOpenAIApiBaseUrl(params.baseUrl) ||
-    isOpenAICodexBaseUrl(params.baseUrl) ||
-    isLegacyCodexCompatBaseUrl(params.baseUrl);
+    !params.baseUrl || isOpenAIApiBaseUrl(params.baseUrl) || isOpenAICodexBaseUrl(params.baseUrl);
   const api =
     useCodexTransport &&
     (!params.api || params.api === 'openai-responses' || params.api === 'openai-completions')

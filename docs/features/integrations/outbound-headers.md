@@ -82,7 +82,7 @@ sequenceDiagram
 env proxy。未配置代理、命中 `NO_PROXY` 或未命中 Header URL 白名单时，分别保持直连、bypass 或
 不注入业务 Header。
 
-手动“重建索引”通过 OpenClaw 原生 `force: true`、`reason: "cli"` 意图触发，缓存与重建由原生运行时处理。当前版本不再依赖旧 `009` 补丁；是否需要重建按真实原生回执判断，不从代理收到请求与否推断成功。补丁处置统一见[当前补丁总账](../../../scripts/patches/v2026.9.8/README.md)。
+手动“重建索引”通过 OpenClaw 原生 `force: true`、`reason: "cli"` 意图触发，缓存与重建由原生运行时处理。当前版本不再依赖旧 `009` 补丁；是否需要重建按真实原生回执判断，不从代理收到请求与否推断成功。补丁处置统一见[当前补丁总账](../../../scripts/patches/v2026.10.4/README.md)。
 
 ## 5. 请求处理
 

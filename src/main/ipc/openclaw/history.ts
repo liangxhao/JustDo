@@ -5,7 +5,7 @@ import {
   type OpenClawCompactionDetailLookup,
   OpenClawHistoryIpc,
 } from '../../../shared/openclaw/historyIpc';
-import { parseHistoryDetailsResultV2026_9_8 } from '../../engine/openclaw/wire/v2026_9_8';
+import { parseHistoryDetailsResultV2026_10_4 } from '../../engine/openclaw/wire/v2026_10_4';
 
 export type OpenClawToolInputLookup = Record<string, { name?: string; input: unknown }>;
 
@@ -52,7 +52,7 @@ const requestHistoryDetails = async (
     compactionEntryIds?: string[];
   },
 ) =>
-  parseHistoryDetailsResultV2026_9_8(
+  parseHistoryDetailsResultV2026_10_4(
     await dependencies.requestGateway('runtimeServices.historyDetails', params),
   );
 

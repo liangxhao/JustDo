@@ -4,15 +4,15 @@
 检查范围包括供应链、Gateway/SDK 契约、配置与执行、消息展示、产品功能和最终安装包。
 运行时能够启动、TypeScript 编译通过或一次聊天成功，都不足以证明升级完成。
 
-当前仓库基线为 `openclaw@2026.9.8`；后续升级以 `package.json.openclaw.version`
+当前仓库基线为 `openclaw@2026.10.4`；后续升级以 `package.json.openclaw.version`
 为准。源包 integrity 以目标版本补丁目录的 `source-lock.json` 为准，逐补丁能力、
 上游证据、依赖与删除条件以该目录 `README.md` 为唯一总账。本文不固定补丁数量，
 也不把历史版本验收结果当作目标版本的通过记录。
 
-近期升级交接：当前 9.8 的 043 SQLite 关闭补丁已完成生命周期回归并决定保留；
-此结论不自动延续到即将升级的版本。2026.10.4 的预审发现、039/043 的重新判定与
-重写位置、验证脚本适配及依赖前置问题，见[当前补丁总账的升级交接](../scripts/patches/v2026.9.8/README.md#upgrade-handoff-2026104)。
-升级时将最终决策和新证据写入目标版本总账，不把这次预审当作新版已验收。
+当前 10.4 升级决策与验证范围见[升级记录](openclaw-upgrades/v2026.10.4/README.md)。
+原生已覆盖旧 039 的转发写入隔离；旧 043 依据目标包并发复现重写为 025，保留原生
+`beginClose`/异步 `stop` 的维护任务 join。原生 immutable registry 的 owned-run 接线
+改用原生事务发布，结果不明不重试。旧预审保存在历史 9.8 总账，不作为新版通过证据。
 
 本文中的勾选项是升级时需要执行的检查。每个领域应记录「通过 / 需适配 / 未验证 /
 不适用」，附目标版本、测试或人工场景及证据；不适用必须说明原因。即使判断无需
@@ -497,7 +497,7 @@
 
 ## 13. 本地 OpenAI 完整源码替换
 
-`openclaw-extensions/openai` 以原生 OpenAI 的 v2026.9.8 源码为起点，包含
+`openclaw-extensions/openai` 以原生 OpenAI 的 v2026.10.4 源码为起点，包含
 MIT LICENSE。`upstream-source.json` 记录原始 tag、commit 和源文件 SHA-256；
 它描述上游基线，不要求已修改的本地文件等于原始 hash。测试辅助源码不发布。
 本地依赖使用独立 `package-lock.json`，不引用上游 `workspace:*` 开发依赖。
@@ -539,29 +539,29 @@ API Key/SecretRef 仍可用于用户显式选择的内网服务；删除的是�
 
 ## 14. 运行时补丁与宿主接缝复核
 
-逐项读取[当前版本总账](../scripts/patches/v2026.9.8/README.md)和 transformer，
+逐项读取[当前版本总账](../scripts/patches/v2026.10.4/README.md)和 transformer，
 升级后将链接更新为目标版本总账。下表按集成风险组织验证，不替代逐补丁删除条件。
 
 | 接缝（当前编号）                                  | 目标版本必须验证的重点                                                                                                                                                           |
 | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 环境/提示/请求（001/005/006/007/026）             | 真实 pip 安装后 import；最终 system prompt transform 不改用户/历史/工具参数；人类发起 metadata 经 queue 到执行正确归属；维护 purpose 与本轮 private untrusted input 隔离         |
-| 会话/恢复/显示（008/013/014/015/022/023/028/032） | app-start 主会话恢复边界、paused Goal 显式继续、provider-safe replay、授权媒体、reset 显示历史、原子 fork 冲突、admin cwd 与 Windows canonical/SQLite 路径和身份                 |
-| 离线插件（016/019）                               | 断网 catalog 与配置同步不偷偷安装/下载缺失插件，显式安装仍走原生流程；新 inventory/capture 生命周期不破坏保护                                                                    |
-| 沙盒/凭据/定时任务（025/030/031）                 | MXC external skills 只读物化及越界拒绝，cron 权限/工作区持久映射，Windows servicing launcher 的身份、ACL、凭据与清理                                                             |
-| owned execution（034）                            | native-support 注入与精确 bytes、SDK run timeout、registry actor/owner/incarnation、whole-run settlement、custody 与 managed-tool cleanup/recovery，不把 wait timeout 当执行超时 |
-| 共享终端（036/037）                               | native PTY launch/close、cwd/shell/args、viewer ownership、buffer/offset 与 attach；欢迎文字只影响展示，删除候选需单独说明用户影响                                               |
-| 压缩/转发（038/039）                              | operation-scoped 状态/取消覆盖准备与清理，自动恢复压缩生命周期；恢复调用者授权后仅退出源 transcript/CLI-history 写入 scope，目标保持自己的写入 claim                             |
-| 电脑提示/Windows 恢复（040/042）                  | 内容无关的 activity start/end/heartbeat/release 与真实操作分别验收；原生 recovery capture 保留获准目录 junction，不改文件链接、hardlink、相对/坏链接或授权                       |
+| 环境/提示/请求（001/002/003/004/014）             | 真实 pip 安装后 import；最终 system prompt transform 不改用户/历史/工具参数；人类发起 metadata 经 queue 到执行正确归属；维护 purpose 与本轮 private untrusted input 隔离         |
+| 会话/恢复/显示（005/006/007/008/011/012/015/018） | app-start 主会话恢复边界、paused Goal 显式继续、provider-safe replay、授权媒体、reset 显示历史、原子 fork 冲突、admin cwd 与 Windows canonical/SQLite 路径和身份                 |
+| 离线插件（009/010）                               | 断网 catalog 与配置同步不偷偷安装/下载缺失插件，显式安装仍走原生流程；新 inventory/capture 生命周期不破坏保护                                                                    |
+| 沙盒/凭据/定时任务（013/016/017）                 | MXC external skills 只读物化及越界拒绝，cron 权限/工作区持久映射，Windows servicing launcher 的身份、ACL、凭据与清理                                                             |
+| owned execution（019）                            | native-support 注入与精确 bytes、SDK run timeout、registry actor/owner/incarnation、whole-run settlement、custody 与 managed-tool cleanup/recovery，不把 wait timeout 当执行超时 |
+| 共享终端（020/021）                               | native PTY launch/close、cwd/shell/args、viewer ownership、buffer/offset 与 attach；欢迎文字只影响展示，删除候选需单独说明用户影响                                               |
+| 压缩/转发（022/原生）                             | operation-scoped 状态/取消覆盖准备与清理，自动恢复压缩生命周期；恢复调用者授权后仅退出源 transcript/CLI-history 写入 scope，目标保持自己的写入 claim                             |
+| 电脑提示/Windows 恢复（023/024）                  | 内容无关的 activity start/end/heartbeat/release 与真实操作分别验收；原生 recovery capture 保留获准目录 junction，不改文件链接、hardlink、相对/坏链接或授权                       |
 
-- [ ] 删除的 002/003 由 Main MCP/Chrome 启动器及配置投影承载，真实连接回归仍必需；
-      020/021 由完整本地 OpenAI 源码替换承载，027 由构建时共享 SDK 模块承载。
-- [ ] 033 私有 loop-exit 诊断、035 私有 prompt-budget 接线、041 发现刷新与拟议 043
-      替代安装接线不恢复。Workflow 结果预算用公开 `model_call_started` 的有效预算及
+- [ ] 以下均指 9.8 旧编号：删除的 002/003 由 Main MCP/Chrome 启动器及配置投影承载，
+      真实连接回归仍必需；020/021 由完整本地 OpenAI 源码替换承载，027 由构建时共享 SDK 模块承载。
+- [ ] 9.8 旧编号 033 私有 loop-exit 诊断、035 私有 prompt-budget 接线、041 发现刷新与
+      历史拟议的 043 替代安装接线不恢复。Workflow 结果预算用公开 `model_call_started` 的有效预算及
       精确 run/trace/attempt span；缺观察保守回退，不能采用旧 attempt 的大额度。
 - [ ] 核对单独锁定的 MXC package、二进制 hash 与 product build patch，probe 实际
       selected executor 和真实隔离进程，不以无关 broker readiness 判定准入。
 - [ ] 补丁核验覆盖发布包全部相关 native copies、worker、recovery monolith 和最终
-      bundle；不能只匹配一个源码文件或只检查补丁标记存在。034/038 普通 native-support
+      bundle；不能只匹配一个源码文件或只检查补丁标记存在。019/022 普通 native-support
       与原生接线一同校验，不移动到可被关闭的插件。
 
 ## 15. 重建、构建产物与自动化回归

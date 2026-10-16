@@ -45,7 +45,7 @@ Plugin Hub 有四类插件概念；市场当前只开放 extension、skill、mcp
 日常 Chrome 沿用原生 existing-session driver 和随包 Chrome MCP，设置页通过 Gateway 请求原生 Tab 查询来触发浏览器授权。Windows 的应用配置选择 `chrome-mcp.cmd`，Main 生成的 UTF-8 启动器用 Electron Node 模式启动锁定服务器；`npm.cmd`、`npx.cmd` 和 `node.cmd` 同样位于应用 PATH 前端。启动器内的 Node／可信预加载文件引用使用绝对路径，避免真实 npm 包的 `.cmd` 嵌套调用裸 `node` 时将 `%~dp0` 解析到调用方工作目录。受管 MCP 的裸 `npm/npx` 命令由 Main 配置投影为 Electron Node 的直接启动参数，显式加载可信窗口隐藏模块；用户保存的命令、参数、环境和其它原生字段不被改写，绝对路径自定义命令保留原样。配置投影与启动器共享 npm 路径解析，打包后继续使用逻辑 `app.asar` 路径。原生 MCP 仍过滤不安全环境变量，负责连接授权、进程身份核验与清理。普通插件来源仍可使用应用 PATH 中的自包含启动器。002/003 补丁已移除；真实 npm/npx 与原生配置解析器对照测试验证连接、工具发现、调用和清理，受管配置不产生批处理空帧诊断。真实本地包二进制启动另验证嵌套批处理和中文／空格启动器路径。批处理对照虽有空帧诊断仍能完成普通 Client 连接，不能把该诊断直接等同于功能不可用。
 
 OpenAI 媒体适配由 `openclaw-extensions/openai` 的完整本地源码实现，基线为原生
-v2026.9.8。资源同步完整替换原包目录；裁剪策略明确移除上游插件，本地保护只保留
+v2026.10.4。资源同步完整替换原包目录；裁剪策略明确移除上游插件，本地保护只保留
 替换后的唯一 `openai`。不合并源码、不备份 native-* 入口、不注册第二个同名插件。
 本地 manifest 和 setup 删除官网登录/API Key 引导、公网 catalog 和 usage；内网服务
 仍可配置 API Key/SecretRef，缺失能力地址时拒绝请求，不读取环境 Key 回退。
@@ -341,14 +341,14 @@ Extension 可用 outbound-header-policy.json 声明 HTTPS 目标、Header 名称
 
 从 `src/main/plugins/` 的文件事务、MCP/Hook 同步、Extension import/conversion 和 registry 测试检查产品层；从 `tests/openclaw/extensions/` 与 skill-resolution runtime contract 检查最终原生能力。市场增加 kind 前需完成安装、更新、启停、删除与状态对账闭环，详见[市场适配](16-skill-marketplace-adapter.md)。
 
-## OpenClaw 2026.9.8 integration
+## OpenClaw 2026.10.4 integration
 
 The runtime retains the native QuickJS Code Mode executor as an enabled application-managed
 adapter; Runtime settings control Code Mode use. CUA desktop control retains explicit
 opt-in through its dedicated Settings switch. Both retain explicit allowlist membership. Local
 extensions import named SDK subpaths. Agent-owned Workshop collections remain
 Gateway-owned; the application does not recreate workspace-based skill ownership.
-See [upgrade audit](../openclaw-upgrades/v2026.9.8/v2026.9.8.md).
+See [upgrade audit](../openclaw-upgrades/v2026.10.4/README.md).
 
 ### 可选本机电脑控制
 

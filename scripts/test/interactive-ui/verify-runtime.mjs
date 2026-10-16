@@ -9,7 +9,7 @@ import { Script } from 'node:vm';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const runtime = path.resolve(process.argv[2] ?? path.join(root, 'vendor/openclaw-runtime/current'));
 const runtimePackage = JSON.parse(await readFile(path.join(runtime, 'package.json'), 'utf8'));
-assert.equal(runtimePackage.version, '2026.9.8');
+assert.equal(runtimePackage.version, '2026.10.4');
 const output = await mkdtemp(path.join(os.tmpdir(), 'interactive-ui-contract-'));
 try {
   await build({

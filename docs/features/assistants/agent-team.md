@@ -163,6 +163,12 @@ Main SQLite 的 `team_discussion_queue_control` 与 `team_discussion_pending_inp
 
 协作工具与显式发起门禁均读取原生 `plan-mode/state`：扩展通过 `pluginExtensions['plan-mode'].state` 读取，Main 使用 `sessions.describe` 返回的对应命名空间。`planMode` 槽投影及旧产品槽不参与判断；投影与原生状态不一致时，以原生状态为准。开启规划或尚有待审批计划时仍拒绝发起。
 
+轮末修订的交付等待通过原生补丁 026 的 `appliesToAgentRun` 声明。先确认当前原生 SID；
+仅已确认无发起账本、已 released，或原发起整轮已精确结算后的不同 run 可解除该钩子的
+等待。未知/损坏账本、退役实例及身份异常继续保护。选择在 prompt build 后冻结，
+不以正文标记或后续工具调用补选；原有 live ledger、权限及修订检查继续执行，
+解除等待本身不证明授权或完成。
+
 OpenClaw 9.8 的紧凑工具目录通过 `tool_search`、`tool_describe` 和 `tool_call` 发现及调用团队工具。精确当前提交完成验证后，守卫允许这些原生入口；`tool_call` 的实际目标仍由原生执行器再次接受可信工具政策检查，入口本身不能证明团队已启动，也不能放行另一模式的工具、写文件或执行命令。
 
 原生 queued/followup 的通用提交/执行绑定仍未成立，显式 Team 在忙碌或已有未确认队列时保留草稿并拒绝普通 followup。有限纠正最多使用两次原生 revise，只能在精确阶段、尚无已确认或不确定副作用时执行；副作用已发生后不回退。此能力不保证建群成功，也不扩大工具权限。完整业务建群的剩余验收见[验收清单](../../plans/agent-team-acceptance.md)。
@@ -230,8 +236,10 @@ flowchart LR
 
 原生调用失败按 `collaboration.bind` / `collaboration.dispatch` 等实际阶段报告封闭的原因码和错误引用；日志不记录消息正文、工具参数或原始异常内容。模型得到明确的停止重复尝试提示。绑定失败不会进入发送或投递预留；后续阶段的不确定结果仍按既有回执与 unknown 契约处理，不自动重试。单文件 Gateway 与动态 SDK 共享原生授权及私有会话绑定所有者，保持 host-issued 校验及撤销有效；真实 webchat 来源的多级转发须单独验证，不能仅用后台连接的成功结果代替。该链路已在隔离确定性模型及 Electron 环境中验证三个原生 accepted 投递、各执行的 whole-run terminal 和最后回传来源 main；这不替代真实业务模型及完整 Main room 流程验收。
 
-当前能力使用锁定 v2026.9.8 的公开 Gateway/SDK 和既有补丁集，没有为上述 Team 功能新增运行时 patch。真实 holding、冷/热禁用、精确清理、guard/QuickJS、原生输入规范化和附件绑定已有隔离确定性模型验证；正式回归覆盖容量事务、FIFO/汇总结算、ACK 丢失、停止/迟到返回、权限漂移、独立补充草稿与可信发起身份。
+既有能力在 v2026.9.8 使用公开 Gateway/SDK 和当时补丁集完成接入，没有为上述 Team 功能新增运行时 patch。真实 holding、冷/热禁用、精确清理、guard/QuickJS、原生输入规范化和附件绑定已有隔离确定性模型验证；正式回归覆盖容量事务、FIFO/汇总结算、ACK 丢失、停止/迟到返回、权限漂移、独立补充草稿与可信发起身份。
 
 这些证据不等于完整生产 Main/room/业务模型、麦克风点击、系统级故障或讨论质量已验收。尚未运行的 dreaming、其他原生管理/channel 恢复路径不被概括为全部隔离。真实模型内容质量、完整 UI、多窗口与权限竞争验收继续见[验收清单](../../plans/agent-team-acceptance.md)。
 
 修改时应同时核对 shared 合约、Main IPC/store/coordinator、扩展 service/guard、preload 和 Renderer，运行对应行为回归。不要只以文件存在或注册成功宣称功能完整；也不要将这份现行说明恢复成已完成计划和逐轮审查流水。
+
+当前 v2026.10.4 的 owned-run registry 接线通过原生 immutable actor 发布，Team 不接管该事务。目标版本的实际通过范围见[升级记录](../../openclaw-upgrades/v2026.10.4/README.md)，上述历史验证不自动延续为本版真实模型验收。

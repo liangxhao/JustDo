@@ -30,7 +30,7 @@ test('prunes public-cloud plugins while retaining the intranet OpenAI adapter an
   const repoRoot = path.resolve(__dirname, '../..');
   const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-plugin-prune-'));
   const extensionsRoot = path.join(runtimeRoot, 'dist', 'extensions');
-  const excluded = ['novita', 'elevenlabs', 'kie', 'zai', 'anthropic', 'github'];
+  const excluded = ['cloudflare', 'elevenlabs', 'kie', 'anthropic', 'github'];
   const retained = [
     'openai',
     'browser',
@@ -49,7 +49,7 @@ test('prunes public-cloud plugins while retaining the intranet OpenAI adapter an
     const computerRoot = path.join(extensionsRoot, 'cua-computer');
     fs.writeFileSync(
       path.join(extensionsRoot, 'openai', 'package.json'),
-      JSON.stringify({ version: '2026.9.8', openclaw: { runtimeBundled: true } }),
+      JSON.stringify({ version: '2026.10.4', openclaw: { runtimeBundled: true } }),
     );
     const nativeRoot = path.join(
       computerRoot,
@@ -67,12 +67,12 @@ test('prunes public-cloud plugins while retaining the intranet OpenAI adapter an
     pruneExtensionDependencies(computerRoot);
 
     expect(result.removed.sort()).toEqual([...excluded].sort());
-    expect(stats.extensionDirsRemoved).toBe(6);
+    expect(stats.extensionDirsRemoved).toBe(excluded.length);
     expect(fs.readdirSync(extensionsRoot).sort()).toEqual([...retained].sort());
     expect(fs.readdirSync(nativeRoot).sort()).toEqual([...nativeFiles].sort());
     fs.writeFileSync(
       path.join(extensionsRoot, 'openai', 'package.json'),
-      JSON.stringify({ version: '2026.9.8' }),
+      JSON.stringify({ version: '2026.10.4' }),
     );
     expect(() => pruneRuntimeExtensions(runtimeRoot, stats, { repoRoot, label: 'test' })).toThrow(
       /Missing local source replacement: openai/,

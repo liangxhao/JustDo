@@ -41,7 +41,7 @@ const runtime = path.resolve(
     path.join(root, 'vendor/openclaw-runtime/current'),
 );
 const runtimePackage = JSON.parse(await readFile(path.join(runtime, 'package.json'), 'utf8'));
-assert.equal(runtimePackage.version, '2026.9.8', 'Use the locked prepared runtime');
+assert.equal(runtimePackage.version, '2026.10.4', 'Use the locked prepared runtime');
 const buildInfo = JSON.parse(await readFile(path.join(runtime, 'runtime-build-info.json'), 'utf8'));
 const fixture = await mkdtemp(path.join(os.tmpdir(), 'interactive-ui-gateway-'));
 const state = path.join(fixture, 'state');

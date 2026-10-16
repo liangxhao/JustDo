@@ -18,6 +18,7 @@ function verifyPublicCliArchiveEntries(entries) {
 
 const RUNTIME_COMPANION_CHECKS = [
   { marker: 'resolveStartupMigrationBuildIdentity', path: 'build-info.json' },
+  { marker: 'build-info.json', path: 'build-info.json' },
   {
     marker: 'legacy-config-binding-repair.runtime',
     path: 'dist/legacy-config-binding-repair.runtime.js',
@@ -97,6 +98,13 @@ const RUNTIME_BUNDLED_ASSET_COPIES = [
     target: 'build-info.json',
   },
   {
+    // 10.4 removed the startup identity helper; native commit readers still
+    // resolve build-info beside their executing module.
+    marker: 'build-info.json',
+    source: 'dist/build-info.json',
+    target: 'build-info.json',
+  },
+  {
     marker: 'web-tree-sitter.wasm',
     source: 'node_modules/web-tree-sitter/web-tree-sitter.wasm',
     target: 'web-tree-sitter.wasm',
@@ -164,6 +172,19 @@ function getRuntimeCompanionPathsReferencedByBundle(bundle) {
   for (const match of bundle.matchAll(
     /runtimeProcessEntrypoint\d*\(["']([a-zA-Z0-9_./-]+)["']\)/g,
   )) {
+    // The 10.4 package retains two declarations for the removed remote
+    // file-transfer workers but ships neither worker. They are dormant in
+    // the desktop graph (file-transfer is explicitly pruned). Never exempt
+    // a referenced entry, an unknown declaration, or a new worker path.
+    const dormantKey = {
+      'worker/memory-worker-entry': 'workspaceMemory',
+      'worker/skills-worker-entry': 'workspaceSkills',
+    }[match[1]];
+    if (dormantKey &&
+        bundle.slice(0, match.index).trimEnd().endsWith(dormantKey + ':') &&
+        [...bundle.matchAll(new RegExp('\\b' + dormantKey + '\\b', 'g'))].length === 1) {
+      continue;
+    }
     paths.push(`dist/${match[1]}.js`);
   }
   for (const companion of RUNTIME_RELATIVE_COMPANIONS) {

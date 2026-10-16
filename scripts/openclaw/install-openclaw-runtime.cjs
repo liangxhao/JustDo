@@ -28,7 +28,10 @@ const {
   commitStagedRuntime,
   prepareStagedRuntimeForCommit,
 } = require('./openclaw-runtime-staging.cjs');
-const { verifyPristineOpenClawContracts } = require('./verify-openclaw-pristine-contracts.cjs');
+const {
+  verifyPristineOpenClawContracts,
+  verifyNativeProviderTransportContracts,
+} = require('./verify-openclaw-pristine-contracts.cjs');
 const {
   OPENCLAW_CLI_ROOT_FILES,
   verifyPublicCliRootFiles,
@@ -266,6 +269,7 @@ fs.mkdirSync(extractDir, { recursive: true });
       targetArch,
       path.join(tmpDir, 'install-state'),
     );
+    verifyNativeProviderTransportContracts(stagingOutDir);
 
     // ---------------------------------------------------------------------------
     // 6. Patch facade-runtime JS dist (critical for esbuild bundling)

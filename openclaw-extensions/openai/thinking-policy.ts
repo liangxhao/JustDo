@@ -93,14 +93,19 @@ export function resolveUnifiedOpenAIThinkingProfile(
     return { levels: binaryThinking ? OPENAI_THINKING_BASE_LEVELS : [] };
   }
   const canSynthesizeUltra = thinkingLevelMap?.max !== null;
-  if (OPENAI_GPT_6_MODEL_IDS.some(id => id === modelId)) {
-    const fallbackEfforts = thinkingMetadata[modelId as keyof typeof thinkingMetadata] ?? [];
+  const knownCodexEfforts = resolveOpenAICodexReasoningEfforts(modelId, undefined);
+  const fallbackEfforts = thinkingMetadata[modelId as keyof typeof thinkingMetadata];
+  if (
+    OPENAI_GPT_6_MODEL_IDS.some(id => id === modelId) ||
+    ((agentRuntime !== 'codex' || knownCodexEfforts === undefined) &&
+      (codexEfforts ?? fallbackEfforts) !== undefined)
+  ) {
     // Native Codex owns its effort picker even when the subscription API accepts none.
     const efforts =
       codexEfforts ??
       (agentRuntime === 'codex'
-        ? fallbackEfforts.filter(effort => effort !== 'none')
-        : fallbackEfforts);
+        ? (fallbackEfforts ?? []).filter(effort => effort !== 'none')
+        : (fallbackEfforts ?? []));
     // Ultra is runtime orchestration; the Platform's scalar effort list stops at Max.
     // Preserve narrower account capabilities while exposing the supported runtime mode.
     const supportsUltra =
@@ -123,7 +128,6 @@ export function resolveUnifiedOpenAIThinkingProfile(
     api === undefined || api === 'openai-chatgpt-responses'
       ? resolveOpenAICodexReasoningEfforts(modelId, codexEfforts)
       : undefined;
-  const knownCodexEfforts = resolveOpenAICodexReasoningEfforts(modelId, undefined);
   const isGpt56Variant = knownCodexEfforts !== undefined;
   const codexSupportsMax = (resolvedCodexEfforts ?? knownCodexEfforts)?.includes('max');
   const supportsMax =

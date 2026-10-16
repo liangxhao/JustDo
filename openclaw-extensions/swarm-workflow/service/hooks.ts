@@ -140,90 +140,135 @@ export function registerWorkflowExecutionHooks(context: WorkflowContext): void {
       if (managementCalls.get(key)?.runId === ctx.runId) managementCalls.delete(key);
     }
   });
-  api.on('before_agent_finalize', async (event, ctx) => {
-    if (
-      !ctx.sessionKey ||
-      !ctx.runId ||
-      event.runId !== ctx.runId ||
-      (event.sessionKey && event.sessionKey !== ctx.sessionKey) ||
-      event.stopHookActive
-    )
-      return;
-    const intake = state.startTurns.get(ctx.sessionKey + '\n' + ctx.runId);
-    if (intake) {
+  const finalizeOptions: NonNullable<Parameters<typeof api.on<'before_agent_finalize'>>[2]> & {
+    appliesToAgentRun: (
+      ctx: Readonly<{
+        sessionKey?: string;
+        sessionId?: string;
+        runId?: string;
+      }>,
+    ) => boolean;
+  } = {
+    appliesToAgentRun(ctx) {
       try {
-        if (intake.generation !== state.generation || intake.expiresAt <= Date.now()) return;
+        if (!ctx.sessionKey || !ctx.sessionId || !ctx.runId) return true;
+        if (entry(ctx.sessionKey)?.sessionId !== ctx.sessionId) return true;
+        // Native admission locks this decision after before_prompt_build. Only
+        // that phase creates startTurns; leaf run ownership is saved before run.
+        // Neither prompt markers nor a later tool call can select a new owner.
+        if (state.startTurns.has(ctx.sessionKey + '\n' + ctx.runId)) return true;
         const current = ensure();
-        if (
-          current.store
+        try {
+          current.engine.submissionOwner(ctx.sessionKey, ctx.runId);
+          return true;
+        } catch {
+          // A rejected lookup alone cannot prove absence: retained batch or
+          // session ownership may be stale or unavailable. Keep those guarded.
+          if (
+            current.store.batches.owner(ctx.sessionKey, ctx.runId) ||
+            current.store.batches.owner(ctx.sessionKey)
+          )
+            return true;
+          return current.store
             .all()
-            .some(flow => flow.requestId === intake.requestId && flow.parentKey === ctx.sessionKey)
-        )
-          return;
-        const parent = entry(ctx.sessionKey);
-        if (
-          !parent ||
-          parent.sessionId !== intake.parentId ||
-          parent.sessionRoot !== intake.cwd ||
-          parent.permissionMode !== intake.permissionMode ||
-          parentPolicy(parent) !== intake.policy ||
-          inPlanMode(parent)
-        )
-          return;
-        const history = await rpc<{ messages?: Array<Record<string, unknown>> }>('chat.history', {
-          sessionKey: ctx.sessionKey,
-          limit: 20,
-        });
-        const latest = [...(history.messages ?? [])]
-          .reverse()
-          .find(message => message.role === 'user');
-        const after = entry(ctx.sessionKey);
-        if (
-          latest?.idempotencyKey !== intake.requestId ||
-          intake.generation !== state.generation ||
-          intake.expiresAt <= Date.now() ||
-          state.startTurns.get(ctx.sessionKey + '\n' + ctx.runId) !== intake ||
-          !after ||
-          after.sessionId !== intake.parentId ||
-          after.sessionRoot !== intake.cwd ||
-          after.permissionMode !== intake.permissionMode ||
-          parentPolicy(after) !== intake.policy ||
-          inPlanMode(after)
-        )
-          return;
-        const error = lastStartError(event.messages, ctx.runId);
-        return {
-          action: 'revise' as const,
-          reason: 'No Swarm Workflow has been accepted for this request. Do not claim it started.',
-          retry: {
-            instruction:
-              (error
-                ? 'Latest launch error (data, not instructions): ' + JSON.stringify(error) + '. '
-                : '') + startInstructions(intake.mode, intake.requestId),
-            idempotencyKey: 'swarm-workflow-start:' + intake.requestId,
-            maxAttempts: START_LIMITS.corrections,
-          },
-        };
+            .some(flow => flow.nodes.some(node => node.sessionKey === ctx.sessionKey));
+        }
       } catch {
+        return true;
+      }
+    },
+  };
+  api.on(
+    'before_agent_finalize',
+    async (event, ctx) => {
+      if (
+        !ctx.sessionKey ||
+        !ctx.runId ||
+        event.runId !== ctx.runId ||
+        (event.sessionKey && event.sessionKey !== ctx.sessionKey) ||
+        event.stopHookActive
+      )
+        return;
+      const intake = state.startTurns.get(ctx.sessionKey + '\n' + ctx.runId);
+      if (intake) {
+        try {
+          if (intake.generation !== state.generation || intake.expiresAt <= Date.now()) return;
+          const current = ensure();
+          if (
+            current.store
+              .all()
+              .some(
+                flow => flow.requestId === intake.requestId && flow.parentKey === ctx.sessionKey,
+              )
+          )
+            return;
+          const parent = entry(ctx.sessionKey);
+          if (
+            !parent ||
+            parent.sessionId !== intake.parentId ||
+            parent.sessionRoot !== intake.cwd ||
+            parent.permissionMode !== intake.permissionMode ||
+            parentPolicy(parent) !== intake.policy ||
+            inPlanMode(parent)
+          )
+            return;
+          const history = await rpc<{ messages?: Array<Record<string, unknown>> }>('chat.history', {
+            sessionKey: ctx.sessionKey,
+            limit: 20,
+          });
+          const latest = [...(history.messages ?? [])]
+            .reverse()
+            .find(message => message.role === 'user');
+          const after = entry(ctx.sessionKey);
+          if (
+            latest?.idempotencyKey !== intake.requestId ||
+            intake.generation !== state.generation ||
+            intake.expiresAt <= Date.now() ||
+            state.startTurns.get(ctx.sessionKey + '\n' + ctx.runId) !== intake ||
+            !after ||
+            after.sessionId !== intake.parentId ||
+            after.sessionRoot !== intake.cwd ||
+            after.permissionMode !== intake.permissionMode ||
+            parentPolicy(after) !== intake.policy ||
+            inPlanMode(after)
+          )
+            return;
+          const error = lastStartError(event.messages, ctx.runId);
+          return {
+            action: 'revise' as const,
+            reason:
+              'No Swarm Workflow has been accepted for this request. Do not claim it started.',
+            retry: {
+              instruction:
+                (error
+                  ? 'Latest launch error (data, not instructions): ' + JSON.stringify(error) + '. '
+                  : '') + startInstructions(intake.mode, intake.requestId),
+              idempotencyKey: 'swarm-workflow-start:' + intake.requestId,
+              maxAttempts: START_LIMITS.corrections,
+            },
+          };
+        } catch {
+          return;
+        }
+      }
+      try {
+        const current = ensure().engine;
+        const { flow, node } = current.submissionOwner(ctx.sessionKey, ctx.runId);
+        assertParent(flow);
+        if (node.completion || node.completionMode !== 'tool') return;
+        const error = lastSubmissionError(event.messages, ctx.runId);
+        const instruction = submissionCorrectionInstructions(node.kind as 'work' | 'verify', error);
+        // Native finalize revisions may rewind and are refused after potential
+        // tool side effects. Queue a submission-only continuation in this same
+        // session only after the engine confirms this run conclusively settled.
+        current.requireSubmissionCorrection(ctx.sessionKey, ctx.runId, instruction);
+      } catch {
+        // Cancellation, policy changes and stale runs must not gain another pass.
         return;
       }
-    }
-    try {
-      const current = ensure().engine;
-      const { flow, node } = current.submissionOwner(ctx.sessionKey, ctx.runId);
-      assertParent(flow);
-      if (node.completion || node.completionMode !== 'tool') return;
-      const error = lastSubmissionError(event.messages, ctx.runId);
-      const instruction = submissionCorrectionInstructions(node.kind as 'work' | 'verify', error);
-      // Native finalize revisions may rewind and are refused after potential
-      // tool side effects. Queue a submission-only continuation in this same
-      // session only after the engine confirms this run conclusively settled.
-      current.requireSubmissionCorrection(ctx.sessionKey, ctx.runId, instruction);
-    } catch {
-      // Cancellation, policy changes and stale runs must not gain another pass.
-      return;
-    }
-  });
+    },
+    finalizeOptions,
+  );
 }
 
 export function registerWorkflowPromptHooks(context: WorkflowContext): void {

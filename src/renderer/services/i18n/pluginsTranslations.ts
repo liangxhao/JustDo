@@ -177,7 +177,7 @@ export const pluginsTranslations = {
     mcpDetailStatus: '启用状态',
     mcpExtensionToggleUnavailable:
       '由扩展「{name}」提供；所属扩展未启用、连接不可用或应用管理规则限制了此处的切换',
-    'mcpExtensionMutation.invalid': 'MCP 参数无效或未通过 OpenClaw 原生校验。',
+    'mcpExtensionMutation.invalid': 'MCP 参数无效或未通过配置校验。',
     'mcpExtensionMutation.forbidden': '此 MCP 当前不允许修改，请检查所属扩展的状态和管理来源。',
     'mcpExtensionMutation.conflict': 'MCP 配置已发生变化，已保留现有配置，请重新检查后再操作。',
     'mcpExtensionMutation.unavailable':
@@ -565,7 +565,7 @@ export const pluginsTranslations = {
     mcpDetailStatus: 'Enabled state',
     mcpExtensionToggleUnavailable:
       'Provided by "{name}"; its parent extension is disabled, the connection is unavailable, or application policy prevents switching here',
-    'mcpExtensionMutation.invalid': 'Invalid MCP parameters or OpenClaw native validation failed.',
+    'mcpExtensionMutation.invalid': 'Invalid MCP parameters or configuration validation failed.',
     'mcpExtensionMutation.forbidden':
       'Changes to this MCP are currently restricted. Check its parent extension and management source.',
     'mcpExtensionMutation.conflict':

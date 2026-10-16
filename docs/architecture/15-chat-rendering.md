@@ -317,6 +317,15 @@ optimistic tail 在原生接收前显示用户输入；history 接管后移除�
 
 ## 6. 终态、停止与迟到 admission
 
+普通会话的正文流由原生 Gateway 发布。10.4 的轮末修订保护按
+[执行引擎的 attempt 准入](05-agent-engine.md#轮末修订与流式交付)冻结适用钩子；
+非所属会话不再因全局注册的 Team/Workflow 钩子等待完整回复。Renderer 不通过缓存、
+轮询历史或模拟分字补流。所属运行仍在修订决策前隐藏草稿；停止和结算分别遵循下述边界。
+
+首次 `chat.startup` 和后续历史响应由原生 canonical 准备控制。Windows 路径别名与
+pending frame 的发布修复见同一执行引擎文档；Renderer 不重复提交请求来推动准备，
+也不把尚未完成读取时提前收到的响应视为另一次执行或新的授权。
+
 ```mermaid
 stateDiagram-v2
   [*] --> Running

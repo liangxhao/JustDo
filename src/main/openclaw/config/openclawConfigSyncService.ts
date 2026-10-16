@@ -7,9 +7,9 @@ import { ManagedDirectoryRuntimeStopAbortedError } from '../../core/filesystem/m
 import type { CoworkStore } from '../../data/coworkStore';
 import { enqueueSessionModelOperation } from '../../engine/gateway/sessionModelOperations';
 import {
-  parseModelReferenceV2026_9_8,
-  parseSessionsListResultV2026_9_8,
-} from '../../engine/openclaw/wire/v2026_9_8';
+  parseModelReferenceV2026_10_4,
+  parseSessionsListResultV2026_10_4,
+} from '../../engine/openclaw/wire/v2026_10_4';
 import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
@@ -813,10 +813,10 @@ export class OpenClawConfigSyncService {
   }
 
   private async syncManagedSessionModelsViaGateway(snapshot: ConfigSnapshot): Promise<void> {
-    const defaults = parseModelReferenceV2026_9_8(snapshot.config?.agents?.defaults?.model);
+    const defaults = parseModelReferenceV2026_10_4(snapshot.config?.agents?.defaults?.model);
     const targets = new Map<string, NonNullable<typeof defaults>>();
     for (const [agentId, agent] of Object.entries(snapshot.config?.agents?.entries ?? {})) {
-      const target = parseModelReferenceV2026_9_8(agent.model) ?? defaults;
+      const target = parseModelReferenceV2026_10_4(agent.model) ?? defaults;
       if (target) targets.set(agentId, target);
     }
     if (defaults) targets.set('main', targets.get('main') ?? defaults);
@@ -842,7 +842,7 @@ export class OpenClawConfigSyncService {
     const seenOffsets = new Set<number>();
     while (!seenOffsets.has(offset)) {
       seenOffsets.add(offset);
-      const page = parseSessionsListResultV2026_9_8(
+      const page = parseSessionsListResultV2026_10_4(
         await this.deps.requestGateway('sessions.list', { limit, offset }),
       );
       for (const session of page.sessions) {

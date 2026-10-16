@@ -6,9 +6,9 @@ const {
   beginRuntimePatchPhase,
   endRuntimePatchPhase,
   readRuntimeTextFile,
-} = require('../patches/v2026.9.8/_patch-utils.js');
+} = require('../patches/v2026.10.4/_patch-utils.js');
 
-const TARGET_VERSION = '2026.9.8';
+const TARGET_VERSION = '2026.10.4';
 
 function walkJavaScriptFiles(dir, output = []) {
   if (!fs.existsSync(dir)) return output;
@@ -38,6 +38,24 @@ function uniqueEvidence(...groups) {
   return [...new Set(groups.flat())];
 }
 
+// 10.4 publishes provider transports in the separately versioned @openclaw/ai
+// dependency. Check its installed bytes before any integration source writes.
+function verifyNativeProviderTransportContracts(runtimeDir) {
+  const root = path.join(runtimeDir, 'node_modules', '@openclaw', 'ai');
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  if (pkg.name !== '@openclaw/ai' || pkg.version !== TARGET_VERSION)
+    throw new Error(`Expected @openclaw/ai@${TARGET_VERSION}`);
+  return findFileWithAll(walkJavaScriptFiles(path.join(root, 'dist')), [
+    'function finalizeOpenAICompletionsToolCalls(',
+    'options.allowSilentToolCallPromotion !== false',
+    'candidate.text.trim().length > 0',
+    'output.stopReason = "toolUse"',
+    'output.stopReason = "error"',
+    'Provider returned an incomplete or malformed tool call',
+    'finalizeTerminalToolCallArguments(',
+  ], 'OpenAI silent-only promotion and malformed tool-call rejection in @openclaw/ai');
+}
+
 // Stop no longer queries task or approval inventories in the application.
 // Keep its native dependencies explicit at the pristine artifact boundary.
 // These shape checks complement behavior tests; they are not execution proofs.
@@ -49,7 +67,7 @@ function verifyNativeSessionStopContracts(runtimeDir) {
       fragments: [
         '"sessions.abort":',
         'if (clearQueued && canonicalKey !== "global")',
-        'clearSessionQueues(queueKeys)',
+        'prepareSessionFollowupCleanup(',
         '!requestedRunId ? { cascadeDescendants: true }',
       ],
     },
@@ -59,7 +77,7 @@ function verifyNativeSessionStopContracts(runtimeDir) {
       fragments: [
         'if (params.cascadeDescendants && plan.canCascade)',
         'descendants = await abortControlledSubagents({',
-        'result = plan.abort()',
+        'beforeKill: () => {', 'plan.abort();',
         'descendant cancellation was incomplete',
       ],
     },
@@ -147,6 +165,8 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
         `${String(pkg.name)}@${String(pkg.version)}`,
     );
   }
+  if (pkg.dependencies?.['@openclaw/ai'] !== TARGET_VERSION)
+    throw new Error(`Pristine OpenClaw must pin @openclaw/ai@${TARGET_VERSION}`);
   for (const forbidden of ['runtime-patch-manifest.json', 'runtime-build-info.json']) {
     if (fs.existsSync(path.join(runtimeDir, forbidden))) {
       throw new Error(`Pristine contract audit rejected prebuilt artifact containing ${forbidden}`);
@@ -284,15 +304,30 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
           'native safeguard compaction with staged summaries',
         ),
       ),
+      'native-peer-writer-scope': uniqueEvidence(
+        findFileWithAll(files, [
+          'const runInCallerContext = AsyncLocalStorage.snapshot()',
+          'runInCallerContext(() => callAgentToolGatewayRequestBound(',
+        ], 'caller context restored before native in-process dispatch'),
+        findFileWithAll(files, [
+          'method === "agent" ? await runWithoutOwnedSessionTranscriptWrites(',
+          'runOutsideOperatorToolGatewayAuthority(() => run(resolved))',
+          'captured.authority.assertCurrent()',
+          'releaseOperatorAuthority?.()',
+        ], 'agent dispatch detaches the writer after capturing and checking authority'),
+        findFileWithAll(files, [
+          'function runWithoutOwnedSessionTranscriptWrites(run)',
+          'ownedTranscriptWriteContext.exit(() => runWithCliHistoryWriter(void 0, run))',
+        ], 'native detach clears transcript and CLI-history scope together'),
+      ),
       'openai-visible-stop-tool-safety': findFileWithAll(
         files,
         [
-          'allowSilentToolCallPromotion',
-          'Provider returned an incomplete or malformed tool call',
-          'stopReason=`toolUse`',
-          'stopReason=`error`',
+          'wrapStreamFnSanitizeMalformedToolCalls(',
+          'wrapStreamFnPromoteStandaloneTextToolCalls(',
+          'wrapStreamFnHandleSensitiveStopReason(',
         ],
-        'OpenAI-compatible stop/tool-call promotion is silent-only and rejects malformed calls',
+        'native stream sanitation; pinned @openclaw/ai transport is verified after dependency installation',
       ),
     };
 
@@ -318,4 +353,4 @@ if (require.main === module) {
   );
 }
 
-module.exports = { verifyPristineOpenClawContracts, verifyNativeSessionStopContracts };
+module.exports = { verifyPristineOpenClawContracts, verifyNativeSessionStopContracts, verifyNativeProviderTransportContracts };

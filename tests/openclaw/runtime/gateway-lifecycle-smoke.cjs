@@ -53,6 +53,7 @@ const { buildOpenClawCompileCacheEnvironment, GATEWAY_READY_MESSAGE } = require(
   let client;
   let output = '';
   let helloCount = 0;
+  const connectionEvents = [];
   async function waitFor(predicate, label, timeout = 60000) {
     const start = Date.now();
     while (!predicate()) {
@@ -85,6 +86,9 @@ const { buildOpenClawCompileCacheEnvironment, GATEWAY_READY_MESSAGE } = require(
     client = new GatewayClient({
       url: `ws://127.0.0.1:${port}`, token, clientName: 'gateway-client', mode: 'backend',
       scopes: ['operator.admin'], onHelloOk: () => { helloCount++; },
+      onClose: (code, reason) => connectionEvents.push({ type: 'close', code, reason }),
+      onConnectError: error => connectionEvents.push({ type: 'error', message: error.message }),
+      onReconnectPaused: info => connectionEvents.push({ type: 'paused', ...info }),
     });
     client.start();
     await waitFor(() => helloCount > count, 'startup handshake');
@@ -134,6 +138,7 @@ const { buildOpenClawCompileCacheEnvironment, GATEWAY_READY_MESSAGE } = require(
       hotReloadSameProcess: true, hotRestartSameProcess: true, coldRestartNewProcess: true,
       stateRetained: true, upgradedExistingState: Boolean(existingState), state }));
   } finally {
+    console.log(JSON.stringify({ helloCount, connectionEvents }));
     clearTimeout(deadline);
     await stop();
     fs.writeFileSync(path.join(state, 'smoke.log'), output.replaceAll(token, '<test-token>'));

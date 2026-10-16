@@ -11,39 +11,33 @@ const BROWSER_EXTENSION_ID = 'jboajogplelmaahjbomgflnfngpolgcb';
 const BROWSER_EXTENSION_PUBLIC_KEY =
   'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAskQFUZFtJ36I7FXfGPJj+twgXrJgQDKju1ZFrXBQo+UgapYI3c+kcVgBbq+nNbivgYHHV30B/5iI7AxJcJSa1xxa5h34AzKrmg5CoFjdykj3qWZUyDLtueEiJVIKSKLZTdpphy6yqE8IIu7b5l5ZhRwFBio17S+Fo+M/oRzearW+qxYWioIrdF4qRu7KSdKYSHE1grVLI1PCl0g04rY22ITyuBLup13NlJM8w2I20O+Alk4Pe/uO2nxBnaKwB+LrDgQ7U8P6/AO5D/hN+xNVQLgS/gMhEf+W7WpQXjpCadi8xOdpb5YlKXfQtcg9jvDzbSvqNaWIqKlPup54R8hR0wIDAQAB';
 const LOCKED_OPENCLAW_FILES = {
-  'THIRD_PARTY_NOTICES.txt': 'a8d4796897428528efc1baf2c2052ca5c8a4e728a204b29aaa43559f6c3c6897',
-  'background.js': 'd6cdc0e12cc4fd84404603c83ccac14353a1931192d06d8cea0be4f1324056f5',
-  'icons/icon128.png': 'a745c50e0ecc40e1b0ef9c0e841ed7c968078c218a5ef15818ba661c7310a04d',
-  'icons/icon16.png': 'f374c44036f3ac0a30b9e5f99d6e902548616f7b11886bef18d20b8b8ce084a0',
-  'icons/icon32.png': '092aea24a5edfc1907cf7964a5aaef7dbc5ae3b6c1fc581a7b4987f74a068268',
-  'icons/icon48.png': '02619a3803614f185ccee73b7860dc8123d7074ce81f929125bc63bd3737d6d4',
-  'manifest.json': 'dcdea285b73e8541b88ad313b402a8a1752de3859a67531789073324d735c1da',
-  'modules/native-bootstrap.js': '279029948909215bd7caebe3b2e43862140d2ff5b5459e1c111b07831f93aa2f',
-  'modules/popup-background.js': '0048fa2c899c8299b5a151c59d919a35bf15e54315e72d4a670f594fa5dddbba',
-  'modules/relay-auth-v2-crypto.js':
-    '207b3bd5f4cb376cd83ab4f6b4284e531a1aff7e0f737d844534ede5fd37ece1',
-  'modules/relay-auth-v2.js': '828e14b59e7b964c16959a5976f1d16bda0a1543bd3b1688ebb71970e8899feb',
-  'modules/relay-command-handler.js':
-    'cbc0ccef42e8aa2954fe2bc7210bed222a24a126c8ca054b5595ec66cfbbcb92',
-  'modules/relay-connection.js': '2b561d2d0381a294ef424513aad040f08225bdea455b7cb9a85e5bb9d1e5795e',
-  'modules/relay-core.js': 'c81b61a3d8b40f089be2eba1ffda735483373c341832076c2e2dcde47c77d7d6',
-  'modules/relay-debugger.js': '3ba28970eb7578f8c724ad4f737d12252849bead2ea49fb9cd6afb36627817c0',
-  'modules/relay-tab-groups.js': '99765b42aca26dc403321f9e19ffcf32e1e8f5d9946f5e54a57fa15f31052e89',
-  'modules/strict-json.js': '8d891740325942d54788d177ddad05a9813c2149c92dd9bd4b3bbb6348bff43c',
-  'modules/tab-access-command-scope.js':
-    '0ec625b939845f1f35c33695a1117dca54b670e0db10f2350b4f9ceddd1aef61',
-  'modules/tab-access-events.js':
-    'b0e572d8c2731753bcd21654741d2bff3d0eaafa98450252e3bd3d74a9d939c4',
-  'modules/tab-access.js': '74f7c095293e27e5e757dc6c55a272dacbc4b5c2d6368d3733ac7e8d7c5f8068',
-  'modules/tab-document-provenance.js':
-    'ef9b98cae4d8ab536a565def6bf315774ee43806f07582f187ca9cad7a40bb12',
-  'modules/tab-eligibility.js': '2d0f27e514014ed5e113510d35db6a1c5fc702783c3fe49706dd019c975a7e21',
-  'modules/tab-group-revocations.js':
-    '341b9489b8188d734fd19e622b7fb1f1844e4ffc6dcf119fbc34107bdc978936',
-  'options.html': '39a2f3e94151c0eeca125412e0b2dee951edd37ab39a931242ce439967037ca5',
-  'options.js': '91f3f74b307c834ad3537d87ea81a44350228bf4ac0c069591c7219dbc02b763',
-  'popup.html': 'aeece4f271f407d4604cb8b0b0ea8223decb4a829f2cb74291f3357ed7fea321',
-  'popup.js': '4900edd5e7e1995a3cf6bfcaf55428d05fa0385a47c0b2154a69db7e8f460c81',
+  "THIRD_PARTY_NOTICES.txt": "716265c106302099486c82e3b53d1af260eccca75241d8ee44ed4a2357e3d1fe",
+  "background.js": "8176753caa1dc659fa021bd71d0320e6dc045300e3ec2f9e46b61bb54d2679af",
+  "icons/icon128.png": "a745c50e0ecc40e1b0ef9c0e841ed7c968078c218a5ef15818ba661c7310a04d",
+  "icons/icon16.png": "f374c44036f3ac0a30b9e5f99d6e902548616f7b11886bef18d20b8b8ce084a0",
+  "icons/icon32.png": "092aea24a5edfc1907cf7964a5aaef7dbc5ae3b6c1fc581a7b4987f74a068268",
+  "icons/icon48.png": "02619a3803614f185ccee73b7860dc8123d7074ce81f929125bc63bd3737d6d4",
+  "manifest.json": "dcdea285b73e8541b88ad313b402a8a1752de3859a67531789073324d735c1da",
+  "modules/native-bootstrap.js": "b3e23863cd7969a265f08a63ee2e8893ab1b6fc9ae82041cbf64da38f2be5c82",
+  "modules/popup-background.js": "0048fa2c899c8299b5a151c59d919a35bf15e54315e72d4a670f594fa5dddbba",
+  "modules/relay-auth-v2-crypto.js": "48337df8f3885dbd65900345b856150b55efd04b80841a1181603fc5d40b7344",
+  "modules/relay-auth-v2.js": "1f227e39840d01f280cb8dea84a3053ccfbc96b9282d585ef6cd1b226d91a534",
+  "modules/relay-command-handler.js": "cbc0ccef42e8aa2954fe2bc7210bed222a24a126c8ca054b5595ec66cfbbcb92",
+  "modules/relay-connection.js": "2b561d2d0381a294ef424513aad040f08225bdea455b7cb9a85e5bb9d1e5795e",
+  "modules/relay-core.js": "c81b61a3d8b40f089be2eba1ffda735483373c341832076c2e2dcde47c77d7d6",
+  "modules/relay-debugger.js": "3ba28970eb7578f8c724ad4f737d12252849bead2ea49fb9cd6afb36627817c0",
+  "modules/relay-tab-groups.js": "99765b42aca26dc403321f9e19ffcf32e1e8f5d9946f5e54a57fa15f31052e89",
+  "modules/strict-json.js": "7efe5799f9650d7e32273e28d2e3acccd062ede3f05741821474aac86ac197a7",
+  "modules/tab-access-command-scope.js": "0ec625b939845f1f35c33695a1117dca54b670e0db10f2350b4f9ceddd1aef61",
+  "modules/tab-access-events.js": "b0e572d8c2731753bcd21654741d2bff3d0eaafa98450252e3bd3d74a9d939c4",
+  "modules/tab-access.js": "74f7c095293e27e5e757dc6c55a272dacbc4b5c2d6368d3733ac7e8d7c5f8068",
+  "modules/tab-document-provenance.js": "ef9b98cae4d8ab536a565def6bf315774ee43806f07582f187ca9cad7a40bb12",
+  "modules/tab-eligibility.js": "2d0f27e514014ed5e113510d35db6a1c5fc702783c3fe49706dd019c975a7e21",
+  "modules/tab-group-revocations.js": "341b9489b8188d734fd19e622b7fb1f1844e4ffc6dcf119fbc34107bdc978936",
+  "options.html": "39a2f3e94151c0eeca125412e0b2dee951edd37ab39a931242ce439967037ca5",
+  "options.js": "91f3f74b307c834ad3537d87ea81a44350228bf4ac0c069591c7219dbc02b763",
+  "popup.html": "aeece4f271f407d4604cb8b0b0ea8223decb4a829f2cb74291f3357ed7fea321",
+  "popup.js": "4900edd5e7e1995a3cf6bfcaf55428d05fa0385a47c0b2154a69db7e8f460c81"
 };
 const CONVERSATION_OVERLAY_FILES = [
   'THIRD_PARTY_NOTICES.append.txt',

@@ -1,6 +1,6 @@
 # 原生 Worktree 与会话接入
 
-应用通过 OpenClaw 的托管接口创建和管理 Git worktree。分支、检出、快照、恢复与清理继续由原生运行时拥有；应用只保存产品会话映射、执行目录和入口偏好，不实现第二套 Git 生命周期。当前锁定运行时为 2026.9.8，未完成的真实 Gateway/模型验收见[验收清单](../../plans/worktree-integration-plan.md)。
+应用通过 OpenClaw 的托管接口创建和管理 Git worktree。分支、检出、快照、恢复与清理继续由原生运行时拥有；应用只保存产品会话映射、执行目录和入口偏好，不实现第二套 Git 生命周期。当前锁定运行时为 2026.10.4，未完成的真实 Gateway/模型验收见[验收清单](../../plans/worktree-integration-plan.md)。
 
 ## 用户入口
 

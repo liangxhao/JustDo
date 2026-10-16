@@ -153,3 +153,7 @@ WebContentsView 迁移需单独验证 DPI/bounds、焦点、输入、实时标�
 ## 2026.9.8 上游基线复核
 
 9.8 升级复核发现原生扩展基线曾遗漏更新，已刷新相关 JavaScript 并补入 strict-json 认证模块；因此不能继续沿用早期“配对与中继源码无变化”的判断。原生基线按锁定版本替换，侧栏会话 overlay 仍独立构建。差异与验证证据见[升级说明](../../openclaw-upgrades/v2026.9.8/v2026.9.8.md#关键修复与必须保留的约束)与[验收摘要](../../openclaw-upgrades/v2026.9.8/validation.md)。上游 Lightpanda、云端桌面音频和多用户浏览器并未替代本软件四种浏览器模式。
+
+## 2026.10.4 上游基线复核
+
+当前原生基线取自锁定 tag 的 `extensions/browser/chrome-extension`；更新 background、native-bootstrap、relay-auth-v2/crypto 和 strict-json，并重新生成锁定 hash 与产品 overlay。沿用上述四模式和配对/中继权限边界；本次自动化和仍需真实 Chrome 验收的范围见[升级记录](../../openclaw-upgrades/v2026.10.4/README.md)，9.8 的人工通过不自动延续。

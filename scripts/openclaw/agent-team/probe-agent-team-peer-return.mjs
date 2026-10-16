@@ -56,7 +56,8 @@ for (const entry of readdirSync(path.join(runtimeSource, 'dist'), { withFileType
   const source = path.join(runtimeSource, 'dist', entry.name),
     target = path.join(runtime, 'dist', entry.name);
   if (entry.name === 'plugin-sdk') cpSync(source, target, { recursive: true });
-  else if (entry.isDirectory()) symlinkSync(source, target, 'junction');
+  // Native public-surface admission requires files to remain inside this root.
+  else if (entry.isDirectory()) cpSync(source, target, { recursive: true });
   else copyFileSync(source, target);
 }
 require('../../../src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs').ensureOpenClawGatewayBundleLauncher(
@@ -122,7 +123,7 @@ const model = createServer(async (request, response) => {
   const lastUser = messages.findLastIndex(
     item =>
       item.role === 'user' &&
-      !JSON.stringify(item.content).includes('<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>'),
+      /(?:WORKER_TASK|PEER_RESULT) \d+/.test(JSON.stringify(item.content)),
   );
   const turn = messages.slice(lastUser);
   const text = JSON.stringify(turn[0]?.content);
@@ -173,6 +174,7 @@ const port = listener.address().port;
 await new Promise(resolve => listener.close(resolve));
 const token = randomBytes(24).toString('hex');
 const cfg = {
+  logging: { file: path.join(state, 'native.log'), level: 'debug', consoleLevel: 'info' },
   gateway: { mode: 'local', bind: 'loopback', port, auth: { mode: 'token', token } },
   update: { checkOnStart: false, auto: { enabled: false } },
   agents: {

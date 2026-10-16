@@ -9,8 +9,6 @@ import { afterEach, expect, test } from 'vitest';
 const {
   createSharedSdkModulesPlugin,
 } = require('../../../scripts/openclaw/openclaw-shared-sdk-modules.cjs');
-const { transform: detachPeerDispatcher } =
-  require('../../../scripts/patches/v2026.9.8/039-peer-transcript-write-scope.cjs').__testing;
 const roots: string[] = [];
 afterEach(() => roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true })));
 
@@ -148,11 +146,13 @@ test('Gateway and separately loaded SDK share activation, rotation, revocation a
   );
   fs.writeFileSync(
     path.join(root, 'dist/peer-dispatch.js'),
-    detachPeerDispatcher(
       `import { AsyncLocalStorage } from 'node:async_hooks';
+    import { withoutWriter } from './transcript-write-context.js';
     const runBoundInProcessGatewayCall = run => run();
     const withInProcessAgentRuntimeIdentity = () => undefined;
-    const dispatchGatewayMethodInProcess = (method, params) => params.run();
+    // 10.4 separates writers in native server dispatch, after caller restoration.
+    const dispatchGatewayMethodInProcess = (method, params) => method === 'agent'
+      ? withoutWriter(() => params.run()) : params.run();
     async function callAgentToolGatewayRequestBound(request, resolver, identity, assertCaller, forceTransport = false, revalidate = true) {
       const signal = request.signal;
       const guard = request.sessionMutationCommitGuard;
@@ -166,9 +166,6 @@ test('Gateway and separately loaded SDK share activation, rotation, revocation a
       const snapshot = AsyncLocalStorage.snapshot();
       return request => snapshot(() => callAgentToolGatewayRequestBound(request, {}, {}, () => undefined));
     }`,
-      '<fixture>',
-      { module: './transcript-write-context.js', exportName: 'withoutWriter' },
-    ),
   );
   fs.writeFileSync(
     path.join(root, 'dist/gateway-context-binding-owner.js'),

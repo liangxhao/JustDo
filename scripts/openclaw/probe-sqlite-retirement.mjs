@@ -8,8 +8,8 @@ import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 
 const require = createRequire(import.meta.url);
-const { transform, CONTRACT } =
-  require('../patches/v2026.9.8/043-nonblocking-sqlite-retirement.cjs').__testing;
+const nativeOnly = process.argv.includes('--native-only');
+const CONTRACT = 'SQLITE_RETIREMENT_CHECKPOINT_V2026_10_4';
 const runtime = path.resolve(process.argv[2] ?? 'vendor/openclaw-runtime/current');
 const dist = path.join(runtime, 'dist');
 const file = readdirSync(dist).find(name => /^sqlite-wal-.*\.mjs$/.test(name));
@@ -19,13 +19,6 @@ const original = readFileSync(nativePath, 'utf8');
 const alias = original.match(/configureSqliteWalMaintenance as (\w+)/)?.[1];
 assert.ok(alias, 'native maintenance export required');
 const nativeRequire = createRequire(nativePath);
-const patched = transform(original, nativePath).replace(/from ("[^"\n]+")/g, (all, specifier) => {
-  const name = JSON.parse(specifier);
-  if (name.startsWith('node:')) return all;
-  const target = name.startsWith('.') ? path.resolve(dist, name) : nativeRequire.resolve(name);
-  return `from ${JSON.stringify(pathToFileURL(target).href)}`;
-});
-const patchedUrl = `data:text/javascript;base64,${Buffer.from(patched).toString('base64')}`;
 
 async function check(moduleUrl, expectBlockedWrite) {
   const state = mkdtempSync(path.join(os.tmpdir(), 'wal-retirement-probe-'));
@@ -51,6 +44,7 @@ async function check(moduleUrl, expectBlockedWrite) {
           const maintenance = module[workerData.alias](db, { busyTimeoutMs: 2000, checkpointIntervalMs: 0, databasePath: workerData.databasePath });
           parentPort.postMessage({ state: 'closing' });
           const start = Date.now();
+          await maintenance.stop();
           const checkpointComplete = maintenance.close();
           parentPort.postMessage({ state: 'closed', checkpointComplete, elapsedMs: Date.now() - start, busyTimeout: db.prepare('PRAGMA busy_timeout').get().timeout });
         } finally { db.close(); }
@@ -133,4 +127,15 @@ async function check(moduleUrl, expectBlockedWrite) {
 }
 
 if (!original.includes(CONTRACT)) await check(pathToFileURL(nativePath).href, true);
-await check(patchedUrl, false);
+if (!nativeOnly) {
+  const { transform } = require('../patches/v2026.10.4/025-nonblocking-sqlite-retirement.cjs').__testing;
+  const patched = transform(original, nativePath).replace(/from ("[^"\n]+")/g, (all, specifier) => {
+    const name = JSON.parse(specifier);
+    if (name.startsWith('node:')) return all;
+    const target = name.startsWith('.') ? path.resolve(dist, name) : nativeRequire.resolve(name);
+    return `from ${JSON.stringify(pathToFileURL(target).href)}`;
+  });
+  const patchedUrl = `data:text/javascript;base64,${Buffer.from(patched).toString('base64')}`;
+
+  await check(patchedUrl, false);
+}

@@ -5,7 +5,7 @@ import {
   type CoworkSubagentDetailTask,
 } from '../../../shared/cowork/subagentDetails';
 import type { GatewayClientLike } from '../gateway/types';
-import { parseSessionsListResultV2026_9_8 } from './wire/v2026_9_8';
+import { parseSessionsListResultV2026_10_4 } from './wire/v2026_10_4';
 
 export type GatewayRequestClient = Pick<GatewayClientLike, 'request'>;
 
@@ -153,7 +153,7 @@ const readPage = async (
   // children whose durable row still has spawnedBy. Read native rows and match
   // their explicit ancestry locally; do not infer membership or cache history.
   for (;;) {
-    const page = parseSessionsListResultV2026_9_8(
+    const page = parseSessionsListResultV2026_10_4(
       await client.request('sessions.list', { limit, offset, archived: 'all' }),
     );
     if (page.hasMore && (page.nextOffset == null || page.nextOffset <= offset)) {

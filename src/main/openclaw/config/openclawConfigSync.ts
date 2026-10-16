@@ -71,7 +71,7 @@ import {
   removeRetiredManagedToolDenyEntries,
   resolveManagedOpenClawTtsConfig,
   resolveOpenClawExecHost,
-  sanitizeOpenClawV2026_9_8Config,
+  sanitizeOpenClawV2026_10_4Config,
   verifyOpenClawConfigMatches,
   withMemorySearch,
 } from './openclawConfigBuilders';
@@ -125,7 +125,7 @@ export {
   removeUnavailableOpenClawPluginRegistrations,
   resolveManagedOpenClawTtsConfig,
   resolveOpenClawExecHost,
-  sanitizeOpenClawV2026_9_8Config,
+  sanitizeOpenClawV2026_10_4Config,
   verifyLoggedOutOpenClawConfig,
 } from './openclawConfigBuilders';
 
@@ -708,7 +708,7 @@ export class OpenClawConfigSync {
         error: 'Failed to prepare managed model provider credentials.',
       };
     }
-    const configToPersist = sanitizeOpenClawV2026_9_8Config(
+    const configToPersist = sanitizeOpenClawV2026_10_4Config(
       withComputerControlPolicy(preparedSecrets.config),
     );
     this.applyManagedRuntimeConfiguration(configToPersist);
@@ -1060,7 +1060,7 @@ export class OpenClawConfigSync {
       );
     }
     this.applyManagedRuntimeConfiguration(minimalConfig);
-    minimalConfig = sanitizeOpenClawV2026_9_8Config(withComputerControlPolicy(minimalConfig));
+    minimalConfig = sanitizeOpenClawV2026_10_4Config(withComputerControlPolicy(minimalConfig));
     const nextContent = `${JSON.stringify(minimalConfig, null, 2)}\n`;
     const buildMinimalSyncResult = (
       expectedConfig: Record<string, unknown>,
@@ -1112,7 +1112,7 @@ export class OpenClawConfigSync {
       try {
         const existing = previousConfig;
         if (isRecord(existing)) {
-          const canonicalExisting = sanitizeOpenClawV2026_9_8Config(existing);
+          const canonicalExisting = sanitizeOpenClawV2026_10_4Config(existing);
           const hasHookConfig = Object.keys(hookConfig).length > 0;
           const hasSubstantiveConfig =
             Boolean(isRecord(canonicalExisting.models) && canonicalExisting.models.providers) ||
@@ -1182,7 +1182,7 @@ export class OpenClawConfigSync {
                 existingConfig: canonicalExisting,
               }),
             );
-            const mergedConfig = sanitizeOpenClawV2026_9_8Config(
+            const mergedConfig = sanitizeOpenClawV2026_10_4Config(
               withMemorySearch(
                 {
                   ...canonicalExisting,

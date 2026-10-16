@@ -10,16 +10,16 @@ package.json、各依赖锁及 source lock 为准；下列版本是当前仓库�
 
 ## 1. 资源与校验入口
 
-| 资源                             | 当前来源/版本                                                     | 输入缓存与输出                                                       | 校验/准备入口                                                          |
-| -------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| 应用依赖、Electron/7zip/原生依赖 | package-lock.json；Node 版本由 .nvmrc 指定                        | npm/Electron 及各工具原生缓存 → node_modules 与目标安装包            | package.json、原生 ABI 包装及 Builder 资源检查                         |
-| OpenClaw                         | openclaw@2026.9.8，npm registry 精确元数据/tarball                | vendor/openclaw-runtime/<platform>，current 为选定开发产物           | scripts/patches/v2026.9.8/source-lock.json 与 pristine/freeze/manifest |
-| Windows MXC                      | @openclaw/mxc-sandbox@2026.9.8；SDK 0.8.0                         | vendor/openclaw-plugins/mxc → 目标 runtime dist/extensions/mxc       | package.json.openclaw.plugins、mxcNativeBinaries.json、插件构建补丁    |
-| 本地 OpenAI/ACPX 等扩展          | openclaw-extensions 的源码、独立 package-lock.json 与上游来源记录 | 完整本地源码组装 → 目标 runtime 预编译扩展                           | runtime recipe、setup/worker/依赖/裁剪验证                             |
-| Windows MinGit                   | 2.55.0.windows.3                                                  | resources/MinGit-2.55.0.3-64-bit.zip → resources/mingit              | setup-mingit.js 的 SHA-256、版本与必需文件                             |
-| Windows Python                   | 默认 CPython 3.12.10 x64 embeddable，依赖目标 cp312/win_amd64     | resources/python-win-runtime.zip 或显式本地包 → resources/python-win | setup-python-runtime.js、hashed requirements 与真实 import             |
-| 本地语音引擎                     | Sherpa ONNX 1.13.7 Windows x64                                    | resources/local-tts-cache → resources/local-tts/win-x64/runtime      | setup-local-tts.js 的 SHA-256、版本标记与必需 exe/DLL                  |
-| 语音模型                         | 下文锁定源包与许可证                                              | local-tts-cache → 本地发布源目录；用户模型另在 userData              | setup-local-tts.js、shared/speech 目录及模型 artifact 校验             |
+| 资源                             | 当前来源/版本                                                     | 输入缓存与输出                                                       | 校验/准备入口                                                           |
+| -------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| 应用依赖、Electron/7zip/原生依赖 | package-lock.json；Node 版本由 .nvmrc 指定                        | npm/Electron 及各工具原生缓存 → node_modules 与目标安装包            | package.json、原生 ABI 包装及 Builder 资源检查                          |
+| OpenClaw                         | openclaw@2026.10.4，npm registry 精确元数据/tarball               | vendor/openclaw-runtime/<platform>，current 为选定开发产物           | scripts/patches/v2026.10.4/source-lock.json 与 pristine/freeze/manifest |
+| Windows MXC                      | @openclaw/mxc-sandbox@2026.10.4；SDK 0.8.0                        | vendor/openclaw-plugins/mxc → 目标 runtime dist/extensions/mxc       | package.json.openclaw.plugins、mxcNativeBinaries.json、插件构建补丁     |
+| 本地 OpenAI/ACPX 等扩展          | openclaw-extensions 的源码、独立 package-lock.json 与上游来源记录 | 完整本地源码组装 → 目标 runtime 预编译扩展                           | runtime recipe、setup/worker/依赖/裁剪验证                              |
+| Windows MinGit                   | 2.55.0.windows.3                                                  | resources/MinGit-2.55.0.3-64-bit.zip → resources/mingit              | setup-mingit.js 的 SHA-256、版本与必需文件                              |
+| Windows Python                   | 默认 CPython 3.12.10 x64 embeddable，依赖目标 cp312/win_amd64     | resources/python-win-runtime.zip 或显式本地包 → resources/python-win | setup-python-runtime.js、hashed requirements 与真实 import              |
+| 本地语音引擎                     | Sherpa ONNX 1.13.7 Windows x64                                    | resources/local-tts-cache → resources/local-tts/win-x64/runtime      | setup-local-tts.js 的 SHA-256、版本标记与必需 exe/DLL                   |
+| 语音模型                         | 下文锁定源包与许可证                                              | local-tts-cache → 本地发布源目录；用户模型另在 userData              | setup-local-tts.js、shared/speech 目录及模型 artifact 校验              |
 
 npm 包应通过获准 registry/mirror 提供元数据、精确 tarball、全部传递及目标平台可选
 依赖，保持锁文件和 source lock 的 integrity。当前脚本没有「随便把 tgz 放进 vendor

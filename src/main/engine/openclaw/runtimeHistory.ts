@@ -11,9 +11,9 @@ import {
 } from './runtimeAdapterSupport';
 import { fetchNativePendingHistory } from './runtimePendingHistory';
 import {
-  parseChatHistoryCursorResultV2026_9_8,
-  parseChatHistoryResultV2026_9_8,
-} from './wire/v2026_9_8';
+  parseChatHistoryCursorResultV2026_10_4,
+  parseChatHistoryResultV2026_10_4,
+} from './wire/v2026_10_4';
 export interface RuntimeHistoryContext {
   readonly gatewayClient: GatewayClientLike | null;
   readonly sessionHistorySnapshots: Map<string, { messages: unknown[]; deltaCursor: string }>;
@@ -56,7 +56,7 @@ export async function fetchSessionHistoryByKey(
     const fetchHistory = async (key: string): Promise<unknown[]> => {
       const cached = options.forceFullSnapshot ? undefined : this.sessionHistorySnapshots.get(key);
       if (cached) {
-        const delta = parseChatHistoryCursorResultV2026_9_8(
+        const delta = parseChatHistoryCursorResultV2026_10_4(
           await client.request('chat.history', {
             sessionKey: key,
             cursor: cached.deltaCursor,
@@ -84,7 +84,7 @@ export async function fetchSessionHistoryByKey(
               limit: FULL_HISTORY_SYNC_LIMIT,
               ...(offset !== undefined ? { offset } : {}),
             });
-            const page = parseChatHistoryResultV2026_9_8(raw);
+            const page = parseChatHistoryResultV2026_10_4(raw);
             if (offset === undefined) deltaCursor = page.deltaCursor;
             if (page.totalMessages !== undefined) {
               if (snapshotTotalMessages === undefined) {
@@ -116,7 +116,7 @@ export async function fetchSessionHistoryByKey(
           // detects equal-sized reset/compaction/branch changes that a count
           // alone cannot, and catches appends that land after the first page.
           if (deltaCursor !== undefined) {
-            const delta = parseChatHistoryCursorResultV2026_9_8(
+            const delta = parseChatHistoryCursorResultV2026_10_4(
               await client.request('chat.history', {
                 sessionKey: key,
                 cursor: deltaCursor,

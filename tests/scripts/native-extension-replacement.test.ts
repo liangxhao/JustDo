@@ -22,20 +22,20 @@ test('replaces the entire native directory and compiles main, setup, policy, cat
   const target = path.join(runtime, 'dist/extensions/openai');
   fs.mkdirSync(source, { recursive: true });
   fs.mkdirSync(target, { recursive: true });
-  fs.writeFileSync(path.join(runtime, 'package.json'), JSON.stringify({ version: '2026.9.8' }));
+  fs.writeFileSync(path.join(runtime, 'package.json'), JSON.stringify({ version: '2026.10.4' }));
   fs.writeFileSync(
     path.join(target, 'native-only.js'),
     'throw Error("must not load upstream entry");',
   );
   fs.writeFileSync(
     path.join(source, 'upstream-source.json'),
-    JSON.stringify({ id: 'openai', version: '2026.9.8' }),
+    JSON.stringify({ id: 'openai', version: '2026.10.4' }),
   );
   fs.writeFileSync(
     path.join(source, 'package.json'),
     JSON.stringify({
       type: 'module',
-      version: '2026.9.8',
+      version: '2026.10.4',
       openclaw: {
         runtimeBundled: true,
         extensions: ['./index.ts'],

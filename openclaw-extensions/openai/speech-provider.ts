@@ -2,8 +2,8 @@ import { hasServiceBaseUrl, requireServiceBaseUrl } from './intranet-config.js';
 import { normalizeResolvedSecretInputString } from 'openclaw/plugin-sdk/secret-input';
 import type {
   SpeechDirectiveTokenParseContext,
+  SpeechDirectiveTokenParseResult,
   SpeechProviderConfig,
-  SpeechProviderOverrides,
   SpeechProviderPlugin,
   SpeechSynthesisRequest,
 } from 'openclaw/plugin-sdk/speech-core';
@@ -61,12 +61,8 @@ function normalizeOpenAISpeechResponseFormat(
 }
 
 function isGroqSpeechBaseUrl(baseUrl: string): boolean {
-  try {
-    const hostname = normalizeLowercaseStringOrEmpty(new URL(baseUrl).hostname);
-    return hostname === 'groq.com' || hostname.endsWith('.groq.com');
-  } catch {
-    return false;
-  }
+  const hostname = normalizeLowercaseStringOrEmpty(URL.parse(baseUrl)?.hostname);
+  return hostname === 'groq.com' || hostname.endsWith('.groq.com');
 }
 
 function resolveSpeechResponseFormat(
@@ -102,9 +98,7 @@ function normalizeOpenAISpeechSpeed(value: unknown, baseUrl?: string): number | 
   return speed >= 0.25 && speed <= 4 ? speed : undefined;
 }
 
-function normalizeOpenAIProviderConfig(
-  rawConfig: Record<string, unknown>,
-): OpenAITtsProviderConfig {
+function normalizeOpenAIProviderConfig(rawConfig: Record<string, unknown>) {
   const raw = resolveOpenAIProviderConfigRecord(rawConfig);
   const extraBody = readExtraBody(raw?.extraBody) ?? readExtraBody(raw?.extra_body);
   const baseUrl = normalizeOpenAITtsBaseUrl(normalizeOptionalString(raw?.baseUrl));
@@ -123,7 +117,7 @@ function normalizeOpenAIProviderConfig(
   };
 }
 
-function readOpenAIProviderConfig(config: SpeechProviderConfig): OpenAITtsProviderConfig {
+function readOpenAIProviderConfig(config: SpeechProviderConfig) {
   const normalized = normalizeOpenAIProviderConfig({});
   return {
     apiKey: normalizeOptionalString(config.apiKey) ?? normalized.apiKey,
@@ -142,11 +136,9 @@ function readOpenAIProviderConfig(config: SpeechProviderConfig): OpenAITtsProvid
   };
 }
 
-function parseDirectiveToken(ctx: SpeechDirectiveTokenParseContext): {
-  handled: boolean;
-  overrides?: SpeechProviderOverrides;
-  warnings?: string[];
-} {
+function parseDirectiveToken(
+  ctx: SpeechDirectiveTokenParseContext,
+): SpeechDirectiveTokenParseResult {
   const baseUrl = normalizeOptionalString(asOptionalRecord(ctx.providerConfig)?.baseUrl);
   switch (ctx.key) {
     case 'voice':

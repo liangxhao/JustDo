@@ -839,37 +839,72 @@ export function registerAgentTeamLaunchGuard(api: OpenClawPluginApi): void {
       }
     },
   });
-  api.on('before_agent_finalize', async (_event, ctx) => {
-    if (!managed(ctx.sessionKey)) return;
-    const launch = read(ctx.sessionKey).launch;
-    if (
-      !launch ||
-      !['pending', 'verified'].includes(launch.state) ||
-      ctx.runId !== launch.clientTurnId ||
-      ctx.sessionId !== launch.nativeSessionId
-    )
-      return;
-    try {
-      const result = (await rpc('revise', {
-        sessionKey: launch.sessionKey,
-        nativeSessionId: launch.nativeSessionId,
-        clientTurnId: launch.clientTurnId,
-        runId: ctx.runId,
-      })) as { revise?: boolean };
-      if (!result.revise) return;
-      const current = read(launch.sessionKey).launch;
-      if (!current || current.state !== 'verified' || !sameRequest(current, launch)) return;
-      return {
-        action: 'revise' as const,
-        reason: 'The explicitly requested Agent Team has not been started.',
-        retry: {
-          instruction: `Start the explicitly requested ${launch.mode === 'discussion' ? 'group discussion' : 'task collaboration'} using the enabled Agent Team tools. If it cannot be started, explain the blocker. Do not claim success without an accepted Team operation.`,
-          idempotencyKey: `agent-team-launch:${launch.clientTurnId}`,
-          maxAttempts: MAX_CORRECTIONS,
-        },
-      };
-    } catch {
-      return;
-    }
-  });
+  const finalizeOptions: NonNullable<Parameters<typeof api.on<'before_agent_finalize'>>[2]> & {
+    appliesToAgentRun: (ctx: Readonly<Identity>) => boolean;
+  } = {
+    appliesToAgentRun(ctx) {
+      try {
+        if (!ctx.sessionKey || !ctx.sessionId || !ctx.runId || retired) return true;
+        // Exclusion only removes this hook's delivery hold. It never grants
+        // tools or revision authority, which still use the exact live ledger.
+        const current = nativeEntry(ctx.sessionKey);
+        if (current?.sessionId !== ctx.sessionId) return true;
+        if (!managed(ctx.sessionKey)) return false;
+        const state = read(ctx.sessionKey);
+        if (state.raw === undefined || state.launch?.state === 'released') return false;
+        const launch = state.launch;
+        if (!launch || launch.owner !== OWNER) return true;
+        assertNativeIdentity(launch);
+        if (
+          launch.state === 'launched' &&
+          launch.wholeSettled?.runId === launch.clientTurnId &&
+          launch.wholeSettled?.nativeSessionId === launch.nativeSessionId &&
+          ctx.sessionId === launch.nativeSessionId &&
+          ctx.runId !== launch.clientTurnId
+        )
+          return false;
+        return true;
+      } catch {
+        // Missing, corrupt or uncertain admission keeps the native protection.
+        return true;
+      }
+    },
+  };
+  api.on(
+    'before_agent_finalize',
+    async (_event, ctx) => {
+      if (!managed(ctx.sessionKey)) return;
+      const launch = read(ctx.sessionKey).launch;
+      if (
+        !launch ||
+        !['pending', 'verified'].includes(launch.state) ||
+        ctx.runId !== launch.clientTurnId ||
+        ctx.sessionId !== launch.nativeSessionId
+      )
+        return;
+      try {
+        const result = (await rpc('revise', {
+          sessionKey: launch.sessionKey,
+          nativeSessionId: launch.nativeSessionId,
+          clientTurnId: launch.clientTurnId,
+          runId: ctx.runId,
+        })) as { revise?: boolean };
+        if (!result.revise) return;
+        const current = read(launch.sessionKey).launch;
+        if (!current || current.state !== 'verified' || !sameRequest(current, launch)) return;
+        return {
+          action: 'revise' as const,
+          reason: 'The explicitly requested Agent Team has not been started.',
+          retry: {
+            instruction: `Start the explicitly requested ${launch.mode === 'discussion' ? 'group discussion' : 'task collaboration'} using the enabled Agent Team tools. If it cannot be started, explain the blocker. Do not claim success without an accepted Team operation.`,
+            idempotencyKey: `agent-team-launch:${launch.clientTurnId}`,
+            maxAttempts: MAX_CORRECTIONS,
+          },
+        };
+      } catch {
+        return;
+      }
+    },
+    finalizeOptions,
+  );
 }

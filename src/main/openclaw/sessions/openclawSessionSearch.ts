@@ -5,9 +5,9 @@ import type {
 } from '../../../shared/cowork/sessionSearch';
 import type { CoworkStore } from '../../data/coworkStore';
 import {
-  type OpenClawSessionsSearchHitV2026_9_8,
-  parseSessionsSearchResultV2026_9_8,
-} from '../../engine/openclaw/wire/v2026_9_8';
+  type OpenClawSessionsSearchHitV2026_10_4,
+  parseSessionsSearchResultV2026_10_4,
+} from '../../engine/openclaw/wire/v2026_10_4';
 import { buildManagedSessionKey, isTeamDiscussionHoldingSessionKey } from './openclawSessionKeys';
 
 const SESSION_KEYS_PER_REQUEST = 200;
@@ -19,7 +19,7 @@ const MAX_CONCURRENT_REQUESTS = 4;
 type GatewayRequest = (method: string, params: unknown) => Promise<unknown>;
 
 interface SearchBatchResult {
-  hits: OpenClawSessionsSearchHitV2026_9_8[];
+  hits: OpenClawSessionsSearchHitV2026_10_4[];
   indexing: boolean;
   truncated: boolean;
   partial: boolean;
@@ -119,8 +119,8 @@ const combineSettledBatches = (
 };
 
 const isBetterHit = (
-  candidate: OpenClawSessionsSearchHitV2026_9_8,
-  current: OpenClawSessionsSearchHitV2026_9_8,
+  candidate: OpenClawSessionsSearchHitV2026_10_4,
+  current: OpenClawSessionsSearchHitV2026_10_4,
 ): boolean =>
   candidate.score > current.score ||
   (candidate.score === current.score && candidate.timestamp > current.timestamp);
@@ -194,7 +194,7 @@ export const searchCoworkSessionMessages = async ({
     }
     requestCount += 1;
 
-    const page = parseSessionsSearchResultV2026_9_8(
+    const page = parseSessionsSearchResultV2026_10_4(
       await limitedRequest(() =>
         requestGateway('sessions.search', {
           query: trimmedQuery,
@@ -253,7 +253,7 @@ export const searchCoworkSessionMessages = async ({
   }
 
   const combined = combineSettledBatches(await Promise.allSettled(initialBatches));
-  const bestHitBySessionId = new Map<string, OpenClawSessionsSearchHitV2026_9_8>();
+  const bestHitBySessionId = new Map<string, OpenClawSessionsSearchHitV2026_10_4>();
 
   for (const hit of combined.hits) {
     const localSessionId = localSessionIdByKey.get(hit.sessionKey);

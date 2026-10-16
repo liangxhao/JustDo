@@ -153,11 +153,12 @@ grant. It verifies repeated writer results start actual organizer executions and
 receive whole-run terminals under concurrent history/list reads. Run it with the
 Electron Node runtime as well as Node when investigating packaged behavior.
 
-These SQLite/peer-return probes currently target the prepared 9.8 runtime. Before
-using them to accept an upgraded runtime, adapt their native exports, lifecycle
-and SDK assumptions; the contention probe also imports the version-specific 043
-transformer. See the [2026.10.4 upgrade handoff](patches/v2026.9.8/README.md#upgrade-handoff-2026104)
-for required rewrites and assertions that must remain intact.
+The SQLite probes target 10.4: final maintenance stop is awaited, rollback uses
+backup-bound migration write receipts, and logical writes invalidate stale authority.
+The contention probe imports the current 025 transformer. See the
+[current patch inventory](patches/v2026.10.4/README.md) and
+[upgrade evidence](../docs/openclaw-upgrades/v2026.10.4/README.md) for executed
+Node/Electron cases and the peer-return validation scope.
 
 `node scripts/openclaw/agent-team/probe-agent-team-gateway.mjs <runtime-directory>` additionally
 exercises the production team extension with Main coordinators: model-created

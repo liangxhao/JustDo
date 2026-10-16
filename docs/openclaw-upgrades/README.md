@@ -2,7 +2,8 @@
 
 本目录按目标版本保存差异、产品接入决策、审查和当时的验证范围。记录只适用于对应版本与提交，不替代当前架构，也不是最新补丁清单。
 
+- [v2026.10.4 升级记录](v2026.10.4/README.md)：目标包、补丁与 SDK 适配，以及已验证和待人工验收的范围。
 - [v2026.9.8 升级与验收索引](v2026.9.8/README.md)：主要升级决策、关键修复与合并后的验收摘要。
 - [v2026.9.6 历史升级审计](v2026.9.6.md)：从 9.2 升级的历史记录；该应用构建未发布。
 
-当前版本以 `package.json.openclaw.version` 为准；操作规范见[补丁指南](../openclaw-runtime-patches.md)，能力、原生处置及移除条件以[当前补丁总账](../../scripts/patches/v2026.9.8/README.md)为准。
+当前版本以 `package.json.openclaw.version` 为准；操作规范见[补丁指南](../openclaw-runtime-patches.md)，能力、原生处置及移除条件以[当前补丁总账](../../scripts/patches/v2026.10.4/README.md)为准。

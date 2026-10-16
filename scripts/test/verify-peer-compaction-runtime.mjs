@@ -78,14 +78,20 @@ const model = http.createServer(async (req, res) => {
   let raw = '';
   for await (const chunk of req) raw += chunk;
   const body = JSON.parse(raw);
+  // The fixture model ignores context-only carriers and selects its reserved
+  // task labels. Exact native session grants above still own authorization.
   const userText = JSON.stringify(
     body.messages?.findLast(
       message =>
         message.role === 'user' &&
-        !JSON.stringify(message.content).includes('BEGIN_OPENCLAW_INTERNAL_CONTEXT'),
+        ['ORGANIZER_ONLY', 'WORKER_ACK', 'WORKER_READ', 'WARMUP_ONLY'].some(
+          label => JSON.stringify(message.content).includes(label),
+        ),
     )?.content,
   );
   const compact = body.metadata?.request_purpose === 'context_compaction' || !body.tools?.length;
+  // Fixture-model routing, separate from the exact-session grant above. Native
+  // peer envelopes can include quoted source context as well as the new task.
   if (!compact && (userText.includes('ORGANIZER_ONLY') || userText.includes('WORKER_ACK'))) {
     if (userText.includes('WORKER_ACK')) acknowledged = true;
     const start = userText.includes('ORGANIZER_ONLY') && !sourceStarted;
@@ -579,7 +585,8 @@ try {
       'automatic compaction used',
     );
     assert.equal(terminals[0].phase, 'error', 'whole-run provider error settles');
-    assert.match(terminals[0].error ?? '', /provider rejected the request schema or tool payload/);
+    assert.equal(terminals[0].errorObservation?.providerRuntimeFailureKind, 'schema');
+    assert.equal(terminals[0].errorObservation?.failoverReason, 'format');
     assert.ok(result.historyHasFailure, 'native failure reason persisted in history');
     assert.equal(result.historyHasCompletion, false, 'failed work did not publish completion');
     assert.ok(output.includes('outcome=compacted'), 'native compaction actually succeeded');

@@ -70,7 +70,7 @@ export function createPluginOwnedExecutionRuntime(native) {
   }
 
   async function justDoObservePluginLifecycle(entry, event) {
-    if (!entry.justDoPluginExecution || native.subagentRuns.get(entry.runId) !== entry) return;
+    if (!entry.justDoPluginExecution || !native.getCurrentSubagentRunOwner(native.subagentRuns, entry)) return;
     const phase = event.data?.phase;
     if (
       phase !== 'start' &&
@@ -108,93 +108,46 @@ export function createPluginOwnedExecutionRuntime(native) {
     const identity = owner?.justDoPluginExecution;
     if (!identity) return;
     const assertOwner = () => {
-      const current = owner.justDoPluginExecution;
-      if (
-        native.subagentRuns.get(runId) !== owner ||
-        identity.epoch !== native.getAgentEventLifecycleGeneration() ||
-        !current ||
-        ['pluginId', 'sessionId', 'lifecycleRevision', 'epoch'].some(
-          key => current[key] !== identity[key],
-        ) ||
-        !justDoPluginExecutionCurrent(owner, identity.pluginId)
-      )
+      const current = native.getCurrentSubagentRunOwner(native.subagentRuns, owner);
+      const meta = current?.justDoPluginExecution;
+      if (!current || identity.epoch !== native.getAgentEventLifecycleGeneration() || !meta ||
+          ['pluginId', 'sessionId', 'lifecycleRevision', 'epoch'].some(key => meta[key] !== identity[key]) ||
+          !justDoPluginExecutionCurrent(current, identity.pluginId))
         throw new Error('Plugin execution publication lost its original owner.');
     };
-    const queues = (globalThis[Symbol.for('openclaw.pluginExecutionPublications.v1')] ??=
-      new Map());
-    const prior = queues.get(runId) ?? Promise.resolve();
-    const publishing = prior
-      .catch(() => undefined)
-      .then(async () => {
-        // Native terminal writers can restore a cloned preimage. Compare values,
-        // including the complete row, rather than metadata object identity. Only a
-        // conclusively uncommitted write may be recaptured; never retry an unknown
-        // commit or replay the execution itself.
-        for (let attempt = 0; attempt < 8; attempt += 1) {
-          assertOwner();
-          const entry = native.subagentRuns.get(runId);
-          const previous = entry?.justDoPluginExecution;
-          if (!previous || previous.epoch !== native.getAgentEventLifecycleGeneration()) return;
-          const next = update(previous);
-          if (next === previous) return;
-          const context = native.captureOpenClawStateWorkerContext();
-          const previousSnapshot = structuredClone(entry);
-          const nextSnapshot = { ...previousSnapshot, justDoPluginExecution: next };
-          const matches = snapshot =>
-            native.subagentRuns.get(runId) === entry && native.isDeepStrictEqual(entry, snapshot);
-          let capturing = true;
-          let published = false;
-          let publication;
-          entry.justDoPluginExecution = next;
-          try {
-            publication = native.persistSubagentRunsAsyncOrThrow(
-              context,
-              {
-                assertCurrent: () => {
-                  assertOwner();
-                  if (
-                    previous.epoch !== native.getAgentEventLifecycleGeneration() ||
-                    !matches(capturing ? nextSnapshot : previousSnapshot)
-                  )
-                    throw new Error('Plugin execution changed before metadata publication.');
-                },
-                onCommitted: () => {
-                  assertOwner();
-                  if (!matches(previousSnapshot))
-                    throw new Error('Plugin execution publication lost its preimage.');
-                  entry.justDoPluginExecution = next;
-                  published = true;
-                },
-              },
-              runId,
-            );
-          } finally {
-            if (native.subagentRuns.get(runId) === entry && entry.justDoPluginExecution === next)
-              entry.justDoPluginExecution = previous;
-            capturing = false;
-          }
-          try {
-            await publication;
-            if (!published)
-              throw new native.SubagentRegistryWriteError(
-                'committed',
-                new Error('Plugin execution publication superseded.'),
-                'superseded',
-              );
-            return;
-          } catch (error) {
-            if (error?.outcome !== 'not-committed' || attempt === 7) throw error;
-            const prepared = await native.prepareSubagentRunsByRunIds([runId]);
-            if (!prepared.consume(() => undefined).ready) throw error;
-          }
-        }
-      });
-    queues.set(runId, publishing);
-    const release = () => {
-      if (queues.get(runId) === publishing) queues.delete(runId);
-    };
-    publishing.then(release, release);
-    return publishing;
+    // The native actor owns serialization, version-conflict refresh, commit
+    // uncertainty and immutable publication. Never mutate a published preimage.
+    let intended;
+    let published = false;
+    let planned = false;
+    await native.mutateSubagentRuns([runId], rows => {
+      planned = true;
+      assertOwner();
+      const current = rows.get(runId);
+      if (!current || !native.isSameSubagentRunOwner(current, owner))
+        throw new Error('Plugin execution mutation lost its admitted generation.');
+      const previous = current.justDoPluginExecution;
+      if (!previous || ['pluginId', 'sessionId', 'lifecycleRevision', 'epoch'].some(key => previous[key] !== identity[key]))
+        throw new Error('Plugin execution mutation lost its original metadata.');
+      const changed = update(previous);
+      intended = changed === previous ? undefined : changed;
+      return changed === previous ? { value: undefined } : {
+        value: undefined,
+        postimages: new Map([[runId, { ...current, justDoPluginExecution: changed }]]),
+      };
+    }, {
+      runs: native.subagentRuns,
+      context: native.captureOpenClawStateWorkerContext(),
+      assertCurrent: assertOwner,
+      onPublished: postimages => {
+        assertOwner();
+        if (!intended || !native.isDeepStrictEqual(postimages.get(runId)?.justDoPluginExecution, intended))
+          throw new Error('Plugin execution publication lost its committed metadata.');
+        published = true;
+      },
+    });
+    if (!planned || intended && !published)
+      throw new native.SubagentRegistryWriteError('committed', new Error('Plugin execution publication superseded.'), 'superseded');
   }
 
   function justDoRegisterManagedToolCleanup(options, scopeKey, supervisor, waitForScope) {
@@ -284,7 +237,7 @@ export function createPluginOwnedExecutionRuntime(native) {
       await Promise.all(state.cleanups.map(cleanup => cleanup()));
     }
     if (
-      native.subagentRuns.get(runId) !== entry ||
+      !native.getCurrentSubagentRunOwner(native.subagentRuns, entry) ||
       meta.epoch !== native.getAgentEventLifecycleGeneration()
     )
       throw new Error('Managed execution changed while joining tool cleanup.');
@@ -326,7 +279,7 @@ export function createPluginOwnedExecutionRuntime(native) {
       throw new Error('Another execution owns this session.');
     const assertCurrent = () => {
       if (
-        native.subagentRuns.get(runId) !== entry ||
+        !native.getCurrentSubagentRunOwner(native.subagentRuns, entry) ||
         !justDoPluginExecutionCurrent(entry, pluginId) ||
         meta.epoch !== native.getAgentEventLifecycleGeneration()
       )
