@@ -48,7 +48,7 @@ export default function TeamDiscussionMessage({
         <div
           className={`team-discussion-message-content ${
             isUser
-              ? 'w-fit max-w-full overflow-hidden rounded-2xl rounded-tr-sm bg-surface-raised px-3 py-2 text-sm [overflow-wrap:anywhere]'
+              ? 'team-discussion-message-content--user w-fit max-w-full overflow-hidden rounded-xl rounded-br bg-chat-user px-3.5 py-2.5 text-sm text-chat-user-fg dark:rounded-[20px] dark:px-4 [overflow-wrap:anywhere]'
               : 'pt-1 text-sm [overflow-wrap:anywhere]'
           }`}
         >
@@ -57,7 +57,7 @@ export default function TeamDiscussionMessage({
             mermaidIdPrefix={`team-${message.id}`}
           />
           {message.mediaUrls.map(url => (
-            <p key={url} className="break-all text-xs text-secondary">
+            <p key={url} className={`break-all text-xs ${isUser ? 'text-inherit' : 'text-secondary'}`}>
               {url}
             </p>
           ))}

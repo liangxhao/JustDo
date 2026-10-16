@@ -61,6 +61,7 @@ import {
   updateDiscussionDraft,
   useDiscussionDraft,
 } from './teamDiscussionDraft';
+import TeamDiscussionMembersPanel from './TeamDiscussionMembersPanel';
 import TeamDiscussionMessageRow from './TeamDiscussionMessage';
 import { TEAM_ROOM_FOCUSED, TEAM_ROOMS_CHANGED } from './teamDiscussionNavigation';
 import {
@@ -70,6 +71,7 @@ import {
   discussionPendingInputs,
   discussionQueueAvailable,
 } from './teamDiscussionQueue';
+import TeamDiscussionQuoteCard from './TeamDiscussionQuoteCard';
 import { buildDiscussionReference, buildTeamResultDraft } from './teamResultDraft';
 
 const t = (key: string) => i18nService.t(key);
@@ -344,6 +346,13 @@ export default function TeamDiscussionView({
     // Polling returns a fresh projection even when nothing changed. Only
     // actual timeline activity should pull a reader toward the latest reply.
   }, [messages.length, latestMessage?.id, latestMessage?.text, latestMediaKey]);
+  const messageName = (message: TeamDiscussionMessage) =>
+    message.role === 'user'
+      ? t('teamYou')
+      : (room?.members.find(member => member.agentId === message.agentId)?.name ??
+        agents.find(agent => agent.id === message.agentId)?.name ??
+        message.agentId ??
+        '?');
   const run = async (operation: () => Promise<void>) => {
     if (submitting.current) return;
     submitting.current = true;
@@ -962,14 +971,7 @@ export default function TeamDiscussionView({
                 <TeamDiscussionMessageRow
                   key={message.id}
                   message={message}
-                  name={
-                    message.role === 'user'
-                      ? t('teamYou')
-                      : (room?.members.find(member => member.agentId === message.agentId)?.name ??
-                        agents.find(agent => agent.id === message.agentId)?.name ??
-                        message.agentId ??
-                        '?')
-                  }
+                  name={messageName(message)}
                   color={
                     COLLABORATION_PALETTE[
                       Math.max(
@@ -1041,22 +1043,22 @@ export default function TeamDiscussionView({
               ))}
             </div>
           </div>
-          {drawer && (
-            <aside className="absolute inset-y-0 right-0 z-20 w-64 max-w-[calc(100%-24px)] overflow-auto border-l border-border bg-surface p-4 shadow-lg">
-              <h2 className="font-medium">{t('teamMembers')}</h2>
-              {room?.summarySource &&
+          {drawer && room && (
+            <TeamDiscussionMembersPanel
+              members={room.members}
+              executions={executions}
+              onClose={() => setDrawer(false)}
+              participation={
+                room.summarySource &&
                 room.readOnly !== false &&
                 !room.members.some(
                   member =>
                     member.agentId === room.summarySource?.agentId && member.ownership !== 'source',
-                ) && (
-                  <label className="my-3 flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={room.members.some(member => member.ownership === 'source')}
-                      disabled={active || busy || draftLocked || !enabled}
-                      onChange={event => {
-                        const enabled = event.target.checked;
+                )
+                  ? {
+                      enabled: room.members.some(member => member.ownership === 'source'),
+                      disabled: active || busy || draftLocked || !enabled,
+                      onChange: enabled => {
                         void run(async () => {
                           const result = await window.electron.teamDiscussion.participation({
                             roomId: room.id,
@@ -1066,22 +1068,11 @@ export default function TeamDiscussionView({
                           if (!result.success) throw new Error(result.error);
                           setRoom(result.value);
                         });
-                      }}
-                    />
-                    {t('teamOrganizerParticipates')}
-                  </label>
-                )}
-              {room?.members.map(member => (
-                <p className="py-2" key={member.agentId}>
-                  {member.name}
-                  <span className="ml-2 text-xs text-secondary">
-                    {t(
-                      `teamMember_${[...executions].reverse().find(item => item.agentId === member.agentId)?.outcome ?? 'unknown'}`,
-                    )}
-                  </span>
-                </p>
-              ))}
-            </aside>
+                      },
+                    }
+                  : undefined
+              }
+            />
           )}
         </div>
       )}
@@ -1169,23 +1160,28 @@ export default function TeamDiscussionView({
               </section>
             )}
             {quotes.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {quotes.map(message => (
-                  <button
-                    key={message.id}
-                    className={button}
-                    disabled={busy || draftLocked}
-                    onClick={() =>
-                      setQuotes(current => current.filter(item => item.id !== message.id))
-                    }
-                  >
-                    {t('teamQuote')}:{' '}
-                    {messages.find(item => item.id === message.id)?.text.slice(0, 60) ??
-                      t('teamQuote')}{' '}
-                    ×
-                  </button>
-                ))}
-              </div>
+              <ul
+                aria-label={t('messageQuoteLabel')}
+                className="max-h-52 min-w-0 space-y-2 overflow-y-auto"
+              >
+                {quotes.map(quote => {
+                  const message = messages.find(
+                    item => item.id === quote.id && item.discussionId === quote.discussionId,
+                  );
+                  return (
+                    <li key={quote.id}>
+                      <TeamDiscussionQuoteCard
+                        message={message}
+                        name={message ? messageName(message) : undefined}
+                        disabled={busy || draftLocked}
+                        onRemove={() =>
+                          setQuotes(current => current.filter(item => item.id !== quote.id))
+                        }
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
             )}
             {attachments.length > 0 && (
               <div className="flex flex-wrap gap-2">

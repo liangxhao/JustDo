@@ -5,3 +5,26 @@
 .team-discussion-message-content .file-preview-markdown > :last-child {
   margin-bottom: 0;
 }
+
+.team-discussion-message-content--user .file-preview-markdown {
+  color: inherit;
+  font-size: inherit;
+  line-height: 1.65;
+}
+
+.team-discussion-message-content--user .file-preview-markdown > p {
+  margin: 0;
+}
+
+.team-discussion-message-content--user .file-preview-markdown > p + p {
+  margin-top: 8px;
+}
+
+.dark .team-discussion-message-content--user .file-preview-markdown > p + p {
+  margin-top: 16px;
+}
+
+.team-discussion-message-content--user .file-preview-markdown :is(h1, h2, h3, h4, h5, h6, a),
+.team-discussion-message-content--user .file-preview-markdown :not(pre) > code {
+  color: inherit;
+}

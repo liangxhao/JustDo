@@ -52,7 +52,7 @@ export const teamDiscussionTranslations = {
       '当前会话无法发起 Agent Team，请检查 Goal、计划模式、只读状态和会话类型。',
     teamFeatureConflict:
       'Agent Team 需要普通执行消息；请退出 Plan 或当前目标流程，并移除斜杠命令后发送。',
-    teamReplyToAgent: '回复该助手',
+    teamReplyToAgent: '回复',
     teamSpeaking: '正在响应',
     teamAwaitingMembers: '等待成员继续讨论',
     teamDiscussionIdle: '当前没有进行中的讨论',
@@ -69,6 +69,8 @@ export const teamDiscussionTranslations = {
     teamReviewState_cancelled: '验收已停止，结论未确认',
     teamStopSummary: '停止汇总',
     teamOrganizerParticipates: '主助手参与讨论（沿用主会话）',
+    teamOrganizerParticipationLabel: '主助手参与讨论',
+    teamOrganizerParticipationHint: '使用当前主会话加入讨论',
     teamOrganizerAutoHelp:
       '组织者沿用左侧主会话，讨论结束后自动汇总结果。是否在群内发言可在成员设置中调整。',
     teamViewSummary: '查看主会话汇总',
@@ -197,6 +199,7 @@ export const teamDiscussionTranslations = {
     teamProject: '项目目录',
     teamBrowse: '选择目录',
     teamMembers: '成员',
+    teamCloseMembers: '关闭成员面板',
     teamMembersHint: '选择 2–6 位已启用的助手。创建后本次讨论的成员固定。',
     teamPermission: '工具权限',
     teamPermission_ask: '询问',
@@ -208,6 +211,9 @@ export const teamDiscussionTranslations = {
     teamYou: 'You',
     teamDiscussionDispatcher: '群聊调度',
     teamQuote: '引用',
+    teamQuoteNotLoaded: '原消息暂未加载',
+    teamQuoteAttachment: '附件消息',
+    teamQuoteNoText: '无文字内容',
     teamContextHint:
       '成员不一定看过全部历史；需要共享的内容请明确引用。未选择 @ 成员时，首轮通知全体。',
     teamMentionPlaceholder: '输入消息，使用 @ 选择助手',
@@ -301,7 +307,7 @@ export const teamDiscussionTranslations = {
       'This conversation cannot start Agent Team. Check Goal, Plan mode, read-only status, and conversation type.',
     teamFeatureConflict:
       'Agent Team needs a normal execution message. Exit Plan or the active goal workflow and remove slash commands before sending.',
-    teamReplyToAgent: 'Reply to this assistant',
+    teamReplyToAgent: 'Reply',
     teamSpeaking: 'Responding',
     teamAwaitingMembers: 'Waiting for members to continue',
     teamDiscussionIdle: 'No discussion is currently running',
@@ -318,6 +324,8 @@ export const teamDiscussionTranslations = {
     teamReviewState_cancelled: 'Review stopped; verdict is unconfirmed',
     teamStopSummary: 'Stop summary',
     teamOrganizerParticipates: 'Organizer participates (uses source conversation)',
+    teamOrganizerParticipationLabel: 'Organizer participation',
+    teamOrganizerParticipationHint: 'Join using the current source conversation',
     teamOrganizerAutoHelp:
       'The organizer uses the source conversation and summarizes results there automatically. Participation in the group can be changed in member settings.',
     teamViewSummary: 'View source summary',
@@ -459,6 +467,7 @@ export const teamDiscussionTranslations = {
     teamProject: 'Project directory',
     teamBrowse: 'Choose directory',
     teamMembers: 'Members',
+    teamCloseMembers: 'Close members panel',
     teamMembersHint: 'Choose 2–6 enabled assistants. Membership is fixed after creation.',
     teamPermission: 'Tool permissions',
     teamPermission_ask: 'Ask',
@@ -471,6 +480,9 @@ export const teamDiscussionTranslations = {
     teamYou: 'You',
     teamDiscussionDispatcher: 'Group discussion dispatcher',
     teamQuote: 'Quote',
+    teamQuoteNotLoaded: 'Original message is not loaded',
+    teamQuoteAttachment: 'Attachment message',
+    teamQuoteNoText: 'No text content',
     teamContextHint:
       'Members may not have seen all earlier messages. Quote content they need. Without selected @ members, the first round notifies everyone.',
     teamMentionPlaceholder: 'Write a message; type @ to mention an assistant',
