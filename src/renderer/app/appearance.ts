@@ -26,7 +26,7 @@ export const defaultAppearanceConfig: AppearanceConfig = {
   chatContentWidth: 60,
   fontFamily: 'system',
   fontSize: 16,
-  messageLayout: 'bubble',
+  messageLayout: 'document',
   messageDensity: 'comfortable',
   wrapCodeBlocks: false,
   petEnabled: true,

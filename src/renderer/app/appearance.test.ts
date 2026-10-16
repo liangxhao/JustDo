@@ -10,7 +10,7 @@ describe('appearance configuration', () => {
   test('migrates a legacy config with no appearance section to current defaults', () => {
     expect(normalizeAppearanceConfig(undefined)).toEqual(defaultAppearanceConfig);
     expect(defaultAppearanceConfig.chatContentWidth).toBe(60);
-    expect(defaultAppearanceConfig.messageLayout).toBe('bubble');
+    expect(defaultAppearanceConfig.messageLayout).toBe('document');
     expect(defaultAppearanceConfig.petEnabled).toBe(true);
     expect(defaultAppearanceConfig.petAnimationEnabled).toBe(true);
   });
@@ -140,8 +140,8 @@ describe('appearance configuration', () => {
       },
     } as unknown as HTMLElement;
 
-    applyAppearanceConfig({ ...defaultAppearanceConfig, messageLayout: 'document' }, root);
     applyAppearanceConfig(defaultAppearanceConfig, root);
+    applyAppearanceConfig({ ...defaultAppearanceConfig, messageLayout: 'bubble' }, root);
 
     expect(properties.get('--justdo-assistant-bubble-background-strength')).toBe('100%');
     expect(properties.get('--justdo-assistant-row-gap')).toBe('6px');

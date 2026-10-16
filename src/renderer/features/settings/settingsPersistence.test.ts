@@ -35,7 +35,7 @@ describe('settings app config updates', () => {
 
   test('persists an appearance-only edit without rewriting runtime-facing providers', () => {
     const providers = defaultConfig.providers!;
-    const appearance = { ...defaultAppearanceConfig, messageLayout: 'document' as const };
+    const appearance = { ...defaultAppearanceConfig, messageLayout: 'bubble' as const };
 
     expect(
       buildSettingsAppConfigUpdate(defaultConfig, {

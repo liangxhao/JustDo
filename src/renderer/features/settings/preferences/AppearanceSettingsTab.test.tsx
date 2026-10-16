@@ -14,54 +14,54 @@ vi.mock('@/services/i18n', () => ({
 afterEach(cleanup);
 
 describe('AppearanceSettingsTab', () => {
-  test('shows bubble layout as the default and lets the user preview document layout', () => {
+  test('shows document layout as the default and lets the user preview bubble layout', () => {
     const onChange = vi.fn();
     const { rerender } = render(
       <AppearanceSettingsTab value={defaultAppearanceConfig} onChange={onChange} />,
     );
 
     expect(
-      screen.getByRole('button', { name: 'messageLayoutBubble' }).getAttribute('aria-pressed'),
+      screen.getByRole('button', { name: 'messageLayoutDocument' }).getAttribute('aria-pressed'),
     ).toBe('true');
     expect(document.querySelector('[data-message-layout-preview="bubble"]')).not.toBeNull();
     expect(document.querySelector('[data-message-layout-preview="document"]')).not.toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'messageLayoutDocument' }));
+    fireEvent.click(screen.getByRole('button', { name: 'messageLayoutBubble' }));
 
     expect(onChange).toHaveBeenCalledWith({
       ...defaultAppearanceConfig,
-      messageLayout: 'document',
+      messageLayout: 'bubble',
     });
 
     rerender(
       <AppearanceSettingsTab
-        value={{ ...defaultAppearanceConfig, messageLayout: 'document' }}
+        value={{ ...defaultAppearanceConfig, messageLayout: 'bubble' }}
         onChange={onChange}
       />,
     );
 
     expect(
-      screen.getByRole('button', { name: 'messageLayoutDocument' }).getAttribute('aria-pressed'),
+      screen.getByRole('button', { name: 'messageLayoutBubble' }).getAttribute('aria-pressed'),
     ).toBe('true');
     expect(
-      screen.getByRole('button', { name: 'messageLayoutBubble' }).getAttribute('aria-pressed'),
+      screen.getByRole('button', { name: 'messageLayoutDocument' }).getAttribute('aria-pressed'),
     ).toBe('false');
   });
 
   test('restores reading defaults without changing the independently selected layout', () => {
     const onChange = vi.fn();
-    const documentAppearance = {
+    const bubbleAppearance = {
       ...defaultAppearanceConfig,
       chatContentWidth: 88,
-      messageLayout: 'document' as const,
+      messageLayout: 'bubble' as const,
     };
-    render(<AppearanceSettingsTab value={documentAppearance} onChange={onChange} />);
+    render(<AppearanceSettingsTab value={bubbleAppearance} onChange={onChange} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'restoreDefaults' }));
 
     expect(onChange).toHaveBeenCalledWith({
       ...defaultAppearanceConfig,
-      messageLayout: 'document',
+      messageLayout: 'bubble',
     });
   });
 
