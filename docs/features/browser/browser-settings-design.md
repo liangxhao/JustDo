@@ -75,6 +75,8 @@ flowchart LR
 
 页面文本、日志、脚本结果均按 network 不可信内容返回；诊断不收集 header/POST body，清理链接凭据和敏感 URL。完整原生 schema 对齐以 bridge/contract tests 为准，不能用“类似支持”返回伪造结果。
 
+聊天「摘要 → 来源」复用当前会话真实 browser 工具访问结果，覆盖内置和 Chrome。Chrome 使用原生公共历史保留的 `browserTab`；内置工具仅从成功页面结果追加有界、独立的页面引用 JSON，使地址与可用标题能经过历史投影。来源按网页地址去重，不读取全局浏览历史、不额外请求页面；失败、下载、标签清单和正文内链接不作为来源。元数据准入与历史投影契约见[聊天渲染](../../architecture/15-chat-rendering.md)。
+
 ## 4. 用户与 Agent 不能同时破坏现场
 
 Agent 控制同一页面期间，Renderer 使用交互遮罩；用户画笔、框选、元素检查、评论和录制期间，反向 lease 阻止 Agent 导航、输入、切 Tab 或关闭。允许的观察不应改变页面。

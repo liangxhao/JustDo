@@ -359,9 +359,17 @@ stateDiagram-v2
 
 存在非空进度说明时，摘要面板宽度从 20rem 扩至 26rem，并始终以视口宽度减去两侧留白为上限；没有说明时保留原宽度。中间说明默认最多展示 279px（约十五行正文），只有实际内容超高时才显示「展开全部／收起」，短说明直接完整显示。切换按钮无边框，直接悬浮在说明内容的右下角，不预留按钮行或额外底部空白；「展开全部」保持可见，「收起」仅在鼠标悬停说明区域或键盘焦点可见时显示，鼠标点击留下的普通焦点不阻止移开后隐藏。限高只裁剪展示，不截断或改写原生 Markdown；步骤列表独立保留在说明下方，展开后仍由摘要面板统一纵向滚动。根据实际布局观测内容和宽度变化；同一说明组件的 revision 更新保留展开选择，切换会话或重新打开已卸载的卡片时恢复默认收起。键盘焦点进入说明内的链接等交互内容时自动展开，避免焦点停留在裁剪区域。
 
-摘要的输出内容通过当前聊天的认证 Gateway client 调用 `artifacts.list(sessionKey, messageRole:'assistant')` 获取交付 metadata，不传只适用于 image 查询的分页参数；另补充助手消息明确交付的本地文件链接和站点描述。工具写文件的参数不作为交付证据。来源来自当前 Renderer 已加载原生 user 附件/文件引用，以及带有效 externalContent 归属的成功 web_search/web_fetch 结果，覆盖搜索结果与 provider citations；普通助手网页链接和工作区所有被触及文件不冒充来源。没有独立 `sources.list` 接口，来源列表以已就绪的原生会话记录为依据，有实际条目时显示来源栏目。metadata 投影停留在 Renderer 内存，不引入 Main/Redux transcript 缓存或 SQLite 表。
+摘要的输出内容通过当前聊天的认证 Gateway client 调用 `artifacts.list(sessionKey, messageRole:'assistant')` 获取交付 metadata，不传只适用于 image 查询的分页参数；另补充助手消息明确交付的本地文件链接和站点描述。工具写文件的参数不作为交付证据。来源来自当前 Renderer 已加载原生 user 附件/文件引用、带有效 externalContent 归属的成功 web_search/web_fetch 结果，以及已确认的 browser 页面结果，覆盖搜索结果与 provider citations；普通助手网页链接和工作区所有被触及文件不冒充来源。没有独立 `sources.list` 接口，来源列表以已就绪的原生会话记录为依据，有实际条目时显示来源栏目。metadata 投影停留在 Renderer 内存，不引入 Main/Redux transcript 缓存或 SQLite 表。
 
-网页来源同时读取顶层原生工具结果与 Gateway 投影的 `custom` / `openclaw.nested-tool.v1` 记录中的 `toolResult` block，覆盖 tool_call 和 Code Mode 的嵌套执行；外层调度结果即使被截断，也可使用已有的完整嵌套结果。仅采纳成功且具备原生 externalContent 归属的结果，不采纳工具调用参数、助手/用户消息伪装的结果或任意 custom 记录中的链接；网页正文截断不影响已确认的原网页地址。
+网页来源同时读取顶层原生工具结果与 Gateway 投影的 `custom` / `openclaw.nested-tool.v1` 记录中的 `toolResult` block，覆盖 tool_call 和 Code Mode 的嵌套执行；外层调度结果即使被截断，也可使用已有的完整嵌套结果。搜索／抓取仅采纳成功且具备原生 externalContent 归属的结果，不采纳工具调用参数、助手/用户消息伪装的结果或任意 custom 记录中的链接；网页正文截断不影响已确认的原网页地址。
+
+browser 来源覆盖内置侧栏浏览器，以及原生隔离、日常 Chrome 和扩展连接。Gateway 公共历史会裁掉任意工具 details，只保留白名单 `browserTab` 路由；Chrome 因此直接读取该路由中的完整 targetId、profile、host/node 身份、HTTP(S) 地址和可用标题，不要求已被裁掉的顶层 targetId。原生路由地址达到 2048 字符裁剪边界且没有完整页面地址证据时不采纳，避免把截短 URL 当成原网页。原始完整结果仍须校验路由与页面地址一致；成功且属于同一 targetId 的原生 `pageState` snapshot 可确认导航后的地址。
+
+内置扩展仅为打开、导航、快照、正文、截图及交互的成功页面结果追加独立 `browser-page-source.v1` text block，包含动作、真实 targetId、HTTP(S) 地址和有界标题。专用前缀后使用完整的不可信网页内容边界包裹封闭 JSON，标题和地址仍是外部资料；序列化时以 JSON 转义保护 URL 中的媒体指令冒号，不能由内容净化器改写地址。其纯契约由扩展和 Renderer 共用，不借用 Chrome 路由，不携带正文或权限。该 block 经原生历史投影保留；Renderer 只在真实 browser 工具结果或受信嵌套结果中解码完整专用 block，普通网页边界、裸 JSON 和正文同名标记均不采纳。失败、关闭、下载、部分失败批次、标签清单、请求日志及 evaluate 返回的任意对象不产生页面元数据。原生投影集成测试覆盖顶层／嵌套的成功与失败结果。
+
+旧版内置历史缺少该 block 时，仅为真实 `openclaw.nested-tool.v1` 中按精确调用 ID 配对的 browser `navigate`／`snapshot` 结果补读 Main 生成的固定快照头。调用必须没有非空查询且不是 ARIA；查询会过滤掉原生头部并使页面正文可能冒充头部，因此不能用同一路径处理。只读 Main 专有不可信内容边界后紧邻的 `title:`／`url:` 两行，不读取调用参数地址或正文链接。完整边界须匹配；原生显示裁剪移除结束边界时，先移除整个标准裁剪后缀（包括前导换行），再要求 URL 在原始保留片段中已有自己的换行，不能把截在地址中间的片段当作来源。被旧媒体指令净化改写的地址、未配对／重复调用、失败结果和无可靠头部的旧页面均省略；不修补外层已截断的工具调度 JSON。
+
+来源只保存已有结果中的当前网页地址和可用标题，与搜索／抓取来源按去除 fragment 的身份去重，实际打开保留 fragment。网页正文中的链接不产生来源；不扫描浏览器全局历史、不额外抓取网页或保存正文。
 
 原生显示裁剪若将 `web_fetch` 的 JSON 截在末尾 `text` 字符串中，仅在存在原生截断后缀时读取该字段之前可完整解析的 metadata；地址、HTTP 成功状态和 externalContent 归属仍须全部通过校验。正文中的链接、缺失或被截断的来源标记以及其它损坏 JSON 不用于补全来源，不修补正文或重新抓取网页。
 
