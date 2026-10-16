@@ -216,8 +216,6 @@ export const MAX_EVALUATE_RESULT_CHARS = 50_000;
 
 export const MAX_BATCH_ACTIONS = 100;
 
-export const MAX_BROWSER_TABS = 8;
-
 export const MAX_ACT_DOWNLOADS = 8;
 
 export const ACT_DOWNLOAD_EVENT_GRACE_MS = 250;

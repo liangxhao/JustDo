@@ -27,6 +27,11 @@ import {
   type BrowserLinkTarget as BrowserLinkTargetValue,
   normalizeBrowserLinkTarget,
 } from '@shared/browser/browserLinkOpening';
+import {
+  MAX_BROWSER_TAB_LIMIT,
+  MIN_BROWSER_TAB_LIMIT,
+  normalizeBrowserTabLimit,
+} from '@shared/browser/browserTabLimit';
 import { ProxyMode, type ProxySettings } from '@shared/network/proxy';
 import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
@@ -186,6 +191,10 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
     ),
   }));
   const [savingLinkTarget, setSavingLinkTarget] = useState(false);
+  const [tabLimit, setTabLimit] = useState(() =>
+    String(normalizeBrowserTabLimit(configService.getConfig().browserTabLimit)),
+  );
+  const [savingTabLimit, setSavingTabLimit] = useState(false);
   const [downloadDirectory, setDownloadDirectory] = useState(
     () => configService.getConfig().browserDownloadDirectory ?? '',
   );
@@ -352,6 +361,24 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
     } finally {
       savingModeRef.current = false;
       setSavingMode(false);
+    }
+  };
+
+  const saveTabLimit = async () => {
+    if (savingTabLimit) return;
+    const previous = normalizeBrowserTabLimit(configService.getConfig().browserTabLimit);
+    const next = tabLimit.trim() ? normalizeBrowserTabLimit(Number(tabLimit)) : previous;
+    setTabLimit(String(next));
+    if (next === previous) return;
+    setSavingTabLimit(true);
+    setError(null);
+    try {
+      await configService.updateConfig({ browserTabLimit: next });
+    } catch {
+      setTabLimit(String(previous));
+      setError(i18nService.t('browserTabLimitSaveFailed'));
+    } finally {
+      setSavingTabLimit(false);
     }
   };
 
@@ -1088,6 +1115,32 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
                 {i18nService.t('browserSearchEngineGoogle')}
               </option>
             </BrowserSelect>
+          </div>
+          <div className="flex min-h-12 items-center justify-between gap-3 py-3">
+            <div className="min-w-0 flex-1">
+              <label htmlFor="browser-tab-limit" className="text-sm text-foreground">
+                {i18nService.t('browserTabLimitTitle')}
+              </label>
+              <p id="browser-tab-limit-description" className="mt-0.5 text-xs text-secondary">
+                {i18nService.t('browserTabLimitDescription')}
+              </p>
+            </div>
+            <input
+              id="browser-tab-limit"
+              type="number"
+              min={MIN_BROWSER_TAB_LIMIT}
+              max={MAX_BROWSER_TAB_LIMIT}
+              step={1}
+              value={tabLimit}
+              disabled={savingTabLimit}
+              aria-describedby="browser-tab-limit-description"
+              onChange={event => setTabLimit(event.target.value)}
+              onBlur={() => void saveTabLimit()}
+              onKeyDown={event => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+              }}
+              className="h-9 w-20 shrink-0 rounded-lg border border-border bg-surface px-3 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:opacity-60"
+            />
           </div>
           <div className="flex min-h-12 items-center justify-between gap-3 py-2">
             <span id="browser-history-label" className="text-sm text-foreground">

@@ -21,6 +21,10 @@ import {
   type BrowserInterventionResult,
 } from '../../shared/browser/browserIntervention';
 import { BrowserRecordingChannel } from '../../shared/browser/browserRecording';
+import {
+  DEFAULT_BROWSER_TAB_LIMIT,
+  normalizeBrowserTabLimit,
+} from '../../shared/browser/browserTabLimit';
 import { TASK_WORKSPACE_DIRECTORY } from '../../shared/cowork/taskWorkspace';
 import { t } from '../core/i18n';
 import { registerBrowserProxySession } from '../core/network/systemProxyPreference';
@@ -49,7 +53,6 @@ import {
   IMPORTED_PROFILE,
   LEGACY_FLATTENED_ACT_KEYS,
   LONG_COMMAND_TIMEOUT_MS,
-  MAX_BROWSER_TABS,
   MAX_LOG_ENTRIES,
   normalizeNavigationUrl,
   normalizeSessionId,
@@ -141,6 +144,7 @@ export class BrowserAgentBridge {
       ownerId,
       hostId,
     ) => ownerId === hostId,
+    private readonly getBrowserTabLimit: () => unknown = () => DEFAULT_BROWSER_TAB_LIMIT,
   ) {
     try {
       for (const profile of listImportedBrowserProfiles()) {
@@ -898,9 +902,15 @@ export class BrowserAgentBridge {
     if (options.targetId && !options.forceNew) {
       throw new Error(`Browser tab not found: ${options.targetId}`);
     }
-    const pendingNewTabs = this.tabWaiters.get(scopeId)?.size ?? 0;
-    if (this.listLiveTabs(scopeId).length + pendingNewTabs >= MAX_BROWSER_TABS) {
-      throw new Error(`The embedded browser supports at most ${MAX_BROWSER_TABS} tabs per task.`);
+    const maximumTabs = normalizeBrowserTabLimit(this.getBrowserTabLimit());
+    let occupiedTabs = 0;
+    for (const candidateProfile of this.profiles) {
+      const candidateScope = browserScopeId(rendererSessionId, candidateProfile);
+      occupiedTabs +=
+        this.listLiveTabs(candidateScope).length + (this.tabWaiters.get(candidateScope)?.size ?? 0);
+    }
+    if (occupiedTabs >= maximumTabs) {
+      throw new Error(`The embedded browser supports at most ${maximumTabs} tabs per task.`);
     }
 
     const requestedTargetId = options.targetId ?? `embedded-${randomUUID()}`;

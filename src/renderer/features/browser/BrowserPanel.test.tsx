@@ -1057,6 +1057,8 @@ describe('BrowserPanel embedded webview', () => {
   });
 
   it('reports rejected creation at capacity without selecting a nonexistent guest', () => {
+    let config = { ...configService.getConfig(), browserTabLimit: 8 };
+    vi.spyOn(configService, 'getConfig').mockImplementation(() => config);
     let panelHandle: BrowserPanelHandle | null = null;
     const initialTabs = Array.from({ length: 8 }, (_, index) => ({
       id: `page-${index}`,
@@ -1085,6 +1087,23 @@ describe('BrowserPanel embedded webview', () => {
     });
     expect(container.querySelectorAll('webview')).toHaveLength(8);
     expect(onTabsChange).not.toHaveBeenCalled();
+
+    act(() => {
+      config = { ...config, browserTabLimit: 12 };
+      window.dispatchEvent(new CustomEvent('config-updated'));
+      expect(panelHandle?.openTab('https://example.com/ninth', { targetId: 'ninth' })).toBe(true);
+    });
+    expect(container.querySelectorAll('webview')).toHaveLength(9);
+
+    act(() => {
+      config = { ...config, browserTabLimit: 2 };
+      window.dispatchEvent(new CustomEvent('config-updated'));
+      expect(panelHandle?.openTab('https://example.com/overflow', { targetId: 'overflow' })).toBe(
+        false,
+      );
+      expect(panelHandle?.openTab('https://example.com/0', { targetId: 'page-0' })).toBe(true);
+    });
+    expect(container.querySelectorAll('webview')).toHaveLength(9);
   });
 
   it('focuses the address bar when a shortcut opens a blank embedded tab', async () => {

@@ -19,11 +19,12 @@ import {
   takeAvailableBrowserAgentPanelStates,
 } from '@/features/browser/browserPanelRetention';
 import { MessageBrowserEvent } from '@/features/browser/messageBrowserLinks';
+import { getBrowserTabLimit } from '@/features/browser/useBrowserTabLimit';
 import type { CoworkSessionSummary } from '@/features/cowork/coworkTypes';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
-import { browserDisplayTabId, MAX_BROWSER_TABS } from './displayTabIds';
+import { browserDisplayTabId } from './displayTabIds';
 import type { SessionDisplayState, SessionDisplayStateMap } from './useSessionDisplayState';
 
 interface CoworkBrowserPanelsOptions {
@@ -110,7 +111,7 @@ export function useCoworkBrowserPanels({
       const pendingTabs = pendingBrowserTabsRef.current.get(displaySessionKey) ?? [];
       if (
         currentSessionId?.startsWith('temp-') ||
-        browserTabs.length + pendingTabs.length >= MAX_BROWSER_TABS
+        browserTabs.length + pendingTabs.length >= getBrowserTabLimit()
       )
         return;
       pendingTabs.push(url ? { url } : {});
@@ -367,7 +368,7 @@ export function useCoworkBrowserPanels({
         sourcePreviewRootUrl: tab.sourcePreviewRootUrl,
       });
       if (created === false) return;
-      openBrowserTabRef.current(displaySessionKey, tab, MAX_BROWSER_TABS);
+      openBrowserTabRef.current(displaySessionKey, tab, getBrowserTabLimit());
     };
     const handleOpenWebUrl = (event: Event) => {
       const detail = (event as CustomEvent<{ url?: unknown }>).detail;

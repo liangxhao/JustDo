@@ -4,6 +4,7 @@ import {
   normalizeBrowserSearchEngine,
 } from '@shared/browser/browser';
 import { BrowserLinkTarget, normalizeBrowserLinkTarget } from '@shared/browser/browserLinkOpening';
+import { normalizeBrowserTabLimit } from '@shared/browser/browserTabLimit';
 import { normalizeProxySettings, ProxyMode } from '@shared/network/proxy';
 import { isLegacyCustomProviderKey } from '@shared/providers';
 import { normalizeLocalSpeechSettings } from '@shared/speech/localSpeechSettings';
@@ -143,6 +144,7 @@ export class ConfigService {
           ...storedConfig,
           browserMode: normalizeBrowserMode(storedConfig.browserMode),
           browserSearchEngine: normalizeBrowserSearchEngine(storedConfig.browserSearchEngine),
+          browserTabLimit: normalizeBrowserTabLimit(storedConfig.browserTabLimit),
           browserWebLinkTarget: normalizeBrowserLinkTarget(
             storedConfig.browserWebLinkTarget,
             BrowserLinkTarget.Embedded,
@@ -230,6 +232,7 @@ export class ConfigService {
       ...storedConfig,
       browserMode: normalizeBrowserMode(storedConfig.browserMode),
       browserSearchEngine: normalizeBrowserSearchEngine(storedConfig.browserSearchEngine),
+      browserTabLimit: normalizeBrowserTabLimit(storedConfig.browserTabLimit),
       browserWebLinkTarget: normalizeBrowserLinkTarget(
         storedConfig.browserWebLinkTarget,
         BrowserLinkTarget.Embedded,
@@ -303,6 +306,9 @@ export class ConfigService {
           : {}),
         ...(newConfig.browserSearchEngine !== undefined
           ? { browserSearchEngine: normalizeBrowserSearchEngine(newConfig.browserSearchEngine) }
+          : {}),
+        ...(newConfig.browserTabLimit !== undefined
+          ? { browserTabLimit: normalizeBrowserTabLimit(newConfig.browserTabLimit) }
           : {}),
         ...(newConfig.browserDownloadDirectory !== undefined ||
         newConfig.browserAskDownloadLocation !== undefined

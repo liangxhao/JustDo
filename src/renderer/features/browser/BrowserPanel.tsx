@@ -95,6 +95,7 @@ import {
 import { BrowserInterventionBar } from './intervention/BrowserInterventionBar';
 import { BrowserRecordingControls } from './recording/BrowserRecordingControls';
 import { useBrowserRecording } from './recording/useBrowserRecording';
+import { getBrowserTabLimit, useBrowserTabLimit } from './useBrowserTabLimit';
 
 type BrowserPanelMode = 'interact' | 'inspect' | 'pen' | 'rectangle';
 type Gesture =
@@ -360,6 +361,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     null,
   );
   const [browserMode, setBrowserMode] = useState(() => configService.getConfig().browserMode);
+  const maximumTabs = useBrowserTabLimit();
   useEffect(() => {
     const changed = () => setBrowserMode(configService.getConfig().browserMode);
     window.addEventListener('config-updated', changed);
@@ -837,7 +839,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         return true;
       }
       const url = normalizeUrl(rawUrl);
-      if (!url || tabsRef.current.length >= 8) return false;
+      if (!url || tabsRef.current.length >= getBrowserTabLimit()) return false;
       const tab = createBrowserPanelTab(url, options);
       initialUrlsRef.current.set(tab.targetId, tab.url);
       const insertionIndex = options?.insertAfterTargetId
@@ -2298,7 +2300,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
             <button
               type="button"
               className={modeButton(false)}
-              disabled={tabs.length >= 8}
+              disabled={tabs.length >= maximumTabs}
               onClick={() => openTab()}
               aria-label={i18nService.t('browserPanelNewTab')}
             >

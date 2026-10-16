@@ -169,6 +169,10 @@ export const browserTranslations = {
     browserPanelEmptyDescription: '搜索或输入网址以打开页面',
     browserPanelEmptyFocusAddress: '聚焦到地址栏',
     browserSearchEngineTitle: '搜索引擎',
+    browserTabLimitTitle: '浏览器标签页上限',
+    browserTabLimitDescription:
+      '每个会话最多可打开的内置浏览器标签页数量，默认 20，可设置为 1–50。标签越多，占用内存越多；调低上限不会关闭已打开的页面。',
+    browserTabLimitSaveFailed: '无法保存浏览器标签页上限',
     browserLinkTargetsTitle: '消息链接打开位置',
     browserWebLinkTargetTitle: '网页链接',
     browserWebLinkTargetDescription: '点击消息中的网页地址时使用。',
@@ -536,6 +540,10 @@ export const browserTranslations = {
     browserPanelEmptyDescription: 'Search or enter an address to open a page',
     browserPanelEmptyFocusAddress: 'Focus the address bar',
     browserSearchEngineTitle: 'Search engine',
+    browserTabLimitTitle: 'Browser tab limit',
+    browserTabLimitDescription:
+      'Maximum embedded browser tabs per conversation. Default: 20; range: 1–50. More tabs use more memory. Lowering the limit keeps existing pages open.',
+    browserTabLimitSaveFailed: 'Unable to save the browser tab limit',
     browserLinkTargetsTitle: 'Open message links in',
     browserWebLinkTargetTitle: 'Web links',
     browserWebLinkTargetDescription: 'For web addresses clicked in messages.',

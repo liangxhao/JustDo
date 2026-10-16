@@ -4,6 +4,10 @@
 
 ## 1. 存储边界
 
+内置浏览器的每会话标签页上限沿用 Main KV 的 `app_config.browserTabLimit`，
+默认 20，可设置为 1–50 的整数。旧配置缺失时直接使用默认值，不新增表或迁移；
+Main 与 Renderer 共用数值校验。它只控制新建准入，不持久化网页或回收已有标签。
+
 独立 `swarm-workflow` 扩展在 Gateway `stateDir/swarm-workflow/flows.sqlite` 保存流程目标、
 已校验 DAG、阶段结果、修订号、启动意图和原生运行引用。它是插件调度状态，
 不属于产品 SQLite 的消息表，也不复制原生 transcript。执行会话由插件拥有，

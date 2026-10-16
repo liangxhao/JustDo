@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { BrowserLinkTarget } from '@shared/browser/browserLinkOpening';
+import { DEFAULT_BROWSER_TAB_LIMIT } from '@shared/browser/browserTabLimit';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { createElement, StrictMode } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -8,7 +9,6 @@ import { defaultConfig } from '@/app/config';
 import { MessageBrowserEvent } from '@/features/browser/messageBrowserLinks';
 import { configService } from '@/services/config';
 
-import { MAX_BROWSER_TABS } from './displayTabIds';
 import { useCoworkBrowserPanels } from './useCoworkBrowserPanels';
 
 type Options = Parameters<typeof useCoworkBrowserPanels>[0];
@@ -105,7 +105,7 @@ test.each([BrowserLinkTarget.Embedded, BrowserLinkTarget.Chrome])(
       expect(openBrowserTab).toHaveBeenCalledWith(
         'clicked-session',
         expect.objectContaining({ url: preview.url, sourceFilePath: preview.filePath }),
-        MAX_BROWSER_TABS,
+        DEFAULT_BROWSER_TAB_LIMIT,
       );
     }
   },
@@ -342,7 +342,7 @@ test('keeps a pending summary HTML preview when another session updates the tab 
   expect(updatedOpenBrowserTab).toHaveBeenCalledWith(
     'session',
     expect.objectContaining({ url: localHtmlPreview.url }),
-    MAX_BROWSER_TABS,
+    DEFAULT_BROWSER_TAB_LIMIT,
   );
 });
 
@@ -416,7 +416,7 @@ test.each([
           targetId: 'user-tab',
           url: 'https://example.com/report.html?q=1#chart',
         }),
-        MAX_BROWSER_TABS,
+        DEFAULT_BROWSER_TAB_LIMIT,
       );
     }
   },
@@ -483,7 +483,7 @@ test.each([
       expect(options.openBrowserTab).toHaveBeenCalledWith(
         'session',
         expect.objectContaining({ ...source, url: localHtmlPreview.url }),
-        MAX_BROWSER_TABS,
+        DEFAULT_BROWSER_TAB_LIMIT,
       );
     }
   },
@@ -528,7 +528,7 @@ test.each(
       expect(options.openBrowserTab).toHaveBeenCalledWith(
         'session',
         expect.objectContaining({ url, sourcePreviewUrl: url }),
-        MAX_BROWSER_TABS,
+        DEFAULT_BROWSER_TAB_LIMIT,
       );
     }
   },
@@ -558,7 +558,7 @@ test.each(['https://example.com', '//example.com', '?value=bad\n', '#bad\u0000',
 
 test('reopens the sidebar at tab capacity without creating another tab', () => {
   const options = createOptions({
-    browserTabs: Array.from({ length: MAX_BROWSER_TABS }, (_, index) => ({
+    browserTabs: Array.from({ length: DEFAULT_BROWSER_TAB_LIMIT }, (_, index) => ({
       id: String(index),
       targetId: String(index),
       url: 'about:blank',
@@ -651,10 +651,11 @@ test('reopens retained browser tabs without creating an extra page', () => {
 });
 
 test('queues another blank page on each creation and includes pending tabs in the capacity limit', () => {
+  vi.spyOn(configService, 'getConfig').mockReturnValue({ ...defaultConfig, browserTabLimit: 12 });
   const options = createOptions({
     isDisplayPanelOpen: true,
     hasDisplayTabs: true,
-    browserTabs: Array.from({ length: 6 }, (_, index) => ({
+    browserTabs: Array.from({ length: 10 }, (_, index) => ({
       id: `tab-${index}`,
       targetId: `tab-${index}`,
       title: '',

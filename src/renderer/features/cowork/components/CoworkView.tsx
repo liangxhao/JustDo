@@ -73,6 +73,7 @@ import BrowserTabIcon from '@/features/browser/BrowserTabIcon';
 import { browserTaskStopped } from '@/features/browser/intervention/browserTaskStopped';
 import { MessageBrowserEvent } from '@/features/browser/messageBrowserLinks';
 import { recordingSubmissionIssue } from '@/features/browser/recording/browserRecordingSubmission';
+import { getBrowserTabLimit, useBrowserTabLimit } from '@/features/browser/useBrowserTabLimit';
 import PlanApprovalDrawer from '@/features/cowork/components/approvals/PlanApprovalDrawer';
 import {
   initialPlanPreviewState,
@@ -220,7 +221,6 @@ import {
   COLLABORATION_DISPLAY_TAB_ID,
   FILE_DISPLAY_TAB_PREFIX,
   fileDisplayTabId,
-  MAX_BROWSER_TABS,
   MAX_TERMINAL_TABS,
   PLAN_DISPLAY_TAB_ID,
   SUBAGENT_DISPLAY_TAB_ID,
@@ -517,6 +517,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const sessionSearchInputRef = useRef<HTMLInputElement>(null);
   const sessionSearchPanelRef = useRef<HTMLDivElement>(null);
   const browserPanelRefs = useRef(new Map<string, BrowserPanelHandle>());
+  const maximumBrowserTabs = useBrowserTabLimit();
   const continueBrowserTaskRef = useRef<
     | ((
         sessionId: string,
@@ -550,7 +551,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       pendingBrowserTabsRef.current,
       fromSessionKey,
       toSessionKey,
-      MAX_BROWSER_TABS,
+      getBrowserTabLimit(),
     );
   }, []);
   const terminalSequenceRef = useRef(0);
@@ -1724,7 +1725,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   const handleOpenSummaryResource = (resource: SummaryResource) => {
     if (!currentGatewaySessionKey) return;
-    if (resource.target.kind === 'url' && browserTabs.length >= MAX_BROWSER_TABS) {
+    if (resource.target.kind === 'url' && browserTabs.length >= maximumBrowserTabs) {
       window.dispatchEvent(
         new CustomEvent('app:showToast', { detail: i18nService.t('coworkSummaryBrowserLimit') }),
       );
@@ -1768,7 +1769,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         if (isWorkspaceDetached) window.electron.workspaceWindow?.focus();
       },
       openUrl: url => {
-        if (browserTabs.length >= MAX_BROWSER_TABS)
+        if (browserTabs.length >= maximumBrowserTabs)
           throw new Error(i18nService.t('coworkSummaryBrowserLimit'));
         handleCreateBrowserTab(url);
         if (isWorkspaceDetached) window.electron.workspaceWindow?.focus();
@@ -2066,7 +2067,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         showAddressInput={!onNavigateBrowser}
         onNavigateBrowser={onNavigateBrowser}
         browserDisabled={
-          Boolean(currentSessionId?.startsWith('temp-')) || browserTabs.length >= MAX_BROWSER_TABS
+          Boolean(currentSessionId?.startsWith('temp-')) || browserTabs.length >= maximumBrowserTabs
         }
         filesDisabled={!workspaceFilesRootPath || Boolean(currentSessionId?.startsWith('temp-'))}
         onCreateBrowser={handleCreateBrowserTab}
@@ -3444,7 +3445,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               actions={
                 <NewDisplayTabButton
                   disabled={
-                    currentSession.id.startsWith('temp-') || browserTabs.length >= MAX_BROWSER_TABS
+                    currentSession.id.startsWith('temp-') ||
+                    browserTabs.length >= maximumBrowserTabs
                   }
                   onCreateTab={() => handleCreateBrowserTab()}
                 />

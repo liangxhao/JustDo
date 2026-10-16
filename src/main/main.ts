@@ -1161,6 +1161,7 @@ const browserAgentBridge = new BrowserAgentBridge(
   sessionId => getCoworkStore().getSession(sessionId)?.cwd ?? null,
   true,
   isWorkspaceBrowserHost,
+  () => getStore().get<AppConfigSettings>('app_config')?.browserTabLimit,
 );
 const embeddedBrowserRequests = new Map<
   string,
@@ -1261,6 +1262,7 @@ const APP_UPDATE_LAST_AUTOMATIC_CHECK_AT_KEY = 'app_update_last_automatic_check_
 type AppConfigSettings = {
   api?: unknown;
   browserMode?: unknown;
+  browserTabLimit?: unknown;
   browserDownloadDirectory?: unknown;
   browserAskDownloadLocation?: unknown;
   model?: unknown;

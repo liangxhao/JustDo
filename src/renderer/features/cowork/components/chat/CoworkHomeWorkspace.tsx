@@ -1,6 +1,7 @@
 import type { BrowserPanelTab } from '@shared/browser/browser';
 import { HOME_WORKSPACE_SESSION_ID } from '@shared/preview/filePreview';
 
+import { useBrowserTabLimit } from '@/features/browser/useBrowserTabLimit';
 import { COMPOSER_FRAME_CLASS } from '@/features/cowork/components/composer/composerStyles';
 import CoworkPromptInput, {
   type CoworkPromptInputRef,
@@ -24,7 +25,6 @@ import FolderIcon from '@/shared/components/icons/FolderIcon';
 import logoUrl from '../../../../../../resources/logo.png';
 import {
   fileDisplayTabId,
-  MAX_BROWSER_TABS,
   MAX_TERMINAL_TABS,
   WORKSPACE_FILES_DISPLAY_TAB_ID,
 } from '../display/displayTabIds';
@@ -119,6 +119,7 @@ export function CoworkHomeWorkspace({
   closeFilePreview,
   closeUnsupportedFilePreview,
 }: CoworkHomeWorkspaceProps) {
+  const maximumBrowserTabs = useBrowserTabLimit();
   return (
     <div className="cowork-home flex-1 flex flex-col h-full">
       <div className="cowork-display-host relative flex min-h-0 flex-1">
@@ -203,7 +204,7 @@ export function CoworkHomeWorkspace({
               ) : (
                 <DisplayPanelLauncher
                   visible={isDisplayPanelOpen || isWorkspaceDetached}
-                  browserDisabled={browserTabs.length >= MAX_BROWSER_TABS}
+                  browserDisabled={browserTabs.length >= maximumBrowserTabs}
                   onCreateBrowser={handleCreateBrowserTab}
                   onCreateTerminal={handleCreateTerminalTab}
                   onOpenFiles={homeWorkspaceFolderPath ? handleOpenWorkspaceFiles : undefined}
@@ -243,7 +244,7 @@ export function CoworkHomeWorkspace({
             }
             actions={
               <NewDisplayTabButton
-                disabled={browserTabs.length >= MAX_BROWSER_TABS}
+                disabled={browserTabs.length >= maximumBrowserTabs}
                 onCreateTab={() => handleCreateBrowserTab()}
               />
             }

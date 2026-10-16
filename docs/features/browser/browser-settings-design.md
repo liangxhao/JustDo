@@ -39,6 +39,16 @@ Chrome 扩展安装入口作为独立区域始终显示，位于浏览器选择�
 
 ## 2. 内置浏览器的资源模型
 
+每个会话的内置浏览器标签页上限由 `app_config.browserTabLimit` 保存，默认 20，
+可在浏览器设置的“内置浏览器设置”中调整为 1–50 的整数，输入框失焦或按 Enter 后即时保存。
+空白“新标签页”计入上限；首页、会话侧栏、消息链接、弹出网页和 Agent 创建入口
+共用 `shared/browser/browserTabLimit.ts` 的默认值与边界校验。Main 的 Agent bridge
+每次新建时读取最新配置，并合计同一会话所有 profile 的存活标签与待创建请求；
+profile 的标签查询与操作仍保持隔离。Renderer 通过现有 `config-updated` 通知刷新按钮状态，
+无需重启。缺失或非法配置使用默认值；合法数值取整并限制在上述范围内。
+调低上限不关闭或裁剪已有标签，超过上限时仍可切换、导航和关闭已有页面，
+只拒绝继续新建。标签越多，Chromium guest 的内存占用越高。
+
 ```mermaid
 flowchart LR
   User[用户输入] --> Guest[真实 Chromium guest]

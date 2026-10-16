@@ -8,6 +8,7 @@ import {
   BrowserLinkTarget,
   type BrowserLinkTarget as BrowserLinkTargetValue,
 } from '@shared/browser/browserLinkOpening';
+import { DEFAULT_BROWSER_TAB_LIMIT } from '@shared/browser/browserTabLimit';
 import {
   defaultBrowserProxySettings,
   defaultProxySettings,
@@ -44,6 +45,7 @@ export interface AppConfig {
   computerOverlayRemotePreview: boolean;
   browserMode: BrowserModeValue;
   browserSearchEngine: BrowserSearchEngineValue;
+  browserTabLimit: number;
   browserWebLinkTarget: BrowserLinkTargetValue;
   browserHtmlLinkTarget: BrowserLinkTargetValue;
   browserDownloadDirectory: string;
@@ -190,6 +192,7 @@ const buildDefaultProviders = (): AppConfig['providers'] => {
 export const defaultConfig: AppConfig = {
   browserMode: BrowserMode.Embedded,
   browserSearchEngine: BrowserSearchEngine.Baidu,
+  browserTabLimit: DEFAULT_BROWSER_TAB_LIMIT,
   browserWebLinkTarget: BrowserLinkTarget.Embedded,
   browserHtmlLinkTarget: BrowserLinkTarget.Embedded,
   browserDownloadDirectory: '',

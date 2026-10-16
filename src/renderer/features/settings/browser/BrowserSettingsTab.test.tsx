@@ -125,6 +125,44 @@ describe('BrowserSettingsTab extension connection checks', () => {
     vi.clearAllMocks();
   });
 
+  test.each([
+    ['35', 35],
+    ['200', 50],
+    ['0', 1],
+    ['12.7', 13],
+  ])('saves browser tab limit %s as %s', async (draft, expected) => {
+    installElectronBrowserMock();
+    render(<BrowserSettingsTab />);
+    const input = screen.getByRole('spinbutton', { name: 'browserTabLimitTitle' });
+    expect((input as HTMLInputElement).value).toBe('20');
+
+    fireEvent.change(input, { target: { value: draft } });
+    fireEvent.blur(input);
+
+    await waitFor(() =>
+      expect(mocks.updateConfig).toHaveBeenCalledWith({ browserTabLimit: expected }),
+    );
+    expect((input as HTMLInputElement).value).toBe(String(expected));
+  });
+
+  test('keeps the saved limit when the input is cleared or persistence fails', async () => {
+    mocks.getConfig.mockReturnValue({ browserMode: BrowserMode.Embedded, browserTabLimit: 40 });
+    mocks.updateConfig.mockRejectedValue(new Error('storage unavailable'));
+    installElectronBrowserMock();
+    render(<BrowserSettingsTab />);
+    const input = screen.getByRole('spinbutton', { name: 'browserTabLimitTitle' });
+
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.blur(input);
+    expect((input as HTMLInputElement).value).toBe('40');
+    expect(mocks.updateConfig).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: '50' } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(screen.getByText('browserTabLimitSaveFailed')).toBeTruthy());
+    expect((input as HTMLInputElement).value).toBe('40');
+  });
+
   test('edits the browser proxy draft without autosaving application proxy settings', async () => {
     mocks.getConfig.mockReturnValue({
       browserMode: BrowserMode.Embedded,

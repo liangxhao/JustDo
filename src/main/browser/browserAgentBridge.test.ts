@@ -225,6 +225,138 @@ test('opens, labels, resolves, and closes a distinct internal tab', async () => 
   });
 });
 
+test('reads the current configured tab limit for agent creation and preserves existing tabs when lowered', async () => {
+  let limit = 10;
+  const sendToRenderer = vi.fn((channel, payload) => {
+    if (channel !== BrowserIpc.AgentEnsureTab) return;
+    const id = electron.guests.size + 100;
+    electron.guests.set(id, {
+      id,
+      getType: () => 'webview',
+      isDestroyed: () => false,
+      session: electron.partition,
+      hostWebContents: { id: 10 },
+      getTitle: () => 'Page',
+      getURL: () => payload.url,
+      loadURL: vi.fn().mockResolvedValue(undefined),
+    });
+    registerGuest(id, payload.targetId);
+  });
+  bridge = new BrowserAgentBridge(
+    sendToRenderer,
+    () => true,
+    undefined,
+    false,
+    undefined,
+    () => limit,
+  );
+  bridge.registerIpc();
+  for (let index = 0; index < 10; index++) {
+    await expect(
+      bridge.executeCommand('justdo:session-1', {
+        action: 'open',
+        targetUrl: 'https://example.com/',
+      }),
+    ).resolves.toMatchObject({ ok: true });
+  }
+  await expect(
+    bridge.executeCommand('justdo:session-1', {
+      action: 'open',
+      targetUrl: 'https://example.com/',
+    }),
+  ).rejects.toThrow('at most 10 tabs');
+
+  limit = 11;
+  await expect(
+    bridge.executeCommand('justdo:session-1', {
+      action: 'open',
+      targetUrl: 'https://example.com/',
+    }),
+  ).resolves.toMatchObject({ ok: true });
+  limit = 1;
+  await expect(
+    bridge.executeCommand('justdo:session-1', {
+      action: 'open',
+      targetUrl: 'https://example.com/',
+    }),
+  ).rejects.toThrow('at most 1 tabs');
+  await expect(
+    bridge.executeCommand('justdo:session-1', {
+      action: 'open',
+      profile: 'imported',
+      targetUrl: 'https://example.com/imported',
+    }),
+  ).rejects.toThrow('at most 1 tabs');
+  await expect(
+    bridge.executeCommand('justdo:session-1', { action: 'tabs' }),
+  ).resolves.toMatchObject({
+    tabCount: 11,
+  });
+  expect(
+    sendToRenderer.mock.calls.filter(([channel]) => channel === BrowserIpc.AgentEnsureTab),
+  ).toHaveLength(11);
+});
+
+test('counts pending tab requests across profiles without sharing capacity between conversations', async () => {
+  const sendToRenderer = vi.fn();
+  bridge = new BrowserAgentBridge(
+    sendToRenderer,
+    () => true,
+    undefined,
+    false,
+    undefined,
+    () => 1,
+  );
+  bridge.registerIpc();
+  const firstController = new AbortController();
+  const otherController = new AbortController();
+  const first = bridge
+    .executeCommand(
+      'justdo:session-1',
+      { action: 'open', targetUrl: 'https://example.com/' },
+      firstController.signal,
+    )
+    .catch(error => error);
+  try {
+    await vi.waitFor(() =>
+      expect(sendToRenderer).toHaveBeenCalledWith(
+        BrowserIpc.AgentEnsureTab,
+        expect.objectContaining({ sessionId: 'session-1', profile: 'embedded' }),
+      ),
+    );
+    await expect(
+      bridge.executeCommand('justdo:session-1', {
+        action: 'open',
+        profile: 'imported',
+        targetUrl: 'https://example.com/',
+      }),
+    ).rejects.toThrow('at most 1 tabs');
+
+    const other = bridge
+      .executeCommand(
+        'justdo:session-2',
+        { action: 'open', profile: 'imported', targetUrl: 'https://example.com/' },
+        otherController.signal,
+      )
+      .catch(error => error);
+    await vi.waitFor(() =>
+      expect(sendToRenderer).toHaveBeenCalledWith(
+        BrowserIpc.AgentEnsureTab,
+        expect.objectContaining({ sessionId: 'session-2', profile: 'imported' }),
+      ),
+    );
+    expect(
+      sendToRenderer.mock.calls.filter(([channel]) => channel === BrowserIpc.AgentEnsureTab),
+    ).toHaveLength(2);
+    otherController.abort();
+    expect(await other).toBeInstanceOf(Error);
+  } finally {
+    firstController.abort();
+    otherController.abort();
+    await first;
+  }
+});
+
 test('lists and focuses only registered live guests while redacting sensitive URLs', async () => {
   const sendToRenderer = vi.fn();
   bridge = new BrowserAgentBridge(sendToRenderer, senderId => senderId === 10);
