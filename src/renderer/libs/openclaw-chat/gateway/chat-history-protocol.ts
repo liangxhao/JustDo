@@ -1,9 +1,13 @@
 import { appendErrorDisplayDetail } from '@shared/openclaw/errorDisplay';
-import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
+import {
+  OPENCLAW_HISTORY_DETAIL_MAX_IDS,
+  readHistoryFailurePartial,
+} from '@shared/openclaw/historyIpc';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 
 import {
   isPersistedFailedAssistantMessage,
+  readCollapsedDeliveryArtifacts,
   retainCollapsedDeliveryArtifacts,
 } from '../pipeline/history-display-normalizer';
 import { extractText } from '../pipeline/message-extract';
@@ -111,6 +115,31 @@ const needsFailureDetail = (message: unknown): boolean => {
   );
 };
 
+function canRestoreFailureText(message: UnknownRecord): boolean {
+  if (
+    message.openclawDisplayContent !== undefined ||
+    readCollapsedDeliveryArtifacts(message).length > 0
+  )
+    return false;
+  if (
+    [message.activity, message.__justdoAttachedToolMessages].some(
+      value => Array.isArray(value) && value.length > 0,
+    )
+  )
+    return false;
+  return (
+    typeof message.content === 'string' ||
+    (Array.isArray(message.content) &&
+      message.content.every(value => {
+        const block = asRecord(value);
+        return (
+          (block?.type === 'text' && typeof block.text === 'string') ||
+          (block?.type === 'thinking' && typeof block.thinking === 'string')
+        );
+      }))
+  );
+}
+
 async function hydrateFailureDetails(
   client: GatewayClient,
   messages: unknown[],
@@ -126,7 +155,10 @@ async function hydrateFailureDetails(
     ),
   ];
   if (ids.length === 0) return messages;
-  const errors = new Map<string, { errorMessage: string; emptyContent: boolean }>();
+  const errors = new Map<
+    string,
+    { errorMessage: string; emptyContent: boolean; partialContent: unknown }
+  >();
   for (let offset = 0; offset < ids.length; offset += OPENCLAW_HISTORY_DETAIL_MAX_IDS) {
     if (!isCurrent()) return messages;
     const batch = ids.slice(offset, offset + OPENCLAW_HISTORY_DETAIL_MAX_IDS);
@@ -137,6 +169,7 @@ async function hydrateFailureDetails(
         await client.request('runtimeServices.historyDetails', {
           sessionKey,
           failureMessageIds: batch,
+          includeFailurePartialContent: true,
         }),
       );
       if (!isCurrent()) return messages;
@@ -147,6 +180,7 @@ async function hydrateFailureDetails(
           errors.set(id, {
             errorMessage: detail.errorMessage.trim(),
             emptyContent: detail.emptyContent === true,
+            partialContent: detail.partialContent,
           });
         }
       }
@@ -155,24 +189,63 @@ async function hydrateFailureDetails(
     }
   }
   if (errors.size === 0) return messages;
-  return messages.map(message => {
-    if (!needsFailureDetail(message)) return message;
+  const partialOwners = new Map<string, number>();
+  const blockedPartials = new Set<string>();
+  messages.forEach((message, index) => {
+    const raw = asRecord(message);
+    const id = readHistoryMessageId(message);
+    if (!raw || !id) return;
+    if (!readHistoryFailurePartial(errors.get(id)?.partialContent, asRecord(raw.__openclaw)?.runId))
+      return;
+    // Native display carriers, activity and retained delivery artifacts keep
+    // their existing projection; text-only recovery cannot replace them.
+    if (!needsFailureDetail(message) || !canRestoreFailureText(raw)) {
+      blockedPartials.add(id);
+      return;
+    }
+    // One source can have multiple admitted commentary projections. A complete
+    // text/reasoning recovery replaces those siblings exactly once.
+    partialOwners.set(id, index);
+  });
+  return messages.flatMap((message, index) => {
+    if (!needsFailureDetail(message)) return [message];
     const id = readHistoryMessageId(message);
     const detail = id ? errors.get(id) : undefined;
-    if (!detail) return message;
+    if (!detail) return [message];
     const raw = asRecord(message)!;
+    const partial = readHistoryFailurePartial(
+      detail.partialContent,
+      asRecord(raw.__openclaw)?.runId,
+    );
+    if (partial && id && !blockedPartials.has(id)) {
+      if (partialOwners.get(id) !== index) return [];
+      const { truncated: _truncated, reason: _reason, ...metadata } = asRecord(raw.__openclaw)!;
+      return [
+        {
+          ...raw,
+          content: partial.content,
+          errorMessage: detail.errorMessage,
+          __openclaw: {
+            ...metadata,
+            ...(partial.truncated ? { truncated: true, reason: 'display-cap' } : {}),
+          },
+        },
+      ];
+    }
     // Restore only the display copy's source shape. The durable transcript stays
     // untouched; normalization will render this as one run failure, not a reply.
     if (detail.emptyContent && !isPersistedFailedAssistantMessage(raw)) {
-      return {
-        ...raw,
-        content: [],
-        errorMessage: isInternalManagedSubagentHandoffError(detail.errorMessage)
-          ? detail.errorMessage
-          : appendErrorDisplayDetail(extractText(raw)?.trim() || '', detail.errorMessage),
-      };
+      return [
+        {
+          ...raw,
+          content: [],
+          errorMessage: isInternalManagedSubagentHandoffError(detail.errorMessage)
+            ? detail.errorMessage
+            : appendErrorDisplayDetail(extractText(raw)?.trim() || '', detail.errorMessage),
+        },
+      ];
     }
-    return { ...raw, errorMessage: detail.errorMessage };
+    return [{ ...raw, errorMessage: detail.errorMessage }];
   });
 }
 

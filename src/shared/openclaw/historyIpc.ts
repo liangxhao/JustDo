@@ -1,4 +1,6 @@
 // Keep aligned with the runtime services's bounded historyDetails RPC contract.
+export { readHistoryFailurePartial } from '../../../openclaw-extensions/runtime-services/contracts/history-failure';
+
 export const OPENCLAW_HISTORY_DETAIL_MAX_IDS = 250;
 
 export const OpenClawHistoryIpc = {

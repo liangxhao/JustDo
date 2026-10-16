@@ -261,7 +261,214 @@ describe('OpenClaw chat history protocol', () => {
     expect(request).toHaveBeenCalledExactlyOnceWith('runtimeServices.historyDetails', {
       sessionKey: 'session-1',
       failureMessageIds: ['m0', 'm1', 'm2'],
+      includeFailurePartialContent: true,
     });
+  });
+
+  test('restores failed thinking and commentary once instead of keeping generated failure copy', async () => {
+    const marker = { id: 'failed-source', runId: 'run-1', seq: 153 };
+    const partial = [
+      { type: 'thinking', thinking: 'Partial reasoning' },
+      { type: 'text', text: 'I will check the environment first.' },
+    ];
+    const errorMessage = 'Provider returned an incomplete or malformed tool call';
+    const input = [
+      {
+        role: 'assistant',
+        stopReason: 'error',
+        content: 'Older commentary projection',
+        openclawStreamFallback: { source: 'segment', itemId: 'commentary-1' },
+        __openclaw: marker,
+      },
+      {
+        role: 'assistant',
+        stopReason: 'error',
+        content: [{ type: 'text', text: 'The agent run failed before producing a reply.' }],
+        __openclaw: marker,
+      },
+    ];
+    const before = structuredClone(input);
+    const request = vi.fn().mockResolvedValue({
+      failureDetails: {
+        'failed-source': {
+          errorMessage,
+          emptyContent: false,
+          partialContent: { runId: 'run-1', content: partial, truncated: false },
+        },
+      },
+    });
+
+    const hydrated = await hydrateTruncatedHistoryMessages(
+      { request } as unknown as GatewayClient,
+      input,
+      'session-1',
+    );
+    const normalized = await normalizeGatewayHistoryForDisplay(hydrated, {
+      sessionKey: 'session-1',
+    });
+    const timeline = projectPersistedTimeline(normalized as GatewayMessage[]);
+
+    expect(input).toEqual(before);
+    expect(hydrated).toHaveLength(1);
+    expect(hydrated[0]).toMatchObject({
+      content: partial,
+      errorMessage,
+      stopReason: 'error',
+      __openclaw: marker,
+    });
+    const serialized = JSON.stringify(timeline);
+    expect(serialized.split('Partial reasoning')).toHaveLength(2);
+    expect(serialized.split('I will check the environment first.')).toHaveLength(2);
+    const errors = timeline.filter(
+      item => item.kind === 'history-message' && item.message.__justdoFailedRunMessage === true,
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ message: { content: errorMessage } });
+    expect(serialized).not.toContain('The agent run failed before producing a reply.');
+  });
+
+  test.each([
+    { runId: 'other-run', content: [{ type: 'text', text: 'Wrong source' }], truncated: false },
+    { runId: 'run-1', content: [{ type: 'toolCall', name: 'exec' }], truncated: false },
+    { runId: 'run-1', content: [{ type: 'text', text: 'x'.repeat(200_001) }], truncated: false },
+  ])('does not admit mismatched or invalid failure content %#', async partialContent => {
+    const input = [
+      {
+        role: 'assistant',
+        stopReason: 'error',
+        content: 'Existing display',
+        __openclaw: { id: 'failure', runId: 'run-1' },
+      },
+    ];
+    const request = vi.fn().mockResolvedValue({
+      failureDetails: {
+        failure: { errorMessage: 'Failure', emptyContent: false, partialContent },
+      },
+    });
+    const hydrated = await hydrateTruncatedHistoryMessages(
+      { request } as unknown as GatewayClient,
+      input,
+      'session-1',
+    );
+    expect(hydrated).toEqual([{ ...input[0], errorMessage: 'Failure' }]);
+  });
+
+  test('does not replace native display attachments or remove sibling tool activity', async () => {
+    const marker = { id: 'failure', runId: 'run-1' };
+    const attachment = {
+      type: 'attachment',
+      attachment: { url: 'https://example.test/report.pdf', label: 'report.pdf' },
+    };
+    const tool = { role: 'toolResult', toolCallId: 'call-1', content: 'Retained tool output' };
+    const cases = [
+      [
+        {
+          role: 'assistant',
+          stopReason: 'error',
+          __openclaw: marker,
+          content: [{ type: 'text', text: 'Partial reply' }, attachment],
+        },
+      ],
+      [
+        {
+          role: 'assistant',
+          stopReason: 'error',
+          __openclaw: marker,
+          content: 'Commentary',
+          __justdoAttachedToolMessages: [tool],
+          activity: [{ toolCallId: 'call-1' }],
+        },
+        {
+          role: 'assistant',
+          stopReason: 'error',
+          __openclaw: marker,
+          content: 'Failure placeholder',
+        },
+      ],
+    ];
+    const request = vi.fn().mockResolvedValue({
+      failureDetails: {
+        failure: {
+          errorMessage: 'Failure',
+          emptyContent: false,
+          partialContent: {
+            runId: 'run-1',
+            content: [{ type: 'text', text: 'Recovered source' }],
+            truncated: false,
+          },
+        },
+      },
+    });
+    for (const input of cases) {
+      const hydrated = await hydrateTruncatedHistoryMessages(
+        { request } as unknown as GatewayClient,
+        input,
+        'session-1',
+      );
+      expect(hydrated).toEqual(input.map(message => ({ ...message, errorMessage: 'Failure' })));
+    }
+  });
+
+  test('marks bounded failure content as truncated and discards it after a history change', async () => {
+    const input = [
+      {
+        role: 'assistant',
+        stopReason: 'error',
+        content: 'Failure placeholder',
+        __openclaw: { id: 'failure', runId: 'run-1' },
+      },
+    ];
+    const detail = {
+      errorMessage: 'Failure',
+      emptyContent: false,
+      partialContent: {
+        runId: 'run-1',
+        content: [{ type: 'thinking', thinking: 'Partial' }],
+        truncated: true,
+      },
+    };
+    const request = vi.fn().mockResolvedValue({ failureDetails: { failure: detail } });
+    const hydrated = await hydrateTruncatedHistoryMessages(
+      { request } as unknown as GatewayClient,
+      input,
+      'session-1',
+    );
+    expect(hydrated[0]).toMatchObject({
+      __openclaw: { ...input[0].__openclaw, truncated: true, reason: 'display-cap' },
+    });
+    const completeRequest = vi.fn().mockResolvedValue({
+      failureDetails: {
+        failure: {
+          ...detail,
+          partialContent: { ...detail.partialContent, truncated: false },
+        },
+      },
+    });
+    const complete = await hydrateTruncatedHistoryMessages(
+      { request: completeRequest } as unknown as GatewayClient,
+      [
+        {
+          ...input[0],
+          __openclaw: { ...input[0].__openclaw, truncated: true, reason: 'display-cap' },
+        },
+      ],
+      'session-1',
+    );
+    expect(complete[0]).toMatchObject({ __openclaw: input[0].__openclaw });
+    expect((complete[0] as Record<string, unknown>).__openclaw).not.toHaveProperty('truncated');
+    let current = true;
+    request.mockImplementation(async () => {
+      current = false;
+      return { failureDetails: { failure: detail } };
+    });
+    expect(
+      await hydrateTruncatedHistoryMessages(
+        { request } as unknown as GatewayClient,
+        input,
+        'session-1',
+        () => current,
+      ),
+    ).toEqual(input);
   });
 
   test.each([

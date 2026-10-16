@@ -11,6 +11,11 @@ import {
 } from 'openclaw/plugin-sdk/ssrf-runtime';
 
 import { registerAgentTeamRuntimeServices } from './agent-team';
+import {
+  HISTORY_FAILURE_PARTIAL_BATCH_MAX_CHARS,
+  type HistoryFailurePartial,
+} from './contracts/history-failure';
+import { isEmptyFailureSourceContent, projectFailurePartialContent } from './history-failure';
 import { registerScheduledTaskHistory } from './scheduled-task-history';
 
 const PLUGIN_ID = 'runtime-services';
@@ -23,7 +28,14 @@ const HISTORY_MESSAGE_TRANSFER_TTL_MS = 2 * 60 * 1000;
 
 type UnknownRecord = Record<string, unknown>;
 type ToolInputLookup = Record<string, { name?: string; input: unknown }>;
-type FailureDetailLookup = Record<string, { errorMessage: string; emptyContent: boolean }>;
+type FailureDetailLookup = Record<
+  string,
+  {
+    errorMessage: string;
+    emptyContent: boolean;
+    partialContent?: HistoryFailurePartial;
+  }
+>;
 type CompactionDetailLookup = Record<
   string,
   { summary?: string; tokensBefore?: number; tokensAfter?: number }
@@ -282,11 +294,16 @@ const plugin = {
         const toolInputs: ToolInputLookup = {};
         const compactionDetails: CompactionDetailLookup = {};
         const failureDetails: FailureDetailLookup = Object.create(null);
+        let partialContentBudget = HISTORY_FAILURE_PARTIAL_BATCH_MAX_CHARS;
         if (toolCallIds.size > 0 || failureMessageIds.size > 0) {
           const visibleMessages = await readVisibleSessionTranscriptMessageEntries({
             sessionKey,
             sessionId: entry.sessionId,
           });
+          const includePartialContent =
+            params.includeFailurePartialContent === true &&
+            getSessionEntry({ sessionKey, readConsistency: 'latest' })?.sessionId ===
+              entry.sessionId;
           if (toolCallIds.size > 0) {
             collectHistoryDetails(
               visibleMessages.map(item => item.message),
@@ -314,20 +331,23 @@ const plugin = {
             // History replaces empty failures with generated assistant text.
             // Return the source shape so clients can distinguish that copy from
             // a real partial reply without guessing from provider error wording.
-            const content = message.content;
-            const emptyContent =
-              (content == null ||
-                (typeof content === 'string' && !content.trim()) ||
-                (Array.isArray(content) &&
-                  content.every(
-                    block =>
-                      isRecord(block) &&
-                      block.type === 'text' &&
-                      typeof block.text === 'string' &&
-                      !block.text.trim(),
-                  ))) &&
-              !(typeof message.text === 'string' && message.text.trim());
+            const emptyContent = isEmptyFailureSourceContent(message);
             failureDetails[item.entryId] = { errorMessage, emptyContent };
+            if (includePartialContent) {
+              const partialContent = projectFailurePartialContent(
+                message,
+                value => redactSensitiveText(value, { mode: 'tools' }),
+                partialContentBudget,
+              );
+              if (partialContent) {
+                partialContentBudget -= partialContent.content.reduce(
+                  (sum, block) =>
+                    sum + (block.type === 'text' ? block.text.length : block.thinking.length),
+                  0,
+                );
+                failureDetails[item.entryId].partialContent = partialContent;
+              }
+            }
           }
         }
         if (compactionEntryIds.size > 0) {

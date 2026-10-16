@@ -14,6 +14,33 @@ afterEach(() => {
 });
 
 describe('justdo-chat failed runs', () => {
+  test('renders restored failed reasoning, content and one error without repeating the content', async () => {
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    const body = 'Checking the environment first.';
+    const error = 'Provider returned an incomplete or malformed tool call';
+    chat.messages = [
+      {
+        role: 'assistant',
+        stopReason: 'error',
+        errorMessage: error,
+        content: [
+          { type: 'thinking', thinking: 'Inspect the installed tools.' },
+          { type: 'text', text: body },
+        ],
+        __openclaw: { id: 'failure-1', runId: 'run-1' },
+      },
+    ];
+    document.body.append(chat);
+    await chat.updateComplete;
+    const text = chat.shadowRoot?.textContent ?? '';
+    expect(text.split(body)).toHaveLength(2);
+    expect(chat.shadowRoot?.querySelectorAll('.process-terminal--error')).toHaveLength(1);
+    expect(chat.shadowRoot?.querySelector('.process-terminal--error')?.textContent).toContain(
+      error,
+    );
+    expect(JSON.stringify(chat.messages)).toContain('Inspect the installed tools.');
+  });
+
   test.each([
     [{ type: 'thinking', thinking: 'Partial reasoning' }],
     [{ type: 'toolCall', id: 'call-1', name: 'read', arguments: {} }],

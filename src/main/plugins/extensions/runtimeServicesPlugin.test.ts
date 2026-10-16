@@ -383,6 +383,7 @@ test.each([
   [[{ type: 'text', text: 'Partial reply' }], false],
   [[{ type: 'thinking', thinking: 'Partial reasoning' }], false],
   [[{ type: 'toolCall', id: 'call-1', name: 'read' }], false],
+  [[{ type: 'text', text: '[assistant turn failed before producing content]' }], true],
   ['Partial reply', false],
 ])(
   'reports the source failure content shape without returning it: %j',
@@ -431,6 +432,164 @@ test('bounds failure lookup batches and returned error text', async () => {
   expect(sdk.readVisibleSessionTranscriptMessageEntries).not.toHaveBeenCalled();
   await handler({ params: { sessionKey: 'session-1', failureMessageIds: ['failure'] }, respond });
   expect(respond.mock.calls[1][1].failureDetails.failure.errorMessage).toHaveLength(2000);
+});
+
+test('optionally projects exact failed reasoning and commentary with redaction and no private metadata', async () => {
+  sdk.getSessionEntry.mockReturnValue({ sessionId: 'native-session-1' });
+  const message = {
+    role: 'assistant',
+    stopReason: 'error',
+    errorMessage: 'Malformed tool call',
+    __openclaw: { runId: 'run-1' },
+    errorBody: 'private diagnostic',
+    content: [
+      { type: 'thinking', thinking: 'Bearer secret-token', thinkingSignature: 'private signature' },
+      {
+        type: 'text',
+        text: 'Checking the environment.',
+        textSignature: '{"v":1,"phase":"commentary"}',
+      },
+    ],
+  };
+  const original = structuredClone(message);
+  sdk.readVisibleSessionTranscriptMessageEntries.mockResolvedValue([
+    { entryId: 'failure', message },
+  ]);
+  const { registerGatewayMethod } = registerPlugin();
+  const handler = registerGatewayMethod.mock.calls.find(
+    ([method]) => method === 'runtimeServices.historyDetails',
+  )![1] as HistoryHandler;
+  const respond = vi.fn();
+
+  await handler({
+    params: {
+      sessionKey: 'session-1',
+      failureMessageIds: ['failure'],
+      includeFailurePartialContent: true,
+    },
+    respond,
+  });
+
+  expect(respond.mock.calls[0][1].failureDetails.failure).toEqual({
+    errorMessage: 'Malformed tool call',
+    emptyContent: false,
+    partialContent: {
+      runId: 'run-1',
+      truncated: false,
+      content: [
+        { type: 'thinking', thinking: 'Bearer [REDACTED]' },
+        { type: 'text', text: 'Checking the environment.' },
+      ],
+    },
+  });
+  expect(JSON.stringify(respond.mock.calls[0][1])).not.toMatch(
+    /secret-token|private signature|private diagnostic|textSignature/,
+  );
+  expect(message).toEqual(original);
+  expect(sdk.loadTranscriptEventsSync).not.toHaveBeenCalled();
+});
+
+test('does not return partial content for hidden, unbound, mixed-tool or rebound sources', async () => {
+  const base = {
+    role: 'assistant',
+    stopReason: 'error',
+    errorMessage: 'Failure',
+    content: [{ type: 'thinking', thinking: 'Thought' }],
+    __openclaw: { runId: 'run-1' },
+  };
+  sdk.getSessionEntry.mockReturnValue({ sessionId: 'native-session-1' });
+  sdk.readVisibleSessionTranscriptMessageEntries.mockResolvedValue([
+    { entryId: 'hidden', message: { ...base, display: false } },
+    { entryId: 'unbound', message: { ...base, __openclaw: undefined } },
+    {
+      entryId: 'display',
+      message: {
+        ...base,
+        openclawDisplayContent: [
+          { type: 'text', text: 'Visible reply' },
+          {
+            type: 'attachment',
+            attachment: { url: 'https://example.test/report.pdf', label: 'report.pdf' },
+          },
+        ],
+      },
+    },
+    {
+      entryId: 'mixed',
+      message: {
+        ...base,
+        content: [...base.content, { type: 'toolCall', id: 'tool-1', name: 'exec' }],
+      },
+    },
+    { entryId: 'rebound', message: base },
+  ]);
+  const { registerGatewayMethod } = registerPlugin();
+  const handler = registerGatewayMethod.mock.calls.find(
+    ([method]) => method === 'runtimeServices.historyDetails',
+  )![1] as HistoryHandler;
+  const respond = vi.fn();
+  await handler({
+    params: {
+      sessionKey: 'session-1',
+      failureMessageIds: ['hidden', 'unbound', 'mixed', 'display'],
+      includeFailurePartialContent: true,
+    },
+    respond,
+  });
+  for (const detail of Object.values(respond.mock.calls[0][1].failureDetails)) {
+    expect(detail).not.toHaveProperty('partialContent');
+  }
+  sdk.getSessionEntry
+    .mockReturnValueOnce({ sessionId: 'native-session-1' })
+    .mockReturnValue({ sessionId: 'replacement-session' });
+  await handler({
+    params: {
+      sessionKey: 'session-1',
+      failureMessageIds: ['rebound'],
+      includeFailurePartialContent: true,
+    },
+    respond,
+  });
+  expect(respond.mock.calls[1][1].failureDetails.rebound).not.toHaveProperty('partialContent');
+});
+
+test('bounds partial content per message and per request and marks truncation', async () => {
+  sdk.getSessionEntry.mockReturnValue({ sessionId: 'native-session-1' });
+  sdk.readVisibleSessionTranscriptMessageEntries.mockResolvedValue(
+    Array.from({ length: 6 }, (_, index) => ({
+      entryId: `failure-${index}`,
+      message: {
+        role: 'assistant',
+        stopReason: 'error',
+        errorMessage: 'Failure',
+        __openclaw: { runId: `run-${index}` },
+        content: [{ type: 'thinking', thinking: 'x'.repeat(250_000) }],
+      },
+    })),
+  );
+  const { registerGatewayMethod } = registerPlugin();
+  const handler = registerGatewayMethod.mock.calls.find(
+    ([method]) => method === 'runtimeServices.historyDetails',
+  )![1] as HistoryHandler;
+  const respond = vi.fn();
+  await handler({
+    params: {
+      sessionKey: 'session-1',
+      failureMessageIds: Array.from({ length: 6 }, (_, index) => `failure-${index}`),
+      includeFailurePartialContent: true,
+    },
+    respond,
+  });
+  const details = respond.mock.calls[0][1].failureDetails;
+  expect(details['failure-0'].partialContent).toMatchObject({
+    truncated: true,
+  });
+  expect(details['failure-0'].partialContent.content[0].thinking).toHaveLength(200_000);
+  expect(details['failure-0'].partialContent.content[0].thinking).toMatch(
+    /\n\.\.\.\(truncated\)\.\.\.$/u,
+  );
+  expect(details['failure-4'].partialContent.content[0].thinking).toHaveLength(200_000);
+  expect(details['failure-5']).not.toHaveProperty('partialContent');
 });
 
 test('reads one native transcript message through advancing bounded chunks', async () => {

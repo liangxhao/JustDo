@@ -89,6 +89,20 @@ describe('optimistic history tail ownership', () => {
       content: 'partial reply already projected live',
     };
     expect(projectPersistedMessagesForActiveTurn([partialAssistant], turn)).toEqual([]);
+    expect(
+      projectPersistedMessagesForActiveTurn(
+        [
+          {
+            ...partialAssistant,
+            content: [
+              { type: 'thinking', thinking: 'Recovered reasoning' },
+              { type: 'text', text: 'Partial reply already projected live' },
+            ],
+          },
+        ],
+        turn,
+      ),
+    ).toEqual([]);
     expect(state.activeTurn).toBe(turn);
     expect(turn.items).toMatchObject([{ type: 'terminal', message: error }]);
   });
