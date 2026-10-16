@@ -3352,6 +3352,10 @@ export const chatStyles = [
       min-height: 0;
       margin-top: 2px;
     }
+    .new-messages-indicator[hidden] {
+      display: none;
+    }
+
     .new-messages-indicator {
       position: sticky;
       z-index: 12;

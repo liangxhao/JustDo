@@ -404,6 +404,12 @@ Markdown-it 处理列表、代码、表格、公式和链接，DOMPurify 统一�
 
 stream-render-scheduler 合并 frame 更新，assistant pacer 平滑揭示文本但保留原生段边界。用户向上阅读后暂停自动跟随；新内容记录 unseen revision，不强拉到底部。恢复跟随是明确用户动作或仍处底部的规则。
 
+Lit 的批量过程展开／收起先在 `willUpdate` 重置局部选择，实时与历史接管的摘要身份
+在同一次渲染内完成同步；`updated` 恢复已提交 DOM 的焦点时禁止额外滚动，由滚动控制器
+维护阅读锚点，不再回写响应式折叠状态。
+滚动控制器根据渲染后的实际布局直接同步「回到最新消息」按钮的可见性，不为滚动模式、
+可滚动范围或 unseen revision 重新渲染整条时间线，避免 `change-in-update` 警告和重复更新。
+
 历史窗口移动、代码块高度变化、图片加载和 Mermaid 后处理都需要维护可见锚点。搜索/minimap 基于显示投影，跳转未加载范围需先取得相应历史。虚拟化不能破坏键盘导航、选择文本或展开工具详情的稳定性。
 
 侧栏跨对话搜索沿用 Gateway `sessions.search`，将命中消息的原生 entry ID 与

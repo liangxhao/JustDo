@@ -287,7 +287,7 @@ export class JustDoChatElement extends LitElement {
   declare private speechPlayingGroupKey: string | null;
 
   private readonly chatScrollController = new ChatScrollController(
-    () => this.requestUpdate(),
+    () => this.syncScrollIndicator(),
     () => this._controller?.showOlderHistory() ?? false,
     () => this._controller?.showNewerHistory() ?? false,
   );
@@ -787,14 +787,13 @@ export class JustDoChatElement extends LitElement {
                 : nothing
             }
             ${
-              ctrl &&
-              this.chatScrollController.state.mode === 'paused' &&
-              this.chatScrollController.canScrollDown
+              ctrl
                 ? html`
                     <button
                       type="button"
                       class="new-messages-indicator"
                       data-jump-to-latest
+                      hidden
                       aria-label=${i18nService.t('coworkJumpToLatest')}
                       title=${i18nService.t('coworkJumpToLatest')}
                       @click=${() => this._controller?.showLatestHistory()}
@@ -980,10 +979,20 @@ export class JustDoChatElement extends LitElement {
     this.animationWindow.requestAnimationFrame(() => void this.renderMermaidDiagrams());
   }
 
-  protected willUpdate(): void {
-    this.focusedProcessSummaryKeyBeforeRender =
+  protected willUpdate(changedProperties: Map<string | number | symbol, unknown>): void {
+    const focusedKey =
       this.renderRoot?.querySelector<HTMLElement>('[data-process-summary-key]:focus')?.dataset
         .processSummaryKey ?? null;
+    this.focusedProcessSummaryKeyBeforeRender =
+      focusedKey === this.openProcessSummaryKey ? focusedKey : null;
+    if (changedProperties.has('processSummariesExpanded')) {
+      this.openProcessSummaryKey = null;
+      this.renderedOpenProcessSummaryKey = null;
+      this.collapsedProcessSummaryKeys = new Set();
+      this.renderedCollapsedProcessSummaryKeys = new Set();
+      this.processSummaryTakeoverTracker.clear();
+      this.collapsedProcessSummaryTakeoverTracker.clear();
+    }
     this.chatScrollController.beforeRender();
   }
 
@@ -991,33 +1000,14 @@ export class JustDoChatElement extends LitElement {
     this.syncWidgetContexts();
     traceTimelineDom(this._controller?.state.sessionKey ?? '', this.shadowRoot);
     this.syncActiveTurnClock();
-    if (changedProperties?.has('processSummariesExpanded')) {
-      this.openProcessSummaryKey = null;
-      this.renderedOpenProcessSummaryKey = null;
-      this.collapsedProcessSummaryKeys = new Set();
-      this.renderedCollapsedProcessSummaryKeys = new Set();
-      this.collapsedProcessSummaryTakeoverTracker.clear();
-    } else if (
-      this.collapsedProcessSummaryKeys.size !== this.renderedCollapsedProcessSummaryKeys.size ||
-      [...this.collapsedProcessSummaryKeys].some(
-        key => !this.renderedCollapsedProcessSummaryKeys.has(key),
-      )
+    if (
+      this.focusedProcessSummaryKeyBeforeRender !== null &&
+      this.focusedProcessSummaryKeyBeforeRender !== this.renderedOpenProcessSummaryKey &&
+      this.renderedOpenProcessSummaryKey !== null
     ) {
-      this.collapsedProcessSummaryKeys = new Set(this.renderedCollapsedProcessSummaryKeys);
-    }
-    if (this.openProcessSummaryKey !== this.renderedOpenProcessSummaryKey) {
-      const nextOpenKey = this.renderedOpenProcessSummaryKey;
-      const shouldRestoreFocus =
-        this.focusedProcessSummaryKeyBeforeRender === this.openProcessSummaryKey &&
-        nextOpenKey !== null;
-      this.openProcessSummaryKey = nextOpenKey;
-      if (shouldRestoreFocus) {
-        void this.updateComplete.then(() => {
-          this.shadowRoot
-            ?.querySelector<HTMLElement>(`[data-process-summary-key="${CSS.escape(nextOpenKey)}"]`)
-            ?.focus();
-        });
-      }
+      Array.from(this.renderRoot.querySelectorAll<HTMLElement>('[data-process-summary-key]'))
+        .find(element => element.dataset.processSummaryKey === this.renderedOpenProcessSummaryKey)
+        ?.focus({ preventScroll: true });
     }
     this.focusedProcessSummaryKeyBeforeRender = null;
     const transcriptRevision =
@@ -1034,6 +1024,7 @@ export class JustDoChatElement extends LitElement {
           .join('|') ?? '')
       : '';
     this.chatScrollController.afterRender(transcriptRevision);
+    this.syncScrollIndicator();
     this.scrollStreamingThinkingToBottom();
     this.scheduleEditDiffMonacoSync();
     if (changedProperties?.has('searchQuery') || changedProperties?.has('searchCaseSensitive')) {
@@ -1086,6 +1077,14 @@ export class JustDoChatElement extends LitElement {
     }
   }
 
+  private syncScrollIndicator(): void {
+    // Layout-dependent scroll state only changes this control, not the transcript.
+    const indicator = this.renderRoot?.querySelector<HTMLButtonElement>('[data-jump-to-latest]');
+    if (!indicator) return;
+    indicator.hidden =
+      this.chatScrollController.state.mode !== 'paused' || !this.chatScrollController.canScrollDown;
+  }
+
   private scrollStreamingThinkingToBottom(): void {
     const contents = this.renderRoot.querySelectorAll<HTMLElement>(
       '.chat-thinking--streaming .chat-thinking__content',
@@ -1130,19 +1129,29 @@ export class JustDoChatElement extends LitElement {
       this.processSummarySessionIdentity = sessionIdentity;
       this.renderedOpenProcessSummaryKey = null;
       this.renderedCollapsedProcessSummaryKeys = new Set();
-      return;
+    } else {
+      const sourceItems = unfoldProcessItems(items);
+      this.renderedOpenProcessSummaryKey = this.processSummaryTakeoverTracker.resolve(
+        this.openProcessSummaryKey,
+        sourceItems,
+      );
+      this.renderedCollapsedProcessSummaryKeys = this.processSummariesExpanded
+        ? this.collapsedProcessSummaryTakeoverTracker.resolve(
+            this.collapsedProcessSummaryKeys,
+            sourceItems,
+          )
+        : new Set();
     }
-    const sourceItems = unfoldProcessItems(items);
-    this.renderedOpenProcessSummaryKey = this.processSummaryTakeoverTracker.resolve(
-      this.openProcessSummaryKey,
-      sourceItems,
-    );
-    this.renderedCollapsedProcessSummaryKeys = this.processSummariesExpanded
-      ? this.collapsedProcessSummaryTakeoverTracker.resolve(
-          this.collapsedProcessSummaryKeys,
-          sourceItems,
-        )
-      : new Set();
+    // Reconcile while rendering so Lit consumes the derived state in this update.
+    this.openProcessSummaryKey = this.renderedOpenProcessSummaryKey;
+    if (
+      this.collapsedProcessSummaryKeys.size !== this.renderedCollapsedProcessSummaryKeys.size ||
+      [...this.collapsedProcessSummaryKeys].some(
+        key => !this.renderedCollapsedProcessSummaryKeys.has(key),
+      )
+    ) {
+      this.collapsedProcessSummaryKeys = this.renderedCollapsedProcessSummaryKeys;
+    }
   }
 
   private readonly handleMarkdownClick = (event: Event): void => {
