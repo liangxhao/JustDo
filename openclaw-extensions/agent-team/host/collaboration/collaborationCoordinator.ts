@@ -7,6 +7,7 @@ import { parseCoworkSessionKey } from '../../../runtime-services/contracts/sessi
 import { buildCoworkSessionKey as buildManagedSessionKey } from '../../../runtime-services/contracts/session-key';
 import {
   type CollaborationContinueTarget,
+  CollaborationDeliveryState,
   CollaborationGateway,
   type CollaborationMessageResult,
   type CollaborationRoom,
@@ -185,13 +186,18 @@ export class CollaborationCoordinator {
         ))
     )
       throw new Error('collaborationInvalidRecipient');
-    const hasUnsettledDelivery = (snapshot: CollaborationSnapshot) =>
+    // A new source-user turn does not retry or settle historical executions.
+    // Accepted deliveries can lack a terminal event even after native work has
+    // ended; fresh full-team runtime reads below own current activity admission.
+    const hasUnconfirmedAdmission = (snapshot: CollaborationSnapshot) =>
       snapshot.deliveries.some(
         delivery =>
-          ['queued', 'dispatching', 'unknown'].includes(delivery.state) ||
-          (delivery.state === 'accepted' && !delivery.executionOutcome),
+          delivery.state === CollaborationDeliveryState.QUEUED ||
+          delivery.state === CollaborationDeliveryState.DISPATCHING ||
+          delivery.state === CollaborationDeliveryState.UNKNOWN ||
+          (delivery.state === CollaborationDeliveryState.ACCEPTED && !delivery.runId),
       );
-    if (hasUnsettledDelivery(snapshot)) throw new Error('agentBusy');
+    if (hasUnconfirmedAdmission(snapshot)) throw new Error('agentBusy');
     const policy = JSON.stringify([source.agentId, source.cwd, source.permissionMode]);
     const health = await this.deps.requestGateway<{ version: number }>(CollaborationGateway.Health);
     if (health.version !== 2) throw new Error('collaborationRuntimeUnavailable');
@@ -234,7 +240,7 @@ export class CollaborationCoordinator {
     await assertEligible();
     this.assertSourceAdmission(sourceSessionId);
     const currentSnapshot = this.read(sourceSessionId);
-    if (hasUnsettledDelivery(currentSnapshot)) throw new Error('agentBusy');
+    if (hasUnconfirmedAdmission(currentSnapshot)) throw new Error('agentBusy');
     const current = currentSnapshot.room;
     if (
       !current ||

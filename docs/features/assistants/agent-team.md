@@ -153,7 +153,7 @@ Main SQLite 的 `team_discussion_queue_control` 与 `team_discussion_pending_inp
 
 ### 协作详情的来源转发请求
 
-受管 peer 详情新增独立补充输入，来源头像仍回主会话。Main 先核对真实来源、当前成员、可选历史 delivery、原生健康和完整 idle 状态；Plan、Goal、停止/删除或未知执行时拒绝。用户提交走正常来源新 user turn，使用独立 clientTurnId 和明确目标的续协作定位说明；不伪造 peer run、旧 round 或 inReplyTo，不消耗主输入框既有正文、附件、引用与 Team/Swarm 选择。
+受管 peer 详情新增独立补充输入，来源头像仍回主会话。Main 先核对真实来源、当前成员、可选历史 delivery、原生健康和全队当前完整 idle 状态；Plan、Goal、停止/删除、当前活动无法核实或投递仍 queued/dispatching/unknown 时拒绝。历史 accepted 投递已有精确 runId 但缺少 whole-run 终态时，不单独阻止新的用户补充；旧执行结果继续保持未确认，不根据 idle 补造终态、不重发旧消息、不重开已封闭批次。用户提交走正常来源新 user turn，使用独立 clientTurnId 和明确目标的续协作定位说明；不伪造 peer run、旧 round 或 inReplyTo，不消耗主输入框既有正文、附件、引用与 Team/Swarm 选择。
 
 来源正常接纳显示“待主助手转发”；只有新来源运行、新协作阶段、精确目标和真实 accepted peer run 对应后才显示目标已发起。来源终态后刷新精确回执而未找到匹配投递，显示未转发；未知保持冻结，不降级自动重发。引用卡片仍是用户明确选择的草稿入口。此能力是请求来源模型受管工具转发，不保证模型定向调用、完整忠实转述或目标质量；公开 chat.send 没有通用 reject-if-busy，原生外部竞争仍需保守处理，不将一次 idle 查询称为原子独占。
 

@@ -338,6 +338,94 @@ describe('source-mediated collaboration continuation preparation', () => {
     expect(start).not.toHaveBeenCalled();
     expect(request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
   });
+  it('admits a new user request after native idle without settling or replaying an old accepted return', async () => {
+    // The worker completed, but its accepted return to the source lost the
+    // terminal event (for example, a native database error before model start).
+    available();
+    metadata.beginRound('room', 'old-round');
+    const work = metadata.enqueue('room', 'old-round', key('a'), 'work-call', 'old-source', {
+      to: 'b',
+      message: 'Write the first draft',
+    });
+    metadata.transition(work.id, 'queued', 'dispatching');
+    metadata.transition(work.id, 'dispatching', 'accepted', 'worker-run');
+    coordinator.observeExecution({
+      sessionKey: key('b'),
+      runId: 'worker-run',
+      stream: 'lifecycle',
+      data: { phase: 'end', executionSettled: true },
+    });
+    const reply = metadata.enqueue('room', 'old-round', key('b'), 'reply-call', 'worker-run', {
+      to: 'a',
+      message: 'The first draft is ready',
+      inReplyTo: work.id,
+    });
+    metadata.transition(reply.id, 'queued', 'dispatching');
+    metadata.transition(reply.id, 'dispatching', 'accepted', 'unconfirmed-return');
+    metadata.sealRound('room', 'old-round', 'old-source');
+    const before = coordinator.read('a');
+
+    await expect(
+      coordinator.prepareContinuation({ ...input, priorDeliveryId: work.id }),
+    ).resolves.toMatchObject({ targetSessionId: 'b', priorDeliveryId: work.id });
+
+    expect(runtimeStatus.mock.calls.map(([id]) => id)).toEqual(['a', 'b', 'c']);
+    expect(runtimeStatus).toHaveBeenCalledWith('b', {
+      includeSubagents: true,
+      forceRefresh: true,
+      fullScan: true,
+    });
+    expect(coordinator.read('a')).toEqual(before);
+    expect(coordinator.read('a').deliveries.find(item => item.id === reply.id)).toMatchObject({
+      state: 'accepted',
+      runId: 'unconfirmed-return',
+    });
+    expect(
+      coordinator.read('a').deliveries.find(item => item.id === reply.id)?.executionOutcome,
+    ).toBeUndefined();
+    expect(start).not.toHaveBeenCalled();
+    expect(request.mock.calls.map(([method]) => method)).toEqual([
+      'collaboration.health',
+      'sessions.describe',
+      'sessions.describe',
+    ]);
+  });
+  it.each(['queued', 'dispatching', 'unknown'] as const)(
+    'still refuses an unresolved %s admission even when native sessions appear idle',
+    state => {
+      available();
+      metadata.beginRound('room', 'old-round');
+      const delivery = metadata.enqueue('room', 'old-round', key('a'), 'call', 'old-source', {
+        to: 'b',
+        message: 'Work',
+      });
+      if (state !== 'queued') metadata.transition(delivery.id, 'queued', 'dispatching');
+      if (state === 'unknown') metadata.transition(delivery.id, 'dispatching', state);
+
+      return expect(coordinator.prepareContinuation(input)).rejects.toThrow('agentBusy');
+    },
+  );
+  it.each([
+    { known: true, running: true },
+    { known: false, running: false },
+  ])('refuses an accepted execution when current native activity is %j', async status => {
+    available();
+    metadata.beginRound('room', 'old-round');
+    const delivery = metadata.enqueue('room', 'old-round', key('a'), 'call', 'old-source', {
+      to: 'b',
+      message: 'Work',
+    });
+    metadata.transition(delivery.id, 'queued', 'dispatching');
+    metadata.transition(delivery.id, 'dispatching', 'accepted', 'worker-run');
+    runtimeStatus.mockImplementation(async id =>
+      id === 'b' ? status : { known: true, running: false },
+    );
+
+    await expect(coordinator.prepareContinuation(input)).rejects.toThrow('agentBusy');
+
+    expect(coordinator.read('a').deliveries[0].executionOutcome).toBeUndefined();
+    expect(start).not.toHaveBeenCalled();
+  });
   it('refuses disabled extensions, Goal sessions and uncertain members', async () => {
     available();
     request.mockResolvedValue({ version: 1 });

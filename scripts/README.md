@@ -135,6 +135,30 @@ negative control: its top-level routePreserved=false is expected; the internal
 participation and standalone-summary variants must preserve delivery and identity.
 No real provider credentials or user sessions are used.
 
+`node scripts/openclaw/probe-sqlite-retirement.mjs <runtime-directory>` uses
+disposable SQLite databases and a real worker to reproduce the retiring WAL
+checkpointer's foreground write lock, then verifies nonblocking close while an
+older reader remains open. An unpatched runtime supplies the negative control;
+already patched runtimes run the fixed case. It never opens native user history.
+
+`node tests/openclaw/runtime/sqlite-retirement-lifecycle.native-smoke.mjs <runtime-directory>`
+checks the real prepared-runtime backup, update rollback, deletion exclusion,
+integrity receipts, exit callbacks and fresh-process recovery with synthetic
+databases. Run with Node and Electron's Node runtime. Successful fixture roots
+are removed; failures report and retain only their isolated state for diagnosis.
+
+`node scripts/openclaw/agent-team/probe-agent-team-peer-return.mjs <runtime-directory>`
+runs a local fixture model and isolated Gateway with a scoped exact-session send
+grant. It verifies repeated writer results start actual organizer executions and
+receive whole-run terminals under concurrent history/list reads. Run it with the
+Electron Node runtime as well as Node when investigating packaged behavior.
+
+These SQLite/peer-return probes currently target the prepared 9.8 runtime. Before
+using them to accept an upgraded runtime, adapt their native exports, lifecycle
+and SDK assumptions; the contention probe also imports the version-specific 043
+transformer. See the [2026.10.4 upgrade handoff](patches/v2026.9.8/README.md#upgrade-handoff-2026104)
+for required rewrites and assertions that must remain intact.
+
 `node scripts/openclaw/agent-team/probe-agent-team-gateway.mjs <runtime-directory>` additionally
 exercises the production team extension with Main coordinators: model-created
 rooms, automatic summaries, source participation/mentions, public native history

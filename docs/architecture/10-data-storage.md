@@ -38,6 +38,10 @@ flowchart LR
 
 产品数据库位于 app.getPath('userData') 下，默认 `<appData>/<productName>/justdo.sqlite`。内部文件名稳定，productName 改变时不自动迁移旧品牌目录。Gateway state 和项目目录不是该数据库的子表，备份和删除时需要分别处理。
 
+原生 SQLite 连接退休时的 WAL checkpoint 不等待其他读取快照：仅在 close 回调内临时将 busy timeout 设为 0，并恢复原策略，避免 TRUNCATE 清理占住写锁、耗尽 Agent 会话写入的准入期限。仍有读取者时保留未完成 checkpoint 的事实与 WAL，不删除文件、不补造执行成功或重放未知请求；原生 close、lease 和后续维护继续拥有清理。普通事务及用户显式 checkpoint 的等待策略不变。接线和实际 SQLite 并发复现见[运行时补丁 043](../../scripts/patches/v2026.9.8/README.md)。
+
+关闭未完成或出错时不得产生 clean integrity 回执。备份和更新通过原生验证快照取得已提交 WAL 数据，输出单文件副本；删除及更新替换仍需原生 maintenance owner、排他连接与精确代际。外部读者、外部维护 owner、过期代际或损坏快照必须保留源文件并拒绝操作，不能通过重试或把未完成关闭当作 clean 来放行。相关退出、强杀和新进程恢复回归见[生命周期验证](../../tests/openclaw/runtime/sqlite-retirement-lifecycle.native-smoke.mjs)；进程恢复证据不等同于断电或介质故障验证。
+
 MCP 配置变更跨越 `mcp_servers` 与原生配置应用，不能用数据库事务包裹异步 Gateway reload。Main 在全局配置队列内串行执行变更并等待应用，阻止其他配置同步在提交前发现旧原生记录；失败时通过 `McpStore.restoreServer` 原样恢复原 ID、启用状态、配置及时间戳，再补偿同步。新增失败删除本次记录；删除成功后才移除市场安装身份。该恢复流程不新增表或迁移。
 
 账号模板不新增 SQLite 表或 Redux slice。LoginUserInfoStore 使用统一路径解析器，在

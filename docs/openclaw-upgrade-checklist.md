@@ -9,6 +9,11 @@
 上游证据、依赖与删除条件以该目录 `README.md` 为唯一总账。本文不固定补丁数量，
 也不把历史版本验收结果当作目标版本的通过记录。
 
+近期升级交接：当前 9.8 的 043 SQLite 关闭补丁已完成生命周期回归并决定保留；
+此结论不自动延续到即将升级的版本。2026.10.4 的预审发现、039/043 的重新判定与
+重写位置、验证脚本适配及依赖前置问题，见[当前补丁总账的升级交接](../scripts/patches/v2026.9.8/README.md#upgrade-handoff-2026104)。
+升级时将最终决策和新证据写入目标版本总账，不把这次预审当作新版已验收。
+
 本文中的勾选项是升级时需要执行的检查。每个领域应记录「通过 / 需适配 / 未验证 /
 不适用」，附目标版本、测试或人工场景及证据；不适用必须说明原因。即使判断无需
 修改代码，也应说明对照了哪些原生契约、运行了什么回归。已知限制仍以
@@ -611,16 +616,17 @@ git diff --check
 `npm run rebuild:electron-native`。纯清单/文档修改只需 `git diff --check`，
 不因编辑本文启动 Gateway、重建 runtime 或执行全部升级验收。
 
-| 范围                 | 当前可复用的测试入口                                                                                                                                                                        |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 来源替换/预编译/裁剪 | `tests/scripts/{native-extension-replacement,precompile-openclaw-extensions,sync-openclaw-runtime-resources,prune-openclaw-runtime}.test.ts`                                                |
-| SDK 与本地 OpenAI    | `tests/openclaw/runtime/shared-sdk-modules.test.ts`、`tests/openclaw/plugins/{openai-native-composition,openai-intranet-config}.test.ts`                                                    |
-| 流/历史/过程         | chat `agent-event-reducer*`、`history-reconciler`、`chat-history-protocol`、`chunked-message-history`、`process-summary-takeover`、`browser-extension-stream` 与 components streaming tests |
-| 压缩/摘要            | chat `chat-controller.compaction*`、`chat-summary-resources`、`session-summary-resources`、`SessionSummaryPanel` / 资源列表 / `openSummaryResource`，当前补丁 `native-compaction-lifecycle` |
-| 配置/执行/身份       | Main adapter、wire validator、permissions、Goal/Plan、config sync/logout、worktree/sandbox 领域测试及当前版本补丁测试                                                                       |
-| 定时任务             | scheduler `cronJobService`、`scheduledTaskResultSyncService`、`scheduledTaskSessionHistory`、结果 Store/IPC/UI，`tests/openclaw/runtime/scheduled-task-permissions.test.ts`                 |
-| 插件/Team/Workflow   | `tests/openclaw/extensions/`、Main plugins 与 Renderer plugins/composer，当前 plugin recovery/owned-run/cleanup 测试                                                                        |
-| 浏览器/工作区/设置   | browser bridge/extension assembly、Main app-server、Renderer browser/settings/display；`tests/openclaw/runtime/windows-mcp-launch.test.ts` 与 `scripts/test/workspace-window-probe.cjs`     |
+| 范围                 | 当前可复用的测试入口                                                                                                                                                                                                   |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 来源替换/预编译/裁剪 | `tests/scripts/{native-extension-replacement,precompile-openclaw-extensions,sync-openclaw-runtime-resources,prune-openclaw-runtime}.test.ts`                                                                           |
+| SDK 与本地 OpenAI    | `tests/openclaw/runtime/shared-sdk-modules.test.ts`、`tests/openclaw/plugins/{openai-native-composition,openai-intranet-config}.test.ts`                                                                               |
+| 流/历史/过程         | chat `agent-event-reducer*`、`history-reconciler`、`chat-history-protocol`、`chunked-message-history`、`process-summary-takeover`、`browser-extension-stream` 与 components streaming tests                            |
+| 压缩/摘要            | chat `chat-controller.compaction*`、`chat-summary-resources`、`session-summary-resources`、`SessionSummaryPanel` / 资源列表 / `openSummaryResource`，当前补丁 `native-compaction-lifecycle`                            |
+| 配置/执行/身份       | Main adapter、wire validator、permissions、Goal/Plan、config sync/logout、worktree/sandbox 领域测试及当前版本补丁测试                                                                                                  |
+| SQLite 关闭/恢复     | 先按目标版本适配 `scripts/openclaw/probe-sqlite-retirement.mjs`、`tests/openclaw/runtime/sqlite-retirement-lifecycle.native-smoke.mjs`；覆盖备份、回滚拒绝与成功、删除排他、退出租约及重启恢复；Node/Electron 分别验证 |
+| 定时任务             | scheduler `cronJobService`、`scheduledTaskResultSyncService`、`scheduledTaskSessionHistory`、结果 Store/IPC/UI，`tests/openclaw/runtime/scheduled-task-permissions.test.ts`                                            |
+| 插件/Team/Workflow   | `tests/openclaw/extensions/`、Main plugins 与 Renderer plugins/composer，当前 plugin recovery/owned-run/cleanup 测试                                                                                                   |
+| 浏览器/工作区/设置   | browser bridge/extension assembly、Main app-server、Renderer browser/settings/display；`tests/openclaw/runtime/windows-mcp-launch.test.ts` 与 `scripts/test/workspace-window-probe.cjs`                                |
 
 按目标契约更新有意义的行为断言，不能为了通过只改版本快照或删除失败用例。
 旧版本目录测试保留为历史回归，不可作为目标版本通过证据；缺失关键场景时补齐。

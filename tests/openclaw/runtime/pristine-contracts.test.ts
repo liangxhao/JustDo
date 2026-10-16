@@ -45,6 +45,7 @@ const EXPECTED_PATCH_FILES = [
   '039-peer-transcript-write-scope.cjs',
   '040-computer-overlay-activity.cjs',
   '042-windows-plugin-recovery-junctions.cjs',
+  '043-nonblocking-sqlite-retirement.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

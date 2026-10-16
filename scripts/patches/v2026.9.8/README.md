@@ -256,9 +256,102 @@ display projection and the ordering of restored messages.
 | 039   | Peer transcript writer scope         | Detach only source transcript/CLI-history ownership after caller snapshot restoration; preserve native authority, target writer admission, guards and cancellation |
 | 040   | Local computer activity presentation | Admin-only v2 start/end heartbeats and execution release; opaque presentation identity, no input/image/coordinate payload, unchanged native execution and results  |
 | 042   | Windows plugin recovery junctions    | Preserve accepted absolute directory links as junctions in recovery copies; keep native file references, hardlink checks, admission and lifecycle unchanged        |
+| 043   | Nonblocking SQLite retirement        | Run a closing handle's WAL checkpoint with zero busy timeout; preserve blocked evidence, native close, leases and the original foreground busy policy              |
 
 Each module header records its scope, native safety boundary and removal condition.
 No upstream issue number is claimed without an actual filed issue.
+
+Patch 043 prevents a retiring connection from holding SQLite's writer lock while
+waiting for an older read snapshot during a TRUNCATE checkpoint. In the pinned
+native code, close inherits the normal 5-second busy timeout. A concurrent Agent
+session update can exhaust its own write-admission deadline while that cleanup
+waits; accepted peer messages can consequently fail before the organizer starts.
+The shared-state checkpoint warnings and the failed session write are separate
+observations; warnings alone do not establish an execution failure.
+
+The deterministic native SQLite probe holds an old reader, commits a newer frame,
+and closes a third connection concurrently with a foreground write. The original
+close blocks the write with SQLITE_BUSY; the patched close reports incomplete
+checkpointing immediately and the write succeeds with the reader still open.
+Only handle retirement uses a zero busy timeout, restored by the existing native
+helper. Explicit checkpoints, transaction admission, synchronous settings, invalidation,
+cleanup results and lease verification remain native. An incomplete checkpoint
+does not mean an Agent succeeded or its tools finished. Public Gateway/plugin
+APIs do not control the native per-handle retirement callback, so an application
+retry cannot remove this lock and could duplicate an uncertain operation.
+
+All seven native copies (including both embedded worker bundles, the state read
+worker, native-hook relay, config doctor and package recovery) and the final
+Gateway bundle are checked. Tests:
+`tests/openclaw/patches/v2026.9.8/nonblocking-sqlite-retirement.test.ts`;
+`node scripts/openclaw/probe-sqlite-retirement.mjs <runtime-directory>` reproduces
+the pristine defect and tests actual SQLite locking without user data. The peer
+return probe uses an isolated Gateway and deterministic loopback model; it checks
+real organizer execution and whole-run terminals rather than accepting a send ACK
+as completion. Remove this seam when upstream retirement is nonblocking.
+
+Lifecycle regression:
+`node tests/openclaw/runtime/sqlite-retirement-lifecycle.native-smoke.mjs <runtime-directory>`
+uses the prepared package's actual exports and isolated synthetic state, with no
+Gateway/model or replacement of native owners. Run with Node and the Electron
+Node runtime. Its six groups cover:
+
+| Boundary                       | Required evidence                                                                                                                                                                                                                                                                         |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Backup with a pinned reader    | Blocked close releases the exact lease without a clean receipt; verified online snapshots contain later committed WAL rows while the old reader keeps its original view; the published DELETE-journal copy is independently readable without sidecars                                     |
+| Update capture and rollback    | Real update inventory/capture preserves row IDs; native rollback refuses a peer reader, a foreign maintenance owner, stale generations and a damaged snapshot without moving source files; a valid exclusive rollback restores baseline rows and removes candidate-only schema            |
+| Database deletion              | No maintenance authority and a peer reader both refuse removal; after release the native exclusion permits deleting the complete owned family and recreating a valid database; native Agent deletion preparation rejects a foreign live lease and preserves the unrelated surviving owner |
+| Failed close                   | The real maintenance error handler records `health.error`, returns false and never produces a clean integrity receipt                                                                                                                                                                     |
+| Normal exit and restart        | Native process-exit callbacks release the lease before a fresh process starts; a pinned reader keeps the receipt uncheckpointed; reopening preserves committed rows and accepts new writes                                                                                                |
+| Forced termination and restart | An acknowledged committed row survives killing the writer process; an uncommitted row rolls back; a fresh owner recovers the stale lease and can write, then an unpinned orderly close records clean                                                                                      |
+
+Product assistant-profile deletion is separately covered by
+`src/main/ipc/cowork/agents.test.ts`: availability removal preserves native history
+and never calls `agents.delete`. The smoke's physical database deletion uses only
+its own temporary fixture, not the product profile operation. Recovery refusal
+after file-generation changes is intentional; the test never refreshes a stale
+authorization and retries it as if it were the original operation. These tests
+exercise process termination, not hardware power loss or storage failure.
+
+Retention decision (2026-10-16, Windows win-x64): keep 043 for the locked 9.8
+runtime. All six groups passed on Node 24.21.0 and Electron 42.7.0's Node runtime;
+144 focused patch/manifest/profile/store/continuation tests passed. The existing
+`gateway-lifecycle-smoke.cjs` also passed on Electron with the application's
+shutdown preload: hot reload, in-process restart, orderly shutdown and fresh
+process startup retained the exact native session identity. Independent review
+found no remaining blocking issue after correcting the unit error fixture and
+strengthening authority, generation, lease and child-process cleanup assertions.
+The production patch is unchanged by this validation; upgrading OpenClaw requires
+a new audit rather than carrying this version-specific patch forward unchanged.
+
+### Upgrade handoff: 2026.10.4
+
+The 2026-10-16 pre-audit inspected the sibling checkout at release tag
+`v2026.10.4` / `383c124cc32ffee3f8e56f549b88da94d269a4af` and the integrity-verified
+official npm package. This is upgrade input, not acceptance of a 10.4 application
+runtime. The retention decision and passing tests above belong only to 9.8.
+Record final dispositions and new proof in the target version's patch README.
+
+| Area                           | Target observation                                                                                                                                                                                                          | Required upgrade work                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 043 retirement seam            | `configureSqliteWalMaintenance.close` now calls `beginClose`; async `stop()` joins maintenance, and the Agent execution closer awaits it. Ordinary close still uses TRUNCATE with its busy policy.                          | Reproduce the actual target retirement/write contention through its new lifecycle before deciding to retain or remove the seam. The old `clearInterval` / direct cancellation AST guards and seven-source/eight-with-bundle counts are version-specific and require a fresh audit. If a gap remains, rewrite against pristine target source and preserve `stop()` joining, checkpoint results, native close and lease receipts. Do not apply 9.8's transformer to 10.4. |
+| 039 peer writer scope          | The target in-process Agent dispatcher uses `runWithoutOwnedSessionTranscriptWrites` after capturing authority; upstream [#170077](https://github.com/openclaw/openclaw/pull/170077) addresses launched-turn writer claims. | Treat this as a candidate for native coverage. Verify caller snapshot restoration, transcript and CLI-history scope separation, async boundaries and unchanged authority/current-owner checks before dropping the patch. A similar function name alone does not prove equivalence.                                                                                                                                                                                      |
+| SQLite contention probe        | `scripts/openclaw/probe-sqlite-retirement.mjs` directly imports the 9.8 043 transformer.                                                                                                                                    | Separate native target reproduction from the old transformer or bind the comparison to a newly audited target patch. A 9.8 topology/marker rejection is a stale harness, not evidence that target SQLite failed.                                                                                                                                                                                                                                                        |
+| Lifecycle and return probes    | `sqlite-retirement-lifecycle.native-smoke.mjs` resolves exact native function exports; `probe-agent-team-peer-return.mjs` depends on the current session-visibility SDK, fixture plugin and Gateway client.                 | Update module discovery, signatures, scoped grants and shared SDK identity for the target package. Keep latest-WAL backup, row-ID preservation, refusal without file moves, clean/dirty receipts, exact lease release, committed/uncommitted restart and exact whole-run return assertions. Rerun on Node and Electron, plus the application's actual Gateway shutdown/restart path.                                                                                    |
+| Product continuation admission | The current collaboration coordinator permits a new independent user request when historical accepted work has a precise run ID but no terminal receipt and fresh full-team activity is known idle.                         | Preserve this behavior and its tests while adapting native runtime-status/identity contracts. Do not mark the historical execution complete, replay its message or remove the admission fix merely because native writer handling improved.                                                                                                                                                                                                                             |
+
+The sibling checkout's installed dependencies were stale during this pre-audit:
+the test cache failed at `defineCacheKeyGenerator`, and the source import failed
+at `@openclaw/fs-safe/copy` (installed 0.4.1 versus required 0.24.2). Synchronize the
+target's locked dependencies/toolchain in the isolated upgrade checkout before
+interpreting new failures. No target regression pass is claimed from that run.
+
+Build the target from its pristine locked package with a new source lock,
+capability inventory, pristine contracts and source/bundle verification. Do not
+reuse the 9.8 prepared runtime, hashes, target counts or passing test totals as
+target proof; do not weaken safety assertions to make a rewritten harness pass.
+The 10.4 lifecycle improvements do not by themselves prove that 043 can be
+deleted, and 9.8's retention decision does not require retaining it after upgrade.
 
 Patch 042 fixes Windows plugin replacement preparation during uninstall, toggles,
 reloads and other native lifecycle operations. `captureRecoverySource` uses
