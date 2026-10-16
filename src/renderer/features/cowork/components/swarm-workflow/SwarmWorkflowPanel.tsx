@@ -239,12 +239,7 @@ export default function SwarmWorkflowPanel({
               ref={viewport.ref}
               {...viewport.handlers}
               className="min-h-0 flex-1 overflow-hidden"
-              style={{
-                backgroundImage:
-                  'radial-gradient(var(--justdo-border, #d5d8de) 1px, transparent 1px)',
-                backgroundSize: '18px 18px',
-                ...viewport.canvasStyle,
-              }}
+              style={viewport.canvasStyle}
             >
               <svg
                 viewBox={`0 0 ${layout.width} ${layout.height}`}

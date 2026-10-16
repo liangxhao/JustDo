@@ -14,6 +14,7 @@ import {
 } from '../composer/composerStyles';
 import { LocalSpeechInputButton } from '../composer/LocalSpeechInputButton';
 import { RunControlButton } from '../composer/RunControlButton';
+import { isComposerSendShortcut } from '../composer/sendShortcut';
 import {
   getContinueDraft,
   type RequestCollaborationContinue,
@@ -114,6 +115,12 @@ export default function CollaborationContinueInput({
             maxLength={16000}
             disabled={locked}
             onChange={event => changeText(event.target.value)}
+            onKeyDown={event => {
+              if (!locked && isComposerSendShortcut(event)) {
+                event.preventDefault();
+                void submit();
+              }
+            }}
           />
           <div className="flex items-center gap-1 px-3 pb-2 pt-1.5">
             <button

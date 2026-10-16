@@ -159,6 +159,7 @@ import {
   submittedMessageQuotes,
 } from './messageQuote';
 import PlanModeBadge from './PlanModeBadge';
+import { isComposerSendShortcut } from './sendShortcut';
 import { canClearSubmittedDraft } from './sessionSubmission';
 import { buildSwarmWorkflowComposerFeature } from './swarmWorkflowComposerFeature';
 import { blocksSwarmWorkflowGoalSubmission } from './swarmWorkflowSubmission';
@@ -1815,29 +1816,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       // Use synced state (kept up-to-date via config-updated event) so that
       // changes made in the Settings panel are reflected immediately without
       // requiring a configService read at event time.
-      const sendKey = currentSendShortcut;
-
-      let isSendCombo = false;
-      switch (sendKey) {
-        case 'Enter':
-          isSendCombo = !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey;
-          break;
-        case 'Shift+Enter':
-          isSendCombo = event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey;
-          break;
-        case 'Ctrl+Enter':
-          isSendCombo = isMacPlatform
-            ? event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
-            : event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey;
-          break;
-        case 'Alt+Enter':
-          isSendCombo = event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
-          break;
-        default:
-          // Unknown config value — fall back to bare Enter so the user can always send
-          isSendCombo = !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey;
-          break;
-      }
+      const isSendCombo = isComposerSendShortcut(event, currentSendShortcut);
 
       if (isSendCombo && (!isRunActive || canQueue) && !disabled && !goalSubmissionBlocked) {
         event.preventDefault();

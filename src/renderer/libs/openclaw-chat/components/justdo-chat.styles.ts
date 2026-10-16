@@ -4,9 +4,11 @@ import monacoEditorStyles from 'monaco-editor/min/vs/editor/editor.main.css?inli
 
 import browserRecordingStyles from '@/features/browser/recording/browserRecording.css?inline';
 
+import chatAvatarStyles from './chat-avatar.css?inline';
 import codeBlockStyles from './code-block.css?inline';
 
 export const chatStyles = [
+  unsafeCSS(chatAvatarStyles),
   css`
     .tool-agent-link {
       display: inline-flex;
@@ -757,46 +759,6 @@ export const chatStyles = [
     .chat-group--continuation .chat-group__avatar {
       height: 0;
       overflow: hidden;
-    }
-
-    .chat-group__avatar .chat-avatar {
-      width: 32px;
-      height: 32px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 14px;
-      font-weight: 600;
-    }
-
-    .chat-avatar.user {
-      background: var(--justdo-chat-user-avatar-bg, #e0e7ff);
-      color: var(--justdo-chat-user-avatar-text, #4338ca);
-    }
-
-    .chat-avatar.assistant {
-      background: var(--justdo-chat-assistant-avatar-bg, #f3e8ff);
-      color: var(--justdo-chat-assistant-avatar-text, #7c3aed);
-    }
-
-    .chat-avatar.error {
-      background: var(--justdo-chat-error-avatar-bg, #fee2e2);
-      color: var(--justdo-chat-error-avatar-text, #b91c1c);
-    }
-
-    .chat-avatar.tool {
-      background: var(--justdo-chat-tool-avatar-bg, rgba(0, 0, 0, 0.05));
-      color: var(--justdo-chat-tool-avatar-text, #6b7280);
-    }
-
-    .chat-avatar.other {
-      background: rgba(0, 0, 0, 0.05);
-      color: #6b7280;
-    }
-
-    .chat-avatar--logo {
-      object-fit: cover;
     }
 
     .chat-group__content {
@@ -2427,9 +2389,13 @@ export const chatStyles = [
       box-sizing: border-box;
     }
 
+    .chat-thinking__content,
+    .process-summary__thinking {
+      background: var(--justdo-chat-thinking-bg, rgba(0, 0, 0, 0.05));
+    }
+
     .chat-thinking__content {
       padding: 6px 10px;
-      background: var(--justdo-chat-thinking-bg, rgba(0, 0, 0, 0.05));
       border-radius: 8px;
       font-size: 13px;
       line-height: 1.5;
@@ -2924,7 +2890,6 @@ export const chatStyles = [
       margin: 6px 0 0 16px;
       padding: 8px 10px;
       border-radius: 8px;
-      background: var(--justdo-chat-code-bg, rgba(15, 23, 42, 0.05));
       color: var(--justdo-chat-text-secondary, #64748b);
       font-size: 13px;
       line-height: 1.65;
@@ -3366,27 +3331,53 @@ export const chatStyles = [
       overflow-wrap: anywhere;
     }
     .process-terminal__details summary {
+      display: block;
+      list-style: none;
       cursor: pointer;
       line-height: 1.6;
     }
+    .process-terminal__details summary::-webkit-details-marker {
+      display: none;
+    }
+    .process-terminal__details summary:focus-visible {
+      outline: 2px solid var(--justdo-chat-accent, #6366f1);
+      outline-offset: 4px;
+      border-radius: 3px;
+    }
+    .process-terminal__details[open] .process-terminal__summary-preview {
+      display: none;
+    }
     .process-terminal__details-label {
-      display: inline-block;
-      margin-left: 8px;
-      font-size: 11px;
-      text-decoration: underline;
-      text-underline-offset: 3px;
-      opacity: 0.8;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      margin-inline-start: 8px;
+      color: inherit;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .process-terminal__details-label svg {
+      width: 12px;
+      height: 12px;
+      stroke: currentColor;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 1.5;
+    }
+    .process-terminal__details[open] .process-terminal__details-label svg {
+      transform: rotate(180deg);
     }
     .process-terminal__details pre {
-      margin: 10px 0 0;
-      padding-top: 10px;
-      border-top: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+      margin: 6px 0 0;
+      padding: 0;
+      border: 0;
       max-height: 260px;
       overflow: auto;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
+      color: inherit;
       font: inherit;
-      line-height: 1.65;
+      line-height: 1.7;
     }
     .process-terminal--aborted {
       width: fit-content;

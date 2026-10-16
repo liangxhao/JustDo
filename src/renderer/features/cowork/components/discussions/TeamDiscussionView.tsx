@@ -380,6 +380,17 @@ export default function TeamDiscussionView({
       summary?.state === 'running' ||
       pendingInputs.length > 0);
   const queueAvailable = discussionQueueAvailable(room, summary);
+  const canSubmit =
+    (!active || queueContext) &&
+    !(
+      busy ||
+      !!draft.submissionAttemptId ||
+      !enabled ||
+      !text.trim() ||
+      (!room && (!cwd || members.length < 2)) ||
+      (!draft.pending &&
+        (queueContext ? !queueAvailable : summaryUnsettled || (!!room && room.state !== 'ready')))
+    );
   const latestBatchHasMessages =
     !historyUnavailable && messages.some(message => message.discussionId === resultBatch);
   const send = (enqueue = false) =>
@@ -1203,6 +1214,9 @@ export default function TeamDiscussionView({
                   ref={composer}
                   value={text}
                   onChange={changeText}
+                  onSubmit={() => {
+                    if (canSubmit) void send(queueContext && !draft.pending);
+                  }}
                   members={
                     room?.members ??
                     agents
@@ -1276,19 +1290,7 @@ export default function TeamDiscussionView({
                       sendTitle={t(
                         draft.pending ? 'teamRetry' : queueContext ? 'teamEnqueue' : 'teamSend',
                       )}
-                      canSubmit={
-                        !(
-                          busy ||
-                          !!draft.submissionAttemptId ||
-                          !enabled ||
-                          !text.trim() ||
-                          (!room && (!cwd || members.length < 2)) ||
-                          (!draft.pending &&
-                            (queueContext
-                              ? !queueAvailable
-                              : summaryUnsettled || (!!room && room.state !== 'ready')))
-                        )
-                      }
+                      canSubmit={canSubmit}
                       onSend={() => void send(queueContext && !draft.pending)}
                     />
                   )}

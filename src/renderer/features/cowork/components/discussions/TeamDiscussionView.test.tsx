@@ -45,6 +45,9 @@ vi.mock('../collaboration/CollaborationMemberHistory', () => ({
   ),
 }));
 vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
+vi.mock('@/services/config', () => ({
+  configService: { getConfig: () => ({ shortcuts: { sendMessage: 'Enter' } }) },
+}));
 vi.mock('../composer/LocalSpeechInputButton', () => ({
   LocalSpeechInputButton: ({
     disabled,
@@ -1152,7 +1155,7 @@ it('uses plugin defaults for a new draft and restores explicitly selected rounds
       false,
     ),
   );
-  fireEvent.click(screen.getByRole('button', { name: 'teamSend' }));
+  fireEvent.keyDown(screen.getByRole('textbox', { name: 'teamMessage' }), { key: 'Enter' });
   await waitFor(() => expect(send).toHaveBeenCalled());
   expect(send.mock.calls[0][0]).toMatchObject({ selectedAgentIds: ['bob'], rounds: 4 });
 });
@@ -1543,7 +1546,7 @@ it('queues a running discussion draft with exact recipients, quotes, attachments
     false,
   );
   expect((screen.getByRole('combobox') as HTMLSelectElement).disabled).toBe(false);
-  fireEvent.click(screen.getByRole('button', { name: 'teamEnqueue' }));
+  fireEvent.keyDown(screen.getByRole('textbox', { name: 'teamMessage' }), { key: 'Enter' });
   await screen.findByRole('button', { name: /teamPendingInputs/ });
   expect(enqueue).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -1595,6 +1598,9 @@ it('counts receiving and unknown entries, renders a compact queue, and cancels o
   expect((screen.getByRole('button', { name: 'teamEnqueue' }) as HTMLButtonElement).disabled).toBe(
     true,
   );
+  fireEvent.keyDown(screen.getByRole('textbox', { name: 'teamMessage' }), { key: 'Enter' });
+  expect(enqueue).not.toHaveBeenCalled();
+  expect(send).not.toHaveBeenCalled();
   fireEvent.click(expand);
   await screen.findByText(/teamQueue_unknown/);
   expect(screen.getByText('<img src=x> Native pending input')).toBeTruthy();

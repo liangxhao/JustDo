@@ -8,17 +8,23 @@ import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
 import DiscussionMentionInput from './DiscussionMentionInput';
 
 vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
+const config = vi.hoisted(() => ({ shortcut: 'Enter' }));
+vi.mock('@/services/config', () => ({
+  configService: { getConfig: () => ({ shortcuts: { sendMessage: config.shortcut } }) },
+}));
 afterEach(() => {
   cleanup();
+  config.shortcut = 'Enter';
   document.querySelectorAll('iframe').forEach(frame => frame.remove());
 });
-function Draft() {
+function Draft({ onSubmit = vi.fn() }: { onSubmit?: () => void } = {}) {
   const [value, setValue] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   return (
     <DiscussionMentionInput
       value={value}
       onChange={setValue}
+      onSubmit={onSubmit}
       selected={selected}
       onSelected={setSelected}
       disabled={false}
@@ -45,6 +51,37 @@ it('shows no roster until typing @ and binds a filtered assistant without insert
   expect(screen.queryByRole('listbox')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'teamMentionRemove Bob' }));
   expect(screen.queryByRole('button')).toBeNull();
+});
+
+it('sends on Enter, preserves multiline and IME input, and selects mentions before sending', () => {
+  const onSubmit = vi.fn();
+  render(<Draft onSubmit={onSubmit} />);
+  const input = screen.getByRole('textbox');
+  fireEvent.change(input, { target: { value: 'Review this' } });
+  expect(fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })).toBe(true);
+  fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+  fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
+  fireEvent.compositionStart(input);
+  fireEvent.keyDown(input, { key: 'Enter' });
+  fireEvent.compositionEnd(input);
+  expect(onSubmit).not.toHaveBeenCalled();
+  fireEvent.change(input, { target: { value: 'Review @bo' } });
+  fireEvent.keyDown(input, { key: 'Enter' });
+  expect(screen.getByRole('button', { name: 'teamMentionRemove Bob' })).toBeTruthy();
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(fireEvent.keyDown(input, { key: 'Enter' })).toBe(false);
+  expect(onSubmit).toHaveBeenCalledOnce();
+});
+
+it('uses updated send shortcut settings without remounting', () => {
+  const onSubmit = vi.fn();
+  render(<Draft onSubmit={onSubmit} />);
+  const input = screen.getByRole('textbox');
+  config.shortcut = 'Ctrl+Enter';
+  fireEvent.keyDown(input, { key: 'Enter' });
+  expect(onSubmit).not.toHaveBeenCalled();
+  fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
+  expect(onSubmit).toHaveBeenCalledOnce();
 });
 
 it('reveals keyboard suggestions and restores the caret using the detached host', () => {

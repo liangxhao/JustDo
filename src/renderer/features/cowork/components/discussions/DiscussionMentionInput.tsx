@@ -8,12 +8,14 @@ import {
   COMPOSER_TEXTAREA_MIN_HEIGHT,
   resizeComposerTextarea,
 } from '../composer/composerStyles';
+import { isComposerSendShortcut } from '../composer/sendShortcut';
 
 export default forwardRef<
   HTMLTextAreaElement,
   {
     value: string;
     onChange: (value: string) => void;
+    onSubmit?: () => void;
     members: readonly { agentId: string; name: string; deleted?: boolean }[];
     selected: readonly string[];
     onSelected: (ids: string[]) => void;
@@ -22,7 +24,17 @@ export default forwardRef<
     className: string;
   }
 >(function DiscussionMentionInput(
-  { value, onChange, members, selected, onSelected, disabled, recipientsDisabled, className },
+  {
+    value,
+    onChange,
+    onSubmit,
+    members,
+    selected,
+    onSelected,
+    disabled,
+    recipientsDisabled,
+    className,
+  },
   ref,
 ) {
   const ownerDocument = useOwnerDocument();
@@ -158,19 +170,28 @@ export default forwardRef<
             updateQuery(event.currentTarget);
           }}
           onKeyDown={event => {
-            if (!open || event.nativeEvent.isComposing || event.keyCode === 229) return;
-            if (event.key === 'Escape') {
+            if (
+              disabled ||
+              composing.current ||
+              event.nativeEvent.isComposing ||
+              event.keyCode === 229
+            )
+              return;
+            if (open && event.key === 'Escape') {
               event.preventDefault();
               setQuery(null);
-            } else if (choices.length && ['ArrowDown', 'ArrowUp'].includes(event.key)) {
+            } else if (open && choices.length && ['ArrowDown', 'ArrowUp'].includes(event.key)) {
               event.preventDefault();
               setIndex(
                 (activeIndex + (event.key === 'ArrowDown' ? 1 : -1) + choices.length) %
                   choices.length,
               );
-            } else if (choices.length && ['Enter', 'Tab'].includes(event.key)) {
+            } else if (open && choices.length && ['Enter', 'Tab'].includes(event.key)) {
               event.preventDefault();
               choose(choices[activeIndex].agentId);
+            } else if (onSubmit && isComposerSendShortcut(event)) {
+              event.preventDefault();
+              onSubmit();
             }
           }}
         />

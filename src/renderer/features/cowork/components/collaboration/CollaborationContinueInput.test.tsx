@@ -8,6 +8,9 @@ import { getContinueDraft, updateContinueDraft } from './collaborationContinueDr
 import CollaborationContinueInput from './CollaborationContinueInput';
 
 vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
+vi.mock('@/services/config', () => ({
+  configService: { getConfig: () => ({ shortcuts: { sendMessage: 'Enter' } }) },
+}));
 const speech = vi.hoisted(() => ({ callbacks: [] as Array<(text: string) => void> }));
 vi.mock('../composer/LocalSpeechInputButton', () => ({
   LocalSpeechInputButton: ({
@@ -40,13 +43,20 @@ it('submits an independent request and reports only source acceptance without cl
   render(
     <CollaborationContinueInput draftKey={key} disabled={false} onRequestContinue={request} />,
   );
-  fireEvent.click(screen.getByRole('button', { name: 'teamRequestContinue' }));
+  const input = screen.getByRole('textbox');
+  expect(fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })).toBe(true);
+  fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+  fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
+  expect(request).not.toHaveBeenCalled();
+  expect(fireEvent.keyDown(input, { key: 'Enter' })).toBe(false);
+  fireEvent.keyDown(input, { key: 'Enter' });
   await screen.findByText('teamContinue_source_accepted');
   expect(request).toHaveBeenCalledWith({
     requestId: expect.any(String),
     message: 'Inspect the revised result',
     attachmentPaths: ['/project/evidence.png'],
   });
+  expect(request).toHaveBeenCalledOnce();
   expect(screen.queryByText('teamContinue_target_accepted')).toBeNull();
   expect(getContinueDraft(key)).toMatchObject({ text: '', attachments: [], pending: undefined });
 });
@@ -99,6 +109,7 @@ it('preserves a failed request and freezes its identity after an uncertain respo
   render(
     <CollaborationContinueInput draftKey={key} disabled={false} onRequestContinue={request} />,
   );
+  fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
   fireEvent.click(screen.getByRole('button', { name: 'teamRequestContinue' }));
   expect(request).toHaveBeenCalledOnce();
   expect(getContinueDraft(key).pending).toBe(original);

@@ -18,14 +18,16 @@ afterEach(() => {
 });
 
 test.each([
-  'Provider request failed.',
+  '⚠ Provider request failed.',
   'Provider request failed.\nThe connection closed before the response completed.',
   'Provider request failed. '.repeat(12),
+  `${'Provider request failed. '.repeat(12)}\nThe connection closed.`,
 ])('keeps the error copy button hidden until interaction: %s', message => {
   style = document.createElement('style');
   style.textContent = chatStyles.map(styles => styles.cssText).join('\n');
   document.head.append(style);
   render(renderTerminalTimelineMessage(message, 'error'), document.body);
+  expect(document.querySelector('.process-terminal--error')?.textContent).not.toContain('⚠');
 
   const copy = document.querySelector<HTMLButtonElement>('.message-copy')!;
   expect(getComputedStyle(copy).opacity).toBe('0');
@@ -35,29 +37,45 @@ test.each([
     details.open = true;
     expect(getComputedStyle(copy).opacity).toBe('0');
     expect(getComputedStyle(copy).pointerEvents).toBe('none');
+    const summaryPreview = details.querySelector<HTMLElement>('.process-terminal__summary-preview');
+    if (summaryPreview) {
+      expect(getComputedStyle(summaryPreview).display).toBe('none');
+      expect(details.querySelector('pre')?.textContent).toBe(message.trim());
+      details.open = false;
+      expect(getComputedStyle(summaryPreview).display).not.toBe('none');
+    }
   }
 });
 
-test('keeps long errors collapsed and copies the complete displayed diagnostic', async () => {
-  vi.useFakeTimers();
-  const writeText = vi.fn().mockResolvedValue(undefined);
-  vi.stubGlobal('navigator', { clipboard: { writeText } });
-  const message = 'Provider request failed.\nThe connection closed before the response completed.';
-  render(renderTerminalTimelineMessage(message, 'error'), document.body);
-  const details = document.querySelector('details')!;
-  expect(details.open).toBe(false);
-  expect(details.querySelector('summary')?.textContent).toContain('Provider request failed.');
-  expect(details.querySelector('pre')?.textContent).toBe(message);
-  expect(document.querySelectorAll('.chat-avatar.error')).toHaveLength(1);
-  expect(document.querySelector('.chat-avatar.assistant')).toBeNull();
-  const copy = document.querySelector<HTMLButtonElement>('.message-copy')!;
-  copy.click();
-  await Promise.resolve();
-  expect(writeText).toHaveBeenCalledExactlyOnceWith(message);
-  expect(copy.getAttribute('aria-label')).toBe(i18nService.t('copied'));
-  vi.advanceTimersByTime(1500);
-  expect(copy.getAttribute('aria-label')).toBe(i18nService.t('coworkCopyError'));
-});
+test.each(['\n', '\r\n'])(
+  'expands only the error detail and copies the complete diagnostic with %j line endings',
+  async lineEnding => {
+    vi.useFakeTimers();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const summary = 'Provider request failed.';
+    const detail = 'The connection closed before the response completed.';
+    const message = `⚠️ ${summary}${lineEnding}${detail}`;
+    render(renderTerminalTimelineMessage(message, 'error'), document.body);
+    const details = document.querySelector('details')!;
+    expect(details.open).toBe(false);
+    expect(details.querySelector('summary')?.textContent).toContain(summary);
+    details.querySelector('summary')?.click();
+    expect(details.open).toBe(true);
+    expect(details.querySelector('pre')?.textContent).toBe(detail);
+    expect(details.textContent?.split(summary)).toHaveLength(2);
+    expect(details.textContent).not.toContain('⚠');
+    expect(document.querySelectorAll('.chat-avatar.error')).toHaveLength(1);
+    expect(document.querySelector('.chat-avatar.assistant')).toBeNull();
+    const copy = document.querySelector<HTMLButtonElement>('.message-copy')!;
+    copy.click();
+    await Promise.resolve();
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(message);
+    expect(copy.getAttribute('aria-label')).toBe(i18nService.t('copied'));
+    vi.advanceTimersByTime(1500);
+    expect(copy.getAttribute('aria-label')).toBe(i18nService.t('coworkCopyError'));
+  },
+);
 
 test('updates the working stage and timer without announcing every elapsed tick', () => {
   render(

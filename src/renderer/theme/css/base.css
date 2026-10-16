@@ -13,7 +13,7 @@
   --justdo-chat-accent: var(--justdo-primary-hover);
   --justdo-chat-border: var(--justdo-border);
   --justdo-chat-process-bg: transparent;
-  --justdo-chat-thinking-bg: var(--justdo-surface);
+  --justdo-chat-thinking-bg: var(--justdo-surface-raised);
   --justdo-chat-code-bg: var(--justdo-surface-raised);
   --justdo-chat-danger: color-mix(in srgb, var(--justdo-destructive) 80%, var(--justdo-foreground));
   --justdo-chat-user-bg: var(--justdo-chat-user);

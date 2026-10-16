@@ -644,10 +644,17 @@ export function renderTerminalTimelineMessage(
   footer: TemplateResult | typeof nothing = nothing,
   assistantAvatar?: TemplateResult,
 ): TemplateResult {
-  const displayMessage = stripOpenClawLogHintText(message).trim();
+  const diagnosticMessage = stripOpenClawLogHintText(message).trim();
+  const displayMessage = status === 'error'
+    ? diagnosticMessage.replace(/^⚠[\uFE0E\uFE0F]?\s*/u, '')
+    : diagnosticMessage;
   const firstLine = displayMessage.split(/\r?\n/)[0];
-  const summary = firstLine.length > 160 ? `${firstLine.slice(0, 160)}…` : firstLine;
-  const hasDetails = displayMessage !== summary;
+  const isSummaryTruncated = firstLine.length > 160;
+  const summary = isSummaryTruncated ? `${firstLine.slice(0, 160)}…` : firstLine;
+  const detailMessage = isSummaryTruncated
+    ? displayMessage
+    : displayMessage.slice(firstLine.length).replace(/^\r?\n/, '');
+  const hasDetails = detailMessage.length > 0;
   return renderAssistantTimelineRow(
     html`
       <div class="process-terminal process-terminal--${status}" role="status">
@@ -657,18 +664,22 @@ export function renderTerminalTimelineMessage(
             ? html`
                 <details class="process-terminal__details">
                   <summary>
-                    <span>${summary}</span
+                    <span class=${isSummaryTruncated ? 'process-terminal__summary-preview' : nothing}
+                      >${summary}</span
                     ><span class="process-terminal__details-label"
-                      >${i18nService.t('coworkErrorDetails')}</span
+                      >${i18nService.t('coworkErrorDetails')}
+                      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                        <path d="m4.5 6.25 3.5 3.5 3.5-3.5" />
+                      </svg></span
                     >
                   </summary>
                   <pre tabindex="0" aria-label=${i18nService.t('coworkErrorDetails')}>
-${displayMessage}</pre>
+${detailMessage}</pre>
                 </details>
               `
             : html`<span class="process-terminal__text">${displayMessage}</span>`
         }
-        ${status === 'error' ? renderCopyButton(displayMessage, i18nService.t('coworkCopyError')) : nothing}
+        ${status === 'error' ? renderCopyButton(diagnosticMessage, i18nService.t('coworkCopyError')) : nothing}
       </div>
       ${
         footer === nothing

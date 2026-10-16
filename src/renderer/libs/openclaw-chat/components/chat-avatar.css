@@ -1,0 +1,131 @@
+.chat-avatar {
+  box-sizing: border-box;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.chat-avatar > svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.chat-avatar.user {
+  background: var(--justdo-chat-user-avatar-bg, #e0e7ff);
+  color: var(--justdo-chat-user-avatar-text, #4338ca);
+}
+
+.chat-avatar.assistant {
+  background: var(--justdo-chat-assistant-avatar-bg, #f3e8ff);
+  color: var(--justdo-chat-assistant-avatar-text, #7c3aed);
+}
+
+.chat-avatar.error {
+  background: var(--justdo-chat-error-avatar-bg, #fee2e2);
+  color: var(--justdo-chat-error-avatar-text, #b91c1c);
+}
+
+.chat-avatar.tool {
+  background: var(--justdo-chat-tool-avatar-bg, rgba(0, 0, 0, 0.05));
+  color: var(--justdo-chat-tool-avatar-text, #6b7280);
+}
+
+.chat-avatar.other {
+  background: rgba(0, 0, 0, 0.05);
+  color: #6b7280;
+}
+
+.chat-avatar--logo {
+  object-fit: cover;
+}
+
+/* Share the same dark treatment between Lit shadow roots and React adapters. */
+:host(.dark) .chat-avatar:is(.user, .assistant, .error),
+.dark .chat-avatar:is(.user, .assistant, .error) {
+  border-radius: 11px;
+  background: linear-gradient(
+    145deg,
+    var(--chat-avatar-surface-top),
+    var(--chat-avatar-surface-bottom)
+  );
+  color: var(--chat-avatar-foreground);
+  box-shadow:
+    inset 0 0 0 1px var(--chat-avatar-edge),
+    inset 0 1px 0 color-mix(in srgb, var(--justdo-foreground, #e6e6e6) 8%, transparent),
+    0 2px 5px rgba(0, 0, 0, 0.16);
+}
+
+:host(.dark) .chat-avatar.user,
+.dark .chat-avatar.user {
+  --chat-avatar-surface-top: color-mix(
+    in srgb,
+    var(--justdo-surface-raised, #292929) 88%,
+    var(--justdo-foreground, #e6e6e6)
+  );
+  --chat-avatar-surface-bottom: var(--justdo-surface, #202020);
+  --chat-avatar-foreground: color-mix(
+    in srgb,
+    var(--justdo-text-secondary, #a0a0a0) 35%,
+    var(--justdo-foreground, #e6e6e6)
+  );
+  --chat-avatar-edge: color-mix(in srgb, var(--justdo-foreground, #e6e6e6) 16%, transparent);
+}
+
+:host(.dark) .chat-avatar.assistant,
+.dark .chat-avatar.assistant {
+  --chat-avatar-surface-top: color-mix(
+    in srgb,
+    var(--justdo-primary-hover, #60a5fa) 24%,
+    var(--justdo-surface-raised, #292929)
+  );
+  --chat-avatar-surface-bottom: color-mix(
+    in srgb,
+    var(--justdo-primary, #3b82f6) 12%,
+    var(--justdo-surface, #202020)
+  );
+  --chat-avatar-foreground: color-mix(
+    in srgb,
+    var(--justdo-primary-hover, #60a5fa) 72%,
+    var(--justdo-foreground, #e6e6e6)
+  );
+  --chat-avatar-edge: color-mix(in srgb, var(--justdo-primary-hover, #60a5fa) 34%, transparent);
+}
+
+:host(.dark) .chat-avatar.error,
+.dark .chat-avatar.error {
+  --chat-avatar-surface-top: color-mix(
+    in srgb,
+    var(--justdo-destructive, #ef4444) 19%,
+    var(--justdo-surface-raised, #292929)
+  );
+  --chat-avatar-surface-bottom: color-mix(
+    in srgb,
+    var(--justdo-destructive, #ef4444) 8%,
+    var(--justdo-surface, #202020)
+  );
+  --chat-avatar-foreground: color-mix(
+    in srgb,
+    var(--justdo-destructive, #ef4444) 64%,
+    var(--justdo-foreground, #e6e6e6)
+  );
+  --chat-avatar-edge: color-mix(in srgb, var(--justdo-destructive, #ef4444) 38%, transparent);
+}
+
+:host(.dark) .chat-avatar.user > svg,
+.dark .chat-avatar.user > svg {
+  width: 19px;
+  height: 19px;
+  stroke-width: 1.8;
+}
+
+:host(.dark) .chat-avatar.assistant > svg,
+.dark .chat-avatar.assistant > svg {
+  width: 20px;
+  height: 20px;
+}
