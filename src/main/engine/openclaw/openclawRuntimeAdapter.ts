@@ -171,6 +171,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private gatewayReadyPromise: Promise<void> | null = null;
   private gatewayClientInitLock: Promise<void> | null = null;
   private gatewayClientGeneration = 0;
+  private readonly sessionActivityChecks = new Map<string, Set<symbol>>();
   private automationPermissionVerifiedGeneration = -1;
   private continuationPermissionPreparer: ((sessionId: string) => Promise<void>) | null = null;
   private gatewayStoppingIntentionally = false;
@@ -2952,6 +2953,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly runtimeGatewayEventsContext: RuntimeGatewayEventsContext =
     createPropertyContext<RuntimeGatewayEventsContext>({
       emit: { get: () => this.emit.bind(this) },
+      gatewayClient: { get: () => this.gatewayClient },
+      gatewayClientGeneration: { get: () => this.gatewayClientGeneration },
+      sessionActivityChecks: { get: () => this.sessionActivityChecks },
       lastTickTimestamp: {
         get: () => this.lastTickTimestamp,
         set: value => {

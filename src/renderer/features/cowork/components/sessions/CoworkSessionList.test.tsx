@@ -5,7 +5,7 @@ import type { CollaborationRoomEntry } from '@shared/cowork/agent-team/collabora
 import type { TeamDiscussionRoom } from '@shared/cowork/agent-team/teamDiscussion';
 import { CoworkSessionSource } from '@shared/cowork/sessionSource';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { Provider } from 'react-redux';
+import { Provider, useSelector } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import coworkReducer, {
@@ -13,6 +13,7 @@ import coworkReducer, {
   setSessionRuntimeSnapshot,
   setSessions,
   toggleGroupExpanded,
+  touchSessionActivity,
 } from '@/features/cowork/coworkSlice';
 import type { CoworkSessionSummary } from '@/features/cowork/coworkTypes';
 import { translations } from '@/services/i18n/translations';
@@ -43,6 +44,7 @@ vi.mock('@/services/i18n', () => ({
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   activities.collaborations = [];
   activities.discussions = [];
   activities.workflows = {};
@@ -83,6 +85,48 @@ const createStore = () =>
   configureStore({
     reducer: { cowork: coworkReducer, agent: () => ({ agents: [] }) },
   });
+
+it.each([1, 3, 15, 60])(
+  'moves a conversation from %i days ago to the top of Today and keeps it there after a stale refresh',
+  daysAgo => {
+    vi.useFakeTimers();
+    const now = new Date(2026, 9, 16, 12).getTime();
+    vi.setSystemTime(now);
+    const history = summary('Historical chat', now - daysAgo * 86_400_000);
+    const today = summary('Today chat', now - 60_000);
+    const store = createStore();
+    store.dispatch(setSessions([history, today]));
+    const props = { ...createProps([]), currentSessionId: history.id };
+    const ConnectedList = () => {
+      const sessions = useSelector(
+        (state: ReturnType<typeof store.getState>) => state.cowork.sessions,
+      );
+      return <CoworkSessionList {...props} sessions={sessions} groupRecentSessionsByDate />;
+    };
+    render(
+      <Provider store={store}>
+        <ConnectedList />
+      </Provider>,
+    );
+    const todaySection = () => screen.getByRole('button', { name: /^Today ·/ }).closest('section')!;
+    expect(within(todaySection()).queryByText(history.title)).toBeNull();
+
+    act(() => {
+      store.dispatch(touchSessionActivity({ sessionId: history.id, timestamp: now }));
+    });
+
+    const titles = () =>
+      within(todaySection())
+        .getAllByRole('button')
+        .slice(1)
+        .map(button => button.textContent);
+    expect(titles()).toEqual([history.title, today.title]);
+    act(() => {
+      store.dispatch(setSessions([history, today]));
+    });
+    expect(titles()).toEqual([history.title, today.title]);
+  },
+);
 
 it('shows source activity for background Team, discussions and Swarm without changing main execution state', () => {
   activities.collaborations = [

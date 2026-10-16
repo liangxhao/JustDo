@@ -211,6 +211,35 @@ test('copies terminal run metadata with stable transcript run ids', () => {
   expect(store.getSessionRuns(target.id)[0]?.clientTurnId).not.toBe('justdo-1700000000000-source');
 });
 
+test('persists recent conversation activity across store instances and list reads', () => {
+  insertSession('history', 1_700_000_000_000);
+  insertSession('other', 1_700_100_000_000);
+  const activityTime = 1_700_200_000_000;
+
+  store.recordSessionActivity('history', activityTime);
+
+  const reloaded = new CoworkStore(db);
+  expect(reloaded.getSession('history')).toMatchObject({
+    createdAt: 1_700_000_000_000,
+    updatedAt: activityTime,
+  });
+  expect(reloaded.listSessions().map(session => session.id)).toEqual(['history', 'other']);
+  expect(reloaded.getSession('other')?.updatedAt).toBe(1_700_100_000_000);
+});
+
+test('ignores older or invalid activity and never recreates a deleted session', () => {
+  const activityTime = 1_700_200_000_000;
+  insertSession('history', activityTime);
+
+  for (const timestamp of [activityTime - 1, activityTime, NaN, Infinity, -1]) {
+    store.recordSessionActivity('history', timestamp);
+  }
+  store.recordSessionActivity('deleted', activityTime);
+
+  expect(store.getSession('history')?.updatedAt).toBe(activityTime);
+  expect(store.listSessions().map(session => session.id)).toEqual(['history']);
+});
+
 test('session metadata updates do not change recent activity time', () => {
   const sid = 'sess-metadata';
   const activityTime = 1_700_000_000_000;

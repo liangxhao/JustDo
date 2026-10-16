@@ -141,10 +141,26 @@ const coworkSlice = createSlice({
     },
 
     setSessions(state, action: PayloadAction<CoworkSessionSummary[]>) {
-      state.sessions = action.payload;
+      const activityBySessionId = new Map(
+        state.sessions.map(session => [session.id, session.updatedAt]),
+      );
+      if (state.currentSession) {
+        activityBySessionId.set(
+          state.currentSession.id,
+          Math.max(
+            activityBySessionId.get(state.currentSession.id) ?? 0,
+            state.currentSession.updatedAt,
+          ),
+        );
+      }
+      // A list read started before a live activity event can arrive after it.
+      state.sessions = action.payload.map(session => ({
+        ...session,
+        updatedAt: Math.max(session.updatedAt, activityBySessionId.get(session.id) ?? 0),
+      }));
       state.sessionListStatus = 'ready';
       if (state.currentSession) {
-        const summary = action.payload.find(session => session.id === state.currentSession?.id);
+        const summary = state.sessions.find(session => session.id === state.currentSession?.id);
         if (summary) {
           state.currentSession.status = summary.status;
           state.currentSession.external = summary.external;
@@ -222,10 +238,17 @@ const coworkSlice = createSlice({
         (incomingSession && state.currentSession?.id === incomingSession.id
           ? state.currentSession.modelRef
           : undefined);
-      const nextSession =
-        incomingSession && preservedModelRef
-          ? { ...incomingSession, modelRef: preservedModelRef }
-          : incomingSession;
+      const nextSession = incomingSession
+        ? {
+            ...incomingSession,
+            ...(preservedModelRef ? { modelRef: preservedModelRef } : {}),
+            updatedAt: Math.max(
+              incomingSession.updatedAt,
+              state.sessions.find(session => session.id === incomingSession.id)?.updatedAt ?? 0,
+              state.currentSession?.id === incomingSession.id ? state.currentSession.updatedAt : 0,
+            ),
+          }
+        : null;
       state.currentSession = nextSession;
       if (nextSession) {
         // Fresh selected-model reads supersede completed optimistic selections.

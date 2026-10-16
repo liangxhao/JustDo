@@ -876,6 +876,13 @@ export class CoworkStore {
       .run(...values);
   }
 
+  recordSessionActivity(id: string, timestamp: number): void {
+    if (!Number.isFinite(timestamp) || timestamp < 0) return;
+    this.db
+      .prepare('UPDATE cowork_sessions SET updated_at = MAX(updated_at, ?) WHERE id = ?')
+      .run(timestamp, id);
+  }
+
   deleteSession(id: string): void {
     this.db.prepare('DELETE FROM cowork_sessions WHERE id = ?').run(id);
     this.clearGoalExecutionSnapshot(id);

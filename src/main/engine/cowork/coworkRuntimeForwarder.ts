@@ -20,6 +20,11 @@ export const bindCoworkRuntimeForwarder = (
   getCoworkStore: () => CoworkStore,
 ): void => {
   runtime.on('activity', (sessionId: string, kind: 'user' | 'other', timestamp: number) => {
+    try {
+      getCoworkStore().recordSessionActivity(sessionId, timestamp);
+    } catch (error) {
+      console.error('[CoworkForwarder] Failed to persist session activity:', error);
+    }
     broadcast('cowork:session:activity', {
       sessionId,
       kind,

@@ -609,6 +609,38 @@ describe('cowork session recent activity', () => {
     expect(updated.currentSession).not.toHaveProperty('messages');
   });
 
+  test('preserves live activity when an older list response arrives', () => {
+    const session = createSession('session-1');
+    const loaded = coworkReducer(undefined, setSessions([session]));
+    const selected = coworkReducer(loaded, setCurrentSession(session));
+    const active = coworkReducer(
+      selected,
+      touchSessionActivity({ sessionId: session.id, timestamp: activityTime }),
+    );
+
+    const refreshed = coworkReducer(active, setSessions([{ ...session, title: 'Renamed' }]));
+
+    expect(refreshed.sessions[0]).toMatchObject({ title: 'Renamed', updatedAt: activityTime });
+    expect(refreshed.currentSession?.updatedAt).toBe(activityTime);
+    expect(session.updatedAt).toBe(2);
+    expect(coworkReducer(refreshed, setSessions([])).sessions).toEqual([]);
+  });
+
+  test('preserves activity when an older full session response arrives', () => {
+    const session = createSession('session-1');
+    const loaded = coworkReducer(undefined, setSessions([session]));
+    const active = coworkReducer(
+      loaded,
+      touchSessionActivity({ sessionId: session.id, timestamp: activityTime }),
+    );
+
+    const selected = coworkReducer(active, setCurrentSession(session));
+
+    expect(selected.currentSession?.updatedAt).toBe(activityTime);
+    expect(selected.sessions[0].updatedAt).toBe(activityTime);
+    expect(session.updatedAt).toBe(2);
+  });
+
   test('keeps activity time when status changes', () => {
     const loaded = coworkReducer(
       undefined,

@@ -26,11 +26,14 @@ import type { CoworkSessionStatus, CoworkStore } from '../../data/coworkStore';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
 import { SessionExecApprovalGrants } from '../../openclaw/permissions/sessionExecApprovalGrants';
 import { isRecord } from '../gateway/helpers';
-import type { GatewayEventFrame, SessionTurn } from '../gateway/types';
+import type { GatewayClientLike, GatewayEventFrame, SessionTurn } from '../gateway/types';
 import { ERROR_TERMINAL_SESSION_STATUSES } from './runtimeAdapterSupport';
 import { type GatewaySubagent } from './subagentGateway';
 export interface RuntimeGatewayEventsContext {
   readonly emit: (eventName: string | symbol, ...args: unknown[]) => boolean;
+  readonly gatewayClient: GatewayClientLike | null;
+  readonly gatewayClientGeneration: number;
+  readonly sessionActivityChecks: Map<string, Set<symbol>>;
   lastTickTimestamp: number;
   readonly handleChatEvent: (payload: unknown, frameSeq?: number) => void;
   lastAgentActivityTimestamp: number;
@@ -447,7 +450,10 @@ export function handleSessionOperationEvent(
   if (payload.operation === 'reset' || payload.operation === 'delete') {
     this.sessionExecApprovalGrants.clearSession(sessionKey);
     const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
-    if (sessionId) this.clearCompactionInFlight(sessionId);
+    if (sessionId) {
+      this.sessionActivityChecks.delete(sessionId);
+      this.clearCompactionInFlight(sessionId);
+    }
     return;
   }
   if (payload.operation !== 'compact') return;
@@ -493,6 +499,57 @@ export function clearAllCompactionInFlight(this: RuntimeGatewayEventsContext): v
   this.compactionInFlightSessionIds.clear();
 }
 
+async function recordAcceptedInputActivity(
+  context: RuntimeGatewayEventsContext,
+  sessionId: string,
+  sessionKey: string,
+  nativeSessionId: string,
+  timestamp: number,
+): Promise<void> {
+  const client = context.gatewayClient;
+  if (!client) return;
+  const generation = context.gatewayClientGeneration;
+  const checks = context.sessionActivityChecks.get(sessionId) ?? new Set<symbol>();
+  const token = Symbol();
+  checks.add(token);
+  context.sessionActivityChecks.set(sessionId, checks);
+  try {
+    const result = await client.request<{ session?: Record<string, unknown> | null }>(
+      'sessions.describe',
+      { key: sessionKey },
+    );
+    const turn = context.activeTurns.get(sessionId);
+    if (
+      context.gatewayClient !== client ||
+      context.gatewayClientGeneration !== generation ||
+      context.sessionActivityChecks.get(sessionId) !== checks ||
+      context.resolveSessionIdBySessionKey(sessionKey) !== sessionId ||
+      !context.store.getSession(sessionId) ||
+      result.session?.sessionId !== nativeSessionId ||
+      typeof result.session?.key !== 'string' ||
+      normalizeMessageSessionKey(result.session?.key) !== normalizeMessageSessionKey(sessionKey)
+    ) {
+      return;
+    }
+    if (
+      turn?.gatewaySessionId &&
+      (turn.gatewaySessionId !== nativeSessionId ||
+        normalizeMessageSessionKey(turn.sessionKey) !== normalizeMessageSessionKey(sessionKey))
+    ) {
+      return;
+    }
+    // Input custody is conversation activity, never evidence of a new execution.
+    context.emit('activity', sessionId, 'other', timestamp);
+  } catch {
+    // A failed identity lookup cannot establish activity for this incarnation.
+  } finally {
+    checks.delete(token);
+    if (checks.size === 0 && context.sessionActivityChecks.get(sessionId) === checks) {
+      context.sessionActivityChecks.delete(sessionId);
+    }
+  }
+}
+
 export function handleSessionsChangedEvent(
   this: RuntimeGatewayEventsContext,
   payload: unknown,
@@ -519,7 +576,10 @@ export function handleSessionsChangedEvent(
   if (reason === 'delete' || reason === 'reset' || reason === 'new') {
     this.sessionExecApprovalGrants.clearSession(sessionKey);
     const resetSessionId = this.resolveSessionIdBySessionKey(sessionKey);
-    if (resetSessionId) this.clearCompactionInFlight(resetSessionId);
+    if (resetSessionId) {
+      this.sessionActivityChecks.delete(resetSessionId);
+      this.clearCompactionInFlight(resetSessionId);
+    }
   }
   const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
   if (!sessionId) return;
@@ -541,6 +601,16 @@ export function handleSessionsChangedEvent(
   // catalog/event refresh must not terminate a newer local turn with the same key.
   const isSessionBoundary = reason === 'reset' || reason === 'delete';
   const rowSessionId = typeof source.sessionId === 'string' ? source.sessionId : undefined;
+  if (
+    reason === 'send' &&
+    rowSessionId?.trim() &&
+    typeof payload.ts === 'number' &&
+    Number.isSafeInteger(payload.ts) &&
+    payload.ts >= 0 &&
+    (!turn?.gatewaySessionId || (eventMatchesTurn && turn.gatewaySessionId === rowSessionId))
+  ) {
+    void recordAcceptedInputActivity(this, sessionId, sessionKey, rowSessionId, payload.ts);
+  }
   const rowRunId = typeof source.lastRunId === 'string' ? source.lastRunId : undefined;
   const matchesCurrentIdentity = isSessionBoundary || Boolean(
     turn &&
