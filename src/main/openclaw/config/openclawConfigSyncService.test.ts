@@ -482,6 +482,94 @@ describe('OpenClawConfigSyncService', () => {
     };
   };
 
+  it('only reads active permissions during execution admission, without projecting config or discovering MCP', async () => {
+    const discovery = vi.fn(async () => new Set<string>());
+    const harness = createHarness({ getExtensionMcpServerNames: discovery });
+    await harness.service.syncConfig({ reason: 'startup' });
+    harness.requestGateway.mockClear();
+    harness.configSync.sync.mockClear();
+    discovery.mockClear();
+
+    await expect(harness.service.verifyExecutionPermissionPolicy()).resolves.toMatchObject({
+      success: true, hostPolicyVerified: true,
+    });
+    expect(harness.requestGateway.mock.calls.map(([method]) => method)).toEqual([
+      'config.get', 'exec.approvals.get',
+    ]);
+    expect(harness.configSync.sync).not.toHaveBeenCalled();
+    expect(discovery).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsafe execution admission without repairing the approval file', async () => {
+    const harness = createHarness();
+    await expect(harness.service.verifyExecutionPermissionPolicy()).resolves.toMatchObject({
+      success: false,
+    });
+    expect(harness.requestGateway.mock.calls.map(([method]) => method)).toEqual([
+      'config.get', 'exec.approvals.get',
+    ]);
+    expect(harness.configSync.sync).not.toHaveBeenCalled();
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+  });
+
+  it('does not inspect historical model selections or clean credentials during execution admission', async () => {
+    const harness = createHarness();
+    await harness.service.syncConfig({ reason: 'startup' });
+    const original = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      const response = await original(method, params);
+      if (method === 'config.get') {
+        return {
+          ...response,
+          config: {
+            ...('config' in response ? response.config : {}),
+            agents: { defaults: { model: 'provider/model' } },
+            models: { providers: { provider: { models: [{ id: 'model' }] } } },
+          },
+        };
+      }
+      return response;
+    });
+    harness.requestGateway.mockClear();
+    await expect(harness.service.verifyExecutionPermissionPolicy()).resolves.toMatchObject({
+      success: true,
+    });
+    expect(harness.requestGateway.mock.calls.map(([method]) => method)).toEqual([
+      'config.get', 'exec.approvals.get',
+    ]);
+  });
+
+  it('rejects a verification superseded by another process without stopping the replacement', async () => {
+    const harness = createHarness();
+    await harness.service.syncConfig({ reason: 'startup' });
+    const original = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      const response = await original(method, params);
+      if (method === 'config.get') harness.advanceProcessGeneration();
+      return response;
+    });
+    await expect(harness.service.verifyExecutionPermissionPolicy()).resolves.toMatchObject({
+      success: false, status: { phase: 'error' },
+    });
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('waits for an existing configuration mutation before reading active permissions', async () => {
+    const harness = createHarness();
+    await harness.service.syncConfig({ reason: 'startup' });
+    harness.requestGateway.mockClear();
+    let release!: () => void;
+    const pending = harness.service.runConfigMutationExclusive(() => new Promise<void>(resolve => {
+      release = resolve;
+    }));
+    const verification = harness.service.verifyExecutionPermissionPolicy();
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    expect(harness.requestGateway).not.toHaveBeenCalled();
+    release();
+    await pending;
+    await expect(verification).resolves.toMatchObject({ success: true });
+  });
+
   it('waits for native hot reload without restarting the Gateway', async () => {
     const harness = createHarness({ waitForReload: true });
 

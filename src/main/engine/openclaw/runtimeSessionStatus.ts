@@ -17,6 +17,7 @@ import {
   mergeGatewaySubagentSnapshots,
   SUBAGENT_STATUSES,
 } from './subagentGateway';
+import { OPENCLAW_COMPACT_SESSION_ROW_MODE } from './wire/v2026_10_4';
 export interface RuntimeSessionStatusContext {
   readonly invalidateSubagentStatus: (sessionId: string) => void;
   readonly subagentStatusCache: Map<string, { expiresAt: number; subagents: GatewaySubagent[] }>;
@@ -371,6 +372,7 @@ export async function getRuntimeSessionSnapshot(
         sessions?: Array<Record<string, unknown>>;
         hasMore?: boolean;
       }>('sessions.list', {
+        rowMode: OPENCLAW_COMPACT_SESSION_ROW_MODE,
         limit: 500,
         ...(offset > 0 ? { offset } : {}),
       });

@@ -13,6 +13,7 @@ import {
 } from '../../../shared/cowork/sessionGoal';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter, OpenClawRuntimeAdapter } from '../../engine';
+import { OPENCLAW_COMPACT_SESSION_ROW_MODE } from '../../engine/openclaw/wire/v2026_10_4';
 import {
   buildGatewaySessionDetailStats,
   type GatewaySessionHistoryLoader,
@@ -162,6 +163,7 @@ const resolveGatewaySessionWithActiveRunState = async (
     // sessions.describe is the authoritative exact row lookup, but OpenClaw
     // currently projects its active-run registry only on sessions.list.
     const result = await client.request<{ sessions?: GatewaySession[] }>('sessions.list', {
+      rowMode: OPENCLAW_COMPACT_SESSION_ROW_MODE,
       search: session.key,
       limit: 20,
       agentId,

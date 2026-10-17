@@ -34,7 +34,7 @@ import type { CollaborationCoordinator } from '../../cowork/agent-team/collabora
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import { isWorkspacePathWithin } from '../../engine/openclaw/runtimeAdapterSupport';
-import { listPersistedGatewaySessions } from '../../engine/openclaw/subagentGateway';
+import { createPersistedGatewaySessionReader } from '../../engine/openclaw/subagentGateway';
 import type { PermissionModeOperationResult } from '../../openclaw/permissions/sessionPermissionModeCoordinator';
 import {
   buildManagedSessionKey,
@@ -128,6 +128,9 @@ export const registerCoworkSessionHandlers = ({
   getCollaboration,
   getAgentTeamLaunch,
 }: SessionHandlerDependencies): void => {
+  const readNativeSessions = requestGateway
+    ? createPersistedGatewaySessionReader({ request: requestGateway })
+    : null;
   const unknownAdmissions = new Map<string, { id: string; runId: string; cancelled: boolean }>();
   const stoppingSessions = new Map<string, Promise<{ success: boolean; error?: string }>>();
   const idleConfirmations = new Map<string, { count: number; observedAt: number }>();
@@ -1296,10 +1299,10 @@ export const registerCoworkSessionHandlers = ({
 
   ipcMain.handle('cowork:session:list', async (_event, agentId?: string) => {
     try {
-      if (requestGateway) {
+      if (requestGateway && readNativeSessions) {
         const store = getCoworkStore();
         try {
-          const nativeSessions = await listPersistedGatewaySessions({ request: requestGateway });
+          const nativeSessions = await readNativeSessions();
           const parents = new Map(
             store
               .listSessions()

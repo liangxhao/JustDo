@@ -772,6 +772,7 @@ test('getSessionRuntimeStatus only treats the main session as running', async ()
   });
   expect(request).toHaveBeenCalledTimes(1);
   expect(request).toHaveBeenCalledWith('sessions.list', {
+    rowMode: 'compact',
     limit: 500,
   });
 });
@@ -831,8 +832,8 @@ test('omits pending-input harness rows while advancing native runtime list pagin
     running: false,
   });
   expect(request.mock.calls.map(([, params]) => params)).toEqual([
-    { limit: 500 },
-    { limit: 500, offset: 1 },
+    { rowMode: 'compact', limit: 500 },
+    { rowMode: 'compact', limit: 500, offset: 1 },
   ]);
 });
 
@@ -932,7 +933,9 @@ test('scans beyond an inferred 500-row boundary before reporting a parent idle',
     subagentRunning: true,
     running: true,
   });
-  expect(request).toHaveBeenCalledWith('sessions.list', { limit: 500, offset: 500 });
+  expect(request).toHaveBeenCalledWith('sessions.list', {
+    rowMode: 'compact', limit: 500, offset: 500,
+  });
 });
 
 test('sessions.changed invalidates the cached runtime snapshot', async () => {

@@ -5,7 +5,10 @@ import {
   type CoworkSubagentDetailTask,
 } from '../../../shared/cowork/subagentDetails';
 import type { GatewayClientLike } from '../gateway/types';
-import { parseSessionsListResultV2026_10_4 } from './wire/v2026_10_4';
+import {
+  OPENCLAW_COMPACT_SESSION_ROW_MODE,
+  parseSessionsListResultV2026_10_4,
+} from './wire/v2026_10_4';
 
 export type GatewayRequestClient = Pick<GatewayClientLike, 'request'>;
 
@@ -148,13 +151,16 @@ const readPage = async (
   spawnedBy?: string,
   offset = 0,
   limit = SESSION_PAGE_SIZE,
+  rowMode?: 'compact',
 ) => {
   // The native spawnedBy query uses expiring control links and can omit completed
   // children whose durable row still has spawnedBy. Read native rows and match
   // their explicit ancestry locally; do not infer membership or cache history.
   for (;;) {
     const page = parseSessionsListResultV2026_10_4(
-      await client.request('sessions.list', { limit, offset, archived: 'all' }),
+      await client.request('sessions.list', {
+        limit, offset, archived: 'all', ...(rowMode ? { rowMode } : {}),
+      }),
     );
     if (page.hasMore && (page.nextOffset == null || page.nextOffset <= offset)) {
       throw new Error('OpenClaw sessions.list cursor did not advance');
@@ -169,18 +175,53 @@ const readPage = async (
 const listSessions = async (
   client: GatewayRequestClient,
   spawnedBy?: string,
+  rowMode?: 'compact',
 ): Promise<SessionRow[]> => {
   const rows: SessionRow[] = [];
   let offset = 0;
   for (;;) {
-    const page = await readPage(client, spawnedBy, offset);
+    const page = await readPage(client, spawnedBy, offset, SESSION_PAGE_SIZE, rowMode);
     rows.push(...page.sessions);
     if (!page.hasMore) return rows;
     offset = page.nextOffset!;
   }
 };
 export const listPersistedGatewaySessions = (client: GatewayRequestClient): Promise<SessionRow[]> =>
-  listSessions(client);
+  listSessions(client, undefined, OPENCLAW_COMPACT_SESSION_ROW_MODE);
+
+// Keep one read in flight and one shared follow-up. A request arriving during
+// a read waits for the follow-up, so an intervening sessions.changed is not lost.
+// Settled rows are never retained as a second catalog authority.
+export const createPersistedGatewaySessionReader = (client: GatewayRequestClient) => {
+  let running: Promise<SessionRow[]> | null = null;
+  let queued: {
+    promise: Promise<SessionRow[]>;
+    resolve: (rows: SessionRow[]) => void;
+    reject: (error: unknown) => void;
+  } | null = null;
+  const start = (): Promise<SessionRow[]> => {
+    running = listPersistedGatewaySessions(client).finally(() => {
+      running = null;
+      const followUp = queued;
+      queued = null;
+      if (followUp) void start().then(followUp.resolve, followUp.reject);
+    });
+    return running;
+  };
+  return (): Promise<SessionRow[]> => {
+    if (!running) return start();
+    if (!queued) {
+      let resolve!: (rows: SessionRow[]) => void;
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<SessionRow[]>((done, fail) => {
+        resolve = done;
+        reject = fail;
+      });
+      queued = { promise, resolve, reject };
+    }
+    return queued.promise;
+  };
+};
 const describe = async (client: GatewayRequestClient, key: string): Promise<SessionRow | null> => {
   const result = await client.request<{ session?: SessionRow | null }>('sessions.describe', {
     key,

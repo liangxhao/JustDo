@@ -7,6 +7,7 @@ import { ManagedDirectoryRuntimeStopAbortedError } from '../../core/filesystem/m
 import type { CoworkStore } from '../../data/coworkStore';
 import { enqueueSessionModelOperation } from '../../engine/gateway/sessionModelOperations';
 import {
+  OPENCLAW_COMPACT_SESSION_ROW_MODE,
   parseModelReferenceV2026_10_4,
   parseSessionsListResultV2026_10_4,
 } from '../../engine/openclaw/wire/v2026_10_4';
@@ -673,24 +674,61 @@ export class OpenClawConfigSyncService {
     );
   }
 
+  verifyExecutionPermissionPolicy(): Promise<SyncOpenClawConfigResult> {
+    return this.enqueueSyncOperation(() =>
+      this.verifySuccessfulConfigApplication({
+        success: true,
+        changed: false,
+        configSynced: true,
+        status: this.deps.getOpenClawEngineManager().getStatus(),
+      }, { executionAdmission: true }),
+    );
+  }
+
   private async verifySuccessfulConfigApplication(
     result: SyncOpenClawConfigResult,
     options: {
       execPolicyAlreadyVerified?: boolean;
       retiredProviderIds?: readonly string[];
+      executionAdmission?: boolean;
     } = {},
   ): Promise<SyncOpenClawConfigResult> {
     const engineManager = this.deps.getOpenClawEngineManager();
-    if (engineManager.getStatus().phase !== 'running') return result;
+    if (engineManager.getStatus().phase !== 'running') {
+      return options.executionAdmission ? { ...result, success: false } : result;
+    }
+    const processGeneration = options.executionAdmission
+      ? engineManager.getGatewayProcessGeneration()
+      : undefined;
+    const supersededAdmission = (): SyncOpenClawConfigResult | null =>
+      options.executionAdmission && (
+        engineManager.getStatus().phase !== 'running' ||
+        engineManager.getGatewayProcessGeneration() !== processGeneration
+      ) ? {
+          ...result,
+          success: false,
+          status: {
+            ...engineManager.getStatus(),
+            phase: 'error',
+            message: 'The active Gateway permission policy is unavailable.',
+          },
+        } : null;
 
     try {
       const [runtimeConfigResult, execPolicyApplied] = await Promise.all([
         this.verifyRuntimePermissionConfig(),
         options.execPolicyAlreadyVerified
           ? Promise.resolve(true)
-          : this.applyExecApprovalPolicy(),
+          : options.executionAdmission
+            ? this.deps.requestGateway<ExecApprovalsSnapshot>('exec.approvals.get')
+              .then(snapshot => typeof snapshot.hash === 'string' && snapshot.hash.length > 0 &&
+                this.isExecApprovalPolicyApplied(snapshot.file))
+            : this.applyExecApprovalPolicy(),
       ]);
+      const superseded = supersededAdmission();
+      if (superseded) return superseded;
       if (runtimeConfigResult.verified && execPolicyApplied) {
+        if (options.executionAdmission) return { ...result, hostPolicyVerified: true };
         await this.syncManagedSessionModelsViaGateway(runtimeConfigResult.snapshot);
         await this.discoverOrphanedManagedAuthProfiles(runtimeConfigResult.snapshot);
         await this.cleanupRetiredProviderAuthProfiles(
@@ -703,6 +741,8 @@ export class OpenClawConfigSyncService {
       const error = 'The OpenClaw host execution policy could not be verified.';
       return this.failClosedConfigApplication(result, error);
     } catch (error) {
+      const superseded = supersededAdmission();
+      if (superseded) return superseded;
       const message = `Failed to apply or verify the active OpenClaw permission state: ${
         error instanceof Error ? error.message : String(error)
       }`;
@@ -843,7 +883,9 @@ export class OpenClawConfigSyncService {
     while (!seenOffsets.has(offset)) {
       seenOffsets.add(offset);
       const page = parseSessionsListResultV2026_10_4(
-        await this.deps.requestGateway('sessions.list', { limit, offset }),
+        await this.deps.requestGateway('sessions.list', {
+          rowMode: OPENCLAW_COMPACT_SESSION_ROW_MODE, limit, offset,
+        }),
       );
       for (const session of page.sessions) {
         const match = /^agent:([^:]+):justdo:(.+)$/.exec(session.key);

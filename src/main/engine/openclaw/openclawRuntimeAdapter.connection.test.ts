@@ -196,7 +196,7 @@ test('resolves the Gateway session ID used by title generation', async () => {
   await expect(internals.resolveGatewaySessionIdForTitle('session-1')).resolves.toBe(
     'gateway-session-123',
   );
-  expect(request).toHaveBeenCalledWith('sessions.list', { limit: 500 });
+  expect(request).toHaveBeenCalledWith('sessions.list', { rowMode: 'compact', limit: 500 });
 });
 
 test('an intentionally stopped gateway client cannot reclaim the active connection', async () => {

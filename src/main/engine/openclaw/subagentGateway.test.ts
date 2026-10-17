@@ -2,6 +2,7 @@ import { expect, test, vi } from 'vitest';
 
 import type { GatewayClientLike } from '../gateway/types';
 import {
+  createPersistedGatewaySessionReader,
   getGatewaySubagentDetails,
   listGatewaySubagentDescendants,
   listGatewaySubagents,
@@ -21,6 +22,45 @@ const row = {
   updatedAt: 10,
   activeRunIds: ['run-1'],
 };
+
+test('coalesces catalog refresh bursts while reading again after requests that arrived in flight', async () => {
+  const completions: Array<(value: unknown) => void> = [];
+  const request = vi.fn(() => new Promise(resolve => { completions.push(resolve); }));
+  const read = createPersistedGatewaySessionReader(client(request));
+  const first = read();
+  const second = read();
+  const third = read();
+  expect(second).toBe(third);
+  expect(request).toHaveBeenCalledTimes(1);
+  completions[0]({ sessions: [{ key: 'old' }], hasMore: false });
+  await expect(first).resolves.toEqual([{ key: 'old' }]);
+  expect(request).toHaveBeenCalledTimes(2);
+  const later = read();
+  completions[1]({ sessions: [{ key: 'new' }], hasMore: false });
+  await expect(second).resolves.toEqual([{ key: 'new' }]);
+  expect(request).toHaveBeenCalledTimes(3);
+  completions[2]({ sessions: [{ key: 'latest' }], hasMore: false });
+  await expect(later).resolves.toEqual([{ key: 'latest' }]);
+  const fresh = read();
+  expect(request).toHaveBeenCalledTimes(4);
+  completions[3]({ sessions: [], hasMore: false });
+  await expect(fresh).resolves.toEqual([]);
+});
+
+test('does not retain a failed catalog read or suppress the queued fresh read', async () => {
+  let reject!: (error: unknown) => void;
+  const request = vi.fn()
+    .mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }))
+    .mockResolvedValueOnce({ sessions: [{ key: 'fresh' }], hasMore: false });
+  const read = createPersistedGatewaySessionReader(client(request));
+  const first = read();
+  const next = read();
+  const failure = expect(first).rejects.toThrow('unavailable');
+  reject(new Error('unavailable'));
+  await failure;
+  await expect(next).resolves.toEqual([{ key: 'fresh' }]);
+  expect(request).toHaveBeenCalledTimes(2);
+});
 
 test('projects native session lifecycle and stable identities without task RPCs', async () => {
   const request = vi
@@ -130,6 +170,7 @@ test('reads every native page and includes archived children', async () => {
     });
   expect(await listPersistedGatewaySessions(client(request))).toHaveLength(2);
   expect(request).toHaveBeenLastCalledWith('sessions.list', {
+    rowMode: 'compact',
     limit: 500,
     offset: 500,
     archived: 'all',

@@ -216,6 +216,7 @@ import {
 import { OpenClawConfigSyncService } from './openclaw/config/openclawConfigSyncService';
 import { resolveQualifiedAgentModelRef } from './openclaw/models/openclawAgentModels';
 import { SessionPermissionModeCoordinator } from './openclaw/permissions/sessionPermissionModeCoordinator';
+import { ensureExecutionReady } from './openclaw/runtime/executionReadiness';
 import {
   OpenClawEngineManager,
   type OpenClawEngineStatus,
@@ -718,41 +719,11 @@ const getEngineNotReadyResponse = (status: OpenClawEngineStatus) => {
 
 const ensureOpenClawRunningForCowork = async () => {
   bindOpenClawGatewayPortProxyBypass();
-  const manager = getOpenClawEngineManager();
-
-  const syncResult = await syncOpenClawConfig({
-    reason: 'ensureRunning',
+  return ensureExecutionReady({
+    manager: getOpenClawEngineManager(),
+    verifyPermissionPolicy: () =>
+      getOpenClawConfigSyncService().verifyExecutionPermissionPolicy(),
   });
-  if (!syncResult.success) {
-    console.error('[OpenClaw] ensureRunning: config sync failed:', syncResult.error);
-    return (
-      syncResult.status ??
-      manager.setExternalError(syncResult.error || 'OpenClaw configuration could not be verified.')
-    );
-  }
-
-  const status = manager.getStatus();
-  if (status.phase === 'running') {
-    if (syncResult.hostPolicyVerified) return status;
-
-    const verification = await getOpenClawConfigSyncService().verifyActivePermissionPolicy();
-    return verification.success
-      ? status
-      : manager.setExternalError(
-          verification.error || 'The active Gateway permission policy is unavailable.',
-        );
-  }
-
-  // Reuse an in-flight start when the Gateway is already starting. Calling
-  // startGateway() is intentional: the manager deduplicates concurrent starts.
-  const started = await manager.startGateway();
-  if (started.phase !== 'running') return started;
-  const verification = await getOpenClawConfigSyncService().verifyActivePermissionPolicy();
-  return verification.success
-    ? started
-    : manager.setExternalError(
-        verification.error || 'The active Gateway permission policy is unavailable.',
-      );
 };
 
 const getCoworkStore = () => {

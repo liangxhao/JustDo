@@ -296,6 +296,7 @@ describe('queryGatewaySession', () => {
       hasActiveRun: false,
     });
     expect(request).toHaveBeenCalledWith('sessions.list', {
+      rowMode: 'compact',
       search: 'agent:main:justdo:session-1',
       limit: 20,
       agentId: 'main',

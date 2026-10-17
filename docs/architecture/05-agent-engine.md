@@ -137,7 +137,11 @@ Windows Gateway 子进程通过专用 Node IPC 接收退出请求，宿主注入
 
 进程 generation 与连接 generation 用于淘汰旧退出通知、重连结果和事件。唤醒或断线后建立新连接，不允许旧 socket 的终态更新新运行。Manager 的进程就绪只代表 Gateway 服务可用，模型认证与 session 权限还有独立验证。
 
-## 4. 配置同步是执行准入的一部分
+## 4. 配置发布与执行准入
+
+配置投影由启动及设置变更流程负责；聊天发送等待已有配置 mutation 完成，复用运行中的 Gateway，不再以 `ensureRunning` 为由重新执行全量配置同步。执行准入仅并行读取 `config.get` 与 `exec.approvals.get`，验证当前宿主执行/文件边界和审批底线；不启动扩展 MCP 发现、不扫描历史会话模型、不清理凭据，也不在发送路径修复审批文件。权限不符仍拒绝准入，进程代次变化时旧校验不能放行或停止新进程。原生会话自身的 mode/root 与身份准备继续保留。
+
+运行状态、侧栏原生会话发现和配置变更后的模型修复扫描使用原生 `sessions.list` 的 `rowMode: compact`，省略能力目录、插件状态等详情字段；需要完整能力或权限事实时仍使用 `sessions.describe`。省略字段表示未知，不是清除回执。子任务列表仍读取完整行以保留 ACP runtime 分类。侧栏并发刷新只保留一个在途目录读取和一个共享后续读取；在读取期间到达的请求等待后续新读取，完成结果不缓存，不复制 transcript 或建立第二份目录权威。
 
 桌面主聊天的首轮原生发送支持由实际 Renderer 连接执行：Adapter 准备 session/root、权限、模型、运行 ID 与 Goal intent 后，向受信窗口交出同一份 `chat.send` 参数；Main 保留监听与运行状态。只有已挂载原生 viewer 的 HTTP(S) 聊天连接公告 `inline-widgets`，原生执行按 originating client capability 决定 `show_widget` 是否可用。Main 的后台连接保持 headless，未增加 UI capability 或 native runtime patch。一次 ACK 必须对应原始幂等 ID，停止控制回执和 structured Goal receipt 分别校验；不确定发送只恢复状态，不重新启动任务。
 

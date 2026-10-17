@@ -284,7 +284,7 @@ test('getSessionRuntimeStatus can include subagent running state on request', as
     running: true,
   });
   expect(request).toHaveBeenCalledTimes(1);
-  expect(request).toHaveBeenCalledWith('sessions.list', { limit: 500 });
+  expect(request).toHaveBeenCalledWith('sessions.list', { rowMode: 'compact', limit: 500 });
 });
 
 test('does not require descendant coverage once a truncated snapshot proves the parent is active', async () => {
