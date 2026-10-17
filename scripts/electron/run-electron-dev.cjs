@@ -17,9 +17,12 @@ const start = async () => {
   }
   const devServerPort = await findFreePort(port);
   const devServerUrl = `http://localhost:${devServerPort}`;
-  const nativeHost = prepareBrowserExtensionDevHost({ devServerUrl });
+  const nativeHost = prepareBrowserExtensionDevHost();
   if (nativeHost) {
     console.log(`[Electron Dev] Registered browser native host: ${nativeHost.manifestPath}`);
+    console.log(
+      '[Electron Dev] Browser extension discovery only; start the app from this terminal.',
+    );
   }
   const env = {
     ...process.env,

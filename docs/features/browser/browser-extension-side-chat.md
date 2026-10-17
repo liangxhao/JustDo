@@ -23,7 +23,7 @@ sequenceDiagram
   participant G as Gateway
   Panel->>BG: ensure
   BG->>Host: hello / ensure
-  Host->>Host: 读取 rendezvous 或启动桌面
+  Host->>Host: 读取已运行实例的 rendezvous
   Host-->>Panel: localAppServerUrl
   Panel->>Main: WS initialize / initialized
   Panel->>Main: thread/read 或 turn/start
@@ -32,7 +32,13 @@ sequenceDiagram
   Main-->>Panel: thread/stream / turn/completed
 ```
 
-Native helper 只负责 framing、发现和启动，Electron GUI 不直接承担 Chrome stdin/stdout。app-server 每次启动随机 loopback 端口和 capability；退出清理发现信息，客户端重连重新取得地址，不能长期缓存旧 URL。
+Native helper 只负责 framing 和实例发现，Electron GUI 不直接承担 Chrome stdin/stdout。app-server 每次启动随机 loopback 端口和 capability；退出清理发现信息，客户端重连重新取得地址，不能长期缓存旧 URL。
+
+开发版和安装版统一仅连接用户已经启动的实例；实例未运行或收到扩展重启请求时返回提示，
+不会启动应用、重启 app-server 或删除已有发现信息。连续连接失败只重新发现和连接，
+不会升级为重启请求。开发态运行日志保留在启动终端，安装版日志写入应用日志目录。
+应用尚未运行的结构化错误映射为原生可重试配对结果，避免进入需要人工重置的永久失败状态；
+用户稍后启动应用后，watchdog 可继续发现实例并完成自动配对。
 
 ## 3. 当前协议子集
 
@@ -81,6 +87,6 @@ Native manifest 只允许固定公钥派生的扩展 ID。app-server 校验 capa
 
 ## 8. 维护、测试和未交付范围
 
-日常 UI 修改在 conversation-overlay，relay 基线由锁定 OpenClaw 版本更新，构建接缝单独审查。回归包括 Native host 未安装/拉起失败、旧 rendezvous、非法 Origin/token、初始化前调用、流与历史重合、停止、超限附件和页面上下文分离。
+日常 UI 修改在 conversation-overlay，relay 基线由锁定 OpenClaw 版本更新，构建接缝单独审查。回归包括 Native host 未安装、实例未运行、禁止启动与重启、旧 rendezvous、非法 Origin/token、初始化前调用、流与历史重合、停止、超限附件和页面上下文分离。
 
 当前不能将手动 Chrome 加载验证扩展为所有 Chromium 浏览器/商店发布承诺。右键提问、YouTube transcript、tab mention 等未接通能力不列作现有功能；新增时需同步[兼容规范](../../browser-extension-api/compatibility.md)。

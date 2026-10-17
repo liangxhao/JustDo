@@ -1,6 +1,6 @@
-# Native Messaging 启动与发现协议
+# Native Messaging 实例发现协议
 
-Native Host 只负责发现或拉起桌面 app-server，不承载对话内容。Chrome 扩展通过
+Native Host 只负责发现已经运行的桌面 app-server，不启动或重启应用，也不承载对话内容。Chrome 扩展通过
 `chrome.runtime.connectNative('com.justdo.browserextension')` 建立长连接。
 
 ## 注册
@@ -29,10 +29,12 @@ HKCU\Software\Google\Chrome\NativeMessagingHosts\com.justdo.browserextension
 `resources/browser-extension/native-host/` 下的随包 helper。后启动的一方会更新当前用户注册，
 所以从安装版切回开发版时应重新运行 `npm run electron:dev`。
 
-manifest 同目录还有 `native-host.config.json`，只记录启动目标、启动参数、工作目录和 rendezvous
-路径。开发态额外记录当前 Vite URL，以及 `dist-electron/main.js` 和 Vite 服务两个就绪条件。
-Chrome 不读取此文件，由 helper 用注册表中的 manifest 路径定位它。开发 helper 只有在两个条件
-都满足时才允许拉起 Electron；否则向扩展返回开发环境未就绪错误，不打开 GUI 错误窗口。
+manifest 同目录还有 `native-host.config.json`。Chrome 不读取此文件，由 helper 用注册表中的
+manifest 路径定位它。开发态和安装版统一只记录 `allowAppLaunch: false` 和 rendezvous 路径，
+不提供可执行文件或启动参数。helper 只能连接用户已经启动的应用；没有可用实例时返回
+手动启动应用的错误。构建文件和 Vite 服务就绪也不会允许扩展抢先拉起 Electron。
+helper 中没有启动子进程或删除发现文件的路径，即使旧配置还带有启动目标或
+`allowAppLaunch: true`，也不能由扩展启动或重启应用。
 
 开发 helper 文件名包含其 C# 源码摘要。相同摘要的有效 PE 文件会直接复用，避免 Chrome 正在
 运行 helper 时 Windows 文件锁导致编译器无法覆盖；源码变化后会自然生成新的文件名。
@@ -47,7 +49,8 @@ chrome-extension://jboajogplelmaahjbomgflnfngpolgcb/
 ```
 
 Helper 自己读写 Native Messaging framing，不经过 Electron GUI 进程，避免 Windows Electron
-关闭或污染标准输入输出。它只在 `ensure`/`restart` 确认没有可用 rendezvous 时启动 JustDo。
+关闭或污染标准输入输出。两种版本均只读取已运行实例的发现信息。开发态 Main 和 Gateway
+由开发命令启动，输出继续属于开发终端；安装版由用户手动启动，日志写入应用日志目录。
 
 ## 消息 framing
 
@@ -107,8 +110,11 @@ Helper 自己读写 Native Messaging framing，不经过 Electron GUI 进程，�
 
 ## `codexRuntime/ensure`
 
-返回可用 app-server 地址。如果 rendezvous 指向仍存活的进程则复用，否则拉起 JustDo 并等待
-app-server 发布地址，最长等待 15 秒。
+返回可用 app-server 地址。如果 rendezvous 指向仍存活的进程则复用；否则立即返回手动启动
+应用的错误。扩展后续重试会重新发现实例，不能将连接失败升级为启动或重启请求。
+该错误携带 `error.data.code: APP_NOT_RUNNING`；扩展自动配对传输将其映射为原生
+`pairing_unavailable`，使 watchdog 保持可重试，用户稍后手动启动应用后可继续自动配对。
+真正的 Native Host 缺失、版本不兼容和其他错误继续由原生控制器按各自策略处理。
 
 请求：
 
@@ -150,7 +156,9 @@ app-server 发布地址，最长等待 15 秒。
 
 ## `codexRuntime/restart`
 
-删除旧 rendezvous 并要求桌面应用重启 app-server。参数和结果与 `ensure` 相同，可额外携带原因：
+此方法在开发态和安装版均返回 `-32603`，提示用户手动重启应用，不删除已有 rendezvous，
+也不启动第二个实例。扩展正常连接与重连只发送 `ensure`。旧客户端仍可能发送以下请求，
+Host 会明确拒绝而非假装重启成功：
 
 ```json
 {
@@ -165,8 +173,8 @@ app-server 发布地址，最长等待 15 秒。
 }
 ```
 
-如果主应用已经运行，helper 拉起的第二实例通过
-`--justdo-browser-extension-restart-app-server` 通知现有实例停止、重新监听并发布新地址。
+Main 对旧的 `--justdo-browser-extension-restart-app-server` 第二实例参数只记录拒绝提示，
+不会停止或重新监听 app-server。
 
 ## rendezvous 文件
 
@@ -191,12 +199,12 @@ Host 只接受 `ws:`、`127.0.0.1`、`/app-server`、64 位十六进制 token，
 
 ## Native Host 错误
 
-| code     | 场景                               |
-| -------- | ---------------------------------- |
-| `-32700` | JSON body 无法解析                 |
-| `-32600` | 缺少 `jsonrpc: "2.0"` 或合法方法名 |
-| `-32601` | 方法不存在                         |
-| `-32603` | 启动失败、超时或其他内部错误       |
+| code     | 场景                                 |
+| -------- | ------------------------------------ |
+| `-32700` | JSON body 无法解析                   |
+| `-32600` | 缺少 `jsonrpc: "2.0"` 或合法方法名   |
+| `-32601` | 方法不存在                           |
+| `-32603` | 实例未运行、重启被拒绝或其他内部错误 |
 
 错误响应：
 
@@ -206,7 +214,8 @@ Host 只接受 `ws:`、`127.0.0.1`、`/app-server`、64 位十六进制 token，
   "id": "justdo-native:2",
   "error": {
     "code": -32603,
-    "message": "Unable to start the JustDo app server."
+    "message": "The desktop app is not running. Start it manually, then reconnect the extension.",
+    "data": { "code": "APP_NOT_RUNNING" }
   }
 }
 ```

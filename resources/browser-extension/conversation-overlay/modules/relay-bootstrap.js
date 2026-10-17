@@ -1,9 +1,17 @@
-import { ensureAppServer } from './app-server-background.js';
+import { APP_NOT_RUNNING_CODE, ensureAppServer } from './app-server-background.js';
 
 // Transport only. The upstream controller owns coalescing, opt-out, custody
 // checks and applying the validated native pairing result.
 export async function requestLocalBootstrap(_chromeApi, request) {
-  const { localAppServerUrl } = await ensureAppServer(false, 'browser-bootstrap');
+  let localAppServerUrl;
+  try {
+    ({ localAppServerUrl } = await ensureAppServer('browser-bootstrap'));
+  } catch (error) {
+    if (error?.code === APP_NOT_RUNNING_CODE) {
+      return { v: 1, ok: false, code: 'pairing_unavailable' };
+    }
+    throw error;
+  }
   return new Promise(resolve => {
     const socket = new WebSocket(localAppServerUrl);
     const initId = `relay:init:${request.nonce}`;

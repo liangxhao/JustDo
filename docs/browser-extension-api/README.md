@@ -11,7 +11,7 @@ JSON-RPC v2 形态为基线，并实现侧栏对话所需的兼容子集。Nativ
 
 ## 文档导航
 
-- [Native Messaging 启动与发现协议](native-messaging.md)：Chrome 到桌面进程的启动、版本协商、rendezvous 文件和消息帧。
+- [Native Messaging 实例发现协议](native-messaging.md)：Chrome 到已运行桌面进程的发现、版本协商、rendezvous 文件和消息帧。
 - [WebSocket app-server 协议](app-server.md)：连接、初始化、请求、响应、通知和订阅语义。
 - [数据模型](data-models.md)：Thread、Turn、Item、页面上下文和状态映射。
 - [生命周期、错误与恢复](lifecycle-errors.md)：完整时序、停止生成、断线重连和错误码。
@@ -32,7 +32,7 @@ flowchart LR
   Panel -->|runtime message| Background
   Background -->|Chrome Native Messaging| Native
   Native --> Rendezvous
-  Native -->|必要时启动| Server
+  Server -->|发布已运行实例| Rendezvous
   Background -->|localAppServerUrl| Panel
   Panel <-->|JSON-RPC-like WebSocket| Server
   Server --> Controller --> Gateway
@@ -40,10 +40,10 @@ flowchart LR
 
 两层协议的 framing 不同：
 
-| 层          | 传输                                                 | JSON-RPC 标头                | 用途                                   |
-| ----------- | ---------------------------------------------------- | ---------------------------- | -------------------------------------- |
-| Native Host | Chrome Native Messaging，4 字节小端长度 + UTF-8 JSON | 必须为 `"jsonrpc":"2.0"`     | 版本协商、确保启动、重启、发现动态地址 |
-| app-server  | `ws://127.0.0.1:<port>/app-server?token=<token>`     | 按 Codex app-server 约定省略 | 会话、消息、运行状态与通知             |
+| 层          | 传输                                                 | JSON-RPC 标头                | 用途                               |
+| ----------- | ---------------------------------------------------- | ---------------------------- | ---------------------------------- |
+| Native Host | Chrome Native Messaging，4 字节小端长度 + UTF-8 JSON | 必须为 `"jsonrpc":"2.0"`     | 版本协商、发现已运行实例的动态地址 |
+| app-server  | `ws://127.0.0.1:<port>/app-server?token=<token>`     | 按 Codex app-server 约定省略 | 会话、消息、运行状态与通知         |
 
 ## 版本与身份常量
 

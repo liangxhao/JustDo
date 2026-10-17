@@ -1,14 +1,11 @@
 using Microsoft.Win32;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading;
 using System.Web.Script.Serialization;
 
 internal static class BrowserExtensionNativeHost
@@ -17,35 +14,13 @@ internal static class BrowserExtensionNativeHost
     private const string HostName = "com.justdo.browserextension";
     private const int MaxMessageBytes = 1024 * 1024;
     private const int ProtocolVersion = 2;
+    private const string AppNotRunningCode = "APP_NOT_RUNNING";
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
 
-    private static string QuoteArgument(string value)
+    private sealed class AppNotRunningException : InvalidOperationException
     {
-        if (value.Length > 0 && value.All(character => !char.IsWhiteSpace(character) && character != '"'))
-        {
-            return value;
-        }
-        StringBuilder result = new StringBuilder("\"");
-        int backslashes = 0;
-        foreach (char character in value)
-        {
-            if (character == '\\') backslashes += 1;
-            else if (character == '"')
-            {
-                result.Append('\\', backslashes * 2 + 1);
-                result.Append('"');
-                backslashes = 0;
-            }
-            else
-            {
-                result.Append('\\', backslashes);
-                result.Append(character);
-                backslashes = 0;
-            }
-        }
-        result.Append('\\', backslashes * 2);
-        result.Append('"');
-        return result.ToString();
+        public AppNotRunningException() : base(
+            "The desktop app is not running. Start it manually, then reconnect the extension.") { }
     }
 
     private static byte[] ReadExact(Stream input, int length, bool allowEnd)
@@ -117,86 +92,29 @@ internal static class BrowserExtensionNativeHost
         }
     }
 
-    private static void StartApplication(Dictionary<string, object> config, bool restart)
+    private static Dictionary<string, object> EnsureAppServer(Dictionary<string, object> config, bool restart)
     {
-        object rawRequiredPath;
-        if (config.TryGetValue("requiredPath", out rawRequiredPath))
-        {
-            string requiredPath = rawRequiredPath as string;
-            if (String.IsNullOrWhiteSpace(requiredPath) || !File.Exists(requiredPath))
-                throw new InvalidOperationException(
-                    "The desktop development build is not ready. Start it from the development terminal first.");
-        }
-        object rawRequiredUrl;
-        if (config.TryGetValue("requiredUrl", out rawRequiredUrl))
-        {
-            string requiredUrl = rawRequiredUrl as string;
-            try
-            {
-                HttpWebRequest request = WebRequest.CreateHttp(requiredUrl);
-                request.Method = "GET";
-                request.Proxy = null;
-                request.Timeout = 1000;
-                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse()) { }
-            }
-            catch
-            {
-                throw new InvalidOperationException(
-                    "The desktop development server is not ready. Start it from the development terminal first.");
-            }
-        }
-        List<string> arguments = new List<string>();
-        object rawArguments;
-        if (config.TryGetValue("executableArguments", out rawArguments))
-        {
-            IEnumerable entries = rawArguments as IEnumerable;
-            if (entries != null)
-            {
-                foreach (object value in entries) arguments.Add(Convert.ToString(value));
-            }
-        }
-        if (restart) arguments.Add("--justdo-browser-extension-restart-app-server");
-        ProcessStartInfo startInfo = new ProcessStartInfo
-        {
-            FileName = config["executablePath"] as string,
-            Arguments = String.Join(" ", arguments.Select(QuoteArgument)),
-            WorkingDirectory = config["workingDirectory"] as string,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        startInfo.EnvironmentVariables.Remove("ELECTRON_RUN_AS_NODE");
-        object rawEnvironment;
-        if (config.TryGetValue("environment", out rawEnvironment))
-        {
-            Dictionary<string, object> environment = rawEnvironment as Dictionary<string, object>;
-            if (environment != null)
-            {
-                foreach (KeyValuePair<string, object> entry in environment)
-                    startInfo.EnvironmentVariables[entry.Key] = Convert.ToString(entry.Value);
-            }
-        }
-        Process.Start(startInfo);
+        if (restart)
+            throw new InvalidOperationException(
+                "Restarting the desktop app from the extension is disabled. Restart the app manually.");
+        Dictionary<string, object> existing = ReadRendezvous(config);
+        if (existing != null) return existing;
+        throw new AppNotRunningException();
     }
 
-    private static Dictionary<string, object> EnsureAppServer(bool restart)
+    private static object ErrorResponse(object id, Exception error)
     {
-        Dictionary<string, object> config = ReadConfig();
-        Dictionary<string, object> existing = ReadRendezvous(config);
-        if (existing != null && !restart) return existing;
-        if (restart)
+        return new
         {
-            try { File.Delete(config["rendezvousPath"] as string); }
-            catch { }
-        }
-        StartApplication(config, restart);
-        DateTime deadline = DateTime.UtcNow.AddSeconds(15);
-        while (DateTime.UtcNow < deadline)
-        {
-            Thread.Sleep(100);
-            Dictionary<string, object> rendezvous = ReadRendezvous(config);
-            if (rendezvous != null) return rendezvous;
-        }
-        throw new InvalidOperationException("Unable to start the desktop app server.");
+            jsonrpc = "2.0",
+            id = id,
+            error = new
+            {
+                code = -32603,
+                message = error.Message,
+                data = error is AppNotRunningException ? new { code = AppNotRunningCode } : null,
+            },
+        };
     }
 
     private static object Handle(Dictionary<string, object> request)
@@ -225,7 +143,7 @@ internal static class BrowserExtensionNativeHost
                 };
             if (method == "codexRuntime/ensure" || method == "codexRuntime/restart")
             {
-                Dictionary<string, object> rendezvous = EnsureAppServer(method == "codexRuntime/restart");
+                Dictionary<string, object> rendezvous = EnsureAppServer(ReadConfig(), method == "codexRuntime/restart");
                 return new
                 {
                     jsonrpc = "2.0",
@@ -241,7 +159,7 @@ internal static class BrowserExtensionNativeHost
         }
         catch (Exception error)
         {
-            return new { jsonrpc = "2.0", id = id, error = new { code = -32603, message = error.Message } };
+            return ErrorResponse(id, error);
         }
     }
 

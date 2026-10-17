@@ -82,15 +82,10 @@ function isReusableWindowsExecutable(executablePath) {
   }
 }
 
-function buildDevNativeHostConfig(plan, electronPath, devServerUrl) {
+function buildDevNativeHostConfig(plan) {
   return {
-    environment: { ELECTRON_START_URL: devServerUrl, NODE_ENV: 'development' },
-    executableArguments: [plan.repoRoot],
-    executablePath: electronPath,
+    allowAppLaunch: false,
     rendezvousPath: path.join(path.dirname(plan.manifestPath), 'app-server.json'),
-    requiredPath: path.join(plan.repoRoot, 'dist-electron', 'main.js'),
-    requiredUrl: devServerUrl,
-    workingDirectory: plan.repoRoot,
   };
 }
 
@@ -130,17 +125,12 @@ function compileBrowserExtensionNativeHost(options = {}) {
 function prepareBrowserExtensionDevHost(options = {}) {
   if ((options.platform || process.platform) !== 'win32') return null;
   const plan = buildDevNativeHostPlan(options);
-  const electronPath = options.electronPath || require('electron');
-  const devServerUrl = options.devServerUrl;
-  if (typeof devServerUrl !== 'string' || !/^http:\/\/localhost:\d+$/u.test(devServerUrl)) {
-    throw new Error('A loopback Electron development server URL is required.');
-  }
 
   compileBrowserExtensionNativeHost({ ...options, executablePath: plan.executablePath });
   fs.mkdirSync(path.dirname(plan.manifestPath), { recursive: true });
   fs.writeFileSync(
     plan.configPath,
-    `${JSON.stringify(buildDevNativeHostConfig(plan, electronPath, devServerUrl), null, 2)}\n`,
+    `${JSON.stringify(buildDevNativeHostConfig(plan), null, 2)}\n`,
     'utf8',
   );
   fs.writeFileSync(plan.manifestPath, `${JSON.stringify(plan.manifest, null, 2)}\n`, 'utf8');
@@ -154,11 +144,7 @@ function prepareBrowserExtensionDevHost(options = {}) {
 
 if (require.main === module) {
   try {
-    const packageJson = require('../../package.json');
-    const port = process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port;
-    const result = prepareBrowserExtensionDevHost({
-      devServerUrl: `http://localhost:${port}`,
-    });
+    const result = prepareBrowserExtensionDevHost();
     if (result) {
       console.log(`[prepare-browser-extension-dev-host] Registered ${result.manifestPath}`);
     }

@@ -8,14 +8,13 @@ export class AppServerClient {
     this.disposed = false;
     this.nextRequestId = 0;
     this.pending = new Map();
-    this.reconnectAttempts = 0;
     this.reconnectTimer = null;
   }
 
-  async connect(restart = false) {
+  async connect() {
     if (this.connectPromise) return this.connectPromise;
     if (this.socket?.readyState === WebSocket.OPEN) return;
-    this.connectPromise = this.open(restart);
+    this.connectPromise = this.open();
     try {
       await this.connectPromise;
     } catch (error) {
@@ -26,11 +25,10 @@ export class AppServerClient {
     }
   }
 
-  async open(restart) {
+  async open() {
     const browserWindow = await chrome.windows.getCurrent();
     const bootstrap = await chrome.runtime.sendMessage({
       type: 'justdo:app-server:ensure',
-      restart,
       clientId:
         typeof browserWindow.id === 'number' ? `sidepanel-window-${browserWindow.id}` : undefined,
     });
@@ -61,7 +59,6 @@ export class AppServerClient {
         },
       });
       socket.send(JSON.stringify({ method: 'initialized' }));
-      this.reconnectAttempts = 0;
     } catch (error) {
       socket.close();
       this.handleClose(socket);
@@ -123,9 +120,7 @@ export class AppServerClient {
     if (this.reconnectTimer || this.disposed) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      const restart = this.reconnectAttempts >= 2;
-      this.reconnectAttempts += 1;
-      void this.connect(restart)
+      void this.connect()
         .then(() => this.onNotification?.('connection/reconnected', {}))
         .catch(() => this.scheduleReconnect());
     }, 1000);

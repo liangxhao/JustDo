@@ -92,11 +92,10 @@ Main 的运行 owner 仍只有精确 whole-run `executionSettled:true` 才能结
 
 ## 客户端超时
 
-| 通道                                 |  超时 |
-| ------------------------------------ | ----: |
-| Native Host 单次请求                 | 20 秒 |
-| app-server 单次请求                  | 60 秒 |
-| Native Host 等待桌面 app-server 启动 | 15 秒 |
+| 通道                 |  超时 |
+| -------------------- | ----: |
+| Native Host 单次请求 | 20 秒 |
+| app-server 单次请求  | 60 秒 |
 
 超时仅拒绝客户端 Promise，不保证服务端工作已经取消。业务 turn 必须使用 `turn/interrupt`。
 
@@ -108,7 +107,7 @@ WebSocket 关闭时客户端：
 2. 拒绝所有 pending 请求。
 3. 通知 UI `connection/closed` 并清除 Stop 状态。
 4. 1 秒后重新执行 Native Host `hello + ensure`。
-5. 连续两次连接尝试失败后，后续尝试改用 `codexRuntime/restart`。
+5. 连续失败也只重新发现和连接，不发送 `codexRuntime/restart`。
 6. 重连成功后发送本地 UI 事件 `connection/reconnected`，重新加载线程与消息。
 
 `connection/closed` 和 `connection/reconnected` 是扩展内部事件，不从 WebSocket server 发出。
@@ -118,5 +117,6 @@ WebSocket 关闭时客户端：
 
 - 正常退出：删除属于当前 PID 的 rendezvous，终止所有 WebSocket client，关闭 listener。
 - app-server 重启：旧连接断开，端口和 token 都可能变化；客户端必须重新走 Native Host。
-- 桌面应用未运行：Native Host 启动可执行程序，轮询 rendezvous，成功后返回地址。
-- 桌面应用已运行：第二实例把 restart switch 交给主实例，主实例重新发布 capability。
+- 桌面应用未运行：Native Host 立即返回手动启动提示，不启动子进程；扩展后续重试可发现用户新启动的实例。
+- 桌面应用已运行：直接返回有效 rendezvous；扩展重启请求始终拒绝，并保留已有发现信息。
+- 开发版和安装版遵守相同规则。应用和 app-server 的重启由用户或 Main 自有生命周期负责，扩展不能触发。

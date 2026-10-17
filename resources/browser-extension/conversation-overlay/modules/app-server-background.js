@@ -1,5 +1,6 @@
 const NATIVE_HOST = 'com.justdo.browserextension';
 const REQUEST_TIMEOUT_MS = 20_000;
+export const APP_NOT_RUNNING_CODE = 'APP_NOT_RUNNING';
 let nativePort = null;
 let nextRequestId = 0;
 const pending = new Map();
@@ -21,8 +22,11 @@ function connectNativeHost() {
     if (!request) return;
     pending.delete(String(message.id));
     clearTimeout(request.timeout);
-    if (message.error) request.reject(new Error(message.error.message ?? 'Native host failed.'));
-    else request.resolve(message.result);
+    if (message.error) {
+      const error = new Error(message.error.message ?? 'Native host failed.');
+      if (message.error.data?.code === APP_NOT_RUNNING_CODE) error.code = APP_NOT_RUNNING_CODE;
+      request.reject(error);
+    } else request.resolve(message.result);
   });
   port.onDisconnect.addListener(() => {
     if (nativePort === port) nativePort = null;
@@ -63,7 +67,7 @@ function validateAppServer(value) {
   }
 }
 
-export async function ensureAppServer(restart, clientId) {
+export async function ensureAppServer(clientId) {
   const constraints = {
     manifestSchemaVersion: 2,
     nativeHostName: NATIVE_HOST,
@@ -78,10 +82,9 @@ export async function ensureAppServer(restart, clientId) {
   ) {
     throw new Error('The extension and JustDo versions are incompatible.');
   }
-  const result = await requestNativeHost(restart ? 'codexRuntime/restart' : 'codexRuntime/ensure', {
+  const result = await requestNativeHost('codexRuntime/ensure', {
     constraints,
     ...(typeof clientId === 'string' && clientId ? { clientId } : {}),
-    ...(restart ? { reason: 'sidepanel_retry' } : {}),
   });
   const validated = validateAppServer(result);
   if (!validated) throw new Error('JustDo returned an invalid app-server URL.');
@@ -90,7 +93,7 @@ export async function ensureAppServer(restart, clientId) {
 
 export function handleAppServerMessage(message, reply) {
   if (message?.type !== 'justdo:app-server:ensure') return false;
-  void ensureAppServer(message.restart === true, message.clientId)
+  void ensureAppServer(message.clientId)
     .then(result => reply({ ok: true, ...result }))
     .catch(error =>
       reply({ ok: false, error: error instanceof Error ? error.message : String(error) }),

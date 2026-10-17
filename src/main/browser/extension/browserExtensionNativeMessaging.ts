@@ -105,7 +105,6 @@ export const clearBrowserExtensionAppServer = async (userDataPath: string): Prom
 
 export const registerBrowserExtensionNativeHost = async (
   userDataPath: string,
-  executablePath: string,
   nativeHostExecutablePath: string,
 ): Promise<void> => {
   if (process.platform !== 'win32') return;
@@ -117,10 +116,8 @@ export const registerBrowserExtensionNativeHost = async (
     nativeHostConfigPath(userDataPath),
     JSON.stringify(
       {
-        executableArguments: [],
-        executablePath,
+        allowAppLaunch: false,
         rendezvousPath: browserExtensionRendezvousPath(userDataPath),
-        workingDirectory: path.dirname(executablePath),
       },
       null,
       2,

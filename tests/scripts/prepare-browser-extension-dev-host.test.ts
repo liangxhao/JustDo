@@ -10,11 +10,7 @@ const {
   compileBrowserExtensionNativeHost,
   prepareBrowserExtensionDevHost,
 } = require('../../scripts/browser/prepare-browser-extension-dev-host.cjs') as {
-  buildDevNativeHostConfig: (
-    plan: { manifestPath: string; repoRoot: string },
-    electronPath: string,
-    devServerUrl: string,
-  ) => Record<string, unknown>;
+  buildDevNativeHostConfig: (plan: { manifestPath: string }) => Record<string, unknown>;
   buildDevNativeHostPlan: (options: { appDataPath: string; repoRoot: string }) => {
     executablePath: string;
     manifest: Record<string, unknown>;
@@ -71,19 +67,13 @@ describe('browser extension development native host', () => {
     expect(prepareBrowserExtensionDevHost({ platform: 'linux' })).toBeNull();
   });
 
-  test('requires the compiled Electron main process before launching the development app', () => {
+  test('only discovers the running development app and provides no launch target', () => {
     const repoRoot = path.join('E:', 'workspace', 'JustDo');
     const manifestPath = path.join(repoRoot, 'app-data', 'native-host.json');
 
-    expect(
-      buildDevNativeHostConfig(
-        { manifestPath, repoRoot },
-        path.join(repoRoot, 'electron.exe'),
-        'http://localhost:43127',
-      ),
-    ).toMatchObject({
-      requiredPath: path.join(repoRoot, 'dist-electron', 'main.js'),
-      requiredUrl: 'http://localhost:43127',
+    expect(buildDevNativeHostConfig({ manifestPath })).toEqual({
+      allowAppLaunch: false,
+      rendezvousPath: path.join(path.dirname(manifestPath), 'app-server.json'),
     });
   });
 

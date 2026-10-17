@@ -534,7 +534,6 @@ let builtinModelTokenExchange: BuiltinModelTokenExchange | null = null;
 let builtinModelAuthCoordinator: BuiltinModelAuthCoordinator | null = null;
 let windowsSandboxService: WindowsSandboxService | null = null;
 let browserExtensionChatServer: BrowserExtensionChatServer | null = null;
-let browserExtensionChatServerRestartPromise: Promise<void> | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 let openClawEngineManager: OpenClawEngineManager | null = null;
 let openClawDirectoryOperations: ManagedDirectoryOperationCoordinator | null = null;
@@ -1397,6 +1396,11 @@ if (multicaBridgeArgv) {
     }
   })();
 } else if (!gotTheLock) {
+  if (isDev && !app.isPackaged) {
+    console.warn(
+      '[Main] Another application instance is already running. Quit it from the tray and restart this command to keep development logs in this terminal.',
+    );
+  }
   app.quit();
 } else {
   const releaseRuntimeDevLease = acquireOpenClawRuntimeDevLease({
@@ -2029,23 +2033,9 @@ if (multicaBridgeArgv) {
       return;
     }
     if (commandLine.includes(BROWSER_EXTENSION_RESTART_SWITCH)) {
-      const server = browserExtensionChatServer;
-      if (server && !browserExtensionChatServerRestartPromise) {
-        const restartPromise = (async () => {
-          try {
-            await server.restart();
-            await publishBrowserExtensionAppServer(app.getPath('userData'), server.getCapability());
-          } catch (error) {
-            console.error('[BrowserExtensionChat] Failed to restart app-server:', error);
-          }
-        })();
-        browserExtensionChatServerRestartPromise = restartPromise;
-        void restartPromise.finally(() => {
-          if (browserExtensionChatServerRestartPromise === restartPromise) {
-            browserExtensionChatServerRestartPromise = null;
-          }
-        });
-      }
+      console.warn(
+        '[BrowserExtensionChat] Ignored extension restart request; restart the app manually.',
+      );
       return;
     }
 
@@ -2216,7 +2206,6 @@ if (multicaBridgeArgv) {
       if (app.isPackaged) {
         await registerBrowserExtensionNativeHost(
           app.getPath('userData'),
-          process.execPath,
           path.join(
             process.resourcesPath,
             'browser-extension',

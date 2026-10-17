@@ -1,11 +1,24 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import vm from 'node:vm';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ensureAppServer } from '../../resources/browser-extension/conversation-overlay/modules/app-server-background.js';
+import {
+  APP_NOT_RUNNING_CODE,
+  ensureAppServer,
+} from '../../resources/browser-extension/conversation-overlay/modules/app-server-background.js';
 import { requestLocalBootstrap } from '../../resources/browser-extension/conversation-overlay/modules/relay-bootstrap.js';
+import { parsePairingString } from '../../resources/browser-extension/openclaw/modules/relay-core.js';
+import { hasExactKeys } from '../../resources/browser-extension/openclaw/modules/strict-json.js';
+
+const { prepareBrowserExtension } = require('../../scripts/browser/prepare-browser-extension.cjs');
 
 vi.mock(
   '../../resources/browser-extension/conversation-overlay/modules/app-server-background.js',
   () => ({
+    APP_NOT_RUNNING_CODE: 'APP_NOT_RUNNING',
     ensureAppServer: vi.fn(),
   }),
 );
@@ -54,7 +67,7 @@ describe('product relay bootstrap transport', () => {
 
   it('discovers the product host and returns native pairing after initializing its socket', async () => {
     const { result, socket } = await begin();
-    expect(ensureAppServer).toHaveBeenCalledWith(false, 'browser-bootstrap');
+    expect(ensureAppServer).toHaveBeenCalledWith('browser-bootstrap');
     socket.emit('open');
     expect(socket.sent[0]).toMatchObject({ method: 'initialize' });
     expect(socket.sent).toHaveLength(1);
@@ -109,6 +122,91 @@ describe('product relay bootstrap transport', () => {
       new Error('Specified native messaging host not found.'),
     );
     await expect(requestLocalBootstrap({}, request)).rejects.toThrow('host not found');
+  });
+
+  it('keeps automatic pairing retryable until the user starts the desktop app', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-bootstrap-recovery-'));
+    try {
+      const projectRoot = path.resolve(__dirname, '../..');
+      fs.cpSync(
+        path.join(projectRoot, 'resources/browser-extension'),
+        path.join(directory, 'resources/browser-extension'),
+        { recursive: true },
+      );
+      fs.cpSync(
+        path.join(projectRoot, 'resources/icons/png'),
+        path.join(directory, 'resources/icons/png'),
+        {
+          recursive: true,
+        },
+      );
+      fs.copyFileSync(path.join(projectRoot, 'package.json'), path.join(directory, 'package.json'));
+      const prepared = prepareBrowserExtension({
+        repoRoot: directory,
+      });
+      const source = fs.readFileSync(
+        path.join(prepared.outputDir, 'modules/native-bootstrap.js'),
+        'utf8',
+      );
+      const createController = vm.runInNewContext(
+        source.replace(/^import .*;$/gm, '').replace(/\bexport /g, '') +
+          ';createNativeBootstrapController',
+        {
+          randomRelayBase64Url: () => request.nonce,
+          parsePairingString,
+          hasExactKeys,
+          ACCESS_MODE_ALL: 'all',
+          crypto: {},
+        },
+      );
+      const stored: Record<string, unknown> = {};
+      const applyPairing = vi.fn(async () => ({ ok: true }));
+      const controller = createController({
+        chromeApi: {
+          storage: {
+            local: {
+              get: async () => ({ ...stored }),
+              set: async (values: Record<string, unknown>) => Object.assign(stored, values),
+              remove: async (keys: string[]) =>
+                keys.forEach(key => {
+                  delete stored[key];
+                }),
+            },
+          },
+        },
+        getPairing: async () => undefined,
+        applyPairing,
+        requestBootstrap: requestLocalBootstrap,
+      });
+      vi.mocked(ensureAppServer).mockRejectedValueOnce(
+        Object.assign(new Error('App is not running.'), { code: APP_NOT_RUNNING_CODE }),
+      );
+
+      expect(await controller.attempt()).toEqual({
+        status: 'retrying',
+        code: 'pairing_unavailable',
+      });
+      expect(applyPairing).not.toHaveBeenCalled();
+
+      const previousSocket = FixtureSocket.current;
+      const recovered = controller.attempt();
+      for (let index = 0; index < 20 && FixtureSocket.current === previousSocket; index += 1)
+        await Promise.resolve();
+      const socket = FixtureSocket.current;
+      expect(socket).not.toBe(previousSocket);
+      socket.emit('open');
+      socket.emit('message', { id: `relay:init:${request.nonce}`, result: {} });
+      socket.emit('message', {
+        id: `relay:pair:${request.nonce}`,
+        result: { pairingString: `ws://127.0.0.1:42870/browser/extension#${'c'.repeat(64)}` },
+      });
+
+      expect(await recovered).toEqual({ status: 'paired' });
+      expect(applyPairing).toHaveBeenCalledOnce();
+      expect(stored.nativeBootstrapState).toBe('ready');
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it('ignores late responses after timing out and handles malformed frames', async () => {

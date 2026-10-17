@@ -23,6 +23,13 @@ npm run electron:dev:openclaw
 
 默认 Vite 端口是 43127。隔离预览的目录及启动参数由 `scripts/electron/run-isolated-dev.cjs` 管理；不要把真实用户数据库、凭据或原生日志复制进仓库。
 
+开发版和安装版的 Chrome Native Host 均只发现并连接已运行的应用，不会自行启动或重启应用，
+也不通过第二实例处理扩展的重启请求。开发态 Main 与 Gateway 由开发命令启动，输出继承当前终端；
+安装版由用户手动启动，日志写入用户日志目录。应用未运行时扩展提示手动启动，后续重试仍只发现实例。
+更新 Native Host 后重新运行开发命令，并重新加载 Chrome 扩展使 helper 更新生效。若此前已有
+独立运行的应用，应先从托盘彻底退出再启动；复用旧实例无法把它的标准输出转接到新终端，
+新开发进程会明确提示这一情况。
+
 开发期的 `react-hooks-refresh` 插件为 Renderer 和扩展 `browser/` 中的普通 `.ts`
 Hook 模块补充 React Refresh 签名；Vite 默认只为 JSX 模块生成这些签名。
 嵌套 Hook 的调用结构改变时，React 会重新挂载消费组件；结构不变的编辑仍保留状态。
