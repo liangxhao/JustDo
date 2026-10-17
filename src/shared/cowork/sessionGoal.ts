@@ -115,13 +115,36 @@ const DEFINITIVE_SESSION_GOAL_GATEWAY_ERROR_CODES: ReadonlySet<string> = new Set
   'METHOD_NOT_FOUND',
 ]);
 
+const DEFINITIVE_SESSION_GOAL_REJECTION_REASONS: ReadonlySet<string> = new Set([
+  'operation-conflict',
+  'session-rebound',
+  'goal-rebound',
+  'capacity',
+  'invalid',
+]);
+
+export const sessionGoalGatewayRejectionReason = (value: unknown): string | undefined => {
+  if (!value || typeof value !== 'object') return undefined;
+  const details = (value as { details?: unknown }).details;
+  if (!details || typeof details !== 'object') return undefined;
+  const { code, reason } = details as { code?: unknown; reason?: unknown };
+  if (typeof reason !== 'string') return undefined;
+  if (code === 'GOAL_OPERATION_REJECTED') return reason;
+  return reason.startsWith('goal-') ? reason.slice(5) : undefined;
+};
+
 /** Only known pre-commit protocol or authorization failures retire an operation identity. */
 export const isDefinitiveSessionGoalGatewayError = (value: unknown): boolean => {
   if (!value || typeof value !== 'object') return false;
   const gatewayCode = (value as { gatewayCode?: unknown }).gatewayCode;
+  const reason = sessionGoalGatewayRejectionReason(value);
+  if (reason !== undefined) {
+    return (
+      gatewayCode === 'INVALID_REQUEST' && DEFINITIVE_SESSION_GOAL_REJECTION_REASONS.has(reason)
+    );
+  }
   return (
-    typeof gatewayCode === 'string' &&
-    DEFINITIVE_SESSION_GOAL_GATEWAY_ERROR_CODES.has(gatewayCode)
+    typeof gatewayCode === 'string' && DEFINITIVE_SESSION_GOAL_GATEWAY_ERROR_CODES.has(gatewayCode)
   );
 };
 

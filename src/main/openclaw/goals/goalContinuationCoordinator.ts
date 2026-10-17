@@ -3,12 +3,14 @@ import { randomUUID } from 'crypto';
 import {
   GoalExecutionPhase,
   type GoalExecutionSnapshot,
+  isDefinitiveSessionGoalGatewayError,
   normalizeSessionGoal,
   type SessionGoal,
   SessionGoalStatus,
 } from '../../../shared/cowork/sessionGoal';
 import { coworkLog } from '../../cowork/coworkLogger';
 import type { GatewayClientLike } from '../../engine/gateway/types';
+import type { GoalEventAdmission, GoalEventIdentity } from './goalEventAdmission';
 
 const CONTINUATION_SYSTEM_PROMPT = [
   'This is an automatic continuation of the active session goal.',
@@ -37,9 +39,10 @@ const buildContinuationPrompt = (goal: SessionGoal): string =>
   ].join('\n');
 
 type GatewaySession = Record<string, unknown> & { key?: string; goal?: unknown };
+type GoalSessionTarget = { sessionId: string; lifecycleRevision?: string | null };
 type TerminalGoalStatus = 'complete' | 'blocked';
 
-export interface GoalLifecycleEvent {
+export interface GoalLifecycleEvent extends GoalEventIdentity {
   runId: string;
   sessionKey: string;
   spawnedBy?: string | null;
@@ -49,7 +52,7 @@ export interface GoalLifecycleEvent {
   error?: string;
 }
 
-export interface GoalToolEvent {
+export interface GoalToolEvent extends GoalEventIdentity {
   runId: string;
   sessionKey: string;
   spawnedBy?: string | null;
@@ -66,8 +69,16 @@ interface GoalContinuationCoordinatorDependencies {
   resolveSessionId: (sessionKey: string) => string | null;
   resolveAgentId: (sessionId: string) => string;
   getMaxContinuationTurns: () => number;
-  onRunAccepted: (sessionId: string, sessionKey: string, runId: string) => void;
+  onRunAccepted: (
+    sessionId: string,
+    sessionKey: string,
+    runId: string,
+    nativeSessionId: string,
+  ) => void;
   onRunFailed: (sessionId: string, runId: string) => void;
+  onRunConfirmed: (sessionId: string, runId: string) => void;
+  onRunUnknown: (sessionId: string, runId: string) => void;
+  eventAdmission: Pick<GoalEventAdmission, 'admit' | 'clearSession' | 'clear'>;
   onSnapshot: (snapshot: GoalExecutionSnapshot) => void;
   prepareSessionForContinuation?: (sessionId: string) => Promise<void>;
   waitBeforeAutomaticContinuation?: () => Promise<void>;
@@ -144,7 +155,7 @@ export class GoalContinuationCoordinator {
   private readonly sessionKeys = new Map<string, string>();
   private readonly processedTerminalRuns = new Set<string>();
   private readonly stoppedSessionIds = new Set<string>();
-  private readonly continuationRuns = new Set<string>();
+  private readonly continuationRuns = new Map<string, GoalSessionTarget>();
   private readonly dispatchingSessionIds = new Set<string>();
   private readonly latestRunIds = new Map<string, string>();
   private readonly pendingGoalUpdates = new Map<string, TerminalGoalStatus>();
@@ -153,6 +164,11 @@ export class GoalContinuationCoordinator {
   private readonly stopGenerations = new Map<string, number>();
   private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly retryAttempts = new Map<string, number>();
+  private readonly retryTargets = new Map<string, GoalSessionTarget>();
+  private readonly sessionTargets = new Map<
+    string,
+    { sessionId: string; lifecycleRevision: string | null }
+  >();
   private readonly now: () => number;
   private generation = 0;
 
@@ -166,6 +182,7 @@ export class GoalContinuationCoordinator {
 
   restoreRunning(sessionId: string, goalId: string, runId?: string): void {
     this.cancelRetry(sessionId, true);
+    this.retryTargets.delete(sessionId);
     this.stoppedSessionIds.delete(sessionId);
     this.snapshotsBeforeStop.delete(sessionId);
     if (runId) this.latestRunIds.set(sessionId, runId);
@@ -205,8 +222,12 @@ export class GoalContinuationCoordinator {
   }
 
   clearSession(sessionId: string): void {
+    this.dependencies.eventAdmission.clearSession(sessionId);
+    const sessionKey = this.sessionKeys.get(sessionId);
+    if (sessionKey) this.sessionTargets.delete(sessionKey);
     this.sessionKeys.delete(sessionId);
     this.cancelRetry(sessionId, true);
+    this.retryTargets.delete(sessionId);
     const runIds = new Set([
       this.latestRunIds.get(sessionId),
       this.snapshots.get(sessionId)?.runId,
@@ -245,10 +266,13 @@ export class GoalContinuationCoordinator {
 
   clear(): void {
     this.generation += 1;
+    this.dependencies.eventAdmission.clear();
+    this.sessionTargets.clear();
     const clearedSnapshots = [...this.snapshots.values()];
     for (const timer of this.retryTimers.values()) clearTimeout(timer);
     this.retryTimers.clear();
     this.retryAttempts.clear();
+    this.retryTargets.clear();
     this.snapshots.clear();
     this.sessionKeys.clear();
     this.processedTerminalRuns.clear();
@@ -345,6 +369,7 @@ export class GoalContinuationCoordinator {
       this.stoppedSessionIds.delete(sessionId);
       this.snapshotsBeforeStop.delete(sessionId);
       this.cancelRetry(sessionId, true);
+      this.retryTargets.delete(sessionId);
       try {
         await this.dispatchContinuation(
           sessionId,
@@ -372,6 +397,20 @@ export class GoalContinuationCoordinator {
 
   async handleLifecycle(event: GoalLifecycleEvent): Promise<void> {
     if (!isManagedGoalSessionKey(event.sessionKey) || event.spawnedBy) return;
+    const sessionId = this.dependencies.resolveSessionId(event.sessionKey);
+    if (!sessionId || !this.dependencies.eventAdmission.admit(sessionId, event)) return;
+    await this.processLifecycle(event);
+  }
+
+  /** The caller has checked the exact agent.wait run ID and terminal receipt. */
+  async reconcileSettledRun(
+    event: GoalLifecycleEvent & { phase: 'end' | 'error'; executionSettled: true },
+  ): Promise<void> {
+    await this.processLifecycle(event);
+  }
+
+  private async processLifecycle(event: GoalLifecycleEvent): Promise<void> {
+    if (!isManagedGoalSessionKey(event.sessionKey) || event.spawnedBy) return;
     // Attempt terminals can precede provider retries and the final run outcome.
     // Do not deduplicate or continue until the native execution has settled.
     if (event.phase !== 'start' && event.executionSettled !== true) return;
@@ -386,6 +425,7 @@ export class GoalContinuationCoordinator {
       if (!isContinuation) {
         this.snapshotsBeforeStop.delete(sessionId);
         this.cancelRetry(sessionId, true);
+        this.retryTargets.delete(sessionId);
       }
       const current = this.snapshots.get(sessionId);
       this.publish({
@@ -399,6 +439,7 @@ export class GoalContinuationCoordinator {
       return;
     }
 
+    const knownTarget = this.continuationRuns.get(event.runId);
     this.continuationRuns.delete(event.runId);
     const terminalStatus = this.terminalGoalRuns.get(event.runId) ?? null;
     this.terminalGoalRuns.delete(event.runId);
@@ -409,6 +450,9 @@ export class GoalContinuationCoordinator {
     this.rememberProcessedTerminalRun(event.runId);
     const latestRunId = this.latestRunIds.get(sessionId);
     if (latestRunId && latestRunId !== event.runId) return;
+    let terminalTarget = event.sessionId
+      ? knownTarget?.sessionId === event.sessionId ? knownTarget : { sessionId: event.sessionId }
+      : knownTarget ?? this.sessionTargets.get(event.sessionKey);
 
     const current = this.snapshots.get(sessionId);
     const generation = this.generation;
@@ -461,6 +505,13 @@ export class GoalContinuationCoordinator {
           this.publishGoalState(sessionId, retryGoal, current?.continuationCount ?? 0);
           return;
         }
+        if (!this.matchesTarget(this.sessionTargets.get(event.sessionKey), terminalTarget)) {
+          this.stop(sessionId);
+          this.confirmStop(sessionId);
+          return;
+        }
+        terminalTarget = this.sessionTargets.get(event.sessionKey);
+        if (terminalTarget) this.retryTargets.set(sessionId, terminalTarget);
       } catch {
         if (generation !== this.generation ||
           (this.stopGenerations.get(sessionId) ?? 0) !== sessionGeneration ||
@@ -472,6 +523,7 @@ export class GoalContinuationCoordinator {
         event.sessionKey,
         current?.goalId,
         event.error || (event.aborted ? 'Goal run was interrupted' : 'Goal continuation failed'),
+        terminalTarget,
       );
       return;
     }
@@ -482,6 +534,7 @@ export class GoalContinuationCoordinator {
         event.sessionKey,
         current?.goalId,
         'Goal continuation dispatch is still settling',
+        terminalTarget,
       );
       return;
     }
@@ -501,6 +554,13 @@ export class GoalContinuationCoordinator {
         this.publishGoalState(sessionId, goal, current?.continuationCount ?? 0);
         return;
       }
+      if (!this.matchesTarget(this.sessionTargets.get(event.sessionKey), terminalTarget)) {
+        this.stop(sessionId);
+        this.confirmStop(sessionId);
+        return;
+      }
+      terminalTarget = this.sessionTargets.get(event.sessionKey);
+      if (terminalTarget) this.retryTargets.set(sessionId, terminalTarget);
       const goalId = goal.id;
       this.publish({
         sessionId,
@@ -541,6 +601,8 @@ export class GoalContinuationCoordinator {
           goal,
           generation,
           sessionGeneration,
+          true,
+          terminalTarget,
         );
       } catch (error) {
         if (
@@ -548,7 +610,7 @@ export class GoalContinuationCoordinator {
           (this.stopGenerations.get(sessionId) ?? 0) === sessionGeneration &&
           !this.stoppedSessionIds.has(sessionId)
         ) {
-          this.scheduleRetry(sessionId, event.sessionKey, goal.id, error);
+          this.scheduleRetry(sessionId, event.sessionKey, goal.id, error, terminalTarget);
         }
       }
     } catch (error) {
@@ -557,7 +619,7 @@ export class GoalContinuationCoordinator {
         (this.stopGenerations.get(sessionId) ?? 0) === sessionGeneration &&
         !this.stoppedSessionIds.has(sessionId)
       ) {
-        this.scheduleRetry(sessionId, event.sessionKey, current?.goalId, error);
+        this.scheduleRetry(sessionId, event.sessionKey, current?.goalId, error, terminalTarget);
       }
     } finally {
       this.dispatchingSessionIds.delete(sessionId);
@@ -575,6 +637,7 @@ export class GoalContinuationCoordinator {
     }
     const sessionId = this.dependencies.resolveSessionId(event.sessionKey);
     if (!sessionId) return;
+    if (!this.dependencies.eventAdmission.admit(sessionId, event)) return;
     if (this.processedTerminalRuns.has(event.runId)) return;
     const key = `${event.runId}:${event.toolCallId}`;
     const requestedStatus = readGoalTerminalStatus(event.input);
@@ -609,6 +672,21 @@ export class GoalContinuationCoordinator {
     const result = await client.request<{ session?: GatewaySession | null }>('sessions.describe', {
       key: sessionKey,
     });
+    if (result.session && result.session.key !== sessionKey) {
+      throw new Error('Gateway returned a different Goal session key');
+    }
+    const nativeSessionId = result.session?.sessionId;
+    if (typeof nativeSessionId === 'string' && nativeSessionId.trim()) {
+      this.sessionTargets.set(sessionKey, {
+        sessionId: nativeSessionId,
+        lifecycleRevision:
+          typeof result.session?.lifecycleRevision === 'string'
+            ? result.session.lifecycleRevision
+            : null,
+      });
+    } else {
+      this.sessionTargets.delete(sessionKey);
+    }
     return asGoal(result.session?.goal);
   }
 
@@ -619,6 +697,7 @@ export class GoalContinuationCoordinator {
     generation: number,
     sessionGeneration: number,
     enforceMaxContinuationTurns = true,
+    expectedTarget?: GoalSessionTarget,
   ): Promise<void> {
     if (
       generation !== this.generation ||
@@ -650,6 +729,15 @@ export class GoalContinuationCoordinator {
       updatedAt: this.now(),
     });
 
+    const target = this.sessionTargets.get(sessionKey);
+    const previousRunId = this.latestRunIds.get(sessionId);
+    if (!target) throw new Error('Goal session identity is unavailable');
+    if (!this.matchesTarget(target, expectedTarget)) {
+      this.stop(sessionId);
+      this.confirmStop(sessionId);
+      return;
+    }
+    this.retryTargets.set(sessionId, target);
     await this.dependencies.prepareSessionForContinuation?.(sessionId);
     if (generation !== this.generation) throw new Error('OpenClaw Gateway connection changed');
     if (
@@ -658,28 +746,92 @@ export class GoalContinuationCoordinator {
     ) {
       throw new Error('Goal execution was stopped');
     }
+    const preparedGoal = await this.readGoal(sessionKey);
+    if (
+      generation !== this.generation ||
+      (this.stopGenerations.get(sessionId) ?? 0) !== sessionGeneration ||
+      this.stoppedSessionIds.has(sessionId) ||
+      this.latestRunIds.get(sessionId) !== previousRunId
+    ) {
+      return;
+    }
+    const preparedTarget = this.sessionTargets.get(sessionKey);
+    if (!preparedGoal || preparedGoal.status !== SessionGoalStatus.Active) {
+      this.publishGoalState(sessionId, preparedGoal, current?.continuationCount ?? 0);
+      return;
+    }
+    if (
+      preparedGoal.id !== goal.id ||
+      preparedTarget?.sessionId !== target.sessionId ||
+      preparedTarget.lifecycleRevision !== target.lifecycleRevision
+    ) {
+      this.stop(sessionId);
+      this.publish({
+        sessionId,
+        goalId: preparedGoal.id,
+        phase: GoalExecutionPhase.Stopped,
+        continuationCount: current?.continuationCount ?? 0,
+        updatedAt: this.now(),
+        error: 'Goal or native session changed during continuation preparation',
+      });
+      return;
+    }
 
-    const runId = `justdo-goal-${goal.id}-${continuationCount}-${randomUUID()}`;
-    this.continuationRuns.add(runId);
+    const runId = randomUUID();
+    this.continuationRuns.set(runId, target);
     this.latestRunIds.set(sessionId, runId);
-    this.dependencies.onRunAccepted(sessionId, sessionKey, runId);
+    this.dependencies.onRunAccepted(sessionId, sessionKey, runId, target.sessionId);
     try {
       // Normal chat.send turns receive OpenClaw's native bounded active-Goal context. Automatic
       // continuations use the lower-level agent RPC so the synthetic prompt stays out of history
       // and JustDo can retain its stricter completion and blocked-state policy.
-      await client.request('agent', {
-        message: buildContinuationPrompt(goal),
+      const receipt = await client.request('agent', {
+        message: buildContinuationPrompt(preparedGoal),
         extraSystemPrompt: CONTINUATION_SYSTEM_PROMPT,
         sessionKey,
+        expectedExistingSessionId: target.sessionId,
+        expectedExistingSessionLifecycleRevision: target.lifecycleRevision,
         agentId: this.dependencies.resolveAgentId(sessionId),
         deliver: false,
         suppressPromptPersistence: true,
         idempotencyKey: runId,
       });
+      if (receipt.runId !== runId || (receipt.status !== 'accepted' && receipt.status !== 'in_flight')) {
+        throw new Error('Gateway returned an unconfirmed Goal continuation receipt');
+      }
     } catch (error) {
-      this.continuationRuns.delete(runId);
-      this.dependencies.onRunFailed(sessionId, runId);
-      throw error;
+      if (
+        generation !== this.generation ||
+        this.latestRunIds.get(sessionId) !== runId ||
+        this.processedTerminalRuns.has(runId)
+      ) {
+        return;
+      }
+      if (
+        isDefinitiveSessionGoalGatewayError(error) ||
+        (error && typeof error === 'object' && 'requestSent' in error && error.requestSent === false)
+      ) {
+        this.continuationRuns.delete(runId);
+        this.dependencies.onRunFailed(sessionId, runId);
+        throw error;
+      }
+      // A sent request can execute before its ACK is lost. Preserve custody and
+      // reconcile this exact run; a new idempotency key could repeat side effects.
+      this.cancelRetry(sessionId, false);
+      if (!this.stoppedSessionIds.has(sessionId)) {
+        this.publish({
+          sessionId,
+          goalId: goal.id,
+          phase: GoalExecutionPhase.Running,
+          runId,
+          continuationCount,
+          updatedAt: this.now(),
+          identityPending: true,
+          error: errorSummary(error),
+        });
+      }
+      this.dependencies.onRunUnknown(sessionId, runId);
+      return;
     }
     if (
       generation !== this.generation ||
@@ -689,6 +841,7 @@ export class GoalContinuationCoordinator {
     ) {
       return;
     }
+    this.dependencies.onRunConfirmed(sessionId, runId);
     this.cancelRetry(sessionId, false);
     this.publish({
       sessionId,
@@ -705,8 +858,12 @@ export class GoalContinuationCoordinator {
     sessionKey: string,
     goalId: string | undefined,
     error: unknown,
+    expectedTarget = this.retryTargets.get(sessionId) ?? this.sessionTargets.get(sessionKey),
   ): void {
     if (this.stoppedSessionIds.has(sessionId)) return;
+    // Keep the original terminal's fence even when Stop fails and rollbackStop
+    // rearms the retry after its timer was cancelled.
+    if (expectedTarget) this.retryTargets.set(sessionId, expectedTarget);
     this.cancelRetry(sessionId, false);
     const attempt = (this.retryAttempts.get(sessionId) ?? 0) + 1;
     this.retryAttempts.set(sessionId, attempt);
@@ -736,7 +893,7 @@ export class GoalContinuationCoordinator {
       sessionId,
       setTimeout(() => {
         this.retryTimers.delete(sessionId);
-        void this.retry(sessionId, sessionKey, goalId, generation);
+        void this.retry(sessionId, sessionKey, goalId, generation, expectedTarget);
       }, delay),
     );
   }
@@ -746,6 +903,7 @@ export class GoalContinuationCoordinator {
     sessionKey: string,
     expectedGoalId: string | undefined,
     generation: number,
+    expectedTarget?: GoalSessionTarget,
   ): Promise<void> {
     if (generation !== this.generation || this.stoppedSessionIds.has(sessionId)) return;
     const sessionGeneration = this.stopGenerations.get(sessionId) ?? 0;
@@ -755,6 +913,7 @@ export class GoalContinuationCoordinator {
         sessionKey,
         expectedGoalId,
         'Goal continuation dispatch is still in progress',
+        expectedTarget,
       );
       return;
     }
@@ -774,6 +933,13 @@ export class GoalContinuationCoordinator {
         this.publishGoalState(sessionId, goal, this.snapshots.get(sessionId)?.continuationCount ?? 0);
         return;
       }
+      if (!this.matchesTarget(this.sessionTargets.get(sessionKey), expectedTarget)) {
+        this.stop(sessionId);
+        this.confirmStop(sessionId);
+        return;
+      }
+      expectedTarget = this.sessionTargets.get(sessionKey);
+      if (expectedTarget) this.retryTargets.set(sessionId, expectedTarget);
       if (expectedGoalId && goal.id !== expectedGoalId) {
         this.cancelRetry(sessionId, true);
         this.publishGoalState(sessionId, goal, 0);
@@ -785,6 +951,8 @@ export class GoalContinuationCoordinator {
         goal,
         generation,
         sessionGeneration,
+        true,
+        expectedTarget,
       );
     } catch (error) {
       if (
@@ -792,11 +960,16 @@ export class GoalContinuationCoordinator {
         (this.stopGenerations.get(sessionId) ?? 0) === sessionGeneration &&
         !this.stoppedSessionIds.has(sessionId)
       ) {
-        this.scheduleRetry(sessionId, sessionKey, retryGoalId, error);
+        this.scheduleRetry(sessionId, sessionKey, retryGoalId, error, expectedTarget);
       }
     } finally {
       this.dispatchingSessionIds.delete(sessionId);
     }
+  }
+
+  private matchesTarget(target: GoalSessionTarget | undefined, expected: GoalSessionTarget | undefined): boolean {
+    return !expected || Boolean(target && target.sessionId === expected.sessionId &&
+      (expected.lifecycleRevision === undefined || target.lifecycleRevision === expected.lifecycleRevision));
   }
 
   private cancelRetry(sessionId: string, resetAttempt: boolean): void {

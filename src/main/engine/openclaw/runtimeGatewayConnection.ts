@@ -312,6 +312,11 @@ export async function createGatewayClient(
       this.scheduleGatewayReconnect();
     },
     onEvent: (event: GatewayEventFrame) => {
+      if (
+        generation !== this.gatewayClientGeneration ||
+        this.gatewayClient !== client ||
+        this.intentionallyStoppedGatewayClients.has(client)
+      ) return;
       client.invalidateSessionLists();
       this.handleGatewayEvent(event);
     },

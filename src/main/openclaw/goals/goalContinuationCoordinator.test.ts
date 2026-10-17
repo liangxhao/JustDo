@@ -9,6 +9,7 @@ import type { GatewayClientLike } from '../../engine/gateway/types';
 import { GoalContinuationCoordinator } from './goalContinuationCoordinator';
 
 const sessionId = 'session-1';
+const nativeIdentity = { sessionId: 'native-session-1', lifecycleRevision: 'revision-1' };
 const sessionKey = 'agent:main:justdo:session-1';
 
 const goal = (status: SessionGoal['status'] = SessionGoalStatus.Active): SessionGoal => ({
@@ -30,14 +31,15 @@ const createHarness = (
   prepareSessionForContinuation = vi.fn().mockResolvedValue(undefined),
 ) => {
   let currentGoal: unknown = goal(goalStatus);
-  const request = vi.fn(async (method: string) => {
-    if (method === 'sessions.describe') return { session: { key: sessionKey, goal: currentGoal } };
-    if (method === 'agent') return { runId: 'accepted', status: 'accepted' };
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'sessions.describe') return { session: { key: sessionKey, ...nativeIdentity, goal: currentGoal } };
+    if (method === 'agent') return { runId: params?.idempotencyKey, status: 'accepted' };
     throw new Error(`unexpected method ${method}`);
   });
   const onSnapshot = vi.fn();
   const onRunAccepted = vi.fn();
   const onRunFailed = vi.fn();
+  const onRunUnknown = vi.fn();
   let now = 100;
   const coordinator = new GoalContinuationCoordinator({
     getClient: () => ({ request } as unknown as GatewayClientLike),
@@ -46,6 +48,9 @@ const createHarness = (
     getMaxContinuationTurns: () => maxContinuationTurns,
     onRunAccepted,
     onRunFailed,
+    onRunConfirmed: vi.fn(),
+    onRunUnknown,
+    eventAdmission: { admit: () => true, clearSession: () => {}, clear: () => {} },
     onSnapshot,
     prepareSessionForContinuation,
     waitBeforeAutomaticContinuation,
@@ -57,6 +62,7 @@ const createHarness = (
     onSnapshot,
     onRunAccepted,
     onRunFailed,
+    onRunUnknown,
     prepareSessionForContinuation,
     setGoal: (value: unknown) => {
       currentGoal = value;
@@ -69,6 +75,218 @@ afterEach(() => {
 });
 
 describe('GoalContinuationCoordinator', () => {
+  it('keeps a sent request unknown until exact settlement, without sending another run', async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    const normalRequest = harness.request.getMockImplementation()!;
+    let sends = 0;
+    harness.request.mockImplementation(async (method, params) => {
+      if (method === 'agent' && ++sends === 1) {
+        throw Object.assign(new Error('ACK timed out'), { code: 'CLIENT_TIMEOUT', requestSent: true });
+      }
+      return normalRequest(method, params);
+    });
+    await harness.coordinator.continue(sessionId, sessionKey);
+    const unknown = harness.coordinator.getSnapshot(sessionId)!;
+    expect(unknown).toMatchObject({ phase: GoalExecutionPhase.Running, identityPending: true });
+    expect(harness.onRunFailed).not.toHaveBeenCalled();
+    expect(harness.onRunUnknown).toHaveBeenCalledWith(sessionId, unknown.runId);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sends).toBe(1);
+    await expect(harness.coordinator.continue(sessionId, sessionKey)).rejects.toThrow('already running');
+    await harness.coordinator.reconcileSettledRun({
+      sessionKey, runId: unknown.runId!, phase: 'error', executionSettled: true,
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(sends).toBe(2);
+    expect(harness.coordinator.getSnapshot(sessionId)?.runId).not.toBe(unknown.runId);
+  });
+
+  it.each([{ runId: 'wrong-run', status: 'accepted' }, { status: 'aborted' }, {}])(
+    'reconciles an unconfirmed continuation receipt %j without retrying', async receipt => {
+      vi.useFakeTimers();
+      const harness = createHarness();
+      const normalRequest = harness.request.getMockImplementation()!;
+      harness.request.mockImplementation(async (method, params) => method === 'agent'
+        ? { runId: params?.idempotencyKey, ...receipt } : normalRequest(method, params));
+      await harness.coordinator.continue(sessionId, sessionKey);
+      expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({ identityPending: true });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1);
+      expect(harness.onRunFailed).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [SessionGoalStatus.Paused, GoalExecutionPhase.Stopped],
+    [SessionGoalStatus.Complete, GoalExecutionPhase.AwaitingConfirmation],
+    [SessionGoalStatus.BudgetLimited, GoalExecutionPhase.AwaitingInput],
+  ] as const)('does not send when preparation changes the Goal to %s', async (status, phase) => {
+    const harness = createHarness();
+    harness.prepareSessionForContinuation.mockImplementation(async () => { harness.setGoal(goal(status)); });
+    await harness.coordinator.continue(sessionId, sessionKey);
+    expect(harness.onRunAccepted).not.toHaveBeenCalled();
+    expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({ phase, continuationCount: 0 });
+  });
+
+  it.each(['sessionId', 'lifecycleRevision'] as const)(
+    'requires explicit review when the native %s changes during preparation', async field => {
+      const harness = createHarness();
+      let identity = { ...nativeIdentity };
+      harness.request.mockImplementation(async _method => ({ session: { key: sessionKey, ...identity, goal: goal() } }));
+      harness.prepareSessionForContinuation.mockImplementation(async () => { identity = { ...identity, [field]: 'replacement' }; });
+      await harness.coordinator.continue(sessionId, sessionKey);
+      expect(harness.onRunAccepted).not.toHaveBeenCalled();
+      expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({ phase: GoalExecutionPhase.Stopped });
+    },
+  );
+
+  it('does not transfer a prepared continuation to a replacement Goal', async () => {
+    const harness = createHarness();
+    harness.prepareSessionForContinuation.mockImplementation(async () => { harness.setGoal({ ...goal(), id: 'goal-2' }); });
+    await harness.coordinator.continue(sessionId, sessionKey);
+    expect(harness.onRunAccepted).not.toHaveBeenCalled();
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({ goalId: 'goal-2', phase: GoalExecutionPhase.Stopped });
+  });
+
+  it('uses the current objective and native session constraints after preparation', async () => {
+    const harness = createHarness();
+    harness.prepareSessionForContinuation.mockImplementation(async () => { harness.setGoal({ ...goal(), objective: 'Revised objective' }); });
+    await harness.coordinator.continue(sessionId, sessionKey);
+    expect(harness.request).toHaveBeenCalledWith('agent', expect.objectContaining({
+      message: expect.stringContaining('Revised objective'),
+      expectedExistingSessionId: nativeIdentity.sessionId,
+      expectedExistingSessionLifecycleRevision: nativeIdentity.lifecycleRevision,
+    }));
+  });
+
+  it.each([
+    ['end', false], ['error', false], ['end', true], ['error', true],
+  ] as const)(
+    'keeps the settled native session fence after failed %s inspection, rollback %s', async (phase, rollback) => {
+      vi.useFakeTimers();
+      const harness = createHarness();
+      let inspections = 0;
+      harness.request.mockImplementation(async method => {
+        if (method === 'sessions.describe') {
+          if (++inspections <= 2) throw new Error('inspection unavailable');
+          return { session: { key: sessionKey, ...nativeIdentity, sessionId: 'replacement-native', goal: goal() } };
+        }
+        throw new Error(`unexpected send ${method}`);
+      });
+      await harness.coordinator.handleLifecycle({
+        runId: 'run-1', sessionKey, sessionId: nativeIdentity.sessionId, phase: 'start',
+      });
+      await harness.coordinator.handleLifecycle({
+        runId: 'run-1', sessionKey, sessionId: nativeIdentity.sessionId, phase, executionSettled: true,
+      });
+      if (rollback) {
+        harness.coordinator.stop(sessionId);
+        harness.coordinator.rollbackStop(sessionId);
+      }
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
+      expect(harness.coordinator.getSnapshot(sessionId)?.phase).toBe(GoalExecutionPhase.Stopped);
+      harness.coordinator.clear();
+    },
+  );
+  it.each([false, true])('retains a known lifecycle revision across retry, rollback %s', async rollback => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    let lifecycleRevision = nativeIdentity.lifecycleRevision;
+    harness.request.mockImplementation(async (method, params) => {
+      if (method === 'sessions.describe') return { session: { key: sessionKey, ...nativeIdentity, lifecycleRevision, goal: goal() } };
+      if (method === 'agent') return { runId: params?.idempotencyKey, status: 'accepted' };
+      throw new Error(method);
+    });
+    const running = await harness.coordinator.continue(sessionId, sessionKey);
+    await harness.coordinator.handleLifecycle({
+      runId: running.runId!, sessionKey, sessionId: nativeIdentity.sessionId,
+      phase: 'error', executionSettled: true,
+    });
+    lifecycleRevision = 'revision-after-reset';
+    if (rollback) {
+      harness.coordinator.stop(sessionId);
+      harness.coordinator.rollbackStop(sessionId);
+    }
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1);
+    expect(harness.coordinator.getSnapshot(sessionId)?.phase).toBe(GoalExecutionPhase.Stopped);
+    harness.coordinator.clear();
+  });
+
+  it.each([false, true])('captures the first inspected revision before retrying an initial run, read failure %s', async failFirstRead => {
+    vi.useFakeTimers();
+    const prepare = vi.fn().mockRejectedValueOnce(new Error('preparation unavailable'));
+    const harness = createHarness(SessionGoalStatus.Active, undefined, 20, prepare);
+    let lifecycleRevision = nativeIdentity.lifecycleRevision;
+    let reads = 0;
+    harness.request.mockImplementation(async (method, params) => {
+      if (method === 'sessions.describe') {
+        if (++reads === 1 && failFirstRead) throw new Error('inspection unavailable');
+        return { session: { key: sessionKey, ...nativeIdentity, lifecycleRevision, goal: goal() } };
+      }
+      if (method === 'agent') return { runId: params?.idempotencyKey, status: 'accepted' };
+      throw new Error(method);
+    });
+    await harness.coordinator.handleLifecycle({
+      runId: 'initial-run', sessionKey, sessionId: nativeIdentity.sessionId,
+      phase: 'error', executionSettled: true,
+    });
+    if (failFirstRead) await vi.advanceTimersByTimeAsync(2_000);
+    lifecycleRevision = 'revision-after-reset';
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
+    expect(harness.coordinator.getSnapshot(sessionId)?.phase).toBe(GoalExecutionPhase.Stopped);
+    harness.coordinator.clear();
+  });
+
+  it.each(['end', 'error'] as const)('rejects a reset before inspecting a settled %s run', async phase => {
+    const harness = createHarness();
+    const running = await harness.coordinator.continue(sessionId, sessionKey);
+    harness.request.mockResolvedValue({ session: { key: sessionKey, ...nativeIdentity, lifecycleRevision: 'revision-after-reset', goal: goal() } });
+    await harness.coordinator.handleLifecycle({
+      runId: running.runId!, sessionKey, sessionId: nativeIdentity.sessionId, phase, executionSettled: true,
+    });
+    expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1);
+    expect(harness.coordinator.getSnapshot(sessionId)?.phase).toBe(GoalExecutionPhase.Stopped);
+    harness.coordinator.clear();
+  });
+
+  it('preserves a newly learned revision when Stop rolls back during retry preparation', async () => {
+    vi.useFakeTimers();
+    let releasePreparation: (() => void) | undefined;
+    const prepare = vi.fn().mockImplementationOnce(() => new Promise<void>(resolve => {
+      releasePreparation = resolve;
+    }));
+    const harness = createHarness(SessionGoalStatus.Active, undefined, 20, prepare);
+    let revision = nativeIdentity.lifecycleRevision;
+    let reads = 0;
+    harness.request.mockImplementation(async (method, params) => {
+      if (method === 'sessions.describe') {
+        if (++reads === 1) throw new Error('inspection unavailable');
+        return { session: { key: sessionKey, ...nativeIdentity, lifecycleRevision: revision, goal: goal() } };
+      }
+      if (method === 'agent') return { runId: params?.idempotencyKey, status: 'accepted' };
+      throw new Error(method);
+    });
+    await harness.coordinator.handleLifecycle({
+      runId: 'initial-run', sessionKey, sessionId: nativeIdentity.sessionId,
+      phase: 'error', executionSettled: true,
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(releasePreparation).toBeDefined();
+    harness.coordinator.stop(sessionId);
+    harness.coordinator.rollbackStop(sessionId);
+    revision = 'revision-after-reset';
+    releasePreparation!();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
+    expect(harness.coordinator.getSnapshot(sessionId)?.phase).toBe(GoalExecutionPhase.Stopped);
+    harness.coordinator.clear();
+  });
+
   it.each(['end', 'error'] as const)(
     'ignores attempt %s until the same run definitively settles',
     async phase => {
@@ -153,15 +371,15 @@ describe('GoalContinuationCoordinator', () => {
       resolveGoal = resolve;
     });
     const harness = createHarness();
-    harness.request.mockImplementation(async (method: string) => {
+    harness.request.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
       if (method === 'sessions.describe') return goalLookup;
-      if (method === 'agent') return { runId: 'accepted', status: 'accepted' };
+      if (method === 'agent') return { runId: params?.idempotencyKey, status: 'accepted' };
       throw new Error(`unexpected method ${method}`);
     });
 
     const continuing = harness.coordinator.continue(sessionId, sessionKey);
     harness.coordinator.clearSession(sessionId);
-    resolveGoal({ session: { key: sessionKey, goal: goal() } });
+    resolveGoal({ session: { key: sessionKey, ...nativeIdentity, goal: goal() } });
 
     await expect(continuing).rejects.toThrow('stopped');
     expect(harness.request.mock.calls.some(([method]) => method === 'agent')).toBe(false);
@@ -355,13 +573,13 @@ describe('GoalContinuationCoordinator', () => {
   it('does not let a late continuation acknowledgement overwrite a newer manual run', async () => {
     const harness = createHarness();
     let resolveAgent: (() => void) | undefined;
-    harness.request.mockImplementation(async (method: string) => {
-      if (method === 'sessions.describe') return { session: { key: sessionKey, goal: goal() } };
+    harness.request.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'sessions.describe') return { session: { key: sessionKey, ...nativeIdentity, goal: goal() } };
       if (method === 'agent') {
         await new Promise<void>(resolve => {
           resolveAgent = resolve;
         });
-        return { runId: 'accepted', status: 'accepted' };
+        return { runId: params?.idempotencyKey, status: 'accepted' };
       }
       throw new Error(`unexpected method ${method}`);
     });
@@ -535,8 +753,8 @@ describe('GoalContinuationCoordinator', () => {
     const harness = createHarness();
     let resolveAgent: (() => void) | undefined;
     let agentCalls = 0;
-    harness.request.mockImplementation(async (method: string) => {
-      if (method === 'sessions.describe') return { session: { key: sessionKey, goal: goal() } };
+    harness.request.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'sessions.describe') return { session: { key: sessionKey, ...nativeIdentity, goal: goal() } };
       if (method === 'agent') {
         agentCalls += 1;
         if (agentCalls === 1) {
@@ -544,7 +762,7 @@ describe('GoalContinuationCoordinator', () => {
             resolveAgent = resolve;
           });
         }
-        return { runId: 'accepted', status: 'accepted' };
+        return { runId: params?.idempotencyKey, status: 'accepted' };
       }
       throw new Error(`unexpected method ${method}`);
     });
@@ -605,8 +823,8 @@ describe('GoalContinuationCoordinator', () => {
     vi.useFakeTimers();
     const harness = createHarness();
     harness.request.mockImplementation(async (method: string) => {
-      if (method === 'sessions.describe') return { session: { key: sessionKey, goal: goalState } };
-      if (method === 'agent') throw new Error('gateway unavailable');
+      if (method === 'sessions.describe') return { session: { key: sessionKey, ...nativeIdentity, goal: goalState } };
+      if (method === 'agent') throw Object.assign(new Error('gateway unavailable'), { requestSent: false });
       throw new Error(`unexpected method ${method}`);
     });
     let goalState: unknown = goal();
@@ -643,8 +861,8 @@ describe('GoalContinuationCoordinator', () => {
     vi.useFakeTimers();
     const harness = createHarness();
     harness.request.mockImplementation(async (method: string) => {
-      if (method === 'sessions.describe') return { session: { key: sessionKey, goal: goal() } };
-      if (method === 'agent') throw new Error('gateway unavailable');
+      if (method === 'sessions.describe') return { session: { key: sessionKey, ...nativeIdentity, goal: goal() } };
+      if (method === 'agent') throw Object.assign(new Error('gateway unavailable'), { requestSent: false });
       throw new Error(`unexpected method ${method}`);
     });
 
@@ -791,14 +1009,14 @@ describe('GoalContinuationCoordinator', () => {
   it('does not let a concurrent Stop be cleared by an in-flight Continue', async () => {
     const harness = createHarness();
     let resolveGoalRead: (() => void) | undefined;
-    harness.request.mockImplementation(async (method: string) => {
+    harness.request.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
       if (method === 'sessions.describe') {
         await new Promise<void>(resolve => {
           resolveGoalRead = resolve;
         });
-        return { session: { key: sessionKey, goal: goal() } };
+        return { session: { key: sessionKey, ...nativeIdentity, goal: goal() } };
       }
-      if (method === 'agent') return { runId: 'accepted', status: 'accepted' };
+      if (method === 'agent') return { runId: params?.idempotencyKey, status: 'accepted' };
       throw new Error(`unexpected method ${method}`);
     });
     harness.coordinator.restoreRunning(sessionId, 'goal-1', 'old-run');
@@ -827,7 +1045,7 @@ describe('GoalContinuationCoordinator', () => {
       id: 'goal-2',
       objective: 'Ship the replacement release',
     };
-    harness.request.mockImplementation(async (method: string) => {
+    harness.request.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
       if (method === 'sessions.describe') {
         describeCalls += 1;
         if (describeCalls === 1) {
@@ -835,9 +1053,9 @@ describe('GoalContinuationCoordinator', () => {
             resolveStoppedRead = resolve;
           });
         }
-        return { session: { key: sessionKey, goal: replacementGoal } };
+        return { session: { key: sessionKey, ...nativeIdentity, goal: replacementGoal } };
       }
-      if (method === 'agent') return { runId: 'accepted', status: 'accepted' };
+      if (method === 'agent') return { runId: params?.idempotencyKey, status: 'accepted' };
       throw new Error(`unexpected method ${method}`);
     });
     harness.coordinator.restoreRunning(sessionId, 'goal-1', 'old-run');

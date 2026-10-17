@@ -236,7 +236,7 @@ export function handleChatEvent(
 
   const admission = classifyChatEvent({
     selected: { sessionKey: turn.sessionKey, sessionId: turn.gatewaySessionId },
-    activeRun: turn,
+    activeRun: { ...turn, sessionId: turn.gatewaySessionId },
     event,
   });
   if (admission === 'ignored-session') return;
@@ -247,6 +247,7 @@ export function handleChatEvent(
   }
   if (turn.runId && !runId) return;
   if (admission === 'ignored-run') return;
+  if (admission === 'bind-provisional-run' && !turn.knownRunIds.has(runId)) return;
   if (this.unknownSessionRuns.get(sessionId)?.cancelled && event.state === 'delta') {
     void this.reconcileDisconnectedTurn(sessionId);
   }
@@ -302,6 +303,7 @@ export function handleAgentEvent(
   frameSeq?: number,
 ): void {
   let normalized = normalizeAgentEvent({ deliveryEvent, payload, frameSeq });
+  const nativeAgentSeq = normalized.event?.agentSeq;
   if (normalized.reason === 'missing-sequence' && isRecord(payload)) {
     normalized = normalizeAgentEvent({
       deliveryEvent,
@@ -318,45 +320,53 @@ export function handleAgentEvent(
   const { runId, stream } = event;
   const sessionKey = event.sessionKey ?? '';
   const data = event.data;
-  if (stream === 'tool' && sessionKey) {
-    const tool = normalizeToolEvent(data);
-    this.goalContinuationCoordinator.handleToolEvent({
-      runId,
-      sessionKey,
-      spawnedBy: event.spawnedBy,
-      name: tool.name,
-      toolCallId: tool.toolCallId,
-      ...(tool.input === undefined ? {} : { input: tool.input }),
-      ...(tool.output === null ? {} : { output: tool.output }),
-      status: tool.status,
-      failed: tool.failed,
-    });
-  }
-  if (stream === 'lifecycle' && sessionKey) {
-    const phase = typeof data.phase === 'string' ? data.phase : '';
-    if (phase === 'start' || phase === 'end' || phase === 'error') {
-      void this.goalContinuationCoordinator.handleLifecycle({
+  const forwardGoalEvent = () => {
+    if (stream === 'tool' && sessionKey) {
+      const tool = normalizeToolEvent(data);
+      this.goalContinuationCoordinator.handleToolEvent({
         runId,
         sessionKey,
+        sessionId: event.sessionId,
+        lifecycleGeneration: event.lifecycleGeneration,
+        agentSeq: nativeAgentSeq,
         spawnedBy: event.spawnedBy,
-        phase,
-        executionSettled: data.executionSettled === true,
-        ...(typeof data.aborted === 'boolean' ? { aborted: data.aborted } : {}),
-        ...(typeof data.error === 'string' ? { error: data.error } : {}),
+        name: tool.name,
+        toolCallId: tool.toolCallId,
+        ...(tool.input === undefined ? {} : { input: tool.input }),
+        ...(tool.output === null ? {} : { output: tool.output }),
+        status: tool.status,
+        failed: tool.failed,
       });
     }
-  }
-
-  // Goal continuation consumes the complete tool/lifecycle sequence even
-  // when chat final already settled the local UI lifecycle. Only suppress
-  // replay before it can recreate an active Main-process turn.
-  if (this.isRecentTerminalRun(runId)) return;
+    if (stream === 'lifecycle' && sessionKey) {
+      const phase = typeof data.phase === 'string' ? data.phase : '';
+      if (phase === 'start' || phase === 'end' || phase === 'error') {
+        void this.goalContinuationCoordinator.handleLifecycle({
+          runId,
+          sessionKey,
+          sessionId: event.sessionId,
+          lifecycleGeneration: event.lifecycleGeneration,
+          agentSeq: nativeAgentSeq,
+          spawnedBy: event.spawnedBy,
+          phase,
+          executionSettled: data.executionSettled === true,
+          ...(typeof data.aborted === 'boolean' ? { aborted: data.aborted } : {}),
+          ...(typeof data.error === 'string' ? { error: data.error } : {}),
+        });
+      }
+    }
+  };
 
   let sessionId = runId ? (this.sessionIdByRunId.get(runId) ?? null) : null;
   if (!sessionId && sessionKey) {
     sessionId = this.resolveSessionIdBySessionKey(sessionKey);
   }
   if (!sessionId || event.spawnedBy || this.isAnnounceRunId(runId)) return;
+
+  // Chat final can retire Main before the whole-run terminal arrives. Only
+  // the Goal admission record may accept that exact trailing event.
+  if (!this.activeTurns.has(sessionId)) forwardGoalEvent();
+  if (this.isRecentTerminalRun(runId)) return;
 
   if (!this.activeTurns.has(sessionId) && stream === 'lifecycle' && data.phase === 'start') {
     this.ensureActiveTurn(sessionId, sessionKey, runId);
@@ -384,6 +394,7 @@ export function handleAgentEvent(
   if (!turn.lifecycleGeneration && event.lifecycleGeneration) {
     turn.lifecycleGeneration = event.lifecycleGeneration;
   }
+  forwardGoalEvent();
   turn.lastAgentSeq = event.agentSeq;
   turn.knownRunIds.add(runId);
   this.sessionIdByRunId.set(runId, sessionId);

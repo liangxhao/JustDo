@@ -224,6 +224,13 @@ Worktree 设置页同时接入 Gateway 全局 `worktreeRoot` / `worktreeAccelera
 
 Goal coordinator 在原生目标仍 active 时安排续跑，保存产品 phase、次数和等待状态。六种原生 Goal status 原样保留。用户操作使用 goalId fence，停止 latch 和等待交互阻止后台抢跑。
 
+权限准备后重新核对 Goal 与原生会话实例，backend 续跑携带 sessionId/lifecycleRevision
+约束。发送结果不明确时保留原运行跟踪，只按精确 agent.wait 回执恢复；不得换新 ID 重发。
+Goal 事件独立核对原生会话、run 与原生序列，连接回调核对当前 client 和 Main 连接代次，
+并保留 chat final 后的合法迟到事件；不要求原生刻意省略的内部 lifecycleGeneration。
+结构化操作的回执异常与过期不能当作未提交；完整契约及保留的暂停恢复补丁见
+[Goal 模式](../features/chat/goal-mode.md)。
+
 Plan-mode 通过原生 session extension、turn hook、工具和 scoped RPC 实现。Main 持久化计划文件及 handoff，批准后用原生 reset 建立实施上下文；这是产品交接，不是另一套原生恢复状态机。
 
 子任务查询分页读取 `sessions.list({ archived:'all' })`，按返回记录的 `spawnedBy` 精确筛选，并通过 `sessions.describe` 核对详情；`sessions.changed` 使产品快照失效。原生请求的 `spawnedBy` 过滤使用有保留期限的控制关系，不能用于完整历史发现，否则已结束子会话会被遗漏。OpenClaw 从 v2026.9.8 起已移除旧任务账本与 `tasks.*` RPC，原生会话投影统一拥有委派执行与控制归属。原生仍负责 admission、队列、required-child join 与完成通知。平级协作发送使用原生 sessions_send，产品只负责任务范围和回执。SubAgent 与平级协作有独立生命周期；上游 `agents team create` 是角色预设与原生委派配置，不能直接替代产品 room。跨助手原生委派须同时设计目标授权与助手创建、禁用、软删除的同步；当前不自动将受管 roster 扩展为 `subagents.allowAgents`。

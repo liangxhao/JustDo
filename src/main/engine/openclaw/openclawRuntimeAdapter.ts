@@ -99,6 +99,7 @@ import { coworkLog } from '../../cowork/coworkLogger';
 import { type SessionTitleFetch, SessionTitleGenerator } from '../../cowork/sessionTitleGenerator';
 import type { CoworkStore } from '../../data/coworkStore';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
+import { GoalEventAdmission } from '../../openclaw/goals/goalEventAdmission';
 import {
   buildSessionExecApprovalFingerprint,
   SessionExecApprovalGrants,
@@ -272,13 +273,33 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       resolveSessionId: sessionKey => this.resolveSessionIdBySessionKey(sessionKey),
       resolveAgentId: sessionId => this.store.getSession(sessionId)?.agentId || 'main',
       getMaxContinuationTurns: () => this.store.getConfig().maxGoalContinuationTurns,
-      onRunAccepted: (sessionId, sessionKey, runId) => {
+      eventAdmission: new GoalEventAdmission(sessionId => this.activeTurns.get(sessionId)),
+      onRunAccepted: (sessionId, sessionKey, runId, nativeSessionId) => {
         if (this.terminalLifecycleSessionIds.has(sessionId)) {
           this.cleanupSessionTurn(sessionId);
         }
+        this.stoppedSessions.delete(sessionId);
         this.ensureActiveTurn(sessionId, sessionKey, runId);
+        const turn = this.activeTurns.get(sessionId);
+        if (turn?.runId === runId) turn.gatewaySessionId = nativeSessionId;
+        // Fence cancellation before sending, including the interval before an
+        // ACK or any lifecycle event can establish native admission.
+        this.registerUnknownSessionRun(sessionId, runId);
       },
-      onRunFailed: sessionId => this.cleanupSessionTurn(sessionId),
+      onRunConfirmed: (sessionId, runId) => {
+        const pending = this.unknownSessionRuns.get(sessionId);
+        if (pending?.runId === runId && !pending.cancelled) {
+          this.unknownSessionRuns.delete(sessionId);
+          this.disconnectedSessionIds.delete(sessionId);
+        }
+      },
+      onRunFailed: (sessionId, runId) => {
+        if (this.activeTurns.get(sessionId)?.runId === runId) this.cleanupSessionTurn(sessionId);
+      },
+      onRunUnknown: (sessionId, runId) => {
+        this.registerUnknownSessionRun(sessionId, runId);
+        void this.reconcileDisconnectedTurn(sessionId);
+      },
       onSnapshot: snapshot => {
         if (
           snapshot.phase === GoalExecutionPhase.AwaitingConfirmation ||
@@ -1037,7 +1058,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         sessionId,
         sessionKey,
         runId,
-        gatewaySessionId: null,
+        gatewaySessionId: goalStartObjective !== null ? preparedSession.gatewaySessionId : null,
         lifecycleGeneration: null,
         lastAgentSeq: -1,
         status: 'running',
@@ -1844,12 +1865,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private classifyMainAgentEvent(turn: SessionTurn, event: NormalizedAgentEvent) {
-    return classifyAgentEvent({
+    const admission = classifyAgentEvent({
       selected: { sessionKey: turn.sessionKey, sessionId: turn.gatewaySessionId },
-      activeRun: turn,
+      activeRun: { ...turn, sessionId: turn.gatewaySessionId },
       event,
       terminalRun: this.isRecentTerminalRun(event.runId),
     });
+    // A provisional prefix is not authority to replace a prepared run. Only
+    // aliases already bound by its acceptance receipt may change that identity.
+    return admission === 'bind-provisional-run' && !turn.knownRunIds.has(event.runId)
+      ? 'ignored-run'
+      : admission;
   }
 
   private rememberTerminalRun(runId: string): void {
@@ -2300,6 +2326,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.rootRunIdBySession.delete(sessionId);
     this.manuallyStoppedSessions.delete(sessionId);
     this.goalMutationOperations.delete(sessionId);
+    this.goalContinuationCoordinator.clearSession(sessionId);
     this.terminalLifecycleSessionIds.delete(sessionId);
     this.terminalLifecycleErrorSessionIds.delete(sessionId);
     this.invalidateSubagentStatus(sessionId);
@@ -2508,7 +2535,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         yielded?: boolean;
       }>('agent.wait', { runId: turn.runId, timeoutMs: 0 });
       if (this.gatewayClient !== client || this.activeTurns.get(sessionId) !== turn) return;
-      if (result.runId && result.runId !== turn.runId) return;
+      if (result.runId !== turn.runId) return;
       if (result.yielded) {
         this.confirmUnknownSessionRunAdmission(sessionId, turn);
         // Yield proves admission, but not whole-session completion. Release the
@@ -2542,8 +2569,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // The lifecycle event may have been lost with the connection as well.
       // Reconcile the Goal before exposing idle so an automatic continuation
       // cannot disappear from the aggregate between root runs.
-      await this.goalContinuationCoordinator.handleLifecycle({
+      await this.goalContinuationCoordinator.reconcileSettledRun({
         sessionKey: turn.sessionKey,
+        sessionId: turn.gatewaySessionId,
+        lifecycleGeneration: turn.lifecycleGeneration,
         runId: turn.runId,
         phase: result.status === 'ok' ? 'end' : 'error',
         executionSettled: true,

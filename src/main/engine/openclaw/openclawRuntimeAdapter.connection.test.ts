@@ -271,6 +271,56 @@ test('an intentionally stopped gateway client cannot reclaim the active connecti
   expect(stop).toHaveBeenCalledTimes(2);
 });
 
+test('only forwards Gateway events from the current authenticated client and generation', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const options: Array<{
+    onHelloOk: () => void;
+    onEvent: (event: { event: string }) => void;
+    onClose: (code: number, reason: string) => void;
+  }> = [];
+  class FakeClient {
+    constructor(value: typeof options[number]) { options.push(value); }
+    start() {}
+    stop() {}
+    async request() { return {}; }
+  }
+  adapter.loadGatewayClientCtor = vi.fn().mockResolvedValue(FakeClient);
+  adapter.handleGatewayReady = vi.fn().mockResolvedValue(undefined);
+  adapter.reconcilePendingApprovals = vi.fn().mockResolvedValue(undefined);
+  adapter.reconcilePendingAskUserInteractions = vi.fn().mockResolvedValue(undefined);
+  adapter.scheduleGatewayReconnect = vi.fn();
+  adapter.startTickWatchdog = vi.fn();
+  const received = vi.fn();
+  adapter.on('gatewayEvent', received);
+  const connection = { url: 'ws://127.0.0.1:1234', token: '', version: 'test', clientEntryPath: 'test.js' };
+  const event = { event: 'tick' };
+
+  await adapter.createGatewayClient(connection);
+  options[0].onEvent(event);
+  expect(received).not.toHaveBeenCalled();
+  options[0].onHelloOk();
+  options[0].onEvent(event);
+  expect(received).toHaveBeenCalledTimes(1);
+
+  options[0].onClose(1006, 'network interrupted');
+  options[0].onEvent(event);
+  expect(received).toHaveBeenCalledTimes(1);
+  await adapter.createGatewayClient(connection);
+  options[1].onHelloOk();
+  options[0].onEvent(event);
+  expect(received).toHaveBeenCalledTimes(1);
+  options[1].onEvent(event);
+  expect(received).toHaveBeenCalledTimes(2);
+
+  adapter.gatewayClientGeneration++;
+  options[1].onEvent(event);
+  expect(received).toHaveBeenCalledTimes(2);
+  adapter.disconnectGatewayClient();
+  options[1].onEvent(event);
+  expect(received).toHaveBeenCalledTimes(2);
+});
+
 test('reconnectGateway preserves the retry loop when the immediate handshake fails', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});

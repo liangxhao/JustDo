@@ -9,6 +9,35 @@ import {
 } from './sessionGoal';
 
 describe('isDefinitiveSessionGoalGatewayError', () => {
+  it.each(['receipt-invalid', 'expired', 'unrecognized-reason'])(
+    'retains unknown outcomes for typed %s rejections',
+    reason => {
+      expect(
+        isDefinitiveSessionGoalGatewayError({
+          gatewayCode: 'INVALID_REQUEST',
+          details: { code: 'GOAL_OPERATION_REJECTED', reason },
+        }),
+      ).toBe(false);
+      expect(
+        isDefinitiveSessionGoalGatewayError({
+          gatewayCode: 'INVALID_REQUEST',
+          details: { reason: `goal-${reason}` },
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it.each(['invalid', 'capacity', 'operation-conflict', 'session-rebound', 'goal-rebound'])(
+    'retires a typed pre-commit %s rejection',
+    reason => {
+      expect(
+        isDefinitiveSessionGoalGatewayError({
+          gatewayCode: 'INVALID_REQUEST',
+          details: { code: 'GOAL_OPERATION_REJECTED', reason },
+        }),
+      ).toBe(true);
+    },
+  );
   it('retains ambiguous unavailable failures even when clients default retryable to false', () => {
     expect(
       isDefinitiveSessionGoalGatewayError({ gatewayCode: 'UNAVAILABLE', retryable: false }),

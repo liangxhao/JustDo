@@ -8,6 +8,7 @@ import {
   isDefinitiveSessionGoalGatewayError,
   normalizeSessionGoal,
   type SessionGoal,
+  sessionGoalGatewayRejectionReason,
   SessionGoalIpc,
   type SessionGoalMutationOutcome,
   type SessionGoalMutationRequest,
@@ -161,6 +162,23 @@ export async function mutateSessionGoal(
     await retained.promise;
     return this.mutateSessionGoal(sessionId, request);
   }
+  if (retained?.retired === 'expired') {
+    // Expiry says nothing about the original commit. This explicit request only
+    // refreshes the canonical Goal; a subsequent human decision gets a new ID.
+    const client = this.requireGatewayClient();
+    const generation = this.gatewayClientGeneration;
+    await client.request('sessions.describe', { key: retained.params.sessionKey });
+    if (this.gatewayClient !== client || this.gatewayClientGeneration !== generation) {
+      throw new Error('Gateway connection changed while reviewing an expired Goal operation');
+    }
+    if (this.goalMutationOperations.get(sessionId) === retained) {
+      this.goalMutationOperations.delete(sessionId);
+    }
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(SessionGoalIpc.Changed, { sessionId });
+    }
+    throw new Error('Goal operation expired; review the refreshed Goal before trying again');
+  }
   if (retained && retained.signature === signature) {
     return this.executeSessionGoalMutation(sessionId, retained);
   }
@@ -252,11 +270,16 @@ export async function performSessionGoalMutation(
   params: Record<string, unknown>,
 ): Promise<SessionGoalMutationOutcome> {
   const client = this.requireGatewayClient();
+  const generation = this.gatewayClientGeneration;
   const method = request.action === 'clear' ? 'sessions.goal.clear' : 'sessions.goal.update';
   let rawMutation: SessionGoalMutationResult;
   try {
     rawMutation = await client.request<SessionGoalMutationResult>(method, params);
   } catch (error) {
+    const operation = this.goalMutationOperations.get(sessionId);
+    if (operation?.params === params && sessionGoalGatewayRejectionReason(error) === 'expired') {
+      operation.retired = 'expired';
+    }
     if (
       isDefinitiveSessionGoalGatewayError(error) &&
       this.goalMutationOperations.get(sessionId)?.params === params
@@ -266,9 +289,7 @@ export async function performSessionGoalMutation(
     throw error;
   }
   const rejectMismatchedReceipt = (): never => {
-    if (this.goalMutationOperations.get(sessionId)?.params === params) {
-      this.goalMutationOperations.delete(sessionId);
-    }
+    // A mismatched response cannot prove whether this operation committed.
     throw new Error('Gateway returned a mismatched goal mutation receipt');
   };
   if (
@@ -310,6 +331,9 @@ export async function performSessionGoalMutation(
     const runtimeRow = listed.sessions?.find(row => row.key === params.sessionKey);
     activeRunIds = readActiveRunIds(runtimeRow?.activeRunIds);
   }
+  if (this.gatewayClient !== client || this.gatewayClientGeneration !== generation) {
+    throw new Error('Gateway connection changed while reconciling the Goal operation');
+  }
   const mutation: SessionGoalMutationResult = {
     operationId: rawMutation.operationId,
     action: rawMutation.action,
@@ -334,6 +358,8 @@ export async function performSessionGoalMutation(
     this.stoppedSessions.delete(sessionId);
     this.goalIdsActivatedThisApp.add(`${sessionId}:${goal.id}`);
     this.ensureActiveTurn(sessionId, String(params.sessionKey), mutation.runId);
+    const turn = this.activeTurns.get(sessionId);
+    if (turn?.runId === mutation.runId) turn.gatewaySessionId = mutation.sessionId;
     this.goalContinuationCoordinator.restoreRunning(sessionId, goal.id, mutation.runId);
     execution = this.goalContinuationCoordinator.getSnapshot(sessionId) ?? undefined;
   } else if (!goal) {

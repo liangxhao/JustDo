@@ -118,6 +118,7 @@ export interface RetainedSessionGoalMutation {
   signature: string;
   params: Record<string, unknown>;
   promise?: Promise<SessionGoalMutationOutcome>;
+  retired?: 'expired';
 }
 
 export const readActiveRunIds = (value: unknown): string[] =>
