@@ -24,6 +24,20 @@ do not rely on the caller's working directory when locating repository assets.
 Versioned patches remain under `patches/`; runtime orchestration belongs in
 `openclaw/`.
 
+`test/verify-native-skill-state-runtime.mjs [runtime-directory]` runs opt-in checks
+of installed-skill discovery and interactive Code Mode session storage through a
+real isolated Gateway and QuickJS executor. It uses synthetic imported skills and
+a loopback model, checks exact whole-run terminals, restarts its own Gateway, and
+writes local evidence under `.agent-tasks/runtime/skill-state/`. It never reads
+user configuration or connects to the running app. Run it against the freshly
+prepared runtime; it also supports Electron in Node mode. This does not validate
+real model decisions or MXC isolation.
+
+If a run reached all 16 pre-restart checks but its shutdown checkpoint failed,
+`[runtime-directory] --resume-restart <probe-directory>` can continue the restart
+checks against that probe's private state. Evidence keeps the earlier failure
+and resumed checks separate; this is not a fresh full pass.
+
 ### Inspect one native session's stored content
 
 For explicitly requested storage forensics, `openclaw/inspect-session-storage.cjs`

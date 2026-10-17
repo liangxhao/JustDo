@@ -85,7 +85,12 @@ Code Mode 偏好复用 `cowork_config` 中的 `agentRuntimeSettings:v1` JSON 记
 `codeMode: { mode: "off" | "auto" | "on" }`。读取旧记录时只为缺失字段补上 `off`，
 已有显式 `auto` 值保留；界面暂不允许新选自动模式。
 非法显式值由运行设置校验器拒绝。保存、配置同步和失败回滚沿用现有运行设置 IPC；
-不新增数据表，也不持久化 JavaScript VM、工具中间结果或等待快照。
+产品不新增数据表，也不持久化 JavaScript VM、工具中间结果或等待快照。
+Code Mode 的显式 `store/load` JSON 值由原生会话 transcript 的
+`openclaw.code-mode-store` custom entries 保存和恢复；完成的 cell 才提交，失败或
+取消的未完成 cell 丢弃缓冲。Main/Redux 不复制这些值。覆盖/删除仅改变当前投影，
+旧值仍可能存在原生历史和导出中；与产品偏好、普通 VM 变量及当轮 `results.save`
+引用的生命周期分别管理。原生行为与隔离验证入口见[引擎](05-agent-engine.md)。
 
 SqliteStore.create 先检查已知 legacy schema，再打开连接，设置 PRAGMA，初始化表及增量列/索引，调用协作 schema 初始化器，最后处理 app_config 中遗留凭据引用。
 

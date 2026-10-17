@@ -253,6 +253,18 @@
       不把长期助手 roster 自动加入跨角色 allowlist，不用原生 `agents team create`
       直接替代产品房间。累计 usage 与本轮上下文快照不能混用。
 
+### 6.4 Code Mode 执行与会话中间结果
+
+- [ ] 核对现有 Code Mode 开关及 QuickJS 执行器配置，实际验证 exec、wait/resume、
+      失败与取消。缺失执行器不能降级为 Node VM；普通 JavaScript 变量、当轮
+      `results.save` 引用与显式 `await store/load` 的生命周期分别验证。
+- [ ] 验证已完成 cell 的 JSON 值可跨 cell、后续用户回合和 Gateway 重启恢复；
+      会话之间隔离，失败或取消的未完成 cell 不提交缓冲写入。覆盖超限拒绝、覆盖与
+      删除后读取；按目标版本核对单值/总量限制，不将历史旧值视为已物理擦除。
+- [ ] 保存与恢复由原生会话的 `openclaw.code-mode-store` entries 负责，检查其不进入
+      面向展示的聊天历史；Main/Redux 不复制中间结果，也不新增 VM 或等待快照缓存。
+      使用精确整轮 `executionSettled:true` 终态核对，重启前确认关闭结果，不重发未知执行。
+
 参考：[权限管理](features/chat/openclaw-permission-management.md)、
 [运行参数](features/chat/agent-runtime-settings.md)、
 [助手](features/assistants/assistants-and-collaboration.md)、[执行引擎](architecture/05-agent-engine.md)。
@@ -343,6 +355,12 @@
 - [ ] Skill 有效赢家以 `skills.status/update` 为准；测试同名来源、eligible 与 enabled
       的区别、导入/删除、启停确认、文件 watcher 与迟到响应。关闭赢家不自动改用下一份。
       041 发现刷新补丁已退役，不因短暂发现延迟恢复补丁或强制重启。
+- [ ] 验证 `skills_search/skills_read` 按需发现已安装技能：即使提示词目录因预算省略，
+      仍可搜索并读取完整说明；覆盖元数据/有界正文搜索、完整读取超出搜索前缀的正文、
+      禁用及禁止模型调用的技能过滤。用与产品导入相同的 `stateDir/skills` 位置验证。
+- [ ] 撤销读取权限后仅保留元数据搜索，正文搜索与完整读取不能绕过权限；Code Mode
+      的 `skills.search/skills.read` 使用同一原生目录和权限。读取技能不授予执行权限，
+      Main 不建立第二份技能索引；工具可用性与真实模型会否主动选用分别记录。
 - [ ] MCP 用户配置与 Extension 提供项分开，扩展连接参数只读，独立启停服从原生
       归属与管理权限；关闭的连接仍可显式测试，测试不修改保存配置或启用状态。
       真实验证连接、工具/资源/提示发现、资源读取、
@@ -659,6 +677,7 @@ git diff --check
 | 流/历史/过程         | chat `agent-event-reducer*`、`history-reconciler`、`chat-history-protocol`、`chunked-message-history`、`process-summary-takeover`、`browser-extension-stream` 与 components streaming tests                            |
 | 压缩/摘要            | chat `chat-controller.compaction*`、`chat-summary-resources`、`session-summary-resources`、`SessionSummaryPanel` / 资源列表 / `openSummaryResource`，当前补丁 `native-compaction-lifecycle`                            |
 | 配置/执行/身份       | Main adapter、wire validator、permissions、Goal/Plan、config sync/logout、worktree/sandbox 领域测试及当前版本补丁测试                                                                                                  |
+| 技能发现/Code Mode   | `scripts/test/verify-native-skill-state-runtime.mjs [runtime-directory]` 验证真实隔离 Gateway 的技能发现、读取权限与 JSON 跨轮/重启保存；`scripts/test/verify-code-mode-runtime.mjs` 验证 QuickJS 资产及执行/等待/取消；Node/Electron 分别运行 |
 | SQLite 关闭/恢复     | 先按目标版本适配 `scripts/openclaw/probe-sqlite-retirement.mjs`、`tests/openclaw/runtime/sqlite-retirement-lifecycle.native-smoke.mjs`；覆盖备份、回滚拒绝与成功、删除排他、退出租约及重启恢复；Node/Electron 分别验证 |
 | 定时任务             | scheduler `cronJobService`、`scheduledTaskResultSyncService`、`scheduledTaskSessionHistory`、结果 Store/IPC/UI，`tests/openclaw/runtime/scheduled-task-permissions.test.ts`                                            |
 | 插件页生命周期      | `src/main/plugins/`、`src/main/ipc/plugins/`、`src/renderer/features/plugins/` 的安装、更新、卸载、归属、部分提交、状态刷新与迟到回包测试                                                                                      |
@@ -667,6 +686,9 @@ git diff --check
 
 按目标契约更新有意义的行为断言，不能为了通过只改版本快照或删除失败用例。
 旧版本目录测试保留为历史回归，不可作为目标版本通过证据；缺失关键场景时补齐。
+技能/Code Mode 探针使用隔离状态与本机合成模型；分阶段续验应分别保留前序失败与
+续验结果，不冒充一次全量通过。此类验证不证明真实模型会主动选择技能、正确编排
+Code Mode 或通过 MXC 实机准入；本版专项证据见[升级记录](openclaw-upgrades/v2026.10.4/README.md)。
 
 插件还需按目标版本适配并运行 `tests/openclaw/runtime/` 下的实际原生验证：
 `plugin-management.native-smoke.mjs`（安装/更新/启停/卸载）、

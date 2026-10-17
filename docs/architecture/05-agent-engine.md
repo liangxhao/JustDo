@@ -28,6 +28,26 @@ Gateway 权限、审批及 hooks；QuickJS 隔离本身不授予额外工具权�
 打包产物的 worker、WASM、文本编码模块，并实际验证执行、等待恢复、失败与取消。
 该检查无需模型凭据，不替代真实模型/MCP/审批端到端验证。
 
+### 已安装技能发现与会话中间结果
+
+10.4 原生 `skills_search` / `skills_read` 分别搜索有效的已安装技能和读取完整说明。
+提示词目录因预算省略技能时仍可搜索；禁用或禁止模型调用的技能不进入有效目录。
+有读取权限时搜索可使用有界正文，撤销读取权限后只保留元数据搜索；读取技能不授予
+执行技能所需工具的权限。Code Mode 使用同一目录的 `skills.search` / `skills.read`，
+Main 不建立第二份技能索引。
+
+交互式 Code Mode 的 `await store(key, value)` / `await load(key)` 可跨 cell、后续
+回复及 Gateway 重启复用当前原生会话中的小型 JSON 值；普通 JavaScript 变量和
+`results.save` 的当轮引用没有这一持久化语义。只有完成的 cell 提交缓冲写入，失败或
+取消的未完成 cell 不提交。单值上限 256 KiB、当前值总量上限 1 MiB；覆盖或删除不会
+抹除原生历史中的旧版本。此能力沿用 Code Mode 开关，没有独立的产品存储开关。
+
+`node scripts/test/verify-native-skill-state-runtime.mjs [runtime-directory]` 使用隔离
+Gateway、本机合成模型和与产品相同的 `stateDir/skills` 导入位置，检查上述发现、
+读取权限、跨轮/重启持久化、会话隔离及失败/取消行为。它通过正常聊天执行入口和
+精确 `executionSettled` 终态核对，不读取用户 transcript；合成模型不证明真实模型会
+主动选择技能或正确编排 Code Mode，也不替代 MXC 实机验收。
+
 ## 1. 三层控制各管什么
 
 | 层                           | 所有状态                                               | 主要入口                     |
