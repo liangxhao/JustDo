@@ -76,31 +76,17 @@ function buildOpenClawGatewayBundleLauncherSource() {
     `  : undefined;\n` +
     `const bundleUrl = pathToFileURL(bundlePath).href;\n` +
     `// Gateway top-level await can keep import() pending for its entire life.\n` +
-    `// Persist compiled modules before Windows terminates the process.\n` +
+    `// Cache serialization is synchronous and can stall every live RPC for seconds.\n` +
+    `// Persist at normal exit; forced termination may lose cache, never session data.\n` +
     `const _flushCache = () => { try { require('node:module').flushCompileCache(); } catch (_) {} };\n` +
-    `let _cacheFlushTimer;\n` +
-    `const _startCacheFlush = () => {\n` +
-    `  if (!_cacheFlushTimer) {\n` +
-    `    _cacheFlushTimer = setInterval(_flushCache, 5000);\n` +
-    `    _cacheFlushTimer.unref();\n` +
-    `  }\n` +
-    `};\n` +
-    `if (_keepAlive && process.channel) {\n` +
-    `  // Cache serialization is synchronous: keep it off the startup critical path.\n` +
-    `  const _onReady = message => {\n` +
-    `    if (message !== '${GATEWAY_READY_MESSAGE}') return;\n` +
-    `    process.removeListener('message', _onReady);\n` +
-    `    _startCacheFlush();\n` +
-    `  };\n` +
-    `  process.on('message', _onReady);\n` +
-    `  process.channel.unref();\n` +
-    `} else if (_keepAlive) {\n` +
-    `  _startCacheFlush();\n` +
+    `if (_keepAlive) {\n` +
+    `  process.once('exit', _flushCache);\n` +
+    `  if (process.channel) process.channel.unref();\n` +
     `}\n` +
     `_log('loading bundle (' + _elapsed() + ')');\n` +
     `import(bundleUrl).then(() => {\n` +
     `  _log('import ok (' + _elapsed() + ')');\n` +
-    `  if (!_keepAlive || !process.channel) _flushCache();\n` +
+    `  if (!_keepAlive) _flushCache();\n` +
     `}).catch((err) => {\n` +
     `  _log('import failed (' + _elapsed() + '): ' + (err.stack || err));\n` +
     `  process.exit(1);\n` +

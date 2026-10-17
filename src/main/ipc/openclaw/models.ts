@@ -16,11 +16,8 @@ const nonEmptyString = (value: unknown): string | undefined =>
 const positiveInteger = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
 
-const nonNegativeInteger = (value: unknown): number | undefined =>
-  typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined;
-
 const modelInputKinds = new Set(['text', 'image', 'audio', 'video', 'document']);
-const unavailableReasons = new Set(['missing-auth', 'auth-failed', 'cooldown']);
+const unavailableReasons = new Set(['missing-auth', 'auth-failed']);
 
 export const normalizeOpenClawModelChoices = (value: unknown) => {
   if (!Array.isArray(value)) return [];
@@ -53,9 +50,6 @@ export const normalizeOpenClawModelChoices = (value: unknown) => {
             unavailableReason:
               unavailableReason as OpenClawModelsListResult['models'][number]['unavailableReason'],
           }
-        : {}),
-      ...(nonNegativeInteger(record.unavailableUntil) !== undefined
-        ? { unavailableUntil: nonNegativeInteger(record.unavailableUntil) }
         : {}),
       ...(positiveInteger(record.contextWindow) !== undefined
         ? { contextWindow: positiveInteger(record.contextWindow) }

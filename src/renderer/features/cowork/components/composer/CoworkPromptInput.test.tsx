@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { flushSync } from 'react-dom';
-import { Provider } from 'react-redux';
+import { Provider, useSelector } from 'react-redux';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { setAvailableModels } from '@/features/models/modelSlice';
+import { setAvailableModels, setSelectedModel } from '@/features/models/modelSlice';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { store } from '@/store';
@@ -12,12 +12,137 @@ import { store } from '@/store';
 import CoworkPromptInput from './CoworkPromptInput';
 
 const originalModels = store.getState().model.availableModels;
+const originalSelectedModel = store.getState().model.selectedModel;
 
 afterEach(() => {
   cleanup();
   store.dispatch(setAvailableModels(originalModels));
+  store.dispatch(setSelectedModel(originalSelectedModel));
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+test('keeps model clicks immediate and skips intermediate choices while native confirmation is pending', async () => {
+  const models = ['Current', 'First', 'Intermediate', 'Latest'].map(name => ({
+    id: name.toLowerCase(),
+    name,
+    provider: 'Acme',
+    providerKey: 'custom_0',
+  }));
+  store.dispatch(setAvailableModels(models));
+  store.dispatch(setSelectedModel(models[0]));
+  vi.spyOn(configService, 'acceptDefaultModelSelection').mockImplementation(() => undefined);
+  const sessionId = 'responsive-model-selection';
+  const contextKey = `${sessionId}\0main`;
+  let finishFirst!: (result: { success: true; modelRef: string }) => void;
+  let finishDefaults!: (result: { success: true }) => void;
+  const firstPatch = new Promise<{ success: true; modelRef: string }>(resolve => {
+    finishFirst = resolve;
+  });
+  const defaults = new Promise<{ success: true }>(resolve => {
+    finishDefaults = resolve;
+  });
+  const patchSessionModel = vi
+    .fn(async ({ model }: { model: string }) => ({
+      success: true,
+      modelRef: model,
+    }))
+    .mockImplementationOnce(() => firstPatch);
+  const setDefaultModel = vi.fn(() => defaults);
+  // Even a pending catalog read must never hold the configured menu open or block selection.
+  const listModels = vi.fn(() => new Promise(() => {}));
+  const getSessionModel = vi.fn(async () => ({
+    success: true,
+    source: 'gateway',
+    modelRef: 'acme/current',
+  }));
+  vi.stubGlobal('electron', {
+    extensions: {
+      list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
+      onChanged: vi.fn().mockReturnValue(() => undefined),
+    },
+    cowork: {
+      patchSessionModel,
+      setDefaultModel,
+      getSessionModel,
+      getSessionGoal: vi.fn().mockResolvedValue({ success: true, goal: null }),
+      getGoalExecution: vi.fn().mockResolvedValue({ success: true }),
+      onSessionGoalChanged: vi.fn().mockReturnValue(() => undefined),
+      onGoalExecutionChanged: vi.fn().mockReturnValue(() => undefined),
+    },
+    openclaw: { models: { list: listModels } },
+    localAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
+    localSpeechModels: { onChanged: vi.fn().mockReturnValue(() => undefined) },
+  });
+  const onSubmit = vi.fn();
+  const Composer = () => {
+    const modelRef = useSelector(
+      (state: ReturnType<typeof store.getState>) =>
+        state.cowork.userConfirmedSessionModelRefs[sessionId],
+    );
+    return (
+      <CoworkPromptInput
+        size="large"
+        sessionId={sessionId}
+        sessionModelRef={modelRef ?? 'acme/current'}
+        modelAgentId="main"
+        showModelSelector
+        onSubmit={onSubmit}
+      />
+    );
+  };
+  render(
+    <Provider store={store}>
+      <Composer />
+    </Provider>,
+  );
+  const input = screen.getByRole('textbox') as HTMLTextAreaElement;
+  fireEvent.change(input, { target: { value: 'Keep this draft' } });
+  const send = screen.getByRole('button', {
+    name: i18nService.t('coworkSendMessage'),
+  }) as HTMLButtonElement;
+  await waitFor(() => expect(send.disabled).toBe(false));
+  const select = (current: string, next: string) => {
+    fireEvent.click(screen.getByRole('button', { name: current }));
+    fireEvent.click(screen.getByText(next));
+    const selector = screen.getByRole('button', { name: next }) as HTMLButtonElement;
+    expect(selector.disabled).toBe(false);
+    expect(selector.getAttribute('aria-busy')).toBe('false');
+    expect(selector.getAttribute('aria-expanded')).toBe('false');
+  };
+
+  select('Current', 'First');
+  await waitFor(() => expect(patchSessionModel).toHaveBeenCalledTimes(1));
+  select('First', 'Intermediate');
+  select('Intermediate', 'Latest');
+  expect(send.disabled).toBe(true);
+  expect(input.value).toBe('Keep this draft');
+  expect(listModels).toHaveBeenCalledTimes(1);
+  expect(getSessionModel).toHaveBeenCalledTimes(1);
+  expect(patchSessionModel).toHaveBeenCalledTimes(1);
+
+  await act(async () => {
+    finishFirst({ success: true, modelRef: 'acme/first' });
+  });
+
+  await waitFor(() => expect(send.disabled).toBe(false));
+  expect(patchSessionModel.mock.calls.map(([options]) => options.model)).toEqual([
+    'acme/first',
+    'acme/latest',
+  ]);
+  expect(store.getState().cowork.pendingModelSelectionTaskIds[contextKey]).toBeUndefined();
+  expect(store.getState().cowork.userConfirmedSessionModelRefs[sessionId]).toBe('acme/latest');
+  expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy();
+  expect(setDefaultModel).toHaveBeenCalledTimes(2);
+  expect(input.value).toBe('Keep this draft');
+  expect(onSubmit).not.toHaveBeenCalled();
+
+  await act(async () => {
+    finishDefaults({ success: true });
+  });
+  await waitFor(() =>
+    expect(store.getState().cowork.pendingModelSelectionTaskIds['__home__\0main']).toBeUndefined(),
+  );
 });
 
 test.each(['normal', 'large'] as const)(

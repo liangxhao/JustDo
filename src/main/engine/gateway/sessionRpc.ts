@@ -165,11 +165,13 @@ export class SessionRpc {
           normalizedModel,
         );
 
+        let patchAcknowledged = false;
         try {
           const result = await client.request<{ resolved?: unknown }>('sessions.patch', {
             key: sessionKey,
             model: normalizedModel,
           });
+          patchAcknowledged = true;
           // Use the mutation's resolved identity, including Gateway aliases. The
           // entry's model fields may still describe the preceding execution.
           const modelRef = readModelRef(result.resolved);
@@ -179,22 +181,23 @@ export class SessionRpc {
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : String(error);
           let currentModelRef: string | undefined;
-          try {
-            currentModelRef =
-              (await this.readCurrentModel(client, sessionId, agentId)) ?? undefined;
-            // Recover a lost mutation response only when the selected identity
-            // confirms the request. Built-in discovery IDs also expose their
-            // provider/model identity without the local catalog wrapper.
-            if (
-              isAmbiguousModelPatchFailure(error) &&
-              currentModelRef &&
-              matchesModelSelectionIdentity(normalizedModel, currentModelRef)
-            ) {
-              this.callbacks.store.updateSession(sessionId, { modelRef: currentModelRef });
-              return { ok: true, modelRef: currentModelRef, appliesTo, source: 'gateway' };
+          // Definite rejections can roll back immediately. A lost response or
+          // failure after acknowledgement still needs the native selected identity.
+          if (patchAcknowledged || isAmbiguousModelPatchFailure(error)) {
+            try {
+              currentModelRef =
+                (await this.readCurrentModel(client, sessionId, agentId)) ?? undefined;
+              // Built-in discovery IDs can omit the local catalog wrapper.
+              if (
+                currentModelRef &&
+                matchesModelSelectionIdentity(normalizedModel, currentModelRef)
+              ) {
+                this.callbacks.store.updateSession(sessionId, { modelRef: currentModelRef });
+                return { ok: true, modelRef: currentModelRef, appliesTo, source: 'gateway' };
+              }
+            } catch {
+              // Preserve the patch failure when recovery is unavailable.
             }
-          } catch {
-            // The patch failure is already actionable; do not hide it behind recovery errors.
           }
           console.warn('[OpenClawRuntime] patchSessionModel: failed:', errorMsg);
           return {

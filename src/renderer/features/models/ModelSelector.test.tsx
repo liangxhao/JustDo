@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 
 import { configureStore } from '@reduxjs/toolkit';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { Provider } from 'react-redux';
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import ModelSelector from './ModelSelector';
 import modelReducer, { type Model } from './modelSlice';
+
+afterEach(cleanup);
 
 const renderSelector = (models: Model[], onChange = vi.fn(), onOpen = vi.fn()) => {
   const store = configureStore({ reducer: { model: modelReducer } });
@@ -52,31 +54,33 @@ describe('ModelSelector', () => {
     expect(screen.getByRole('button', { name: '请选择模型' })).toBeTruthy();
   });
 
-  test('allows selecting models regardless of transient runtime availability', () => {
-    const models: Model[] = [
-      { id: 'ready', name: 'Ready model', providerKey: 'custom_0', provider: 'Acme' },
-      {
-        id: 'unavailable',
-        name: 'Unavailable model',
-        providerKey: 'custom_0',
-        provider: 'Acme',
-        available: false,
-        unavailableReason: 'cooldown',
-        unavailableUntil: Date.now() + 60_000,
-      },
-    ];
-    const { onChange, onOpen } = renderSelector(models);
+  test.each(['missing-auth', 'auth-failed', undefined] as const)(
+    'allows selecting a configured model with runtime state %s',
+    unavailableReason => {
+      const models: Model[] = [
+        { id: 'ready', name: 'Ready model', providerKey: 'custom_0', provider: 'Acme' },
+        {
+          id: 'unavailable',
+          name: 'Unavailable model',
+          providerKey: 'custom_0',
+          provider: 'Acme',
+          available: false,
+          unavailableReason,
+        },
+      ];
+      const { onChange, onOpen } = renderSelector(models);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Ready model' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Ready model' }));
 
-    const unavailableButton = screen.getByText('Unavailable model').closest('button');
-    expect(unavailableButton?.getAttribute('aria-disabled')).toBeNull();
-    expect(unavailableButton?.getAttribute('title')).toBeNull();
-    expect(unavailableButton?.textContent).toBe('Acme/Unavailable model');
-    fireEvent.click(unavailableButton!);
-    expect(onChange).toHaveBeenCalledWith(models[1]);
-    expect(onOpen).toHaveBeenCalledOnce();
-  });
+      const unavailableButton = screen.getByText('Unavailable model').closest('button');
+      expect(unavailableButton?.getAttribute('aria-disabled')).toBeNull();
+      expect(unavailableButton?.getAttribute('title')).toBeNull();
+      expect(unavailableButton?.textContent).toBe('Acme/Unavailable model');
+      fireEvent.click(unavailableButton!);
+      expect(onChange).toHaveBeenCalledWith(models[1]);
+      expect(onOpen).toHaveBeenCalledOnce();
+    },
+  );
 
   test('renders the configured provider and complete model display name on one line', () => {
     const models: Model[] = [

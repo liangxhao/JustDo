@@ -79,7 +79,7 @@ describe('OpenClaw gateway bundle launcher', () => {
     if (stateDir.length > 200) expect(env.NODE_DISABLE_COMPILE_CACHE).toBe('1');
   });
 
-  test('waits for host readiness before flushing a pending Gateway import', async () => {
+  test('keeps cache serialization out of live Gateway requests and persists on exit', async () => {
     const runtimeRoot = createRuntime();
     fs.writeFileSync(path.join(runtimeRoot, 'gateway-bundle.mjs'), [
       "import { getCompileCacheDir } from 'node:module';",
@@ -105,8 +105,11 @@ describe('OpenClaw gateway bundle launcher', () => {
       child.send(GATEWAY_READY_MESSAGE);
       const [result] = await ready;
       expect(result.phase).toBe('ready');
-      expect(result.files).toBeGreaterThan(0);
+      expect(result.files).toBe(0);
       await exited;
+      const cacheDirectory = fs.readdirSync(path.join(runtimeRoot, '.compile-cache'))[0];
+      expect(fs.readdirSync(path.join(runtimeRoot, '.compile-cache', cacheDirectory)).length)
+        .toBeGreaterThan(0);
     } finally {
       if (child.exitCode === null) child.kill();
     }
@@ -177,13 +180,13 @@ describe('OpenClaw gateway bundle launcher', () => {
     );
   });
 
-  test('flushes compile cache while the Gateway module import remains pending', () => {
+  test('also postpones standalone Gateway cache serialization until exit', () => {
     const runtimeRoot = createRuntime();
     fs.writeFileSync(path.join(runtimeRoot, 'gateway-bundle.mjs'), [
       "import { getCompileCacheDir } from 'node:module';",
       "import { readdirSync } from 'node:fs';",
       'await new Promise(resolve => setTimeout(resolve, 5500));',
-      'process.stdout.write(JSON.stringify(readdirSync(getCompileCacheDir()).length));',
+      'process.stdout.write(JSON.stringify({ directory: getCompileCacheDir(), files: readdirSync(getCompileCacheDir()).length }));',
       'process.exit(0);',
     ].join('\n'));
     const { launcherPath } = ensureOpenClawGatewayBundleLauncher(runtimeRoot);
@@ -193,6 +196,8 @@ describe('OpenClaw gateway bundle launcher', () => {
       encoding: 'utf8', timeout: 9000,
       env,
     });
-    expect(JSON.parse(output)).toBeGreaterThan(0);
+    const result = JSON.parse(output);
+    expect(result.files).toBe(0);
+    expect(fs.readdirSync(result.directory).length).toBeGreaterThan(0);
   }, 10_000);
 });

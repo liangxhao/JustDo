@@ -21,7 +21,6 @@ export const enrichModelsFromOpenClawCatalog = (
       ...model,
       available: choice.available,
       unavailableReason: choice.unavailableReason,
-      unavailableUntil: choice.unavailableUntil,
       supportsImage: choice.input ? choice.input.includes('image') : model.supportsImage,
       contextLength: choice.contextWindow ?? model.contextLength,
       reasoning: choice.reasoning,

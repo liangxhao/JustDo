@@ -3068,7 +3068,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                             onChange={async nextModel => {
                               if (!nextModel) return;
                               const selectionContextKey = modelSelectionContextKey;
-                              const { taskId, completion } = modelSelectionTaskQueue.enqueue(
+                              const { taskId, completion } = modelSelectionTaskQueue.enqueueLatest(
+                                selectionContextKey,
                                 async () => {
                                   try {
                                     const result = await applyModelSelectionUpdate(

@@ -14,6 +14,30 @@ import { OpenClawModelsIpc } from '../../../shared/openclaw/models';
 import { normalizeOpenClawModelChoices, registerOpenClawModelHandlers } from './models';
 
 describe('normalizeOpenClawModelChoices', () => {
+  test('retains model choices without forwarding runtime retry state', () => {
+    const models = normalizeOpenClawModelChoices([
+      {
+        id: 'configured-model',
+        name: 'Configured model',
+        provider: 'acme',
+        available: false,
+        unavailableReason: 'cooldown',
+        unavailableUntil: 123,
+        input: ['text', 'image'],
+      },
+    ]);
+
+    expect(models).toEqual([
+      {
+        id: 'configured-model',
+        name: 'Configured model',
+        provider: 'acme',
+        available: false,
+        input: ['text', 'image'],
+      },
+    ]);
+  });
+
   test('drops malformed rows and private or unknown fields', () => {
     expect(
       normalizeOpenClawModelChoices([

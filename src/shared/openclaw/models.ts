@@ -2,7 +2,7 @@ export const OpenClawModelsIpc = {
   List: 'openclaw:models:list',
 } as const;
 
-export type OpenClawModelUnavailableReason = 'missing-auth' | 'auth-failed' | 'cooldown';
+export type OpenClawModelUnavailableReason = 'missing-auth' | 'auth-failed';
 
 export interface OpenClawModelChoice {
   id: string;
@@ -12,7 +12,6 @@ export interface OpenClawModelChoice {
   tags?: string[];
   available?: boolean;
   unavailableReason?: OpenClawModelUnavailableReason;
-  unavailableUntil?: number;
   contextWindow?: number;
   reasoning?: boolean;
   supportsTools?: boolean;

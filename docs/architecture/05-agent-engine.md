@@ -72,6 +72,8 @@ Adapter 入口保留生命周期及状态，runtimeGatewayConnection、runtimeGa
 
 Gateway bundle 位于运行时根目录，构建流程必须把原始 `dist/build-info.json` 同步到 bundle 旁，并作为必需 companion 验证。原生迁移检查从执行模块旁读取构建身份；缺失时会把检查点判为失效，每次启动重做迁移检查。这里保留原始构建身份和原生检查点规则，不伪造迁移完成状态；构建、配置或插件迁移指纹变化仍由 OpenClaw 判定是否需要重跑。
 
+Bundle 启动器在 Gateway 正常退出时保存编译缓存，不在就绪后周期性执行同步 `flushCompileCache()`。10.4 运行时实测中，这项同步缓存序列化曾阻塞模型切换与其它 RPC 数秒；移出运行阶段后继续保留正常退出的启动加速缓存。强制终止可能丢失尚未保存的编译缓存，不影响原生会话持久化与恢复规则；一次性 CLI 在导入完成后仍可保存缓存。
+
 冻结 manifest 把补丁、helper、source lock 和构建 recipe 绑定在一起。同版本输入变化也可能拒绝旧产物。历史或部分补丁标记不得就地迁移；从 pristine 包重建，见[开发指南](../development.md)。
 
 原生助手向其它会话转发新任务时，调用者授权与 transcript 写入归属具有不同的寿命。
@@ -133,7 +135,7 @@ stateDiagram-v2
 
 Windows Gateway 子进程通过专用 Node IPC 接收退出请求，宿主注入的 shutdown preload 转交给 OpenClaw 原生 SIGTERM 处理器释放数据库租约；父进程断开时也执行同一清理。不能把 Windows `child.kill()` 当作优雅退出，它会跳过清理，遗留租约在 PID 被系统进程复用且无法读取创建时间时可能阻塞下次启动。原生插件与连接清理可能超过 4 秒，退出请求 15 秒后仍未完成才强制结束，整个停止过程最多等待 16 秒。开发宿主清理预算为 30 秒，紧急清理额外等待最多 17 秒，避免宿主先于 Gateway 的退出截止时间结束。
 
-宿主确认健康后通过同一 IPC 通知 launcher 开始周期性持久化 V8 编译缓存。缓存序列化是同步操作，不能在冷启动尚未就绪时执行；独立 CLI 没有宿主 IPC 时保留原有缓存写入行为。应用退出开始时先关闭 Manager 的启动准入，再清理依赖和停止 Gateway，避免后台读取或排队的重启在退出期间重新创建进程。
+Gateway 运行期间不执行同步编译缓存序列化，缓存由 launcher 在正常退出时保存；一次性 CLI 在导入完成后保存。应用退出开始时先关闭 Manager 的启动准入，再清理依赖和停止 Gateway，避免后台读取或排队的重启在退出期间重新创建进程。
 
 进程 generation 与连接 generation 用于淘汰旧退出通知、重连结果和事件。唤醒或断线后建立新连接，不允许旧 socket 的终态更新新运行。Manager 的进程就绪只代表 Gateway 服务可用，模型认证与 session 权限还有独立验证。
 

@@ -110,6 +110,8 @@ describe('SessionRpc model coordination', () => {
       error: failure.message,
     });
     expect(updateSession).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).not.toHaveBeenCalledWith('sessions.describe', expect.anything());
   });
 
   test('recovers a disconnected response when the selected identity confirms the request', async () => {
@@ -187,6 +189,39 @@ describe('SessionRpc model coordination', () => {
       error: 'sessions.patch returned no resolved model',
     });
     expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  test('recovers an acknowledged patch with no resolved model after reading the selected identity', async () => {
+    const { rpc, request, session } = createHarness();
+    request.mockImplementation(async method =>
+      method === 'sessions.patch'
+        ? {}
+        : { session: { modelProvider: 'openai', model: 'gpt-5' } },
+    );
+
+    const update = rpc.patchModel('session-1', 'openai/gpt-5');
+    const barrier = rpc.waitForModelUpdate('session-1');
+
+    await expect(update).resolves.toMatchObject({ ok: true, modelRef: 'openai/gpt-5' });
+    await expect(barrier).resolves.toBeUndefined();
+    expect(session.modelRef).toBe('openai/gpt-5');
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  test('returns the native selected identity when local persistence fails after acknowledgement', async () => {
+    const { rpc, request, session, updateSession } = createHarness();
+    updateSession.mockImplementation(() => {
+      throw new Error('local persistence failed');
+    });
+
+    await expect(rpc.patchModel('session-1', 'openai/gpt-5')).resolves.toMatchObject({
+      ok: false,
+      error: 'local persistence failed',
+      modelRef: 'openai/gpt-5',
+      source: 'gateway',
+    });
+    expect(session.modelRef).toBe('openai/gpt-4o');
+    expect(request).toHaveBeenCalledTimes(2);
   });
 
   test('uses the mutation result instead of stale entry execution metadata', async () => {
@@ -473,7 +508,7 @@ describe('SessionRpc model coordination', () => {
     expect(session.modelRef).toBe('openai/gpt-5');
   });
 
-  test('does not replace the user selection when a failed patch reads another model', async () => {
+  test('returns a definite rejection without waiting for a model read', async () => {
     const session = { id: 'session-1', agentId: 'main', modelRef: 'openai/gpt-4o' };
     const updateSession = vi.fn();
     const request = vi.fn(async (method: string) => {
@@ -502,8 +537,9 @@ describe('SessionRpc model coordination', () => {
 
     await expect(rpc.patchModel('session-1', 'openai/gpt-5')).resolves.toMatchObject({
       ok: false,
-      modelRef: 'anthropic/claude-sonnet-4',
+      error: 'patch failed',
     });
+    expect(request).toHaveBeenCalledTimes(1);
     expect(updateSession).not.toHaveBeenCalled();
     expect(session.modelRef).toBe('openai/gpt-4o');
   });
