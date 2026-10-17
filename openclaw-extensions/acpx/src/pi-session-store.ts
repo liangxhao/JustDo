@@ -1,15 +1,19 @@
-import { createReadStream } from "node:fs";
-import fs from "node:fs/promises";
-import path from "node:path";
-import { runTasksWithConcurrency } from "openclaw/plugin-sdk/concurrency-runtime";
-import { isPathStrictlyInside } from "openclaw/plugin-sdk/file-access-runtime";
-import type { SessionCatalogSession } from "openclaw/plugin-sdk/session-catalog";
+import { createReadStream } from 'node:fs';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
+import { runTasksWithConcurrency } from 'openclaw/plugin-sdk/concurrency-runtime';
+import { isPathStrictlyInside } from 'openclaw/plugin-sdk/file-access-runtime';
+import { parseDateFirstTimestampMs } from 'openclaw/plugin-sdk/number-runtime';
+import type { SessionCatalogSession } from 'openclaw/plugin-sdk/session-catalog';
 import {
   isRecord,
   normalizeBoundedOptionalString as readBoundedString,
-} from "openclaw/plugin-sdk/string-coerce-runtime";
-import { piAcpSessionStoreRoot, piSessionStore } from "./pi-session-paths.js";
-import { parsePiSessionTimestampMs } from "./pi-session-timestamp.js";
+} from 'openclaw/plugin-sdk/string-coerce-runtime';
+import { safeParseJson } from 'openclaw/plugin-sdk/text-utility-runtime';
+
+import { PI_SESSION_ID_PATTERN } from './pi-session-catalog-shared.js';
+import { piAcpSessionStoreRoot, piSessionStore } from './pi-session-paths.js';
 
 const MAX_DISCOVERY_FILES = 10_000;
 const SUMMARY_SCAN_BATCH_SIZE = 100;
@@ -20,7 +24,6 @@ const APPEND_PROOF_EDGE_BYTES = 64 * 1024;
 const IO_CONCURRENCY = 8;
 const PI_FILE_CANDIDATE_CACHE_TTL_MS = 32_000;
 const PI_FILE_CANDIDATE_CACHE_MAX_ENTRIES = 8;
-const SESSION_ID_PATTERN = /^(?!-)[A-Za-z0-9._:-]{1,256}$/u;
 
 type PiSessionSummary = SessionCatalogSession & { file: string; version: number };
 
@@ -83,7 +86,7 @@ function cacheSummary(file: string, value: CachedSummary): void {
   summaryCache.set(file, value);
   while (summaryCache.size > MAX_SUMMARY_CACHE_ENTRIES) {
     const oldest = summaryCache.keys().next().value;
-    if (typeof oldest !== "string") {
+    if (typeof oldest !== 'string') {
       break;
     }
     forgetCachedSummary(oldest);
@@ -95,7 +98,7 @@ async function discoverPiSessionFiles(
 ): Promise<{ root: string; files: string[] }> {
   const store = piSessionStore(env);
   const resolvedRoot = await realpathOrResolve(store.root);
-  let entries: Array<import("node:fs").Dirent>;
+  let entries: Array<import('node:fs').Dirent>;
   try {
     entries = await fs.readdir(resolvedRoot, { withFileTypes: true });
   } catch {
@@ -105,9 +108,9 @@ async function discoverPiSessionFiles(
     return {
       root: store.root,
       files: entries
-        .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+        .filter(entry => entry.isFile() && entry.name.endsWith('.jsonl'))
         .slice(0, MAX_DISCOVERY_FILES)
-        .map((entry) => path.join(resolvedRoot, entry.name)),
+        .map(entry => path.join(resolvedRoot, entry.name)),
     };
   }
   const files: string[] = [];
@@ -116,14 +119,14 @@ async function discoverPiSessionFiles(
       continue;
     }
     const directory = path.join(resolvedRoot, entry.name);
-    let children: Array<import("node:fs").Dirent>;
+    let children: Array<import('node:fs').Dirent>;
     try {
       children = await fs.readdir(directory, { withFileTypes: true });
     } catch {
       continue;
     }
     for (const child of children) {
-      if (child.isFile() && child.name.endsWith(".jsonl")) {
+      if (child.isFile() && child.name.endsWith('.jsonl')) {
         files.push(path.join(directory, child.name));
         if (files.length >= MAX_DISCOVERY_FILES) {
           break;
@@ -147,7 +150,7 @@ async function scanPiFileCandidates(env: NodeJS.ProcessEnv): Promise<PiFileCandi
   const configuredAcpRoot = piAcpSessionStoreRoot(env);
   const acpRoot = configuredAcpRoot ? await realpathOrResolve(configuredAcpRoot) : undefined;
   const { results: candidates } = await runTasksWithConcurrency({
-    tasks: files.map((file) => async () => {
+    tasks: files.map(file => async () => {
       try {
         const stats = await fs.stat(file);
         return stats.isFile()
@@ -174,7 +177,7 @@ async function scanPiFileCandidates(env: NodeJS.ProcessEnv): Promise<PiFileCandi
 
 async function piFileCandidates(env: NodeJS.ProcessEnv): Promise<PiFileCandidate[]> {
   const store = piSessionStore(env);
-  const key = `${store.root}\0${store.flat}\0${piAcpSessionStoreRoot(env) ?? ""}`;
+  const key = `${store.root}\0${store.flat}\0${piAcpSessionStoreRoot(env) ?? ''}`;
   const cached = piFileCandidateCache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
     piFileCandidateCache.delete(key);
@@ -205,57 +208,53 @@ async function piFileCandidates(env: NodeJS.ProcessEnv): Promise<PiFileCandidate
 }
 
 function parsePiJsonLines(content: string): Record<string, unknown>[] {
-  return content.split(/\r?\n/u).flatMap((line) => {
+  return content.split(/\r?\n/u).flatMap(line => {
     if (!line.trim()) {
       return [];
     }
-    try {
-      const value = JSON.parse(line) as unknown;
-      return isRecord(value) ? [value] : [];
-    } catch {
-      return [];
-    }
+    const value = safeParseJson<unknown>(line);
+    return isRecord(value) ? [value] : [];
   });
 }
 
-function textFromContent(content: unknown): string {
-  if (typeof content === "string") {
+export function piMessageText(content: unknown): string {
+  if (typeof content === 'string') {
     return content;
   }
   if (!Array.isArray(content)) {
-    return "";
+    return '';
   }
   return content
-    .flatMap((part) =>
-      isRecord(part) && part.type === "text" && typeof part.text === "string" ? [part.text] : [],
+    .flatMap(part =>
+      isRecord(part) && part.type === 'text' && typeof part.text === 'string' ? [part.text] : [],
     )
-    .join("\n");
+    .join('\n');
 }
 
 function processSummaryLine(state: PiSummaryScanState, line: Buffer): void {
   const content = line.at(-1) === 0x0d ? line.subarray(0, -1) : line;
-  const entry = parsePiJsonLines(content.toString("utf8"))[0];
+  const entry = parsePiJsonLines(content.toString('utf8'))[0];
   if (!entry) {
     return;
   }
   if (!state.header) {
-    if (entry.type !== "session") {
+    if (entry.type !== 'session') {
       state.invalid = true;
       return;
     }
     state.header = entry;
     return;
   }
-  if (entry.type === "session_info") {
+  if (entry.type === 'session_info') {
     // Latest metadata wins, including an explicit empty-name clear.
     state.name = readBoundedString(entry.name, 1_000);
   } else if (
     !state.firstMessage &&
-    entry.type === "message" &&
+    entry.type === 'message' &&
     isRecord(entry.message) &&
-    entry.message.role === "user"
+    entry.message.role === 'user'
   ) {
-    state.firstMessage = readBoundedString(textFromContent(entry.message.content), 1_000);
+    state.firstMessage = readBoundedString(piMessageText(entry.message.content), 1_000);
   }
 }
 
@@ -312,7 +311,7 @@ async function readAppendProof(
   if (length === 0) {
     return { head: Buffer.alloc(0), tail: Buffer.alloc(0) };
   }
-  const handle = await fs.open(file, "r");
+  const handle = await fs.open(file, 'r');
   try {
     const head = Buffer.alloc(length);
     const tail = Buffer.alloc(length);
@@ -355,7 +354,7 @@ async function readPiSessionSummary(
   }
   let summary: PiSessionSummary | undefined;
   let scanState: PiSummaryScanState;
-  let appendProof: CachedSummary["appendProof"];
+  let appendProof: CachedSummary['appendProof'];
   try {
     // Pi normally appends JSONL. Resume only when bounded edge proofs show the
     // previously indexed prefix survived; rewrites rebuild from byte zero.
@@ -381,23 +380,23 @@ async function readPiSessionSummary(
     }
     const { header, name, firstMessage } = projectedState;
     const version =
-      header?.type === "session" && typeof header.version === "number" ? header.version : 1;
-    const threadId = header?.type === "session" ? readBoundedString(header.id, 256) : undefined;
-    if (header && threadId && SESSION_ID_PATTERN.test(threadId)) {
+      header?.type === 'session' && typeof header.version === 'number' ? header.version : 1;
+    const threadId = header?.type === 'session' ? readBoundedString(header.id, 256) : undefined;
+    if (header && threadId && PI_SESSION_ID_PATTERN.test(threadId)) {
       const cwd = readBoundedString(header.cwd, 4_096);
-      const createdAt = parsePiSessionTimestampMs(header.timestamp);
+      const createdAt = parseDateFirstTimestampMs(header.timestamp);
       summary = {
         file: candidate.file,
         version,
         threadId,
         ...(name || firstMessage ? { name: name ?? firstMessage } : {}),
         ...(cwd ? { cwd } : {}),
-        status: "stored",
+        status: 'stored',
         ...(createdAt !== undefined ? { createdAt } : {}),
         updatedAt: candidate.mtimeMs,
         recencyAt: candidate.mtimeMs,
-        source: "pi-cli",
-        modelProvider: "pi",
+        source: 'pi-cli',
+        modelProvider: 'pi',
         archived: false,
         canContinue: candidate.resumable,
         canArchive: false,
@@ -422,7 +421,7 @@ function summaryMatches(summary: PiSessionSummary, needle?: string): boolean {
   if (!needle) {
     return true;
   }
-  return [summary.threadId, summary.name, summary.cwd].some((field) =>
+  return [summary.threadId, summary.name, summary.cwd].some(field =>
     field?.toLocaleLowerCase().includes(needle),
   );
 }
@@ -432,7 +431,7 @@ export async function listPiSummaryPage(
   params: { offset: number; limit: number; searchTerm?: string },
 ): Promise<{ summaries: PiSessionSummary[]; hasMore: boolean }> {
   const candidates = await piFileCandidates(env);
-  const activeFiles = new Set(candidates.map((candidate) => candidate.file));
+  const activeFiles = new Set(candidates.map(candidate => candidate.file));
   for (const file of summaryCache.keys()) {
     if (!activeFiles.has(file)) {
       forgetCachedSummary(file);
@@ -448,7 +447,7 @@ export async function listPiSummaryPage(
   ) {
     const batch = candidates.slice(index, index + SUMMARY_SCAN_BATCH_SIZE);
     const { results: summaries } = await runTasksWithConcurrency({
-      tasks: batch.map((candidate) => () => readPiSessionSummary(candidate)),
+      tasks: batch.map(candidate => () => readPiSessionSummary(candidate)),
       limit: IO_CONCURRENCY,
       throwOnError: true,
     });
@@ -476,11 +475,11 @@ async function findPiSummary(
     const { results: summaries } = await runTasksWithConcurrency({
       tasks: candidates
         .slice(index, index + SUMMARY_SCAN_BATCH_SIZE)
-        .map((candidate) => () => readPiSessionSummary(candidate)),
+        .map(candidate => () => readPiSessionSummary(candidate)),
       limit: IO_CONCURRENCY,
       throwOnError: true,
     });
-    const match = summaries.find((summary) => summary?.threadId === threadId);
+    const match = summaries.find(summary => summary?.threadId === threadId);
     if (match) {
       return match;
     }
@@ -521,18 +520,18 @@ export async function readPiSessionById(
       file = (await findPiSummary(threadId, env))?.file;
     }
     if (!file) {
-      throw new Error("Pi session was not found");
+      throw new Error('Pi session was not found');
     }
     try {
       const stats = await fs.stat(file);
       if (!stats.isFile()) {
-        throw new Error("Pi session is not a file");
+        throw new Error('Pi session is not a file');
       }
       if (stats.size > MAX_SESSION_BYTES) {
-        throw new RangeError("Pi session exceeds the 32 MiB read safety limit");
+        throw new RangeError('Pi session exceeds the 32 MiB read safety limit');
       }
-      const entries = parsePiJsonLines(await fs.readFile(file, "utf8"));
-      if (entries[0]?.type === "session" && entries[0].id === threadId) {
+      const entries = parsePiJsonLines(await fs.readFile(file, 'utf8'));
+      if (entries[0]?.type === 'session' && entries[0].id === threadId) {
         return entries;
       }
     } catch (error) {
@@ -540,12 +539,12 @@ export async function readPiSessionById(
         throw error;
       }
       if (attempt > 0) {
-        throw new Error("Pi session is unavailable", { cause: error });
+        throw new Error('Pi session is unavailable', { cause: error });
       }
     }
     // The cached path can disappear when Pi replaces or prunes a session file.
     threadFileCache.delete(cacheKey);
     file = undefined;
   }
-  throw new Error("Pi session changed during read");
+  throw new Error('Pi session changed during read');
 }

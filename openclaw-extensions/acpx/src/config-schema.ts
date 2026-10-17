@@ -12,15 +12,11 @@ const ACPX_NON_INTERACTIVE_POLICIES = ['deny', 'fail'] as const;
 /** Permission policy applied when ACPX cannot ask a human for approval. */
 export type AcpxNonInteractivePermissionPolicy = (typeof ACPX_NON_INTERACTIVE_POLICIES)[number];
 
-/** Default session timeout for ACPX runtime turns. */
+/** Default timeout for ACPX startup and control operations. */
 export const DEFAULT_ACPX_TIMEOUT_SECONDS = 120;
 
 /** Raw MCP server command config accepted from plugin configuration. */
-export type McpServerConfig = {
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
-};
+export type McpServerConfig = z.output<typeof McpServerConfigSchema>;
 
 /** Normalized MCP server config emitted to the ACPX runtime process. */
 export type AcpxMcpServer = {
@@ -54,6 +50,7 @@ export type ResolvedAcpxPluginConfig = {
   stateDir: string;
   probeAgent?: string;
   startupProbe: boolean;
+  diagnosticAgents: string[];
   claudeExecutable?: string;
   permissionMode: AcpxPermissionMode;
   nonInteractivePermissions: AcpxNonInteractivePermissionPolicy;

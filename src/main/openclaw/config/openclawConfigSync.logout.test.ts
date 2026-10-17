@@ -144,6 +144,8 @@ test.each(['full', 'minimal'])(
     expect(sync.sync('app-config-change', new Set(['extension-server', 'disabled-server'])).ok).toBe(true);
     expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).mcp.servers).not.toHaveProperty('extension-server');
   },
+  // Six real filesystem projections need headroom under concurrent Windows test load.
+  15_000,
 );
 
 test('allows users to toggle agent-team independently of required extensions', () => {
@@ -990,6 +992,8 @@ describe('OpenClaw auth logout config sync', () => {
         }
       }
     },
+    // Nine real filesystem projections exercise both opt-in states across the lifecycle.
+    30_000,
   );
 
   test.each(['full', 'minimal'] as const)(
@@ -1054,6 +1058,8 @@ describe('OpenClaw auth logout config sync', () => {
       }
       expect(sync.sync('settings')).toMatchObject({ ok: true, configChanged: false });
     },
+    // Thirteen real filesystem projections cover every activation and lifecycle combination.
+    30_000,
   );
 
   test.each(['full', 'minimal'] as const)(
@@ -2660,6 +2666,8 @@ test.each(['full', 'minimal'])(
     expect(read().plugins.entries.typesafe.enabled).toBe(false);
     expect(read().agents.defaults.decisionModel).toBeUndefined();
   },
+  // Ten real filesystem projections include credential rotation and clearing the selection.
+  30_000,
 );
 
 test.each(['full', 'minimal'])(
@@ -2759,6 +2767,8 @@ test.each(['full', 'minimal'])(
     );
     expect(restored.plugins.entries.openai.enabled).toBe(true);
   },
+  // Nine real filesystem projections cover activation, clearing and restoration.
+  30_000,
 );
 
 test.each(['full', 'minimal'])(

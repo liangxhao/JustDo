@@ -1,6 +1,6 @@
 {
   "name": "acpx-runtime",
-  "version": "2026.9.8-local.1",
+  "version": "2026.10.4-local.1",
   "private": true,
   "description": "Vendored OpenClaw ACP runtime backend.",
   "repository": {
@@ -12,9 +12,9 @@
     "@agentclientprotocol/claude-agent-acp": "0.79.0",
     "@agentclientprotocol/codex-acp": "1.12.0",
     "@anthropic-ai/sdk": "0.125.0",
-    "@modelcontextprotocol/sdk": "1.30.0",
-    "acpx": "0.19.1",
-    "smol-toml": "1.8.0",
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "acpx": "0.19.5",
+    "smol-toml": "1.9.0",
     "zod": "4.6.5"
   },
   "openclaw": {
@@ -22,7 +22,7 @@
       "./index.ts"
     ],
     "compat": {
-      "pluginApi": ">=2026.9.8"
+      "pluginApi": ">=2026.10.4"
     }
   }
 }

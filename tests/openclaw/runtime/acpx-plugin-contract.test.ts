@@ -14,9 +14,7 @@ describe('vendored ACPX plugin contract', () => {
     const packageJson = readJson(path.join(repositoryRoot, 'package.json'));
     const openclaw = packageJson.openclaw as { plugins?: Array<Record<string, unknown>> };
 
-    expect(openclaw.plugins ?? []).not.toContainEqual(
-      expect.objectContaining({ id: 'acpx' }),
-    );
+    expect(openclaw.plugins ?? []).not.toContainEqual(expect.objectContaining({ id: 'acpx' }));
     expect(fs.existsSync(extensionRoot)).toBe(true);
   });
 
@@ -30,13 +28,13 @@ describe('vendored ACPX plugin contract', () => {
 
     expect(packageJson).toMatchObject({
       name: 'acpx-runtime',
-      version: '2026.9.8-local.1',
+      version: '2026.10.4-local.1',
       private: true,
     });
     expect(dependencies).toMatchObject({
       '@agentclientprotocol/claude-agent-acp': '0.79.0',
       '@agentclientprotocol/codex-acp': '1.12.0',
-      acpx: '0.19.1',
+      acpx: '0.19.5',
     });
     expect(schema.properties).toHaveProperty('claudeExecutable');
     expect(schema.properties).toHaveProperty('agents');
@@ -80,7 +78,7 @@ describe('vendored ACPX plugin contract', () => {
     expect(entrySource).toContain("{ scope: 'operator.read' }");
     expect(entrySource).toContain('doctorAgentIds.has(agentId)');
     expect(runtimeSource).toContain('async doctorAgent(agentName: string)');
-    expect(runtimeSource).toContain('probeAgent: normalizedAgentName');
+    expect(runtimeSource).toContain('this.probe.doctorAgent(normalizedAgentName)');
     expect(proxySource).toContain('doctorAgent(agentName)');
   });
 });

@@ -26,6 +26,7 @@ const projectionFile = fs.existsSync(dist)
 
 describe.skipIf(!projectionFile)('browser sources through locked native public history', () => {
   let projectHistory: (messages: unknown[], options: { maxChars: number }) => unknown[];
+  // Cold imports traverse the actual published native module graph on disk.
   beforeAll(async () => {
     const filename = path.join(dist, projectionFile!);
     const source = fs.readFileSync(filename, 'utf8');
@@ -33,7 +34,7 @@ describe.skipIf(!projectionFile)('browser sources through locked native public h
     expect(exportName).toBeTruthy();
     const native = await import(pathToFileURL(filename).href);
     projectHistory = native[exportName!];
-  });
+  }, 30_000);
 
   test.each(['direct', 'nested'] as const)(
     'retains Chrome route sources and embedded page blocks in %s results',

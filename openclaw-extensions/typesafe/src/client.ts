@@ -10,6 +10,7 @@ export async function evaluate(
   config: RuntimeConfig,
   signal?: AbortSignal,
   deadlineMonotonicMs?: number,
+  isAdmissible?: () => boolean,
 ) {
   if (signal?.aborted) {
     throw evaluationError(undefined, true);
@@ -38,6 +39,7 @@ export async function evaluate(
       timeoutMs: config.timeoutMs,
       signal,
       deadlineMonotonicMs,
+      isAdmissible,
     });
     signal?.throwIfAborted();
     const evaluation =

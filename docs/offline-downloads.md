@@ -24,9 +24,12 @@ package.json、各依赖锁及 source lock 为准；下列版本是当前仓库�
 npm 包应通过获准 registry/mirror 提供元数据、精确 tarball、全部传递及目标平台可选
 依赖，保持锁文件和 source lock 的 integrity。当前脚本没有「随便把 tgz 放进 vendor
 即可使用」的准入协议；只预填一个顶层 npm 包缓存不能证明全流程离线。
-ACPX 当前包含 acpx 0.19.1、Claude ACP adapter 0.79.0、Codex ACP adapter 1.12.0，
+ACPX 当前包含 acpx 0.19.5、Claude ACP adapter 0.79.0、Codex ACP adapter 1.12.0，
 完整依赖以 `openclaw-extensions/acpx/package-lock.json` 为准。开发 Node 与打包后
 Electron Node 环境分开，不能用 host 原生 ABI 代替目标 Electron ABI。
+ACPX 封装与 TypeSafe 源码均以 OpenClaw v2026.10.4 为上游基线，并保留各自
+来源记录中的本地定制。acpx 0.19.5 是独立运行库升级；其版本、传递依赖及目标平台
+可选原生包由 ACPX 的生产锁文件固定，不按上游默认命令在用户运行时下载。
 
 已联网或内网准备好的最终 runtime 仍需完整来源、补丁、预编译和 freeze 核验。不得
 手工补 generated bundle、跳过 hash 或从旧补丁目录移植文件。各平台准备命令、串行

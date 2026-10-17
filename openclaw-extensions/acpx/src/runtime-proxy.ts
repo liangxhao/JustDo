@@ -1,7 +1,6 @@
-/**
- * Lazy ACP runtime proxy for ACPX. It defers resolving the real runtime until
- * the first ACP call while preserving the SDK runtime shape.
- */
+import type { AcpxRuntime as UpstreamRuntime } from 'acpx/runtime';
+import { createLazyRuntimeMethodBinder } from 'openclaw/plugin-sdk/lazy-runtime';
+
 import type {
   AcpRuntime,
   AcpRuntimeDoctorReport,
@@ -19,22 +18,28 @@ export type CompleteAcpRuntimeTurn = AcpRuntimeTurn &
  * implements the full surface. Requiring them here turns an absent hook into
  * a compile error instead of a silently fabricated success at runtime.
  */
-export type CompleteAcpRuntime = Omit<AcpRuntime, 'startTurn'> &
-  Required<
-    Pick<
-      AcpRuntime,
-      | 'getCapabilities'
-      | 'getStatus'
-      | 'setMode'
-      | 'setConfigOption'
-      | 'doctor'
-      | 'prepareFreshSession'
-    >
-  > & {
+export type CompleteAcpRuntime = Omit<
+  AcpRuntime,
+  'startTurn' | 'getStatus' | 'prepareFreshSession'
+> &
+  Required<Pick<AcpRuntime, 'getCapabilities' | 'setMode' | 'setConfigOption' | 'doctor'>> & {
     startTurn(input: AcpRuntimeTurnInput): CompleteAcpRuntimeTurn;
+    getStatus: UpstreamRuntime['getStatus'];
+    setModel: UpstreamRuntime['setModel'];
+    prepareFreshSession(
+      input:
+        | Parameters<NonNullable<AcpRuntime['prepareFreshSession']>>[0]
+        | Parameters<UpstreamRuntime['prepareFreshSession']>[0],
+    ): Promise<void>;
+    findSession(input: {
+      sessionKey: string;
+      agent: string;
+      agentId?: string;
+    }): ReturnType<UpstreamRuntime['findSession']>;
+    shutdown(): Promise<void>;
   };
 
-/** ACPX control surface used by the plugin-owned Gateway diagnostics. */
+/** Product diagnostics retain the managed catalog's individual agent probe. */
 export type CompleteAcpxRuntime = CompleteAcpRuntime & {
   doctorAgent(agentName: string): Promise<AcpRuntimeDoctorReport>;
 };
@@ -69,43 +74,29 @@ function lazyStartRuntimeTurn(
 export function createLazyAcpRuntimeProxy(
   resolveRuntime: () => Promise<CompleteAcpxRuntime>,
 ): CompleteAcpxRuntime {
+  const bind = createLazyRuntimeMethodBinder(resolveRuntime);
   return {
     ownerAwareSessions: 1,
-    async ensureSession(input) {
-      return await (await resolveRuntime()).ensureSession(input);
-    },
+    findSession: bind(runtime => runtime.findSession.bind(runtime)),
+    shutdown: bind(runtime => runtime.shutdown.bind(runtime)),
+    ensureSession: bind(runtime => runtime.ensureSession.bind(runtime)),
     startTurn(input) {
       return lazyStartRuntimeTurn(resolveRuntime, input);
     },
     async *runTurn(input) {
       yield* (await resolveRuntime()).runTurn(input);
     },
-    async getCapabilities(input) {
-      return await (await resolveRuntime()).getCapabilities(input);
+    getCapabilities: bind(runtime => runtime.getCapabilities.bind(runtime)),
+    getStatus: bind(runtime => runtime.getStatus.bind(runtime)),
+    setMode: bind(runtime => runtime.setMode.bind(runtime)),
+    setModel: bind(runtime => runtime.setModel.bind(runtime)),
+    setConfigOption: bind(runtime => runtime.setConfigOption.bind(runtime)),
+    doctor: bind(runtime => runtime.doctor.bind(runtime)),
+    doctorAgent(agentName) {
+      return resolveRuntime().then(runtime => runtime.doctorAgent(agentName));
     },
-    async getStatus(input) {
-      return await (await resolveRuntime()).getStatus(input);
-    },
-    async setMode(input) {
-      await (await resolveRuntime()).setMode(input);
-    },
-    async setConfigOption(input) {
-      return await (await resolveRuntime()).setConfigOption(input);
-    },
-    async doctor() {
-      return await (await resolveRuntime()).doctor();
-    },
-    async doctorAgent(agentName) {
-      return await (await resolveRuntime()).doctorAgent(agentName);
-    },
-    async prepareFreshSession(input) {
-      await (await resolveRuntime()).prepareFreshSession(input);
-    },
-    async cancel(input) {
-      await (await resolveRuntime()).cancel(input);
-    },
-    async close(input) {
-      await (await resolveRuntime()).close(input);
-    },
+    prepareFreshSession: bind(runtime => runtime.prepareFreshSession.bind(runtime)),
+    cancel: bind(runtime => runtime.cancel.bind(runtime)),
+    close: bind(runtime => runtime.close.bind(runtime)),
   };
 }

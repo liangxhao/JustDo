@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
+
 import { readJsonFileWithFallback } from 'openclaw/plugin-sdk/json-store';
 import { isRecord as isConfigRecord } from 'openclaw/plugin-sdk/string-coerce-runtime';
 import {
@@ -13,6 +14,7 @@ import {
   stringify as stringifyToml,
   type TomlTableWithoutBigInt,
 } from 'smol-toml';
+
 import {
   CODEX_ACP_BIN,
   CODEX_ACP_PACKAGE,

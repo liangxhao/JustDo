@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
+
 import { transformSync } from 'esbuild';
 import { expect, test } from 'vitest';
 
-test('scopes the new acpx dynamic MCP resolver to the admitted session', () => {
+test('scopes resolved dynamic MCP servers to the admitted session', () => {
   const source = fs.readFileSync(path.resolve('openclaw-extensions/acpx/src/runtime.ts'), 'utf8');
   const fn = source.match(/function withManagedToolsMcpSessionEnv\([^]*?\n\}\r?\n/)?.[0];
   expect(fn).toBeDefined();
@@ -17,13 +18,22 @@ test('scopes the new acpx dynamic MCP resolver to the admitted session', () => {
   const context = { agent: 'codex' };
   const original = [{ name: 'openclaw-tools', command: 'node', args: [], env: [] }];
   const scoped = resolve({
-    pluginToolsEnabled: false, openclawToolsEnabled: true,
-    sessionKey: 'agent:main:justdo:task', agentId: 'main',
-    mcpServers: (value: unknown) => { expect(value).toBe(context); return original; },
+    pluginToolsEnabled: false,
+    openclawToolsEnabled: true,
+    sessionKey: 'agent:main:justdo:task',
+    agentId: 'main',
+    mcpServers: ((value: unknown) => {
+      expect(value).toBe(context);
+      return original;
+    })(context),
   });
-  expect(scoped(context)).toEqual([{
-    name: 'openclaw-tools', command: 'node', args: ['--openclaw-agent-id', 'main'],
-    env: [{ name: 'OPENCLAW_AGENT_SESSION_KEY', value: 'agent:main:justdo:task' }],
-  }]);
+  expect(scoped).toEqual([
+    {
+      name: 'openclaw-tools',
+      command: 'node',
+      args: ['--openclaw-agent-id', 'main'],
+      env: [{ name: 'OPENCLAW_AGENT_SESSION_KEY', value: 'agent:main:justdo:task' }],
+    },
+  ]);
   expect(original[0].env).toEqual([]);
 });

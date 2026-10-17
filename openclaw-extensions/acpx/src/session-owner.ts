@@ -1,13 +1,14 @@
-import { decodeAcpxRuntimeHandleState } from "acpx/runtime";
-import { AcpRuntimeError, type AcpRuntimeHandle } from "../runtime-api.js";
-import { resolveAcpxSessionResource } from "./session-resource.js";
-export { resolveAcpxSessionResource } from "./session-resource.js";
+import { decodeAcpxRuntimeHandleState } from 'acpx/runtime';
+
+import { AcpRuntimeError, type AcpRuntimeHandle } from '../runtime-api.js';
+import { resolveAcpxSessionResource } from './session-resource.js';
+export { resolveAcpxSessionResource } from './session-resource.js';
 
 function requireAcpxOwnerMigration(sessionKey: string): never {
   throw new AcpRuntimeError(
-    "ACP_SESSION_INIT_FAILED",
+    'ACP_SESSION_INIT_FAILED',
     `ACP session "${sessionKey}" has an unqualified or unverifiable backend locator. Stop the Gateway and run "openclaw doctor --fix" to migrate ownership without losing history, then restart.`,
-    { detailCode: "SESSION_OWNER_MIGRATION_REQUIRED" },
+    { detailCode: 'SESSION_OWNER_MIGRATION_REQUIRED' },
   );
 }
 

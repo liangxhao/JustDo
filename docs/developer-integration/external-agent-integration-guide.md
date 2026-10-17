@@ -441,6 +441,12 @@ Skill，需要单独设计显式的、安全的适配流程，不能把“已打
 设置页的单项“测试”和“测试全部”会调用 Gateway 的 `acpx.agent.doctor`，使用产品目录中登记的
 实际命令完成 ACP 初始化探测。
 
+已登记但未启用的内置适配器也先准备离线受管包装器；缺少随包文件时返回构建诊断，
+不使用上游 registry 的默认下载命令。准备诊断命令不会把该 Agent 加入任务准入集合。
+ACPX 封装基线为 OpenClaw v2026.10.4，独立运行库版本及离线依赖见
+[离线下载文档](../offline-downloads.md)，本地定制与上游来源见
+[ACPX 扩展](../../openclaw-extensions/acpx/README.md)。
+
 测试具备以下特性：
 
 - 未启用的 Agent 也可以测试；

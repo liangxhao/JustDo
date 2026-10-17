@@ -3,27 +3,12 @@
  * wires reply-dispatch hooks into the plugin SDK runtime.
  */
 import { tryDispatchAcpReplyHook } from 'openclaw/plugin-sdk/acp-runtime-backend';
-import { finiteSecondsToTimerSafeMilliseconds } from 'openclaw/plugin-sdk/number-runtime';
 import { redactSensitiveText } from 'openclaw/plugin-sdk/security-runtime';
-import { createAcpxRuntimeService } from './register.runtime.js';
-import { getAcpRuntimeBackend } from './runtime-api.js';
-import type {
-  OpenClawPluginApi,
-  PluginHookReplyDispatchContext,
-  PluginHookReplyDispatchEvent,
-  PluginHookReplyDispatchResult,
-} from './runtime-api.js';
-import { DEFAULT_ACPX_TIMEOUT_SECONDS } from './src/config-schema.js';
-import { registerPiSessionCatalog } from './src/pi-session-catalog-plugin.js';
 
-function resolveReplyDispatchTimeoutMs(pluginConfig?: Record<string, unknown>): number {
-  const timeoutSeconds = pluginConfig?.timeoutSeconds;
-  const resolvedSeconds =
-    typeof timeoutSeconds === 'number' && Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
-      ? timeoutSeconds
-      : DEFAULT_ACPX_TIMEOUT_SECONDS;
-  return finiteSecondsToTimerSafeMilliseconds(resolvedSeconds) ?? 1;
-}
+import { createAcpxRuntimeService } from './register.runtime.js';
+import type { OpenClawPluginApi } from './runtime-api.js';
+import { getAcpRuntimeBackend } from './runtime-api.js';
+import { registerPiSessionCatalog } from './src/pi-session-catalog-plugin.js';
 
 function resolveDoctorAgentIds(pluginConfig?: Record<string, unknown>): ReadonlySet<string> {
   const configuredAgents = Array.isArray(pluginConfig?.diagnosticAgents)
@@ -37,38 +22,17 @@ function resolveDoctorAgentIds(pluginConfig?: Record<string, unknown>): Readonly
   );
 }
 
-async function tryDispatchAcpReplyHookWithTimeout(
-  event: PluginHookReplyDispatchEvent,
-  ctx: PluginHookReplyDispatchContext,
-  timeoutMs: number,
-): Promise<PluginHookReplyDispatchResult | void> {
-  const timeoutController = new AbortController();
-  const timeout = setTimeout(() => timeoutController.abort(), timeoutMs);
-  timeout.unref?.();
-  const abortSignal = ctx.abortSignal
-    ? AbortSignal.any([ctx.abortSignal, timeoutController.signal])
-    : timeoutController.signal;
-  try {
-    return await tryDispatchAcpReplyHook(event, {
-      ...ctx,
-      abortSignal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 const plugin = {
   id: 'acpx',
   name: 'ACPX Runtime',
   description: 'Embedded ACP runtime backend with plugin-owned session and transport management.',
   register(api: OpenClawPluginApi) {
-    const replyDispatchTimeoutMs = resolveReplyDispatchTimeoutMs(api.pluginConfig);
     const doctorAgentIds = resolveDoctorAgentIds(api.pluginConfig);
     registerPiSessionCatalog(api);
     api.registerService(
       createAcpxRuntimeService({
         pluginConfig: api.pluginConfig,
+        getAllowedAgents: () => api.runtime.config.current().acp?.allowedAgents,
         openKeyedStore: options => api.runtime.state.openKeyedStore(options),
       }),
     );
@@ -106,11 +70,7 @@ const plugin = {
       },
       { scope: 'operator.read' },
     );
-    api.on(
-      'reply_dispatch',
-      (event, ctx) => tryDispatchAcpReplyHookWithTimeout(event, ctx, replyDispatchTimeoutMs),
-      { timeoutMs: replyDispatchTimeoutMs, eligibleDispatchKinds: ['acp'] },
-    );
+    api.on('reply_dispatch', tryDispatchAcpReplyHook, { eligibleDispatchKinds: ['acp'] });
   },
 };
 

@@ -2,7 +2,9 @@
 
 This directory vendors `extensions/typesafe` from
 `https://github.com/openclaw/openclaw`, revision
-`b1c1c6d3af1f68bc82efbb6c92fb224c36df8683` (package version `2026.9.8`).
+`383c124cc32ffee3f8e56f549b88da94d269a4af` (tag `v2026.10.4`, package
+version `2026.10.4`). The refresh was compared against the previous upstream
+baseline `b1c1c6d3af1f68bc82efbb6c92fb224c36df8683` (`2026.9.8`) and this local fork.
 The native decision semantics, response validation, assets and MIT license
 are preserved. One application transport seam adds `serviceUrl`: an authenticated
 HTTP(S) API base including `/v1` or another prefix. It accepts explicit intranet
@@ -18,6 +20,17 @@ the exact selected model cannot introduce a new credential disclosure; searching
 the whole serialized response falsely rejected short keys matching those values,
 JSON field names or numeric results. Unexpected model names containing the key
 remain rejected, and raw transport diagnostics never cross the plugin boundary.
+
+The v2026.10.4 refresh carries the native `context.isAdmissible` callback through
+the decision adapter and client to the transport. Admission is checked before
+guarded-fetch preparation and again by native `beforeRequest` after asynchronous
+DNS/transport preparation, immediately before dispatch. This applies to hosted,
+loopback and authenticated `serviceUrl` requests. It also adopts upstream's
+`URL.parse` validation for the loopback origin. The native credential ownership,
+lazy loading, cancellation, response cleanup and host-selected `decisionModel`
+remain intact. Existing behavior tests are retained instead of importing
+upstream test deletions; additional offline regressions exercise admission
+revocation during lazy loading and native DNS preparation.
 
 Packaging-only changes:
 

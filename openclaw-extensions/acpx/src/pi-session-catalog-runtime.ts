@@ -1,9 +1,10 @@
-import process from "node:process";
-import { resolveAcpSessionAvailability } from "openclaw/plugin-sdk/acp-runtime";
-import { resolveSessionAgentIdsStrict } from "openclaw/plugin-sdk/agent-scope-runtime";
-import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { resolveNodeHostExecutable } from "openclaw/plugin-sdk/node-host";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
+import process from 'node:process';
+
+import { resolveAcpSessionAvailability } from 'openclaw/plugin-sdk/acp-runtime';
+import { resolveSessionAgentIdsStrict } from 'openclaw/plugin-sdk/agent-scope-runtime';
+import type { OpenClawConfig } from 'openclaw/plugin-sdk/config-contracts';
+import { resolveNodeHostExecutable } from 'openclaw/plugin-sdk/node-host';
+import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/plugin-entry';
 import {
   createSessionCatalogFamily,
   importSessionCatalogHistory,
@@ -11,38 +12,39 @@ import {
   sessionCatalogAdoptedSessionKey,
   type SessionCatalogEntrySnapshot,
   type SessionCatalogSession,
-} from "openclaw/plugin-sdk/session-catalog";
-import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
-import {
-  PI_LOCAL_SESSION_HOST_ID,
-  PI_SESSIONS_LIST_COMMAND,
-  PI_SESSION_CATALOG_MAX_HOSTS,
-  PI_SESSION_CATALOG_MAX_PAGE_LIMIT,
-  PI_SESSION_ID_PATTERN,
-  PI_SESSION_READ_COMMAND,
-  PI_TERMINAL_RESUME_COMMAND,
-} from "./pi-session-catalog-shared.js";
+} from 'openclaw/plugin-sdk/session-catalog';
+import { isRecord } from 'openclaw/plugin-sdk/string-coerce-runtime';
+
 import {
   isExactPiSessionCursor,
   listLocalPiSessionPage,
   readLocalPiTranscriptPage,
-} from "./pi-session-catalog.js";
-import { piSessionStore, piSessionStoreAvailable } from "./pi-session-paths.js";
-import { checkPiUpstreamActivity, linkContinuedPiSession } from "./pi-session-upstream-activity.js";
+} from './pi-session-catalog.js';
+import {
+  PI_LOCAL_SESSION_HOST_ID,
+  PI_SESSION_CATALOG_MAX_HOSTS,
+  PI_SESSION_CATALOG_MAX_PAGE_LIMIT,
+  PI_SESSION_ID_PATTERN,
+  PI_SESSION_READ_COMMAND,
+  PI_SESSIONS_LIST_COMMAND,
+  PI_TERMINAL_RESUME_COMMAND,
+} from './pi-session-catalog-shared.js';
+import { piSessionStore, piSessionStoreAvailable } from './pi-session-paths.js';
+import { checkPiUpstreamActivity, linkContinuedPiSession } from './pi-session-upstream-activity.js';
 
 const NODE_TIMEOUT_MS = 20_000;
-const ACPX_BACKEND_ID = "acpx";
-const PI_ACP_AGENT_ID = "pi";
-const PI_ADOPTED_SESSION_KEY_PREFIX = "plugin:acpx:catalog-adopt:pi:";
+const ACPX_BACKEND_ID = 'acpx';
+const PI_ACP_AGENT_ID = 'pi';
+const PI_ADOPTED_SESSION_KEY_PREFIX = 'plugin:acpx:catalog-adopt:pi:';
 
 export async function requireLocalPiSession(threadId: string): Promise<SessionCatalogSession> {
   const page = await listLocalPiSessionPage({
     searchTerm: threadId,
     limit: PI_SESSION_CATALOG_MAX_PAGE_LIMIT,
   });
-  const session = page.sessions.find((candidate) => candidate.threadId === threadId);
+  const session = page.sessions.find(candidate => candidate.threadId === threadId);
   if (!session) {
-    throw new Error("Pi session is unavailable");
+    throw new Error('Pi session is unavailable');
   }
   return session;
 }
@@ -62,12 +64,12 @@ function resolvePiContinuationAvailability(
   if (!availability.available) {
     return availability;
   }
-  const executable = resolveNodeHostExecutable("pi", {
+  const executable = resolveNodeHostExecutable('pi', {
     env: process.env,
-    pathEnv: process.env.PATH ?? "",
-    strategy: "fallback",
+    pathEnv: process.env.PATH ?? '',
+    strategy: 'fallback',
   });
-  return executable ? { available: true } : { available: false, message: "Pi CLI is unavailable" };
+  return executable ? { available: true } : { available: false, message: 'Pi CLI is unavailable' };
 }
 
 function listAdoptedPiSessions(
@@ -81,10 +83,10 @@ function listAdoptedPiSessions(
     pluginId: api.id,
     runtime: api.runtime,
     sessionEntries,
-    sourceFromEntry: (entry) => {
+    sourceFromEntry: entry => {
       const acpx = isRecord(entry.pluginExtensions?.acpx) ? entry.pluginExtensions.acpx : undefined;
       const marker = acpx && isRecord(acpx.piSessionCatalog) ? acpx.piSessionCatalog : undefined;
-      return marker && typeof marker.sourceThreadId === "string"
+      return marker && typeof marker.sourceThreadId === 'string'
         ? { hostId: PI_LOCAL_SESSION_HOST_ID, threadId: marker.sourceThreadId }
         : undefined;
     },
@@ -115,9 +117,9 @@ async function createAdoptedPiSession(params: {
       },
       pluginExtensions: { acpx: { piSessionCatalog: marker } },
     },
-    afterCreate: async (entry) => {
+    afterCreate: async entry => {
       await importSessionCatalogHistory({
-        catalogId: "pi",
+        catalogId: 'pi',
         threadId: params.threadId,
         read: async ({ cursor, limit }) =>
           await readLocalPiTranscriptPage({
@@ -143,17 +145,14 @@ function assertPiLocalAccess(hostId: string, allowProcessHomeFallback?: boolean)
     allowProcessHomeFallback === false &&
     piSessionStore(process.env).usesProcessHomeFallback
   ) {
-    throw new Error("local Pi sessions are unavailable in isolated state");
+    throw new Error('local Pi sessions are unavailable in isolated state');
   }
 }
 
-export async function listPiSessions(params: unknown) {
-  return await listLocalPiSessionPage(params);
-}
-
-export async function readPiSession(params: unknown) {
-  return await readLocalPiTranscriptPage(params);
-}
+export {
+  listLocalPiSessionPage as listPiSessions,
+  readLocalPiTranscriptPage as readPiSession,
+} from './pi-session-catalog.js';
 
 export function createPiSessionCatalogRuntime(api: OpenClawPluginApi) {
   return createSessionCatalogFamily(
@@ -161,21 +160,21 @@ export function createPiSessionCatalogRuntime(api: OpenClawPluginApi) {
       runtime: api.runtime,
       local: {
         hostId: PI_LOCAL_SESSION_HOST_ID,
-        label: "Local Pi",
-        available: (query) => {
+        label: 'Local Pi',
+        available: query => {
           const store = piSessionStore(process.env);
           return (
             (query.allowProcessHomeFallback !== false || !store.usesProcessHomeFallback) &&
             piSessionStoreAvailable(process.env, store)
           );
         },
-        list: async (query) =>
+        list: async query =>
           await listLocalPiSessionPage({
             limit: query.limitPerHost,
             ...(query.search ? { searchTerm: query.search } : {}),
             cursor: query.cursors?.[PI_LOCAL_SESSION_HOST_ID],
           }),
-        read: async (request) =>
+        read: async request =>
           await readLocalPiTranscriptPage({
             threadId: request.threadId,
             ...(request.limit ? { limit: request.limit } : {}),
@@ -196,13 +195,13 @@ export function createPiSessionCatalogRuntime(api: OpenClawPluginApi) {
         local: () => ({
           canContinue: resolvePiContinuationAvailability(api).available,
           canOpenTerminal:
-            resolveNodeHostExecutable("pi", {
+            resolveNodeHostExecutable('pi', {
               env: process.env,
-              pathEnv: process.env.PATH ?? "",
-              strategy: "fallback",
+              pathEnv: process.env.PATH ?? '',
+              strategy: 'fallback',
             }) !== undefined,
         }),
-        node: (node) => {
+        node: node => {
           const commands = node.invocableCommands ?? node.commands;
           return {
             canContinue: false,
@@ -216,44 +215,45 @@ export function createPiSessionCatalogRuntime(api: OpenClawPluginApi) {
         }),
       },
       messages: {
-        invalidNodeCursor: "Pi node returned an invalid cursor",
-        invalidNodeSessionPage: "Pi node returned an invalid session page",
-        invalidNodeTranscriptPage: "Pi node returned an invalid transcript page",
-        invalidHostId: "Pi session catalog hostId is invalid",
-        localReadFailed: "Local Pi sessions are unavailable",
-        nodeInvokeFailed: "Paired node Pi sessions are unavailable",
-        nodeReadUnavailable: "paired-node Pi session host is unavailable",
-        nodeTerminalUnavailable: "paired-node Pi terminal is unavailable",
-        sessionUnavailable: "Pi session is unavailable",
+        invalidNodeCursor: 'Pi node returned an invalid cursor',
+        invalidNodeSessionPage: 'Pi node returned an invalid session page',
+        invalidNodeTranscriptPage: 'Pi node returned an invalid transcript page',
+        invalidHostId: 'Pi session catalog hostId is invalid',
+        localReadFailed: 'Local Pi sessions are unavailable',
+        nodeInvokeFailed: 'Paired node Pi sessions are unavailable',
+        nodeReadUnavailable: 'paired-node Pi session host is unavailable',
+        nodeTerminalUnavailable: 'paired-node Pi terminal is unavailable',
+        sessionUnavailable: 'Pi session is unavailable',
       },
       continuation: {
-        resolveAgentId: (agentId) =>
+        resolveAgentId: agentId =>
           resolveSessionAgentIdsStrict({ config: api.config, agentId }).sessionAgentId,
         availability: () => resolvePiContinuationAvailability(api),
         listAdopted: (agentId, sessionEntries) =>
           listAdoptedPiSessions(api, agentId, sessionEntries),
         loadSession: requireLocalPiSession,
-        validateSession: (session) => {
+        validateSession: session => {
           if (!session.canContinue) {
-            throw new Error("Pi session is outside the session store supported by pi-acp");
+            throw new Error('Pi session is outside the session store supported by pi-acp');
           }
         },
-        create: async (params) => await createAdoptedPiSession({ api, ...params }),
+        create: async params => await createAdoptedPiSession({ api, ...params }),
         complete: async (continued, threadId) =>
           await linkContinuedPiSession(continued.sessionKey, threadId),
-        nodeReadOnlyMessage: "paired-node Pi session rows are view-only",
+        nodeReadOnlyMessage: 'paired-node Pi session rows are view-only',
       },
       terminal: {
-        executable: "pi",
-        args: (threadId) => ["--session", threadId],
-        title: (threadId) => `pi --session ${threadId.slice(0, 12)}…`,
+        executable: 'pi',
+        uploadPathStyle: 'native',
+        args: threadId => ['--session', threadId],
+        title: threadId => `pi --session ${threadId.slice(0, 12)}…`,
         requireLocalSession: requireLocalPiSession,
-        unavailableMessage: "Pi CLI is unavailable",
+        unavailableMessage: 'Pi CLI is unavailable',
       },
       checkUpstreamActivity: (probes, policy) =>
         checkPiUpstreamActivity(
           probes.filter(
-            (probe) =>
+            probe =>
               probe.hostId !== PI_LOCAL_SESSION_HOST_ID ||
               policy?.allowProcessHomeFallback !== false ||
               !piSessionStore(process.env).usesProcessHomeFallback,

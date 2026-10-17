@@ -14,7 +14,13 @@
   ],
   "doctorContract": {
     "configRepair": true,
-    "stateMigrations": true
+    "stateMigrations": [
+      {
+        "id": "acpx-session-owner-resources",
+        "doctorOnly": true,
+        "phase": "after-session-repair"
+      }
+    ]
   },
   "activation": {
     "onStartup": true
@@ -88,12 +94,16 @@
             },
             "args": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Arguments to pass to the command"
             },
             "env": {
               "type": "object",
-              "additionalProperties": { "type": "string" },
+              "additionalProperties": {
+                "type": "string"
+              },
               "description": "Environment variables for the MCP server"
             }
           },
@@ -120,7 +130,9 @@
             },
             "args": {
               "type": "array",
-              "items": { "type": "string" }
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": ["command"]
@@ -211,5 +223,6 @@
         }
       ]
     }
-  }
+  },
+  "categories": ["agent-runtimes"]
 }

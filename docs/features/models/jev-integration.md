@@ -37,7 +37,7 @@ charges. Results use the existing OpenClaw stream, without a transcript cache.
 
 ## Native decision tool
 
-OpenClaw 2026.9.8 owns the provider-neutral `decision_evaluate` tool. It accepts
+OpenClaw 2026.10.4 owns the provider-neutral `decision_evaluate` tool. It accepts
 Boolean, Choice and Score questions and routes them through the selected agent's
 `decisionModel`. TypeSafe is a decision provider, with manifest-declared capabilities,
 lazy evaluator loading, and native unsupported-input fallback for HTTP 413/422.
@@ -46,6 +46,13 @@ were removed upstream. The application uses the current native tool and model
 selection only; it does not move legacy plugin model selections or rename old tool
 policies. The unreleased 9.6 compatibility additions were removed at the user's
 request. Current `decision_evaluate` policies and explicit denies remain respected.
+
+The native admission callback remains authoritative through lazy evaluator loading
+and HTTP preparation. TypeSafe rechecks it before guarded-fetch preparation and
+after native DNS/transport preparation, immediately before dispatch. If admission
+is revoked while either operation is pending, the evaluation returns unavailable
+without sending the request or retrying. The same checks protect authenticated
+intranet `serviceUrl` requests and the legacy loopback endpoint.
 
 ## Ownership and credential lifecycle
 
@@ -115,7 +122,10 @@ npx vitest run --config scripts/openclaw/typesafe.vitest.config.mts
 
 Set `OPENCLAW_RUNTIME` to use a different prepared SDK directory. It covers the
 explicit endpoint, authentication failure without fallback, schema validation,
-cancellation and existing upstream behavior; no real hosted key is used.
+cancellation and existing upstream behavior. Registered-provider regressions also
+cover initial admission denial and revocation during lazy loading or native DNS
+preparation, including the authenticated intranet endpoint, with admitted requests
+as positive controls. No real hosted key is used.
 
 ## Remaining scope
 

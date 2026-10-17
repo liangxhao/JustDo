@@ -6,19 +6,21 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import { formatPluginConfigIssue } from 'openclaw/plugin-sdk/extension-shared';
 import { resolveStateDir } from 'openclaw/plugin-sdk/state-paths';
 import { normalizeLowercaseStringOrEmpty } from 'openclaw/plugin-sdk/string-coerce-runtime';
-import { AcpxPluginConfigSchema, DEFAULT_ACPX_TIMEOUT_SECONDS } from './config-schema.js';
+
 import { expandBundledAgentCommandValue } from './command-tokens.js';
 import type {
-  AcpxPluginConfig,
-  AcpxPermissionMode,
-  AcpxNonInteractivePermissionPolicy,
-  McpServerConfig,
   AcpxMcpServer,
+  AcpxNonInteractivePermissionPolicy,
+  AcpxPermissionMode,
+  AcpxPluginConfig,
+  McpServerConfig,
   ResolvedAcpxPluginConfig,
 } from './config-schema.js';
+import { AcpxPluginConfigSchema, DEFAULT_ACPX_TIMEOUT_SECONDS } from './config-schema.js';
 export { type ResolvedAcpxPluginConfig } from './config-schema.js';
 
 const ACPX_PLUGIN_TOOLS_MCP_SERVER_NAME = 'openclaw-plugin-tools';
@@ -121,7 +123,7 @@ function parseAcpxPluginConfig(value: unknown): ParseResult {
   };
 }
 
-function resolveOpenClawRoot(currentRoot: string): string {
+export function resolveOpenClawRoot(currentRoot: string): string {
   if (
     path.basename(currentRoot) === 'acpx' &&
     path.basename(path.dirname(currentRoot)) === 'extensions'
@@ -260,7 +262,7 @@ export function resolveAcpxPluginConfig(params: {
             [
               normalizedName,
               [entry.command, ...(entry.args ?? [])].map(value =>
-                expandBundledAgentCommandValue(value.trim(), agentCommandPaths),
+                expandBundledAgentCommandValue(value, agentCommandPaths),
               ),
             ],
           ]
@@ -273,6 +275,7 @@ export function resolveAcpxPluginConfig(params: {
     stateDir,
     probeAgent: normalized.probeAgent,
     startupProbe: normalized.startupProbe ?? false,
+    diagnosticAgents: normalized.diagnosticAgents ?? [],
     claudeExecutable: normalized.claudeExecutable,
     permissionMode: normalized.permissionMode ?? DEFAULT_PERMISSION_MODE,
     nonInteractivePermissions:

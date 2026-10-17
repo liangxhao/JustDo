@@ -259,3 +259,122 @@ Renderer 末轮单文件回归分别为扩展 34、MCP 33、市场 35、Skill 21
 - npm-shrinkwrap SHA-256：`886d40c7b53c2b9d7ac45c19b5a7102ac2fc22ca45a267cc6d9adba9b824fc8a`（本轮依赖版本及 integrity 未变化）
 
 AI 传输与分区解析模块的精确身份和 hash 已纳入本轮 current/frozen manifest 及归档校验。本轮没有重新生成 Windows 安装包；旧包的打包结果不作为 029 的安装版验证。
+
+## ACPX / TypeSafe 源码同步与 ACPX 0.19.5
+
+本轮在独立 worktree `acpx-typesafe-10-4/JustDo`、分支
+`codex/acpx-typesafe-10-4` 完成，应用基线为 `1cd2e66b3`。没有修改或合入
+`dev` 的并行工作。目标源码为 OpenClaw `v2026.10.4`，提交
+`383c124cc32ffee3f8e56f549b88da94d269a4af`；Node 24.21.0、Electron 42.7.0、
+Windows x64。上文各历史构建的测试数和真实界面记录不替代本轮验证。
+
+ACPX 原包名虽为 `2026.9.8-local.1`，实际源码祖先仍为 9.2，不能只调整版本号。
+本轮按祖先、本地定制及 10.4 做三方比较，采用原生 generation/session-store、
+probe、process-cleanup、稳定 lazy facade、Pi catalog 和 Windows argv 接线，
+保留受管目录、隔离认证、结构化命令、构建时目录、逐 Agent 诊断和默认不启动探针。
+未开放运行时下载、原生第二套模型选择器或工作区状态目录接管。完整对应关系和
+上游来源见 [ACPX 来源记录](../../../openclaw-extensions/acpx/UPSTREAM.md)。
+
+TypeSafe 同步 10.4 的 `isAdmissible`，从注册入口经 client 传入 transport，
+在首次准备及真实 DNS 等待后的 `beforeRequest` 再检查；保留显式内网服务、认证、
+取消和资源释放。内网和 loopback 请求禁止重定向/环境代理，hosted 保留上游代理策略。
+来源及定制见
+[TypeSafe 来源记录](../../../openclaw-extensions/typesafe/UPSTREAM.md)。
+
+OpenClaw 10.4 上游仍使用 acpx 0.19.1；本轮额外评估并精确锁定 0.19.5。
+其公开运行时接口和持久会话格式兼容，采用首次持久会话加载、并发 ensure/import、
+历史保存与关闭错误聚合等修复。Claude ACP 0.79.0、Codex ACP 1.12.0 保持不变。
+`@openclaw/fs-safe@0.22.0` 的可选平台包和 integrity 保留在 npm 生成的锁中。
+同时将已有生产依赖 MCP SDK / TOML parser 精确锁定到 1.31.0 / 1.9.0；
+对应公告、实际影响边界及零告警审计见 ACPX 来源记录。离线资源清单仍统一维护于
+[离线下载文档](../../offline-downloads.md)。
+
+三位 Agent 分工并交叉复审，发现并修复了以下边界：
+
+- 未启用的内置 Agent 做诊断时，先准备其本地包装器；缺失目录命令直接拒绝，
+  不落入 ACPX 默认包下载，也不因此授予任务准入。
+- 服务先撤销发布再等待实际 shutdown；部分启动失败也等待清理。探针清理失败保留
+  owner，并传播到服务关闭；清理失败屏障阻止新代接管，不伪报退出成功。
+- Codex 异步读取后重新检查 generation；旧 turn 固定准入时的 lease，重置后不能
+  读到后继任务的 stderr。后台关闭和进程清理同时失败时保留两项错误。
+- 移除给整个 ACP 任务套用连接超时的旧钩子，继续由 OpenClaw 管理执行期限。
+
+应用构建另暴露基线 `process-history.test.ts` 中 `unknown[]` 强转不符合消息类型；
+仅将 fixture 改为真实数组收窄，错误 fixture 明确失败，没有更改产品聊天逻辑。
+该最小修复经另一位 Agent 只读复审。
+
+本轮未启动 Gateway、使用用户凭据、读取用户 transcript 或调用真实模型；协议测试
+只使用隔离临时目录及本机模拟 ACP peer。ACPX 插件源码的完整静态类型检查仍受上游发布 SDK 缺失
+部分 ACPX facade 声明限制；未伪造 ambient 声明来宣称通过。TypeSafe 则直接使用
+实际发布 SDK 的严格 TypeScript 语义检查。
+
+最终产物专项记录位于本 worktree 的 `.agent-tasks/plugin-refresh/`，原始日志不入 Git：
+
+| 记录                                            | 结果与边界                                                                                                                                                           |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runtime-build-final.log`                       | 从锁定 pristine 完整构建成功；9 扩展预编译、0 错误，随后完成裁剪。                                                                                                   |
+| `verify-final-runtime.log`                      | 28 项补丁及冻结证明全部通过。                                                                                                                                        |
+| `acpx-final-runtime.log`                        | 19 文件、119 项全部通过，73.54 秒；实际 SDK 和 acpx 均来自新 runtime，真实旧 0.19.1 临时 store/handle/history 兼容分支已运行。                                       |
+| `typesafe-final-runtime.log`                    | 12 文件、189 项全部通过，22.95 秒；包括三类服务地址各四项准入/DNS 撤销检查。                                                                                         |
+| `typesafe-sdk-final-runtime.log`                | 实际发布 SDK 严格语义检查 1 项通过，4.39 秒；运行时仅有 JS 的辅助 facade 从实际 JS 解析，不补造声明。                                                                |
+| `acpx-electron-final.log`                       | Electron 42.7.0 下真实 acpx 协议回归 1 项通过，40.94 秒；其内置 Node 为 24.18.0。并发 ensure、会话复用、拒绝权限后下一轮、取消、关闭流、进程退出和旧版本数据均覆盖。 |
+| `lint.log`、`build.log`、`compile-electron.log` | 应用静态检查、前端构建与 Electron 编译通过；前述测试数据类型修正后重新构建。                                                                                         |
+
+另在 Electron 下直接加载 `fs-safe@0.22.0` Windows x64 native 成功（48 exports），
+对应文件 1,720,832 bytes，SHA-256
+`d2bceba7ecc2d97563c76923f0f7928a76ab098ad70456eafba19b6fdb647828`。
+上述专项与完整应用测试有重叠，不相加冒充独立测试总数。
+
+首轮完整测试 `tests-final.log` 未通过：6 文件失败，14 项失败、10,657 项通过、
+70 项跳过（665.80 秒），不能计为全套通过。定位到 ACPX 根测试缺少新引入的
+SDK helper fixture，专用配置实际 SDK alias 因而未暴露这个收集缺口；现已补齐
+最窄依赖 fixture。其余配置失败均为真实文件投影循环超过默认 5 秒，五组矩阵
+每例分别执行 6/9/13/10/9 次同步，保留全部断言，只给对应矩阵设置 15/30 秒预算。
+实际原生历史模块冷加载与每例两次技能 CLI 冷启动也改用局部有界预算，未修改
+全局时限、生产期限或添加重试。以上测试修复经另一位 Agent 只读复审。
+
+首轮还有一次浏览器 MCP 的原生进程检查超时和一次卡片资源初始化失败；未证实
+产品逻辑缺陷，不据此修改原生检查或增加卡片等待/重试。`tests-repair-serial.log`
+将全部失败文件及聊天类型修复用例合并串行复测，7 文件、202 项全部通过
+（366.56 秒），两项原测试保持原样。测试后已恢复 Electron ABI 146；随后降低
+worker 数独立完整复跑，不以局部通过代替全套结果。
+
+`tests-final-rerun.log` 的独立完整复跑通过：914 文件通过、6 文件跳过，
+**10,683 项通过、66 项跳过**，962.30 秒，退出码 0，无未处理错误。
+使用两个 worker，实际 TypeSafe SDK 检查及新 runtime 内 acpx 0.19.5 / 旧 0.19.1
+数据兼容分支均已启用；跳过项不计通过。结束后再次核对并恢复 Electron ABI 146。
+
+`lint-final.log`、`build-final.log`、`compile-electron-final.log` 的提交前完整检查均通过。
+`package-final.log` 的 Windows x64 目录打包成功：资源归档 36,105 文件，包内
+28 项 proof、companion、浏览器扩展、Node 24.18.0 / npm 11.19.1 / npx 11.19.1，
+以及 better-sqlite3 / node-pty 的 Electron ABI 146 全部核验通过。
+`verify-post-package.log` 再次核对补丁及冻结证明通过。打包前后核对下列 runtime
+文件及两插件 package/lock 哈希全部不变，见 `post-package-identity.json`。
+没有安装或启动目录包，不能代替安装器交互或真实模型验收。
+
+`archive-native-audit.log` 另由独立 Agent 流式读取最终 Zstd/tar，确认 ACPX
+manifest、assembly target/fingerprint、安装后的 package 和 lock 均在归档中，
+核心/适配器/安全依赖版本与 fresh 产物一致；fs-safe Windows x64 native 的大小及
+SHA-256 与前述已在 Electron 加载的文件精确一致。没有执行归档代码或启动产品。
+
+本轮最终构建身份：
+
+- patch set：`b92cc1be485ce170fddda657b19a2800a63a13de2f67156dad96bf331e33dd55`
+- build recipe：`eb0e6e3a56f086de0876513180d6ac8c5701c5bd748e2b3a83514057d4dcd034`
+- Gateway bundle：`9f0fccdc673a45e3210bc7e29d96e97e1a87b8f0ef54418b1fba509a2f3f8638`（76,755,573 bytes）
+- gateway.asar：`3c099c933a9dfbc81524284f5661428da0a3f5c4627b943c8cc0228eefb87ef5`
+- runtime package：`b6588b64f66016de8c020c9ff0b29ed4713b87af0ef955d3864066dcbfb038d3`
+- npm-shrinkwrap：`886d40c7b53c2b9d7ac45c19b5a7102ac2fc22ca45a267cc6d9adba9b824fc8a`
+- ACPX lock：`4707781e87179adb44b6229b792c591cc44105de3416d89e9b4a3ccde3c0f1cc`
+- TypeSafe lock：`d93fbb5e2642e72040e9acd335cd9345916c5b755128b8e27a9b6612ae753686`
+- Windows `win-resources.tar.zst`：`7237d81b8141ac8225d3d22c47c3bd98b38e3731d6fa17244b93d0f65ce1b2dc`（449,189,330 bytes）
+
+本轮仍需使用最终安装包手工验证：
+
+- 使用真实 Claude/Codex 凭据首次连接、凭据过期/更新，分别从新会话和已有会话执行任务。
+- 实际外部 Agent 的长任务、动态 MCP、权限拒绝后的继续执行、停止/重置和应用退出，
+  核对不会残留受管进程、误报结束或影响后继任务。
+- 真实 TypeSafe 内网地址、认证更新、取消和提供方切换；合成 DNS/HTTP 测试不代表真实服务可用性。
+- 中文/空格安装目录的完整安装交互，以及 macOS/Linux/Windows arm64。
+
+Chrome 日常窗口授权及扩展配对继续按用户此前要求留待手测，本轮没有恢复该验收。

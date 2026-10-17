@@ -64,7 +64,8 @@ it("runs the registered provider through the HTTP transport and back to host dec
       model: "jev-agent-selected",
       agentId: "research",
       signal: new AbortController().signal,
-      deadlineMonotonicMs: performance.now() + 1000,
+      // This first registered evaluation includes the real cold evaluator import.
+      deadlineMonotonicMs: performance.now() + 30_000,
     }),
   ).resolves.toEqual({
     status: "ok",

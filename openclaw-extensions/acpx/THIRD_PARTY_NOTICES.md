@@ -18,3 +18,7 @@ The Claude Agent SDK and its platform packages use the license identified in
 their package metadata and bundled license-bearing files. The Codex platform
 packages are distributed under Apache-2.0. Transitive dependency terms remain
 available beside each installed package.
+
+ACPX 0.19.5 additionally brings the MIT-licensed `@openclaw/fs-safe` runtime
+and its optional platform packages. Their package license files remain beside
+the installed artifacts under the same pruning and packaging policy.

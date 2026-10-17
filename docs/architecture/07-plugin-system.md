@@ -145,6 +145,13 @@ Main 的 Skill 文件夹复制同样为绝对目标目录链接保留 junction�
 
 本地 Extension 的构建预编译同时覆盖主入口和独立的 `setup-api` 入口（插件根及 `dist/` 下的 TypeScript 文件）。即使主入口已经是 JavaScript，也必须处理 setup 入口；编译成功后移除对应 TypeScript 入口，避免 OpenClaw 优先选中源码。ACPX 的自动启用探针在配置、旧状态检查和重载时都会运行，遗漏其 setup 预编译会触发原生源码代际快照，重复复制、哈希和校验依赖树。预编译让 bundled JavaScript 使用原生快速加载路径，不改变用户插件的源码隔离或完整性校验。
 
+ACPX 本地封装以 OpenClaw v2026.10.4 为基线，底层运行库精确锁定为 acpx 0.19.5。
+会话世代、持久资源绑定、reset 和探测沿用上游分层；产品继续拥有外部 Agent 目录、
+结构化受管命令、隔离认证、逐 Agent doctor 和默认不启动探测的策略。内置适配器的
+诊断也使用随包包装器，诊断不授予任务执行权限。服务停止先撤销后端，再等待运行库
+shutdown 和进程清理；清理失败必须向宿主报告，不能当作成功结束或释放责任后另起一代。
+这些状态只描述 ACP 执行资源，不替代原生 transcript 或 whole-run 结算。
+
 ## 3. Skill：有效赢家与文件来源
 
 内置 manifest 有 8 个默认启用项：data-analysis、diagram-design、frontend-design、docx、pdf、pptx、skill-creator、xlsx。v2 manifest 通过 `openclaw.skills` 和 `openclaw.custodianSkills` 显式选择上游技能：分别保留 `coding-agent` 和 `diagnose-gateway`，其余上游技能不打包。系统维护技能留在原生 `custodian-skills/`，仅由系统 Agent（应用配置为 `main`）发现。安装和打包共用同一筛选逻辑，所有选中源校验通过后才清理目录；缺失上游技能时必须从锁定的原始包重建运行时，不能静默跳过。打包资源必须与 manifest 一致；数量不应散落在 UI 常量中。

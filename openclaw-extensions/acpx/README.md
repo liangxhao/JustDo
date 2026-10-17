@@ -1,7 +1,8 @@
 # ACPX runtime
 
 This directory vendors the OpenClaw `@openclaw/acpx` extension from the
-`v2026.9.2` source tree. It is compiled and packaged with the desktop application,
+`v2026.10.4` source tree (commit
+`383c124cc32ffee3f8e56f549b88da94d269a4af`). It is compiled and packaged with the desktop application,
 which does not download the plugin at runtime.
 
 OpenClaw remains responsible for ACP task scheduling, durable task state,
@@ -34,16 +35,29 @@ with read-only permissions. The complete extension template is documented in
 ## Compatibility
 
 - Plugin id: `acpx`
-- Source baseline: OpenClaw `v2026.9.2`
-- Minimum plugin API: `2026.9.8`
+- Source baseline: OpenClaw `v2026.10.4`
+- Local package version: `2026.10.4-local.1`
+- Minimum plugin API: `2026.10.4`
 
-The desktop adapter retains its product-specific source fork. With OpenClaw 2026.9.8,
-it uses acpx 0.19.1, Claude ACP 0.79.0 and Codex ACP 1.12.0.
+The desktop adapter retains its product-specific source fork. It uses acpx
+0.19.5, Claude ACP 0.79.0 and Codex ACP 1.12.0. OpenClaw 10.4 itself selects
+acpx 0.19.1; 0.19.5 is an independently evaluated, exact product dependency pin.
 The upstream native-agent model picker/harness registration is not enabled by
 this product: the managed external-agent catalog still owns admission and diagnostics.
 
-The 2026.9.8 integration validates every used public SDK export and keeps the
-managed state directory and external-agent catalog. Upstream native harness reset
-and state-directory adoption do not replace this product fork. Generated wrappers
+The 2026.10.4 integration keeps the managed state directory and external-agent
+catalog while adopting the upstream generation, reset, native permission,
+process lifecycle, cleanup and Windows bridge contracts. Native harness
+registration and workspace-state-directory adoption remain excluded. Generated wrappers
 recheck captured bundled adapter paths before launch and fail with the managed
 rebuild diagnostic when missing; they never download a replacement at runtime.
+
+The managed registry also rejects an absent adapter command before ACPX can
+select a package runner. Disabled catalog agents retain explicit diagnostic
+wrappers. Startup probing stays disabled by default. The connection timeout
+limits startup and control operations; native run policy owns task duration.
+Stopping joins session and diagnostic cleanup, and a failed cleanup prevents a
+replacement owner from being activated in that service instance.
+
+See [UPSTREAM.md](UPSTREAM.md) for the three-way source comparison, retained
+customizations, automated checks and remaining real-agent acceptance work.

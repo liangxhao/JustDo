@@ -8,6 +8,9 @@ import { afterEach, expect, test } from 'vitest';
 const runtimeEntry = path.resolve('vendor/openclaw-runtime/current/openclaw.mjs');
 const runtimeAvailable = fs.existsSync(runtimeEntry);
 const temporaryRoots: string[] = [];
+// Each case performs two real CLI cold starts against the published runtime.
+const cliStartupTimeoutMs = 60_000;
+const caseTimeoutMs = 2 * cliStartupTimeoutMs + 10_000;
 
 const writeSkill = (directory: string, description: string): void => {
   fs.mkdirSync(directory, { recursive: true });
@@ -67,7 +70,7 @@ const listSkills = (fixture: ReturnType<typeof createFixture>, enabled?: boolean
         NO_COLOR: '1',
       },
       encoding: 'utf8',
-      timeout: 30_000,
+      timeout: cliStartupTimeoutMs,
     },
   );
   return JSON.parse(stdout) as {
@@ -109,7 +112,7 @@ test.skipIf(!runtimeAvailable)(
     }),
   ]);
   },
-  60_000,
+  caseTimeoutMs,
 );
 
 test.skipIf(!runtimeAvailable)('locked runtime resolves the next source only after the winner disappears', () => {
@@ -128,7 +131,7 @@ test.skipIf(!runtimeAvailable)('locked runtime resolves the next source only aft
   expect(
     listSkills(fixture).skills.find(skill => skill.name === 'duplicate-skill'),
   ).toMatchObject({ description: 'Managed variant', source: 'openclaw-managed' });
-}, 60_000);
+}, caseTimeoutMs);
 
 test.skipIf(!runtimeAvailable)(
   'locked runtime resolves the same skill name independently for each workspace',
@@ -147,5 +150,5 @@ test.skipIf(!runtimeAvailable)(
     ),
   ).toMatchObject({ description: 'Second workspace', source: 'openclaw-workspace' });
   },
-  60_000,
+  caseTimeoutMs,
 );
