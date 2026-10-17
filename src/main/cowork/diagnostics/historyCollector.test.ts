@@ -187,8 +187,15 @@ describe('native conversation diagnostic scan', () => {
         kind: 'delta',
         deltaCursor: 'after',
         messages: [
-          { ...failedTool, isError: false, __openclaw: { id: 'message-1' } },
-          { role: 'assistant', timestamp: 1800, stopReason: 'aborted' },
+          {
+            sessionKey: 'native',
+            messageId: 'message-1',
+            message: { ...failedTool, isError: false },
+          },
+          {
+            sessionKey: 'native',
+            message: { role: 'assistant', timestamp: 1800, stopReason: 'aborted' },
+          },
         ],
         activity: [
           {
@@ -199,6 +206,108 @@ describe('native conversation diagnostic scan', () => {
       });
     const result = await collectDiagnosticHistory(report, clientWith(request), 'native');
     expect(result.failures.map(item => item.outcome)).toEqual(['blocked', 'aborted']);
+  });
+
+  it('unwraps verified delta response shapes and preserves exact run association', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({ messages: [], deltaCursor: 'before' })
+      .mockResolvedValueOnce({
+        kind: 'delta',
+        deltaCursor: 'after',
+        messages: [
+          {
+            sessionKey: 'native',
+            messageId: 'reply',
+            runId: 'run-1',
+            message: {
+              role: 'assistant',
+              timestamp: 1800,
+              stopReason: 'stop',
+              content: [{ type: 'thinking', thinking: 'PRIVATE' }],
+            },
+          },
+        ],
+      });
+    const result = await collectDiagnosticHistory(report, clientWith(request), 'native');
+    expect(result).toMatchObject({
+      status: 'scanned',
+      lastResponse: { association: 'run', thinking: true, complete: true },
+    });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
+  });
+
+  it.each([
+    { sessionKey: 'other', message: failedTool },
+    {
+      sessionKey: 'native',
+      runId: 'other',
+      message: { ...failedTool, __openclaw: { runId: 'run-1' } },
+    },
+    {
+      sessionKey: 'native',
+      messageId: 'other',
+      message: { ...failedTool, __openclaw: { id: 'original' } },
+    },
+  ])('discards evidence when a delta envelope has conflicting identity: %j', async envelope => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({ messages: [failedTool], deltaCursor: 'before' })
+      .mockResolvedValueOnce({ kind: 'delta', deltaCursor: 'after', messages: [envelope] });
+    expect(await collectDiagnosticHistory(report, clientWith(request), 'native')).toMatchObject({
+      status: 'changed',
+      reason: 'history_changed',
+      failures: [],
+    });
+  });
+
+  it('reports malformed native deltas as incomplete instead of a successful empty scan', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({ messages: [], deltaCursor: 'before' })
+      .mockResolvedValueOnce({
+        kind: 'delta',
+        deltaCursor: 'after',
+        messages: [{ sessionKey: 'native' }],
+      });
+    expect(await collectDiagnosticHistory(report, clientWith(request), 'native')).toMatchObject({
+      status: 'unavailable',
+      reason: 'read_failed',
+    });
+  });
+
+  it('replaces a replayed boundary response without losing genuine timestamp ambiguity', async () => {
+    const reply = {
+      role: 'assistant',
+      timestamp: 1800,
+      stopReason: 'stop',
+      content: 'reply',
+      __openclaw: { id: 'reply', seq: 3 },
+    };
+    const scan = (latest: unknown[]) =>
+      collectDiagnosticHistory(
+        report,
+        clientWith(
+          vi
+            .fn()
+            .mockResolvedValueOnce({
+              messages: latest,
+              hasMore: true,
+              nextOffset: 1,
+              totalMessages: 4,
+            })
+            .mockResolvedValueOnce({ messages: [reply], totalMessages: 4 }),
+        ),
+        'native',
+      );
+    expect((await scan([reply])).lastResponse?.complete).toBe(true);
+    expect(
+      (await scan([reply, { ...reply, __openclaw: { id: 'distinct', seq: 4 } }])).lastResponse
+        ?.complete,
+    ).toBe(false);
+    expect((await scan([reply, { ...reply, __openclaw: undefined }])).lastResponse?.complete).toBe(
+      false,
+    );
   });
 
   it('handles snake-case failures without treating user examples as tool evidence', async () => {

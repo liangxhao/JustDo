@@ -2,8 +2,12 @@ import { randomUUID } from 'node:crypto';
 
 import type {
   DiagnosticEvent,
+  DiagnosticGatewayInfo,
+  DiagnosticHistoryUpdate,
   DiagnosticQuery,
   DiagnosticReport,
+  DiagnosticRuntimeArtifact,
+  DiagnosticRuntimeInfo,
   DiagnosticScanProgress,
 } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import type { SessionDiagnosticsStore } from '../../data/sessionDiagnosticsStore';
@@ -12,6 +16,7 @@ import {
   projectDiagnosticEvent,
   type ProjectedDiagnostic,
 } from '../../engine/openclaw/runtimeDiagnostics';
+import { OPENCLAW_WIRE_VERSION } from '../../engine/openclaw/wire/v2026_10_4';
 import { classifyDiagnostics } from './classifier';
 import { projectDiagnosticEnvironment } from './environment';
 import { DiagnosticExportLogs } from './exportLogs';
@@ -21,6 +26,7 @@ import { discoverNativeDiagnosticLogs } from './logScanner';
 
 export interface DiagnosticRuntime {
   getGatewayClient(): GatewayClientLike | null;
+  getDiagnosticGatewayInfo?(): DiagnosticGatewayInfo | null;
   resolveDiagnosticSession(runId: string, sessionKey?: string): string | null;
 }
 interface Dependencies {
@@ -28,6 +34,7 @@ interface Dependencies {
   hasSession: (id: string) => boolean;
   getNativeSessionKey: (id: string) => string | null;
   getRuntime: () => DiagnosticRuntime | null;
+  getRuntimeArtifact?: (signal?: AbortSignal) => Promise<DiagnosticRuntimeArtifact | undefined>;
   now?: () => number;
   logSources?: Record<'main' | 'cowork' | 'gateway', (report: DiagnosticReport) => string[]>;
 }
@@ -331,6 +338,7 @@ export class SessionDiagnosticsService {
     options: {
       signal?: AbortSignal;
       onProgress?: (progress: DiagnosticScanProgress) => void;
+      onHistory?: (update: DiagnosticHistoryUpdate) => void;
       onExportRecord?: NonNullable<Parameters<typeof collectDiagnosticLogs>[3]>['onExportRecord'];
     } = {},
   ): Promise<DiagnosticReport> {
@@ -339,123 +347,172 @@ export class SessionDiagnosticsService {
       throw new DiagnosticServiceError('busy');
     this.collecting.add(owner);
     this.pinnedSnapshots.add(query.snapshotId);
-    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const sessionKey = this.deps.getNativeSessionKey(previous.sessionId);
       const runtime = this.deps.getRuntime();
       const client = runtime?.getGatewayClient();
-      let native:
-        | {
-            lines: string[];
-            truncated?: boolean;
-            files?: string[];
-            discoveryFailure?: 'unsafe_file' | 'unreadable' | 'read_timeout' | 'canceled';
-          }
-        | undefined;
-      if (client) {
+      const runtimeInfo: DiagnosticRuntimeInfo = {
+        scope: 'collection_environment',
+        collectedAt: this.now(),
+        wireVersion: OPENCLAW_WIRE_VERSION,
+        gateway: {
+          status: client ? 'connected' : 'offline',
+          ...(client ? runtime?.getDiagnosticGatewayInfo?.() : {}),
+        },
+      };
+      const connectionCurrent = () =>
+        runtime === this.deps.getRuntime() && client === runtime?.getGatewayClient();
+      const isCurrent = () =>
+        connectionCurrent() && sessionKey === this.deps.getNativeSessionKey(previous.sessionId);
+      const checkHistory = (history: NonNullable<DiagnosticReport['history']>) => {
+        this.snapshot(query, owner);
+        if (!isCurrent()) {
+          history.status = 'changed';
+          history.reason = 'history_changed';
+          history.failures = [];
+          delete history.lastResponse;
+        }
+        return history;
+      };
+      const publishHistory = (history: NonNullable<DiagnosticReport['history']>) => {
+        if (options.signal?.aborted) return;
         try {
-          const response = await Promise.race([
-            client.request<{ lines?: unknown; truncated?: unknown; file?: unknown }>('logs.tail', {
-              limit: 1000,
-              maxBytes: 524288,
-            }),
-            new Promise<never>((_, reject) => {
-              timer = setTimeout(() => reject(new Error('timeout')), 3000);
-            }),
-          ]);
-          if (
-            runtime === this.deps.getRuntime() &&
-            client === runtime.getGatewayClient() &&
-            Array.isArray(response?.lines)
-          ) {
-            let bytes = 0;
-            const lines: string[] = [];
-            let truncated = response.truncated !== false;
-            // Native tails are chronological; prioritize the latest failure when reapplying limits.
-            for (
-              let index = response.lines.length - 1;
-              index >= Math.max(0, response.lines.length - 1000);
-              index--
+          options.onHistory?.({ snapshotId: query.snapshotId, history });
+        } catch {
+          // Optional presentation notifications must not discard collected evidence.
+        }
+      };
+      const logsTask = (async () => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let native:
+          | {
+              lines: string[];
+              truncated?: boolean;
+              files?: string[];
+              discoveryFailure?: 'unsafe_file' | 'unreadable' | 'read_timeout' | 'canceled';
+            }
+          | undefined;
+        if (client) {
+          try {
+            const response = await Promise.race([
+              client.request<{ lines?: unknown; truncated?: unknown; file?: unknown }>(
+                'logs.tail',
+                {
+                  limit: 1000,
+                  maxBytes: 524288,
+                },
+              ),
+              new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error('timeout')), 3000);
+              }),
+            ]);
+            if (
+              runtime === this.deps.getRuntime() &&
+              client === runtime.getGatewayClient() &&
+              Array.isArray(response?.lines)
             ) {
-              const line = response.lines[index];
-              if (typeof line !== 'string') {
-                truncated = true;
-                continue;
+              let bytes = 0;
+              const lines: string[] = [];
+              let truncated = response.truncated !== false;
+              // Native tails are chronological; prioritize the latest failure when reapplying limits.
+              for (
+                let index = response.lines.length - 1;
+                index >= Math.max(0, response.lines.length - 1000);
+                index--
+              ) {
+                const line = response.lines[index];
+                if (typeof line !== 'string') {
+                  truncated = true;
+                  continue;
+                }
+                const lineBytes = Buffer.byteLength(line) + 1;
+                if (lineBytes > 65537 || bytes + lineBytes > 524288) {
+                  truncated = true;
+                  continue;
+                }
+                bytes += lineBytes;
+                lines.push(line);
               }
-              const lineBytes = Buffer.byteLength(line) + 1;
-              if (lineBytes > 65537 || bytes + lineBytes > 524288) {
-                truncated = true;
-                continue;
+              truncated ||= response.lines.length > 1000;
+              native = { lines: lines.reverse(), truncated };
+              try {
+                const files = await discoverNativeDiagnosticLogs(response.file, options.signal);
+                if (files.length) native.files = files;
+              } catch (error) {
+                // Keep the partial native tail and record why full source discovery failed.
+                native.truncated = true;
+                const message = error instanceof Error ? error.message : '';
+                native.discoveryFailure =
+                  message === 'unsafe_file' || message === 'read_timeout' || message === 'canceled'
+                    ? message
+                    : 'unreadable';
               }
-              bytes += lineBytes;
-              lines.push(line);
             }
-            truncated ||= response.lines.length > 1000;
-            native = { lines: lines.reverse(), truncated };
-            try {
-              const files = await discoverNativeDiagnosticLogs(response.file, options.signal);
-              if (files.length) native.files = files;
-            } catch (error) {
-              // Keep the partial native tail and record why full source discovery failed.
-              native.truncated = true;
-              const message = error instanceof Error ? error.message : '';
-              native.discoveryFailure =
-                message === 'unsafe_file' || message === 'read_timeout' || message === 'canceled'
-                  ? message
-                  : 'unreadable';
-            }
+          } catch {
+            /* Native collection is optional and never starts an offline runtime. */
+          } finally {
+            clearTimeout(timer);
           }
-        } catch {
-          /* Native collection is optional and never starts an offline runtime. */
-        } finally {
-          clearTimeout(timer);
         }
-      }
-      this.snapshot(query, owner);
-      const sources = { main: [] as string[], cowork: [] as string[], gateway: [] as string[] };
-      const failedSources = new Set<string>();
-      for (const source of ['main', 'cowork', 'gateway'] as const) {
-        try {
-          sources[source] = this.deps.logSources?.[source](previous) ?? [];
-        } catch {
-          failedSources.add(source);
+        const sources = { main: [] as string[], cowork: [] as string[], gateway: [] as string[] };
+        const failedSources = new Set<string>();
+        for (const source of ['main', 'cowork', 'gateway'] as const) {
+          try {
+            sources[source] = this.deps.logSources?.[source](previous) ?? [];
+          } catch {
+            failedSources.add(source);
+          }
         }
-      }
-      const logs = await collectDiagnosticLogs(previous, sources, native, {
-        fullScan: true,
-        onExportRecord: options.onExportRecord,
-        signal: options.signal,
-        onProgress: progress => options.onProgress?.({ ...progress, snapshotId: query.snapshotId }),
-      });
-      for (const coverage of logs.sources) {
-        if (failedSources.has(coverage.source)) {
-          coverage.status = 'unavailable';
-          coverage.reasons = ['unreadable'];
+        const logs = await collectDiagnosticLogs(previous, sources, native, {
+          fullScan: true,
+          onExportRecord: options.onExportRecord,
+          signal: options.signal,
+          onProgress: progress =>
+            options.onProgress?.({ ...progress, snapshotId: query.snapshotId }),
+        });
+        for (const coverage of logs.sources) {
+          if (failedSources.has(coverage.source)) {
+            coverage.status = 'unavailable';
+            coverage.reasons = ['unreadable'];
+          }
         }
-      }
-      this.snapshot(query, owner);
-      const history = await collectDiagnosticHistory(
+        return logs;
+      })();
+      // Start independently of potentially large log files. Publish only after
+      // history's own cursor verification and current binding/owner checks.
+      const historyTask = collectDiagnosticHistory(
         previous,
         client,
         sessionKey === this.deps.getNativeSessionKey(previous.sessionId) ? sessionKey : null,
         options.signal,
+      ).then(history => {
+        checkHistory(history);
+        publishHistory(history);
+        return history;
+      });
+      const artifactTask = Promise.resolve().then(() =>
+        this.deps.getRuntimeArtifact?.(options.signal),
       );
-      this.snapshot(query, owner);
-      if (
-        runtime !== this.deps.getRuntime() ||
-        client !== runtime?.getGatewayClient() ||
-        sessionKey !== this.deps.getNativeSessionKey(previous.sessionId)
-      ) {
-        history.status = 'changed';
-        history.reason = 'history_changed';
-        history.failures = [];
-        delete history.lastResponse;
+      // Keep the busy guard and snapshot pin until every independent task settles.
+      const [logResult, historyResult, artifactResult] = await Promise.allSettled([
+        logsTask,
+        historyTask,
+        artifactTask,
+      ]);
+      if (logResult.status === 'rejected') throw logResult.reason;
+      if (historyResult.status === 'rejected') throw historyResult.reason;
+      const logs = logResult.value;
+      const history = checkHistory(historyResult.value);
+      if (!isCurrent()) {
+        publishHistory(history);
       }
-      const report = { ...previous, snapshotId: randomUUID(), logs, history };
+      if (!connectionCurrent()) runtimeInfo.gateway = { status: 'changed' };
+      if (artifactResult.status === 'fulfilled')
+        runtimeInfo.installedArtifact = artifactResult.value;
+      const report = { ...previous, snapshotId: randomUUID(), logs, history, runtimeInfo };
       this.remember(report, owner);
       return report;
     } finally {
-      clearTimeout(timer);
       this.collecting.delete(owner);
       this.pinnedSnapshots.delete(query.snapshotId);
     }

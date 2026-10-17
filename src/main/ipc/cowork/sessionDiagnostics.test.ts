@@ -116,8 +116,12 @@ describe('diagnostics IPC', () => {
   it('isolates cancellation by owner and snapshot and sends progress only to the requesting window', async () => {
     let finish!: (value: unknown) => void;
     let signal!: AbortSignal;
+    let publish!: () => void;
     service.collect.mockImplementation((_query, _owner, options) => {
       signal = options.signal;
+      publish = () =>
+        options.onHistory({ snapshotId: 'snapshot', history: { status: 'scanned', failures: [] } });
+      publish();
       options.onProgress({
         snapshotId: 'snapshot',
         source: 'main',
@@ -132,6 +136,10 @@ describe('diagnostics IPC', () => {
     });
     const pending = invoke(SessionDiagnosticsIpc.Collect);
     expect(event.sender.send).toHaveBeenCalledWith(
+      SessionDiagnosticsIpc.History,
+      expect.objectContaining({ snapshotId: 'snapshot' }),
+    );
+    expect(event.sender.send).toHaveBeenCalledWith(
       SessionDiagnosticsIpc.Progress,
       expect.objectContaining({ snapshotId: 'snapshot', bytesRead: 1024 }),
     );
@@ -144,6 +152,9 @@ describe('diagnostics IPC', () => {
     event = original;
     await invoke(SessionDiagnosticsIpc.Cancel);
     expect(signal.aborted).toBe(true);
+    vi.mocked(event.sender.send).mockClear();
+    publish();
+    expect(event.sender.send).not.toHaveBeenCalled();
     finish({});
     await pending;
   });

@@ -1,6 +1,8 @@
 import { app } from 'electron';
 
 import { TerminalGateway } from '../../../shared/app/terminal';
+import { projectDiagnosticGatewayInfo } from '../../../shared/cowork/diagnostics/diagnosticRuntimeInfo';
+import type { DiagnosticGatewayInfo } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import { coworkLog } from '../../cowork/coworkLogger';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
@@ -41,6 +43,7 @@ export interface RuntimeGatewayConnectionContext {
   readonly _ensureGatewayClientReadyImpl: () => Promise<void>;
   readonly engineManager: OpenClawEngineManager;
   gatewayClientVersion: string | null;
+  diagnosticGatewayInfo: DiagnosticGatewayInfo | null;
   gatewayClientEntryPath: string | null;
   gatewayReadyPromise: Promise<void> | null;
   readonly createGatewayClient: (connection: OpenClawGatewayConnectionInfo) => Promise<void>;
@@ -249,7 +252,7 @@ export async function createGatewayClient(
     // gateway token. Avoid OpenClaw creating a second device identity under
     // the Electron main process's default ~/.openclaw state directory.
     deviceIdentity: null,
-    onHelloOk: () => {
+    onHelloOk: (hello: unknown) => {
       const isExpectedClient =
         generation === this.gatewayClientGeneration &&
         this.pendingGatewayClient === client &&
@@ -260,6 +263,7 @@ export async function createGatewayClient(
         return;
       }
       this.gatewayClient = client;
+      this.diagnosticGatewayInfo = projectDiagnosticGatewayInfo(hello);
       this.pendingGatewayClient = null;
       this.gatewayClientVersion = connection.version;
       this.gatewayClientEntryPath = connection.clientEntryPath;
@@ -346,6 +350,7 @@ export function stopGatewayClient(this: RuntimeGatewayConnectionContext): void {
   this.pendingGatewayClient = null;
   this.emit('gatewayDisconnected');
   this.gatewayClientVersion = null;
+  this.diagnosticGatewayInfo = null;
   this.gatewayClientEntryPath = null;
   this.gatewayReadyPromise = null;
   this.invalidateRuntimeSessionSnapshot();
@@ -393,6 +398,7 @@ export function cleanupGatewayClientState(this: RuntimeGatewayConnectionContext)
   this.pendingGatewayClient = null;
   this.emit('gatewayDisconnected');
   this.gatewayClientVersion = null;
+  this.diagnosticGatewayInfo = null;
   this.gatewayClientEntryPath = null;
   this.gatewayReadyPromise = null;
   this.invalidateRuntimeSessionSnapshot();

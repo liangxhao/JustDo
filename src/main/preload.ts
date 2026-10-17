@@ -95,6 +95,7 @@ import {
 } from '../shared/cowork/agent-team/teamDiscussion';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import {
+  type DiagnosticHistoryUpdate,
   type DiagnosticQuery,
   type DiagnosticScanProgress,
   SessionDiagnosticsIpc,
@@ -814,6 +815,12 @@ contextBridge.exposeInMainWorld('electron', {
           callback(progress);
         ipcRenderer.on(SessionDiagnosticsIpc.Progress, listener);
         return () => ipcRenderer.removeListener(SessionDiagnosticsIpc.Progress, listener);
+      },
+      onHistory: (callback: (update: DiagnosticHistoryUpdate) => void) => {
+        const listener = (_event: Electron.IpcRendererEvent, update: DiagnosticHistoryUpdate) =>
+          callback(update);
+        ipcRenderer.on(SessionDiagnosticsIpc.History, listener);
+        return () => ipcRenderer.removeListener(SessionDiagnosticsIpc.History, listener);
       },
     },
     review: {

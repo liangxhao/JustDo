@@ -513,13 +513,15 @@ test('an unexpected Gateway close preserves execution identity without publishin
       version: 'test',
       clientEntryPath: 'test.js',
     });
-    options.onHelloOk();
+    options.onHelloOk({ protocol: 3, server: { version: '2026.10.4', buildId: 'abcdef012345', connId: 'PRIVATE' }, auth: { token: 'PRIVATE' } });
+    expect(adapter.getDiagnosticGatewayInfo()).toEqual({ version: '2026.10.4', protocol: 3, buildId: 'abcdef012345' });
     expect(connection).toHaveBeenLastCalledWith({ connected: true, runs: [] });
     const turn = createSessionTurn();
     const reject = vi.fn();
     adapter.activeTurns.set('session-1', turn);
     adapter.pendingTurns.set('session-1', { resolve: vi.fn(), reject });
     options.onClose(1006, 'network interrupted');
+    expect(adapter.getDiagnosticGatewayInfo()).toBeNull();
     expect(connection).toHaveBeenLastCalledWith({ connected: false, runs: [{ sessionId: 'session-1', nativeRunId: 'run-1' }] });
     expect(adapter.activeTurns.get('session-1')).toBe(turn);
     expect(adapter.disconnectedSessionIds.has('session-1')).toBe(true);

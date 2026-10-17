@@ -27,6 +27,7 @@ const bridge = {
   collect: vi.fn(),
   export: vi.fn(),
   onProgress: vi.fn(),
+  onHistory: vi.fn(),
   cancel: vi.fn(),
 };
 beforeEach(() => {
@@ -34,6 +35,7 @@ beforeEach(() => {
   i18nService.setLanguage('en', { persist: false });
   bridge.cancel.mockResolvedValue({ success: true });
   bridge.onProgress.mockReturnValue(vi.fn());
+  bridge.onHistory.mockReturnValue(vi.fn());
   bridge.list.mockResolvedValue({ success: true, runs: [report().run] });
   bridge.read.mockResolvedValue({ success: true, report: report() });
   bridge.collect.mockImplementation(
@@ -56,6 +58,51 @@ const open = () =>
   );
 
 describe('session diagnostics', () => {
+  it('shows early history for the current snapshot while keeping export disabled', async () => {
+    let publish!: (value: unknown) => void;
+    const unsubscribe = vi.fn();
+    bridge.onHistory.mockImplementation(callback => {
+      publish = callback;
+      return unsubscribe;
+    });
+    let finish!: (value: unknown) => void;
+    bridge.collect.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+    );
+    const view = open();
+    await screen.findByRole('button', { name: 'Cancel scan' });
+    const history = {
+      status: 'scanned',
+      messagesScanned: 1,
+      omitted: 0,
+      failures: [
+        {
+          timestamp: 10,
+          kind: 'tool',
+          excerpt: 'early failure excerpt',
+          clipped: false,
+          association: 'run',
+        },
+      ],
+    };
+    publish({ snapshotId: 'stale-snapshot', history });
+    expect(screen.queryByText(i18nService.t('diagnosticsHistoryReadyLogsPending'))).toBeNull();
+    publish({ snapshotId: 'snapshot-1', history });
+    await screen.findByText(i18nService.t('diagnosticsHistoryReadyLogsPending'));
+    expect(screen.getByRole('button', { name: /Export/ }).hasAttribute('disabled')).toBe(true);
+    finish({
+      success: true,
+      report: report({ snapshotId: 'finished', history: history as DiagnosticReport['history'] }),
+    });
+    await waitFor(() =>
+      expect(screen.queryByText(i18nService.t('diagnosticsHistoryReadyLogsPending'))).toBeNull(),
+    );
+    view.unmount();
+    expect(unsubscribe).toHaveBeenCalled();
+  });
   it('explains a normal model stop using native history', async () => {
     bridge.read.mockResolvedValue({
       success: true,

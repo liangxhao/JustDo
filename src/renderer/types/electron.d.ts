@@ -1,6 +1,8 @@
 import type { AppInitializationState } from '../../shared/app/initialization';
 type DiagnosticScanProgress =
   import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticScanProgress;
+type DiagnosticHistoryUpdate =
+  import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticHistoryUpdate;
 type DiagnosticQuery = import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticQuery;
 type DiagnosticReadResult =
   import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticReadResult;
@@ -1009,6 +1011,7 @@ interface IElectronAPI {
       collect: (query: DiagnosticQuery & { snapshotId: string }) => Promise<DiagnosticReadResult>;
       cancel: (query: DiagnosticQuery & { snapshotId: string }) => Promise<{ success: boolean }>;
       onProgress: (callback: (progress: DiagnosticScanProgress) => void) => () => void;
+      onHistory: (callback: (update: DiagnosticHistoryUpdate) => void) => () => void;
       export: (query: DiagnosticQuery & { snapshotId: string }) => Promise<DiagnosticExportResult>;
     };
     review: {

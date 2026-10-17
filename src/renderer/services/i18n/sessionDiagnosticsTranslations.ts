@@ -328,6 +328,8 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsCoverageDetails: 'Coverage details',
     diagnosticsTechnicalHint: 'Structured evidence for deeper inspection',
     diagnosticsScanTitle: 'Evidence collection',
+    diagnosticsHistoryReadyLogsPending:
+      'Conversation history has been checked. Log collection is still in progress; export will be available when it finishes.',
     diagnosticsCurrentFile: 'Current file progress',
     diagnosticsFilterLabel: 'Filter log records',
     diagnosticsFilterAll: 'All records',
@@ -793,6 +795,7 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsCoverageDetails: '查看覆盖详情',
     diagnosticsTechnicalHint: '查看结构化证据',
     diagnosticsScanTitle: '证据采集',
+    diagnosticsHistoryReadyLogsPending: '会话历史检查已完成，日志仍在采集中；完成后可导出完整结果。',
     diagnosticsCurrentFile: '当前文件进度',
     diagnosticsFilterLabel: '筛选日志记录',
     diagnosticsFilterAll: '全部记录',

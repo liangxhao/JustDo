@@ -12,6 +12,10 @@ import {
   diagnosticStages,
   isDiagnosticMetricValue,
 } from '../../../shared/cowork/diagnostics/diagnosticLogDetails';
+import {
+  projectDiagnosticGatewayInfo,
+  projectDiagnosticRuntimeArtifact,
+} from '../../../shared/cowork/diagnostics/diagnosticRuntimeInfo';
 import { assessDiagnosticStop } from '../../../shared/cowork/diagnostics/diagnosticStop';
 import {
   DiagnosticReason,
@@ -19,6 +23,7 @@ import {
   diagnosticResponseIssues,
   diagnosticTimeoutPhases,
 } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
+import { OPENCLAW_WIRE_VERSION } from '../../engine/openclaw/wire/v2026_10_4';
 import type { DiagnosticExportLogBundle } from './exportLogs';
 import { redactDiagnosticLog } from './exportLogs';
 
@@ -43,6 +48,25 @@ export function buildDiagnosticArchive(
     return aliases.get(value);
   };
   const reason = member(report.conclusion.reason, Object.values(DiagnosticReason));
+  const runtimeInfo = report.runtimeInfo
+    ? {
+        scope: 'collection_environment',
+        collectedAt: count(report.runtimeInfo.collectedAt),
+        wireVersion: member(report.runtimeInfo.wireVersion, [OPENCLAW_WIRE_VERSION]),
+        gateway: {
+          status: member(report.runtimeInfo.gateway.status, ['connected', 'offline', 'changed']),
+          ...(report.runtimeInfo.gateway.status === 'connected'
+            ? projectDiagnosticGatewayInfo({
+                server: report.runtimeInfo.gateway,
+                protocol: report.runtimeInfo.gateway.protocol,
+              })
+            : {}),
+        },
+        installedArtifact: report.runtimeInfo.installedArtifact
+          ? projectDiagnosticRuntimeArtifact(report.runtimeInfo.installedArtifact)
+          : undefined,
+      }
+    : undefined;
   const sources = ['main', 'cowork', 'gateway', 'native'] as const;
   const logs = report.logs
     ? {
@@ -239,6 +263,7 @@ export function buildDiagnosticArchive(
       firstObservedAt: count(report.coverage.firstObservedAt),
     },
     connection: member(report.connection, ['connected', 'offline']),
+    runtimeInfo,
     environment: {
       scope: 'global',
       status: member(report.environment.status, ['not_requested', 'available', 'unavailable']),
@@ -371,7 +396,8 @@ export function buildDiagnosticArchive(
     conversationFailureExcerptsIncluded: Boolean(report.history),
     identifiersAliased: !logBundle && !report.history,
     metadataIdentifiersAliased: true,
-    nativeRuntimeVersion: 'not_collected',
+    nativeRuntimeVersion: runtimeInfo?.gateway.version ?? 'not_collected',
+    runtimeInfo,
     logCollectionRequested: Boolean(logs),
     logCoverage: logs?.sources,
     limits: {
@@ -421,6 +447,10 @@ export function buildDiagnosticArchive(
     'manifest.json': JSON.stringify(manifest, null, 2),
     'ai-analysis.md': guide,
   };
+  entries['ai-analysis.md'] +=
+    language === 'zh'
+      ? '\n运行时身份：manifest.json / report.json 的 runtimeInfo 只表示采集时环境，不是所选历史运行的版本证明。gateway 来自当前连接握手；installedArtifact 是当前磁盘上的安装产物元数据，未经本次重新验签，可能与已运行的 Gateway 不同。缺失版本不可用应用声明版本补齐。\n'
+      : '\nRuntime identity: runtimeInfo in manifest.json / report.json describes the collection environment, not the selected historical run. gateway comes from the current authenticated handshake; installedArtifact describes installed files, is not reverified here, and can differ from the running Gateway. Never substitute a declared application runtime version for missing evidence.\n';
   if (report.history) {
     entries['session-evidence.json'] = JSON.stringify(
       {

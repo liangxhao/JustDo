@@ -106,6 +106,7 @@ import {
 } from './core/window/workspaceWindowManager';
 import { AgentTeamLaunchCoordinator } from './cowork/agent-team/agentTeamLaunchCoordinator';
 import { orderDiagnosticMainLogs } from './cowork/diagnostics/logSources';
+import { readDiagnosticRuntimeArtifact } from './cowork/diagnostics/runtimeInfo';
 import { SessionDiagnosticsService } from './cowork/diagnostics/service';
 import { CoworkStore } from './data/coworkStore';
 import { GroupStore } from './data/groupStore';
@@ -983,6 +984,8 @@ const getSessionDiagnosticsService = (): SessionDiagnosticsService => {
         : null;
     },
     getRuntime: getOpenClawRuntimeAdapter,
+    getRuntimeArtifact: signal =>
+      readDiagnosticRuntimeArtifact(openClawEngineManager?.getRuntimeRoot() ?? null, signal),
     logSources: {
       main: report => orderDiagnosticMainLogs(getRecentMainLogEntries(true), report),
       cowork: () =>

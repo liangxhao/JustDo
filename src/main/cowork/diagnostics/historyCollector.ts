@@ -45,6 +45,8 @@ export async function collectDiagnosticHistory(
   }
   const runIds = new Set(report.events.map(event => event.nativeRunId).filter(Boolean));
   const seen = new Set<string>();
+  const latestResponses = new Map<string, NonNullable<DiagnosticHistoryEvidence['lastResponse']>>();
+  let anonymousResponse = 0;
   const request = async (params: Record<string, unknown>) => {
     signal?.throwIfAborted();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -82,11 +84,19 @@ export async function collectDiagnosticHistory(
       timestamp,
       runId && runIds.has(runId) ? 'run' : 'run_window',
     );
-    if (response && (!evidence.lastResponse || timestamp > evidence.lastResponse.timestamp))
-      evidence.lastResponse = response;
-    else if (response && evidence.lastResponse?.timestamp === timestamp) {
-      // Timestamp ties do not establish ordering across native pages/attempts.
-      evidence.lastResponse.complete = false;
+    if (response && (!evidence.lastResponse || timestamp >= evidence.lastResponse.timestamp)) {
+      if (!evidence.lastResponse || timestamp > evidence.lastResponse.timestamp)
+        latestResponses.clear();
+      // Native byte-budget pagination can replay a boundary record. Replace that
+      // observation, while distinct/unidentified replies at the same time stay uncertain.
+      const responseId = text(metadata.id)
+        ? JSON.stringify([metadata.id, record(metadata.transcriptPosition).source])
+        : `anonymous:${++anonymousResponse}`;
+      latestResponses.set(responseId, response);
+      evidence.lastResponse = {
+        ...response,
+        complete: response.complete && latestResponses.size === 1,
+      };
     }
     // Native fallback IDs count only tool-bearing blocks, including calls.
     // Result envelopes own a single outcome even if their content mirrors it.
@@ -181,14 +191,37 @@ export async function collectDiagnosticHistory(
       });
     }
   };
-  const inspectPage = (page: { messages: unknown[]; activity?: unknown[] }) => {
+  const inspectPage = (page: { messages: unknown[]; activity?: unknown[] }, delta = false) => {
     const activities = new Map<string, Record<string, unknown>[]>();
     for (const raw of page.activity ?? []) {
       const entry = record(raw);
       if (typeof entry.messageId === 'string' && Array.isArray(entry.items))
         activities.set(entry.messageId, entry.items.map(record));
     }
-    for (const message of page.messages) {
+    for (const raw of page.messages) {
+      let message = raw;
+      if (delta) {
+        // Cursor deltas contain session.message envelopes, unlike full pages.
+        const envelope = record(raw);
+        const nested = record(envelope.message);
+        const metadata = record(nested.__openclaw);
+        if (envelope.sessionKey !== sessionKey) throw new Error('history_changed');
+        if (typeof nested.role !== 'string') throw new Error('invalid_delta');
+        if (
+          (envelope.messageId && metadata.id && envelope.messageId !== metadata.id) ||
+          (envelope.runId && metadata.runId && envelope.runId !== metadata.runId) ||
+          (envelope.runId && nested.runId && envelope.runId !== nested.runId)
+        )
+          throw new Error('history_changed');
+        message = {
+          ...nested,
+          ...(text(envelope.runId) ? { runId: envelope.runId } : {}),
+          __openclaw: {
+            ...metadata,
+            ...(text(envelope.messageId) ? { id: envelope.messageId } : {}),
+          },
+        };
+      }
       evidence.messagesScanned++;
       inspect(message, activities);
     }
@@ -233,20 +266,23 @@ export async function collectDiagnosticHistory(
         evidence.reason = 'history_changed';
         evidence.failures = [];
         delete evidence.lastResponse;
-      } else inspectPage(delta);
+      } else inspectPage(delta, true);
     }
   } catch (error) {
     // A failed page or final check can leave rows from mixed history generations.
-    if (needsVerification) {
+    const changed = error instanceof Error && error.message === 'history_changed';
+    if (needsVerification || changed) {
       evidence.failures = [];
       delete evidence.lastResponse;
     }
-    evidence.status = evidence.messagesScanned ? 'partial' : 'unavailable';
-    evidence.reason = signal?.aborted
-      ? 'canceled'
-      : error instanceof Error && error.message === 'timeout'
-        ? 'timeout'
-        : 'read_failed';
+    evidence.status = changed ? 'changed' : evidence.messagesScanned ? 'partial' : 'unavailable';
+    evidence.reason = changed
+      ? 'history_changed'
+      : signal?.aborted
+        ? 'canceled'
+        : error instanceof Error && error.message === 'timeout'
+          ? 'timeout'
+          : 'read_failed';
   }
   evidence.failures.sort((a, b) => a.timestamp - b.timestamp);
   return evidence;

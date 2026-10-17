@@ -4,6 +4,7 @@ import { EventEmitter } from 'events';
 import path from 'path';
 
 import { createPropertyContext } from '../../../shared/app/propertyContext';
+import type { DiagnosticGatewayInfo } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { ensureProjectGitRepository } from '../../core/filesystem/projectGit';
 import { t } from '../../core/i18n';
 import {
@@ -165,6 +166,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   // Gateway connection
   private gatewayClient: GatewayClientLike | null = null;
   private gatewayClientVersion: string | null = null;
+  private diagnosticGatewayInfo: DiagnosticGatewayInfo | null = null;
   private gatewayClientEntryPath: string | null = null;
   private pendingGatewayClient: GatewayClientLike | null = null;
   private readonly intentionallyStoppedGatewayClients = new WeakSet<object>();
@@ -2337,6 +2339,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return this.gatewayClient;
   }
 
+  getDiagnosticGatewayInfo(): DiagnosticGatewayInfo | null {
+    return this.gatewayClient && this.diagnosticGatewayInfo ? { ...this.diagnosticGatewayInfo } : null;
+  }
+
   getSessionKeysForSession(sessionId: string): string[] {
     const keys: string[] = [];
     for (const [key, id] of this.sessionIdBySessionKey.entries()) {
@@ -2759,6 +2765,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         get: () => this.gatewayClientVersion,
         set: value => {
           this.gatewayClientVersion = value;
+        },
+      },
+      diagnosticGatewayInfo: {
+        get: () => this.diagnosticGatewayInfo,
+        set: value => {
+          this.diagnosticGatewayInfo = value;
         },
       },
       gatewayClientEntryPath: {

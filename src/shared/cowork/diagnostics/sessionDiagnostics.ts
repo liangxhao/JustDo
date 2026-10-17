@@ -10,6 +10,7 @@ export const SessionDiagnosticsIpc = {
   Refresh: 'cowork:diagnostics:refresh',
   Collect: 'cowork:diagnostics:collect',
   Progress: 'cowork:diagnostics:progress',
+  History: 'cowork:diagnostics:history',
   Cancel: 'cowork:diagnostics:cancel',
   Export: 'cowork:diagnostics:export',
 } as const;
@@ -124,6 +125,7 @@ export interface DiagnosticReport {
   connection: 'connected' | 'offline';
   logs?: DiagnosticLogCollection;
   history?: DiagnosticHistoryEvidence;
+  runtimeInfo?: DiagnosticRuntimeInfo;
   environment: {
     status: 'not_requested' | 'available' | 'unavailable';
     collectedAt?: number;
@@ -136,6 +138,30 @@ export interface DiagnosticReport {
     firstAt?: number;
     lastAt?: number;
   };
+}
+
+export interface DiagnosticGatewayInfo {
+  version?: string;
+  protocol?: number;
+  buildId?: string;
+}
+export interface DiagnosticRuntimeArtifact {
+  version?: string;
+  patchSetSha256?: string;
+  buildRecipeSha256?: string;
+  gatewayAsarSha256?: string;
+}
+/** Current collection environment; never the selected historical run's environment. */
+export interface DiagnosticRuntimeInfo {
+  scope: 'collection_environment';
+  collectedAt: number;
+  wireVersion: string;
+  gateway: DiagnosticGatewayInfo & { status: 'connected' | 'offline' | 'changed' };
+  installedArtifact?: DiagnosticRuntimeArtifact;
+}
+export interface DiagnosticHistoryUpdate {
+  snapshotId: string;
+  history: DiagnosticHistoryEvidence;
 }
 /** On-demand failure excerpts, never a persisted transcript cache. */
 export interface DiagnosticHistoryEvidence {

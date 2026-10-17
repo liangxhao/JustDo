@@ -97,6 +97,10 @@ export function registerSessionDiagnosticsHandlers(
         let lastProgress = 0;
         const report = await getService().collect(query, event.sender.id, {
           signal: controller.signal,
+          onHistory: update => {
+            if (controller?.signal.aborted || event.sender.isDestroyed()) return;
+            event.sender.send(SessionDiagnosticsIpc.History, update);
+          },
           onProgress: progress => {
             if (Date.now() - lastProgress < 100 || event.sender.isDestroyed()) return;
             lastProgress = Date.now();

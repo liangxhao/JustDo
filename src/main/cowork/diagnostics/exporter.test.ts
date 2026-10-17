@@ -37,6 +37,36 @@ const report = (): DiagnosticReport => ({
   ],
 });
 
+it('exports current runtime identity and artifact fingerprints without claiming historical provenance', () => {
+  const input = report();
+  input.runtimeInfo = {
+    scope: 'collection_environment',
+    collectedAt: 10,
+    wireVersion: 'v2026.10.4',
+    gateway: { status: 'connected', version: '2026.10.4', protocol: 3, buildId: 'abc1234' },
+    installedArtifact: { version: 'v2026.10.5', patchSetSha256: 'a'.repeat(64) },
+  };
+  Object.assign(input.runtimeInfo.gateway, { token: 'PRIVATE' });
+  Object.assign(input.runtimeInfo.installedArtifact!, { path: 'PRIVATE' });
+  const archive = buildDiagnosticArchive(input, '2026.8.27', 'en');
+  const manifest = JSON.parse(archive['manifest.json']);
+  expect(manifest.nativeRuntimeVersion).toBe('2026.10.4');
+  expect(manifest.runtimeInfo).toMatchObject({
+    scope: 'collection_environment',
+    installedArtifact: { version: 'v2026.10.5', patchSetSha256: 'a'.repeat(64) },
+  });
+  expect(JSON.parse(archive['report.json']).runtimeInfo).toEqual(manifest.runtimeInfo);
+  expect(JSON.stringify(archive)).not.toContain('PRIVATE');
+  input.runtimeInfo.gateway = { status: 'offline', version: '2026.10.4' };
+  expect(
+    JSON.parse(buildDiagnosticArchive(input, '2026.8.27', 'en')['manifest.json'])
+      .nativeRuntimeVersion,
+  ).toBe('not_collected');
+  input.runtimeInfo.gateway = { status: 'connected', version: 'PRIVATE', buildId: 'PRIVATE' };
+  input.runtimeInfo.installedArtifact = { patchSetSha256: 'PRIVATE' };
+  expect(JSON.stringify(buildDiagnosticArchive(input, '2026.8.27', 'en'))).not.toContain('PRIVATE');
+});
+
 it('exports only response shape and aliased stop evidence, never model text', () => {
   const input = report();
   input.run!.state = 'completed';

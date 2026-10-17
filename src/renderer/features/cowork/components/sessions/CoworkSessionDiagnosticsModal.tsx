@@ -113,8 +113,17 @@ export default function CoworkSessionDiagnosticsModal({
     const unsubscribe = window.electron.cowork.diagnostics.onProgress?.(value => {
       if (value.snapshotId === collectingQuery.current?.snapshotId) setProgress(value);
     });
+    const unsubscribeHistory = window.electron.cowork.diagnostics.onHistory?.(value => {
+      if (!mounted.current || value.snapshotId !== collectingQuery.current?.snapshotId) return;
+      setReport(previous =>
+        previous?.snapshotId === value.snapshotId
+          ? { ...previous, history: value.history }
+          : previous,
+      );
+    });
     return () => {
       unsubscribe?.();
+      unsubscribeHistory?.();
       if (collectingQuery.current)
         void window.electron.cowork.diagnostics.cancel?.(collectingQuery.current);
     };
@@ -508,6 +517,11 @@ export default function CoworkSessionDiagnosticsModal({
 
           {report && (
             <>
+              {scanning && report.history && (
+                <p role="status" className="diagnostics-section-description">
+                  {t('diagnosticsHistoryReadyLogsPending')}
+                </p>
+              )}
               <DiagnosticOverview report={report} />
               <details className="diagnostics-technical diagnostics-supporting">
                 <summary>
@@ -533,6 +547,7 @@ export default function CoworkSessionDiagnosticsModal({
                       conclusion: report.conclusion,
                       events: report.events,
                       logs: report.logs,
+                      runtimeInfo: report.runtimeInfo,
                     },
                     null,
                     2,

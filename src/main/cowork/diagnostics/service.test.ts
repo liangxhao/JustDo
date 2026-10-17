@@ -6,6 +6,7 @@ import {
   SessionDiagnosticsStore,
 } from '../../data/sessionDiagnosticsStore';
 import type { GatewayClientLike } from '../../engine/gateway/types';
+import * as logCollector from './logCollector';
 import { type DiagnosticRuntime, SessionDiagnosticsService } from './service';
 
 describe('SessionDiagnosticsService', () => {
@@ -19,6 +20,8 @@ describe('SessionDiagnosticsService', () => {
   let request: ReturnType<typeof vi.fn>;
   let logSources: Record<'main' | 'cowork' | 'gateway', ReturnType<typeof vi.fn>>;
   let nativeSessionKey: string;
+  let runtime: DiagnosticRuntime;
+  let getRuntimeArtifact: ReturnType<typeof vi.fn>;
   beforeEach(() => {
     vi.useFakeTimers();
     currentTime = Date.now();
@@ -39,24 +42,158 @@ describe('SessionDiagnosticsService', () => {
     request = vi.fn().mockResolvedValue({ count: 1, dropped: 0 });
     logSources = { main: vi.fn(() => []), cowork: vi.fn(() => []), gateway: vi.fn(() => []) };
     client = { start: vi.fn(), stop: vi.fn(), request: request as GatewayClientLike['request'] };
-    const runtime: DiagnosticRuntime = {
+    runtime = {
       getGatewayClient: () => (connected ? client : null),
+      getDiagnosticGatewayInfo: () => ({ version: '2026.10.4', protocol: 3 }),
       resolveDiagnosticSession: (runId, key) =>
         resolved && runId === 'native' && key === 'session-key' ? 's' : null,
     };
+    getRuntimeArtifact = vi.fn().mockResolvedValue(undefined);
     service = new SessionDiagnosticsService({
       store,
       now: () => currentTime,
       getRuntime: () => runtime,
+      getRuntimeArtifact,
       logSources,
       hasSession: id => !!db.prepare('SELECT id FROM cowork_sessions WHERE id = ?').get(id),
       getNativeSessionKey: () => nativeSessionKey,
     });
   });
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.clearAllTimers();
     vi.useRealTimers();
     db.close();
+  });
+
+  it('publishes verified history while logs are pending and retains the busy guard', async () => {
+    connected = true;
+    request.mockImplementation(async method =>
+      method === 'chat.history'
+        ? {
+            messages: [
+              { role: 'toolResult', timestamp: 200, isError: true, content: 'early failure' },
+            ],
+          }
+        : { lines: [] },
+    );
+    let release!: (value: Awaited<ReturnType<typeof logCollector.collectDiagnosticLogs>>) => void;
+    vi.spyOn(logCollector, 'collectDiagnosticLogs').mockImplementation(
+      () =>
+        new Promise(resolve => {
+          release = resolve;
+        }),
+    );
+    const previous = service.read({ sessionId: 's' }, 1);
+    const query = { sessionId: 's', snapshotId: previous.snapshotId };
+    const onHistory = vi.fn();
+    const pending = service.collect(query, 1, { onHistory });
+    await vi.waitFor(() => expect(onHistory).toHaveBeenCalled());
+    expect(onHistory.mock.calls[0][0]).toMatchObject({
+      snapshotId: previous.snapshotId,
+      history: { status: 'scanned', failures: [{ excerpt: 'early failure' }] },
+    });
+    await expect(service.collect(query, 1)).rejects.toMatchObject({ reason: 'busy' });
+    release({
+      collectedAt: currentTime,
+      window: { from: 0, to: currentTime },
+      localTimezoneOffsetMinutes: 0,
+      partial: true,
+      sources: [],
+      records: [],
+    });
+    expect((await pending).history?.failures[0].excerpt).toBe('early failure');
+  });
+
+  it('records handshake and installed artifact metadata separately and omits offline server claims', async () => {
+    connected = true;
+    request.mockImplementation(async method =>
+      method === 'chat.history' ? { messages: [] } : { lines: [] },
+    );
+    getRuntimeArtifact.mockResolvedValue({ version: 'v2026.10.5', patchSetSha256: 'a'.repeat(64) });
+    const previous = service.read({ sessionId: 's' }, 1);
+    const query = { sessionId: 's', snapshotId: previous.snapshotId };
+    expect((await service.collect(query, 1)).runtimeInfo).toMatchObject({
+      scope: 'collection_environment',
+      collectedAt: currentTime,
+      gateway: { status: 'connected', version: '2026.10.4', protocol: 3 },
+      installedArtifact: { version: 'v2026.10.5', patchSetSha256: 'a'.repeat(64) },
+    });
+    connected = false;
+    getRuntimeArtifact.mockRejectedValue(new Error('optional metadata unavailable'));
+    const offline = await service.collect(query, 1);
+    expect(offline.runtimeInfo?.gateway).toEqual({ status: 'offline' });
+    expect(offline.runtimeInfo?.installedArtifact).toBeUndefined();
+    expect(client.start).not.toHaveBeenCalled();
+  });
+
+  it('never publishes a canceled early history result', async () => {
+    connected = true;
+    const controller = new AbortController();
+    request.mockImplementation(async method => {
+      if (method === 'chat.history') controller.abort();
+      return method === 'chat.history' ? { messages: [] } : { lines: [] };
+    });
+    const previous = service.read({ sessionId: 's' }, 1);
+    const onHistory = vi.fn();
+    const result = await service.collect({ sessionId: 's', snapshotId: previous.snapshotId }, 1, {
+      signal: controller.signal,
+      onHistory,
+    });
+    expect(result.history?.reason).toBe('canceled');
+    expect(onHistory).not.toHaveBeenCalled();
+  });
+
+  it('retains the final report if the optional early notification cannot be delivered', async () => {
+    const previous = service.read({ sessionId: 's' }, 1);
+    const result = await service.collect({ sessionId: 's', snapshotId: previous.snapshotId }, 1, {
+      onHistory: () => {
+        throw new Error('window closed');
+      },
+    });
+    expect(result.history?.reason).toBe('offline');
+    expect(service.snapshot({ sessionId: 's', snapshotId: result.snapshotId }, 1)).toBe(result);
+  });
+
+  it('revokes early evidence if the native binding changes while logs finish', async () => {
+    connected = true;
+    request.mockImplementation(async method =>
+      method === 'chat.history'
+        ? {
+            messages: [
+              { role: 'toolResult', timestamp: 200, isError: true, content: 'stale failure' },
+            ],
+          }
+        : { lines: [] },
+    );
+    let release!: (value: Awaited<ReturnType<typeof logCollector.collectDiagnosticLogs>>) => void;
+    vi.spyOn(logCollector, 'collectDiagnosticLogs').mockImplementation(
+      () =>
+        new Promise(resolve => {
+          release = resolve;
+        }),
+    );
+    const previous = service.read({ sessionId: 's' }, 1);
+    const onHistory = vi.fn();
+    const pending = service.collect({ sessionId: 's', snapshotId: previous.snapshotId }, 1, {
+      onHistory,
+    });
+    await vi.waitFor(() => expect(onHistory).toHaveBeenCalled());
+    nativeSessionKey = 'replacement';
+    release({
+      collectedAt: currentTime,
+      window: { from: 0, to: currentTime },
+      localTimezoneOffsetMinutes: 0,
+      partial: true,
+      sources: [],
+      records: [],
+    });
+    expect((await pending).history).toMatchObject({ status: 'changed', failures: [] });
+    expect(onHistory).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        history: expect.objectContaining({ status: 'changed', failures: [] }),
+      }),
+    );
   });
 
   it('collects stored tool errors through native history without persisting conversation text', async () => {
@@ -84,9 +221,12 @@ describe('SessionDiagnosticsService', () => {
     });
     expect(JSON.stringify(store.read('s', 'r'))).not.toContain('report.csv');
     expect(client.start).not.toHaveBeenCalled();
-    expect(request).toHaveBeenCalledWith('chat.history', expect.objectContaining({
-      sessionKey: 'agent:researcher:justdo:s',
-    }));
+    expect(request).toHaveBeenCalledWith(
+      'chat.history',
+      expect.objectContaining({
+        sessionKey: 'agent:researcher:justdo:s',
+      }),
+    );
   });
 
   it('discards history evidence if the native session binding changes during collection', async () => {
@@ -94,7 +234,9 @@ describe('SessionDiagnosticsService', () => {
     request.mockImplementation(async method => {
       if (method !== 'chat.history') return { lines: [] };
       nativeSessionKey = 'agent:researcher:subagent:replacement';
-      return { messages: [{ role: 'toolResult', timestamp: 200, isError: true, content: 'old failure' }] };
+      return {
+        messages: [{ role: 'toolResult', timestamp: 200, isError: true, content: 'old failure' }],
+      };
     });
     const previous = service.read({ sessionId: 's' }, 1);
     const result = await service.collect({ sessionId: 's', snapshotId: previous.snapshotId }, 1);
@@ -353,11 +495,12 @@ describe('SessionDiagnosticsService', () => {
   it('rejects deleted sessions after native collection and before retaining evidence', async () => {
     connected = true;
     let finish!: (value: unknown) => void;
-    request.mockImplementation(
-      () =>
-        new Promise(resolve => {
-          finish = resolve;
-        }),
+    request.mockImplementation(method =>
+      method === 'chat.history'
+        ? Promise.resolve({ messages: [] })
+        : new Promise(resolve => {
+            finish = resolve;
+          }),
     );
     const original = service.read({ sessionId: 's' }, 1);
     const pending = service.collect({ sessionId: 's', snapshotId: original.snapshotId }, 1);
