@@ -11,6 +11,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 const patch27 = require('../../../../scripts/patches/v2026.10.4/027-canonical-readiness-owner-path.cjs');
 const patch28 = require('../../../../scripts/patches/v2026.10.4/028-prepared-history-response-publication.cjs');
+const patch29 = require('../../../../scripts/patches/v2026.10.4/029-reasoning-completions-streaming.cjs');
+const { PROVIDER_TRANSPORT_PATH, PROVIDER_PARTITIONER_PATH } =
+  require('../../../../scripts/openclaw/openclaw-patch-dependencies.cjs');
 const ownerName = 'session-canonical-key-D1TSJMmX.mjs';
 const cacheName = 'openclaw-agent-db-validation-cache-_HDeZNQr.mjs';
 const handlerName = 'chat-history-handler-BKMKq528.mjs';
@@ -46,7 +49,7 @@ afterEach(() => {
       throw new Error('Unexpected fixture cleanup path');
     fs.rmSync(root, { recursive: true, force: true });
   }
-});
+}, 120_000);
 function fixture(bundle: boolean) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prepared-read-contract-'));
   roots.push(root);
@@ -94,6 +97,31 @@ function expectNoWrites(root: string, patch: any, targets = files(root)) {
     expect(() => patch[method](root)).toThrow();
     expect(targets.map(hash)).toEqual(before);
   }
+}
+
+function withRuntimeIndex(root: string, verify: () => void): void {
+  const { beginRuntimePatchPhase, endRuntimePatchPhase, runtimeJavaScriptFiles } =
+    require('../../../../scripts/patches/v2026.10.4/_patch-utils.js');
+  const snapshot = new Map(
+    runtimeJavaScriptFiles(root).map((file: string) => [file, fs.readFileSync(file)]),
+  );
+  beginRuntimePatchPhase(root, snapshot);
+  try {
+    verify();
+  } finally {
+    endRuntimePatchPhase(root);
+  }
+}
+
+function retainFailedBundle(root: string): void {
+  if (process.env.STREAMING_VERIFICATION_KEEP_BUNDLE !== '1') return;
+  const output = path.resolve(
+    __dirname,
+    '../../../..',
+    '.agent-tasks/streaming-verification/gateway-bundle.failed.mjs',
+  );
+  fs.mkdirSync(path.dirname(output), { recursive: true });
+  fs.copyFileSync(path.join(root, 'gateway-bundle.mjs'), output);
 }
 
 for (const [name, patch, family, nativeNames] of [
@@ -249,6 +277,13 @@ it.skipIf(!process.env.JUSTDO_EXECUTION_PRISTINE_DIR)(
       recursive: true,
       filter: (file: string) => path.resolve(file) !== path.resolve(pristine, 'node_modules'),
     });
+    const providerSource = path.join(pristine, 'node_modules', '@openclaw', 'ai');
+    if (!fs.existsSync(providerSource)) {
+      throw new Error('Full pristine patch verification requires the locked @openclaw/ai dependency');
+    }
+    fs.cpSync(providerSource, path.join(root, 'node_modules', '@openclaw', 'ai'), {
+      recursive: true,
+    });
     const expected = [
       ['dist/' + ownerName, 'dist/' + workerName],
       ['dist/' + cacheName, 'dist/' + workerName],
@@ -271,11 +306,15 @@ it.skipIf(!process.env.JUSTDO_EXECUTION_PRISTINE_DIR)(
       pristineInstallPass: true,
       writeManifest: false,
     });
-    expect(results).toHaveLength(28);
-    expect(patch27.applyPatch(root)).toEqual([]);
-    expect(patch28.applyPatch(root)).toEqual([]);
-    expect(() => patch27.verifyPatch(root)).not.toThrow();
-    expect(() => patch28.verifyPatch(root)).not.toThrow();
+    expect(results).toHaveLength(29);
+    withRuntimeIndex(root, () => {
+      expect(patch27.applyPatch(root)).toEqual([]);
+      expect(patch28.applyPatch(root)).toEqual([]);
+      expect(patch29.applyPatch(root)).toEqual([]);
+      expect(() => patch27.verifyPatch(root)).not.toThrow();
+      expect(() => patch28.verifyPatch(root)).not.toThrow();
+      expect(() => patch29.verifyPatch(root)).not.toThrow();
+    });
     // Run the complete native entry graph with the production resolver plugins and external list.
     // Reuse installed dependency files read-only; no installation, Gateway or ABI changes occur.
     const recipe = fs.readFileSync(
@@ -330,24 +369,44 @@ it.skipIf(!process.env.JUSTDO_EXECUTION_PRISTINE_DIR)(
       plugins: [createSharedSdkModulesPlugin(root, esbuild), createImportMetaPlugin(root)],
     });
     fs.writeFileSync(path.join(root, 'gateway-bundle.mjs'), built.outputFiles[0].text);
-    expect(() => patch27.verifyPatch(root)).not.toThrow();
-    expect(() => patch28.verifyPatch(root)).not.toThrow();
-    const worker = path.join(root, 'dist', workerName);
-    const currentWorker = fs.readFileSync(worker, 'utf8');
-    fs.writeFileSync(
-      worker,
-      fs.readFileSync(path.join(process.env.JUSTDO_EXECUTION_PRISTINE_DIR!, 'dist', workerName)),
-    );
-    expectNoWrites(root, patch27, [
-      path.join(root, 'dist', ownerName),
-      path.join(root, 'dist', cacheName),
-      worker,
-      path.join(root, 'gateway-bundle.mjs'),
-    ]);
-    fs.writeFileSync(worker, currentWorker);
-    expect(() => patch27.verifyPatch(root)).not.toThrow();
+    try {
+      withRuntimeIndex(root, () => {
+        expect(() => patch27.verifyPatch(root)).not.toThrow();
+        expect(() => patch28.verifyPatch(root)).not.toThrow();
+        expect(() => patch29.verifyPatch(root)).not.toThrow();
+        const sourceAndBundle = [
+          path.join(root, PROVIDER_TRANSPORT_PATH),
+          path.join(root, PROVIDER_PARTITIONER_PATH),
+          path.join(root, 'dist/builtin-openclaw-qVsnLx0N.mjs'),
+          path.join(root, 'gateway-bundle.mjs'),
+        ];
+        const hashes = () => sourceAndBundle.map(file =>
+          createHash('sha256').update(fs.readFileSync(file)).digest('hex'));
+        const currentBytes = hashes();
+        expect(patch29.applyPatch(root)).toEqual([]);
+        expect(hashes()).toEqual(currentBytes);
+      });
+      // Deliberate external corruption must be observed from disk, outside the prior index.
+      const worker = path.join(root, 'dist', workerName);
+      const currentWorker = fs.readFileSync(worker, 'utf8');
+      fs.writeFileSync(
+        worker,
+        fs.readFileSync(path.join(process.env.JUSTDO_EXECUTION_PRISTINE_DIR!, 'dist', workerName)),
+      );
+      expectNoWrites(root, patch27, [
+        path.join(root, 'dist', ownerName),
+        path.join(root, 'dist', cacheName),
+        worker,
+        path.join(root, 'gateway-bundle.mjs'),
+      ]);
+      fs.writeFileSync(worker, currentWorker);
+      expect(() => patch27.verifyPatch(root)).not.toThrow();
+    } catch (error) {
+      retainFailedBundle(root);
+      throw error;
+    }
   },
-  300_000,
+  900_000,
 );
 
 const configured = Boolean(

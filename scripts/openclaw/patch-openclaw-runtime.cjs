@@ -4,6 +4,9 @@ const fs = require('fs');
 const { execFileSync } = require('node:child_process');
 const path = require('path');
 const {
+  listRuntimePatchDependencyTargets,
+} = require('./openclaw-patch-dependencies.cjs');
+const {
   buildOpenClawPatchManifest,
   listPatchFiles,
   verifyOpenClawPatchManifest,
@@ -80,6 +83,7 @@ function listRuntimePatchTargets(runtimeDir) {
   }
   const bundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');
   if (fs.existsSync(bundlePath)) files.push(bundlePath);
+  files.push(...listRuntimePatchDependencyTargets(runtimeDir));
   return files.sort();
 }
 
@@ -175,15 +179,18 @@ function patchOpenClawRuntime(runtimeDir, options = {}) {
       console.log(`[${label}] Patch directory is empty for ${version}.`);
     }
 
-    // Both native workers embed patched code independently of the Gateway bundle.
-    for (const name of ['worker.mjs', 'sqlite-store.worker.mjs']) {
-      const workerPath = path.join(runtimeDir, 'dist', 'worker', name);
-      if (fs.existsSync(workerPath)) {
-        execFileSync(process.execPath, ['--check', workerPath], {
-          windowsHide: true, timeout: 60_000, stdio: 'pipe',
-          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-        });
-      }
+    // Native workers and patched provider dependencies can execute outside the bundle.
+    const syntaxTargets = [
+      ...['worker.mjs', 'sqlite-store.worker.mjs']
+        .map(name => path.join(runtimeDir, 'dist', 'worker', name))
+        .filter(filePath => fs.existsSync(filePath)),
+      ...listRuntimePatchDependencyTargets(runtimeDir),
+    ];
+    for (const filePath of syntaxTargets) {
+      execFileSync(process.execPath, ['--check', filePath], {
+        windowsHide: true, timeout: 60_000, stdio: 'pipe',
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      });
     }
 
     const gatewayBundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');

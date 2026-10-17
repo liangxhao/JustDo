@@ -4,6 +4,9 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const {
+  runtimePatchDependencyArtifactPaths,
+} = require('./openclaw-patch-dependencies.cjs');
+const {
   verifyRuntimeCompanionFiles,
   verifyPublicCliRootFiles,
 } = require('./openclaw-runtime-companions.cjs');
@@ -27,6 +30,7 @@ const BUILD_RECIPE_FILES = [
   'scripts/openclaw/openclaw-runtime-companions.cjs',
   'scripts/openclaw/openclaw-runtime-staging.cjs',
   'scripts/openclaw/patch-openclaw-runtime.cjs',
+  'scripts/openclaw/openclaw-patch-dependencies.cjs',
   'scripts/openclaw/verify-openclaw-pristine-contracts.cjs',
   'scripts/openclaw/verify-openclaw-runtime-patches.cjs',
   'scripts/openclaw/sync-openclaw-runtime-current.cjs',
@@ -108,6 +112,14 @@ function hashFile(filePath) {
   const hash = crypto.createHash('sha256');
   hash.update(fs.readFileSync(filePath));
   return hash.digest('hex');
+}
+
+function buildRuntimePatchDependencyArtifacts(runtimeRoot, version) {
+  return runtimePatchDependencyArtifactPaths(runtimeRoot, version).map(filePath => ({
+    path: path.relative(runtimeRoot, filePath).replace(/\\/g, '/'),
+    size: fs.statSync(filePath).size,
+    sha256: hashFile(filePath),
+  }));
 }
 
 function readJsonFile(filePath, label) {
@@ -240,6 +252,17 @@ function verifyFrozenOpenClawRuntime(runtimeRoot, options = {}) {
     };
     if (JSON.stringify(manifest.sourceArtifacts) !== JSON.stringify(expectedSourceArtifacts)) {
       problems.push('patch manifest source artifacts do not match runtime-build-info.json');
+    }
+    try {
+      const dependencies = buildRuntimePatchDependencyArtifacts(
+        runtimeRoot,
+        buildInfo.openclawVersion,
+      );
+      if (JSON.stringify(manifest.patchDependencyArtifacts) !== JSON.stringify(dependencies)) {
+        problems.push('runtime patch dependencies do not match the frozen patch manifest');
+      }
+    } catch (error) {
+      problems.push(`runtime patch dependencies are invalid: ${error.message}`);
     }
     if (
       !Array.isArray(manifest.patches) ||
@@ -442,6 +465,7 @@ function buildOpenClawPatchManifest(runtimeRoot, options = {}) {
       runtimePackageLockPath: buildInfo.runtimePackageLockPath,
       runtimePackageLockSha256: buildInfo.runtimePackageLockSha256,
     },
+    patchDependencyArtifacts: buildRuntimePatchDependencyArtifacts(runtimeRoot, version),
     patches: patchFiles.map(filePath => ({
       file: path.relative(repoRoot, filePath).replace(/\\/g, '/'),
       sha256: hashFile(filePath),
@@ -528,6 +552,11 @@ function verifyOpenClawPatchManifest(runtimeRoot, options = {}) {
   }
   if (JSON.stringify(actual.sourceArtifacts) !== JSON.stringify(expected.sourceArtifacts)) {
     problems.push('runtime source artifacts do not match runtime-build-info.json');
+  }
+  if (
+    JSON.stringify(actual.patchDependencyArtifacts) !== JSON.stringify(expected.patchDependencyArtifacts)
+  ) {
+    problems.push('runtime patch dependencies do not match the recorded dependency artifacts');
   }
 
   const actualPatches = Array.isArray(actual.patches) ? actual.patches : [];

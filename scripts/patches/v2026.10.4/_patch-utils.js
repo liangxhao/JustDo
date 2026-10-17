@@ -2,6 +2,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const {
+  isRuntimePatchDependencyTarget,
+  listRuntimePatchDependencyTargets,
+} = require('../../openclaw/openclaw-patch-dependencies.cjs');
 
 let activeRuntimePhase = null;
 const atomicRenameWaitArray = new Int32Array(new SharedArrayBuffer(4));
@@ -34,6 +38,7 @@ function isRuntimeJavaScriptFile(runtimeDir, filePath) {
   const relativePath = path.relative(normalizedRuntimeDir, normalizedFilePath);
   if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) return false;
   if (relativePath === 'gateway-bundle.mjs') return true;
+  if (isRuntimePatchDependencyTarget(normalizedRuntimeDir, normalizedFilePath)) return true;
   return relativePath.startsWith(`dist${path.sep}`) && /\.[cm]?js$/.test(normalizedFilePath);
 }
 
@@ -162,6 +167,7 @@ function runtimeJavaScriptFiles(runtimeDir, options = {}) {
     );
   }
   const files = listJavaScriptFiles(path.join(runtimeDir, 'dist'));
+  files.push(...listRuntimePatchDependencyTargets(runtimeDir));
   if (options.includeBundle !== false) {
     const bundlePath = path.join(runtimeDir, 'gateway-bundle.mjs');
     if (fs.existsSync(bundlePath)) files.push(bundlePath);

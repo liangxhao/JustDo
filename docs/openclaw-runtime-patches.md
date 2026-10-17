@@ -133,6 +133,12 @@ patch 只接入显式原生依赖。支持模块通过事务工具复制并校�
 - immutable runtime artifacts；
 - 最终 bundle/package/companion 文件字节。
 
+当前精确补丁还会修改锁定的 `@openclaw/ai` transport 和 reasoning partitioner。这两个依赖目标与
+根 `dist/` 一样进入事务快照、索引、语法检查和回滚；依赖入口及 package 身份
+写入 manifest 的 `patchDependencyArtifacts`，冻结产物与 Windows 归档验证均核对。
+不能扩大为对任意 `node_modules` 文件进行无界搜索或写入。旧 manifest 缺少这些
+字节证明时，须从 pristine 包重建，不能给旧运行时补写证明。
+
 任何 patch 重排、helper 改动、bundle 重建、cache 污染或打包遗漏都会使 manifest 失效。Electron Builder 在打包前和 staged product 上再次验证；Windows 还会流式解码并验证 `win-resources.tar.zst`，仅允许设计上单独省略的 asar。
 
 ## 10. 常用命令

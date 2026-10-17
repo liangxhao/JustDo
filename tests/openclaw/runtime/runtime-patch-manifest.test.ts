@@ -68,13 +68,37 @@ const { ensureOpenClawRuntimePatches, patchOpenClawRuntime } =
 
 const temporaryRoots: string[] = [];
 const fixtureIntegrity = `sha512-${Buffer.alloc(64, 7).toString('base64')}`;
+const {
+  PROVIDER_PACKAGE_PATH,
+  PROVIDER_PARTITIONER_PATH,
+  PROVIDER_TRANSPORT_PATH,
+} = require('../../../scripts/openclaw/openclaw-patch-dependencies.cjs') as {
+  PROVIDER_PACKAGE_PATH: string;
+  PROVIDER_PARTITIONER_PATH: string;
+  PROVIDER_TRANSPORT_PATH: string;
+};
+
+function writeProviderFixture(runtimeRoot: string): void {
+  const target = path.join(runtimeRoot, PROVIDER_TRANSPORT_PATH);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, 'const providerTransport = true;\n');
+  fs.writeFileSync(
+    path.join(runtimeRoot, PROVIDER_PARTITIONER_PATH),
+    'const providerPartitioner = true;\n',
+  );
+  fs.writeFileSync(
+    path.join(runtimeRoot, PROVIDER_PACKAGE_PATH),
+    JSON.stringify({ name: '@openclaw/ai', version: '2026.10.4' }),
+  );
+}
 
 function writeFixtureBuildInfo(
   repoRoot: string,
   runtimeRoot: string,
   overrides: Record<string, unknown> = {},
 ) {
-  const version = 'v2026.6.11';
+  const version = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
+    .openclaw.version;
   fs.writeFileSync(
     path.join(runtimeRoot, 'runtime-build-info.json'),
     JSON.stringify({
@@ -104,16 +128,16 @@ function writeFixtureBuildInfo(
   );
 }
 
-function createFixture() {
+function createFixture(version = 'v2026.6.11') {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-patch-manifest-test-'));
   temporaryRoots.push(repoRoot);
   const runtimeRoot = path.join(repoRoot, 'runtime');
-  const patchRoot = path.join(repoRoot, 'scripts', 'patches', 'v2026.6.11');
+  const patchRoot = path.join(repoRoot, 'scripts', 'patches', version);
   fs.mkdirSync(runtimeRoot, { recursive: true });
   fs.mkdirSync(patchRoot, { recursive: true });
   fs.writeFileSync(
     path.join(repoRoot, 'package.json'),
-    JSON.stringify({ openclaw: { version: 'v2026.6.11' } }),
+    JSON.stringify({ openclaw: { version } }),
   );
   fs.writeFileSync(path.join(repoRoot, '.nvmrc'), '24.15.0\n');
   fs.writeFileSync(path.join(repoRoot, 'package-lock.json'), '{}\n');
@@ -208,11 +232,12 @@ module.exports = { applyPatch, verifyPatch };
     path.join(patchRoot, 'source-lock.json'),
     JSON.stringify({
       name: 'openclaw',
-      version: '2026.6.11',
+      version: version.slice(1),
       integrity: fixtureIntegrity,
       tarballSha256: 'a'.repeat(64),
     }),
   );
+  if (version === 'v2026.10.4') writeProviderFixture(runtimeRoot);
   writeFixtureBuildInfo(repoRoot, runtimeRoot);
   return { patchRoot, repoRoot, runtimeRoot };
 }
@@ -439,6 +464,113 @@ describe('OpenClaw runtime patch manifest', () => {
     );
   });
 
+  test.each(
+    [PROVIDER_TRANSPORT_PATH, PROVIDER_PARTITIONER_PATH].flatMap(target =>
+      ['none', 'apply', 'verify'].map(failure => ({ target, failure })),
+    ),
+  )(
+    'indexes the exact provider module $target and restores its bytes after $failure failure',
+    ({ target, failure }) => {
+      const { patchRoot, repoRoot, runtimeRoot } = createFixture('v2026.10.4');
+      const provider = path.join(runtimeRoot, target);
+      const foreign = path.join(path.dirname(provider), 'unowned-provider.mjs');
+      const original = fs.readFileSync(provider);
+      const marker = original.toString('utf8').trim();
+      fs.writeFileSync(foreign, original);
+      const bundle = fs.readFileSync(path.join(runtimeRoot, 'gateway-bundle.mjs'));
+      fs.writeFileSync(
+        path.join(patchRoot, '_patch-utils.js'),
+        `module.exports = require(${JSON.stringify(path.resolve('scripts/patches/v2026.10.4/_patch-utils.js'))});\n`,
+      );
+      fs.writeFileSync(
+        path.join(patchRoot, '001-example.cjs'),
+        `const fs = require('fs');
+        const { findFilesContaining, writeIfChanged } = require('./_patch-utils.js');
+        module.exports = {
+          applyPatch(root) {
+            const matches = findFilesContaining(root, ${JSON.stringify(marker)});
+            if (matches.length !== 1) throw new Error('provider inventory widened');
+            const source = fs.readFileSync(matches[0], 'utf8');
+            writeIfChanged(matches[0], source, source + 'const indexedProvider = true;\\n');
+          },
+          verifyPatch(root) {
+            if (findFilesContaining(root, 'const indexedProvider = true;').length !== 1)
+              throw new Error('provider index stale');
+          },
+        };`,
+      );
+      fs.writeFileSync(
+        path.join(patchRoot, '002-example.cjs'),
+        `const { findFilesContaining } = require('./_patch-utils.js');
+        module.exports = {
+          applyPatch(root) {
+            if (findFilesContaining(root, 'const indexedProvider = true;').length !== 1)
+              throw new Error('provider index stale');
+            ${failure === 'apply' ? "throw new Error('provider apply failed');" : ''}
+          },
+          verifyPatch() { ${failure === 'verify' ? "throw new Error('provider verify failed');" : ''} },
+        };`,
+      );
+      writeFixtureBuildInfo(repoRoot, runtimeRoot);
+
+      const apply = () => patchOpenClawRuntime(runtimeRoot, { repoRoot, freshBundlePass: true });
+      if (failure === 'none') {
+        expect(apply).not.toThrow();
+        expect(fs.readFileSync(provider, 'utf8')).toContain('const indexedProvider = true;');
+      } else {
+        expect(apply).toThrow(`provider ${failure} failed`);
+        expect(fs.readFileSync(provider)).toEqual(original);
+        expect(fs.readFileSync(path.join(runtimeRoot, 'gateway-bundle.mjs'))).toEqual(bundle);
+        expect(fs.existsSync(path.join(runtimeRoot, PATCH_MANIFEST_FILENAME))).toBe(false);
+      }
+      expect(fs.readFileSync(foreign)).toEqual(original);
+    },
+  );
+
+  test.each(['transport', 'partitioner', 'metadata', 'missing-transport', 'missing-partitioner'])(
+    'rejects a changed provider %s in both current and frozen runtime proofs',
+    change => {
+      const { repoRoot, runtimeRoot } = createFixture('v2026.10.4');
+      patchOpenClawRuntime(runtimeRoot, { repoRoot, freshBundlePass: true });
+      const manifest = JSON.parse(
+        fs.readFileSync(path.join(runtimeRoot, PATCH_MANIFEST_FILENAME), 'utf8'),
+      );
+      expect(manifest.patchDependencyArtifacts.map((entry: { path: string }) => entry.path)).toEqual([
+        PROVIDER_PACKAGE_PATH,
+        PROVIDER_TRANSPORT_PATH,
+        PROVIDER_PARTITIONER_PATH,
+      ]);
+      const target = path.join(
+        runtimeRoot,
+        change === 'metadata'
+          ? PROVIDER_PACKAGE_PATH
+          : change.endsWith('partitioner')
+            ? PROVIDER_PARTITIONER_PATH
+            : PROVIDER_TRANSPORT_PATH,
+      );
+      if (change.startsWith('missing')) fs.unlinkSync(target);
+      else fs.appendFileSync(target, change === 'metadata' ? '\n ' : '// changed\n');
+
+      expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(
+        /dependencies|ENOENT/,
+      );
+      expect(() => verifyFrozenOpenClawRuntime(runtimeRoot, { requireBundle: true })).toThrow(
+        /dependencies/,
+      );
+    },
+  );
+
+  test('rejects provider package identity mismatches before creating proof', () => {
+    const { repoRoot, runtimeRoot } = createFixture('v2026.10.4');
+    fs.writeFileSync(
+      path.join(runtimeRoot, PROVIDER_PACKAGE_PATH),
+      JSON.stringify({ name: '@openclaw/ai', version: '2026.10.3' }),
+    );
+    expect(() => writeOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(
+      'Runtime patch dependency must be @openclaw/ai@2026.10.4',
+    );
+  });
+
   test('skips the patch pass when the recorded patch set and bundle are unchanged', () => {
     const { patchRoot, repoRoot, runtimeRoot } = createFixture();
     const counterPath = path.join(runtimeRoot, 'apply-count.txt').replace(/\\/g, '\\\\');
@@ -493,6 +625,8 @@ module.exports = { applyPatch, verifyPatch };
     'gateway-bundle.mjs',
     'dist/worker/worker.mjs',
     'dist/worker/sqlite-store.worker.mjs',
+    PROVIDER_TRANSPORT_PATH,
+    PROVIDER_PARTITIONER_PATH,
   ])('rolls back invalid JavaScript in %s before writing proof', target => {
     const { patchRoot, repoRoot, runtimeRoot } = createFixture();
     const targetPath = path.join(runtimeRoot, target);
@@ -768,7 +902,14 @@ module.exports = { applyPatch, verifyPatch };
     ).toThrow('cli-root-options.mjs');
   });
 
-  test.each([true, false])('checks packaged patch proof with archived companion present=%s', async includeCompanion => {
+  test.each([
+    { includeCompanion: true, providerChange: 'none' },
+    { includeCompanion: false, providerChange: 'none' },
+    { includeCompanion: true, providerChange: 'missing' },
+    { includeCompanion: true, providerChange: 'changed' },
+    { includeCompanion: true, providerChange: 'partitioner-missing' },
+    { includeCompanion: true, providerChange: 'partitioner-changed' },
+  ])('checks archived proof: companion=$includeCompanion provider=$providerChange', async ({ includeCompanion, providerChange }) => {
     const repositoryRoot = path.resolve(__dirname, '../../..');
     const sourceLock = readOpenClawSourceLock(repositoryRoot, 'v2026.10.4');
     const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-packaged-patch-test-'));
@@ -789,6 +930,7 @@ module.exports = { applyPatch, verifyPatch };
     fs.writeFileSync(path.join(runtimeRoot, 'gateway.asar'), 'packaged asar\n');
     fs.writeFileSync(path.join(runtimeRoot, 'package.json'), '{}\n');
     fs.writeFileSync(path.join(runtimeRoot, 'npm-shrinkwrap.json'), '{}\n');
+    writeProviderFixture(runtimeRoot);
     for (const name of cliRuntimeFiles) {
       fs.writeFileSync(path.join(runtimeRoot, name), 'export {};\n');
     }
@@ -856,6 +998,12 @@ module.exports = { applyPatch, verifyPatch };
     writeOpenClawPatchManifest(runtimeRoot, { repoRoot: repositoryRoot });
     fs.rmSync(path.join(runtimeRoot, 'gateway.asar'));
     if (!includeCompanion) fs.rmSync(workerPath);
+    const provider = path.join(
+      runtimeRoot,
+      providerChange.startsWith('partitioner') ? PROVIDER_PARTITIONER_PATH : PROVIDER_TRANSPORT_PATH,
+    );
+    if (providerChange.endsWith('missing')) fs.unlinkSync(provider);
+    if (providerChange.endsWith('changed')) fs.appendFileSync(provider, '// changed after proof\n');
 
     const tar = require('tar') as {
       create: (options: { cwd: string; file: string; sync: boolean }, paths: string[]) => void;
@@ -881,7 +1029,9 @@ module.exports = { applyPatch, verifyPatch };
         appOutDir,
         electronPlatformName: 'win32',
       });
-    if (includeCompanion) await expect(verification).resolves.toBeUndefined();
-    else await expect(verification).rejects.toThrow('dist/agents/archive-proof.worker.js');
-  });
+    if (!includeCompanion) await expect(verification).rejects.toThrow('dist/agents/archive-proof.worker.js');
+    else if (providerChange.endsWith('missing')) await expect(verification).rejects.toThrow(/ENOENT/);
+    else if (providerChange.endsWith('changed')) await expect(verification).rejects.toThrow(/dependencies/);
+    else await expect(verification).resolves.toBeUndefined();
+  }, 30_000);
 });

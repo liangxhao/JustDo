@@ -118,6 +118,9 @@ const {
   PATCH_MANIFEST_FILENAME,
   verifyOpenClawPatchManifest,
 } = require('../openclaw/verify-openclaw-runtime-patches.cjs');
+const {
+  PATCH_DEPENDENCY_ARTIFACT_PATHS,
+} = require('../openclaw/openclaw-patch-dependencies.cjs');
 const { createMulticaAgentLauncher } = require('../multica/create-multica-agent-launcher.cjs');
 const {
   verifyMxcNativeBinaries,
@@ -1623,6 +1626,7 @@ async function verifyPackagedOpenClawRuntime(context) {
         'cfmind/dist/entry.js',
         'cfmind/dist/entry.mjs',
         'cfmind/npm-shrinkwrap.json',
+        ...PATCH_DEPENDENCY_ARTIFACT_PATHS.map(name => `cfmind/${name}`),
       ]);
       const archiveEntryPaths = new Set();
       const tarModule = require(path.join(__dirname, '../..', 'node_modules', 'tar'));

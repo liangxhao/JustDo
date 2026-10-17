@@ -4,6 +4,39 @@
 
 打开弹窗、切换运行或刷新时，先显示本地元数据，再自动采集有界日志；采集期间显示进度并禁止导出半成品。采集失败保留本地快照并显示错误，之后仍可重试或导出。应用记录中的运行状态、开始/结束时间单独展示，不将历史 `failed` 状态当成已经查明根因。
 
+## 正文在结束时集中出现
+
+先对照完整原生 JSON 日志中的 Agent `thinking`、`assistant` 和 `usage` 事件，
+再判断问题属于模型服务、运行时适配还是 Renderer。控制台捕获会合并流事件，
+不能凭捕获文件中缺少增量就断言运行时没有发布。
+
+2026-10-17 在锁定的 pristine OpenClaw 2026.10.4 npm 产物上，可通过以下纯本地探针
+复现 Chat Completions 的正文缓冲，不启动 Gateway、不读用户状态、不调用模型服务：
+
+```powershell
+node tests/openclaw/runtime/completions-stream-latency.native-smoke.mjs --runtime-dir '<pristine-runtime>' --expect-buffered
+node tests/openclaw/runtime/completions-stream-latency.native-smoke.mjs --expect-streaming
+```
+
+探针通过 scoped AI host 在内存中分时发送两段 SSE 正文，不发起任何真实网络请求。
+没有 reasoning 时，正文在各自
+到达时透出；先发送 `reasoning_content` 时，运行时将正文留至 terminal 后合并透出，
+并标记 `openclawDelivery.textPhaseRequiresTerminal`。原生 Agent 订阅层还会依据该标记
+抑制提前正文。因此，删除 Renderer 播放队列或放行连续 Chat 快照无法释放这部分文本。
+当前 029 补丁按原生归一后的 thinking/text 通道提供可替换的实时 Agent 预览，
+不判断模型名、厂商或 endpoint。独立 reasoning 字段及类型化 thinking 保留私有通道；
+公开正文继续通过原生 Markdown/tag 解析。专用 structured 恢复模式保证未闭合的
+思考标签不会在成功结束、工具 flush、失败或取消时恢复成正文，显式 strict 保持
+原生整轮缓冲。正文仍需原生终态确定 final/commentary，失败或被归为 commentary
+的预览会按原 message/item 身份撤回，不提前触发持久回复。
+范围、原生接口不足的证据与移除条件见[补丁总账](../../../scripts/patches/v2026.10.4/README.md)。
+探针输出仅有相对耗时、事件类别和字符数，没有真实请求、凭据或用户正文。
+
+升级运行时后应重新运行探针，不能把当前产物行为当作所有模型、协议或版本的结论。
+正文展示前的根因仍需原始模型 SSE 才能进一步区分；原生 Agent 日志只能证明
+Gateway 发布的时间，不能证明模型服务何时产生了正文。关闭页面的思考展示与停止
+模型生成 reasoning 是不同设置，不能以隐藏 thinking 作为解决该缓冲的依据。
+
 ## 用户操作
 
 首屏只突出「本轮结束原因」「判断依据」「建议下一步」，并区分记录已确认、

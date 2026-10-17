@@ -49,6 +49,7 @@ const EXPECTED_PATCH_FILES = [
   '026-scoped-finalize-hook-admission.cjs',
   '027-canonical-readiness-owner-path.cjs',
   '028-prepared-history-response-publication.cjs',
+  '029-reasoning-completions-streaming.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

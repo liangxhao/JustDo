@@ -23,7 +23,10 @@ import {
 } from './memory';
 
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));
-vi.mock('child_process', () => ({ spawn: vi.fn() }));
+vi.mock('child_process', async importOriginal => ({
+  ...(await importOriginal<typeof import('child_process')>()),
+  spawn: vi.fn(),
+}));
 
 const temporaryDirectories: string[] = [];
 
