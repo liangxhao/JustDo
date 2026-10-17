@@ -31,6 +31,65 @@ describe('projectWaitingStatus', () => {
       }),
     ).toMatchObject({ kind: 'rate-limited' });
   });
+
+  it.each([1, 2])('projects the admitted format recovery attempt %i', retryAttempt => {
+    expect(
+      projectWaitingStatus({
+        activity: activity({
+          stage: 'retrying',
+          retryReason: 'tool_call_format',
+          retryAttempt,
+          maxRetries: 2,
+        }),
+        transportStatus: 'connected',
+        now: 2_000,
+      }),
+    ).toEqual({
+      kind: 'retry-tool-call-format',
+      tone: 'neutral',
+      quietMs: 1_000,
+      retryAttempt,
+      maxRetries: 2,
+    });
+  });
+
+  it.each([
+    [0, 2],
+    [3, 2],
+    [1.5, 2],
+    [Number.NaN, 2],
+    [1, 3],
+    [1, undefined],
+  ])('omits unsupported format recovery progress %s/%s', (retryAttempt, maxRetries) => {
+    expect(
+      projectWaitingStatus({
+        activity: activity({
+          stage: 'retrying',
+          retryReason: 'tool_call_format',
+          retryAttempt,
+          maxRetries,
+        }),
+        transportStatus: 'connected',
+        now: 2_000,
+      }),
+    ).toEqual({ kind: 'retry-tool-call-format', tone: 'neutral', quietMs: 1_000 });
+  });
+
+  it('does not carry format counters into another retry reason', () => {
+    expect(
+      projectWaitingStatus({
+        activity: activity({
+          stage: 'retrying',
+          retryReason: 'rate_limit',
+          retryAttempt: 1,
+          maxRetries: 2,
+        }),
+        transportStatus: 'connected',
+        now: 2_000,
+      }),
+    ).toEqual({ kind: 'rate-limited', tone: 'neutral', quietMs: 1_000 });
+  });
+
   it('keeps the existing UI unchanged before the stall threshold', () => {
     expect(
       projectWaitingStatus({

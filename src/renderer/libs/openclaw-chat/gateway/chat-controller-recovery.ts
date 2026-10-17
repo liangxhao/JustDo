@@ -239,6 +239,8 @@ export interface ChatControllerRecoveryContext {
       provider?: string;
       model?: string;
       retryReason?: unknown;
+      retryAttempt?: unknown;
+      maxRetries?: unknown;
       at?: number;
     },
   ) => void;
@@ -1938,6 +1940,8 @@ export function handleAgentEvent(
           provider: typeof data.provider === 'string' ? data.provider : undefined,
           model: typeof data.model === 'string' ? data.model : undefined,
           retryReason: mappedStage === 'retrying' ? data.reason : undefined,
+          retryAttempt: mappedStage === 'retrying' ? data.retryAttempt : undefined,
+          maxRetries: mappedStage === 'retrying' ? data.maxRetries : undefined,
           at: typeof data.at === 'number' ? data.at : payload.timestamp,
         });
         this.notifyStream();

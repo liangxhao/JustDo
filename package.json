@@ -154,6 +154,7 @@
     "@typescript-eslint/parser": "^8.70.1",
     "@vitejs/plugin-react": "^6.0.3",
     "7zip-bin": "^5.2.0",
+    "acorn": "8.17.0",
     "autoprefixer": "^10.4.17",
     "concurrently": "^8.2.2",
     "cronstrue": "^3.14.0",

@@ -9,7 +9,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const ts = require('typescript');
 const { createFinalizeHookAdmission } = require('./finalize-hook-admission.js');
-const { canonicalHelper } = require('../../openclaw/native-support-contract.cjs');
+const {
+  canonicalHelper, nodes: collect, oneNativeNode: one, parseNativeSource: parse,
+  extractNativeFunction, editNativeSource, verifyNativeSupportBindings,
+} = require('../../openclaw/native-support-contract.cjs');
 const {
   assertCurrentPatchContract,
   findFilesContaining,
@@ -20,22 +23,6 @@ const {
 const CONTRACT = 'RUNTIME_SCOPED_FINALIZE_ADMISSION_V2026_10_4';
 const HELPER = 'createFinalizeHookAdmission';
 const signatures = ['createHookRunner', 'prepareStream', 'runEmbeddedAttemptPromptPhase'];
-function collect(root, predicate) {
-  const result = [];
-  const visit = node => {
-    if (predicate(node)) result.push(node);
-    ts.forEachChild(node, visit);
-  };
-  visit(root);
-  return result;
-}
-function one(values, label) {
-  if (values.length !== 1) throw new Error(`${label}: native topology changed (${values.length})`);
-  return values[0];
-}
-function parse(source) {
-  return ts.createSourceFile('native.mjs', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-}
 function same(actual, expected, label) {
   if (
     canonicalHelper(`function seam(){${actual}}`) !==
@@ -44,18 +31,13 @@ function same(actual, expected, label) {
     throw new Error(`${label}: historical or partial finalization admission`);
 }
 function functionRange(source, name) {
-  const start = source.indexOf(`function ${name}(`);
-  if (start < 0 || source.indexOf(`function ${name}(`, start + 1) >= 0)
-    throw new Error(`${name}: native declaration changed`);
-  const paren = source.indexOf('(', start);
-  const close = findMatchingDelimiter(source, paren, '(', ')', name);
-  const open = source.indexOf('{', close);
-  const end = findMatchingDelimiter(source, open, '{', '}', name) + 1;
-  return { start, end, text: source.slice(start, end) };
+  const part = extractNativeFunction(source, name, findMatchingDelimiter);
+  if (!part) throw new Error(`${name}: native declaration changed`);
+  return { ...part, text: part.body };
 }
 function editFunction(source, name, edit) {
   const range = functionRange(source, name);
-  return source.slice(0, range.start) + edit(range.text) + source.slice(range.end);
+  return editNativeSource(source, [{ ...range, text: edit(range.text) }]);
 }
 function transformFunction(body, name) {
   // Restore async for parsing await/comma expressions in the prompt handler.
@@ -299,9 +281,11 @@ function transform(source, file = '<runtime>') {
   let result = source;
   if (result.includes('function createHookRunner(')) {
     if (result.includes(`function ${HELPER}(`)) {
-      const helper = functionRange(result, HELPER);
-      if (canonicalHelper(helper.text) !== canonicalHelper(createFinalizeHookAdmission.toString()))
+      try {
+        verifyNativeSupportBindings(result, createFinalizeHookAdmission.toString(), findMatchingDelimiter);
+      } catch {
         throw new Error(`${file}: finalization admission implementation changed`);
+      }
     } else {
       if (current || result.includes('createBeforeAgentFinalizeAdmission'))
         throw new Error('Partial finalization admission helper');

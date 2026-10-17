@@ -138,6 +138,7 @@ import {
 import { ChunkedMessageHistory } from '@/libs/openclaw-chat/model/chunked-message-history';
 import { markOptimisticHistoryTail } from '@/libs/openclaw-chat/model/optimistic-history-tail';
 import {
+  normalizeRunRetryProgress,
   normalizeRunRetryReason,
   RUN_PROBE_INTERVAL_MS,
   RUN_STALL_NOTICE_MS,
@@ -594,6 +595,8 @@ export class ChatController {
       provider?: string;
       model?: string;
       retryReason?: unknown;
+      retryAttempt?: unknown;
+      maxRetries?: unknown;
       at?: number;
     } = {},
   ): void {
@@ -628,10 +631,21 @@ export class ChatController {
     ) {
       activeTurn.modelRef = modelRef;
     }
-    if (options.retryReason !== undefined) {
+    if (stage === 'retrying' && options.retryReason !== undefined) {
       activity.retryReason = normalizeRunRetryReason(options.retryReason);
     } else if (stage !== 'retrying') {
       delete activity.retryReason;
+    }
+    const retryProgress =
+      stage === 'retrying'
+        ? normalizeRunRetryProgress(activity.retryReason, options.retryAttempt, options.maxRetries)
+        : undefined;
+    if (retryProgress) {
+      activity.retryAttempt = retryProgress.retryAttempt;
+      activity.maxRetries = retryProgress.maxRetries;
+    } else {
+      delete activity.retryAttempt;
+      delete activity.maxRetries;
     }
     if (options.modelActivity) {
       activity.lastModelActivityAt = at;

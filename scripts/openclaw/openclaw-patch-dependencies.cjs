@@ -16,6 +16,9 @@ const PATCH_DEPENDENCY_JAVASCRIPT_PATHS = Object.freeze([
 const PATCH_DEPENDENCY_ARTIFACT_PATHS = Object.freeze([
   PROVIDER_PACKAGE_PATH,
   ...PATCH_DEPENDENCY_JAVASCRIPT_PATHS,
+  'node_modules/@openclaw/ai/dist/transports.mjs',
+  'node_modules/@openclaw/ai/dist/providers.mjs',
+  'node_modules/@openclaw/ai/dist/openai-completions-XvUwdvJc.mjs',
 ]);
 
 function listRuntimePatchDependencyTargets(runtimeDir) {
@@ -36,9 +39,15 @@ function runtimePatchDependencyArtifactPaths(runtimeDir, version) {
   if (metadata.name !== '@openclaw/ai' || metadata.version !== '2026.10.4') {
     throw new Error('Runtime patch dependency must be @openclaw/ai@2026.10.4');
   }
+  // Load after module initialization: pristine checks use the shared patch index.
+  const { resolveNativeProviderTransportArtifact } = require('./verify-openclaw-pristine-contracts.cjs');
+  resolveNativeProviderTransportArtifact(runtimeDir, { required: true });
+  const runtimeRoot = fs.realpathSync(runtimeDir);
   return PATCH_DEPENDENCY_ARTIFACT_PATHS.map(relativePath => {
     const filePath = path.join(runtimeDir, relativePath);
-    if (!fs.statSync(filePath).isFile()) {
+    const relative = path.relative(runtimeRoot, fs.realpathSync(filePath));
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) ||
+        !fs.statSync(filePath).isFile()) {
       throw new Error(`Runtime patch dependency is not a regular file: ${relativePath}`);
     }
     return filePath;

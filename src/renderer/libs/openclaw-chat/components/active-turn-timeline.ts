@@ -29,7 +29,7 @@ import {
   type ActiveTurnTimelineItem,
   type ProcessSummaryTimelineItem,
 } from '../model/project-turn-items';
-import type { WaitingStatusKind } from '../model/run-activity';
+import type { WaitingStatusKind, WaitingStatusProjection } from '../model/run-activity';
 import { OPEN_SPAWNED_AGENT_EVENT, spawnedAgentSessionKey } from '../model/spawn-tool-target';
 import { toolNesting, toolOperation, toolOutcome, toolTarget } from '../model/tool-presentation';
 import { stripOpenClawLogHintText } from '../pipeline/system-message-display';
@@ -697,11 +697,26 @@ const waitingStatusKeys = {
   'retry-timeout': 'coworkWaitingRetryTimeout',
   'retry-overloaded': 'coworkWaitingRetryOverloaded',
   'retry-auth': 'coworkWaitingRetryAuth',
+  'retry-tool-call-format': 'coworkWaitingToolCallFormat',
   'response-paused': 'coworkWaitingResponsePaused',
   disconnected: 'coworkWaitingDisconnected',
   reconnecting: 'coworkWaitingReconnecting',
   'probe-failed': 'coworkWaitingProbeFailed',
 } as const satisfies Record<WaitingStatusKind, string>;
+
+function waitingStatusLabel(status: WaitingStatusProjection): string {
+  if (
+    status.kind === 'retry-tool-call-format' &&
+    status.retryAttempt !== undefined &&
+    status.maxRetries !== undefined
+  ) {
+    return i18nService
+      .t('coworkWaitingToolCallFormatCount')
+      .replace('{attempt}', String(status.retryAttempt))
+      .replace('{max}', String(status.maxRetries));
+  }
+  return i18nService.t(waitingStatusKeys[status.kind]);
+}
 
 export function renderTimelineItem(
   item: ActiveTurnTimelineItem,
@@ -736,9 +751,9 @@ export function renderTimelineItem(
     return renderReadingIndicatorGroup({
       showAvatar,
       assistantAvatar,
-      label: i18nService.t(
-        item.notice ? waitingStatusKeys[item.notice.kind] : labels[item.stage ?? 'starting'],
-      ),
+      label: item.notice
+        ? waitingStatusLabel(item.notice)
+        : i18nService.t(labels[item.stage ?? 'starting']),
       warning: item.notice?.tone === 'warning',
       elapsed:
         item.startedAt === undefined
@@ -747,7 +762,6 @@ export function renderTimelineItem(
     });
   }
   if (item.kind === 'waiting-status') {
-    const key = waitingStatusKeys[item.status.kind];
     return html`
       <div
         class=${`chat-group chat-group--assistant chat-group--continuation waiting-status waiting-status--${item.status.tone}`}
@@ -756,7 +770,7 @@ export function renderTimelineItem(
         <div class="chat-group__content">
           <div class="waiting-status__message" role="status" aria-live="polite">
             <span class="waiting-status__indicator" aria-hidden="true"></span>
-            <span>${i18nService.t(key)}</span>
+            <span>${waitingStatusLabel(item.status)}</span>
           </div>
         </div>
       </div>

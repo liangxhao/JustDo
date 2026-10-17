@@ -4,10 +4,14 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, test } from 'vitest';
 
-const { verifyPristineOpenClawContracts, verifyNativeSessionStopContracts, verifyNativeProviderTransportContracts } =
+const { verifyPristineOpenClawContracts, verifyNativeSessionStopContracts, verifyNativeProviderTransportContracts, resolveNativeProviderTransportArtifact } =
   require('../../../scripts/openclaw/verify-openclaw-pristine-contracts.cjs') as {
     verifyNativeSessionStopContracts: (runtimeDir: string) => string[];
     verifyNativeProviderTransportContracts: (runtimeDir: string) => string[];
+    resolveNativeProviderTransportArtifact: (
+      runtimeDir: string,
+      options?: { required?: boolean },
+    ) => { file: string; proofFiles: string[] } | null;
     verifyPristineOpenClawContracts: (
       runtimeDir: string,
       options: { patchFiles: string[] },
@@ -19,6 +23,39 @@ const { verifyPristineOpenClawContracts, verifyNativeSessionStopContracts, verif
   };
 
 const temporaryRoots: string[] = [];
+const PROVIDER_TRANSPORT_BASENAME = 'openai-completions-transport-QYABn8Uz.mjs';
+const COMPLETIONS_PROVIDER_BASENAME = 'openai-completions-XvUwdvJc.mjs';
+
+function createProviderTransportFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'provider-contract-'));
+  temporaryRoots.push(root);
+  const ai = path.join(root, 'node_modules', '@openclaw', 'ai');
+  fs.mkdirSync(path.join(ai, 'dist'), { recursive: true });
+  const metadata = {
+    name: '@openclaw/ai', version: '2026.10.4',
+    exports: {
+      './transports': { import: './dist/transports.mjs' },
+      './providers': { import: './dist/providers.mjs' },
+    },
+  };
+  const packagePath = path.join(ai, 'package.json');
+  const sourcePath = path.join(ai, 'dist', PROVIDER_TRANSPORT_BASENAME);
+  const source = `function finalizeOpenAICompletionsToolCalls(output, candidate, options) {
+    if (options.allowSilentToolCallPromotion !== false && candidate.text.trim().length > 0) output.stopReason = "toolUse";
+    else { output.stopReason = "error"; throw Error("Provider returned an incomplete or malformed tool call"); }
+    finalizeTerminalToolCallArguments(output);
+  }`;
+  fs.writeFileSync(packagePath, JSON.stringify(metadata));
+  fs.writeFileSync(sourcePath, source);
+  fs.writeFileSync(path.join(ai, 'dist', 'transports.mjs'),
+    `import { t as createOpenAICompletionsTransportStreamFn } from "./${PROVIDER_TRANSPORT_BASENAME}";`);
+  fs.writeFileSync(path.join(ai, 'dist', 'providers.mjs'),
+    `createLazyRegistration("openai-completions", () => import("./${COMPLETIONS_PROVIDER_BASENAME}").then((n) => n.t));`);
+  fs.writeFileSync(path.join(ai, 'dist', COMPLETIONS_PROVIDER_BASENAME),
+    `import { n as streamOpenAICompletionsRequest } from "./${PROVIDER_TRANSPORT_BASENAME}";\n` +
+    'const streamOpenAICompletions = (model, context, options) => streamOpenAICompletionsRequest(model, context, options, "direct");');
+  return { root, ai, metadata, packagePath, sourcePath, source };
+}
 
 const EXPECTED_PATCH_FILES = [
   '001-managed-pip-config-environment.cjs',
@@ -50,6 +87,7 @@ const EXPECTED_PATCH_FILES = [
   '027-canonical-readiness-owner-path.cjs',
   '028-prepared-history-response-publication.cjs',
   '029-reasoning-completions-streaming.cjs',
+  '030-tool-call-format-recovery.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [
@@ -223,26 +261,60 @@ afterEach(() => {
 
 describe('OpenClaw pristine artifact contracts', () => {
   test('binds the separately installed provider transport to its exact identity and connected source', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'provider-contract-'));
-    temporaryRoots.push(root);
-    const ai = path.join(root, 'node_modules/@openclaw/ai');
-    fs.mkdirSync(path.join(ai, 'dist'), { recursive: true });
-    const packagePath = path.join(ai, 'package.json');
-    const sourcePath = path.join(ai, 'dist/transport.mjs');
-    const source = `function finalizeOpenAICompletionsToolCalls(output, candidate, options) {
-      if (options.allowSilentToolCallPromotion !== false && candidate.text.trim().length > 0) output.stopReason = "toolUse";
-      else { output.stopReason = "error"; throw Error("Provider returned an incomplete or malformed tool call"); }
-      finalizeTerminalToolCallArguments(output);
-    }`;
-    fs.writeFileSync(packagePath, JSON.stringify({ name: '@openclaw/ai', version: '2026.10.4' }));
-    fs.writeFileSync(sourcePath, source);
-    expect(verifyNativeProviderTransportContracts(root)).toEqual(['transport.mjs']);
-    fs.writeFileSync(packagePath, JSON.stringify({ name: '@openclaw/ai', version: '2026.9.8' }));
+    const { root, ai, metadata, packagePath, sourcePath, source } = createProviderTransportFixture();
+    expect(verifyNativeProviderTransportContracts(root)).toEqual([PROVIDER_TRANSPORT_BASENAME]);
+    const artifact = resolveNativeProviderTransportArtifact(root, { required: true });
+    expect(artifact).toEqual({
+      file: sourcePath,
+      proofFiles: [packagePath, sourcePath, ...['transports.mjs', 'providers.mjs', COMPLETIONS_PROVIDER_BASENAME]
+        .map(name => path.join(ai, 'dist', name))].sort(),
+    });
+    const { runtimeJavaScriptFiles } = require('../../../scripts/patches/v2026.10.4/_patch-utils.js');
+    expect(runtimeJavaScriptFiles(root)).toEqual([sourcePath]);
+    fs.writeFileSync(packagePath, JSON.stringify({ ...metadata, version: '2026.9.8' }));
     expect(() => verifyNativeProviderTransportContracts(root)).toThrow('Expected @openclaw/ai@2026.10.4');
-    fs.writeFileSync(packagePath, JSON.stringify({ name: '@openclaw/ai', version: '2026.10.4' }));
+    fs.writeFileSync(packagePath, JSON.stringify(metadata));
     fs.writeFileSync(sourcePath, source.replace('finalizeTerminalToolCallArguments(output);', ''));
     fs.writeFileSync(path.join(ai, 'dist/unrelated.mjs'), 'finalizeTerminalToolCallArguments(output);');
     expect(() => verifyNativeProviderTransportContracts(root)).toThrow('malformed tool-call rejection');
+  });
+
+  test.each(['transport export', 'provider export', 'managed import', 'provider import', 'lazy provider', 'direct call'])(
+    'rejects a changed provider transport graph at %s',
+    change => {
+      const { root, ai, metadata, packagePath } = createProviderTransportFixture();
+      if (change === 'transport export') metadata.exports['./transports'].import = './dist/unrelated.mjs';
+      if (change === 'provider export') metadata.exports['./providers'].import = './dist/unrelated.mjs';
+      fs.writeFileSync(packagePath, JSON.stringify(metadata));
+      const file = path.join(ai, 'dist', change === 'managed import' ? 'transports.mjs' :
+        change === 'lazy provider' ? 'providers.mjs' : COMPLETIONS_PROVIDER_BASENAME);
+      if (change === 'managed import' || change === 'provider import' || change === 'lazy provider')
+        fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('openai-completions-', 'unrelated-'));
+      if (change === 'direct call')
+        fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('options, "direct"', 'options, "managed"'));
+      expect(() => resolveNativeProviderTransportArtifact(root)).toThrow(/changed|audited tool-call producer/u);
+    },
+  );
+
+  test('permits dependency-free fixtures but fails closed for required or declared AI dependencies', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'provider-contract-'));
+    temporaryRoots.push(root);
+    expect(resolveNativeProviderTransportArtifact(root)).toBeNull();
+    expect(() => resolveNativeProviderTransportArtifact(root, { required: true })).toThrow('missing');
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ dependencies: { '@openclaw/ai': '2026.10.4' } }));
+    expect(() => resolveNativeProviderTransportArtifact(root)).toThrow('missing');
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ dependencies: { '@openclaw/ai': '2026.9.8' } }));
+    expect(() => resolveNativeProviderTransportArtifact(root)).toThrow('must pin');
+  });
+
+  test('rejects a provider transport graph whose physical files escape the runtime', () => {
+    const { root, ai } = createProviderTransportFixture();
+    const external = fs.mkdtempSync(path.join(os.tmpdir(), 'provider-contract-external-'));
+    temporaryRoots.push(external);
+    fs.cpSync(path.join(ai, 'dist'), path.join(external, 'dist'), { recursive: true });
+    fs.rmSync(path.join(ai, 'dist'), { recursive: true });
+    fs.symlinkSync(path.join(external, 'dist'), path.join(ai, 'dist'), 'junction');
+    expect(() => resolveNativeProviderTransportArtifact(root)).toThrow('escaped the runtime');
   });
   test.each(Object.keys(NATIVE_STOP_FIXTURES))(
     'rejects an artifact missing native Stop capability in %s',
@@ -279,6 +351,9 @@ describe('OpenClaw pristine artifact contracts', () => {
       // projections together, including rejection of partially applied fields.
       '012-managed-session-fork-target-key.cjs': 625,
       '019-plugin-owned-execution.cjs': 1200,
+      // The same recovery capability also binds the native accepted nested
+      // receipt owner; projection and graph validation stay in Runtime Services.
+      '030-tool-call-format-recovery.cjs': 650,
     };
     for (const name of patchFiles) {
       const content = fs.readFileSync(path.join(patchDir, name), 'utf8');

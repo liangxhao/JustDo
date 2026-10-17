@@ -220,6 +220,43 @@ Worktree 设置页同时接入 Gateway 全局 `worktreeRoot` / `worktreeAccelera
 
 网络超时可能发生在原生接收之后。run receipt 需要保留未知状态并查询原生事实；无条件重发将造成重复工具副作用。工具错误不必然是运行终态，late terminal 也不能结束新的 generation。
 
+### 工具调用格式纠正
+
+工具调用格式纠正的恢复契约限定为可信初始模型候选中的同一 OpenAI Completions runner：
+完整响应的工具参数在派发前被整批拒绝，且先前工具及其原生结果已精确结算时，
+从现有历史追加最多两次纠正生成。原有工具权限、审批和 replayUnsafe 事实保留；
+Main 与 Renderer 不重发用户输入、不拼装历史，也不把残缺参数补成可执行命令。
+
+纯策略、事实投影和提示由 Runtime Services 目录的无状态叶子模块维护，构建时静态绑定；
+原生所有者掌握当前调用身份、取消、writer fence、累计次数和实际续跑。
+不新增插件恢复回调、执行 RPC、全局 run 注册表或数据库 schema。
+同步 Tool Search 的内层调用使用独立原生回执，不能要求它伪装成模型历史中的工具消息。
+原生 attempt 在清理前通过已有可取消等待读取本 attempt 已接受的嵌套回执，并核对原生
+session/target；Runtime Services 只投影身份、父属及结果状态，逐项核对当前 run、物理会话、
+scope、原始与规范化工具记录、完整父链和外层历史结果，不保留参数或结果正文。
+缺失、重复、异属、循环或未结算的调用继续否决恢复；读取失败不改变原生执行结果。
+首期不跨 runner/候选承接恢复；接管后无法继续时保留真实错误与原生结算，
+不能再经 empty-error、模型回退或 text-only 补全获得另一组机会。
+用户取消、超时、审批等待、yield 和客户端接管仍保持各自原生结果。
+已接管链的完成结果在既有 `meta.modelFallbackStopReason` 声明
+`tool_call_format_recovery`，原有停止原因优先。候选所有者消费此字段，
+避免零正文等待/超时结果被通用空响应分类重新送入 fallback；不改写真实结算元数据。
+纠正后的答案仍受原生 `before_agent_finalize` 约束。钩子要求重写并撤回的草稿
+不能从 completed observation 重新交付；正常运行以原生 `incomplete_turn` 明确失败，
+同时清除正文 payload 和最终正文元数据，不追加请求。取消、超时和等待状态优先保留。
+
+无正文或 thinking-only 不要求 text phase。存在正文时，只允许逐块确认的 commentary，
+并且没有最终回复或 canonical 终止交付；过程说明按原消息/分段身份保留一份。
+final_answer、阶段不明、未结算异步/委派活动和待审批均不授予格式恢复。
+`stop + tool_calls + 正文` 被移除的协议冲突路径，以及缺少可信终止证据的流，
+不直接归为可恢复的格式错误。
+
+实际安排纠正后由原生发布 lifecycle progress：`stage: retrying`、
+`reason: tool_call_format`、`retryAttempt: 1..2`、`maxRetries: 2`。
+聊天仅作有界投影，阶段变化清理旧次数；整轮结果仍须精确匹配的
+`executionSettled: true` 终态。当前接线、冻结和真实验收进度保留在
+[恢复方案](../plans/tool-call-format-recovery-plan.md)，局部测试不代表整套能力已验收。
+
 ## 7. Goal、Plan 与子任务不重造执行器
 
 Goal coordinator 在原生目标仍 active 时安排续跑，保存产品 phase、次数和等待状态。六种原生 Goal status 原样保留。用户操作使用 goalId fence，停止 latch 和等待交互阻止后台抢跑。

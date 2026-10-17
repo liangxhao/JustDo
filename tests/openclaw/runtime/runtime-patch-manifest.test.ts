@@ -79,16 +79,13 @@ const {
 };
 
 function writeProviderFixture(runtimeRoot: string): void {
+  addLockedAiDependency(runtimeRoot);
   const target = path.join(runtimeRoot, PROVIDER_TRANSPORT_PATH);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, 'const providerTransport = true;\n');
   fs.writeFileSync(
     path.join(runtimeRoot, PROVIDER_PARTITIONER_PATH),
     'const providerPartitioner = true;\n',
-  );
-  fs.writeFileSync(
-    path.join(runtimeRoot, PROVIDER_PACKAGE_PATH),
-    JSON.stringify({ name: '@openclaw/ai', version: '2026.10.4' }),
   );
 }
 
@@ -220,6 +217,7 @@ function applyPatch(runtimeRoot) {
     fs.appendFileSync(bundlePath, 'const verified = true;\\n');
   }
 }
+
 function verifyPatch(runtimeRoot) {
   const content = fs.readFileSync(path.join(runtimeRoot, 'gateway-bundle.mjs'), 'utf8');
   if (!content.includes('const verified = true;')) throw new Error('patch verification failed');
@@ -242,6 +240,28 @@ module.exports = { applyPatch, verifyPatch };
   return { patchRoot, repoRoot, runtimeRoot };
 }
 
+function addLockedAiDependency(runtimeRoot: string) {
+  const root = path.join(runtimeRoot, 'node_modules', '@openclaw', 'ai');
+  const transport = 'openai-completions-transport-QYABn8Uz.mjs';
+  const provider = 'openai-completions-XvUwdvJc.mjs';
+  const target = path.join(root, 'dist', transport);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({
+    name: '@openclaw/ai', version: '2026.10.4',
+    exports: {
+      './transports': { import: './dist/transports.mjs' },
+      './providers': { import: './dist/providers.mjs' },
+    },
+  }));
+  fs.writeFileSync(path.join(root, 'dist', 'transports.mjs'), `import { t as createOpenAICompletionsTransportStreamFn } from "./${transport}";`);
+  fs.writeFileSync(path.join(root, 'dist', 'providers.mjs'), `createLazyRegistration("openai-completions", () => import("./${provider}").then((n) => n.t));`);
+  fs.writeFileSync(path.join(root, 'dist', provider),
+    `import { n as streamOpenAICompletionsRequest } from "./${transport}";\n` +
+    'const streamOpenAICompletions = (model, context, options) => streamOpenAICompletionsRequest(model, context, options, "direct");');
+  fs.writeFileSync(target, 'export const dependencyProducer = true;\n');
+  return target;
+}
+
 afterEach(() => {
   for (const temporaryRoot of temporaryRoots.splice(0)) {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
@@ -249,6 +269,76 @@ afterEach(() => {
 });
 
 describe('OpenClaw runtime patch manifest', () => {
+  test.each(['producer', 'managed importer', 'provider registry', 'direct provider', 'metadata'] as const)(
+    'freezes the exact dependency %s independently of the Gateway bundle',
+    artifact => {
+      const { repoRoot, runtimeRoot } = createFixture('v2026.10.4');
+      const target = path.join(runtimeRoot, PROVIDER_TRANSPORT_PATH);
+      writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
+      const manifest = JSON.parse(fs.readFileSync(path.join(runtimeRoot, PATCH_MANIFEST_FILENAME), 'utf8'));
+      expect(manifest.patchDependencyArtifacts.map((entry: { path: string }) => entry.path)).toEqual([
+        PROVIDER_PACKAGE_PATH, PROVIDER_TRANSPORT_PATH, PROVIDER_PARTITIONER_PATH,
+        'node_modules/@openclaw/ai/dist/transports.mjs',
+        'node_modules/@openclaw/ai/dist/providers.mjs',
+        'node_modules/@openclaw/ai/dist/openai-completions-XvUwdvJc.mjs',
+      ]);
+      expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).not.toThrow();
+      expect(() => verifyFrozenOpenClawRuntime(runtimeRoot, { requireBundle: true })).not.toThrow();
+      const proofTarget = artifact === 'producer' ? target : path.join(path.dirname(target), {
+        'managed importer': 'transports.mjs',
+        'provider registry': 'providers.mjs',
+        'direct provider': 'openai-completions-XvUwdvJc.mjs',
+        metadata: '../package.json',
+      }[artifact]);
+      fs.appendFileSync(proofTarget, artifact === 'metadata' ? '\n ' : '\n// stale artifact\n');
+      expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow('dependencies');
+      expect(() => verifyFrozenOpenClawRuntime(runtimeRoot, { requireBundle: true })).toThrow('dependencies');
+    },
+  );
+
+  test('snapshots and indexes the explicit dependency and rolls it back on failure', () => {
+    const { patchRoot, repoRoot, runtimeRoot } = createFixture();
+    const target = addLockedAiDependency(runtimeRoot);
+    const original = fs.readFileSync(target);
+    const patchUtils = path.resolve(__dirname, '../../../scripts/patches/v2026.10.4/_patch-utils.js');
+    const pristineContracts = path.resolve(__dirname, '../../../scripts/openclaw/verify-openclaw-pristine-contracts.cjs');
+    fs.writeFileSync(path.join(patchRoot, '_patch-utils.js'), `module.exports = require(${JSON.stringify(patchUtils)});`);
+    fs.writeFileSync(path.join(patchRoot, '001-example.cjs'), `
+      const fs = require('fs');
+      const { findFilesContaining, writeIfChanged } = require('./_patch-utils.js');
+      const { resolveNativeProviderTransportArtifact } = require(${JSON.stringify(pristineContracts)});
+      module.exports = {
+        applyPatch(root) {
+          if (findFilesContaining(root, 'dependencyProducer').length !== 1) throw new Error('audited dependency missing from index');
+          const { file } = resolveNativeProviderTransportArtifact(root, { required: true });
+          const source = fs.readFileSync(file, 'utf8');
+          writeIfChanged(file, source, source + 'export const indexedDependency = true;');
+          if (!fs.readFileSync(file, 'utf8').includes('indexedDependency')) throw new Error('SDK write missing');
+          if (findFilesContaining(root, 'indexedDependency').length !== 1) throw new Error('SDK index stale');
+        }, verifyPatch() {}
+      };`);
+    fs.writeFileSync(path.join(patchRoot, '002-example.cjs'), "module.exports = { applyPatch() { throw new Error('fixture failure'); }, verifyPatch() {} };");
+    writeFixtureBuildInfo(repoRoot, runtimeRoot);
+    expect(() => patchOpenClawRuntime(runtimeRoot, { repoRoot, freshBundlePass: true })).toThrow('fixture failure');
+    expect(fs.readFileSync(target)).toEqual(original);
+    expect(fs.existsSync(path.join(runtimeRoot, PATCH_MANIFEST_FILENAME))).toBe(false);
+  });
+
+  test('rejects invalid direct SDK syntax and restores the original producer bytes', () => {
+    const { patchRoot, repoRoot, runtimeRoot } = createFixture();
+    const target = addLockedAiDependency(runtimeRoot);
+    const original = fs.readFileSync(target);
+    fs.writeFileSync(path.join(patchRoot, '001-example.cjs'), `
+      const fs = require('fs');
+      module.exports = {
+        applyPatch() { fs.appendFileSync(${JSON.stringify(target)}, 'export const broken = ;'); },
+        verifyPatch() {}
+      };`);
+    writeFixtureBuildInfo(repoRoot, runtimeRoot);
+    expect(() => patchOpenClawRuntime(runtimeRoot, { repoRoot, freshBundlePass: true })).toThrow(/Command failed|Unexpected token/u);
+    expect(fs.readFileSync(target)).toEqual(original);
+    expect(fs.existsSync(path.join(runtimeRoot, PATCH_MANIFEST_FILENAME))).toBe(false);
+  });
   test('packaging relies on the target-version manifest instead of legacy patch strings', () => {
     const hookSource = fs.readFileSync(
       path.resolve(__dirname, '../../..', 'scripts', 'packaging', 'electron-builder-hooks.cjs'),
@@ -539,6 +629,9 @@ describe('OpenClaw runtime patch manifest', () => {
         PROVIDER_PACKAGE_PATH,
         PROVIDER_TRANSPORT_PATH,
         PROVIDER_PARTITIONER_PATH,
+        'node_modules/@openclaw/ai/dist/transports.mjs',
+        'node_modules/@openclaw/ai/dist/providers.mjs',
+        'node_modules/@openclaw/ai/dist/openai-completions-XvUwdvJc.mjs',
       ]);
       const target = path.join(
         runtimeRoot,

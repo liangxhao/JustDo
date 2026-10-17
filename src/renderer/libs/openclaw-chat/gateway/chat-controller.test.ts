@@ -508,6 +508,115 @@ test('suppresses model-stall notices until every running tool has settled', asyn
   ).toMatchObject({ kind: 'waiting-model' });
 });
 
+test('projects native format recovery progress and clears it when model content resumes', () => {
+  vi.useFakeTimers();
+  const controller = new ChatController();
+  const sessionKey = 'agent:main:justdo:session-format';
+  controller.state.sessionKey = sessionKey;
+  controller.state.transportStatus = 'connected';
+  controller.setPendingUserMessage('continue the task');
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+  const event = (seq: number, stream: string, data: unknown) => ({
+    event: 'agent',
+    payload: { session: sessionKey, runId: 'run-format', seq, stream, data },
+  });
+
+  handleEvent(
+    event(1, 'lifecycle', {
+      phase: 'progress',
+      stage: 'retrying',
+      reason: 'tool_call_format',
+      retryAttempt: 1,
+      maxRetries: 2,
+    }),
+  );
+
+  expect(controller.state.runActivity).toMatchObject({
+    runId: 'run-format',
+    stage: 'retrying',
+    retryReason: 'tool_call_format',
+    retryAttempt: 1,
+    maxRetries: 2,
+  });
+  expect(
+    projectWaitingStatus({ activity: controller.state.runActivity, transportStatus: 'connected' }),
+  ).toMatchObject({ kind: 'retry-tool-call-format', retryAttempt: 1, maxRetries: 2 });
+  expect(controller.state.chatSending).toBe(true);
+
+  handleEvent(event(2, 'thinking', { text: 'new model activity' }));
+
+  expect(controller.state.runActivity?.stage).toBe('thinking');
+  expect(controller.state.runActivity).not.toHaveProperty('retryReason');
+  expect(controller.state.runActivity).not.toHaveProperty('retryAttempt');
+  expect(controller.state.runActivity).not.toHaveProperty('maxRetries');
+
+  handleEvent(
+    event(3, 'lifecycle', {
+      phase: 'progress',
+      stage: 'retrying',
+      reason: 'tool_call_format',
+      retryAttempt: 2,
+      maxRetries: 2,
+    }),
+  );
+  expect(controller.state.runActivity).toMatchObject({ retryAttempt: 2, maxRetries: 2 });
+  handleEvent(
+    event(4, 'lifecycle', { phase: 'progress', stage: 'retrying', reason: 'rate_limit' }),
+  );
+  expect(controller.state.runActivity?.retryReason).toBe('rate_limit');
+  expect(controller.state.runActivity).not.toHaveProperty('retryAttempt');
+  expect(controller.state.runActivity).not.toHaveProperty('maxRetries');
+});
+
+test.each([
+  ['1', 2],
+  [1, '2'],
+  [0, 2],
+  [3, 2],
+  [1.5, 2],
+  [1, 3],
+  [1, undefined],
+])('does not retain malformed native format counters %s/%s', (retryAttempt, maxRetries) => {
+  vi.useFakeTimers();
+  const controller = new ChatController();
+  const sessionKey = 'agent:main:justdo:session-format';
+  controller.state.sessionKey = sessionKey;
+  controller.setPendingUserMessage('continue the task');
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+  const progress = (seq: number, attempt: unknown, maximum: unknown) => ({
+    event: 'agent',
+    payload: {
+      session: sessionKey,
+      runId: 'run-format',
+      seq,
+      stream: 'lifecycle',
+      data: {
+        phase: 'progress',
+        stage: 'retrying',
+        reason: 'tool_call_format',
+        retryAttempt: attempt,
+        maxRetries: maximum,
+      },
+    },
+  });
+  handleEvent(progress(1, 1, 2));
+  expect(controller.state.runActivity).toMatchObject({ retryAttempt: 1, maxRetries: 2 });
+
+  handleEvent(progress(2, retryAttempt, maxRetries));
+
+  expect(controller.state.runActivity?.retryReason).toBe('tool_call_format');
+  expect(controller.state.runActivity).not.toHaveProperty('retryAttempt');
+  expect(controller.state.runActivity).not.toHaveProperty('maxRetries');
+});
+
 test('shows model waiting before the Gateway assigns a run id', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(1_500_000);

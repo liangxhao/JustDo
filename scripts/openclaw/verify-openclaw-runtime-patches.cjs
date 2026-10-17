@@ -51,6 +51,8 @@ const BUILD_RECIPE_FILES = [
   'src/main/openclaw/config/openclawConfigBuilders.ts',
   'src/main/openclaw/runtime/native-support/plugin-owned-execution.mjs',
   'src/main/openclaw/runtime/native-support/compaction-lifecycle.mjs',
+  'openclaw-extensions/runtime-services/tool-call-recovery/policy.mjs',
+  'openclaw-extensions/runtime-services/tool-call-recovery/facts.mjs',
   'src/shared/openclaw/cliRuntimeFiles.json',
   'src/shared/security/mxcNativeBinaries.json',
   'resources/openclaw-extension-prune.json',

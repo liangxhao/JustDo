@@ -199,6 +199,50 @@ describe('active turn timeline', () => {
     expect(rendered).not.toContain('chat-avatar assistant');
   });
 
+  test.each([
+    ['zh', '工具调用格式异常，正在重新生成（1/2）'],
+    ['en', 'Tool call format error. Regenerating (1/2)…'],
+  ] as const)('renders format recovery counts in %s for both waiting layouts', (language, copy) => {
+    const previousLanguage = i18nService.getLanguage();
+    i18nService.setLanguage(language, { persist: false });
+    try {
+      const status = {
+        kind: 'retry-tool-call-format' as const,
+        tone: 'neutral' as const,
+        quietMs: 0,
+        retryAttempt: 1,
+        maxRetries: 2,
+      };
+      const waiting = flatten(
+        renderTimelineItem({ kind: 'waiting', key: 'waiting:format', notice: status }),
+      );
+      const notice = flatten(
+        renderTimelineItem({ kind: 'waiting-status', key: 'notice:format', status }),
+      );
+
+      expect(waiting).toContain(copy);
+      expect(notice).toContain(copy);
+      expect(notice).toContain('aria-live="polite"');
+    } finally {
+      i18nService.setLanguage(previousLanguage, { persist: false });
+    }
+  });
+
+  test('renders format recovery without inventing missing counters', () => {
+    const rendered = flatten(
+      renderTimelineItem({
+        kind: 'waiting-status',
+        key: 'notice:format',
+        status: { kind: 'retry-tool-call-format', tone: 'neutral', quietMs: 0 },
+      }),
+    );
+
+    expect(rendered).toContain(i18nService.t('coworkWaitingToolCallFormat'));
+    expect(rendered).not.toContain('undefined');
+    expect(rendered).not.toContain('{attempt}');
+    expect(rendered).not.toContain('1/2');
+  });
+
   test('renders an interrupted run as the original terminal status row', () => {
     const rendered = flatten(
       renderTimelineItem({

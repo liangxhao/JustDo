@@ -9,6 +9,8 @@ const {
 } = require('../patches/v2026.10.4/_patch-utils.js');
 
 const TARGET_VERSION = '2026.10.4';
+const PROVIDER_TRANSPORT_BASENAME = 'openai-completions-transport-QYABn8Uz.mjs';
+const COMPLETIONS_PROVIDER_BASENAME = 'openai-completions-XvUwdvJc.mjs';
 
 function walkJavaScriptFiles(dir, output = []) {
   if (!fs.existsSync(dir)) return output;
@@ -38,14 +40,60 @@ function uniqueEvidence(...groups) {
   return [...new Set(groups.flat())];
 }
 
-// 10.4 publishes provider transports in the separately versioned @openclaw/ai
-// dependency. Check its installed bytes before any integration source writes.
-function verifyNativeProviderTransportContracts(runtimeDir) {
-  const root = path.join(runtimeDir, 'node_modules', '@openclaw', 'ai');
-  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+// The locked provider and managed transport share this producer. Resolve only
+// its audited import graph; the shared index admits only explicit writable targets.
+function resolveNativeProviderTransportArtifact(runtimeDir, options = {}) {
+  const root = path.resolve(runtimeDir, 'node_modules', '@openclaw', 'ai');
+  const packagePath = path.join(root, 'package.json');
+  const runtimePackagePath = path.join(runtimeDir, 'package.json');
+  const declared = fs.existsSync(runtimePackagePath)
+    ? JSON.parse(fs.readFileSync(runtimePackagePath, 'utf8')).dependencies?.['@openclaw/ai']
+    : undefined;
+  if (declared !== undefined && declared !== TARGET_VERSION)
+    throw new Error(`OpenClaw must pin @openclaw/ai@${TARGET_VERSION}`);
+  if (!fs.existsSync(packagePath)) {
+    if (options.required || declared !== undefined)
+      throw new Error('Locked @openclaw/ai dependency is missing; rebuild pristine runtime.');
+    return null;
+  }
+  const file = path.join(root, 'dist', PROVIDER_TRANSPORT_BASENAME);
+  const transportsPath = path.join(root, 'dist', 'transports.mjs');
+  const providersPath = path.join(root, 'dist', 'providers.mjs');
+  const providerPath = path.join(root, 'dist', COMPLETIONS_PROVIDER_BASENAME);
+  const proofFiles = [packagePath, transportsPath, providersPath, providerPath, file].sort();
+  const runtimeRoot = fs.realpathSync(runtimeDir);
+  for (const proofFile of proofFiles) {
+    const relative = path.relative(runtimeRoot, fs.realpathSync(proofFile));
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) ||
+        !fs.statSync(proofFile).isFile())
+      throw new Error('Locked @openclaw/ai provider transport escaped the runtime.');
+  }
+  const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
   if (pkg.name !== '@openclaw/ai' || pkg.version !== TARGET_VERSION)
     throw new Error(`Expected @openclaw/ai@${TARGET_VERSION}`);
-  return findFileWithAll(walkJavaScriptFiles(path.join(root, 'dist')), [
+  if (pkg.exports?.['./transports']?.import !== './dist/transports.mjs' ||
+      pkg.exports?.['./providers']?.import !== './dist/providers.mjs')
+    throw new Error('Locked @openclaw/ai provider or transport export changed.');
+  const importsProducer = (sourcePath, binding) => {
+    const source = fs.readFileSync(sourcePath, 'utf8');
+    const imports = [...source.matchAll(/import\s*\{([^}]+)\}\s*from\s*["']([^"']+)["']/gu)]
+      .filter(match => match[2] === `./${PROVIDER_TRANSPORT_BASENAME}`);
+    return imports.length === 1 && imports[0][1].split(',').some(specifier => specifier.trim() === binding);
+  };
+  const providers = fs.readFileSync(providersPath, 'utf8');
+  if (!importsProducer(transportsPath, 't as createOpenAICompletionsTransportStreamFn') ||
+      !importsProducer(providerPath, 'n as streamOpenAICompletionsRequest') ||
+      !providers.includes(`createLazyRegistration("openai-completions", () => import("./${COMPLETIONS_PROVIDER_BASENAME}")`) ||
+      !fs.readFileSync(providerPath, 'utf8').includes('streamOpenAICompletionsRequest(model, context, options, "direct")'))
+    throw new Error('Locked @openclaw/ai no longer imports the audited tool-call producer.');
+  return { file, proofFiles };
+}
+
+// Check the installed producer before any integration source writes. Separate
+// files cannot contribute disconnected keyword evidence for this contract.
+function verifyNativeProviderTransportContracts(runtimeDir) {
+  const artifact = resolveNativeProviderTransportArtifact(runtimeDir, { required: true });
+  return findFileWithAll([artifact.file], [
     'function finalizeOpenAICompletionsToolCalls(',
     'options.allowSilentToolCallPromotion !== false',
     'candidate.text.trim().length > 0',
@@ -340,6 +388,13 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
   }
 }
 
+module.exports = {
+  verifyPristineOpenClawContracts,
+  verifyNativeSessionStopContracts,
+  verifyNativeProviderTransportContracts,
+  resolveNativeProviderTransportArtifact,
+};
+
 if (require.main === module) {
   const runtimeDir = process.argv[2];
   if (!runtimeDir) {
@@ -352,5 +407,3 @@ if (require.main === module) {
       `${result.retainedGaps.length} retained gaps verified`,
   );
 }
-
-module.exports = { verifyPristineOpenClawContracts, verifyNativeSessionStopContracts, verifyNativeProviderTransportContracts };

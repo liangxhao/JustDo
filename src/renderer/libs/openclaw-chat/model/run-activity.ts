@@ -14,7 +14,8 @@ export type RunProgressStage =
   | 'running-tool'
   | 'retrying';
 
-export type RunRetryReason = 'rate_limit' | 'timeout' | 'overloaded' | 'auth' | 'unknown';
+export type RunRetryReason =
+  'rate_limit' | 'timeout' | 'overloaded' | 'auth' | 'tool_call_format' | 'unknown';
 
 export interface RunActivity {
   runId: string;
@@ -27,6 +28,8 @@ export interface RunActivity {
   provider?: string;
   model?: string;
   retryReason?: RunRetryReason;
+  retryAttempt?: number;
+  maxRetries?: number;
   activeRunConfirmedAt: number | null;
   probeState: 'idle' | 'checking' | 'active' | 'failed';
 }
@@ -39,6 +42,7 @@ export type WaitingStatusKind =
   | 'retry-timeout'
   | 'retry-overloaded'
   | 'retry-auth'
+  | 'retry-tool-call-format'
   | 'rate-limited'
   | 'response-paused'
   | 'disconnected'
@@ -49,13 +53,36 @@ export interface WaitingStatusProjection {
   kind: WaitingStatusKind;
   tone: 'neutral' | 'warning';
   quietMs: number;
+  retryAttempt?: number;
+  maxRetries?: number;
 }
 
 export function normalizeRunRetryReason(value: unknown): RunRetryReason {
-  if (value === 'rate_limit' || value === 'timeout' || value === 'overloaded' || value === 'auth') {
+  if (
+    value === 'rate_limit' ||
+    value === 'timeout' ||
+    value === 'overloaded' ||
+    value === 'auth' ||
+    value === 'tool_call_format'
+  ) {
     return value;
   }
   return 'unknown';
+}
+
+export function normalizeRunRetryProgress(
+  reason: unknown,
+  retryAttempt: unknown,
+  maxRetries: unknown,
+): { retryAttempt: number; maxRetries: number } | undefined {
+  if (
+    reason === 'tool_call_format' &&
+    (retryAttempt === 1 || retryAttempt === 2) &&
+    maxRetries === 2
+  ) {
+    return { retryAttempt, maxRetries };
+  }
+  return undefined;
 }
 
 export function projectWaitingStatus(params: {
@@ -92,12 +119,18 @@ export function projectWaitingStatus(params: {
       timeout: 'retry-timeout',
       overloaded: 'retry-overloaded',
       auth: 'retry-auth',
+      tool_call_format: 'retry-tool-call-format',
       unknown: 'retrying',
     } as const;
     return {
       kind: retryKinds[activity.retryReason ?? 'unknown'],
       tone: 'neutral',
       quietMs,
+      ...normalizeRunRetryProgress(
+        activity.retryReason,
+        activity.retryAttempt,
+        activity.maxRetries,
+      ),
     };
   }
   if (quietMs < RUN_STALL_NOTICE_MS) return null;
