@@ -158,6 +158,8 @@ it('reports active older flows beyond the twenty visible histories for owned par
         status: 'completed', nodes: [] });
     }
     const params = { parentKeys: [f.parentKey] };
+    expect(await f.request('swarmWorkflow.summary', params)).toEqual({ count: 21, running: true });
+    expect(await f.request('swarmWorkflow.activity', {})).toMatchObject({ parentKeys: [f.parentKey] });
     expect(await f.request('swarmWorkflow.list', params)).toMatchObject({ running: true });
     const listed = await f.request('swarmWorkflow.list', params) as any;
     expect(listed.flows).toHaveLength(20);
@@ -170,6 +172,20 @@ it('reports active older flows beyond the twenty visible histories for owned par
   } finally {
     store.close();
   }
+});
+
+it('validates compact read requests without dispatching any work', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  const activity = await f.request('swarmWorkflow.activity', {}) as any;
+  expect(activity).toMatchObject({ parentKeys: [], snapshot: expect.any(String) });
+  expect(await f.request('swarmWorkflow.summary', { parentKeys: [f.parentKey] }))
+    .toEqual({ count: 0, running: false });
+  await expect(f.request('swarmWorkflow.summary', { parentKeys: [] })).rejects.toThrow('Invalid parent');
+  await expect(f.request('swarmWorkflow.summary', { parentKeys: ['agent:main:subagent:worker'] }))
+    .rejects.toThrow('Invalid parent');
+  await expect(f.request('swarmWorkflow.activity', { cursor: 1 })).rejects.toThrow('Invalid activity cursor');
+  expect(f.run).not.toHaveBeenCalled();
 });
 
 it.each(['paused', 'blocked'] as const)(
@@ -200,12 +216,16 @@ it.each(['paused', 'blocked'] as const)(
       const params = { parentKeys: [f.parentKey] };
       const listed = await f.request('swarmWorkflow.list', params) as any;
       expect(listed.running).toBe(true);
+      expect(await f.request('swarmWorkflow.summary', params)).toEqual({ count: 1, running: true });
+      expect(await f.request('swarmWorkflow.activity', {})).toMatchObject({ parentKeys: [f.parentKey] });
       expect(listed.flows[0].nodes.find((node: any) => node.id === 'batch').batchCounts)
         .toMatchObject({ uncertain: 1 });
       const settled = store.get(active.id, item.id)!;
       settled.nodes.find(node => node.id === item.id)!.status = 'done';
       store.put(settled);
       expect(await f.request('swarmWorkflow.list', params)).toMatchObject({ running: false });
+      expect(await f.request('swarmWorkflow.summary', params)).toEqual({ count: 1, running: false });
+      expect(await f.request('swarmWorkflow.activity', {})).toMatchObject({ parentKeys: [] });
     } finally {
       store.close();
     }

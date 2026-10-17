@@ -105,6 +105,21 @@ test('selects the node native session and displays history followed by live cont
   expect(screen.getByTestId('native-messages').textContent).toContain('Live tool activity');
 });
 
+test('attaches native history only while its detail panel is visible', async () => {
+  const view = render(<SwarmWorkflowNodeHistory {...props} active={false} />);
+  await act(async () => {});
+  expect(native.connect).not.toHaveBeenCalled();
+  view.rerender(<SwarmWorkflowNodeHistory {...props} active />);
+  await act(async () => {});
+  expect(native.connect).toHaveBeenCalledTimes(1);
+  const controller = native.instances[0];
+  view.rerender(<SwarmWorkflowNodeHistory {...props} active={false} />);
+  expect(controller.disconnect).toHaveBeenCalled();
+  expect(progressListeners.size).toBe(0);
+  await act(async () => vi.advanceTimersByTimeAsync(60_000));
+  expect(native.connect).toHaveBeenCalledTimes(1);
+});
+
 test('releases native and engine subscriptions and pending timers when closed', async () => {
   const view = render(<SwarmWorkflowNodeHistory {...props} />);
   await act(async () => {});

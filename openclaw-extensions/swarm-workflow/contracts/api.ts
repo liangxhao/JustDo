@@ -1,11 +1,13 @@
 import type { SwarmWorkflowOptions } from './options';
 import type {
   SwarmWorkflowAction,
+  SwarmWorkflowActivityResult,
   SwarmWorkflowBatchOptions,
   SwarmWorkflowBatchPage,
   SwarmWorkflowDetailResult,
   SwarmWorkflowIntervention,
   SwarmWorkflowResult,
+  SwarmWorkflowSummaryResult,
 } from './workflow';
 
 export type SwarmWorkflowPrepareResult =
@@ -44,6 +46,8 @@ export interface SwarmWorkflowApi {
     sourceId?: string,
   ): Promise<SwarmWorkflowDetailResult>;
   getSwarmWorkflows(sessionId: string): Promise<SwarmWorkflowResult>;
+  getSwarmWorkflowActivity(): Promise<SwarmWorkflowActivityResult>;
+  getSwarmWorkflowSummary(sessionId: string): Promise<SwarmWorkflowSummaryResult>;
   controlSwarmWorkflow(
     sessionId: string,
     id: string,

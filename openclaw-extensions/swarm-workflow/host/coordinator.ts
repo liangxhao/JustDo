@@ -1,3 +1,5 @@
+import type { SwarmWorkflowApi, SwarmWorkflowPrepareResult } from '../contracts/api';
+import { isSwarmWorkflowOptions } from '../contracts/options';
 import {
   isSwarmWorkflowParentKey,
   SwarmWorkflowGateway,
@@ -6,10 +8,11 @@ import {
   validFlowDetail,
   validFlowList,
   validSwarmWorkflowIntervention,
+  validWorkflowActivityPage,
+  validWorkflowSummary,
+  WORKFLOW_ACTIVITY_MAX_PAGES,
 } from '../contracts/workflow';
 import { buildSwarmWorkflowInstruction } from '../prompt/request';
-import { isSwarmWorkflowOptions } from '../contracts/options';
-import type { SwarmWorkflowApi, SwarmWorkflowPrepareResult } from '../contracts/api';
 import type { SwarmWorkflowDependencies } from './ports';
 export type { SwarmWorkflowDependencies } from './ports';
 
@@ -36,6 +39,69 @@ export function createSwarmWorkflowCoordinator({
   };
 
   const operations: SwarmWorkflowApi = {
+    getSwarmWorkflowActivity: async () => {
+      try {
+        const runtime = getRuntime();
+        const client = runtime?.getGatewayClient();
+        if (!runtime || !client) return { success: false };
+        const parents = new Set<string>();
+        const cursors = new Set<string>();
+        let cursor: string | undefined;
+        let snapshot: string | undefined;
+        for (let index = 0; index < WORKFLOW_ACTIVITY_MAX_PAGES; index++) {
+          const page: unknown = await client.request(SwarmWorkflowGateway.Activity, {
+            ...(cursor ? { cursor } : {}),
+          });
+          if (
+            getRuntime() !== runtime ||
+            runtime.getGatewayClient() !== client ||
+            !validWorkflowActivityPage(page)
+          )
+            return { success: false };
+          if (snapshot !== undefined && page.snapshot !== snapshot) return { success: false };
+          snapshot = page.snapshot;
+          page.parentKeys.forEach(key => parents.add(key));
+          if (!page.cursor) {
+            const sessionIds = new Set<string>();
+            for (const parentKey of parents) {
+              // The embedded ID is only a candidate. Exact live ownership authorizes its projection.
+              const sessionId = parentKey.split(':')[3];
+              if (!hasSession(sessionId)) continue;
+              const ownedKeys = runtime.getSessionKeysForSession(sessionId);
+              if (!ownedKeys.length) return { success: false };
+              if (ownedKeys.includes(parentKey)) sessionIds.add(sessionId);
+            }
+            return { success: true, sessionIds: [...sessionIds] };
+          }
+          if (cursors.has(page.cursor)) return { success: false };
+          cursors.add(page.cursor);
+          cursor = page.cursor;
+        }
+        return { success: false };
+      } catch {
+        return { success: false };
+      }
+    },
+    getSwarmWorkflowSummary: async (sessionId: unknown) => {
+      try {
+        const { runtime, client, keys } = resolveOwnedRoot(sessionId);
+        if (!keys.length) return { success: true, count: 0, running: false };
+        const result = await client.request<unknown>(SwarmWorkflowGateway.Summary, {
+          parentKeys: keys,
+        });
+        const current = resolveOwnedRoot(sessionId);
+        if (
+          runtime !== current.runtime ||
+          client !== current.client ||
+          JSON.stringify(keys) !== JSON.stringify(current.keys) ||
+          !validWorkflowSummary(result)
+        )
+          return { success: false };
+        return { success: true, count: result.count, running: result.running };
+      } catch {
+        return { success: false };
+      }
+    },
     prepareSwarmWorkflow: async (
       options: unknown,
       sessionId?: unknown,

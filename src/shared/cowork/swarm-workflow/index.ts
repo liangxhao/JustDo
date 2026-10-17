@@ -8,6 +8,8 @@ export * from '../../../../openclaw-extensions/swarm-workflow/prompt/request';
 export const SwarmWorkflowIpc = {
   Prepare: 'cowork:swarm-workflow:prepare',
   List: 'cowork:swarm-workflow:list',
+  Activity: 'cowork:swarm-workflow:activity',
+  Summary: 'cowork:swarm-workflow:summary',
   Changed: 'cowork:swarm-workflow:changed',
   Control: 'cowork:swarm-workflow:control',
   Detail: 'cowork:swarm-workflow:detail',

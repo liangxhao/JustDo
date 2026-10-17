@@ -1,10 +1,12 @@
 import type { FilesystemAdmission } from '../../runtime-services/contracts/filesystem';
-import type { BatchCounts, BatchItemIdentity, BatchPlan, ItemResultManifest } from './batch.js';
 import type { SwarmWorkflowSettings } from '../settings.js';
+import type { BatchCounts, BatchItemIdentity, BatchPlan, ItemResultManifest } from './batch.js';
 
 export const FLOW_RPC = {
   start: 'swarmWorkflow.start',
   list: 'swarmWorkflow.list',
+  activity: 'swarmWorkflow.activity',
+  summary: 'swarmWorkflow.summary',
   control: 'swarmWorkflow.control',
   health: 'swarmWorkflow.health',
   detail: 'swarmWorkflow.detail',

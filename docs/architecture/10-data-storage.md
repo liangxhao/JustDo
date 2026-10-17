@@ -16,6 +16,8 @@ Main 与 Renderer 共用数值校验。它只控制新建准入，不持久化�
 主会话被删除后身份检查阻止下一次派发，原生工作历史与插件记录不会自动级联清除。
 参见 [Swarm Workflow](../features/workflow/swarm-workflow.md)。
 
+侧栏活动与摘要数量通过插件的 `activity` / `summary` 只读接口从既有 `flows`、`batch_items` 聚合，不 hydrate 完整流程或读取批次结果，不新增表或持久缓存。活动分页携带本次 Store 实例的随机代次和已提交变更版本；跨实例或版本不一致的页不拼接为空闲结论，Main 继续核对原生父 key 的精确产品归属。
+
 会话诊断增加 `cowork_run_diagnostic_events` 和 `cowork_run_diagnostic_coverage`。两表通过产品 run 外键级联删除；前者只存闭合值运行元数据，后者保留采集起点和裁剪计数，不存正文或任意错误文本。每轮普通/关键事件分别限 200/32 条，全局 20,000 条、14 天；coverage 随既有 run 生命周期保留，事件裁剪不会抹掉丢失证据。
 
 原生运行时的循环退出分支及最后回复种类以 `loopExit` / `responseShape` 闭合枚举

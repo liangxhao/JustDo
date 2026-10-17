@@ -88,6 +88,30 @@ it('shares capacity fairly and lowers the ceiling without cancelling active item
   await f.tick();
   expect(f.store.batches.occupiedCount()).toBe(2);
 });
+
+it('keeps paused batch preparation active until its pending freeze settles', async () => {
+  const f = fixture();
+  const flow = f.engine.create({ requestId: 'freezing', parentKey: 'agent:main:justdo:freezing',
+    parentId: 'freezing', agentId: 'main', agents: [{ id: 'main', name: 'Main' }],
+    cwd: path.join(os.tmpdir(), 'workflow-preparing'), permissionMode: 'workspace',
+    mode: 'auto', goal: 'Process files', settings: swarmWorkflowSettings({}), controlVersion: 0 });
+  flow.nodes[0].status = 'done';
+  flow.nodes.push({ id: 'batch', kind: 'batch', title: 'Prepare inputs', task: 'Process files',
+    deps: ['plan'], status: 'queued', sessionKey: '', agentId: 'main', agentName: 'Main', access: 'read' });
+  f.store.put(flow);
+  let rejectFreeze!: (error: Error) => void;
+  let started!: () => void;
+  const freezing = new Promise<void>(resolve => { started = resolve; });
+  f.host.freezeBatch = vi.fn(() => new Promise((_resolve, reject) => { rejectFreeze = reject; started(); }));
+  try {
+    await f.engine.tick(); await freezing;
+    f.engine.control(flow.id, f.store.get(flow.id)!.revision, 'pause');
+    expect(f.store.get(flow.id)!.nodes.find(node => node.id === 'batch')?.status).toBe('preparing');
+    expect(f.store.summary([flow.parentKey])).toEqual({ count: 1, running: true });
+    expect(f.store.activity().parentKeys).toContain(flow.parentKey);
+  } finally { rejectFreeze(new Error('Preparation revoked.')); await f.engine.drain(); }
+  expect(f.store.summary([flow.parentKey])).toEqual({ count: 1, running: false });
+});
 it('honors a narrower per-flow ceiling while allocating remaining slots to another flow', async () => {
   const f = fixture(); const limited = f.create(100, 'limited'); const other = f.create(100, 'other');
   const flow = f.store.get(limited)!; flow.concurrency = 1; f.store.put(flow);

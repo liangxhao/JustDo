@@ -3,6 +3,7 @@ import {
   layoutFlow,
   routeFlowEdge,
 } from '../../../../../../openclaw-extensions/swarm-workflow/browser/graph/layout';
+import { useWorkflowVisibility } from '../../../../../../openclaw-extensions/swarm-workflow/browser/visibility';
 import { useSwarmWorkflowPanelState } from './workflowBrowserState';
 export {
   layoutFlow,
@@ -63,6 +64,8 @@ export default function SwarmWorkflowPanel({
   onRefresh?: () => void;
 }) {
   const ownerWindow = useOwnerWindow();
+  const visible = useWorkflowVisibility(ownerWindow.document);
+  active = active && visible;
   const t = (key: string) => i18nService.t(key);
   const {
     flows,
@@ -184,6 +187,7 @@ export default function SwarmWorkflowPanel({
           key={JSON.stringify([sessionId, flow.id, node.id, source?.id])}
           sessionId={sessionId}
           flowId={flow.id}
+          revision={flow.revision}
           node={node}
           source={source}
           active={active}

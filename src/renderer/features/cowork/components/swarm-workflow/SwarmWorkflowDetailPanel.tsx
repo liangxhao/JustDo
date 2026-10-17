@@ -16,6 +16,7 @@ export default function SwarmWorkflowDetailPanel({
   node,
   source,
   active,
+  revision,
   onBack,
   backLabel,
   onChanged,
@@ -25,6 +26,7 @@ export default function SwarmWorkflowDetailPanel({
   node: SwarmWorkflowNode;
   source?: SwarmWorkflowNode;
   active: boolean;
+  revision?: number;
   onBack: () => void;
   backLabel?: string;
   onChanged?: () => void;
@@ -38,6 +40,7 @@ export default function SwarmWorkflowDetailPanel({
     node,
     source,
     active,
+    revision,
   });
   const handoff =
     source && detail?.dispatch ? handoffContent(detail.dispatch.message, source.id) : undefined;
@@ -160,6 +163,7 @@ export default function SwarmWorkflowDetailPanel({
         ) : (
           active && (
             <SwarmWorkflowNodeHistory
+              active={active}
               key={detail.sessionKey + retry}
               sessionKey={detail.sessionKey}
               workingDirectory={detail.workingDirectory}

@@ -50,6 +50,7 @@ export function useWorkflowPanel(
   }, [flows]);
   useEffect(() => {
     if (!active || snapshot !== undefined) return;
+    setStale(true);
     return observeWorkflows(
       api,
       sessionId,
@@ -70,6 +71,7 @@ export function useWorkflowPanel(
     } else setStale(true);
   }, [snapshot]);
   const refreshFlows = () => {
+    setStale(true);
     if (onRefresh) onRefresh();
     else refresh(v => v + 1);
   };

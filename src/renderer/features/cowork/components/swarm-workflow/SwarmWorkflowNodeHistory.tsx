@@ -13,16 +13,19 @@ export default function SwarmWorkflowNodeHistory({
   workingDirectory,
   agentId,
   name,
+  active = true,
 }: {
   sessionKey: string;
   workingDirectory: string;
   agentId?: string;
   name: string;
+  active?: boolean;
 }) {
   const [controller, setController] = useState<ChatController | null>(null);
   const [status, setStatus] = useState('loading');
   const [retry, setRetry] = useState(0);
   useEffect(() => {
+    if (!active) return;
     const next = new ChatController();
     next.state.sessionKey = sessionKey;
     setController(next);
@@ -54,7 +57,7 @@ export default function SwarmWorkflowNodeHistory({
       unsubscribe();
       disconnect();
     };
-  }, [sessionKey, retry]);
+  }, [sessionKey, retry, active]);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {status !== 'ready' && (

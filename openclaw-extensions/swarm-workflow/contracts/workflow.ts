@@ -1,3 +1,4 @@
+import type { BatchCounts } from './batch';
 import {
   FLOW_LIMITS,
   FLOW_RPC,
@@ -7,11 +8,12 @@ import {
   type NodeStatus,
   type StageKind,
 } from './flow';
-import type { BatchCounts } from './batch';
 
 export const SwarmWorkflowGateway = {
   Health: FLOW_RPC.health,
   List: FLOW_RPC.list,
+  Activity: FLOW_RPC.activity,
+  Summary: FLOW_RPC.summary,
   Control: FLOW_RPC.control,
   Detail: FLOW_RPC.detail,
   Intervene: FLOW_RPC.intervene,
@@ -170,6 +172,41 @@ export function isSwarmWorkflowActive(
 }
 export type SwarmWorkflowResult =
   { success: true; flows: SwarmWorkflowView[]; running?: boolean } | { success: false };
+
+export const WORKFLOW_ACTIVITY_PAGE_SIZE = 128;
+export const WORKFLOW_ACTIVITY_MAX_PAGES = 128;
+export interface SwarmWorkflowSummary {
+  count: number;
+  running: boolean;
+}
+export type SwarmWorkflowSummaryResult =
+  ({ success: true } & SwarmWorkflowSummary) | { success: false };
+export type SwarmWorkflowActivityResult =
+  { success: true; sessionIds: string[] } | { success: false };
+export interface SwarmWorkflowActivityPage {
+  parentKeys: string[];
+  snapshot: string;
+  cursor?: string;
+}
+export function validWorkflowSummary(value: unknown): value is SwarmWorkflowSummary {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as SwarmWorkflowSummary;
+  return Number.isSafeInteger(item.count) && item.count >= 0 && typeof item.running === 'boolean';
+}
+export function validWorkflowActivityPage(value: unknown): value is SwarmWorkflowActivityPage {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as SwarmWorkflowActivityPage;
+  return (
+    Array.isArray(item.parentKeys) &&
+    item.parentKeys.length <= WORKFLOW_ACTIVITY_PAGE_SIZE &&
+    item.parentKeys.every(key => isSwarmWorkflowParentKey(key) && key.length <= 512) &&
+    typeof item.snapshot === 'string' &&
+    item.snapshot.length > 0 &&
+    item.snapshot.length <= 128 &&
+    (item.cursor === undefined ||
+      (typeof item.cursor === 'string' && item.cursor.length > 0 && item.cursor.length <= 512))
+  );
+}
 export interface SwarmWorkflowDetail {
   flowId: string;
   nodeId: string;

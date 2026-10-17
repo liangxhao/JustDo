@@ -1278,6 +1278,8 @@ interface IElectronAPI {
     onSessionGoalChanged: (callback: (data: { sessionId: string }) => void) => () => void;
     getSwarmSnapshot: import('../../shared/cowork/swarm').SwarmApi['getSwarmSnapshot'];
     getSwarmWorkflows: import('../../shared/cowork/swarm-workflow').SwarmWorkflowApi['getSwarmWorkflows'];
+    getSwarmWorkflowActivity: import('../../shared/cowork/swarm-workflow').SwarmWorkflowApi['getSwarmWorkflowActivity'];
+    getSwarmWorkflowSummary: import('../../shared/cowork/swarm-workflow').SwarmWorkflowApi['getSwarmWorkflowSummary'];
     onSwarmWorkflowsChanged: import('../../shared/cowork/swarm-workflow').SwarmWorkflowEventsApi['onSwarmWorkflowsChanged'];
     getSwarmWorkflowBatch: import('../../shared/cowork/swarm-workflow').SwarmWorkflowApi['getSwarmWorkflowBatch'];
     retrySwarmWorkflowBatch: import('../../shared/cowork/swarm-workflow').SwarmWorkflowApi['retrySwarmWorkflowBatch'];

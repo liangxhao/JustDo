@@ -8,6 +8,12 @@ import {
 
 export function registerSwarmWorkflowHandlers(deps: SwarmWorkflowDependencies): void {
   const coordinator = createSwarmWorkflowCoordinator(deps);
+  ipcMain.handle(SwarmWorkflowIpc.Activity, () => coordinator.getSwarmWorkflowActivity());
+  ipcMain.handle(
+    SwarmWorkflowIpc.Summary,
+    (_event, ...args: Parameters<typeof coordinator.getSwarmWorkflowSummary>) =>
+      coordinator.getSwarmWorkflowSummary(...args),
+  );
   ipcMain.handle(
     SwarmWorkflowIpc.Prepare,
     (_event, ...args: Parameters<typeof coordinator.prepareSwarmWorkflow>) =>

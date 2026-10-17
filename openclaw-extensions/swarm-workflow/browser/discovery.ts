@@ -1,86 +1,80 @@
-import type { WorkflowBrowserPorts, WorkflowAvailability } from './ports';
-import type { SwarmWorkflowResult } from '../contracts/workflow';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { observeWorkflows } from './observe';
 
-/** Observe the selected chat independently of whether its workflow Tab is open. */
+import type { SwarmWorkflowSummary, SwarmWorkflowSummaryResult } from '../contracts/workflow';
+import { createWorkflowObserver } from './observe';
+import type { WorkflowAvailability, WorkflowBrowserPorts } from './ports';
+
+type SummaryPorts = Pick<
+  WorkflowBrowserPorts,
+  'getSwarmWorkflowSummary' | 'onSwarmWorkflowsChanged'
+>;
+const observeSummary = createWorkflowObserver<SummaryPorts, SwarmWorkflowSummary>(
+  (api, sessionId) => api.getSwarmWorkflowSummary(sessionId),
+);
+
+/** Summary metadata is read only while the selected chat's summary is visible. */
 export function useSwarmWorkflowDiscovery(
-  api: Pick<WorkflowBrowserPorts, 'getSwarmWorkflows' | 'onSwarmWorkflowsChanged'>,
+  api: SummaryPorts,
   sessionId: string | null | undefined,
   onDiscover?: () => void,
   availability: WorkflowAvailability = { enabled: true, disabledRevision: 0 },
+  active = false,
 ) {
   const { enabled, disabledRevision } = availability;
-  const seenRevision = useRef(disabledRevision);
-  const seen = useRef(new Map<string, Set<string>>());
-  const onDiscoverRef = useRef(onDiscover);
-  onDiscoverRef.current = onDiscover;
+  const callback = useRef(onDiscover);
+  callback.current = onDiscover;
   const [snapshot, setSnapshot] = useState<{
     sessionId: string;
-    disabledRevision: number;
-    result: SwarmWorkflowResult;
-    hasFlows: boolean;
+    generation: number;
+    result: SwarmWorkflowSummaryResult;
     count: number;
   }>();
   const [revision, setRevision] = useState(0);
   const refresh = useCallback(() => setRevision(value => value + 1), []);
   useEffect(() => {
-    if (seenRevision.current !== disabledRevision) {
-      seen.current.clear();
-      seenRevision.current = disabledRevision;
-    }
     if (!enabled) {
-      seen.current.clear();
       setSnapshot(undefined);
       return;
     }
-    if (!sessionId) return;
-    return observeWorkflows(
+    if (!sessionId || !active) return;
+    return observeSummary(
       api,
       sessionId,
       result => {
         setSnapshot(previous => ({
           sessionId,
-          disabledRevision,
+          generation: disabledRevision,
           result,
-          hasFlows: result.success
-            ? result.flows.length > 0
-            : previous?.sessionId === sessionId &&
-              previous.disabledRevision === disabledRevision &&
-              previous.hasFlows,
           count: result.success
-            ? result.flows.length
-            : previous?.sessionId === sessionId && previous.disabledRevision === disabledRevision
+            ? result.count
+            : previous?.sessionId === sessionId && previous.generation === disabledRevision
               ? previous.count
               : 0,
         }));
-        if (result.success && onDiscoverRef.current) {
-          const known = seen.current.get(sessionId);
-          const discovered = result.flows.some(
-            flow =>
-              !known?.has(flow.id) &&
-              (known !== undefined || !['completed', 'cancelled'].includes(flow.status)),
-          );
-          const next = known ?? new Set<string>();
-          result.flows.forEach(flow => next.add(flow.id));
-          seen.current.set(sessionId, next);
-          if (discovered) onDiscoverRef.current();
-        }
       },
       { generation: disabledRevision, refresh: revision > 0 },
     );
-  }, [api, sessionId, revision, enabled, disabledRevision]);
+  }, [api, sessionId, enabled, disabledRevision, active, revision]);
   const current =
     enabled &&
     snapshot &&
     snapshot.sessionId === sessionId &&
-    snapshot.disabledRevision === disabledRevision
+    snapshot.generation === disabledRevision
       ? snapshot
       : undefined;
-  const result: SwarmWorkflowResult = current ? current.result : { success: false };
-  const running =
-    result.success && result.flows.some(flow => ['running', 'stopping'].includes(flow.status));
-  const hasFlows = current?.hasFlows === true;
+  const result: SwarmWorkflowSummaryResult = current?.result ?? { success: false };
   const count = current?.count ?? 0;
-  return { result, running, hasFlows, count, refresh };
+  const successful = result.success;
+  const running = result.success && result.running;
+  const discovered = useRef({ generation: disabledRevision, counts: new Map<string, number>() });
+  useEffect(() => {
+    if (discovered.current.generation !== disabledRevision) {
+      discovered.current = { generation: disabledRevision, counts: new Map() };
+    }
+    if (!active || !sessionId || !successful) return;
+    const known = discovered.current.counts.get(sessionId);
+    if (count > (known ?? 0) && (known !== undefined || running)) callback.current?.();
+    discovered.current.counts.set(sessionId, count);
+  }, [active, sessionId, disabledRevision, count, successful, running]);
+  return { result, count, hasFlows: count > 0, running, refresh };
 }

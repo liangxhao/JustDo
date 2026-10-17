@@ -291,6 +291,7 @@ export default function SwarmWorkflowBatchPanel({
           key={selected.id}
           sessionId={sessionId}
           flowId={flow.id}
+          revision={flow.revision}
           node={{ ...selected, kind: 'work', deps: [], sessionKey: '' }}
           active={active}
           backLabel={t('swarmWorkflowBatchBack')}

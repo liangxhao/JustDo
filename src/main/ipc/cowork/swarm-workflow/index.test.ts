@@ -8,6 +8,87 @@ import { registerSwarmWorkflowHandlers } from './index';
 beforeEach(() => mocks.handle.mockReset());
 const handler = (key: string) => mocks.handle.mock.calls.find(call => call[0] === key)![1];
 const ownedParent = 'agent:main:justdo:product';
+test('loads compact activity in pages and projects only exact current product owners', async () => {
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({ parentKeys: [ownedParent], cursor: ownedParent, snapshot: '1:2' })
+    .mockResolvedValueOnce({
+      parentKeys: ['agent:other:justdo:product', 'agent:main:justdo:foreign'],
+      snapshot: '1:2',
+    });
+  const runtime = {
+    getGatewayClient: () => ({ request }),
+    getSessionKeysForSession: () => [ownedParent],
+  };
+  // The runtime's connected client has stable identity, as in the production adapter.
+  const client = { request };
+  runtime.getGatewayClient = () => client;
+  registerSwarmWorkflowHandlers({
+    getRuntime: () => runtime as unknown as OpenClawRuntimeAdapter,
+    hasSession: id => id === 'product',
+  });
+  expect(await handler(SwarmWorkflowIpc.Activity)({})).toEqual({
+    success: true,
+    sessionIds: ['product'],
+  });
+  expect(request.mock.calls).toEqual([
+    ['swarmWorkflow.activity', {}],
+    ['swarmWorkflow.activity', { cursor: ownedParent }],
+  ]);
+});
+
+test('rejects incomplete, malformed and replaced-client activity snapshots', async () => {
+  const request = vi
+    .fn()
+    .mockResolvedValue({ parentKeys: [ownedParent], cursor: ownedParent, snapshot: '1:2' });
+  const client = { request };
+  const runtime = { getGatewayClient: () => client, getSessionKeysForSession: () => [ownedParent] };
+  registerSwarmWorkflowHandlers({
+    getRuntime: () => runtime as unknown as OpenClawRuntimeAdapter,
+    hasSession: id => id === 'product',
+  });
+  const read = handler(SwarmWorkflowIpc.Activity);
+  expect(await read({})).toEqual({ success: false });
+  request.mockResolvedValue({ parentKeys: ['agent:main:subagent:worker'], snapshot: '1:2' });
+  expect(await read({})).toEqual({ success: false });
+  request.mockResolvedValue({ parentKeys: [ownedParent], snapshot: '1:2' });
+  runtime.getSessionKeysForSession = () => [];
+  expect(await read({})).toEqual({ success: false });
+  runtime.getSessionKeysForSession = () => [ownedParent];
+  request
+    .mockResolvedValueOnce({ parentKeys: [ownedParent], cursor: ownedParent, snapshot: '1:2' })
+    .mockResolvedValueOnce({ parentKeys: [], snapshot: '2:0' });
+  expect(await read({})).toEqual({ success: false });
+  request.mockImplementation(async () => {
+    runtime.getGatewayClient = () => ({ request });
+    return { parentKeys: [], snapshot: '1:2' };
+  });
+  expect(await read({})).toEqual({ success: false });
+});
+
+test('reads summary counts without full histories and rechecks identity after awaiting', async () => {
+  const request = vi.fn().mockResolvedValue({ count: 50, running: false });
+  const client = { request };
+  let key = ownedParent;
+  const runtime = { getGatewayClient: () => client, getSessionKeysForSession: () => [key] };
+  registerSwarmWorkflowHandlers({
+    getRuntime: () => runtime as unknown as OpenClawRuntimeAdapter,
+    hasSession: id => id === 'product',
+  });
+  const read = handler(SwarmWorkflowIpc.Summary);
+  expect(await read({}, 'product')).toEqual({ success: true, count: 50, running: false });
+  expect(request).toHaveBeenCalledExactlyOnceWith('swarmWorkflow.summary', {
+    parentKeys: [ownedParent],
+  });
+  expect(await read({}, 'foreign')).toEqual({ success: false });
+  request.mockResolvedValue({ count: -1, running: false });
+  expect(await read({}, 'product')).toEqual({ success: false });
+  request.mockImplementation(async () => {
+    key = 'agent:other:justdo:product';
+    return { count: 1, running: true };
+  });
+  expect(await read({}, 'product')).toEqual({ success: false });
+});
 test('queries workflow parents without forwarding channel or worker aliases', async () => {
   const parents = ['agent:main:justdo:product', 'agent:assistant:justdo:product'];
   const request = vi.fn(async (_method: string, params: { parentKeys: string[] }) => {
@@ -54,6 +135,11 @@ test.each([
     flows: [],
     running: false,
   });
+  expect(await handler(SwarmWorkflowIpc.Summary)({}, 'product')).toEqual({
+    success: true,
+    count: 0,
+    running: false,
+  });
   expect(await handler(SwarmWorkflowIpc.List)({}, 'foreign')).toEqual({ success: false });
   expect(await handler(SwarmWorkflowIpc.Detail)({}, 'product', 'flow', 'node')).toEqual({
     success: false,
@@ -88,6 +174,7 @@ test('keeps unresolved native identity as a failure instead of successful empty 
   registerSwarmWorkflowHandlers({ getRuntime: () => runtime, hasSession: id => id === 'product' });
 
   expect(await handler(SwarmWorkflowIpc.List)({}, 'product')).toEqual({ success: false });
+  expect(await handler(SwarmWorkflowIpc.Summary)({}, 'product')).toEqual({ success: false });
   expect(request).not.toHaveBeenCalled();
 });
 

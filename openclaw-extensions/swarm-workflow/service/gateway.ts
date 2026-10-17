@@ -1,4 +1,7 @@
 import path from 'node:path';
+
+import { managedSubagent } from '../../runtime-services/execution/managed-subagent';
+import { permissionFingerprint } from '../../runtime-services/filesystem/admission';
 import {
   DEFAULT_FLOW_AGENT,
   FLOW_LIMITS,
@@ -7,17 +10,55 @@ import {
   viewFlow,
 } from '../contracts/flow';
 import { isSwarmWorkflowActive } from '../contracts/workflow';
-import { managedSubagent } from '../../runtime-services/execution/managed-subagent';
-import { permissionFingerprint } from '../../runtime-services/filesystem/admission';
 import { interventionAvailability } from '../execution/intervention';
 import { parentPolicy } from '../execution/policy';
 import { swarmWorkflowSettings } from '../settings';
+import type { WorkflowContext } from './context';
 import { entry, inPlanMode, managed } from './native-context';
 import type { StartAdmission } from './state';
-import type { WorkflowContext } from './context';
 
 export function registerWorkflowGateway(context: WorkflowContext): void {
   const { api, state, ensure, assertParent, assertParentIdentity, availableAgents } = context;
+  api.registerGatewayMethod(
+    FLOW_RPC.activity,
+    ({ params, respond }) => {
+      try {
+        if (
+          params.cursor !== undefined &&
+          (typeof params.cursor !== 'string' || !params.cursor || params.cursor.length > 512)
+        )
+          throw new Error('Invalid activity cursor.');
+        const store = ensure().store;
+        const page = store.activity(params.cursor as string | undefined);
+        respond(true, {
+          ...page,
+          parentKeys: page.parentKeys.filter(managed),
+          snapshot: store.snapshotVersion,
+        });
+      } catch (error) {
+        respond(false, undefined, { code: 'swarm_workflow_error', message: String(error) });
+      }
+    },
+    { scope: 'operator.read' },
+  );
+  api.registerGatewayMethod(
+    FLOW_RPC.summary,
+    ({ params, respond }) => {
+      try {
+        if (
+          !Array.isArray(params.parentKeys) ||
+          !params.parentKeys.length ||
+          params.parentKeys.length > 8 ||
+          !params.parentKeys.every(managed)
+        )
+          throw new Error('Invalid parent identities.');
+        respond(true, ensure().store.summary(params.parentKeys as string[]));
+      } catch (error) {
+        respond(false, undefined, { code: 'swarm_workflow_error', message: String(error) });
+      }
+    },
+    { scope: 'operator.read' },
+  );
   api.registerGatewayMethod(
     FLOW_RPC.start,
     async ({ params, respond }) => {

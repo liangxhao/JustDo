@@ -79,6 +79,59 @@ test('lays out actual dependencies before downstream tasks', () => {
   expect(points.get('a')!.y).toBeLessThan(points.get('verify')!.y);
 });
 
+test('loads full workflows only while the graph panel is active', async () => {
+  const { read } = fixture();
+  const view = render(<SwarmWorkflowPanel sessionId="product" active={false} />);
+  await act(async () => {});
+  expect(read).not.toHaveBeenCalled();
+  view.rerender(<SwarmWorkflowPanel sessionId="product" active />);
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+  view.rerender(<SwarmWorkflowPanel sessionId="product" active={false} />);
+  view.rerender(<SwarmWorkflowPanel sessionId="product" active />);
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+});
+
+test('pauses graph reads while its owning window is hidden and revalidates on return', async () => {
+  const { read } = fixture();
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+  render(<SwarmWorkflowPanel sessionId="product" active />);
+  await act(async () => {});
+  expect(read).not.toHaveBeenCalled();
+  act(() => {
+    visibility.mockReturnValue('visible');
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+  act(() => {
+    visibility.mockReturnValue('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await act(async () => {});
+  expect(read).toHaveBeenCalledTimes(1);
+});
+
+test('keeps controls disabled while a reopened graph revalidates its retained snapshot', async () => {
+  const { read } = fixture();
+  const view = render(<SwarmWorkflowPanel sessionId="product" active />);
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+  view.rerender(<SwarmWorkflowPanel sessionId="product" active={false} />);
+  let finish!: (result: unknown) => void;
+  read.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+  );
+  view.rerender(<SwarmWorkflowPanel sessionId="product" active />);
+  expect(
+    (screen.getByLabelText(i18nService.t('swarmWorkflowPause')) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  await act(async () => finish({ success: true, flows: [{ ...flow, revision: 9 }] }));
+  expect(
+    (screen.getByLabelText(i18nService.t('swarmWorkflowPause')) as HTMLButtonElement).disabled,
+  ).toBe(false);
+});
+
 test('fits on entry and workflow switches while preserving navigation through updates and details', () => {
   fixture();
   const observers = new Map<Element, ResizeObserverCallback>();

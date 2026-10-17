@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+
 import type {
   SwarmWorkflowBatchItem,
   SwarmWorkflowBatchPage,
@@ -17,7 +18,10 @@ export interface WorkflowBatchOptions {
 export function useWorkflowBatch(
   api: Pick<
     WorkflowBrowserPorts,
-    'getSwarmWorkflowBatch' | 'retrySwarmWorkflowBatch' | 'newOperationId'
+    | 'getSwarmWorkflowBatch'
+    | 'retrySwarmWorkflowBatch'
+    | 'newOperationId'
+    | 'onSwarmWorkflowsChanged'
   >,
   { sessionId, flow, stage, active, onChanged }: WorkflowBatchOptions,
 ) {
@@ -37,14 +41,19 @@ export function useWorkflowBatch(
     reasons?: string[];
   }>();
   const sequence = useRef(0);
+  const revalidate = useRef<(() => void) | undefined>();
   const cursor = cursors[cursors.length - 1];
   const ready = Boolean(stage.batchCounts);
   useEffect(() => {
-    if (!active || !ready) return;
+    if (!active || !ready || selected) return;
     let disposed = false;
+    let reading = false;
+    let dirty = false;
     let timer: ReturnType<typeof setTimeout>;
     const load = async () => {
       const request = ++sequence.current;
+      reading = true;
+      dirty = false;
       setLoading(true);
       try {
         const result = await api.getSwarmWorkflowBatch(sessionId, flow.id, stage.id, {
@@ -52,7 +61,7 @@ export function useWorkflowBatch(
           status: filter ? (filter as SwarmWorkflowNode['status']) : undefined,
           cursor,
         });
-        if (disposed || request !== sequence.current) return;
+        if (disposed || dirty || request !== sequence.current) return;
         if (result.success) {
           setPage(result.page);
           setError(false);
@@ -60,17 +69,63 @@ export function useWorkflowBatch(
           setError(true);
         }
       } catch {
-        if (!disposed) setError(true);
+        if (!disposed && !dirty) setError(true);
+      } finally {
+        reading = false;
+        if (!disposed && request === sequence.current && !dirty) setLoading(false);
+        if (!disposed && dirty) refreshPage();
+        else if (
+          !disposed &&
+          !cursor &&
+          !['completed', 'cancelled'].includes(flow.status) &&
+          (stage.status === 'queued' ||
+            stage.status === 'preparing' ||
+            stage.status === 'running' ||
+            stage.status === 'uncertain')
+        )
+          timer = setTimeout(load, 3000);
       }
-      if (!disposed && request === sequence.current) setLoading(false);
-      if (!disposed && !cursor) timer = setTimeout(load, 3000);
     };
+    const refreshPage = () => {
+      if (disposed) return;
+      clearTimeout(timer);
+      if (reading) {
+        dirty = true;
+        return;
+      }
+      timer = setTimeout(load, 0);
+    };
+    revalidate.current = refreshPage;
+    const unsubscribe = api.onSwarmWorkflowsChanged(event => {
+      if (!event.sessionId) refreshPage();
+    });
     timer = setTimeout(() => void load(), 200);
     return () => {
       disposed = true;
       clearTimeout(timer);
+      unsubscribe();
+      if (revalidate.current === refreshPage) revalidate.current = undefined;
     };
-  }, [sessionId, flow.id, stage.id, ready, active, cursor, filter, search, revision]);
+  }, [
+    api,
+    sessionId,
+    flow.id,
+    flow.status,
+    stage.id,
+    stage.status,
+    ready,
+    active,
+    selected,
+    cursor,
+    filter,
+    search,
+    revision,
+  ]);
+  // The graph supplies current revisions even when a terminal batch has no timer.
+  // Serialize changes arriving during a read instead of cancelling every response.
+  useEffect(() => {
+    revalidate.current?.();
+  }, [flow.revision]);
   const reset = () => {
     setLoading(true);
     setPage(undefined);

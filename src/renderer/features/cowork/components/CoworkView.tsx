@@ -749,10 +749,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     setIsDisplayPanelOpen,
     setIsWorkspaceFilesOpen,
   ]);
-  const swarmWorkflowDiscovery = useSwarmWorkflowDiscovery(currentSessionId, undefined, {
-    enabled: swarmWorkflowEnabled,
-    disabledRevision: swarmWorkflowDisabledRevision,
-  });
   const activeDisplayTabId =
     preferredDisplayTabId && availableDisplayTabIds.includes(preferredDisplayTabId)
       ? preferredDisplayTabId
@@ -978,10 +974,18 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     !!summaryObjective ||
       !!progressCard ||
       subtasks.length > 0 ||
-      swarmWorkflowDiscovery.count > 0 ||
       summaryTeamEntries.length > 0 ||
       !!currentSummaryResources?.outputs.length ||
       !!currentSummaryResources?.sources.length,
+  );
+  const swarmWorkflowDiscovery = useSwarmWorkflowDiscovery(
+    currentSessionId,
+    undefined,
+    {
+      enabled: swarmWorkflowEnabled,
+      disabledRevision: swarmWorkflowDisabledRevision,
+    },
+    summaryVisibility.visible,
   );
   const handleGoalResumeAccepted = useCallback((sessionId: string, runId: string) => {
     if (currentSessionIdRef.current !== sessionId) return;
@@ -3514,8 +3518,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   <SwarmWorkflowPanel
                     key={currentSession.id}
                     sessionId={currentSession.id}
-                    snapshot={swarmWorkflowDiscovery.result}
-                    onRefresh={swarmWorkflowDiscovery.refresh}
                     active={
                       activeDisplayTabId === SWARM_WORKFLOW_DISPLAY_TAB_ID && isWorkspaceVisible
                     }

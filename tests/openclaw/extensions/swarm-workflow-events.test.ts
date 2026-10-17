@@ -61,6 +61,63 @@ test('reads only owned parents in newest-first order without hydrating other his
   expect(hydrate).not.toHaveBeenCalled();
 });
 
+test('projects metadata across all history without hydrating any workflow or item result', () => {
+  const { flow, store } = fixture();
+  store.insert(flow);
+  for (let index = 0; index < 25; index++) {
+    store.insert({ ...flow, id: `done-${index}`, requestId: `done-${index}`, status: 'completed' });
+  }
+  store.insert({ ...flow, id: 'idle', requestId: 'idle', parentKey: 'agent:main:justdo:idle', status: 'paused' });
+  const hydrate = vi.spyOn(store.batches, 'hydrate');
+  expect(store.summary([flow.parentKey, flow.parentKey])).toEqual({ count: 26, running: true });
+  expect(store.summary([])).toEqual({ count: 0, running: false });
+  expect(store.activity()).toEqual({ parentKeys: [flow.parentKey] });
+  expect(hydrate).not.toHaveBeenCalled();
+  flow.status = 'completed';
+  store.put(flow);
+  expect(store.summary([flow.parentKey])).toEqual({ count: 26, running: false });
+  expect(store.activity()).toEqual({ parentKeys: [] });
+});
+
+test.each(['preparing', 'running', 'uncertain'] as const)(
+  'preserves %s work in paused and blocked activity summaries', status => {
+    const { flow, store } = fixture();
+    flow.status = 'blocked';
+    flow.nodes = [{ id: 'worker', title: 'Work', task: 'Inspect', kind: 'work',
+      deps: [], sessionKey: 'worker', agentId: 'main', agentName: 'Main', status }];
+    store.insert(flow);
+    expect(store.summary([flow.parentKey]).running).toBe(true);
+    expect(store.activity().parentKeys).toEqual([flow.parentKey]);
+  },
+);
+
+test('pages active parents in stable order rather than truncating the global snapshot', () => {
+  const { flow, store } = fixture();
+  for (let index = 0; index < 130; index++) store.insert({ ...flow,
+    id: `flow-${index}`, requestId: `request-${index}`,
+    parentKey: `agent:main:justdo:parent-${String(index).padStart(3, '0')}` });
+  const first = store.activity();
+  expect(first.parentKeys).toHaveLength(128);
+  expect(first.cursor).toBe(first.parentKeys[127]);
+  const second = store.activity(first.cursor);
+  expect(second.parentKeys).toHaveLength(2);
+  expect(second.cursor).toBeUndefined();
+  expect(new Set([...first.parentKeys, ...second.parentKeys]).size).toBe(130);
+});
+
+test('versions committed metadata changes and gives each store incarnation a fresh epoch', () => {
+  const { flow, store } = fixture();
+  const emptyVersion = store.snapshotVersion;
+  store.summary([]);
+  store.activity();
+  expect(store.snapshotVersion).toBe(emptyVersion);
+  store.insert(flow);
+  expect(store.snapshotVersion).not.toBe(emptyVersion);
+  const second = new FlowStore(flow.cwd);
+  try { expect(second.snapshotVersion).not.toBe(store.snapshotVersion); }
+  finally { second.close(); }
+});
+
 test('notifies batch expansion only after the whole transaction commits', () => {
   const { flow, store, changed } = fixture();
   const stage: FlowNode = {

@@ -1028,6 +1028,9 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.Status, sessionId, forceRefresh),
     getSwarmSnapshot: (sessionId: string) => ipcRenderer.invoke(SwarmIpc.Snapshot, sessionId),
     getSwarmWorkflows: (sessionId: string) => ipcRenderer.invoke(SwarmWorkflowIpc.List, sessionId),
+    getSwarmWorkflowActivity: () => ipcRenderer.invoke(SwarmWorkflowIpc.Activity),
+    getSwarmWorkflowSummary: (sessionId: string) =>
+      ipcRenderer.invoke(SwarmWorkflowIpc.Summary, sessionId),
     onSwarmWorkflowsChanged: (callback: (event: SwarmWorkflowChangedEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, event: SwarmWorkflowChangedEvent) =>
         callback(event);
