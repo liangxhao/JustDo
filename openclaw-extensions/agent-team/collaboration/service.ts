@@ -14,6 +14,9 @@ const DISCUSSION = 'team_discussion';
 const CREATE = 'assistants_create';
 const ASSISTANTS = 'task_assistants';
 const HOST_REQUEST_TIMEOUT_MS = 8000;
+const HOST_PREPARATION_TIMEOUT_MS = 60000;
+const GATEWAY_PREPARATION_TIMEOUT_MS = 75000;
+const PREPARATION_OPERATIONS = new Set(['create', 'discussion', 'ensure']);
 // Native outcomes can arrive after recovery. This identity grants no access
 // and outlives the 60-second send grant.
 const NATIVE_RECEIPT_TTL_MS = 10 * 60 * 1000;
@@ -66,8 +69,8 @@ export function registerCollaborationService(api: OpenClawPluginApi): void {
     new Promise((resolve, reject) => {
       if (!emit) return reject(new Error('Collaboration service unavailable.'));
       const requestId = randomUUID();
-      const timeoutMs = ['create', 'discussion'].includes(String(payload.operation))
-        ? 60000
+      const timeoutMs = PREPARATION_OPERATIONS.has(String(payload.operation))
+        ? HOST_PREPARATION_TIMEOUT_MS
         : HOST_REQUEST_TIMEOUT_MS;
       const expiresAt = Date.now() + timeoutMs;
       const timer = setTimeout(() => {
@@ -89,8 +92,8 @@ export function registerCollaborationService(api: OpenClawPluginApi): void {
     try {
       return await api.runtime.gateway.request(method, params, {
         scopes: ['operator.admin', 'operator.read', 'operator.write'],
-        ...(['create', 'discussion'].includes(String(params.operation))
-          ? { timeoutMs: 75000 }
+        ...(PREPARATION_OPERATIONS.has(String(params.operation))
+          ? { timeoutMs: GATEWAY_PREPARATION_TIMEOUT_MS }
           : {}),
       });
     } catch (error) {

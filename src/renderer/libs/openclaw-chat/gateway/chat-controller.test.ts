@@ -2449,6 +2449,27 @@ test('propagates a definitive send rejection so the product can settle its recei
   expect(controller.state.chatSending).toBe(false);
 });
 
+test.each(['not connected', 'serialization failed'])(
+  'does not preserve an unknown run when transport confirms it was not sent: %s',
+  async message => {
+    const controller = new ChatController();
+    const failure = Object.assign(new Error(message), { requestSent: false });
+    controller.state.client = { request: vi.fn().mockRejectedValue(failure) } as never;
+    controller.state.connected = true;
+    controller.state.sessionKey = 'session-a';
+    const onRequestUnknown = vi.fn();
+    await expect(
+      controller.sendMessage('hello', [], undefined, {
+        propagateRequestFailure: true,
+        onRequestUnknown,
+      }),
+    ).rejects.toThrow(message);
+    expect(onRequestUnknown).not.toHaveBeenCalled();
+    expect(controller.state.chatSending).toBe(false);
+    expect(controller.state.lastError).toBe(message);
+  },
+);
+
 test('records issuance at native chat.send and never marks a failed pre-send sender as issued', async () => {
   const controller = new ChatController();
   const events: string[] = [];

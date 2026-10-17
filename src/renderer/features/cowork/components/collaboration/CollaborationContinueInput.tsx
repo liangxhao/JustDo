@@ -69,7 +69,7 @@ export default function CollaborationContinueInput({
       // Settle only the original draft even when the user has opened another member.
       settleContinueDraft(draftKey, request.requestId, status);
     } catch {
-      // A lost response cannot establish that the source did not receive the request.
+      // A lost response cannot establish that the member did not receive the request.
       settleContinueDraft(draftKey, request.requestId, 'unknown');
     }
   };

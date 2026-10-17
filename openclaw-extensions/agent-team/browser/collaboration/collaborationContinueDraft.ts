@@ -5,8 +5,9 @@ export interface CollaborationContinueRequest {
   message: string;
   attachmentPaths?: string[];
 }
-export type CollaborationContinueStatus =
-  'source_accepted' | 'target_accepted' | 'not_forwarded' | 'unknown' | 'rejected';
+export type CollaborationContinueStatus = 'target_accepted' | 'unknown' | 'rejected';
+export const collaborationMemberTurnId = (requestId: string): string =>
+  `agent-team-member-${requestId}`;
 export type RequestCollaborationContinue = (
   input: CollaborationContinueRequest,
 ) => Promise<CollaborationContinueStatus>;
@@ -116,7 +117,7 @@ export function settleContinueDraft(
 ): void {
   const current = getContinueDraft(key);
   if (current.pending?.requestId !== requestId) return;
-  const accepted = status === 'source_accepted' || status === 'target_accepted';
+  const accepted = status === 'target_accepted';
   const unchanged =
     current.text === current.pending.message &&
     JSON.stringify(current.attachments) === JSON.stringify(current.pending.attachmentPaths ?? []);

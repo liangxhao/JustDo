@@ -233,6 +233,10 @@ export const registerCoworkSessionHandlers = ({
                   : result.status === 'ok'
                     ? 'completed'
                     : 'failed';
+              // A terminal result for this exact unknown native run also proves
+              // admission. Preserve it before settlement so every sender can
+              // recover a lost ACK without treating product idle as acceptance.
+              store.bindSessionRunRootRun(latest.id, unknownAdmission.runId);
               timing = store.finishSessionRun(latest.id, state, result.endedAt ?? Date.now());
               unknownAdmissions.delete(sessionId);
               terminalOutcomes.delete(sessionId);
@@ -367,6 +371,7 @@ export const registerCoworkSessionHandlers = ({
                 : result.status === 'ok'
                   ? 'completed'
                   : 'failed';
+            store.bindSessionRunRootRun(timing.id, timing.rootRunId ?? timing.clientTurnId);
             timing = store.finishSessionRun(timing.id, state, result.endedAt ?? Date.now());
             idleConfirmations.delete(sessionId);
             if (timing) finalizedOutcomes.set(sessionId, { id: timing.id, state });

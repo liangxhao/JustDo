@@ -1,5 +1,7 @@
 import { expect, it, vi } from 'vitest';
 
+vi.mock('@/features/cowork/coworkService', () => ({ coworkService: {} }));
+
 import { submitCollaborationContinuation } from './collaborationContinueSubmission';
 
 const target = {
@@ -19,11 +21,10 @@ const context = () => ({
   stageAudio: vi.fn().mockResolvedValue({ success: true, path: 'E:/project/chosen.wav' }),
   readImage: vi.fn().mockResolvedValue({ success: true, dataUrl: 'data:image/png;base64,eA==' }),
   beforeSubmit: vi.fn().mockResolvedValue(undefined),
-  submit: vi.fn().mockResolvedValue(true),
-  outcomeUnknown: () => false,
+  submit: vi.fn().mockResolvedValue('target_accepted' as const),
 });
 
-it('requests the actual source to forward using a new user identity and independent attachments', async () => {
+it('submits the exact member with an independent user identity and attachments, without a source handoff prompt', async () => {
   const deps = context();
   expect(
     await submitCollaborationContinuation(
@@ -34,27 +35,27 @@ it('requests the actual source to forward using a new user identity and independ
       },
       deps,
     ),
-  ).toBe('source_accepted');
+  ).toBe('target_accepted');
   expect(deps.submit).toHaveBeenCalledWith(
+    target,
     'Continue review\nMEDIA:E:/project/chosen.wav\nMEDIA:E:/notes.txt',
     [{ name: 'diagram.png', mimeType: 'image/png', base64Data: 'eA==' }],
-    expect.stringContaining(JSON.stringify(target)),
-    'justdo-continue-next',
+    'agent-team-member-next',
   );
   expect(deps.stageAudio).toHaveBeenCalledWith('E:/picked.wav', 'E:/project');
   expect(deps.beforeSubmit).toHaveBeenCalledOnce();
 });
 
-it('does not equate source acceptance with target acceptance or retry an unknown submission', async () => {
+it('preserves an unknown member submission without retrying', async () => {
   const deps = context();
-  deps.outcomeUnknown = () => true;
+  deps.submit.mockResolvedValue('unknown' as never);
   expect(
     await submitCollaborationContinuation({ requestId: 'next', message: 'Continue' }, deps),
   ).toBe('unknown');
   expect(deps.submit).toHaveBeenCalledTimes(1);
 });
 
-it('rejects slash execution before reading attachments or starting a source turn', async () => {
+it('rejects slash execution before reading attachments or starting a member turn', async () => {
   const deps = context();
   expect(
     await submitCollaborationContinuation({ requestId: 'next', message: ' /goal create' }, deps),
@@ -83,7 +84,7 @@ it('does not submit after a source switch during attachment staging', async () =
   expect(deps.submit).not.toHaveBeenCalled();
 });
 
-it('revalidates admission after a slow attachment and preserves rejection without a source send', async () => {
+it('revalidates admission after a slow attachment and preserves rejection without a member send', async () => {
   const deps = context();
   let finishImage!: () => void;
   deps.readImage.mockImplementation(async () => {
@@ -122,7 +123,7 @@ it('closes a source switch during the final admission recheck before invoking th
   expect(deps.submit).not.toHaveBeenCalled();
 });
 
-it('rejects an image for a text-only source before sending', async () => {
+it('rejects an image for a text-only member before sending', async () => {
   const deps = context();
   deps.supportsImages = () => false;
   await expect(

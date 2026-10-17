@@ -171,6 +171,8 @@ forked_from_* 保存原生分支来源，源会话删除时引用置空并保留
 
 运行表保存 started_at、accepted_at、ended_at 与 state，区分用户提交、原生接收和结束。client_turn_id 全局唯一；每个 session 通过 ended_at IS NULL 的部分唯一索引限制一个未结束回执。终态和计时必须幂等结算，不能重启后重新开始计算同一已结束 run。
 
+发送 ACK 丢失后，只有精确原生运行的 `agent.wait` 接纳／终态证据才能补写 root_run_id 和接纳核实时间，再结算该回执；恢复分支与正常 ACK 共用绑定方法。产品 idle、Stop ACK 或既有产品终态不能补写接纳证据。此核实时间可能晚于原生结束，不用于推断实际开始延迟。
+
 外部 session 另存来源、原生 key、首次绑定的 agent/cwd 和运行状态。删除产品会话的 trigger 写外部 tombstone；外部客户端再次同步不能复活用户已删记录。
 
 ## 5. Plan 与 Goal

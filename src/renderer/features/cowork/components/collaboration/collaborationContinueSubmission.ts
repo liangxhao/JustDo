@@ -1,14 +1,16 @@
 import type { CollaborationContinueTarget } from '@shared/cowork/agent-team/collaboration';
-import { appendCollaborationContinuation } from '@shared/cowork/agent-team/collaborationContinuationPrompt';
 import { isLocalAudioAttachment } from '@shared/speech/localAsr';
 
+import { coworkService } from '@/features/cowork/coworkService';
 import type { CoworkAttachmentPayload } from '@/features/cowork/coworkTypes';
+import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 
 import { isImagePath } from '../composer/composerAttachmentFiles';
 import type {
   CollaborationContinueRequest,
   CollaborationContinueStatus,
 } from './collaborationContinueDraft';
+import { collaborationMemberTurnId } from './collaborationContinueDraft';
 
 interface ContinueSubmissionContext {
   target: CollaborationContinueTarget;
@@ -23,15 +25,14 @@ interface ContinueSubmissionContext {
   /** Refresh the exact source/room/member admission after any slow attachment work. */
   beforeSubmit: () => Promise<void>;
   submit: (
-    display: string,
+    target: CollaborationContinueTarget,
+    message: string,
     images: CoworkAttachmentPayload[],
-    gateway: string,
     clientTurnId: string,
-  ) => Promise<boolean>;
-  outcomeUnknown: () => boolean;
+  ) => Promise<CollaborationContinueStatus>;
 }
 
-/** An independent source-user turn: it neither sends directly to the peer nor consumes main drafts. */
+/** A user turn for the selected member, independent of the source chat and its drafts. */
 export async function submitCollaborationContinuation(
   input: CollaborationContinueRequest,
   context: ContinueSubmissionContext,
@@ -65,16 +66,95 @@ export async function submitCollaborationContinuation(
     input.message,
     ...media.map(path => `MEDIA:${path.replace(/[\r\n]/g, '')}`),
   ].join('\n');
-  const gateway = appendCollaborationContinuation(display, context.target);
   context.assertCurrent();
   await context.beforeSubmit();
   context.assertCurrent();
-  const accepted = await context.submit(
+  return context.submit(
+    context.target,
     display,
     images,
-    gateway,
-    `justdo-continue-${input.requestId}`,
+    collaborationMemberTurnId(input.requestId),
   );
-  if (context.outcomeUnknown()) return 'unknown';
-  return accepted ? 'source_accepted' : 'rejected';
+}
+
+/** Keep both the native send and its metadata bound to the same member controller. */
+export async function sendCollaborationMemberMessage(
+  controller: ChatController,
+  target: CollaborationContinueTarget,
+  message: string,
+  images: CoworkAttachmentPayload[],
+  clientTurnId: string,
+  assertCurrent: () => void,
+  beforeSend: () => Promise<void>,
+  service: Pick<
+    typeof coworkService,
+    | 'reconcileSessionPermissionMode'
+    | 'beginSessionRun'
+    | 'bindSessionRun'
+    | 'markSessionRunUnknown'
+    | 'failSessionRun'
+  > = coworkService,
+): Promise<CollaborationContinueStatus> {
+  const client = controller.state.client;
+  const nativeSessionId = controller.state.currentSessionId;
+  const hello = controller.state.hello;
+  const assertMember = () => {
+    assertCurrent();
+    if (
+      !client ||
+      !nativeSessionId ||
+      controller.state.client !== client ||
+      controller.state.hello !== hello ||
+      !controller.state.connected ||
+      controller.state.sessionKey !== target.targetSessionKey ||
+      controller.state.currentSessionId !== nativeSessionId ||
+      !controller.state.initialHistoryReady ||
+      controller.state.historyReadFailed ||
+      controller.state.chatSending ||
+      controller.state.transcript.activeTurn?.status === 'running' ||
+      controller.hasUnconfirmedQueuedInput()
+    )
+      throw new Error('collaborationContinuationUnavailable');
+  };
+  assertMember();
+  const permission = await service.reconcileSessionPermissionMode(target.targetSessionId);
+  if (!permission.success) throw new Error(permission.error || 'permissionModeSaveFailed');
+  assertMember();
+  const timing = await service.beginSessionRun({
+    sessionId: target.targetSessionId,
+    clientTurnId,
+    startedAt: Date.now(),
+  });
+  let unknown = false;
+  try {
+    await beforeSend();
+    assertMember();
+    await controller.sendMessage(message, images, message, {
+      propagateRequestFailure: true,
+      expectedSessionKey: target.targetSessionKey,
+      clientTurnId,
+      isCancelled: () => {
+        try {
+          assertCurrent();
+          return (
+            controller.state.client !== client ||
+            controller.state.hello !== hello ||
+            controller.state.currentSessionId !== nativeSessionId
+          );
+        } catch {
+          return true;
+        }
+      },
+      onRunBound: runId => service.bindSessionRun(timing.id, runId, target.targetSessionId),
+      onRequestUnknown: async () => {
+        unknown = true;
+        await service.markSessionRunUnknown({ sessionId: target.targetSessionId, id: timing.id });
+      },
+    });
+    return 'target_accepted';
+  } catch (error) {
+    if (unknown) return 'unknown';
+    await service.failSessionRun(target.targetSessionId, timing.id);
+    throw error;
+  }
 }

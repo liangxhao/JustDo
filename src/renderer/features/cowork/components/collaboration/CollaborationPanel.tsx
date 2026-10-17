@@ -11,7 +11,7 @@ import {
 } from '@shared/cowork/agent-team/collaboration';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useSelector } from 'react-redux';
 
 import type { CoworkSession, CoworkSessionStatus } from '@/features/cowork/coworkTypes';
@@ -20,6 +20,7 @@ import {
   useExtensionAvailability,
   useExtensionEnabled,
 } from '@/features/plugins/extensions/useExtensionEnablement';
+import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { i18nService } from '@/services/i18n';
 import { useOwnerDocument } from '@/shared/dom/ownerDocument';
 import type { RootState } from '@/store';
@@ -63,7 +64,7 @@ const DELIVERY_STATUS_LABELS = {
   [CollaborationDeliveryState.FAILED]: 'collaborationFailed',
 } as const;
 const EMPTY_SESSIONS: never[] = [];
-const EMPTY_RUN_TIMINGS: SessionRunTiming[] = [];
+const EMPTY_RUN_TIMINGS: Record<string, SessionRunTiming[]> = {};
 
 export const COLLABORATION_CHANGED = 'cowork:collaboration-changed';
 
@@ -244,15 +245,18 @@ export default function CollaborationPanel({
     member: CollaborationMember,
     delivery: CollaborationDelivery | undefined,
     input: CollaborationContinueRequest,
+    controller: ChatController,
   ) => Promise<CollaborationContinueStatus>;
 }) {
   const { enabled, disabledRevision } = useExtensionAvailability(OpenClawExtensionId.AGENT_TEAM);
+  const [memberController, setMemberController] = useState<ChatController | null>(null);
   const agents = useSelector((state: RootState) => state.agent.agents);
   const sessions = useSelector((state: RootState) => state.cowork?.sessions ?? EMPTY_SESSIONS);
-  const sourceRunTimings = useSelector(
-    (state: RootState) => state.cowork?.sessionRunTimings?.[source.id] ?? EMPTY_RUN_TIMINGS,
+  const runTimings = useSelector(
+    (state: RootState) => state.cowork?.sessionRunTimings ?? EMPTY_RUN_TIMINGS,
   );
-  const timingsEvidenceKey = continueTimingsEvidenceKey(sourceRunTimings);
+  const memberRunTimings = useMemo(() => Object.values(runTimings).flat(), [runTimings]);
+  const timingsEvidenceKey = continueTimingsEvidenceKey(memberRunTimings);
   const continueRequestsRevision = useContinueRequestsRevision();
   const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => {
@@ -298,15 +302,14 @@ export default function CollaborationPanel({
         request.locator,
         request.requestId,
         snapshot,
-        sourceRunTimings,
-        loaded?.timingsEvidenceKey === timingsEvidenceKey,
+        memberRunTimings,
       );
       if (status) reconcileContinueDraft(request.key, request.requestId, status);
     }
   }, [
     snapshot,
     source.id,
-    sourceRunTimings,
+    memberRunTimings,
     timingsEvidenceKey,
     loaded?.timingsEvidenceKey,
     continueRequestsRevision,
@@ -433,6 +436,7 @@ export default function CollaborationPanel({
             <div className="min-h-0 flex-1">
               <CollaborationMemberHistory
                 key={detailMemberId}
+                onControllerChange={setMemberController}
                 onOpenSubtask={onOpenSubtask}
                 anchorSessionId={room.anchorSessionId}
                 roomId={room.id}
@@ -510,9 +514,17 @@ export default function CollaborationPanel({
                       },
                       activeReceipt?.id,
                     )}
-                    disabled={room.deleting === true}
+                    disabled={!enabled || room.deleting === true || !memberController}
                     onRequestContinue={input =>
-                      onRequestContinue(room, detailMember, activeReceipt, input)
+                      memberController
+                        ? onRequestContinue(
+                            room,
+                            detailMember,
+                            activeReceipt,
+                            input,
+                            memberController,
+                          )
+                        : Promise.resolve('rejected')
                     }
                   />
                 </div>

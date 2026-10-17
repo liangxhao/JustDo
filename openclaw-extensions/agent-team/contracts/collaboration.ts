@@ -157,6 +157,10 @@ export interface CollaborationContinueTarget {
   priorDeliveryId?: string;
 }
 
+export interface CollaborationContinuePreparationReceipt extends CollaborationContinueTarget {
+  controlGeneration: string;
+}
+
 export const CollaborationGateway = {
   Requested: 'plugin.agent-team.requested',
   Resolve: 'collaboration.resolve',
@@ -252,5 +256,7 @@ export interface CollaborationContinuePreparation {
   sourceSessionId: string;
   roomId: string;
   targetSessionKey: string;
+  nativeSessionId: string;
+  expectedControlGeneration?: string;
   priorDeliveryId?: string;
 }

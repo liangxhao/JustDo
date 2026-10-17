@@ -1329,8 +1329,12 @@ export class CoworkService {
     }
 
     const state = store.getState().cowork;
-    const session = state.currentSession?.id === sessionId ? state.currentSession : undefined;
-    if (!session) return { success: false, error: 'Session not found' };
+    let session = state.currentSession?.id === sessionId ? state.currentSession : undefined;
+    if (!session) {
+      const result = await window.electron?.cowork?.getSession?.(sessionId);
+      if (result?.success) session = result.session;
+    }
+    if (!session || session.id !== sessionId) return { success: false, error: 'Session not found' };
     return this.setSessionPermissionMode(sessionId, session.permissionMode);
   }
 

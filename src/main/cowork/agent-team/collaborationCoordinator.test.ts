@@ -316,27 +316,98 @@ it('joins all member cancellations and duplicate room Stops before reporting a p
   expect(secondOutcome).toHaveBeenCalledWith(expect.objectContaining({ message: 'b unavailable' }));
 });
 
-describe('source-mediated collaboration continuation preparation', () => {
-  const input = { sourceSessionId: 'a', roomId: 'room', targetSessionKey: key('b') };
+describe('direct member message preparation', () => {
+  const input = {
+    sourceSessionId: 'a',
+    roomId: 'room',
+    targetSessionKey: key('b'),
+    nativeSessionId: 'native-b',
+  };
   const available = () => {
     getRuntime.mockReturnValue({
       getPlanMode: async () => ({ enabled: false }),
       getGoalExecution: () => null,
     } as unknown as OpenClawRuntimeAdapter);
-    request.mockImplementation(async method =>
-      method === 'collaboration.health' ? { version: 2 } : { session: { sessionId: 'native-a' } },
+    request.mockImplementation(async (method, params) =>
+      method === 'collaboration.health'
+        ? { version: 2 }
+        : {
+            session: {
+              key: params.key,
+              sessionId: params.key === key('b') ? 'native-b' : 'native-a',
+            },
+          },
     );
   };
+  it('refuses a replaced native member even when its product key is unchanged', async () => {
+    available();
+    await expect(
+      coordinator.prepareContinuation({ ...input, nativeSessionId: 'old-member' }),
+    ).rejects.toThrow('collaborationInvalidRecipient');
+    expect(start).not.toHaveBeenCalled();
+  });
+  it('rejects a target member Goal without sending through the source', async () => {
+    available();
+    request.mockImplementation(async (method, params) =>
+      method === 'collaboration.health'
+        ? { version: 2 }
+        : {
+            session: {
+              key: params.key,
+              sessionId: params.key === key('b') ? 'native-b' : 'native-a',
+              ...(params.key === key('b') ? { goal: { id: 'member-goal' } } : {}),
+            },
+          },
+    );
+    await expect(coordinator.prepareContinuation(input)).rejects.toThrow(
+      'collaborationContinuationUnavailable',
+    );
+    expect(start).not.toHaveBeenCalled();
+  });
   it('prepares the exact source and target without starting or forwarding any execution', async () => {
     available();
     await expect(coordinator.prepareContinuation(input)).resolves.toEqual({
-      ...input,
+      sourceSessionId: 'a',
+      roomId: 'room',
+      targetSessionKey: key('b'),
       sourceAgentId: 'a',
       targetAgentId: 'b',
       targetSessionId: 'b',
+      controlGeneration: expect.any(String),
     });
     expect(start).not.toHaveBeenCalled();
     expect(request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
+  });
+  it('invalidates the original preparation across completed and repeated whole-team stops', async () => {
+    available();
+    const prepared = await coordinator.prepareContinuation(input);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await coordinator.stop('a');
+      await expect(
+        coordinator.prepareContinuation({
+          ...input,
+          expectedControlGeneration: prepared.controlGeneration,
+        }),
+      ).rejects.toThrow('collaborationStateConflict');
+    }
+    const fresh = await coordinator.prepareContinuation(input);
+    expect(fresh.controlGeneration).not.toBe(prepared.controlGeneration);
+    expect(start).not.toHaveBeenCalled();
+  });
+  it('rejects a stop that finishes during the final asynchronous admission check', async () => {
+    available();
+    const prepared = await coordinator.prepareContinuation(input);
+    runtimeStatus.mockImplementationOnce(async () => {
+      await coordinator.stop('a');
+      return { known: true, running: false };
+    });
+    await expect(
+      coordinator.prepareContinuation({
+        ...input,
+        expectedControlGeneration: prepared.controlGeneration,
+      }),
+    ).rejects.toThrow('collaborationStateConflict');
+    expect(start).not.toHaveBeenCalled();
   });
   it('admits a new user request after native idle without settling or replaying an old accepted return', async () => {
     // The worker completed, but its accepted return to the source lost the
@@ -386,6 +457,8 @@ describe('source-mediated collaboration continuation preparation', () => {
     expect(start).not.toHaveBeenCalled();
     expect(request.mock.calls.map(([method]) => method)).toEqual([
       'collaboration.health',
+      'sessions.describe',
+      'sessions.describe',
       'sessions.describe',
       'sessions.describe',
     ]);
@@ -457,11 +530,13 @@ describe('source-mediated collaboration continuation preparation', () => {
   });
   it('refuses a pending Plan review even when Plan execution is disabled', async () => {
     available();
-    request.mockImplementation(async method =>
+    request.mockImplementation(async (method, params) =>
       method === 'collaboration.health'
         ? { version: 2 }
         : {
             session: {
+              key: params.key,
+              sessionId: params.key === key('b') ? 'native-b' : 'native-a',
               pluginExtensions: [
                 {
                   pluginId: 'plan-mode',
@@ -480,11 +555,13 @@ describe('source-mediated collaboration continuation preparation', () => {
   it('rechecks Plan review and new delivery admission after idle lookup', async () => {
     available();
     let awaitingReview = false;
-    request.mockImplementation(async method =>
+    request.mockImplementation(async (method, params) =>
       method === 'collaboration.health'
         ? { version: 2 }
         : {
             session: {
+              key: params.key,
+              sessionId: params.key === key('b') ? 'native-b' : 'native-a',
               pluginExtensions: [
                 {
                   pluginId: 'plan-mode',
@@ -520,6 +597,67 @@ describe('source-mediated collaboration continuation preparation', () => {
 });
 
 describe('peer execution coordination', () => {
+  it('admits a cold member preparation taking longer than eight seconds within its preparation deadline', async () => {
+    vi.useFakeTimers();
+    db.prepare("DELETE FROM collaboration_members WHERE agent_id = 'c'").run();
+    prepare.mockImplementationOnce(async () => {
+      await new Promise(resolve => setTimeout(resolve, 10000));
+    });
+    const pending = coordinator.handle({
+      requestId: 'slow-prepare',
+      operation: 'ensure',
+      sessionKey: key('a'),
+      sourceRunId: 'user-run',
+      toolCallId: 'slow-prepare',
+      expiresAt: Date.now() + 60000,
+      input: { agentId: 'c' },
+    });
+    await vi.advanceTimersByTimeAsync(10000);
+    await pending;
+    expect(coordinator.read('a').room?.members).toContainEqual({
+      agentId: 'c',
+      sessionId: 'peer-c',
+      sessionKey: 'agent:c:justdo:peer-c',
+    });
+    expect(request).toHaveBeenCalledWith(
+      'collaboration.resolve',
+      expect.objectContaining({
+        requestId: 'slow-prepare',
+        result: expect.not.objectContaining({ error: expect.anything() }),
+      }),
+    );
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('cleans a member prepared after the deadline without publishing or dispatching it', async () => {
+    vi.useFakeTimers();
+    db.prepare("DELETE FROM collaboration_members WHERE agent_id = 'c'").run();
+    prepare.mockImplementationOnce(async () => {
+      await new Promise(resolve => setTimeout(resolve, 60001));
+    });
+    const pending = coordinator.handle({
+      requestId: 'expired-prepare',
+      operation: 'ensure',
+      sessionKey: key('a'),
+      sourceRunId: 'user-run',
+      toolCallId: 'expired-prepare',
+      expiresAt: Date.now() + 60000,
+      input: { agentId: 'c' },
+    });
+    await vi.advanceTimersByTimeAsync(60001);
+    await pending;
+    expect(coordinator.read('a').room?.members.some(member => member.sessionId === 'peer-c')).toBe(
+      false,
+    );
+    expect(db.prepare('SELECT id FROM cowork_sessions WHERE id = ?').get('peer-c')).toBeUndefined();
+    expect(request).toHaveBeenCalledWith('sessions.delete', { key: 'agent:c:justdo:peer-c' });
+    expect(request).toHaveBeenCalledWith('collaboration.resolve', {
+      requestId: 'expired-prepare',
+      result: { error: 'collaborationInvalidMessage' },
+    });
+    expect(start).not.toHaveBeenCalled();
+  });
+
   it('reads only room-owned delivery messages through the native lookup', async () => {
     metadata.beginRound('room', 'round');
     const delivery = metadata.enqueue('room', 'round', key('a'), 'call', 'run', {

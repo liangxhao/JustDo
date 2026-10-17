@@ -182,6 +182,7 @@ import type {
   ChatContextUsageSnapshot,
   RewindEditorDraft,
 } from '@/libs/openclaw-chat/gateway/chat-controller';
+import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import type { QueuedInputSnapshot } from '@/libs/openclaw-chat/gateway/chat-pending-inputs';
 import type {
   SessionSummaryResources,
@@ -203,7 +204,10 @@ import type {
   CollaborationContinueRequest,
   CollaborationContinueStatus,
 } from './collaboration/collaborationContinueDraft';
-import { submitCollaborationContinuation } from './collaboration/collaborationContinueSubmission';
+import {
+  sendCollaborationMemberMessage,
+  submitCollaborationContinuation,
+} from './collaboration/collaborationContinueSubmission';
 import { useCollaborationRooms } from './collaboration/CollaborationPanel';
 import type { MessageQuoteHandler } from './composer/messageQuote';
 import {
@@ -342,6 +346,14 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   }, []);
   const { enabled: agentTeamEnabled, disabledRevision: agentTeamDisabledRevision } =
     useExtensionAvailability(OpenClawExtensionId.AGENT_TEAM);
+  const agentTeamAvailabilityRef = useRef({
+    enabled: agentTeamEnabled,
+    revision: agentTeamDisabledRevision,
+  });
+  agentTeamAvailabilityRef.current = {
+    enabled: agentTeamEnabled,
+    revision: agentTeamDisabledRevision,
+  };
   const { enabled: swarmWorkflowEnabled, disabledRevision: swarmWorkflowDisabledRevision } =
     useExtensionAvailability(OpenClawExtensionId.SWARM_WORKFLOW);
   const [isWorkspaceDetached, setIsWorkspaceDetached] = useState(false);
@@ -2396,14 +2408,27 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       member: CollaborationMember,
       delivery: CollaborationDelivery | undefined,
       input: CollaborationContinueRequest,
+      controller: ChatController,
     ): Promise<CollaborationContinueStatus> => {
       const sourceId = currentSession.id;
       const sourceKey = currentGatewaySessionKey;
+      const memberClient = controller.state.client;
+      const memberNativeSessionId = controller.state.currentSessionId;
+      const memberHello = controller.state.hello;
+      const teamRevision = agentTeamAvailabilityRef.current.revision;
       const assertCurrent = () => {
         if (
           currentSessionIdRef.current !== sourceId ||
+          !controller.state.connected ||
+          controller.state.client !== memberClient ||
+          controller.state.hello !== memberHello ||
+          controller.state.currentSessionId !== memberNativeSessionId ||
+          !memberNativeSessionId ||
+          controller.state.sessionKey !== member.sessionKey ||
           currentGatewaySessionKeyRef.current !== sourceKey ||
           currentSession.external ||
+          !agentTeamAvailabilityRef.current.enabled ||
+          agentTeamAvailabilityRef.current.revision !== teamRevision ||
           currentSessionRuntimeRunningRef.current ||
           goalPresence.sessionId !== sourceId ||
           !goalPresence.ready ||
@@ -2420,6 +2445,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           sourceSessionId: sourceId,
           roomId: room.id,
           targetSessionKey: member.sessionKey,
+          nativeSessionId: memberNativeSessionId!,
           ...(delivery ? { priorDeliveryId: delivery.id } : {}),
         });
         assertCurrent();
@@ -2431,34 +2457,55 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           prepared.value.sourceAgentId !== currentSession.agentId
         )
           throw new Error('collaborationInvalidRecipient');
+        const recheckAdmission = async () => {
+          const current = await window.electron.collaboration.prepareContinuation({
+            sourceSessionId: sourceId,
+            roomId: room.id,
+            targetSessionKey: member.sessionKey,
+            nativeSessionId: memberNativeSessionId!,
+            expectedControlGeneration: prepared.value.controlGeneration,
+            ...(delivery ? { priorDeliveryId: delivery.id } : {}),
+          });
+          assertCurrent();
+          if (!current.success) throw new Error(current.error);
+          if (JSON.stringify(current.value) !== JSON.stringify(prepared.value))
+            throw new Error('collaborationInvalidRecipient');
+        };
         return await submitCollaborationContinuation(input, {
           target: prepared.value,
           cwd: currentSession.cwd,
           assertCurrent,
-          supportsImages: () => promptInputRef.current?.supportsImages() === true,
+          supportsImages: () => {
+            const state = store.getState();
+            return (
+              resolveAgentModelSelection({
+                agentId: member.agentId,
+                agentModel:
+                  state.agent.agents.find(agent => agent.id === member.agentId)?.model ?? '',
+                sessionModel: controller.state.contextUsage?.modelRef ?? undefined,
+                availableModels: state.model.availableModels,
+                fallbackModel: state.model.selectedModel,
+              }).selectedModel?.supportsImage === true
+            );
+          },
           stageAudio: (path, cwd) => window.electron.localAsr.stageAttachment(path, cwd),
           readImage: path => window.electron.dialog.readFileAsDataUrl(path),
-          beforeSubmit: async () => {
-            const current = await window.electron.collaboration.prepareContinuation({
-              sourceSessionId: sourceId,
-              roomId: room.id,
-              targetSessionKey: member.sessionKey,
-              ...(delivery ? { priorDeliveryId: delivery.id } : {}),
-            });
-            assertCurrent();
-            if (!current.success) throw new Error(current.error);
-            if (JSON.stringify(current.value) !== JSON.stringify(prepared.value))
-              throw new Error('collaborationInvalidRecipient');
-          },
-          submit: (display, images, gateway, clientTurnId) =>
-            handleSendMessage(display, images, gateway, { clientTurnId }),
-          outcomeUnknown: () =>
-            pendingMessageSubmissionsRef.current.get(sourceId)?.unknown === true,
+          beforeSubmit: recheckAdmission,
+          submit: (target, message, images, clientTurnId) =>
+            sendCollaborationMemberMessage(
+              controller,
+              target,
+              message,
+              images,
+              clientTurnId,
+              assertCurrent,
+              recheckAdmission,
+            ),
         });
       } catch (error) {
         const key = error instanceof Error ? error.message : 'collaborationContinuationUnavailable';
         window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t(key) }));
-        return pendingMessageSubmissionsRef.current.get(sourceId)?.unknown ? 'unknown' : 'rejected';
+        return 'rejected';
       }
     };
 

@@ -768,7 +768,9 @@ interface IElectronAPI {
     prepareContinuation: (
       input: import('@shared/cowork/agent-team/collaboration').CollaborationContinuePreparation,
     ) => Promise<
-      AgentResult<import('@shared/cowork/agent-team/collaboration').CollaborationContinueTarget>
+      AgentResult<
+        import('@shared/cowork/agent-team/collaboration').CollaborationContinuePreparationReceipt
+      >
     >;
     read: (
       sessionId: string,

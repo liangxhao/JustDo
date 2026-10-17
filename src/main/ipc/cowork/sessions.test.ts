@@ -2140,10 +2140,17 @@ test.each([
   const finishSessionRun = vi.fn(
     (_id, nextState, endedAt) => (timing = { ...timing, state: nextState, endedAt }),
   );
+  const bindSessionRunRootRun = vi.fn(
+    (_id, rootRunId) => (timing = { ...timing, rootRunId, acceptedAt: Date.now() }),
+  );
   const requestGateway = vi.fn().mockResolvedValue({ runId: 'client-1', ...result });
   registerCoworkSessionHandlers({
     getCoworkStore: () =>
-      ({ getLatestSessionRun: () => timing, finishSessionRun }) as unknown as CoworkStore,
+      ({
+        getLatestSessionRun: () => timing,
+        finishSessionRun,
+        bindSessionRunRootRun,
+      }) as unknown as CoworkStore,
     getCoworkEngineRouter: () =>
       ({
         getSessionRuntimeStatus: vi.fn().mockResolvedValue({
@@ -2166,8 +2173,13 @@ test.each([
     timing: { state: state ?? 'running' },
   });
   expect(requestGateway).toHaveBeenCalledWith('agent.wait', { runId: 'client-1', timeoutMs: 0 });
-  if (state) expect(finishSessionRun).toHaveBeenCalledWith('timing-1', state, expect.any(Number));
-  else expect(finishSessionRun).not.toHaveBeenCalled();
+  if (state) {
+    expect(finishSessionRun).toHaveBeenCalledWith('timing-1', state, expect.any(Number));
+    expect(bindSessionRunRootRun).toHaveBeenCalledWith('timing-1', 'client-1');
+  } else {
+    expect(finishSessionRun).not.toHaveBeenCalled();
+    expect(bindSessionRunRootRun).not.toHaveBeenCalled();
+  }
 });
 
 test('only aborts an unaccepted receipt after the stop request succeeds', async () => {
@@ -2264,6 +2276,9 @@ test('retains a cancelled unknown admission through repeated idle abort acknowle
     state: 'running',
   };
   const finishSessionRun = vi.fn((_id, state, endedAt) => (timing = { ...timing, state, endedAt }));
+  const bindSessionRunRootRun = vi.fn(
+    (_id, rootRunId) => (timing = { ...timing, rootRunId, acceptedAt: Date.now() }),
+  );
   const beginSessionRun = vi.fn();
   const registerUnknownSessionRun = vi.fn();
   const requestGateway = vi.fn().mockResolvedValue({ runId: 'unknown-run', status: 'timeout' });
@@ -2273,6 +2288,7 @@ test('retains a cancelled unknown admission through repeated idle abort acknowle
       ({
         getLatestSessionRun: () => timing,
         finishSessionRun,
+        bindSessionRunRootRun,
         beginSessionRun,
       }) as unknown as CoworkStore,
     getCoworkEngineRouter: () =>
@@ -2322,8 +2338,14 @@ test('retains a cancelled unknown admission through repeated idle abort acknowle
   await expect(handler('cowork:session:runtimeStatus')({}, 'session-1')).resolves.toMatchObject({
     known: true,
     running: false,
-    timing: { state: 'aborted', endedAt: 4000 },
+    timing: {
+      state: 'aborted',
+      endedAt: 4000,
+      rootRunId: 'unknown-run',
+      acceptedAt: expect.any(Number),
+    },
   });
+  expect(bindSessionRunRootRun).toHaveBeenCalledExactlyOnceWith('timing-unknown', 'unknown-run');
 });
 
 test('reopens an optimistic stopped receipt when its lost admission ACK is reported late', async () => {

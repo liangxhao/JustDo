@@ -905,6 +905,50 @@ describe('cowork session permission selection', () => {
     });
     expect(store.getState().cowork.currentSession?.permissionMode).toBe('ask');
   });
+
+  test('prepares a sidebar member permission without selecting it or borrowing the source mode', async () => {
+    const source = { id: 'source', permissionMode: 'full' } as CoworkSession;
+    const member = { id: 'peer', permissionMode: 'ask' } as CoworkSession;
+    store.dispatch(setCurrentSession(source));
+    const getSession = vi.fn().mockResolvedValue({ success: true, session: member });
+    const setSessionPermissionMode = vi.fn().mockResolvedValue({ success: true });
+    vi.stubGlobal('window', {
+      electron: { cowork: { getSession, setSessionPermissionMode } },
+    });
+
+    await expect(coworkService.reconcileSessionPermissionMode('peer')).resolves.toEqual({
+      success: true,
+    });
+
+    expect(getSession).toHaveBeenCalledExactlyOnceWith('peer');
+    expect(setSessionPermissionMode).toHaveBeenCalledExactlyOnceWith({
+      sessionId: 'peer',
+      permissionMode: 'ask',
+      deferIfActive: false,
+    });
+    expect(store.getState().cowork.currentSession?.id).toBe('source');
+    expect(store.getState().cowork.currentSession?.permissionMode).toBe('full');
+  });
+
+  test('rejects mismatched member metadata instead of applying another session permission', async () => {
+    store.dispatch(setCurrentSession({ id: 'source', permissionMode: 'full' } as CoworkSession));
+    const setSessionPermissionMode = vi.fn();
+    vi.stubGlobal('window', {
+      electron: {
+        cowork: {
+          getSession: vi
+            .fn()
+            .mockResolvedValue({ success: true, session: { id: 'other', permissionMode: 'full' } }),
+          setSessionPermissionMode,
+        },
+      },
+    });
+    await expect(coworkService.reconcileSessionPermissionMode('peer')).resolves.toEqual({
+      success: false,
+      error: 'Session not found',
+    });
+    expect(setSessionPermissionMode).not.toHaveBeenCalled();
+  });
 });
 
 describe('cowork runtime activity reconciliation', () => {

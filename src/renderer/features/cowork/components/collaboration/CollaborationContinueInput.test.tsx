@@ -33,13 +33,13 @@ afterEach(() => {
   document.querySelectorAll('iframe').forEach(frame => frame.remove());
 });
 
-it('submits an independent request and reports only source acceptance without claiming member execution', async () => {
+it('submits once to the member and clears only its independent accepted draft', async () => {
   const key = crypto.randomUUID();
   updateContinueDraft(key, {
     text: 'Inspect the revised result',
     attachments: ['/project/evidence.png'],
   });
-  const request = vi.fn().mockResolvedValue('source_accepted');
+  const request = vi.fn().mockResolvedValue('target_accepted');
   render(
     <CollaborationContinueInput draftKey={key} disabled={false} onRequestContinue={request} />,
   );
@@ -50,14 +50,13 @@ it('submits an independent request and reports only source acceptance without cl
   expect(request).not.toHaveBeenCalled();
   expect(fireEvent.keyDown(input, { key: 'Enter' })).toBe(false);
   fireEvent.keyDown(input, { key: 'Enter' });
-  await screen.findByText('teamContinue_source_accepted');
+  await screen.findByText('teamContinue_target_accepted');
   expect(request).toHaveBeenCalledWith({
     requestId: expect.any(String),
     message: 'Inspect the revised result',
     attachmentPaths: ['/project/evidence.png'],
   });
   expect(request).toHaveBeenCalledOnce();
-  expect(screen.queryByText('teamContinue_target_accepted')).toBeNull();
   expect(getContinueDraft(key)).toMatchObject({ text: '', attachments: [], pending: undefined });
 });
 
@@ -139,17 +138,16 @@ it('keeps another member draft intact when the previous source response arrives 
   );
   await act(async () => resolve('target_accepted'));
   expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('Second member draft');
-  expect(screen.queryByText('teamContinue_target_accepted')).toBeNull();
   expect(getContinueDraft(first).status).toBe('target_accepted');
 });
 
 it('retains a newer same-member draft after source acceptance and does not send voice automatically', async () => {
   const key = crypto.randomUUID();
   updateContinueDraft(key, { text: 'Initial' });
-  let resolve!: (state: 'source_accepted') => void;
+  let resolve!: (state: 'target_accepted') => void;
   const request = vi.fn().mockImplementation(
     () =>
-      new Promise<'source_accepted'>(finish => {
+      new Promise<'target_accepted'>(finish => {
         resolve = finish;
       }),
   );
@@ -160,7 +158,7 @@ it('retains a newer same-member draft after source acceptance and does not send 
   expect(request).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'teamRequestContinue' }));
   act(() => updateContinueDraft(key, { text: 'Newer draft', attachments: ['/new'] }));
-  await act(async () => resolve('source_accepted'));
+  await act(async () => resolve('target_accepted'));
   await waitFor(() =>
     expect(getContinueDraft(key)).toMatchObject({
       text: 'Newer draft',
@@ -199,14 +197,14 @@ it('ignores an earlier attachment picker and voice response after the request is
       },
     },
   });
-  const request = vi.fn().mockResolvedValue('source_accepted');
+  const request = vi.fn().mockResolvedValue('target_accepted');
   render(
     <CollaborationContinueInput draftKey={key} disabled={false} onRequestContinue={request} />,
   );
   const oldSpeech = speech.callbacks[speech.callbacks.length - 1];
   fireEvent.click(screen.getByRole('button', { name: 'coworkAddFile' }));
   fireEvent.click(screen.getByRole('button', { name: 'teamRequestContinue' }));
-  await screen.findByText('teamContinue_source_accepted');
+  await screen.findByText('teamContinue_target_accepted');
   act(() => updateContinueDraft(key, { text: 'Later draft' }));
   await act(async () => {
     finishFiles({ success: true, paths: ['/earlier-file'] });

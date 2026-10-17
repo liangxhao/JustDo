@@ -136,6 +136,56 @@ const mount = () =>
   );
 
 describe('peer native history lifecycle', () => {
+  it('exposes only the current member controller after authoritative history is ready', async () => {
+    const changed = vi.fn();
+    const view = render(
+      <CollaborationMemberHistory
+        member={member}
+        name="Review"
+        workingDirectory=""
+        onControllerChange={changed}
+      />,
+    );
+    await act(async () => {});
+    const controller = mocks.instances[0];
+    expect(changed).toHaveBeenLastCalledWith(null);
+    act(() => {
+      controller.state.initialHistoryReady = true;
+      controller.notify();
+    });
+    expect(changed).toHaveBeenLastCalledWith(controller);
+    act(() => {
+      controller.state.connected = false;
+      controller.notify();
+    });
+    expect(changed).toHaveBeenLastCalledWith(null);
+    view.unmount();
+    expect(changed).toHaveBeenLastCalledWith(null);
+  });
+
+  it('connects the exact member for sending while displaying a historical delivery receipt', async () => {
+    const changed = vi.fn();
+    render(
+      <CollaborationMemberHistory
+        member={member}
+        name="Review"
+        workingDirectory=""
+        anchorSessionId="main"
+        receipt={{ deliveryId: 'prior', id: 'old-run' }}
+        onControllerChange={changed}
+      />,
+    );
+    await act(async () => {});
+    const controller = mocks.instances[0];
+    expect(controller.state.sessionKey).toBe(member.sessionKey);
+    expect(mocks.readMessages).toHaveBeenCalledWith('main', ['prior']);
+    act(() => {
+      controller.state.initialHistoryReady = true;
+      controller.notify();
+    });
+    expect(changed).toHaveBeenLastCalledWith(controller);
+  });
+
   it('keeps a member-keyed header action distinct from subtask navigation across updates', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {

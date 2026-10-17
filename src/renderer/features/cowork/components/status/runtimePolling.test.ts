@@ -7,6 +7,24 @@ import {
 } from './runtimePolling';
 
 describe('resolveBackgroundRuntimeSessionIds', () => {
+  it('reconciles a hidden Team member user turn without requiring a sidebar session row', () => {
+    expect(
+      resolveBackgroundRuntimeSessionIds(
+        [
+          { id: 'source', status: 'idle' },
+          { id: 'listed', status: 'running' },
+        ],
+        'source',
+        {
+          source: true,
+          listed: true,
+          'hidden-peer': true,
+          idle: false,
+          'temp-new': true,
+        },
+      ),
+    ).toEqual(['listed', 'hidden-peer']);
+  });
   it('polls only non-current sessions that may still be running', () => {
     const sessions = [
       { id: 'current', status: 'running' as const },

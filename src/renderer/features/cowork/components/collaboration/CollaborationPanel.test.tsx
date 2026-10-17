@@ -15,13 +15,14 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
-import type { ReactNode } from 'react';
+import { type ReactNode, useEffect } from 'react';
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CoworkSession } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
 
+const memberController = vi.hoisted(() => ({}));
 const availability = vi.hoisted(() => ({ enabled: true }));
 vi.mock('@/features/plugins/extensions/useExtensionEnablement', () => ({
   useExtensionEnabled: () => availability.enabled,
@@ -35,27 +36,34 @@ vi.mock('@/features/cowork/coworkService', () => ({
   coworkService: { loadSessions: vi.fn().mockResolvedValue(undefined) },
 }));
 vi.mock('./CollaborationMemberHistory', () => ({
-  default: ({
+  default: function MockMemberHistory({
     name,
     receipt,
     backAction,
     headerMenu,
     roomId,
+    onControllerChange,
   }: {
     name: string;
     receipt?: { id: string; deliveryId: string };
     backAction?: { label: string; onClick: () => void };
     headerMenu?: ReactNode;
     roomId?: string;
-  }) => (
-    <div>
-      {backAction && <button onClick={backAction.onClick}>{backAction.label}</button>}
-      {headerMenu}
-      <div data-run-id={receipt?.id} data-delivery-id={receipt?.deliveryId} data-room-id={roomId}>
-        History: {name}
+    onControllerChange?: (controller: never) => void;
+  }) {
+    useEffect(() => {
+      onControllerChange?.(memberController as never);
+    }, [onControllerChange]);
+    return (
+      <div>
+        {backAction && <button onClick={backAction.onClick}>{backAction.label}</button>}
+        {headerMenu}
+        <div data-run-id={receipt?.id} data-delivery-id={receipt?.deliveryId} data-room-id={roomId}>
+          History: {name}
+        </div>
       </div>
-    </div>
-  ),
+    );
+  },
 }));
 vi.mock('../composer/LocalSpeechInputButton', () => ({ LocalSpeechInputButton: () => null }));
 import type { CollaborationContinueRequest } from './collaborationContinueDraft';
@@ -64,7 +72,7 @@ import CollaborationPanel, {
   useCollaborationRooms,
 } from './CollaborationPanel';
 
-it('uses a fresh full receipt snapshot for the exact continuation while preserving a newer member draft', async () => {
+it('routes member input through its own controller and reconciles a lost ACK from member timing', async () => {
   const sourceId = `source-${crypto.randomUUID()}`;
   const room = {
     id: `room-${crypto.randomUUID()}`,
@@ -130,8 +138,7 @@ it('uses a fresh full receipt snapshot for the exact continuation while preservi
     },
   });
   const request = vi.fn(
-    async (_room, _member, _delivery, _input: CollaborationContinueRequest) =>
-      'source_accepted' as const,
+    async (_room, _member, _delivery, _input: CollaborationContinueRequest) => 'unknown' as const,
   );
   render(
     <Provider store={store}>
@@ -149,34 +156,34 @@ it('uses a fresh full receipt snapshot for the exact continuation while preservi
   const input = await screen.findByRole('textbox', { name: i18nService.t('teamContinueMessage') });
   fireEvent.change(input, { target: { value: 'Inspect revisions' } });
   fireEvent.click(screen.getByRole('button', { name: i18nService.t('teamRequestContinue') }));
-  await screen.findByText(i18nService.t('teamContinue_source_accepted'));
+  await screen.findByText(i18nService.t('teamContinue_unknown'));
   const submitted = request.mock.calls[0][3];
   expect(request).toHaveBeenCalledWith(
     room,
     room.members[1],
     undefined,
     expect.objectContaining({ message: 'Inspect revisions', requestId: expect.any(String) }),
+    memberController,
   );
   const timing: SessionRunTiming = {
     id: 'new-timing',
-    sessionId: sourceId,
-    clientTurnId: `justdo-continue-${submitted.requestId}`,
+    sessionId: 'continuation-peer',
+    clientTurnId: `agent-team-member-${submitted.requestId}`,
     rootRunId: 'exact-new-source',
     startedAt: 2,
-    acceptedAt: 3,
     state: 'running',
   };
   await act(async () => {
     store.dispatch({ type: 'set-timing', payload: timing });
   });
   expect(screen.queryByText(i18nService.t('teamContinue_target_accepted'))).toBeNull();
-  fireEvent.change(input, { target: { value: 'Newer draft stays here' } });
   waitForTerminal = true;
   await act(async () => {
-    store.dispatch({ type: 'set-timing', payload: { ...timing, state: 'completed', endedAt: 5 } });
+    store.dispatch({ type: 'set-timing', payload: { ...timing, acceptedAt: 3 } });
   });
   await waitFor(() => expect(settleRead).toBeTypeOf('function'));
-  expect(screen.queryByText(i18nService.t('teamContinue_not_forwarded'))).toBeNull();
+  await screen.findByText(i18nService.t('teamContinue_target_accepted'));
+  fireEvent.change(input, { target: { value: 'Newer draft stays here' } });
   await act(async () =>
     settleRead({
       success: true,

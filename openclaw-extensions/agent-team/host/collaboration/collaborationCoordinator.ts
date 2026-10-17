@@ -6,7 +6,7 @@ import { OpenClawExtensionId } from '../../../runtime-services/contracts/native-
 import { parseCoworkSessionKey } from '../../../runtime-services/contracts/session-key';
 import { buildCoworkSessionKey as buildManagedSessionKey } from '../../../runtime-services/contracts/session-key';
 import {
-  type CollaborationContinueTarget,
+  type CollaborationContinuePreparationReceipt,
   CollaborationDeliveryState,
   CollaborationGateway,
   type CollaborationMessageResult,
@@ -70,6 +70,7 @@ export class CollaborationCoordinator {
   private readonly deletions = new Map<string, Promise<boolean>>();
   private readonly nativeAdmissionWaiters = new Map<string, Set<() => void>>();
   private readonly stoppingRooms = new Map<string, Promise<void>>();
+  private readonly continuationGenerations = new Map<string, string>();
   constructor(private readonly deps: CollaborationDependencies) {
     this.metadata = new CollaborationStore(deps.getDatabase());
     this.metadata.recoverInterrupted();
@@ -142,18 +143,31 @@ export class CollaborationCoordinator {
       reviews: room ? this.metadata.reviews.list(room.id) : [],
     };
   }
-  /** A read-only preparation, never a forged source run or a direct peer send. */
-  async prepareContinuation(value: unknown): Promise<CollaborationContinueTarget> {
+  /** Validate an explicit user send to an existing member without starting execution. */
+  async prepareContinuation(value: unknown): Promise<CollaborationContinuePreparationReceipt> {
     if (!value || typeof value !== 'object' || Array.isArray(value))
       throw new Error('collaborationInvalidMessage');
     const input = value as Record<string, unknown>;
     if (
       Object.keys(input).some(
-        key => !['sourceSessionId', 'roomId', 'targetSessionKey', 'priorDeliveryId'].includes(key),
+        key =>
+          ![
+            'sourceSessionId',
+            'roomId',
+            'targetSessionKey',
+            'nativeSessionId',
+            'expectedControlGeneration',
+            'priorDeliveryId',
+          ].includes(key),
       ) ||
       typeof input.sourceSessionId !== 'string' ||
       typeof input.roomId !== 'string' ||
       typeof input.targetSessionKey !== 'string' ||
+      typeof input.nativeSessionId !== 'string' ||
+      !input.nativeSessionId.trim() ||
+      (input.expectedControlGeneration !== undefined &&
+        (typeof input.expectedControlGeneration !== 'string' ||
+          !input.expectedControlGeneration)) ||
       (input.priorDeliveryId !== undefined && typeof input.priorDeliveryId !== 'string')
     )
       throw new Error('collaborationInvalidMessage');
@@ -186,7 +200,18 @@ export class CollaborationCoordinator {
         ))
     )
       throw new Error('collaborationInvalidRecipient');
-    // A new source-user turn does not retry or settle historical executions.
+    const controlGeneration = this.continuationGenerations.get(room.id) ?? randomUUID();
+    this.continuationGenerations.set(room.id, controlGeneration);
+    const assertGeneration = () => {
+      if (
+        this.continuationGenerations.get(room.id) !== controlGeneration ||
+        (input.expectedControlGeneration !== undefined &&
+          input.expectedControlGeneration !== controlGeneration)
+      )
+        throw new Error('collaborationStateConflict');
+    };
+    assertGeneration();
+    // A new member-user turn does not retry or settle historical executions.
     // Accepted deliveries can lack a terminal event even after native work has
     // ended; fresh full-team runtime reads below own current activity admission.
     const hasUnconfirmedAdmission = (snapshot: CollaborationSnapshot) =>
@@ -202,9 +227,11 @@ export class CollaborationCoordinator {
     const health = await this.deps.requestGateway<{ version: number }>(CollaborationGateway.Health);
     if (health.version !== 2) throw new Error('collaborationRuntimeUnavailable');
     const runtime = this.deps.getRuntime();
-    const assertEligible = async () => {
+    const assertEligible = async (sessionId: string, sessionKey: string) => {
       const described = await this.deps.requestGateway<{
         session?: {
+          key?: string;
+          sessionId?: string;
           goal?: unknown;
           pluginExtensions?: {
             pluginId?: string;
@@ -212,23 +239,30 @@ export class CollaborationCoordinator {
             value?: { enabled?: boolean; awaitingReview?: unknown };
           }[];
         } | null;
-      }>('sessions.describe', { key: buildManagedSessionKey(source.id, source.agentId) });
+      }>('sessions.describe', { key: sessionKey });
       if (!runtime || !described.session || described.session.goal != null)
         throw new Error('collaborationContinuationUnavailable');
+      if (
+        sessionId === target.sessionId &&
+        (described.session.key !== target.sessionKey ||
+          described.session.sessionId !== input.nativeSessionId)
+      )
+        throw new Error('collaborationInvalidRecipient');
       const planState = described.session.pluginExtensions?.find(
         extension =>
           extension.pluginId === OpenClawExtensionId.PLAN_MODE && extension.namespace === 'state',
       )?.value;
-      const plan = await runtime.getPlanMode(source.id);
+      const plan = await runtime.getPlanMode(sessionId);
       if (
         plan.enabled ||
         planState?.enabled === true ||
         planState?.awaitingReview != null ||
-        runtime.getGoalExecution(source.id)
+        runtime.getGoalExecution(sessionId)
       )
         throw new Error('collaborationContinuationUnavailable');
     };
-    await assertEligible();
+    await assertEligible(source.id, buildManagedSessionKey(source.id, source.agentId));
+    await assertEligible(target.sessionId, target.sessionKey);
     for (const member of room.members) {
       const status = await this.deps.getRouter().getSessionRuntimeStatus(member.sessionId, {
         includeSubagents: true,
@@ -237,8 +271,10 @@ export class CollaborationCoordinator {
       });
       if (!status.known || status.running) throw new Error('agentBusy');
     }
-    await assertEligible();
+    await assertEligible(source.id, buildManagedSessionKey(source.id, source.agentId));
+    await assertEligible(target.sessionId, target.sessionKey);
     this.assertSourceAdmission(sourceSessionId);
+    assertGeneration();
     const currentSnapshot = this.read(sourceSessionId);
     if (hasUnconfirmedAdmission(currentSnapshot)) throw new Error('agentBusy');
     const current = currentSnapshot.room;
@@ -286,6 +322,7 @@ export class CollaborationCoordinator {
       targetAgentId: target.agentId,
       targetSessionId: target.sessionId,
       targetSessionKey: target.sessionKey,
+      controlGeneration,
       ...(typeof input.priorDeliveryId === 'string'
         ? { priorDeliveryId: input.priorDeliveryId }
         : {}),
@@ -341,6 +378,7 @@ export class CollaborationCoordinator {
       }
     }
     for (const roomId of rooms) {
+      this.continuationGenerations.set(roomId, randomUUID());
       this.metadata.stopRounds(roomId);
       for (const delivery of this.metadata.listDeliveries(roomId)) {
         this.stoppedDuringSetup.add(delivery.sourceRunId);
@@ -1277,6 +1315,7 @@ export class CollaborationCoordinator {
   private async stopPeers(sessionId: string): Promise<void> {
     const room = this.metadata.getRoomForSession(sessionId);
     if (!room) return;
+    this.continuationGenerations.set(room.id, randomUUID());
     const existing = this.stoppingRooms.get(room.id);
     if (existing) return existing;
     for (const member of room.members)

@@ -128,7 +128,7 @@ function fixture(teamEnabled = true, separateHooks = false) {
       current: () => ({ plugins: { entries: { 'agent-team': { enabled: teamEnabled } } } }),
     },
     gateway: {
-      request: (name: string, params: unknown) =>
+      request: (name: string, params: unknown, _options?: unknown) =>
         new Promise((resolve, reject) => {
           if (name === 'chat.message.get') {
             const index = Number(
@@ -717,8 +717,8 @@ describe('native peer tool authority', () => {
       expiresAt: Number.MAX_SAFE_INTEGER,
     });
     const payload = h.emit.mock.calls[0][1];
-    expect(payload.expiresAt).toBeGreaterThanOrEqual(before + 8000);
-    expect(payload.expiresAt).toBeLessThanOrEqual(Date.now() + 8000);
+    expect(payload.expiresAt).toBeGreaterThanOrEqual(before + 60000);
+    expect(payload.expiresAt).toBeLessThanOrEqual(Date.now() + 60000);
     h.stop();
   });
   it('rejects timed-out host requests and ignores their late receipts', async () => {
@@ -736,6 +736,61 @@ describe('native peer tool authority', () => {
         respond,
       });
       expect(respond).toHaveBeenCalledWith(true, { stale: true });
+    } finally {
+      h.stop();
+      vi.useRealTimers();
+    }
+  });
+  it('waits for a slow native member preparation without timing out or resending', async () => {
+    vi.useFakeTimers();
+    const h = fixture();
+    try {
+      const request = vi.spyOn(h.runtime.gateway, 'request');
+      const sessionKey = 'agent:main:justdo:source';
+      await h.hooks.get('before_tool_call')!(
+        { toolName: 'task_assistants', params: { agentId: 'review' } },
+        { sessionKey, runId: 'source-run', toolCallId: 'slow-prepare' },
+      );
+      h.emit.mockImplementation((_event, payload) => {
+        setTimeout(() => h.methods.get('collaboration.resolve')!({
+          params: { requestId: payload.requestId, result: { sessionKey: 'agent:review:justdo:peer' } },
+          respond: vi.fn(),
+        }), 10000);
+      });
+      const tool = h.factories.get('task_assistants')!({ sessionKey });
+      let settled = false;
+      const pending = tool.execute('slow-prepare', { agentId: 'review' }).finally(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(8000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(await pending).toMatchObject({ isError: false, details: { sessionKey: 'agent:review:justdo:peer' } });
+      expect(h.emit).toHaveBeenCalledOnce();
+      expect(request).toHaveBeenCalledWith('collaboration.dispatch', expect.objectContaining({ operation: 'ensure' }), expect.objectContaining({ timeoutMs: 75000 }));
+    } finally {
+      h.stop();
+      vi.useRealTimers();
+    }
+  });
+  it('bounds member preparation and ignores success arriving after its deadline', async () => {
+    vi.useFakeTimers();
+    const h = fixture();
+    try {
+      const sessionKey = 'agent:main:justdo:source';
+      await h.hooks.get('before_tool_call')!(
+        { toolName: 'task_assistants', params: { agentId: 'review' } },
+        { sessionKey, runId: 'source-run', toolCallId: 'expired-prepare' },
+      );
+      h.emit.mockImplementation(() => undefined);
+      const tool = h.factories.get('task_assistants')!({ sessionKey });
+      const rejected = expect(tool.execute('expired-prepare', { agentId: 'review' })).rejects.toThrow('did not respond');
+      await vi.advanceTimersByTimeAsync(60000);
+      await rejected;
+      const respond = vi.fn();
+      h.methods.get('collaboration.resolve')!({
+        params: { requestId: h.emit.mock.calls[0][1].requestId, result: { sessionKey: 'agent:review:justdo:peer' } }, respond,
+      });
+      expect(respond).toHaveBeenCalledWith(true, { stale: true });
+      expect(h.emit).toHaveBeenCalledOnce();
     } finally {
       h.stop();
       vi.useRealTimers();

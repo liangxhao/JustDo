@@ -26,6 +26,7 @@ export default function CollaborationMemberHistory({
   headerAction,
   backAction,
   headerMenu,
+  onControllerChange,
 }: {
   member: CollaborationRoom['members'][number];
   anchorSessionId?: string;
@@ -39,6 +40,7 @@ export default function CollaborationMemberHistory({
   headerAction?: ReactNode;
   backAction?: { label: string; onClick: () => void };
   headerMenu?: ReactNode;
+  onControllerChange?: (controller: ChatController | null) => void;
 }) {
   const receiptId = receipt?.id;
   const receiptDeliveryId = receipt?.deliveryId;
@@ -57,6 +59,7 @@ export default function CollaborationMemberHistory({
   useEffect(() => {
     let disposed = false;
     setController(null);
+    onControllerChange?.(null);
     setStatus('loading');
     setRunning(false);
     setCanStopMemberRun(false);
@@ -77,9 +80,10 @@ export default function CollaborationMemberHistory({
         .catch(() => {
           if (!disposed) setStatus('error');
         });
-      return () => {
-        disposed = true;
-      };
+      if (!onControllerChange)
+        return () => {
+          disposed = true;
+        };
     }
     // Peers are ordinary sessions; subagent task-boundary discovery would hide
     // or repeatedly rescan their independent history.
@@ -88,6 +92,17 @@ export default function CollaborationMemberHistory({
     setController(next);
     const syncState = (state: ChatController['state']) => {
       if (disposed) return;
+      onControllerChange?.(
+        state.connected &&
+          state.sessionKey === member.sessionKey &&
+          !!state.currentSessionId &&
+          state.initialHistoryReady &&
+          !state.historyReadFailed &&
+          !state.chatSending &&
+          state.transcript.activeTurn?.status !== 'running'
+          ? next
+          : null,
+      );
       const turn = state.transcript.activeTurn;
       setRunning(turn?.status === 'running');
       setCanStopMemberRun(
@@ -99,8 +114,10 @@ export default function CollaborationMemberHistory({
       );
       const hasVisibleTranscript =
         state.chatMessages.length > 0 || state.transcript.activeTurn !== null;
-      if (hasVisibleTranscript) setStatus('ready');
-      else if (state.initialHistoryReady) setStatus(state.lastError ? 'error' : 'empty');
+      if (!receiptDeliveryId) {
+        if (hasVisibleTranscript) setStatus('ready');
+        else if (state.initialHistoryReady) setStatus(state.lastError ? 'error' : 'empty');
+      }
     };
     const unsubscribe = next.subscribe(syncState);
     const unsubscribeStream = next.onStream(() => syncState(next.state));
@@ -110,6 +127,7 @@ export default function CollaborationMemberHistory({
       timeout = setTimeout(() => {
         if (
           !disposed &&
+          !receiptDeliveryId &&
           !next.state.initialHistoryReady &&
           next.state.chatMessages.length === 0 &&
           next.state.transcript.activeTurn === null
@@ -150,7 +168,7 @@ export default function CollaborationMemberHistory({
       if (!transportStarted) {
         const delay = retryDelays[attempt++];
         if (delay !== undefined) retryTimer = setTimeout(() => void connect(), delay);
-        else setStatus('error');
+        else if (!receiptDeliveryId) setStatus('error');
       }
     };
     const unsubscribeProgress = window.electron?.openclaw?.engine?.onProgress?.(engine => {
@@ -160,9 +178,10 @@ export default function CollaborationMemberHistory({
       if (engine.phase !== 'running' || (transportStarted && !endpointMayHaveChanged)) return;
       clearTimeout(retryTimer);
       attempt = 0;
-      setStatus(
-        next.state.chatMessages.length || next.state.transcript.activeTurn ? 'ready' : 'loading',
-      );
+      if (!receiptDeliveryId)
+        setStatus(
+          next.state.chatMessages.length || next.state.transcript.activeTurn ? 'ready' : 'loading',
+        );
       resetHistoryDeadline();
       // A restarted Gateway can publish a different port/token. Serialize the
       // endpoint refresh behind any in-flight connection so old setup cannot win.
@@ -184,8 +203,17 @@ export default function CollaborationMemberHistory({
       unsubscribe();
       unsubscribeStream();
       next.disconnect();
+      onControllerChange?.(null);
     };
-  }, [anchorSessionId, member.sessionKey, receiptDeliveryId, receiptId, receiptKey, receiptRetry]);
+  }, [
+    anchorSessionId,
+    member.sessionKey,
+    receiptDeliveryId,
+    receiptId,
+    receiptKey,
+    receiptRetry,
+    onControllerChange,
+  ]);
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div

@@ -2286,6 +2286,7 @@ export class ChatController {
     this.state.lastError = null;
     this.notify();
 
+    let sendAcknowledged = false;
     try {
       const gatewayAttachments = attachments
         .filter(attachment => attachment.base64Data)
@@ -2313,6 +2314,7 @@ export class ChatController {
         idempotencyKey: runId,
         ...(gatewayAttachments.length > 0 ? { attachments: gatewayAttachments } : {}),
       });
+      sendAcknowledged = true;
       if (goalStartOperation) {
         const receipt = asRecord(ack);
         const receiptGoal = asRecord(receipt?.goal);
@@ -2385,9 +2387,12 @@ export class ChatController {
       }
     } catch (err) {
       // A lost ACK does not prove rejection. Keep its operation identity live.
+      // Ordinary sends with proof that no frame was sent can release the draft.
+      // Goal starts retain their existing operation reconciliation rules.
       const definitiveRejection = goalStartOperation
         ? isDefinitiveSessionGoalGatewayError(err)
-        : typeof asRecord(err)?.gatewayCode === 'string';
+        : (!sendAcknowledged && asRecord(err)?.requestSent === false) ||
+          typeof asRecord(err)?.gatewayCode === 'string';
       if (options.onRequestUnknown && !definitiveRejection) {
         await options.onRequestUnknown(runId);
         throw err;

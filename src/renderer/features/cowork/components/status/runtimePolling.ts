@@ -9,14 +9,14 @@ export const resolveBackgroundRuntimeSessionIds = (
   currentSessionId: string | null,
   runtimeActivity: Readonly<Record<string, boolean>>,
 ): string[] =>
-  sessions
-    .filter(
-      session =>
-        session.id !== currentSessionId &&
-        !session.id.startsWith('temp-') &&
-        (session.status === 'running' || runtimeActivity[session.id] === true),
-    )
-    .map(session => session.id);
+  [
+    ...new Set([
+      ...sessions.filter(session => session.status === 'running').map(session => session.id),
+      // Managed Team members are intentionally absent from the sidebar list.
+      // Their admitted/unknown user turns still need normal receipt reconciliation.
+      ...Object.keys(runtimeActivity).filter(sessionId => runtimeActivity[sessionId] === true),
+    ]),
+  ].filter(sessionId => sessionId !== currentSessionId && !sessionId.startsWith('temp-'));
 
 export const resolveBackgroundRuntimeDiscoverySessionIds = (
   sessions: readonly RuntimePollingSession[],
