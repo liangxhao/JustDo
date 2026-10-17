@@ -4,6 +4,7 @@ import path from 'path';
 import { Readable, Transform } from 'stream';
 import { pipeline } from 'stream/promises';
 import * as tar from 'tar';
+import { setTimeout as delay } from 'timers/promises';
 import { createZstdDecompress } from 'zlib';
 
 import { APP_UPDATE_CONFIG } from '../../config/appUpdate';
@@ -17,6 +18,26 @@ import {
 } from '../../shared/speech/localSpeechModels';
 import { LOCAL_TTS_MODEL_ID } from '../../shared/speech/localTts';
 import { resolveLocalSpeechModelDir, resolveLocalSpeechModelsRoot } from './localSpeechPaths';
+
+async function renameModelDirectory(source: string, destination: string): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await fs.promises.rename(source, destination);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      // Windows scanners may briefly hold freshly extracted model files open.
+      if (
+        process.platform !== 'win32' ||
+        !['EPERM', 'EACCES', 'EBUSY'].includes(code ?? '') ||
+        attempt >= 4
+      ) {
+        throw error;
+      }
+      await delay(100 * 2 ** attempt);
+    }
+  }
+}
 
 export interface LocalSpeechModelArtifact {
   id: string;
@@ -378,13 +399,13 @@ export class LocalSpeechModelService {
       }
 
       fs.rmSync(backupModel, { recursive: true, force: true });
-      if (fs.existsSync(targetModel)) fs.renameSync(targetModel, backupModel);
+      if (fs.existsSync(targetModel)) await renameModelDirectory(targetModel, backupModel);
       try {
-        fs.renameSync(stagedModel, targetModel);
+        await renameModelDirectory(stagedModel, targetModel);
         fs.rmSync(backupModel, { recursive: true, force: true });
       } catch (error) {
         fs.rmSync(targetModel, { recursive: true, force: true });
-        if (fs.existsSync(backupModel)) fs.renameSync(backupModel, targetModel);
+        if (fs.existsSync(backupModel)) await renameModelDirectory(backupModel, targetModel);
         throw error;
       }
 

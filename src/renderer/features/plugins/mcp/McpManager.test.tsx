@@ -122,8 +122,10 @@ const findCardProbe = async (name = 'personal-mcp') => {
 test('configuration sync succeeds silently and reports failures in a dismissible dialog', async () => {
   renderManager();
   await screen.findByText('personal-mcp');
-  const syncStart = vi.mocked(mcpService.onConfigSyncStart).mock.calls.at(-1)![0];
-  const syncDone = vi.mocked(mcpService.onConfigSyncDone).mock.calls.at(-1)![0];
+  const startCalls = vi.mocked(mcpService.onConfigSyncStart).mock.calls;
+  const doneCalls = vi.mocked(mcpService.onConfigSyncDone).mock.calls;
+  const syncStart = startCalls[startCalls.length - 1][0];
+  const syncDone = doneCalls[doneCalls.length - 1][0];
 
   act(() => syncStart());
   act(() => syncDone({ tools: 0 }));

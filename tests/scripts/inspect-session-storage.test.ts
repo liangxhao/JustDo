@@ -7,6 +7,7 @@ import { zstdCompressSync } from 'node:zlib';
 
 import { afterEach, expect, test } from 'vitest';
 
+// Allow CLI cold starts and up to two independently bounded 10-second child runs.
 const script = path.resolve('scripts/openclaw/inspect-session-storage.cjs');
 const fixtureRoot = path.resolve('.agent-tasks/session-storage-tests');
 const fixtures: Array<{ directory: string; database: DatabaseSync }> = [];
@@ -142,7 +143,7 @@ test('reads committed WAL events and compressed original content without changin
   expect(result.stdout).not.toContain('先检查环境');
   expect(digest()).toBe(before);
   expect(database.prepare('SELECT * FROM transcript_events').all()).toEqual(rowsBefore);
-});
+}, 30_000);
 
 test('keeps unbound and other runs separate and reports stored repetitions with branch membership', () => {
   const { directory, database, databasePath } = fixture();
@@ -190,7 +191,7 @@ test('keeps unbound and other runs separate and reports stored repetitions with 
   ]);
   expect(JSON.stringify(result.report)).not.toContain('same text');
   expect(JSON.stringify(result.report)).not.toContain('private error detail');
-});
+}, 30_000);
 
 test('reports unreadable rows and archives as incomplete instead of concluding no content exists', () => {
   const { directory, database, databasePath } = fixture();
@@ -215,7 +216,7 @@ test('reports unreadable rows and archives as incomplete instead of concluding n
   });
   expect(JSON.stringify(result.report)).not.toContain('private broken JSON');
   expect(result.stdout).toContain('Inspection is incomplete');
-});
+}, 30_000);
 
 test('a missing session or SQL-like identity does not select any other session', () => {
   const { directory, database, databasePath } = fixture();
@@ -229,7 +230,7 @@ test('a missing session or SQL-like identity does not select any other session',
   expect(result.status).toBe(2);
   expect(result.report.coverage).toMatchObject({ found: false, complete: false, rowsScanned: 0 });
   expect(result.report.records).toEqual([]);
-});
+}, 30_000);
 
 test('rejects the product database and never creates a database at a missing path', () => {
   const { directory, databasePath } = fixture();
@@ -247,4 +248,4 @@ test('rejects the product database and never creates a database at a missing pat
   expect(missing.status).toBe(1);
   expect(fs.existsSync(missingPath)).toBe(false);
   expect(fs.existsSync(databasePath)).toBe(true);
-});
+}, 30_000);

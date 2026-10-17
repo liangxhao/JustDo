@@ -355,6 +355,8 @@ test.each(['full', 'minimal'])(
       expect(config.tools.deny.filter((name: string) => name === 'portal')).toHaveLength(1);
     }
   },
+  // Five real filesystem projections include startup and four policy updates.
+  15_000,
 );
 
 test.each([
@@ -427,6 +429,8 @@ test.each([
     }
     expect(listManagedOpenClawPluginIds()).toContain('cua-computer');
   },
+  // Four real filesystem projections, including extension inventory on Windows.
+  15_000,
 );
 
 const writeExistingBuiltinConfig = (): string => {
@@ -810,6 +814,8 @@ describe('OpenClaw auth logout config sync', () => {
         if (process.platform !== 'win32') expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
       }
     },
+    // Four real filesystem projections across startup, settings and authentication.
+    15_000,
   );
 
   test.each(['full', 'minimal'] as const)(
@@ -1118,6 +1124,8 @@ describe('OpenClaw auth logout config sync', () => {
       }
       expect(sync.sync('settings')).toMatchObject({ ok: true, configChanged: false });
     },
+    // Six real filesystem projections include the final idempotency check.
+    15_000,
   );
 
   test.each(['full', 'minimal'] as const)(

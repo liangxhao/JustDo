@@ -8,10 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createZstdCompress } from 'zlib';
 
 import { LocalSpeechModelKind } from '../../shared/speech/localSpeechModels';
-import {
-  type LocalSpeechModelArtifact,
-  LocalSpeechModelService,
-} from './localSpeechModelService';
+import { type LocalSpeechModelArtifact, LocalSpeechModelService } from './localSpeechModelService';
 
 const temporaryRoots: string[] = [];
 
@@ -27,7 +24,11 @@ const createArchive = async (modelId: string, files: string[]) => {
   const tarPath = path.join(root, `${modelId}.tar`);
   const archivePath = `${tarPath}.zst`;
   tar.create({ cwd: root, file: tarPath, sync: true }, [modelId]);
-  await pipeline(fs.createReadStream(tarPath), createZstdCompress(), fs.createWriteStream(archivePath));
+  await pipeline(
+    fs.createReadStream(tarPath),
+    createZstdCompress(),
+    fs.createWriteStream(archivePath),
+  );
   const body = fs.readFileSync(archivePath);
   return {
     body,
@@ -36,60 +37,123 @@ const createArchive = async (modelId: string, files: string[]) => {
 };
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of temporaryRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
 describe('LocalSpeechModelService', () => {
-  it('downloads, verifies, and atomically installs a model archive', async () => {
-    const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-speech-user-data-'));
-    temporaryRoots.push(userDataPath);
-    const id = 'test-asr';
-    const requiredFiles = ['encoder.onnx', 'tokens.txt', 'MODEL-LICENSE.txt'];
-    const archive = await createArchive(id, requiredFiles);
-    const artifact: LocalSpeechModelArtifact = {
-      id,
-      kind: LocalSpeechModelKind.Asr,
-      file: `${id}.tar.zst`,
-      sha256: archive.sha256,
-      compressedBytes: archive.body.length,
-      requiredFiles,
-    };
-    const notify = vi.fn();
-    const syncOpenClawConfig = vi.fn();
-    const fetchModel = vi.fn(async () =>
-      new Response(archive.body, {
-        headers: { 'content-length': String(archive.body.length) },
-      }),
-    );
-    const service = new LocalSpeechModelService({
-      userDataPath,
-      fetch: fetchModel,
-      notify,
-      syncOpenClawConfig,
-      artifacts: [artifact],
-      baseUrl: 'https://updates.example.test/speech-models/v1/',
-      resolveModelDir: modelId => path.join(userDataPath, 'local-speech-models', modelId),
-    });
+  it.each([undefined, ...(process.platform === 'win32' ? ['EPERM', 'EBUSY'] : [])])(
+    'downloads, verifies, and atomically installs a model archive (rename error: %s)',
+    async renameError => {
+      const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-speech-user-data-'));
+      temporaryRoots.push(userDataPath);
+      const id = 'test-asr';
+      const requiredFiles = ['encoder.onnx', 'tokens.txt', 'MODEL-LICENSE.txt'];
+      const archive = await createArchive(id, requiredFiles);
+      const artifact: LocalSpeechModelArtifact = {
+        id,
+        kind: LocalSpeechModelKind.Asr,
+        file: `${id}.tar.zst`,
+        sha256: archive.sha256,
+        compressedBytes: archive.body.length,
+        requiredFiles,
+      };
+      const notify = vi.fn();
+      const syncOpenClawConfig = vi.fn();
+      const fetchModel = vi.fn(
+        async () =>
+          new Response(archive.body, {
+            headers: { 'content-length': String(archive.body.length) },
+          }),
+      );
+      const service = new LocalSpeechModelService({
+        userDataPath,
+        fetch: fetchModel,
+        notify,
+        syncOpenClawConfig,
+        artifacts: [artifact],
+        baseUrl: 'https://updates.example.test/speech-models/v1/',
+        resolveModelDir: modelId => path.join(userDataPath, 'local-speech-models', modelId),
+      });
 
-    const result = await service.install(LocalSpeechModelKind.Asr, id);
+      const rename = vi.spyOn(fs.promises, 'rename');
+      if (renameError) {
+        rename.mockRejectedValueOnce(
+          Object.assign(new Error('Temporary model file lock'), { code: renameError }),
+        );
+      }
 
-    expect(result.success).toBe(true);
-    expect(syncOpenClawConfig).toHaveBeenCalledWith('local-speech-model-installed');
-    expect(result.status).toMatchObject({ phase: 'ready', installed: true });
-    expect(fetchModel).toHaveBeenCalledWith(
-      `https://updates.example.test/speech-models/v1/${id}.tar.zst`,
-      { redirect: 'follow' },
-    );
-    for (const file of requiredFiles) {
-      expect(fs.existsSync(path.join(userDataPath, 'local-speech-models', id, file))).toBe(true);
-    }
-    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ phase: 'downloading' }));
-    expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ phase: 'ready' }));
-    await service.remove(LocalSpeechModelKind.Asr, id);
-    expect(syncOpenClawConfig).toHaveBeenCalledWith('local-speech-model-removed');
-  });
+      const result = await service.install(LocalSpeechModelKind.Asr, id);
+
+      expect(result.success).toBe(true);
+      expect(rename).toHaveBeenCalledTimes(renameError ? 2 : 1);
+      expect(fetchModel).toHaveBeenCalledTimes(1);
+      expect(syncOpenClawConfig).toHaveBeenCalledWith('local-speech-model-installed');
+      expect(result.status).toMatchObject({ phase: 'ready', installed: true });
+      expect(fetchModel).toHaveBeenCalledWith(
+        `https://updates.example.test/speech-models/v1/${id}.tar.zst`,
+        { redirect: 'follow' },
+      );
+      for (const file of requiredFiles) {
+        expect(fs.existsSync(path.join(userDataPath, 'local-speech-models', id, file))).toBe(true);
+      }
+      expect(notify).toHaveBeenCalledWith(expect.objectContaining({ phase: 'downloading' }));
+      expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ phase: 'ready' }));
+      await service.remove(LocalSpeechModelKind.Asr, id);
+      expect(syncOpenClawConfig).toHaveBeenCalledWith('local-speech-model-removed');
+    },
+  );
+
+  it.each(['EIO', ...(process.platform === 'win32' ? ['EPERM'] : [])])(
+    'reports a persistent directory rename failure without reinstalling (%s)',
+    async code => {
+      const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'speech-model-rename-'));
+      temporaryRoots.push(userDataPath);
+      const id = 'test-asr';
+      const requiredFiles = ['model.onnx'];
+      const archive = await createArchive(id, requiredFiles);
+      const artifact: LocalSpeechModelArtifact = {
+        id,
+        kind: LocalSpeechModelKind.Asr,
+        file: `${id}.tar.zst`,
+        sha256: archive.sha256,
+        compressedBytes: archive.body.length,
+        requiredFiles,
+      };
+      const fetchModel = vi.fn(async () => new Response(archive.body));
+      const syncOpenClawConfig = vi.fn();
+      const service = new LocalSpeechModelService({
+        userDataPath,
+        fetch: fetchModel,
+        notify: vi.fn(),
+        syncOpenClawConfig,
+        artifacts: [artifact],
+        baseUrl: 'https://artifacts.example.test/',
+        resolveModelDir: modelId => path.join(userDataPath, 'local-speech-models', modelId),
+      });
+      const rename = vi
+        .spyOn(fs.promises, 'rename')
+        .mockRejectedValue(Object.assign(new Error('Persistent model rename failure'), { code }));
+
+      const result = await service.install(LocalSpeechModelKind.Asr, id);
+
+      expect(result).toMatchObject({
+        success: false,
+        status: { phase: 'error', installed: false, error: 'Persistent model rename failure' },
+      });
+      expect(rename).toHaveBeenCalledTimes(code === 'EPERM' ? 5 : 1);
+      expect(fetchModel).toHaveBeenCalledTimes(1);
+      expect(syncOpenClawConfig).not.toHaveBeenCalled();
+      expect(fs.readdirSync(path.join(userDataPath, 'local-speech-models'))).toEqual([
+        '.downloads',
+      ]);
+      expect(fs.readdirSync(path.join(userDataPath, 'local-speech-models', '.downloads'))).toEqual(
+        [],
+      );
+    },
+  );
 
   it('rejects a model whose SHA-256 does not match and leaves no partial installation', async () => {
     const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-speech-user-data-'));

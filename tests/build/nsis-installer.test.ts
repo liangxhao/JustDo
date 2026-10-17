@@ -1327,6 +1327,7 @@ fs.rmSync = (target, options) => {
 
     expect(result.status).not.toBe(0);
     for (const [currentName, backupName, markerPath] of runtimePairs) {
+      expect(existsSync(path.join(installResources, currentName, markerPath)), result.stderr).toBe(true);
       expect(readFileSync(path.join(installResources, currentName, markerPath), 'utf8')).toBe(
         `healthy-${currentName}`,
       );
