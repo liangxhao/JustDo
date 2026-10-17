@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { NativeWidgetSandboxHost, resolveNativeSandboxUrl } from './host';
+import { NativeWidgetSandboxHost, resolveNativeSandboxUrl, WIDGET_TIMEOUT_MS } from './host';
 
 const gateway = 'ws://127.0.0.1:18789';
 const hostOrigin = 'http://127.0.0.1:43180';
@@ -82,7 +82,7 @@ describe('native sandbox transport', () => {
     );
     expect(loaded).toHaveBeenCalledOnce();
     transport.dispose();
-    vi.advanceTimersByTime(20_000);
+    vi.advanceTimersByTime(WIDGET_TIMEOUT_MS + 1);
     expect(failed).not.toHaveBeenCalled();
   });
 
@@ -98,7 +98,9 @@ describe('native sandbox transport', () => {
       vi.fn(),
       failed,
     );
-    vi.advanceTimersByTime(20_000);
+    vi.advanceTimersByTime(10_000);
+    expect(failed).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(WIDGET_TIMEOUT_MS - 10_000);
     expect(failed).toHaveBeenCalledOnce();
     expect(frame.getAttribute('src')).toBeNull();
     transport.dispose();

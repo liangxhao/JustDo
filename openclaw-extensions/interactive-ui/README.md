@@ -15,7 +15,7 @@ The generic local-extension packaging pipeline copies and precompiles this
 plugin and its on-demand `scenario-explorer` and `interactive-answer` skills. It is **disabled by
 default**; app configuration preserves both explicit enable and disable choices.
 It supplies no per-turn prompt hook. Actual loading and native document creation
-have been tested against the locked 2026.9.8 Gateway in an isolated fixture.
+have been tested against the locked 2026.10.4 Gateway in an isolated fixture.
 
 ## Application integration
 
@@ -122,8 +122,9 @@ State stays in iframe memory; reopening the document restores its defaults.
 No product transcript cache, KV copy or persistent selection store is added.
 
 Continuing analysis uses the existing review/add-to-draft/send flow. The draft
-contains current interaction values, bounded to 3600 UTF-16 code units after
-JSON escaping, with explicit omission counts. It does not include the entire
+contains readable current interaction values, bounded to 3600 UTF-16 code units,
+with explicit omission and shortening counts. JSON is used only for internal budget
+calculation, not for the visible suggestion or composer text. It does not include the entire
 table. The iframe also exposes complete local interaction values for review
 and copying. A new answer creates a new native document; neither streaming
 components nor in-place historical updates are claimed.
@@ -186,3 +187,16 @@ Verify the visible interaction through a normal application conversation using
 the actual configured model. See the [current feature contract](../../docs/features/chat/interactive-answers.md)
 for app viewer integration and admission gates, and the [pending acceptance checks](../../docs/plans/interactive-answers-acceptance.md)
 for model quality, packaged applications and platform coverage.
+
+## Presentation and follow-up
+
+The inline host supplies the title; matching titles in newly composed documents
+are hidden inside the frame. Component navigation replaces repeated panel titles,
+while table captions remain available to screen readers. One primary follow-up
+action validates inputs directly. Full selections, chart data and scenario
+assumptions/comparisons start collapsed; local controls do not call the model.
+Bridge failures offer a brief retryable error, and bridge success never claims
+model acceptance. Existing host confirmation and explicit user send remain.
+Use `verify-gateway.mjs <runtime-dir> --ui --interaction-contract --presentation`
+for native renderer/viewer checks and synthetic screenshots in light/dark themes
+at 840/312px card widths. Outputs stay under `.agent-tasks/interactive-ui/presentation/`.

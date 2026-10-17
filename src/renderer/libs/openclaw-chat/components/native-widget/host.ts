@@ -3,7 +3,8 @@ import { postNativeWidgetMessage } from './messaging';
 /** Minimal adapter for OpenClaw's native sandbox transport; no dashboard authority. */
 export const NATIVE_WIDGET_CONTEXT_REQUEST = 'native-widget-context-request';
 export const NATIVE_WIDGET_DRAFT_EVENT = 'native-widget-draft';
-export const WIDGET_TIMEOUT_MS = 10_000;
+export const WIDGET_SLOW_NOTICE_MS = 10_000;
+export const WIDGET_TIMEOUT_MS = 30_000;
 export const MAX_WIDGET_BYTES = 10 * 1024 * 1024;
 
 export interface NativeWidgetClient {

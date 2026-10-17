@@ -363,6 +363,8 @@ export const chatTranslations = {
     coworkSystemMessageLabel: 'System message',
     coworkYouLabel: 'You',
     coworkWidgetLoading: '正在加载交互界面…',
+    coworkWidgetLoadingSlow: '加载时间较长，仍在等待界面和资源…',
+    coworkWidgetRuntimeFailed: '界面运行出现错误，已保留当前内容；重新加载会重置本地输入。',
     coworkWidgetFailed: '交互界面暂不可用，文档可能已过期或脚本加载失败。',
     coworkWidgetRetry: '重新加载',
     coworkWidgetRebuild: '请重新生成',
@@ -373,8 +375,7 @@ export const chatTranslations = {
     coworkInitialDispatchUnavailable: '当前聊天连接未就绪或已失效，无法提交首条消息。',
     coworkInitialDispatchCancelled: '首条消息已在提交前取消。',
     coworkWidgetDisconnected: '连接会话后可加载此交互界面。',
-    coworkWidgetActionsUnavailable: '后续分析请在输入框中发起；界面不会自动执行任务。',
-    coworkWidgetSuggestion: '界面建议的后续分析',
+    coworkWidgetSuggestion: '继续分析',
     coworkWidgetAddDraft: '加入草稿',
     coworkWidgetDismiss: '忽略',
     coworkCanvasTitle: '内容预览',
@@ -1110,6 +1111,10 @@ export const chatTranslations = {
     coworkSystemMessageLabel: 'System message',
     coworkYouLabel: 'You',
     coworkWidgetLoading: 'Loading interactive view…',
+    coworkWidgetLoadingSlow:
+      'Loading is taking longer; still waiting for the view and its resources…',
+    coworkWidgetRuntimeFailed:
+      'The view encountered an error. Current content is preserved; reloading resets local inputs.',
     coworkWidgetFailed:
       'This view is unavailable. Its document may have expired or a script failed to load.',
     coworkWidgetRetry: 'Reload',
@@ -1122,9 +1127,7 @@ export const chatTranslations = {
       'The chat connection is not ready or is no longer current. The first message was not submitted.',
     coworkInitialDispatchCancelled: 'The first message was cancelled before submission.',
     coworkWidgetDisconnected: 'Connect to this conversation to load the view.',
-    coworkWidgetActionsUnavailable:
-      'Follow-up analysis requires your confirmation; this view never executes tasks automatically.',
-    coworkWidgetSuggestion: 'Suggested follow-up from this view',
+    coworkWidgetSuggestion: 'Continue analysis',
     coworkWidgetAddDraft: 'Add to draft',
     coworkWidgetDismiss: 'Dismiss',
     coworkCanvasTitle: 'Content preview',

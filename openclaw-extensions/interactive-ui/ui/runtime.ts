@@ -1,7 +1,7 @@
 import type { UiLabels } from './labels';
 import type { UiBlock, UiDocument, UiFormField } from './schema';
 
-export type UiBoot = { document: UiDocument; labels: UiLabels };
+export type UiBoot = { document: UiDocument; labels: UiLabels; title?: string };
 
 /** Serialized as a fixed resource: every executable helper stays in this function. */
 export function uiRuntime(boot: UiBoot): void {
@@ -62,7 +62,7 @@ export function uiRuntime(boot: UiBoot): void {
   const nav = make('nav', '', 'ui-nav');
   nav.setAttribute('aria-label', doc.summary);
   const footer = make('footer', '', 'ui-footer');
-  const follow = button(l.unavailable, 'ui-follow');
+  const follow = button(l.follow, 'ui-follow');
   follow.id = 'ui-follow';
   follow.disabled = true;
   const fullDetails = make('details');
@@ -72,14 +72,17 @@ export function uiRuntime(boot: UiBoot): void {
   fullValues.readOnly = true;
   fullValues.spellcheck = false;
   fullValues.setAttribute('aria-label', l.fullValues);
-  fullDetails.append(make('p', l.copyHint, 'ui-help'), fullValues);
+  fullDetails.className = 'ui-selection';
+  fullDetails.append(fullValues, make('p', l.resetNotice, 'ui-help'));
   const shortened = make('p', l.truncated, 'ui-help');
   shortened.hidden = true;
   const formStatus = make('p', '', 'ui-error');
   formStatus.setAttribute('role', 'status');
   formStatus.setAttribute('aria-live', 'polite');
-  footer.append(follow, formStatus, shortened, fullDetails, make('p', l.resetNotice, 'ui-help'));
-  root.replaceChildren(make('h2', doc.summary));
+  fullDetails.appendChild(shortened);
+  footer.append(fullDetails, follow, formStatus);
+  const title = make('h2', doc.summary, 'ui-title-repeated');
+  root.replaceChildren(title);
   root.lang = doc.language;
   if (doc.note) root.appendChild(make('p', doc.note, 'ui-note'));
   if (doc.blocks.length > 1) root.appendChild(nav);
@@ -102,8 +105,56 @@ export function uiRuntime(boot: UiBoot): void {
     }));
   }
 
+  function readable(value: Value['value']): string {
+    if (value === null) return l.emptyValue;
+    if (typeof value === 'boolean') return value ? l.yes : l.no;
+    if (value === '') return l.emptyValue;
+    return String(value).replace(/[\u0000-\u001f\u007f]/g, character =>
+      character === '\n'
+        ? '\\n'
+        : character === '\t'
+          ? '\\t'
+          : character === '\r'
+            ? '\\r'
+            : character === '\b'
+              ? '\\b'
+              : character === '\f'
+                ? '\\f'
+                : `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
+    );
+  }
+
+  function selectionText(
+    title: string,
+    blocks: { title: string; values: Value[]; omitted?: number; truncated?: number }[],
+  ): string {
+    return [
+      readable(title),
+      ...blocks.flatMap((block, index) =>
+        block.values.length || block.omitted
+          ? [
+              [
+                `${index + 1}. ${readable(block.title)}`,
+                ...block.values.map(
+                  entry => `  ${readable(entry.label)}: ${readable(entry.value)}`,
+                ),
+                ...(block.omitted ? [`  ${l.omitted}: ${block.omitted}`] : []),
+                ...(block.truncated ? [`  ${l.shortenedValues}: ${block.truncated}`] : []),
+              ].join('\n'),
+            ]
+          : [],
+      ),
+    ].join('\n\n');
+  }
+
   function draftFor(selection: ReturnType<typeof snapshots>): { text: string; shortened: boolean } {
-    const prefix = `${l.followInstruction}\n${l.valuesHeading}\n`;
+    const prefix = `${l.followInstruction}\n`;
+    const labelFor = (values: Value[], index: number): string => {
+      const label = values[index].label;
+      return values.filter(candidate => clip(candidate.label, 40) === clip(label, 40)).length > 1
+        ? `(${index + 1}) ${label}`
+        : label;
+    };
     const encodedClip = (value: string, limit: number): string => {
       if (JSON.stringify(value).length <= limit) return value;
       let low = 1;
@@ -131,10 +182,19 @@ export function uiRuntime(boot: UiBoot): void {
     const extra = Math.max(0, Math.floor((3600 - baseLength - 80) / blocks.length));
     blocks.forEach((block, index) => {
       const limit = JSON.stringify(block).length + extra;
-      for (const value of selection[index].values) {
+      for (const [valueIndex, value] of selection[index].values.entries()) {
+        if (
+          (block.type === 'table' &&
+            (value.value === '' ||
+              value.value === null ||
+              (value.id === 'page' && value.value === 1))) ||
+          (block.type === 'compare' && value.value === null) ||
+          (block.type === 'steps' && value.value === false)
+        )
+          continue;
         const entry: Value = {
           id: value.id,
-          label: clip(value.label, 40),
+          label: clip(labelFor(selection[index].values, valueIndex), 40),
           value: typeof value.value === 'string' ? clip(value.value, 120) : value.value,
         };
         block.values.push(entry);
@@ -165,11 +225,16 @@ export function uiRuntime(boot: UiBoot): void {
         block.omitted++;
       }
       block.truncated = block.values.filter(entry => {
-        const original = selection[index].values.find(value => value.id === entry.id)!;
-        return original.label !== entry.label || original.value !== entry.value;
+        const valueIndex = selection[index].values.findIndex(value => value.id === entry.id);
+        const original = selection[index].values[valueIndex];
+        return (
+          labelFor(selection[index].values, valueIndex) !== entry.label ||
+          original.value !== entry.value
+        );
       }).length;
     });
-    const text = prefix + JSON.stringify({ title, titleTruncated, blocks });
+    // JSON is only an internal sizing representation. Review and composer use readable text.
+    const text = prefix + selectionText(title, blocks);
     return {
       text,
       shortened:
@@ -180,7 +245,7 @@ export function uiRuntime(boot: UiBoot): void {
 
   function refresh(): void {
     const selection = snapshots();
-    fullValues.value = JSON.stringify({ title: doc.summary, blocks: selection }, null, 2);
+    fullValues.value = selectionText(doc.summary, selection);
     shortened.hidden = !draftFor(selection).shortened;
   }
 
@@ -292,6 +357,8 @@ export function uiRuntime(boot: UiBoot): void {
       return cell;
     });
     const detailHead = make('th', l.rowDetails);
+    detailHead.className = 'ui-row-action';
+    detailHead.replaceChildren(make('span', l.rowDetails, 'ui-sr-only'));
     detailHead.scope = 'col';
     headRow.appendChild(detailHead);
     head.appendChild(headRow);
@@ -378,7 +445,10 @@ export function uiRuntime(boot: UiBoot): void {
         const row = make('tr');
         entry.row.forEach(value => row.appendChild(make('td', clip(display(value), 80))));
         const cell = make('td');
-        const rowButton = button(`${l.rowDetails} ${entry.index + 1}`);
+        cell.className = 'ui-row-action';
+        const rowButton = button('⋯');
+        rowButton.setAttribute('aria-label', `${l.rowDetails} ${entry.index + 1}`);
+        rowButton.title = `${l.rowDetails} ${entry.index + 1}`;
         rowButton.dataset.row = String(entry.index);
         rowButton.setAttribute('aria-controls', details.id);
         rowButton.addEventListener('click', () => {
@@ -423,14 +493,25 @@ export function uiRuntime(boot: UiBoot): void {
     let selected: number | null = null;
     const options = make('div', '', 'ui-options');
     const details = make('section', '', 'ui-compare');
+    details.hidden = true;
     const status = make('h3', l.selectPlan);
     const values = make('dl');
     details.append(status, values);
     const buttons = block.items.map((item, index) => {
-      const option = button(item.title);
+      const optionTitle =
+        block.items.filter(candidate => candidate.title === item.title).length > 1
+          ? `${item.title} (${index + 1})`
+          : item.title;
+      const option = button(optionTitle);
       option.setAttribute('aria-pressed', 'false');
       option.addEventListener('click', () => {
         selected = index;
+        details.hidden = !item.values.some(value => display(value).length > 80);
+        table.querySelectorAll('tr').forEach(row => {
+          Array.from(row.children).forEach((cell, column) =>
+            cell.classList.toggle('ui-selected-cell', column === index + 1),
+          );
+        });
         buttons.forEach((candidate, candidateIndex) =>
           candidate.setAttribute('aria-pressed', String(candidateIndex === index)),
         );
@@ -480,7 +561,7 @@ export function uiRuntime(boot: UiBoot): void {
       selected === null
         ? [{ id: 'selected', label: l.selected, value: null }]
         : [
-            { id: 'selected', label: l.selected, value: block.items[selected].id },
+            { id: 'selected', label: l.selected, value: buttons[selected].textContent! },
             ...block.metrics.map((metric, index) => ({
               id: `metric-${index}`,
               label: metric,
@@ -921,6 +1002,7 @@ export function uiRuntime(boot: UiBoot): void {
     const panel = make('section', '', 'ui-panel');
     panel.id = `ui_${block.id}_panel`;
     const heading = make('h3', block.title);
+    heading.className = 'ui-sr-only';
     heading.id = `ui_${block.id}_heading`;
     panel.setAttribute('aria-labelledby', heading.id);
     panel.appendChild(heading);
@@ -957,7 +1039,7 @@ export function uiRuntime(boot: UiBoot): void {
 
   function availability(): void {
     follow.disabled = !draftAvailable || pending;
-    follow.textContent = draftAvailable ? l.follow : l.unavailable;
+    follow.title = draftAvailable ? '' : l.unavailable;
   }
   window.addEventListener('message', event => {
     if (event.source !== window.parent || event.data?.type !== 'openclaw:scenario-draft-policy')
@@ -986,10 +1068,10 @@ export function uiRuntime(boot: UiBoot): void {
       void Promise.resolve(host.openclaw.prompt.send(draft.text))
         .then(
           accepted => {
-            if (accepted === false) draftAvailable = false;
+            if (accepted === false && draftAvailable) formStatus.textContent = l.followFailed;
           },
           () => {
-            draftAvailable = false;
+            if (draftAvailable) formStatus.textContent = l.followFailed;
           },
         )
         .finally(() => {
@@ -998,7 +1080,7 @@ export function uiRuntime(boot: UiBoot): void {
         });
     } catch {
       pending = false;
-      draftAvailable = false;
+      formStatus.textContent = l.followFailed;
       availability();
     }
   });

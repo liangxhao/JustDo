@@ -29,6 +29,7 @@ export const uiContentKind = {
   },
   composeDocument({
     source,
+    title,
     resourceUrls,
   }: {
     source: string;
@@ -42,7 +43,7 @@ export const uiContentKind = {
     if (!url) throw new Error('Interactive answer renderer resource unavailable');
     return (
       `<style>${uiStyles}</style><main id="interactive-answer-root" lang="${document.language}"><p role="status">${escapeHtml(labels.rendererLoading)}</p></main>` +
-      `<script>globalThis.__interactiveAnswerBoot=${scriptJson({ document, labels })};\n(${widgetResourceBootstrap.toString()})(${scriptJson({ rootId: 'interactive-answer-root', rendererId: 'interactive-answer-renderer', unavailable: labels.rendererUnavailable })});</script>` +
+      `<script>globalThis.__interactiveAnswerBoot=${scriptJson({ document, labels, title })};\n(${widgetResourceBootstrap.toString()})(${scriptJson({ rootId: 'interactive-answer-root', rendererId: 'interactive-answer-renderer', unavailable: labels.rendererUnavailable })});</script>` +
       `<script id="interactive-answer-renderer" src="${escapeHtml(url)}"></script>`
     );
   },

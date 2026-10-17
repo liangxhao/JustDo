@@ -68,8 +68,8 @@ function edit(input: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement,
   input.value = value;
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
-function fullSelection(): { blocks: { id: string; values: { id: string; value: unknown }[] }[] } {
-  return JSON.parse((document.getElementById('ui-full-values') as HTMLTextAreaElement).value);
+function fullSelection(): string {
+  return (document.getElementById('ui-full-values') as HTMLTextAreaElement).value;
 }
 function policy(available = true, source: MessageEventSource = window.parent) {
   window.dispatchEvent(
@@ -177,7 +177,7 @@ describe('controlled UI table and panel interaction', () => {
     panel('table').querySelector<HTMLButtonElement>('button[data-row="1"]')!.click();
     expect(row.getAttribute('aria-expanded')).toBe('false');
     expect(panel('table').querySelector('.ui-details')!.textContent).not.toContain(text);
-    expect(fullSelection().blocks[0].values.find(value => value.id === 'row')!.value).toBe(2);
+    expect(fullSelection()).toContain('Current selection: 2');
     expect(JSON.stringify(fullSelection())).not.toContain(text);
   });
 
@@ -197,6 +197,27 @@ describe('controlled UI table and panel interaction', () => {
 });
 
 describe('comparison, chart and explanation components', () => {
+  it('preserves the selected option identity when human titles are duplicated', () => {
+    mount([
+      {
+        type: 'compare',
+        id: 'compare',
+        title: 'Choose',
+        metrics: ['Cost'],
+        items: [
+          { id: 'first', title: 'Plan', values: [10] },
+          { id: 'second', title: 'Plan', values: [20] },
+        ],
+      },
+    ]);
+    const options = panel('compare').querySelectorAll<HTMLButtonElement>('.ui-options button');
+    expect(options[1].textContent).toBe('Plan (2)');
+    options[1].click();
+    policy();
+    clickTrustedHandler();
+    expect(send.mock.calls[0][0]).toContain('Current selection: Plan (2)');
+    expect(send.mock.calls[0][0]).toContain('Cost: 20');
+  });
   it('does not recommend an option automatically and shows all selected metric values', () => {
     const long = 'Complete value '.repeat(20);
     mount([
@@ -218,9 +239,7 @@ describe('comparison, chart and explanation components', () => {
     options[0].click();
     expect(options[0].getAttribute('aria-pressed')).toBe('true');
     expect(panel('compare').querySelector('.ui-compare')!.textContent).toContain(long);
-    expect(fullSelection().blocks[0].values.find(value => value.id === 'selected')!.value).toBe(
-      'a',
-    );
+    expect(fullSelection()).toContain('Current selection: A');
   });
 
   it.each(['table', 'compare'])(
@@ -315,9 +334,7 @@ describe('comparison, chart and explanation components', () => {
     detail.open = true;
     detail.dispatchEvent(new Event('toggle'));
     expect(detail.querySelector('p')!.textContent).toBe(value);
-    expect(fullSelection().blocks[0].values.find(entry => entry.id === 'metric-0')!.value).toBe(
-      value,
-    );
+    expect(fullSelection()).toContain(value.replaceAll('\n', '\\n'));
     // Complete values flow as ordinary text; explicit whitespace formatting is
     // reserved for the bounded readonly copy box, avoiding blank-line height.
     expect(uiStyles).not.toMatch(/white-space:pre-wrap/);
@@ -352,7 +369,7 @@ describe('comparison, chart and explanation components', () => {
       expect(panel('chart').querySelector('svg')).toBeNull();
       expect(panel('chart').querySelector<HTMLElement>('.ui-chart-empty')!.hidden).toBe(false);
       expect(panel('chart').querySelector('tbody')!.textContent).toContain('-10');
-      expect(fullSelection().blocks[0].values.every(value => value.value === false)).toBe(true);
+      expect(fullSelection().match(/: No/g)).toHaveLength(2);
       toggles[1].click();
       expect(panel('chart').querySelector('svg')!.outerHTML).not.toMatch(/NaN|Infinity/);
     },
@@ -460,7 +477,7 @@ describe('comparison, chart and explanation components', () => {
     expect(panel('chart').querySelector('svg')!.getAttribute('viewBox')).toBe('0 0 500 260');
     expect(observed.closest('.ui-panel')).toBe(panel('chart'));
     expect(panel('chart').querySelector('tbody')!.textContent).toContain('-6');
-    expect(fullSelection().blocks[1].values[0].value).toBe(true);
+    expect(fullSelection()).toContain(': Yes');
     const afterResize = panel('chart').querySelector('svg');
     resized();
     paint();
@@ -537,7 +554,7 @@ describe('comparison, chart and explanation components', () => {
     expect([...details].every(detail => !detail.open)).toBe(true);
     details[1].open = true;
     details[1].dispatchEvent(new Event('toggle'));
-    expect(fullSelection().blocks[0].values[1].value).toBe(true);
+    expect(fullSelection()).toContain('Second: Yes');
     expect(panel('steps').querySelector('script')).toBeNull();
   });
 
@@ -565,11 +582,100 @@ describe('comparison, chart and explanation components', () => {
       expect(details.filter(candidate => candidate.open)).toHaveLength(1);
       expect(detail.querySelector('p')!.textContent).toBe(body);
     });
-    expect(fullSelection().blocks[0].values.filter(value => value.value === true)).toHaveLength(1);
+    expect(fullSelection().match(/: 是/g)).toHaveLength(1);
   });
 });
 
 describe('forms and the bounded private prompt bridge', () => {
+  it('disambiguates repeated field labels without reporting false truncation', () => {
+    mount([
+      {
+        ...form,
+        fields: [
+          { id: 'first', label: 'Cost', type: 'number', value: 10 },
+          { id: 'second', label: 'Cost', type: 'number', value: 20 },
+        ],
+      },
+    ]);
+    policy();
+    clickTrustedHandler();
+    const text = send.mock.calls[0][0];
+    expect(text).toContain('(1) Cost: 10');
+    expect(text).toContain('(2) Cost: 20');
+    expect(text).not.toContain(uiLabels.en.shortenedValues);
+  });
+  it('keeps one primary action, collapses secondary information and prepares readable values', () => {
+    mount([
+      {
+        ...form,
+        fields: [
+          { id: 'budget', label: 'Budget (CNY)', type: 'number', value: 0 },
+          { id: 'enabled', label: 'Enabled', type: 'checkbox', value: false },
+        ],
+      },
+    ]);
+    expect(document.querySelectorAll('.ui-follow')).toHaveLength(1);
+    expect(document.querySelector<HTMLDetailsElement>('.ui-selection')!.open).toBe(false);
+    expect(document.querySelector('.ui-footer')!.textContent).not.toContain(uiLabels.en.copyHint);
+    expect(document.querySelector('.ui-footer')!.textContent).not.toContain(uiLabels.en.privacy);
+    policy();
+    clickTrustedHandler();
+    const draft = send.mock.calls[0][0];
+    expect(draft).toContain('Budget (CNY): 0');
+    expect(draft).toContain('Enabled: No');
+    expect(draft).not.toContain('"values":');
+  });
+
+  it('does not duplicate a pending prompt and allows another explicit action after failure', async () => {
+    let resolve!: (value: boolean) => void;
+    send.mockImplementation(
+      () =>
+        new Promise(accept => {
+          resolve = accept;
+        }),
+    );
+    mount([table]);
+    policy();
+    clickTrustedHandler();
+    clickTrustedHandler();
+    expect(send).toHaveBeenCalledOnce();
+    resolve(false);
+    await vi.waitFor(() =>
+      expect((document.getElementById('ui-follow') as HTMLButtonElement).disabled).toBe(false),
+    );
+    clickTrustedHandler();
+    expect(send).toHaveBeenCalledTimes(2);
+    policy(false);
+    resolve(false);
+    await Promise.resolve();
+    expect((document.getElementById('ui-follow') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it.each(['\r', '\b', '\f', '\n', '\t', '\u0001'])(
+    'keeps readable summaries bounded for control character %j',
+    character => {
+      mount(
+        Array.from({ length: 8 }, (_, index) => ({
+          type: 'form',
+          id: `form-${index}`,
+          title: `Form ${index}`,
+          fields: Array.from({ length: 2 }, (_, number) => ({
+            id: `field-${number}`,
+            label: `Field ${number}`,
+            type: 'text',
+            value: character.repeat(400),
+          })),
+        })),
+      );
+      policy();
+      clickTrustedHandler();
+      expect(send).toHaveBeenCalledOnce();
+      const text = send.mock.calls[0][0];
+      expect(text.length).toBeLessThanOrEqual(3600);
+      for (let index = 0; index < 8; index++) expect(text).toContain(`Form ${index}`);
+    },
+  );
+
   it('requires the mounted policy and rejects synthetic clicks', () => {
     mount([table]);
     const follow = document.getElementById('ui-follow') as HTMLButtonElement;
@@ -582,7 +688,7 @@ describe('forms and the bounded private prompt bridge', () => {
     expect(send).not.toHaveBeenCalled();
     clickTrustedHandler();
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send.mock.calls[0][0]).toContain(uiLabels.en.valuesHeading);
+    expect(send.mock.calls[0][0]).toContain(uiLabels.en.followInstruction);
   });
 
   it('locates invalid controls in hidden panels and validates required/number/select/checkbox', async () => {
@@ -609,10 +715,8 @@ describe('forms and the bounded private prompt bridge', () => {
     field('agree').dispatchEvent(new Event('change', { bubbles: true }));
     clickTrustedHandler();
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send.mock.calls[0][0]).toContain('"value":-2.5');
-    expect(
-      fullSelection().blocks[1].values.find(value => value.id === 'optional')!.value,
-    ).toBeNull();
+    expect(send.mock.calls[0][0]).toContain('Budget: -2.5');
+    expect(fullSelection()).toContain('Optional: Not set');
     await Promise.resolve();
   });
 
@@ -703,31 +807,26 @@ describe('forms and the bounded private prompt bridge', () => {
     clickTrustedHandler();
     const sent = send.mock.calls[0][0] as string;
     expect(sent.length).toBeLessThanOrEqual(3600);
-    const payload = JSON.parse(sent.slice(sent.indexOf('{')));
-    expect(payload.blocks).toHaveLength(8);
-    expect(
-      payload.blocks.every(
-        (block: { values: unknown[]; omitted: number; truncated: number }) =>
-          block.values.length > 0 && (block.omitted > 0 || block.truncated > 0),
-      ),
-    ).toBe(true);
-    expect(payload.blocks.map((block: { id: string }) => block.id)).toEqual(
-      blocks.map(block => block.id),
-    );
-    expect(fullSelection().blocks[7].values).toHaveLength(12);
-    expect(fullSelection().blocks[7].values[0].value).toBe(text);
+    blocks.forEach(block => expect(sent).toContain(block.title));
+    expect(sent).not.toContain('"blocks":');
+    expect(sent).toContain(uiLabels.zh.omitted);
+    expect(fullSelection()).toContain(text.replaceAll('\n', '\\n'));
+    expect((fullSelection().match(/Form 7/g) ?? []).length).toBe(1);
     expect((document.getElementById('ui-full-values') as HTMLTextAreaElement).readOnly).toBe(true);
     expect(document.querySelector('.ui-footer')!.textContent).toContain(uiLabels.zh.truncated);
   });
 
-  it('disables follow-up when the bridge rejects or is revoked', async () => {
+  it('allows retry after bridge rejection but disables follow-up when revoked', async () => {
     send.mockImplementation(() => false);
     mount([table]);
     policy();
     clickTrustedHandler();
     await Promise.resolve();
     await Promise.resolve();
-    expect((document.getElementById('ui-follow') as HTMLButtonElement).disabled).toBe(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect((document.getElementById('ui-follow') as HTMLButtonElement).disabled).toBe(false);
+    expect(document.querySelector('.ui-footer')!.textContent).toContain(uiLabels.en.followFailed);
     send.mockImplementation(() => true);
     policy();
     policy(false);
@@ -751,17 +850,9 @@ describe('forms and the bounded private prompt bridge', () => {
     expect(send).toHaveBeenCalledTimes(1);
     const text = send.mock.calls[0][0] as string;
     expect(text.length).toBeLessThanOrEqual(3600);
-    const payload = JSON.parse(text.slice(text.indexOf('{')));
-    expect(payload.titleTruncated).toBe(true);
-    expect(JSON.stringify(payload.title).length).toBeLessThanOrEqual(300);
-    expect(payload.blocks).toHaveLength(8);
-    expect(
-      payload.blocks.every(
-        (block: { title: string; titleTruncated: boolean }) =>
-          block.titleTruncated && JSON.stringify(block.title).length <= 128,
-      ),
-    ).toBe(true);
-    expect(fullSelection().blocks[7].values[0].value).toBe('\u0001'.repeat(400));
+    for (let index = 1; index <= 8; index++) expect(text).toContain(`${index}. `);
+    expect(text).not.toContain('"blocks":');
+    expect(fullSelection()).toContain('\\u0001'.repeat(400));
   });
 
   it('serializes executable helpers without external closures and has complete language labels', () => {

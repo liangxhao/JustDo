@@ -6,7 +6,8 @@ description: Show an interactive team investment and delivery comparison through
 # Scenario explorer
 
 Use the registered `scenario-explorer` kind only when the actual `show_widget`
-tool schema advertises it. Prefer a short explanation alongside the widget.
+tool schema advertises it. Let the widget stand on its own; add at most one
+short sentence only for necessary information absent from the card.
 The widget is a fixed illustrative calculator; distinguish supplied facts from
 assumptions and do not present it as a validated project forecast.
 
@@ -39,6 +40,17 @@ The calculator sums task hours and divides by
 Cost is workdays × people × daily rate. It omits holidays, dependencies and
 parallelism constraints. Avoid repeating unverified numbers in prose; the
 widget calculates its own values.
+
+Keep the widget as the main answer: a short title, no repeated metric prose and
+one "继续分析" / "Continue analysis" action. Set the tool title and scenario
+summary to the same short noun phrase. Only team size and daily focus hours
+are interactive inputs; budget, deadline, task hours and daily rate are fixed
+reference values for this document. Never tell the user these are editable.
+Do not append a recap, usage tutorial or a list of adjustable parameters after
+the successful tool call. The fixed renderer keeps its illustrative-model
+label and puts formula details in the assumptions disclosure. For a later turn,
+use the user's confirmed team and focus values as the new widget's defaults;
+create a new native document rather than claiming to overwrite the old one.
 
 Use the descriptor returned by the actual tool. Do not invent Canvas IDs,
 `[embed]` URLs, Gateway paths or manifests, and do not write Gateway state

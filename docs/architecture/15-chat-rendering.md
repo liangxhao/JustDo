@@ -37,7 +37,7 @@ client/session/generation/docId 校验，不增加子窗口 preload 或权限。
 发起：跨文档调用 `postMessage` 会携带调用者的源窗口，不能仅替换监听目标。
 工作区静态启动模块在自己的文档中安装只读、受限发送函数，完成后才发布 portal root；
 组件按 frame 当前文档选择发送入口，限定已连接的原生组件 iframe、准确的沙箱路径与
-origin、四类封闭消息。未放宽原生 `source === parent`、CSP 或权限；入口缺失时资源
+origin、五类封闭消息（含滚动握手）。未放宽原生 `source === parent`、CSP 或权限；入口缺失时资源
 投递按失败处理。断开期间不创建文档绑定，重挂载主动更新并重新读取当前原生文档。
 
 原生 Tool Search 可以通过 `tool_call` 调用 `show_widget`，历史保留外层工具结果及独立嵌套
@@ -48,7 +48,22 @@ origin、四类封闭消息。未放宽原生 `source === parent`、CSP 或权�
 过程记录仍只展示过程。内外层同时可见时按 document ID 只展示一次组件，两个执行记录
 均保留；仅移除该已验证文档对应的相对 shortcode/结构化 fallback。
 
-HTTP(S) 主聊天挂载原生 viewer 后，实际发送连接公告 `inline-widgets`。生产主页面使用本机只读静态宿主，保留隔离 preload；外层原生 shell 独立 origin、内层 opaque iframe，逐阶段校验 origin/source、sandboxUrl 的原生 csp/v 参数与 renderId。10 秒内未加载、脚本错误或文档丢失提供手动重试，不自动 wake。切换会话、重连或卸载撤销旧绑定与端口，隐藏时关闭草稿可用策略；迟到结果丢弃。
+HTTP(S) 主聊天挂载原生 viewer 后，实际发送连接公告 `inline-widgets`。生产主页面使用本机只读静态宿主，保留隔离 preload；外层原生 shell 独立 origin、内层 opaque iframe，逐阶段校验 origin/source、sandboxUrl 的原生 csp/v 参数与 renderId。加载满 10 秒显示慢加载提示；认证文档读取与沙箱初始化各有 30 秒最终期限，超时或文档丢失后提供手动重试，不自动 wake。脚本运行错误保留当前 iframe 与本地输入，撤销草稿端口并显示恢复操作；主动重载才重置本地状态。切换会话、重连或卸载撤销旧绑定与端口，隐藏时关闭草稿可用策略；迟到结果丢弃。
+
+原生滚动桥通过 `openclaw:widget-board-host` 接收本次挂载的独立 nonce，
+仅用于未消费的滚轮/触摸像素转交，不授予 dashboard 能力。
+宿主校验当前 client/session/generation、frame source/origin、nonce 和有限 delta，
+沿实际文档的 shadow 边界找到所属聊天；先向既有滚动控制器投递滚动意图，
+再移动视口，以保留阅读接管和向上分页行为。隐藏文档、旧挂载与跨会话消息无效。
+主题同步包含颜色、实际聊天组件的计算字体、等宽字体、圆角和滚动条；字体优先从
+viewer 元素读取，避免未设置字体的文档根节点覆盖正文样式；工作区仍从自身文档读取。
+外层原生 shell 与锁定上游查看器一致，使用 `allow-scripts allow-same-origin allow-forms`，
+使内层 HTML 的本地 submit 事件可执行；内层仍为 opaque origin，原生 CSP 的
+`form-action 'none'` 阻止网络表单提交，不增加网络或执行授权。
+加载期间 iframe 保持可布局与绘制，以紧凑覆盖层遮住未完成内容并设为 inert；
+完成后解除覆盖和 inert，再采用原生尺寸。不能用 visibility 隐藏嵌套 frame，
+否则 Chromium 的子视图可能停留在旧尺寸或空白状态；
+不显示常驻后续流程说明，建议确认只占一处行内区域。
 
 失败卡片还提供用户发起的重新生成入口：宿主可信点击生成可审阅建议，绑定当前
 generation/session/docId/mount，加入草稿时再次核对。仅传封闭 load/runtime 类别与
@@ -61,7 +76,7 @@ generation/session/docId/mount，加入草稿时再次核对。仅传封闭 load
 原生协议只报告高度，外框宽度由应用布局控制；不读取跨域 DOM、不改写已保存的组件 HTML，
 不为尺寸调整增加运行时 patch。组件内部的图表留白、标注和断点仍由该文档负责。
 
-原生私有 prompt port 只接收当前 frame 的真实用户激活，检查可见性、焦点、当前会话和长度/速率；拒绝 slash/执行前缀。草稿能力默认关闭，由当前 React consumer 的实时回调决定；只读会话或转录修改时撤销该能力、清除旧建议，并在私有消息、重建与加入草稿入口再次校验。能力切换保留原 iframe、端口与本地选择，不重新读取文档。建议先展示供用户确认，可信「加入草稿」点击只追加当前 composer 文字，保留附件与已有草稿；发送仍由用户操作。没有 dashboard/MCP/tool/resource 权限。固定 scenario 不访问外部网络，原生任意 HTML 类型仍沿用原生 CSP/CDN/media 边界，不承诺全类型断网。用户入口与限制见 [交互式回答](../features/chat/interactive-answers.md)，未完成验收见 [验收清单](../plans/interactive-answers-acceptance.md)。
+原生私有 prompt port 只接收当前 frame 的真实用户激活，检查可见性、焦点、当前会话和长度/速率；拒绝 slash/执行前缀。草稿能力默认关闭，由当前 React consumer 的实时回调决定；只读会话或转录修改时撤销该能力、清除旧建议，并在私有消息、重建与加入草稿入口再次校验。能力切换保留原 iframe、端口与本地选择，不重新读取文档。建议以可读文字在紧凑行内区域展示供用户确认，可信「加入草稿」点击只追加当前 composer 文字，保留附件与已有草稿；发送仍由用户操作。没有 dashboard/MCP/tool/resource 权限。固定 scenario 不访问外部网络，原生任意 HTML 类型仍沿用原生 CSP/CDN/media 边界，不承诺全类型断网。用户入口与限制见 [交互式回答](../features/chat/interactive-answers.md)，未完成验收见 [验收清单](../plans/interactive-answers-acceptance.md)。
 
 消息中的普通网页 URL、Markdown 链接和 `MEDIA` 附件共享浏览器打开偏好，打开当前会话内置网页 Tab 或已安装的 Chrome。句子中的本地 HTML 路径和 Markdown HTML 链接转换为受控点击标记，主窗口不导航到 file URL；文件查找与 URL 查询参数、锚点分离，路径只解码一次，裸文件路径中的 `%`、`#` 保持原名。Main 沿用本地预览服务校验文件及资源根目录，再通过主窗口主 frame 专用 IPC 打开 HTTP(S) 预览 URL。已挂载的内置浏览器通过自身 handle 创建实际 Tab，容量拒绝时不插入外层虚假 Tab。该偏好只影响用户点击，不改变 Gateway 的 browser Tool 模式或原生消息所有权。详见[浏览器设置](../features/browser/browser-settings-design.md)。
 

@@ -29,15 +29,29 @@ export function scenarioRuntime(boot: Boot, calculate: typeof calculateScenario)
     balanced: labels.balanced,
     fast: labels.fast,
   };
+  const chart = document.querySelector<SVGSVGElement>('.chart svg')!;
+  let chartWidth = 650;
   const svg = (peopleCount: number, focusHours: number, color: string, maximumDays: number) => {
     const result = calculate(scenario, peopleCount, focusHours);
     const points = Array.from({ length: 25 }, (_, index) => {
       const day = (maximumDays * index) / 24;
-      return `${42 + index * 24},${190 - Math.min(1, (day * result.capacity) / result.effort) * 156}`;
+      return `${42 + (index * (chartWidth - 66)) / 24},${190 - Math.min(1, (day * result.capacity) / result.effort) * 156}`;
     });
     return `<polyline points="${points.join(' ')}" fill="none" stroke="${color}" stroke-width="3" stroke-linejoin="round"/>`;
   };
   function update(): void {
+    chartWidth = Math.max(
+      240,
+      Math.round(chart.parentElement!.getBoundingClientRect().width) || 650,
+    );
+    chart.setAttribute('viewBox', `0 0 ${chartWidth} 230`);
+    chart
+      .querySelector('.grid-line')!
+      .setAttribute(
+        'd',
+        `M42 34H${chartWidth - 24}M42 112H${chartWidth - 24}M42 190H${chartWidth - 24}`,
+      );
+    element('chart-end').setAttribute('x', String(chartWidth - 24));
     const result = calculate(scenario, people, focus);
     teamInput.value = String(people);
     focusInput.value = String(focus);
@@ -114,9 +128,11 @@ export function scenarioRuntime(boot: Boot, calculate: typeof calculateScenario)
     openclaw?: { prompt?: { send?: (value: string) => unknown } };
   };
   let draftAvailable = false;
+  let pending = false;
+  const error = element('follow-error');
   const updateDraftAvailability = () => {
-    follow.disabled = !draftAvailable;
-    follow.textContent = draftAvailable ? `${labels.follow} →` : labels.unavailable;
+    follow.disabled = !draftAvailable || pending;
+    follow.title = draftAvailable ? '' : labels.unavailable;
   };
   // Function presence alone does not prove the private prompt port is mounted.
   // This signal is display policy; the host still owns admission of every draft.
@@ -129,25 +145,58 @@ export function scenarioRuntime(boot: Boot, calculate: typeof calculateScenario)
   });
   updateDraftAvailability();
   follow.addEventListener('click', event => {
-    if (!event.isTrusted || !draftAvailable) return;
+    if (!event.isTrusted || !draftAvailable || pending) return;
     const result = calculate(scenario, people, focus);
     const draft = `${labels.draft}\n${scenario.summary}\n${labels.team}: ${people}; ${labels.focus}: ${focus} ${labels.hours}; ${labels.duration}: ${result.days} ${labels.days}; ${labels.cost}: ${money(result.cost)}.\n${labels.assumption}`;
     // Inline prompt admission belongs to the canonical private bridge. The
     // compose flag describes dashboard grants and is always false inline.
-    void Promise.resolve(host.openclaw?.prompt?.send?.(draft)).then(
-      accepted => {
-        if (accepted === false) {
-          draftAvailable = false;
+    pending = true;
+    error.hidden = true;
+    updateDraftAvailability();
+    const failed = () => {
+      if (!draftAvailable) return;
+      error.textContent = labels.followFailed;
+      error.hidden = false;
+    };
+    try {
+      void Promise.resolve(host.openclaw?.prompt?.send?.(draft))
+        .then(accepted => {
+          if (accepted === false) failed();
+        }, failed)
+        .finally(() => {
+          pending = false;
           updateDraftAvailability();
-        }
-      },
-      () => {
-        draftAvailable = false;
-        updateDraftAvailability();
-      },
-    );
+        });
+    } catch {
+      pending = false;
+      failed();
+      updateDraftAvailability();
+    }
   });
   update();
+  if (typeof ResizeObserver !== 'undefined') {
+    let frame: number | undefined;
+    const resize = new ResizeObserver(() => {
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(() => {
+        frame = undefined;
+        const width = Math.max(
+          240,
+          Math.round(chart.parentElement!.getBoundingClientRect().width) || 650,
+        );
+        if (width !== chartWidth) update();
+      });
+    });
+    resize.observe(chart.parentElement!);
+    window.addEventListener(
+      'pagehide',
+      () => {
+        resize.disconnect();
+        if (frame !== undefined) cancelAnimationFrame(frame);
+      },
+      { once: true },
+    );
+  }
   document.getElementById('scenario-explorer-loading')?.remove();
   document
     .getElementById('scenario-explorer-root')

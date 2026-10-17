@@ -28,7 +28,11 @@ it('sends only admitted messages to the connected native sandbox with its exact 
   const { widget, frame } = mountFrame();
   const post = vi.spyOn(frame.contentWindow!, 'postMessage');
   expect(postNativeWidgetMessage(frame, message, origin)).toBe(true);
-  for (const type of ['openclaw:widget-theme', 'openclaw:scenario-draft-policy'])
+  for (const type of [
+    'openclaw:widget-theme',
+    'openclaw:widget-board-host',
+    'openclaw:scenario-draft-policy',
+  ])
     expect(postNativeWidgetMessage(frame, { type }, origin)).toBe(true);
   expect(
     postNativeWidgetMessage(frame, { method: 'ui/notifications/sandbox-resource-ready' }, origin),

@@ -3,6 +3,7 @@ import './view';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { ChatScrollController } from '../../controllers/chat-scroll-controller';
 import { decodeNativeCanvasResult } from '../../pipeline/native-canvas';
 import type { NativeWidgetContext } from './host';
 import { NATIVE_WIDGET_OWNER_MESSENGER } from './messaging';
@@ -29,7 +30,7 @@ async function settle(view: NativeWidgetView): Promise<void> {
   await Promise.resolve();
   await view.updateComplete;
 }
-function mount(request = vi.fn().mockResolvedValue(result)) {
+function mount(request = vi.fn().mockResolvedValue(result), parent: Node = document.body) {
   const client = { generation: 1, gatewayUrl: 'ws://127.0.0.1:18789', request };
   const context: NativeWidgetContext = {
     client,
@@ -41,7 +42,7 @@ function mount(request = vi.fn().mockResolvedValue(result)) {
   const view = document.createElement('justdo-native-widget') as NativeWidgetView;
   view.context = context;
   view.preview = preview('widget-1');
-  document.body.append(view);
+  parent.appendChild(view);
   return { view, client, context, request };
 }
 
@@ -49,9 +50,142 @@ afterEach(() => {
   document.body.replaceChildren();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
+function sandbox(view: NativeWidgetView) {
+  const frame = view.shadowRoot!.querySelector('iframe')!;
+  const post = vi.spyOn(frame.contentWindow!, 'postMessage');
+  const send = (data: unknown, origin = new URL(frame.src).origin, source = frame.contentWindow) =>
+    view.ownerDocument.defaultView!.dispatchEvent(
+      new MessageEvent('message', { data, origin, source }),
+    );
+  const ready = () => {
+    send({ method: 'ui/notifications/sandbox-proxy-ready', params: { sandboxUrl: frame.src } });
+    const resource = post.mock.calls.find(
+      ([data]) => data?.method === 'ui/notifications/sandbox-resource-ready',
+    )![0];
+    send({
+      method: 'ui/notifications/sandbox-resource-loaded',
+      params: { renderId: resource.params.renderId },
+    });
+  };
+  return { frame, post, send, ready };
+}
+
 describe('native widget viewer lifecycle', () => {
+  it('keeps a slow authenticated read and sandbox alive, then clears the notice on render', async () => {
+    vi.useFakeTimers();
+    let resolve!: (value: unknown) => void;
+    const { view, request } = mount(
+      vi.fn(
+        () =>
+          new Promise(accept => {
+            resolve = accept;
+          }),
+      ),
+    );
+    await settle(view);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settle(view);
+    expect(view.shadowRoot!.querySelector('[role="status"]')?.textContent).toMatch(/较长|longer/);
+    expect(view.shadowRoot!.querySelector('[role="alert"]')).toBeNull();
+    resolve(result);
+    await settle(view);
+    const { ready, frame } = sandbox(view);
+    expect(view.shadowRoot!.querySelector('.frame.loading')).not.toBeNull();
+    expect(frame.inert).toBe(true);
+    expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-same-origin allow-forms');
+    ready();
+    await settle(view);
+    expect(view.shadowRoot!.querySelector('.frame.loading')).toBeNull();
+    expect(frame.inert).toBe(false);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settle(view);
+    expect(view.shadowRoot!.querySelector('iframe')).toBe(frame);
+    expect(view.shadowRoot!.querySelector('[role="status"]')).toBeNull();
+    expect(view.shadowRoot!.querySelector('[role="alert"]')).toBeNull();
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it('shows a slow sandbox notice before the final deadline and cancels it on unmount', async () => {
+    vi.useFakeTimers();
+    const { view, request } = mount();
+    await settle(view);
+    const frame = view.shadowRoot!.querySelector('iframe');
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settle(view);
+    expect(view.shadowRoot!.querySelector('iframe')).toBe(frame);
+    expect(view.shadowRoot!.querySelector('[role="alert"]')).toBeNull();
+    await vi.advanceTimersByTimeAsync(20_000);
+    await settle(view);
+    expect(view.shadowRoot!.querySelector('[role="alert"]')).not.toBeNull();
+    expect(view.shadowRoot!.querySelector('iframe')).toBeNull();
+    expect(request).toHaveBeenCalledOnce();
+    view.shadowRoot!.querySelector<HTMLButtonElement>('button')!.click();
+    await settle(view);
+    view.remove();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('forwards only current native scroll authority to its own transcript, including paging intent', async () => {
+    const chat = document.createElement('justdo-chat');
+    const root = chat.attachShadow({ mode: 'open' });
+    document.body.append(chat);
+    const scrollBy = vi.fn();
+    chat.scrollBy = scrollBy;
+    const wheel = vi.fn();
+    chat.addEventListener('wheel', wheel);
+    chat.scrollTop = 100;
+    const loadOlder = vi.fn();
+    const controller = new ChatScrollController(vi.fn(), loadOlder);
+    controller.connect(chat);
+    const { view } = mount(undefined, root);
+    await settle(view);
+    const first = sandbox(view);
+    first.ready();
+    await settle(view);
+    const nonce = first.post.mock.calls.find(
+      ([data]) => data?.type === 'openclaw:widget-board-host',
+    )![0].nonce;
+    const scroll = { type: 'openclaw:widget-scroll', nonce, deltaY: -80 };
+    for (const data of [
+      { ...scroll, nonce: 'stale' },
+      { ...scroll, deltaY: Infinity },
+      { ...scroll, deltaY: '80' },
+    ])
+      first.send(data);
+    first.send(scroll, 'https://evil.test');
+    first.send(scroll, new URL(first.frame.src).origin, window);
+    expect(scrollBy).not.toHaveBeenCalled();
+    first.send(scroll);
+    expect(wheel).toHaveBeenCalledOnce();
+    expect(controller.state.mode).toBe('paused');
+    expect(loadOlder).toHaveBeenCalledOnce();
+    expect(scrollBy).toHaveBeenCalledWith({ top: -80, behavior: 'instant' });
+    const prevent = (event: Event) => event.preventDefault();
+    chat.addEventListener('wheel', prevent);
+    first.send(scroll);
+    expect(scrollBy).toHaveBeenCalledTimes(1);
+    chat.removeEventListener('wheel', prevent);
+    view.preview = preview('widget-2');
+    await settle(view);
+    const second = sandbox(view);
+    second.ready();
+    await settle(view);
+    first.send(scroll);
+    second.send(scroll);
+    expect(scrollBy).toHaveBeenCalledTimes(1);
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    const newNonce = second.post.mock.calls.find(
+      ([data]) => data?.type === 'openclaw:widget-board-host',
+    )![0].nonce;
+    second.send({ ...scroll, nonce: newNonce });
+    expect(scrollBy).toHaveBeenCalledTimes(1);
+    controller.disconnect();
+  });
+
   it('reloads after disconnected updates settle before the same view is attached again', async () => {
     const { view, request } = mount();
     await settle(view);
@@ -128,12 +262,16 @@ describe('native widget viewer lifecycle', () => {
     });
     Object.defineProperty(owner, NATIVE_WIDGET_OWNER_MESSENGER, { value: messenger });
     doc.documentElement.style.setProperty('--justdo-primary', '#123456');
+    doc.documentElement.style.setProperty('--justdo-radius', '12px');
+    doc.documentElement.style.setProperty('--justdo-scroll-thumb', '#445566');
+    doc.documentElement.style.fontFamily = 'Example Font';
     doc.documentElement.style.colorScheme = 'dark';
     let visibility = 'visible';
     vi.spyOn(doc, 'visibilityState', 'get').mockImplementation(
       () => visibility as DocumentVisibilityState,
     );
     const { view, request } = mount();
+    view.style.fontFamily = 'Chat Font';
     doc.body.append(view);
     await settle(view);
     expect(view.shadowRoot!.querySelectorAll('style')).toHaveLength(1);
@@ -168,7 +306,13 @@ describe('native widget viewer lifecycle', () => {
       expect.objectContaining({
         type: 'openclaw:widget-theme',
         mode: 'dark',
-        tokens: expect.objectContaining({ accent: '#123456' }),
+        tokens: expect.objectContaining({
+          accent: '#123456',
+          radius: '12px',
+          'font-body': '"Chat Font"',
+          'scrollbar-thumb': '#445566',
+          'font-mono': expect.any(String),
+        }),
       }),
       new URL(frame.src).origin,
     );
@@ -248,6 +392,13 @@ describe('native widget viewer lifecycle', () => {
       window.dispatchEvent(event);
     };
     send({ method: 'ui/notifications/sandbox-proxy-ready', params: { sandboxUrl: frame.src } });
+    const resource = post.mock.calls[0][0];
+    send({
+      method: 'ui/notifications/sandbox-resource-loaded',
+      params: { renderId: resource.params.renderId },
+    });
+    await settle(view);
+    expect(view.shadowRoot!.querySelector('.notice')).toBeNull();
     const port = {
       close: vi.fn(),
       start: vi.fn(),
@@ -255,6 +406,8 @@ describe('native widget viewer lifecycle', () => {
       onmessage: null as ((event: MessageEvent) => void) | null,
     };
     send({ type: 'openclaw:widget-prompt-offer' }, [port]);
+    await settle(view);
+    expect(view.shadowRoot!.querySelector('.notice')).toBeNull();
     send({ type: 'openclaw:widget-bridge-ready' });
     const policy = () =>
       post.mock.calls
@@ -286,6 +439,7 @@ describe('native widget viewer lifecycle', () => {
     view.context = { ...view.context! };
     await settle(view);
     expect(policy()?.available).toBe(true);
+    expect(view.shadowRoot!.querySelector('.notice')).toBeNull();
     prompt('Reviewed selection');
     await settle(view);
     expect(view.shadowRoot!.querySelector('section')?.textContent).toContain('Reviewed selection');
@@ -306,6 +460,7 @@ describe('native widget viewer lifecycle', () => {
     await settle(view);
     expect(policy()?.available).toBe(false);
     expect(view.shadowRoot!.querySelector('section')).toBeNull();
+    expect(view.shadowRoot!.querySelector('.notice')).toBeNull();
     expect(view.shadowRoot!.querySelector('iframe')).toBe(frame);
     expect(port.close).not.toHaveBeenCalled();
     expect(request).toHaveBeenCalledTimes(1);
@@ -579,7 +734,12 @@ describe('native widget viewer lifecycle', () => {
     send({ type: 'openclaw:widget-runtime-error', message: 'bad script' });
     await settle(view);
     expect(view.shadowRoot!.querySelector('[role="alert"]')).not.toBeNull();
+    expect(view.shadowRoot!.querySelector('iframe')).toBe(frame);
     expect(port.close).toHaveBeenCalledOnce();
+    expect(view.shadowRoot!.querySelector('.notice')).toBeNull();
+    const latePort = { close: vi.fn() };
+    send({ type: 'openclaw:widget-prompt-offer' }, [latePort]);
+    expect(latePort.close).toHaveBeenCalledOnce();
     expect(
       post.mock.calls.some(
         call => call[0]?.type === 'openclaw:scenario-draft-policy' && call[0].available === false,

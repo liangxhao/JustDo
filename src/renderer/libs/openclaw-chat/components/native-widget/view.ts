@@ -12,9 +12,11 @@ import {
   type NativeWidgetContext,
   NativeWidgetSandboxHost,
   resolveNativeSandboxUrl,
+  WIDGET_SLOW_NOTICE_MS,
 } from './host';
 import { postNativeWidgetMessage } from './messaging';
 import { WidgetFailure, type WidgetFailureKind, widgetRebuildDraft } from './rebuild';
+import { forwardWidgetScroll } from './scroll';
 
 type Binding = { context: NativeWidgetContext; docId: string; version: number };
 const pendingViews = new WeakMap<object, Map<string, Promise<unknown>>>();
@@ -53,6 +55,7 @@ export class NativeWidgetView extends LitElement {
     ready: { state: true },
     height: { state: true },
     suggestion: { state: true },
+    slow: { state: true },
   };
   static styles = css`
     :host {
@@ -62,16 +65,16 @@ export class NativeWidgetView extends LitElement {
       max-width: 840px;
       min-width: 0;
       margin: 12px auto;
-      border: 1px solid var(--justdo-border, #ddd);
-      border-radius: 10px;
+      border: 1px solid var(--justdo-border-subtle, var(--justdo-border, #ddd));
+      border-radius: 14px;
       overflow: hidden;
       color: var(--justdo-text-primary, inherit);
     }
     header {
-      padding: 10px 14px;
-      font-size: 13px;
+      padding: 18px 22px 0;
+      font-size: 14px;
+      font-weight: 600;
       overflow-wrap: anywhere;
-      border-bottom: 1px solid var(--justdo-border, #ddd);
     }
     iframe {
       display: block;
@@ -79,15 +82,53 @@ export class NativeWidgetView extends LitElement {
       border: 0;
       min-height: 48px;
     }
+    .frame {
+      position: relative;
+    }
+    .frame.loading {
+      height: 120px;
+      overflow: hidden;
+    }
+    .frame.loading .status {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      background: var(--justdo-surface, #fff);
+    }
     .status {
       padding: 20px 14px;
       font-size: 13px;
     }
-    .notice {
-      padding: 9px 14px;
-      font-size: 11px;
+    .suggestion {
+      padding: 14px 18px;
+      border-top: 1px solid var(--justdo-border, #ddd);
+      background: var(--justdo-surface, transparent);
+    }
+    .suggestion p {
+      margin: 0 0 12px;
+      max-height: 180px;
+      overflow: auto;
+      white-space: pre-wrap;
       overflow-wrap: anywhere;
-      color: var(--justdo-text-secondary, #777);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .suggestion-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .suggestion-actions button {
+      margin: 0;
+    }
+    .primary {
+      background: var(--justdo-primary, #287d68);
+      color: var(--justdo-primary-foreground, white);
+      border-color: transparent;
+    }
+    button:focus-visible {
+      outline: 2px solid var(--justdo-primary, #287d68);
+      outline-offset: 3px;
     }
     button {
       font: inherit;
@@ -107,6 +148,7 @@ export class NativeWidgetView extends LitElement {
   declare private ready: boolean;
   declare private height: number;
   declare private suggestion: string;
+  declare private slow: boolean;
   private binding?: Binding;
   private host?: NativeWidgetSandboxHost;
   private themeObserver?: MutationObserver;
@@ -115,6 +157,8 @@ export class NativeWidgetView extends LitElement {
   private version = 0;
   private promptPort?: MessagePort;
   private failureKind: WidgetFailureKind = WidgetFailure.LOAD;
+  private slowTimer?: ReturnType<typeof setTimeout>;
+  private scrollNonce = '';
 
   constructor() {
     super();
@@ -123,6 +167,7 @@ export class NativeWidgetView extends LitElement {
     this.height = 420;
     this.failureKind = WidgetFailure.LOAD;
     this.suggestion = '';
+    this.slow = false;
   }
 
   connectedCallback(): void {
@@ -186,6 +231,10 @@ export class NativeWidgetView extends LitElement {
   }
 
   private clear(): void {
+    clearTimeout(this.slowTimer);
+    this.slowTimer = undefined;
+    this.slow = false;
+    this.scrollNonce = '';
     this.postDraftPolicy(false);
     this.promptPort?.close();
     this.promptPort = undefined;
@@ -222,6 +271,11 @@ export class NativeWidgetView extends LitElement {
     this.failure = false;
     const binding: Binding = { context, docId: this.preview.docId, version: this.version };
     this.binding = binding;
+    this.scrollNonce = crypto.randomUUID();
+    // Includes the authenticated read as well as sandbox/resource initialization.
+    this.slowTimer = setTimeout(() => {
+      if (this.current(binding) && !this.ready && !this.failure) this.slow = true;
+    }, WIDGET_SLOW_NOTICE_MS);
     void loadView(binding, () => this.current(binding))
       .then(value => {
         if (!this.current(binding)) return;
@@ -253,12 +307,15 @@ export class NativeWidgetView extends LitElement {
       this.view.url,
       this.view.html,
       () => {
-        if (!this.current(binding)) return;
+        if (!this.current(binding) || this.failure) return;
+        clearTimeout(this.slowTimer);
+        this.slowTimer = undefined;
+        this.slow = false;
         this.ready = true;
         this.postHostState();
       },
       () => {
-        if (this.current(binding)) this.fail();
+        if (this.current(binding) && !this.failure) this.fail();
       },
     );
     const ownerWindow = this.ownerDocument.defaultView!;
@@ -271,18 +328,23 @@ export class NativeWidgetView extends LitElement {
   }
 
   private fail(kind: WidgetFailureKind = WidgetFailure.LOAD): void {
+    clearTimeout(this.slowTimer);
+    this.slowTimer = undefined;
+    this.slow = false;
     this.postDraftPolicy(false);
     this.promptPort?.close();
     this.promptPort = undefined;
     this.suggestion = '';
-    this.host?.dispose();
-    this.host = undefined;
-    this.themeObserver?.disconnect();
-    this.themeObserver = undefined;
-    this.view = undefined;
+    if (kind === WidgetFailure.LOAD) {
+      this.host?.dispose();
+      this.host = undefined;
+      this.themeObserver?.disconnect();
+      this.themeObserver = undefined;
+      this.view = undefined;
+    }
     this.failure = true;
     this.failureKind = kind;
-    this.ready = false;
+    this.ready = kind === WidgetFailure.RUNTIME && Boolean(this.view);
   }
 
   private postHostState(): void {
@@ -305,12 +367,26 @@ export class NativeWidgetView extends LitElement {
       ok: 'success',
       warn: 'warning',
       danger: 'destructive',
+      info: 'primary',
+      radius: 'radius',
+      'scrollbar-thumb': 'scroll-thumb',
+      'scrollbar-thumb-hover': 'scroll-thumb-hover',
     };
     const tokens = Object.fromEntries(
       Object.entries(map)
         .map(([token, source]) => [token, styles.getPropertyValue(`--justdo-${source}`).trim()])
         .filter(([, value]) => value),
     );
+    Object.assign(tokens, {
+      'font-body':
+        this.ownerDocument.defaultView!.getComputedStyle(this).fontFamily ||
+        styles.fontFamily ||
+        'system-ui, sans-serif',
+      'font-mono': "'SF Mono', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
+      'radius-full': '9999px',
+      'scrollbar-size': '6px',
+      'scrollbar-thumb-inset': '1px',
+    });
     const target = new URL(this.host.url).origin;
     postNativeWidgetMessage(
       this.host.frame,
@@ -322,6 +398,11 @@ export class NativeWidgetView extends LitElement {
       target,
     );
     postNativeWidgetMessage(this.host.frame, { type: 'openclaw:widget-chat-host' }, target);
+    postNativeWidgetMessage(
+      this.host.frame,
+      { type: 'openclaw:widget-board-host', nonce: this.scrollNonce },
+      target,
+    );
     this.postDraftPolicy(
       Boolean(this.promptPort && this.ownerDocument.visibilityState !== 'hidden'),
     );
@@ -339,7 +420,10 @@ export class NativeWidgetView extends LitElement {
       {
         type: 'openclaw:scenario-draft-policy',
         available:
-          available && this.ownerDocument.visibilityState !== 'hidden' && this.draftAllowed(),
+          available &&
+          !this.failure &&
+          this.ownerDocument.visibilityState !== 'hidden' &&
+          this.draftAllowed(),
       },
       new URL(this.host.url).origin,
     );
@@ -356,7 +440,7 @@ export class NativeWidgetView extends LitElement {
       return;
     if (event.data?.type === 'openclaw:widget-prompt-offer') {
       const port = event.ports[0];
-      if (!port || this.promptPort || !host.loaded || event.ports.length !== 1) {
+      if (!port || this.failure || this.promptPort || !host.loaded || event.ports.length !== 1) {
         for (const offered of event.ports) offered.close();
         return;
       }
@@ -364,6 +448,7 @@ export class NativeWidgetView extends LitElement {
       this.promptPort = port;
       port.onmessage = message => {
         if (
+          this.failure ||
           !this.draftAllowed(binding) ||
           this.promptPort !== port ||
           message.data?.type !== 'openclaw:widget-prompt'
@@ -379,6 +464,7 @@ export class NativeWidgetView extends LitElement {
       port.start();
       port.postMessage({ type: 'openclaw:widget-prompt-host-ready' });
       if (this.ready) this.postDraftPolicy(true);
+      this.requestUpdate();
       return;
     }
     // Inline widgets never receive dashboard, tools, resources or execution grants.
@@ -387,7 +473,20 @@ export class NativeWidgetView extends LitElement {
       return;
     }
     host.handleMessage(event);
+    if (
+      event.data?.type === 'openclaw:widget-scroll' &&
+      host.loaded &&
+      this.scrollNonce &&
+      event.data.nonce === this.scrollNonce &&
+      typeof event.data.deltaY === 'number' &&
+      Number.isFinite(event.data.deltaY) &&
+      event.data.deltaY !== 0
+    ) {
+      forwardWidgetScroll(this, event.data.deltaY);
+      return;
+    }
     if (event.data?.type === 'openclaw:widget-runtime-error') {
+      if (this.failure) return;
       this.fail(WidgetFailure.RUNTIME);
       return;
     }
@@ -410,32 +509,34 @@ export class NativeWidgetView extends LitElement {
     if (!this.suggestion || !this.draftAllowed()) return nothing;
     const binding = this.binding;
     const text = this.suggestion;
-    return html`<section class="status" aria-label=${i18nService.t('coworkWidgetSuggestion')}>
-      <strong>${i18nService.t('coworkWidgetSuggestion')}</strong>
-      <p style="white-space:pre-wrap">${this.suggestion}</p>
-      <button
-        @click=${(event: MouseEvent) => {
-          if (!event.isTrusted || !this.draftAllowed(binding) || this.suggestion !== text) return;
-          this.dispatchEvent(
-            new CustomEvent(NATIVE_WIDGET_DRAFT_EVENT, {
-              bubbles: true,
-              composed: true,
-              detail: { sessionKey: binding!.context.sessionKey, text },
-            }),
-          );
-          this.suggestion = '';
-        }}
-      >
-        ${i18nService.t('coworkWidgetAddDraft')}
-      </button>
-      <button
-        @click=${() => {
-          if (!this.current(binding) || this.suggestion !== text) return;
-          this.suggestion = '';
-        }}
-      >
-        ${i18nService.t('coworkWidgetDismiss')}
-      </button>
+    return html`<section class="suggestion" aria-label=${i18nService.t('coworkWidgetSuggestion')}>
+      <p>${this.suggestion}</p>
+      <div class="suggestion-actions">
+        <button
+          class="primary"
+          @click=${(event: MouseEvent) => {
+            if (!event.isTrusted || !this.draftAllowed(binding) || this.suggestion !== text) return;
+            this.dispatchEvent(
+              new CustomEvent(NATIVE_WIDGET_DRAFT_EVENT, {
+                bubbles: true,
+                composed: true,
+                detail: { sessionKey: binding!.context.sessionKey, text },
+              }),
+            );
+            this.suggestion = '';
+          }}
+        >
+          ${i18nService.t('coworkWidgetAddDraft')}
+        </button>
+        <button
+          @click=${() => {
+            if (!this.current(binding) || this.suggestion !== text) return;
+            this.suggestion = '';
+          }}
+        >
+          ${i18nService.t('coworkWidgetDismiss')}
+        </button>
+      </div>
     </section>`;
   }
 
@@ -452,7 +553,9 @@ export class NativeWidgetView extends LitElement {
       ${
         this.failure
           ? html`<div class="status" role="alert">
-              ${i18nService.t('coworkWidgetFailed')}<button @click=${retry}>
+              ${i18nService.t(this.failureKind === WidgetFailure.RUNTIME ? 'coworkWidgetRuntimeFailed' : 'coworkWidgetFailed')}<button
+                @click=${retry}
+              >
                 ${i18nService.t('coworkWidgetRetry')}
               </button>
               ${
@@ -465,23 +568,30 @@ export class NativeWidgetView extends LitElement {
                   : nothing
               }
             </div>`
-          : this.view
-            ? keyed(
-                this.version,
-                html`${!this.ready ? html`<div class="status" role="status">${i18nService.t('coworkWidgetLoading')}</div>` : nothing}<iframe
-                    title=${title}
-                    sandbox="allow-scripts allow-same-origin"
-                    referrerpolicy="origin"
-                    style=${`height:${this.height}px`}
-                    @error=${() => {
-                      if (this.current(binding)) this.fail();
-                    }}
-                  ></iframe>
-                  <div class="notice">${i18nService.t('coworkWidgetActionsUnavailable')}</div> `,
-              )
-            : html`<div class="status" role="status">
-                ${i18nService.t(this.context?.isCurrent() ? 'coworkWidgetLoading' : 'coworkWidgetDisconnected')}
+          : nothing
+      }
+      ${
+        this.view
+          ? keyed(
+              this.version,
+              html`<div class=${this.ready ? 'frame' : 'frame loading'}>
+                ${!this.ready ? html`<div class="status" role="status">${i18nService.t(this.slow ? 'coworkWidgetLoadingSlow' : 'coworkWidgetLoading')}</div>` : nothing}<iframe
+                  .inert=${!this.ready}
+                  title=${title}
+                  sandbox="allow-scripts allow-same-origin allow-forms"
+                  referrerpolicy="origin"
+                  style=${`height:${this.height}px`}
+                  @error=${() => {
+                    if (this.current(binding)) this.fail();
+                  }}
+                ></iframe>
+              </div>`,
+            )
+          : !this.failure
+            ? html`<div class="status" role="status">
+                ${i18nService.t(this.context?.isCurrent() ? (this.slow ? 'coworkWidgetLoadingSlow' : 'coworkWidgetLoading') : 'coworkWidgetDisconnected')}
               </div>`
+            : nothing
       }${this.renderSuggestion()}`;
   }
 }

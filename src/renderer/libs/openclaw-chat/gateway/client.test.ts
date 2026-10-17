@@ -32,20 +32,20 @@ it('accepts manual compaction success beyond the resettable backend watchdog win
   client.stop();
 });
 
-it.each([['chat.history', 90_000]] as const)(
-  'bounds the %s request wait',
-  async (method, timeoutMs) => {
-    vi.useFakeTimers();
-    vi.stubGlobal('WebSocket', { OPEN: 1 });
-    const client = new GatewayClient({ url: 'ws://gateway.test' });
-    (client as unknown as { ws: unknown }).ws = { readyState: 1, send: vi.fn(), close: vi.fn() };
-    const pending = client.request(method);
-    const rejected = expect(pending).rejects.toThrow(`request timeout: ${method}`);
-    await vi.advanceTimersByTimeAsync(timeoutMs);
-    await rejected;
-    client.stop();
-  },
-);
+it.each([
+  ['chat.history', 90_000],
+  ['canvas.document.view', 30_000],
+] as const)('bounds the %s request wait', async (method, timeoutMs) => {
+  vi.useFakeTimers();
+  vi.stubGlobal('WebSocket', { OPEN: 1 });
+  const client = new GatewayClient({ url: 'ws://gateway.test' });
+  (client as unknown as { ws: unknown }).ws = { readyState: 1, send: vi.fn(), close: vi.fn() };
+  const pending = client.request(method);
+  const rejected = expect(pending).rejects.toThrow(`request timeout: ${method}`);
+  await vi.advanceTimersByTimeAsync(timeoutMs);
+  await rejected;
+  client.stop();
+});
 
 it('rejects a pending manual compaction when its gateway connection closes', async () => {
   vi.useFakeTimers();

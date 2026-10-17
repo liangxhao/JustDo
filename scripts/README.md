@@ -87,6 +87,21 @@ documents. Run this separately from scenario variants and `--tool-dispatch`.
 `test/interactive-ui/verify-runtime.mjs <runtime-dir>` also checks both kinds
 against the locked native registrar, including duplicate-path rejection.
 
+Add `--interaction-contract` to `verify-gateway.mjs --ui` to verify rejected hidden-send
+fields, same-name inline document creation, and the actual native private prompt port
+in a hidden, isolated Electron browser. Chromium input exercises real activation;
+programmatic prompt calls must fail. The probe then explicitly submits the returned
+synthetic text to the same session and verifies model input/history. Bridge resolution
+is not a model receipt. No personal state or runtime patches are changed.
+
+Add `--presentation` to `--ui --interaction-contract` for the actual Lit widget viewer
+and native iframe chain. It checks fixed components, the scenario calculator and
+HTML in light/dark themes at 840/312px card widths, live native viewport resizing,
+and a trusted click that produces one readable inline suggestion. Synthetic screenshots
+and a verification summary remain under `.agent-tasks/interactive-ui/presentation/`.
+The test window stays nearly transparent and does not take focus. These checks do
+not replace real-model quality or installed-app/workspace acceptance.
+
 Add `--tool-dispatch` to the verifier for native Tool Search directory mode:
 the synthetic model invokes the exact core `show_widget` through `tool_call`,
 with generic HTML and the scenario plugin disabled. This checks the actual

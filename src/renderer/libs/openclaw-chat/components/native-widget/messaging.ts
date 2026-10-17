@@ -20,6 +20,7 @@ function postInCurrentDocument(
     ![
       'openclaw:widget-theme',
       'openclaw:widget-chat-host',
+      'openclaw:widget-board-host',
       'openclaw:scenario-draft-policy',
     ].includes(data.type)
   ) {

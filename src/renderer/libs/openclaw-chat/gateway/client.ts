@@ -169,7 +169,7 @@ export class GatewayClient {
                 );
               },
               method === 'canvas.document.view'
-                ? 10_000
+                ? 30_000
                 : method === 'tts.speak'
                   ? TTS_REQUEST_TIMEOUT_MS
                   : REQUEST_TIMEOUT_MS,

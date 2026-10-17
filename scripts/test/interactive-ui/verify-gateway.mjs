@@ -22,6 +22,16 @@ const verifyRetention = args.includes('--retention');
 const verifyAcceptedLimits = args.includes('--extreme');
 const verifyToolDispatch = args.includes('--tool-dispatch');
 const verifyUi = args.includes('--ui');
+const verifyInteraction = args.includes('--interaction-contract');
+const verifyPresentation = args.includes('--presentation');
+assert.ok(
+  !verifyPresentation || (verifyUi && verifyInteraction),
+  'Use --presentation with --ui --interaction-contract',
+);
+assert.ok(
+  !verifyInteraction || (verifyUi && !serve),
+  'Use --interaction-contract with --ui and without --serve',
+);
 assert.ok(
   !verifyToolDispatch || (!verifyRetention && !verifyAcceptedLimits),
   'Use --tool-dispatch separately from scenario-only variants',
@@ -52,7 +62,7 @@ const token = randomBytes(24).toString('hex');
 const scenario = {
   version: 1,
   language: 'en',
-  summary: 'Synthetic delivery comparison',
+  summary: 'Team investment',
   tasks: [{ label: 'Synthetic implementation', hours: 448 }],
   dailyRate: 700,
   budget: 80000,
@@ -77,8 +87,8 @@ const scenario = {
 const ui = {
   version: 1,
   language: 'en',
-  summary: 'Synthetic controlled delivery comparison',
-  note: 'Synthetic fixture data; no external submission or persisted input state.',
+  summary: 'Delivery options',
+  note: 'Example data · Workdays / CNY',
   blocks: [
     {
       type: 'table',
@@ -116,8 +126,8 @@ const ui = {
       labels: ['Day 1', 'Day 2', 'Day 3'],
       unit: 'hours',
       series: [
-        { id: 'balanced', label: 'Balanced', values: [25.8, 51.6, 77.4] },
-        { id: 'lean', label: 'Lean', values: [11.5, 23, 34.5] },
+        { id: 'balanced', label: 'Balanced', values: [-4, 0, 7] },
+        { id: 'lean', label: 'Lean', values: [-2, 1, 4] },
       ],
     },
     {
@@ -190,7 +200,9 @@ const provider = http.createServer(async (request, response) => {
     const turnStart = messages.findLastIndex(
       message =>
         message.role === 'user' &&
-        /fixture-(headless|inline|disabled|live|retention):/.test(JSON.stringify(message.content)),
+        /fixture-(headless|inline|disabled|live|retention|interaction):/.test(
+          JSON.stringify(message.content),
+        ),
     );
     const turnMessages = messages.slice(turnStart + 1);
     const headless =
@@ -217,9 +229,13 @@ const provider = http.createServer(async (request, response) => {
       registeredUiKind,
       widgetAvailable: Boolean(widget),
       dispatcherAvailable: Boolean(dispatcher),
+      interactionSeen:
+        turnStart >= 0 &&
+        JSON.stringify(messages[turnStart].content).includes('fixture-interaction: budget=5000'),
     });
     assert.ok(
-      modelRequests.length <= (serve ? 40 : 8) + (verifyRetention ? 66 : 0),
+      modelRequests.length <=
+        (serve ? 40 : verifyInteraction ? 12 : 8) + (verifyRetention ? 66 : 0),
       'No uncontrolled model loop',
     );
     const invoke =
@@ -423,12 +439,14 @@ async function connect(port, caps) {
   throw new Error('Isolated Gateway never admitted fixture connection');
 }
 
-async function runTurn(client, key, message) {
-  const session = await client.rpc('sessions.create', {
-    key,
-    cwd: workspace,
-    permissionMode: 'workspace',
-  });
+async function runTurn(client, key, message, existingSession) {
+  const session =
+    existingSession ??
+    (await client.rpc('sessions.create', {
+      key,
+      cwd: workspace,
+      permissionMode: 'workspace',
+    }));
   const receipt = await client.rpc('chat.send', {
     sessionKey: key,
     idempotencyKey: randomBytes(8).toString('hex'),
@@ -716,6 +734,163 @@ try {
     /unavailable/i,
   );
   const htmlHash = hash(view.html);
+  let interactionContract;
+  if (verifyInteraction) {
+    const beforeInvalidSends = modelRequests.length;
+    for (const extra of [{ display_kind: 'hidden' }, { displayKind: 'hidden' }, { silent: true }]) {
+      await assert.rejects(
+        inline.rpc('chat.send', {
+          sessionKey: inlineKey,
+          message: 'Must not execute an unsupported hidden send',
+          idempotencyKey: randomBytes(8).toString('hex'),
+          ...extra,
+        }),
+        /invalid.*params/i,
+      );
+    }
+    assert.equal(
+      modelRequests.length,
+      beforeInvalidSends,
+      'Rejected fields cannot launch a model turn',
+    );
+    const create = async html => {
+      const result = await inline.rpc('tools.invoke', {
+        name: 'show_widget',
+        sessionKey: inlineKey,
+        args: {
+          title: 'Interaction contract',
+          kind: 'html',
+          name: 'interaction-contract',
+          widget_code: html,
+        },
+      });
+      assert.equal(result.ok, true);
+      const descriptor = findCanvas(result);
+      assert.ok(descriptor);
+      return descriptor;
+    };
+    const first = await create('<p>Original inline document</p>');
+    const original = await inline.rpc('canvas.document.view', { docId: first.view.id });
+    const second = await create('<p>Replacement requested using the same name</p>');
+    assert.notEqual(
+      first.view.id,
+      second.view.id,
+      'Stable names do not update inline document identity',
+    );
+    assert.equal(
+      hash((await inline.rpc('canvas.document.view', { docId: first.view.id })).html),
+      hash(original.html),
+    );
+    const promptDoc = await create(
+      '<style>body{margin:0;color:var(--text);font-family:var(--font-body)}main{padding:20px 22px}label{display:grid;gap:8px;font-size:13px}input{box-sizing:border-box;width:100%;padding:10px;color:inherit;background:var(--card);border:1px solid var(--border);border-radius:8px;font:inherit}button{margin-top:16px;padding:9px 16px;border:0;border-radius:8px;background:var(--accent-fill);color:var(--accent-fg);font:inherit}</style><main><form id="form"><label>Budget (CNY)<input id="budget" value="1000"></label><button id="send" type="submit">Continue analysis</button><output id="ack"></output></form></main><script>document.getElementById("form").onsubmit=async(event)=>{event.preventDefault();const result=await openclaw.prompt.send("fixture-interaction: budget="+document.getElementById("budget").value);document.getElementById("ack").textContent=String(result)};</script>',
+    );
+    const promptView = await inline.rpc('canvas.document.view', { docId: promptDoc.view.id });
+    const inputPath = path.join(fixture, 'prompt-view.json');
+    await writeFile(inputPath, JSON.stringify({ ...promptView, viewerOrigin }));
+    const runBrowserProbe = async (scriptName, inputPath) => {
+      const electron = require('electron');
+      const browserEnv = { ...process.env };
+      delete browserEnv.ELECTRON_RUN_AS_NODE;
+      const browser = spawn(
+        electron,
+        [path.join(root, 'scripts/test/interactive-ui', scriptName), inputPath],
+        {
+          cwd: root,
+          env: browserEnv,
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      );
+      let output = '';
+      let errors = '';
+      browser.stdout.on('data', chunk => {
+        output += chunk;
+      });
+      browser.stderr.on('data', chunk => {
+        errors += chunk;
+      });
+      const code = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          browser.kill();
+          reject(new Error('Isolated browser probe timed out'));
+        }, 90_000);
+        browser.once('error', error => {
+          clearTimeout(timer);
+          reject(error);
+        });
+        browser.once('exit', code => {
+          clearTimeout(timer);
+          resolve(code);
+        });
+      });
+      assert.equal(code, 0, `Isolated browser probe failed: ${errors.slice(-2000)}`);
+      return output;
+    };
+    const output = await runBrowserProbe('verify-prompt-bridge.cjs', inputPath);
+    const receipt = JSON.parse(
+      output.split('\n').find(line => line.startsWith('{"nativePromptBridge"')),
+    );
+    assert.equal(receipt.prompt, 'fixture-interaction: budget=5000');
+    if (verifyPresentation) {
+      const documents = [];
+      for (const [name, kind, data] of [
+        ['ui', 'interactive-answer', ui],
+        ['scenario', 'scenario-explorer', scenario],
+      ]) {
+        const result = await inline.rpc('tools.invoke', {
+          name: 'show_widget',
+          sessionKey: inlineKey,
+          args: { title: data.summary, kind, widget_code: JSON.stringify(data) },
+        });
+        assert.equal(result.ok, true);
+        const descriptor = findCanvas(result);
+        assert.ok(descriptor);
+        const view = await inline.rpc('canvas.document.view', { docId: descriptor.view.id });
+        documents.push({ name, descriptor, view });
+      }
+      documents.push({ name: 'html', descriptor: promptDoc, view: promptView });
+      const outputDirectory = path.join(root, '.agent-tasks/interactive-ui/presentation');
+      const presentationPath = path.join(fixture, 'presentation.json');
+      await writeFile(
+        presentationPath,
+        JSON.stringify({
+          viewerOrigin,
+          gatewayUrl: `ws://127.0.0.1:${port}`,
+          outputDirectory,
+          documents,
+        }),
+      );
+      const output = await runBrowserProbe('verify-presentation.cjs', presentationPath);
+      const evidence = JSON.parse(
+        output.split('\n').find(line => line.startsWith('{"presentation"')),
+      );
+      assert.equal(evidence.screenshots, 29);
+      assert.equal(evidence.htmlFormSubmission, true);
+      await writeFile(
+        path.join(outputDirectory, 'verification.json'),
+        JSON.stringify(evidence, null, 2),
+      );
+    }
+
+    // Model submission is a separate, explicit host step, not implied by prompt.send(true).
+    await runTurn(inline, inlineKey, receipt.prompt, inlineTurn.session);
+    assert.ok(modelRequests.some(request => request.interactionSeen));
+    const followupHistory = await inline.rpc('chat.history', { sessionKey: inlineKey, limit: 30 });
+    assert.ok(JSON.stringify(followupHistory).includes(receipt.prompt));
+    assert.equal(hash((await inline.rpc('canvas.document.view', { docId })).html), htmlHash);
+    interactionContract = {
+      hiddenSendFieldsRejected: true,
+      sameNameCreatesNewInlineDocument: true,
+      oldDocumentPreserved: true,
+      nativePromptBridge: receipt.nativePromptBridge,
+      programmaticPromptBlocked: receipt.programmaticPromptBlocked,
+      bridgeResolutionIsNotModelReceipt: true,
+      explicitFollowupReachedModelAndHistory: true,
+      ...(verifyPresentation
+        ? { presentationScreenshots: 29, readableHostSuggestion: true, htmlFormSubmission: true }
+        : {}),
+    };
+  }
   const callsBeforeRestart = modelRequests.length;
   await stopGateway();
   await startGateway(port, env);
@@ -878,6 +1053,7 @@ try {
         : {}),
       ...(retention ? { retention } : {}),
       localModelRequests: modelRequests.length,
+      ...(interactionContract ? { interactionContract } : {}),
     }),
   );
   if (serve) {
