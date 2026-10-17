@@ -13,6 +13,76 @@ const config = (enabled: boolean, tools: Record<string, unknown> = {}) => ({
 });
 
 describe('computer control switch', () => {
+  test('a failed older policy read does not evict the newer revision', async () => {
+    const request = vi.fn().mockResolvedValue({ valid: true, hash: 'a', config: config(true) });
+    let rejectOlder!: (error: Error) => void;
+    const admitted = vi.fn()
+      .mockImplementationOnce(() => new Promise<boolean>((_resolve, reject) => {
+        rejectOlder = reject;
+      }))
+      .mockResolvedValue(true);
+    const service = new ComputerControlSettingsService(request, () => true, admitted);
+    const olderRead = service.get();
+    await vi.waitFor(() => expect(admitted).toHaveBeenCalledTimes(1));
+
+    request.mockResolvedValue({ valid: true, hash: 'b', config: config(true) });
+    expect(await service.get()).toEqual({ success: true, enabled: true });
+    rejectOlder(new Error('unavailable'));
+    expect(await olderRead).toEqual({ success: false, code: 'unavailable' });
+
+    expect(await service.get()).toEqual({ success: true, enabled: true });
+    expect(admitted).toHaveBeenCalledTimes(2);
+  });
+
+  test('invalidates the policy result while the runtime extension is unavailable', async () => {
+    const request = vi.fn().mockResolvedValue({ valid: true, hash: 'a', config: config(true) });
+    let available = true;
+    const admitted = vi.fn().mockResolvedValue(true);
+    const service = new ComputerControlSettingsService(request, () => available, admitted);
+    expect(await service.get()).toEqual({ success: true, enabled: true });
+
+    available = false;
+    expect(await service.get()).toEqual({ success: false, code: 'unavailable' });
+    available = true;
+    admitted.mockResolvedValue(false);
+
+    expect(await service.get()).toEqual({ success: true, enabled: false });
+    expect(admitted).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  test('reuses native policy evaluation only for the same config revision and runtime', async () => {
+    const request = vi.fn().mockResolvedValue({ valid: true, hash: 'a', config: config(true) });
+    let runtime = 'runtime-a';
+    const admitted = vi.fn().mockResolvedValue(true);
+    const service = new ComputerControlSettingsService(request, () => true, admitted, () => runtime);
+    expect(await Promise.all([service.get(), service.get()])).toEqual([
+      { success: true, enabled: true },
+      { success: true, enabled: true },
+    ]);
+    await service.get();
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(admitted).toHaveBeenCalledTimes(1);
+    request.mockResolvedValue({ valid: true, hash: 'b', config: config(true) });
+    admitted.mockResolvedValue(false);
+    expect(await service.get()).toEqual({ success: true, enabled: false });
+    runtime = 'runtime-b';
+    await service.get();
+    expect(admitted).toHaveBeenCalledTimes(3);
+  });
+
+  test('retries failed policy reads and invalidates the cached choice before a write', async () => {
+    const request = vi.fn().mockResolvedValue({ valid: true, hash: 'a', config: config(true) });
+    const admitted = vi.fn().mockRejectedValueOnce(new Error('unavailable')).mockResolvedValue(true);
+    const service = new ComputerControlSettingsService(request, () => true, admitted);
+    expect(await service.get()).toEqual({ success: false, code: 'unavailable' });
+    expect(await service.get()).toEqual({ success: true, enabled: true });
+    expect(admitted).toHaveBeenCalledTimes(2);
+    await service.setEnabled(false);
+    await service.get();
+    expect(admitted).toHaveBeenCalledTimes(3);
+  });
+
   test('reads the combined choice without exposing native configuration', async () => {
     const request = vi.fn().mockResolvedValue({
       valid: true,
@@ -22,7 +92,7 @@ describe('computer control switch', () => {
     const isToolAdmitted = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true);
     const service = new ComputerControlSettingsService(request, () => true, isToolAdmitted);
     expect(await service.get()).toEqual({ success: true, enabled: false });
-    request.mockResolvedValue({ valid: true, hash: 'revision', config: config(true) });
+    request.mockResolvedValue({ valid: true, hash: 'revision-2', config: config(true) });
     expect(await service.get()).toEqual({ success: true, enabled: true });
     const blocked = config(true);
     request.mockResolvedValue({

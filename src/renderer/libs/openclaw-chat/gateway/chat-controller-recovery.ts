@@ -12,6 +12,7 @@ import { readModelRef } from '@shared/providers/modelRef';
 import { isTruncatedHistoryMessage } from '@/libs/openclaw-chat/gateway/chat-history-protocol';
 import type { GatewayEventFrame } from '@/libs/openclaw-chat/gateway/client';
 import {
+  canAdvanceAssistantSnapshot,
   readPreambleText,
   readToolProgressText,
   reduceAgentEvent,
@@ -940,6 +941,7 @@ export function handleTimelineEvent(
         if (
           normalizedPayload.state === 'delta' &&
           !isChatTextRetraction(normalizedPayload) &&
+          !(transcript && canAdvanceAssistantSnapshot(transcript, normalizedPayload)) &&
           this.sideChatAssistantSnapshotRunIds.has(normalizedPayload.runId)
         ) {
           return;
@@ -1026,6 +1028,7 @@ export function handleTimelineEvent(
       if (
         payload.state === 'delta' &&
         !isChatTextRetraction(payload) &&
+        !canAdvanceAssistantSnapshot(this.state.transcript, payload) &&
         this.assistantSnapshotRunId &&
         (!payload.runId || payload.runId === this.assistantSnapshotRunId)
       ) {

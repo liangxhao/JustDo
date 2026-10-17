@@ -38,6 +38,12 @@ Gateway 权限、审批及 hooks；QuickJS 隔离本身不授予额外工具权�
 
 Adapter 入口保留生命周期及状态，runtimeGatewayConnection、runtimeGatewayEvents、runtimeHistory、runtimePlanInteractions、runtimeGoalOperations、runtimeSessionStatus 处理各领域操作。它们通过显式实时上下文访问入口状态，不复制控制器状态，更不保存 transcript。
 
+电脑控制设置每次读取仍获取原生 `config.get`。同一配置 hash 和 runtime 路径的全局
+工具权限判断复用一个进程内结果（并发读取共享 Promise），避免反复启动独立的原生
+策略检查进程；配置版本或路径变化、设置写入及运行包不可用时失效，失败结果不缓存。
+这里只缓存设置展示所需的全局策略判断，不缓存驱动可用性、会话授权或执行结果，
+也不改变原生聊天工具准备阶段的电脑能力发现。
+
 ## 2. 从源码到可启动运行时
 
 平台构建从锁定 pristine npm 产物开始：安装及校验来源 → 当前精确补丁 → 同步 current → bundle → 官方插件 → 产品资源 → Extension 预编译 → prune。运行时与应用自身 node_modules 是两套依赖集合。

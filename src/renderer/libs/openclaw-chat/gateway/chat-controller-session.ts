@@ -544,6 +544,9 @@ export async function syncMessageSessionSubscription(
   const previousSessionKey = this.subscribedMessageSessionKey;
   if (previousSessionKey === sessionKey) return true;
   const subscriptionSeq = ++this.messageSubscriptionSeq;
+  // The previous subscription stops being a readiness guarantee as soon as
+  // its removal is issued, including when selection returns before the ACK.
+  this.subscribedMessageSessionKey = null;
 
   if (previousSessionKey) {
     await client
@@ -567,9 +570,11 @@ export async function syncMessageSessionSubscription(
       this.subscribedMessageSessionKey = sessionKey;
       return true;
     } else {
-      // OpenClaw subscriptions are many-to-many. A stale subscribe can
-      // succeed after a newer session transition, so undo it explicitly.
-      await client.request('sessions.messages.unsubscribe', { key: sessionKey }).catch(() => {});
+      // A newer transition may have requested this same key again. Unsubscribe
+      // is key-scoped, so cleaning up that older ACK would remove the new edge.
+      if (this.state.client !== client || !this.state.connected || this.state.sessionKey !== sessionKey) {
+        await client.request('sessions.messages.unsubscribe', { key: sessionKey }).catch(() => {});
+      }
       return false;
     }
   } catch {
@@ -755,6 +760,9 @@ export async function initializeConnectedSession(
   }
   if (!this.isConnectionInitializationCurrent(params)) return;
 
+  // A local optimistic activity is not a native run identity. Only an actual
+  // turn/send owner needs recovery; otherwise first-send preparation would
+  // wait for the very history load it is allowed to run alongside.
   // Main can start a run while the renderer transport is offline. A close
   // observed while idle has no suspended ID, so capture the current owner at
   // initialization as well instead of trusting the old transport label.
@@ -762,7 +770,7 @@ export async function initializeConnectedSession(
     this.state.transcript.activeTurn?.status === 'running'
       ? this.state.transcript.activeTurn.runId
       : this.state.chatSending
-        ? (this.state.chatRunId ?? this.state.runActivity?.runId ?? null)
+        ? this.state.chatRunId
         : null;
   if (pendingRunId || (params.resumedTransport && this.suspendedRunId)) {
     this.suspendedRunId = pendingRunId ?? this.suspendedRunId;
@@ -1037,7 +1045,7 @@ export function handleClose(this: ChatControllerSessionContext): void {
     this.state.transcript.activeTurn?.status === 'running'
       ? this.state.transcript.activeTurn.runId
       : this.state.chatSending
-        ? (this.state.chatRunId ?? this.state.runActivity?.runId ?? null)
+        ? this.state.chatRunId
         : null;
   this.state.connected = false;
   this.state.transportStatus = this.state.client && runInProgress ? 'reconnecting' : 'disconnected';

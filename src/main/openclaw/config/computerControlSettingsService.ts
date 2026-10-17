@@ -5,14 +5,34 @@ import { asComputerConfigRecord, buildComputerControlPatch } from './computerCon
 type Request = <T>(method: string, params?: unknown) => Promise<T>;
 
 export class ComputerControlSettingsService {
+  private admission: { revision: string; runtime: string | null; value: Promise<boolean> } | null = null;
+
   constructor(
     private readonly request: Request,
     private readonly isAvailable: () => boolean,
     private readonly isToolAdmitted: (tools: Record<string, unknown>) => Promise<boolean>,
+    private readonly runtimeIdentity: () => string | null = () => null,
   ) {}
 
+  private readAdmission(hash: string, tools: Record<string, unknown>): Promise<boolean> {
+    const runtime = this.runtimeIdentity();
+    if (this.admission?.revision === hash && this.admission.runtime === runtime) {
+      return this.admission.value;
+    }
+    const value = this.isToolAdmitted(tools);
+    const entry = { revision: hash, runtime, value };
+    this.admission = entry;
+    void value.catch(() => {
+      if (this.admission === entry) this.admission = null;
+    });
+    return value;
+  }
+
   private async snapshot() {
-    if (!this.isAvailable()) throw new Error('unavailable');
+    if (!this.isAvailable()) {
+      this.admission = null;
+      throw new Error('unavailable');
+    }
     const result = await this.request<{ config?: unknown; valid?: boolean; hash?: string }>(
       'config.get',
       {},
@@ -46,7 +66,7 @@ export class ComputerControlSettingsService {
 
   get = (): Promise<ComputerControlResult> =>
     this.result(async () => {
-      const { config } = await this.snapshot();
+      const { config, hash } = await this.snapshot();
       const plugins = asComputerConfigRecord(config.plugins);
       const entry = asComputerConfigRecord(
         asComputerConfigRecord(plugins.entries)[OpenClawExtensionId.CUA_COMPUTER],
@@ -57,12 +77,13 @@ export class ComputerControlSettingsService {
         entry.enabled === true &&
         !(Array.isArray(plugins.deny) && plugins.deny.includes(id)) &&
         (!Array.isArray(plugins.allow) || !plugins.allow.length || plugins.allow.includes(id)) &&
-        (await this.isToolAdmitted(asComputerConfigRecord(config.tools)))
+        (await this.readAdmission(hash, asComputerConfigRecord(config.tools)))
       );
     });
 
   setEnabled = (enabled: unknown): Promise<ComputerControlResult> => {
     if (typeof enabled !== 'boolean') return Promise.resolve({ success: false, code: 'invalid' });
+    this.admission = null;
     return this.result(async () => {
       const { config, hash } = await this.snapshot();
       if (enabled && asComputerConfigRecord(config.plugins).enabled === false)

@@ -112,6 +112,7 @@ export interface JustDoChatWrapperRef {
     expectedSessionKey: string,
   ) => SummaryResource | null;
   dispatchInitialTurn: (params: Record<string, unknown>) => Promise<unknown>;
+  isInitialDispatchReady: (sessionKey: string) => boolean;
   getQueuedInputDetail: (inputId: string, expectedSessionKey: string) => QueuedInputDetail | null;
   withdrawQueuedInput: (inputId: string, expectedSessionKey: string) => Promise<void>;
   hasUnconfirmedQueuedInput: () => boolean;
@@ -328,6 +329,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
             return null;
           return resolveSummaryArtifactResource(controller.getLoadedMessages(), target, title);
         },
+        isInitialDispatchReady: sessionKey =>
+          controllerRef.current?.isInitialDispatchReady(sessionKey) ?? false,
         dispatchInitialTurn: async params => {
           const controller = controllerRef.current;
           if (!controller)
@@ -335,12 +338,15 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
               requestSent: false,
             });
           const sessionKey = controller.state.sessionKey;
-          const receipt = await dispatchInitialTurn(controller.state, params);
+          const dispatchRunId = typeof params.idempotencyKey === 'string' ? params.idempotencyKey : '';
+          const receipt = await dispatchInitialTurn(controller.state, params, () =>
+            controller.beginInitialDispatch(sessionKey, dispatchRunId),
+          );
           if (isChatSendStopReceipt(receipt)) {
             // A native control ACK never starts this initial execution. Its
             // optimistic prompt otherwise waits forever for a stream terminal.
-            // The null run fence protects any newer execution in this session.
-            controller.clearSending(sessionKey, null);
+            // The exact dispatch owner protects any newer execution in this session.
+            controller.clearSending(sessionKey, dispatchRunId);
             if (controller.state.sessionKey === sessionKey) void controller.loadHistory(true);
           }
           return receipt;
@@ -877,8 +883,7 @@ export async function connectToGateway(controller: ChatController): Promise<bool
     return false;
   }
 
-  const portResult = await engine.getPort();
-  const tokenResult = await engine.getToken();
+  const [portResult, tokenResult] = await Promise.all([engine.getPort(), engine.getToken()]);
 
   if (!portResult?.success || !portResult.port) {
     console.error('[JustDoChatWrapper] Gateway port not available:', portResult);

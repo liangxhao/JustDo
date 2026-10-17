@@ -2,6 +2,7 @@ import type { NormalizedAgentEvent, NormalizedChatEvent } from '@shared/openclaw
 import { beforeEach, describe, expect, test } from 'vitest';
 
 import {
+  canAdvanceAssistantSnapshot,
   hydrateToolPrecedingSegments,
   reduceAgentEvent,
   reduceChatEvent,
@@ -67,6 +68,73 @@ function chat(
 }
 
 describe('agent event reducer', () => {
+  test('retracts an advanced Chat snapshot and resumes without replaying covered Agent text', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(state, agent(1, 'assistant', { text: 'Hello' }), dependencies);
+    reduceChatEvent(state, chat('delta', {
+      sourceSeq: 2, message: { content: 'Hello world' },
+    }), dependencies);
+    reduceChatEvent(state, chat('delta', {
+      sourceSeq: 2, replace: true, message: { content: '' },
+    }), dependencies);
+    reduceAgentEvent(state, agent(2, 'assistant', { delta: ' world' }), dependencies);
+    expect(state.activeTurn!.items[0]).toMatchObject({ text: '' });
+    reduceAgentEvent(state, agent(3, 'assistant', { text: 'Corrected' }), dependencies);
+    expect(state.activeTurn!.items[0]).toMatchObject({ text: 'Corrected' });
+  });
+
+  test('authoritative final replaces an advanced snapshot and rejects its delayed Agent frame', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(state, agent(1, 'assistant', { text: 'Hello' }), dependencies);
+    reduceChatEvent(state, chat('delta', {
+      sourceSeq: 2, message: { content: 'Hello world' },
+    }), dependencies);
+    reduceChatEvent(state, chat('final', {
+      sourceSeq: 3, message: { content: 'Final answer' },
+    }), dependencies);
+    reduceAgentEvent(state, agent(2, 'assistant', { delta: ' world' }), dependencies);
+    expect(state.activeTurn).toMatchObject({
+      status: 'final', items: [{ text: 'Final answer', status: 'completed' }],
+    });
+  });
+
+  test('displays consecutive Chat snapshots without replaying delayed Agent deltas', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(state, agent(1, 'assistant', { text: 'Hello' }), dependencies);
+    for (const [sourceSeq, text] of [[2, 'Hello world'], [3, 'Hello world!']] as const) {
+      const event = chat('delta', { sourceSeq, message: { role: 'assistant', content: text } });
+      expect(canAdvanceAssistantSnapshot(state, event)).toBe(true);
+      expect(reduceChatEvent(state, event, dependencies)).toBe('applied');
+      expect(state.activeTurn!.items[0]).toMatchObject({ text });
+    }
+    reduceAgentEvent(state, agent(2, 'assistant', { delta: ' world' }), dependencies);
+    reduceChatEvent(state, chat('delta', {
+      sourceSeq: 2, replace: true, message: { content: '' },
+    }), dependencies);
+    expect(state.activeTurn!.items[0]).toMatchObject({ text: 'Hello world!', lastTextSeq: 3 });
+    reduceAgentEvent(state, agent(3, 'assistant', { delta: '!' }), dependencies);
+    expect(state.activeTurn!.items[0]).toMatchObject({ text: 'Hello world!' });
+    reduceAgentEvent(state, agent(4, 'assistant', { delta: ' More' }), dependencies);
+    expect(state.activeTurn!.items[0]).toMatchObject({ text: 'Hello world! More' });
+  });
+
+  test('does not guess snapshot ownership across missing events, replacements or tools', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(state, agent(1, 'assistant', { text: 'Hello' }), dependencies);
+    const event = chat('delta', { sourceSeq: 2, message: { content: 'Hello world' } });
+    for (const override of [
+      { sourceSeq: 1 }, { sourceSeq: 3 }, { sourceSeq: undefined },
+      { replace: true }, { runId: 'other' }, { message: { content: 'Different' } },
+    ]) expect(canAdvanceAssistantSnapshot(state, { ...event, ...override })).toBe(false);
+    reduceAgentEvent(state, agent(2, 'tool', {
+      phase: 'start', toolCallId: 'read-1', name: 'read',
+    }), dependencies);
+    reduceAgentEvent(state, agent(3, 'assistant', { text: 'Answer' }), dependencies);
+    expect(canAdvanceAssistantSnapshot(state, chat('delta', {
+      sourceSeq: 4, message: { content: 'HelloAnswer continues' },
+    }))).toBe(false);
+  });
+
   test('keeps compaction and its preceding content when later tool history repairs its text segment', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
     reduceAgentEvent(state, agent(1, 'assistant', { text: 'Before compaction' }), dependencies);

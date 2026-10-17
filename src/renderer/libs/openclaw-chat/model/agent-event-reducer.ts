@@ -911,6 +911,11 @@ function reduceContent(
   dependencies: TranscriptReducerDependencies,
   backfill = false,
 ): ContentItem | null {
+  const currentOwner = textOwnerForEvent(turn, event, backfill);
+  if (
+    currentOwner?.type === 'content' &&
+    event.agentSeq <= (currentOwner.chatSnapshotSeq ?? -1)
+  ) return currentOwner;
   const snapshot = stringValue(event.data.text);
   const delta = stringValue(event.data.delta);
   // Native agent assistant snapshots are scoped to the current model message.
@@ -1280,7 +1285,7 @@ export function reduceAgentEvent(
       applyTerminalGuardObservationDecision(turn, observation);
     } else {
       const content = reduceContent(turn, event, dependencies, insertBySequence);
-      if (content) content.lastTextSeq = event.agentSeq;
+      if (content) content.lastTextSeq = Math.max(content.lastTextSeq ?? -1, event.agentSeq);
       if (content && observation?.action === 'update') {
         content.terminalGuardObservationToken = observation.token;
       }
@@ -1400,6 +1405,30 @@ function finishTurnItems(turn: AssistantTurn, status: TurnStatus, now: number): 
   }
 }
 
+/** Admit only an unambiguous next snapshot; never guess across a missing boundary. */
+export function canAdvanceAssistantSnapshot(
+  state: ChatTranscriptState,
+  event: NormalizedChatEvent,
+): boolean {
+  const turn = state.activeTurn;
+  if (
+    !turn || turn.status !== 'running' || event.runId !== turn.runId ||
+    event.state !== 'delta' || event.replace || event.sourceSeq === undefined
+  ) return false;
+  const tail = activeAgentTail(turn);
+  if (
+    tail?.type !== 'content' || tail.status !== 'streaming' || !tail.text ||
+    tail.preambleItemId !== undefined || tail.terminalGuardObservationToken !== undefined
+  ) return false;
+  // Cumulative Chat text can cross tool/message boundaries. Keep Agent ownership
+  // for those turns until a separate native segment identity is available.
+  if (turn.items.some(item => item !== tail && item.type !== 'thinking')) return false;
+  if (event.sourceSeq !== Math.max(turn.lastAgentSeq, tail.chatSnapshotSeq ?? -1) + 1)
+    return false;
+  const text = extractMessageText(event.message);
+  return text.length > tail.text.length && text.startsWith(tail.text);
+}
+
 export function reduceChatEvent(
   state: ChatTranscriptState,
   event: NormalizedChatEvent,
@@ -1488,6 +1517,7 @@ export function reduceChatEvent(
     ) {
       return 'ignored-sequence';
     }
+    const advancesSnapshot = canAdvanceAssistantSnapshot(state, event);
     const synthetic: NormalizedAgentEvent = {
       runId: turn.runId,
       sessionKey: state.sessionKey,
@@ -1495,7 +1525,8 @@ export function reduceChatEvent(
       lifecycleGeneration: event.lifecycleGeneration,
       agentId: null,
       spawnedBy: null,
-      agentSeq: event.replace ? (event.sourceSeq ?? turn.lastAgentSeq + 1) : turn.lastAgentSeq + 1,
+      agentSeq: event.replace || advancesSnapshot
+        ? (event.sourceSeq ?? turn.lastAgentSeq + 1) : turn.lastAgentSeq + 1,
       frameSeq: event.frameSeq,
       deliveryEvent: 'agent',
       stream: 'assistant',
@@ -1507,7 +1538,10 @@ export function reduceChatEvent(
       },
     };
     const content = reduceContent(turn, synthetic, dependencies);
-    if (content) content.lastTextSeq = event.sourceSeq ?? synthetic.agentSeq;
+    if (content) {
+      content.lastTextSeq = event.sourceSeq ?? synthetic.agentSeq;
+      if (advancesSnapshot) content.chatSnapshotSeq = event.sourceSeq;
+    }
     state.revision += 1;
     return 'applied';
   }

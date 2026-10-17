@@ -252,7 +252,9 @@ describe('justdo-chat direct-property streaming', () => {
     const container = chat.shadowRoot?.querySelector('.chat-container');
     expect(container?.getAttribute('role')).toBe('log');
     expect(container?.getAttribute('aria-busy')).toBe('true');
-    expect(chat.shadowRoot?.querySelectorAll('.chat-reading-indicator, .chat-working-indicator')).toHaveLength(1);
+    expect(
+      chat.shadowRoot?.querySelectorAll('.chat-reading-indicator, .chat-working-indicator'),
+    ).toHaveLength(1);
   });
 
   test('keeps one waiting indicator while a continued side turn gains its active transcript', async () => {
@@ -268,7 +270,9 @@ describe('justdo-chat direct-property streaming', () => {
 
     await chat.updateComplete;
     await frames.drain(chat);
-    expect(chat.shadowRoot?.querySelectorAll('.chat-reading-indicator, .chat-working-indicator')).toHaveLength(1);
+    expect(
+      chat.shadowRoot?.querySelectorAll('.chat-reading-indicator, .chat-working-indicator'),
+    ).toHaveLength(1);
 
     const transcript = createChatTranscriptState('agent:main:justdo:side-chat');
     chat.activeTurn = beginAssistantTurn(
@@ -279,7 +283,9 @@ describe('justdo-chat direct-property streaming', () => {
     await chat.updateComplete;
     await frames.drain(chat);
 
-    expect(chat.shadowRoot?.querySelectorAll('.chat-reading-indicator, .chat-working-indicator')).toHaveLength(1);
+    expect(
+      chat.shadowRoot?.querySelectorAll('.chat-reading-indicator, .chat-working-indicator'),
+    ).toHaveLength(1);
   });
 
   test('renders an isolated active turn with the normal Thinking, Tool, and Content timeline', async () => {
@@ -348,7 +354,7 @@ describe('justdo-chat direct-property streaming', () => {
   });
 });
 
-describe('justdo-chat assistant stream pacing', () => {
+describe('justdo-chat assistant stream rendering', () => {
   test.each(['result-only', 'assistant-call'] as const)(
     'shows delayed Thinking before a recovered %s Tool before its live start arrives',
     async source => {
@@ -805,7 +811,36 @@ describe('justdo-chat assistant stream pacing', () => {
     expect(footer?.textContent).not.toContain('previous-provider/previous-model');
   });
 
-  test('reveals burst snapshots by frame, flushes the terminal snapshot, and avoids history duplication', async () => {
+  test.each(['agent', 'chat'] as const)(
+    'renders a large %s snapshot on the first frame before final',
+    async source => {
+      const frames = createAnimationFrameHarness();
+      const controller = prepareController();
+      const handleEvent = gatewayEventHandler(controller);
+      const chat = document.createElement('justdo-chat') as JustDoChatElement;
+      chat.controller = controller;
+      document.body.append(chat);
+      await chat.updateComplete;
+      await frames.drain(chat);
+      const text = '及时显示正文。'.repeat(600);
+      handleEvent({
+        event: source,
+        payload: {
+          sessionKey: controller.state.sessionKey,
+          runId: 'run-1',
+          seq: 1,
+          ...(source === 'agent'
+            ? { stream: 'assistant', data: { text } }
+            : { state: 'delta', message: { role: 'assistant', content: text } }),
+        },
+      });
+      await frames.runNext(chat);
+      expect(assistantText(chat)).toBe(text);
+      expect(controller.state.transcript.activeTurn?.status).toBe('running');
+    },
+  );
+
+  test('renders the latest burst snapshot on the first frame and avoids history duplication', async () => {
     const frames = createAnimationFrameHarness();
     const controller = prepareController();
     const handleEvent = gatewayEventHandler(controller);
@@ -845,9 +880,6 @@ describe('justdo-chat assistant stream pacing', () => {
       { type: 'content', text: '你好' },
     ]);
     expect(assistantText(chat)).toBe('');
-
-    await frames.runNext(chat);
-    expect(assistantText(chat)).toBe('你');
 
     await frames.runNext(chat);
     expect(assistantText(chat)).toBe('你好');

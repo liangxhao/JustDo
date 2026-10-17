@@ -113,6 +113,7 @@ import type {
   GatewayHelloOk,
 } from '@/libs/openclaw-chat/gateway/client';
 import {
+  canAdvanceAssistantSnapshot,
   readPreambleText,
   readToolProgressText,
   reduceAgentEvent,
@@ -1480,6 +1481,7 @@ export class ChatController {
     if (
       payload.state === 'delta' &&
       !isChatTextRetraction(payload) &&
+      !canAdvanceAssistantSnapshot(cached.transcript, payload) &&
       cached.assistantSnapshotRunId &&
       (!payload.runId || payload.runId === cached.assistantSnapshotRunId)
     ) {
@@ -2089,6 +2091,32 @@ export class ChatController {
     } finally {
       if (this.state.sessionKey === sessionKey) void this.loadHistory(true);
     }
+  }
+
+  beginInitialDispatch(sessionKey: string, runId: string): void {
+    if (
+      !runId || !this.state.connected || !this.state.client ||
+      this.state.sessionKey !== sessionKey ||
+      (this.state.chatRunId !== null && this.state.chatRunId !== runId)
+    ) {
+      throw Object.assign(new Error(i18nService.t('coworkInitialDispatchUnavailable')), { requestSent: false });
+    }
+    // Record the exact Main send key only at transport invocation. An unknown
+    // response can then recover this owner without inventing a native run ID.
+    this.state.chatRunId = runId;
+    if (this.state.runActivity) this.state.runActivity = { ...this.state.runActivity, runId };
+  }
+
+  isInitialDispatchReady(sessionKey: string): boolean {
+    // Main has already prepared this native session. History/export hydration
+    // is independent of send admission, but the live notification edge is not.
+    return Boolean(
+      this.state.connected &&
+      this.state.client &&
+      this.state.sessionKey === sessionKey &&
+      this.subscribedMessageSessionKey === sessionKey &&
+      !this.suspendedRunId,
+    );
   }
 
   async sendMessage(

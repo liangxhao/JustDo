@@ -15,6 +15,7 @@ export function registerComputerControlHandlers(deps: {
     deps.requestGateway,
     () => hasBundledOpenClawExtension(OpenClawExtensionId.CUA_COMPUTER),
     tools => evaluateComputerControlNativePolicy(deps.getRuntimeRoot(), tools),
+    deps.getRuntimeRoot,
   );
   ipcMain.handle(ComputerControlIpc.Get, () => settings.get());
   ipcMain.handle(ComputerControlIpc.SetEnabled, (_event, enabled: unknown) =>

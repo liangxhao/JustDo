@@ -6,6 +6,7 @@ import type { NativeWidgetClient } from '../components/native-widget/host';
 export async function dispatchInitialTurn(
   state: { client: NativeWidgetClient | null; connected: boolean; sessionKey: string },
   params: Record<string, unknown>,
+  beforeRequest?: () => void,
 ): Promise<unknown> {
   if (
     !state.connected ||
@@ -16,6 +17,7 @@ export async function dispatchInitialTurn(
     throw Object.assign(new Error(i18nService.t('coworkInitialDispatchUnavailable')), {
       requestSent: false,
     });
+  beforeRequest?.();
   try {
     return await state.client.request('chat.send', params);
   } catch (error) {

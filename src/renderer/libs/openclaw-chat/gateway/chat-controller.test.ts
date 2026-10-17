@@ -247,6 +247,55 @@ test('shows a stalled-run status at 20 seconds and clears it on model activity',
   ).toBeNull();
 });
 
+test.each(['selected', 'background', 'sidechat'] as const)(
+  'renders an advancing Chat snapshot in %s and deduplicates its delayed Agent frame',
+  async perspective => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  const stream = vi.fn();
+  controller.onStream(stream);
+  const sideStream = vi.fn();
+  if (perspective === 'sidechat') {
+    controller.state.client = {
+      request: vi.fn().mockResolvedValue({ runId: 'run-1', status: 'accepted' }),
+    } as never;
+    controller.state.connected = true;
+    controller.onSideChatStream(sideStream);
+    await controller.sendSideQuestion('what changed?', 'run-1');
+  }
+  const handle = (controller as unknown as {
+    handleEvent(event: { event: string; payload: unknown }): void;
+  }).handleEvent.bind(controller);
+  handle({ event: 'agent', payload: {
+    session: sessionKey, runId: 'run-1', seq: 1, stream: 'assistant', data: { text: 'Hello' },
+  } });
+  if (perspective === 'background') await controller.switchSession('agent:main:other-session');
+  stream.mockClear();
+  handle({ event: 'chat', payload: {
+    sessionKey, runId: 'run-1', seq: 2, state: 'delta',
+    message: { role: 'assistant', content: 'Hello world' },
+  } });
+  if (perspective === 'selected') expect(stream).toHaveBeenCalledWith('stream');
+  const activeItems = () => perspective === 'sidechat'
+    ? sideStream.mock.lastCall?.[0].turn?.items
+    : controller.state.transcript.activeTurn?.items;
+  if (perspective !== 'background') expect(activeItems()).toMatchObject([{ text: 'Hello world' }]);
+  handle({ event: 'agent', payload: {
+    session: sessionKey, runId: 'run-1', seq: 2, stream: 'assistant', data: { delta: ' world' },
+  } });
+  handle({ event: 'chat', payload: {
+    sessionKey, runId: 'run-1', seq: 1, state: 'delta',
+    message: { role: 'assistant', content: 'Hello stale' },
+  } });
+  if (perspective === 'background') {
+    expect(controller.state.transcript.activeTurn).toBeNull();
+    await controller.switchSession(sessionKey);
+  }
+  expect(activeItems()).toMatchObject([{ text: 'Hello world' }]);
+  if (perspective === 'sidechat') expect(controller.state.transcript.activeTurn).toBeNull();
+});
+
 test('renders an OpenClaw commentary delta when its snapshot field is blank', () => {
   const sessionKey = 'agent:main:justdo:session-1';
   const controller = new ChatController();
@@ -2069,10 +2118,10 @@ test('creates one interruption only after reconnect confirms the run is inactive
   expect(controller.state.chatSending).toBe(false);
 });
 
-test('lets reconnect history settle a first turn that disconnected before run binding', async () => {
+test('lets reconnect history settle an exact delegated first send before its receipt', async () => {
   const persistedMessages = [
-    { role: 'user', content: 'first turn', __openclaw: { seq: 1 } },
-    { role: 'assistant', content: 'finished while offline', __openclaw: { seq: 2 } },
+    { role: 'user', content: 'first turn', __openclaw: { seq: 1, idempotencyKey: 'delegated-first:user' } },
+    { role: 'assistant', content: 'finished while offline', __openclaw: { seq: 2, runId: 'delegated-first' } },
   ];
   const request = vi.fn().mockImplementation((method: string) => {
     if (method === 'sessions.describe') {
@@ -2094,6 +2143,7 @@ test('lets reconnect history settle a first turn that disconnected before run bi
   controller.state.sessionKey = 'agent:main:justdo:session-1';
   controller.state.transcript.sessionKey = controller.state.sessionKey;
   controller.setPendingUserMessage('first turn');
+  controller.beginInitialDispatch(controller.state.sessionKey, 'delegated-first');
 
   (controller as unknown as { handleClose(): void }).handleClose();
   expect(controller.state.transportStatus).toBe('reconnecting');

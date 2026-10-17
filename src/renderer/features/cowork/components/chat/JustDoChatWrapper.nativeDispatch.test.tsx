@@ -60,6 +60,73 @@ async function setup(
 }
 
 describe('actual wrapper initial native dispatch lifecycle', () => {
+  it('admits the prepared first send after subscription while history is still loading', async () => {
+    const { ref, controller, request, params } = await setup();
+    controller.state.initialHistoryReady = false;
+    controller.state.chatLoading = true;
+    const internals = controller as unknown as {
+      subscribedMessageSessionKey: string | null;
+      suspendedRunId: string | null;
+    };
+    internals.subscribedMessageSessionKey = null;
+    expect(ref.current!.isInitialDispatchReady(nativeKey)).toBe(false);
+    internals.subscribedMessageSessionKey = nativeKey;
+    expect(ref.current!.getExportSnapshot().isLoading).toBe(true);
+    expect(ref.current!.isInitialDispatchReady(nativeKey)).toBe(true);
+    expect(ref.current!.isInitialDispatchReady('other-session')).toBe(false);
+    internals.suspendedRunId = 'unresolved-run';
+    expect(ref.current!.isInitialDispatchReady(nativeKey)).toBe(false);
+    internals.suspendedRunId = null;
+    await act(async () => { await ref.current!.dispatchInitialTurn(params); });
+    expect(request).toHaveBeenCalledWith('chat.send', params);
+    controller.state.connected = false;
+    expect(ref.current!.isInitialDispatchReady(nativeKey)).toBe(false);
+  });
+
+  it('retains the exact delegated send owner after an unknown transport failure', async () => {
+    const request = vi.fn().mockRejectedValue(new Error('Transport lost'));
+    const { ref, controller, params } = await setup(request);
+    await expect(ref.current!.dispatchInitialTurn(params)).rejects.toMatchObject({ requestSent: true });
+    expect(controller.state.chatRunId).toBe(params.idempotencyKey);
+    expect(request).toHaveBeenCalledExactlyOnceWith('chat.send', params);
+    const internal = controller as unknown as { handleClose(): void; suspendedRunId: string | null };
+    internal.handleClose();
+    expect(internal.suspendedRunId).toBe(params.idempotencyKey);
+    expect(controller.state.chatSending).toBe(true);
+  });
+
+  it('does not bind a send owner when preflight rejects the selected session', async () => {
+    const { ref, controller, request, params } = await setup();
+    await expect(ref.current!.dispatchInitialTurn({ ...params, sessionKey: 'other-session' }))
+      .rejects.toMatchObject({ requestSent: false });
+    expect(controller.state.chatRunId).toBeNull();
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('retires a confirmed cancelled first send before its first native stream frame', async () => {
+    const { ref, controller, params } = await setup(vi.fn().mockResolvedValue({ runId: 'initial-stop' }));
+    await ref.current!.dispatchInitialTurn(params);
+    expect(controller.state.transcript.activeTurn).toBeNull();
+    controller.settleConfirmedRun(nativeKey, params.idempotencyKey, 'aborted');
+    controller.clearSending(nativeKey, params.idempotencyKey);
+    controller.clearSending(nativeKey, null);
+    expect(controller.state.chatSending).toBe(false);
+    expect(controller.state.pendingUserMessage).toBeNull();
+  });
+
+  it('lets start-failure cleanup retire an owner after a definite client rejection', async () => {
+    const request = vi.fn().mockRejectedValue(Object.assign(new Error('Not sent'), { requestSent: false }));
+    const { ref, controller, params } = await setup(request);
+    await expect(ref.current!.dispatchInitialTurn(params)).rejects.toMatchObject({ requestSent: false });
+    expect(request).toHaveBeenCalledExactlyOnceWith('chat.send', params);
+    // CoworkView owns failed-start cleanup; the wrapper must propagate the
+    // definite result without retrying or claiming a terminal execution.
+    controller.clearSending(nativeKey);
+    expect(controller.state.chatRunId).toBeNull();
+    expect(controller.state.chatSending).toBe(false);
+    expect(controller.state.transcript.terminalRunIds.has(params.idempotencyKey)).toBe(false);
+  });
+
   it('connects a cold native worktree session using its persisted key', async () => {
     const { ref, controller } = await setup();
     expect(controller.state.sessionKey).toBe(nativeKey);

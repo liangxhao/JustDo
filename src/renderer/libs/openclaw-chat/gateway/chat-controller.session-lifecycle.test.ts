@@ -411,6 +411,93 @@ test('subscribes to session messages before taking the initial history snapshot'
   expect(controller.state.chatMessages).toEqual([historyMessage]);
 });
 
+test('makes prepared dispatch ready before the initial history request resolves', async () => {
+  let resolveHistory!: (value: unknown) => void;
+  const history = new Promise(resolve => { resolveHistory = resolve; });
+  const request = vi.fn((method: string) =>
+    method === 'chat.startup' ? history : Promise.resolve({}),
+  );
+  const controller = new ChatController();
+  const sessionKey = 'agent:main:justdo:new-session';
+  controller.state.client = { request } as never;
+  controller.state.sessionKey = sessionKey;
+  const internal = controller as unknown as {
+    handleHello(hello: Record<string, unknown>): void;
+    handleEvent(event: { event: string; payload: unknown }): void;
+  };
+  expect(controller.isInitialDispatchReady(sessionKey)).toBe(false);
+  internal.handleHello({});
+  await vi.waitFor(() => expect(request).toHaveBeenCalledWith('chat.startup', expect.anything()));
+  expect(controller.state.initialHistoryReady).toBe(false);
+  expect(controller.isInitialDispatchReady(sessionKey)).toBe(true);
+  internal.handleEvent({ event: 'agent', payload: {
+    session: sessionKey, runId: 'first-run', seq: 1, stream: 'assistant',
+    data: { text: 'Live answer' },
+  } });
+  resolveHistory({ messages: [] });
+  await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
+  expect(controller.state.transcript.activeTurn?.items).toMatchObject([{ text: 'Live answer' }]);
+});
+
+test('admits the promoted optimistic first send without recovering its local activity as a native run', async () => {
+  let resolveHistory!: (value: unknown) => void;
+  const history = new Promise(resolve => { resolveHistory = resolve; });
+  const request = vi.fn((method: string) =>
+    method === 'chat.startup' ? history : Promise.resolve({ session: { hasActiveRun: false } }),
+  );
+  const controller = new ChatController();
+  const temporaryKey = 'agent:main:justdo:temp-prepared';
+  const sessionKey = 'agent:main:justdo:prepared';
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = temporaryKey;
+  controller.setPendingUserMessage('First prompt');
+  const switching = controller.switchSession(sessionKey, { promoteFromSessionKey: temporaryKey });
+  await vi.waitFor(() => expect(request).toHaveBeenCalledWith('chat.startup', expect.anything()));
+  expect(controller.state.pendingUserMessage?.text).toBe('First prompt');
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.initialHistoryReady).toBe(false);
+  expect(controller.isInitialDispatchReady(sessionKey)).toBe(true);
+  resolveHistory({ sessionId: 'physical-prepared', messages: [] });
+  await switching;
+  expect(controller.state.currentSessionId).toBe('physical-prepared');
+  expect(request).not.toHaveBeenCalledWith('sessions.describe', expect.anything());
+});
+
+test.each([null, 'native-pending-run'])(
+  'reconnect only waits for native recovery when a send owns a run: %s',
+  async runId => {
+    let resolveHistory!: (value: unknown) => void;
+    const history = new Promise(resolve => { resolveHistory = resolve; });
+    const request = vi.fn((method: string) =>
+      method === 'chat.startup' ? history : Promise.resolve({ session: { hasActiveRun: true } }),
+    );
+    const controller = new ChatController();
+    const sessionKey = 'agent:main:justdo:prepared-reconnect';
+    controller.state.client = { request, stop: vi.fn() } as never;
+    controller.state.connected = true;
+    controller.state.sessionKey = sessionKey;
+    controller.setPendingUserMessage('First prompt');
+    controller.state.chatRunId = runId;
+    const internal = controller as unknown as {
+      handleClose(): void;
+      handleHello(hello: Record<string, unknown>): void;
+      suspendedRunId: string | null;
+    };
+    internal.handleClose();
+    expect(internal.suspendedRunId).toBe(runId);
+    expect(controller.isInitialDispatchReady(sessionKey)).toBe(false);
+    internal.handleHello({});
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith('chat.startup', expect.anything()));
+    expect(controller.isInitialDispatchReady(sessionKey)).toBe(runId === null);
+    resolveHistory({ sessionId: 'physical-prepared', messages: [] });
+    await vi.waitFor(() => expect(controller.state.initialHistoryReady).toBe(true));
+    expect(controller.state.pendingUserMessage?.text).toBe('First prompt');
+    expect(controller.state.chatSending).toBe(true);
+    controller.disconnect();
+  },
+);
+
 test('bounds a stalled initial message subscription and catches up after it resolves', async () => {
   vi.useFakeTimers();
   let resolveMessageSubscription: (() => void) | undefined;

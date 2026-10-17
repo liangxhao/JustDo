@@ -1228,8 +1228,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 throw Object.assign(new Error(i18nService.t('coworkInitialDispatchCancelled')), {
                   requestSent: false,
                 });
-              const snapshot = chatWrapperRef.current?.getExportSnapshot();
-              if (snapshot?.sessionKey === request.sessionKey && !snapshot.isLoading) {
+              if (chatWrapperRef.current?.isInitialDispatchReady(request.sessionKey)) {
                 return chatWrapperRef.current!.dispatchInitialTurn(request.params);
               }
               await new Promise(resolve => setTimeout(resolve, 30));
@@ -1319,6 +1318,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             acceptedRunId ?? clientTurnId,
             'aborted',
           );
+          chatWrapperRef.current?.clearSending(sessionKey, acceptedRunId ?? clientTurnId);
           chatWrapperRef.current?.clearSending(sessionKey, null);
         }
         if (getPendingCancellationAction() === 'delete') {

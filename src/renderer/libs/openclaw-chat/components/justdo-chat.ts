@@ -29,10 +29,6 @@ import {
   shouldRenderGroupAvatarByPrevItem,
   shouldRenderGroupFooterByNextItem,
 } from '@/libs/openclaw-chat/components/message-render';
-import {
-  AssistantStreamPacer,
-  type AssistantStreamSnapshot,
-} from '@/libs/openclaw-chat/controllers/assistant-stream-pacer';
 import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
 import { StreamRenderScheduler } from '@/libs/openclaw-chat/controllers/stream-render-scheduler';
 import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
@@ -61,7 +57,6 @@ import {
 import {
   type AssistantTurn,
   type AssistantTurnTiming,
-  normalizeTranscriptSessionKey,
 } from '@/libs/openclaw-chat/model/chat-transcript-state';
 import { unfoldProcessItems } from '@/libs/openclaw-chat/model/completed-process';
 import {
@@ -169,12 +164,6 @@ function latestPersistedUserEntryId(messages: readonly GatewayMessage[]): string
   }
   return null;
 }
-
-type PacedTerminalProjection = {
-  sessionIdentity: string;
-  turn: AssistantTurn;
-  persistedMessages: GatewayMessage[];
-};
 
 @customElement('justdo-chat')
 export class JustDoChatElement extends LitElement {
@@ -292,7 +281,6 @@ export class JustDoChatElement extends LitElement {
     () => this._controller?.showOlderHistory() ?? false,
     () => this._controller?.showNewerHistory() ?? false,
   );
-  private readonly assistantStreamPacer = new AssistantStreamPacer();
   private readonly streamRenderScheduler = new StreamRenderScheduler(
     () => this.publishStreamFrame(),
     () => Date.now(),
@@ -327,8 +315,6 @@ export class JustDoChatElement extends LitElement {
   private minimapScrollFrame: number | null = null;
   private editDiffMonacoFrame: number | null = null;
   private activeTurnClockTimer: ReturnType<typeof setInterval> | null = null;
-  private assistantStreamSessionIdentity: string | null = null;
-  private pacedTerminalProjection: PacedTerminalProjection | null = null;
   private actionableUserEntryId: string | null = null;
   private userMessageHistoryActionsAvailable = false;
   private forkEligibilityMessages: GatewayMessage[] = [];
@@ -554,17 +540,8 @@ export class JustDoChatElement extends LitElement {
     // Use controller state if available, otherwise use direct properties
     const ctrl = this._controller;
     const sourceActiveTurn = this.activeTurnForDisplay(ctrl);
-    const terminalProjection =
-      ctrl &&
-      !ctrl.state.transcript.activeTurn &&
-      this.pacedTerminalProjection?.sessionIdentity === this.assistantStreamSessionIdentityFor(ctrl)
-        ? this.pacedTerminalProjection
-        : null;
     const activePersistedMessages = this.messagesForPerspective(
-      ctrl
-        ? (terminalProjection?.persistedMessages ??
-            (ctrl.state.visibleChatMessages as GatewayMessage[]))
-        : this.messages,
+      ctrl ? (ctrl.state.visibleChatMessages as GatewayMessage[]) : this.messages,
     );
     const activeTurn = withFailureDetailsForDisplay(sourceActiveTurn, activePersistedMessages);
     let pendingMessage = (ctrl?.state.pendingUserMessage as GatewayMessage | null) ?? null;
@@ -728,11 +705,7 @@ export class JustDoChatElement extends LitElement {
           <div
             class="chat-container"
             role="log"
-            aria-busy=${
-              activeTurn?.status === 'running' ||
-              isStreaming ||
-              this.assistantStreamPacer.hasPending()
-            }
+            aria-busy=${activeTurn?.status === 'running' || isStreaming}
           >
             <div class="sr-only" role="status" aria-live="polite">
               ${activeTurn ? i18nService.t(this.activeTurnStatusKey(activeTurn)) : nothing}
@@ -1018,10 +991,7 @@ export class JustDoChatElement extends LitElement {
     const activeContentDisplaySignature = this.searchQuery.trim()
       ? (displayActiveTurn?.items
           .filter(item => item.type === 'content')
-          .map(
-            item =>
-              `${item.id}:${this.assistantStreamPacer.displayText(item.id, item.text).length}`,
-          )
+          .map(item => `${item.id}:${item.text.length}`)
           .join('|') ?? '')
       : '';
     this.chatScrollController.afterRender(transcriptRevision);
@@ -1044,9 +1014,6 @@ export class JustDoChatElement extends LitElement {
     const completedContentKey = completedContent
       .map(item => `${item.id}:${item.lastSeq}`)
       .join('|');
-    const completedContentPending = completedContent.some(item =>
-      this.assistantStreamPacer.isPending(item.id),
-    );
     const outputReadContext = [
       this._controller?.state.client,
       this._controller?.state.hello,
@@ -1067,7 +1034,7 @@ export class JustDoChatElement extends LitElement {
     this.richMessageControls.onQuote = this.onMessageQuote;
     this.richMessageControls.sync();
     const mermaidEnhancementKey = `${this.persistedTimelineCache.revision}:${completedContentKey}`;
-    if (!completedContentPending && mermaidEnhancementKey !== this.lastMermaidEnhancementKey) {
+    if (mermaidEnhancementKey !== this.lastMermaidEnhancementKey) {
       this.lastMermaidEnhancementKey = mermaidEnhancementKey;
       this.animationWindow.requestAnimationFrame(() => void this.renderMermaidDiagrams());
     }
@@ -1390,15 +1357,11 @@ export class JustDoChatElement extends LitElement {
   }
 
   private subscribeController(ctrl: ChatController): void {
-    this.seedAssistantStreamPacer(ctrl);
     this._controllerUnsubscribe = ctrl.subscribe(() => {
       this.syncWidgetContexts();
-      this.captureAssistantStreamSnapshots(ctrl);
       this.requestUpdate();
-      if (this.assistantStreamPacer.hasPending()) this.streamRenderScheduler.schedule();
     });
     this._streamUnsubscribe = ctrl.onStream(kind => {
-      this.captureAssistantStreamSnapshots(ctrl);
       if (kind === 'tool-partial') {
         this.streamRenderScheduler.scheduleToolPartial();
       } else if (kind === 'terminal') {
@@ -1414,76 +1377,10 @@ export class JustDoChatElement extends LitElement {
     this._streamUnsubscribe?.();
     this._controllerUnsubscribe = null;
     this._streamUnsubscribe = null;
-    this.assistantStreamPacer.reset();
-    this.assistantStreamSessionIdentity = null;
-    this.pacedTerminalProjection = null;
-  }
-
-  private assistantStreamSessionIdentityFor(ctrl: ChatController): string {
-    return normalizeTranscriptSessionKey(ctrl.state.sessionKey);
-  }
-
-  private seedAssistantStreamPacer(ctrl: ChatController): void {
-    this.assistantStreamSessionIdentity = this.assistantStreamSessionIdentityFor(ctrl);
-    this.pacedTerminalProjection = null;
-    this.assistantStreamPacer.seed(this.readAssistantStreamSnapshots(ctrl));
-  }
-
-  private readAssistantStreamSnapshots(ctrl: ChatController): AssistantStreamSnapshot[] {
-    const turn = ctrl.state.transcript.activeTurn;
-    return (turn?.items ?? [])
-      .filter(item => item.type === 'content')
-      .map(item => ({
-        id: item.id,
-        text: item.text,
-        flush:
-          turn?.status !== 'running' ||
-          item.status === 'interrupted' ||
-          Boolean(item.followingToolCallId) ||
-          (item.status === 'completed' && turn?.status === 'running'),
-      }));
-  }
-
-  private captureAssistantStreamSnapshots(ctrl: ChatController): void {
-    const sessionIdentity = this.assistantStreamSessionIdentityFor(ctrl);
-    if (sessionIdentity !== this.assistantStreamSessionIdentity) {
-      this.seedAssistantStreamPacer(ctrl);
-      return;
-    }
-
-    const turn = ctrl.state.transcript.activeTurn;
-    if (turn && this.pacedTerminalProjection?.turn !== turn) {
-      this.pacedTerminalProjection = null;
-    }
-    if (!turn && this.pacedTerminalProjection && this.assistantStreamPacer.hasPending()) {
-      return;
-    }
-
-    this.assistantStreamPacer.observe(this.readAssistantStreamSnapshots(ctrl));
-    if (turn && turn.status !== 'running' && this.assistantStreamPacer.hasPending()) {
-      this.pacedTerminalProjection = {
-        sessionIdentity,
-        turn,
-        persistedMessages: [...(ctrl.state.visibleChatMessages as GatewayMessage[])],
-      };
-    } else if (!this.assistantStreamPacer.hasPending()) {
-      this.pacedTerminalProjection = null;
-    }
   }
 
   private publishStreamFrame(): void {
-    let hasPendingAssistantText = false;
-    if (typeof this.animationWindow.requestAnimationFrame === 'function') {
-      hasPendingAssistantText = this.assistantStreamPacer.advance();
-    } else {
-      this.assistantStreamPacer.flushPending();
-    }
-    if (!hasPendingAssistantText && this.pacedTerminalProjection) {
-      this.pacedTerminalProjection = null;
-      if (!this._controller?.state.transcript.activeTurn) this.assistantStreamPacer.reset();
-    }
     this.requestUpdate();
-    if (hasPendingAssistantText) this.streamRenderScheduler.schedule();
   }
 
   public getSearchMatchCount(): number {
@@ -2184,14 +2081,7 @@ export class JustDoChatElement extends LitElement {
   }
 
   private activeTurnForDisplay(ctrl: ChatController | null): AssistantTurn | null {
-    if (!ctrl) return this.activeTurn;
-    if (ctrl.state.transcript.activeTurn) return ctrl.state.transcript.activeTurn;
-    if (
-      this.pacedTerminalProjection?.sessionIdentity === this.assistantStreamSessionIdentityFor(ctrl)
-    ) {
-      return this.pacedTerminalProjection.turn;
-    }
-    return null;
+    return ctrl ? ctrl.state.transcript.activeTurn : this.activeTurn;
   }
 
   private projectActiveTimeline(turn: AssistantTurn | null) {
@@ -2206,23 +2096,7 @@ export class JustDoChatElement extends LitElement {
       this._controller?.state.chatSending ?? this.isStreaming,
       waitingStatus,
       this._controller?.state.runActivity ?? null,
-    ).map(timelineItem => {
-      if (timelineItem.kind !== 'content') return timelineItem;
-      const visuallyStreaming = this.assistantStreamPacer.isPending(timelineItem.item.id);
-      const text = this.assistantStreamPacer.displayText(
-        timelineItem.item.id,
-        timelineItem.item.text,
-      );
-      if (text === timelineItem.item.text && !visuallyStreaming) return timelineItem;
-      return {
-        ...timelineItem,
-        item: {
-          ...timelineItem.item,
-          text,
-          ...(visuallyStreaming ? { status: 'streaming' as const } : {}),
-        },
-      };
-    });
+    );
   }
 
   private renderItem(
