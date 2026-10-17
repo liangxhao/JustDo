@@ -86,10 +86,10 @@ export const registerExtensionHandlers = ({
         onMarketplacePluginDeleted?.(PluginKind.EXTENSION, result.extensionId);
       }
       if (result.extensionId) await publishExtensionState(result.extensionId);
-      let installPath: string | undefined;
-      if (result.success && result.extensionId) {
+      let installPath: string | undefined = result.installPath;
+      if ((result.success || result.installationCommitted) && result.extensionId) {
         try {
-          installPath = extensionImportService
+          installPath ??= extensionImportService
             .listInstalled()
             .find(extension => extension.id === result.extensionId)?.installPath;
         } catch {
@@ -98,6 +98,8 @@ export const registerExtensionHandlers = ({
       }
       return {
         success: result.success,
+        ...(result.installationCommitted ? { installationCommitted: true as const } : {}),
+        ...(result.installSourceInUse ? { installSourceInUse: true as const } : {}),
         pluginId: result.extensionId,
         installPath,
         failedStage: result.failedStage,

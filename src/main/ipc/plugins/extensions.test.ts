@@ -167,6 +167,75 @@ test('a partially installed extension still invalidates attached capabilities wh
   });
 });
 
+test('retains committed installation identity when applying its runtime state fails', async () => {
+  const f = fixture();
+  f.service.importPath.mockResolvedValue({
+    success: false,
+    extensionId: 'feature-plugin',
+    installationCommitted: true,
+    error: 'restart failed',
+  });
+  const installer = f.installation.registerInstaller.mock.calls[0][0];
+
+  await expect(
+    installer.install({
+      payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' },
+      origin: 'marketplace',
+    }),
+  ).resolves.toMatchObject({
+    success: false,
+    pluginId: 'feature-plugin',
+    installPath: 'C:/installed/feature-plugin',
+    installationCommitted: true,
+  });
+});
+
+test('preserves the verified package path when native installation returns a child identity', async () => {
+  const f = fixture();
+  f.service.importPath.mockResolvedValue({
+    success: true,
+    extensionId: 'feature-plugin/child',
+    installPath: 'C:/installed/feature-plugin',
+  });
+  const installer = f.installation.registerInstaller.mock.calls[0][0];
+
+  const result = await installer.install({
+    payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' },
+    origin: 'custom',
+  });
+
+  expect(result).toMatchObject({
+    success: true,
+    pluginId: 'feature-plugin/child',
+    installPath: 'C:/installed/feature-plugin',
+  });
+  expect(f.service.listInstalled).not.toHaveBeenCalled();
+});
+
+test('keeps unconfirmed source ownership inside Main while preserving its native consumer', async () => {
+  const f = fixture();
+  f.service.importPath.mockResolvedValue({
+    success: false,
+    extensionId: 'feature-plugin',
+    installSourceInUse: true,
+    error: 'Gateway request timed out',
+  });
+  const installer = f.installation.registerInstaller.mock.calls[0][0];
+  const result = await installer.install({
+    payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:/source' },
+    origin: 'marketplace',
+  });
+  expect(result).toMatchObject({ success: false, installSourceInUse: true });
+  expect(result).not.toHaveProperty('installationCommitted');
+  expect(f.service.listInstalled).not.toHaveBeenCalled();
+  f.installation.install.mockResolvedValue(result);
+  const response = await handlers.get(ExtensionIpc.Import)!(f.event, {
+    requestId: 'request-1',
+    sourcePath: 'C:/source',
+  });
+  expect(response).not.toHaveProperty('installSourceInUse');
+});
+
 test('serialized notifications prevent an older catalog response from arriving after a newer one', async () => {
   const f = fixture();
   let resolve!: (catalog: Array<{ id: string; enabled: boolean }>) => void;
@@ -386,7 +455,7 @@ test.each([true, undefined])(
     });
 
     expect(result.success).toBe(false);
-    expect(result).not.toHaveProperty('installationCommitted');
+    expect(result.installationCommitted).toBe(installationCommitted);
     if (installationCommitted)
       expect(f.forgetMarketplace).toHaveBeenCalledWith(PluginKind.EXTENSION, 'feature-plugin');
     else expect(f.forgetMarketplace).not.toHaveBeenCalled();

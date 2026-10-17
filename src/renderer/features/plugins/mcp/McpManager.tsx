@@ -214,6 +214,7 @@ const McpManager: React.FC<McpManagerProps> = ({
     tools: number;
     error?: string;
   } | null>(null);
+  // Invalidate before and after mutations, including probes started while sync is pending.
   const invalidateConnectionResults = useCallback(() => {
     inventoryGeneration.current += 1;
     detailGeneration.current += 1;
@@ -349,7 +350,9 @@ const McpManager: React.FC<McpManagerProps> = ({
     inventoryReady: !isLoadingServers && !serverLoadFailed,
     searchQuery: searchQuery,
     onInstalled: async () => {
+      invalidateConnectionResults();
       dispatch(setMcpServers(await mcpService.loadServers()));
+      invalidateConnectionResults();
       if (mounted.current) setServerLoadFailed(mcpService.hasServerLoadFailed());
       if (mcpService.hasServerLoadFailed()) throw new Error('Inventory unavailable');
     },
@@ -397,6 +400,7 @@ const McpManager: React.FC<McpManagerProps> = ({
     if (updatingServerIds.has(serverId)) return;
     const targetServer = servers.find(s => s.id === serverId);
     if (!targetServer) return;
+    invalidateConnectionResults();
     const generation = ++inventoryReadGeneration.current;
     setUpdatingServerIds(current => new Set(current).add(serverId));
     try {
@@ -410,6 +414,7 @@ const McpManager: React.FC<McpManagerProps> = ({
       await reconcileFailedMutation(generation);
     } finally {
       if (mounted.current) {
+        invalidateConnectionResults();
         setUpdatingServerIds(current => {
           const next = new Set(current);
           next.delete(serverId);
@@ -457,6 +462,7 @@ const McpManager: React.FC<McpManagerProps> = ({
       }
     } finally {
       if (mounted.current) {
+        invalidateConnectionResults();
         setUpdatingServerIds(current => {
           const next = new Set(current);
           next.delete(server.id);
@@ -479,6 +485,7 @@ const McpManager: React.FC<McpManagerProps> = ({
 
   const handleConfirmDelete = async () => {
     if (!pendingDelete || isDeleting) return;
+    invalidateConnectionResults();
     const generation = ++inventoryReadGeneration.current;
     setIsDeleting(true);
     setActionError('');
@@ -499,6 +506,7 @@ const McpManager: React.FC<McpManagerProps> = ({
       }
     } finally {
       if (mounted.current) {
+        invalidateConnectionResults();
         setIsDeleting(false);
         if (generation === inventoryReadGeneration.current && !providerReadPending.current) {
           setIsLoadingServers(false);
@@ -536,6 +544,7 @@ const McpManager: React.FC<McpManagerProps> = ({
   };
 
   const handleSaveForm = async (data: McpServerFormData) => {
+    invalidateConnectionResults();
     const generation = ++inventoryReadGeneration.current;
     const formRevision = formGeneration.current;
     setActionError('');
@@ -552,6 +561,7 @@ const McpManager: React.FC<McpManagerProps> = ({
       }
       return result;
     } finally {
+      if (mounted.current) invalidateConnectionResults();
       if (
         mounted.current &&
         generation === inventoryReadGeneration.current &&

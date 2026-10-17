@@ -639,8 +639,8 @@ const getOpenClawExtensionImportService = (): OpenClawExtensionImportService => 
   openClawExtensionImportService ??= new OpenClawExtensionImportService({
     getOpenClawEngineManager,
     getManagedPluginIds: getApplicationManagedPluginIds,
-    requestGateway: <T>(method: string, params?: unknown) =>
-      getCoworkEngineService().requestGateway<T>(method, params),
+    requestGateway: <T>(method: string, params?: unknown, options?: { timeoutMs?: number }) =>
+      getCoworkEngineService().requestGateway<T>(method, params, options),
     runConfigMutationExclusive: operation =>
       getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
     restartGatewayAfterMutation: reason => {

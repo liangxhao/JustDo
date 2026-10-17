@@ -350,6 +350,26 @@ test('ensureGatewayClientReady reuses an already connected Gateway client', asyn
   expect(startGateway).not.toHaveBeenCalled();
 });
 
+test('uses the installation deadline without changing default Gateway request options', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn().mockResolvedValue({ ok: true });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike;
+    ensureGatewayClientReady: () => Promise<void>;
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await adapter.requestGateway('plugins.install', { source: 'local' }, { timeoutMs: 600_000 });
+  await adapter.requestGateway('plugins.list', {});
+
+  expect(request).toHaveBeenNthCalledWith(1, 'plugins.install', { source: 'local' }, {
+    timeoutMs: 600_000,
+  });
+  expect(request).toHaveBeenNthCalledWith(2, 'plugins.list', {});
+});
+
 test('keeps the initial cutoff pending when the Gateway generation changes mid-scan', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});

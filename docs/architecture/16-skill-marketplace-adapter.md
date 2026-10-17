@@ -48,12 +48,12 @@ sequenceDiagram
   G-->>M: runtime id 与结果
   M->>M: 保存市场安装身份
   M-->>UI: 结果并触发 inventory 刷新
-  M->>P: finally cleanup
+  M->>P: 确认不再被原生读取后 cleanup
 ```
 
 SDK 负责下载和认证，Main 不自行拼下载 URL 或重复实现公司协议。Extension/Skill 的 sourcePath 是下载后的本地目录；MCP 是经过映射的结构化配置。通用安装服务位于 `src/main/plugins/installation/`，路由到现有领域安装器。
 
-临时资源无论成功失败都 cleanup。相同安装身份串行，避免重复点击产生交错覆盖；市场查询失败必须明确提示，不能伪装为空结果或影响本地管理。
+临时资源在未发起原生操作或确认结束后 cleanup。原生安装已发起但结果不明时，Main 根据安装器的内部来源占用标记保留临时源，避免 Gateway 仍在读取时被删除；不自动重放安装。相同安装身份串行，避免重复点击产生交错覆盖；市场查询失败必须明确提示，不能伪装为空结果或影响本地管理。
 
 ## 4. 格式与能力审查
 
@@ -74,6 +74,8 @@ SDK 负责下载和认证，Main 不自行拼下载 URL 或重复实现公司协
 | installPath         | 必要时区分同名不同来源的文件安装      |
 
 安装成功后 registry 在 KV 保存这些映射，但是否真实存在仍以 runtime inventory 为准。外部删除、同名 Skill fallback 或插件安装失败都可能使 registry 与原生清单不同，UI 必须对账。
+
+原生安装已确认提交、仅后续运行态应用失败时，安装器保留 `installationCommitted` 及可确认的 runtime/path 身份，registry 仍记录本次版本。公共响应只保留提交事实和原生 ID，错误继续脱敏；Renderer 展示失败并重读清单，不将同版本提交当成可重试安装。仅超时或断线不能建立提交事实。
 
 系统管理/内置项即使同名，也不开放市场更新。Skill 删除同时核对路径，避免删除项目层同名文件时清掉另一个 managed 安装的市场身份。
 

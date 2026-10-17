@@ -77,6 +77,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     extensionConversionNotImplemented: '该扩展需要转换为 OpenClaw 格式，转换功能暂未实现。',
     extensionImportSourceChanged: '导入准备期间源目录发生变化，请重试。',
     agentTeamSkillSyncFailed: '扩展开关已保存，但 Agent Team 技能同步未完成。请重试同一开关操作。',
+    extensionRuntimeServiceFailed: '扩展服务启动失败，请查看运行时诊断。',
+    extensionUninstallUnconfirmed: '扩展卸载结果尚未确认，请稍后刷新状态；未重复执行卸载。',
+    extensionInstallUnconfirmed: '原生运行时未确认扩展安装结果，请稍后刷新状态。',
+    extensionInstallReceiptIncomplete:
+      '扩展安装已保存，但 Gateway 运行态回执不完整，请刷新扩展状态。',
+    extensionPackageOwnershipUnconfirmed: '暂时无法确认扩展包与原生条目的归属，请稍后刷新状态。',
     skillSettingApplyUnconfirmed: '技能设置已保存，暂时无法同步状态。',
     builtinModelAuthenticationUnavailable: '内置模型认证已失效，请等待登录凭据刷新。',
     credentialStorageUnavailable: '操作系统安全凭据存储不可用，无法安全保存内置凭据。',
@@ -228,6 +234,16 @@ const translations: Record<LanguageType, Record<string, string>> = {
     extensionImportSourceChanged: 'The import source changed during preparation. Please try again.',
     agentTeamSkillSyncFailed:
       'The extension setting was saved, but the Agent Team skill could not be synchronized. Retry the same toggle.',
+    extensionRuntimeServiceFailed:
+      'An extension service failed to start. Check the runtime diagnostics.',
+    extensionUninstallUnconfirmed:
+      'The extension uninstall result is not confirmed. Refresh its status later; uninstall was not repeated.',
+    extensionInstallUnconfirmed:
+      'The native runtime did not confirm the extension installation. Refresh its status later.',
+    extensionInstallReceiptIncomplete:
+      'The extension installation was saved, but its Gateway runtime receipt is incomplete. Refresh its status.',
+    extensionPackageOwnershipUnconfirmed:
+      'The extension package ownership could not be confirmed. Refresh its status later.',
     skillSettingApplyUnconfirmed:
       'The skill setting was saved, but its status could not be synchronized.',
     builtinModelAuthenticationUnavailable:

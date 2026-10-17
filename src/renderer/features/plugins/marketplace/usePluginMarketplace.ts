@@ -316,15 +316,25 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
       return pinnedKeys.has(key) && local ? [local.id] : [];
     }),
   );
-  const matchesInstalled = (id: string, textMatches: boolean) =>
-    !(filter === MarketplaceFilter.ALL && pinnedIds.has(id)) &&
-    (filter !== MarketplaceFilter.UPDATES || updateById.has(id) || recentlyUpdated.has(id)) &&
-    (textMatches || matchedIds.has(id));
   const operationFor = (id: string) => {
     const identity = identities.find(entry => entry.runtimeId === id);
     return identity
       ? operations[marketplaceKey({ sourceId: identity.sourceId, id: identity.pluginId })]
       : undefined;
+  };
+  const matchesInstalled = (id: string, textMatches: boolean) => {
+    const operation = operationFor(id);
+    const needsAttention = Boolean(
+      operation?.committed && (operation.error || operation.warning || operation.restartRequired),
+    );
+    return (
+      !(filter === MarketplaceFilter.ALL && pinnedIds.has(id)) &&
+      (filter !== MarketplaceFilter.UPDATES ||
+        updateById.has(id) ||
+        recentlyUpdated.has(id) ||
+        needsAttention) &&
+      (textMatches || matchedIds.has(id))
+    );
   };
   const localFor = (item: MarketplacePlugin) => mapped.get(marketplaceKey(item));
   // Same-name local/bundled items are not market installations. Prevent accidental overwrite.
@@ -376,10 +386,10 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
         version: candidate.version,
         operation: local ? MarketplaceInstallOperation.UPDATE : MarketplaceInstallOperation.INSTALL,
       });
-      if (!response.success)
+      if (!response.success && !response.installationCommitted)
         throw new Error(response.error || i18nService.t('marketplaceInstallFailed'));
       if (mounted.current && !local) setPinnedKeys(current => new Set(current).add(key));
-      if (mounted.current && local) {
+      if (mounted.current && local && response.success) {
         setRecentlyUpdated(current => new Set(current).add(local.id));
       }
       setOperations(current => ({
@@ -389,15 +399,19 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
           committed: true,
           version: candidate.version,
           restartRequired: response.restartRequired,
-          message: i18nService
-            .t(
-              response.restartRequired
-                ? 'marketplaceRestartRequired'
-                : local
-                  ? 'marketplaceUpdateSucceeded'
-                  : 'marketplaceInstallSucceeded',
-            )
-            .replace('{name}', item.name),
+          ...(response.success
+            ? {
+                message: i18nService
+                  .t(
+                    response.restartRequired
+                      ? 'marketplaceRestartRequired'
+                      : local
+                        ? 'marketplaceUpdateSucceeded'
+                        : 'marketplaceInstallSucceeded',
+                  )
+                  .replace('{name}', item.name),
+              }
+            : { error: response.error || i18nService.t('marketplaceInstallFailed') }),
         },
       }));
       await refreshInventory(key);

@@ -1,5 +1,14 @@
 import type { PluginHubScope, PluginManagementCapabilities } from './management';
 
+export const ExtensionState = {
+  ENABLED: 'enabled',
+  DISABLED: 'disabled',
+  NEEDS_SETUP: 'needs-setup',
+  ERROR: 'error',
+} as const;
+
+export type ExtensionState = (typeof ExtensionState)[keyof typeof ExtensionState];
+
 export const ExtensionIpc = {
   List: 'extensions:list',
   Import: 'extensions:import',
@@ -42,7 +51,7 @@ export type InstalledOpenClawExtension = {
   version?: string;
   installPath?: string;
   enabled: boolean;
-  state?: 'enabled' | 'disabled' | 'error';
+  state?: ExtensionState;
   origin?: string;
   category?: string;
   kinds?: string[];

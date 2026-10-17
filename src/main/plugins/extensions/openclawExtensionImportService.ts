@@ -5,14 +5,15 @@ import os from 'os';
 import path from 'path';
 import * as tar from 'tar';
 
-import type {
-  ExtensionImportProgress,
-  ExtensionImportResult,
-  ExtensionImportStage,
-  ExtensionSetEnabledResult,
-  InstalledOpenClawExtension,
-  OpenClawExtensionConfigurationField,
-  OpenClawPluginCapabilityReview,
+import {
+  type ExtensionImportProgress,
+  type ExtensionImportResult,
+  type ExtensionImportStage,
+  type ExtensionSetEnabledResult,
+  ExtensionState,
+  type InstalledOpenClawExtension,
+  type OpenClawExtensionConfigurationField,
+  type OpenClawPluginCapabilityReview,
 } from '../../../shared/plugins/extensions';
 import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
 import {
@@ -29,12 +30,19 @@ import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngin
 import { prepareExtensionForInstall } from './extensionConversion';
 import { prepareExtensionInstallSource } from './extensionInstallSource';
 import type { ExtensionNetworkPolicyInspection } from './extensionNetworkPolicyManifest';
+import {
+  type ExtensionPackageOwnership,
+  readExtensionArtifactPluginIds,
+  readExtensionPackageOwnership,
+} from './extensionPackageOwnership';
 import { isExtensionSecretReferenceField, saveExtensionSecrets } from './extensionSecretFile';
 
 const OPENCLAW_PLUGIN_MANIFEST = 'openclaw.plugin.json';
+const PLUGIN_RUNTIME_SERVICE_FAILED = 'service-failed';
 const AGENT_PLUGIN_MANIFEST_SCHEMA = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
 const SUPPORTED_ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.tar.gz', '.tgz'];
 const INSTALL_TIMEOUT_MS = 300_000;
+const GATEWAY_INSTALL_TIMEOUT_MS = 600_000;
 const MAX_COMMAND_OUTPUT_CHARS = 64_000;
 const OPENCLAW_UNINSTALL_SUCCESS_PATTERN = /(?:^|\r?\n)Uninstalled plugin\s+['"][^'"\r\n]+['"]/i;
 const OPENCLAW_TOGGLE_SUCCESS_PATTERN =
@@ -67,8 +75,12 @@ const createInstallSuccessPattern = (
 
 export type { ExtensionImportProgress, ExtensionImportResult, ExtensionImportStage };
 
-/** Main-only evidence that native installation completed before a later failure. */
-type CommittedExtensionImportResult = ExtensionImportResult & { installationCommitted?: true };
+/** Main-only evidence for settling installation identity and temporary source ownership. */
+type CommittedExtensionImportResult = ExtensionImportResult & {
+  installationCommitted?: true;
+  installSourceInUse?: true;
+  installPath?: string;
+};
 
 export type { InstalledOpenClawExtension };
 
@@ -89,7 +101,11 @@ type CommandOptions = {
 type OpenClawExtensionImportServiceDeps = {
   getOpenClawEngineManager: () => OpenClawEngineManager;
   getManagedPluginIds?: () => string[];
-  requestGateway?: <T>(method: string, params?: unknown) => Promise<T>;
+  requestGateway?: <T>(
+    method: string,
+    params?: unknown,
+    options?: { timeoutMs?: number },
+  ) => Promise<T>;
   runConfigMutationExclusive?: <T>(operation: () => Promise<T>) => Promise<T>;
   restartGatewayAfterMutation?: (reason: string) => Promise<{
     phase: string;
@@ -111,6 +127,7 @@ type OpenClawExtensionImportServiceDeps = {
     inspectExtension: (extensionRoot: string) => ExtensionNetworkPolicyInspection | null;
     reconcile: () => EffectiveOutboundHeaderPolicySnapshot;
   };
+  readPackageOwnership?: typeof readExtensionPackageOwnership;
 };
 
 const CAPABILITY_REVIEW_OUTPUT_PREFIX = 'JUSTDO_PLUGIN_CAPABILITY_REVIEW=';
@@ -324,6 +341,20 @@ const isGatewayUnavailableError = (error: unknown): boolean => {
   );
 };
 
+const isGatewayMutationNotSent = (error: unknown): boolean => {
+  if (!isRecord(error) && !(error instanceof Error)) return false;
+  // A native rejection is authoritative; its diagnostic text cannot establish
+  // that the requested mutation never reached the Gateway.
+  if ('gatewayCode' in error) return false;
+  if ('requestSent' in error) return error.requestSent === false;
+  const message = error instanceof Error ? error.message : '';
+  // These exact errors originate before requestGateway invokes client.request.
+  // Generic closed/reset/unavailable errors can also occur after dispatch.
+  return /^(?:OpenClaw runtime adapter is unavailable\.|OpenClaw gateway client is unavailable\.|OpenClaw engine is not running\.|OpenClaw gateway client connect timeout after \d+ms\.?)$/i.test(
+    message,
+  );
+};
+
 const isDirectoryLockError = (error: unknown): boolean => {
   // A native preparation failure must take precedence over a generic outer code.
   if (isSymbolicLinkCreationError(error)) return false;
@@ -374,6 +405,21 @@ const readJsonRecord = (filePath: string): Record<string, unknown> => {
   } catch {
     return {};
   }
+};
+
+const hasMultipleRuntimeEntries = (directory: string): boolean => {
+  const manifest = readJsonRecord(path.join(directory, 'package.json'));
+  return (
+    isRecord(manifest.openclaw) &&
+    Array.isArray(manifest.openclaw.extensions) &&
+    manifest.openclaw.extensions.length > 1
+  );
+};
+
+const sameInstallPath = (left: string, right: string): boolean => {
+  const normalize = (value: string) =>
+    process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
+  return normalize(left) === normalize(right);
 };
 
 const normalizeMetadataText = (value: unknown): string | undefined =>
@@ -1120,6 +1166,61 @@ export class OpenClawExtensionImportService {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  private async readPackageOwnership(
+    local: InstalledOpenClawExtension[],
+  ): Promise<ExtensionPackageOwnership[]> {
+    const multiple = local.filter(entry => hasMultipleRuntimeEntries(entry.installPath));
+    if (!multiple.length) return [];
+    const packages = await (this.deps.readPackageOwnership ?? readExtensionPackageOwnership)(
+      this.deps.getOpenClawEngineManager(),
+    );
+    const verified = packages.filter(owner =>
+      local.some(
+        entry =>
+          entry.id === owner.ownerId && sameInstallPath(entry.installPath, owner.installPath),
+      ),
+    );
+    if (multiple.some(entry => !verified.some(owner => owner.ownerId === entry.id)))
+      throw new Error(t('extensionPackageOwnershipUnconfirmed'));
+    return verified;
+  }
+
+  private projectPackageEntry(
+    local: InstalledOpenClawExtension,
+    pluginId: string,
+  ): InstalledOpenClawExtension {
+    const manager = this.deps.getOpenClawEngineManager();
+    const manifestPath = findSupportedPluginManifestPath(local.installPath);
+    const configuration = getExtensionConfigurationState(
+      manager,
+      pluginId,
+      manifestPath ? readJsonRecord(manifestPath) : {},
+    );
+    return {
+      ...local,
+      id: pluginId,
+      enabled: isExtensionEnabled(manager, pluginId),
+      configurationFields: configuration.fields,
+      missingRequirements: configuration.missingRequirements,
+    };
+  }
+
+  private async resolveInstalledExtension(
+    extensionId: string,
+  ): Promise<InstalledOpenClawExtension | undefined> {
+    const local = this.listInstalled();
+    const direct = local.find(entry => entry.id === extensionId);
+    if (direct) return direct;
+    const packages = await this.readPackageOwnership(local);
+    const owners = packages.filter(owner => owner.pluginIds.includes(extensionId));
+    if (owners.length !== 1) return undefined;
+    const installed = local.find(
+      entry =>
+        entry.id === owners[0].ownerId && sameInstallPath(entry.installPath, owners[0].installPath),
+    );
+    return installed ? this.projectPackageEntry(installed, extensionId) : undefined;
+  }
+
   async listCatalog(): Promise<InstalledOpenClawExtension[]> {
     if (!this.deps.requestGateway) return this.listInstalled();
     const manager = this.deps.getOpenClawEngineManager();
@@ -1133,8 +1234,12 @@ export class OpenClawExtensionImportService {
       origin?: string;
       installed: boolean;
       enabled: boolean;
-      state: 'enabled' | 'disabled' | 'not-installed' | 'error';
+      state: ExtensionState | 'not-installed';
       error?: string;
+      runtime?: {
+        state: 'unloaded' | 'disabled' | 'active' | typeof PLUGIN_RUNTIME_SERVICE_FAILED;
+        error?: string;
+      };
       category?: string;
       removable?: boolean;
     };
@@ -1155,15 +1260,27 @@ export class OpenClawExtensionImportService {
       }));
     }
     const localExtensions = this.listInstalled();
+    const packages = await this.readPackageOwnership(localExtensions);
+    const localById = new Map(localExtensions.map(extension => [extension.id, extension]));
+    for (const owner of packages) {
+      const local = localById.get(owner.ownerId);
+      if (!local) continue;
+      for (const pluginId of owner.pluginIds)
+        localById.set(pluginId, this.projectPackageEntry(local, pluginId));
+    }
     if (
       localExtensions.some(extension => {
-        const gatewayEntry = result.plugins.find(plugin => plugin.id === extension.id);
-        return (
-          !gatewayEntry?.installed ||
-          (extension.version !== undefined &&
-            gatewayEntry.version !== undefined &&
-            extension.version !== gatewayEntry.version)
-        );
+        const owner = packages.find(owner => owner.ownerId === extension.id);
+        const pluginIds = owner?.pluginIds ?? [extension.id];
+        return pluginIds.some(pluginId => {
+          const gatewayEntry = result.plugins.find(plugin => plugin.id === pluginId);
+          return (
+            !gatewayEntry?.installed ||
+            (extension.version !== undefined &&
+              gatewayEntry.version !== undefined &&
+              extension.version !== gatewayEntry.version)
+          );
+        });
       })
     ) {
       try {
@@ -1176,7 +1293,6 @@ export class OpenClawExtensionImportService {
         );
       }
     }
-    const localById = new Map(localExtensions.map(extension => [extension.id, extension]));
     const managedIds = new Set(this.deps.getManagedPluginIds?.() ?? []);
 
     return result.plugins
@@ -1199,6 +1315,13 @@ export class OpenClawExtensionImportService {
           normalizeMetadataText(plugin.description) ??
           normalizeMetadataText(local?.description) ??
           (bundledDirectory ? readExtensionDescriptionFromDirectory(bundledDirectory) : '');
+        // Desired enablement is independent of registration/service health in
+        // the observed Gateway generation. An unloaded entry alone is not a failure.
+        const runtimeError =
+          plugin.runtime?.error ||
+          (plugin.runtime?.state === PLUGIN_RUNTIME_SERVICE_FAILED
+            ? t('extensionRuntimeServiceFailed')
+            : undefined);
         return {
           id: plugin.id,
           name: plugin.name || plugin.id,
@@ -1206,11 +1329,15 @@ export class OpenClawExtensionImportService {
           version: plugin.version ?? local?.version,
           installPath: local?.installPath ?? bundledDirectory,
           enabled: plugin.enabled,
-          state: plugin.state === 'not-installed' ? 'disabled' : plugin.state,
+          state: runtimeError
+            ? ExtensionState.ERROR
+            : plugin.state === 'not-installed'
+              ? ExtensionState.DISABLED
+              : plugin.state,
           origin: plugin.origin,
           category: plugin.category,
           kinds: plugin.kind ? [...plugin.kind] : undefined,
-          error: plugin.error,
+          error: plugin.error || runtimeError,
           removable: result.mutationAllowed && plugin.removable === true && !managed,
           canToggle: result.mutationAllowed && !managed,
           managed,
@@ -1236,7 +1363,7 @@ export class OpenClawExtensionImportService {
     if (this.deps.getManagedPluginIds?.().includes(extensionId)) {
       return { success: false, error: 'Managed extensions cannot be reconfigured here.' };
     }
-    const installed = this.listInstalled().find(extension => extension.id === extensionId);
+    const installed = await this.resolveInstalledExtension(extensionId);
     const manager = this.deps.getOpenClawEngineManager();
     const pluginDirectory =
       installed?.installPath ?? findBundledExtensionDirectory(manager, extensionId);
@@ -1495,9 +1622,7 @@ export class OpenClawExtensionImportService {
     // Capture the verified local path before the Gateway mutates anything. A failed
     // recursive removal can delete the manifest before reporting a Windows lock,
     // making a post-failure inventory scan unable to locate the retry target.
-    const installedBeforeGateway = this.listInstalled().find(
-      extension => extension.id === extensionId,
-    );
+    const installedBeforeGateway = await this.resolveInstalledExtension(extensionId);
     let gatewayMutationError: unknown;
     if (this.deps.requestGateway) {
       try {
@@ -1513,7 +1638,10 @@ export class OpenClawExtensionImportService {
         return { success: true, warnings: result.warnings };
       } catch (error) {
         gatewayMutationError = error;
-        if (isDirectoryLockError(error)) {
+        if (
+          isDirectoryLockError(error) &&
+          (!isGatewayUnavailableError(error) || (isRecord(error) && 'gatewayCode' in error))
+        ) {
           let gatewayReportsInstalled: boolean | undefined;
           try {
             const catalog = await this.deps.requestGateway<{
@@ -1546,9 +1674,35 @@ export class OpenClawExtensionImportService {
               };
             }
           }
-        } else if (isGatewayUnavailableError(error)) {
-          // A broken plugin can prevent the Gateway from starting. Continue to
-          // the cold CLI path so the plugin page remains a recovery surface.
+        } else if (isGatewayUnavailableError(error) && isGatewayMutationNotSent(error)) {
+          // Offline recovery is safe only with evidence that this mutation was
+          // not dispatched. A timeout or closed socket may leave it in progress.
+        } else if (
+          isGatewayUnavailableError(error) &&
+          (!isRecord(error) || !('gatewayCode' in error))
+        ) {
+          let absentFromInventory = false;
+          try {
+            const catalog = await this.deps.requestGateway<{
+              plugins: Array<{ id: string; installed: boolean }>;
+            }>('plugins.list', {});
+            absentFromInventory = !catalog.plugins.some(
+              plugin => plugin.id === extensionId && plugin.installed,
+            );
+          } catch {
+            // Transport failure cannot be turned into a removal receipt.
+          }
+          if (
+            absentFromInventory &&
+            installedBeforeGateway &&
+            !fs.existsSync(installedBeforeGateway.installPath)
+          ) {
+            const convergenceError = await convergePolicy(true, true);
+            return convergenceError
+              ? { success: false, error: convergenceError }
+              : { success: true };
+          }
+          return { success: false, error: t('extensionUninstallUnconfirmed') };
         } else {
           const convergenceError = await convergePolicy();
           return {
@@ -1560,9 +1714,8 @@ export class OpenClawExtensionImportService {
         }
       }
     }
-    const installedAfterGateway = this.listInstalled().find(
-      extension => extension.id === extensionId,
-    );
+    const installedAfterGateway =
+      installedBeforeGateway ?? (await this.resolveInstalledExtension(extensionId));
     const gatewayMayNeedRestore =
       wasRuntimeActive && !!gatewayMutationError && isGatewayUnavailableError(gatewayMutationError);
     if (
@@ -1601,10 +1754,7 @@ export class OpenClawExtensionImportService {
             successPattern: OPENCLAW_UNINSTALL_SUCCESS_PATTERN,
           },
         );
-        if (
-          result.exitCode === 0 &&
-          !this.listInstalled().some(extension => extension.id === extensionId)
-        ) {
+        if (result.exitCode === 0 && !fs.existsSync(installed.installPath)) {
           try {
             updateExtensionAllowlist(manager.getConfigPath(), extensionId, 'remove');
           } catch (error) {
@@ -1621,7 +1771,7 @@ export class OpenClawExtensionImportService {
         return { success: false, error: convergenceError ?? error };
       }
 
-      if (this.listInstalled().some(extension => extension.id === extensionId)) {
+      if (fs.existsSync(installed.installPath)) {
         const convergenceError = await convergePolicy(gatewayMayNeedRestore);
         return {
           success: false,
@@ -1798,7 +1948,7 @@ export class OpenClawExtensionImportService {
         }
       }
     }
-    const installed = this.listInstalled().find(extension => extension.id === extensionId);
+    const installed = await this.resolveInstalledExtension(extensionId);
     if (!installed) return { success: false, error: 'Extension is not installed.' };
     if (installed.enabled === enabled) {
       if (extensionId === OpenClawExtensionId.AGENT_TEAM) {
@@ -1842,7 +1992,7 @@ export class OpenClawExtensionImportService {
         return { success: false, error: convergenceError ?? error };
       }
 
-      const updated = this.listInstalled().find(extension => extension.id === extensionId);
+      const updated = await this.resolveInstalledExtension(extensionId);
       if (!updated || updated.enabled !== enabled) {
         const convergenceError = await convergeColdState(gatewayMayNeedRestore);
         return {
@@ -1892,6 +2042,8 @@ export class OpenClawExtensionImportService {
     let extensionId: string | undefined;
     let installationAttempted = false;
     let installationCommitted = false;
+    let installationPath: string | undefined;
+    let rejectedCapabilityReview: OpenClawPluginCapabilityReview | undefined;
     let currentStage: ExtensionImportStage = 'preparing';
     const reportProgress = (stage: ExtensionImportStage, percent: number): void => {
       currentStage = stage;
@@ -1948,7 +2100,11 @@ export class OpenClawExtensionImportService {
       const convergeNetworkPolicyFailClosed = async (): Promise<void> => {
         if (!this.deps.outboundHeaderPolicy) return;
         const snapshot = this.deps.outboundHeaderPolicy.reconcile();
-        if (wasRuntimeActive && snapshot.digest !== networkPolicyDigestBeforeInstall) {
+        const phase = manager.getStatus().phase;
+        if (
+          (wasRuntimeActive || phase === 'running' || phase === 'starting') &&
+          snapshot.digest !== networkPolicyDigestBeforeInstall
+        ) {
           const status = await this.restartGatewayAfterMutation('extension-network-policy-change');
           if (status.phase !== 'running') {
             throw new Error(
@@ -1971,6 +2127,10 @@ export class OpenClawExtensionImportService {
           this.deps.outboundHeaderPolicy?.inspectExtension(pluginDirectory);
         }
       }
+      // Discovery can name a multi-entry package's children differently from
+      // its on-disk manifest owner. Keep the exact owner for directory checks.
+      const installOwnerId = extensionId;
+      const multipleRuntimeEntries = hasMultipleRuntimeEntries(pluginDirectory);
       if (this.deps.requestGateway && !options?.trustMarketplaceSource) {
         const inspected = await this.inspectCapabilityReview({
           cli,
@@ -1988,6 +2148,8 @@ export class OpenClawExtensionImportService {
           };
         }
       }
+      if (multipleRuntimeEntries && (!this.deps.requestGateway || options?.trustMarketplaceSource))
+        extensionId = (await readExtensionArtifactPluginIds(manager, pluginDirectory))[0];
       const installArgs = [
         cli.openclawEntry,
         'plugins',
@@ -2021,11 +2183,11 @@ export class OpenClawExtensionImportService {
             ? manager.getStateDir()
             : manager.getBaseDir();
       const extensionsRoot = path.join(stateDir, 'extensions');
-      const installedPath = extensionId
-        ? findInstalledExtensionPath(extensionsRoot, extensionId)
+      const installedPath = installOwnerId
+        ? findInstalledExtensionPath(extensionsRoot, installOwnerId)
         : undefined;
-      const defaultTargetPath = extensionId
-        ? path.join(extensionsRoot, extensionId)
+      const defaultTargetPath = installOwnerId
+        ? path.join(extensionsRoot, installOwnerId)
         : extensionsRoot;
       const targetPath =
         installedPath && isPathWithinDirectory(extensionsRoot, installedPath)
@@ -2038,9 +2200,105 @@ export class OpenClawExtensionImportService {
           ? manager.getConfigPath()
           : path.join(stateDir, 'openclaw.json');
       let allowlistError = '';
+      let gatewayAppliedRuntime = false;
+      let gatewayRestartRequired = false;
+      const confirmInstalledIdentity = async (): Promise<void> => {
+        if (installOwnerId)
+          installationPath = findInstalledExtensionPath(extensionsRoot, installOwnerId);
+        if (!multipleRuntimeEntries) return;
+        if (!gatewayAppliedRuntime) extensionId = undefined;
+        // The successful native receipt names a child; persistence errors and
+        // cold CLI installs can name the package owner. Normalize only through
+        // the native package resolver, never a child-ID naming convention.
+        const local = this.listInstalled();
+        const packages = await this.readPackageOwnership(local);
+        const owner = packages.find(
+          owner =>
+            owner.ownerId === installOwnerId &&
+            installationPath &&
+            sameInstallPath(owner.installPath, installationPath),
+        );
+        if (!owner) {
+          if (!gatewayAppliedRuntime) extensionId = undefined;
+          throw new Error(t('extensionPackageOwnershipUnconfirmed'));
+        }
+        extensionId = owner.pluginIds[0];
+      };
       installationAttempted = true;
       const command = await this.runDirectoryCommand(targetPath, async () => {
         installSourceInFlight = true;
+        if (this.deps.requestGateway && !options?.trustMarketplaceSource && reviewToken) {
+          try {
+            // Bind the human-reviewed surface to native staging. The CLI's
+            // --accept-capabilities would approve whatever source it reads later.
+            const installed = await this.deps.requestGateway<{
+              ok: boolean;
+              plugin: { id: string };
+              restartRequired: boolean;
+              runtime?: { generation: number; pluginIds: string[] };
+            }>(
+              'plugins.install',
+              {
+                source: 'local',
+                path: installSourcePath,
+                mode: 'update',
+                acknowledgeCapabilities: { reviewToken },
+                ...(options?.preserveActivation ? { enable: false } : {}),
+              },
+              { timeoutMs: GATEWAY_INSTALL_TIMEOUT_MS },
+            );
+            if (installed?.ok !== true) {
+              throw new Error(t('extensionInstallUnconfirmed'));
+            }
+            installSourceInFlight = false;
+            installationCommitted = true;
+            if (
+              typeof installed.plugin?.id !== 'string' ||
+              !installed.plugin.id ||
+              typeof installed.restartRequired !== 'boolean' ||
+              !Number.isInteger(installed.runtime?.generation) ||
+              !Array.isArray(installed.runtime?.pluginIds) ||
+              !installed.runtime.pluginIds.includes(installed.plugin.id)
+            ) {
+              throw new Error(t('extensionInstallReceiptIncomplete'));
+            }
+            extensionId = installed.plugin.id;
+            gatewayAppliedRuntime = true;
+            gatewayRestartRequired = installed.restartRequired;
+            return { exitCode: 0, stdout: '', stderr: '' };
+          } catch (error) {
+            const details = isRecord(error) && isRecord(error.details) ? error.details : undefined;
+            const persistence =
+              details && isRecord(details.persistence) ? details.persistence : undefined;
+            if (persistence?.operation === 'install' && typeof persistence.pluginId === 'string') {
+              installationCommitted = true;
+              extensionId = persistence.pluginId;
+              installSourceInFlight = false;
+              await confirmInstalledIdentity();
+            } else if (
+              isGatewayMutationNotSent(error) ||
+              (isRecord(error) && typeof error.gatewayCode === 'string') ||
+              details?.pluginInstallRejected === true
+            ) {
+              installSourceInFlight = false;
+            }
+            if (readCapabilityConsentDetails(error)) {
+              installSourceInFlight = false;
+              currentStage = 'validating';
+              rejectedCapabilityReview = (
+                await this.inspectCapabilityReview({
+                  cli,
+                  pluginDirectory,
+                  sourcePath: installSourcePath,
+                  extensionId,
+                })
+              ).review;
+            }
+            // A lost reply can follow a committed installation. Never repeat it
+            // through the CLI or infer completion from the requested state.
+            throw error;
+          }
+        }
         const result = await this.runCommand(process.execPath, installArgs, {
           cwd: cli.runtimeRoot,
           env: installEnv,
@@ -2081,6 +2339,7 @@ export class OpenClawExtensionImportService {
       });
       const result = command.result;
       if (result.exitCode !== 0) {
+        if (installationCommitted) await confirmInstalledIdentity();
         await convergeNetworkPolicyFailClosed();
         const failedStage = inferInstallerFailureStage(result, currentStage);
         console.error(
@@ -2092,14 +2351,18 @@ export class OpenClawExtensionImportService {
           extensionId,
           error: command.error ?? formatCommandError(result),
           failedStage,
+          ...(installationCommitted ? { installationCommitted: true as const } : {}),
+          ...(installationPath ? { installPath: installationPath } : {}),
+          ...(installSourceInFlight ? { installSourceInUse: true as const } : {}),
+          ...(rejectedCapabilityReview ? { capabilityReview: rejectedCapabilityReview } : {}),
         };
       }
       installationCommitted = true;
+      await confirmInstalledIdentity();
 
       let networkPolicyChanged = false;
       if (extensionId && this.deps.outboundHeaderPolicy) {
-        const installed = this.listInstalled().find(extension => extension.id === extensionId);
-        if (!installed?.installPath) {
+        if (!installationPath) {
           await convergeNetworkPolicyFailClosed();
           return {
             success: false,
@@ -2110,7 +2373,7 @@ export class OpenClawExtensionImportService {
           };
         }
         try {
-          this.deps.outboundHeaderPolicy.inspectExtension(installed.installPath);
+          this.deps.outboundHeaderPolicy.inspectExtension(installationPath);
         } catch (error) {
           await convergeNetworkPolicyFailClosed();
           return {
@@ -2121,6 +2384,7 @@ export class OpenClawExtensionImportService {
                 ? error.message
                 : 'The installed Extension network policy is invalid.',
             installationCommitted: true,
+            installPath: installationPath,
             failedStage: currentStage,
           };
         }
@@ -2128,10 +2392,17 @@ export class OpenClawExtensionImportService {
         networkPolicyChanged = snapshot.digest !== networkPolicyDigestBeforeInstall;
       }
 
-      const cliAppliedRuntime = createInstallSuccessPattern(extensionId, true)?.test(result.stdout);
-      if (wasRuntimeActive && (!command.runtimeRestarted || networkPolicyChanged)) {
+      const cliAppliedRuntime =
+        gatewayAppliedRuntime ||
+        createInstallSuccessPattern(extensionId, true)?.test(result.stdout);
+      const phaseAfterInstall = manager.getStatus().phase;
+      if (
+        (wasRuntimeActive || phaseAfterInstall === 'running' || phaseAfterInstall === 'starting') &&
+        (!command.runtimeRestarted || networkPolicyChanged)
+      ) {
         const reloaded =
           !networkPolicyChanged &&
+          !gatewayRestartRequired &&
           (cliAppliedRuntime ||
             (!command.runtimeRestarted &&
               extensionId &&
@@ -2149,6 +2420,7 @@ export class OpenClawExtensionImportService {
                 status.message ||
                 'Extension installed, but the OpenClaw Gateway failed to restart.',
               installationCommitted: true,
+              ...(installationPath ? { installPath: installationPath } : {}),
               failedStage: currentStage,
             };
           }
@@ -2161,17 +2433,25 @@ export class OpenClawExtensionImportService {
           extensionId,
           error: `Extension installed, but it could not be added to the plugin allowlist: ${allowlistError}`,
           installationCommitted: true,
+          ...(installationPath ? { installPath: installationPath } : {}),
           failedStage: currentStage,
         };
       }
 
       reportProgress('completed', 100);
-      return { success: true, extensionId };
+      return {
+        success: true,
+        extensionId,
+        ...(installationPath ? { installPath: installationPath } : {}),
+      };
     } catch (error) {
       return {
         success: false,
         ...(installationAttempted ? { extensionId } : {}),
         ...(installationCommitted ? { installationCommitted: true as const } : {}),
+        ...(installationPath ? { installPath: installationPath } : {}),
+        ...(installSourceInFlight ? { installSourceInUse: true as const } : {}),
+        ...(rejectedCapabilityReview ? { capabilityReview: rejectedCapabilityReview } : {}),
         error: error instanceof Error ? error.message : 'Failed to import extension',
         failedStage: currentStage,
       };
@@ -2179,7 +2459,7 @@ export class OpenClawExtensionImportService {
       try {
         if (installSourceInFlight && retainedInstallSourcePath) {
           console.warn(
-            '[OpenClawExtensionImportService] Retaining install source after an unconfirmed CLI outcome:',
+            '[OpenClawExtensionImportService] Retaining install source after an unconfirmed native outcome:',
             retainedInstallSourcePath,
           );
         } else await cleanupInstallSource?.();

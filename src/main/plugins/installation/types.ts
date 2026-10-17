@@ -30,6 +30,10 @@ export interface PluginInstallRequest {
 
 export interface PluginInstallResult {
   success: boolean;
+  /** The installation persisted, even if applying the runtime state subsequently failed. */
+  installationCommitted?: true;
+  /** Main-only: a native operation may still be reading the prepared source. */
+  installSourceInUse?: true;
   pluginId?: string;
   /** Internal install location used to disambiguate layered capabilities. Never expose over IPC. */
   installPath?: string;

@@ -226,6 +226,116 @@ describe('ExtensionsManager extension toggle', () => {
     expect(list).toHaveBeenCalledTimes(3);
   });
 
+  test.each([false, true])(
+    'reconciles open extension details after an external change (removed: %s)',
+    async removed => {
+      const list = vi
+        .fn()
+        .mockResolvedValueOnce({
+          success: true,
+          extensions: [{ ...extension, error: 'Previous failure' }],
+        })
+        .mockResolvedValue({
+          success: true,
+          extensions: removed ? [] : [{ ...extension, error: 'Current runtime failure' }],
+        });
+      let changed!: (event: ExtensionChangedEvent) => void;
+      Object.defineProperty(window, 'electron', {
+        configurable: true,
+        value: {
+          extensions: {
+            list,
+            onChanged: vi.fn((listener: typeof changed) => {
+              changed = listener;
+              return vi.fn();
+            }),
+            onImportProgress: vi.fn(() => vi.fn()),
+          },
+        },
+      });
+      render(<ExtensionsManager />);
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'subtaskShowInfo: Sample Extension' }),
+      );
+      expect(screen.getByText('Previous failure')).toBeTruthy();
+
+      await act(async () => changed({ extensionId: extension.id, enabled: false }));
+
+      await waitFor(() => expect(screen.queryByText('Previous failure')).toBeNull());
+      if (removed) expect(screen.queryByRole('button', { name: 'extensionDelete' })).toBeNull();
+      else expect(screen.getByText('Current runtime failure')).toBeTruthy();
+    },
+  );
+
+  test.each([
+    { success: true, sameId: false },
+    { success: false, sameId: false },
+    { success: true, sameId: true },
+    { success: false, sameId: true },
+  ])(
+    'isolates a late configuration result from reopened details ($success, same ID: $sameId)',
+    async ({ success, sameId }) => {
+      const configured = (id: string, name: string): InstalledOpenClawExtension => ({
+        ...extension,
+        id,
+        name,
+        configurationFields: [
+          { path: 'apiKey', label: `${name} credential`, sensitive: true, configured: false },
+        ],
+      });
+      const first = configured('first-plugin', 'First plugin');
+      const second = configured('second-plugin', 'Second plugin');
+      let inventory = [first, second];
+      const pending = deferred<{ success: boolean; pending?: boolean; error?: string }>();
+      const updateConfiguration = vi.fn().mockReturnValue(pending.promise);
+      let changed!: (event: ExtensionChangedEvent) => void;
+      Object.defineProperty(window, 'electron', {
+        configurable: true,
+        value: {
+          extensions: {
+            list: vi.fn(async () => ({ success: true, extensions: inventory })),
+            updateConfiguration,
+            onChanged: vi.fn((listener: typeof changed) => {
+              changed = listener;
+              return vi.fn();
+            }),
+            onImportProgress: vi.fn(() => vi.fn()),
+          },
+        },
+      });
+      render(<ExtensionsManager />);
+      fireEvent.click(await screen.findByRole('button', { name: 'subtaskShowInfo: First plugin' }));
+      fireEvent.change(screen.getByLabelText('First plugin credential'), {
+        target: { value: 'first-value' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'save' }));
+      await waitFor(() => expect(updateConfiguration).toHaveBeenCalledOnce());
+      inventory = [second];
+      await act(async () => changed({ extensionId: first.id, enabled: false }));
+      expect(screen.queryByLabelText('First plugin credential')).toBeNull();
+      const target = sameId ? first : second;
+      if (sameId) {
+        inventory = [first, second];
+        await act(async () => changed({ extensionId: first.id, enabled: true }));
+      }
+      fireEvent.click(screen.getByRole('button', { name: `subtaskShowInfo: ${target.name}` }));
+      const draft = screen.getByLabelText(`${target.name} credential`) as HTMLInputElement;
+      fireEvent.change(draft, { target: { value: 'new-detail-draft' } });
+
+      await act(async () =>
+        pending.resolve({ success, pending: true, error: 'Stale configuration error' }),
+      );
+
+      expect(draft.value).toBe('new-detail-draft');
+      expect(screen.queryByText('extensionConfigurationSaved')).toBeNull();
+      expect(screen.queryByText('Stale configuration error')).toBeNull();
+      expect(updateConfiguration).toHaveBeenCalledExactlyOnceWith({
+        extensionId: first.id,
+        values: { apiKey: 'first-value' },
+      });
+    },
+  );
+
   test('confirms deletion without relabeling the removed extension unavailable', async () => {
     let installed = true;
     const deleteExtension = vi.fn(async () => {
@@ -934,6 +1044,26 @@ describe('ExtensionsManager extension toggle', () => {
         values: { 'env.vars.EXAMPLE_ALIAS': 'synthetic-alias-key' },
       }),
     );
+  });
+
+  test('shows native setup-required state even without environment requirements', async () => {
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn(async () => ({
+            success: true,
+            extensions: [{ ...extension, state: 'needs-setup' }],
+          })),
+          onChanged: vi.fn(() => vi.fn()),
+          onImportProgress: vi.fn(() => vi.fn()),
+        },
+      },
+    });
+    render(<ExtensionsManager />);
+    const warning = await screen.findByRole('button', { name: 'extensionMissingConfiguration' });
+    fireEvent.click(warning);
+    expect(screen.getByText('extensionMissingConfiguration')).toBeTruthy();
   });
 
   test('exposes extension errors on keyboard focus and in the details dialog', async () => {

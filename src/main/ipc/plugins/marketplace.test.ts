@@ -165,6 +165,35 @@ test('does not expose internal installation failure details', async () => {
   expect(JSON.stringify(response)).not.toContain('private-download');
 });
 
+test('preserves confirmed commit evidence without exposing runtime failure details', async () => {
+  const manager = createPluginManager();
+  vi.mocked(manager.installFromMarketplace).mockResolvedValue({
+    success: false,
+    pluginId: ' writer-runtime ',
+    installationCommitted: true,
+    installPath: 'C:\\private-download',
+    error: 'Cannot apply private credential',
+  });
+  registerMarketplaceHandlers(manager);
+
+  expect(
+    await handlers.get(MarketplaceIpc.Install)?.(
+      {},
+      {
+        sourceId: 'enterprise',
+        pluginId: 'writer',
+        kind: PluginKind.EXTENSION,
+      },
+    ),
+  ).toEqual({
+    success: false,
+    pluginId: 'writer-runtime',
+    installationCommitted: true,
+    error: 'Marketplace installation failed',
+    errorCode: MarketplaceErrorCode.INTERNAL,
+  });
+});
+
 test('constructs narrow category list and filtered search requests', async () => {
   const manager = createPluginManager();
   registerMarketplaceHandlers(manager);

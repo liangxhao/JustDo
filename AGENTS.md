@@ -28,6 +28,7 @@ npm test
   `npm run rebuild:electron-native` repairs native dependencies when needed.
 - Packaging and runtime preparation commands are in `package.json` and
   [scripts/README.md](scripts/README.md).
+- For specific implementation details, refer to the OpenClaw source code at ../openclaw (relative to the dev branch)."
 
 ## Ownership and Safety
 

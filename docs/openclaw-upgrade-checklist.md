@@ -320,20 +320,41 @@
 - [ ] Extension 查询、启停、安装/更新、卸载分别验证运行态回读、reload/refresh 与
       必要重启。已提交但响应丢失先查 inventory，不重复破坏性 CLI 操作；
       文件锁失败保留真实原因，不以 stop/mutate/start 或强制重试绕过原生生命周期。
+- [ ] 分开验证 `plugins.list` 的期望开关与实际 `runtime` 健康状态：注册/服务失败
+      显示错误，`unloaded` 不推断失败；`needs-setup` 即使没有缺失环境变量也显示
+      配置警告。清单成功后能清除旧错误，不为展示错误修改开关或管理权限。
 - [ ] 测试本地目录/压缩包导入、能力审查与 reviewToken、换包/文件变化、取消和部分
       安装失败。未知格式拒绝，不把上游 bundle 识别能力当作产品已实现转换。
+- [ ] 人工确认的能力令牌必须由最终原生 staging 再核验；审查后增加能力使旧令牌
+      失效，不能用 CLI 无条件接受标志代替确认。安装等待覆盖依赖准备与运行时应用，
+      普通 RPC 超时不证明安装未提交，不能自动改走另一条安装路径。
+- [ ] 多入口包分别核对 manifest owner、原生子条目 ID、精确安装路径和市场身份。
+      以原生 metadata/ownership 为准，不按 ID 前缀猜归属；CLI 最终回执匹配实际
+      子条目，列表、配置、更新和卸载使用同一已核验目录。验证无预授权子条目的新安装，
+      以及已提交失败回包中的 owner/代表条目对账，不能因包级扫描没有子 ID 误判已卸载。
+- [ ] 原生明确已提交、后续应用失败时，保留 `installationCommitted`、可确认身份和
+      安装路径，市场仍记录本次版本；市场安装响应不泄露内部路径、凭据或原始错误。
+      未知结果不冒充提交，仍可能被原生读取的临时源不能被清理，不自动重复安装。
+- [ ] 卸载覆盖明确未发送、已发送后超时/断线、原生拒绝与目录部分删除；只有明确
+      未发送才允许离线 CLI 恢复。结果不明先核对权威清单和本次包路径，不能重放卸载。
+      安装时才启动 Gateway 的场景也要检查网络策略、原生重启要求和实际运行态收敛。
 - [ ] Windows 普通目录、junction、坏链接、恢复副本、worker/CLI 清理与真实原生
       卸载验证不跟随链接误删宿主 runtime；不放宽原生 hardlink/文件引用校验。
 - [ ] Skill 有效赢家以 `skills.status/update` 为准；测试同名来源、eligible 与 enabled
       的区别、导入/删除、启停确认、文件 watcher 与迟到响应。关闭赢家不自动改用下一份。
       041 发现刷新补丁已退役，不因短暂发现延迟恢复补丁或强制重启。
-- [ ] MCP 用户配置与 Extension 提供项分开，后者只读。真实验证连接、工具发现、
+- [ ] MCP 用户配置与 Extension 提供项分开，扩展连接参数只读，独立启停服从原生
+      归属与管理权限；关闭的连接仍可显式测试，测试不修改保存配置或启用状态。
+      真实验证连接、工具/资源/提示发现、资源读取、
       调用、取消、timeout 与进程退出；Windows npm/npx、嵌套包 bin、中文/空格路径
       和 Chrome MCP 均要握手，不能把某条批处理诊断直接判为连接失败。
 - [ ] Hook 文件、开关、数据库与配置事务一致，拒绝不支持的链接和半成品发布；
       父扩展变更刷新附带 Hook/MCP，不只翻转旧卡布尔值。
 - [ ] 市场默认无业务 provider 时显示未配置；只支持已接入的 extension/skill/mcp。
       核对安装来源/版本、更新对账与受保护同名项，不凭空恢复公网 catalog 或厂商默认目录。
+- [ ] 分别验证市场更新、本地重新导入和父扩展更新，更新保留用户明确停用状态；
+      无市场映射的本地/系统同名项不能获得市场更新权限。按实际交付能力记录不适用项：
+      当前 Hook 无独立市场更新入口，Skill/Hook 无独立执行测试按钮，不能以模拟按钮代替验收。
 - [ ] 清单读取失败保留最近确认状态与错误，迟到查询不覆盖新操作。配置同步尊重显式
       optional disable，受管适配器遵循所属设置；通用插件入口的保护同时由 Main 强制。
 
@@ -364,7 +385,22 @@
       假 shortcode/JSON、失败工具结果或同名 MCP 不授予读取；切换/重连撤销旧端口，
       文档丢失/加载失败按手动重试和草稿建议恢复，不保存组件 HTML 副本。
 
+### 9.3 插件页面的状态刷新与跨页恢复
+
+- [ ] 安装、更新、卸载和启停完成后重读权威清单，再核对市场身份、版本、分组与权限；
+      Main 向窗口发布实际观察到的状态，保存成功但应用失败也触发对账，不能只翻转旧卡片。
+- [ ] 父扩展变更同时刷新附带 Skill/MCP/Hook，已打开的扩展详情更新或关闭；
+      Skill 移除后同 ID 恢复不自动重开旧详情。列表读取失败保留已确认内容和错误。
+- [ ] MCP 保存、删除、启停及市场更新前后使旧测试结果和在途测试代次失效；
+      覆盖操作期间新发起的测试、资源读取和迟到结果，不将旧连接成功挂到新配置。
+- [ ] 配置保存/失败反馈绑定详情代次；保存期间移除条目、打开另一详情或同 ID 重入后，
+      迟到回包不能清空新草稿、串写成功/错误提示，也不能重开已关闭详情。
+- [ ] 市场已提交但后续失败时保留错误和状态刷新入口，同版本不重复安装；
+      在“可更新”筛选下仍可看到待处理反馈。页内切换、离页再返回、多窗口及交错读取
+      不释放在途安装锁、不覆盖较新清单，不依靠重复安装修复刷新失败。
+
 参考：[插件系统](architecture/07-plugin-system.md)、[Plugin Hub](features/plugins/plugin-hub-experience.md)、
+[市场适配](architecture/16-skill-marketplace-adapter.md)、
 [Agent Team](features/assistants/agent-team.md)、[Workflow](features/workflow/swarm-workflow.md)、
 [批次](features/workflow/swarm-workflow-batches.md)、[Workboard](features/workflow/workboard.md)、
 [交互式回答](features/chat/interactive-answers.md)。
@@ -625,11 +661,19 @@ git diff --check
 | 配置/执行/身份       | Main adapter、wire validator、permissions、Goal/Plan、config sync/logout、worktree/sandbox 领域测试及当前版本补丁测试                                                                                                  |
 | SQLite 关闭/恢复     | 先按目标版本适配 `scripts/openclaw/probe-sqlite-retirement.mjs`、`tests/openclaw/runtime/sqlite-retirement-lifecycle.native-smoke.mjs`；覆盖备份、回滚拒绝与成功、删除排他、退出租约及重启恢复；Node/Electron 分别验证 |
 | 定时任务             | scheduler `cronJobService`、`scheduledTaskResultSyncService`、`scheduledTaskSessionHistory`、结果 Store/IPC/UI，`tests/openclaw/runtime/scheduled-task-permissions.test.ts`                                            |
-| 插件/Team/Workflow   | `tests/openclaw/extensions/`、Main plugins 与 Renderer plugins/composer，当前 plugin recovery/owned-run/cleanup 测试                                                                                                   |
+| 插件页生命周期      | `src/main/plugins/`、`src/main/ipc/plugins/`、`src/renderer/features/plugins/` 的安装、更新、卸载、归属、部分提交、状态刷新与迟到回包测试                                                                                      |
+| Team/Workflow        | `tests/openclaw/extensions/`、Renderer composer 及当前 plugin recovery/owned-run/cleanup 测试                                                                                                                          |
 | 浏览器/工作区/设置   | browser bridge/extension assembly、Main app-server、Renderer browser/settings/display；`tests/openclaw/runtime/windows-mcp-launch.test.ts` 与 `scripts/test/workspace-window-probe.cjs`                                |
 
 按目标契约更新有意义的行为断言，不能为了通过只改版本快照或删除失败用例。
 旧版本目录测试保留为历史回归，不可作为目标版本通过证据；缺失关键场景时补齐。
+
+插件还需按目标版本适配并运行 `tests/openclaw/runtime/` 下的实际原生验证：
+`plugin-management.native-smoke.mjs`（安装/更新/启停/卸载）、
+`plugin-capability-consent.native-smoke.mjs`（staging 能力令牌）、
+`plugin-package-ownership.native-smoke.mjs`（多入口包、清单与市场身份）及
+`extension-mcp.native-smoke.mjs`（扩展连接发现与测试）。使用独立配置、端口和凭据，
+不触碰用户运行中的 Gateway；原生 fixture 通过仍不能替代下节真实界面与企业服务验收。
 
 ## 16. 真实应用验收与完成标准
 
@@ -644,7 +688,7 @@ fixture、合成输入和本机测试服务不替代真实模型、设备或企�
 | 权限/目标/计划   | 三种权限、审批/问题、Goal 暂停/继续、Plan 批准 reset；停止及两类重启无未知操作重放                        |
 | 子会话/团队/流程 | 原生 SubAgent、Agent Team 两种模式、Workflow/批次分别执行与停止；精确结算/cleanup、unknown 和禁用恢复有效 |
 | cron 收件箱      | 一次手动与一次真实定时触发，结果详情/未读/readAt，多页追赶及删除后重启不复活                              |
-| 插件生命周期     | Skill/MCP/Hook/Extension 实际导入/启停/卸载，受管保护、Windows junction 与离线行为正常                    |
+| 插件生命周期     | Skill/MCP/Hook/Extension 按支持范围实际安装/更新/启停/测试/卸载；父扩展联动、详情/市场状态刷新、部分提交、受管保护、Windows junction 与离线行为正常；真实在线热变更和企业市场另记 |
 | 浏览器与扩展     | 四模式、真实 Chrome 授权/配对、侧栏聊天与 relay 分别检查；内置页面人工介入、文件/PDF/下载正确             |
 | 设置与认证       | 保存后实际新任务使用，取消/冲突/完整/最小/登录退出投影；chat/image/STT/TTS/video 不串凭据                 |
 | 工程与桌面       | 普通工程/Worktree、Review、共享终端 attach、左右侧栏、工作区分离/最小化/托盘及安装版资源正确              |

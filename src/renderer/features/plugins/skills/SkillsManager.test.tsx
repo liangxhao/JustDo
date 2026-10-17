@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { configureStore } from '@reduxjs/toolkit';
+import type { ExtensionChangedEvent } from '@shared/plugins/extensions';
 import { getSkillManagementCapabilities } from '@shared/plugins/skillManagement';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
@@ -97,6 +98,12 @@ const skill: Skill = {
   }),
 };
 
+const extensionEvents = {
+  onChanged: vi.fn<(listener: (event: ExtensionChangedEvent) => void) => () => void>(
+    () => () => undefined,
+  ),
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(skillService.loadSkills).mockReset().mockResolvedValue([skill]);
@@ -104,6 +111,12 @@ beforeEach(() => {
   vi.mocked(skillService.deleteSkill).mockReset();
   vi.mocked(skillService.setSkillEnabled).mockReset();
   vi.mocked(skillService.hasInventoryReadFailed).mockReset().mockReturnValue(false);
+  vi.mocked(skillService.subscribeInventory)
+    .mockReset()
+    .mockReturnValue(() => undefined);
+  vi.mocked(skillService.refreshInventoryAfterMutation).mockReset();
+  extensionEvents.onChanged.mockReset().mockReturnValue(() => undefined);
+  vi.stubGlobal('electron', { extensions: extensionEvents });
 });
 afterEach(() => {
   cleanup();
@@ -125,6 +138,44 @@ test('does not authorize marketplace inventory or confirm refresh after an onlin
   expect(options.runtimeUnavailable).toBe(false);
   expect(options.inventoryReady).toBe(false);
   await expect(options.onInstalled?.()).rejects.toThrow('Inventory unavailable');
+});
+
+test('refreshes attached skills and open details when their parent extension changes', async () => {
+  let changed!: (event: ExtensionChangedEvent) => void;
+  const stop = vi.fn();
+  extensionEvents.onChanged.mockImplementation(listener => {
+    changed = listener;
+    return stop;
+  });
+  let notify!: (skills: Skill[]) => void;
+  vi.mocked(skillService.subscribeInventory).mockImplementation(listener => {
+    notify = listener;
+    return () => undefined;
+  });
+  vi.mocked(skillService.refreshInventoryAfterMutation).mockImplementation(async () => {
+    notify([]);
+    return [];
+  });
+  const store = configureStore({ reducer: { skill: skillReducer } });
+  const view = render(
+    <Provider store={store}>
+      <SkillsManager searchQuery={skill.name} visibility="installed" />
+    </Provider>,
+  );
+  fireEvent.click(await screen.findByRole('button', { name: `subtaskShowInfo: ${skill.name}` }));
+  expect(screen.getByRole('button', { name: 'close' })).toBeTruthy();
+  expect(extensionEvents.onChanged).toHaveBeenCalledOnce();
+
+  await act(async () => changed({ extensionId: 'parent-plugin', enabled: false }));
+
+  expect(skillService.refreshInventoryAfterMutation).toHaveBeenCalledOnce();
+  expect(store.getState().skill.skills).toEqual([]);
+  expect(screen.queryByRole('button', { name: 'close' })).toBeNull();
+  await act(async () => notify([skill]));
+  expect(screen.getByRole('button', { name: `subtaskShowInfo: ${skill.name}` })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'close' })).toBeNull();
+  view.unmount();
+  expect(stop).toHaveBeenCalledOnce();
 });
 
 async function openDetails(readOnly = false, skillName = skill.name) {
@@ -466,6 +517,7 @@ test.each(['success', 'failure'] as const)(
     let finishSwitch!: (skills: Skill[]) => void;
     let failSwitch!: (error: Error) => void;
     vi.stubGlobal('electron', {
+      extensions: extensionEvents,
       dialog: {
         selectFolders: vi.fn().mockResolvedValue({
           success: true,
@@ -524,6 +576,7 @@ test.each(['success', 'failure'] as const)(
 
 async function startImport(paths: string[], sourceType: 'folders' | 'archives' = 'folders') {
   vi.stubGlobal('electron', {
+    extensions: extensionEvents,
     dialog: {
       selectFolders: vi.fn().mockResolvedValue({ success: true, paths }),
       selectFiles: vi.fn().mockResolvedValue({ success: true, paths }),

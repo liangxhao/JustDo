@@ -9,12 +9,13 @@ import {
   FolderIcon,
   QuestionMarkCircleIcon,
 } from '@heroicons/react/24/outline';
-import type {
-  ExtensionImportProgress,
-  ExtensionImportStage,
-  InstalledOpenClawExtension,
-  OpenClawExtensionConfigurationField,
-  OpenClawPluginCapabilityReview,
+import {
+  type ExtensionImportProgress,
+  type ExtensionImportStage,
+  ExtensionState,
+  type InstalledOpenClawExtension,
+  type OpenClawExtensionConfigurationField,
+  type OpenClawPluginCapabilityReview,
 } from '@shared/plugins/extensions';
 import { PluginKind } from '@shared/plugins/marketplace';
 import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
@@ -200,6 +201,25 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   const [configurationSaved, setConfigurationSaved] = useState(false);
   const [configurationPending, setConfigurationPending] = useState(false);
   const [savingConfiguration, setSavingConfiguration] = useState(false);
+  const detailGeneration = useRef(0);
+  const handledRequestedExtension = useRef<string | undefined>(undefined);
+  const openExtensionDetails = useCallback(
+    (extension: InstalledOpenClawExtension, artworkTone: string) => {
+      detailGeneration.current += 1;
+      setSelectedExtension(extension);
+      setDetailArtworkTone(artworkTone);
+      setConfigurationValues({});
+      setConfigurationVariables({});
+      setConfigurationError('');
+      setConfigurationSaved(false);
+      setConfigurationPending(false);
+    },
+    [],
+  );
+  const closeExtensionDetails = useCallback(() => {
+    detailGeneration.current += 1;
+    setSelectedExtension(null);
+  }, []);
   const localExtensionActionBusy =
     importing ||
     deletingExtensionId !== null ||
@@ -216,6 +236,12 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         if (!isCurrent()) return inventoryMounted.current ? latestInventoryRead.current : null;
         if (!result.success) throw new Error(result.error || i18nService.t('extensionListFailed'));
         setExtensions(result.extensions);
+        setSelectedExtension(current => {
+          if (!current) return null;
+          const updated = result.extensions.find(extension => extension.id === current.id);
+          if (!updated) detailGeneration.current += 1;
+          return updated ?? null;
+        });
         setInventoryReady(true);
         return result.extensions;
       } catch (error) {
@@ -253,6 +279,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     });
     return () => {
       inventoryMounted.current = false;
+      detailGeneration.current += 1;
       inventoryGeneration.current += 1;
       latestInventoryRead.current = null;
       stop();
@@ -260,21 +287,26 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   }, [loadExtensions]);
 
   useEffect(() => {
-    if (!requestedExtensionId) return;
+    if (!requestedExtensionId) {
+      handledRequestedExtension.current = undefined;
+      return;
+    }
+    if (handledRequestedExtension.current === requestedExtensionId) return;
     const requested = extensions.find(extension => extension.id === requestedExtensionId);
     if (!requested) return;
-    setSelectedExtension(requested);
+    handledRequestedExtension.current = requestedExtensionId;
     const group = groupExtensionsByOwnership(extensions).find(group =>
       group.extensions.some(extension => extension.id === requested.id),
     );
-    setDetailArtworkTone(
+    openExtensionDetails(
+      requested,
       getPluginArtworkTone(
         `extensions:${requested.origin}`,
         group?.extensions.findIndex(extension => extension.id === requested.id),
       ),
     );
     onRequestedExtensionHandled?.();
-  }, [extensions, onRequestedExtensionHandled, requestedExtensionId]);
+  }, [extensions, onRequestedExtensionHandled, openExtensionDetails, requestedExtensionId]);
 
   useEffect(
     () => window.electron.extensions.onImportProgress(progress => setImportProgress(progress)),
@@ -627,15 +659,6 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     }
   };
 
-  const openExtensionDetails = (extension: InstalledOpenClawExtension, artworkTone: string) => {
-    setSelectedExtension(extension);
-    setDetailArtworkTone(artworkTone);
-    setConfigurationValues({});
-    setConfigurationVariables({});
-    setConfigurationError('');
-    setConfigurationSaved(false);
-  };
-
   const handleSaveConfiguration = async () => {
     if (!selectedExtension || extensionActionBusy) return;
     const values = Object.fromEntries(
@@ -654,6 +677,9 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       setConfigurationError(i18nService.t('extensionConfigurationValueRequired'));
       return;
     }
+    const generation = detailGeneration.current;
+    const isCurrentDetail = () =>
+      inventoryMounted.current && generation === detailGeneration.current;
     try {
       setSavingConfiguration(true);
       setConfigurationError('');
@@ -667,15 +693,24 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         throw new Error(result.error || i18nService.t('extensionConfigurationSaveFailed'));
       }
       const latestExtensions = await loadExtensions();
+      if (!isCurrentDetail()) return;
       const updatedExtension = latestExtensions?.find(item => item.id === selectedExtension.id);
-      if (updatedExtension) setSelectedExtension(updatedExtension);
+      if (updatedExtension) {
+        setSelectedExtension(current =>
+          current?.id === updatedExtension.id ? updatedExtension : current,
+        );
+      }
       setConfigurationValues({});
       setConfigurationSaved(true);
       setConfigurationPending(result.pending === true);
     } catch (error) {
-      setConfigurationError(
-        error instanceof Error ? error.message : i18nService.t('extensionConfigurationSaveFailed'),
-      );
+      if (isCurrentDetail()) {
+        setConfigurationError(
+          error instanceof Error
+            ? error.message
+            : i18nService.t('extensionConfigurationSaveFailed'),
+        );
+      }
     } finally {
       setSavingConfiguration(false);
     }
@@ -815,7 +850,8 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                   <ExclamationTriangleIcon className="h-4 w-4" />
                 </button>
               </Tooltip>
-            ) : extension.missingRequirements.length > 0 ? (
+            ) : extension.missingRequirements.length > 0 ||
+              extension.state === ExtensionState.NEEDS_SETUP ? (
               <Tooltip
                 content={i18nService.t('extensionMissingConfiguration')}
                 position="top"
@@ -1014,7 +1050,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         createPortal(
           <Modal
             onClose={() => {
-              if (!savingConfiguration) setSelectedExtension(null);
+              if (!savingConfiguration) closeExtensionDetails();
             }}
             overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
             className={PLUGIN_DETAIL_MODAL_CLASS_NAME}
@@ -1024,7 +1060,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
               version={selectedExtension.version}
               icon={<PuzzleIcon className="h-5 w-5" />}
               artworkTone={detailArtworkTone}
-              onClose={() => setSelectedExtension(null)}
+              onClose={closeExtensionDetails}
               busy={savingConfiguration}
             />
             <div className={PLUGIN_DETAIL_BODY_CLASS_NAME}>
@@ -1050,7 +1086,8 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                     {selectedExtension.error}
                   </div>
                 )}
-                {selectedExtension.missingRequirements.length > 0 && (
+                {(selectedExtension.missingRequirements.length > 0 ||
+                  selectedExtension.state === ExtensionState.NEEDS_SETUP) && (
                   <div className="mb-4 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
                     <ExclamationTriangleIcon className="h-3.5 w-3.5 shrink-0" />
                     <span>{i18nService.t('extensionMissingConfiguration')}</span>
@@ -1239,7 +1276,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                       type="button"
                       className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-primary hover:bg-surface-raised"
                       onClick={() => {
-                        setSelectedExtension(null);
+                        closeExtensionDetails();
                         openTeamRecords();
                       }}
                     >
@@ -1250,7 +1287,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                       type="button"
                       className="rounded-lg px-3 py-2 text-sm text-primary hover:bg-surface-raised"
                       onClick={() => {
-                        setSelectedExtension(null);
+                        closeExtensionDetails();
                         setTeamSettingsOpen(true);
                       }}
                     >
@@ -1265,7 +1302,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                       type="button"
                       onClick={() => {
                         const extension = selectedExtension;
-                        setSelectedExtension(null);
+                        closeExtensionDetails();
                         setPendingDelete(extension);
                       }}
                       disabled={savingConfiguration || extensionActionBusy}
@@ -1280,7 +1317,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setSelectedExtension(null)}
+                  onClick={closeExtensionDetails}
                   disabled={savingConfiguration}
                   className="rounded-lg px-3 py-2 text-sm text-secondary transition-colors hover:bg-surface-raised disabled:opacity-50"
                 >

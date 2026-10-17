@@ -2648,9 +2648,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return this.sessionRpc.getModel(sessionId, agentId);
   }
 
-  async requestGateway<T>(method: string, params?: unknown): Promise<T> {
+  async requestGateway<T>(
+    method: string,
+    params?: unknown,
+    options?: { timeoutMs?: number },
+  ): Promise<T> {
     await this.ensureGatewayClientReady();
-    return this.requireGatewayClient().request<T>(method, params);
+    return options
+      ? this.requireGatewayClient().request<T>(method, params, options)
+      : this.requireGatewayClient().request<T>(method, params);
   }
 
   // Resolve dependencies at call time so cancellation, session changes, and teardown stay authoritative.

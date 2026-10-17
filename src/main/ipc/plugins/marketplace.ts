@@ -138,18 +138,22 @@ const publicInstallResult = (result: {
   success: boolean;
   pluginId?: string;
   restartRequired?: boolean;
+  installationCommitted?: true;
 }): MarketplaceInstallResponse => {
+  const pluginId =
+    typeof result.pluginId === 'string' && result.pluginId.trim().length <= 256
+      ? result.pluginId.trim() || undefined
+      : undefined;
   if (!result.success) {
     return {
       success: false,
+      ...(result.installationCommitted
+        ? { installationCommitted: true as const, ...(pluginId ? { pluginId } : {}) }
+        : {}),
       error: 'Marketplace installation failed',
       errorCode: MarketplaceErrorCode.INTERNAL,
     };
   }
-  const pluginId =
-    typeof result.pluginId === 'string' && result.pluginId.trim().length <= 256
-      ? result.pluginId.trim()
-      : undefined;
   return {
     success: true,
     ...(pluginId ? { pluginId } : {}),

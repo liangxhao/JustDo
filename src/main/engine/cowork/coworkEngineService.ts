@@ -72,11 +72,17 @@ export class CoworkEngineService {
     await this.runtimeAdapter.reconnectGateway();
   }
 
-  async requestGateway<T>(method: string, params?: unknown): Promise<T> {
+  async requestGateway<T>(
+    method: string,
+    params?: unknown,
+    options?: { timeoutMs?: number },
+  ): Promise<T> {
     this.getRouter();
     if (!this.runtimeAdapter) {
       throw new Error('OpenClaw runtime adapter is unavailable.');
     }
-    return this.runtimeAdapter.requestGateway<T>(method, params);
+    return options
+      ? this.runtimeAdapter.requestGateway<T>(method, params, options)
+      : this.runtimeAdapter.requestGateway<T>(method, params);
   }
 }

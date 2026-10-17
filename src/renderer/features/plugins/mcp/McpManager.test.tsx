@@ -235,6 +235,86 @@ test('tests saved user MCP settings from the editor and preserves unsaved input 
   expect(screen.getByRole('button', { name: 'saveMcpServer' })).toBeTruthy();
 });
 
+test.each([false, true])(
+  'saving a changed user MCP invalidates earlier probe feedback (pending: %s)',
+  async pending => {
+    vi.mocked(mcpService.loadServers).mockResolvedValue([customServer]);
+    const changedServer = { ...customServer, command: 'changed-command', updatedAt: 2 };
+    vi.mocked(mcpService.getServers).mockReturnValue([changedServer]);
+    vi.mocked(mcpService.updateServer).mockResolvedValue({
+      success: true,
+      servers: [changedServer],
+    });
+    let finish!: (value: Awaited<ReturnType<typeof mcpService.probeServer>>) => void;
+    if (pending) {
+      vi.mocked(mcpService.probeServer).mockReturnValueOnce(
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+      );
+    }
+    renderManager();
+    fireEvent.click(await findCardProbe(customServer.name));
+    if (!pending) await screen.findByText('echo');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: `editMcpServer: ${customServer.name}` }));
+    const command = await screen.findByPlaceholderText('mcpCommandPlaceholder');
+    fireEvent.change(command, { target: { value: 'changed-command' } });
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'saveMcpServer' })));
+    if (pending) {
+      await act(async () =>
+        finish({
+          success: true,
+          result: {
+            available: true,
+            latencyMs: 1,
+            tools: [{ name: 'old-connection-tool' }],
+            resources: [],
+            prompts: [],
+          },
+        }),
+      );
+    }
+    expect((await findCardProbe(customServer.name)).getAttribute('title')).not.toContain(
+      'mcpProbeStatusAvailable',
+    );
+    expect(screen.queryByText('mcpTestingServer')).toBeNull();
+  },
+);
+
+test('a probe started during a user MCP switch cannot survive its committed state change', async () => {
+  vi.mocked(mcpService.loadServers).mockResolvedValue([customServer]);
+  const disabled = { ...customServer, enabled: false };
+  vi.mocked(mcpService.getServers).mockReturnValue([disabled]);
+  let finishSwitch!: (servers: McpServerConfig[]) => void;
+  vi.mocked(mcpService.setServerEnabled).mockReturnValueOnce(
+    new Promise(resolve => {
+      finishSwitch = resolve;
+    }),
+  );
+  let finishProbe!: (value: Awaited<ReturnType<typeof mcpService.probeServer>>) => void;
+  vi.mocked(mcpService.probeServer).mockReturnValueOnce(
+    new Promise(resolve => {
+      finishProbe = resolve;
+    }),
+  );
+  renderManager();
+  const toggle = await screen.findByRole('switch', { name: 'disableMcpServer' });
+  fireEvent.click(toggle);
+  fireEvent.click(await findCardProbe(customServer.name));
+  await act(async () => finishSwitch([disabled]));
+  await act(async () =>
+    finishProbe({
+      success: true,
+      result: { available: true, latencyMs: 1, tools: [], resources: [], prompts: [] },
+    }),
+  );
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect((await findCardProbe(customServer.name)).getAttribute('title')).not.toContain(
+    'mcpProbeStatusAvailable',
+  );
+});
+
 test('tests an extension MCP from the read-only parameter window without changing its definition', async () => {
   const server = editableExtensionServer();
   vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([server]);

@@ -193,3 +193,47 @@ Chrome 窗口读取时，界面工具因无法可靠识别当前 URL 而结束�
 - runtime package：`b6588b64f66016de8c020c9ff0b29ed4713b87af0ef955d3864066dcbfb038d3`
 - npm-shrinkwrap：`886d40c7b53c2b9d7ac45c19b5a7102ac2fc22ca45a267cc6d9adba9b824fc8a`
 - Windows `win-resources.tar.zst`：`e00ae923c7ba8aec5c4fcf00b8e4e65e03563bd112089dbdf70fbc82281da8b7`（448633466 bytes）
+
+## Plugin Hub 生命周期复核
+
+对照 `../openclaw` 的 v2026.10.4 源码、实际运行时及页面调用方复核四类管理流程。本轮只修改应用适配和展示，不增加运行时补丁、不替换活动运行时、不调用真实模型。
+
+| 类型  | 本轮核对的流程与结论                                                                                                                                                                                                                                                                                              |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 扩展  | `plugins.list` 的配置开关与 `runtime` 健康状态分别处理。修复漏报 `runtime.error`、`service-failed` 及 `needs-setup`；保持原生启用意图、管理权限及卸载保护。安装审查、CLI 最终回执、原生 reload/refresh、卸载和失败后的清单对账维持现行协议。实际 CLI 验证安装、停用、保留停用状态更新、启用、卸载及移除后的清单。 |
+| Skill | `skills.status/update`、开关回读确认、文件导入/覆盖/删除、同名有效来源与父扩展归属无新增协议错配。原生解析复核覆盖关闭赢家不切换来源、删除赢家后回退，以及两个工作区各自解析。没有独立执行测试按钮；列表可用性来自原生依赖与资格状态。                                                                            |
+| MCP   | 用户配置 CRUD、原生配置投影、扩展连接发现/归属/只读参数/启停及测试保留原生语义。实际 native 与 bundle 两类连接覆盖清单、定向连接、工具/资源/提示发现、资源读取、停用后的显式测试、完整覆盖优先、错误脱敏及父扩展禁用；不调用工具或写回测试配置。                                                                  |
+| Hook  | `hooks.status` 的 `enabledByConfig`、`requirementsSatisfied`、`loadable` 和 `blockedReason` 已接入；导入、开关、隔离删除、配置同步与 `plugins.refresh`、回滚及父扩展分组维持现行契约。独立 Hook 没有市场更新入口，同名导入拒绝覆盖；扩展附带 Hook 继续由父扩展管理。                                              |
+
+验证证据在本机忽略目录 `.agent-tasks/plugin-hub/`，不提交原始日志：
+
+- 新增回归先复现 4 个失败：3 类原生运行错误及没有环境缺失项的配置状态；修复后均通过。首轮两文件回归另有一项既有压缩包测试超过 5 秒；其文件夹/压缩包两种形式独立复测通过，后续广泛回归也通过，没有调整超时时限。
+- `plugin-suite.log` / `.err.log`：使用 Electron Node 模式及可信 Windows preload，避免切换正在使用的 SQLite ABI。65 个完整文件、914 项通过；另一个原生 Skill 解析文件有 2 项通过、1 项 CLI 子进程超时。该文件随后按项目 Node 24 要求独立运行，3 项全部通过（`skill-native-rerun.log`，69.69 秒）。这些为分批结果，不宣称首轮整套无失败；Electron 子进程单次超时原因未确定。
+- `extension-mcp-native.log`：`node --test tests/openclaw/runtime/extension-mcp.native-smoke.mjs` 通过；独立状态与连接，运行插件入口被故意设为抛错，证明清单和测试不会通过执行插件入口完成。
+- `extension-lifecycle-native.log`：`node --test tests/openclaw/runtime/plugin-management.native-smoke.mjs` 通过（146.65 秒）。实际应用导入服务、安装器和 CLI 使用一次性配置、端口及凭据，覆盖保留停用策略的升级和最终移除；没有启动 Gateway，测试目录已清理。
+- 完整 lint、Renderer/Electron 两组 `tsc --noEmit` 通过；现有运行时 28 项补丁冻结核验通过。没有为测试重建或替换使用中的原生模块。
+
+尚需人工验收：重启开发应用使 Main 适配生效后，在插件页面验证真实本地扩展的审查/取消、热启停/更新/卸载及附带 Skill/MCP/Hook 刷新，观察实际注册/服务失败和待配置提示；对 Skill 导入/同名覆盖/开关/删除、MCP 编辑/测试/开关/删除及 Hook 导入/实际触发/停用/删除做界面闭环。真实企业市场提供方、远端 OAuth/TLS MCP、活动任务期间的插件热变更、权限拒绝和真实文件占用仍未在本轮覆盖。仓库默认未注册市场提供方；扩展/Skill 的自动更新依赖已安装市场身份和提供方能力，本地扩展/Skill 可重新导入，Hook 没有独立更新流程。现有 Chrome 扩展配对延期决定保持不变。
+
+### 多 Agent 交叉复审补充
+
+三名 Agent 分别检查安装更新、卸载归属与界面刷新，再交叉检查修复。补充修复如下：
+
+- 本地交互式安装将人工确认的 `reviewToken` 传给原生 `plugins.install`，由最终 staging 核验能力面；不再用 CLI 无条件接受新能力。安装请求使用 10 分钟窗口，未知结果不重放。多入口包保留精确 manifest owner 与原生代表子 ID 的区别，按真实包目录核对出站策略和安装身份，不按子 ID 前缀猜路径。
+- 已提交但运行态应用失败时，提交事实、原生 ID 和已核验路径穿过 Main 安装器与市场登记；市场保留版本身份，Renderer 显示错误和状态刷新，同版本不重新安装，在“可更新”筛选下也保留待处理反馈。无法确认的安装保留可能仍被原生读取的临时源；仅 Main 持有来源占用标记。
+- 卸载超时或断线后只读核验清单和本次原路径，无法确认时报告待确认；只有明确未发送才允许离线 CLI 恢复。原生关联拒绝和包含目录占用文字的断线也不能触发重放。
+- 已打开的扩展详情跟随成功清单更新，移除时关闭；Skill 订阅父扩展变更，已移除条目的详情不会因同 ID 恢复自动重开。MCP 保存、删除、开关和市场刷新前后使旧测试结果与在途代次失效。配置保存反馈受详情代次约束，迟到结果不污染另一详情或新草稿。
+
+新增实际原生验证 `node --test tests/openclaw/runtime/plugin-capability-consent.native-smoke.mjs`：原能力面可接受旧令牌；增加工具后旧令牌被拒绝，即使存在原生自动确认回调；重新审查的新令牌可接受。另验证临时目录变化不改变相同能力面的令牌。此验证直接调用当前运行时的原生 staging consent，不执行插件入口、不启动 Gateway、不调用模型；它验证的是原生声明能力面令牌，不宣称冻结所有源码字节。
+
+`node --test tests/openclaw/runtime/plugin-package-ownership.native-smoke.mjs` 的加强版也通过（`package-ownership-native-complete.log`，60.51 秒）。独立配置、端口和随机凭据，初始只允许无关的 `memory-core`；实际多入口 CLI 安装后两个子条目均启用，原生 ownership、真实 native catalog、应用列表路径和市场身份一致，列表不发生误刷新；已提交失败中的 owner 也规范到同一代表条目。最初真实样例暴露的 CLI 子 ID 终态匹配和 fixture 对具名原生导出的读取问题已修正。此样例不启动 Gateway，不代表真实在线热安装验收。
+
+补充回归、类型和构建结果见本机 `.agent-tasks/plugin-hub/review-*.log`。`review-suite.log` 使用 Electron Node 与可信 preload，65 个文件、967 项通过；后续交叉修复的受影响文件另行复测，不把不同批次的重叠用例相加。
+
+Renderer 末轮单文件回归分别为扩展 34、MCP 33、市场 35、Skill 21 项通过；Main IPC 与市场适配末轮 62 项通过。安装服务和安装源在隔离 Windows 锁查询后完整复测；锁归属专门用例仍显式提供对应诊断结果，实际原生能力审查继续由独立 fixture 验证，没有提高单测超时或改变生产文件锁诊断。
+
+最终完整 lint、Renderer 构建和 Main `tsc --project electron-tsconfig.json --noEmit` 通过（`review-lint-verified.log`、`review-build-sealed.log`、`review-main-types-sealed.log`）。编译不切换 SQLite ABI；没有为本轮修改重新生成 OpenClaw 运行时。
+
+所有补修完成后的五文件末轮回归 `review-final-regression.log` 为 217/217 通过，覆盖完整安装服务、Windows 安装源、扩展 IPC、市场 IPC 和市场服务；与此前 967 项整套回归有重叠，不相加为独立用例总数。
+
+本轮没有进行真实界面验收或替换活动运行时。上述人工项仍需验证，尤其是新增在线本地安装的真实 Gateway 回执、权限/活动任务冲突、多入口包更新卸载，以及企业市场真实下载更新和远端认证 MCP。请在自行重启开发应用后验收；本轮未关闭正在使用的应用或 Gateway，也未切换 SQLite ABI。

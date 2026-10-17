@@ -92,6 +92,12 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
   const [inventoryReady, setInventoryReady] = useState(false);
 
   useEffect(() => {
+    if (selectedSkillId && !skills.some(skill => skill.id === selectedSkillId)) {
+      setSelectedSkillId(null);
+    }
+  }, [selectedSkillId, skills]);
+
+  useEffect(() => {
     mounted.current = true;
     let isActive = true;
     const generation = ++inventoryReadGeneration.current;
@@ -110,12 +116,16 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
       setInventoryReady(!skillService.hasInventoryReadFailed());
     });
     loadSkills();
+    const stopExtensionChanges = window.electron.extensions.onChanged(() => {
+      void skillService.refreshInventoryAfterMutation();
+    });
 
     return () => {
       isActive = false;
       mounted.current = false;
       inventoryReadGeneration.current += 1;
       stopInventoryUpdates();
+      stopExtensionChanges();
     };
   }, [dispatch]);
 

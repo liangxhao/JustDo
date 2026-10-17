@@ -235,14 +235,66 @@ test('persists marketplace identity and maps update checks back to the runtime i
 
   expect(provider.checkUpdates).toHaveBeenCalledWith({
     kind: PluginKind.SKILL,
-    installed: [
-      { id: 'catalog-writer', runtimeId: 'writer-runtime', version: '1.0.0' },
-    ],
+    installed: [{ id: 'catalog-writer', runtimeId: 'writer-runtime', version: '1.0.0' }],
   });
   expect(result.updates[0]).toMatchObject({
     id: 'catalog-writer',
     runtimeId: 'writer-runtime',
   });
+});
+
+test('records a committed update even when its runtime application fails', async () => {
+  const provider = createProvider();
+  provider.source.supportedKinds = [PluginKind.EXTENSION];
+  vi.mocked(provider.prepareInstall).mockResolvedValue({
+    payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:\\downloads\\writer' },
+  });
+  const registry = createInstallRegistry();
+  registry.upsert({
+    sourceId: provider.source.id,
+    kind: PluginKind.EXTENSION,
+    marketplacePluginId: 'catalog-writer',
+    runtimeId: 'writer-runtime',
+    installedVersion: '1.0.0',
+    installPath: 'C:\\extensions\\writer-runtime',
+  });
+  const installationService = new PluginInstallationService();
+  installationService.registerInstaller({
+    kind: PluginKind.EXTENSION,
+    install: async () => ({
+      success: false,
+      installationCommitted: true,
+      pluginId: 'writer-runtime',
+      installPath: 'C:\\extensions\\writer-runtime',
+      error: 'Runtime application failed',
+    }),
+  });
+  const service = new PluginMarketplaceService([provider], installationService, registry);
+
+  const result = await service.install({
+    sourceId: provider.source.id,
+    pluginId: 'catalog-writer',
+    kind: PluginKind.EXTENSION,
+    version: '2.0.0',
+    operation: MarketplaceInstallOperation.UPDATE,
+  });
+
+  expect(result).toMatchObject({ success: false, installationCommitted: true });
+  expect(registry.list(PluginKind.EXTENSION)).toEqual([
+    expect.objectContaining({ installedVersion: '2.0.0', runtimeId: 'writer-runtime' }),
+  ]);
+  expect(
+    service.resolveInstalled({
+      kind: PluginKind.EXTENSION,
+      installed: [{ id: 'writer-runtime', installPath: 'C:\\extensions\\writer-runtime' }],
+    }),
+  ).toEqual([
+    {
+      runtimeId: 'writer-runtime',
+      sourceId: provider.source.id,
+      pluginId: 'catalog-writer',
+    },
+  ]);
 });
 
 test('does not disclose a persisted installation to another marketplace source', async () => {
@@ -271,9 +323,7 @@ test('does not disclose a persisted installation to another marketplace source',
 
   expect(first.checkUpdates).toHaveBeenCalledWith({
     kind: PluginKind.SKILL,
-    installed: [
-      { id: 'catalog-writer', runtimeId: 'writer-runtime', version: undefined },
-    ],
+    installed: [{ id: 'catalog-writer', runtimeId: 'writer-runtime', version: undefined }],
   });
   expect(second.checkUpdates).not.toHaveBeenCalled();
 });
@@ -299,6 +349,36 @@ test('cleans up a prepared marketplace payload after installation', async () => 
   });
 
   expect(cleanup).toHaveBeenCalledOnce();
+});
+
+test('retains a prepared source while a dispatched native installation is unconfirmed', async () => {
+  const provider = createProvider();
+  const cleanup = vi.fn();
+  vi.mocked(provider.prepareInstall).mockResolvedValue({
+    payload: { kind: PluginKind.SKILL, sourcePath: 'C:\\downloads\\writer' },
+    cleanup,
+  });
+  const installationService = new PluginInstallationService();
+  installationService.registerInstaller({
+    kind: PluginKind.SKILL,
+    install: async () => ({ success: false, installSourceInUse: true }),
+  });
+  const registry = createInstallRegistry();
+  const service = new PluginMarketplaceService([provider], installationService, registry);
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  try {
+    await expect(
+      service.install({
+        sourceId: provider.source.id,
+        pluginId: 'writer',
+        kind: PluginKind.SKILL,
+      }),
+    ).resolves.toMatchObject({ success: false, installSourceInUse: true });
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(registry.list()).toEqual([]);
+  } finally {
+    warn.mockRestore();
+  }
 });
 
 test('cleans up a prepared payload when its kind is invalid', async () => {

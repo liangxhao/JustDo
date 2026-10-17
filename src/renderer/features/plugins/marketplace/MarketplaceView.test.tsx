@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  type MarketplaceInstallResponse,
   MarketplaceInstallState,
   type MarketplacePlugin,
   PluginKind,
@@ -55,7 +56,11 @@ function setup() {
       result: { items: [writer], nextCursor: undefined as string | undefined },
     })),
     checkUpdates: vi.fn(async () => ({ success: true, result: { updates: [writer] } })),
-    install: vi.fn(async () => ({ success: true, pluginId: 'writer', restartRequired: false })),
+    install: vi.fn(async (): Promise<MarketplaceInstallResponse> => ({
+      success: true,
+      pluginId: 'writer',
+      restartRequired: false,
+    })),
     detail: vi.fn(async () => ({ success: true, detail: writer })),
     listCategories: vi.fn(async () => ({
       success: true,
@@ -248,6 +253,54 @@ test('leaves the failed card retryable and does not lose local controls', async 
   fireEvent.click(screen.getByRole('button', { name: 'marketplaceUpdate' }));
   await waitFor(() => expect(api.install).toHaveBeenCalledTimes(2));
 });
+
+test.each([
+  { updating: false, updatesOnly: false },
+  { updating: true, updatesOnly: false },
+  { updating: true, updatesOnly: true },
+])(
+  'refreshes a committed failure without replaying installation ($updating, updates filter: $updatesOnly)',
+  async ({ updating, updatesOnly }) => {
+    api.install.mockResolvedValue({
+      success: false,
+      pluginId: 'writer',
+      restartRequired: false,
+      installationCommitted: true,
+      error: 'Runtime activation failed after publishing',
+    });
+    const refresh = vi.fn(async () => undefined);
+    render(<Harness installed={updating ? INSTALLED : EMPTY} onInstalled={refresh} />);
+    if (updatesOnly)
+      fireEvent.click(screen.getByRole('button', { name: /marketplaceFilter.updates/ }));
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: updating ? 'marketplaceUpdate' : 'marketplaceInstall',
+      }),
+    );
+    expect(await screen.findByText('Runtime activation failed after publishing')).toBeTruthy();
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    expect(screen.queryByText('marketplaceUpdateSucceeded')).toBeNull();
+    expect(screen.queryByText('marketplaceInstallSucceeded')).toBeNull();
+    expect(screen.getByText('marketplaceInstallCommittedWithError')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'marketplaceRefreshStatus' }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('Runtime activation failed after publishing')).toBeTruthy();
+    if (updatesOnly) {
+      vi.useFakeTimers();
+      await act(async () => vi.advanceTimersByTimeAsync(2000));
+      vi.useRealTimers();
+      expect(screen.getByTestId('local-writer')).toBeTruthy();
+      expect(screen.getByText('Runtime activation failed after publishing')).toBeTruthy();
+    }
+    expect(screen.queryByRole('button', { name: 'marketplaceUpdate' })).toBeNull();
+    if (!updating) {
+      const settled = screen.getByRole('button', { name: 'marketplaceStatusPending' });
+      expect(settled.hasAttribute('disabled')).toBe(true);
+      fireEvent.click(settled);
+    }
+    expect(api.install).toHaveBeenCalledTimes(1);
+  },
+);
 
 test('installed and update filters retain background checks but hide market-only items', async () => {
   render(<Harness installed={INSTALLED} />);

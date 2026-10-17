@@ -105,9 +105,11 @@ export function MarketplaceFeedback({
   if (!operation || operation.busy) return null;
   const warning =
     operation.warning ||
-    (item && operation.committed && !controller.localFor(item)
-      ? i18nService.t('marketplaceStatusPending')
-      : '');
+    (operation.committed && operation.error
+      ? i18nService.t('marketplaceInstallCommittedWithError')
+      : item && operation.committed && !controller.localFor(item)
+        ? i18nService.t('marketplaceStatusPending')
+        : '');
   return (
     <div
       className="relative z-10 space-y-1 text-xs [&_button]:pointer-events-auto"

@@ -4,13 +4,11 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { OpenClawPluginCapabilityReview } from '../../../shared/plugins/extensions';
 import { ManagedDirectoryOperationCoordinator } from '../../core/filesystem/managedDirectoryOperations';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import { prepareExtensionInstallSource } from './extensionInstallSource';
-import {
-  __openClawExtensionImportTestUtils,
-  OpenClawExtensionImportService,
-} from './openclawExtensionImportService';
+import { OpenClawExtensionImportService } from './openclawExtensionImportService';
 
 describe.skipIf(process.platform !== 'win32')('Windows extension import source', () => {
   let root: string;
@@ -121,75 +119,73 @@ describe.skipIf(process.platform !== 'win32')('Windows extension import source',
     },
   );
 
-  it.skipIf(!fs.existsSync(path.resolve('vendor/openclaw-runtime/current/dist')))(
-    'keeps native review tokens stable across disposable sources and cleans confirmed success',
-    async () => {
-      const runtimeRoot = fs.realpathSync(path.resolve('vendor/openclaw-runtime/current'));
-      fs.unlinkSync(hostLink);
-      fs.symlinkSync(runtimeRoot, hostLink, 'junction');
-      fs.writeFileSync(
-        path.join(source, 'openclaw.plugin.json'),
-        JSON.stringify({
-          id: 'demo',
-          configSchema: { type: 'object', properties: {} },
-        }),
-      );
-      const stateDir = path.join(root, 'state');
-      fs.mkdirSync(stateDir);
-      const configPath = path.join(stateDir, 'openclaw.json');
-      fs.writeFileSync(configPath, '{"plugins":{}}');
-      const reviewedPaths: string[] = [];
-      const installedPaths: string[] = [];
-      const runCommand: typeof __openClawExtensionImportTestUtils.runCommand = async (
-        exe,
-        args,
-        options,
-      ) => {
-        if (args[0] === '--input-type=module') {
-          reviewedPaths.push(options.env.JUSTDO_PLUGIN_REVIEW_DIRECTORY!);
-          return __openClawExtensionImportTestUtils.runCommand(exe, args, options);
-        }
-        installedPaths.push(args[3]);
-        expect(args[3]).toBe(reviewedPaths.at(-1));
-        expect(fs.existsSync(path.join(args[3], 'node_modules', 'openclaw'))).toBe(false);
-        return { exitCode: 0, stdout: '', stderr: '' };
+  it('reviews and installs the same disposable source and cleans confirmed success', async () => {
+    const runtimeRoot = fs.realpathSync(host);
+    fs.writeFileSync(
+      path.join(source, 'openclaw.plugin.json'),
+      JSON.stringify({
+        id: 'demo',
+        configSchema: { type: 'object', properties: {} },
+      }),
+    );
+    const stateDir = path.join(root, 'state');
+    fs.mkdirSync(stateDir);
+    const configPath = path.join(stateDir, 'openclaw.json');
+    fs.writeFileSync(configPath, '{"plugins":{}}');
+    const reviewedPaths: string[] = [];
+    const installedPaths: string[] = [];
+    const runCommand = vi.fn();
+    const inspectCapabilityReview = vi.fn(async (params: { pluginDirectory: string }) => {
+      reviewedPaths.push(params.pluginDirectory);
+      return {
+        extensionId: 'demo',
+        review: { reviewToken: 'fixture-reviewed-token' } as OpenClawPluginCapabilityReview,
       };
-      const service = new OpenClawExtensionImportService({
-        getOpenClawEngineManager: () =>
-          ({
-            getStatus: () => ({ phase: 'ready' }),
-            getBaseDir: () => stateDir,
-            getConfigPath: () => configPath,
-            buildCliEnvironment: async () => ({
-              runtimeRoot,
-              openclawEntry: path.join(runtimeRoot, 'openclaw.mjs'),
-              env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
-            }),
-          }) as unknown as OpenClawEngineManager,
-        requestGateway: vi.fn(),
-        runCommand,
-        directoryOperations: new ManagedDirectoryOperationCoordinator({
-          findLockingProcesses: vi.fn(async () => ({ available: true, processes: [] })),
-        }),
-      });
-      const first = await service.importPath(source);
-      expect(first.error).toBeUndefined();
-      expect(first.capabilityReview?.reviewToken).toMatch(/^[a-f0-9]{64}$/);
-      expect(fs.existsSync(reviewedPaths[0])).toBe(false);
-      expect(installedPaths).toHaveLength(0);
-      const second = await service.importPath(
-        source,
-        undefined,
-        first.capabilityReview!.reviewToken,
-      );
-      expect(second).toMatchObject({ success: true, extensionId: 'demo' });
-      expect(reviewedPaths).toHaveLength(2);
-      expect(reviewedPaths[0]).not.toBe(reviewedPaths[1]);
-      expect(installedPaths).toHaveLength(1);
-      expect(fs.existsSync(installedPaths[0])).toBe(false);
-      expect(fs.realpathSync(hostLink)).toBe(runtimeRoot);
-    },
-  );
+    });
+    const requestGateway = vi.fn(async (_method: string, params: { path: string }) => {
+      installedPaths.push(params.path);
+      expect(params.path).toBe(reviewedPaths.at(-1));
+      expect(fs.existsSync(path.join(params.path, 'node_modules', 'openclaw'))).toBe(false);
+      return {
+        ok: true,
+        plugin: { id: 'demo' },
+        restartRequired: false,
+        runtime: { generation: 1, pluginIds: ['demo'] },
+      };
+    });
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () =>
+        ({
+          getStatus: () => ({ phase: 'ready' }),
+          getBaseDir: () => stateDir,
+          getConfigPath: () => configPath,
+          buildCliEnvironment: async () => ({
+            runtimeRoot,
+            openclawEntry: path.join(runtimeRoot, 'openclaw.mjs'),
+            env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
+          }),
+        }) as unknown as OpenClawEngineManager,
+      requestGateway,
+      inspectCapabilityReview,
+      runCommand,
+      directoryOperations: new ManagedDirectoryOperationCoordinator({
+        findLockingProcesses: vi.fn(async () => ({ available: true, processes: [] })),
+      }),
+    });
+    const first = await service.importPath(source);
+    expect(first.error).toBeUndefined();
+    expect(first.capabilityReview?.reviewToken).toBe('fixture-reviewed-token');
+    expect(fs.existsSync(reviewedPaths[0])).toBe(false);
+    expect(installedPaths).toHaveLength(0);
+    const second = await service.importPath(source, undefined, first.capabilityReview!.reviewToken);
+    expect(second).toMatchObject({ success: true, extensionId: 'demo' });
+    expect(reviewedPaths).toHaveLength(2);
+    expect(reviewedPaths[0]).not.toBe(reviewedPaths[1]);
+    expect(installedPaths).toHaveLength(1);
+    expect(fs.existsSync(installedPaths[0])).toBe(false);
+    expect(fs.realpathSync(hostLink)).toBe(runtimeRoot);
+    expect(runCommand).not.toHaveBeenCalled();
+  });
 
   it.each(['timeout', 'failure', 'throw'])(
     'retains the temporary source after %s when the native outcome is uncertain',

@@ -208,6 +208,8 @@ export interface MarketplaceDetailResponse {
 
 export interface MarketplaceInstallResponse {
   success: boolean;
+  /** Installation persisted; an unsuccessful response still requires inventory reconciliation. */
+  installationCommitted?: true;
   pluginId?: string;
   restartRequired?: boolean;
   error?: string;

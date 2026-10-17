@@ -290,6 +290,7 @@ export class PluginMarketplaceService {
         () => provider.prepareInstall(normalizedRequest),
         'prepare installation',
       );
+      let installSourceInUse = false;
       try {
         if (!prepared || prepared.payload?.kind !== request.kind) {
           throw new MarketplaceError(
@@ -303,7 +304,8 @@ export class PluginMarketplaceService {
           marketplacePluginId: pluginId,
           payload: prepared.payload,
         });
-        if (result.success && result.pluginId) {
+        installSourceInUse = result.installSourceInUse === true;
+        if ((result.success || result.installationCommitted) && result.pluginId) {
           try {
             const previous = this.installRegistry
               .list(request.kind)
@@ -327,7 +329,13 @@ export class PluginMarketplaceService {
         return result;
       } finally {
         try {
-          await prepared?.cleanup?.();
+          if (installSourceInUse) {
+            console.warn(
+              '[PluginMarketplace] Retaining prepared source after an unconfirmed installation',
+            );
+          } else {
+            await prepared?.cleanup?.();
+          }
         } catch {
           console.warn('[PluginMarketplace] Failed to clean prepared installation payload');
         }

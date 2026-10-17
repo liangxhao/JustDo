@@ -68,6 +68,7 @@ export const pluginsTranslations = {
     marketplaceInstallSucceeded: '“{name}”已安装。',
     marketplaceUpdateSucceeded: '“{name}”已更新。',
     marketplaceRefreshAfterInstallFailed: '安装已完成，但插件状态刷新失败，请稍后重试。',
+    marketplaceInstallCommittedWithError: '安装已保存，但后续步骤失败。请检查插件状态。',
     openExtensionDetails: '查看扩展“{name}”的详情',
     marketplaceDetailFailed: '加载插件详情失败',
     marketplaceRequirements: '运行要求',
@@ -450,6 +451,8 @@ export const pluginsTranslations = {
     marketplaceInstallFailed: 'Failed to install plugin',
     marketplaceInstallSucceeded: '“{name}” was installed.',
     marketplaceUpdateSucceeded: '“{name}” was updated.',
+    marketplaceInstallCommittedWithError:
+      'The installation was saved, but a subsequent step failed. Check the plugin status.',
     marketplaceRefreshAfterInstallFailed:
       'Installation completed, but plugin status could not be refreshed. Try again later.',
     openExtensionDetails: 'View details for extension “{name}”',
