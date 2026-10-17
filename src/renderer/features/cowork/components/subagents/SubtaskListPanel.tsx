@@ -35,6 +35,8 @@ import {
   subtaskStatusStyles,
 } from './subtaskPresentation';
 
+const SUBTASK_CHANGE_REFRESH_DELAY_MS = 100;
+
 interface SubtaskListPanelProps {
   sessionId: string;
   panelId?: string;
@@ -283,10 +285,25 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
   useEffect(() => {
     const subscribe = window.electron.cowork.onSubtasksChanged;
     if (!subscribe) return;
-    return subscribe(event => {
-      if (!event.sessionId || event.sessionId === sessionId) void refresh(true);
+    let timer: number | undefined;
+    let active = true;
+    const unsubscribe = subscribe(event => {
+      if (!active || sessionIdRef.current !== sessionId || (event.sessionId && event.sessionId !== sessionId)) return;
+      // Retire a pre-event response immediately, then combine notification
+      // bursts without issuing one full native catalog read per notification.
+      refreshGenerationRef.current += 1;
+      if (timer !== undefined) return;
+      timer = ownerWindow.setTimeout(() => {
+        timer = undefined;
+        if (active && sessionIdRef.current === sessionId) refreshRef.current(true);
+      }, SUBTASK_CHANGE_REFRESH_DELAY_MS);
     });
-  }, [refresh, sessionId]);
+    return () => {
+      active = false;
+      ownerWindow.clearTimeout(timer);
+      unsubscribe();
+    };
+  }, [sessionId, ownerWindow]);
 
   useEffect(() => {
     if (!isOpen || active.length === 0) return;

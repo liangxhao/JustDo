@@ -2,6 +2,7 @@ import { GoalExecutionPhase } from '../../../shared/cowork/sessionGoal';
 import type { CoworkStore } from '../../data/coworkStore';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
 import { isTeamDiscussionHoldingSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
+import { invalidateSessionListRequests } from '../gateway/sessionListClient';
 import type { GatewayClientLike } from '../gateway/types';
 import {
   RUNTIME_SESSION_SNAPSHOT_TTL_MS,
@@ -51,6 +52,11 @@ export interface RuntimeSessionStatusContext {
   runtimeSessionSnapshot: (RuntimeSessionSnapshot & { expiresAt: number }) | null;
   runtimeSessionSnapshotGeneration: number;
   runtimeSessionSnapshotPromise: Promise<RuntimeSessionSnapshot> | null;
+  runtimeSessionSnapshotQueuedRefresh: {
+    forceRefresh: boolean;
+    fullScan: boolean;
+    promise: Promise<RuntimeSessionSnapshot>;
+  } | null;
   lastRuntimeStatusWarningAt: number;
 }
 
@@ -62,7 +68,10 @@ export async function getSubagentStatuses(
   subagents: GatewaySubagent[];
 }> {
   if (!sessionId) return { subagents: [] };
-  if (forceRefresh) this.invalidateSubagentStatus(sessionId);
+  if (forceRefresh) {
+    invalidateSessionListRequests(this.gatewayClient);
+    this.invalidateSubagentStatus(sessionId);
+  }
   const cached = this.subagentStatusCache.get(sessionId);
   if (cached && cached.expiresAt > Date.now()) {
     return { subagents: cached.subagents };
@@ -355,13 +364,40 @@ export async function getRuntimeSessionSnapshot(
     return this.runtimeSessionSnapshot;
   }
   if (this.runtimeSessionSnapshotPromise) {
-    const pendingSnapshot = await this.runtimeSessionSnapshotPromise;
-    return forceRefresh || (fullScan && pendingSnapshot.hasMore)
-      ? this.getRuntimeSessionSnapshot(forceRefresh, fullScan)
-      : pendingSnapshot;
+    if (!forceRefresh && !fullScan) return this.runtimeSessionSnapshotPromise;
+    let queued = this.runtimeSessionSnapshotQueuedRefresh;
+    if (!queued) {
+      const pending = this.runtimeSessionSnapshotPromise;
+      queued = {
+        forceRefresh,
+        fullScan,
+        promise: pending,
+      };
+      const request = queued;
+      this.runtimeSessionSnapshotQueuedRefresh = request;
+      request.promise = pending.then(snapshot => {
+        // Release the queued slot before starting the next read. Notifications
+        // arriving during that read must still be able to request a newer one.
+        if (this.runtimeSessionSnapshotQueuedRefresh === request) {
+          this.runtimeSessionSnapshotQueuedRefresh = null;
+        }
+        return request.forceRefresh || (request.fullScan && snapshot.hasMore)
+          ? this.getRuntimeSessionSnapshot(request.forceRefresh, request.fullScan)
+          : snapshot;
+      }).finally(() => {
+        if (this.runtimeSessionSnapshotQueuedRefresh === request) {
+          this.runtimeSessionSnapshotQueuedRefresh = null;
+        }
+      });
+    } else {
+      queued.forceRefresh ||= forceRefresh;
+      queued.fullScan ||= fullScan;
+    }
+    return queued.promise;
   }
   const client = this.gatewayClient;
   if (!client) return { known: false, sessions: [], hasMore: false };
+  if (forceRefresh) invalidateSessionListRequests(client);
   const snapshotGeneration = this.runtimeSessionSnapshotGeneration;
 
   this.runtimeSessionSnapshotPromise = (async (): Promise<RuntimeSessionSnapshot> => {

@@ -1,14 +1,14 @@
 import type { BrowserMode } from '../../../shared/browser/browser';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
 import { readModelRef } from '../../../shared/providers/modelRef';
-import { matchesModelSelectionIdentity } from '../../../shared/providers/modelSelectionIdentity';
 import type { WindowsSandboxStatus } from '../../../shared/security/windowsSandbox';
 import { ManagedDirectoryRuntimeStopAbortedError } from '../../core/filesystem/managedDirectoryOperations';
 import type { CoworkStore } from '../../data/coworkStore';
+import { createManagedSessionModelPolicy } from '../../engine/gateway/managedSessionModels';
 import { enqueueSessionModelOperation } from '../../engine/gateway/sessionModelOperations';
+import type { GatewayClientLike } from '../../engine/gateway/types';
 import {
   OPENCLAW_COMPACT_SESSION_ROW_MODE,
-  parseModelReferenceV2026_10_4,
   parseSessionsListResultV2026_10_4,
 } from '../../engine/openclaw/wire/v2026_10_4';
 import type {
@@ -18,6 +18,7 @@ import type {
 import type { OpenClawHookStore } from '../../plugins/hooks';
 import type { McpStore } from '../../plugins/mcp';
 import { discoverOpenClawManagedMcpServers } from '../../plugins/mcp';
+import { ComputerHostPreparation } from '../runtime/computerHostPreparation';
 import {
   GatewayConfigRestartOutcome,
   requestGatewayConfigRestart,
@@ -29,6 +30,7 @@ import {
   resolveOpenClawExecHost,
   verifyLoggedOutOpenClawConfig,
 } from './openclawConfigSync';
+import { maintainStartupAuthProfiles } from './startupAuthProfileMaintenance';
 
 type OpenClawConfigSyncServiceDeps = {
   getCoworkStore: () => CoworkStore;
@@ -39,6 +41,7 @@ type OpenClawConfigSyncServiceDeps = {
   disconnectGatewayClient: () => void;
   connectGatewayClient: () => Promise<void>;
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
+  getGatewayClient: () => GatewayClientLike | null;
   getBrowserMode?: () => BrowserMode;
   getDecisionModelCategory?: () => unknown;
   getNativeVideoCategory?: () => unknown;
@@ -64,6 +67,10 @@ type SyncOpenClawConfigResult = {
   hostPolicyVerified?: boolean;
   status?: OpenClawEngineStatus;
   error?: string;
+};
+
+type ExecutionAdmissionOptions = {
+  prepareComputerForSend?: boolean;
 };
 
 export type OpenClawConfigMutationContext = {
@@ -212,6 +219,7 @@ export const resolveDeferredGatewayRestartAction = (options: {
 
 export class OpenClawConfigSyncService {
   private readonly deps: OpenClawConfigSyncServiceDeps;
+  private readonly computerHostPreparation = new ComputerHostPreparation();
   private configSync: OpenClawConfigSync | null = null;
   private deferredRestartTimer: ReturnType<typeof setInterval> | null = null;
   private deferredRestartGeneration: number | null = null;
@@ -674,15 +682,47 @@ export class OpenClawConfigSyncService {
     );
   }
 
-  verifyExecutionPermissionPolicy(): Promise<SyncOpenClawConfigResult> {
+  verifyExecutionPermissionPolicy(options: ExecutionAdmissionOptions = {}): Promise<SyncOpenClawConfigResult> {
     return this.enqueueSyncOperation(() =>
       this.verifySuccessfulConfigApplication({
         success: true,
         changed: false,
         configSynced: true,
         status: this.deps.getOpenClawEngineManager().getStatus(),
-      }, { executionAdmission: true }),
+      }, { executionAdmission: true, ...options }),
     );
+  }
+
+  startGatewayWithExecutionPolicy(options: ExecutionAdmissionOptions = {}): Promise<OpenClawEngineStatus> {
+    return this.enqueueSyncOperation(async () => {
+      const engineManager = this.deps.getOpenClawEngineManager();
+      const current = engineManager.getStatus();
+      const needsStartupPolicy = current.phase !== 'running';
+      const status = needsStartupPolicy ? await engineManager.startGateway() : current;
+      if (status.phase !== 'running') return status;
+
+      // A stopped config projection cannot use Gateway approval RPCs. Complete
+      // that startup obligation here, without redoing config/model/auth work.
+      const verified = await this.verifySuccessfulConfigApplication({
+        success: true,
+        changed: false,
+        configSynced: true,
+        status,
+      }, { executionAdmission: true, initializeExecPolicy: needsStartupPolicy, ...options });
+      if (verified.success && needsStartupPolicy) {
+        void maintainStartupAuthProfiles({
+          getGatewayClient: this.deps.getGatewayClient,
+          manager: engineManager,
+          runExclusive: operation => this.enqueueSyncOperation(operation),
+        }).catch(error => {
+          console.warn(
+            '[OpenClaw] Startup provider auth maintenance failed; a later config change can retry:',
+            error instanceof Error ? error.message : String(error),
+          );
+        });
+      }
+      return verified.status ?? engineManager.getStatus();
+    });
   }
 
   private async verifySuccessfulConfigApplication(
@@ -691,14 +731,21 @@ export class OpenClawConfigSyncService {
       execPolicyAlreadyVerified?: boolean;
       retiredProviderIds?: readonly string[];
       executionAdmission?: boolean;
+      initializeExecPolicy?: boolean;
+      prepareComputerForSend?: boolean;
     } = {},
   ): Promise<SyncOpenClawConfigResult> {
     const engineManager = this.deps.getOpenClawEngineManager();
     if (engineManager.getStatus().phase !== 'running') {
-      return options.executionAdmission ? { ...result, success: false } : result;
+      return options.executionAdmission
+        ? { ...result, success: false, status: engineManager.getStatus() }
+        : result;
     }
     const processGeneration = options.executionAdmission
       ? engineManager.getGatewayProcessGeneration()
+      : undefined;
+    const configGeneration = options.prepareComputerForSend
+      ? engineManager.getGatewayConfigReloadGeneration()
       : undefined;
     const supersededAdmission = (): SyncOpenClawConfigResult | null =>
       options.executionAdmission && (
@@ -719,16 +766,33 @@ export class OpenClawConfigSyncService {
         this.verifyRuntimePermissionConfig(),
         options.execPolicyAlreadyVerified
           ? Promise.resolve(true)
-          : options.executionAdmission
+          : options.executionAdmission && !options.initializeExecPolicy
             ? this.deps.requestGateway<ExecApprovalsSnapshot>('exec.approvals.get')
               .then(snapshot => typeof snapshot.hash === 'string' && snapshot.hash.length > 0 &&
                 this.isExecApprovalPolicyApplied(snapshot.file))
-            : this.applyExecApprovalPolicy(),
+            : options.initializeExecPolicy
+              ? this.initializeExecApprovalPolicy(() => supersededAdmission() === null)
+              : this.applyExecApprovalPolicy(),
       ]);
       const superseded = supersededAdmission();
       if (superseded) return superseded;
       if (runtimeConfigResult.verified && execPolicyApplied) {
-        if (options.executionAdmission) return { ...result, hostPolicyVerified: true };
+        if (options.executionAdmission) {
+          const client = options.prepareComputerForSend ? this.deps.getGatewayClient() : null;
+          if (options.prepareComputerForSend && client && processGeneration !== undefined && configGeneration !== undefined) {
+            this.computerHostPreparation.start({
+              client,
+              config: runtimeConfigResult.snapshot.config,
+              processGeneration,
+              configGeneration,
+              isCurrent: () => this.deps.getGatewayClient() === client &&
+                engineManager.getStatus().phase === 'running' &&
+                engineManager.getGatewayProcessGeneration() === processGeneration &&
+                engineManager.getGatewayConfigReloadGeneration() === configGeneration,
+            });
+          }
+          return { ...result, hostPolicyVerified: true };
+        }
         await this.syncManagedSessionModelsViaGateway(runtimeConfigResult.snapshot);
         await this.discoverOrphanedManagedAuthProfiles(runtimeConfigResult.snapshot);
         await this.cleanupRetiredProviderAuthProfiles(
@@ -853,30 +917,8 @@ export class OpenClawConfigSyncService {
   }
 
   private async syncManagedSessionModelsViaGateway(snapshot: ConfigSnapshot): Promise<void> {
-    const defaults = parseModelReferenceV2026_10_4(snapshot.config?.agents?.defaults?.model);
-    const targets = new Map<string, NonNullable<typeof defaults>>();
-    for (const [agentId, agent] of Object.entries(snapshot.config?.agents?.entries ?? {})) {
-      const target = parseModelReferenceV2026_10_4(agent.model) ?? defaults;
-      if (target) targets.set(agentId, target);
-    }
-    if (defaults) targets.set('main', targets.get('main') ?? defaults);
-    if (targets.size === 0) return;
-
-    const availableModelRefs = new Set<string>();
-    for (const [providerId, provider] of Object.entries(
-      snapshot.config?.models?.providers ?? {},
-    )) {
-      for (const model of provider.models ?? []) {
-        if (typeof model.id !== 'string' || !model.id.trim()) continue;
-        availableModelRefs.add(`${providerId}/${model.id.trim()}`);
-      }
-    }
-
-    const availableRoute = (reference: string | null | undefined) => reference
-      ? availableModelRefs.has(reference)
-        ? reference
-        : [...availableModelRefs].find(route => matchesModelSelectionIdentity(route, reference))
-      : undefined;
+    const policy = createManagedSessionModelPolicy(snapshot.config);
+    if (!policy.hasTargets) return;
     const limit = 200;
     let offset = 0;
     const seenOffsets = new Set<number>();
@@ -896,7 +938,7 @@ export class OpenClawConfigSyncService {
         // a concurrent user selection remains authoritative.
         const listedRef = readModelRef(session);
         if (
-          listedRef && availableRoute(listedRef) &&
+          listedRef && policy.availableRoute(listedRef) &&
           this.deps.getCoworkStore().getSessionModelRef(match[2]) === listedRef
         ) continue;
         await enqueueSessionModelOperation(session.key, async () => {
@@ -911,11 +953,11 @@ export class OpenClawConfigSyncService {
           const persistedRef = store.getSessionModelRef(match[2]);
           // A valid native selection is user-owned, even when the local snapshot
           // still names an earlier picker selection (for example after /model).
-          if (selectedRef && availableRoute(selectedRef)) {
+          if (selectedRef && policy.availableRoute(selectedRef)) {
             if (persistedRef !== selectedRef) store.updateSession(match[2], { modelRef: selectedRef });
             return;
           }
-          const target = availableRoute(persistedRef) ?? targets.get(match[1])?.reference;
+          const target = policy.repairTarget(match[1], persistedRef);
           if (!target) return;
           const patched = await this.deps.requestGateway<{ resolved?: unknown }>('sessions.patch', {
             key: session.key,
@@ -934,9 +976,27 @@ export class OpenClawConfigSyncService {
     }
   }
 
-  private async applyExecApprovalPolicy(): Promise<boolean> {
+  private async initializeExecApprovalPolicy(isCurrentProcess: () => boolean): Promise<boolean> {
+    await this.deps.connectGatewayClient();
+    if (!isCurrentProcess()) return false;
+    const client = this.deps.getGatewayClient();
+    if (!client) throw new Error('The active Gateway permission policy is unavailable.');
+    // Mutating startup RPCs must stay on this client. The general requester
+    // reconnects automatically and could otherwise write an old snapshot into
+    // a replacement after the process check but before dispatch.
+    return this.applyExecApprovalPolicy(
+      isCurrentProcess,
+      <T>(method: string, params?: unknown) => client.request<T>(method, params),
+    );
+  }
+
+  private async applyExecApprovalPolicy(
+    isCurrentProcess?: () => boolean,
+    requestGateway: OpenClawConfigSyncServiceDeps['requestGateway'] = this.deps.requestGateway,
+  ): Promise<boolean> {
     const current =
-      await this.deps.requestGateway<ExecApprovalsSnapshot>('exec.approvals.get');
+      await requestGateway<ExecApprovalsSnapshot>('exec.approvals.get');
+    if (isCurrentProcess && !isCurrentProcess()) return false;
     if (
       typeof current.hash === 'string' &&
       current.hash.length > 0 &&
@@ -957,12 +1017,13 @@ export class OpenClawConfigSyncService {
         removePersistentApprovalGrants({ ...entry, ...policy }),
       ]),
     );
-    const submitted = await this.deps.requestGateway<ExecApprovalsSnapshot>('exec.approvals.set', {
+    const submitted = await requestGateway<ExecApprovalsSnapshot>('exec.approvals.set', {
       file,
       ...(current.hash ? { baseHash: current.hash } : {}),
     });
+    if (isCurrentProcess && !isCurrentProcess()) return false;
     const applied =
-      await this.deps.requestGateway<ExecApprovalsSnapshot>('exec.approvals.get');
+      await requestGateway<ExecApprovalsSnapshot>('exec.approvals.get');
     return (
       typeof submitted.hash === 'string' &&
       submitted.hash.length > 0 &&

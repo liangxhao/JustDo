@@ -653,6 +653,8 @@ export class JustDoChatElement extends LitElement {
         persisted: this.persistedTimelineRenderCache.get(historyTimeline, processFoldOptions),
         activeTimeline,
         suppressTrailingAssistantFooter: activeTurnFooter !== null || isStreaming,
+        foldSettledTurn:
+          activeTurn?.status === 'final' && !isStreaming && currentRunTiming?.state !== 'running',
       });
       const hasVisibleInterruptedTerminal = [
         ...timelineView.persistedRows,

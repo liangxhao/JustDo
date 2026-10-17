@@ -39,9 +39,9 @@ test('starts Electron as soon as the quiet readiness probes succeed', () => {
     'utf8',
   );
 
-  expect(devRunner).toContain('wait-on -t 300000 --simultaneous 1');
-  expect(devRunner).not.toMatch(/wait-on[^\n]*\s-d\s/);
-  expect(devRunner).not.toContain('wait-on -v');
+  expect(devRunner).toContain("require('wait-on')");
+  expect(devRunner).toContain('timeout: 300_000, simultaneous: 1');
+  expect(devRunner).not.toMatch(/delay:|verbose: true/);
 });
 
 test('prepares the local speech runtime before starting Electron in development', () => {

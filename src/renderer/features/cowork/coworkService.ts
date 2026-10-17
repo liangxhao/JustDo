@@ -90,15 +90,22 @@ type SessionRuntimeStatus = SessionRuntimeSnapshot;
 
 const TERMINAL_IDLE_CONFIRM_DELAY_MS = 750;
 const TERMINAL_IDLE_CONFIRM_MAX_ATTEMPTS = 5;
+const SESSION_LIST_REFRESH_DELAY_MS = 100;
 
 export class CoworkService {
   private streamListenerCleanups: Array<() => void> = [];
   private initialized = false;
+  private initializationTask: Promise<void> | null = null;
+  private initializationGeneration = 0;
   private openClawStatus: OpenClawEngineStatus | null = null;
   private openClawStatusRevision = 0;
   private openClawStatusListeners = new Set<(status: OpenClawEngineStatus) => void>();
   private openClawEngineListenerAttached = false;
   private latestLoadSessionsRequestId = 0;
+  private sessionListRefreshTimer: number | null = null;
+  private sessionListRefreshTask: Promise<void> | null = null;
+  private sessionListRefreshPending = false;
+  private sessionListRefreshGeneration = 0;
   private latestLoadSessionRequestId = 0;
   private readonly sessionModelRevisions = new Map<string, number>();
   private readonly sessionModelReadVersions = new Map<string, number>();
@@ -115,17 +122,31 @@ export class CoworkService {
   private readonly initialNativeStarts = new Map<string, InitialNativeStart>();
   private readonly interactionResponses = new Map<string, Promise<boolean>>();
 
-  async init(): Promise<void> {
-    if (this.initialized) return;
+  init(): Promise<void> {
+    if (this.initialized) return Promise.resolve();
+    if (this.initializationTask) return this.initializationTask;
+
+    const task = this.initialize(this.initializationGeneration).finally(() => {
+      if (this.initializationTask === task) this.initializationTask = null;
+    });
+    this.initializationTask = task;
+    return task;
+  }
+
+  private async initialize(generation: number): Promise<void> {
+    const isCurrent = () => generation === this.initializationGeneration;
 
     // Load initial config
     await this.loadConfig();
+    if (!isCurrent()) return;
 
     // Load sessions list
     await this.loadSessions();
+    if (!isCurrent()) return;
 
     // Load session groups
     await this.loadGroups();
+    if (!isCurrent()) return;
 
     // Set up stream listeners
     this.setupStreamListeners();
@@ -133,6 +154,7 @@ export class CoworkService {
 
     // Load OpenClaw status
     await this.loadOpenClawEngineStatus();
+    if (!isCurrent()) return;
 
     this.initialized = true;
   }
@@ -253,27 +275,7 @@ export class CoworkService {
 
     // Sessions changed listener (new channel sessions discovered by polling)
     const sessionsChangedCleanup = cowork.onSessionsChanged(() => {
-      const beforeState = store.getState().cowork;
-      if (beforeState.currentSessionId) void this.refreshSessionModel(beforeState.currentSessionId);
-      debugLog(
-        '[CoworkService] onSessionsChanged: received IPC event, before sessions:',
-        beforeState.sessions.length,
-        'sessionIds:',
-        beforeState.sessions.map(s => s.id).slice(0, 5),
-      );
-      void this.loadSessions()
-        .then(() => {
-          const state = store.getState().cowork;
-          debugLog(
-            '[CoworkService] onSessionsChanged: loadSessions complete, total sessions:',
-            state.sessions.length,
-            'sessionIds:',
-            state.sessions.map(s => s.id).slice(0, 5),
-          );
-        })
-        .catch(err => {
-          console.error('[CoworkService] onSessionsChanged: loadSessions FAILED:', err);
-        });
+      this.scheduleSessionListRefresh();
     });
     this.streamListenerCleanups.push(sessionsChangedCleanup);
   }
@@ -301,10 +303,41 @@ export class CoworkService {
   private cleanupListeners(): void {
     this.streamListenerCleanups.forEach(cleanup => cleanup());
     this.streamListenerCleanups = [];
+    this.sessionListRefreshGeneration += 1;
+    if (this.sessionListRefreshTimer !== null) window.clearTimeout(this.sessionListRefreshTimer);
+    this.sessionListRefreshTimer = null;
+    this.sessionListRefreshTask = null;
+    this.sessionListRefreshPending = false;
+    this.latestLoadSessionsRequestId += 1;
     this.terminalIdleConfirmationTimers.forEach(timer => window.clearTimeout(timer));
     this.terminalIdleConfirmationTimers.clear();
     this.terminalIdleConfirmationTokens.clear();
     this.openClawEngineListenerAttached = false;
+  }
+
+  private scheduleSessionListRefresh(): void {
+    this.sessionListRefreshPending = true;
+    if (this.sessionListRefreshTimer !== null || this.sessionListRefreshTask) return;
+    const generation = this.sessionListRefreshGeneration;
+    // Use a fixed window rather than restarting the timer on every event, so a
+    // continuously changing session still updates the sidebar promptly.
+    this.sessionListRefreshTimer = window.setTimeout(() => {
+      this.sessionListRefreshTimer = null;
+      if (generation !== this.sessionListRefreshGeneration) return;
+      this.sessionListRefreshPending = false;
+      const currentSessionId = store.getState().cowork.currentSessionId;
+      if (currentSessionId) void this.refreshSessionModel(currentSessionId);
+      const task = this.loadSessions()
+        .catch(error => {
+          console.error('[CoworkService] onSessionsChanged: loadSessions FAILED:', error);
+        })
+        .finally(() => {
+          if (this.sessionListRefreshTask !== task) return;
+          this.sessionListRefreshTask = null;
+          if (this.sessionListRefreshPending) this.scheduleSessionListRefresh();
+        });
+      this.sessionListRefreshTask = task;
+    }, SESSION_LIST_REFRESH_DELAY_MS);
   }
 
   async loadSessions(agentId?: string): Promise<void> {
@@ -1650,6 +1683,8 @@ export class CoworkService {
   }
 
   destroy(): void {
+    this.initializationGeneration += 1;
+    this.initializationTask = null;
     this.cleanupListeners();
     this.openClawStatusListeners.clear();
     this.initialized = false;

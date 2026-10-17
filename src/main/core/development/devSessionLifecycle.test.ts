@@ -1,12 +1,60 @@
+import { EventEmitter } from 'node:events';
 import { createServer } from 'node:net';
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-import { createDevSessionLifecycle, probeDevServer } from './devSessionLifecycle';
+import developmentParent from '../../../shared/app/developmentParent.json';
+import { bindDevelopmentParentShutdown, createDevSessionLifecycle, probeDevServer } from './devSessionLifecycle';
 
 afterEach(() => vi.useRealTimers());
 
 describe('development session lifecycle', () => {
+  test('stops startup if its inherited parent pipe closed before registration', () => {
+    const parent = Object.assign(new EventEmitter(), { connected: false, send: vi.fn() });
+    const quit = vi.fn();
+    bindDevelopmentParentShutdown(quit, parent as never)();
+    expect(quit).toHaveBeenCalledOnce();
+    expect(parent.listenerCount('message')).toBe(0);
+  });
+
+  test('releases an old launcher after another development server takes ownership', () => {
+    const parent = Object.assign(new EventEmitter(), { connected: true, send: vi.fn() });
+    const quit = vi.fn();
+    const detach = bindDevelopmentParentShutdown(quit, parent as never, () => false);
+    parent.emit('message', developmentParent.shutdown);
+    parent.emit('disconnect');
+    expect(quit).not.toHaveBeenCalled();
+    expect(parent.send).toHaveBeenCalledWith(developmentParent.released, expect.any(Function));
+    detach();
+  });
+
+  test('accepts only the owned parent shutdown message and retires its listeners', () => {
+    const parent = Object.assign(new EventEmitter(), { connected: true, channel: { unref: vi.fn() } });
+    const quit = vi.fn();
+    const detach = bindDevelopmentParentShutdown(quit, parent as never);
+    parent.emit('message', { type: developmentParent.shutdown });
+    parent.emit('message', 'unrelated');
+    expect(quit).not.toHaveBeenCalled();
+    parent.emit('message', developmentParent.shutdown);
+    parent.emit('disconnect');
+    expect(quit).toHaveBeenCalledOnce();
+    expect(parent.channel.unref).toHaveBeenCalledOnce();
+    detach();
+    expect(parent.listenerCount('message')).toBe(0);
+    expect(parent.listenerCount('disconnect')).toBe(0);
+  });
+
+  test('quits on parent loss and leaves unowned launchers alone', () => {
+    const parent = Object.assign(new EventEmitter(), { connected: false });
+    const quit = vi.fn();
+    bindDevelopmentParentShutdown(quit, parent as never)();
+    expect(parent.listenerCount('disconnect')).toBe(0);
+    parent.connected = true;
+    const detach = bindDevelopmentParentShutdown(quit, parent as never);
+    parent.emit('disconnect');
+    expect(quit).toHaveBeenCalledOnce();
+    detach();
+  });
   test('exits once after the current server stops, even without a parent signal', async () => {
     vi.useFakeTimers();
     const ended = vi.fn();

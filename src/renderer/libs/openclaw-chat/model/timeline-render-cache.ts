@@ -134,6 +134,7 @@ export function projectIncrementalTimelineView(params: {
   persisted: PersistedTimelineView;
   activeTimeline: readonly ActiveTurnTimelineItem[];
   suppressTrailingAssistantFooter: boolean;
+  foldSettledTurn?: boolean;
 }): IncrementalTimelineView {
   const { persisted, suppressTrailingAssistantFooter } = params;
   const activeTimeline = coalesceAdjacentProcessSummaries(params.activeTimeline);
@@ -154,6 +155,34 @@ export function projectIncrementalTimelineView(params: {
     initialAssistantTurnOpen: mergedSeam ? true : persisted.assistantTurnOpen,
   });
   const minimapTail = projectChatMinimapTailEntry(persisted.minimapTail, activeTimeline);
+
+  // Keep live ownership until native history takes over, but give a finished
+  // display turn the same process disclosure across the persisted/live seam.
+  if (params.foldSettledTurn) {
+    const prefix = mergedSeam
+      ? suppressTrailingAssistantFooter
+        ? persisted.rowsWithSuppressedFooterWithoutLast
+        : persisted.rowsWithoutLast
+      : persistedRows;
+    const folded = foldCompletedProcessRows([
+      ...prefix,
+      ...(seamRow ? [seamRow] : []),
+      ...activeRows,
+    ]);
+    // Unfolded live rows must stay in their existing keyed render lane (for
+    // example, an expanded compaction divider awaiting native history).
+    const prefixRows = new Set(prefix);
+    const firstChanged = folded.findIndex(row => !prefixRows.has(row));
+    const split = firstChanged < 0 ? folded.length : firstChanged;
+    return {
+      persistedRows: folded.slice(0, split),
+      seamRow: null,
+      activeRows: folded.slice(split),
+      minimapPrefix: persisted.minimapPrefix,
+      minimapTail,
+      minimapKeySignature: persisted.minimapKeySignature,
+    };
+  }
 
   return {
     persistedRows: mergedSeam

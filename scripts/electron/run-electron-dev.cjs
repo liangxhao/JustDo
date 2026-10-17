@@ -8,6 +8,9 @@ const {
   prepareBrowserExtensionDevHost,
 } = require('../browser/prepare-browser-extension-dev-host.cjs');
 const { prepareMulticaDevAgent } = require('../multica/create-multica-dev-agent.cjs');
+const { launchElectron } = require('./launch-electron.cjs');
+const { stopElectron } = require('./electron-shutdown.cjs');
+const waitOn = require('wait-on');
 
 const start = async () => {
   try {
@@ -31,37 +34,60 @@ const start = async () => {
   };
   console.log(`[Electron Dev] Using development server port ${devServerPort}.`);
 
-  const commands = [
-    `vite --port ${devServerPort}`,
-    `wait-on -t 300000 --simultaneous 1 ${devServerUrl} dist-electron/.electron-ready && npm run start:electron`,
-  ];
-  const concurrentlyPackagePath = require.resolve('concurrently/package.json');
-  const concurrentlyPackage = require(concurrentlyPackagePath);
-  const concurrentlyBin =
-    typeof concurrentlyPackage.bin === 'string'
-      ? concurrentlyPackage.bin
-      : concurrentlyPackage.bin?.concurrently;
-
-  if (!concurrentlyBin) {
-    console.error('[Electron Dev] The concurrently package does not expose a CLI binary.');
-    process.exit(1);
-  }
-
-  const concurrentlyPath = path.resolve(path.dirname(concurrentlyPackagePath), concurrentlyBin);
-  const child = spawn(process.execPath, [concurrentlyPath, ...commands], {
-    cwd: process.cwd(),
+  let electron;
+  let stopping = false;
+  let cancelStartup;
+  const cancelled = new Promise(resolve => { cancelStartup = resolve; });
+  const stop = async code => {
+    if (stopping) return;
+    stopping = true;
+    cancelStartup(false);
+    await stopElectron(electron);
+    try { vite.kill(); } catch { /* Already exited. */ }
+    process.exit(code);
+  };
+  // Own children directly. concurrently's Windows process-tree termination can
+  // kill Gateway before Electron completes its native database lease cleanup.
+  const root = path.resolve(__dirname, '../..');
+  const viteEntry = path.join(path.dirname(require.resolve('vite/package.json')), 'bin/vite.js');
+  const vite = spawn(process.execPath, [viteEntry, '--port', String(devServerPort), '--strictPort'], {
+    cwd: root,
     env,
     stdio: 'inherit',
+    windowsHide: true,
   });
 
-  child.on('error', error => {
-    console.error('[Electron Dev] Failed to start development processes:', error);
-    process.exit(1);
+  vite.on('error', error => {
+    console.error('[Electron Dev] Failed to start Vite:', error.message);
+    void stop(1);
   });
-
-  child.on('close', code => {
-    process.exit(code ?? 1);
+  vite.on('close', code => {
+    if (!stopping) void stop(code || 1);
   });
+  for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => void stop(0));
+  try {
+    const ready = await Promise.race([
+      waitOn({
+        resources: [devServerUrl, path.join(root, 'dist-electron/.electron-ready')],
+        timeout: 300_000, simultaneous: 1,
+      }).then(() => true),
+      cancelled,
+    ]);
+    if (!ready || stopping) return;
+    electron = launchElectron({ env });
+    electron.on('error', error => {
+      console.error('[Electron Dev] Failed to start Electron:', error.message);
+      void stop(1);
+    });
+    electron.on('close', code => {
+      // A successful single-instance handoff also exits this child. Keep Vite
+      // serving the adopted window until the terminal ends, as before.
+      if (!stopping && code !== 0) void stop(code || 1);
+    });
+  } catch (error) {
+    console.error('[Electron Dev] Startup readiness failed:', error.message);
+    await stop(1);
+  }
 };
 
 start().catch(error => {

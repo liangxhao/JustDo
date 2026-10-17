@@ -1,0 +1,4 @@
+{
+  "shutdown": "development:shutdown",
+  "released": "development:released"
+}

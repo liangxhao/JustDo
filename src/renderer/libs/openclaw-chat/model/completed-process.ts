@@ -27,6 +27,13 @@ function assistantMessage(item: VisibleTimelineItem) {
 }
 
 function canFold(item: VisibleTimelineItem): item is SourceTimelineItem {
+  if (item.kind === 'content') {
+    return (
+      item.item.status === 'completed' &&
+      Boolean(item.item.text.trim()) &&
+      getTranscriptMedia({ role: 'assistant', content: item.item.text }).length === 0
+    );
+  }
   if (item.kind === 'process-summary') {
     return item.items.every(process => process.status !== 'running');
   }
@@ -72,13 +79,19 @@ export function foldCompletedProcessRows(
   const flushTurn = (protectedTurn = false) => {
     let finalIndex = -1;
     for (let index = turn.length - 1; index >= 0; index -= 1) {
-      if (assistantMessage(turn[index].item)) {
+      if (assistantMessage(turn[index].item) || turn[index].item.kind === 'content') {
         finalIndex = index;
         break;
       }
     }
     const final = turn[finalIndex]?.item;
-    if (final?.kind !== 'history-message' || protectedTurn || final.runState === 'running') {
+    if (
+      !final ||
+      protectedTurn ||
+      (final.kind === 'history-message'
+        ? final.runState === 'running'
+        : final.kind !== 'content' || final.item.status !== 'completed')
+    ) {
       result.push(...turn);
       turn = [];
       return;

@@ -12,10 +12,10 @@ function harness(status: OpenClawEngineStatus = running) {
   return {
     manager: {
       getStatus: vi.fn(() => current),
-      startGateway: vi.fn(async () => (current = running)),
       setExternalError: vi.fn((message: string) =>
         (current = { ...current, phase: 'error', message })),
     },
+    startWithPermissionPolicy: vi.fn(async () => (current = running)),
     verifyPermissionPolicy: vi.fn(async () => ({ success: true })),
   };
 }
@@ -24,21 +24,21 @@ describe('ensureExecutionReady', () => {
   it('reuses a running Gateway and only verifies its active permission boundary', async () => {
     const dependencies = harness();
     await expect(ensureExecutionReady(dependencies)).resolves.toEqual(running);
-    expect(dependencies.manager.startGateway).not.toHaveBeenCalled();
+    expect(dependencies.startWithPermissionPolicy).not.toHaveBeenCalled();
     expect(dependencies.verifyPermissionPolicy).toHaveBeenCalledOnce();
   });
 
   it.each(['ready', 'starting'] as const)('joins process readiness from %s', async phase => {
     const dependencies = harness({ ...running, phase });
     await expect(ensureExecutionReady(dependencies)).resolves.toEqual(running);
-    expect(dependencies.manager.startGateway).toHaveBeenCalledOnce();
-    expect(dependencies.verifyPermissionPolicy).toHaveBeenCalledOnce();
+    expect(dependencies.startWithPermissionPolicy).toHaveBeenCalledOnce();
+    expect(dependencies.verifyPermissionPolicy).not.toHaveBeenCalled();
   });
 
   it('does not verify or admit a Gateway whose startup failed', async () => {
     const failed: OpenClawEngineStatus = { ...running, phase: 'error' };
     const dependencies = harness(failed);
-    dependencies.manager.startGateway.mockResolvedValue(failed);
+    dependencies.startWithPermissionPolicy.mockResolvedValue(failed);
     await expect(ensureExecutionReady(dependencies)).resolves.toEqual(failed);
     expect(dependencies.verifyPermissionPolicy).not.toHaveBeenCalled();
   });

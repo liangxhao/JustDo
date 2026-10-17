@@ -151,6 +151,24 @@ test('uses native active run identity and configured model for ACP sessions', as
   });
 });
 
+test('preserves ACP classification from runtime metadata when listing ordinary session keys', async () => {
+  const request = vi.fn().mockResolvedValue({
+    sessions: [{ ...row, agentRuntime: { id: 'acp', source: 'session' } }],
+    hasMore: false,
+  });
+  expect(child).not.toContain(':acp:');
+  expect(await listGatewaySubagents({ client: client(request), parentKeys: [root] })).toMatchObject([
+    { sessionKey: child, runtime: 'acp' },
+  ]);
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(request).toHaveBeenCalledWith('sessions.list', {
+    limit: 500,
+    offset: 0,
+    archived: 'all',
+  });
+  expect(request.mock.calls[0][1]).not.toHaveProperty('rowMode');
+});
+
 test('rejects a mismatched describe result and root rows', async () => {
   const request = vi
     .fn()

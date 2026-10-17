@@ -76,6 +76,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     selectedModelUnavailable: '所选模型已停用或移除，请重新选择可用模型。',
     selectedModelProviderNotReady: '所选模型的提供商尚未就绪，请检查配置和认证状态。',
     selectedModelRouteChanged: '所选模型的路由已变更，请重新选择模型。',
+    sessionModelPreparationChanged: '模型准备期间连接或配置发生变化，请重试。',
+    sessionModelConfigurationUnavailable: '无法读取模型配置，请稍后重试。',
+    sessionModelIdentityChanged: '模型准备期间会话身份发生变化，操作已停止。',
+    sessionModelPreparationUnconfirmed: '未能确认会话模型已生效，请重新选择模型后重试。',
     extensionConversionNotImplemented: '该扩展需要转换为 OpenClaw 格式，转换功能暂未实现。',
     extensionImportSourceChanged: '导入准备期间源目录发生变化，请重试。',
     agentTeamSkillSyncFailed: '扩展开关已保存，但 Agent Team 技能同步未完成。请重试同一开关操作。',
@@ -233,6 +237,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'The selected provider is not ready. Please check its configuration and authentication.',
     selectedModelRouteChanged:
       'The selected model route has changed. Please select the model again.',
+    sessionModelPreparationChanged: 'The connection or configuration changed while preparing the model. Try again.',
+    sessionModelConfigurationUnavailable: 'The model configuration could not be read. Try again later.',
+    sessionModelIdentityChanged: 'The session identity changed while preparing the model. The operation has stopped.',
+    sessionModelPreparationUnconfirmed: 'The session model could not be confirmed. Select the model again and retry.',
     extensionConversionNotImplemented:
       'This extension requires conversion to OpenClaw format. Conversion is not implemented yet.',
     extensionImportSourceChanged: 'The import source changed during preparation. Please try again.',

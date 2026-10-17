@@ -115,6 +115,7 @@ import {
 } from '../../openclaw/sessions/openclawSessionKeys';
 import { resolveRawApiConfig } from '../../providers/providerApiConfig';
 import { isRecord } from '../gateway/helpers';
+import { reconcilePreparedManagedSessionModel } from '../gateway/managedSessionModels';
 import { SessionRpc } from '../gateway/sessionRpc';
 import type {
   GatewayClientCtor,
@@ -227,6 +228,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly subagentStatusGenerations = new Map<string, number>();
   private runtimeSessionSnapshot: (RuntimeSessionSnapshot & { expiresAt: number }) | null = null;
   private runtimeSessionSnapshotPromise: Promise<RuntimeSessionSnapshot> | null = null;
+  private runtimeSessionSnapshotQueuedRefresh: RuntimeSessionStatusContext['runtimeSessionSnapshotQueuedRefresh'] = null;
   private runtimeSessionSnapshotGeneration = 0;
   private lastRuntimeStatusWarningAt = 0;
   private readonly sessionHistorySnapshots = new Map<
@@ -456,13 +458,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.rememberSessionKey(sessionId, sessionKey);
       return { sessionKey, gatewaySessionId: entry.sessionId };
     }
-    const result = await this.requireGatewayClient().request<{
+    const client = this.requireGatewayClient();
+    const generation = this.gatewayClientGeneration;
+    const result = await client.request<{
       key?: unknown;
       sessionId?: unknown;
       entry?: {
         sessionId?: unknown;
         permissionMode?: unknown;
         sessionRoot?: unknown;
+        modelOverride?: unknown;
       };
     }>('sessions.create', {
       key: sessionKey,
@@ -479,6 +484,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       throw new Error('OpenClaw sessions.create returned no sessionId.');
     }
     this.assertPreparedSessionEntry(result.entry, nativePermissionMode, workspaceRoot);
+    if (typeof result.entry?.modelOverride === 'string' && result.entry.modelOverride.trim()) {
+      if (result.key !== sessionKey || result.entry.sessionId !== gatewaySessionId) {
+        throw new Error(t('sessionModelIdentityChanged'));
+      }
+      const configGeneration = this.engineManager.getGatewayConfigReloadGeneration();
+      await reconcilePreparedManagedSessionModel({
+        client,
+        isCurrentConnection: () =>
+          this.gatewayClient === client && this.gatewayClientGeneration === generation &&
+          this.engineManager.getGatewayConfigReloadGeneration() === configGeneration,
+        sessionKey,
+        gatewaySessionId,
+        agentId: options.agentId || session.agentId || DEFAULT_MANAGED_AGENT_ID,
+        getPersistedModelRef: () => this.store.getSession(sessionId)?.modelRef,
+        persistModelRef: modelRef => this.store.updateSession(sessionId, { modelRef }),
+      });
+    }
     await ensureProjectGitRepository(workspaceRoot);
 
     this.rememberSessionKey(sessionId, sessionKey);
@@ -2966,6 +2988,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         get: () => this.runtimeSessionSnapshotPromise,
         set: value => {
           this.runtimeSessionSnapshotPromise = value;
+        },
+      },
+      runtimeSessionSnapshotQueuedRefresh: {
+        get: () => this.runtimeSessionSnapshotQueuedRefresh,
+        set: value => {
+          this.runtimeSessionSnapshotQueuedRefresh = value;
         },
       },
       lastRuntimeStatusWarningAt: {

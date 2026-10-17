@@ -15,6 +15,7 @@ import {
   OPENCLAW_GATEWAY_TOOL_EVENTS_CAP,
   waitWithTimeout,
 } from '../gateway/helpers';
+import { SessionListClient } from '../gateway/sessionListClient';
 import type {
   GatewayClientCtor,
   GatewayClientLike,
@@ -233,7 +234,7 @@ export async function createGatewayClient(
     rejectReady?.(error);
   };
 
-  const client = new GatewayClient({
+  const client = new SessionListClient(new GatewayClient({
     url: connection.url,
     token: connection.token,
     clientDisplayName: PRODUCT_NAME,
@@ -310,8 +311,11 @@ export async function createGatewayClient(
       this.gatewayReadyPromise.catch(() => {});
       this.scheduleGatewayReconnect();
     },
-    onEvent: (event: GatewayEventFrame) => this.handleGatewayEvent(event),
-  });
+    onEvent: (event: GatewayEventFrame) => {
+      client.invalidateSessionLists();
+      this.handleGatewayEvent(event);
+    },
+  }));
 
   this.pendingGatewayClient = client;
   client.start();

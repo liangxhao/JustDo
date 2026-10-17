@@ -1,7 +1,8 @@
 import type { OpenClawEngineManager, OpenClawEngineStatus } from './openclawEngineManager';
 
 type ExecutionReadinessDependencies = {
-  manager: Pick<OpenClawEngineManager, 'getStatus' | 'startGateway' | 'setExternalError'>;
+  manager: Pick<OpenClawEngineManager, 'getStatus' | 'setExternalError'>;
+  startWithPermissionPolicy: () => Promise<OpenClawEngineStatus>;
   verifyPermissionPolicy: () => Promise<{
     success: boolean;
     status?: OpenClawEngineStatus;
@@ -10,14 +11,15 @@ type ExecutionReadinessDependencies = {
 };
 
 // Configuration is published by startup/settings mutations. Sending only joins
-// process readiness and verifies the already active execution boundary.
+// process readiness (including the cold-start approval floor) and verifies the
+// already active execution boundary on a running process.
 export async function ensureExecutionReady({
   manager,
+  startWithPermissionPolicy,
   verifyPermissionPolicy,
 }: ExecutionReadinessDependencies): Promise<OpenClawEngineStatus> {
   const current = manager.getStatus();
-  const status = current.phase === 'running' ? current : await manager.startGateway();
-  if (status.phase !== 'running') return status;
+  if (current.phase !== 'running') return startWithPermissionPolicy();
 
   const verification = await verifyPermissionPolicy();
   if (verification.success) return manager.getStatus();

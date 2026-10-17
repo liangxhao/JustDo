@@ -25,6 +25,37 @@ const installElectron = (
 };
 
 describe('SubtaskListPanel', () => {
+  it('combines task notification bursts within a fixed window', async () => {
+    let notify!: (event: { sessionId?: string }) => void;
+    const read = vi.fn().mockResolvedValue({ success: true, subagents: [] });
+    installElectron(read, vi.fn(), vi.fn(callback => { notify = callback; return vi.fn(); }));
+    render(<SubtaskListPanel sessionId="parent" isOpen={false} onClose={vi.fn()} />);
+    await waitFor(() => expect(read).toHaveBeenCalledOnce());
+    vi.useFakeTimers();
+    act(() => { notify({}); notify({ sessionId: 'parent' }); });
+    await act(() => vi.advanceTimersByTimeAsync(70));
+    act(() => notify({ sessionId: 'parent' }));
+    expect(read).toHaveBeenCalledOnce();
+    await act(() => vi.advanceTimersByTimeAsync(30));
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenLastCalledWith('parent', true);
+  });
+
+  it('discards a scheduled notification refresh when switching sessions', async () => {
+    let notify!: (event: { sessionId?: string }) => void;
+    const read = vi.fn().mockResolvedValue({ success: true, subagents: [] });
+    installElectron(read, vi.fn(), vi.fn(callback => { notify = callback; return vi.fn(); }));
+    const onClose = vi.fn();
+    const view = render(<SubtaskListPanel sessionId="first" isOpen={false} onClose={onClose} />);
+    await waitFor(() => expect(read).toHaveBeenCalledOnce());
+    vi.useFakeTimers();
+    act(() => notify({ sessionId: 'first' }));
+    view.rerender(<SubtaskListPanel sessionId="second" isOpen={false} onClose={onClose} />);
+    await act(() => vi.advanceTimersByTimeAsync(100));
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenLastCalledWith('second');
+  });
+
   it('releases detail keyboard capture when its retained list Tab becomes hidden', async () => {
     i18nService.setLanguage('en', { persist: false });
     const task = {

@@ -5,6 +5,8 @@ const http = require('http');
 const { spawn } = require('child_process');
 const { findFreePort } = require('./find-free-port.cjs');
 const { prepareMulticaDevAgent } = require('../multica/create-multica-dev-agent.cjs');
+const { launchElectron } = require('./launch-electron.cjs');
+const { stopElectron } = require('./electron-shutdown.cjs');
 
 async function main() {
   const root = path.resolve(__dirname, '../..');
@@ -47,9 +49,10 @@ async function main() {
   const stop = code => {
     if (stopping) return;
     stopping = true;
-    electron?.kill();
-    vite.kill();
-    process.exit(code);
+    void stopElectron(electron).then(() => {
+      try { vite.kill(); } catch { /* Already exited. */ }
+      process.exit(code);
+    });
   };
   process.on('SIGINT', () => stop(0));
   process.on('SIGTERM', () => stop(0));
@@ -73,20 +76,16 @@ async function main() {
       });
     });
   const deadline = Date.now() + 120000;
-  while (Date.now() < deadline && (!fs.existsSync(marker) || !(await ready()))) {
+  while (!stopping && Date.now() < deadline && (!fs.existsSync(marker) || !(await ready()))) {
     await new Promise(resolve => setTimeout(resolve, 500));
   }
+  if (stopping) return;
   if (!fs.existsSync(marker) || !(await ready())) {
     console.error('Development build did not become ready.');
     stop(1);
     return;
   }
-  electron = spawn(require('electron'), ['.'], {
-    cwd: root,
-    env,
-    stdio: 'inherit',
-    windowsHide: false,
-  });
+  electron = launchElectron({ env });
   electron.on('error', error => {
     console.error(error.message);
     stop(1);

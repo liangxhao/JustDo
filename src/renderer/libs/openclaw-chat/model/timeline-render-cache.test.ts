@@ -38,6 +38,54 @@ function summary(key: string): ProcessSummaryTimelineItem {
 }
 
 describe('PersistedTimelineRenderCache', () => {
+  test('folds a settled turn across its persisted/live seam while preserving final content', () => {
+    const persistedSummary = summary('persisted-process');
+    const activeSummary = summary('active-process');
+    const commentary = activeContent('commentary', 2);
+    const final = activeContent('final answer', 3);
+    if (commentary.kind !== 'content' || final.kind !== 'content')
+      throw new Error('Missing content');
+    commentary.item.status = 'completed';
+    final.item.status = 'completed';
+    const timeline: PersistedTimelineItem[] = [
+      { kind: 'history-message', key: 'user', message: { role: 'user', content: 'request' } },
+      persistedSummary,
+    ];
+    const view = projectIncrementalTimelineView({
+      persisted: new PersistedTimelineRenderCache().get(timeline, { protectTrailingTurn: true }),
+      activeTimeline: [activeSummary, commentary, summary('last-process'), final],
+      suppressTrailingAssistantFooter: true,
+      foldSettledTurn: true,
+    });
+
+    expect([...view.persistedRows, ...view.activeRows].map(row => row.item.kind)).toEqual([
+      'history-message',
+      'completed-process',
+      'content',
+    ]);
+    const folded = view.activeRows[0].item;
+    if (folded.kind !== 'completed-process') throw new Error('Missing disclosure');
+    expect(folded.items.map(item => item.key)).toEqual([
+      'persisted-process',
+      'content-2',
+      'last-process',
+    ]);
+    expect(folded.items[0]).toMatchObject({ thinkingCount: 2 });
+    expect(view.activeRows[1].item).toBe(final);
+    expect(view.seamRow).toBeNull();
+    expect(view.persistedRows).toHaveLength(1);
+  });
+
+  test('does not fold unfinished final content even when requested', () => {
+    const view = projectIncrementalTimelineView({
+      persisted: new PersistedTimelineRenderCache().get([]),
+      activeTimeline: [summary('process'), activeContent('still streaming', 2)],
+      suppressTrailingAssistantFooter: true,
+      foldSettledTurn: true,
+    });
+    expect(view.activeRows.map(row => row.item.kind)).toEqual(['process-summary', 'content']);
+  });
+
   test('reuses history-sized row and minimap projections across live revisions', () => {
     let oldRoleReads = 0;
     const timeline: PersistedTimelineItem[] = Array.from({ length: 10_000 }, (_, index) => ({

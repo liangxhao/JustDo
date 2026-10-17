@@ -8,6 +8,8 @@ import {
   managedDirectorySuccess,
 } from '../../core/filesystem/managedDirectoryOperations';
 import { SessionRpc } from '../../engine/gateway/sessionRpc';
+import type { GatewayClientLike } from '../../engine/gateway/types';
+import { ensureExecutionReady } from '../runtime/executionReadiness';
 import {
   OpenClawConfigSyncService,
   resolveDeferredGatewayRestartAction,
@@ -295,6 +297,9 @@ describe('OpenClawConfigSyncService', () => {
     authLogoutFails?: boolean;
     executionMode?: 'local' | 'sandbox';
     sandboxReady?: boolean;
+    getGatewayClient?: () => GatewayClientLike | null;
+    computerEnabled?: boolean;
+    computerStatus?: () => Promise<{ available: boolean }>;
   } = {}) => {
     let phase = options.phase ?? 'running';
     let processGeneration = 1;
@@ -352,6 +357,7 @@ describe('OpenClawConfigSyncService', () => {
       },
     };
     const requestGateway = vi.fn(async (method: string, params?: unknown) => {
+      if (method === 'computer.status') return options.computerStatus?.() ?? { available: true };
       if (method === 'secrets.reload') {
         if (options.secretsReloadFails) throw new Error('credential reload failed');
         return { ok: true };
@@ -404,6 +410,9 @@ describe('OpenClawConfigSyncService', () => {
         const execHost = executionMode === 'sandbox' ? 'sandbox' : 'gateway';
         return {
           config: {
+            ...(options.computerEnabled === undefined ? {} : {
+              plugins: { entries: { 'cua-computer': { enabled: options.computerEnabled } } },
+            }),
             agents: {
               entries: { main: {} },
             },
@@ -416,6 +425,7 @@ describe('OpenClawConfigSyncService', () => {
       }
       throw new Error(`Unexpected Gateway method: ${method}`);
     });
+    const connectedClient = { request: requestGateway } as unknown as GatewayClientLike;
     const service = new OpenClawConfigSyncService({
       getCoworkStore: () => ({
         getConfig: () => ({
@@ -430,6 +440,7 @@ describe('OpenClawConfigSyncService', () => {
       disconnectGatewayClient,
       connectGatewayClient,
       requestGateway,
+      getGatewayClient: options.getGatewayClient ?? (() => connectedClient),
       getWindowsSandboxStatus: vi.fn(async () => ({
         code: options.sandboxReady === false ? 'check_failed' : 'ready',
         supported: true,
@@ -509,6 +520,219 @@ describe('OpenClawConfigSyncService', () => {
       'config.get', 'exec.approvals.get',
     ]);
     expect(harness.configSync.sync).not.toHaveBeenCalled();
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+  });
+
+  it('overlaps computer preparation with sending, reusing the verified config without blocking the queue', async () => {
+    let release!: (value: { available: boolean }) => void;
+    const hostReady = new Promise<{ available: boolean }>(resolve => { release = resolve; });
+    const harness = createHarness({ computerEnabled: true, computerStatus: () => hostReady });
+    await harness.service.syncConfig({ reason: 'startup' });
+    harness.requestGateway.mockClear();
+    harness.configSync.sync.mockClear();
+
+    await expect(harness.service.verifyExecutionPermissionPolicy({ prepareComputerForSend: true }))
+      .resolves.toMatchObject({ success: true, hostPolicyVerified: true });
+    expect(harness.requestGateway.mock.calls.map(([method]) => method)).toEqual([
+      'config.get', 'exec.approvals.get', 'computer.status',
+    ]);
+    expect(harness.configSync.sync).not.toHaveBeenCalled();
+    // A slow native host cannot retain the configuration mutation lock.
+    await expect(harness.service.verifyExecutionPermissionPolicy()).resolves.toMatchObject({ success: true });
+    release({ available: false });
+  });
+
+  it('does not prepare the computer when readiness is requested without a send', async () => {
+    const harness = createHarness({ computerEnabled: true });
+    await harness.service.syncConfig({ reason: 'startup' });
+    harness.requestGateway.mockClear();
+    await harness.service.verifyExecutionPermissionPolicy();
+    expect(harness.requestGateway.mock.calls.map(([method]) => method)).toEqual([
+      'config.get', 'exec.approvals.get',
+    ]);
+  });
+
+  it('does not prepare the computer after a failed permission verification', async () => {
+    const harness = createHarness({ computerEnabled: true });
+    await expect(harness.service.verifyExecutionPermissionPolicy({ prepareComputerForSend: true }))
+      .resolves.toMatchObject({ success: false });
+    expect(harness.requestGateway).not.toHaveBeenCalledWith('computer.status', expect.anything(), expect.anything());
+  });
+
+  it('skips computer preparation if config reloads while permissions are being read', async () => {
+    const harness = createHarness({ computerEnabled: true });
+    await harness.service.syncConfig({ reason: 'startup' });
+    harness.requestGateway.mockClear();
+    const request = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      const response = await request(method, params);
+      if (method === 'exec.approvals.get') {
+        harness.engineManager.getGatewayConfigReloadGeneration.mockReturnValue(8);
+      }
+      return response;
+    });
+    await expect(harness.service.verifyExecutionPermissionPolicy({ prepareComputerForSend: true }))
+      .resolves.toMatchObject({ success: true });
+    expect(harness.requestGateway.mock.calls.map(([method]) => method)).toEqual([
+      'config.get', 'exec.approvals.get',
+    ]);
+  });
+
+  it('also prepares the host on a cold send after initializing the approval floor', async () => {
+    const harness = createHarness({ phase: 'ready', computerEnabled: true });
+    await expect(harness.service.startGatewayWithExecutionPolicy({ prepareComputerForSend: true }))
+      .resolves.toMatchObject({ phase: 'running' });
+    expect(harness.requestGateway).toHaveBeenCalledWith('computer.status', {}, { timeoutMs: 60_000 });
+    expect(harness.configSync.sync).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('initializes the approval floor after a stopped startup projection without repeating config work', async () => {
+    const discovery = vi.fn(async () => new Set<string>());
+    const harness = createHarness({ phase: 'ready', getExtensionMcpServerNames: discovery });
+    await expect(harness.service.syncConfig({ reason: 'startup' })).resolves.toMatchObject({
+      success: true,
+    });
+    expect(harness.requestGateway).not.toHaveBeenCalled();
+    harness.configSync.sync.mockClear();
+    discovery.mockClear();
+
+    await expect(ensureExecutionReady({
+      manager: harness.engineManager,
+      startWithPermissionPolicy: () => harness.service.startGatewayWithExecutionPolicy(),
+      verifyPermissionPolicy: () => harness.service.verifyExecutionPermissionPolicy(),
+    })).resolves.toMatchObject({ phase: 'running' });
+    expect(harness.requestGateway.mock.calls.map(([method]) => method)).toEqual([
+      'config.get', 'exec.approvals.get', 'exec.approvals.set', 'exec.approvals.get',
+      'models.authStatus', 'config.get',
+    ]);
+    expect(harness.configSync.sync).not.toHaveBeenCalled();
+    expect(discovery).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('serializes concurrent cold starts and initializes the approval floor only once', async () => {
+    const harness = createHarness({ phase: 'ready' });
+    await expect(Promise.all([
+      harness.service.startGatewayWithExecutionPolicy(),
+      harness.service.startGatewayWithExecutionPolicy(),
+    ])).resolves.toEqual([
+      expect.objectContaining({ phase: 'running' }),
+      expect.objectContaining({ phase: 'running' }),
+    ]);
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'exec.approvals.set'))
+      .toHaveLength(1);
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+    expect(harness.configSync.sync).not.toHaveBeenCalled();
+  });
+
+  it('starts auth maintenance in the background without holding execution admission behind discovery', async () => {
+    let releaseDiscovery!: (value: unknown) => void;
+    const discovery = new Promise(resolve => { releaseDiscovery = resolve; });
+    const backgroundRequest = vi.fn((method: string, params?: unknown): Promise<unknown> => {
+      if (method === 'models.authStatus') return discovery;
+      if (method === 'config.get') return Promise.resolve({ config: { models: { providers: {} } } });
+      return harness.requestGateway(method, params);
+    });
+    const client = { request: backgroundRequest } as unknown as GatewayClientLike;
+    const harness = createHarness({ phase: 'ready', getGatewayClient: () => client });
+
+    await expect(harness.service.startGatewayWithExecutionPolicy())
+      .resolves.toMatchObject({ phase: 'running' });
+    expect(backgroundRequest).toHaveBeenCalledWith('models.authStatus', { agentId: 'main' });
+    await expect(harness.service.verifyExecutionPermissionPolicy())
+      .resolves.toMatchObject({ success: true });
+    expect(harness.requestGateway).not.toHaveBeenCalledWith('models.authStatus', expect.anything());
+    expect(harness.configSync.sync).not.toHaveBeenCalled();
+    releaseDiscovery({ providers: [] });
+  });
+
+  it('joins an in-flight startup before initializing its approval floor', async () => {
+    const harness = createHarness({ phase: 'starting' });
+    await expect(harness.service.startGatewayWithExecutionPolicy())
+      .resolves.toMatchObject({ phase: 'running' });
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+    expect(harness.requestGateway).toHaveBeenCalledWith('exec.approvals.set', expect.anything());
+  });
+
+  it('does not repair unsafe approvals if another caller already started the Gateway', async () => {
+    const harness = createHarness();
+    await expect(harness.service.startGatewayWithExecutionPolicy())
+      .resolves.toMatchObject({ phase: 'error' });
+    expect(harness.requestGateway.mock.calls.map(([method]) => method)).toEqual([
+      'config.get', 'exec.approvals.get',
+    ]);
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+  });
+
+  it('does not initialize approvals if the Gateway failed to start', async () => {
+    const harness = createHarness({ phase: 'ready' });
+    harness.startGateway.mockImplementationOnce(async () => {
+      harness.setPhase('error');
+      return harness.getStatus() as typeof runningStatus;
+    });
+    await expect(harness.service.startGatewayWithExecutionPolicy())
+      .resolves.toMatchObject({ phase: 'error' });
+    expect(harness.requestGateway).not.toHaveBeenCalled();
+  });
+
+  it('does not write an old approval snapshot into a replacement process during startup', async () => {
+    const harness = createHarness({ phase: 'ready' });
+    const original = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      const response = await original(method, params);
+      if (method === 'exec.approvals.get') harness.advanceProcessGeneration();
+      return response;
+    });
+    await expect(harness.service.startGatewayWithExecutionPolicy())
+      .resolves.toMatchObject({ phase: 'error' });
+    expect(harness.requestGateway).not.toHaveBeenCalledWith('exec.approvals.set', expect.anything());
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.engineManager.setExternalError).not.toHaveBeenCalled();
+  });
+
+  it('keeps startup approval writes on their captured client if a reconnect races dispatch', async () => {
+    const replacementRequest = vi.fn();
+    const replacement = { request: replacementRequest } as unknown as GatewayClientLike;
+    let currentClient: GatewayClientLike;
+    const boundRequest = vi.fn(async (method: string, params?: unknown): Promise<unknown> => {
+      if (method === 'exec.approvals.set') {
+        currentClient = replacement;
+        harness.advanceProcessGeneration();
+        throw new Error('The captured connection closed before dispatch');
+      }
+      return harness.requestGateway(method, params);
+    });
+    currentClient = { request: boundRequest } as unknown as GatewayClientLike;
+    const harness = createHarness({ phase: 'ready', getGatewayClient: () => currentClient });
+
+    await expect(harness.service.startGatewayWithExecutionPolicy())
+      .resolves.toMatchObject({ phase: 'error' });
+    expect(boundRequest).toHaveBeenCalledWith('exec.approvals.set', expect.anything());
+    expect(harness.requestGateway).not.toHaveBeenCalledWith('exec.approvals.set', expect.anything());
+    expect(replacementRequest).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.engineManager.setExternalError).not.toHaveBeenCalled();
+  });
+
+  it('does not admit a startup result after its process has already stopped', async () => {
+    const harness = createHarness({ phase: 'ready' });
+    harness.startGateway.mockResolvedValueOnce(runningStatus);
+    await expect(harness.service.startGatewayWithExecutionPolicy())
+      .resolves.toMatchObject({ phase: 'ready' });
+    expect(harness.requestGateway).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when cold-start approval initialization is rejected', async () => {
+    const harness = createHarness({ phase: 'ready' });
+    const original = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'exec.approvals.set') throw new Error('approval write rejected');
+      return original(method, params);
+    });
+    await expect(harness.service.startGatewayWithExecutionPolicy())
+      .resolves.toMatchObject({ phase: 'error' });
     expect(harness.stopGateway).toHaveBeenCalledOnce();
   });
 

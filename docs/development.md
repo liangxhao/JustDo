@@ -37,6 +37,19 @@ Hook 模块补充 React Refresh 签名；Vite 默认只为 JSX 模块生成这�
 `useState/useEffect` 改为 `useSyncExternalStore` 等结构变化可能导致
 “change in the order of Hooks” 警告；重启开发进程并重新加载 Renderer 后再验证。
 
+开发启动器直接管理 Vite 与 Electron，不通过 concurrently 对 Windows 子进程树
+转发终止信号。Electron 保留独立的父进程 Node IPC 管道；Ctrl+C 先请求当前子进程
+执行应用正常退出，等待 Main 停止运行及 Gateway、释放原生数据库租约后，再关闭
+Vite。Main 的退出预算为 30 秒，紧急 Gateway 清理另有 17 秒；启动器给予 50 秒，
+仍未退出才强制结束，并最多再等 5 秒。重复终止信号不提前缩短该窗口。
+准备阶段取消后，即使就绪检查迟到完成也不能再启动 Electron。隔离开发入口复用
+同一退出通道。正常单实例转交后，Vite 仍持续服务被接管的窗口，直到终端退出；
+该窗口沿用开发服务器丢失检测请求正常退出。切换开发服务器后，旧父进程收到释放
+回执，不再等待或强制结束已被接管的窗口。安装版不注册开发父进程协议。
+
+该流程减少非正常退出造成的旧租约恢复开销，不跳过 OpenClaw 的完整性检查；
+系统强制结束或掉电后的恢复仍由原生数据库负责。
+
 ## 2. 更新运行时
 
 Gateway 由锁定的 pristine OpenClaw 包、当前补丁及扩展构建，产物位于 vendor 运行时目录。更换声明版本会重建；同版本补丁或构建输入变化可能触发冻结快照拒绝，需要显式重新安装。

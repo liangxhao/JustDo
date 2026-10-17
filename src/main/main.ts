@@ -68,7 +68,7 @@ import { createTray, destroyTray, updateTrayMenu } from './core/app/trayManager'
 import { APP_NAME, DEV_SERVER_URL_SWITCH, INSTALLER_QUIT_SWITCH } from './core/appConstants';
 import { resolveDevelopmentDataDirectory } from './core/development/developmentDataDirectory';
 import { getDevServerUrlFromCommandLine } from './core/development/devServerHandoff';
-import { createDevSessionLifecycle } from './core/development/devSessionLifecycle';
+import { bindDevelopmentParentShutdown, createDevSessionLifecycle } from './core/development/devSessionLifecycle';
 import { ManagedDirectoryOperationCoordinator } from './core/filesystem/managedDirectoryOperations';
 import { setLanguage, t } from './core/i18n';
 import { getRecentMainLogEntries, initLogger } from './core/logger';
@@ -717,12 +717,14 @@ const getEngineNotReadyResponse = (status: OpenClawEngineStatus) => {
   };
 };
 
-const ensureOpenClawRunningForCowork = async () => {
+const ensureOpenClawRunningForCowork = async (options: { prepareComputerForSend?: boolean } = {}) => {
   bindOpenClawGatewayPortProxyBypass();
   return ensureExecutionReady({
     manager: getOpenClawEngineManager(),
+    startWithPermissionPolicy: () =>
+      getOpenClawConfigSyncService().startGatewayWithExecutionPolicy(options),
     verifyPermissionPolicy: () =>
-      getOpenClawConfigSyncService().verifyExecutionPermissionPolicy(),
+      getOpenClawConfigSyncService().verifyExecutionPermissionPolicy(options),
   });
 };
 
@@ -769,6 +771,7 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
       connectGatewayClient: () => getCoworkEngineService().connectGatewayClient(),
       requestGateway: <T>(method: string, params?: unknown) =>
         getCoworkEngineService().requestGateway<T>(method, params),
+      getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
       getBrowserMode: () =>
         normalizeBrowserMode(getStore().get<{ browserMode?: unknown }>('app_config')?.browserMode),
       getDecisionModelCategory: () =>
@@ -1660,7 +1663,7 @@ if (multicaBridgeArgv) {
   registerCoworkSessionExecutionHandlers({
     getMainWindow: () => mainWindow,
     getAgentTeamLaunch,
-    ensureEngineRunning: ensureOpenClawRunningForCowork,
+    ensureEngineRunning: () => ensureOpenClawRunningForCowork({ prepareComputerForSend: true }),
     getCoworkStore,
     getCoworkEngineRouter,
     waitForConfigUpdates: waitForCoworkConfigUpdates,
@@ -1935,6 +1938,7 @@ if (multicaBridgeArgv) {
     disposeComputerOverlay = undefined;
     openClawEngineManager?.beginApplicationShutdown();
     devSessionLifecycle?.stop();
+    detachDevelopmentParent?.();
     console.log('[Main] App is quitting, starting cleanup...');
     getTeamDiscussionCoordinator().dispose();
     builtinModelCredentialMonitor?.stop();
@@ -1992,6 +1996,14 @@ if (multicaBridgeArgv) {
       await openClawEngineManager?.stopGateway();
     },
   });
+  const developmentParentServerUrl = devServerUrl;
+  const detachDevelopmentParent = !app.isPackaged
+    ? bindDevelopmentParentShutdown(
+        () => app.quit(),
+        process,
+        () => !isDev || new URL(devServerUrl).href === new URL(developmentParentServerUrl).href,
+      )
+    : null;
   const devSessionLifecycle =
     isDev && !app.isPackaged
       ? createDevSessionLifecycle(() => {

@@ -5,6 +5,7 @@ import './justdo-chat';
 import { html, render } from 'lit';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import type { AssistantTurn } from '../model/chat-transcript-state';
 import type { GatewayMessage } from '../types';
 import { renderCompletedProcess } from './completed-process';
 import type { JustDoChatElement } from './justdo-chat';
@@ -64,6 +65,106 @@ function createChat(state: 'running' | 'completed' | 'failed' | 'aborted' = 'com
 }
 
 describe('completed chat process history', () => {
+  test.each(['running', 'sending', 'receipt', 'settled'] as const)(
+    'folds a retained second live turn only after display activity ends: %s',
+    async phase => {
+      const chat = createChat();
+      chat.messages = [
+        ...chat.messages,
+        {
+          role: 'user',
+          content: 'Second prompt',
+          timestamp: 4_000,
+          __openclaw: { id: 'user-two', runId: 'run-two' },
+        },
+      ];
+      const base = {
+        runId: 'run-two',
+        firstSeq: 1,
+        lastSeq: 2,
+        startedAt: 4_000,
+        updatedAt: 5_000,
+      };
+      const turn: AssistantTurn = {
+        id: 'turn-two',
+        runId: 'run-two',
+        sessionId: 'session-1',
+        sessionKey: 'session',
+        lifecycleGeneration: null,
+        lastAgentSeq: 3,
+        startedAt: 4_000,
+        endedAt: 5_000,
+        status: phase === 'running' ? 'running' : 'final',
+        toolById: new Map(),
+        items: [
+          {
+            ...base,
+            id: 'thinking-two',
+            type: 'thinking',
+            status: 'completed',
+            text: 'Second reasoning',
+          },
+          {
+            ...base,
+            id: 'answer-two',
+            type: 'content',
+            status: 'completed',
+            text: 'Second final answer',
+            sourceMode: 'snapshot',
+          },
+        ],
+      };
+      chat.activeTurn = turn;
+      chat.isStreaming = phase === 'sending';
+      chat.runTimings = [
+        ...chat.runTimings,
+        {
+          id: 'receipt-two',
+          rootRunId: 'run-two',
+          clientTurnId: 'turn-two',
+          sessionId: 'session-1',
+          startedAt: 4_000,
+          state: phase === 'receipt' ? 'running' : 'completed',
+          ...(phase === 'receipt' ? {} : { endedAt: 5_000 }),
+        },
+      ];
+      await chat.updateComplete;
+
+      const disclosures = chat.shadowRoot!.querySelectorAll('.completed-process');
+      expect(disclosures).toHaveLength(phase === 'settled' ? 2 : 1);
+      if (phase === 'settled') {
+        expect(disclosures[1].textContent).toContain('Thinking × 1');
+        expect(disclosures[1].textContent).not.toContain('Second final answer');
+        expect((disclosures[1] as HTMLDetailsElement).open).toBe(false);
+        chat.processSummariesExpanded = true;
+        await chat.updateComplete;
+        expect(chat.shadowRoot!.textContent).toContain('Second reasoning');
+      }
+      expect(chat.shadowRoot!.textContent).toContain('Second final answer');
+      expect(chat.activeTurn).toBe(turn);
+
+      // Native history takeover keeps the same presentation without duplication.
+      if (phase === 'settled') {
+        chat.messages = [
+          ...chat.messages,
+          {
+            role: 'assistant',
+            timestamp: 5_000,
+            content: [
+              { type: 'thinking', thinking: 'Second reasoning' },
+              { type: 'text', text: 'Second final answer' },
+            ],
+            __openclaw: { id: 'final-two', runId: 'run-two' },
+          },
+        ];
+        chat.activeTurn = null;
+        await chat.updateComplete;
+        expect(chat.shadowRoot!.querySelectorAll('.completed-process')).toHaveLength(2);
+        expect(chat.shadowRoot!.textContent!.match(/Second final answer/g)).toHaveLength(1);
+      }
+    },
+  );
+
   test.each([
     { separateLeadingMessage: false, withReceipts: false },
     { separateLeadingMessage: false, withReceipts: true },
