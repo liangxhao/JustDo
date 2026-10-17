@@ -837,6 +837,8 @@ test('copies an idle session from its canonical transcript', async () => {
   const store = {
     getSession: vi.fn().mockReturnValue(source),
     createSession: vi.fn().mockReturnValue(copied),
+    markSessionBranchPending: vi.fn(),
+    clearSessionBranchPending: vi.fn(),
     copyTerminalSessionRuns: vi.fn().mockReturnValue(1),
     deleteSession: vi.fn(),
   } as unknown as CoworkStore;
@@ -860,6 +862,23 @@ test('copies an idle session from its canonical transcript', async () => {
     continuationTurns: 0,
   };
   const requestGateway = vi.fn(async (method: string, params?: unknown) => {
+    if (method === 'chat.history') {
+      if ((params as { cursor?: string })?.cursor)
+        return {
+          kind: 'delta',
+          deltaCursor: 'cursor',
+          messages: [],
+          sessionInfo: { sessionId: 'gateway-copy' },
+        };
+      return {
+        sessionId: 'gateway-copy',
+        deltaCursor: 'cursor',
+        totalMessages: 1,
+        messages: [
+          { role: 'assistant', __openclaw: { id: 'copy-answer', runId: 'copied-native-run' } },
+        ],
+      };
+    }
     if (method === 'sessions.describe') {
       const key = (params as { key?: string } | undefined)?.key;
       return key === 'agent:main:justdo:copied-session'
@@ -911,7 +930,7 @@ test('copies an idle session from its canonical transcript', async () => {
     cwd: source.cwd,
     permissionMode: 'workspace',
   });
-  expect(router.prepareSession).toHaveBeenCalledWith(copied.id);
+  expect(router.prepareSession).toHaveBeenCalledWith(copied.id, { pendingBranchPreparation: true });
   expect(requestGateway).toHaveBeenCalledWith(
     'sessions.goal.clear',
     expect.objectContaining({
@@ -922,7 +941,15 @@ test('copies an idle session from its canonical transcript', async () => {
     }),
   );
   expect(store.deleteSession).not.toHaveBeenCalled();
-  expect(store.copyTerminalSessionRuns).toHaveBeenCalledWith(source.id, copied.id);
+  expect(store.copyTerminalSessionRuns).toHaveBeenCalledWith(
+    source.id,
+    copied.id,
+    new Set(['copied-native-run']),
+  );
+  expect(vi.mocked(store.markSessionBranchPending).mock.invocationCallOrder[0]).toBeLessThan(
+    vi.mocked(router.prepareSession).mock.invocationCallOrder[0],
+  );
+  expect(store.clearSessionBranchPending).toHaveBeenCalledWith(copied.id);
 });
 
 test('preserves enabled Plan mode when copying the canonical session', async () => {
@@ -943,6 +970,8 @@ test('preserves enabled Plan mode when copying the canonical session', async () 
   const store = {
     getSession: vi.fn().mockReturnValue(source),
     createSession: vi.fn().mockReturnValue(copied),
+    markSessionBranchPending: vi.fn(),
+    clearSessionBranchPending: vi.fn(),
     copyTerminalSessionRuns: vi.fn().mockReturnValue(0),
     deleteSession: vi.fn(),
   } as unknown as CoworkStore;
@@ -999,7 +1028,7 @@ test('preserves enabled Plan mode when copying the canonical session', async () 
   });
 });
 
-test('rolls back a copied local session when Gateway creation fails', async () => {
+test('retains the target identity when the copy creation response is lost', async () => {
   const source = {
     id: 'source-session',
     title: 'Source',
@@ -1017,6 +1046,8 @@ test('rolls back a copied local session when Gateway creation fails', async () =
   const store = {
     getSession: vi.fn().mockReturnValue(source),
     createSession: vi.fn().mockReturnValue(copied),
+    markSessionBranchPending: vi.fn(),
+    clearSessionBranchPending: vi.fn(),
     deleteSession: vi.fn(),
   } as unknown as CoworkStore;
   const router = {
@@ -1040,14 +1071,10 @@ test('rolls back a copied local session when Gateway creation fails', async () =
   await expect(handler({}, { sessionId: source.id, title: copied.title })).resolves.toEqual({
     success: false,
     error: 'fork failed',
+    session: { ...copied, status: 'error', branchCreationPending: true },
   });
-  expect(store.deleteSession).toHaveBeenCalledWith(copied.id);
-  expect(router.onSessionDeleted).toHaveBeenCalledWith(
-    copied.id,
-    copied.agentId,
-    ['agent:main:justdo:copied-session'],
-    [copied.cwd],
-  );
+  expect(store.deleteSession).not.toHaveBeenCalled();
+  expect(router.onSessionDeleted).not.toHaveBeenCalled();
 });
 
 test('refuses to copy when aggregate runtime activity cannot be verified', async () => {
@@ -1083,7 +1110,7 @@ test('refuses to copy when aggregate runtime activity cannot be verified', async
   expect(requestGateway).not.toHaveBeenCalled();
 });
 
-test('preserves the copy error when rollback cleanup also fails', async () => {
+test('preserves the preparation failure when native recovery lookup is incomplete', async () => {
   const source = {
     id: 'source-session',
     title: 'Source',
@@ -1101,6 +1128,8 @@ test('preserves the copy error when rollback cleanup also fails', async () => {
   const store = {
     getSession: vi.fn().mockReturnValue(source),
     createSession: vi.fn().mockReturnValue(copied),
+    markSessionBranchPending: vi.fn(),
+    clearSessionBranchPending: vi.fn(),
     deleteSession: vi.fn().mockImplementation(() => {
       throw new Error('local cleanup failed');
     }),
@@ -1128,9 +1157,10 @@ test('preserves the copy error when rollback cleanup also fails', async () => {
   await expect(handler({}, { sessionId: source.id, title: copied.title })).resolves.toEqual({
     success: false,
     error: 'adoption failed',
+    session: { ...copied, status: 'error', branchCreationPending: true },
   });
-  expect(store.deleteSession).toHaveBeenCalledWith(copied.id);
-  expect(router.onSessionDeleted).toHaveBeenCalled();
+  expect(store.deleteSession).not.toHaveBeenCalled();
+  expect(router.onSessionDeleted).not.toHaveBeenCalled();
 });
 
 test('forks after a historical assistant response by cutting before the next user entry', async () => {
@@ -1157,6 +1187,8 @@ test('forks after a historical assistant response by cutting before the next use
   const store = {
     getSession: vi.fn().mockReturnValue(source),
     createSession: vi.fn().mockReturnValue(forked),
+    markSessionBranchPending: vi.fn(),
+    clearSessionBranchPending: vi.fn(),
     copyTerminalSessionRuns: vi.fn().mockReturnValue(1),
     deleteSession: vi.fn(),
   } as unknown as CoworkStore;
@@ -1180,6 +1212,21 @@ test('forks after a historical assistant response by cutting before the next use
     continuationTurns: 0,
   };
   const requestGateway = vi.fn(async (method: string, params?: unknown) => {
+    if (method === 'chat.history') {
+      if ((params as { cursor?: string })?.cursor)
+        return {
+          kind: 'delta',
+          deltaCursor: 'cursor',
+          messages: [],
+          sessionInfo: { sessionId: 'gateway-fork' },
+        };
+      return {
+        sessionId: 'gateway-fork',
+        deltaCursor: 'cursor',
+        totalMessages: 1,
+        messages: [{ role: 'assistant', __openclaw: { id: 'entry-1', runId: 'cut-run' } }],
+      };
+    }
     if (method === 'sessions.describe') {
       return { session: { sessionId: 'gateway-fork', goal: forkedGoal } };
     }
@@ -1236,7 +1283,7 @@ test('forks after a historical assistant response by cutting before the next use
     targetKey: 'agent:main:justdo:forked-session',
     includeEntry: true,
   });
-  expect(router.prepareSession).toHaveBeenCalledWith(forked.id);
+  expect(router.prepareSession).toHaveBeenCalledWith(forked.id, { pendingBranchPreparation: true });
   expect(requestGateway).toHaveBeenCalledWith(
     'sessions.goal.clear',
     expect.objectContaining({
@@ -1247,7 +1294,11 @@ test('forks after a historical assistant response by cutting before the next use
     }),
   );
   expect(store.deleteSession).not.toHaveBeenCalled();
-  expect(store.copyTerminalSessionRuns).toHaveBeenCalledWith(source.id, forked.id);
+  expect(store.copyTerminalSessionRuns).toHaveBeenCalledWith(
+    source.id,
+    forked.id,
+    new Set(['cut-run']),
+  );
 });
 
 test('forks the latest completed assistant response at its exact entry', async () => {
@@ -1271,6 +1322,8 @@ test('forks the latest completed assistant response at its exact entry', async (
   const store = {
     getSession: vi.fn().mockReturnValue(source),
     createSession: vi.fn().mockReturnValue(forked),
+    markSessionBranchPending: vi.fn(),
+    clearSessionBranchPending: vi.fn(),
     copyTerminalSessionRuns: vi.fn().mockReturnValue(1),
     deleteSession: vi.fn(),
   } as unknown as CoworkStore;
@@ -1282,7 +1335,24 @@ test('forks the latest completed assistant response at its exact entry', async (
     }),
     onSessionDeleted: vi.fn(),
   } as unknown as CoworkEngineRouter;
-  const requestGateway = vi.fn(async (method: string) => {
+  const requestGateway = vi.fn(async (method: string, params?: unknown) => {
+    if (method === 'chat.history') {
+      if ((params as { cursor?: string })?.cursor)
+        return {
+          kind: 'delta',
+          deltaCursor: 'cursor',
+          messages: [],
+          sessionInfo: { sessionId: 'gateway-fork' },
+        };
+      return {
+        sessionId: 'gateway-fork',
+        deltaCursor: 'cursor',
+        totalMessages: 1,
+        messages: [
+          { role: 'assistant', __openclaw: { id: 'assistant-entry', runId: 'latest-run' } },
+        ],
+      };
+    }
     if (method === 'sessions.describe') {
       return { session: { sessionId: 'gateway-fork', goal: null } };
     }
@@ -1315,7 +1385,11 @@ test('forks the latest completed assistant response at its exact entry', async (
     targetKey: 'agent:main:justdo:forked-session',
     includeEntry: true,
   });
-  expect(store.copyTerminalSessionRuns).toHaveBeenCalledWith(source.id, forked.id);
+  expect(store.copyTerminalSessionRuns).toHaveBeenCalledWith(
+    source.id,
+    forked.id,
+    new Set(['latest-run']),
+  );
   expect(requestGateway).not.toHaveBeenCalledWith('sessions.create', expect.anything());
   expect(store.deleteSession).not.toHaveBeenCalled();
 });
@@ -1336,6 +1410,8 @@ test('rolls back a fork when Gateway returns a different target key', async () =
   const store = {
     getSession: vi.fn().mockReturnValue(source),
     createSession: vi.fn().mockReturnValue(forked),
+    markSessionBranchPending: vi.fn(),
+    clearSessionBranchPending: vi.fn(),
     deleteSession: vi.fn(),
   } as unknown as CoworkStore;
   const router = {
@@ -1347,7 +1423,11 @@ test('rolls back a fork when Gateway returns a different target key', async () =
     getCoworkStore: () => store,
     getCoworkEngineRouter: () => router,
     setSessionPermissionMode: vi.fn(),
-    requestGateway: vi.fn().mockResolvedValue({ sessionKey: 'agent:main:dashboard:wrong' }),
+    requestGateway: vi.fn(async (method: string) =>
+      method === 'sessions.describe'
+        ? { session: null }
+        : { sessionKey: 'agent:main:dashboard:wrong' },
+    ),
   });
   const handler = mocks.handle.mock.calls.find(
     ([channel]) => channel === CoworkSessionForkIpc.Fork,
@@ -1373,6 +1453,249 @@ test('rolls back a fork when Gateway returns a different target key', async () =
     ['agent:main:justdo:forked-session'],
     [forked.cwd],
   );
+});
+
+test.each(['copy', 'fork'] as const)(
+  'retains a %s whose physical identity changes during preparation',
+  async action => {
+    const source = {
+      id: 'source',
+      title: 'Source',
+      status: 'idle' as const,
+      pinned: false,
+      cwd: 'E:\\workspace\\project',
+      executionMode: 'local' as const,
+      permissionMode: 'ask' as const,
+      activeSkillIds: [],
+      agentId: 'main',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const target = { ...source, id: 'target', title: 'Target' };
+    const store = {
+      getSession: vi.fn().mockReturnValue(source),
+      createSession: vi.fn().mockReturnValue(target),
+      markSessionBranchPending: vi.fn(),
+      clearSessionBranchPending: vi.fn(),
+      deleteSession: vi.fn(),
+      updateSession: vi.fn(),
+      copyTerminalSessionRuns: vi.fn(),
+    } as unknown as CoworkStore;
+    const router = {
+      getSessionRuntimeStatus: vi.fn().mockResolvedValue({ known: true, running: false }),
+      prepareSession: vi.fn().mockResolvedValue({
+        sessionKey: 'agent:main:justdo:target',
+        gatewaySessionId: 'replacement',
+      }),
+      onSessionDeleted: vi.fn(),
+    } as unknown as CoworkEngineRouter;
+    const requestGateway = vi.fn(async (method: string, params?: unknown) => {
+      if (method === 'sessions.describe')
+        return {
+          session: (params as { key: string }).key.endsWith(':target')
+            ? { sessionId: 'original', goal: null }
+            : { pluginExtensions: [] },
+        };
+      if (method === 'sessions.create')
+        return { key: 'agent:main:justdo:target', sessionId: 'original' };
+      return { sessionKey: 'agent:main:justdo:target' };
+    });
+    registerCoworkSessionHandlers({
+      getCoworkStore: () => store,
+      getCoworkEngineRouter: () => router,
+      setSessionPermissionMode: vi.fn(),
+      requestGateway,
+    });
+    const handler = mocks.handle.mock.calls.find(
+      ([channel]) =>
+        channel === (action === 'copy' ? CoworkSessionCopyIpc.Copy : CoworkSessionForkIpc.Fork),
+    )![1] as IpcHandler;
+    await expect(
+      handler({}, { sessionId: source.id, title: target.title, entryId: 'answer' }),
+    ).resolves.toMatchObject({
+      success: false,
+      session: { id: target.id, status: 'error' },
+      error: `The ${action === 'copy' ? 'copied' : 'forked'} session identity changed during preparation.`,
+    });
+    expect(store.deleteSession).not.toHaveBeenCalled();
+    expect(store.copyTerminalSessionRuns).not.toHaveBeenCalled();
+    expect(requestGateway).not.toHaveBeenCalledWith('sessions.goal.clear', expect.anything());
+  },
+);
+
+test('does not clear a replacement session Goal after a copy', async () => {
+  const source = {
+    id: 'source',
+    title: 'Source',
+    status: 'idle' as const,
+    pinned: false,
+    cwd: 'E:\\workspace\\project',
+    executionMode: 'local' as const,
+    permissionMode: 'ask' as const,
+    activeSkillIds: [],
+    agentId: 'main',
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const target = { ...source, id: 'target', title: 'Copy' };
+  const store = {
+    getSession: vi.fn().mockReturnValue(source),
+    createSession: vi.fn().mockReturnValue(target),
+    markSessionBranchPending: vi.fn(),
+    clearSessionBranchPending: vi.fn(),
+    deleteSession: vi.fn(),
+    updateSession: vi.fn(),
+    copyTerminalSessionRuns: vi.fn(),
+  } as unknown as CoworkStore;
+  const router = {
+    getSessionRuntimeStatus: vi.fn().mockResolvedValue({ known: true, running: false }),
+    prepareSession: vi
+      .fn()
+      .mockResolvedValue({ sessionKey: 'agent:main:justdo:target', gatewaySessionId: 'original' }),
+    onSessionDeleted: vi.fn(),
+  } as unknown as CoworkEngineRouter;
+  const requestGateway = vi.fn(async (method: string, params?: unknown) => {
+    if (method === 'sessions.describe')
+      return {
+        session: (params as { key: string }).key.endsWith(':target')
+          ? { sessionId: 'replacement', goal: { id: 'foreign-goal' } }
+          : { pluginExtensions: [] },
+      };
+    return { key: 'agent:main:justdo:target', sessionId: 'original' };
+  });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store,
+    getCoworkEngineRouter: () => router,
+    setSessionPermissionMode: vi.fn(),
+    requestGateway,
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === CoworkSessionCopyIpc.Copy,
+  )![1] as IpcHandler;
+  await expect(handler({}, { sessionId: source.id, title: target.title })).resolves.toMatchObject({
+    success: false,
+    error: 'The copied session identity changed during Goal verification.',
+    session: { id: target.id, status: 'error' },
+  });
+  expect(requestGateway).not.toHaveBeenCalledWith('sessions.goal.clear', expect.anything());
+});
+
+test.each(['copy', 'fork'] as const)(
+  '%s distinguishes native rejection from an unknown creation',
+  async action => {
+    for (const rejected of [true, false]) {
+      mocks.handle.mockReset();
+      const source = {
+        id: 'source',
+        title: 'Source',
+        status: 'idle' as const,
+        pinned: false,
+        cwd: 'E:\\workspace\\project',
+        executionMode: 'local' as const,
+        permissionMode: 'ask' as const,
+        activeSkillIds: [],
+        agentId: 'main',
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      const target = { ...source, id: 'target', title: 'Copy' };
+      const store = {
+        getSession: vi.fn().mockReturnValue(source),
+        createSession: vi.fn().mockReturnValue(target),
+        markSessionBranchPending: vi.fn(),
+        clearSessionBranchPending: vi.fn(),
+        deleteSession: vi.fn(),
+        updateSession: vi.fn(),
+      } as unknown as CoworkStore;
+      const router = {
+        getSessionRuntimeStatus: vi.fn().mockResolvedValue({ known: true, running: false }),
+        onSessionDeleted: vi.fn(),
+        prepareSession: vi.fn(),
+      } as unknown as CoworkEngineRouter;
+      const failure = Object.assign(
+        new Error(rejected ? 'rejected' : 'request timeout: session creation'),
+        rejected
+          ? { gatewayCode: 'INVALID_REQUEST' }
+          : { code: 'CLIENT_TIMEOUT', requestSent: true },
+      );
+      const requestGateway = vi.fn(async (method: string, params?: unknown) => {
+        if (method === 'sessions.describe')
+          return {
+            session: (params as { key: string }).key.endsWith(':target')
+              ? null
+              : { pluginExtensions: [] },
+          };
+        throw failure;
+      });
+      registerCoworkSessionHandlers({
+        getCoworkStore: () => store,
+        getCoworkEngineRouter: () => router,
+        requestGateway,
+        setSessionPermissionMode: vi.fn(),
+      });
+      const handler = mocks.handle.mock.calls.find(
+        ([channel]) =>
+          channel === (action === 'copy' ? CoworkSessionCopyIpc.Copy : CoworkSessionForkIpc.Fork),
+      )![1] as IpcHandler;
+      const result = await handler(
+        {},
+        { sessionId: source.id, title: target.title, entryId: 'answer' },
+      );
+      if (rejected) {
+        expect(result).toEqual({ success: false, error: 'rejected' });
+        expect(store.deleteSession).toHaveBeenCalledWith(target.id);
+      } else {
+        expect(result).toMatchObject({
+          success: false,
+          session: { id: target.id, branchCreationPending: true },
+        });
+        expect(store.deleteSession).not.toHaveBeenCalled();
+      }
+      expect(
+        requestGateway.mock.calls.filter(
+          ([method]) => method === (action === 'copy' ? 'sessions.create' : 'sessions.fork'),
+        ),
+      ).toHaveLength(1);
+      expect(router.prepareSession).not.toHaveBeenCalled();
+    }
+  },
+);
+
+test('unfinished branch metadata blocks run admission and both source-copy actions before native access', async () => {
+  const store = {
+    getSession: vi.fn().mockReturnValue({ id: 'pending', branchCreationPending: true }),
+    beginSessionRun: vi.fn(),
+  } as unknown as CoworkStore;
+  const requestGateway = vi.fn();
+  const router = { getSessionRuntimeStatus: vi.fn() } as unknown as CoworkEngineRouter;
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store,
+    getCoworkEngineRouter: () => router,
+    requestGateway,
+    setSessionPermissionMode: vi.fn(),
+  });
+  for (const channel of [
+    CoworkSessionCopyIpc.Copy,
+    CoworkSessionForkIpc.Fork,
+    'cowork:session:run:begin',
+  ]) {
+    const handler = mocks.handle.mock.calls.find(([name]) => name === channel)![1] as IpcHandler;
+    await expect(
+      handler(
+        {},
+        {
+          sessionId: 'pending',
+          title: 'Copy',
+          entryId: 'answer',
+          clientTurnId: 'input',
+          startedAt: 1,
+        },
+      ),
+    ).resolves.toMatchObject({ success: false });
+  }
+  expect(store.beginSessionRun).not.toHaveBeenCalled();
+  expect(requestGateway).not.toHaveBeenCalled();
+  expect(router.getSessionRuntimeStatus).not.toHaveBeenCalled();
 });
 
 test('reports failure when the runtime cannot confirm a session stop', async () => {

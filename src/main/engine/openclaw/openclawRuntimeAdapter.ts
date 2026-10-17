@@ -382,6 +382,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   ): Promise<CoworkPreparedSession> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`Session ${sessionId} not found`);
+    if (session.branchCreationPending && !options.pendingBranchPreparation) {
+      throw new Error(t('coworkBranchCreationPending'));
+    }
 
     const workspaceRoot = (options.workspaceRoot || session.cwd).trim();
     if (!workspaceRoot || !path.isAbsolute(workspaceRoot)) {
@@ -1594,6 +1597,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   setPlanMode(sessionId: string, enabled: boolean): Promise<{ enabled: boolean }> {
+    if (this.store.getSession(sessionId)?.branchCreationPending) {
+      return Promise.reject(new Error(t('coworkBranchCreationPending')));
+    }
     return runtimePlanInteractions.setPlanMode.call(
       this.runtimePlanInteractionsContext,
       sessionId,
@@ -2642,6 +2648,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   async patchSessionModel(sessionId: string, model: string, agentId?: string) {
+    if (this.store.getSession(sessionId)?.branchCreationPending) {
+      return { ok: false as const, error: t('coworkBranchCreationPending') };
+    }
     return this.sessionRpc.patchModel(
       sessionId,
       model,

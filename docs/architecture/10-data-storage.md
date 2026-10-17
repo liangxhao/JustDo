@@ -176,6 +176,20 @@ forked_from_* 保存原生分支来源，源会话删除时引用置空并保留
 
 运行表保存 started_at、accepted_at、ended_at 与 state，区分用户提交、原生接收和结束。client_turn_id 全局唯一；每个 session 通过 ended_at IS NULL 的部分唯一索引限制一个未结束回执。终态和计时必须幂等结算，不能重启后重新开始计算同一已结束 run。
 
+复制和分支都只继承目标原生历史中确实存在的已结束计时回执。Main 对新目标使用
+有界 `chat.history` 分页，只提取 run 身份，不保存正文；每页核对物理 sessionId，
+最后以首个 deltaCursor 确认历史未改变。扫描最多 40 页，读取失败、身份/游标变化
+或超限时省略可选计时，不按时间或随机回执 ID 猜切点，也不复制 off-path 回执。
+诊断事件、Goal 续跑状态和 Plan handoff 不随计时复制。
+
+复制/分支在发送创建请求前，先将 `sessionBranchPending:<sessionId>` 标记写入现有
+`cowork_config`，完整准备成功后清理。标记按存在性关闭准入，不解析内容授予权限；
+详情与列表均投影 `branchCreationPending`。创建结果不明或后续准备失败时保留同一
+目标，标为 error 供检查/删除；重启、状态刷新、模型/Plan 更改及普通 prepare 均不能
+把它恢复为空会话。仅创建 handler 使用 Main 内部 typed 选项完成其原请求的准备。
+只有收到成功或明确拒绝响应、并确认原生 `session:null` 才撤销本地记录；未知请求的
+暂时不存在不足以排除迟到提交。产品删除与隔离标记清理在同一 SQLite 事务中完成。
+
 发送 ACK 丢失后，只有精确原生运行的 `agent.wait` 接纳／终态证据才能补写 root_run_id 和接纳核实时间，再结算该回执；恢复分支与正常 ACK 共用绑定方法。产品 idle、Stop ACK 或既有产品终态不能补写接纳证据。此核实时间可能晚于原生结束，不用于推断实际开始延迟。
 
 外部 session 另存来源、原生 key、首次绑定的 agent/cwd 和运行状态。删除产品会话的 trigger 写外部 tombstone；外部客户端再次同步不能复活用户已删记录。

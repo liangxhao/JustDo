@@ -223,6 +223,15 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       ? `${currentSession.external.status}:${currentSession.updatedAt}`
       : '';
     const initialSessionRef = useRef(currentSession);
+    const branchCreationPendingRef = useRef(currentSession?.branchCreationPending === true);
+    branchCreationPendingRef.current = currentSession?.branchCreationPending === true;
+    const assertSessionMutationAllowed = useCallback(() => {
+      if (branchCreationPendingRef.current) {
+        throw Object.assign(new Error(i18nService.t('coworkBranchCreationPending')), {
+          requestSent: false,
+        });
+      }
+    }, []);
     const canonicalSessionKeyRef = useRef(canonicalSessionKey);
     canonicalSessionKeyRef.current = canonicalSessionKey;
     const controllerRef = useRef<ChatController | null>(null);
@@ -330,15 +339,18 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           return resolveSummaryArtifactResource(controller.getLoadedMessages(), target, title);
         },
         isInitialDispatchReady: sessionKey =>
-          controllerRef.current?.isInitialDispatchReady(sessionKey) ?? false,
+          !branchCreationPendingRef.current &&
+          (controllerRef.current?.isInitialDispatchReady(sessionKey) ?? false),
         dispatchInitialTurn: async params => {
+          assertSessionMutationAllowed();
           const controller = controllerRef.current;
           if (!controller)
             throw Object.assign(new Error(i18nService.t('coworkInitialDispatchUnavailable')), {
               requestSent: false,
             });
           const sessionKey = controller.state.sessionKey;
-          const dispatchRunId = typeof params.idempotencyKey === 'string' ? params.idempotencyKey : '';
+          const dispatchRunId =
+            typeof params.idempotencyKey === 'string' ? params.idempotencyKey : '';
           const receipt = await dispatchInitialTurn(controller.state, params, () =>
             controller.beginInitialDispatch(sessionKey, dispatchRunId),
           );
@@ -379,18 +391,21 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
             : null;
         },
         withdrawQueuedInput: async (inputId, expectedSessionKey) => {
+          assertSessionMutationAllowed();
           const controller = controllerRef.current;
           if (!controller || controller.state.sessionKey !== expectedSessionKey)
             throw new Error(i18nService.t('coworkQueueUnavailable'));
           await controller.withdrawQueuedInput(inputId);
         },
         queueMessage: async (text, attachments, gatewayMessage, expectedSessionKey) => {
+          assertSessionMutationAllowed();
           const controller = controllerRef.current;
           if (!controller?.state.initialHistoryReady || controller.state.historyReadFailed)
             throw new Error(i18nService.t('storageHistoryFailed'));
           await controller.queueMessage(text, attachments, gatewayMessage, expectedSessionKey);
         },
         sendMessage: async (text: string, attachments = [], gatewayMessage, options) => {
+          assertSessionMutationAllowed();
           const controller = controllerRef.current;
           if (!controller) throw new Error('Controller not initialized');
           if (!controller.state.initialHistoryReady || controller.state.historyReadFailed) {
@@ -438,8 +453,12 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           controllerRef.current?.beginGoalResume(sessionKey, runId);
         },
         refreshProgressCard: async () => controllerRef.current?.refreshProgressCard() ?? false,
-        dismissProgressCard: async () => controllerRef.current?.dismissProgressCard() ?? false,
+        dismissProgressCard: async () => {
+          assertSessionMutationAllowed();
+          return controllerRef.current?.dismissProgressCard() ?? false;
+        },
         rewindToUserMessage: async entryId => {
+          assertSessionMutationAllowed();
           const controller = controllerRef.current;
           if (!controller) throw new Error('Controller not initialized');
           return controller.rewindToUserMessage(entryId);
@@ -493,6 +512,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           return false;
         },
         sendSideQuestion: async (question, runId) => {
+          assertSessionMutationAllowed();
           const controller = controllerRef.current;
           if (!controller) throw new Error('Controller not initialized');
           if (!controller.state.initialHistoryReady || controller.state.historyReadFailed) {
@@ -501,7 +521,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           return controller.sendSideQuestion(question, runId);
         },
       }),
-      [],
+      [assertSessionMutationAllowed],
     );
 
     // Create the Lit element and controller on mount
@@ -841,9 +861,13 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           processSummariesExpanded={processSummariesExpanded}
           onSearchMatchCountChange={onSearchMatchCountChange}
           runTimings={runTimings}
-          onLastUserMessageAction={onLastUserMessageAction}
+          onLastUserMessageAction={
+            currentSession?.branchCreationPending ? undefined : onLastUserMessageAction
+          }
           onMessageQuote={onMessageQuote}
-          onAssistantMessageFork={onAssistantMessageFork}
+          onAssistantMessageFork={
+            currentSession?.branchCreationPending ? undefined : onAssistantMessageFork
+          }
           onChatElementChange={handleChatElementChange}
         />
       </div>

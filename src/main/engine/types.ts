@@ -146,6 +146,8 @@ export type CoworkStopOptions = {
 };
 
 export type CoworkPrepareSessionOptions = {
+  /** Main's branch creation handler only; ordinary sends must respect the persistent fence. */
+  pendingBranchPreparation?: true;
   permissionMode?: PermissionMode;
   workspaceRoot?: string;
   agentId?: string;

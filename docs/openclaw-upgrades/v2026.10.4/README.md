@@ -2,6 +2,47 @@
 
 本记录区分源码/自动化验证与真实服务、设备和安装版人工验收；历史版本结果不作为本版证据。
 
+## 会话复制与消息分支专项复审（2026-10-17）
+
+对照目标源码的 `sessions-create` / `session-create-service`、`sessions-rewind`、
+SQLite parent-fork/message-cut 与当前 012 补丁后，保留现有两个原生调用路径。
+10.4 原生默认 fork 仍在用户消息前切断，不能替代包含选中助手回复的受管分支。
+不扩大 Worktree 或 Agent Team 的复制准入，也不增加运行时补丁。
+
+产品适配收紧三处：复制/分支的计时回执按目标原生 run 身份精确筛选；创建、准备与 Goal 清理
+核对同一物理身份；创建结果不明或后续准备失败时保留列表恢复记录，不先删除产品
+目标再进行无人核对的原生清理。只有已收到创建响应并确认原生目标不存在时撤销记录。
+明确失败与成功仍分开，恢复项不会自动选中或重发复制请求。
+
+独立 agent 复审发现并修复两项 P2：按产品时间/随机 ID 排序仍可能误带同时间戳或
+off-path 回执；普通 error 恢复项可能经继续、模型选择或侧聊创建/执行空目标。
+现以稳定原生历史的 run ID 成员集筛选计时，持久 pending 标记阻止未完成目标继续；
+Main 与 Renderer Wrapper 分别覆盖准备/运行/设置及直接 Gateway 发送旁路。
+补测覆盖重复时间、旧分支回执、分页失败/身份变化/超限、明确拒绝与丢失回执、
+重启后的隔离及旧 Renderer ref。当前恢复项供检查/删除，不提供未经核验的自动继续。
+
+`scripts/test/verify-native-session-branching.mjs` 在当前准备运行时、Node 24.21.0 的
+独立合成状态中通过六组原生验证：完整分支复制保留工具配对及最新 Code Mode
+store entry；历史回复/最新回复均精确包含切点；历史分支排除后续消息和 store 写入；
+工具调用中途切点被拒绝、来源记录不变。另启动独立 Gateway 验证真实 create/fork、
+history cursor/计时 ID 投影及目标冲突拒绝；退出状态为 0。没有启动用户 Gateway、
+调用模型或读取用户 transcript；它不证明真实 UI 操作、
+模型在分支后主动读取 store、冷归档或断线重连场景已人工验收。
+
+本地证据：`.agent-tasks/runtime/session-branching/probe-rywEsx/result.json`，包含运行时
+版本及 bundle SHA-256。复审后专项 7 个文件、219 项测试通过；最终全量 Vitest
+为 924 个文件、11,124 项通过，另有 5 个文件、60 项按现有条件跳过。
+lint、build、Main 与 Renderer 类型检查通过。最终 agent 复核无新增阻塞项。
+
+首轮全量发现一个新增测试引用了不存在的 IPC 常量，已改为现有 handler channel
+并复跑通过；另有本地 ACPX 仍为 0.19.1、锁文件要求 0.19.5，以及 SDK 类型测试
+并行负载下超时。后两项分别经独立依赖与单独复跑确认，再以 2 workers 完整重跑通过。
+测试文件中的超时预算未调整。由于当前 Electron 原生库文件被占用，SQLite 用相同
+锁定版本 12.11.1 的 Node ABI 预构建库在临时 Vitest alias 中执行；ACPX 依照现有
+锁文件在独立目录 `npm ci --ignore-scripts`，通过 `ACPX_RUNTIME_TEST_PACKAGE` 选择。
+这些测试环境文件及日志均留在 `.agent-tasks/runtime/session-branching/`，未覆盖应用
+当前运行目录或修改依赖锁文件，也不提交原生日志。
+
 ## 技能发现与 Code Mode 中间结果专项验证（2026-10-17）
 
 在独立 worktree `codex/verify-native-skill-state`、应用提交 `3b58e5a9e` 上从锁定

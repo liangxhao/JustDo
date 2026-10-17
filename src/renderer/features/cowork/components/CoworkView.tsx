@@ -2236,7 +2236,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         goalPresence.hasGoal
       )
         return false;
-      if (currentSession.external?.readOnly || currentSessionAgent?.enabled === false) return false;
+      if (
+        currentSession.branchCreationPending ||
+        currentSession.external?.readOnly ||
+        currentSessionAgent?.enabled === false
+      )
+        return false;
       if (!ensureOpenClawReadyForSubmit() || pendingStartRef.current?.cancelled) return false;
       const sessionKey = currentGatewaySessionKey;
       const chat = chatWrapperRef.current;
@@ -2270,7 +2275,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       gatewayPrompt?: string,
       submission?: boolean | { clientTurnId: string },
     ) => {
-      if (currentSession.external?.readOnly) return false;
+      if (currentSession.branchCreationPending || currentSession.external?.readOnly) return false;
       if (goalPresence.sessionId !== currentSession.id || !goalPresence.ready) return false;
       if (!ensureOpenClawReadyForSubmit() || pendingStartRef.current?.cancelled) return false;
       const outboundPrompt = gatewayPrompt ?? prompt;
@@ -3360,9 +3365,13 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     latestRun={currentSessionRunTimings[currentSessionRunTimings.length - 1]}
                   />
                 )}
-                {currentSession.external?.readOnly ? (
+                {currentSession.branchCreationPending || currentSession.external?.readOnly ? (
                   <div className="rounded-xl border border-border bg-surface-raised px-4 py-3 text-center text-xs leading-5 text-secondary">
-                    {i18nService.t('multicaSessionReadOnly')}
+                    {i18nService.t(
+                      currentSession.branchCreationPending
+                        ? 'coworkBranchCreationPending'
+                        : 'multicaSessionReadOnly',
+                    )}
                   </div>
                 ) : (
                   <div className="relative isolate rounded-2xl">

@@ -46,6 +46,11 @@ import {
   searchCoworkSessionMessages,
 } from '../../openclaw/sessions/openclawSessionSearch';
 import { cancelAgentTeamLaunchWithoutWaiting } from './agentTeamLaunchCancellation';
+import {
+  hasSessionBranchCreationResponse,
+  readSessionBranchRunIds,
+  recoverFailedSessionBranch,
+} from './sessionBranching';
 
 interface SessionHandlerDependencies {
   getAgentTeamLaunch?: () => AgentTeamLaunchCoordinator;
@@ -72,13 +77,13 @@ const clearInheritedSessionGoal = async (
   if (!described.session) {
     throw new Error('OpenClaw did not return the copied session for Goal verification.');
   }
+  if (described.session.sessionId !== options.gatewaySessionId) {
+    throw new Error('The copied session identity changed during Goal verification.');
+  }
   if (described.session.goal === undefined || described.session.goal === null) return;
   const goal = normalizeSessionGoal(described.session.goal);
   if (!goal) throw new Error('OpenClaw returned invalid Goal metadata on the copied session.');
-  const gatewaySessionId =
-    typeof described.session.sessionId === 'string' && described.session.sessionId.trim()
-      ? described.session.sessionId.trim()
-      : options.gatewaySessionId;
+  const gatewaySessionId = options.gatewaySessionId;
   const operationId = randomUUID();
   const cleared = await requestGateway<{
     operationId?: unknown;
@@ -103,12 +108,12 @@ const clearInheritedSessionGoal = async (
   ) {
     throw new Error('OpenClaw did not confirm that the copied Goal was cleared.');
   }
-  const verified = await requestGateway<{ session?: { goal?: unknown } | null }>(
-    'sessions.describe',
-    { key: options.sessionKey },
-  );
+  const verified = await requestGateway<{
+    session?: { sessionId?: unknown; goal?: unknown } | null;
+  }>('sessions.describe', { key: options.sessionKey });
   if (
     !verified.session ||
+    verified.session.sessionId !== gatewaySessionId ||
     (verified.session.goal !== undefined && verified.session.goal !== null)
   ) {
     throw new Error('OpenClaw did not clear Goal metadata from the copied session.');
@@ -549,7 +554,14 @@ export const registerCoworkSessionHandlers = ({
         };
       }
       const store = getCoworkStore();
-      const owner = store.getSession(input.sessionId)?.agentId;
+      const session = store.getSession(input.sessionId);
+      if (session?.branchCreationPending)
+        return {
+          success: false,
+          errorCode: SessionRunBeginErrorCode.RuntimeUnknown,
+          error: t('coworkBranchCreationPending'),
+        };
+      const owner = session?.agentId;
       if (owner && !store.getAgent(owner)?.enabled)
         return { success: false, error: 'agentUnavailable' };
       if (isRestartCheckpoint(store.getLatestSessionRun(input.sessionId))) {
@@ -888,6 +900,8 @@ export const registerCoworkSessionHandlers = ({
     const router = getCoworkEngineRouter();
     const source = store.getSession(sourceSessionId);
     if (!source) return { success: false, error: 'Source session not found.' };
+    if (source.branchCreationPending)
+      return { success: false, error: t('coworkBranchCreationPending') };
     if (source.nativeSessionKey) return { success: false, error: t('worktreeCopyUnavailable') };
     if (getCollaboration?.().read(sourceSessionId).room)
       return { success: false, error: 'collaborationCopyUnavailable' };
@@ -897,6 +911,8 @@ export const registerCoworkSessionHandlers = ({
 
     let copiedSession: ReturnType<CoworkStore['createSession']> | null = null;
     let copiedSessionKey = '';
+    let creationResponseReceived = false;
+    let creationRequestIssued = false;
     try {
       const runtime = await router.getSessionRuntimeStatus(sourceSessionId, {
         includeSubagents: true,
@@ -946,6 +962,8 @@ export const registerCoworkSessionHandlers = ({
         copiedSession.id,
         copiedSession.agentId || DEFAULT_MANAGED_AGENT_ID,
       );
+      store.markSessionBranchPending(copiedSession.id);
+      creationRequestIssued = true;
       const created = await requestGateway<{
         key?: unknown;
         sessionId?: unknown;
@@ -957,6 +975,7 @@ export const registerCoworkSessionHandlers = ({
         cwd: source.cwd,
         permissionMode: toOpenClawSessionPermissionMode(source.permissionMode),
       });
+      creationResponseReceived = true;
       const gatewaySessionId =
         typeof created.sessionId === 'string'
           ? created.sessionId.trim()
@@ -982,36 +1001,47 @@ export const registerCoworkSessionHandlers = ({
 
       // Adopting the explicit key verifies the copied workspace and permission
       // boundary and records the runtime key in the adapter cache.
-      const prepared = await router.prepareSession(copiedSession.id);
+      const prepared = await router.prepareSession(copiedSession.id, {
+        pendingBranchPreparation: true,
+      });
+      if (
+        prepared.sessionKey !== copiedSessionKey ||
+        prepared.gatewaySessionId !== gatewaySessionId
+      ) {
+        throw new Error('The copied session identity changed during preparation.');
+      }
+      const copiedRunIds = await readSessionBranchRunIds(
+        requestGateway,
+        copiedSessionKey,
+        gatewaySessionId,
+      );
       await clearInheritedSessionGoal(requestGateway, {
         sessionKey: copiedSessionKey,
-        gatewaySessionId: prepared.gatewaySessionId || gatewaySessionId,
+        gatewaySessionId,
         agentId: copiedSession.agentId || DEFAULT_MANAGED_AGENT_ID,
       });
       if (getCollaboration?.().read(sourceSessionId).room)
         throw new Error('collaborationCopyUnavailable');
-      store.copyTerminalSessionRuns(source.id, copiedSession.id);
+      store.copyTerminalSessionRuns(source.id, copiedSession.id, copiedRunIds);
+      store.clearSessionBranchPending(copiedSession.id);
       return { success: true, session: copiedSession, planModeEnabled: copyPlanMode };
     } catch (error) {
-      if (copiedSession) {
-        try {
-          store.deleteSession(copiedSession.id);
-        } catch {
-          // Preserve the original copy failure; local cleanup is best effort.
-        }
-        try {
-          router.onSessionDeleted(
-            copiedSession.id,
-            copiedSession.agentId,
-            copiedSessionKey ? [copiedSessionKey] : [],
-            [copiedSession.cwd],
-          );
-        } catch {
-          // Preserve the original copy failure; runtime cleanup is best effort.
-        }
-      }
+      const retainedSession =
+        copiedSession && copiedSessionKey
+          ? await recoverFailedSessionBranch({
+              requestGateway,
+              store,
+              router,
+              session: copiedSession,
+              sessionKey: copiedSessionKey,
+              creationResponseReceived:
+                creationResponseReceived || hasSessionBranchCreationResponse(error),
+              creationRequestIssued,
+            })
+          : undefined;
       return {
         success: false,
+        ...(retainedSession ? { session: retainedSession } : {}),
         error: error instanceof Error ? error.message : 'Failed to copy session.',
       };
     }
@@ -1032,6 +1062,8 @@ export const registerCoworkSessionHandlers = ({
     const router = getCoworkEngineRouter();
     const source = store.getSession(sourceSessionId);
     if (!source) return { success: false, error: 'Source session not found.' };
+    if (source.branchCreationPending)
+      return { success: false, error: t('coworkBranchCreationPending') };
     if (source.nativeSessionKey) return { success: false, error: t('worktreeCopyUnavailable') };
     if (!requestGateway) {
       return { success: false, error: 'OpenClaw Gateway session fork is unavailable.' };
@@ -1045,6 +1077,8 @@ export const registerCoworkSessionHandlers = ({
 
     let forkedSession: ReturnType<CoworkStore['createSession']> | null = null;
     let forkedSessionKey = '';
+    let creationResponseReceived = false;
+    let creationRequestIssued = false;
     try {
       const runtime = await router.getSessionRuntimeStatus(sourceSessionId, {
         includeSubagents: true,
@@ -1075,6 +1109,8 @@ export const registerCoworkSessionHandlers = ({
         forkedSession.id,
         forkedSession.agentId || DEFAULT_MANAGED_AGENT_ID,
       );
+      store.markSessionBranchPending(forkedSession.id);
+      creationRequestIssued = true;
       const forked = await requestGateway<{ sessionKey?: unknown }>('sessions.fork', {
         sessionKey: sourceSessionKey,
         agentId: source.agentId || DEFAULT_MANAGED_AGENT_ID,
@@ -1082,41 +1118,62 @@ export const registerCoworkSessionHandlers = ({
         targetKey: forkedSessionKey,
         includeEntry: true,
       });
+      creationResponseReceived = true;
       const returnedKey = typeof forked.sessionKey === 'string' ? forked.sessionKey.trim() : '';
       if (returnedKey !== forkedSessionKey) {
         throw new Error('OpenClaw did not create the requested forked session.');
       }
 
-      const prepared = await router.prepareSession(forkedSession.id);
+      const described = await requestGateway<{ session?: { sessionId?: unknown } | null }>(
+        'sessions.describe',
+        { key: forkedSessionKey },
+      );
+      const gatewaySessionId = described.session?.sessionId;
+      if (typeof gatewaySessionId !== 'string' || !gatewaySessionId.trim()) {
+        throw new Error('OpenClaw did not return the forked session identity.');
+      }
+      const prepared = await router.prepareSession(forkedSession.id, {
+        pendingBranchPreparation: true,
+      });
+      if (
+        prepared.sessionKey !== forkedSessionKey ||
+        prepared.gatewaySessionId !== gatewaySessionId
+      ) {
+        throw new Error('The forked session identity changed during preparation.');
+      }
+      const nativeRunIds = await readSessionBranchRunIds(
+        requestGateway,
+        forkedSessionKey,
+        gatewaySessionId,
+        entryId,
+      );
       await clearInheritedSessionGoal(requestGateway, {
         sessionKey: forkedSessionKey,
-        gatewaySessionId: prepared.gatewaySessionId,
+        gatewaySessionId,
         agentId: forkedSession.agentId || DEFAULT_MANAGED_AGENT_ID,
       });
       if (getCollaboration?.().read(sourceSessionId).room)
         throw new Error('collaborationCopyUnavailable');
-      store.copyTerminalSessionRuns(source.id, forkedSession.id);
+      store.copyTerminalSessionRuns(source.id, forkedSession.id, nativeRunIds);
+      store.clearSessionBranchPending(forkedSession.id);
       return { success: true, session: forkedSession };
     } catch (error) {
-      if (forkedSession) {
-        try {
-          store.deleteSession(forkedSession.id);
-        } catch {
-          // Preserve the original fork failure; local cleanup is best effort.
-        }
-        try {
-          router.onSessionDeleted(
-            forkedSession.id,
-            forkedSession.agentId,
-            forkedSessionKey ? [forkedSessionKey] : [],
-            [forkedSession.cwd],
-          );
-        } catch {
-          // Preserve the original fork failure; runtime cleanup is best effort.
-        }
-      }
+      const retainedSession =
+        forkedSession && forkedSessionKey
+          ? await recoverFailedSessionBranch({
+              requestGateway,
+              store,
+              router,
+              session: forkedSession,
+              sessionKey: forkedSessionKey,
+              creationResponseReceived:
+                creationResponseReceived || hasSessionBranchCreationResponse(error),
+              creationRequestIssued,
+            })
+          : undefined;
       return {
         success: false,
+        ...(retainedSession ? { session: retainedSession } : {}),
         error: error instanceof Error ? error.message : 'Failed to fork session.',
       };
     }

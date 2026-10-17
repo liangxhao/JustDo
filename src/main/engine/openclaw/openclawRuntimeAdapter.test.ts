@@ -144,6 +144,23 @@ const getSessionPreparationInternals = (
   adapter: OpenClawRuntimeAdapter,
 ): SessionPreparationInternals => adapter as unknown as SessionPreparationInternals;
 
+test('unfinished branch records cannot create an empty target through prepare, model or Plan changes', async () => {
+  const { store, session } = createEmptyStore();
+  Object.assign(session, { branchCreationPending: true });
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = getSessionPreparationInternals(adapter);
+  const request = vi.fn();
+  internals.gatewayClient = { request } as unknown as GatewayClientLike;
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  await expect(adapter.prepareSession(session.id)).rejects.toThrow();
+  await expect(adapter.setPlanMode(session.id, true)).rejects.toThrow();
+  await expect(adapter.patchSessionModel(session.id, 'provider/model')).resolves.toMatchObject({
+    ok: false,
+  });
+  expect(request).not.toHaveBeenCalled();
+  expect(internals.ensureGatewayClientReady).not.toHaveBeenCalled();
+});
+
 const createAskUserRequest = () => ({
   requestId: 'ask_0123456789abcdef',
   questions: [

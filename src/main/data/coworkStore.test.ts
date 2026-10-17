@@ -211,6 +211,117 @@ test('copies terminal run metadata with stable transcript run ids', () => {
   expect(store.getSessionRuns(target.id)[0]?.clientTurnId).not.toBe('justdo-1700000000000-source');
 });
 
+test('copies branch timing only through the exact native cut run', () => {
+  const source = store.createSession('Source', '/tmp');
+  const target = store.createSession('Branch', '/tmp');
+  for (const [index, state] of ['completed', 'completed', 'failed'].entries()) {
+    const timing = store.beginSessionRun({
+      sessionId: source.id,
+      clientTurnId: `input-${index}`,
+      startedAt: 100 + index,
+    });
+    store.bindSessionRunRootRun(timing.id, `native-${index}`);
+    store.finishSessionRun(timing.id, state as 'completed' | 'failed', 200 + index);
+  }
+  expect(
+    store.copyTerminalSessionRuns(source.id, target.id, new Set(['native-0', 'native-1'])),
+  ).toBe(2);
+  expect(store.getSessionRuns(target.id).map(run => run.rootRunId)).toEqual([
+    'native-0',
+    'native-1',
+  ]);
+  expect(store.getLatestSessionRun(target.id)?.state).toBe('completed');
+});
+
+test('does not guess a timing cutoff when the native run is absent from product receipts', () => {
+  const source = store.createSession('Source', '/tmp');
+  const target = store.createSession('Branch', '/tmp');
+  const timing = store.beginSessionRun({
+    sessionId: source.id,
+    clientTurnId: 'input',
+    startedAt: 1,
+  });
+  store.finishSessionRun(timing.id, 'completed', 2);
+  expect(store.copyTerminalSessionRuns(source.id, target.id, new Set(['unknown']))).toBe(0);
+  expect(store.getSessionRuns(target.id)).toEqual([]);
+});
+
+test('does not copy later run timing when start times tie and receipt UUID order differs', () => {
+  const source = store.createSession('Source', '/tmp');
+  const target = store.createSession('Branch', '/tmp');
+  const first = store.beginSessionRun({
+    sessionId: source.id,
+    clientTurnId: 'first',
+    startedAt: 1,
+  });
+  store.bindSessionRunRootRun(first.id, 'cut-run');
+  store.finishSessionRun(first.id, 'completed', 2);
+  const later = store.beginSessionRun({
+    sessionId: source.id,
+    clientTurnId: 'later',
+    startedAt: 1,
+  });
+  store.bindSessionRunRootRun(later.id, 'later-run');
+  store.finishSessionRun(later.id, 'failed', 3);
+  db.prepare('UPDATE cowork_session_runs SET id = ? WHERE id = ?').run('z-cut', first.id);
+  db.prepare('UPDATE cowork_session_runs SET id = ? WHERE id = ?').run('a-later', later.id);
+
+  expect(store.copyTerminalSessionRuns(source.id, target.id, new Set(['cut-run']))).toBe(1);
+  expect(store.getSessionRuns(target.id).map(run => run.rootRunId)).toEqual(['cut-run']);
+});
+
+test('filters receipts abandoned by native rewind even when their timing precedes the cut', () => {
+  const source = store.createSession('Source', '/tmp');
+  const target = store.createSession('Copy', '/tmp');
+  for (const [index, root] of ['kept', 'abandoned', 'cut'].entries()) {
+    const timing = store.beginSessionRun({
+      sessionId: source.id,
+      clientTurnId: root,
+      startedAt: index,
+    });
+    store.bindSessionRunRootRun(timing.id, root);
+    store.finishSessionRun(timing.id, 'completed', index + 1);
+  }
+  expect(store.copyTerminalSessionRuns(source.id, target.id, new Set(['kept', 'cut']))).toBe(2);
+  expect(store.getSessionRuns(target.id).map(run => run.rootRunId)).toEqual(['kept', 'cut']);
+});
+
+test('persists unfinished branch fences across store instances and list refreshes, then clears on deletion', () => {
+  const target = store.createSession('Unconfirmed copy', '/tmp');
+  store.markSessionBranchPending(target.id);
+  const reopened = new CoworkStore(db);
+  expect(reopened.getSession(target.id)?.branchCreationPending).toBe(true);
+  expect(reopened.listSessions().find(item => item.id === target.id)?.branchCreationPending).toBe(
+    true,
+  );
+  reopened.clearSessionBranchPending(target.id);
+  expect(store.getSession(target.id)?.branchCreationPending).toBeUndefined();
+  store.markSessionBranchPending(target.id);
+  store.deleteSession(target.id);
+  expect(reopened.isSessionBranchPending(target.id)).toBe(false);
+  const batch = store.createSession('Batch', '/tmp');
+  store.markSessionBranchPending(batch.id);
+  store.deleteSessions([batch.id]);
+  expect(reopened.isSessionBranchPending(batch.id)).toBe(false);
+  store.markSessionBranchPending('missing');
+  expect(reopened.isSessionBranchPending('missing')).toBe(false);
+});
+
+test.each([false, true])(
+  'rolls back product deletion if branch-fence cleanup fails (batch: %s)',
+  batch => {
+    const target = store.createSession('Unfinished', '/tmp');
+    store.markSessionBranchPending(target.id);
+    db.exec(`CREATE TRIGGER prevent_branch_fence_removal BEFORE DELETE ON cowork_config
+    WHEN OLD.key LIKE 'sessionBranchPending:%' BEGIN SELECT RAISE(ABORT, 'cleanup failed'); END;`);
+    expect(() =>
+      batch ? store.deleteSessions([target.id]) : store.deleteSession(target.id),
+    ).toThrow('cleanup failed');
+    const reopened = new CoworkStore(db);
+    expect(reopened.getSession(target.id)?.branchCreationPending).toBe(true);
+  },
+);
+
 test('persists recent conversation activity across store instances and list reads', () => {
   insertSession('history', 1_700_000_000_000);
   insertSession('other', 1_700_100_000_000);

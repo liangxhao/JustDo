@@ -8,7 +8,13 @@ import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import JustDoChatWrapper, { type JustDoChatWrapperRef } from './JustDoChatWrapper';
 
 vi.mock('./ChatMessageDisplay', () => ({ default: () => <div /> }));
-const fixture = vi.hoisted(() => ({ session: { id: 'old', agentId: 'main' } }));
+const fixture = vi.hoisted(() => ({
+  session: { id: 'old', agentId: 'main' } as {
+    id: string;
+    agentId: string;
+    branchCreationPending?: boolean;
+  },
+}));
 vi.mock('react-redux', () => ({ useSelector: () => fixture.session }));
 vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
 
@@ -71,6 +77,96 @@ it('blocks export and sending while history is loading or failed, and retry only
   expect(onReady).toHaveBeenLastCalledWith('agent:main:justdo:old', true);
   await ref.current?.sendMessage('continue');
   expect(send).toHaveBeenCalledTimes(1);
+});
+
+it('keeps pending branch history readable while blocking direct native sends and mutations', async () => {
+  fixture.session = { id: 'old', agentId: 'main', branchCreationPending: true };
+  const connect = vi.spyOn(ChatController.prototype, 'connect').mockImplementation(async function (
+    this: ChatController,
+  ) {
+    this.state.connected = true;
+    this.state.initialHistoryReady = true;
+  });
+  const send = vi.spyOn(ChatController.prototype, 'sendMessage').mockResolvedValue();
+  const side = vi.spyOn(ChatController.prototype, 'sendSideQuestion').mockResolvedValue('side');
+  const queue = vi.spyOn(ChatController.prototype, 'queueMessage').mockResolvedValue();
+  const withdraw = vi.spyOn(ChatController.prototype, 'withdrawQueuedInput').mockResolvedValue();
+  const dismiss = vi.spyOn(ChatController.prototype, 'dismissProgressCard').mockResolvedValue(true);
+  const rewind = vi
+    .spyOn(ChatController.prototype, 'rewindToUserMessage')
+    .mockImplementation(async () => {
+      throw new Error('Unexpected native history mutation');
+    });
+  const initialDispatch = vi
+    .spyOn(ChatController.prototype, 'beginInitialDispatch')
+    .mockImplementation(() => {});
+  const refresh = vi.spyOn(ChatController.prototype, 'refreshProgressCard').mockResolvedValue(true);
+  const messages = [{ role: 'assistant', content: 'Copied history' }];
+  vi.spyOn(ChatController.prototype, 'getLoadedMessages').mockReturnValue(messages);
+  const ref = createRef<JustDoChatWrapperRef>();
+  render(<JustDoChatWrapper ref={ref} />);
+  await waitFor(() => expect(connect).toHaveBeenCalled());
+  const sessionKey = 'agent:main:justdo:old';
+
+  await expect(ref.current!.sendMessage('continue')).rejects.toMatchObject({
+    message: 'coworkBranchCreationPending',
+    requestSent: false,
+  });
+  await expect(ref.current!.sendMessage('/compact')).rejects.toThrow('coworkBranchCreationPending');
+  await expect(ref.current!.sendSideQuestion('question', 'side')).rejects.toThrow(
+    'coworkBranchCreationPending',
+  );
+  await expect(ref.current!.queueMessage('follow-up', [], undefined, sessionKey)).rejects.toThrow(
+    'coworkBranchCreationPending',
+  );
+  await expect(ref.current!.withdrawQueuedInput('queued', sessionKey)).rejects.toThrow(
+    'coworkBranchCreationPending',
+  );
+  await expect(ref.current!.rewindToUserMessage('entry')).rejects.toThrow(
+    'coworkBranchCreationPending',
+  );
+  await expect(ref.current!.dismissProgressCard()).rejects.toThrow('coworkBranchCreationPending');
+  await expect(ref.current!.dispatchInitialTurn({ sessionKey })).rejects.toMatchObject({
+    message: 'coworkBranchCreationPending',
+    requestSent: false,
+  });
+  expect(ref.current!.isInitialDispatchReady(sessionKey)).toBe(false);
+  for (const mutation of [send, side, queue, withdraw, dismiss, rewind, initialDispatch]) {
+    expect(mutation).not.toHaveBeenCalled();
+  }
+  expect(ref.current!.getExportSnapshot()).toMatchObject({
+    messages,
+    sessionKey,
+    isLoading: false,
+  });
+  await expect(ref.current!.refreshProgressCard()).resolves.toBe(true);
+  expect(refresh).toHaveBeenCalledOnce();
+});
+
+it('checks the live pending fence even through an imperative handle captured before a session update', async () => {
+  const connect = vi.spyOn(ChatController.prototype, 'connect').mockImplementation(async function (
+    this: ChatController,
+  ) {
+    this.state.connected = true;
+    this.state.initialHistoryReady = true;
+  });
+  const send = vi.spyOn(ChatController.prototype, 'sendMessage').mockResolvedValue();
+  const ref = createRef<JustDoChatWrapperRef>();
+  const view = render(<JustDoChatWrapper ref={ref} />);
+  await waitFor(() => expect(connect).toHaveBeenCalled());
+  const handle = ref.current!;
+  await handle.sendMessage('ready');
+  expect(send).toHaveBeenCalledOnce();
+
+  fixture.session = { ...fixture.session, branchCreationPending: true };
+  view.rerender(<JustDoChatWrapper ref={ref} />);
+  await expect(handle.sendMessage('pending')).rejects.toThrow('coworkBranchCreationPending');
+  expect(send).toHaveBeenCalledOnce();
+
+  fixture.session = { ...fixture.session, branchCreationPending: false };
+  view.rerender(<JustDoChatWrapper ref={ref} />);
+  await handle.sendMessage('confirmed');
+  expect(send).toHaveBeenCalledTimes(2);
 });
 
 it('delays real history loading notices and resets them when switching sessions', async () => {

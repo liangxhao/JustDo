@@ -59,6 +59,7 @@ const getDefaultWorkingDirectory = (): string => {
 };
 
 const GOAL_EXECUTION_CONFIG_PREFIX = 'goalExecution:';
+const SESSION_BRANCH_PENDING_CONFIG_PREFIX = 'sessionBranchPending:';
 const AGENT_RUNTIME_SETTINGS_CONFIG_KEY = 'agentRuntimeSettings:v1';
 const EXTERNAL_AGENT_SETTINGS_CONFIG_KEY = 'externalAgentSettings:v1';
 
@@ -133,6 +134,7 @@ export interface CoworkSession {
   activeSkillIds: string[];
   agentId: string;
   modelRef?: string;
+  branchCreationPending?: boolean;
   handoffSource?: import('../../shared/agents/agents').AgentHandoffSource;
   forkSource?: CoworkSessionForkSource;
   external?: ExternalSessionMetadata;
@@ -150,6 +152,7 @@ export interface CoworkSessionForkSource {
 }
 
 export interface CoworkSessionSummary {
+  branchCreationPending?: boolean;
   nativeSessionKey?: string;
   id: string;
   title: string;
@@ -339,13 +342,22 @@ export class CoworkStore {
     return row ? mapSessionRun(row) : undefined;
   }
 
-  copyTerminalSessionRuns(sourceSessionId: string, targetSessionId: string): number {
-    const sourceRuns = this.getAll<SessionRunRow>(
+  copyTerminalSessionRuns(
+    sourceSessionId: string,
+    targetSessionId: string,
+    nativeRunIds?: ReadonlySet<string>,
+  ): number {
+    let sourceRuns = this.getAll<SessionRunRow>(
       `SELECT * FROM cowork_session_runs
        WHERE session_id = ? AND ended_at IS NOT NULL
        ORDER BY started_at, id`,
       [sourceSessionId],
     );
+    if (nativeRunIds !== undefined) {
+      sourceRuns = sourceRuns.filter(run =>
+        nativeRunIds.has(run.root_run_id ?? run.client_turn_id),
+      );
+    }
     if (sourceRuns.length === 0) return 0;
 
     const insert = this.db.prepare(
@@ -742,6 +754,7 @@ export class CoworkStore {
       activeSkillIds,
       agentId: row.agent_id || 'main',
       ...(row.model_ref?.trim() ? { modelRef: row.model_ref.trim() } : {}),
+      ...(this.isSessionBranchPending(id) ? { branchCreationPending: true } : {}),
       ...(row.native_session_key ? { nativeSessionKey: row.native_session_key } : {}),
       ...(row.native_parent_session_id
         ? { nativeParentSessionId: row.native_parent_session_id }
@@ -884,16 +897,25 @@ export class CoworkStore {
   }
 
   deleteSession(id: string): void {
-    this.db.prepare('DELETE FROM cowork_sessions WHERE id = ?').run(id);
-    this.clearGoalExecutionSnapshot(id);
+    this.db.transaction(() => {
+      this.db.prepare('DELETE FROM cowork_sessions WHERE id = ?').run(id);
+      this.clearGoalExecutionSnapshot(id);
+      this.clearSessionBranchPending(id);
+    })();
   }
 
   deleteSessions(ids: string[]): void {
     if (ids.length === 0) return;
     const placeholders = ids.map(() => '?').join(',');
-    this.db.prepare(`DELETE FROM cowork_sessions WHERE id IN (${placeholders})`).run(...ids);
-    const goalKeys = ids.map(id => `${GOAL_EXECUTION_CONFIG_PREFIX}${id}`);
-    this.db.prepare(`DELETE FROM cowork_config WHERE key IN (${placeholders})`).run(...goalKeys);
+    this.db.transaction(() => {
+      this.db.prepare(`DELETE FROM cowork_sessions WHERE id IN (${placeholders})`).run(...ids);
+      const goalKeys = ids.map(id => `${GOAL_EXECUTION_CONFIG_PREFIX}${id}`);
+      this.db.prepare(`DELETE FROM cowork_config WHERE key IN (${placeholders})`).run(...goalKeys);
+      const branchKeys = ids.map(id => `${SESSION_BRANCH_PENDING_CONFIG_PREFIX}${id}`);
+      this.db
+        .prepare(`DELETE FROM cowork_config WHERE key IN (${placeholders})`)
+        .run(...branchKeys);
+    })();
   }
 
   setSessionPinned(id: string, pinned: boolean): void {
@@ -934,6 +956,11 @@ export class CoworkStore {
     }
 
     const externalBySessionId = this.listExternalSessionMetadata();
+    const pendingBranches = new Set(
+      this.getAll<{ key: string }>('SELECT key FROM cowork_config WHERE key GLOB ?', [
+        `${SESSION_BRANCH_PENDING_CONFIG_PREFIX}*`,
+      ]).map(row => row.key.slice(SESSION_BRANCH_PENDING_CONFIG_PREFIX.length)),
+    );
     return rows
       .filter(
         row =>
@@ -944,6 +971,7 @@ export class CoworkStore {
       .map(row => ({
         ...(row.native_session_key ? { nativeSessionKey: row.native_session_key } : {}),
         id: row.id,
+        ...(pendingBranches.has(row.id) ? { branchCreationPending: true } : {}),
         title: row.title,
         status: row.status as CoworkSessionStatus,
         pinned: Boolean(row.pinned),
@@ -1064,6 +1092,29 @@ export class CoworkStore {
   }
 
   // Config operations
+  markSessionBranchPending(sessionId: string): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO cowork_config (key, value, updated_at)
+      SELECT ?, 'true', ? WHERE EXISTS (SELECT 1 FROM cowork_sessions WHERE id = ?)`,
+      )
+      .run(`${SESSION_BRANCH_PENDING_CONFIG_PREFIX}${sessionId}`, Date.now(), sessionId);
+  }
+
+  isSessionBranchPending(sessionId: string): boolean {
+    return Boolean(
+      this.getOne('SELECT key FROM cowork_config WHERE key = ?', [
+        `${SESSION_BRANCH_PENDING_CONFIG_PREFIX}${sessionId}`,
+      ]),
+    );
+  }
+
+  clearSessionBranchPending(sessionId: string): void {
+    this.db
+      .prepare('DELETE FROM cowork_config WHERE key = ?')
+      .run(`${SESSION_BRANCH_PENDING_CONFIG_PREFIX}${sessionId}`);
+  }
+
   getGoalExecutionSnapshot(sessionId: string): GoalExecutionSnapshot | null {
     const row = this.getOne<{ value: string }>('SELECT value FROM cowork_config WHERE key = ?', [
       `${GOAL_EXECUTION_CONFIG_PREFIX}${sessionId}`,

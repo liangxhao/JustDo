@@ -65,6 +65,7 @@ export interface CoworkSession {
   activeSkillIds: string[];
   agentId: string;
   modelRef?: string;
+  branchCreationPending?: boolean;
   handoffSource?: import('../../../shared/agents/agents').AgentHandoffSource;
   forkSource?: {
     sessionId?: string;
@@ -160,6 +161,7 @@ export interface CoworkInteractionResponse {
 
 // Session summary for list display (without full messages)
 export interface CoworkSessionSummary {
+  branchCreationPending?: boolean;
   nativeSessionKey?: string;
   collaboration?: { memberCount: number; deleting: boolean };
   id: string;

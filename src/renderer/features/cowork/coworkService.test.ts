@@ -1595,6 +1595,56 @@ test('forks after an assistant response with an empty composer', async () => {
   vi.unstubAllGlobals();
 });
 
+test.each(['copy', 'fork'] as const)(
+  'keeps a failed %s recovery entry visible without selecting it or reporting success',
+  async action => {
+    const source: CoworkSession = {
+      id: 'recovery-source',
+      title: 'Source',
+      status: 'completed',
+      pinned: false,
+      cwd: 'C:\\workspace',
+      executionMode: 'local',
+      permissionMode: 'ask',
+      activeSkillIds: [],
+      agentId: 'main',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const recovery = { ...source, id: 'recovery-target', status: 'error' as const };
+    vi.stubGlobal('window', {
+      electron: {
+        cowork: {
+          [action === 'copy' ? 'copySession' : 'forkSession']: vi.fn().mockResolvedValue({
+            success: false,
+            session: recovery,
+            error: 'creation unconfirmed',
+          }),
+        },
+      },
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    store.dispatch(setCurrentSession(source));
+    try {
+      const result =
+        action === 'copy'
+          ? await coworkService.copySession(source)
+          : await coworkService.forkSession(source, 'answer');
+      expect(result).toBeNull();
+      expect(store.getState().cowork.currentSession?.id).toBe(source.id);
+      expect(store.getState().cowork.sessions.find(item => item.id === recovery.id)?.status).toBe(
+        'error',
+      );
+    } finally {
+      store.dispatch(deleteSession(recovery.id));
+      store.dispatch(deleteSession(source.id));
+      store.dispatch(clearCurrentSession());
+      error.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
 test('copy selection invalidates an older in-flight session load', async () => {
   const source: CoworkSession = {
     id: 'copy-load-source',

@@ -940,6 +940,7 @@ export class CoworkService {
         );
         return result.session;
       }
+      if (result.session) store.dispatch(addSession({ session: result.session, select: false }));
       console.error('Failed to copy session:', result.error);
       return null;
     } catch (error) {
@@ -975,6 +976,7 @@ export class CoworkService {
           draft: parseEditorDraftPayload(undefined, undefined),
         };
       }
+      if (result.session) store.dispatch(addSession({ session: result.session, select: false }));
       console.error('Failed to fork session:', result.error);
       return null;
     } catch (error) {

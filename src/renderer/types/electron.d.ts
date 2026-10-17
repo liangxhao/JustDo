@@ -191,6 +191,7 @@ interface CoworkSession {
   activeSkillIds: string[];
   agentId: string;
   modelRef?: string;
+  branchCreationPending?: boolean;
   handoffSource?: import('../../shared/agents/agents').AgentHandoffSource;
   forkSource?: {
     sessionId?: string;
@@ -204,6 +205,7 @@ interface CoworkSession {
 }
 
 interface CoworkSessionSummary {
+  branchCreationPending?: boolean;
   nativeSessionKey?: string;
   id: string;
   title: string;
@@ -1061,6 +1063,7 @@ interface IElectronAPI {
       input: import('../../shared/cowork/sessionCopy').CopyCoworkSessionInput,
     ) => Promise<{
       success: boolean;
+      /** On failure, an existing target retained for inspection; it is not a successful copy. */
       session?: CoworkSession;
       planModeEnabled?: boolean;
       error?: string;
@@ -1069,6 +1072,7 @@ interface IElectronAPI {
       input: import('../../shared/cowork/sessionFork').ForkCoworkSessionInput,
     ) => Promise<{
       success: boolean;
+      /** On failure, an existing target retained for inspection; it is not a successful fork. */
       session?: CoworkSession;
       error?: string;
     }>;

@@ -16,6 +16,8 @@ export type LanguageType = 'zh' | 'en';
 
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    coworkBranchCreationPending:
+      '该副本或分支尚未完成创建。请在会话列表中检查或删除，暂时无法继续发送。',
     computerOverlayActive: '正在操作电脑',
     computerOverlayWaiting: '电脑操作待续',
     windowMinimize: '最小化',
@@ -149,6 +151,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     browserContextSaveImage: '图片另存为…',
   },
   en: {
+    coworkBranchCreationPending:
+      'This copy or branch is unfinished. Inspect or delete it in the session list before continuing.',
     computerOverlayActive: 'Operating your computer',
     computerOverlayWaiting: 'Between computer actions',
     windowMinimize: 'Minimize',
