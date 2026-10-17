@@ -3,6 +3,7 @@ import { PRODUCT_NAME } from '@shared/productMetadata';
 export const chatTranslations = {
   zh: {
     coworkSummaryTitle: '摘要',
+    coworkSummaryResize: '拖动调整摘要大小，也可使用方向键',
     coworkSummaryGoal: '目标',
     coworkSummarySubagents: '子智能体',
     coworkSummaryRunning: '{count} 运行中',
@@ -729,6 +730,7 @@ export const chatTranslations = {
   },
   en: {
     coworkSummaryTitle: 'Summary',
+    coworkSummaryResize: 'Drag to resize summary, or use arrow keys',
     coworkSummaryGoal: 'Goal',
     coworkSummarySubagents: 'Subagents',
     coworkSummaryRunning: '{count} running',

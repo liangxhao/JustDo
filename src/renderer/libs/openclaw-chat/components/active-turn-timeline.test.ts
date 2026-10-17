@@ -140,17 +140,21 @@ describe('active turn timeline', () => {
     },
   );
 
-  test('shows nonzero exit codes only inside expanded details', () => {
+  test('keeps command failure evidence in output without a duplicate exit-code line', () => {
     const fixture = summary();
     const tool = fixture.items[1];
     if (tool.type !== 'tool') throw new Error('Expected tool fixture');
     tool.presentation = { exitCode: 7 };
-    expect(flatten(renderTimelineItem(fixture, 100, true))).toContain(
-      i18nService.t('messageExitCode').replace('{code}', '7'),
-    );
-    expect(flatten(renderTimelineItem(fixture, 100, false))).not.toContain(
-      i18nService.t('messageExitCode').replace('{code}', '7'),
-    );
+    tool.name = 'exec';
+    tool.output = '(no output)\n(Command exited with code 7)';
+    for (const presentation of [{ exitCode: 7 }, undefined]) {
+      tool.presentation = presentation;
+      const rendered = flatten(renderTimelineItem(fixture, 100, true));
+      expect(rendered).toContain(tool.output);
+      expect(rendered).not.toContain(
+        i18nService.t('messageExitCode').replace('{code}', '7'),
+      );
+    }
   });
   test.each(['running', 'completed'] as const)(
     'labels absent %s arguments separately from output',

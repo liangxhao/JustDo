@@ -1,3 +1,6 @@
+import './execApprovalModal.css';
+
+import { FolderIcon, ShieldCheckIcon } from '@heroicons/react/24/outline';
 import {
   ApprovalDecision,
   type ApprovalDecision as ApprovalDecisionValue,
@@ -89,6 +92,7 @@ const ExecApprovalModal: React.FC<ExecApprovalModalProps> = ({ approval, onExpir
     ? approval.request.title?.trim() || i18nService.t('pluginApprovalHeading')
     : i18nService.t('execApprovalHeading');
   const summary = resolveApprovalSummary(approval);
+  const cwd = approval.kind === ApprovalKind.Exec ? approval.request.cwd?.trim() : undefined;
 
   useEffect(() => {
     if (!expired || expirationNotifiedRef.current) return;
@@ -146,19 +150,23 @@ const ExecApprovalModal: React.FC<ExecApprovalModalProps> = ({ approval, onExpir
   return (
     <div
       data-workspace-overlay="true"
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 px-4 backdrop-blur-[2px]"
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]"
     >
       <div
         ref={dialogRef}
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="exec-approval-title"
+        aria-describedby={summary ? 'exec-approval-content' : undefined}
         onKeyDown={handleDialogKeyDown}
         onKeyUp={event => event.stopPropagation()}
-        className="w-full max-w-xl overflow-hidden rounded-2xl border border-border/80 bg-background shadow-[0_24px_70px_rgba(0,0,0,0.24)]"
+        className="exec-approval-panel flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-border/80 bg-surface shadow-[0_24px_70px_rgba(0,0,0,0.24)]"
       >
-        <div className="px-5 pb-4 pt-5">
+        <div className="exec-approval-header shrink-0 border-b border-border px-5 py-4">
           <div className="flex min-w-0 items-center gap-3">
+            <div className="rounded-xl bg-warning/10 p-2 text-warning">
+              <ShieldCheckIcon className="h-5 w-5" aria-hidden="true" />
+            </div>
             <div className="min-w-0 flex-1">
               <h2 id="exec-approval-title" className="text-[15px] font-semibold text-foreground">
                 {heading}
@@ -172,33 +180,43 @@ const ExecApprovalModal: React.FC<ExecApprovalModalProps> = ({ approval, onExpir
           </div>
         </div>
 
-        {summary && (
-          <div className="px-5 pb-4">
+        <div className="min-h-0 overflow-y-auto px-5 py-4">
+          {summary && (
             <div
-              className={
+              id="exec-approval-content"
+              className={`whitespace-pre-wrap break-words text-foreground ${
                 isPluginApproval
-                  ? 'max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface/70 px-3 py-2 font-mono text-xs text-foreground'
-                  : 'truncate rounded-lg bg-surface/70 px-3 py-2 font-mono text-xs text-foreground'
-              }
-              title={summary}
+                  ? 'text-sm leading-relaxed'
+                  : 'rounded-xl border border-border/70 bg-background px-4 py-3 font-mono text-xs leading-6'
+              }`}
             >
               {summary}
             </div>
-          </div>
-        )}
+          )}
+          {cwd && (
+            <div className="mt-3 flex items-start gap-2 text-xs leading-5 text-secondary">
+              <FolderIcon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 break-all select-text">{cwd}</span>
+            </div>
+          )}
 
-        {(error || (!isPluginApproval && approval.request.warningText)) && (
-          <div className="space-y-2 px-5 pb-4">
-            {!isPluginApproval && approval.request.warningText && (
-              <div className="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning">
-                {approval.request.warningText}
-              </div>
-            )}
-            {error && <div className="text-xs text-danger">{error}</div>}
-          </div>
-        )}
+          {(error || (!isPluginApproval && approval.request.warningText)) && (
+            <div className="mt-3 space-y-2">
+              {!isPluginApproval && approval.request.warningText && (
+                <div className="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning">
+                  {approval.request.warningText}
+                </div>
+              )}
+              {error && (
+                <div role="alert" className="break-words text-xs text-danger">
+                  {error}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
-        <div className="flex flex-wrap justify-end gap-2 border-t border-border/70 bg-surface/60 px-5 py-3.5">
+        <div className="exec-approval-footer flex shrink-0 flex-wrap justify-end gap-2 border-t border-border/70 bg-surface/60 px-5 py-3.5">
           {allowed.includes(ApprovalDecision.Deny) && (
             <button
               ref={denyButtonRef}

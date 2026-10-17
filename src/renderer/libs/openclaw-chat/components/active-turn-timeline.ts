@@ -407,13 +407,6 @@ function renderToolDetail(
       )}
       ${renderAssistantAttachments(media.filter(item => item.kind !== 'image'))}
       ${
-        tool.presentation?.exitCode !== undefined && tool.presentation.exitCode !== 0
-          ? html`<div class="process-summary__error">
-              ${i18nService.t('messageExitCode').replace('{code}', String(tool.presentation.exitCode))}
-            </div>`
-          : nothing
-      }
-      ${
         patch.length
           ? html`<div class="process-summary__detail-label">
                 ${i18nService.t('coworkToolInput')}

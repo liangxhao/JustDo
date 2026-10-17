@@ -119,6 +119,25 @@ const findCardProbe = async (name = 'personal-mcp') => {
   return within(card).getByRole('button', { name: 'mcpTestServer' });
 };
 
+test('configuration sync succeeds silently and reports failures in a dismissible dialog', async () => {
+  renderManager();
+  await screen.findByText('personal-mcp');
+  const syncStart = vi.mocked(mcpService.onConfigSyncStart).mock.calls.at(-1)![0];
+  const syncDone = vi.mocked(mcpService.onConfigSyncDone).mock.calls.at(-1)![0];
+
+  act(() => syncStart());
+  act(() => syncDone({ tools: 0 }));
+  expect(screen.queryByText(/mcpBridgeSyncDone/)).toBeNull();
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+
+  act(() => syncStart());
+  act(() => syncDone({ tools: 0, error: 'Connection refused' }));
+  const dialog = screen.getByRole('alertdialog', { name: 'mcpBridgeSyncError' });
+  expect(within(dialog).getByText('Connection refused')).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'close' }));
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+});
+
 const customServer: McpServerConfig = {
   id: 'user-mcp',
   name: 'User MCP',

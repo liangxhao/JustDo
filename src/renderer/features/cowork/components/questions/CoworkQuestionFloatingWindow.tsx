@@ -204,7 +204,7 @@ const CoworkQuestionFloatingWindow: React.FC<CoworkQuestionFloatingWindowProps> 
     >
       <aside
         ref={panelRef}
-        className={`pointer-events-auto max-h-[80vh] w-full overflow-hidden rounded-2xl bg-surface shadow-modal will-change-transform ${
+        className={`question-dialog-panel pointer-events-auto max-h-[80vh] w-full overflow-hidden rounded-2xl bg-surface shadow-modal will-change-transform ${
           hasMultipleQuestions ? 'max-w-2xl' : 'max-w-lg'
         }`}
         style={{ transform: `translate3d(${offset.x}px, ${offset.y}px, 0)` }}

@@ -860,6 +860,8 @@ const InitializedApp: React.FC = () => {
             interaction.interactionKind !== CoworkInteractionKind.PLAN_APPROVAL,
         );
 
+  const activeApproval = pendingApprovals[0] ?? null;
+
   const questionWindows = useMemo(() => {
     return structuredQuestionInteractions.map(interaction => (
       <CoworkQuestionFloatingWindow
@@ -870,13 +872,14 @@ const InitializedApp: React.FC = () => {
             ? `${i18nService.t('teamGroup')} · ${teamAgents.find(agent => agent.id === parseTeamDiscussionSessionKey(interaction.toolInput.sessionKey)?.agentId)?.name ?? ''}`
             : undefined
         }
-        isVisible={interaction.requestId === activeQuestionRequestId}
+        isVisible={!activeApproval && interaction.requestId === activeQuestionRequestId}
         onRespond={result => handleInteractionResponse(interaction.requestId, result)}
       />
     ));
   }, [
     structuredQuestionInteractions,
     activeQuestionRequestId,
+    activeApproval,
     handleInteractionResponse,
     teamAgents,
   ]);
@@ -888,12 +891,11 @@ const InitializedApp: React.FC = () => {
       <CoworkInteractionModal
         key={modalInteraction.requestId}
         interaction={modalInteraction}
+        isActive={!activeApproval}
         onRespond={result => handleInteractionResponse(modalInteraction.requestId, result)}
       />
     );
-  }, [modalInteraction, handleInteractionResponse]);
-
-  const activeApproval = pendingApprovals[0] ?? null;
+  }, [modalInteraction, handleInteractionResponse, activeApproval]);
 
   const resolveExecApproval = useCallback(
     async (decision: ApprovalDecision) => {
@@ -1148,7 +1150,7 @@ const InitializedApp: React.FC = () => {
         </OwnerDocumentContext.Provider>
       )}
       {questionWindows}
-      {interactionModal}
+      <div hidden={Boolean(activeApproval)}>{interactionModal}</div>
       {activeApproval && (
         <ExecApprovalModal
           approval={activeApproval}

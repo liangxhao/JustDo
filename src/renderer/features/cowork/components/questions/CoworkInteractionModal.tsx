@@ -1,3 +1,5 @@
+import './questionDialog.css';
+
 import { QuestionMarkCircleIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import type {
   AskUserAnswers,
@@ -310,8 +312,8 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
         ref={dialogRef}
         className={
           isFloating
-            ? 'flex max-h-[80vh] min-h-0 w-full flex-col overflow-hidden bg-surface focus:outline-none'
-            : 'modal-content w-full max-w-lg mx-4 bg-surface rounded-2xl shadow-modal overflow-hidden focus:outline-none'
+            ? 'question-dialog-body flex max-h-[80vh] min-h-0 w-full flex-col overflow-hidden bg-surface focus:outline-none'
+            : 'question-dialog-panel question-dialog-body modal-content w-full max-w-lg mx-4 bg-surface rounded-2xl shadow-modal overflow-hidden focus:outline-none'
         }
         role="dialog"
         aria-modal={isFloating ? undefined : true}
@@ -321,7 +323,7 @@ const CoworkInteractionModal: React.FC<CoworkInteractionModalProps> = ({
       >
         {/* Header */}
         <div
-          className={`flex items-center gap-3 px-6 py-4 border-b border-border ${
+          className={`question-dialog-header flex items-center gap-3 px-6 py-4 border-b border-border ${
             isFloating ? 'cursor-move touch-none select-none' : ''
           }`}
           data-question-drag-handle={isFloating ? true : undefined}

@@ -7,7 +7,7 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type { ProgressCard } from '@shared/openclaw/progressCard';
-import { type RefObject, useEffect, useRef } from 'react';
+import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import type {
   SessionSummaryResources,
@@ -121,6 +121,49 @@ export default function SessionSummaryPanel(props: Props) {
   const { visible, anchorRef, onClose } = props;
   const ownerDocument = useOwnerDocument();
   const panelRef = useRef<HTMLElement>(null);
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  const [limits, setLimits] = useState<{ maxWidth: number; maxHeight: number } | null>(null);
+  const resizeStart = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!visible) return;
+    const panel = panelRef.current;
+    const view = panel?.ownerDocument.defaultView;
+    if (!panel || !view) return;
+    const updateLimits = () => {
+      const bounds = panel.getBoundingClientRect();
+      const next = {
+        maxWidth: Math.max(0, bounds.right - 16),
+        maxHeight: Math.max(0, panel.ownerDocument.documentElement.clientHeight - bounds.top - 16),
+      };
+      setLimits(current =>
+        current?.maxWidth === next.maxWidth && current.maxHeight === next.maxHeight
+          ? current
+          : next,
+      );
+    };
+    updateLimits();
+    const observer = view.ResizeObserver ? new view.ResizeObserver(updateLimits) : null;
+    for (let ancestor = panel.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      observer?.observe(ancestor);
+    }
+    view.addEventListener('resize', updateLimits);
+    return () => {
+      observer?.disconnect();
+      view.removeEventListener('resize', updateLimits);
+    };
+  }, [visible, ownerDocument]);
+  const resizePanel = (width: number, height: number) => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const bounds = panel.getBoundingClientRect();
+    const viewport = panel.ownerDocument.documentElement;
+    const maxWidth = Math.max(0, bounds.right - 16);
+    const maxHeight = Math.max(0, viewport.clientHeight - bounds.top - 16);
+    setSize({
+      width: Math.min(maxWidth, Math.max(280, width)),
+      height: Math.min(maxHeight, Math.max(160, height)),
+    });
+  };
   const counts = summarySubagentCounts(props.tasks);
   const teamCountLabel = [
     { kind: AgentTeamKind.TASK, key: 'teamSummaryTaskCount' },
@@ -178,9 +221,10 @@ export default function SessionSummaryPanel(props: Props) {
       id="cowork-session-summary"
       role="dialog"
       aria-label={i18nService.t('coworkSummaryTitle')}
-      className={`session-summary-panel absolute right-0 top-full z-[90] mt-2 flex max-h-[min(42rem,calc(100dvh-5rem))] ${props.progress?.card.markdown?.trim() ? 'w-[26rem]' : 'w-80'} max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-border shadow-popover dark:shadow-[0_16px_48px_rgba(0,0,0,0.4)]`}
+      style={{ ...(size ? { width: size.width, height: size.height } : {}), ...limits }}
+      className={`session-summary-panel absolute right-0 top-full z-[90] mt-2 flex max-h-[calc(100dvh-5rem)] ${props.progress?.card.markdown?.trim() ? 'w-[26rem]' : 'w-80'} max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-border shadow-popover dark:shadow-[0_16px_48px_rgba(0,0,0,0.4)]`}
     >
-      <div className="session-summary-panel__header flex items-center justify-between border-b border-border px-4 py-2.5">
+      <div className="session-summary-panel__header flex shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
         <h2 className="text-sm font-semibold text-foreground">
           {i18nService.t('coworkSummaryTitle')}
         </h2>
@@ -193,7 +237,7 @@ export default function SessionSummaryPanel(props: Props) {
           <XMarkIcon className="h-4 w-4" />
         </button>
       </div>
-      <div className="min-h-0 space-y-4 overflow-y-auto p-3">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3 pb-5">
         {props.objective && (
           <section>
             {heading('coworkSummaryGoal')}
@@ -311,6 +355,65 @@ export default function SessionSummaryPanel(props: Props) {
           </div>
         )}
       </div>
+      <button
+        type="button"
+        aria-label={i18nService.t('coworkSummaryResize')}
+        title={i18nService.t('coworkSummaryResize')}
+        className="absolute bottom-0 left-0 h-5 w-5 touch-none cursor-nesw-resize rounded-bl-xl text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+        onPointerDown={event => {
+          if (event.button !== 0) return;
+          const bounds = panelRef.current?.getBoundingClientRect();
+          if (!bounds) return;
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          resizeStart.current = {
+            x: event.clientX,
+            y: event.clientY,
+            width: bounds.width,
+            height: bounds.height,
+          };
+        }}
+        onPointerMove={event => {
+          const start = resizeStart.current;
+          if (!start) return;
+          resizePanel(
+            start.width + start.x - event.clientX,
+            start.height + event.clientY - start.y,
+          );
+        }}
+        onPointerUp={event => {
+          resizeStart.current = null;
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+        }}
+        onLostPointerCapture={() => {
+          resizeStart.current = null;
+        }}
+        onPointerCancel={() => {
+          resizeStart.current = null;
+        }}
+        onKeyDown={event => {
+          const bounds = panelRef.current?.getBoundingClientRect();
+          if (!bounds || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key))
+            return;
+          event.preventDefault();
+          resizePanel(
+            bounds.width + (event.key === 'ArrowLeft' ? 16 : event.key === 'ArrowRight' ? -16 : 0),
+            bounds.height + (event.key === 'ArrowDown' ? 16 : event.key === 'ArrowUp' ? -16 : 0),
+          );
+        }}
+      >
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 20 20"
+          className="h-5 w-5"
+          fill="none"
+          stroke="currentColor"
+        >
+          <path d="M4 9v7h7M4 12l4 4" />
+        </svg>
+      </button>
     </aside>
   );
 }

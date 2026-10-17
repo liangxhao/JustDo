@@ -1,0 +1,43 @@
+.question-dialog-panel {
+  border: 1px solid var(--justdo-border);
+  box-shadow:
+    0 24px 72px rgb(0 0 0 / 22%),
+    0 4px 16px rgb(0 0 0 / 12%);
+}
+
+.dark .question-dialog-panel {
+  border-color: color-mix(in srgb, var(--justdo-foreground) 24%, var(--justdo-surface));
+  box-shadow:
+    0 28px 80px rgb(0 0 0 / 60%),
+    0 8px 24px rgb(0 0 0 / 35%);
+}
+
+.dark .question-dialog-body,
+.dark .question-dialog-panel {
+  background-color: var(--justdo-surface-raised);
+}
+
+.dark .question-dialog-header {
+  background: linear-gradient(
+    110deg,
+    color-mix(in srgb, var(--justdo-primary) 12%, var(--justdo-surface-raised)),
+    var(--justdo-surface-raised)
+  );
+  border-bottom-color: color-mix(in srgb, var(--justdo-foreground) 16%, var(--justdo-surface));
+}
+
+.dark .question-dialog-body label:has(> input:is([type='radio'], [type='checkbox'])) {
+  background-color: var(--justdo-surface);
+  border-color: color-mix(in srgb, var(--justdo-foreground) 20%, var(--justdo-surface));
+  color: var(--justdo-foreground);
+}
+
+.dark .question-dialog-body label:has(> input:is([type='radio'], [type='checkbox'])):hover {
+  border-color: color-mix(in srgb, var(--justdo-primary) 65%, var(--justdo-foreground));
+  background-color: color-mix(in srgb, var(--justdo-primary) 8%, var(--justdo-surface));
+}
+
+.dark .question-dialog-body label:has(> input:checked) {
+  border-color: var(--justdo-primary);
+  background-color: color-mix(in srgb, var(--justdo-primary) 18%, var(--justdo-surface));
+}

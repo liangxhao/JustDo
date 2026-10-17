@@ -210,10 +210,7 @@ const McpManager: React.FC<McpManagerProps> = ({
   // Using local registry only (no remote marketplace)
   const dynamicRegistry = mcpRegistry;
   const [bridgeSyncing, setBridgeSyncing] = useState(false);
-  const [bridgeSyncResult, setBridgeSyncResult] = useState<{
-    tools: number;
-    error?: string;
-  } | null>(null);
+  const [bridgeSyncError, setBridgeSyncError] = useState('');
   // Invalidate before and after mutations, including probes started while sync is pending.
   const invalidateConnectionResults = useCallback(() => {
     inventoryGeneration.current += 1;
@@ -807,15 +804,12 @@ const McpManager: React.FC<McpManagerProps> = ({
 
     const cleanupStart = mcpService.onConfigSyncStart(() => {
       setBridgeSyncing(true);
-      setBridgeSyncResult(null);
+      setBridgeSyncError('');
       // Fallback: auto-clear overlay after 40s to prevent permanent lock
       if (syncTimeout) clearTimeout(syncTimeout);
       syncTimeout = setTimeout(() => {
         setBridgeSyncing(false);
-        setBridgeSyncResult({
-          tools: 0,
-          error: i18nService.t('mcpBridgeSyncError') || 'Sync timed out',
-        });
+        setBridgeSyncError(i18nService.t('mcpBridgeSyncError'));
       }, 40_000);
     });
     const cleanupDone = mcpService.onConfigSyncDone(data => {
@@ -824,10 +818,7 @@ const McpManager: React.FC<McpManagerProps> = ({
         syncTimeout = null;
       }
       setBridgeSyncing(false);
-      setBridgeSyncResult({ tools: data.tools, error: data.error });
-      if (!data.error) {
-        setTimeout(() => setBridgeSyncResult(null), 5000);
-      }
+      setBridgeSyncError(data.error || '');
     });
     return () => {
       cleanupStart();
@@ -949,28 +940,35 @@ const McpManager: React.FC<McpManagerProps> = ({
         />
       )}
 
-      {/* MCP Bridge sync result */}
-      {!bridgeSyncing && bridgeSyncResult && (
-        <div
-          className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs border ${
-            bridgeSyncResult.error
-              ? 'dark:bg-red-500/10 bg-red-50 dark:text-red-400 text-red-600 dark:border-red-500/20 border-red-200'
-              : 'dark:bg-green-500/10 bg-green-50 dark:text-green-400 text-green-600 dark:border-green-500/20 border-green-200'
-          }`}
+      {!bridgeSyncing && bridgeSyncError && (
+        <Modal
+          onClose={() => setBridgeSyncError('')}
+          className="w-full max-w-sm mx-4 rounded-2xl bg-surface border border-border shadow-2xl p-5"
         >
-          <span>
-            {bridgeSyncResult.error
-              ? `${i18nService.t('mcpBridgeSyncError') || 'Sync failed'}: ${bridgeSyncResult.error}`
-              : `${i18nService.t('mcpBridgeSyncDone') || 'MCP configuration synced'}: ${bridgeSyncResult.tools}`}
-          </span>
-          <button
-            type="button"
-            onClick={() => setBridgeSyncResult(null)}
-            className="ml-2 opacity-60 hover:opacity-100"
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="mcp-sync-error-title"
+            aria-describedby="mcp-sync-error-description"
           >
-            &times;
-          </button>
-        </div>
+            <h2 id="mcp-sync-error-title" className="text-lg font-semibold text-foreground">
+              {i18nService.t('mcpBridgeSyncError')}
+            </h2>
+            <p id="mcp-sync-error-description" className="mt-2 break-words text-sm text-red-500">
+              {bridgeSyncError}
+            </p>
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                autoFocus
+                onClick={() => setBridgeSyncError('')}
+                className="px-3 py-1.5 text-xs rounded-lg border border-border text-secondary hover:bg-surface-raised transition-colors"
+              >
+                {i18nService.t('close')}
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       <div>

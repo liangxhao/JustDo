@@ -1,0 +1,32 @@
+.dark .exec-approval-panel {
+  background-color: var(--justdo-surface-raised);
+  border-color: color-mix(in srgb, var(--justdo-foreground) 24%, var(--justdo-surface));
+  box-shadow:
+    0 28px 80px rgb(0 0 0 / 60%),
+    0 8px 24px rgb(0 0 0 / 35%);
+}
+
+.dark .exec-approval-header {
+  background: linear-gradient(
+    110deg,
+    color-mix(in srgb, var(--justdo-warning) 9%, var(--justdo-surface-raised)),
+    var(--justdo-surface-raised)
+  );
+  border-bottom-color: color-mix(in srgb, var(--justdo-foreground) 16%, var(--justdo-surface));
+}
+.exec-approval-header {
+  background: linear-gradient(
+    110deg,
+    color-mix(in srgb, var(--justdo-warning) 6%, var(--justdo-surface)),
+    var(--justdo-surface)
+  );
+}
+
+.exec-approval-footer button {
+  min-height: 36px;
+}
+
+.exec-approval-footer button:focus-visible {
+  outline: 2px solid var(--justdo-primary);
+  outline-offset: 2px;
+}

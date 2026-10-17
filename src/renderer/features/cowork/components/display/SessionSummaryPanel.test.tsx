@@ -13,6 +13,44 @@ import SessionSummaryPanel from './SessionSummaryPanel';
 
 afterEach(cleanup);
 
+it('resizes from the fixed right edge and clamps to the viewport and minimum size', () => {
+  const { props, onClose } = fixture();
+  render(<SessionSummaryPanel {...props} />);
+  const panel = screen.getByRole('dialog');
+  const handle = screen.getByRole('button', { name: 'Drag to resize summary, or use arrow keys' });
+  const bounds = vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({
+    width: 320,
+    height: 400,
+    right: 900,
+    top: 64,
+  } as DOMRect);
+  const viewportHeight = vi
+    .spyOn(document.documentElement, 'clientHeight', 'get')
+    .mockReturnValue(800);
+  try {
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    expect(panel.style.width).toBe('336px');
+    expect(panel.style.height).toBe('400px');
+    bounds.mockReturnValue({ width: 336, height: 400, right: 300, top: 64 } as DOMRect);
+    fireEvent(window, new Event('resize'));
+    expect(panel.style.maxWidth).toBe('284px');
+    expect(panel.style.maxHeight).toBe('720px');
+    bounds.mockReturnValue({ width: 890, height: 720, right: 900, top: 64 } as DOMRect);
+    fireEvent.keyDown(handle, { key: 'ArrowDown' });
+    expect(panel.style.width).toBe('884px');
+    expect(panel.style.height).toBe('720px');
+    bounds.mockReturnValue({ width: 280, height: 160, right: 900, top: 64 } as DOMRect);
+    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    fireEvent.keyDown(handle, { key: 'ArrowUp' });
+    expect(panel.style.width).toBe('280px');
+    expect(panel.style.height).toBe('160px');
+    expect(onClose).not.toHaveBeenCalled();
+  } finally {
+    bounds.mockRestore();
+    viewportHeight.mockRestore();
+  }
+});
+
 function mixedTeamEntries() {
   return buildAgentTeamEntries(
     'chat',
@@ -215,7 +253,9 @@ it('refreshes through the existing progress callback and shows completed progres
   const onRefresh = vi.fn().mockResolvedValue(true);
   const progress = { card: progressCard, runState: 'running' as const, onRefresh };
   const { rerender } = render(<SessionSummaryPanel {...props} progress={progress} />);
-  const refresh = screen.getByRole('button', { name: 'Refresh task progress' }) as HTMLButtonElement;
+  const refresh = screen.getByRole('button', {
+    name: 'Refresh task progress',
+  }) as HTMLButtonElement;
   fireEvent.click(refresh);
   expect(onRefresh).toHaveBeenCalledTimes(1);
   expect(refresh.disabled).toBe(true);
@@ -284,7 +324,7 @@ it('keeps an empty output section until real outputs arrive, then opens the orig
     screen.getByRole('heading', { name: 'Outputs' }).parentElement,
   );
   expect(screen.getByText('None').closest('button')).toBeNull();
-  expect(within(screen.getByRole('dialog')).getAllByRole('button')).toHaveLength(1);
+  expect(within(screen.getByRole('dialog')).getAllByRole('button')).toHaveLength(2);
 
   const resources = { ...props.resources, sources: [], outputsLoading: true };
   rerender(<SessionSummaryPanel {...emptyProps} resources={resources} />);

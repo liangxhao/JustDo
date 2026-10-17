@@ -14,7 +14,7 @@
 
 ## 2. 保存和应用是两个时点
 
-用户切换权限后先将期望值写入 cowork_sessions。会话空闲时立即准备原生 session 并回读核对；仍有运行时先记录 pending，终态后重试应用。UI 可以显示已保存但待应用，不能把它描述成旧 run 已立即换权限。
+用户切换权限后先将期望值写入 cowork_sessions。会话空闲时立即准备原生 session 并回读核对；仍有运行时先记录 pending，终态后立即尝试应用。UI 简洁显示用户选择，不额外弹出等待提示；该选择不表示旧 run 已立即换权限。
 
 ```mermaid
 flowchart LR
@@ -38,6 +38,8 @@ sessionRoot 来自产品任务 cwd，并规范化验证。变更项目路径、�
 计划模式限制当前规划工作流，automation-permission 控制定时任务变更，session visibility 控制跨会话访问，MXC 控制工具进程隔离。它们各自生效，不因 permissionMode 显示 full 就全部关闭。
 
 原生 exec/plugin approval 有独立 pending、期限和 decision 集合。Main 验证响应属于有效请求；关弹窗、页面卸载、断线不表示允许。session grant 在原生终态/停止/删除语义中清理。
+
+审批弹窗优先于问答弹窗显示；问答暂时隐藏并暂停焦点捕获，保留已有草稿，审批结束后恢复。命令审批分层展示命令与实际工作目录，插件详情按正文排版；长内容在正文区域滚动，操作按钮保持可见，不展示节点等产品未开放的执行概念。
 
 ## 5. 拒绝和延迟如何反馈
 
