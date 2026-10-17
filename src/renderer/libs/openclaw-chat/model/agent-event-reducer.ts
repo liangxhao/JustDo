@@ -26,6 +26,7 @@ import {
   type TurnItem,
   type TurnStatus,
 } from './chat-transcript-state';
+import { compactionEventId, findTurnCompaction } from './compaction-item';
 import {
   hasToolResultPayload,
   inferSessionsYieldInput,
@@ -192,12 +193,16 @@ function pendingRecoveredTool(turn: AssistantTurn): ToolItem | undefined {
   );
 }
 
+function isTextSegmentBoundary(item: TurnItem): boolean {
+  return item.type === 'tool' || item.type === 'compaction';
+}
+
 function thinkingBeforeTool(turn: AssistantTurn, tool: ToolItem): ThinkingItem | undefined {
   const toolIndex = turn.items.indexOf(tool);
   if (toolIndex < 0) return undefined;
   for (let index = toolIndex - 1; index >= 0; index -= 1) {
     const item = turn.items[index];
-    if (item.type === 'tool') break;
+    if (isTextSegmentBoundary(item)) break;
     if (item.type === 'thinking') return item;
   }
   return undefined;
@@ -208,7 +213,7 @@ function contentBeforeTool(turn: AssistantTurn, tool: ToolItem): ContentItem | u
   if (toolIndex < 0) return undefined;
   for (let index = toolIndex - 1; index >= 0; index -= 1) {
     const item = turn.items[index];
-    if (item.type === 'tool') break;
+    if (isTextSegmentBoundary(item)) break;
     if (item.type === 'content') return item;
   }
   return undefined;
@@ -423,7 +428,7 @@ export function hydrateToolPrecedingThinking(
   const toolIndex = turn.items.indexOf(tool);
   if (toolIndex < 0) return false;
   let insertionIndex = toolIndex;
-  while (insertionIndex > 0 && turn.items[insertionIndex - 1].type !== 'tool') {
+  while (insertionIndex > 0 && !isTextSegmentBoundary(turn.items[insertionIndex - 1])) {
     insertionIndex -= 1;
   }
   turn.items.splice(insertionIndex, 0, {
@@ -518,7 +523,7 @@ export function hydrateToolPrecedingSegments(
   const toolIndex = turn.items.indexOf(tool);
   if (toolIndex < 0) return false;
   let startIndex = toolIndex;
-  while (startIndex > 0 && turn.items[startIndex - 1].type !== 'tool') startIndex -= 1;
+  while (startIndex > 0 && !isTextSegmentBoundary(turn.items[startIndex - 1])) startIndex -= 1;
   const existing = turn.items.slice(startIndex, toolIndex);
   const recoveredItems: Array<ThinkingItem | ContentItem> = [];
   const normalizedText = (text: string) => text.replace(/\s+/g, ' ').trim();
@@ -1284,11 +1289,41 @@ export function reduceAgentEvent(
     reduceTool(turn, event, dependencies, insertBySequence);
   } else if (event.stream === 'item' && readPreambleText(event.data) !== null) {
     reducePreamble(turn, event, dependencies);
-  } else if (
-    event.stream === 'lifecycle' ||
-    event.stream === 'item' ||
-    event.stream === 'compaction'
-  ) {
+  } else if (event.stream === 'compaction') {
+    const phase = event.data.phase;
+    if (
+      phase === 'start' ||
+      phase === 'update' ||
+      phase === 'end' ||
+      phase === 'error' ||
+      phase === 'failed'
+    ) {
+      const eventId = compactionEventId(event.data);
+      let item = findTurnCompaction(turn, eventId);
+      if (!item && (phase === 'start' || phase === 'update' || eventId !== undefined)) {
+        const tail = activeAgentTail(turn);
+        if (tail?.type === 'thinking' && tail.status === 'running') tail.status = 'completed';
+        if (tail?.type === 'content' && tail.status === 'streaming') tail.status = 'completed';
+        item = {
+          type: 'compaction',
+          status: 'running',
+          id: dependencies.createId('compaction'),
+          runId: turn.runId,
+          eventId,
+          firstSeq: event.agentSeq,
+          lastSeq: event.agentSeq,
+          startedAt: event.timestamp,
+          updatedAt: event.timestamp,
+        };
+        if (insertBySequence) insertAgentItemBySequence(turn, item);
+        else appendAgentItem(turn, item);
+      }
+      if (item) {
+        item.lastSeq = Math.max(item.lastSeq, event.agentSeq);
+        item.updatedAt = Math.max(item.updatedAt, event.timestamp);
+      }
+    }
+  } else if (event.stream === 'lifecycle' || event.stream === 'item') {
     // Ordering still advances for admitted non-display Agent events.
     if (event.stream === 'item') {
       const recoveredTool = turn.toolById.get(itemToolCallId(event.data) ?? '');

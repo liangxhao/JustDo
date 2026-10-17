@@ -35,6 +35,7 @@ import { toolNesting, toolOperation, toolOutcome, toolTarget } from '../model/to
 import { stripOpenClawLogHintText } from '../pipeline/system-message-display';
 import { renderChatAvatar } from './chat-avatar';
 import { getCodeModeSource, getCodeModeTitle } from './code-mode-presentation';
+import { renderCompactionMessage } from './compaction-divider';
 import { type EditDiffMonacoData, resolveEditDiffLanguage } from './edit-diff-monaco';
 import { toSanitizedMarkdownHtml } from './markdown';
 import {
@@ -937,6 +938,7 @@ export function renderTimelineItem(
       },
     );
   }
+  if (item.kind === 'compaction') return renderCompactionMessage(item.item.message, now);
   const terminalMessage =
     item.item.status === 'aborted'
       ? i18nService.t('coworkRunInterruptedMessage')

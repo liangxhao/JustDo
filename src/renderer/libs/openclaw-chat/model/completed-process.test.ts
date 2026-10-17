@@ -51,6 +51,124 @@ function progressReceipt(
 }
 
 describe('foldCompletedProcessRows', () => {
+  test.each([
+    { kind: 'compaction' },
+    { kind: 'compaction-skipped' },
+    ...['completed', 'failed', 'aborted', 'skipped'].map(phase => ({
+      kind: 'compaction-status',
+      phase,
+    })),
+  ])('folds settled compaction with adjacent process records: %o', marker => {
+    const compaction: PersistedTimelineItem = {
+      kind: 'history-message',
+      key: 'compaction',
+      message: { role: 'system', content: '', __openclaw: { ...marker, id: 'compact-1' } },
+    };
+    const source = [
+      summary('before'),
+      message('commentary'),
+      compaction,
+      summary('after'),
+      message('final'),
+    ];
+    const before = structuredClone(source);
+
+    const result = foldCompletedProcessRows(prepareVisibleTimelineRows(source));
+
+    expect(result.map(row => row.item.kind)).toEqual(['completed-process', 'history-message']);
+    if (result[0].item.kind !== 'completed-process') throw new Error('Missing process group');
+    expect(result[0].item.items).toEqual(source.slice(0, -1));
+    expect(result[0].item.items[2]).toBe(compaction);
+    expect(result[1].item).toBe(source[4]);
+    expect(source).toEqual(before);
+  });
+
+  test.each(['in-progress', 'unknown', undefined])(
+    'keeps unsettled compaction visible between folded records: %s',
+    phase => {
+      const compaction: PersistedTimelineItem = {
+        kind: 'history-message',
+        key: 'compaction',
+        message: { role: 'system', __openclaw: { kind: 'compaction-status', phase } },
+      };
+      const source = [summary('before'), compaction, summary('after'), message('final')];
+
+      const result = foldCompletedProcessRows(prepareVisibleTimelineRows(source));
+
+      expect(result.map(row => row.item.kind)).toEqual([
+        'completed-process',
+        'history-message',
+        'completed-process',
+        'history-message',
+      ]);
+      expect(result[1].item).toBe(compaction);
+    },
+  );
+
+  test.each([false, true])(
+    'preserves one assistant avatar when compaction leads a process group (thinking: %s)',
+    withThinking => {
+      const compaction: PersistedTimelineItem = {
+        kind: 'history-message',
+        key: 'compaction',
+        message: { role: 'system', __openclaw: { kind: 'compaction' } },
+      };
+      const source = [compaction, ...(withThinking ? [summary('thinking')] : []), message('final')];
+
+      const result = foldCompletedProcessRows(prepareVisibleTimelineRows(source));
+
+      expect(result.map(row => row.item.kind)).toEqual(['completed-process', 'history-message']);
+      expect(result.map(row => row.showAvatar)).toEqual(
+        withThinking ? [true, false] : [false, true],
+      );
+    },
+  );
+
+  test('keeps ordinary system messages as turn boundaries', () => {
+    const system = message('system notice', 'system');
+    const source = [
+      summary('before'),
+      message('earlier reply'),
+      system,
+      summary('after'),
+      message('final'),
+    ];
+
+    const result = foldCompletedProcessRows(prepareVisibleTimelineRows(source));
+
+    expect(result.map(row => row.item.kind)).toEqual([
+      'completed-process',
+      'history-message',
+      'history-message',
+      'completed-process',
+      'history-message',
+    ]);
+    expect(result[2].item).toBe(system);
+  });
+
+  test.each(['system', 'assistant'])(
+    'keeps %s compaction in the live tail, after the final answer, and without a final answer visible',
+    role => {
+      const compaction: PersistedTimelineItem = {
+        kind: 'history-message',
+        key: 'compaction',
+        message: { role, __openclaw: { kind: 'compaction', id: 'compact-1' } },
+      };
+      const live = prepareVisibleTimelineRows([summary('before'), compaction, message('partial')]);
+      expect(foldCompletedProcessRows(live, { protectTrailingTurn: true })).toEqual(live);
+      const processOnly = prepareVisibleTimelineRows([summary('before'), compaction]);
+      expect(foldCompletedProcessRows(processOnly)).toEqual(processOnly);
+      const source = [summary('before'), message('final'), compaction];
+      const result = foldCompletedProcessRows(prepareVisibleTimelineRows(source));
+      expect(result.map(row => row.item.kind)).toEqual([
+        'completed-process',
+        'history-message',
+        'history-message',
+      ]);
+      expect(result[2].item).toBe(compaction);
+    },
+  );
+
   test.each(['completed', 'failed', 'cancelled', 'interrupted'] as const)(
     'folds a %s progress receipt together with adjacent process records',
     status => {

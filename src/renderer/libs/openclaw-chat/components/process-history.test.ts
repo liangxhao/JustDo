@@ -64,6 +64,72 @@ function createChat(state: 'running' | 'completed' | 'failed' | 'aborted' = 'com
 }
 
 describe('completed chat process history', () => {
+  test.each([
+    { separateLeadingMessage: false, withReceipts: false },
+    { separateLeadingMessage: false, withReceipts: true },
+    { separateLeadingMessage: true, withReceipts: false },
+    { separateLeadingMessage: true, withReceipts: true },
+  ])(
+    'folds leading Content in Content/Thinking/Content/Tool/Content order: %o',
+    async ({ separateLeadingMessage, withReceipts }) => {
+      const chat = createChat();
+      const leadingText = 'Starting with a visible explanation';
+      const intermediate = chat.messages[1];
+      const content = Array.isArray(intermediate.content) ? intermediate.content : [];
+      chat.messages = [
+        chat.messages[0],
+        ...(separateLeadingMessage
+          ? [
+              {
+                role: 'assistant',
+                content: leadingText,
+                timestamp: 1_050,
+                __openclaw: { id: 'leading-content', runId: 'run-1' },
+              },
+            ]
+          : []),
+        {
+          ...intermediate,
+          content: separateLeadingMessage
+            ? content
+            : [{ type: 'text', text: leadingText }, ...content],
+        },
+        ...chat.messages.slice(2),
+      ];
+      if (!withReceipts) chat.runTimings = [];
+      await chat.updateComplete;
+
+      const root = chat.shadowRoot!;
+      const disclosures = root.querySelectorAll<HTMLDetailsElement>('.completed-process');
+      expect(disclosures).toHaveLength(1);
+      const disclosure = disclosures[0];
+      expect(disclosure.open).toBe(false);
+      const processText = disclosure.querySelector('.completed-process__items')!.textContent!;
+      expect(processText).toContain(leadingText);
+      expect(processText.indexOf(leadingText)).toBeLessThan(
+        processText.indexOf('Intermediate explanation'),
+      );
+      expect(disclosure.querySelectorAll('.process-summary')).toHaveLength(2);
+      expect(disclosure.textContent).not.toContain('Final answer');
+      const final = root.querySelector('[data-entry-id="final"]')!;
+      expect(final.closest('.completed-process')).toBeNull();
+      expect(final.textContent).toContain('Second paragraph');
+      disclosure.querySelector('summary')!.click();
+      expect(disclosure.open).toBe(true);
+      expect(disclosure.textContent).toContain(leadingText);
+      chat.processSummariesExpanded = true;
+      await chat.updateComplete;
+      const expandedText = disclosure.querySelector('.completed-process__items')!.textContent!;
+      expect(expandedText).toContain('Inspecting the configuration');
+      expect(expandedText.indexOf(leadingText)).toBeLessThan(
+        expandedText.indexOf('Inspecting the configuration'),
+      );
+      expect(expandedText.indexOf('Inspecting the configuration')).toBeLessThan(
+        expandedText.indexOf('Intermediate explanation'),
+      );
+    },
+  );
+
   test.each(['failed', 'aborted'] as const)(
     'collapses settled history with a %s receipt and keeps native errors and the last reply visible',
     async state => {
@@ -182,6 +248,58 @@ describe('completed chat process history', () => {
     await chat.updateComplete;
     expect(root.querySelector('.progress-card-receipt')).toBe(receipt);
     expect(receipt.textContent).toContain('Verify results');
+    expect(chat.messages).toBe(messages);
+  });
+
+  test('includes context compaction in one process disclosure and retains its details when expanded', async () => {
+    const chat = createChat();
+    const summary = 'Preserved task decisions\n<untrusted>summary</untrusted>';
+    const messages: GatewayMessage[] = [
+      ...chat.messages.slice(0, -1),
+      {
+        role: 'system',
+        timestamp: 1_300,
+        __openclaw: {
+          kind: 'compaction',
+          id: 'compact-1',
+          tokensBefore: 12_000,
+          tokensAfter: 4_000,
+          summary,
+        },
+      },
+      {
+        role: 'assistant',
+        content: 'Continuing after compaction',
+        timestamp: 1_400,
+        __openclaw: { id: 'after-compaction', runId: 'run-1' },
+      },
+      chat.messages[chat.messages.length - 1],
+    ];
+    chat.messages = messages;
+    await chat.updateComplete;
+
+    const root = chat.shadowRoot!;
+    const disclosures = root.querySelectorAll<HTMLDetailsElement>('.completed-process');
+    expect(disclosures).toHaveLength(1);
+    const disclosure = disclosures[0];
+    expect(disclosure.open).toBe(false);
+    const compaction = root.querySelector<HTMLDetailsElement>('.chat-divider__details')!;
+    expect(compaction.closest('.completed-process')).toBe(disclosure);
+    expect(compaction.querySelector('summary')!.textContent?.trim()).toBe('12,000 → 4,000 tokens');
+    expect(disclosure.textContent).toContain('Intermediate explanation');
+    expect(disclosure.textContent).toContain('Continuing after compaction');
+    expect(root.querySelector('[data-entry-id="final"]')!.closest('.completed-process')).toBeNull();
+
+    disclosure.querySelector('summary')!.click();
+    expect(disclosure.open).toBe(true);
+    compaction.querySelector('summary')!.click();
+    expect(compaction.open).toBe(true);
+    expect(compaction.querySelector('.chat-divider__content')!.textContent).toBe(summary);
+    expect(compaction.querySelector('untrusted')).toBeNull();
+    chat.requestUpdate();
+    await chat.updateComplete;
+    expect(root.querySelector('.chat-divider__details')).toBe(compaction);
+    expect(compaction.open).toBe(true);
     expect(chat.messages).toBe(messages);
   });
 

@@ -42,6 +42,7 @@ export function prepareVisibleTimelineRows(
 ) {
   let assistantTurnOpen = options?.initialAssistantTurnOpen ?? false;
   const rows = items.map<VisibleTimelineRow>(item => {
+    if (item.kind === 'compaction') return { item, showAvatar: false, showFooter: false };
     if (item.kind === 'phase-boundary') {
       assistantTurnOpen = false;
       return { item, showAvatar: false, showFooter: false };

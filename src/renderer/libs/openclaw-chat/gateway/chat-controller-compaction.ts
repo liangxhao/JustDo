@@ -2,6 +2,14 @@ import { isDefinitiveSessionGoalGatewayError } from '@shared/cowork/sessionGoal'
 import { isBenignCompactionNoopReason, isCompactionAbortReason } from '@shared/openclaw/compaction';
 
 import { ChunkedMessageHistory } from '@/libs/openclaw-chat/model/chunked-message-history';
+import {
+  compactionEventId,
+  findTurnCompaction,
+  matchesCompactionHistory,
+  setCompactionMessage,
+} from '@/libs/openclaw-chat/model/compaction-item';
+import { hydrateGatewayHistoryForDisplay } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
+import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
 import type { ChatController } from './chat-controller';
@@ -119,6 +127,18 @@ export function updateLocalCompactionMessage(
   statusId: string,
   replacement: unknown | null,
 ): void {
+  if (replacement) {
+    const transcript = this.isSelectedSession(sessionKey)
+      ? this.state.transcript
+      : this.findLiveSessionState(sessionKey)?.[1].transcript;
+    const item = transcript?.activeTurn?.items.find(
+      item => item.type === 'compaction' && item.message?.__openclaw?.id === statusId,
+    );
+    if (item?.type === 'compaction') {
+      setCompactionMessage(item, replacement as GatewayMessage);
+      transcript!.revision += 1;
+    }
+  }
   const history =
     this.state.sessionKey === sessionKey
       ? this.state.chatMessages
@@ -143,6 +163,7 @@ export function projectLocalCompactionStatus(
   sessionKey: string,
   messages: unknown[],
 ): unknown[] {
+  applyCompactionHistory.call(this, sessionKey, messages);
   const status = this.localCompactionStatusBySession.get(sessionKey);
   if (!status) return messages;
   const hasAuthoritativeMarker = messages.some(message => {
@@ -214,6 +235,14 @@ export function beginLocalCompactionStatus(
   };
   this.deferredHistoryReloadAttempts.delete(sessionKey);
   this.localCompactionStatusBySession.set(sessionKey, status);
+  const transcript = this.isSelectedSession(sessionKey)
+    ? this.state.transcript
+    : this.findLiveSessionState(sessionKey)?.[1].transcript;
+  const item = findTurnCompaction(transcript?.activeTurn ?? null, options.eventId);
+  if (item) {
+    setCompactionMessage(item, status.message);
+    transcript!.revision += 1;
+  }
   if (this.state.sessionKey === sessionKey) {
     this.setCurrentSessionMessages([...this.state.chatMessages, status.message]);
   } else {
@@ -222,6 +251,84 @@ export function beginLocalCompactionStatus(
     this.chatMessagesBySession.set(sessionKey, history);
   }
   return status;
+}
+
+/** Enrich the admitted live position without replacing the running transcript. */
+function applyCompactionHistory(
+  this: ChatControllerCompactionContext,
+  sessionKey: string,
+  messages: unknown[],
+): boolean {
+  const transcript = this.isSelectedSession(sessionKey)
+    ? this.state.transcript
+    : this.findLiveSessionState(sessionKey)?.[1].transcript;
+  let matched = false;
+  for (const message of messages) {
+    for (const item of transcript?.activeTurn?.items ?? []) {
+      if (item.type !== 'compaction' || !item.message || !matchesCompactionHistory(item, message))
+        continue;
+      matched = true;
+      const marker = (message as GatewayMessage).__openclaw!;
+      item.historyEntryId = marker.id as string;
+      const metadata = { ...item.message.__openclaw };
+      if (typeof marker.summary === 'string' && marker.summary.trim())
+        metadata.summary = marker.summary;
+      for (const field of ['tokensBefore', 'tokensAfter'] as const) {
+        if (
+          typeof marker[field] === 'number' &&
+          Number.isFinite(marker[field]) &&
+          marker[field] >= 0
+        )
+          metadata[field] = marker[field];
+      }
+      setCompactionMessage(item, { ...item.message, __openclaw: metadata });
+      const status = this.localCompactionStatusBySession.get(sessionKey);
+      if (status && status.id === metadata.id) {
+        status.message = item.message as LocalCompactionStatus['message'];
+        this.updateLocalCompactionMessage(sessionKey, status.id, status.message);
+      }
+      transcript!.revision += 1;
+    }
+  }
+  return matched;
+}
+
+export function observeCompactionHistoryMessage(
+  this: ChatControllerCompactionContext,
+  message: unknown,
+): boolean {
+  const { sessionKey, client, transcript, currentSessionId } = this.state;
+  const turn = transcript.activeTurn;
+  if (!turn || !applyCompactionHistory.call(this, sessionKey, [message])) return false;
+  this.notifyStream();
+  this.notify();
+  const generation = transcript.historyGeneration;
+  const isCurrent = () =>
+    this.state.connected &&
+    this.state.client === client &&
+    this.state.sessionKey === sessionKey &&
+    this.state.currentSessionId === currentSessionId &&
+    this.state.transcript === transcript &&
+    transcript.historyGeneration === generation &&
+    transcript.activeTurn === turn;
+  if (!isCurrent()) return true;
+  void hydrateGatewayHistoryForDisplay([message], {
+    sessionKey,
+    sessionId: currentSessionId,
+    includeFailedRunOverlays: false,
+    includeInterruptedOverlays: false,
+  })
+    .then(messages => {
+      if (!isCurrent()) return;
+      if (applyCompactionHistory.call(this, sessionKey, messages)) {
+        this.notifyStream();
+        this.notify();
+      }
+    })
+    .catch(() => {
+      /* Keep the visible node and any already confirmed metrics. */
+    });
+  return true;
 }
 
 export function completeLocalCompactionStatus(
@@ -276,6 +383,15 @@ export function clearLocalCompactionStatus(
 ): void {
   const status = this.localCompactionStatusBySession.get(sessionKey);
   if (!status) return;
+  const transcript = this.isSelectedSession(sessionKey)
+    ? this.state.transcript
+    : this.findLiveSessionState(sessionKey)?.[1].transcript;
+  for (const item of transcript?.activeTurn?.items ?? []) {
+    if (item.type === 'compaction' && item.message?.__openclaw?.id === status.id) {
+      item.message = undefined;
+      transcript!.revision += 1;
+    }
+  }
   this.localCompactionStatusBySession.delete(sessionKey);
   this.deferredHistoryReloadAttempts.delete(sessionKey);
   this.updateLocalCompactionMessage(sessionKey, status.id, null);
@@ -458,14 +574,18 @@ export function handleCompactionPhase(
   data: Record<string, unknown> = {},
 ): void {
   const isCurrentSession = this.isSelectedSession(sessionKey);
-  const eventId =
-    typeof data.operationId === 'string'
-      ? `operation:${data.operationId}`
-      : typeof data.itemId === 'string'
-        ? `item:${data.itemId}`
-        : undefined;
+  const eventId = compactionEventId(data);
   const settledKey = eventId ? JSON.stringify([sessionKey, eventId]) : undefined;
   if (settledKey && this.settledCompactionEventIds.has(settledKey)) return;
+  const transcript = isCurrentSession
+    ? this.state.transcript
+    : this.findLiveSessionState(sessionKey)?.[1].transcript;
+  if (
+    !this.localCompactionStatusBySession.has(sessionKey) &&
+    findTurnCompaction(transcript?.activeTurn ?? null, eventId)
+  ) {
+    this.beginLocalCompactionStatus(sessionKey, { eventId });
+  }
   const existing = this.localCompactionStatusBySession.get(sessionKey);
   let manualOperationSettled = false;
   let manualPresentationSuperseded = false;

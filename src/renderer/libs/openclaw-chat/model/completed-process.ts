@@ -6,10 +6,22 @@ import type {
   VisibleTimelineItem,
   VisibleTimelineRow,
 } from './timeline-avatar-state';
-import { unwrapToolMessage } from './tool-message-adapter';
+import { asToolRecord, unwrapToolMessage } from './tool-message-adapter';
+
+const COMPACTION_MARKER_KINDS = new Set(['compaction', 'compaction-status', 'compaction-skipped']);
+const SETTLED_COMPACTION_PHASES = new Set(['completed', 'failed', 'aborted', 'skipped']);
+
+function compactionMarker(item: VisibleTimelineItem) {
+  if (item.kind !== 'history-message') return null;
+  const message = unwrapToolMessage(item.message);
+  const marker = asToolRecord(message?.__openclaw) ?? asToolRecord(item.message.__openclaw);
+  return marker && typeof marker.kind === 'string' && COMPACTION_MARKER_KINDS.has(marker.kind)
+    ? marker
+    : null;
+}
 
 function assistantMessage(item: VisibleTimelineItem) {
-  if (item.kind !== 'history-message') return null;
+  if (item.kind !== 'history-message' || compactionMarker(item)) return null;
   const message = unwrapToolMessage(item.message);
   return message?.role === 'assistant' ? message : null;
 }
@@ -19,6 +31,13 @@ function canFold(item: VisibleTimelineItem): item is SourceTimelineItem {
     return item.items.every(process => process.status !== 'running');
   }
   if (item.kind === 'progress-receipt') return item.item.status !== 'running';
+  const compaction = compactionMarker(item);
+  if (compaction) {
+    return (
+      compaction.kind !== 'compaction-status' ||
+      (typeof compaction.phase === 'string' && SETTLED_COMPACTION_PHASES.has(compaction.phase))
+    );
+  }
   const message = assistantMessage(item);
   if (item.kind !== 'history-message' || !message || isFailedRunMessage(item.message)) return false;
   // A settled run receipt can annotate ordinary commentary as well as its last reply.
@@ -74,7 +93,7 @@ export function foldCompletedProcessRows(
           key: `completed-process:${items[0].key}`,
           items,
         },
-        showAvatar: prefix[0].showAvatar,
+        showAvatar: prefix.some(row => row.showAvatar && !compactionMarker(row.item)),
         showFooter: false,
       });
       prefix = [];
@@ -93,7 +112,9 @@ export function foldCompletedProcessRows(
   for (const row of rows) {
     if (
       row.item.kind === 'phase-boundary' ||
-      (row.item.kind === 'history-message' && !assistantMessage(row.item))
+      (row.item.kind === 'history-message' &&
+        !assistantMessage(row.item) &&
+        !compactionMarker(row.item))
     ) {
       flushTurn();
       result.push(row);

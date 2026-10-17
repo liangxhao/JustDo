@@ -1,7 +1,11 @@
 import type { NormalizedAgentEvent, NormalizedChatEvent } from '@shared/openclaw/agentEvent';
 import { beforeEach, describe, expect, test } from 'vitest';
 
-import { reduceAgentEvent, reduceChatEvent } from './agent-event-reducer';
+import {
+  hydrateToolPrecedingSegments,
+  reduceAgentEvent,
+  reduceChatEvent,
+} from './agent-event-reducer';
 import {
   beginAssistantTurn,
   createChatTranscriptState,
@@ -63,6 +67,71 @@ function chat(
 }
 
 describe('agent event reducer', () => {
+  test('keeps compaction and its preceding content when later tool history repairs its text segment', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(state, agent(1, 'assistant', { text: 'Before compaction' }), dependencies);
+    reduceAgentEvent(
+      state,
+      agent(2, 'compaction', { phase: 'start', itemId: 'compact-1' }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(3, 'tool', { phase: 'start', toolCallId: 'read-1', name: 'read' }),
+      dependencies,
+    );
+    const turn = state.activeTurn!;
+    const before = turn.items[0];
+    const compaction = turn.items[1];
+    const tool = turn.toolById.get('read-1')!;
+
+    hydrateToolPrecedingSegments(
+      turn,
+      tool,
+      [{ type: 'content', text: 'After compaction' }],
+      3,
+      103,
+      dependencies,
+    );
+
+    expect(turn.items.map(item => item.type)).toEqual(['content', 'compaction', 'content', 'tool']);
+    expect(turn.items[0]).toBe(before);
+    expect(turn.items[1]).toBe(compaction);
+    expect(before).toMatchObject({ text: 'Before compaction' });
+    expect(turn.items[2]).toMatchObject({ text: 'After compaction' });
+  });
+
+  test('preserves a compaction sequence boundary between content segments until its own terminal event', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(state, agent(1, 'assistant', { text: 'Before' }), dependencies);
+    reduceAgentEvent(state, agent(2, 'thinking', { text: 'Preparing' }), dependencies);
+    reduceAgentEvent(
+      state,
+      agent(3, 'compaction', { phase: 'start', itemId: 'compact-1' }),
+      dependencies,
+    );
+    const boundary = state.activeTurn!.items[2];
+    reduceAgentEvent(state, agent(4, 'assistant', { text: 'After' }), dependencies);
+    reduceAgentEvent(
+      state,
+      agent(5, 'compaction', { phase: 'end', itemId: 'compact-1', completed: true }),
+      dependencies,
+    );
+
+    expect(state.activeTurn!.items.map(item => item.type)).toEqual([
+      'content',
+      'thinking',
+      'compaction',
+      'content',
+    ]);
+    expect(state.activeTurn!.items[2]).toBe(boundary);
+    expect(boundary.firstSeq).toBe(3);
+    expect(boundary.lastSeq).toBe(5);
+    expect(state.activeTurn!.items[0].status).toBe('completed');
+    expect(state.activeTurn!.items[1].status).toBe('completed');
+    expect(state.activeTurn!.status).toBe('running');
+  });
+
   test.each(['thinking', 'tool'])('retracts reply owners across a newer %s boundary', stream => {
     const state = createChatTranscriptState('session-1', 'sid-1');
     reduceAgentEvent(

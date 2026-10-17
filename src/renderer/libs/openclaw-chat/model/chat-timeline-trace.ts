@@ -85,7 +85,7 @@ function itemIdentity(item: TurnItem): Record<string, unknown> {
     type: item.type,
     firstSeq: item.firstSeq,
     lastSeq: item.lastSeq,
-    status: item.status,
+    status: item.type === 'compaction' ? item.message?.__openclaw?.phase : item.status,
     startedAt: item.startedAt,
     text: 'text' in item ? traceTextIdentity(item.text) : undefined,
     ...(item.type === 'tool'

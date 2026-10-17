@@ -8,7 +8,7 @@ import { createChatTranscriptState, type TurnItem } from './chat-transcript-stat
 type Item = Record<string, unknown> & { type: string; id?: string };
 type Thread = { id: string; turns: Array<{ id: string; items: Item[] }> };
 
-function projectItem(item: TurnItem): Item {
+function projectItem(item: Exclude<TurnItem, { type: 'compaction' }>): Item {
   if (item.type === 'content') return { id: item.id, type: 'agentMessage', text: item.text };
   if (item.type === 'thinking')
     return { id: item.id, type: 'reasoning', content: [item.text], status: item.status };
@@ -225,7 +225,7 @@ export class BrowserExtensionStream {
     const turns = this.history.turns.slice();
     const index = this.anchor ?? Math.max(0, turns.length - 1);
     const historical = turns[index] ?? { id: turn.id, items: [] };
-    const live = turn.items.map(projectItem);
+    const live = turn.items.filter(item => item.type !== 'compaction').map(projectItem);
     turns[index] = { ...historical, items: reconcileItems(historical.items, live).items };
     return { ...this.history, turns };
   }
@@ -240,7 +240,7 @@ export class BrowserExtensionStream {
       const historical =
         this.history.turns[this.anchor ?? Math.max(0, this.history.turns.length - 1)]?.items ?? [];
       const live = this.state.activeTurn.items
-        .filter(item => item.type !== 'terminal')
+        .filter(item => item.type !== 'terminal' && item.type !== 'compaction')
         .map(projectItem);
       const { matches } = reconcileItems(historical, live);
       const covered = live.every((item, index) => {

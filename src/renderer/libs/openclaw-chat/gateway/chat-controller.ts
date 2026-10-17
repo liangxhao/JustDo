@@ -1262,6 +1262,13 @@ export class ChatController {
     );
   }
 
+  private observeCompactionHistoryMessage(message: unknown): boolean {
+    return chatControllerCompaction.observeCompactionHistoryMessage.call(
+      this.chatControllerCompactionContext,
+      message,
+    );
+  }
+
   private clearPostFinalHistoryReload(): void {
     return chatControllerRecovery.clearPostFinalHistoryReload.call(
       this.chatControllerRecoveryContext,
@@ -2676,6 +2683,9 @@ export class ChatController {
       applySessionContextUsage: { get: () => this.applySessionContextUsage.bind(this) },
       admitExpectedInitialHistoryMessage: {
         get: () => this.admitExpectedInitialHistoryMessage.bind(this),
+      },
+      observeCompactionHistoryMessage: {
+        get: () => this.observeCompactionHistoryMessage.bind(this),
       },
       hydrateActiveToolItemsFromHistory: {
         get: () => this.hydrateActiveToolItemsFromHistory.bind(this),

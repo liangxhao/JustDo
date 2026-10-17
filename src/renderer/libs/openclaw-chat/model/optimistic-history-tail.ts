@@ -1,4 +1,5 @@
 import type { AssistantTurn, ChatTranscriptState } from './chat-transcript-state';
+import { isTurnCompactionMessage, matchesCompactionHistory } from './compaction-item';
 import { isFailedRunMessage, readFailedRunMessageText } from './failed-run-message';
 import { readTranscriptIdentity } from './transcript-identity';
 
@@ -125,6 +126,7 @@ export function projectPersistedMessagesForActiveTurn<T>(
   });
   let projected = messages.filter((message, index) => {
     if (index <= lastUserIndex || messageRole(message) === 'user') return true;
+    if (isTurnCompactionMessage(activeTurn, message)) return false;
     if (readActiveTurnMessageRunId(message) !== activeTurn.runId) return true;
     // Persisted diagnostics can describe a model attempt rather than the
     // whole-run failure. Show the native diagnostic alongside the retained
@@ -167,9 +169,25 @@ export function projectPersistedMessagesForActiveTurn<T>(
  * OpenClaw WebChat replaces live state with authoritative chat.history.
  * Retire the terminal projection only after the optimistic fallback is gone.
  */
-export function retireSettledActiveTurn(state: ChatTranscriptState, messages: unknown[]): boolean {
+export function retireSettledActiveTurn(
+  state: ChatTranscriptState,
+  messages: unknown[],
+  preserveCompactionPositions = false,
+): boolean {
   if (!state.activeTurn || state.activeTurn.status === 'running') return false;
   if (isLocallyOptimisticHistoryTail(messages[messages.length - 1])) return false;
+  // A durable final append can precede its compaction marker. Keep the live
+  // position until that marker arrives or a reconciled full snapshot takes over.
+  if (
+    preserveCompactionPositions &&
+    state.activeTurn.items.some(
+      item =>
+        item.type === 'compaction' &&
+        item.message &&
+        !messages.some(message => matchesCompactionHistory(item, message)),
+    )
+  )
+    return false;
   const terminal = state.activeTurn.items.find(item => item.type === 'terminal');
   const normalizeError = (value: string): string => value.replace(/\s+/g, ' ').trim();
   if (

@@ -7,6 +7,7 @@ import {
 } from '../pipeline/native-canvas';
 import type {
   AssistantTurn,
+  CompactionItem,
   ContentItem,
   TerminalItem,
   ThinkingItem,
@@ -29,6 +30,12 @@ export interface ContentTimelineItem {
   kind: 'content';
   key: string;
   item: ContentItem;
+}
+
+export interface CompactionTimelineItem {
+  kind: 'compaction';
+  key: string;
+  item: CompactionItem;
 }
 
 export interface LiveProcessTimelineItem {
@@ -82,6 +89,7 @@ export type ActiveTurnTimelineItem =
   | ProgressReceiptTimelineItem
   | PlanPresentationTimelineItem
   | ContentTimelineItem
+  | CompactionTimelineItem
   | TerminalTimelineItem
   | WaitingTimelineItem
   | WaitingStatusTimelineItem;
@@ -224,7 +232,10 @@ export function projectTurnItems(
     }
 
     flushSummary();
-    if (item.type === 'content') {
+    if (item.type === 'compaction') {
+      if (item.message) projected.push({ kind: 'compaction', key: item.id, item });
+      summarySegment += 1;
+    } else if (item.type === 'content') {
       projected.push({ kind: 'content', key: item.id, item: content! });
       summarySegment += 1;
     } else {

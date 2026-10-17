@@ -1,6 +1,7 @@
 import type { NormalizedAgentEvent } from '@shared/openclaw/agentEvent';
 import { messageSessionMatches, normalizeMessageSessionKey } from '@shared/openclaw/messageDomain';
 
+import type { GatewayMessage } from '../types';
 import type { ToolPresentation } from './tool-presentation';
 
 export type TurnStatus = 'running' | 'final' | 'aborted' | 'error';
@@ -67,7 +68,16 @@ export interface TerminalItem extends BaseTurnItem {
   message: string;
 }
 
-export type TurnItem = ThinkingItem | ToolItem | ContentItem | TerminalItem;
+/** Display position belongs to the admitted Agent sequence; lifecycle stays controller-owned. */
+export interface CompactionItem extends BaseTurnItem {
+  type: 'compaction';
+  status: ProcessStatus;
+  eventId?: string;
+  historyEntryId?: string;
+  message?: GatewayMessage;
+}
+
+export type TurnItem = ThinkingItem | ToolItem | ContentItem | TerminalItem | CompactionItem;
 
 export interface AssistantTurn {
   id: string;

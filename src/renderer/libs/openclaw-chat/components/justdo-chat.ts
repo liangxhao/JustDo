@@ -19,6 +19,7 @@ import {
   renderTerminalTimelineMessage,
   renderTimelineItem,
 } from '@/libs/openclaw-chat/components/active-turn-timeline';
+import { renderCompactionDivider } from '@/libs/openclaw-chat/components/compaction-divider';
 import { renderCompletedProcess } from '@/libs/openclaw-chat/components/completed-process';
 import {
   renderMessageBlock,
@@ -1810,6 +1811,15 @@ export class JustDoChatElement extends LitElement {
     showAvatar: boolean,
     showFooter: boolean,
   ): TemplateResult | typeof nothing {
+    if (item.kind === 'compaction') {
+      return item.item.message
+        ? this.renderVisibleTimelineItem(
+            { kind: 'history-message', key: item.key, message: item.item.message },
+            false,
+            false,
+          )
+        : nothing;
+    }
     if (item.kind === 'completed-process') {
       return renderCompletedProcess(item, {
         sessionIdentity: this.processSummarySessionIdentity,
@@ -2252,35 +2262,7 @@ export class JustDoChatElement extends LitElement {
         });
       }
       if (item.kind === 'divider') {
-        const label = item.inProgress
-          ? `${item.label} · ${formatActiveTurnDuration(Date.now() - item.timestamp)}`
-          : item.label;
-        if (item.expandable === false) {
-          const description = item.description?.trim();
-          return html`
-            <div class="chat-divider">
-              <div class="chat-divider__status">
-                <span class="chat-divider__summary">${label}</span>
-                ${
-                  description
-                    ? html`<div class="chat-divider__description">${description}</div>`
-                    : nothing
-                }
-              </div>
-            </div>
-          `;
-        }
-        const summary = item.summary?.trim() || i18nService.t('coworkCompactSummaryUnavailable');
-        return html`
-          <div class="chat-divider">
-            <details class="chat-divider__details">
-              <summary class="chat-divider__summary" title=${i18nService.t('coworkCompactDetails')}>
-                ${label}
-              </summary>
-              <div class="chat-divider__content">${summary}</div>
-            </details>
-          </div>
-        `;
+        return renderCompactionDivider(item);
       }
       if (item.kind === 'reading-indicator') {
         return nothing;

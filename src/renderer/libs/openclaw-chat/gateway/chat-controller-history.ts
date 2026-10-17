@@ -183,7 +183,7 @@ export function setCurrentSessionMessages(
       nextWindow.end,
     );
     this.state.transcript.persistedMessages = messages;
-    retireSettledActiveTurn(this.state.transcript, messages);
+    retireSettledActiveTurn(this.state.transcript, messages, true);
     this.cacheSessionMessages(this.state.sessionKey);
     return;
   }
@@ -210,7 +210,7 @@ export function setCurrentSessionMessages(
     nextWindow.end,
   );
   this.state.transcript.persistedMessages = messages;
-  retireSettledActiveTurn(this.state.transcript, messages);
+  retireSettledActiveTurn(this.state.transcript, messages, true);
   this.cacheSessionMessages(this.state.sessionKey);
 }
 

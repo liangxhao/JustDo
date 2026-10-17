@@ -104,6 +104,7 @@ export interface ChatControllerRecoveryContext {
     }
   >;
   readonly state: ChatState;
+  readonly observeCompactionHistoryMessage: (message: unknown) => boolean;
   readonly historyLoadsInFlight: Set<string>;
   readonly scheduleActiveToolHistoryCatchUp: (sessionKey: string, runId: string) => void;
   readonly claimActiveToolHistoryCatchUp: (sessionKey: string, sessionId: string | null) => boolean;
@@ -1451,6 +1452,12 @@ export function handleTimelineEvent(
       payload?.message === undefined ? [] : projectGatewayHistoryForDisplay([payload.message]);
     const appendIsTruncated =
       projectedAppend.length === 1 && isTruncatedHistoryMessage(projectedAppend[0]);
+    const compactionObserved =
+      sessionIdentityMatches &&
+      runIdentityMatches &&
+      projectedAppend.length === 1 &&
+      !appendIsTruncated &&
+      this.observeCompactionHistoryMessage(projectedAppend[0]);
     const directApply =
       sessionIdentityMatches && projectedAppend.length === 1 && !appendIsTruncated
         ? applySessionMessagePayload(
@@ -1507,7 +1514,7 @@ export function handleTimelineEvent(
     const appendWasHidden = payload?.message !== undefined && projectedAppend.length === 0;
     const needsHistoryFallback =
       !sessionIdentityMatches ||
-      (!appendWasHidden && directApply?.kind !== 'applied') ||
+      (!appendWasHidden && !compactionObserved && directApply?.kind !== 'applied') ||
       activeTailCatchUpPending ||
       (directApply?.kind === 'applied' && isTruncatedHistoryMessage(directApply.message));
     if (!needsHistoryFallback && !this.pendingHistoryReload) return;
