@@ -1,4 +1,4 @@
-import { ShareIcon } from '@heroicons/react/24/outline';
+import { UserGroupIcon } from '@heroicons/react/24/outline';
 import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 
 import { i18nService } from '@/services/i18n';
@@ -36,13 +36,13 @@ export function buildAgentTeamFeature(
     id: OpenClawExtensionId.AGENT_TEAM,
     extensionId: OpenClawExtensionId.AGENT_TEAM,
     label: t('teamTitle'),
-    icon: <ShareIcon />,
+    icon: <UserGroupIcon />,
     selected: !!value,
     onSelect: () => {},
     children: [AGENT_TEAM_MODE.GROUP, AGENT_TEAM_MODE.TASK].map(option => ({
       id: option,
       label: t(option === AGENT_TEAM_MODE.GROUP ? 'teamGroup' : 'teamTask'),
-      icon: <ShareIcon />,
+      icon: <UserGroupIcon />,
       role: 'menuitemradio',
       selected: value === option,
       onSelect: () => onChange(option),

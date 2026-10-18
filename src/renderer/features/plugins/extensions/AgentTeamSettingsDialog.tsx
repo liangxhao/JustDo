@@ -4,7 +4,7 @@ import {
   ChatBubbleLeftRightIcon,
   ChevronDownIcon,
   ShareIcon,
-  UsersIcon,
+  UserGroupIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import {
@@ -281,7 +281,7 @@ export default function AgentTeamSettingsDialog({
       >
         <header className="flex shrink-0 items-start gap-3 px-5 pb-4 pt-5">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-muted text-primary">
-            <UsersIcon aria-hidden="true" className="h-5 w-5" />
+            <UserGroupIcon aria-hidden="true" className="h-5 w-5" />
           </span>
           <div className="min-w-0 flex-1">
             <h2 id="agent-team-settings-title" className="text-base font-semibold leading-6">

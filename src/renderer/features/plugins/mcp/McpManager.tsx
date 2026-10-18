@@ -886,14 +886,16 @@ const McpManager: React.FC<McpManagerProps> = ({
           />
         }
         description={
-          <Tooltip
-            content={installedDescription}
-            position="bottom"
-            maxWidth="360px"
-            className="block w-full"
-          >
-            <p className="line-clamp-2 break-words">{installedDescription}</p>
-          </Tooltip>
+          installedDescription ? (
+            <Tooltip
+              content={installedDescription}
+              position="bottom"
+              maxWidth="360px"
+              className="block w-full"
+            >
+              <p className="line-clamp-2 break-words">{installedDescription}</p>
+            </Tooltip>
+          ) : null
         }
         feedback={<MarketplaceFeedback controller={marketplace} id={server.id} />}
       />
@@ -1029,7 +1031,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                             </p>
                           )
                         ) : (
-                          <div className="grid min-w-0 auto-rows-fr grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-4">
+                          <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-x-4 gap-y-1">
                             {userServers.map((server, visualIndex) =>
                               'providerId' in server ? (
                                 <ExtensionMcpCard
@@ -1063,12 +1065,11 @@ const McpManager: React.FC<McpManagerProps> = ({
                         hideHeader={Boolean(searchQuery.trim())}
                         title={i18nService.t('pluginGroup.system.label')}
                         count={systemExtensionServers.length}
-                        description={i18nService.t('mcpGroupExtensionDescription')}
                         collapsible
                         defaultExpanded={false}
                         forceExpanded={Boolean(searchQuery.trim())}
                       >
-                        <div className="grid min-w-0 auto-rows-fr grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-4">
+                        <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-x-4 gap-y-1">
                           {systemExtensionServers.map((server, visualIndex) => (
                             <ExtensionMcpCard
                               key={server.id}

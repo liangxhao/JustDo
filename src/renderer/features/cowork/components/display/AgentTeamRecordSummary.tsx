@@ -1,4 +1,4 @@
-import { ChatBubbleLeftRightIcon, ChevronRightIcon, ShareIcon } from '@heroicons/react/24/outline';
+import { ChevronRightIcon, UserGroupIcon } from '@heroicons/react/24/outline';
 
 import { i18nService } from '@/services/i18n';
 
@@ -19,7 +19,6 @@ export default function AgentTeamRecordSummary({
   const groupPrefix = `${i18nService.t('teamGroup')} · `;
   const displayTitle =
     group && title.startsWith(groupPrefix) ? title.slice(groupPrefix.length) : title;
-  const Icon = group ? ChatBubbleLeftRightIcon : ShareIcon;
   const tone = group
     ? 'bg-teal-500/10 text-teal-600 dark:text-teal-400'
     : 'bg-violet-500/10 text-violet-600 dark:text-violet-400';
@@ -33,7 +32,7 @@ export default function AgentTeamRecordSummary({
   return (
     <>
       <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${tone}`}>
-        <Icon className="h-5 w-5" aria-hidden="true" />
+        <UserGroupIcon className="h-5 w-5" aria-hidden="true" />
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-medium text-foreground" title={title}>

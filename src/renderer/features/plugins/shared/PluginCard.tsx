@@ -5,6 +5,8 @@ interface PluginCardProps {
   iconBadge?: ReactNode;
   title: ReactNode;
   description: ReactNode;
+  reserveDescriptionSpace?: boolean;
+  compact?: boolean;
   actions?: ReactNode;
   footer?: ReactNode;
   feedback?: ReactNode;
@@ -17,6 +19,8 @@ const PluginCard = ({
   iconBadge,
   title,
   description,
+  reserveDescriptionSpace = true,
+  compact = false,
   actions,
   footer,
   feedback,
@@ -24,7 +28,7 @@ const PluginCard = ({
   openLabel,
 }: PluginCardProps) => (
   <article
-    className={`group relative flex h-full min-w-0 flex-col rounded-xl p-4 transition-colors hover:bg-surface-raised focus-within:bg-surface-raised${onOpen ? ' cursor-pointer' : ''}`}
+    className={`group relative flex h-full min-w-0 flex-col rounded-xl ${compact ? 'p-3' : 'p-4'} transition-colors hover:bg-surface-raised focus-within:bg-surface-raised${onOpen ? ' cursor-pointer' : ''}`}
     onClick={onOpen}
   >
     {onOpen && (
@@ -43,7 +47,12 @@ const PluginCard = ({
         {icon}
         {iconBadge && <div className="absolute -bottom-1 -right-1 z-10 flex">{iconBadge}</div>}
       </div>
-      <div className="min-w-0 flex-1">{title}</div>
+      <div className="min-w-0 flex-1">
+        {title}
+        {compact && description && (
+          <div className="mt-1 min-w-0 text-xs text-secondary">{description}</div>
+        )}
+      </div>
       {actions && (
         <div
           className="flex shrink-0 items-center gap-1.5"
@@ -53,7 +62,13 @@ const PluginCard = ({
         </div>
       )}
     </div>
-    <div className="relative mt-2 h-8 min-w-0 text-xs text-secondary">{description}</div>
+    {!compact && (reserveDescriptionSpace || description) && (
+      <div
+        className={`relative mt-2 min-w-0 text-xs text-secondary${reserveDescriptionSpace ? ' h-8' : ''}`}
+      >
+        {description}
+      </div>
+    )}
     {footer && (
       <div className="relative mt-auto flex min-h-10 items-center justify-between gap-3 pt-3 text-[10px] text-secondary">
         {footer}

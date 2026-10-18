@@ -11,6 +11,7 @@ import {
   PhotoIcon,
   QueueListIcon,
   ShareIcon,
+  UserGroupIcon,
 } from '@heroicons/react/24/outline';
 import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
 import { SaveTextFileErrorCode } from '@shared/app/dialogIpc';
@@ -2987,7 +2988,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             {
               id: COLLABORATION_DISPLAY_TAB_ID,
               label: i18nService.t('teamTitle'),
-              icon: <ChatBubbleLeftEllipsisIcon className="h-4 w-4" />,
+              icon: <UserGroupIcon className="h-4 w-4" />,
               onSelect: () => setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID),
               onClose: () => {
                 setCollaborationSessionId(null);

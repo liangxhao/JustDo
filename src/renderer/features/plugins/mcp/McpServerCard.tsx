@@ -41,6 +41,7 @@ const McpServerCard = ({
   probeResult,
 }: McpServerCardProps) => (
   <PluginCard
+    compact
     onOpen={onOpen}
     openLabel={openLabel}
     icon={
@@ -65,6 +66,7 @@ const McpServerCard = ({
       </>
     }
     description={description}
+    reserveDescriptionSpace={false}
     feedback={feedback}
   />
 );

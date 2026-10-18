@@ -1,4 +1,4 @@
-import { ChatBubbleLeftRightIcon, ShareIcon } from '@heroicons/react/24/outline';
+import { UserGroupIcon } from '@heroicons/react/24/outline';
 import type { ComponentProps } from 'react';
 import { useLayoutEffect, useRef, useState } from 'react';
 
@@ -78,11 +78,7 @@ export default function AgentTeamPanel(
               aria-pressed={activeTab?.key === tab.key}
               onClick={() => selectTab(tab)}
             >
-              {tab.kind === AgentTeamKind.TASK ? (
-                <ShareIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              ) : (
-                <ChatBubbleLeftRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              )}
+              <UserGroupIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               <span className="min-w-0 truncate">{tab.label}</span>
             </button>
           ))}

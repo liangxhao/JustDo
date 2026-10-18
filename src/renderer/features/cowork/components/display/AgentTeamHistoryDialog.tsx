@@ -1,4 +1,4 @@
-import { MagnifyingGlassIcon, ShareIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { MagnifyingGlassIcon, UserGroupIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import type { CollaborationRoomEntry } from '@shared/cowork/agent-team/collaboration';
 import type { TeamDiscussionRoom } from '@shared/cowork/agent-team/teamDiscussion';
 import { useEffect, useId, useRef, useState } from 'react';
@@ -131,7 +131,7 @@ export default function AgentTeamHistoryDialog({
       >
         <header className="flex shrink-0 items-center gap-3 px-5 pb-3 pt-5">
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
-            <ShareIcon className="h-5 w-5" aria-hidden="true" />
+            <UserGroupIcon className="h-5 w-5" aria-hidden="true" />
           </span>
           <h2 id={titleId} className="flex-1 text-base font-semibold">
             {t('teamRecords')}

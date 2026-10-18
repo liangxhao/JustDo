@@ -1,9 +1,9 @@
 import './SessionSummaryPanel.css';
 
 import {
-  ChatBubbleLeftEllipsisIcon,
   LinkIcon,
   ShareIcon,
+  UserGroupIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type { ProgressCard } from '@shared/openclaw/progressCard';
@@ -344,7 +344,7 @@ export default function SessionSummaryPanel(props: Props) {
                 .join(' ')}
               onClick={props.onOpenTeam}
             >
-              <ChatBubbleLeftEllipsisIcon className="h-4 w-4 shrink-0 text-secondary" />
+              <UserGroupIcon className="h-4 w-4 shrink-0 text-secondary" />
               <span className="shrink-0">{i18nService.t('coworkSummaryAgentTeam')}</span>
               {teamCountLabel && (
                 <span className="min-w-0 flex-1 text-right text-xs text-secondary tabular-nums">

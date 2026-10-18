@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ClockIcon, ShareIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon, ClockIcon, UserGroupIcon } from '@heroicons/react/24/outline';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -120,7 +120,7 @@ export default function AgentTeamMenu({
           }
         }}
       >
-        <ShareIcon className="h-[18px] w-[18px]" aria-hidden="true" />
+        <UserGroupIcon className="h-[18px] w-[18px]" aria-hidden="true" />
         <span>{i18nService.t('teamTitle')}</span>
         {entries.length > 0 && <span className="text-[10px] tabular-nums">{entries.length}</span>}
         <ChevronDownIcon className="h-3 w-3" aria-hidden="true" />
