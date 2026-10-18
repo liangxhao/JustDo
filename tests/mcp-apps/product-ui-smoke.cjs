@@ -131,7 +131,13 @@ if (!process.versions.electron) {
         'getComputedStyle(document.querySelector("[role=menuitem]")).color === "rgb(29, 32, 38)"',
       );
       await click('项目日历');
-      await until('document.body.textContent.includes("任务看板")');
+      await until('Boolean(document.querySelector("#app-workspace button[title=任务看板]"))');
+      if (
+        await js(
+          'document.querySelector("#chat").textContent.includes("任务看板") || document.querySelectorAll("#app-workspace [role=tab]").length !== 1',
+        )
+      )
+        throw new Error('Manual App controls must occupy one sidebar tab, outside the chat');
       await capture('catalog-light');
       await js(
         'document.documentElement.dataset.theme="classic-dark";document.documentElement.classList.add("dark");true',

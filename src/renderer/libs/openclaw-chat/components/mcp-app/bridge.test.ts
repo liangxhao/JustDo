@@ -302,4 +302,31 @@ describe('MCP Apps SDK round trip', () => {
       await app.close();
     }
   });
+
+  it('does not open a file when its confirmed authorization returns after the App is hidden', async () => {
+    const { app, host, confirmFile, openFile, request, hide } = await fixture();
+    confirmFile.mockResolvedValue(true);
+    let finish!: (value: unknown) => void;
+    request.mockImplementationOnce(
+      async () =>
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+    );
+    try {
+      const pending = app.request(
+        { method: 'openai/files/open', params: { path: '/workspace/fixture.txt' } },
+        z.record(z.string(), z.unknown()),
+      );
+      await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+      hide();
+      finish({ path: 'fixture.txt', name: 'fixture.txt' });
+
+      await expect(pending).resolves.toEqual({ isError: true });
+      expect(openFile).not.toHaveBeenCalled();
+    } finally {
+      host.dispose();
+      await app.close();
+    }
+  });
 });

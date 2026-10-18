@@ -11,6 +11,7 @@ export const MCP_APP_DOWNLOAD_TYPES: Readonly<Record<string, readonly string[]>>
   'text/csv': ['csv'],
   'text/markdown': ['md'],
   'application/json': ['json'],
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['xlsx'],
 };
 export interface McpAppDownloadInput {
   fileName: string;

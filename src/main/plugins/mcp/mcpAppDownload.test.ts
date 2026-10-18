@@ -49,6 +49,25 @@ describe('native MCP App file save', () => {
     ).rejects.toThrow();
     expect(mocks.choose).toHaveBeenCalledTimes(1);
   });
+  it('saves embedded spreadsheet bytes through the owner-bound file dialog', async () => {
+    const bytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0xff, 0x80]);
+    mocks.choose.mockResolvedValue({ canceled: false, filePath: 'D:/chosen/预算.xlsx' });
+    await expect(
+      saveMcpAppDownload({ sender: {} } as IpcMainInvokeEvent, {
+        fileName: '预算.xlsx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        dataBase64: bytes.toString('base64'),
+      }),
+    ).resolves.toEqual({ canceled: false });
+    expect(mocks.choose).toHaveBeenCalledWith(
+      mocks.owner,
+      expect.objectContaining({
+        defaultPath: '预算.xlsx',
+        filters: [{ name: 'XLSX', extensions: ['xlsx'] }],
+      }),
+    );
+    expect(mocks.write).toHaveBeenCalledWith('D:/chosen/预算.xlsx', bytes);
+  });
   it.each(['../file.png', 'file.exe', 'NUL.png', 'trailing.png '])(
     'rejects unsafe file name %s',
     fileName => {

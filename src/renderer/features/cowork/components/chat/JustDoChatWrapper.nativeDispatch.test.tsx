@@ -5,6 +5,7 @@ import { createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
+import { McpAppSession } from '@/libs/openclaw-chat/gateway/mcp-app-session';
 
 import JustDoChatWrapper, { type JustDoChatWrapperRef } from './JustDoChatWrapper';
 
@@ -17,6 +18,7 @@ vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }))
 vi.mock('./ChatMessageDisplay', () => ({ default: () => <div /> }));
 
 beforeEach(() => {
+  vi.spyOn(McpAppSession.prototype, 'discover').mockResolvedValue({ servers: [] });
   fixture.session.nativeSessionKey = nativeKey;
   Object.defineProperty(window, 'electron', {
     configurable: true,

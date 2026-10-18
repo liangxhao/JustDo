@@ -146,10 +146,11 @@ export function useMcpAppTabs(sessionId: string, select: (id: string) => void, o
           !existing ||
           'attach' in existing ||
           ('load' in existing
-            ? existing.failed
-            : !existing.context.isCurrent() ||
-              views.current.get(entry.id)?.error ||
-              views.current.get(entry.id)?.closed)
+            ? existing.failed && existing.retryable !== false
+            : entry.retryable !== false &&
+              (!existing.context.isCurrent() ||
+                views.current.get(entry.id)?.error ||
+                views.current.get(entry.id)?.closed))
         )
           loadFile(entry);
       } else {
@@ -241,7 +242,8 @@ export function useMcpAppTabs(sessionId: string, select: (id: string) => void, o
           item.filePath === filePath &&
           ('load' in item ||
             ((views.current.get(item.id)?.context ?? item.context).isCurrent() &&
-              !views.current.get(item.id)?.error)),
+              !views.current.get(item.id)?.error &&
+              !views.current.get(item.id)?.closed)),
       );
       if (!entry) return false;
       if ('load' in entry && entry.failed) loadFile(entry);

@@ -4,6 +4,10 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+import {
+  MCP_APP_HISTORY_TOOL_METHOD,
+  MCP_APP_HISTORY_VIEW_METHOD,
+} from '../../../../openclaw-extensions/runtime-services/contracts/mcp-apps';
 import runtimeServicesPlugin from '../../../../openclaw-extensions/runtime-services/index';
 
 const sdk = vi.hoisted(() => ({
@@ -20,6 +24,20 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock('openclaw/plugin-sdk/codex-session-transcript-runtime', () => ({
   withCodexSessionTranscriptMirrorWriteLock: vi.fn(),
+}));
+
+vi.mock('openclaw/plugin-sdk/agent-scope-runtime', () => ({
+  resolveAgentDir: vi.fn(),
+}));
+vi.mock('openclaw/plugin-sdk/agent-harness-runtime', () => ({
+  getPluginToolMeta: vi.fn(),
+  prepareHarnessNativeMcpAppPreview: vi.fn(),
+}));
+vi.mock('openclaw/plugin-sdk/codex-mcp-projection', () => ({
+  materializeStaticMcpToolsForHarnessRun: vi.fn(),
+}));
+vi.mock('openclaw/plugin-sdk/gateway-method-runtime', () => ({
+  dispatchGatewayMethod: vi.fn(),
 }));
 
 vi.mock('openclaw/plugin-sdk/routing', () => ({
@@ -144,6 +162,10 @@ describe('runtime services startup and progress', () => {
       expect.any(Function),
       { scope: 'operator.read' },
     );
+    for (const method of [MCP_APP_HISTORY_VIEW_METHOD, MCP_APP_HISTORY_TOOL_METHOD])
+      expect(registerGatewayMethod).toHaveBeenCalledWith(method, expect.any(Function), {
+        scope: 'operator.admin',
+      });
   });
 
   test('keeps successful tool-loop model calls in waiting state without inventing retries', () => {

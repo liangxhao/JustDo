@@ -528,6 +528,7 @@ export class McpAppView extends LitElement {
   closeApp(): Promise<void> {
     if (this.closing) return this.closing;
     const resources = this.resources;
+    this.contextCleanupUnconfirmed = false;
     this.closed = true;
     this.confirmation?.respond(false);
     this.confirmation = undefined;

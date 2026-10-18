@@ -64,6 +64,28 @@ test('a file open in another session is never focused', () => {
   expect(result.current.focusFile('E:/预算.xlsx')).toBe(false);
 });
 
+test('a file App closed by its own UI is not focused as an existing editor', () => {
+  const select = vi.fn();
+  const entry = {
+    id: 'file-view:session:budget',
+    sessionId: 'session',
+    filePath: 'E:/预算.xlsx',
+    preview: { title: 'Univer', viewId: 'view' },
+    context: { isCurrent: () => true } as McpAppViewContext,
+  } as McpAppWorkspaceEntry;
+  const { result } = renderHook(() => useMcpAppTabs('session', select, vi.fn()));
+  act(() => openWorkspaceApp(entry));
+  result.current.panels(entry.id)[0].props.register({
+    context: entry.context,
+    closed: true,
+    error: '',
+  });
+  select.mockClear();
+
+  expect(result.current.focusFile(entry.filePath!)).toBe(false);
+  expect(select).not.toHaveBeenCalled();
+});
+
 function pendingFile() {
   let finish!: (value: Pick<McpAppWorkspaceEntry, 'preview' | 'context'>) => void;
   let fail!: (error: Error) => void;
@@ -215,6 +237,41 @@ test('failed manual operations stay in their sidebar tab and never offer a blind
   await act(async () => pending.fail());
   expect(screen.getByTestId('sidebar').contains(screen.getByRole('alert'))).toBe(true);
   expect(screen.queryByRole('button')).toBeNull();
+  expect(pending.load).toHaveBeenCalledOnce();
+});
+
+test('selecting a failed manual entry focuses its unknown result without dispatching again', async () => {
+  const pending = pendingFile();
+  const entry = { ...pending.entry, filePath: undefined, label: 'Manual app', retryable: false };
+  const select = vi.fn();
+  renderHook(() => useMcpAppTabs('session', select, vi.fn()));
+  act(() => openWorkspaceAppLaunch(entry));
+  await act(async () => pending.fail());
+  select.mockClear();
+
+  act(() => openWorkspaceAppLaunch({ ...entry }));
+
+  expect(select).toHaveBeenCalledExactlyOnceWith(entry.id);
+  expect(pending.load).toHaveBeenCalledOnce();
+});
+
+test('an existing manual App with a failed interface is focused without relaunching its tool', async () => {
+  const pending = pendingFile();
+  const entry = { ...pending.entry, filePath: undefined, label: 'Manual app', retryable: false };
+  const select = vi.fn();
+  const { result } = renderHook(() => useMcpAppTabs('session', select, vi.fn()));
+  act(() => openWorkspaceAppLaunch(entry));
+  await act(async () => pending.finish());
+  result.current.panels(entry.id)[0].props.register({
+    context: pending.ready().context,
+    error: 'Interface unavailable',
+    closed: false,
+  });
+  select.mockClear();
+
+  act(() => openWorkspaceAppLaunch({ ...entry }));
+
+  expect(select).toHaveBeenCalledExactlyOnceWith(entry.id);
   expect(pending.load).toHaveBeenCalledOnce();
 });
 

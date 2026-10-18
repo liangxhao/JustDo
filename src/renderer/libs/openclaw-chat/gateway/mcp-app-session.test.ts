@@ -309,6 +309,29 @@ describe('MCP App native session authority', () => {
     finish({ viewId: 'mcp-app-fresh', payload: { html: 'late' } });
     await rejection;
   });
+
+  it('aborts a recovery wait when the owning session is invalidated', async () => {
+    const { apps, request } = fixture();
+    let finish!: (value: unknown) => void;
+    request.mockRejectedValueOnce(expired()).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+    );
+    const pending = apps.bind(original.viewId).view(undefined, original);
+    const rejection = expect(pending).rejects.toThrow('superseded');
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    const signal = request.mock.calls[1][2]?.signal;
+
+    apps.invalidate();
+    const aborted = signal?.aborted;
+    finish({ viewId: 'mcp-app-fresh', payload: { html: 'late' } });
+
+    await rejection;
+    expect(aborted).toBe(true);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
   it('cancels historical result waits locally and rejects their late response after close', async () => {
     const { apps, request } = fixture();
     const descriptor = {

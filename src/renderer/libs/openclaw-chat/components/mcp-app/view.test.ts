@@ -113,3 +113,21 @@ test('the user can reopen an unavailable file using a fresh admitted view', asyn
     expect.anything(),
   );
 });
+
+test('a successful close after reopening does not retain an earlier cleanup warning', async () => {
+  const f = waitingFixture();
+  f.finishBinding();
+  await vi.waitFor(() => expect(f.view.error).not.toBe(''));
+  const first = f.bind.mock.results[0].value;
+  vi.spyOn(first, 'close').mockRejectedValueOnce(new Error('Cleanup response unavailable'));
+  await f.view.closeApp();
+  expect(f.view.contextCleanupUnconfirmed).toBe(true);
+  await f.view.updateComplete;
+
+  f.view.shadowRoot!.querySelector<HTMLButtonElement>('[data-action="reopen"]')!.click();
+  await vi.waitFor(() => expect(f.request).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(f.view.loading).toBe(false));
+  await f.view.closeApp();
+
+  expect(f.view.contextCleanupUnconfirmed).toBe(false);
+});

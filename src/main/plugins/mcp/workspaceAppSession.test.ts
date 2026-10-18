@@ -139,6 +139,60 @@ describe('homepage native App workspace ownership', () => {
     );
   });
 
+  it('shares concurrent cleanup and keeps the next owned context registered', async () => {
+    const f = fixture();
+    const previous = await f.service.prepare(f.owner, f.input);
+    const native = f.request.getMockImplementation()!;
+    const completions: Array<() => void> = [];
+    f.request.mockImplementation(async (method, params) => {
+      if (method === 'sessions.delete')
+        await new Promise<void>(resolve => completions.push(resolve));
+      return native(method, params);
+    });
+
+    const first = f.service.release(f.owner, f.input.requestId);
+    const second = f.service.release(f.owner, f.input.requestId);
+    await vi.waitFor(() => expect(completions).toHaveLength(1));
+    expect(f.request.mock.calls.filter(([method]) => method === 'sessions.delete')).toHaveLength(1);
+    completions.shift()!();
+    await Promise.all([first, second]);
+
+    const next = await f.service.prepare(f.owner, f.input);
+    expect(next.sessionKey).not.toBe(previous.sessionKey);
+    (f.owner as unknown as EventEmitter).emit('destroyed');
+    await vi.waitFor(() => expect(completions).toHaveLength(1));
+    expect(f.request).toHaveBeenLastCalledWith(
+      'sessions.delete',
+      expect.objectContaining({
+        key: next.sessionKey,
+        expectedSessionId: next.gatewaySessionId,
+      }),
+    );
+    completions.shift()!();
+  });
+
+  it('shares an unknown cleanup result without resending the deletion', async () => {
+    const f = fixture();
+    await f.service.prepare(f.owner, f.input);
+    const native = f.request.getMockImplementation()!;
+    let fail!: (error: Error) => void;
+    f.request.mockImplementation(async (method, params) => {
+      if (method === 'sessions.delete')
+        return new Promise((_resolve, reject) => {
+          fail = reject;
+        });
+      return native(method, params);
+    });
+    const first = f.service.release(f.owner, f.input.requestId);
+    const second = f.service.release(f.owner, f.input.requestId);
+    const results = Promise.allSettled([first, second]);
+    await vi.waitFor(() => expect(fail).toBeTypeOf('function'));
+    fail(new Error('connection lost after deletion dispatch'));
+    expect((await results).every(result => result.status === 'rejected')).toBe(true);
+    await f.service.release(f.owner, f.input.requestId);
+    expect(f.request.mock.calls.filter(([method]) => method === 'sessions.delete')).toHaveLength(1);
+  });
+
   it('rejects a changed homepage folder while native preparation is pending', async () => {
     const f = fixture();
     const pending = f.service.prepare(f.owner, f.input);
@@ -155,6 +209,34 @@ describe('homepage native App workspace ownership', () => {
     const next = await f.service.prepare(f.owner, f.input);
     expect(next.sessionKey).not.toBe(previous.sessionKey);
     expect(f.created()).toHaveLength(2);
+  });
+
+  it('shares one replacement when concurrent preparations observe the old context is absent', async () => {
+    const f = fixture();
+    const previous = await f.service.prepare(f.owner, f.input);
+    f.sessions.delete(previous.sessionKey);
+    const native = f.request.getMockImplementation()!;
+    const observations: Array<() => void> = [];
+    f.request.mockImplementation(async (method, params) => {
+      if (method === 'sessions.describe' && (params as { key: string }).key === previous.sessionKey)
+        return new Promise(resolve => observations.push(() => resolve({ session: undefined })));
+      return native(method, params);
+    });
+    const first = f.service.prepare(f.owner, f.input);
+    const second = f.service.prepare(f.owner, f.input);
+    await vi.waitFor(() => expect(observations).toHaveLength(2));
+    for (const finish of observations) finish();
+    const [a, b] = await Promise.all([first, second]);
+    expect(a).toEqual(b);
+    expect(a.sessionKey).not.toBe(previous.sessionKey);
+    expect(f.created()).toHaveLength(2);
+    (f.owner as unknown as EventEmitter).emit('destroyed');
+    await vi.waitFor(() =>
+      expect(f.request).toHaveBeenLastCalledWith(
+        'sessions.delete',
+        expect.objectContaining({ key: a.sessionKey }),
+      ),
+    );
   });
 
   it('does not resend a preparation with an unknown result', async () => {

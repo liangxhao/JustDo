@@ -396,6 +396,7 @@ export class McpAppSessionView {
       // retries the business tool or accepts Renderer-supplied diagram data.
       const recovery = new AbortController();
       const combined = signal ? AbortSignal.any([signal, recovery.signal]) : recovery.signal;
+      this.retain(this);
       this.operations.add(recovery);
       try {
         const restored = await this.binding.client.request<{
@@ -431,6 +432,7 @@ export class McpAppSessionView {
         result = restored.payload;
       } finally {
         this.operations.delete(recovery);
+        if (!this.loaded && this.operations.size === 0) this.forget(this);
       }
     }
     if (!this.isCurrent() || signal?.aborted) throw new Error('MCP App response superseded');

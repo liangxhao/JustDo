@@ -5,6 +5,7 @@ import { type ComponentProps, useState } from 'react';
 import ComposerFeatureMenu from '../../src/renderer/features/cowork/components/composer/ComposerFeatureMenu';
 import { buildAgentTeamFeature } from '../../src/renderer/features/cowork/components/composer/AgentTeamSelector';
 import { buildSwarmWorkflowComposerFeature } from '../../src/renderer/features/cowork/components/composer/swarmWorkflowComposerFeature';
+import { useMcpAppTabs } from '../../src/renderer/features/cowork/components/display/useMcpAppTabs';
 import {
   type McpAppComposerMenu,
   McpAppsControls,
@@ -171,21 +172,49 @@ const pluginFeatures = [
 ].map(item => ({ ...item, section: i18nService.t('composerPlugins') }));
 function ProductFixture() {
   const [menu, setMenu] = useState<McpAppComposerMenu | null>(null);
+  const [activeId, select] = useState<string | null>(null);
+  const tabs = useMcpAppTabs('fixture', select, () => undefined);
   return (
-    <div className="flex flex-col justify-end" style={{ minHeight: 600 }}>
-      <McpAppsControls {...controlProps} onMenuChange={setMenu} />
-      <div className="rounded-2xl border-t border-border p-3">
-        <textarea
-          aria-label="消息"
-          placeholder="发送消息"
-          className="min-h-16 w-full resize-none bg-transparent p-2 outline-none"
-        />
-        <ComposerFeatureMenu
-          items={[...(menu?.items ?? []), ...pluginFeatures]}
-          label="添加"
-          backLabel="返回"
-        />
-      </div>
+    <div
+      className={`grid min-w-0 grid-cols-1 ${tabs.tabs.length ? 'md:grid-cols-2' : ''}`}
+      style={{ minHeight: 600 }}
+    >
+      <main id="chat" className="flex min-w-0 flex-col justify-end">
+        <McpAppsControls {...controlProps} onMenuChange={setMenu} />
+        <div className="rounded-2xl border-t border-border p-3">
+          <textarea
+            aria-label="消息"
+            placeholder="发送消息"
+            className="min-h-16 w-full resize-none bg-transparent p-2 outline-none"
+          />
+          <ComposerFeatureMenu
+            items={[...(menu?.items ?? []), ...pluginFeatures]}
+            label="添加"
+            backLabel="返回"
+          />
+        </div>
+      </main>
+      {tabs.tabs.length > 0 && (
+        <aside id="app-workspace" className="flex min-w-0 flex-col border-l border-border">
+          <nav className="flex items-center border-b border-border px-3" aria-label="应用标签">
+            {tabs.tabs.map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={tab.id === activeId}
+                onClick={tab.onSelect}
+                className="p-2 text-xs"
+              >
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+          <div className="relative min-w-0 flex-1" style={{ minHeight: 480 }}>
+            {tabs.panels(activeId)}
+          </div>
+        </aside>
+      )}
     </div>
   );
 }

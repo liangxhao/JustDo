@@ -274,7 +274,14 @@ export function createMcpAppBridge(host: McpAppBridgeHost): {
       const file = recordSchema.parse(
         await request(McpAppMethod.OpenFile, { ...params, path }, extra.mcpReq.signal),
       );
-      if (typeof file.path !== 'string' || typeof file.name !== 'string' || !session.isCurrent())
+      if (
+        disposed ||
+        !host.canInteract() ||
+        extra.mcpReq.signal.aborted ||
+        typeof file.path !== 'string' ||
+        typeof file.name !== 'string' ||
+        !session.isCurrent()
+      )
         return { isError: true };
       // Native returns a workspace-relative display path. The original absolute
       // path has just been authorized by Gateway and is unambiguous to desktop IPC.

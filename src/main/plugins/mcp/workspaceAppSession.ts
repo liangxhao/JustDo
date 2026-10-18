@@ -19,6 +19,7 @@ interface WorkspaceEntry {
   signature: string;
   released: boolean;
   task: Promise<{ binding: McpAppWorkspaceBinding; lifecycleRevision: string }>;
+  releaseTask?: Promise<null>;
 }
 
 /** Owned native preview sessions, without creating a product conversation. */
@@ -132,7 +133,7 @@ export class WorkspaceAppSessions {
     // Only explicit preparation may replace a removed owned context. Existing
     // native identities must still match; live view lifecycle checks stay native.
     if (!session && existing && !entry.released && !owner.isDestroyed()) {
-      entries.delete(scope.requestId);
+      if (entries.get(scope.requestId) === entry) entries.delete(scope.requestId);
       return this.prepare(owner, raw);
     }
     if (
@@ -152,21 +153,25 @@ export class WorkspaceAppSessions {
     const entries = this.owners.get(owner);
     const entry = entries?.get(requestId);
     if (!entry) return null;
+    if (entry.releaseTask) return entry.releaseTask;
     entry.released = true;
-    try {
-      const { binding, lifecycleRevision } = await entry.task;
-      await this.deps.request('sessions.delete', {
-        key: binding.sessionKey,
-        agentId: binding.agentId,
-        expectedSessionId: binding.gatewaySessionId,
-        expectedLifecycleRevision: lifecycleRevision,
-        deleteTranscript: true,
-        emitLifecycleHooks: false,
-      });
-    } finally {
-      entries?.delete(requestId);
-      if (!entries?.size) this.owners.delete(owner);
-    }
-    return null;
+    entry.releaseTask = (async (): Promise<null> => {
+      try {
+        const { binding, lifecycleRevision } = await entry.task;
+        await this.deps.request('sessions.delete', {
+          key: binding.sessionKey,
+          agentId: binding.agentId,
+          expectedSessionId: binding.gatewaySessionId,
+          expectedLifecycleRevision: lifecycleRevision,
+          deleteTranscript: true,
+          emitLifecycleHooks: false,
+        });
+      } finally {
+        if (entries?.get(requestId) === entry) entries.delete(requestId);
+        if (!entries?.size && this.owners.get(owner) === entries) this.owners.delete(owner);
+      }
+      return null;
+    })();
+    return entry.releaseTask;
   }
 }
