@@ -2,6 +2,7 @@ import { type Dispatch, type MutableRefObject, type SetStateAction, useEffect } 
 
 import { i18nService } from '@/services/i18n';
 
+import type { OpenMcpAppFile } from '../mcpApps/fileApps';
 import type { FilePreview } from './FilePreviewDrawer';
 import { isCurrentFilePreviewRequest } from './filePreviewNavigation';
 import { createImageFilePreview, IMAGE_PREVIEW_EVENT, isImageFilePath } from './imageFilePreview';
@@ -17,6 +18,7 @@ interface FilePreviewEventsOptions {
   setIsWorkspaceFilesOpen: Dispatch<SetStateAction<boolean>>;
   setPreferredDisplayTabId: Dispatch<SetStateAction<string | null>>;
   setUnsupportedFilePreviews: Dispatch<SetStateAction<string[]>>;
+  openAppFile?: OpenMcpAppFile;
 }
 
 export function useFilePreviewEvents({
@@ -30,6 +32,7 @@ export function useFilePreviewEvents({
   setIsWorkspaceFilesOpen,
   setPreferredDisplayTabId,
   setUnsupportedFilePreviews,
+  openAppFile,
 }: FilePreviewEventsOptions): void {
   useEffect(() => {
     const openImage = (
@@ -117,18 +120,29 @@ export function useFilePreviewEvents({
       const existingUnsupportedPreview = unsupportedFilePreviewsRef.current.find(
         filePath => fileDisplayTabId(filePath) === requestedTabId,
       );
-      if (existingPreview || existingUnsupportedPreview) {
-        if (!existingPreview && detail.openUnsupportedInSystem) {
-          await openInSystem();
-          return;
-        }
-        if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
-        setPreferredDisplayTabId(requestedTabId);
-        setIsDisplayPanelOpen(true);
-        return;
-      }
       let result: Awaited<ReturnType<typeof window.electron.shell.readPreviewFile>>;
       try {
+        if (!existingPreview && !detail.openUnsupportedInSystem && openAppFile) {
+          const opened = await openAppFile({
+            filePath: detail.filePath,
+            isCurrent: requestIsCurrent,
+          });
+          if (!requestIsCurrent()) return;
+          if (opened) {
+            if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
+            return;
+          }
+        }
+        if (existingPreview || existingUnsupportedPreview) {
+          if (!existingPreview && detail.openUnsupportedInSystem) {
+            await openInSystem();
+            return;
+          }
+          if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
+          setPreferredDisplayTabId(requestedTabId);
+          setIsDisplayPanelOpen(true);
+          return;
+        }
         result = await window.electron.shell.readPreviewFile(
           detail.filePath,
           detail.workingDirectory,
@@ -219,5 +233,6 @@ export function useFilePreviewEvents({
     setIsWorkspaceFilesOpen,
     setPreferredDisplayTabId,
     setUnsupportedFilePreviews,
+    openAppFile,
   ]);
 }

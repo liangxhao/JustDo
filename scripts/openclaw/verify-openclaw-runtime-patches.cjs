@@ -58,6 +58,17 @@ const BUILD_RECIPE_FILES = [
   'resources/openclaw-extension-prune.json',
   'resources/builtin-skills.json',
   'scripts/runtime/sync-bundled-skills.cjs',
+  'openclaw-extensions/drawio/scripts/prepare.cjs',
+  'openclaw-extensions/drawio/scripts/verify-packaged.cjs',
+  'openclaw-extensions/drawio/package.json',
+  'openclaw-extensions/drawio/openclaw.plugin.json',
+  'openclaw-extensions/drawio/index.ts',
+  'openclaw-extensions/drawio/upstream.json',
+  'openclaw-extensions/drawio/licenses/saxes-6.0.0.txt',
+  'openclaw-extensions/drawio/server.mjs',
+  'openclaw-extensions/drawio/app.ts',
+  'openclaw-extensions/drawio/app.css',
+  'openclaw-extensions/drawio/editor-bridge.js',
 ];
 
 function normalizeOpenClawVersion(version) {

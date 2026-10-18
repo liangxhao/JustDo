@@ -2,6 +2,19 @@
 
 插件页组合多种能力，但它们不是同一种安装单元。本文以 Main 插件服务、原生 API、配置同步和 Extension 注册为依据，说明读取、启停、安装和恢复各由谁负责。
 
+插件专属的工具、界面、资源、构建/校验脚本和单元测试归 `openclaw-extensions/<plugin-id>/` 所有。主工程保留通用 MCP Apps 宿主、权限与保存桥、配置/打包接入，以及验证宿主边界的集成测试；插件不能反向导入应用 `src`。根 npm 命令和打包流程只委托插件自己的脚本，draw.io 的目录约定见[插件说明](../../openclaw-extensions/drawio/README.md)。
+
+独立分发的 MCP Apps 由各自的插件仓库维护源码、依赖、构建和交付物，不进入主工程
+依赖或 Electron 安装包。插件清单静态声明 MCP，经现有扩展导入和能力审查安装，
+附带 MCP 沿原生配置、审批和父扩展启停流程运行；市场按现有 `extension` 类型分发。
+宿主只提供通用发现、消息展示、工作区文件入口及原生 RPC 约定，文件格式解析、
+容量限制和编辑存储归外部插件所有，不增加 marketplace kind 或业务 Provider。
+
+Runtime Services 提供嵌套 MCP App 历史的受限恢复 RPC：只读原生当前可见历史和当前
+策略许可的 UI resource，使用公开 SDK 借用原生连接。挂载时主动取数的历史 App 可以
+按原工具和原参数读取已记录结果，缺省值按当前 schema 核对，不执行原业务工具或恢复旧工具授权。
+会话 incarnation、生命周期和配置权限变化立即使恢复视图失效，详见[MCP Apps](../features/chat/mcp-apps.md)。
+
 `openclaw-extensions/interactive-ui` 内部按 `scenario/` 和 `ui/` 聚合各自的 schema、
 组合器、渲染逻辑、文案与样式；`document/` 提供共用的 HTML/JSON 安全序列化和资源
 初始化。两种 kind 独立校验与登记，不通过场景 schema 借用通用文档能力。
@@ -254,6 +267,8 @@ Extension 提供的 MCP 通过受管子进程直接调用原生 manifest registr
 配置同步前读取原生扩展 MCP 名称归属，完整、最小及登录状态同步保留这些原生覆盖，外部 MCP 发现排除这些名称，避免将覆盖导入产品 Store。归属读取失败保留现有配置并报告失败，不能按空清单重建。参数窗口整页只读，Main 的配置能力固定禁止，不注册任意参数保存 IPC，也不提供对应 preload/Renderer 方法；保留独立启停、只读查看和测试，不改变既有原生覆盖。窗口读取选中条目的完整原生定义，只有禁用标记时也加载父扩展默认连接；常用字段与下方完整原始 JSON 均不可修改。已有连接覆盖优先读取 Gateway sourceConfig，默认定义经原生 schema/redactConfigObject 脱敏后返回 Renderer；没有完整定义时保留原生摘要，不从摘要重建配置。此查看流程不写配置，不增加第二份运行清单或凭据持久化。
 
 MCP 的传输支持状态使用原生清单的 `unsupported` 标记；`hasStdioTransport: false` 也可能表示受支持的 HTTP 传输，不能据此标记为不支持。
+
+交互界面是工具的附加能力，仍使用相同 MCP 清单和启停流程。连接测试保留标准 `ui://` 资源元数据，列表显示紧凑的界面标识；不因名称、transport 或 resources 能力推断。内置 draw.io 的已审查提示在连接定义被覆盖后撤回，实际工具目录优先。其 stdio 服务、Web 编辑器、只读 loopback 资源和完整离线打包契约见 [draw.io 离线绘图](../features/chat/drawio-offline.md)。
 
 发现只增加缺失项，不因原生配置暂时缺失就删除产品记录。产品主动删除/改名后不能先读旧原生配置，否则会复活旧 name。未被表单建模的 cwd、OAuth、TLS、tool filter 等字段需要保留合并，不能保存一次表单就丢失。
 

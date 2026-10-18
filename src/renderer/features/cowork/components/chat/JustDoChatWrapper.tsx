@@ -10,6 +10,7 @@
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { isChatSendStopReceipt } from '@shared/openclaw/chatSendReceipt';
 import type { ProgressCardViewState } from '@shared/openclaw/progressCard';
+import { McpAppMethod } from '@shared/plugins/mcpApps';
 import {
   forwardRef,
   useCallback,
@@ -30,6 +31,7 @@ import {
 import { selectCurrentSession } from '@/features/cowork/coworkSelectors';
 import type { CoworkAttachmentPayload, CoworkSession } from '@/features/cowork/coworkTypes';
 import type { JustDoChatElement } from '@/libs/openclaw-chat/components/justdo-chat';
+import type { McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
 import { NATIVE_WIDGET_DRAFT_EVENT } from '@/libs/openclaw-chat/components/native-widget/host';
 import { NativeWidgetView } from '@/libs/openclaw-chat/components/native-widget/view';
 import {
@@ -58,6 +60,7 @@ import type { GatewayMessage, UserMessageHistoryAction } from '@/libs/openclaw-c
 import { i18nService } from '@/services/i18n';
 
 import type { MessageQuoteHandler } from '../composer/messageQuote';
+import { type McpAppComposerMenu, McpAppsControls } from '../mcpApps/McpAppsControls';
 
 const HISTORY_LOADING_NOTICE_DELAY_MS = 3_000;
 
@@ -71,7 +74,11 @@ function debugLog(...args: unknown[]): void {
 }
 
 interface JustDoChatWrapperProps {
-  onWidgetDraft?: (sessionKey: string, text: string) => void;
+  onWidgetDraft?: (sessionKey: string, text: string) => void | boolean;
+  onOpenMcpAppFile?: (file: { path: string; name: string }) => Promise<boolean>;
+  mcpAppFilePath?: string;
+  onNewMcpAppDraft?: (text: string, content: unknown[]) => Promise<boolean>;
+  onMcpAppMenuChange?: (menu: McpAppComposerMenu) => void;
   className?: string;
   assistantName?: string;
   workingDirectory?: string;
@@ -204,6 +211,10 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       onLastUserMessageAction,
       onMessageQuote,
       onWidgetDraft,
+      onOpenMcpAppFile,
+      mcpAppFilePath,
+      onNewMcpAppDraft,
+      onMcpAppMenuChange,
       onAssistantMessageFork,
       onSideChatResult,
       onSideChatStream,
@@ -213,6 +224,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
   ) => {
     const currentSession = useSelector(selectCurrentSession) as CoworkSession | null;
     const currentSessionId = currentSession?.id;
+    const activeProductSessionId = useRef(currentSessionId);
+    activeProductSessionId.current = currentSessionId;
     const currentSessionAgentId = currentSession?.agentId;
     const canonicalSessionKey = currentSessionId
       ? currentSession.nativeSessionKey ||
@@ -238,7 +251,116 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const chatElementRef = useRef<JustDoChatElement | null>(null);
     const widgetDraftCallback = useRef(onWidgetDraft);
     widgetDraftCallback.current = onWidgetDraft;
-    const canDraftWidget = useCallback(() => typeof widgetDraftCallback.current === 'function', []);
+    const openMcpAppFileCallback = useRef(onOpenMcpAppFile);
+    openMcpAppFileCallback.current = onOpenMcpAppFile;
+    const newMcpAppDraftCallback = useRef(onNewMcpAppDraft);
+    newMcpAppDraftCallback.current = onNewMcpAppDraft;
+    const canDraftWidget = useCallback(
+      () => !branchCreationPendingRef.current && typeof widgetDraftCallback.current === 'function',
+      [],
+    );
+    const addMcpAppDraft = useCallback(
+      async (text: string): Promise<boolean> => {
+        const state = controllerRef.current?.state;
+        if (
+          !state?.connected ||
+          !canDraftWidget() ||
+          !text.trim() ||
+          text.length > 4000 ||
+          /^\s*[!/]/.test(text)
+        )
+          return false;
+        return widgetDraftCallback.current?.(state.sessionKey, text) !== false;
+      },
+      [canDraftWidget],
+    );
+    const openMcpAppFile = useCallback(
+      (file: { path: string; name: string }) =>
+        openMcpAppFileCallback.current?.(file) ?? Promise.resolve(false),
+      [],
+    );
+    const prepareMcpApp = useCallback(async (): Promise<McpAppViewContext> => {
+      assertSessionMutationAllowed();
+      const controller = controllerRef.current;
+      const sessionKey = canonicalSessionKeyRef.current;
+      if (!controller || !currentSessionId || !sessionKey || !canDraftWidget())
+        throw new Error('Session unavailable');
+      if (activeProductSessionId.current !== currentSessionId)
+        throw new Error('App conversation changed');
+      if (
+        !controller.state.currentSessionId ||
+        !controller.state.initialHistoryReady ||
+        controller.state.sessionKey !== sessionKey
+      ) {
+        const prepared = await window.electron.mcpApps.prepare(currentSessionId);
+        if (
+          !prepared.success ||
+          controllerRef.current !== controller ||
+          canonicalSessionKeyRef.current !== sessionKey ||
+          prepared.value.sessionKey !== sessionKey
+        )
+          throw new Error('Session changed');
+        await controller.loadHistory(true);
+        if (
+          controllerRef.current !== controller ||
+          canonicalSessionKeyRef.current !== sessionKey ||
+          controller.state.currentSessionId !== prepared.value.gatewaySessionId
+        )
+          throw new Error('Native session changed');
+      }
+      assertSessionMutationAllowed();
+      const binding = controller.mcpApps.bind();
+      return {
+        apps: controller.mcpApps,
+        sessionKey,
+        isCurrent: () =>
+          activeProductSessionId.current === currentSessionId &&
+          controllerRef.current === controller &&
+          canonicalSessionKeyRef.current === sessionKey &&
+          binding.isCurrent(),
+        canDraft: canDraftWidget,
+        addDraft: addMcpAppDraft,
+        openFile: openMcpAppFile,
+        refresh: prepareMcpApp,
+        addNewDraft: (text, content) =>
+          newMcpAppDraftCallback.current?.(text, content) ?? Promise.resolve(false),
+      };
+    }, [
+      currentSessionId,
+      canDraftWidget,
+      addMcpAppDraft,
+      openMcpAppFile,
+      assertSessionMutationAllowed,
+    ]);
+    const onboardMcpApp = useCallback(
+      async (pluginId: string, signal: AbortSignal) => {
+        assertSessionMutationAllowed();
+        const controller = controllerRef.current;
+        if (!controller) throw new Error('Session unavailable');
+        const productSessionId = activeProductSessionId.current;
+        const binding = controller.mcpApps.bind();
+        const result = await binding.request<{ runId?: string; status?: string }>(
+          McpAppMethod.Onboard,
+          {
+            pluginId,
+            idempotencyKey: crypto.randomUUID(),
+          },
+          signal,
+        );
+        if (
+          branchCreationPendingRef.current ||
+          !binding.isCurrent() ||
+          activeProductSessionId.current !== productSessionId ||
+          controllerRef.current !== controller
+        )
+          return;
+        if (result.status === 'started' && typeof result.runId === 'string') {
+          controller.beginGoalResume(binding.sessionKey, result.runId);
+        }
+        await controller.loadHistory(true);
+      },
+      [assertSessionMutationAllowed],
+    );
     const handleWidgetDraft = useCallback((event: Event) => {
       const widget = event.composedPath()[0];
       const detail = (event as CustomEvent<{ sessionKey: string; text: string }>).detail;
@@ -260,12 +382,23 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       (element: JustDoChatElement | null) => {
         const previous = chatElementRef.current;
         previous?.removeEventListener(NATIVE_WIDGET_DRAFT_EVENT, handleWidgetDraft);
-        if (previous && previous !== element) previous.canDraftWidget = undefined;
+        if (previous && previous !== element) {
+          previous.canDraftWidget = undefined;
+          previous.addMcpAppDraft = undefined;
+          previous.openMcpAppFile = undefined;
+          previous.addNewMcpAppDraft = undefined;
+        }
         chatElementRef.current = element;
-        if (element) element.canDraftWidget = canDraftWidget;
+        if (element) {
+          element.canDraftWidget = canDraftWidget;
+          element.addMcpAppDraft = addMcpAppDraft;
+          element.openMcpAppFile = openMcpAppFile;
+          element.addNewMcpAppDraft = (text, content) =>
+            newMcpAppDraftCallback.current?.(text, content) ?? Promise.resolve(false);
+        }
         element?.addEventListener(NATIVE_WIDGET_DRAFT_EVENT, handleWidgetDraft);
       },
-      [canDraftWidget, handleWidgetDraft],
+      [canDraftWidget, handleWidgetDraft, addMcpAppDraft, openMcpAppFile],
     );
     useLayoutEffect(() => {
       // The live callback fences input immediately; refresh policy/UI without
@@ -870,6 +1003,19 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           }
           onChatElementChange={handleChatElementChange}
         />
+        {controller?.mcpApps && currentSessionId && (
+          <McpAppsControls
+            key={currentSessionId}
+            apps={controller.mcpApps}
+            prepare={prepareMcpApp}
+            sessionId={currentSessionId}
+            canDraft={canDraftWidget}
+            addDraft={addMcpAppDraft}
+            filePath={mcpAppFilePath}
+            onOnboard={onboardMcpApp}
+            onMenuChange={onMcpAppMenuChange}
+          />
+        )}
       </div>
     );
   },

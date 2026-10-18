@@ -1,0 +1,520 @@
+'use strict';
+// Actual bundled draw.io + standard MCP + actual product host + native sandbox.
+// Only the Gateway identity facade and native Save dialog are fixtures in this UI test.
+const fs = require('node:fs');
+const path = require('node:path');
+const http = require('node:http');
+const os = require('node:os');
+const { pathToFileURL } = require('node:url');
+const { spawnSync } = require('node:child_process');
+const assert = require('node:assert/strict');
+const root = path.resolve(__dirname, '../..');
+const output = path.join(root, '.agent-tasks/drawio/ui');
+fs.mkdirSync(output, { recursive: true });
+
+async function fixture() {
+  const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+  const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio.js');
+  const sourceAssets = path.join(
+    root,
+    process.argv.includes('--runtime')
+      ? 'vendor/openclaw-runtime/current/dist/extensions/drawio/assets'
+      : 'openclaw-extensions/drawio/assets',
+  );
+  require('../../openclaw-extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(sourceAssets);
+  // No ancestor node_modules: this proves the service/SDK dependencies are bundled.
+  const isolated = fs.mkdtempSync(path.join(os.tmpdir(), 'diagram-offline-'));
+  for (const file of ['server.cjs', 'app.js', 'app.css'])
+    fs.copyFileSync(path.join(sourceAssets, file), path.join(isolated, file));
+  fs.symlinkSync(path.join(sourceAssets, 'public'), path.join(isolated, 'public'), 'junction');
+  const transport = new StdioClientTransport({
+    command: process.env.DIAGRAM_TEST_NODE || process.execPath,
+    args: [path.join(isolated, 'server.cjs')],
+    stderr: 'pipe',
+  });
+  const client = new Client({ name: 'offline-test', version: '1' });
+  await client.connect(transport);
+  const tools = await client.listTools();
+  assert.equal(tools.tools[0]._meta.ui.resourceUri, 'ui://drawio/editor');
+  const xml = fs.readFileSync(
+    path.join(root, 'openclaw-extensions/drawio/tests/fixture.xml'),
+    'utf8',
+  );
+  const result = await client.callTool({
+    name: process.argv.includes('--blank') ? 'open_editor' : 'create_diagram',
+    arguments: process.argv.includes('--blank') ? {} : { xml, title: '采购审批流程' },
+  });
+  assert.ok(!result.isError);
+  const resource = await client.readResource({ uri: 'ui://drawio/editor' });
+  assert.equal(resource.contents[0].mimeType, 'text/html;profile=mcp-app');
+  assert.ok(Buffer.byteLength(resource.contents[0].text) < 2 * 1024 * 1024);
+  const csp = resource.contents[0]._meta.ui.csp;
+  const dist = path.join(root, 'vendor/openclaw-runtime/current/dist');
+  const moduleFile = fs.readdirSync(dist).find(file => /^sandbox-host-.*\.mjs$/.test(file));
+  const native = await import(pathToFileURL(path.join(dist, moduleFile)).href);
+  const document = native.n(csp);
+  const sandbox = http.createServer((_req, res) => {
+    res.writeHead(200, document.headers);
+    res.end(document.html);
+  });
+  await new Promise(resolve => sandbox.listen(0, '127.0.0.1', resolve));
+  const payload = {
+    html: resource.contents[0].text,
+    csp,
+    sandboxUrl: native.r(csp),
+    sandboxPort: sandbox.address().port,
+    toolInput: process.argv.includes('--blank') ? {} : { xml },
+    toolResult: result,
+  };
+  const host = http.createServer((req, res) => {
+    res.setHeader(
+      'Content-Type',
+      req.url === '/host.js'
+        ? 'text/javascript'
+        : req.url === '/product.css'
+          ? 'text/css'
+          : 'text/html; charset=utf-8',
+    );
+    if (req.url === '/host.js') return res.end(fs.readFileSync(path.join(output, 'host.js')));
+    if (req.url === '/product.css')
+      return res.end(fs.readFileSync(path.join(output, 'product.css')));
+    res.end(
+      `<html lang="zh" data-theme="classic-light"><head><link rel="stylesheet" href="/product.css"><style>html{background:var(--justdo-background);color:var(--justdo-text-primary)}body{max-width:1000px;margin:30px auto;font:14px system-ui}</style></head><body><script>window.fixturePayload=${JSON.stringify(payload).replaceAll('<', '\\u003c')};</script><script type="module" src="/host.js"></script></body></html>`,
+    );
+  });
+  await new Promise(resolve =>
+    host.listen(process.argv.includes('--serve') ? 7842 : 0, '127.0.0.1', resolve),
+  );
+  return {
+    url: `http://127.0.0.1:${host.address().port}`,
+    close: async () => {
+      host.close();
+      sandbox.close();
+      await client.close();
+      fs.unlinkSync(path.join(isolated, 'public'));
+      assert.equal(path.dirname(isolated), os.tmpdir());
+      fs.rmSync(isolated, { recursive: true, force: true });
+    },
+  };
+}
+
+if (!process.versions.electron) {
+  require('../../openclaw-extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets();
+  const css = fs
+    .readdirSync(path.join(root, 'dist/assets'))
+    .find(file => /^main-.*\.css$/.test(file));
+  if (!css) throw new Error('Build the product stylesheet first');
+  fs.copyFileSync(path.join(root, 'dist/assets', css), path.join(output, 'product.css'));
+  require('esbuild').buildSync({
+    entryPoints: [path.join(__dirname, 'ui-host.ts')],
+    outfile: path.join(output, 'host.js'),
+    bundle: true,
+    platform: 'browser',
+    format: 'esm',
+    target: 'chrome140',
+    minify: true,
+    jsx: 'automatic',
+    alias: { '@shared': path.join(root, 'src/shared'), '@': path.join(root, 'src/renderer') },
+  });
+  if (process.argv.includes('--serve')) {
+    fixture()
+      .then(value => {
+        console.log(`Draw.io UI preview: ${value.url}`);
+        setTimeout(
+          () => {
+            void value.close();
+          },
+          2 * 60 * 60 * 1000,
+        );
+      })
+      .catch(error => {
+        console.error(error);
+        process.exitCode = 1;
+      });
+  } else {
+    const result = spawnSync(require('electron'), [__filename, ...process.argv.slice(2)], {
+      cwd: root,
+      env: { ...process.env, DIAGRAM_TEST_NODE: process.execPath },
+      windowsHide: true,
+      stdio: 'inherit',
+      timeout: 180000,
+    });
+    process.exit(result.status ?? 1);
+  }
+} else {
+  const { app, BrowserWindow } = require('electron');
+  const profile = fs.mkdtempSync(path.join(output, 'cold-profile-'));
+  app.setPath('userData', profile);
+  app.commandLine.appendSwitch('disable-background-networking');
+  let win, running;
+  app
+    .whenReady()
+    .then(async () => {
+      running = await fixture();
+      win = new BrowserWindow({
+        show: false,
+        width: 1100,
+        height: 850,
+        webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false },
+      });
+      const blocked = [],
+        errors = [];
+      win.webContents.session.webRequest.onBeforeRequest((details, callback) => {
+        const allowed =
+          ['127.0.0.1', ''].includes(new URL(details.url).hostname) ||
+          /^(data|blob|about):/.test(details.url);
+        if (!allowed) blocked.push(details.url);
+        callback({ cancel: !allowed });
+      });
+      win.webContents.on('console-message', event => {
+        if (event.level === 'error') errors.push(event.message);
+      });
+      await win.loadURL(running.url + (process.argv.includes('--blank') ? '/?blank=1' : ''));
+      const until = async (fn, label) => {
+        for (let i = 0; i < 300; i++) {
+          const value = await fn();
+          if (value) return value;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        throw new Error(`${label} timed out: ${JSON.stringify(errors)}`);
+      };
+      const inner = await until(async () => {
+        for (const frame of win.webContents.mainFrame.framesInSubtree)
+          try {
+            if (
+              await frame.executeJavaScript(
+                'Boolean(document.querySelector("#save") && !document.querySelector("#save").disabled)',
+              )
+            )
+              return frame;
+          } catch {}
+      }, 'App ready');
+      if (process.argv.includes('--blank')) {
+        const blankEditor = await until(async () => {
+          for (const frame of win.webContents.mainFrame.framesInSubtree) {
+            try {
+              if (
+                await frame.executeJavaScript(
+                  'Boolean(document.querySelector(".geDiagramContainer"))',
+                )
+              )
+                return frame;
+            } catch {
+              /* Wait for the local editor document. */
+            }
+          }
+        }, 'Blank editor');
+        assert.equal(
+          await blankEditor.executeJavaScript('document.body.innerText.includes("提交申请")'),
+          false,
+          'The manual entry must open an empty graph',
+        );
+        await inner.executeJavaScript('document.querySelector("#save").click()');
+        await until(
+          () => win.webContents.executeJavaScript('window.downloads.length === 1'),
+          'Save a manually opened blank graph',
+        );
+        const saved = await win.webContents.executeJavaScript('window.downloads[0]');
+        const source = Buffer.from(saved.dataBase64, 'base64').toString();
+        assert.match(source, /mxfile/);
+        assert.doesNotMatch(source, /vertex="1"/);
+        assert.deepEqual(blocked, [], 'Manual editing must use local assets only');
+        await blankEditor.executeJavaScript(
+          'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+        );
+        await win.webContents.capturePage();
+        fs.writeFileSync(
+          path.join(output, 'drawio-manual-blank.png'),
+          (await win.webContents.capturePage()).toPNG(),
+        );
+        console.log('Manual blank draw.io UI and source export passed with no public requests.');
+        return;
+      }
+      const editor = await until(async () => {
+        for (const frame of win.webContents.mainFrame.framesInSubtree)
+          try {
+            if (
+              await frame.executeJavaScript(
+                'Boolean(document.querySelector(".geDiagramContainer svg") && document.body.innerText.includes("提交申请"))',
+              )
+            )
+              return frame;
+          } catch {}
+      }, 'Diagram rendered');
+      assert.ok(editor);
+      let currentLabel = '提交申请';
+      for (const format of ['save', 'png', 'svg']) {
+        const editedLabel = `${format} 前即时修改`;
+        await editor.executeJavaScript(`(() => {
+          const label = [...document.querySelectorAll('foreignObject div')].find(
+            element => element.textContent === ${JSON.stringify(currentLabel)} && !element.childElementCount,
+          );
+          if (!label) throw new Error('Diagram label missing');
+          const bounds = label.getBoundingClientRect();
+          label.dispatchEvent(new MouseEvent('dblclick', {
+            bubbles: true, button: 0,
+            clientX: bounds.x + bounds.width / 2, clientY: bounds.y + bounds.height / 2,
+          }));
+        })()`);
+        await until(
+          () =>
+            editor.executeJavaScript(
+              'Boolean(document.querySelector(".mxCellEditor[contenteditable=true]"))',
+            ),
+          `${format} cell editing`,
+        );
+        await editor.executeJavaScript(`(() => {
+          const input = document.querySelector('.mxCellEditor[contenteditable=true]');
+          input.textContent = ${JSON.stringify(editedLabel)};
+          input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
+        })()`);
+        await inner.executeJavaScript(`document.querySelector('#${format}').click()`);
+        const count = ['save', 'png', 'svg'].indexOf(format) + 1;
+        await until(
+          () => win.webContents.executeJavaScript(`window.downloads.length === ${count}`),
+          `${format} export`,
+        );
+        assert.equal(
+          await editor.executeJavaScript(
+            'Boolean(document.querySelector(".mxCellEditor[contenteditable=true]"))',
+          ),
+          false,
+          `${format} commits active cell text before export`,
+        );
+        currentLabel = editedLabel;
+      }
+      const downloads = await win.webContents.executeJavaScript('window.downloads');
+      for (const file of downloads) {
+        const bytes = Buffer.from(file.dataBase64, 'base64');
+        fs.writeFileSync(path.join(output, file.fileName), bytes);
+        if (file.mimeType === 'image/png') assert.equal(bytes.subarray(1, 4).toString(), 'PNG');
+        else if (file.mimeType === 'image/svg+xml') {
+          assert.match(bytes.toString(), /<svg/);
+          assert.match(bytes.toString(), /svg 前即时修改/);
+        } else {
+          assert.match(bytes.toString(), /mxfile/);
+          assert.match(bytes.toString(), /save 前即时修改/);
+        }
+      }
+      // Commit the latest edit to a source file before leaving the editor, so
+      // the fixture exercises the normal saved-document navigation path too.
+      await inner.executeJavaScript("document.querySelector('#save').click()");
+      await until(
+        () => win.webContents.executeJavaScript('window.downloads.length === 4'),
+        'Save latest diagram edits',
+      );
+      const latestSource = await win.webContents.executeJavaScript('window.downloads[3]');
+      const latestBytes = Buffer.from(latestSource.dataBase64, 'base64');
+      assert.match(latestBytes.toString(), /svg 前即时修改/);
+      fs.writeFileSync(path.join(output, latestSource.fileName), latestBytes);
+      assert.deepEqual(blocked, [], 'No public request is needed');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      fs.writeFileSync(
+        path.join(output, 'drawio-inline.png'),
+        (await win.webContents.capturePage()).toPNG(),
+      );
+      await win.webContents.executeJavaScript(
+        'window.fixtureEditorFrame=window.fixtureView.shadowRoot.querySelector("iframe");window.fixtureView.shadowRoot.querySelector("[data-action=display-mode]").click();true',
+      );
+      await until(
+        () => win.webContents.executeJavaScript('window.fixtureView.expanded'),
+        'Expand diagram',
+      );
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      fs.writeFileSync(
+        path.join(output, 'drawio-expanded.png'),
+        (await win.webContents.capturePage()).toPNG(),
+      );
+      for (let cycle = 0; cycle < 2; cycle++) {
+        await win.webContents.executeJavaScript(
+          'window.fixtureView.shadowRoot.querySelector("[data-action=dismiss]").click();true',
+        );
+        await until(
+          () => win.webContents.executeJavaScript('!window.fixtureView.expanded'),
+          'Return to inline diagram',
+        );
+        assert.equal(
+          await win.webContents.executeJavaScript(
+            '!window.fixtureView.closed && window.fixtureView.shadowRoot.querySelector("iframe") === window.fixtureEditorFrame && window.fixtureEditorFrame.isConnected',
+          ),
+          true,
+          'The same diagram frame must survive closing its expanded presentation',
+        );
+        assert.equal(
+          await editor.executeJavaScript('document.body.innerText.includes("svg 前即时修改")'),
+          true,
+          'Returning from expansion must preserve edited node text',
+        );
+        if (cycle === 0) {
+          await inner.executeJavaScript('document.querySelector("#save").click()');
+          await until(
+            () => win.webContents.executeJavaScript('window.downloads.length === 5'),
+            'Save after returning from expansion',
+          );
+          const afterReturn = await win.webContents.executeJavaScript('window.downloads[4]');
+          assert.match(Buffer.from(afterReturn.dataBase64, 'base64').toString(), /svg 前即时修改/);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          fs.writeFileSync(
+            path.join(output, 'drawio-returned-inline.png'),
+            (await win.webContents.capturePage()).toPNG(),
+          );
+        }
+        await win.webContents.executeJavaScript(
+          'window.fixtureView.shadowRoot.querySelector("[data-action=display-mode]").click();true',
+        );
+        await until(
+          () => win.webContents.executeJavaScript('window.fixtureView.expanded'),
+          'Expand the same diagram again',
+        );
+      }
+      await win.webContents.executeJavaScript(
+        'document.documentElement.classList.add("dark");document.documentElement.dataset.theme="classic-dark"',
+      );
+      await until(
+        () => editor.executeJavaScript('Boolean(document.querySelector(".geDarkMode"))'),
+        'Live theme',
+      );
+      await new Promise(resolve => setTimeout(resolve, 300));
+      fs.writeFileSync(
+        path.join(output, 'drawio-dark.png'),
+        (await win.webContents.capturePage()).toPNG(),
+      );
+      win.setSize(560, 720);
+      await until(() => editor.executeJavaScript('innerWidth < 550'), 'Nested frame resized');
+      await until(
+        () =>
+          inner.executeJavaScript(
+            'document.querySelector("#svg").getBoundingClientRect().right <= innerWidth',
+          ),
+        'Narrow export controls',
+      );
+      await until(
+        () =>
+          win.webContents.executeJavaScript(
+            'document.documentElement.scrollWidth <= document.documentElement.clientWidth',
+          ),
+        'Narrow layout',
+      );
+      const viewport = await editor.executeJavaScript(
+        '({ height: innerHeight, scroll: document.documentElement.scrollHeight, children: [...document.body.children].filter(e=>e.className).map(e=>({cls:String(e.className).slice(0,60), top:e.getBoundingClientRect().top,bottom:e.getBoundingClientRect().bottom})) })',
+      );
+      const layout = await win.webContents.executeJavaScript(
+        '(()=>{const v=document.querySelector("mcp-app-view");return [v,...v.shadowRoot.querySelectorAll("header,.mount,iframe")].map(e=>({tag:e.tagName,cls:e.className,h:e.getBoundingClientRect().height}))})()',
+      );
+      assert.ok(
+        viewport.scroll <= viewport.height + 2,
+        'Editor toolbar stays inside the expanded viewport',
+      );
+      await new Promise(resolve => setTimeout(resolve, 500));
+      fs.writeFileSync(
+        path.join(output, 'drawio-narrow.png'),
+        (await win.webContents.capturePage()).toPNG(),
+      );
+      await win.webContents.executeJavaScript(
+        '(async()=>{const view=window.fixtureView;view.shadowRoot.querySelector("[data-action=dismiss]").click();await view.updateComplete;view.fillContainer=true;document.body.style.cssText="margin:0;height:100vh;max-width:none";await view.updateComplete;return true})()',
+      );
+      await until(
+        () =>
+          win.webContents.executeJavaScript(
+            'getComputedStyle(window.fixtureView.shadowRoot.querySelector("header")).display === "none"',
+          ),
+        'Workspace hides the duplicate host title bar',
+      );
+      assert.equal(
+        await win.webContents.executeJavaScript(
+          'window.fixtureView.shadowRoot.querySelector("iframe") === window.fixtureEditorFrame && !window.fixtureView.closed',
+        ),
+        true,
+        'Workspace layout must keep the same editor document',
+      );
+      assert.equal(
+        await editor.executeJavaScript('document.body.innerText.includes("svg 前即时修改")'),
+        true,
+      );
+      assert.ok(
+        await inner.executeJavaScript(
+          'document.querySelector("#toolbar").getBoundingClientRect().top === 0 && document.querySelector("#svg").getBoundingClientRect().right <= innerWidth',
+        ),
+        'The editor has one top toolbar with all export controls',
+      );
+      await inner.executeJavaScript('document.querySelector("#save").click()');
+      await until(
+        () => win.webContents.executeJavaScript('window.downloads.length === 6'),
+        'Save from the compact workspace',
+      );
+      const workspaceSource = await win.webContents.executeJavaScript('window.downloads[5]');
+      assert.match(Buffer.from(workspaceSource.dataBase64, 'base64').toString(), /svg 前即时修改/);
+      await new Promise(resolve => setTimeout(resolve, 300));
+      fs.writeFileSync(
+        path.join(output, 'drawio-workspace-toolbar-dark.png'),
+        (await win.webContents.capturePage()).toPNG(),
+      );
+      await win.webContents.executeJavaScript(
+        'document.documentElement.classList.remove("dark");document.documentElement.dataset.theme="classic-light"',
+      );
+      await until(
+        () => editor.executeJavaScript('!document.querySelector(".geDarkMode")'),
+        'Compact workspace light theme',
+      );
+      await new Promise(resolve => setTimeout(resolve, 300));
+      fs.writeFileSync(
+        path.join(output, 'drawio-workspace-toolbar-light.png'),
+        (await win.webContents.capturePage()).toPNG(),
+      );
+      await win.loadURL(running.url + '/?list=1');
+      await until(
+        () =>
+          win.webContents.executeJavaScript(
+            'Boolean(document.querySelector("[aria-label=\\"支持交互界面\\"]"))',
+          ),
+        'MCP interface badge',
+      );
+      assert.equal(
+        await win.webContents.executeJavaScript(
+          'document.querySelectorAll("[aria-label=\\"支持交互界面\\"]").length',
+        ),
+        1,
+      );
+      await new Promise(resolve => setTimeout(resolve, 500));
+      fs.writeFileSync(
+        path.join(output, 'mcp-interface-badge.png'),
+        (await win.webContents.capturePage()).toPNG(),
+      );
+      assert.deepEqual(
+        errors.filter(
+          message => !message.includes("Unrecognized Content-Security-Policy directive 'webrtc'"),
+        ),
+        [],
+      );
+      console.log(
+        JSON.stringify(
+          {
+            coldProfile: true,
+            publicRequests: blocked.length,
+            expandedCloseReturnsInline: true,
+            returnedDiagramRetainsEdits: true,
+            returnedDiagramCanExport: true,
+            workspaceSingleToolbar: true,
+            workspaceEditorRetainsEditsAndExports: true,
+            exports: downloads.map(file => file.mimeType),
+            errors,
+            viewport,
+            layout,
+          },
+          null,
+          2,
+        ),
+      );
+    })
+    .then(async () => {
+      win?.destroy();
+      await running?.close();
+      app.exit(0);
+    })
+    .catch(async error => {
+      console.error(error);
+      win?.destroy();
+      await running?.close();
+      app.exit(1);
+    });
+}

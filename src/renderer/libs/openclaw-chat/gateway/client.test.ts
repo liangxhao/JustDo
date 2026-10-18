@@ -7,6 +7,28 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it('cancels a local request wait, retains sent identity and removes its timer and listener', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('WebSocket', { OPEN: 1 });
+  const send = vi.fn();
+  const client = new GatewayClient({ url: 'ws://gateway.test' });
+  (client as unknown as { ws: unknown }).ws = { readyState: 1, send, close: vi.fn() };
+  const abort = new AbortController();
+  const remove = vi.spyOn(abort.signal, 'removeEventListener');
+  const pending = client.request('mcp.app.callTool', {}, { signal: abort.signal });
+  const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError', requestSent: true });
+  expect(JSON.parse(send.mock.calls[0][0]).id).toEqual(expect.any(String));
+  abort.abort();
+  await rejected;
+  expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+  expect(vi.getTimerCount()).toBe(0);
+  await expect(
+    client.request('mcp.app.callTool', {}, { signal: abort.signal }),
+  ).rejects.toMatchObject({ requestSent: false });
+  expect(send).toHaveBeenCalledTimes(1);
+  client.stop();
+});
+
 it('accepts manual compaction success beyond the resettable backend watchdog window', async () => {
   vi.useFakeTimers();
   vi.stubGlobal('WebSocket', { OPEN: 1 });

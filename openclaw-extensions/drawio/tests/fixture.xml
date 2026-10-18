@@ -1,0 +1,13 @@
+<mxfile><diagram name="采购审批"><mxGraphModel dx="900" dy="500" grid="1" gridSize="10" page="0"><root><mxCell id="0"/><mxCell id="1" parent="0"/>
+<mxCell id="heading" value="采购审批流程" style="text;html=1;fontSize=24;fontStyle=1;fontColor=#1e293b;align=left;" vertex="1" parent="1"><mxGeometry x="60" y="40" width="400" height="40" as="geometry"/></mxCell>
+<mxCell id="start" value="提交申请" style="rounded=1;whiteSpace=wrap;html=1;arcSize=20;fillColor=#eaf2ff;strokeColor=#8bb4ee;fontColor=#234a81;fontSize=16;" vertex="1" parent="1"><mxGeometry x="60" y="150" width="150" height="64" as="geometry"/></mxCell>
+<mxCell id="review" value="部门审核" style="rounded=1;whiteSpace=wrap;html=1;arcSize=20;fillColor=#eaf2ff;strokeColor=#8bb4ee;fontColor=#234a81;fontSize=16;" vertex="1" parent="1"><mxGeometry x="280" y="150" width="150" height="64" as="geometry"/></mxCell>
+<mxCell id="decision" value="通过？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff5df;strokeColor=#ddbb6d;fontColor=#8b661b;fontSize=15;" vertex="1" parent="1"><mxGeometry x="500" y="122" width="120" height="120" as="geometry"/></mxCell>
+<mxCell id="finance" value="财务确认" style="rounded=1;whiteSpace=wrap;html=1;arcSize=20;fillColor=#e3f5ef;strokeColor=#7fbaa7;fontColor=#206952;fontSize=16;" vertex="1" parent="1"><mxGeometry x="690" y="150" width="150" height="64" as="geometry"/></mxCell>
+<mxCell id="return" value="补充材料" style="rounded=1;whiteSpace=wrap;html=1;arcSize=20;fillColor=#f4f4f6;strokeColor=#b7bec9;fontColor=#526070;fontSize=15;" vertex="1" parent="1"><mxGeometry x="485" y="330" width="150" height="60" as="geometry"/></mxCell>
+<mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#94a3b8;strokeWidth=2;" edge="1" source="start" target="review" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#94a3b8;strokeWidth=2;" edge="1" source="review" target="decision" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="e3" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#7fbaa7;fontColor=#526070;strokeWidth=2;" edge="1" source="decision" target="finance" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="e4" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#ddbb6d;fontColor=#526070;strokeWidth=2;" edge="1" source="decision" target="return" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;strokeColor=#a3adbb;strokeWidth=2;exitX=0;exitY=0.5;entryX=0.5;entryY=1;" edge="1" source="return" target="start" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+</root></mxGraphModel></diagram></mxfile>

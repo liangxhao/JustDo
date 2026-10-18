@@ -51,6 +51,7 @@ import {
   SwitchSessionOptions,
   withThinkingContent,
 } from './chat-controller-support';
+import { McpAppSession } from './mcp-app-session';
 export type {
   ChatContextUsageSnapshot,
   ChatControllerOptions,
@@ -158,6 +159,43 @@ import { hasUnconfirmedQueuedInput, sendQueuedInput } from './chat-queued-input'
 // ─── ChatController ─────────────────────────────────────────────────────────
 
 export class ChatController {
+  readonly mcpApps = new McpAppSession(() => {
+    const {
+      client,
+      connected,
+      sessionKey,
+      currentSessionId,
+      initialHistoryReady,
+      historyReadFailed,
+    } = this.state;
+    if (
+      !client ||
+      !connected ||
+      !sessionKey ||
+      !currentSessionId ||
+      !initialHistoryReady ||
+      historyReadFailed
+    )
+      return;
+    const generation = client.generation;
+    const agentId = /^agent:([^:]+):/.exec(sessionKey)?.[1];
+    return {
+      client,
+      generation,
+      sessionKey,
+      sessionId: currentSessionId,
+      agentId,
+      isCurrent: () =>
+        this.state.client === client &&
+        this.state.connected &&
+        this.state.sessionKey === sessionKey &&
+        this.state.currentSessionId === currentSessionId &&
+        this.state.initialHistoryReady &&
+        !this.state.historyReadFailed &&
+        client.generation === generation,
+    };
+  });
+
   private readonly localSlashCommandHandlers = new Map<
     string,
     (argumentsText: string) => Promise<void>
@@ -561,6 +599,7 @@ export class ChatController {
   }
 
   private notify(): void {
+    this.mcpApps.refreshBinding();
     debugLog('[ChatCtrl] ▶ notify', this._snap());
     for (const listener of this.listeners) listener(this.state);
   }
@@ -1443,6 +1482,7 @@ export class ChatController {
    * This replicates the webchat's connectGateway + loadChatHistory flow.
    */
   connect(url: string, token: string, sessionKey: string): Promise<void> {
+    this.mcpApps.invalidate();
     return chatControllerSession.connect.call(
       this.chatControllerSessionContext,
       url,
@@ -1453,6 +1493,7 @@ export class ChatController {
 
   /** Switch to a different session */
   switchSession(sessionKey: string, options: SwitchSessionOptions = {}): Promise<void> {
+    this.mcpApps.invalidate();
     return chatControllerSession.switchSession.call(
       this.chatControllerSessionContext,
       sessionKey,
@@ -1462,6 +1503,7 @@ export class ChatController {
 
   /** Disconnect and clean up */
   disconnect(): void {
+    this.mcpApps.invalidate();
     return chatControllerSession.disconnect.call(this.chatControllerSessionContext);
   }
 
@@ -1472,6 +1514,7 @@ export class ChatController {
   }
 
   private handleClose(): void {
+    this.mcpApps.invalidate();
     return chatControllerSession.handleClose.call(this.chatControllerSessionContext);
   }
 
@@ -2109,11 +2152,15 @@ export class ChatController {
 
   beginInitialDispatch(sessionKey: string, runId: string): void {
     if (
-      !runId || !this.state.connected || !this.state.client ||
+      !runId ||
+      !this.state.connected ||
+      !this.state.client ||
       this.state.sessionKey !== sessionKey ||
       (this.state.chatRunId !== null && this.state.chatRunId !== runId)
     ) {
-      throw Object.assign(new Error(i18nService.t('coworkInitialDispatchUnavailable')), { requestSent: false });
+      throw Object.assign(new Error(i18nService.t('coworkInitialDispatchUnavailable')), {
+        requestSent: false,
+      });
     }
     // Record the exact Main send key only at transport invocation. An unknown
     // response can then recover this owner without inventing a native run ID.

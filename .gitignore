@@ -27,6 +27,8 @@ resources/python-win/
 resources/python-*.zip
 resources/local-tts/
 resources/local-tts-cache/
+resources/drawio-cache/
+openclaw-extensions/drawio/assets/
 resources/dependency-config/.npmrc
 resources/dependency-config/pip.ini
 !resources/dependency-config/README.md

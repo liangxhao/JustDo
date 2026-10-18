@@ -6,13 +6,14 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import { WORKSPACE_FILES_DISPLAY_TAB_ID } from '../display/displayTabIds';
 import { useSessionDisplayState } from '../display/useSessionDisplayState';
+import type { OpenMcpAppFile } from '../mcpApps/fileApps';
 import { IMAGE_PREVIEW_EVENT } from './imageFilePreview';
 import { useFilePreviewEvents } from './useFilePreviewEvents';
 
 const fileDisplayTabId = (path: string) => `file:${path.replace(/\\/g, '/')}`;
 const imageSource = 'data:image/png;base64,AA==';
 
-function usePreviewHarness() {
+function usePreviewHarness(openAppFile?: OpenMcpAppFile) {
   const currentSessionIdRef = useRef<string | null>('session-a');
   const navigationScope = useRef({});
   const filePreviewRequestIdRef = useRef(0);
@@ -30,6 +31,7 @@ function usePreviewHarness() {
   filePreviewsRef.current = filePreviews;
   unsupportedFilePreviewsRef.current = unsupportedFilePreviews;
   useFilePreviewEvents({
+    openAppFile,
     currentSessionIdRef,
     filePreviewRequestIdRef,
     filePreviewsRef,
@@ -63,6 +65,59 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+test('a discovered file app handles a spreadsheet before the text preview reads it', async () => {
+  const readPreviewFile = vi.fn();
+  const openAppFile = vi.fn().mockResolvedValue(true);
+  vi.stubGlobal('electron', { shell: { readPreviewFile } });
+  const { result } = renderHook(() => usePreviewHarness(openAppFile));
+  await act(async () =>
+    window.dispatchEvent(
+      new CustomEvent('cowork:preview-file', { detail: { filePath: 'E:/预算.xlsx' } }),
+    ),
+  );
+  expect(openAppFile).toHaveBeenCalledWith({
+    filePath: 'E:/预算.xlsx',
+    isCurrent: expect.any(Function),
+  });
+  expect(readPreviewFile).not.toHaveBeenCalled();
+  expect(result.current.unsupportedFilePreviews).toEqual([]);
+});
+
+test('unavailable file apps preserve the ordinary unsupported-file preview', async () => {
+  const readPreviewFile = vi.fn().mockResolvedValue({ success: false, unsupportedType: true });
+  vi.stubGlobal('electron', { shell: { readPreviewFile } });
+  const { result } = renderHook(() => usePreviewHarness(async () => false));
+  await act(async () =>
+    window.dispatchEvent(
+      new CustomEvent('cowork:preview-file', { detail: { filePath: 'E:/预算.xlsx' } }),
+    ),
+  );
+  expect(readPreviewFile).toHaveBeenCalledOnce();
+  expect(result.current.unsupportedFilePreviews).toEqual(['E:/预算.xlsx']);
+});
+
+test('switching session while the app opens cannot fall back into the new session', async () => {
+  let finish!: (opened: boolean) => void;
+  const openAppFile = vi.fn(
+    (_request: Parameters<OpenMcpAppFile>[0]) =>
+      new Promise<boolean>(resolve => {
+        finish = resolve;
+      }),
+  );
+  const readPreviewFile = vi.fn();
+  vi.stubGlobal('electron', { shell: { readPreviewFile } });
+  const { result } = renderHook(() => usePreviewHarness(openAppFile));
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent('cowork:preview-file', { detail: { filePath: 'E:/预算.xlsx' } }),
+    );
+    result.current.switchSession();
+  });
+  expect(openAppFile.mock.calls[0][0].isCurrent()).toBe(false);
+  await act(async () => finish(false));
+  expect(readPreviewFile).not.toHaveBeenCalled();
 });
 
 test.each(['unsupported', 'too-large', 'existing-unsupported'])(

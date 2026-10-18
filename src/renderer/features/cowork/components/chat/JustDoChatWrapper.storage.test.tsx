@@ -14,6 +14,17 @@ const fixture = vi.hoisted(() => ({
     agentId: string;
     branchCreationPending?: boolean;
   },
+  mcpControls: null as null | {
+    prepare: () => Promise<unknown>;
+    canDraft: () => boolean;
+    onOnboard: (pluginId: string, signal: AbortSignal) => Promise<void>;
+  },
+}));
+vi.mock('../mcpApps/McpAppsControls', () => ({
+  McpAppsControls: (props: NonNullable<typeof fixture.mcpControls>) => {
+    fixture.mcpControls = props;
+    return null;
+  },
 }));
 vi.mock('react-redux', () => ({ useSelector: () => fixture.session }));
 vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
@@ -26,9 +37,15 @@ afterEach(() => {
 
 beforeEach(() => {
   fixture.session = { id: 'old', agentId: 'main' };
+  fixture.mcpControls = null;
   Object.defineProperty(window, 'electron', {
     configurable: true,
     value: {
+      mcpApps: {
+        prepare: vi.fn(),
+        questions: vi.fn().mockResolvedValue({ success: true, value: [] }),
+        onQuestionsChanged: vi.fn(() => () => undefined),
+      },
       openclaw: {
         engine: {
           getPort: vi.fn().mockResolvedValue({ success: true, port: 1 }),
@@ -77,6 +94,29 @@ it('blocks export and sending while history is loading or failed, and retry only
   expect(onReady).toHaveBeenLastCalledWith('agent:main:justdo:old', true);
   await ref.current?.sendMessage('continue');
   expect(send).toHaveBeenCalledTimes(1);
+});
+
+it('blocks captured App entrypoints when branch creation becomes pending', async () => {
+  vi.spyOn(ChatController.prototype, 'connect').mockImplementation(async function (
+    this: ChatController,
+  ) {
+    this.state.connected = true;
+    this.state.initialHistoryReady = true;
+  });
+  const onWidgetDraft = vi.fn(() => true);
+  const view = render(<JustDoChatWrapper onWidgetDraft={onWidgetDraft} />);
+  await waitFor(() => expect(fixture.mcpControls).not.toBeNull());
+  const controls = fixture.mcpControls!;
+  expect(controls.canDraft()).toBe(true);
+  fixture.session = { ...fixture.session, branchCreationPending: true };
+  view.rerender(<JustDoChatWrapper onWidgetDraft={onWidgetDraft} />);
+  expect(controls.canDraft()).toBe(false);
+  await expect(controls.prepare()).rejects.toThrow('coworkBranchCreationPending');
+  await expect(controls.onOnboard('fixture', new AbortController().signal)).rejects.toThrow(
+    'coworkBranchCreationPending',
+  );
+  expect(window.electron.mcpApps.prepare).not.toHaveBeenCalled();
+  expect(onWidgetDraft).not.toHaveBeenCalled();
 });
 
 it('keeps pending branch history readable while blocking direct native sends and mutations', async () => {

@@ -57,6 +57,9 @@ npm test
   not depend on optional plugins. Native registration must not import
   `host/` or `browser/`; shared facades import only pure contracts/prompts,
   and browser modules never import Main.
+- Keep plugin-owned tools, UI, assets, build/verification scripts and unit tests
+  under `openclaw-extensions/<plugin-id>/`. The host retains generic capabilities,
+  integration adapters and tests that exercise host/plugin boundaries.
 - Keep `main.ts`, `preload.ts` and plugin registration entries thin.
   Controllers retain lifecycle/state ownership and delegate through explicit
   typed contexts. Use live `shared/app/propertyContext.ts` accessors rather
@@ -133,6 +136,13 @@ npm test
   `tests/**/*.test.mjs`. Test behavior with Arrange → Act → Assert.
 
 ## Runtime and Configuration Guardrails
+
+- Production runs in a company intranet without public Internet access; model
+  endpoints are internal. Ship runtime dependencies and UI assets in the installer
+  or use explicitly configured internal services. Do not depend on public CDNs,
+  first-launch package downloads, public update checks or public-service fallbacks.
+  Validate cold startup without caches and with public network access blocked;
+  build-time resource preparation follows `docs/offline-downloads.md`.
 
 - Before any OpenClaw version upgrade or local OpenAI fork refresh, read
   [upgrade checklist](docs/openclaw-upgrade-checklist.md). Validate patches, SDK

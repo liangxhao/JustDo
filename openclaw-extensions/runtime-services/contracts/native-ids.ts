@@ -11,6 +11,7 @@ export const OpenClawExtensionId = {
   PLAN_MODE: 'plan-mode',
   AGENT_TEAM: 'agent-team',
   INTERACTIVE_UI: 'interactive-ui',
+  DRAWIO: 'drawio',
   SWARM_WORKFLOW: 'swarm-workflow',
   TYPESAFE: 'typesafe',
   EMBEDDED_BROWSER: 'embedded-browser',

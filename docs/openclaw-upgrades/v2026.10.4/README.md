@@ -78,6 +78,46 @@ Code Mode；未做 MXC 实机或安装版 UI 验收。Code Mode 仍需启用其�
 
 正文流式输出及输出中停止真实验收通过，Windows 目录包通过；Chrome 扩展配对按用户要求延期。最新复审与产物见[追加复审](#追加复审与补丁整体校验)，前序候选的测试和产物身份按各自阶段保留。
 
+## MCP Apps 合回 dev（2026-10-18）
+
+将 `codex/mcp-apps-research` 的单个功能提交 `cf4a47a4b` 合到 dev `497c970e9` 之上，保留后续会话分支恢复、Widget 30 秒读取期限、测试双 worker 配置及工具调用恢复的改动。解决同处修改后，补齐 Main/Renderer 的 App 会话门禁：原生分支创建结果待确认时，旧 App 回调、启动/安装引导及问题操作不能绕过原有隔离。
+
+本次不恢复原 `030-mcp-app-operation-lifecycle.cjs`，不修改 dev 已有的 30 项补丁；现行 `030-tool-call-format-recovery.cjs` 属于另一能力。下方 28 项产物身份及 MiMo 证据仅属于原 worktree 阶段，不冒充合并后 dev 的新运行时构建。draw.io 资源已按 dev 的实际依赖从锁定本地归档重新准备；未覆盖现有 Gateway 的运行时。
+
+合并后的 lint、生产 build、Electron 编译通过。交叉回归 51 个文件/742 项通过；补充的 Main/Renderer 门禁回归 2 个文件/16 项通过。dev 当前依赖下重新准备 3,141 项校验资源，实际 draw.io 冷 profile 公网请求为 0，编辑后 .drawio/PNG/SVG 导出通过。
+
+完整 Vitest 使用现有隔离配置 `.agent-tasks/runtime/session-branching/vitest.config.ts` 导入当前仓库配置（包括新插件测试），以相同版本 12.11.1 的独立 Node SQLite alias 和锁定 ACPX 0.19.5 fixture 执行，未切换/覆盖运行中 Electron 的原生依赖。2 workers、30 秒 test/hook 预算下，首轮 959 个文件/11,794 项通过、4 个文件/60 项条件跳过；`inspect-session-storage.test.ts` 的一项原有测试发生 30 秒超时，该文件和脚本本次均未修改。整轮结束后按原时限单独复测该文件，5 项全部通过（3.11 秒）。保留首次超时，不将其记作首轮全量全绿；未修改断言、预算或跳过失败项。证据在 `.agent-tasks/mcp-apps/merge-{full-tests,storage-recheck}.log`，不提交原始日志。
+
+## MCP Apps 改用原生生命周期（2026-10-18）
+
+经锁定源码与公开 SDK 复核、用户明确确认，删除原 MCP Apps 生命周期补丁 `030-mcp-app-operation-lifecycle.cjs` 及其 helper，该 worktree 当时回到 28 项原有补丁。工具、资源、审批、提问、文件、上下文与标准 AppBridge 继续使用原生认证 WS；宿主和表单预览不再要求本地 appIdentity/hostLeaseId 字段。
+
+关闭停止本地交互并尝试清理已知精确 updateId；已发出的操作可能继续，视图和临时授权按原生租约回收，最长为创建后约十分钟。这个取舍不是协议功能缺失。后续升级必须重新核对公开取消与最终视图释放接口，见[升级清单](../../openclaw-upgrade-checklist.md#21-mcp-apps-原生生命周期)和[宿主契约](../../features/chat/mcp-apps.md#原生接口与插件替代审计)。下节指纹和补丁测试仅对应已移除 030 的历史候选，不能作为当前产物证明。
+
+Windows x64 已从锁定 pristine 包强制重建、bundle、资源同步、预编译和裁剪，并通过 28 项补丁最终校验。该 worktree 验证时 Gateway bundle SHA-256 为 `2a807004b695065822a99608d5fad70d94a027198fb388825b8e27172ff4449b`，patch set 为 `b92cc1be485ce170fddda657b19a2800a63a13de2f67156dad96bf331e33dd55`，build recipe 为 `fef5a727d2dc0acdaaffd6b113d27d01a12f0713b3fef058b98d296245bef30a`。
+
+两个 Agent 只读复审后，修复旧展示关闭误清新上下文的代次及展示归属竞态；最新 51 项相关测试、lint/build 和 Electron 编译通过。实际 Gateway 探针通过工具授权/拒绝、原生问题、设置、资源、精确上下文移除、文件保存/ETag 冲突/订阅/边界和跨会话拒绝，确认本地取消后的后台完成且无自动重发。消息与工作区 Chromium 探针通过；实际运行时 draw.io 冷 profile 公网请求为 0，编辑后的 .drawio/PNG/SVG 导出均通过。
+
+已获准使用的 MiMo `mimo-v2.6-flash` 在隔离原生会话完成真实绘图，精确 `executionSettled:true` 终态和原生历史确认实际模型及 `drawio__create_diagram` 调用；随后通过实际认证 Gateway 加载可编辑界面。冷启动浏览器公网请求为 0，.drawio/PNG/SVG 三种实际导出通过。此项使用现有公网模型仅做开发验证，不代替企业内网模型或完整安装版验收。
+
+最终完整运行时冻结后重新执行 `npm test -- --maxWorkers=2 --testTimeout=30000 --hookTimeout=30000`：931 个测试文件、10,896 项测试通过，6 个文件/66 项条件跳过；结束后恢复 Electron ABI 146。前一轮与运行时重建并行、读到替换中文件的测试已作废，不计入本记录结论。完整安装版、企业内网模型和前述人工组合场景仍需另行验收。
+
+## 历史候选：MCP Apps 宿主追加验证（2026-10-17，含已移除的 030）
+
+`codex/mcp-apps-research` 在同一锁定 npm 包上加入 030：连接/请求绑定的 MCP App 取消、展示租约和最终视图回收，仍由原生会话、请求者、工具、问题与文件策略授权。产品宿主及当前限制见 [MCP Apps](../../features/chat/mcp-apps.md)。未改变 OpenClaw 版本，也未在旧产物上改写 proof。
+
+Windows x64 从 pristine 完整安装、打包、bundle、插件资源同步、预编译及裁剪成功；最终校验确认 29 项补丁。Gateway bundle SHA-256 为 `0a7d9c0b2d2ca783e39d24614361cefb3e3ef2db324b1f1dff5f0071b62cf810`，patch set 为 `fbc64f2cdaa9b93926d4afd2606701696805fe19f075d6e4a30a88c88945200d`，build recipe 为 `de0289b318b77b3ab5e4caeb98393404bcd959978bfca77b1829b69294d452d5`。
+
+三路 Agent 审查后修复取消读取的未交付租约回收、部分补丁形态拒绝、真实原生历史预览恢复、展开后关闭覆盖层和关闭中的草稿确认竞态。React 入口、设置和原生提问采用紧凑控件，补充必选校验、可选数值和首页迟到响应测试；真实产品组件已检查明暗主题和窄窗口截图。
+
+最终 launcher 的隔离 stdio MCP 探针已通过：入口、视图内授权与拒绝、精确取消、原生问题、设置、资源搜索、上下文、文件保存/冲突/订阅/边界和释放。两个父文档的 Chromium 探针通过 SDK 握手、初始结果、一次工具调用、伪造来源拒绝、展开保留输入、主题更新和 teardown 后释放。以上均不发送模型请求。
+
+本次全量 `npm test -- --maxWorkers=2 --testTimeout=30000 --hookTimeout=30000` 通过 10,864 项，条件跳过 66 项（926 个测试文件通过，6 个跳过）；结束后已恢复 Electron ABI 146。`npm run lint`、`npm run build` 与 `npm run compile:electron` 均通过。
+
+全量回归后追加修复 ToolSearch 原生嵌套活动的历史恢复，并以真实 nested live 事件验证 `reduceAgentEvent → projectTurnItems`。最终 `npm test -- src/renderer/libs/openclaw-chat --maxWorkers=2 --testTimeout=30000 --hookTimeout=30000` 通过 108 个聊天模块测试文件、1,717 项测试，随后恢复 Electron ABI 146 并重新执行 lint/build；该追加改动未改变上述运行时指纹。
+
+安装版、企业 MCP 服务/代理、富表单预览/上传/秘密存储组合，以及实际独立窗口最小化等人工场景仍待验收；前述历史 Windows 目录包通过不能替代这次新增宿主的安装版验证。
+
 ## 基线与来源
 
 - 应用起点：`2893c978f314b977a5881526174aa7295e37a3dc`，原 OpenClaw `v2026.9.8`。

@@ -393,6 +393,9 @@ function bundleProductExtension(sourceDir, targetDir) {
 }
 
 function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
+  if (fs.existsSync(path.join(repoRoot, 'openclaw-extensions/drawio'))) {
+    require('../../openclaw-extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(path.join(repoRoot, 'openclaw-extensions/drawio/assets'));
+  }
   const sourceDir = path.join(repoRoot, 'openclaw-extensions');
   const targetDir = path.join(runtimeRoot, 'dist', 'extensions');
   const copied = [];

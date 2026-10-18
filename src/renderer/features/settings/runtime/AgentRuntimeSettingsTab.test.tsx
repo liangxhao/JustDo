@@ -283,13 +283,13 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
 
     expect(onChange).toHaveBeenCalledWith({
       ...settings,
-      mcp: { requestTimeoutSeconds: 300 },
+      mcp: { ...settings.mcp, requestTimeoutSeconds: 300 },
     });
 
     fireEvent.change(input, { target: { value: '100000' } });
     expect(onChange).toHaveBeenLastCalledWith({
       ...settings,
-      mcp: { requestTimeoutSeconds: 86_400 },
+      mcp: { ...settings.mcp, requestTimeoutSeconds: 86_400 },
     });
   });
 

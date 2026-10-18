@@ -74,6 +74,8 @@ const EXCLUDED_ENVFILE = /^\.env(\..+)?$/i;
 function shouldExclude(entryPath) {
   const basename = path.basename(entryPath);
   const normalized = entryPath.replace(/\\/g, '/');
+  // The prepared editor is a closed, hashed resource set, including legal files.
+  if (/(?:^|\/)dist\/extensions\/drawio\/assets(?:\/|$)/.test(normalized)) return false;
   const isExtensionLegalMetadata =
     /(?:^|\/)dist\/extensions\/(?:acpx|mxc)\//.test(normalized) &&
     /^(?:license|licence|notice|third[_-]party[_-]notices?|readme)(?:\..+)?$/i.test(basename);

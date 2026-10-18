@@ -63,6 +63,7 @@ export const parseExtensionMcpInventory = (value: unknown): ExtensionProvidedMcp
               : plugin.enabled === true && plugin.status !== 'error',
           // Native inspection supports both stdio and HTTP; only this flag means unsupported.
           supported: rawServer.unsupported !== true,
+          ...(rawServer.supportsApps === true ? { supportsApps: true } : {}),
           ...(typeof rawServer.toggleable === 'boolean'
             ? { toggleable: rawServer.toggleable }
             : {}),

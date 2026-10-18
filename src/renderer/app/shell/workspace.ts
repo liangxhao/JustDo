@@ -1,6 +1,8 @@
+import { installMcpAppFrameMessaging } from '@/libs/openclaw-chat/components/mcp-app/transport';
 import { installNativeWidgetMessaging } from '@/libs/openclaw-chat/components/native-widget/messaging';
 
 installNativeWidgetMessaging();
+installMcpAppFrameMessaging();
 
 // The existing portal waits for this root. Publish it only after the local
 // messaging function is ready, so the first widget cannot race module loading.

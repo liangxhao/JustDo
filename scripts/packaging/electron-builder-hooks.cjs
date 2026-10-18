@@ -442,6 +442,7 @@ function verifyRuntimeCompanionFilesFromBundle(runtimeRoot, gatewayBundlePath, b
 }
 
 function verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint) {
+  require('../../openclaw-extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(path.join(runtimeRoot, 'dist/extensions/drawio/assets'));
   verifyRequiredPathSet(
     runtimeRoot,
     [
@@ -864,6 +865,7 @@ function installSkillDependencies() {
 }
 
 async function beforePack(context) {
+  require('../../openclaw-extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets();
   verifyPackagedBuiltinModelAuthConfig(context.appDir || path.join(__dirname, '../..'));
   prepareBrowserExtension();
   if (isWindowsTarget(context)) compileBrowserExtensionNativeHost();
@@ -1112,6 +1114,10 @@ async function beforePack(context) {
 async function afterPack(context) {
   verifyPackagedNodeRuntime(context);
   await verifyPackagedOpenClawRuntime(context);
+  const diagramResourcesRoot = isMacTarget(context)
+    ? path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Resources')
+    : path.join(context.appOutDir, 'resources');
+  await require('../../openclaw-extensions/drawio/scripts/verify-packaged.cjs').verifyPackagedDrawioAssets(diagramResourcesRoot, isWindowsTarget(context));
   verifyPackagedBrowserExtension(context);
 
   if (isWindowsTarget(context)) {

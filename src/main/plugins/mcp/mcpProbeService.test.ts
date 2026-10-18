@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   mcpProbeFetch: vi.fn(),
   transportFetch: undefined as unknown,
   eventSourceFetch: undefined as unknown,
+  tools: [] as unknown[],
 }));
 
 vi.mock('../../core/network/mainProcessFetch', () => ({
@@ -38,7 +39,7 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
     async connect() {}
     async ping() {}
     async listTools() {
-      return { tools: [] };
+      return { tools: mocks.tools };
     }
     async listResources() {
       return { resources: [] };
@@ -79,6 +80,14 @@ const buildServer = (transportType: 'http' | 'sse'): McpServerRecord => ({
 beforeEach(() => {
   mocks.transportFetch = undefined;
   mocks.eventSourceFetch = undefined;
+  mocks.tools = [];
+});
+
+test('projects interactive capability without copying unrelated tool metadata', async () => {
+  mocks.tools = [{ name: 'diagram', _meta: { ui: { resourceUri: 'ui://diagram/view' }, unrelated: 'private' } }];
+  const result = await probeMcpServer(buildServer('http'));
+  expect(result.tools[0].uiResourceUri).toBe('ui://diagram/view');
+  expect(result.tools[0]._meta).toBeUndefined();
 });
 
 test.each(['http', 'sse'] as const)(

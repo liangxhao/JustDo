@@ -12,7 +12,12 @@ export default defineConfig({
   test: {
     // Native runtime cold starts and Windows process snapshots compete for resources.
     maxWorkers: 2,
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'tests/**/*.test.ts'],
+    include: [
+      'src/**/*.test.ts',
+      'src/**/*.test.tsx',
+      'tests/**/*.test.ts',
+      'openclaw-extensions/*/tests/**/*.test.ts',
+    ],
     environment: 'node',
   },
 });

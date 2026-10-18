@@ -1217,6 +1217,13 @@ describe('OpenClaw plugin config merging', () => {
     ).toEqual({ entries: { [OpenClawExtensionId.WORKBOARD]: { enabled: false } } });
   });
 
+  test('enables bundled draw.io by default and preserves an explicit disable', () => {
+    const defaults = buildDefaultOpenClawPluginEntries(id => id === OpenClawExtensionId.DRAWIO);
+    expect(defaults).toEqual({ drawio: { enabled: true } });
+    expect(applyDefaultOpenClawPluginEntries({ entries: { drawio: { enabled: false } } }, defaults))
+      .toEqual({ entries: { drawio: { enabled: false } } });
+  });
+
   test('removes registrations for extensions that are no longer discoverable', () => {
     expect(
       removeUnavailableOpenClawPluginRegistrations(

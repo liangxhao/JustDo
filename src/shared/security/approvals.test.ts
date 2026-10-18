@@ -49,7 +49,7 @@ describe('OpenClaw approval contracts', () => {
   test('rejects unknown values', () => {
     expect(isPermissionMode('allowlist')).toBe(false);
     expect(isExecApprovalDecision('approve')).toBe(false);
-    expect(isApprovalDecision(ExecApprovalDecision.AllowAlways)).toBe(false);
+    expect(isApprovalDecision('allow-persistently')).toBe(false);
   });
 
   test('requires a bound execution identity for a session grant', () => {

@@ -81,6 +81,8 @@ if (mode === 'list') {
           connectionSummary: transport?.description,
           connectionTimeoutMs: transport?.connectionTimeoutMs,
           requestTimeoutMs: transport?.requestTimeoutMs,
+          supportsApps: plugin.origin === 'bundled' && plugin.id === 'drawio' && name === 'drawio' &&
+            !Object.keys(cfg.mcp?.servers?.[name] ?? {}).some(key => !['enabled', 'connectionTimeoutMs', 'requestTimeoutMs'].includes(key)),
         };
       }) }];
   });
@@ -129,6 +131,7 @@ if (mode === 'list') {
           tools: catalog.tools.filter(tool => tool.serverName === name).map(tool => ({
             name: tool.toolName, title: tool.title, description: tool.description,
             inputSchema: tool.inputSchema, outputSchema: tool.outputSchema,
+            uiResourceUri: tool.uiResourceUri,
           })), resources, prompts,
           capabilities: { tools: Boolean(server.tools), resources: Boolean(server.resources), prompts: Boolean(server.prompts) },
         };

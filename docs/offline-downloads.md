@@ -131,7 +131,37 @@ npm run build:local-speech-model-artifacts
 源包更新或产品包装修订后，更新编译期 metadata 并用新文件身份发布，不原地更换旧包字节。
 用户实际安装目录为 `<userData>/local-speech-models/<model-id>`，引擎与用户权重分别判断就绪。
 
-## 6. 准备完成后的检查
+## 6. draw.io 离线编辑器
+
+构建时下载锁定的 [draw.io 源码归档](https://codeload.github.com/jgraph/drawio/tar.gz/9034053fba80a435e27d68d374bc564b83917ae9)，文件名为
+`drawio-9034053fba80a435e27d68d374bc564b83917ae9.tar.gz`，放入
+`resources/drawio-cache/`。SHA-256：
+
+```text
+f02fdcff60653653eef185ad65db3331083bd89c60ab8b4e19edaa11f65ca571
+```
+
+来源锁定记录为 `openclaw-extensions/drawio/upstream.json`；资源准备和校验实现归该插件的 `scripts/` 目录所有，根 npm 命令只负责委托。
+
+XML 解析依赖 `saxes@6.0.0` 的 npm 包未携带许可证文件；上游固定版本的[完整许可证](https://raw.githubusercontent.com/lddubeau/saxes/v6.0.0/LICENSE)已保存为 `openclaw-extensions/drawio/licenses/saxes-6.0.0.txt`，原始下载 SHA-256 为 `0fac2374380621b22e6b50451057721a9c52935b02d16d106a9f04897f061d0e`。构建从仓库副本复制，不再联网获取；同名依赖的不同版本分别保留许可证目录。
+
+在已有 npm 锁定依赖的构建机上，从本地归档准备：
+
+```powershell
+npm run drawio:prepare
+npm run drawio:verify
+```
+
+归档在其他获准位置时使用 `npm run drawio:prepare -- --archive "D:\离线资源\drawio-9034053fba80a435e27d68d374bc564b83917ae9.tar.gz"`。
+允许联网的资源准备机也可显式执行 `npm run drawio:prepare -- --download`；该开关仅用于构建资源准备，产品运行时没有下载入口。
+
+输出为 `openclaw-extensions/drawio/assets/`，包含完整 Web 编辑器、布局/worker/WASM/公式/形状资源、本地 stdio 服务、标准 App SDK bundle、逐文件哈希和许可证。原始 tar 包及生成目录不提交 Git。npm 依赖、Node 和 esbuild 仍应按本文件第 1 节由完整内网 registry/cache 提供。
+
+资源组装复制到目标 runtime 的 `dist/extensions/drawio/assets/`，预编译扩展和最终打包再次核对资源。缺失、陈旧、篡改或多余文件直接报错；不在打包或启动阶段自动下载。若适配器、锁定依赖或准备脚本变化，重新准备资源并按 OpenClaw 构建规则重建运行时，不能只修改产物哈希。
+
+安装包不需要上述归档、npm、开发工具或公网连接。平台发布 CI 在构建阶段显式准备资源；内网构建机使用已校验的本地归档。实际使用只运行随包提供的 Node/MCP 服务和本机只读资源 listener；渲染和导出不连接公共 MCP、CDN、云存储或远程转换服务。部署和验收细节见 [draw.io 离线绘图](features/chat/drawio-offline.md)。
+
+## 7. 准备完成后的检查
 
 - 资源对应本次目标平台/架构，版本、hash、许可证与脚本要求一致。
 - Python 依赖已通过目标解释器真实 import；语音模型不是半成品解包目录。

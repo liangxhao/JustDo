@@ -39,6 +39,17 @@ export const resolveAllowedDecisions = (approval: ApprovalRequest): ApprovalDeci
     ...(allowOnce && approval.kind === ApprovalKind.Exec && canGrantExecApprovalForSession(approval)
       ? [ApprovalDecision.AllowForSession]
       : []),
+    ...(approval.kind === ApprovalKind.Plugin &&
+    approval.request.pluginId === 'bundle-mcp' &&
+    supplied?.includes(ExecApprovalDecision.AllowAlways) &&
+    approval.request.actions?.some(
+      action =>
+        action.kind === 'decision' &&
+        action.decision === ExecApprovalDecision.AllowAlways &&
+        action.command === 'allow-always',
+    )
+      ? [ApprovalDecision.AllowForView]
+      : []),
     ...(deny ? [ApprovalDecision.Deny] : []),
   ];
 };
@@ -226,6 +237,16 @@ const ExecApprovalModal: React.FC<ExecApprovalModalProps> = ({ approval, onExpir
               className="rounded-lg border border-border bg-background px-3.5 py-2 text-xs font-medium text-foreground transition-colors hover:bg-surface-raised disabled:opacity-50"
             >
               {i18nService.t('execApprovalDeny')}
+            </button>
+          )}
+          {allowed.includes(ApprovalDecision.AllowForView) && (
+            <button
+              type="button"
+              disabled={expired || submitting !== null}
+              onClick={() => void submit(ApprovalDecision.AllowForView)}
+              className="rounded-lg border border-primary/35 bg-background px-3.5 py-2 text-xs font-medium text-primary disabled:opacity-50"
+            >
+              {i18nService.t('mcpAppsAllowView')}
             </button>
           )}
           {allowed.includes(ApprovalDecision.AllowForSession) && (

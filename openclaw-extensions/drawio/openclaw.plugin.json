@@ -1,0 +1,14 @@
+{
+  "id": "drawio",
+  "name": "draw.io",
+  "description": "Offline diagram editor with an interactive MCP App.",
+  "enabledByDefault": true,
+  "contracts": { "gatewayMethodDispatch": ["authenticated-request"] },
+  "categories": ["productivity"],
+  "skills": ["./skills"],
+  "activation": { "onStartup": true },
+  "mcpServers": {
+    "drawio": { "command": "node", "args": ["./assets/server.cjs"] }
+  },
+  "configSchema": { "type": "object", "additionalProperties": false, "properties": {} }
+}

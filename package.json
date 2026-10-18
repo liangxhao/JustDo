@@ -35,6 +35,8 @@
     "prebuild": "npm run validate:product-metadata",
     "build": "tsc && vite build",
     "validate:product-metadata": "node scripts/packaging/validate-product-metadata.cjs",
+    "drawio:prepare": "node openclaw-extensions/drawio/scripts/prepare.cjs",
+    "drawio:verify": "node openclaw-extensions/drawio/scripts/prepare.cjs --verify",
     "verify:windows-update-artifacts": "node scripts/packaging/verify-windows-update-artifacts.cjs release",
     "lint": "eslint src/",
     "format": "prettier --write .",
@@ -94,6 +96,8 @@
     "fix:mac-icon": "bash scripts/assets/mac-icon.sh fix-display"
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "2.2.0",
+    "@modelcontextprotocol/ext-apps": "2.0.0",
     "@tanstack/react-virtual": "^3.14.13",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",
@@ -129,6 +133,7 @@
     }
   },
   "devDependencies": {
+    "saxes": "6.0.0",
     "@commitlint/cli": "^21.2.3",
     "@commitlint/config-conventional": "^21.2.3",
     "@dnd-kit/core": "^6.3.1",

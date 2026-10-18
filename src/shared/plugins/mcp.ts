@@ -42,6 +42,8 @@ export type ExtensionProvidedMcpServer = {
   providerDescription: string;
   enabled: boolean;
   supported: boolean;
+  /** Reviewed bundled declaration. Live tool metadata supersedes this hint after a probe. */
+  supportsApps?: boolean;
   /** Native ownership and transport admission; Main also checks application protection. */
   toggleable?: boolean;
   configurable?: boolean;

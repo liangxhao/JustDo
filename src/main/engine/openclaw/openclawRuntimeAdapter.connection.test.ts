@@ -249,6 +249,7 @@ test('an intentionally stopped gateway client cannot reclaim the active connecti
   const onHelloOk = clientOptions?.onHelloOk;
   expect(typeof onHelloOk).toBe('function');
   expect(clientOptions?.deviceIdentity).toBeNull();
+  expect(clientOptions?.caps).toEqual(expect.arrayContaining(['exec-approvals', 'plugin-approvals']));
   expect(clientOptions?.scopes).toEqual([
     'operator.admin',
     'operator.read',

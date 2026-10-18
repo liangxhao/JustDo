@@ -38,6 +38,11 @@ If a run reached all 16 pre-restart checks but its shutdown checkpoint failed,
 checks against that probe's private state. Evidence keeps the earlier failure
 and resumed checks separate; this is not a fresh full pass.
 
+Plugin-specific preparation and verification scripts belong to
+`openclaw-extensions/<plugin-id>/scripts/`. Root npm commands and packaging hooks
+delegate there; for example, draw.io owns its asset builder and packaged-asset
+verifier under `openclaw-extensions/drawio/`.
+
 ### Inspect one native session's stored content
 
 For explicitly requested storage forensics, `openclaw/inspect-session-storage.cjs`

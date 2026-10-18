@@ -4,6 +4,7 @@ import { TerminalGateway } from '../../../shared/app/terminal';
 import { projectDiagnosticGatewayInfo } from '../../../shared/cowork/diagnostics/diagnosticRuntimeInfo';
 import type { DiagnosticGatewayInfo } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
+import { ApprovalGatewayCapability } from '../../../shared/security/approvals';
 import { coworkLog } from '../../cowork/coworkLogger';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
 import {
@@ -240,7 +241,8 @@ export async function createGatewayClient(
     clientDisplayName: PRODUCT_NAME,
     clientVersion: app.getVersion(),
     mode: 'backend',
-    caps: [OPENCLAW_GATEWAY_TOOL_EVENTS_CAP, TerminalGateway.OffsetCapability],
+    caps: [OPENCLAW_GATEWAY_TOOL_EVENTS_CAP, TerminalGateway.OffsetCapability,
+      ApprovalGatewayCapability.Exec, ApprovalGatewayCapability.Plugin],
     role: 'operator',
     scopes: [
       'operator.admin',

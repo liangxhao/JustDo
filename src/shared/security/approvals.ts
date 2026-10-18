@@ -5,6 +5,12 @@ import {
 
 export * from '../../../openclaw-extensions/runtime-services/contracts/permissions';
 
+/** The desktop renders these native approval kinds through Main. */
+export const ApprovalGatewayCapability = {
+  Exec: 'exec-approvals',
+  Plugin: 'plugin-approvals',
+} as const;
+
 export const ExecApprovalDecision = {
   AllowOnce: 'allow-once',
   AllowAlways: 'allow-always',
@@ -16,6 +22,7 @@ export type ExecApprovalDecision = (typeof ExecApprovalDecision)[keyof typeof Ex
 export const ApprovalDecision = {
   AllowOnce: ExecApprovalDecision.AllowOnce,
   AllowForSession: 'allow-session',
+  AllowForView: ExecApprovalDecision.AllowAlways,
   Deny: ExecApprovalDecision.Deny,
 } as const;
 
@@ -81,6 +88,12 @@ export interface PluginApprovalRequestPayload {
   toolName?: string | null;
   toolCallId?: string | null;
   allowedDecisions?: ExecApprovalDecision[] | null;
+  actions?: Array<{
+    kind: 'decision';
+    decision: ExecApprovalDecision;
+    label: string;
+    command: string;
+  }>;
   agentId?: string | null;
   sessionKey?: string | null;
 }
@@ -131,6 +144,7 @@ export const isExecApprovalDecision = (value: unknown): value is ExecApprovalDec
 export const isApprovalDecision = (value: unknown): value is ApprovalDecision =>
   value === ApprovalDecision.AllowOnce ||
   value === ApprovalDecision.AllowForSession ||
+  value === ApprovalDecision.AllowForView ||
   value === ApprovalDecision.Deny;
 
 export const canGrantExecApprovalForSession = (request: ExecApprovalRequest): boolean => {

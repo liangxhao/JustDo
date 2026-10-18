@@ -21,6 +21,10 @@ beforeEach(() => {
   Object.defineProperty(window, 'electron', {
     configurable: true,
     value: {
+      mcpApps: {
+        questions: vi.fn().mockResolvedValue({ success: true, value: [] }),
+        onQuestionsChanged: vi.fn(() => () => undefined),
+      },
       openclaw: {
         engine: {
           getPort: vi.fn().mockResolvedValue({ success: true, port: 1 }),
@@ -77,7 +81,9 @@ describe('actual wrapper initial native dispatch lifecycle', () => {
     internals.suspendedRunId = 'unresolved-run';
     expect(ref.current!.isInitialDispatchReady(nativeKey)).toBe(false);
     internals.suspendedRunId = null;
-    await act(async () => { await ref.current!.dispatchInitialTurn(params); });
+    await act(async () => {
+      await ref.current!.dispatchInitialTurn(params);
+    });
     expect(request).toHaveBeenCalledWith('chat.send', params);
     controller.state.connected = false;
     expect(ref.current!.isInitialDispatchReady(nativeKey)).toBe(false);
@@ -86,10 +92,15 @@ describe('actual wrapper initial native dispatch lifecycle', () => {
   it('retains the exact delegated send owner after an unknown transport failure', async () => {
     const request = vi.fn().mockRejectedValue(new Error('Transport lost'));
     const { ref, controller, params } = await setup(request);
-    await expect(ref.current!.dispatchInitialTurn(params)).rejects.toMatchObject({ requestSent: true });
+    await expect(ref.current!.dispatchInitialTurn(params)).rejects.toMatchObject({
+      requestSent: true,
+    });
     expect(controller.state.chatRunId).toBe(params.idempotencyKey);
     expect(request).toHaveBeenCalledExactlyOnceWith('chat.send', params);
-    const internal = controller as unknown as { handleClose(): void; suspendedRunId: string | null };
+    const internal = controller as unknown as {
+      handleClose(): void;
+      suspendedRunId: string | null;
+    };
     internal.handleClose();
     expect(internal.suspendedRunId).toBe(params.idempotencyKey);
     expect(controller.state.chatSending).toBe(true);
@@ -97,14 +108,17 @@ describe('actual wrapper initial native dispatch lifecycle', () => {
 
   it('does not bind a send owner when preflight rejects the selected session', async () => {
     const { ref, controller, request, params } = await setup();
-    await expect(ref.current!.dispatchInitialTurn({ ...params, sessionKey: 'other-session' }))
-      .rejects.toMatchObject({ requestSent: false });
+    await expect(
+      ref.current!.dispatchInitialTurn({ ...params, sessionKey: 'other-session' }),
+    ).rejects.toMatchObject({ requestSent: false });
     expect(controller.state.chatRunId).toBeNull();
     expect(request).not.toHaveBeenCalled();
   });
 
   it('retires a confirmed cancelled first send before its first native stream frame', async () => {
-    const { ref, controller, params } = await setup(vi.fn().mockResolvedValue({ runId: 'initial-stop' }));
+    const { ref, controller, params } = await setup(
+      vi.fn().mockResolvedValue({ runId: 'initial-stop' }),
+    );
     await ref.current!.dispatchInitialTurn(params);
     expect(controller.state.transcript.activeTurn).toBeNull();
     controller.settleConfirmedRun(nativeKey, params.idempotencyKey, 'aborted');
@@ -115,9 +129,13 @@ describe('actual wrapper initial native dispatch lifecycle', () => {
   });
 
   it('lets start-failure cleanup retire an owner after a definite client rejection', async () => {
-    const request = vi.fn().mockRejectedValue(Object.assign(new Error('Not sent'), { requestSent: false }));
+    const request = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('Not sent'), { requestSent: false }));
     const { ref, controller, params } = await setup(request);
-    await expect(ref.current!.dispatchInitialTurn(params)).rejects.toMatchObject({ requestSent: false });
+    await expect(ref.current!.dispatchInitialTurn(params)).rejects.toMatchObject({
+      requestSent: false,
+    });
     expect(request).toHaveBeenCalledExactlyOnceWith('chat.send', params);
     // CoworkView owns failed-start cleanup; the wrapper must propagate the
     // definite result without retrying or claiming a terminal execution.

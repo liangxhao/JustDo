@@ -44,6 +44,10 @@ beforeEach(() => {
   Object.defineProperty(window, 'electron', {
     configurable: true,
     value: {
+      mcpApps: {
+        questions: vi.fn().mockResolvedValue({ success: true, value: [] }),
+        onQuestionsChanged: vi.fn(() => () => undefined),
+      },
       openclaw: {
         engine: {
           getPort: vi.fn().mockResolvedValue({ success: true, port: 1 }),

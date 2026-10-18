@@ -104,6 +104,7 @@ import NewDisplayTabButton from '@/features/cowork/components/display/NewDisplay
 import SessionSummaryPanel from '@/features/cowork/components/display/SessionSummaryPanel';
 import SessionSummaryResourceList from '@/features/cowork/components/display/SessionSummaryResourceList';
 import { useDisplayTabOrder } from '@/features/cowork/components/display/useDisplayTabOrder';
+import { useMcpAppTabs } from '@/features/cowork/components/display/useMcpAppTabs';
 import { useRecordingReviewTabs } from '@/features/cowork/components/display/useRecordingReviewTabs';
 import {
   HOME_DISPLAY_SESSION_KEY,
@@ -113,6 +114,10 @@ import { useSessionSummaryVisibility } from '@/features/cowork/components/displa
 import { WORKSPACE_PRESENTATION_EVENT } from '@/features/cowork/components/display/useWorkspacePortal';
 import { inferInitialGoalObjective } from '@/features/cowork/components/goals/goalPendingObjective';
 import { useSessionRunProgress } from '@/features/cowork/components/goals/useSessionRunProgress';
+import type { OpenMcpAppFile } from '@/features/cowork/components/mcpApps/fileApps';
+import type { McpAppComposerMenu } from '@/features/cowork/components/mcpApps/McpAppsControls';
+import { saveAppMessageAttachments } from '@/features/cowork/components/mcpApps/messageAttachments';
+import { useHomeFileApps } from '@/features/cowork/components/mcpApps/useHomeFileApps';
 import FilePreviewDrawer, {
   type FilePreviewDrawerHandle,
 } from '@/features/cowork/components/preview/FilePreviewDrawer';
@@ -604,6 +609,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
   // Ref for JustDoChatWrapper (to call sendMessage)
   const chatWrapperRef = useRef<JustDoChatWrapperRef>(null);
+  const [mcpAppMenu, setMcpAppMenu] = useState<McpAppComposerMenu | null>(null);
   const [historyReadiness, setHistoryReadiness] = useState<{
     sessionKey: string;
     ready: boolean;
@@ -667,6 +673,25 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     },
     () => setIsDisplayPanelOpen(true),
   );
+  const mcpAppTabs = useMcpAppTabs(
+    displaySessionKey,
+    id => {
+      setIsWorkspaceFilesOpen(false);
+      setPreferredDisplayTabId(id);
+    },
+    () => setIsDisplayPanelOpen(true),
+  );
+  const appFileOpenerRef = useRef<OpenMcpAppFile>(async () => false);
+  const homeFileOpenerRef = useRef<OpenMcpAppFile>(async () => false);
+  appFileOpenerRef.current = async request => {
+    if (!request.isCurrent()) return false;
+    if (mcpAppTabs.focusFile(request.filePath)) return true;
+    if (!currentSessionId) return homeFileOpenerRef.current(request);
+    return mcpAppMenu?.sessionId === currentSessionId
+      ? ((await mcpAppMenu.openFile?.(request)) ?? false)
+      : false;
+  };
+  const openAppFile = useCallback<OpenMcpAppFile>(request => appFileOpenerRef.current(request), []);
   const unorderedDisplayTabIds = useMemo(
     () => [
       ...(isBrowserPanelOpen ? browserTabs.map(tab => browserDisplayTabId(tab.targetId)) : []),
@@ -689,6 +714,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       ...(isReviewOpen ? [REVIEW_TAB_ID] : []),
       ...sideChatTabs.map(tab => tab.id),
       ...recordingReviewTabs.tabs.map(tab => tab.id),
+      ...mcpAppTabs.tabs.map(tab => tab.id),
     ],
     [
       agentTeamEnabled,
@@ -709,6 +735,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       unsupportedFilePreviews,
       visiblePlanInteraction,
       recordingReviewTabs.tabs,
+      mcpAppTabs.tabs,
     ],
   );
   const { orderedIds: availableDisplayTabIds, replaceTab } = useDisplayTabOrder(
@@ -937,6 +964,32 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const currentAgentId = config.allowMainAgentSwitch
     ? agentState.currentAgentId
     : MAIN_USER_AGENT_ID;
+  homeFileOpenerRef.current = useHomeFileApps({
+    enabled: !currentSessionId,
+    cwd: config.workingDirectory.trim(),
+    agentId: currentAgentId,
+    permissionMode: config.permissionMode,
+    addDraft: async text => {
+      if (
+        currentSessionIdRef.current ||
+        !text.trim() ||
+        text.length > 4000 ||
+        /^\s*[!/]/.test(text)
+      )
+        return false;
+      if (promptInputRef.current) promptInputRef.current.appendValue(text);
+      else {
+        const previous = store.getState().cowork.draftPrompts.__home__ ?? '';
+        dispatch(
+          setDraftPrompt({
+            sessionId: '__home__',
+            draft: previous ? `${previous}\n\n${text}` : text,
+          }),
+        );
+      }
+      return true;
+    },
+  });
   const currentSessionMainRunning = useSelector(selectCurrentSessionMainRuntimeRunning);
   const currentSessionRuntimeRunning = currentSession
     ? currentSession.id.startsWith('temp-')
@@ -1622,6 +1675,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     setIsWorkspaceFilesOpen,
     setPreferredDisplayTabId,
     setUnsupportedFilePreviews,
+    openAppFile,
   });
 
   useEffect(() => {
@@ -2840,6 +2894,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           ]
         : []),
       ...recordingReviewTabs.tabs,
+      ...mcpAppTabs.tabs,
       ...(isBrowserPanelOpen
         ? browserTabs.map(tab => ({
             id: browserDisplayTabId(tab.targetId),
@@ -3283,8 +3338,56 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             </div>
             {/* Messages */}
             <JustDoChatWrapper
+              onMcpAppMenuChange={setMcpAppMenu}
               onSummaryResourcesChange={setSummaryResources}
               ref={chatWrapperRef}
+              mcpAppFilePath={activeFilePreview?.filePath}
+              onNewMcpAppDraft={async (text, content) => {
+                const sessionId = currentSessionIdRef.current;
+                const isCurrent = () =>
+                  currentSessionIdRef.current === sessionId &&
+                  !store.getState().cowork.currentSession?.external?.readOnly;
+                if (!onNewChat || !sessionId || !isCurrent() || !text.trim() || text.length > 4000)
+                  return false;
+                const attachments = await saveAppMessageAttachments(
+                  content,
+                  currentSessionFolderPath,
+                  isCurrent,
+                );
+                if (!isCurrent()) return false;
+                const previous = store.getState().cowork.draftPrompts.__home__ ?? '';
+                dispatch(
+                  setDraftPrompt({
+                    sessionId: '__home__',
+                    draft: previous ? `${previous}\n\n${text}` : text,
+                  }),
+                );
+                const existing = store.getState().cowork.draftAttachments.__home__ ?? [];
+                dispatch(
+                  setDraftAttachments({
+                    draftKey: '__home__',
+                    attachments: [...existing, ...attachments],
+                  }),
+                );
+                onNewChat();
+                return true;
+              }}
+              onOpenMcpAppFile={async file => {
+                const sessionId = currentSessionIdRef.current;
+                if (!sessionId || sessionId !== currentSession.id) return false;
+                window.dispatchEvent(
+                  new CustomEvent('cowork:preview-file', {
+                    detail: {
+                      filePath: file.path,
+                      workingDirectory: currentSessionFolderPath,
+                      currentSessionOnly: true,
+                      openUnsupportedInSystem: false,
+                      isCurrent: () => currentSessionIdRef.current === sessionId,
+                    },
+                  }),
+                );
+                return true;
+              }}
               onWidgetDraft={
                 sessionTranscriptMutation === null && !currentSession.external?.readOnly
                   ? (sessionKey, text) => {
@@ -3297,7 +3400,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                         text.length > 4000 ||
                         /^\s*[!/]/.test(text)
                       )
-                        return;
+                        return false;
                       const composer = promptInputRef.current;
                       if (composer) {
                         composer.appendValue(text);
@@ -3306,6 +3409,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                         const draft = previous ? `${previous}\n\n${text}` : text;
                         dispatch(setDraftPrompt({ sessionId: active.id, draft }));
                       }
+                      return true;
                     }
                   : undefined
               }
@@ -3396,6 +3500,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     )}
                     <div className={`${COMPOSER_FRAME_CLASS} relative z-10`}>
                       <CoworkPromptInput
+                        mcpAppMenu={mcpAppMenu}
                         ref={promptInputRef}
                         onSubmit={handleSendMessage}
                         onQueue={handleQueueMessage}
@@ -3567,6 +3672,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 </div>
               ))}
               {recordingReviewTabs.panels(activeDisplayTabId)}
+              {mcpAppTabs.panels(activeDisplayTabId)}
               {swarmWorkflowEnabled && swarmWorkflowSessionId === currentSession.id && (
                 <div
                   className="absolute inset-0"
@@ -3722,6 +3828,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   const homeDisplayTabs: CoworkDisplayTab[] = [
     ...recordingReviewTabs.tabs,
+    ...mcpAppTabs.tabs,
     ...(isBrowserPanelOpen
       ? browserTabs.map(tab => ({
           id: browserDisplayTabId(tab.targetId),
@@ -3796,6 +3903,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       filePreviews={filePreviews}
       unsupportedFilePreviews={unsupportedFilePreviews}
       recordingReviewTabs={recordingReviewTabs}
+      mcpAppTabs={mcpAppTabs}
       hasRetainedRuntimePanels={hasRetainedRuntimePanels}
       activeDisplayTabId={activeDisplayTabId}
       closeDisplayPanel={closeDisplayPanel}

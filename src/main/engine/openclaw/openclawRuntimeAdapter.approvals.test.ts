@@ -474,6 +474,37 @@ test('reuses an exact command grant only in the approved session', async () => {
   );
 });
 
+test('allows a view grant only for the current native MCP approval action', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const pending = [{ id: 'app-approval', request: { pluginId: 'bundle-mcp', allowedDecisions: ['allow-always'], actions: [{ kind: 'decision', decision: 'allow-always', command: 'allow-always' }] } }];
+  const request = vi.fn(async (method: string) => method === 'plugin.approval.list' ? pending : {});
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  await expect(adapter.resolveApproval('app-approval', ApprovalDecision.AllowForView, ApprovalKind.Plugin)).resolves.toBeUndefined();
+  expect(request).toHaveBeenLastCalledWith('plugin.approval.resolve', { id: 'app-approval', decision: 'allow-always' });
+  request.mockClear();
+  pending[0].request.actions = [];
+  await expect(adapter.resolveApproval('app-approval', ApprovalDecision.AllowForView, ApprovalKind.Plugin)).rejects.toThrow('does not offer');
+  await expect(adapter.resolveApproval('app-approval', ApprovalDecision.AllowForView, ApprovalKind.Exec)).rejects.toThrow('plugin approval');
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+test('rejects a view grant if the Gateway connection changes during native approval lookup', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = getSessionPreparationInternals(adapter);
+  const request = vi.fn(async () => {
+    internals.gatewayClient = null;
+    return [];
+  });
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  await expect(adapter.resolveApproval('app-approval', ApprovalDecision.AllowForView, ApprovalKind.Plugin)).rejects.toThrow('connection changed');
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
 test('commits a session grant only after Gateway confirms the current request', async () => {
   sendToRenderer.mockClear();
   const { store } = createEmptyStore();

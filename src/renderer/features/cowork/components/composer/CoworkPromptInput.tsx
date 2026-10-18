@@ -129,6 +129,7 @@ import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 import { type RootState, store } from '@/store';
 
 import { prepareWorkflowComposerSubmission } from '../../../../../../openclaw-extensions/swarm-workflow/browser/composer';
+import type { McpAppComposerMenu } from '../mcpApps/McpAppsControls';
 import { buildAgentTeamFeature } from './AgentTeamSelector';
 import {
   type AgentTeamMode,
@@ -226,6 +227,7 @@ export interface CoworkPromptInputRef {
 }
 
 interface CoworkPromptInputProps {
+  mcpAppMenu?: McpAppComposerMenu | null;
   onSubmit: (
     prompt: string,
     attachments?: CoworkAttachmentPayload[],
@@ -328,6 +330,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       onGoalPresenceChange,
       remoteManaged = false,
       mode = 'default',
+      mcpAppMenu,
     } = props;
     const dispatch = useDispatch();
     const draftKey = draftKeyOverride || sessionId || '__home__';
@@ -2020,6 +2023,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             ]
           : []),
         planModeComposerFeature,
+        ...(mcpAppMenu && mcpAppMenu.sessionId === sessionId
+          ? mcpAppMenu.items.map(item => ({ ...item, disabled: disabled || item.disabled }))
+          : []),
         {
           ...swarmWorkflowComposerFeature,
           section: i18nService.t('composerPlugins'),

@@ -43,6 +43,9 @@ jobs:
 
       - run: npm install
 
+      - name: Prepare offline draw.io assets
+        run: npm run drawio:prepare -- --download
+
       # 设置 OpenClaw runtime (如果需要)
       - name: Setup OpenClaw Runtime
         run: |
@@ -84,6 +87,9 @@ jobs:
           restore-keys: npm-${{ runner.os }}-
 
       - run: npm install
+
+      - name: Prepare offline draw.io assets
+        run: npm run drawio:prepare -- --download
 
       # Windows 需要 Python 运行时
       - name: Setup Python Runtime
@@ -131,6 +137,9 @@ jobs:
           sudo apt-get install -y libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libuuid1 libsecret-1-0
 
       - run: npm install
+
+      - name: Prepare offline draw.io assets
+        run: npm run drawio:prepare -- --download
 
       - name: Build Linux
         run: npm run dist:linux

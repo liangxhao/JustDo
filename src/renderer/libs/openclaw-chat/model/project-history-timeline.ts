@@ -12,6 +12,12 @@ import {
 } from '@/libs/openclaw-chat/pipeline/native-canvas';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
+import {
+  decodeNativeMcpAppHistoryResult,
+  decodeNativeMcpAppResult,
+  decodeNativeNestedMcpAppHistoryResult,
+  isNativeMcpAppFallbackPreview,
+} from '../pipeline/native-mcp-app';
 import { type ThinkingItem, type ToolItem } from './chat-transcript-state';
 import {
   FAILED_RUN_MESSAGE_FLAG,
@@ -22,6 +28,7 @@ import {
 import { deterministicHistoryKey } from './history-reconciler';
 import type {
   LiveProcessTimelineItem,
+  NativeMcpAppTimelineItem,
   NativeWidgetTimelineItem,
   PlanPresentationTimelineItem,
   ProcessSummaryTimelineItem,
@@ -65,7 +72,8 @@ export type PersistedTimelineItem =
   | LiveProcessTimelineItem
   | PlanPresentationTimelineItem
   | ProgressReceiptTimelineItem
-  | NativeWidgetTimelineItem;
+  | NativeWidgetTimelineItem
+  | NativeMcpAppTimelineItem;
 
 const THINKING_TYPES = new Set(['thinking', 'reasoning']);
 const TOOL_RESULT_ROLES = new Set(['tool', 'toolresult', 'tool_result', 'function']);
@@ -224,6 +232,7 @@ export function projectPersistedTimeline(
   const allTools: ToolItem[] = [];
   const presentedWidgets = new WeakSet<ToolItem>();
   const presentedWidgetDocIds = new Set<string>();
+  const presentedAppViewIds = new Set<string>();
   const syntheticRunIds = new Set<string>();
   const toolEpochByItem = new WeakMap<ToolItem, number>();
   let toolEpoch = 0;
@@ -552,6 +561,21 @@ export function projectPersistedTimeline(
     const role = roleOf(source);
     if (TOOL_RESULT_ROLES.has(role)) {
       const tool = applyToolResult(source, fallbackId, runId, sequence, timestamp);
+      const app =
+        tool.status === 'completed'
+          ? (decodeNativeMcpAppHistoryResult(
+              source,
+              readToolName(source),
+              readToolCallId(source) ?? undefined,
+            ) ??
+            decodeNativeMcpAppResult(tool.output, tool.name, readToolCallId(source) ?? undefined))
+          : undefined;
+      if (app && !presentedAppViewIds.has(app.viewId)) {
+        presentedAppViewIds.add(app.viewId);
+        flushSummary();
+        projected.push({ kind: 'mcp-app', key: `history-mcp-app:${tool.id}`, preview: app });
+        segment += 1;
+      }
       // Only native tool-role records grant document-view authority. An
       // assistant-authored nested result is still just ordinary transcript data.
       const widget =
@@ -808,7 +832,17 @@ export function projectPersistedTimeline(
       }
       if (isToolResultType(type)) {
         flushVisibleBlocks();
-        applyToolResult(toolSource, itemId, runId, blockIndex, timestamp);
+        const tool = applyToolResult(toolSource, itemId, runId, blockIndex, timestamp);
+        const app =
+          tool.status === 'completed'
+            ? decodeNativeNestedMcpAppHistoryResult(message, block)
+            : undefined;
+        if (app && !presentedAppViewIds.has(app.viewId)) {
+          presentedAppViewIds.add(app.viewId);
+          flushSummary();
+          projected.push({ kind: 'mcp-app', key: `history-mcp-app:${tool.id}`, preview: app });
+          segment += 1;
+        }
         return;
       }
 
@@ -835,12 +869,18 @@ export function projectPersistedTimeline(
   const nativeDocIds = new Set(
     projected.flatMap(item => (item.kind === 'native-widget' ? [item.preview.docId] : [])),
   );
+  const nativeApps = new Map(
+    projected.flatMap(item =>
+      item.kind === 'mcp-app' ? [[item.preview.viewId, item.preview] as const] : [],
+    ),
+  );
+  const fallbackIds = new Set([...nativeDocIds, ...nativeApps.keys()]);
   // A history refresh can expose an in-flight Tool before its result, notably
   // when a subagent announce is persisted behind a long sessions_yield call.
   // Keep the same invariant as the live projection: only settled Thinking and
   // Tool items belong in a collapsible summary.
   return projected.flatMap(item => {
-    if (item.kind === 'history-message' && nativeDocIds.size) {
+    if (item.kind === 'history-message' && fallbackIds.size) {
       const source = unwrapToolMessage(item.message);
       if (!source || roleOf(source) !== 'assistant') return [item];
       const content = Array.isArray(source.content)
@@ -853,17 +893,18 @@ export function projectPersistedTimeline(
       let changed = false;
       const cleaned = content.flatMap(block => {
         const record = asToolRecord(block);
-        // Native history has already expanded its fallback into a URL canvas
-        // block. Suppress the exact same admitted document, not external embeds.
+        // Native history can also expand a fallback into a Canvas block.
+        // Remove only the same admitted document/App; preserve external embeds.
         if (
           record?.type === 'canvas' &&
-          isNativeWidgetFallbackPreview(record.preview, nativeDocIds)
+          (isNativeWidgetFallbackPreview(record.preview, nativeDocIds) ||
+            isNativeMcpAppFallbackPreview(record.preview, nativeApps))
         ) {
           changed = true;
           return [];
         }
         if (record?.type !== 'text' || typeof record.text !== 'string') return [block];
-        const text = stripNativeWidgetFallbacks(record.text, nativeDocIds);
+        const text = stripNativeWidgetFallbacks(record.text, fallbackIds);
         if (text === record.text) return [block];
         changed = true;
         return text.trim() ? [{ ...record, text }] : [];

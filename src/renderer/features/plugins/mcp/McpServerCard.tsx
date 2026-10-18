@@ -1,9 +1,12 @@
+import { mcpToolHasApp } from '@shared/plugins/mcpAppCapabilities';
 import type { ReactNode } from 'react';
 
 import type { McpProbeResult } from '@/features/plugins/mcp/mcp';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
 import PluginCard from '@/features/plugins/shared/PluginCard';
+import { i18nService } from '@/services/i18n';
 import ConnectorIcon from '@/shared/components/icons/ConnectorIcon';
+import Tooltip from '@/shared/components/ui/Tooltip';
 
 import McpProbeButton from './McpProbeButton';
 
@@ -22,6 +25,7 @@ interface McpServerCardProps {
   probeDisabled: boolean;
   probing: boolean;
   probeResult?: McpProbeResult;
+  supportsApps?: boolean;
 }
 
 const McpServerCard = ({
@@ -39,6 +43,7 @@ const McpServerCard = ({
   probeDisabled,
   probing,
   probeResult,
+  supportsApps,
 }: McpServerCardProps) => (
   <PluginCard
     compact
@@ -52,7 +57,34 @@ const McpServerCard = ({
       </div>
     }
     iconBadge={iconBadge}
-    title={title}
+    title={
+      <div className="flex min-w-0 items-center gap-1.5">
+        <div className="min-w-0 truncate">{title}</div>
+        {(probeResult?.available ? probeResult.tools.some(mcpToolHasApp) : supportsApps) && (
+          <Tooltip content={i18nService.t('mcpSupportsApps')} position="top">
+            <span
+              tabIndex={0}
+              role="img"
+              aria-label={i18nService.t('mcpSupportsApps')}
+              className="inline-flex shrink-0 rounded text-primary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                aria-hidden="true"
+              >
+                <rect x="3" y="4" width="18" height="16" rx="3" />
+                <path d="M3 9h18M8 9v11" />
+              </svg>
+            </span>
+          </Tooltip>
+        )}
+      </div>
+    }
     actions={
       <>
         {actions}

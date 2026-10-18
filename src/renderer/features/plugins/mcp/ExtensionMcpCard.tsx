@@ -47,6 +47,7 @@ const ExtensionMcpCard = ({
     probeDisabled={probing || updating || !server.supported}
     probing={probing}
     probeResult={probeResult}
+    supportsApps={server.supportsApps}
     title={
       <span className="block max-w-full truncate text-sm font-medium text-foreground">
         {server.name}

@@ -17,6 +17,7 @@ import {
 } from './contracts/history-failure';
 import { isEmptyFailureSourceContent, projectFailurePartialContent } from './history-failure';
 import { registerScheduledTaskHistory } from './scheduled-task-history';
+import { registerMcpAppHistory } from './mcp-app-history';
 
 const PLUGIN_ID = 'runtime-services';
 const MAX_DETAIL_IDS = 250;
@@ -238,6 +239,7 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     registerAgentTeamRuntimeServices(api);
     registerScheduledTaskHistory(api);
+    registerMcpAppHistory(api);
     const historyMessageTransfers = new Map<string, HistoryMessageTransfer>();
     let historyMessageTransferSequence = 0;
     const pruneHistoryMessageTransfers = (): void => {

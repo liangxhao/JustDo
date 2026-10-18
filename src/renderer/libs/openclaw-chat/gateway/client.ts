@@ -71,6 +71,12 @@ export interface GatewayRequestError extends Error {
   details?: unknown;
 }
 
+export interface GatewayRequestOptions {
+  signal?: AbortSignal;
+  /** null delegates the active-work and human-input deadlines to Gateway. */
+  timeoutMs?: number | null;
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const CHALLENGE_TIMEOUT_MS = 10_000;
@@ -106,9 +112,11 @@ export class GatewayClient {
       resolve: (v: unknown) => void;
       reject: (e: Error) => void;
       timer: ReturnType<typeof setTimeout> | undefined;
+      cleanup?: () => void;
     }
   >();
   private lastSeq: number | null = null;
+  private readonly eventListeners = new Set<(event: GatewayEventFrame) => void>();
 
   constructor(opts: GatewayClientOptions) {
     this.opts = opts;
@@ -142,7 +150,19 @@ export class GatewayClient {
     this.flushPending(new Error('gateway client stopped'));
   }
 
-  async request<T = unknown>(method: string, params?: unknown): Promise<T> {
+  subscribeEvents(listener: (event: GatewayEventFrame) => void): () => void {
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
+  }
+
+  async request<T = unknown>(
+    method: string,
+    params?: unknown,
+    options: GatewayRequestOptions = {},
+  ): Promise<T> {
+    if (options.signal?.aborted) {
+      throw Object.assign(new Error('request aborted'), { name: 'AbortError', requestSent: false });
+    }
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw Object.assign(new Error('not connected'), { requestSent: false });
     }
@@ -156,37 +176,60 @@ export class GatewayClient {
       });
     }
     return new Promise<T>((resolve, reject) => {
+      let submitted = false;
+      const cleanup = () => options.signal?.removeEventListener('abort', abort);
+      const abort = () => {
+        const pending = this.pendingRequests.get(id);
+        if (!pending) return;
+        this.pendingRequests.delete(id);
+        clearTimeout(pending.timer);
+        cleanup();
+        // This ends only the local wait. Backend cancellation needs a supported
+        // capability API; aborting a browser promise never proves remote rollback.
+        reject(
+          Object.assign(new Error('request aborted'), {
+            name: 'AbortError',
+            requestSent: submitted,
+          }),
+        );
+      };
       // Native compaction resets its watchdog as work progresses, so it has no
       // fixed total deadline. Transport loss still rejects every pending request.
       const timer =
-        method === 'sessions.compact'
+        method === 'sessions.compact' || options.timeoutMs === null
           ? undefined
           : setTimeout(
               () => {
                 this.pendingRequests.delete(id);
+                cleanup();
                 reject(
                   Object.assign(new Error(`request timeout: ${method}`), { requestSent: true }),
                 );
               },
-              method === 'canvas.document.view'
-                ? 30_000
-                : method === 'tts.speak'
-                  ? TTS_REQUEST_TIMEOUT_MS
-                  : REQUEST_TIMEOUT_MS,
+              options.timeoutMs ??
+                (method === 'canvas.document.view'
+                  ? 30_000
+                  : method === 'tts.speak'
+                    ? TTS_REQUEST_TIMEOUT_MS
+                    : REQUEST_TIMEOUT_MS),
             );
       this.pendingRequests.set(id, {
         resolve: resolve as (v: unknown) => void,
         reject,
         timer,
+        cleanup,
       });
+      options.signal?.addEventListener('abort', abort, { once: true });
       try {
         this.ws!.send(frame);
+        submitted = true;
       } catch (error) {
         clearTimeout(timer);
+        cleanup();
         this.pendingRequests.delete(id);
         reject(
           Object.assign(error instanceof Error ? error : new Error(String(error)), {
-            requestSent: false,
+            requestSent: submitted,
           }),
         );
       }
@@ -308,6 +351,7 @@ export class GatewayClient {
         this.lastSeq = event.seq;
       }
       this.opts.onEvent?.(event);
+      for (const listener of this.eventListeners) listener(event);
       return;
     }
 
@@ -317,6 +361,7 @@ export class GatewayClient {
       const pending = this.pendingRequests.get(res.id);
       if (pending) {
         clearTimeout(pending.timer);
+        pending.cleanup?.();
         this.pendingRequests.delete(res.id);
         if (res.ok) {
           pending.resolve(res.payload);
@@ -487,6 +532,7 @@ export class GatewayClient {
   private flushPending(err: Error): void {
     for (const [, pending] of this.pendingRequests) {
       clearTimeout(pending.timer);
+      pending.cleanup?.();
       pending.reject(err);
     }
     this.pendingRequests.clear();

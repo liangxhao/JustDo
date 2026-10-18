@@ -1,0 +1,15 @@
+{
+  "name": "diagram-editor-extension",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "assets:prepare": "node scripts/prepare.cjs",
+    "assets:verify": "node scripts/prepare.cjs --verify"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

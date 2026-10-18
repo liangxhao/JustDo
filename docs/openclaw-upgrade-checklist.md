@@ -75,6 +75,15 @@
 参考：[架构](architecture/02-architecture.md)、[进程模型](architecture/03-process-model.md)、
 [执行引擎](architecture/05-agent-engine.md)、[数据存储](architecture/10-data-storage.md)。
 
+### 2.1 MCP Apps 原生生命周期
+
+当前 MCP Apps 完全使用原生认证 WS 接口，原 MCP Apps 生命周期补丁 `030-mcp-app-operation-lifecycle.cjs` 已于 2026-10-18 移除；不要与后续 dev 的同编号工具调用修复补丁混淆。用户已接受原生关闭语义：停止本地交互不保证后台取消，视图及临时授权按原生租约到期回收（当前创建后约十分钟）。详细来源和取舍见 [MCP Apps 宿主](features/chat/mcp-apps.md#原生接口与插件替代审计)。
+
+- [ ] 重读目标版本 WS 派发、App view/disposer、SDK 与方法描述，核对是否新增公开的精确请求取消、可确认的最终视图释放和多窗口隔离接口；有则通过公开接口接入，无则保留原生行为，不恢复补丁或访问私有 store。
+- [ ] 核对 TTL、授权范围、原生过期和后台收尾语义；分别测试本地 AbortSignal、已发出操作、等待审批/提问、断线、迟到响应，不把取消 ACK 当成副作用回滚。
+- [ ] 验证原生 view/launch/history/formResource 返回形态，普通工具 descriptor 与问题预览引用各从认证来源准入，不要求已删除的 `appIdentity` / `hostLeaseId`。
+- [ ] 回归精确 `updateId` 清理、文件 ETag/订阅、旧 session/incarnation/generation 拒绝、跨窗口影响及未知结果不重试；核对冷启动 draw.io 三种导出仍不依赖公网资源。
+
 ## 3. Thinking / Tool / Content 消息流与历史展示
 
 **每次升级都要重新核对消息流适配。** 检查链路为原生事件/历史 → Gateway client →

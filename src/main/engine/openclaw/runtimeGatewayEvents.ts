@@ -25,6 +25,7 @@ import { coworkLog } from '../../cowork/coworkLogger';
 import type { CoworkSessionStatus, CoworkStore } from '../../data/coworkStore';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
 import { SessionExecApprovalGrants } from '../../openclaw/permissions/sessionExecApprovalGrants';
+import { notifyNativeQuestionChanged } from '../../plugins/mcp/nativeQuestionEvents';
 import { isRecord } from '../gateway/helpers';
 import type { GatewayClientLike, GatewayEventFrame, SessionTurn } from '../gateway/types';
 import { ERROR_TERMINAL_SESSION_STATUSES } from './runtimeAdapterSupport';
@@ -169,6 +170,11 @@ export function handleGatewayEvent(
 
   if (event.event === 'exec.approval.requested') {
     void this.handleExecApprovalRequested(event.payload);
+    return;
+  }
+
+  if (event.event === 'question.requested' || event.event === 'question.resolved') {
+    notifyNativeQuestionChanged();
     return;
   }
 

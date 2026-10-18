@@ -1,10 +1,12 @@
 import { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
+import type { McpAppPreview } from '@shared/plugins/mcpApps';
 
 import {
   decodeNativeCanvasResult,
   type NativeCanvasPreview,
   stripNativeWidgetFallbacks,
 } from '../pipeline/native-canvas';
+import { decodeNativeMcpAppResult } from '../pipeline/native-mcp-app';
 import type {
   AssistantTurn,
   CompactionItem,
@@ -82,8 +84,15 @@ export interface NativeWidgetTimelineItem {
   preview: NativeCanvasPreview;
 }
 
+export interface NativeMcpAppTimelineItem {
+  kind: 'mcp-app';
+  key: string;
+  preview: McpAppPreview;
+}
+
 export type ActiveTurnTimelineItem =
   | NativeWidgetTimelineItem
+  | NativeMcpAppTimelineItem
   | ProcessSummaryTimelineItem
   | LiveProcessTimelineItem
   | ProgressReceiptTimelineItem
@@ -161,16 +170,24 @@ export function projectTurnItems(
   const failedTools: ToolItem[] = [];
   let summarySegment = 0;
   const widgets = new Map<ToolItem, NativeCanvasPreview>();
+  const apps = new Map<ToolItem, McpAppPreview>();
+  const appViews = new Set<string>();
   const nativeDocIds = new Set<string>();
   for (const item of turn.items) {
     if (item.type !== 'tool' || item.status !== 'completed') continue;
     const preview = decodeNativeCanvasResult(item.output, item.name, item.toolCallId);
+    const app = decodeNativeMcpAppResult(item.output, item.name, item.toolCallId);
+    if (app && !appViews.has(app.viewId)) {
+      apps.set(item, app);
+      appViews.add(app.viewId);
+    }
     if (preview && !nativeDocIds.has(preview.docId)) {
       widgets.set(item, preview);
       nativeDocIds.add(preview.docId);
     }
   }
 
+  const fallbackIds = new Set([...nativeDocIds, ...appViews]);
   const flushSummary = () => {
     if (archived.length === 0) return;
     const first = archived[0];
@@ -193,7 +210,7 @@ export function projectTurnItems(
   for (const item of turn.items) {
     const content =
       item.type === 'content'
-        ? { ...item, text: stripNativeWidgetFallbacks(item.text, nativeDocIds) }
+        ? { ...item, text: stripNativeWidgetFallbacks(item.text, fallbackIds) }
         : null;
     if (content && !content.text.trim()) continue;
     if (item.type === 'thinking' || item.type === 'tool') {
@@ -201,6 +218,14 @@ export function projectTurnItems(
         if (item.status === 'failed') failedTools.push(item);
         const normalizedName = item.name.trim().toLowerCase();
         const widget = widgets.get(item);
+        const app = apps.get(item);
+        if (app) {
+          archived.push(item);
+          flushSummary();
+          projected.push({ kind: 'mcp-app', key: `mcp-app:${item.id}`, preview: app });
+          summarySegment += 1;
+          continue;
+        }
         if (widget) {
           archived.push(item);
           flushSummary();

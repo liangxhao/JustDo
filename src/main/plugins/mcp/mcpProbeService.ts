@@ -8,6 +8,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { FetchLike, Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 
+import { mcpToolAppResourceUri } from '../../../shared/plugins/mcpAppCapabilities';
 import { mainProcessMcpProbeFetch } from '../../core/network/mainProcessFetch';
 import { applyDependencyManagerConfigEnv } from '../../core/runtime/dependencyManagerConfig';
 import type { McpServerRecord } from './mcpStore';
@@ -202,6 +203,7 @@ export const probeMcpServer = async (server: McpServerRecord): Promise<McpProbeR
             description: tool.description,
             inputSchema: tool.inputSchema,
             outputSchema: tool.outputSchema,
+            uiResourceUri: mcpToolAppResourceUri(tool),
           })),
           nextCursor: page.nextCursor,
         };

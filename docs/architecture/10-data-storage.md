@@ -4,6 +4,13 @@
 
 ## 1. 存储边界
 
+首页 MCP App 文件预览使用 Gateway 创建的专用 `workspace-preview` 原生会话。
+Main 仅在窗口内存中保留请求标识、工作区签名及原生创建回执；产品 `cowork_sessions`、
+消息表和 KV 均不增加预览记录。原生身份与必要元数据仍由 Gateway 保存，Renderer 不读取
+或缓存其 transcript。离开首页或切换工作区后，通过原生删除接口并按创建时的精确
+sessionId/lifecycleRevision 清理自有会话；拒绝或未知结果不扩大清理范围。
+文件内容与插件文档库的所有权不变，见 [MCP Apps](../features/chat/mcp-apps.md)。
+
 内置浏览器的每会话标签页上限沿用 Main KV 的 `app_config.browserTabLimit`，
 默认 20，可设置为 1–50 的整数。旧配置缺失时直接使用默认值，不新增表或迁移；
 Main 与 Renderer 共用数值校验。它只控制新建准入，不持久化网页或回收已有标签。

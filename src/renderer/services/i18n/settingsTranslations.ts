@@ -478,6 +478,12 @@ export const settingsTranslations = {
     agentRuntimeSubagentSectionTitle: 'SubAgent',
     agentRuntimeSubagentSectionDescription: 'SubAgent 的模型、容量和任务执行参数。',
     agentRuntimeMcpSectionTitle: 'MCP',
+    mcpAppsEnabledTitle: 'MCP Apps 交互界面',
+    mcpAppsEnabledDescription:
+      '显示 MCP 服务提供的交互界面；手动入口由服务提供。保存后通过配置流程应用。',
+    mcpAppsInherit: '沿用原生设置（未配置时开启）',
+    mcpAppsEnable: '启用',
+    mcpAppsDisable: '关闭',
     agentRuntimeMcpSectionDescription: '用户 MCP Server 未单独配置时使用的默认请求参数。',
     agentRuntimeMcpRequestTimeoutTitle: 'MCP 默认请求超时',
     agentRuntimeMcpRequestTimeoutDescription:
@@ -673,7 +679,8 @@ export const settingsTranslations = {
     messageLayoutDocument: '文档模式',
     restoreDefaults: '恢复默认值',
     chatContentWidth: '消息区域宽度',
-    chatContentWidthDescription: '设置窗口最大化时对话内容和输入框的宽度比例；窗口缩小或侧边栏挤压聊天区时自动加宽，并预留消息导航空间',
+    chatContentWidthDescription:
+      '设置窗口最大化时对话内容和输入框的宽度比例；窗口缩小或侧边栏挤压聊天区时自动加宽，并预留消息导航空间',
     interfaceFontSize: '界面字号',
     interfaceFontSizeDescription: '同时调整界面和聊天正文的文字大小',
     interfaceFont: '界面字体',
@@ -1435,6 +1442,12 @@ export const settingsTranslations = {
     agentRuntimeSubagentSectionDescription:
       'Model, capacity, and task execution settings for SubAgents.',
     agentRuntimeMcpSectionTitle: 'MCP',
+    mcpAppsEnabledTitle: 'MCP Apps interactive interfaces',
+    mcpAppsEnabledDescription:
+      'Display interactive interfaces supplied by MCP servers. Manual entrypoints depend on the server. Save to apply through the configuration flow.',
+    mcpAppsInherit: 'Use native setting (on when unset)',
+    mcpAppsEnable: 'Enabled',
+    mcpAppsDisable: 'Disabled',
     agentRuntimeMcpSectionDescription:
       'Default request settings for user-configured MCP servers without an override.',
     agentRuntimeMcpRequestTimeoutTitle: 'Default MCP request timeout',

@@ -56,6 +56,10 @@ interface CoworkHomeWorkspaceProps {
     tabs: CoworkDisplayTab[];
     panels: (activeId: string | null) => React.JSX.Element[];
   };
+  mcpAppTabs: {
+    tabs: CoworkDisplayTab[];
+    panels: (activeId: string | null) => React.JSX.Element[];
+  };
   hasRetainedRuntimePanels: boolean;
   activeDisplayTabId: string;
   closeDisplayPanel: () => void;
@@ -98,6 +102,7 @@ export function CoworkHomeWorkspace({
   filePreviews,
   unsupportedFilePreviews,
   recordingReviewTabs,
+  mcpAppTabs,
   hasRetainedRuntimePanels,
   activeDisplayTabId,
   closeDisplayPanel,
@@ -251,6 +256,7 @@ export function CoworkHomeWorkspace({
           >
             {retainedRuntimePanels}
             {recordingReviewTabs.panels(activeDisplayTabId)}
+            {mcpAppTabs.panels(activeDisplayTabId)}
             {filePreviews.map(preview => (
               <FilePreviewDrawer
                 key={fileDisplayTabId(preview.filePath)}

@@ -1757,6 +1757,21 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   ): Promise<void> {
     await this.ensureGatewayClientReady();
     const client = this.requireGatewayClient();
+    if (decision === ApprovalDecision.AllowForView) {
+      const generation = this.gatewayClientGeneration;
+      if (kind !== ApprovalKind.Plugin) throw new Error('App grants require a plugin approval.');
+      const pending = await client.request<PluginApprovalRequest[]>('plugin.approval.list');
+      if (this.gatewayClient !== client || this.gatewayClientGeneration !== generation) throw new Error('App approval connection changed.');
+      const request = Array.isArray(pending) ? pending.find(item => item.id === id)?.request : undefined;
+      if (request?.pluginId !== 'bundle-mcp' ||
+        !request.allowedDecisions?.includes(ExecApprovalDecision.AllowAlways) ||
+        !request.actions?.some(action => action.kind === 'decision' &&
+          action.decision === ExecApprovalDecision.AllowAlways && action.command === 'allow-always')) {
+        throw new Error('This approval does not offer a current App grant.');
+      }
+      await client.request('plugin.approval.resolve', { id, decision: ExecApprovalDecision.AllowAlways });
+      return;
+    }
     if (decision !== ApprovalDecision.AllowForSession) {
       if (decision === ApprovalDecision.AllowOnce) {
         await this.resolveApprovalAllowOnce(kind, id);

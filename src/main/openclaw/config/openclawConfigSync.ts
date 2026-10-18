@@ -7,6 +7,7 @@ import {
   captureDecisionModelConfiguration,
   resolveDecisionModelSelection,
 } from './decisionModelConfig';
+import { buildManagedMcpConfig } from './mcpAppsConfig';
 import {
   applyNativeVideoConfiguration,
   captureNativeVideoConfiguration,
@@ -593,9 +594,7 @@ export class OpenClawConfigSync {
         mcp: false,
         plugins: true,
       },
-      mcp: {
-        servers: mcpServers,
-      },
+      mcp: buildManagedMcpConfig(existingConfig?.mcp, mcpServers, agentRuntimeSettings.mcp),
       ...hookConfig,
       update: connectivityConfig.update,
       tools: {
@@ -993,9 +992,7 @@ export class OpenClawConfigSync {
         acp: buildManagedOpenClawAcpConfig(externalAgentSettings),
         session: buildManagedOpenClawSessionConfig(),
         ...(localTtsConfig ? { tts: localTtsConfig } : {}),
-        mcp: {
-          servers: mcpServers,
-        },
+        mcp: buildManagedMcpConfig(undefined, mcpServers, agentRuntimeSettings.mcp),
         ...connectivityConfig,
         ...hookConfig,
         tools: {
@@ -1038,9 +1035,11 @@ export class OpenClawConfigSync {
       // Only malformed JSON follows the minimal-config recovery path.
     }
     if (isRecord(previousConfig)) {
-      minimalConfig.mcp = {
-        servers: mergeNativeMcpOverrides(previousConfig, mcpServers, extensionMcpNames, retiredMcpNames),
-      };
+      minimalConfig.mcp = buildManagedMcpConfig(
+        previousConfig.mcp,
+        mergeNativeMcpOverrides(previousConfig, mcpServers, extensionMcpNames, retiredMcpNames),
+        agentRuntimeSettings.mcp,
+      );
       for (const key of ['worktreeRoot', 'worktreeAcceleration']) {
         if (previousConfig[key] !== undefined) minimalConfig[key] = previousConfig[key];
       }
@@ -1218,9 +1217,11 @@ export class OpenClawConfigSync {
                   },
                   acp: buildManagedOpenClawAcpConfig(externalAgentSettings),
                   session: buildManagedOpenClawSessionConfig(canonicalExisting.session),
-                  mcp: {
-                    servers: mergeNativeMcpOverrides(canonicalExisting, mcpServers, extensionMcpNames, retiredMcpNames),
-                  },
+                  mcp: buildManagedMcpConfig(
+                    canonicalExisting.mcp,
+                    mergeNativeMcpOverrides(canonicalExisting, mcpServers, extensionMcpNames, retiredMcpNames),
+                    agentRuntimeSettings.mcp,
+                  ),
                   update: connectivityConfig.update,
                   browser: connectivityConfig.browser,
                   hooks: {

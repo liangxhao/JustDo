@@ -27,6 +27,7 @@ describe('Agent runtime settings', () => {
       },
       mcp: {
         requestTimeoutSeconds: 60,
+        appsEnabled: null,
       },
       sessions: {
         visibility: 'tree',
@@ -113,7 +114,7 @@ describe('Agent runtime settings', () => {
 
     expect(parseAgentRuntimeSettings(legacyInput)).toEqual({
       ...input,
-      mcp: { requestTimeoutSeconds: 60 },
+      mcp: { requestTimeoutSeconds: 60, appsEnabled: null },
     });
   });
 

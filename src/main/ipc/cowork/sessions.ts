@@ -45,6 +45,7 @@ import {
   parseCoworkSessionSearchOptions,
   searchCoworkSessionMessages,
 } from '../../openclaw/sessions/openclawSessionSearch';
+import { registerMcpAppHandlers } from '../plugins/mcpApps';
 import { cancelAgentTeamLaunchWithoutWaiting } from './agentTeamLaunchCancellation';
 import {
   hasSessionBranchCreationResponse,
@@ -136,6 +137,7 @@ export const registerCoworkSessionHandlers = ({
   const readNativeSessions = requestGateway
     ? createPersistedGatewaySessionReader({ request: requestGateway })
     : null;
+  registerMcpAppHandlers({ getCoworkStore, getCoworkEngineRouter, requestGateway });
   const unknownAdmissions = new Map<string, { id: string; runId: string; cancelled: boolean }>();
   const stoppingSessions = new Map<string, Promise<{ success: boolean; error?: string }>>();
   const idleConfirmations = new Map<string, { count: number; observedAt: number }>();

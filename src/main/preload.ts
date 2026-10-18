@@ -204,10 +204,7 @@ import {
   type MarketplaceResolveRequest,
   type MarketplaceUpdateCheckRequest,
 } from '../shared/plugins/marketplace';
-import {
-  type ExtensionMcpEnabledInput,
-  ExtensionMcpIpc,
-} from '../shared/plugins/mcp';
+import { type ExtensionMcpEnabledInput, ExtensionMcpIpc } from '../shared/plugins/mcp';
 import type { OpenClawSkillSource } from '../shared/plugins/skills';
 import { type SkillWorkshopDecision, SkillWorkshopIpc } from '../shared/plugins/skillWorkshop';
 import {
@@ -272,9 +269,11 @@ import {
 } from '../shared/speech/onlineAsr';
 import { type OnlineTtsConfigurationUpdate, OnlineTtsIpc } from '../shared/speech/onlineTts';
 import { SpeechSynthesisIpc } from '../shared/speech/speechSynthesis';
+import { createMcpAppPreloadApi } from './preload/mcpApps';
 
 // 暴露安全的 API 到渲染进程
 contextBridge.exposeInMainWorld('electron', {
+  mcpApps: createMcpAppPreloadApi(),
   platform: process.platform,
   arch: process.arch,
   multica: {

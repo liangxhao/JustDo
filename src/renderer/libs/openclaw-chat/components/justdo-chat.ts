@@ -7,6 +7,7 @@
  * 2. Via a ChatController reference (controller property)
  */
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
+import { McpAppEvent } from '@shared/plugins/mcpApps';
 import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
 import { normalizeLocalSpeechSettings } from '@shared/speech/localSpeechSettings';
 import { html, LitElement, nothing, type TemplateResult } from 'lit';
@@ -110,6 +111,7 @@ import { resolveFullToolOutput } from '../model/tool-presentation';
 import { renderChatAvatar } from './chat-avatar';
 import { EditDiffMonacoController } from './edit-diff-monaco';
 import { chatStyles } from './justdo-chat.styles';
+import { McpAppView, type McpAppViewContext } from './mcp-app/view';
 import { renderMessageDiagram } from './mermaidRenderer';
 import {
   handleMessageDiagramToggle,
@@ -245,6 +247,15 @@ export class JustDoChatElement extends LitElement {
 
   @property({ attribute: false })
   declare canDraftWidget: (() => boolean) | undefined;
+
+  @property({ attribute: false })
+  declare addMcpAppDraft: ((text: string) => Promise<boolean>) | undefined;
+
+  @property({ attribute: false })
+  declare addNewMcpAppDraft: ((text: string, content: unknown[]) => Promise<boolean>) | undefined;
+
+  @property({ attribute: false })
+  declare openMcpAppFile: McpAppViewContext['openFile'];
 
   @property({ attribute: false })
   declare onAssistantMessageFork: ((entryId: string) => boolean | Promise<boolean>) | undefined;
@@ -883,6 +894,7 @@ export class JustDoChatElement extends LitElement {
   connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener(NATIVE_WIDGET_CONTEXT_REQUEST, this.handleWidgetContext);
+    this.addEventListener(McpAppEvent.ContextRequest, this.handleMcpAppContext);
     this.addEventListener(TOOL_OUTPUT_REQUEST, this.handleToolOutputRequest);
     this.messageThemeObserver = new MutationObserver(() => {
       this.renderRoot
@@ -912,6 +924,7 @@ export class JustDoChatElement extends LitElement {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     this.removeEventListener(NATIVE_WIDGET_CONTEXT_REQUEST, this.handleWidgetContext);
+    this.removeEventListener(McpAppEvent.ContextRequest, this.handleMcpAppContext);
     this.richMessageControls?.dispose();
     this.richMessageControls = null;
     this.removeEventListener(TOOL_OUTPUT_REQUEST, this.handleToolOutputRequest);
@@ -1356,7 +1369,34 @@ export class JustDoChatElement extends LitElement {
     this.renderRoot?.querySelectorAll<NativeWidgetView>('justdo-native-widget').forEach(widget => {
       widget.context = context;
     });
+    this.renderRoot?.querySelectorAll<McpAppView>('mcp-app-view').forEach(view => {
+      view.context = this.mcpAppContext();
+    });
   }
+
+  private mcpAppContext(): McpAppViewContext | undefined {
+    const native = this.widgetContext();
+    const controller = this._controller;
+    if (!native || !controller) return;
+    const sessionId = controller.state.currentSessionId;
+    return {
+      apps: controller.mcpApps,
+      sessionKey: native.sessionKey,
+      isCurrent: () => native.isCurrent() && controller.state.currentSessionId === sessionId,
+      canDraft: native.canDraft,
+      addDraft: text => this.addMcpAppDraft?.(text) ?? Promise.resolve(false),
+      addNewDraft: (text, content) =>
+        this.addNewMcpAppDraft?.(text, content) ?? Promise.resolve(false),
+      openFile: this.openMcpAppFile,
+    };
+  }
+
+  private readonly handleMcpAppContext = (event: Event): void => {
+    const view = event.composedPath()[0];
+    if (!(view instanceof McpAppView) || !this.renderRoot.contains(view)) return;
+    event.stopPropagation();
+    view.context = this.mcpAppContext();
+  };
 
   private subscribeController(ctrl: ChatController): void {
     this._controllerUnsubscribe = ctrl.subscribe(() => {

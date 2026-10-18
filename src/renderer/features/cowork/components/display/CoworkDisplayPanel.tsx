@@ -1,14 +1,12 @@
 import './CoworkDisplayPanel.css';
 
-import {
-  ArrowTopRightOnSquareIcon,
-  ChevronDownIcon,
-  XMarkIcon,
-} from '@heroicons/react/24/outline';
+import { ArrowTopRightOnSquareIcon, ChevronDownIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { McpAppEvent } from '@shared/plugins/mcpApps';
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import WindowHeader from '@/app/shell/window/WindowHeader';
+import { McpAppView } from '@/libs/openclaw-chat/components/mcp-app/view';
 import { i18nService } from '@/services/i18n';
 import FileTreeIcon from '@/shared/components/icons/FileTreeIcon';
 import RightSidebarIcon from '@/shared/components/icons/RightSidebarIcon';
@@ -123,6 +121,26 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   const [hasOpenedSidePanel, setHasOpenedSidePanel] = useState(hasSidePanel);
   const [isSidePanelResizing, setIsSidePanelResizing] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    const changeMode = (event: Event) => {
+      const view = event.composedPath()[0];
+      const detail = (event as CustomEvent<{ mode: string; respond: (accepted: boolean) => void }>)
+        .detail;
+      if (
+        !(view instanceof McpAppView) ||
+        !panel?.contains(view) ||
+        !visible ||
+        (detail?.mode !== 'inline' && detail.mode !== 'fullscreen')
+      )
+        return;
+      setIsWorkspaceFullscreen(detail.mode === 'fullscreen');
+      detail.respond(true);
+      event.stopPropagation();
+    };
+    panel?.addEventListener(McpAppEvent.DisplayMode, changeMode);
+    return () => panel?.removeEventListener(McpAppEvent.DisplayMode, changeMode);
+  }, [visible, portal.target]);
   const sidePanelRef = useRef<HTMLDivElement>(null);
   const sidePanelToggleRef = useRef<HTMLButtonElement>(null);
   const [fileToolbarTarget, setFileToolbarTarget] = useState<HTMLDivElement | null>(null);
@@ -810,10 +828,17 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       {portal.target &&
         createPortal(
           <OwnerDocumentContext.Provider value={ownerDocument}>
-            <div className={`flex h-full min-h-0 flex-col ${portal.detached ? 'bg-surface-raised p-1.5' : ''}`}>
-              <div className={`flex min-h-0 flex-1 flex-col ${portal.detached ? 'overflow-hidden rounded-xl bg-background' : ''}`}>
+            <div
+              className={`flex h-full min-h-0 flex-col ${portal.detached ? 'bg-surface-raised p-1.5' : ''}`}
+            >
+              <div
+                className={`flex min-h-0 flex-1 flex-col ${portal.detached ? 'overflow-hidden rounded-xl bg-background' : ''}`}
+              >
                 {portal.detached && <WindowHeader controls={portal.windowControls} />}
-                <div className="min-h-0 flex-1" {...(portal.detached && portal.blocked ? { inert: '' } : {})}>
+                <div
+                  className="min-h-0 flex-1"
+                  {...(portal.detached && portal.blocked ? { inert: '' } : {})}
+                >
                   {content}
                 </div>
               </div>

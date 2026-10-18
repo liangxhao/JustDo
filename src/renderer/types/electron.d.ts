@@ -663,6 +663,7 @@ interface IElectronAPI {
       options?: import('@shared/cowork/slashCommands').ListSlashCommandsOptions,
     ) => Promise<import('@shared/cowork/slashCommands').ListSlashCommandsResult>;
   };
+  mcpApps: import('../../shared/plugins/mcpApps').McpAppHostApi;
   mcp: {
     list: () => Promise<{
       success: boolean;
