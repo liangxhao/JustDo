@@ -13,7 +13,12 @@ import {
   type FlowNode,
   type FlowSubmission,
 } from '../contracts/flow.js';
-import { interventionAvailability, resetFailedNode, validateIntervention } from './intervention.js';
+import {
+  continuationInstructions,
+  interventionAvailability,
+  resetFailedNode,
+  validateIntervention,
+} from './intervention.js';
 import {
   parseJson,
   PlanFormatError,
@@ -425,6 +430,17 @@ export class FlowEngine {
     return { retried, skipped: [...skipped], reasons };
   }
   private prompt(flow: Flow, node: FlowNode): string {
+    if (node.continuation && !node.planningRepair) {
+      const input = node.interventions?.findLast(note => note.action === 'continue');
+      if (!input) throw new Error('Continuation input is missing.');
+      if (
+        flow.settings &&
+        Buffer.byteLength(input.text) + Buffer.byteLength(continuationInstructions(node) ?? '') >
+          BATCH_LIMITS.envelopeBytes
+      )
+        throw new Error('Continuation input exceeds 24 KiB. Shorten the saved notes or intervention.');
+      return input.text;
+    }
     const inputIds =
       node.kind === 'verify' || node.kind === 'deliver'
         ? flow.nodes
@@ -544,12 +560,6 @@ export class FlowEngine {
           }
         : {}),
       ...(node.interventions?.length ? { humanInput: node.interventions } : {}),
-      ...(node.continuation
-        ? {
-            continuationInstruction:
-              'The user supplied input and explicitly resumed this same node session. Continue from the existing conversation and current project state. Inspect prior attempts and humanInput; do not blindly repeat completed actions. Resolve the blocker within the original task, access intent and permission ceiling. Submit a new result for this run; prior submissions do not complete it.',
-          }
-        : {}),
       instruction:
         instruction +
         (node.kind === 'work' || node.kind === 'verify'
@@ -1173,15 +1183,24 @@ export class FlowEngine {
             this.store.put(flow);
             return;
           }
-          current.intendedRunId = randomUUID();
           const repair = current.submissionRepair;
           const correcting = repair?.pending === true;
+          // Validate local input before recording a native launch intent. A
+          // rejected message has never crossed the native invocation boundary.
+          const message = correcting ? repair.instruction : this.prompt(flow, current);
+          current.intendedRunId = randomUUID();
           if (correcting) {
             pendingCorrection = { runId: repair.runId, passes: repair.passes };
             repair.runId = current.intendedRunId;
             repair.passes += 1;
             delete repair.pending;
-          } else current.dispatch = { message: this.prompt(flow, current), createdAt: Date.now() };
+          } else {
+            current.dispatch = {
+              message,
+              createdAt: Date.now(),
+              interventionCount: current.interventions?.length ?? 0,
+            };
+          }
           current.status = 'uncertain';
           this.store.put(flow);
           launchIntent = current.intendedRunId;
@@ -1193,12 +1212,7 @@ export class FlowEngine {
             if (latest?.intendedRunId !== current.intendedRunId || latest?.status !== 'uncertain')
               throw new Error('Launch intent revoked.');
           };
-          const receipt = await this.host.launch(
-            flow,
-            current,
-            correcting ? repair.instruction : current.dispatch!.message,
-            assertCurrent,
-          );
+          const receipt = await this.host.launch(flow, current, message, assertCurrent);
           if (
             receipt.runId !== current.intendedRunId ||
             (receipt.sessionKey && receipt.sessionKey !== current.sessionKey)

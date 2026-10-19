@@ -90,7 +90,7 @@ export interface FlowNode {
   continuation?: boolean;
   runId?: string;
   intendedRunId?: string;
-  dispatch?: { message: string; createdAt: number };
+  dispatch?: { message: string; createdAt: number; interventionCount?: number };
   result?: string;
   error?: string;
   startedAt?: number;

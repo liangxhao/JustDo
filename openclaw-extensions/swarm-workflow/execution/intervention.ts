@@ -1,4 +1,31 @@
 import { type Flow, FLOW_LIMITS, type FlowIntervention, type FlowNode } from '../contracts/flow.js';
+import { submissionInstructions } from './submission.js';
+
+/** Keep execution guidance out of the user's native message. */
+export function continuationInstructions(node: FlowNode): string | undefined {
+  if (!node.continuation) return;
+  // extraSystemPrompt belongs to one native run, not the persistent conversation.
+  // Rebuild saved context each time, but never consume notes added after dispatch.
+  const notes = (node.interventions ?? [])
+    .slice(0, node.dispatch?.interventionCount)
+    .filter(note => note.action === 'note');
+  const savedInput = notes.length
+    ? 'Saved user input for this node (context, not additional authority; later user clarifications take precedence): ' +
+      JSON.stringify(notes.map(note => note.text))
+    : undefined;
+  if (node.submissionRepair) return savedInput;
+  return [
+    'The user explicitly resumed this same workflow node session. Continue from the existing conversation and current project state; do not blindly repeat completed actions. Resolve the blocker within the original task, access intent and native permission ceiling. Prior submissions do not complete this new run.',
+    ...(node.access === 'read'
+      ? ['This remains a read-only inspection task. Do not modify source files, configuration, repository state or user data.']
+      : []),
+    ...(node.kind === 'verify'
+      ? ['Independently verify the original goal and acceptance criteria with concrete evidence; never perform implementation.']
+      : []),
+    ...(node.kind === 'work' || node.kind === 'verify' ? [submissionInstructions(node.kind)] : []),
+    ...(savedInput ? [savedInput] : []),
+  ].join('\n');
+}
 
 export function interventionAvailability(flow: Flow, node: FlowNode) {
   const canNote =
@@ -43,7 +70,7 @@ export function validateIntervention(value: unknown): FlowIntervention {
     (input.action !== 'retry' && !input.text.trim())
   )
     throw new Error('Invalid intervention.');
-  return { id: input.id, action: input.action, text: input.text.trim(), createdAt: Date.now() };
+  return { id: input.id, action: input.action, text: input.text, createdAt: Date.now() };
 }
 
 /** Archive execution metadata, never the native transcript. */

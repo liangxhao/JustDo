@@ -1,4 +1,5 @@
 import { NativeLaunchNotInvokedError } from '../execution/launch-admission';
+import { continuationInstructions } from '../execution/intervention';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { FlowEngine } from '../execution/engine';
@@ -94,6 +95,17 @@ export function registerWorkflowLifecycle(context: WorkflowContext): void {
                 )
               ).projectRules;
             validate();
+            const extraSystemPrompt = [
+              continuationInstructions(node),
+              projectRules
+                ? 'Project rules from ' +
+                  path.join(flow.cwd, 'AGENTS.md') +
+                  '\nFrozen input version: ' +
+                  node.batchItem?.manifestVersion +
+                  '\nRetain these project rules for this item workspace, together with the native assistant role rules:\n' +
+                  projectRules
+                : undefined,
+            ].filter(Boolean).join('\n\n');
             params = {
               sessionKey: node.sessionKey,
               message,
@@ -106,17 +118,7 @@ export function registerWorkflowLifecycle(context: WorkflowContext): void {
               timeoutSeconds: node.deadlineAt
                 ? Math.max(1, Math.floor((node.deadlineAt - Date.now()) / 1000))
                 : (flow.settings ?? swarmWorkflowSettings({})).executionTimeoutSeconds,
-              ...(projectRules
-                ? {
-                    extraSystemPrompt:
-                      'Project rules from ' +
-                      path.join(flow.cwd, 'AGENTS.md') +
-                      '\nFrozen input version: ' +
-                      node.batchItem?.manifestVersion +
-                      '\nRetain these project rules for this item workspace, together with the native assistant role rules:\n' +
-                      projectRules,
-                  }
-                : {}),
+              ...(extraSystemPrompt ? { extraSystemPrompt } : {}),
             };
           } catch (error) {
             throw new NativeLaunchNotInvokedError(error);

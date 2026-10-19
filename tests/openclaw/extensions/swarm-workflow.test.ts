@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FlowEngine, type FlowHost } from '../../../openclaw-extensions/swarm-workflow/execution/engine';
 import { parseJson, PlanFormatError, validatePlan, validateStageAssignments, verdict } from '../../../openclaw-extensions/swarm-workflow/execution/plan';
 import { FlowStore } from '../../../openclaw-extensions/swarm-workflow/data/store';
+import { continuationInstructions, interventionAvailability } from '../../../openclaw-extensions/swarm-workflow/execution/intervention';
+import { swarmWorkflowSettings } from '../../../openclaw-extensions/swarm-workflow/settings';
 const cleanups: Array<() => void> = [];
 afterEach(() => {
   for (const clean of cleanups.splice(0)) clean();
@@ -737,13 +739,81 @@ describe('Swarm Workflow human intervention', () => {
     expect(current).toMatchObject({ sessionKey: original.sessionKey, attempt: 2, status: 'running' });
     expect(current.runId).not.toBe(original.runId);
     expect(() => f.engine.submit(current.sessionKey, original.runId!, { outcome: 'complete', summary: 'stale', evidence: ['stale'] })).toThrow('active Swarm Workflow');
-    expect(JSON.parse(vi.mocked(f.host.launch).mock.calls.at(-1)![2]).continuationInstruction).toContain('do not blindly repeat');
+    expect(vi.mocked(f.host.launch).mock.calls.at(-1)![2]).toBe(request.text);
+    expect(current.dispatch?.message).toBe(request.text);
     f.finish(original.id, 'New inspected evidence');
     await f.engine.tick();
     expect(f.get().nodes.find(n => n.id === 'task-2')?.status).toBe('running');
     expect(f.get().nodes.find(n => n.id === original.id)?.attempts?.[0].error).toBe(original.error);
     f.engine.intervene(f.id, original.id, revision, request);
     expect(f.host.launch).toHaveBeenCalledTimes(4);
+  });
+  it('sends only the current input on each continuation, preserving whitespace and JSON text', async () => {
+    const f = await failedWorker();
+    const sessionKey = f.get().nodes.find(n => n.id === 'task-1')!.sessionKey;
+    const messages = ['  请检查新的结果\n\n保留已完成工作。  ', '{"text":"只处理本次输入","humanInput":[]}'];
+    for (const [index, message] of messages.entries()) {
+      const saved = 'Saved evidence ' + index;
+      f.engine.intervene(f.id, 'task-1', f.get().revision, input('note-' + index, 'note', saved));
+      f.engine.intervene(f.id, 'task-1', f.get().revision, input('continue-' + index, 'continue', message));
+      f.restart();
+      await f.engine.tick();
+      expect(vi.mocked(f.host.launch).mock.calls.at(-1)![2]).toBe(message);
+      const node = f.get().nodes.find(n => n.id === 'task-1')!;
+      expect(node.sessionKey).toBe(sessionKey);
+      expect(node.dispatch).toMatchObject({ message, interventionCount: (index + 1) * 2 });
+      expect(continuationInstructions(node)).toContain(saved);
+      if (index) expect(continuationInstructions(node)).toContain('Saved evidence 0');
+      f.finish('task-1', 'Still blocked', 'error');
+      await f.engine.tick();
+    }
+  });
+  it('rejects oversized continuation context before creating a native launch intent', async () => {
+    const f = await failedWorker();
+    const flow = f.get();
+    flow.settings = swarmWorkflowSettings({});
+    f.engine.store.put(flow);
+    for (let index = 0; index < 7; index++) {
+      f.engine.intervene(f.id, 'task-1', f.get().revision, input('large-note-' + index, 'note', 'x'.repeat(4000)));
+    }
+    f.engine.intervene(f.id, 'task-1', f.get().revision, input('oversized', 'continue', 'Continue inspection'));
+    await f.engine.tick();
+    const failed = f.get().nodes.find(node => node.id === 'task-1')!;
+    expect(failed).toMatchObject({ status: 'failed', cleanupSettled: true });
+    expect(failed.error).toContain('24 KiB');
+    expect(failed).not.toHaveProperty('intendedRunId');
+    expect(failed).not.toHaveProperty('runId');
+    expect(f.host.launch).toHaveBeenCalledTimes(2);
+    f.restart();
+    await f.engine.tick();
+    expect(f.get().nodes.find(node => node.id === 'task-1')?.status).toBe('failed');
+    expect(f.host.launch).toHaveBeenCalledTimes(2);
+    const restored = f.get();
+    expect(interventionAvailability(restored, restored.nodes.find(node => node.id === 'task-1')!).canRetry).toBe(true);
+  });
+  it('sends planning correction feedback after a manually continued planner returns invalid JSON', async () => {
+    const f = fixture({ batchAvailable: true });
+    await f.engine.tick();
+    f.finish('plan', 'Provider unavailable', 'error');
+    await f.engine.tick();
+    const original = f.get().nodes[0];
+    const request = input('continue-planner', 'continue', 'Try planning again');
+    f.engine.intervene(f.id, 'plan', f.get().revision, request);
+    await f.engine.tick();
+    expect(vi.mocked(f.host.launch).mock.calls.at(-1)![2]).toBe(request.text);
+    const continued = f.get().nodes[0];
+    f.finish('plan', '{invalid JSON}');
+    await f.engine.tick();
+    const corrected = f.get().nodes[0];
+    const message = JSON.parse(vi.mocked(f.host.launch).mock.calls.at(-1)![2]);
+    expect(message.planningCorrection).toMatchObject({ round: 1, maximumRounds: 3, error: expect.any(String) });
+    expect(corrected.sessionKey).toBe(original.sessionKey);
+    expect(corrected.attempt).toBe(2);
+    expect(corrected.runId).not.toBe(continued.runId);
+    f.finish('plan', JSON.stringify({ tasks: [{ id: 'inspect', title: 'Inspect', task: 'Inspect without edits', access: 'read', deps: [], batch: null }] }));
+    await f.engine.tick();
+    expect(f.get().nodes[0]).toMatchObject({ status: 'done', attempt: 2 });
+    expect(f.get().nodes.find(node => node.kind === 'work')?.status).toBe('running');
   });
   it('does not continue live, uncertain, stale, ended or exhausted nodes', async () => {
     const f = await failedWorker();

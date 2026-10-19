@@ -5,7 +5,7 @@ const original=process.env.SWARM_WORKFLOW_TEST_RUNTIME;
 if(!original) throw new Error('Set SWARM_WORKFLOW_TEST_RUNTIME to a prepared OpenClaw runtime directory.');
 const runtimeEntry=process.env.SWARM_WORKFLOW_TEST_ENTRY||'openclaw.mjs';
 if(!['openclaw.mjs','gateway-launcher.cjs'].includes(runtimeEntry))throw Error('Unsupported fixture runtime entry.');
-const base=path.resolve('.work/native-flow-smoke-'+Date.now());
+const base=path.resolve('.agent-tasks/swarm-workflow/native-smoke-'+Date.now());
 fs.mkdirSync(path.join(base,'extensions/swarm-workflow'),{recursive:true});
 fs.mkdirSync(path.join(base,'node_modules'),{recursive:true});
 fs.mkdirSync(path.join(base,'project'),{recursive:true});
@@ -25,7 +25,8 @@ const startCorrection=process.env.SWARM_WORKFLOW_TEST_START_CORRECTION;
 const unavailableStartTool='fixture_unavailable_tool';
 let startMistakeMade=false, startFeedbackSeen=false;
 let startMistakes=0;
-let launchToolsExpanded=false;
+let launchToolSurface;
+let launchToolSurfaceChanged=false;
 const emptyVerification=process.env.SWARM_WORKFLOW_TEST_VERIFICATION_EMPTY==='1';
 const exhaustCorrections=process.env.SWARM_WORKFLOW_TEST_CORRECTION_EXHAUST==='1';
 let invalidWorkerSubmitted=false,pendingInvalidReply=false,correctionPasses=0,correctionFeedbackSeen=false;
@@ -36,8 +37,12 @@ const specialized=process.env.SWARM_WORKFLOW_TEST_AGENT==='reviewer';
 const assignment='Use reviewer for inspection and verification.';
 const models=[];
 const managementReceipts=[];
+let releasePauseWork;
+let pauseWorkReleased=false;
+let pauseWorkHeld=false;
+const pauseWork=new Promise(resolve=>{releasePauseWork=resolve;});
 const provider=http.createServer((req,res)=>{
- let body='';req.on('data',c=>body+=c);req.on('end',()=>{
+ let body='';req.on('data',c=>body+=c);req.on('end',async()=>{
   calls++;if(calls>30){res.writeHead(500);res.end('Fixture exceeded expected call count');return;}const input=JSON.parse(body||'{}');
   models.push(input.model);
   console.log('MODEL',calls,input.model,JSON.stringify((input.tools||[]).map(t=>t.function?.name)),(input.messages||[]).length);
@@ -52,9 +57,15 @@ const provider=http.createServer((req,res)=>{
   const managementState=managementResponses.find(m=>m.id&&Number.isInteger(m.revision));
   const managementAccepted=managementResponses.find(m=>m.accepted===true);
   if(managementCommand&&managementAccepted&&!managementReceipts.some(m=>m.command===managementCommand.command))managementReceipts.push({command:managementCommand.command,...managementAccepted});
-  const intake=text.includes('The user explicitly selected Swarm Workflow.') && (input.tools||[]).some(t=>['swarm_workflow_start','tool_call'].includes(t.function?.name)) && !(input.messages||[]).some(m=>m.role==='tool'&&String(m.content).includes('Flow accepted.'));
+  // Recognize the admitted request/tool contract, independently of explanatory prose.
+  // This only drives the local fixture model; the plugin still authorizes the call.
+  const intake=text.includes('swarm_workflow_start') && text.includes('fixture-once:user') && (input.tools||[]).some(t=>['swarm_workflow_start','tool_call'].includes(t.function?.name)) && !(input.messages||[]).some(m=>m.role==='tool'&&String(m.content).includes('Flow accepted.'));
   if(intake&&startMistakeMade)startFeedbackSeen=startCorrection==='prose'?text.includes('No Swarm Workflow has been accepted'):text.includes(unavailableStartTool);
-  if(startCorrection&&intake&&(input.tools||[]).some(t=>['read','write','edit','apply_patch','process'].includes(t.function?.name)))launchToolsExpanded=true;
+  if(intake){
+    const surface=JSON.stringify((input.tools||[]).map(t=>t.function?.name).sort());
+    if(launchToolSurface===undefined)launchToolSurface=surface;
+    else if(launchToolSurface!==surface)launchToolSurfaceChanged=true;
+  }
   const deferred=(input.tools||[]).some(t=>t.function?.name==='tool_call');
   const worker=text.includes('Call swarm_workflow_complete(summary, evidence)');
   const verification=text.includes('Independently inspect every work result');
@@ -65,11 +76,16 @@ const provider=http.createServer((req,res)=>{
   let args=intake?{goal:'Read-only smoke check'+(specialized?' '+assignment:''),mode:'auto',sourceRequestId:'fixture-once:user'}:inspection?{command:'node -e "process.stdout.write(\'swarm-inspection-ok\')"',workdir:path.join(base,'project')}:verification?{passed:!retryScenario||verificationAttempts>0,...(evidenceOnly?{}:{summary:retryScenario&&verificationAttempts===0?'Missing fixture check':'Verified fixture'}),evidence:['fixture result']}:evidenceOnly?{evidence:'Read-only fixture evidence.'}:{summary:'Read-only fixture evidence.',evidence:['fixture file inspected']};
   if(managementCommand)args=!managementState?{}:{flowId:managementState.id,revision:managementState.revision,action:managementCommand.command,...(!managementControl?{nodeId:managementCommand.nodeId,text:managementCommand.text}:{})};
   // Native post-tool reminders can also be user-role entries. Only the latest
-  // dispatched task/correction envelope starts a new fixture execution turn.
-  const lastUser=(input.messages||[]).findLastIndex(m=>m.role==='user'&&/assignedTask|Submission correction only\./.test(JSON.stringify(m.content)));
+  // dispatched task/correction or literal human input starts a new execution turn.
+  const lastUser=(input.messages||[]).findLastIndex(m=>m.role==='user'&&/assignedTask|Submission correction only\.|Continue independent verification with the supplied decision/.test(JSON.stringify(m.content)));
   const turnToolMessages=(input.messages||[]).slice(lastUser+1).filter(m=>m.role==='tool');
   const submitted=turnToolMessages.some(m=>String(m.content).includes('Submission persisted.'));
-  if(verification&&text.includes('Human verified fixture prerequisites')&&text.includes('continuationInstruction'))humanInputSeen=true;
+  if(verification&&text.includes('Human verified fixture prerequisites')){
+    const message=input.messages[lastUser];
+    const content=typeof message?.content==='string'?message.content:(message?.content||[]).filter(p=>p.type==='text').map(p=>p.text).join('\n');
+    if(!content.endsWith('Continue independent verification with the supplied decision')||content.includes('assignedTask')||content.includes('humanInput'))throw Error('Continuation repackaged the human input');
+    humanInputSeen=true;
+  }
   const premature=correctionScenario&&worker&&pendingInvalidReply&&!submitted;
   if(premature)pendingInvalidReply=false;
   const emptyReply=emptyVerification&&verification&&pendingEmptyReply&&!submitted&&(input.tools||[]).length>0;
@@ -93,6 +109,12 @@ const provider=http.createServer((req,res)=>{
    ? JSON.stringify({tasks:[{id:'inspect',title:'Inspect',task:'Describe the goal without modifying files.',deps:[],access:'read',batch:null,...(specialized?{agentId:'reviewer',agentRequest:assignment}:{})}],...(specialized?{stages:{verify:{agentId:'reviewer',agentRequest:assignment}}}:{})})
    : verification ? 'Verification complete. This final explanation is deliberately not JSON.'
    : text.includes('Produce the final user-facing answer') ? 'Native flow integration fixture complete.' : 'Read-only fixture evidence.';
+  // Pause only after native admission, while this deterministic model turn is held.
+  // Pausing an uncertain launch correctly fences it and cannot prove it never ran.
+  if(worker&&!intake&&!verification&&!managementCommand&&!startCorrection&&!pauseWorkReleased&&!pauseWorkHeld){
+    pauseWorkHeld=true;await pauseWork;
+    if(res.destroyed||res.writableEnded)return;
+  }
   if(input.stream){
    res.writeHead(200,{'Content-Type':'text/event-stream'});
    res.write('data: '+JSON.stringify({id:'test-'+calls,object:'chat.completion.chunk',created:1,model:'fixture',choices:[{index:0,delta:calling?{role:'assistant',tool_calls:[{index:0,...toolCall}]}:{role:'assistant',content:output},finish_reason:null}]})+'\n\n');
@@ -148,19 +170,28 @@ const wait=ms=>new Promise(r=>setTimeout(r,ms));
   await rpc('sessions.create',{key:parentKey,cwd:path.join(base,'project'),permissionMode:execScenario?'full':'workspace'});
   const startReceipt=await rpc('chat.send',{sessionKey:parentKey,idempotencyKey:'fixture-once',message:'Read-only smoke check'+(specialized?' '+assignment:'')+'\n\n<swarm-workflow mode="auto"/>'});
   for(let i=0;i<70;i++){
-    const result=await rpc('swarmWorkflow.list',{parentKeys:[parentKey]});const flow=result.flows[0]; if(!flow){
+    const result=await rpc('swarmWorkflow.list',{parentKeys:[parentKey]});let flow=result.flows[0]; if(!flow){
+      const source=await rpc('agent.wait',{runId:startReceipt.runId,timeoutMs:1});
       if(startCorrection==='exhaust'){
-        const settled=await rpc('agent.wait',{runId:startReceipt.runId,timeoutMs:1});
+        const settled=source;
         if(!['pending','timeout'].includes(settled.status)){
-          if(settled.status!=='ok'||startMistakes!==4||calls!==4||launchToolsExpanded)throw Error('Launch correction did not stop safely after 3 rounds: '+JSON.stringify({settled,startMistakes,calls,launchToolsExpanded}));
+          const flows=(await rpc('swarmWorkflow.list',{parentKeys:[parentKey]})).flows;
+          if(settled.status!=='ok'||startMistakes!==4||calls!==4||launchToolSurfaceChanged||flows.length!==0)throw Error('Launch correction did not stop safely after 3 rounds: '+JSON.stringify({settled,startMistakes,calls,launchToolSurfaceChanged,flows:flows.length}));
           console.log('PASS',JSON.stringify({calls,startMistakes,correctionRounds:3,bounded:true,flows:0}));return;
         }
       }
-      await wait(1000);continue;
+      if(['ok','error'].includes(source.status)){
+        // The first snapshot may precede acceptance; recheck after source settlement.
+        flow=(await rpc('swarmWorkflow.list',{parentKeys:[parentKey]})).flows[0];
+        if(!flow)throw Error('Source chat ended without an accepted Swarm Workflow: '+JSON.stringify({runId:startReceipt.runId,status:source.status,error:source.error,calls}));
+      }
+      if(!flow){await wait(1000);continue;}
     }
     if(i%5===0)console.log('STATE',flow.status,flow.nodes.map(n=>n.id+':'+n.status).join(','));
-    if(!startCorrection && !paused && flow.status==='running' && flow.nodes.some(n=>n.kind==='work')){
-      await rpc('swarmWorkflow.control',{parentKeys:[parentKey],id:flow.id,revision:flow.revision,action:'pause'});paused=true;continue;
+    if(!startCorrection && !paused && pauseWorkHeld && flow.status==='running' && flow.nodes.some(n=>n.kind==='work'&&n.status==='running'&&n.runId)){
+      try{await rpc('swarmWorkflow.control',{parentKeys:[parentKey],id:flow.id,revision:flow.revision,action:'pause'});}
+      catch(error){if(String(error).includes('Flow revision conflict.'))continue;throw error;}
+      paused=true;pauseWorkReleased=true;releasePauseWork();continue;
     }
     if(paused && !restarted && flow.status==='paused' && !flow.nodes.some(n=>['preparing','running','uncertain'].includes(n.status))){
       const before=calls; socket.close();await new Promise(resolve=>{child.once('exit',resolve);child.kill();});socket=undefined;
@@ -177,7 +208,7 @@ const wait=ms=>new Promise(r=>setTimeout(r,ms));
       if (detail.submission !== 'submitted' || JSON.parse(detail.dispatch.message).assignedTask !== 'Describe the goal without modifying files.') throw new Error('Missing exact dispatch');
       const nodeHistory = await rpc('chat.history', { sessionKey: detail.sessionKey, limit: 20 });
       if (!JSON.stringify(nodeHistory.messages).includes('Read-only fixture evidence.')) throw new Error('Missing native node execution history');
-      const history=await rpc('chat.history',{sessionKey:parentKey,limit:30}); if((!startCorrection&&!restarted) || calls!==((retryScenario?10:8)+(execScenario?1:0)+(correctionScenario?2:0)+(emptyVerification?3:0)+(managementScenario?9:0)+(startCorrection?1:0)) || !JSON.stringify(history.messages).includes('Native flow integration fixture complete.')) throw new Error('Missing recovery or final chat delivery');if(startCorrection&&(!startMistakeMade||!startFeedbackSeen||launchToolsExpanded||(await rpc('swarmWorkflow.list',{parentKeys:[parentKey]})).flows.length!==1))throw Error('Start correction was lost or created duplicate workflows');if(execScenario&&(!inspectionPassed||inspectionExecutions!==1))throw Error('Inspection command was denied, repeated or did not return evidence');if((correctionScenario||emptyVerification)&&(!correctionFeedbackSeen||correctionPasses!==1||work.attempt!==1||flow.nodes.find(n=>n.kind==='verify').attempt!==1))throw Error('Submission was not corrected in the original task attempt');if(interventionScenario&&!humanInputSeen)throw Error('Continued verifier did not receive human input');if(managementScenario&&(managementReceipts.length!==3||!managementReceipts.some(m=>m.command==='resume'&&m.flow.status==='running')||!JSON.stringify(history.messages).includes('Swarm Workflow needs attention')))throw Error('Missing main-session management or blocker notice');console.log('PASS',JSON.stringify({calls,nodes:flow.nodes.length,delivered:true,restarted,retried,specialized,inspectionPassed,inspectionExecutions,evidenceOnly,emptyVerification,correctionPasses,correctionFeedbackSeen,startCorrection,startFeedbackSeen,humanInputSeen,managementScenario,managementReceipts:managementReceipts.map(m=>({command:m.command,accepted:m.accepted})),models}));return;
+      const history=await rpc('chat.history',{sessionKey:parentKey,limit:30}); if((!startCorrection&&!restarted) || calls!==((retryScenario?10:8)+(execScenario?1:0)+(correctionScenario?2:0)+(emptyVerification?3:0)+(managementScenario?9:0)+(startCorrection?1:0)) || !JSON.stringify(history.messages).includes('Native flow integration fixture complete.')) throw new Error('Missing recovery or final chat delivery');if(startCorrection&&(!startMistakeMade||!startFeedbackSeen||launchToolSurfaceChanged||(await rpc('swarmWorkflow.list',{parentKeys:[parentKey]})).flows.length!==1))throw Error('Start correction was lost or created duplicate workflows');if(execScenario&&(!inspectionPassed||inspectionExecutions!==1))throw Error('Inspection command was denied, repeated or did not return evidence');if((correctionScenario||emptyVerification)&&(!correctionFeedbackSeen||correctionPasses!==1||work.attempt!==1||flow.nodes.find(n=>n.kind==='verify').attempt!==1))throw Error('Submission was not corrected in the original task attempt');if(interventionScenario&&!humanInputSeen)throw Error('Continued verifier did not receive human input');if(managementScenario&&(managementReceipts.length!==3||!managementReceipts.some(m=>m.command==='resume'&&m.flow.status==='running')||!JSON.stringify(history.messages).includes('Swarm Workflow needs attention')))throw Error('Missing main-session management or blocker notice');console.log('PASS',JSON.stringify({calls,nodes:flow.nodes.length,delivered:true,restarted,retried,specialized,inspectionPassed,inspectionExecutions,evidenceOnly,emptyVerification,correctionPasses,correctionFeedbackSeen,startCorrection,startFeedbackSeen,humanInputSeen,managementScenario,managementReceipts:managementReceipts.map(m=>({command:m.command,accepted:m.accepted})),models}));return;
     }
     if(flow.status==='blocked'){
       if(exhaustCorrections){
@@ -215,5 +246,5 @@ const wait=ms=>new Promise(r=>setTimeout(r,ms));
     await wait(1000);
   }throw new Error('Flow completion timed out');
  }catch(e){console.error(String(e));console.error(log.slice(-7500));process.exitCode=1;}
- finally{socket?.close();child.kill();provider.close();fs.writeFileSync(path.join(base,'gateway.log'),log);console.log('FIXTURE',base);}
+ finally{pauseWorkReleased=true;releasePauseWork();socket?.close();child.kill();provider.close();fs.writeFileSync(path.join(base,'gateway.log'),log);console.log('FIXTURE',base);}
 })().catch(e=>{console.error(e);provider.close();process.exitCode=1});

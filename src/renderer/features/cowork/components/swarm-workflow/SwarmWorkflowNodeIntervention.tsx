@@ -1,10 +1,8 @@
 import {
   ArrowPathIcon,
   BookmarkSquareIcon,
-  ChatBubbleLeftEllipsisIcon,
-  CheckCircleIcon,
-  ChevronDownIcon,
   EllipsisHorizontalIcon,
+  ExclamationTriangleIcon,
   PaperAirplaneIcon,
 } from '@heroicons/react/24/outline';
 import {
@@ -12,13 +10,17 @@ import {
   type SwarmWorkflowDetail,
   type SwarmWorkflowInterventionNote,
 } from '@shared/cowork/swarm-workflow';
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef } from 'react';
 
 import { i18nService } from '@/services/i18n';
 
 import { UserMessageContent } from '../chat/UserMessageContent';
 import ComposerFeatureMenu, { type ComposerFeatureItem } from '../composer/ComposerFeatureMenu';
-import { COMPOSER_SURFACE_CLASS, COMPOSER_TEXTAREA_CLASS } from '../composer/composerStyles';
+import {
+  COMPOSER_FRAME_CLASS,
+  COMPOSER_SURFACE_CLASS,
+  COMPOSER_TEXTAREA_CLASS,
+} from '../composer/composerStyles';
 import { RunControlButton } from '../composer/RunControlButton';
 import { useSwarmWorkflowInterventionState } from './workflowBrowserState';
 
@@ -67,7 +69,6 @@ export default function SwarmWorkflowNodeIntervention({
   onChanged: () => void;
 }) {
   const t = (key: string) => i18nService.t(key);
-  const [expanded, setExpanded] = useState(false);
   const { text, setText, busy, failed, acceptedAction, setAcceptedAction, notes, send } =
     useSwarmWorkflowInterventionState({
       sessionId,
@@ -77,19 +78,16 @@ export default function SwarmWorkflowNodeIntervention({
     });
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const notesRef = useRef<HTMLUListElement>(null);
-  const hintId = useId();
-  useEffect(() => {
-    if (detail.canContinue) setExpanded(true);
-  }, [detail.canContinue]);
+  const errorId = useId();
   useLayoutEffect(() => {
     const input = inputRef.current;
     if (!input) return;
     input.style.height = 'auto';
     input.style.height = `${Math.min(144, Math.max(48, input.scrollHeight))}px`;
-  }, [text, expanded, detail.canNote]);
+  }, [text, detail.canNote]);
   useEffect(() => {
     if (notesRef.current) notesRef.current.scrollTop = notesRef.current.scrollHeight;
-  }, [notes.length, expanded]);
+  }, [notes.length]);
   if (!detail.canNote && !notes.length && !failed) return null;
   const moreActions: ComposerFeatureItem[] = [];
   if (detail.canContinue)
@@ -110,143 +108,99 @@ export default function SwarmWorkflowNodeIntervention({
       onSelect: () => void send('retry'),
     });
   return (
-    <div className="shrink-0 border-t border-border p-3">
-      <div className="flex items-center">
-        <button
-          type="button"
-          title={t('swarmWorkflowIntervene')}
-          aria-label={t('swarmWorkflowIntervene')}
-          aria-expanded={expanded}
-          onClick={() => setExpanded(value => !value)}
-          className="flex w-full min-w-0 items-center gap-2 rounded-lg px-1 py-1 text-xs font-medium text-secondary hover:bg-surface-raised"
+    <div className="shrink-0 p-3">
+      {!!notes.length && (
+        <ul
+          ref={notesRef}
+          aria-label={t('swarmWorkflowInterventionHistory')}
+          className="my-3 max-h-44 space-y-3 overflow-y-auto overscroll-contain pr-1"
         >
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-            <ChatBubbleLeftEllipsisIcon className="h-3.5 w-3.5" aria-hidden="true" />
-          </span>
-          <span className="shrink-0 whitespace-nowrap">{t('swarmWorkflowIntervene')}</span>
-          {!!notes.length && (
-            <span className="shrink-0 rounded-full bg-surface-raised px-1.5 py-0.5 text-[10px] font-normal text-muted">
-              {notes.length}
-            </span>
-          )}
-          {expanded && detail.canNote && (
-            <span
-              id={hintId}
-              title={t(
-                detail.canContinue
-                  ? 'swarmWorkflowInterventionContinueHint'
-                  : 'swarmWorkflowInterventionNoteHint',
-              )}
-              className="min-w-0 flex-1 truncate text-left text-[11px] font-normal text-muted"
-            >
-              {t(
-                detail.canContinue
-                  ? 'swarmWorkflowInterventionContinueHint'
-                  : 'swarmWorkflowInterventionNoteHint',
-              )}
-            </span>
-          )}
-          <ChevronDownIcon
-            className={`ml-auto h-3 w-3 shrink-0 text-muted transition-transform ${expanded ? 'rotate-180' : ''}`}
-            aria-hidden="true"
-          />
-        </button>
-      </div>
-      {expanded && (
-        <>
-          {!!notes.length && (
-            <ul
-              ref={notesRef}
-              aria-label={t('swarmWorkflowInterventionHistory')}
-              className="my-3 max-h-44 space-y-3 overflow-y-auto overscroll-contain pr-1"
-            >
-              {notes.map(note => (
-                <InterventionMessage
-                  key={note.id}
-                  note={note}
-                  workingDirectory={detail.workingDirectory}
+          {notes.map(note => (
+            <InterventionMessage
+              key={note.id}
+              note={note}
+              workingDirectory={detail.workingDirectory}
+            />
+          ))}
+        </ul>
+      )}
+      {detail.canNote && (
+        <div className={COMPOSER_FRAME_CLASS}>
+          <div className={COMPOSER_SURFACE_CLASS}>
+            <textarea
+              ref={inputRef}
+              value={text}
+              maxLength={SWARM_WORKFLOW_INTERVENTION_LIMITS.text}
+              disabled={busy || disabled}
+              aria-label={t('swarmWorkflowInterventionInput')}
+              aria-describedby={failed ? errorId : undefined}
+              aria-keyshortcuts="Control+Enter Meta+Enter"
+              placeholder={t('swarmWorkflowInterventionPlaceholder')}
+              onChange={event => {
+                setText(event.target.value);
+                setAcceptedAction(undefined);
+              }}
+              onKeyDown={event => {
+                if (
+                  !event.nativeEvent.isComposing &&
+                  event.keyCode !== 229 &&
+                  event.key === 'Enter' &&
+                  (event.ctrlKey || event.metaKey)
+                ) {
+                  event.preventDefault();
+                  void send(detail.canContinue ? 'continue' : 'note');
+                }
+              }}
+              rows={1}
+              className={`${COMPOSER_TEXTAREA_CLASS} block min-h-12 max-h-36 disabled:opacity-50`}
+            />
+            <div className="flex items-center gap-2 px-3 pb-2 pt-1.5">
+              {!!moreActions.length && (
+                <ComposerFeatureMenu
+                  items={moreActions}
+                  label={t('swarmWorkflowInterventionMore')}
+                  triggerIcon={<EllipsisHorizontalIcon className="h-4 w-4" />}
+                  disabled={disabled || busy || !detail.revision}
                 />
-              ))}
-            </ul>
-          )}
-          {detail.canNote && (
-            <div className={`${COMPOSER_SURFACE_CLASS} mt-2`}>
-              <textarea
-                ref={inputRef}
-                value={text}
-                maxLength={SWARM_WORKFLOW_INTERVENTION_LIMITS.text}
-                disabled={busy || disabled}
-                aria-label={t('swarmWorkflowInterventionInput')}
-                aria-describedby={hintId}
-                aria-keyshortcuts="Control+Enter Meta+Enter"
-                placeholder={t('swarmWorkflowInterventionPlaceholder')}
-                onChange={event => {
-                  setText(event.target.value);
-                  setAcceptedAction(undefined);
-                }}
-                onKeyDown={event => {
-                  if (
-                    !event.nativeEvent.isComposing &&
-                    event.keyCode !== 229 &&
-                    event.key === 'Enter' &&
-                    (event.ctrlKey || event.metaKey)
-                  ) {
-                    event.preventDefault();
-                    void send(detail.canContinue ? 'continue' : 'note');
-                  }
-                }}
-                rows={1}
-                className={`${COMPOSER_TEXTAREA_CLASS} block min-h-12 max-h-36 disabled:opacity-50`}
-              />
-              <div className="flex items-center gap-2 px-3 pb-2 pt-1">
-                {!!moreActions.length && (
-                  <ComposerFeatureMenu
-                    items={moreActions}
-                    label={t('swarmWorkflowInterventionMore')}
-                    triggerIcon={<EllipsisHorizontalIcon className="h-4 w-4" />}
-                    disabled={disabled || busy || !detail.revision}
-                  />
+              )}
+              <div className="flex-1" />
+              <RunControlButton
+                isRunning={false}
+                isStopping={false}
+                canSubmit={!disabled && !busy && !!text.trim() && !!detail.revision}
+                size="normal"
+                sendLabel={t(
+                  detail.canContinue
+                    ? 'swarmWorkflowInterventionContinue'
+                    : 'swarmWorkflowInterventionSave',
                 )}
-                <div className="flex-1" />
-                <RunControlButton
-                  isRunning={false}
-                  isStopping={false}
-                  canSubmit={!disabled && !busy && !!text.trim() && !!detail.revision}
-                  size="normal"
-                  sendLabel={t(
+                sendTitle={
+                  t(
                     detail.canContinue
                       ? 'swarmWorkflowInterventionContinue'
                       : 'swarmWorkflowInterventionSave',
-                  )}
-                  sendText={t(
-                    detail.canContinue
-                      ? 'swarmWorkflowInterventionSendContinue'
-                      : 'swarmWorkflowInterventionSendNote',
-                  )}
-                  sendTitle={
-                    t(
-                      detail.canContinue
-                        ? 'swarmWorkflowInterventionContinue'
-                        : 'swarmWorkflowInterventionSave',
-                    ) + ' · Ctrl/⌘ + Enter'
-                  }
-                  onSend={() => void send(detail.canContinue ? 'continue' : 'note')}
-                />
-              </div>
+                  ) + ' · Ctrl/⌘ + Enter'
+                }
+                onSend={() => void send(detail.canContinue ? 'continue' : 'note')}
+              />
             </div>
-          )}
-        </>
+          </div>
+        </div>
       )}
       {failed && (
-        <p role="alert" className="px-2 py-1 text-xs text-red-600">
-          {t('swarmWorkflowControlFailed')}
-        </p>
+        <div
+          id={errorId}
+          role="alert"
+          className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+        >
+          <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <p>{t('swarmWorkflowInterventionSendUnconfirmed')}</p>
+        </div>
       )}
       {acceptedAction && (
-        <p role="status" className="mt-2 flex items-center gap-1.5 px-1 text-xs text-secondary">
-          <CheckCircleIcon className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
+        <span role="status" className="sr-only">
           {t('swarmWorkflowInterventionAccepted_' + acceptedAction)}
-        </p>
+        </span>
       )}
     </div>
   );

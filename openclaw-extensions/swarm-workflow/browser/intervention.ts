@@ -29,7 +29,7 @@ export function useWorkflowIntervention(
   useEffect(() => {
     // A response can be lost after acceptance. Reconcile using the persisted ID.
     if (pending.current && notes.some(note => note.id === pending.current?.id)) {
-      if (text.trim() === pending.current.text) setText('');
+      if (text === pending.current.text) setText('');
       setAcceptedAction(pending.current.action);
       pending.current = undefined;
       setFailed(false);
@@ -46,7 +46,7 @@ export function useWorkflowIntervention(
       (action !== 'retry' && !text.trim())
     )
       return;
-    const body = text.trim();
+    const body = text;
     const request =
       pending.current?.action === action && pending.current.text === body
         ? pending.current

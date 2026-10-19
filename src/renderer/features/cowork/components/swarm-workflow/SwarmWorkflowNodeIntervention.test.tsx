@@ -30,8 +30,6 @@ function fixture(current = detail) {
   const onChanged = vi.fn();
   const props = { sessionId: 'product', detail: current, disabled: false, onChanged };
   const view = render(<SwarmWorkflowNodeIntervention {...props} />);
-  const toggle = screen.getByRole('button', { name: 'Human input' });
-  if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle);
   return { ...view, send, props, onChanged };
 }
 
@@ -48,7 +46,7 @@ test('continues with explicit text and refreshes both the node and graph after a
   expect(f.send).toHaveBeenCalledWith('product', 'flow', 'verify', 3, {
     id: expect.any(String),
     action: 'continue',
-    text: 'Environment fixed',
+    text: '  Environment fixed  ',
   });
   expect((input as HTMLTextAreaElement).value).toBe('');
   expect(f.onChanged).toHaveBeenCalledOnce();
@@ -59,7 +57,10 @@ test('keeps draft and request identity after a lost reply and reconciles a later
   const input = screen.getByRole('textbox');
   fireEvent.change(input, { target: { value: 'Additional evidence' } });
   saveOnly();
-  await screen.findByRole('alert');
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toBe('Send not confirmed. Your draft is still here; try again.');
+  expect(alert.contains(input)).toBe(false);
+  expect(input.getAttribute('aria-describedby')).toBe(alert.id);
   expect((input as HTMLTextAreaElement).value).toBe('Additional evidence');
   saveOnly();
   await waitFor(() => expect(f.send).toHaveBeenCalledTimes(2));
@@ -181,14 +182,14 @@ test('does not submit a Chinese IME composition and blocks repeated sends awaiti
   await screen.findByText('Continuation requested.');
 });
 
-test('offers one primary send action and explains optional save and rerun in the menu', async () => {
+test('offers one icon send action with a descriptive label and explains optional actions in the menu', async () => {
   const f = fixture();
-  expect(screen.getByRole('button', { name: 'Human input' }).getAttribute('aria-expanded')).toBe(
-    'true',
-  );
-  expect(screen.getByRole('button', { name: 'Send and continue (same session)' }).textContent).toBe(
-    'Send & continue',
-  );
+  expect(screen.queryByRole('button', { name: 'Human input' })).toBeNull();
+  expect(screen.queryByText('Add input to continue this node in its existing session.')).toBeNull();
+  expect(screen.getByRole('textbox').getAttribute('aria-describedby')).toBeNull();
+  const sendButton = screen.getByRole('button', { name: 'Send and continue (same session)' });
+  expect(sendButton.textContent).toBe('');
+  expect(sendButton.title).toBe('Send and continue (same session) · Ctrl/⌘ + Enter');
   expect(screen.queryByRole('button', { name: 'Save input' })).toBeNull();
   expect(screen.queryByText('Save without continuing')).toBeNull();
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Evidence for later' } });
@@ -207,7 +208,9 @@ test('offers one primary send action and explains optional save and rerun in the
       detail={{ ...detail, canContinue: false, canRetry: false }}
     />,
   );
-  expect(screen.getByRole('button', { name: 'Save input' }).textContent).toBe('Send input');
+  const saveButton = screen.getByRole('button', { name: 'Save input' });
+  expect(saveButton.textContent).toBe('');
+  expect(saveButton.title).toBe('Save input · Ctrl/⌘ + Enter');
   expect(screen.queryByRole('button', { name: 'More actions' })).toBeNull();
-  expect(screen.getByText('This input will be read on the next run.')).toBeTruthy();
+  expect(screen.queryByText('This input will be read on the next run.')).toBeNull();
 });

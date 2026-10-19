@@ -1115,7 +1115,10 @@ it('continues a blocked verifier through owned operator input and requires a fre
   const resumed = f.run.mock.calls[3][0];
   expect(resumed.sessionKey).toBe(verify.sessionKey);
   expect(resumed.idempotencyKey).not.toBe(verify.idempotencyKey);
-  expect(JSON.parse(resumed.message).humanInput[0].text).toContain('acceptance criteria');
+  expect(resumed.message).toBe(params.intervention.text);
+  expect(resumed.extraSystemPrompt).toContain('Prior submissions do not complete this new run');
+  expect(resumed.extraSystemPrompt).toContain('swarm_workflow_verify');
+  expect(resumed.extraSystemPrompt).toContain('read-only');
   const context = { ...oldContext, runId: resumed.idempotencyKey, toolCallId: 'new-verdict' };
   expect(f.hooks.get('before_tool_call')({ toolName: 'exec' }, context)).toBeUndefined();
   expect(f.hooks.get('before_tool_call')({ toolName: oldTool.name }, oldContext)).toMatchObject({ block: true });
