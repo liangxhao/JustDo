@@ -6,7 +6,7 @@
 
 | 项目     | 声明/锁定                            | 解释                            |
 | -------- | ------------------------------------ | ------------------------------- |
-| 应用     | v2026.8.27                           | package.json 与 lockfile 根版本 |
+| 应用     | v2026.10.20                           | package.json 与 lockfile 根版本 |
 | Node     | .nvmrc 24.21.0；engine >=24.16.0 <25 | 开发工具与原生构建环境          |
 | Electron | 声明 ^42.6.2；lockfile 42.7.0        | 桌面运行时与 Electron ABI       |
 | OpenClaw | v2026.9.8                            | 独立锁定 pristine runtime       |

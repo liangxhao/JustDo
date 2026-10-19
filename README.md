@@ -5,7 +5,7 @@ OpenClaw Gateway. It is designed for real task execution: chat with an agent,
 attach files, manage skills and MCP servers, run scheduled tasks, and keep the
 desktop app available in the background.
 
-![Version](https://img.shields.io/badge/Version-v2026.8.27-green.svg?style=for-the-badge)
+![Version](https://img.shields.io/badge/Version-v2026.10.20-green.svg?style=for-the-badge)
 ![Electron](https://img.shields.io/badge/Electron-42-47848F?style=for-the-badge&logo=electron&logoColor=white)
 ![Node](https://img.shields.io/badge/Node-24.x-339933?style=for-the-badge&logo=node.js&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)
@@ -160,7 +160,7 @@ OpenClaw integration is declared in `package.json`:
 
 ```json
 {
-  "version": "v2026.8.27",
+  "version": "v2026.10.20",
   "openclaw": {
     "version": "v2026.9.8",
     "repo": "https://github.com/openclaw/openclaw.git"
