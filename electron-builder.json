@@ -103,7 +103,8 @@
           "!**/__tests__/**",
           "docs/**/*",
           "skills/**/*",
-          "**/*.md"
+          "**/*.md",
+          "!dist/worker-artifacts{,/**}"
         ]
       },
       {
@@ -171,7 +172,8 @@
           "!**/__tests__/**",
           "docs/**/*",
           "skills/**/*",
-          "**/*.md"
+          "**/*.md",
+          "!dist/worker-artifacts{,/**}"
         ]
       },
       {

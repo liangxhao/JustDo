@@ -22,7 +22,7 @@ a read-only recovery RPC covers the native ToolSearch reconstruction gap.
 | `assets/`                                          | Generated, ignored runtime bundles, editor resources and licenses     |
 
 Preparation inputs and commands are maintained in
-[offline downloads](../../docs/offline-downloads.md#6-drawio-离线编辑器).
+[offline downloads](../../docs/offline-downloads.md#5-drawio-离线编辑器).
 Root `drawio:prepare` / `drawio:verify` commands delegate to this plugin's scripts;
 the plugin package also exposes `assets:prepare` / `assets:verify`. Build tooling
 uses the repository's installed development dependencies; generated bundles need

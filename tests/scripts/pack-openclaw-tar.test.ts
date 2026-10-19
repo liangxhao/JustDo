@@ -5,16 +5,22 @@ import { pipeline } from 'node:stream/promises';
 import { createZstdDecompress } from 'node:zlib';
 
 import { list as listTar } from 'tar';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 
 const {
+  PACKAGED_RUNTIME_EXCLUDES,
+  resolveCompressionWorkers,
   compressTarArchive,
   packMultipleSources,
   verifyRuntimeKnowledgeEntries,
+  verifyRuntimeWorkerEntries,
   verifyLegalMetadataEntries,
 } = require('../../scripts/openclaw/pack-openclaw-tar.cjs') as {
-  compressTarArchive: (sourceTar: string, outputArchive: string) => Promise<void>;
+  PACKAGED_RUNTIME_EXCLUDES: string[];
+  resolveCompressionWorkers: (sourceBytes: number, options: Record<string, unknown>) => number;
+  compressTarArchive: (sourceTar: string, outputArchive: string, options?: Record<string, unknown>) => Promise<{ workers: number }>;
   verifyRuntimeKnowledgeEntries: (entries: Set<string>, prefix: string, root: string) => number;
+  verifyRuntimeWorkerEntries: (entries: Set<string>, prefix: string, root: string) => number;
   verifyLegalMetadataEntries: (entries: Set<string>, prefix: string, root: string) => number;
   packMultipleSources: (
     sources: Array<{
@@ -26,6 +32,49 @@ const {
     outputTar: string,
   ) => void;
 };
+
+test('omits the standalone deployment bundle while retaining every local Worker and knowledge file', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-worker-packaging-'));
+  const runtime = path.join(root, 'runtime');
+  const workers = [
+    'dist/infra/sqlite-store.worker.js',
+    'dist/media/image-processor.worker.js',
+    'dist/agents/code-mode-node.worker.js',
+    'dist/worker-artifacts-cache/local.worker.js',
+    'dist/extensions/fixture/worker-artifacts/local.worker.js',
+  ];
+  try {
+    for (const file of [
+      ...workers,
+      'gateway.asar',
+      'gateway-bundle.mjs',
+      'dist/worker-artifacts/bundle.tar.gz',
+      'docs/worker-artifacts/README.md',
+      'skills/example/SKILL.md',
+      'LICENSE',
+    ]) {
+      const target = path.join(runtime, file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, file);
+    }
+    const archive = path.join(root, 'runtime.tar');
+    packMultipleSources([{ dir: runtime, prefix: 'cfmind', exclude: PACKAGED_RUNTIME_EXCLUDES }], archive);
+    const entries = new Set<string>();
+    listTar({ file: archive, sync: true, onReadEntry: entry => entries.add(entry.path.replaceAll('\\', '/')) });
+    expect([...entries].some(entry => /^cfmind\/dist\/worker-artifacts(?:\/|$)/.test(entry))).toBe(false);
+    expect(entries.has('cfmind/gateway.asar')).toBe(false);
+    for (const file of [...workers, 'gateway-bundle.mjs', 'docs/worker-artifacts/README.md', 'skills/example/SKILL.md', 'LICENSE'])
+      expect(entries.has(`cfmind/${file}`), file).toBe(true);
+    expect(verifyRuntimeWorkerEntries(entries, 'cfmind/', runtime)).toBe(workers.length);
+    for (const forbidden of ['cfmind/dist/worker-artifacts/', 'cfmind/dist/worker-artifacts/bundle.tar.gz']) {
+      expect(() => verifyRuntimeWorkerEntries(new Set([...entries, forbidden]), 'cfmind/', runtime)).toThrow(/deployment artifacts/);
+    }
+    entries.delete(`cfmind/${workers[0]}`);
+    expect(() => verifyRuntimeWorkerEntries(entries, 'cfmind/', runtime)).toThrow(/sqlite-store\.worker\.js/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('retains legal metadata across all packages, including filtered development directories', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'legal-archive-'));
@@ -66,8 +115,8 @@ test('retains legal metadata across all packages, including filtered development
   }
 });
 
-test('pre-compresses a runtime tar without changing its entries', async () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-zstd-'));
+test.each([0, 2])('pre-compresses a runtime tar with %i native workers without changing its entries', async workers => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-zstd 中文 空格-'));
   const runtimeRoot = path.join(tempRoot, 'runtime');
   const tarPath = path.join(tempRoot, 'runtime.tar');
   const archivePath = path.join(tempRoot, 'runtime.tar.zst');
@@ -77,7 +126,8 @@ test('pre-compresses a runtime tar without changing its entries', async () => {
     fs.writeFileSync(path.join(runtimeRoot, 'gateway-bundle.mjs'), 'bundle'.repeat(1000), 'utf8');
     packMultipleSources([{ dir: runtimeRoot, prefix: 'cfmind' }], tarPath);
 
-    await compressTarArchive(tarPath, archivePath);
+    const result = await compressTarArchive(tarPath, archivePath, { workers, cpuCount: 8, availableMemory: 8 * 1024 ** 3 });
+    expect(result.workers).toBe(workers);
 
     const entries: string[] = [];
     await pipeline(
@@ -91,6 +141,40 @@ test('pre-compresses a runtime tar without changing its entries', async () => {
     expect(fs.statSync(archivePath).size).toBeLessThan(fs.statSync(tarPath).size);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('bounds compression concurrency by CPUs, memory and buffered input size', () => {
+  vi.stubEnv('RUNTIME_COMPRESSION_WORKERS', undefined);
+  try {
+    const enough = { cpuCount: 32, availableMemory: 16 * 1024 ** 3 };
+    expect(resolveCompressionWorkers(900 * 1024 ** 2, enough)).toBe(4);
+    expect(resolveCompressionWorkers(900 * 1024 ** 2, { ...enough, workers: 8 })).toBe(8);
+    expect(resolveCompressionWorkers(900 * 1024 ** 2, { ...enough, cpuCount: 3 })).toBe(2);
+    expect(resolveCompressionWorkers(900 * 1024 ** 2, { ...enough, cpuCount: 2 })).toBe(0);
+    expect(resolveCompressionWorkers(900 * 1024 ** 2, { ...enough, availableMemory: 3 * 1024 ** 3 })).toBe(0);
+    expect(resolveCompressionWorkers(2 * 1024 ** 3, enough)).toBe(0);
+    expect(resolveCompressionWorkers(1024, enough)).toBe(0);
+    expect(resolveCompressionWorkers(900 * 1024 ** 2, { ...enough, workers: '0' })).toBe(0);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+test.each(['all', '-1', '9', '2.5', '4 extra'])('rejects invalid compression worker configuration %s', workers => {
+  expect(() => resolveCompressionWorkers(1024, { workers })).toThrow(/RUNTIME_COMPRESSION_WORKERS/);
+});
+
+test('preserves the last complete archive and removes partial output on a compression failure', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-compression-failure-'));
+  const archive = path.join(root, 'resources.tar.zst');
+  try {
+    fs.writeFileSync(archive, 'last complete build');
+    await expect(compressTarArchive(root, archive, { workers: 0 })).rejects.toThrow();
+    expect(fs.readFileSync(archive, 'utf8')).toBe('last complete build');
+    expect(fs.readdirSync(root)).toEqual(['resources.tar.zst']);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 

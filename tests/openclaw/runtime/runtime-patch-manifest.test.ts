@@ -1071,6 +1071,20 @@ module.exports = { applyPatch, verifyPatch };
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       fs.writeFileSync(filePath, 'fixture\n');
     }
+    // Match the local Worker inventory used by the real packaging verifier.
+    // These are inert archive fixtures; no installed runtime code is executed.
+    const sourceRuntime = path.join(repositoryRoot, 'vendor/openclaw-runtime/current');
+    const sourceDist = path.join(sourceRuntime, 'dist');
+    if (fs.existsSync(sourceDist)) {
+      for (const entry of fs.readdirSync(sourceDist, { recursive: true, withFileTypes: true })) {
+        if (!entry.isFile() || !/\.worker\.[cm]?js$/.test(entry.name)) continue;
+        const relative = path.relative(sourceRuntime, path.join(entry.parentPath, entry.name));
+        if (relative.split(path.sep).includes('node_modules')) continue;
+        const filePath = path.join(runtimeRoot, relative);
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, 'export {};\n');
+      }
+    }
     fs.writeFileSync(
       path.join(runtimeRoot, 'runtime-build-info.json'),
       JSON.stringify({

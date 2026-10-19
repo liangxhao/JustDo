@@ -15,9 +15,10 @@ test('relies on the npm predist:win lifecycle without invoking it twice', () => 
   ) as { scripts: Record<string, string> };
 
   expect(packageJson.scripts['predist:win']).toBe(
-    'npm run clean:release && npm run openclaw:runtime:win-x64',
+    'npm run drawio:prepare -- --ensure --download && npm run clean:release && node scripts/packaging/prepare-windows-build.cjs',
   );
   expect(packageJson.scripts['dist:win']).not.toContain('npm run predist:win');
+  expect(packageJson.scripts['dist:win']).not.toMatch(/setup:(?:mingit|python-runtime)/);
 });
 
 test('preinstalls the official MXC sandbox only for Windows runtimes', () => {

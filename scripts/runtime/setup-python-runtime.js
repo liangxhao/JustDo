@@ -29,7 +29,6 @@ const { path7za } = (() => {
 
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const OUTPUT_DIR = path.join(PROJECT_ROOT, 'resources', 'python-win');
-const DEFAULT_ARCHIVE_PATH = path.join(PROJECT_ROOT, 'resources', 'python-win-runtime.zip');
 const DEFAULT_REQUIREMENTS_PATH = path.join(PROJECT_ROOT, 'resources', 'python-requirements.txt');
 const DEFAULT_SITE_CUSTOMIZE_PATH = path.join(PROJECT_ROOT, 'resources', 'python-sitecustomize.py');
 const MANAGED_SITE_PACKAGES_REL_PATH = path.join('Lib', 'bundled-site-packages');
@@ -37,6 +36,7 @@ const MANAGED_SITE_PACKAGES_PTH_ENTRY = 'Lib\\bundled-site-packages';
 const DEFAULT_WINDOWS_EMBED_PYTHON_VERSION =
   process.env.JUSTDO_WINDOWS_EMBED_PYTHON_VERSION || '3.12.10';
 const DEFAULT_WINDOWS_EMBED_PYTHON_ZIP = `python-${DEFAULT_WINDOWS_EMBED_PYTHON_VERSION}-embed-amd64.zip`;
+const DEFAULT_ARCHIVE_PATH = path.join(PROJECT_ROOT, 'resources', DEFAULT_WINDOWS_EMBED_PYTHON_ZIP);
 const DEFAULT_WINDOWS_EMBED_PYTHON_URL =
   process.env.JUSTDO_WINDOWS_EMBED_PYTHON_URL ||
   `https://www.python.org/ftp/python/${DEFAULT_WINDOWS_EMBED_PYTHON_VERSION}/${DEFAULT_WINDOWS_EMBED_PYTHON_ZIP}`;

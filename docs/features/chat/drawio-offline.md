@@ -66,7 +66,7 @@ HTML 资源保持在原生 2 MiB 上限内，绘图脚本不塞入工具结果�
 
 ## 构建和验证
 
-下载源、固定提交、归档 SHA-256、缓存/输出路径和准备命令统一见[离线资源准备](../../offline-downloads.md#6-drawio-离线编辑器)。适配器源码位于 `openclaw-extensions/drawio/`，生成资源不提交 Git；安装包携带完整生成目录和许可证，首次运行不下载、不安装包、不检查公网版本。
+下载源、固定提交、归档 SHA-256、缓存/输出路径和准备命令统一见[离线资源准备](../../offline-downloads.md#5-drawio-离线编辑器)。适配器源码位于 `openclaw-extensions/drawio/`，生成资源不提交 Git；安装包携带完整生成目录和许可证，首次运行不下载、不安装包、不检查公网版本。
 
 插件专属资源准备、打包校验脚本位于该目录的 `scripts/`，单元测试与 XML 样例位于 `tests/`。目录职责见[插件说明](../../../openclaw-extensions/drawio/README.md)。主工程仅保留通用宿主能力和必要接入；`tests/drawio/` 验证与真实宿主、运行时及打包器的集成，不属于插件运行依赖。
 

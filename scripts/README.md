@@ -24,6 +24,16 @@ do not rely on the caller's working directory when locating repository assets.
 Versioned patches remain under `patches/`; runtime orchestration belongs in
 `openclaw/`.
 
+Windows packaging uses `packaging/prepare-windows-build.cjs` to verify and reuse
+the prepared locked runtime, or rebuild it from pristine inputs when stale.
+`OPENCLAW_FORCE_INSTALL=1` deliberately disables reuse; remove that environment
+variable for normal repeated builds. The packaging hook prepares Python, Git and
+speech in independent child processes. Runtime compression selects up to four
+native workers within CPU/memory limits; `RUNTIME_COMPRESSION_WORKERS=0` keeps the
+streaming path, while 2–8 requests a bounded parallel worker count. All packaging,
+source-proof and final-archive checks still run. See
+[Windows installer](../docs/windows-installer.md) for memory and validation scope.
+
 `test/verify-native-skill-state-runtime.mjs [runtime-directory]` runs opt-in checks
 of installed-skill discovery and interactive Code Mode session storage through a
 real isolated Gateway and QuickJS executor. It uses synthetic imported skills and

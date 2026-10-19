@@ -275,6 +275,30 @@ is measured separately before release. Python bytecode caches,
 the Control UI's precompressed representations and native asset manifest remain
 intact.
 
+Windows builds reuse the complete prepared OpenClaw runtime only after its target,
+source proof, build recipe, bundle and all patches verify. A missing/stale proof
+triggers a full rebuild from the locked pristine npm package, followed by another
+verification; no hashes are refreshed in place. `OPENCLAW_FORCE_INSTALL=1` always
+forces that rebuild, including on repeated builds. Local resources and final
+packaged artifacts still pass their normal checks on every build.
+
+Python, MinGit and local speech preparation run in three separate processes with
+disjoint resource roots. All must finish successfully before archiving; a failure
+waits for the remaining processes before reporting the error. Windows' npm build
+entry no longer prepares Python/Git a second time before this packaging step.
+
+Runtime compression uses an isolated Node process with up to four native Zstd
+workers when CPU and available memory permit. It retains level 19, long-distance
+matching and the 64 MiB decoder window. Buffered compression is limited to 1 GiB
+inputs with conservative input/output and per-worker memory headroom; smaller
+machines and larger inputs use streaming single-thread compression. Node 24's
+streaming multi-worker path failed the large-archive regression, so only the
+buffered child uses native parallel compression. The child exits before Electron
+packaging continues, releasing its buffers. Output is published only on success.
+`RUNTIME_COMPRESSION_WORKERS=0` explicitly selects streaming; values 2–8 set a
+requested worker count, still bounded by CPU and memory. No extra compressor is
+downloaded or installed, and installer decoding is unchanged.
+
 Runtime pruning removes native PDB symbols and source files only from reviewed
 SDK packages with compiled entry points present. Markdown is retained. Packaging
 preserves the complete native `docs/` and `skills/` trees, including names such
@@ -333,6 +357,15 @@ Operation, Result, and the process tree. Do not collect file contents or command
 lines containing credentials.
 
 ## Verification
+
+Packaged runtimes omit `dist/worker-artifacts/`, the standalone Worker deployment
+bundle. Direct local execution remains supported; independent Worker environments
+and paired node-host execution (including a node on the same PC) are outside this
+distribution. All ordinary local `.worker.js` entries, runtime knowledge and legal
+metadata remain. Archive validation rejects deployment bundles and missing local
+Workers. The pristine source runtime and its original inventories stay complete;
+packaging does not rewrite source proofs to conceal the intentional omission.
+Compression settings are unchanged by this removal.
 
 The default deployment has no update feed. An empty address does
 not produce `app-update.yml`, an update-configuration marker, `latest.yml` or

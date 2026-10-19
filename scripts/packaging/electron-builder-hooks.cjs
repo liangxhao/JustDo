@@ -26,12 +26,7 @@ const {
 } = require('../openclaw/openclaw-runtime-companions.cjs');
 const yaml = require('js-yaml');
 const ts = require('typescript');
-const {
-  ensurePortablePythonRuntime,
-  checkRuntimeHealth,
-} = require('../runtime/setup-python-runtime.js');
-const { ensurePortableGit } = require('../runtime/setup-mingit.js');
-const { ensureLocalTts } = require('../runtime/setup-local-tts.js');
+const { prepareWindowsResources } = require('./prepare-windows-build.cjs');
 const {
   resolveRuntimeInstallTarget,
   syncOpenClawRuntimeResources,
@@ -40,9 +35,11 @@ const {
 const { precompileOpenClawExtensions } = require('../openclaw/precompile-openclaw-extensions.cjs');
 const { readBundledSkillConfig, syncBundledSkills } = require('../runtime/sync-bundled-skills.cjs');
 const {
+  PACKAGED_RUNTIME_EXCLUDES,
   compressTarArchive,
   packMultipleSources,
   verifyRuntimeKnowledgeEntries,
+  verifyRuntimeWorkerEntries,
   verifyLegalMetadataEntries,
 } = require('../openclaw/pack-openclaw-tar.cjs');
 const { isLegalMetadataFile } = require('../openclaw/prune-openclaw-runtime.cjs');
@@ -879,25 +876,9 @@ async function beforePack(context) {
     // These must be ready before we build the combined tar, otherwise the
     // directories will be empty and the installed app will lack Python/Git.
 
-    console.log(
-      '[electron-builder-hooks] Windows target detected, ensuring portable Python runtime is prepared...',
-    );
-    await ensurePortablePythonRuntime({ required: true });
+    await prepareWindowsResources();
     const pythonRoot = path.join(__dirname, '../..', 'resources', 'python-win');
-    const pythonHealth = checkRuntimeHealth(pythonRoot, { requirePip: true });
-    if (!pythonHealth.ok) {
-      throw new Error(
-        'Portable Python runtime health check failed before pack. Missing files: ' +
-          pythonHealth.missing.join(', '),
-      );
-    }
-
-    console.log('[electron-builder-hooks] Ensuring MinGit is prepared...');
-    await ensurePortableGit({ required: true });
     const mingitRoot = path.join(__dirname, '../..', 'resources', 'mingit');
-
-    console.log('[electron-builder-hooks] Ensuring local speech runtime is prepared...');
-    await ensureLocalTts();
     const localTtsRoot = path.join(__dirname, '../..', 'resources', 'local-tts');
 
     // ── Build combined tar for NSIS ──
@@ -918,7 +899,7 @@ async function beforePack(context) {
         prefix: 'cfmind',
         // gateway-bundle.mjs is the Windows gateway entry and the bare dist/
         // tree serves CLI/client fallbacks. gateway.asar duplicates that tree.
-        exclude: ['gateway.asar'],
+        exclude: PACKAGED_RUNTIME_EXCLUDES,
       },
       {
         label: 'Python runtime',
@@ -1001,6 +982,14 @@ async function beforePack(context) {
     );
     console.log(
       `[electron-builder-hooks] Verified all ${knowledgeCount} runtime knowledge files in the archive.`,
+    );
+    const workerCount = verifyRuntimeWorkerEntries(
+      tarEntryPaths,
+      'cfmind/',
+      path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
+    );
+    console.log(
+      `[electron-builder-hooks] Verified ${workerCount} local Workers; deployment archives omitted.`,
     );
     const legalCount = sources.reduce(
       (count, source) =>
@@ -1835,6 +1824,11 @@ async function verifyPackagedOpenClawRuntime(context) {
           path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
         ),
         'packaged Windows archive',
+      );
+      verifyRuntimeWorkerEntries(
+        archiveEntryPaths,
+        'cfmind/',
+        path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
       );
     } finally {
       rmSync(temporaryRoot, { recursive: true, force: true });

@@ -139,7 +139,7 @@ patch 只接入显式原生依赖。支持模块通过事务工具复制并校�
 不能扩大为对任意 `node_modules` 文件进行无界搜索或写入。旧 manifest 缺少这些
 字节证明时，须从 pristine 包重建，不能给旧运行时补写证明。
 
-任何 patch 重排、helper 改动、bundle 重建、cache 污染或打包遗漏都会使 manifest 失效。Electron Builder 在打包前和 staged product 上再次验证；Windows 还会流式解码并验证 `win-resources.tar.zst`，仅允许设计上单独省略的 asar。
+任何 patch 重排、helper 改动、bundle 重建、cache 污染或打包遗漏都会使 manifest 失效。Electron Builder 在打包前和 staged product 上再次验证；Windows 还会流式解码并验证 `win-resources.tar.zst`。分发包按设计省略重复的 `gateway.asar` 和独立 Worker 部署归档 `dist/worker-artifacts/`，保留全部本机 Worker；原始 runtime、inventory 和来源证明保持完整，不改写哈希隐藏打包裁剪。
 
 ## 10. 常用命令
 
