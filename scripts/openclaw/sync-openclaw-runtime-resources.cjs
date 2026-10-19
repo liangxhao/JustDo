@@ -115,8 +115,33 @@ function renameExtensionIntoPlace(sourceDir, targetDir, options = {}) {
       return;
     } catch (error) {
       const isRetryable = RETRYABLE_RENAME_ERROR_CODES.has(error?.code);
-      if (!isRetryable || attempt >= maxRetries) {
+      if (!isRetryable) {
         throw error;
+      }
+      if (attempt >= maxRetries) {
+        // Windows scanners can deny renaming a freshly copied directory while
+        // still allowing its files to be read. Claim an absent destination;
+        // never merge with an existing extension or suppress copy failures.
+        try {
+          fs.mkdirSync(targetDir);
+        } catch {
+          throw error;
+        }
+        try {
+          fs.cpSync(sourceDir, targetDir, {
+            recursive: true,
+            force: false,
+            errorOnExist: true,
+            verbatimSymlinks: true,
+          });
+        } catch (copyError) {
+          throw new Error(
+            `Extension rename and copy fallback failed: ${sourceDir} -> ${targetDir}. ` +
+              `Rename: ${error.message}. Copy: ${copyError.message}`,
+            { cause: copyError },
+          );
+        }
+        return;
       }
       sleep(retryDelayMs);
     }

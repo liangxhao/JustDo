@@ -92,6 +92,56 @@ test('does not retry a non-transient extension rename error', () => {
   expect(sleep).not.toHaveBeenCalled();
 });
 
+test('copies the complete staged tree when extension rename retries are exhausted', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'extension-publish-'));
+  const source = path.join(root, 'staged');
+  const target = path.join(root, 'installed');
+  const rename = vi.fn(() => {
+    throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+  });
+  try {
+    fs.mkdirSync(path.join(source, 'assets'), { recursive: true });
+    fs.writeFileSync(path.join(source, 'assets', 'viewer.html'), 'complete payload');
+    fs.writeFileSync(path.join(source, 'package.json'), '{"name":"fixture"}');
+
+    renameExtensionIntoPlace(source, target, { rename, sleep: () => {}, maxRetries: 1 });
+
+    expect(rename).toHaveBeenCalledTimes(2);
+    expect(fs.readFileSync(path.join(target, 'assets', 'viewer.html'), 'utf8')).toBe('complete payload');
+    expect(fs.readFileSync(path.join(target, 'package.json'), 'utf8')).toBe('{"name":"fixture"}');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('does not merge the copy fallback into an occupied destination', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'extension-publish-'));
+  const target = path.join(root, 'installed');
+  const error = Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+  try {
+    fs.mkdirSync(target);
+    fs.writeFileSync(path.join(target, 'existing.txt'), 'preserved');
+    expect(() => renameExtensionIntoPlace(path.join(root, 'staged'), target, {
+      rename: () => { throw error; }, maxRetries: 0,
+    })).toThrow(error);
+    expect(fs.readdirSync(target)).toEqual(['existing.txt']);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('fails publication when copying the staged extension fails', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'extension-publish-'));
+  try {
+    expect(() => renameExtensionIntoPlace(path.join(root, 'missing'), path.join(root, 'installed'), {
+      rename: () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); },
+      maxRetries: 0,
+    })).toThrow(/rename and copy fallback failed/u);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('uses a bounded configurable timeout for locked extension installs', () => {
   expect(resolveExtensionInstallTimeoutMs({})).toBe(20 * 60 * 1000);
   expect(resolveExtensionInstallTimeoutMs({ JUSTDO_EXTENSION_NPM_CI_TIMEOUT_MS: '1800000' })).toBe(

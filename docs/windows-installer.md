@@ -246,6 +246,17 @@ Use the interactive checkbox to request data deletion instead.
 
 ## Diagnostics
 
+### Build-time extension staging
+
+Local extension assembly retries `EACCES`, `EBUSY` and `EPERM` directory
+renames five times at 200 ms intervals. If renaming remains blocked, assembly
+copies the prepared tree into an exclusively created destination instead.
+An existing destination or a failed copy still fails packaging; an incomplete
+extension is never accepted as a successful assembly. The staging tree is
+cleaned by the assembly caller. Persistent file-read/write denial requires
+checking processes using the development runtime, directory permissions and
+endpoint-security events; `EPERM` alone does not identify the blocking process.
+
 The lifecycle log remains `install-timing.log`; resource extraction details are
 in `install-resource.log`. Both files are append-only across installer runs.
 NSIS uses Windows append-only handles so callback writes and overlapping
