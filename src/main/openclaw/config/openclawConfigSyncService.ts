@@ -47,6 +47,7 @@ type OpenClawConfigSyncServiceDeps = {
   getNativeVideoCategory?: () => unknown;
   getLocalSttConfig?: () => Record<string, unknown> | null;
   getLocalTtsConfig?: () => Record<string, unknown> | null;
+  getLocalSpeechExtensionTtsConfig?: () => Record<string, unknown> | null;
   getSpeechOutputState?: () => { enabled: boolean; mode: 'local' | 'online' };
   getWindowsSandboxStatus: () => Promise<WindowsSandboxStatus>;
   getWindowsSandboxEnvironment: () => Record<string, string>;
@@ -1284,6 +1285,7 @@ export class OpenClawConfigSyncService {
         getNativeVideoCategory: this.deps.getNativeVideoCategory,
         getLocalSttConfig: this.deps.getLocalSttConfig,
         getLocalTtsConfig: this.deps.getLocalTtsConfig,
+        getLocalSpeechExtensionTtsConfig: this.deps.getLocalSpeechExtensionTtsConfig,
         getSpeechOutputState: this.deps.getSpeechOutputState,
         getWindowsSandboxEnvironment: this.deps.getWindowsSandboxEnvironment,
       });

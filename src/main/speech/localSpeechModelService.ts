@@ -1,7 +1,5 @@
-import { createHash } from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { Readable, Transform } from 'stream';
 import { pipeline } from 'stream/promises';
 import * as tar from 'tar';
 import { setTimeout as delay } from 'timers/promises';
@@ -19,6 +17,7 @@ import {
 import { LOCAL_TTS_MODEL_ID } from '../../shared/speech/localTts';
 import { resolveAppUpdateResourceUrl } from '../core/app/updateResourceUrl';
 import { t } from '../core/i18n';
+import { downloadLocalSpeechModel } from './localSpeechModelDownload';
 import { resolveLocalSpeechModelDir, resolveLocalSpeechModelsRoot } from './localSpeechPaths';
 
 async function renameModelDirectory(source: string, destination: string): Promise<void> {
@@ -351,44 +350,14 @@ export class LocalSpeechModelService {
       });
 
       const baseUrl = this.resolveBaseUrl();
-      const response = await this.dependencies.fetch(new URL(artifact.file, baseUrl).toString(), {
-        redirect: 'follow',
+      await downloadLocalSpeechModel({
+        url: new URL(artifact.file, baseUrl).toString(),
+        archivePath,
+        compressedBytes: artifact.compressedBytes,
+        sha256: artifact.sha256,
+        fetch: this.dependencies.fetch,
+        onProgress: downloadPercent => this.update(artifact, { downloadPercent }),
       });
-      if (!response.ok || !response.body) {
-        throw new Error(`Model download failed with HTTP ${response.status}.`);
-      }
-      const contentLength = response.headers.get('content-length');
-      if (contentLength !== null && Number(contentLength) !== artifact.compressedBytes) {
-        throw new Error('Downloaded model has an unexpected size.');
-      }
-
-      const hash = createHash('sha256');
-      let received = 0;
-      let lastPercent = -1;
-      const progress = new Transform({
-        transform: (chunk: Buffer, _encoding, callback) => {
-          received += chunk.length;
-          if (received > artifact.compressedBytes) {
-            callback(new Error('Downloaded model exceeds the expected size.'));
-            return;
-          }
-          hash.update(chunk);
-          const percent = Math.min(100, Math.floor((received / artifact.compressedBytes) * 100));
-          if (percent !== lastPercent) {
-            lastPercent = percent;
-            this.update(artifact, { downloadPercent: percent });
-          }
-          callback(null, chunk);
-        },
-      });
-      await pipeline(
-        Readable.fromWeb(response.body as never),
-        progress,
-        fs.createWriteStream(archivePath),
-      );
-      if (received !== artifact.compressedBytes || hash.digest('hex') !== artifact.sha256) {
-        throw new Error('Downloaded model failed integrity verification.');
-      }
 
       this.update(artifact, { phase: 'installing', downloadPercent: 100 });
       fs.rmSync(stagingRoot, { recursive: true, force: true });

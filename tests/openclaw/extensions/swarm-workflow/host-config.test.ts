@@ -14,7 +14,7 @@ it('projects only enabled, retained product assistants, deduplicating main', () 
     () => true,
   );
   expect(result).toEqual({
-    'swarm-workflow': { enabled: true, config: { availableAgentIds: ['main', 'worker'] } },
+    'swarm-workflow': { config: { availableAgentIds: ['main', 'worker'] } },
   });
 });
 

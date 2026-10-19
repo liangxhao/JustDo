@@ -8,7 +8,6 @@ describe('openclawExtensionRegistry', () => {
     const entries = buildBundledExtensionEntries(() => true, 5);
 
     expect(entries).toEqual({
-      [OpenClawExtensionId.STT_LOCAL_CLI]: { enabled: true },
       [OpenClawExtensionId.ASK_USER_QUESTION]: {
         enabled: true,
       },

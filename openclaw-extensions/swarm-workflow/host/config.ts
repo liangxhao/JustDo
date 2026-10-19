@@ -13,7 +13,6 @@ export const buildManagedSwarmWorkflowPluginEntries = (
   isAvailable(OpenClawExtensionId.SWARM_WORKFLOW)
     ? {
         [OpenClawExtensionId.SWARM_WORKFLOW]: {
-          enabled: true,
           config: {
             availableAgentIds: [
               ...new Set([

@@ -58,3 +58,65 @@ test('shows a previously saved disabled value but selects an enabled option on o
   fireEvent.keyDown(button, { key: 'Enter' });
   expect(onChange).toHaveBeenCalledWith('off');
 });
+
+test('uses viewport space for the portaled menu inside a short scrollable dialog body', () => {
+  render(
+    <div data-testid="dialog-body" style={{ overflowY: 'auto' }}>
+      <ThemedSelect id="model" value="off" options={options} onChange={vi.fn()} />
+    </div>,
+  );
+  const body = screen.getByTestId('dialog-body');
+  let buttonTop = 100;
+  vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    const top = this === body ? 80 : buttonTop;
+    const height = this === body ? 100 : 32;
+    return {
+      top,
+      bottom: top + height,
+      left: 20,
+      right: 220,
+      width: 200,
+      height,
+      x: 20,
+      y: top,
+      toJSON: () => ({}),
+    };
+  });
+
+  fireEvent.click(screen.getByRole('combobox'));
+
+  const menu = screen.getByRole('listbox').parentElement!;
+  expect(menu.parentElement).toBe(document.body);
+  expect(menu.style.maxHeight).toBe('240px');
+  expect(menu.style.top).toBe('136px');
+
+  // A portaled menu still closes when its trigger scrolls out of the dialog body.
+  buttonTop = 40;
+  fireEvent.scroll(body);
+  expect(screen.queryByRole('listbox')).toBeNull();
+});
+
+test('opens upward near the viewport bottom and stays inside the viewport', () => {
+  render(<ThemedSelect id="model" value="off" options={options} onChange={vi.fn()} />);
+  const button = screen.getByRole('combobox');
+  vi.spyOn(button, 'getBoundingClientRect').mockReturnValue({
+    top: window.innerHeight - 64,
+    bottom: window.innerHeight - 32,
+    left: 20,
+    right: 220,
+    width: 200,
+    height: 32,
+    x: 20,
+    y: window.innerHeight - 64,
+    toJSON: () => ({}),
+  });
+
+  fireEvent.click(button);
+
+  const menu = screen.getByRole('listbox').parentElement!;
+  expect(menu.style.bottom).toBe('68px');
+  expect(menu.style.top).toBe('');
+  expect(menu.style.maxHeight).toBe('240px');
+});

@@ -293,6 +293,41 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
     });
   });
 
+  test.each([true, false])('offers only explicit MCP Apps choices (enabled: %s)', enabled => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 132, height: 32, left: 20, right: 220, top: 100, width: 200,
+      x: 20, y: 100, toJSON: () => ({}),
+    });
+    const settings = createDefaultAgentRuntimeSettings();
+    settings.mcp.appsEnabled = enabled;
+    const onChange = vi.fn();
+    render(
+      <AgentRuntimeSettingsTab
+        settings={settings}
+        models={[]}
+        isLoading={false}
+        loadError={null}
+        onChange={onChange}
+        onRetry={vi.fn()}
+        maxRetainedDisplayTabs={30}
+        onMaxRetainedDisplayTabsChange={vi.fn()}
+        maxGoalContinuationTurns={10}
+        onMaxGoalContinuationTurnsChange={vi.fn()}
+      />,
+    );
+
+    const select = screen.getByRole('combobox', { name: 'mcpAppsEnabledTitle' });
+    expect(select.textContent).toContain(enabled ? 'mcpAppsEnable' : 'mcpAppsDisable');
+    fireEvent.click(select);
+    expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual([
+      'mcpAppsEnable', 'mcpAppsDisable',
+    ]);
+    fireEvent.click(screen.getByRole('option', { name: enabled ? 'mcpAppsDisable' : 'mcpAppsEnable' }));
+    expect(onChange).toHaveBeenCalledWith({
+      ...settings, mcp: { ...settings.mcp, appsEnabled: !enabled },
+    });
+  });
+
   test('shows tree as the default session scope and emits a broader selection', () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 132,

@@ -13,8 +13,7 @@ export function withComputerControlPolicy(
   config: Record<string, unknown>,
 ): Record<string, unknown> {
   const entries = asComputerConfigRecord(asComputerConfigRecord(config.plugins).entries);
-  const enabled = asComputerConfigRecord(entries[OpenClawExtensionId.CUA_COMPUTER]).enabled;
-  if (typeof enabled !== 'boolean') return config;
+  const enabled = asComputerConfigRecord(entries[OpenClawExtensionId.CUA_COMPUTER]).enabled === true;
   const tools = asComputerConfigRecord(config.tools);
   const computer = OpenClawToolName.COMPUTER;
   const deny = strings(tools.deny).filter(value => value.trim().toLowerCase() !== computer);

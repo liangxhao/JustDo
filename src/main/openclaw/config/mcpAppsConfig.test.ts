@@ -4,7 +4,7 @@ import { DEFAULT_AGENT_RUNTIME_SETTINGS } from '../../../shared/agents/agentRunt
 import { buildManagedMcpConfig } from './mcpAppsConfig';
 
 describe('managed MCP Apps configuration', () => {
-  it('inherits a native opt-in and preserves unrelated native options', () => {
+  it('preserves unrelated native options', () => {
     const native = {
       sessionIdleTtlMs: 123,
       apps: { enabled: true, sandboxPort: 4567, sandboxOrigin: 'https://apps.internal' },
@@ -15,11 +15,11 @@ describe('managed MCP Apps configuration', () => {
     expect(native.servers).toEqual({ old: {} });
   });
 
-  it('enables new installations and preserves explicit choices and sandbox settings', () => {
+  it('defaults to enabled and projects explicit choices while preserving sandbox settings', () => {
     expect(buildManagedMcpConfig(undefined, {}, DEFAULT_AGENT_RUNTIME_SETTINGS.mcp))
       .toEqual({ servers: {}, apps: { enabled: true } });
     expect(buildManagedMcpConfig({ apps: { enabled: false } }, {}, DEFAULT_AGENT_RUNTIME_SETTINGS.mcp))
-      .toEqual({ servers: {}, apps: { enabled: false } });
+      .toEqual({ servers: {}, apps: { enabled: true } });
     expect(buildManagedMcpConfig({ apps: { enabled: true, sandboxPort: 4567 } }, {}, {
       ...DEFAULT_AGENT_RUNTIME_SETTINGS.mcp, appsEnabled: false,
     })).toEqual({ servers: {}, apps: { enabled: false, sandboxPort: 4567 } });

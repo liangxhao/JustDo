@@ -13,6 +13,23 @@ const config = (enabled: boolean, tools: Record<string, unknown> = {}) => ({
 });
 
 describe('computer control switch', () => {
+  test.each([{}, { plugins: { entries: { 'cua-computer': {} } } }])(
+    'denies computer control until the provider is explicitly enabled (%j)',
+    async nativeConfig => {
+      const source = { ...nativeConfig, tools: { allow: ['read'], deny: ['exec'] } };
+      const request = vi.fn().mockResolvedValue({ valid: true, hash: 'revision', config: source });
+      const admitted = vi.fn().mockResolvedValue(true);
+      const service = new ComputerControlSettingsService(request, () => true, admitted);
+
+      expect(await service.get()).toEqual({ success: true, enabled: false });
+      expect(admitted).not.toHaveBeenCalled();
+      expect(withComputerControlPolicy(source).tools).toEqual({
+        allow: ['read'], deny: ['exec', 'computer'],
+      });
+      expect(source.tools.deny).toEqual(['exec']);
+    },
+  );
+
   test('a failed older policy read does not evict the newer revision', async () => {
     const request = vi.fn().mockResolvedValue({ valid: true, hash: 'a', config: config(true) });
     let rejectOlder!: (error: Error) => void;

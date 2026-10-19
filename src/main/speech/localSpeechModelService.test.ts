@@ -169,7 +169,10 @@ describe('LocalSpeechModelService', () => {
       expect(result.status).toMatchObject({ phase: 'ready', installed: true });
       expect(fetchModel).toHaveBeenCalledWith(
         `https://example.com/speech-models/v1/${id}.tar.zst`,
-        { redirect: 'follow' },
+        expect.objectContaining({
+          redirect: 'follow',
+          headers: { Range: `bytes=0-${archive.body.length - 1}`, 'Accept-Encoding': 'identity' },
+        }),
       );
       for (const file of requiredFiles) {
         expect(fs.existsSync(path.join(userDataPath, 'local-speech-models', id, file))).toBe(true);
@@ -319,7 +322,56 @@ describe('LocalSpeechModelService', () => {
     expect(fetchModel).toHaveBeenNthCalledWith(
       2,
       `https://updates.example.test/speech-models/v1/${id}.tar.zst`,
-      { redirect: 'follow' },
+      expect.objectContaining({ redirect: 'follow' }),
+    );
+  });
+
+  it('cleans partial files after exhausting network retries without installing a model', async () => {
+    const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'speech-model-network-'));
+    temporaryRoots.push(userDataPath);
+    const id = 'test-asr';
+    const fetchModel = vi.fn(async () => {
+      let reads = 0;
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            if (reads++ === 0) controller.enqueue(Buffer.from('partial'));
+            else controller.error(new Error('net::ERR_HTTP2_PROTOCOL_ERROR'));
+          },
+        }),
+      );
+    });
+    const syncOpenClawConfig = vi.fn();
+    const service = new LocalSpeechModelService({
+      userDataPath,
+      fetch: fetchModel,
+      notify: vi.fn(),
+      syncOpenClawConfig,
+      baseUrl: 'https://models.example.test/',
+      resolveModelDir: modelId => path.join(userDataPath, 'local-speech-models', modelId),
+      artifacts: [
+        {
+          id,
+          kind: LocalSpeechModelKind.Asr,
+          file: 'model.tar.zst',
+          sha256: 'a'.repeat(64),
+          compressedBytes: 100,
+          requiredFiles: ['model.onnx'],
+        },
+      ],
+    });
+
+    const result = await service.install(LocalSpeechModelKind.Asr, id);
+
+    expect(result).toMatchObject({
+      success: false,
+      status: { installed: false, phase: 'error', error: 'net::ERR_HTTP2_PROTOCOL_ERROR' },
+    });
+    expect(fetchModel).toHaveBeenCalledTimes(3);
+    expect(syncOpenClawConfig).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(userDataPath, 'local-speech-models', id))).toBe(false);
+    expect(fs.readdirSync(path.join(userDataPath, 'local-speech-models', '.downloads'))).toEqual(
+      [],
     );
   });
 

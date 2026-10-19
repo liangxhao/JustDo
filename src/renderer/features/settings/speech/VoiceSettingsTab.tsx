@@ -8,7 +8,6 @@ import {
 } from '@shared/speech/localAsr';
 import {
   LocalSpeechModelKind,
-  type LocalSpeechModelStatus,
 } from '@shared/speech/localSpeechModels';
 import {
   LOCAL_SPEECH_MAX_MEETING_SEGMENT_SECONDS,
@@ -30,6 +29,8 @@ import type { OnlineAsrStatus } from '@shared/speech/onlineAsr';
 import type { OnlineTtsStatus } from '@shared/speech/onlineTts';
 import React, { useEffect, useRef, useState } from 'react';
 
+import ModelStatus from '@/features/speech/models/LocalSpeechModelStatusView';
+import { useLocalSpeechModels } from '@/features/speech/models/useLocalSpeechModels';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import ThemedSelect from '@/shared/components/ui/ThemedSelect';
@@ -130,72 +131,8 @@ const NumberSetting: React.FC<{
   </div>
 );
 
-const ModelStatus: React.FC<{
-  status: LocalSpeechModelStatus | null;
-  loading: boolean;
-  showInstallAction: boolean;
-  onRetry: () => void;
-  onRemove: () => void;
-}> = ({ status, loading, showInstallAction, onRetry, onRemove }) => {
-  const busy = status?.phase === 'downloading' || status?.phase === 'installing';
-  const available = status?.phase === 'ready';
-  const statusText = (() => {
-    if (loading) return i18nService.t('voiceModelChecking');
-    if (status?.phase === 'downloading') {
-      return `${i18nService.t('voiceModelDownloading')} ${status.downloadPercent ?? 0}%`;
-    }
-    if (status?.phase === 'installing') return i18nService.t('voiceModelInstalling');
-    if (available) return i18nService.t('voiceModelReady');
-    if (status?.phase === 'error') return status.error || i18nService.t('voiceModelDownloadFailed');
-    return i18nService.t('voiceModelNotInstalled');
-  })();
-  return (
-    <div
-      className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-secondary"
-      role="status"
-      aria-live="polite"
-    >
-      {loading || busy ? (
-        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-      ) : available ? (
-        <CheckCircleIcon className="h-4 w-4 text-green-500" />
-      ) : (
-        <ExclamationTriangleIcon className="h-4 w-4 text-amber-500" />
-      )}
-      <span>{statusText}</span>
-      {status?.id ? (
-        <code className="max-w-full truncate rounded bg-surface-raised px-1.5 py-0.5">
-          {status.id}
-        </code>
-      ) : null}
-      {status?.downloadBytes ? (
-        <span>{`${status.downloadBytesExact === false ? '≈' : ''}${(status.downloadBytes / 1024 / 1024).toFixed(1)} MiB`}</span>
-      ) : null}
-      {showInstallAction && (status?.phase === 'error' || status?.phase === 'not-installed') ? (
-        <button
-          type="button"
-          onClick={onRetry}
-          className="font-medium text-primary hover:underline"
-        >
-          {status.phase === 'error' ? i18nService.t('retry') : i18nService.t('voiceModelDownload')}
-        </button>
-      ) : null}
-      {available ? (
-        <button
-          type="button"
-          onClick={onRemove}
-          className="font-medium text-secondary hover:underline"
-        >
-          {i18nService.t('voiceModelRemove')}
-        </button>
-      ) : null}
-    </div>
-  );
-};
-
 const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) => {
-  const [statuses, setStatuses] = useState<LocalSpeechModelStatus[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { statuses, loading, install, remove } = useLocalSpeechModels();
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
   const [microphoneRefreshKey, setMicrophoneRefreshKey] = useState(0);
   const [onlineStatus, setOnlineStatus] = useState<OnlineAsrStatus | null>(null);
@@ -347,29 +284,6 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
   const asrStatus = statuses.find(status => status.id === value.asrModelId) ?? null;
   const ttsStatus = statuses.find(status => status.id === value.ttsModelId) ?? null;
 
-  const install = (kind: LocalSpeechModelKind, id: string) => {
-    void window.electron.localSpeechModels
-      .install(kind, id)
-      .then(result => {
-        setStatuses(current => [
-          ...current.filter(status => status.id !== result.status.id),
-          result.status,
-        ]);
-      })
-      .catch(() => undefined);
-  };
-  const remove = (kind: LocalSpeechModelKind, id: string) => {
-    void window.electron.localSpeechModels
-      .remove(kind, id)
-      .then(result => {
-        setStatuses(current => [
-          ...current.filter(status => status.id !== result.status.id),
-          result.status,
-        ]);
-      })
-      .catch(() => undefined);
-  };
-
   useEffect(() => {
     const generation = ++asrStatusGenerationRef.current;
     if (value.recognitionMode !== 'online') {
@@ -434,29 +348,6 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
       active = false;
     };
   }, [value.synthesisMode]);
-
-  useEffect(() => {
-    let active = true;
-    const unsubscribe = window.electron.localSpeechModels.onChanged(status => {
-      if (!active) return;
-      setStatuses(current => [...current.filter(candidate => candidate.id !== status.id), status]);
-    });
-    void window.electron.localSpeechModels
-      .list()
-      .then(result => {
-        if (!active) return;
-        setStatuses(result.models);
-      })
-      .catch(() => {
-        if (!active) return;
-        setStatuses([]);
-      })
-      .finally(() => active && setLoading(false));
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
 
   useEffect(() => {
     if (!value.inputEnabled || !navigator.mediaDevices?.enumerateDevices) return;

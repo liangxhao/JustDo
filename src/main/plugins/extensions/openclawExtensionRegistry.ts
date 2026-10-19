@@ -11,10 +11,6 @@ export type OpenClawExtensionDescriptor = {
 
 export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] = [
   {
-    id: OpenClawExtensionId.STT_LOCAL_CLI,
-    buildEntry: () => ({ enabled: true }),
-  },
-  {
     id: OpenClawExtensionId.ACPX,
     buildEntry: () => ({ enabled: true }),
   },

@@ -390,7 +390,8 @@ See [upgrade audit](../openclaw-upgrades/v2026.10.4/README.md).
 ### 可选本机电脑控制
 
 运行时裁剪保留上游 `cua-computer`，配置同步为已安装插件写入默认
-`enabled: false`，并加入原生插件 allowlist。设置 → 电脑操控提供一个即时保存的
+`enabled: false`，并加入原生插件 allowlist。未明确启用插件时，全局 `computer`
+工具也默认禁止，包括插件配置缺失的情况。设置 → 电脑操控提供一个即时保存的
 开关，通过带原生配置版本的单次 `config.patch` 同时更新插件和全局 `computer`
 工具许可；关闭时写入明确的工具 deny，开启时只移除该工具的 deny，并扩展当前
 allow 或 alsoAllow，保留其他工具权限。同步、登录和退出登录按插件选择维持两者

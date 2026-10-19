@@ -1,0 +1,57 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { defaultLocalSpeechSettings } from '../../../shared/speech/localSpeechSettings';
+import {
+  buildLocalSpeechExtensionSttConfig,
+  buildLocalSpeechExtensionTtsConfig,
+  mergeLocalSpeechExtensionTtsConfig,
+} from './localSpeechExtensionConfig';
+import { buildManagedLocalSttConfig } from './localSttConfig';
+import { buildManagedLocalTtsConfig } from './localTtsConfig';
+
+vi.mock('./localSttConfig', () => ({ buildManagedLocalSttConfig: vi.fn() }));
+vi.mock('./localTtsConfig', () => ({ buildManagedLocalTtsConfig: vi.fn() }));
+
+beforeEach(() => vi.clearAllMocks());
+
+describe('extension speech model projection', () => {
+  it('prepares STT from its own selection while microphone input stays off', () => {
+    buildLocalSpeechExtensionSttConfig({ sttModelId: 'sherpa-onnx-whisper-base' }, 'en');
+    expect(buildManagedLocalSttConfig).toHaveBeenCalledWith({
+      ...defaultLocalSpeechSettings, asrModelId: 'sherpa-onnx-whisper-base',
+    }, 'en');
+  });
+
+  it('prepares TTS without a reply-reading switch and uses a valid voice for its model', () => {
+    buildLocalSpeechExtensionTtsConfig({ ttsModelId: 'vits-icefall-zh-aishell3' });
+    expect(buildManagedLocalTtsConfig).toHaveBeenCalledWith(undefined, expect.objectContaining({
+      outputEnabled: true, synthesisMode: 'local', ttsModelId: 'vits-icefall-zh-aishell3', voiceId: 0,
+    }));
+  });
+
+  const local = { providers: { 'tts-local-cli': { command: 'extension.exe' } } };
+
+  it('makes the prepared local tool available even when reply reading is off', () => {
+    const existing = { enabled: false, auto: 'off', providers: { 'tts-local-cli': { command: 'voice.exe' } } };
+    expect(mergeLocalSpeechExtensionTtsConfig(existing, local)).toMatchObject({
+      enabled: true, provider: 'tts-local-cli', providers: local.providers,
+    });
+    expect(existing.providers['tts-local-cli'].command).toBe('voice.exe');
+  });
+
+  it.each([false, true])('preserves the online default regardless of reply reading (%s)', enabled => {
+    expect(mergeLocalSpeechExtensionTtsConfig({
+      enabled, provider: 'openai', auto: 'off', providers: { openai: { model: 'online' } },
+    }, local)).toEqual({
+      enabled: true, provider: 'openai', auto: 'off',
+      providers: { openai: { model: 'online' }, ...local.providers },
+    });
+  });
+
+  it('removes stale local parameters when the independently selected model is missing', () => {
+    expect(mergeLocalSpeechExtensionTtsConfig({
+      enabled: true, provider: 'tts-local-cli', providers: { ...local.providers, openai: {} },
+    }, null)).toEqual({ enabled: false, provider: 'tts-local-cli', providers: { openai: {} } });
+    expect(mergeLocalSpeechExtensionTtsConfig(undefined, null)).toBeNull();
+  });
+});

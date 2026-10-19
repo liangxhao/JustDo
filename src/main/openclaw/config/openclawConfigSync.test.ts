@@ -81,7 +81,7 @@ test('keeps extension Hook dispatch available when every independent Hook is dis
   expect(buildOpenClawHookConfig([])).toEqual({});
 });
 
-test('projects only product-available agents into Swarm without re-enabling the plugin', () => {
+test.each([undefined, false, true])('projects Swarm agents while preserving enablement (%s)', enabled => {
   const entries = buildManagedSwarmWorkflowPluginEntries(
     [
       { id: 'reviewer', enabled: true },
@@ -92,22 +92,26 @@ test('projects only product-available agents into Swarm without re-enabling the 
   );
   expect(entries).toEqual({
     'swarm-workflow': {
-      enabled: true,
       config: { availableAgentIds: ['main', 'reviewer'] },
     },
   });
   const merged = mergeOpenClawPluginConfig(
-    {
+    applyDefaultOpenClawPluginEntries({
       entries: {
-        'swarm-workflow': { enabled: false, config: { availableAgentIds: ['main', 'deleted'] } },
+        ...(enabled === undefined ? {} : {
+          'swarm-workflow': {
+            enabled,
+            config: { availableAgentIds: ['main', 'deleted'] },
+          },
+        }),
       },
-    },
+    }, buildDefaultOpenClawPluginEntries(() => true)),
     entries,
     ['swarm-workflow'],
   );
   expect(merged.entries).toMatchObject({
     'swarm-workflow': {
-      enabled: false,
+      enabled: enabled ?? false,
       config: { availableAgentIds: ['main', 'reviewer'] },
     },
   });
@@ -1168,13 +1172,13 @@ describe('OpenClaw plugin config merging', () => {
       expect(buildDefaultOpenClawPluginEntries(() => false)).toEqual({});
     },
   );
-  test('enables independent flows without enabling Workboard and preserves explicit choices', () => {
+  test('defaults independent flows and Workboard to disabled and preserves explicit choices', () => {
     const ids = [OpenClawExtensionId.SWARM_WORKFLOW, OpenClawExtensionId.WORKBOARD];
     const defaults = buildDefaultOpenClawPluginEntries(id =>
       ids.includes(id as (typeof ids)[number]),
     );
     expect(defaults).toEqual({
-      'swarm-workflow': { enabled: true },
+      'swarm-workflow': { enabled: false },
       workboard: { enabled: false },
     });
     expect(
@@ -1418,7 +1422,7 @@ describe('OpenClaw managed speech config', () => {
     ).toEqual({ enabled: false, provider: 'openai' });
   });
 
-  test.each(['tts-local-cli', 'openai'])(
+  test.each(['openai'])(
     'enables the active %s speech provider plugin',
     provider => {
       expect(buildManagedOpenClawTtsPluginEntries({ provider })).toEqual({
@@ -1428,6 +1432,7 @@ describe('OpenClaw managed speech config', () => {
   );
 
   test('does not enable removed or unknown speech provider plugins', () => {
+    expect(buildManagedOpenClawTtsPluginEntries({ provider: 'tts-local-cli' })).toEqual({});
     expect(buildManagedOpenClawTtsPluginEntries({ provider: 'elevenlabs' })).toEqual({});
     expect(buildManagedOpenClawTtsPluginEntries({ provider: 'unknown' })).toEqual({});
   });

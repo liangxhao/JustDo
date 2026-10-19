@@ -21,6 +21,10 @@ import {
   validateCustomProviderDisplayName,
 } from '@shared/providers';
 import {
+  defaultLocalSpeechExtensionSettings,
+  type LocalSpeechExtensionSettings,
+} from '@shared/speech/localSpeechExtensionSettings';
+import {
   defaultLocalSpeechSettings,
   type LocalSpeechSettings,
 } from '@shared/speech/localSpeechSettings';
@@ -131,6 +135,7 @@ export interface AppConfig {
   sidebarPinnedItems?: string[];
   // 本地语音输入与朗读配置
   voice: LocalSpeechSettings;
+  localSpeechExtensions: LocalSpeechExtensionSettings;
   // 语言初始化标记 (用于判断是否是首次启动)
   language_initialized?: boolean;
   // 应用配置
@@ -218,6 +223,7 @@ export const defaultConfig: AppConfig = {
   computerOverlayRemotePreview: false,
   sidebarPinnedItems: [],
   voice: defaultLocalSpeechSettings,
+  localSpeechExtensions: defaultLocalSpeechExtensionSettings,
   app: {
     port: 3000,
     isDevelopment: process.env.NODE_ENV === 'development',

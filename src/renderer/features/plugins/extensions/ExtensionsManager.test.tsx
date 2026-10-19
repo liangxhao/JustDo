@@ -226,6 +226,27 @@ describe('ExtensionsManager extension toggle', () => {
     expect(list).toHaveBeenCalledTimes(3);
   });
 
+  test.each(['stt-local-cli', 'tts-local-cli'])(
+    'shows a model settings gear on the disabled %s card without enabling it', async id => {
+      const setEnabled = vi.fn();
+      Object.defineProperty(window, 'electron', { configurable: true, value: {
+        extensions: {
+          list: vi.fn(async () => ({ success: true, extensions: [{ ...extension, id, name: id }] })),
+          setEnabled, onChanged: vi.fn(() => vi.fn()), onImportProgress: vi.fn(() => vi.fn()),
+        },
+        localSpeechModels: {
+          list: vi.fn(async () => ({ supported: true, models: [] })),
+          onChanged: vi.fn(() => vi.fn()),
+        },
+      } });
+      render(<ExtensionsManager />);
+      fireEvent.click(await screen.findByRole('button', { name: `${id} · speechExtensionModelSettings` }));
+      expect(screen.getByRole('dialog', { name: `${id} · speechExtensionModelSettings` })).toBeTruthy();
+      expect(setEnabled).not.toHaveBeenCalled();
+      expect(screen.queryByRole('heading', { name: id, level: 2 })).toBeNull();
+    },
+  );
+
   test.each([false, true])(
     'reconciles open extension details after an external change (removed: %s)',
     async removed => {

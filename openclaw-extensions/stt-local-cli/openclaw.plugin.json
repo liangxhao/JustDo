@@ -2,6 +2,7 @@
   "id": "stt-local-cli",
   "name": "stt-local-cli",
   "description": "Transcribe local audio attachments offline using the installed Sherpa ONNX model.",
+  "enabledByDefault": true,
   "activation": {
     "onStartup": true,
     "onCapabilities": ["tool"]

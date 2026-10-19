@@ -2,6 +2,10 @@ import { ipcMain } from 'electron';
 
 import { AppConfigIpc, type AppConfigPatch } from '../../../shared/app/appConfig';
 import { buildCustomProviderRenameAliases, ProviderName } from '../../../shared/providers';
+import {
+  normalizeLocalSpeechExtensionSettings,
+  parseLocalSpeechExtensionSettingsPatch,
+} from '../../../shared/speech/localSpeechExtensionSettings';
 import { enqueueAppConfigUpdate } from '../../data/appConfigUpdateQueue';
 import type { SqliteStore } from '../../data/sqliteStore';
 
@@ -77,6 +81,12 @@ export const registerStoreHandlers = ({
       }
       const previous = getStore().get<AppConfigPatch>('app_config');
       const next = { ...previous, ...patch };
+      if ('localSpeechExtensions' in patch) {
+        next.localSpeechExtensions = {
+          ...normalizeLocalSpeechExtensionSettings(previous?.localSpeechExtensions),
+          ...parseLocalSpeechExtensionSettingsPatch(patch.localSpeechExtensions),
+        };
+      }
       if (patch.providers)
         next.providers = mergeProviderPatch(previous?.providers, patch.providers);
       if (patch.providers && next.model && typeof next.model === 'object') {

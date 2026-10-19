@@ -375,7 +375,7 @@ export const resolveManagedOpenClawTtsConfig = (
     : { ...existingTts, enabled: false };
 };
 
-export const MANAGED_TTS_PLUGIN_IDS = new Set([LOCAL_TTS_PROVIDER_ID, 'openai']);
+export const MANAGED_TTS_PLUGIN_IDS = new Set(['openai']);
 
 export const buildManagedOpenClawTtsPluginEntries = (
   ttsConfig: Record<string, unknown> | null,
@@ -1290,7 +1290,20 @@ export const mergeOpenClawPluginConfig = (
         isRecord(value)
       ) {
         const previous = isRecord(sourcePlugins.entries) ? sourcePlugins.entries[pluginId] : null;
-        if (pluginId === OpenClawExtensionId.SWARM_WORKFLOW && isRecord(previous)) {
+        if (
+          (pluginId === OpenClawExtensionId.STT_LOCAL_CLI || pluginId === LOCAL_TTS_PROVIDER_ID) &&
+          isRecord(previous)
+        ) {
+          // Settings may refresh parameters, but only the extension page owns enablement.
+          value = {
+            ...previous,
+            ...value,
+            ...(typeof previous.enabled === 'boolean' ? { enabled: previous.enabled } : {}),
+          };
+        }
+        if (
+          pluginId === OpenClawExtensionId.SWARM_WORKFLOW && isRecord(previous) && isRecord(value)
+        ) {
           value = {
             ...previous,
             ...value,
@@ -1327,11 +1340,19 @@ export const mergeOpenClawPluginConfig = (
       ? []
       : null;
   const shouldPinInstalledExtensions = trustedIds.length > 0;
-  const allow = existingAllow
+  const projectedAllow = existingAllow
     ? [...new Set([...existingAllow, ...trustedIds, ...managedIds])]
     : shouldPinInstalledExtensions
       ? [...new Set([...trustedIds, ...managedIds])]
       : null;
+  // Refreshing local speech parameters must not admit a plugin excluded by
+  // an existing restrictive allowlist. Extension-page enablement owns that change.
+  const allow = existingAllow?.length
+    ? projectedAllow?.filter(id =>
+        (id !== OpenClawExtensionId.STT_LOCAL_CLI && id !== LOCAL_TTS_PROVIDER_ID) ||
+        existingAllow.includes(id),
+      )
+    : projectedAllow;
   const requiredCapabilityIds = new Set<string>(
     APPLICATION_CAPABILITY_PLUGIN_IDS.filter(id => {
       const entry = managedEntries[id];
@@ -2207,7 +2228,7 @@ export const buildDefaultOpenClawPluginEntries = (
         [OpenClawExtensionId.DRAWIO, true],
         // Native desktop control requires explicit opt-in, preserved across syncs.
         [OpenClawExtensionId.CUA_COMPUTER, false],
-        [OpenClawExtensionId.SWARM_WORKFLOW, true],
+        [OpenClawExtensionId.SWARM_WORKFLOW, false],
         [OpenClawExtensionId.TYPESAFE, false],
         // The prepared agent runtime rejects a selected memory plugin omitted from
         // an explicit allowlist, even if Gateway startup already loaded its service.
@@ -2366,6 +2387,7 @@ export type OpenClawConfigSyncDeps = {
   getNativeVideoCategory?: () => unknown;
   getLocalSttConfig?: () => Record<string, unknown> | null;
   getLocalTtsConfig?: () => Record<string, unknown> | null;
+  getLocalSpeechExtensionTtsConfig?: () => Record<string, unknown> | null;
   getSpeechOutputState?: () => { enabled: boolean; mode: 'local' | 'online' };
   getWindowsSandboxEnvironment?: () => Record<string, string>;
 };

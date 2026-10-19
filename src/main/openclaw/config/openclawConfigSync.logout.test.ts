@@ -1151,6 +1151,9 @@ describe('OpenClaw auth logout config sync', () => {
           : {};
       setStoreGetter(() => ({ get: () => appConfig }) as never);
       let sttConfig = { command: 'sherpa.exe', args: ['--model=first.onnx'], modelId: 'first' };
+      const outputState: { enabled: boolean; mode: 'local' | 'online' } = {
+        enabled: true, mode: 'local',
+      };
       const sync = new OpenClawConfigSync({
         engineManager: {
           getConfigPath: () => configPath,
@@ -1164,21 +1167,45 @@ describe('OpenClaw auth logout config sync', () => {
         }),
         getAgents: () => [],
         getLocalSttConfig: () => sttConfig,
+        getLocalSpeechExtensionTtsConfig: () => ({
+          providers: { 'tts-local-cli': { command: 'extension-tts.exe' } },
+        }),
         getLocalTtsConfig: () => ({
           enabled: true,
           provider: 'tts-local-cli',
           providers: { 'tts-local-cli': { command: 'sherpa-tts.exe' } },
         }),
-        getSpeechOutputState: () => ({ enabled: true, mode: 'local' }),
+        getSpeechOutputState: () => outputState,
       } as never);
       const readConfig = () => JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
+      fs.writeFileSync(configPath, JSON.stringify({
+        plugins: { allow: ['openai'] },
+        tts: {
+          enabled: true, auto: 'off', provider: 'openai',
+          providers: { openai: { baseUrl: 'https://speech.example.test/v1', model: 'online', voice: 'test-voice' } },
+        },
+      }));
+      outputState.enabled = false;
+      expect(sync.sync('settings').ok).toBe(true);
+      expect(readConfig().tts).toMatchObject({
+        provider: 'openai',
+        providers: {
+          openai: { model: 'online', voice: 'test-voice' },
+          'tts-local-cli': { command: 'extension-tts.exe' },
+        },
+      });
+      outputState.enabled = true;
       expect(sync.sync('settings').ok).toBe(true);
       let config = readConfig();
       // Assert that the public entry point exercised the intended provider branch.
       expect(Boolean(config.models.providers?.['custom-provider'])).toBe(mode === 'full');
+      expect(config.plugins.entries['tts-local-cli']).toEqual({});
+      expect(config.plugins.allow).not.toContain('tts-local-cli');
+      expect(config.plugins.allow).not.toContain('stt-local-cli');
       for (const pluginId of ['tts-local-cli', 'stt-local-cli']) {
-        expect(config.plugins.entries[pluginId].enabled).toBe(true);
+        expect(config.plugins.entries[pluginId] ?? {}).not.toHaveProperty('enabled');
+        config.plugins.entries[pluginId] ??= {};
         config.plugins.entries[pluginId].enabled = false;
       }
       fs.writeFileSync(configPath, JSON.stringify(config));
@@ -1194,13 +1221,33 @@ describe('OpenClaw auth logout config sync', () => {
       for (const pluginId of ['tts-local-cli', 'stt-local-cli']) {
         config.plugins.entries[pluginId].enabled = true;
       }
+      config.plugins.allow.push('tts-local-cli', 'stt-local-cli');
       fs.writeFileSync(configPath, JSON.stringify(config));
 
       expect(sync.sync('settings').ok).toBe(true);
       config = readConfig();
       expect(config.plugins.entries['stt-local-cli']).toEqual({ enabled: true, config: sttConfig });
       expect(config.plugins.entries['tts-local-cli'].enabled).toBe(true);
+
+      for (const enabled of [false, true]) {
+        for (const reason of [
+          'settings', 'startup', 'local-speech-model-installed',
+          BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout,
+        ]) {
+          outputState.enabled = enabled;
+          outputState.mode = enabled ? 'local' : 'online';
+          expect(sync.sync(reason).ok).toBe(true);
+          config = readConfig();
+          expect(config.tts.enabled).toBe(true);
+          expect(config.tts.providers['tts-local-cli']).toEqual({ command: 'extension-tts.exe' });
+          for (const pluginId of ['tts-local-cli', 'stt-local-cli']) {
+            expect(config.plugins.entries[pluginId].enabled).toBe(true);
+          }
+        }
+      }
     },
+    // Full/minimal projections exercise settings, model install and auth transitions.
+    15_000,
   );
 
   test.each([
@@ -1307,7 +1354,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.defaults.modelSelectionScope).toBe('session');
   });
 
-  test('enables the local speech extension when offline TTS assets are available', () => {
+  test('projects offline TTS assets without enabling the local speech extension', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-tts-config-'));
     temporaryDirectories.push(directory);
     const configPath = path.join(directory, 'openclaw.json');
@@ -1332,7 +1379,7 @@ describe('OpenClaw auth logout config sync', () => {
 
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.tts).toEqual(tts);
-    expect(config.plugins.entries['tts-local-cli']).toEqual({ enabled: true });
+    expect(config.plugins.entries['tts-local-cli']).toEqual({});
     expect(config.plugins.allow).toContain('tts-local-cli');
   });
 

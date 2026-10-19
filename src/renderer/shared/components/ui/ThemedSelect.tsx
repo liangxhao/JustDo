@@ -128,8 +128,13 @@ const ThemedSelect: React.FC<ThemedSelectProps> = ({
     }
 
     const desiredHeight = Math.min(DROPDOWN_MAX_HEIGHT, options.length * 32 + 8);
-    const spaceAbove = Math.max(0, rect.top - boundary.top - DROPDOWN_GAP);
-    const spaceBelow = Math.max(0, boundary.bottom - rect.bottom - DROPDOWN_GAP);
+    // The menu is portaled to the document body, so only the viewport limits its
+    // height. The scroll boundary above only determines trigger visibility.
+    const spaceAbove = Math.max(0, rect.top - DROPDOWN_VIEWPORT_PADDING - DROPDOWN_GAP);
+    const spaceBelow = Math.max(
+      0,
+      ownerWindow.innerHeight - DROPDOWN_VIEWPORT_PADDING - rect.bottom - DROPDOWN_GAP,
+    );
     const opensUpward = spaceBelow < desiredHeight && spaceAbove > spaceBelow;
     const availableHeight = opensUpward ? spaceAbove : spaceBelow;
 

@@ -601,14 +601,13 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
         >
           <ThemedSelect
             id="mcp-apps-enabled"
-            value={settings.mcp.appsEnabled === null ? 'inherit' : String(settings.mcp.appsEnabled)}
+            value={String(settings.mcp.appsEnabled)}
             options={[
-              { value: 'inherit', label: i18nService.t('mcpAppsInherit') },
               { value: 'true', label: i18nService.t('mcpAppsEnable') },
               { value: 'false', label: i18nService.t('mcpAppsDisable') },
             ]}
             onChange={value =>
-              updateMcp({ appsEnabled: value === 'inherit' ? null : value === 'true' })
+              updateMcp({ appsEnabled: value === 'true' })
             }
             ariaLabel={i18nService.t('mcpAppsEnabledTitle')}
             className="h-9 py-2 text-xs"

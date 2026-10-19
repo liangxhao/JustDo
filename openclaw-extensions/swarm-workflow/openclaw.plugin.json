@@ -2,6 +2,7 @@
   "id": "swarm-workflow",
   "name": "Swarm Workflow",
   "description": "Durable agent task flows with dependency gates and independent verification.",
+  "enabledByDefault": false,
   "activation": {
     "onStartup": true,
     "onCapabilities": ["tool"]

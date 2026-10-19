@@ -27,7 +27,7 @@ describe('Agent runtime settings', () => {
       },
       mcp: {
         requestTimeoutSeconds: 60,
-        appsEnabled: null,
+        appsEnabled: true,
       },
       sessions: {
         visibility: 'tree',
@@ -114,8 +114,23 @@ describe('Agent runtime settings', () => {
 
     expect(parseAgentRuntimeSettings(legacyInput)).toEqual({
       ...input,
-      mcp: { requestTimeoutSeconds: 60, appsEnabled: null },
+      mcp: { requestTimeoutSeconds: 60, appsEnabled: true },
     });
+  });
+
+  test.each([null, undefined, true, false])('normalizes the MCP Apps preference (%s)', appsEnabled => {
+    const input = createDefaultAgentRuntimeSettings();
+    expect(parseAgentRuntimeSettings({ ...input, mcp: { ...input.mcp, appsEnabled } })).toEqual({
+      ...input,
+      mcp: { ...input.mcp, appsEnabled: appsEnabled ?? true },
+    });
+  });
+
+  test('rejects an invalid MCP Apps preference without dropping other settings', () => {
+    const input = createDefaultAgentRuntimeSettings();
+    expect(validateAgentRuntimeSettings({
+      ...input, mcp: { ...input.mcp, appsEnabled: 'true' },
+    }).ok).toBe(false);
   });
 
   test('migrates version 1 settings saved before session visibility preferences', () => {

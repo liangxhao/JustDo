@@ -17,6 +17,8 @@ export type LanguageType = 'zh' | 'en';
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
     localSpeechModelServerNotConfigured: '尚未配置内网语音模型服务，请联系管理员配置后再安装模型。',
+    localSpeechModelRangeIgnored: '模型服务未按请求返回文件分段，请联系管理员检查分段下载支持。',
+    localSpeechModelRangeInvalid: '模型服务返回的文件分段与请求不符，请联系管理员检查模型服务。',
     coworkBranchCreationPending:
       '该副本或分支尚未完成创建。请在会话列表中检查或删除，暂时无法继续发送。',
     computerOverlayActive: '正在操作电脑',
@@ -156,6 +158,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     browserContextSaveImage: '图片另存为…',
   },
   en: {
+    localSpeechModelRangeIgnored:
+      'The model server ignored the requested download range. Contact your administrator to check range support.',
+    localSpeechModelRangeInvalid:
+      'The model server returned an unexpected download range. Contact your administrator to check the model service.',
     localSpeechModelServerNotConfigured:
       'The internal speech model server is not configured. Contact your administrator before installing models.',
     coworkBranchCreationPending:

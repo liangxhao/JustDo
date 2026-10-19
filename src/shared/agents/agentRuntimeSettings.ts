@@ -84,8 +84,7 @@ export interface AgentRuntimeSettings {
   };
   mcp: {
     requestTimeoutSeconds: number;
-    /** null inherits an explicit native choice; new installations remain opt-in. */
-    appsEnabled: boolean | null;
+    appsEnabled: boolean;
   };
   sessions: {
     visibility: AgentRuntimeSessionVisibilityValue;
@@ -124,7 +123,7 @@ export const DEFAULT_AGENT_RUNTIME_SETTINGS: Readonly<AgentRuntimeSettings> = Ob
   }),
   mcp: Object.freeze({
     requestTimeoutSeconds: DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS,
-    appsEnabled: null,
+    appsEnabled: true,
   }),
   sessions: Object.freeze({
     visibility: AgentRuntimeSessionVisibility.Tree,
@@ -264,8 +263,9 @@ export const validateAgentRuntimeSettings = (
   // valid while making OpenClaw's 60-second request default explicit.
   const mcp = isRecord(value.mcp) ? value.mcp : DEFAULT_AGENT_RUNTIME_SETTINGS.mcp;
   const mcpRequestTimeoutSeconds = mcp.requestTimeoutSeconds;
-  const appsEnabled = mcp.appsEnabled ?? null;
-  if (appsEnabled !== null && typeof appsEnabled !== 'boolean') {
+  // The removed inherit preference (null) now uses the enabled product default.
+  const appsEnabled = mcp.appsEnabled ?? DEFAULT_AGENT_RUNTIME_SETTINGS.mcp.appsEnabled;
+  if (typeof appsEnabled !== 'boolean') {
     return { ok: false, error: 'Invalid MCP Apps preference.' };
   }
   if (
@@ -422,7 +422,7 @@ export const validateAgentRuntimeSettings = (
       },
       mcp: {
         requestTimeoutSeconds: mcpRequestTimeoutSeconds,
-        appsEnabled: typeof appsEnabled === 'boolean' ? appsEnabled : null,
+        appsEnabled,
       },
       sessions: {
         visibility: sessionVisibility,

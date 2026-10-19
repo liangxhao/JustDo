@@ -5,7 +5,7 @@ const record = (value: unknown): Record<string, unknown> =>
     ? (value as Record<string, unknown>)
     : {};
 
-/** Enable the bundled App host by default; preserve explicit user/native opt-outs. */
+/** Project the product App host choice while preserving unrelated native options. */
 export function buildManagedMcpConfig(
   existing: unknown,
   servers: unknown,
@@ -17,7 +17,7 @@ export function buildManagedMcpConfig(
     servers,
     apps: {
       ...record(previous.apps),
-      enabled: settings.appsEnabled ?? (record(previous.apps).enabled !== false),
+      enabled: settings.appsEnabled,
     },
   };
 }

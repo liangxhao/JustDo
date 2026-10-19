@@ -47,6 +47,7 @@ import {
   ProviderName,
 } from '../shared/providers';
 import { BuiltinModelIpc, BuiltinModelSyncReason } from '../shared/providers/builtinModels';
+import { normalizeLocalSpeechExtensionSettings } from '../shared/speech/localSpeechExtensionSettings';
 import { LocalSpeechModelIpc } from '../shared/speech/localSpeechModels';
 import { normalizeLocalSpeechSettings } from '../shared/speech/localSpeechSettings';
 import { BrowserAgentBridge } from './browser/browserAgentBridge';
@@ -210,7 +211,10 @@ import {
   registerOnlineTtsHandlers,
   registerSpeechSynthesisHandlers,
 } from './ipc/speech';
-import { buildManagedLocalSttConfig } from './openclaw/config/localSttConfig';
+import {
+  buildLocalSpeechExtensionSttConfig,
+  buildLocalSpeechExtensionTtsConfig,
+} from './openclaw/config/localSpeechExtensionConfig';
 import { buildManagedLocalTtsConfig } from './openclaw/config/localTtsConfig';
 import { NativeAssistantCreation } from './openclaw/config/nativeAssistantCreation';
 import { resolveNativeVideoSelection } from './openclaw/config/nativeVideoModelConfig';
@@ -785,8 +789,8 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
         getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.video,
       getLocalSttConfig: () => {
         const appConfig = getStore().get<AppConfigSettings>('app_config');
-        return buildManagedLocalSttConfig(
-          normalizeLocalSpeechSettings(appConfig?.voice),
+        return buildLocalSpeechExtensionSttConfig(
+          appConfig?.localSpeechExtensions,
           appConfig?.language === 'en' ? 'en' : 'zh',
         );
       },
@@ -795,6 +799,9 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
           undefined,
           normalizeLocalSpeechSettings(getStore().get<AppConfigSettings>('app_config')?.voice),
         ),
+      getLocalSpeechExtensionTtsConfig: () => buildLocalSpeechExtensionTtsConfig(
+        getStore().get<AppConfigSettings>('app_config')?.localSpeechExtensions,
+      ),
       getSpeechOutputState: () => {
         const settings = normalizeLocalSpeechSettings(
           getStore().get<AppConfigSettings>('app_config')?.voice,
@@ -1255,6 +1262,7 @@ type AppConfigSettings = {
   providers?: unknown;
   onlineModelProviders?: { decision?: unknown; video?: unknown };
   voice?: unknown;
+  localSpeechExtensions?: unknown;
 };
 
 const getOpenClawAppConfigSignature = (config: unknown): string => {
@@ -1267,6 +1275,8 @@ const getOpenClawAppConfigSignature = (config: unknown): string => {
     providers: appConfig.providers,
     decisionModels: appConfig.onlineModelProviders?.decision,
     nativeVideoModels: appConfig.onlineModelProviders?.video,
+    localSpeechExtensions: normalizeLocalSpeechExtensionSettings(appConfig.localSpeechExtensions),
+    language: appConfig.language,
     voice: {
       outputEnabled: voice.outputEnabled,
       synthesisMode: voice.synthesisMode,

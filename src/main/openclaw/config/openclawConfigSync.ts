@@ -7,6 +7,8 @@ import {
   captureDecisionModelConfiguration,
   resolveDecisionModelSelection,
 } from './decisionModelConfig';
+import { mergeLocalSpeechExtensionTtsConfig } from './localSpeechExtensionConfig';
+import { buildManagedLocalSpeechPluginEntries } from './localSpeechPluginConfig';
 import { buildManagedMcpConfig } from './mcpAppsConfig';
 import {
   applyNativeVideoConfiguration,
@@ -186,6 +188,7 @@ export class OpenClawConfigSync {
   private readonly getBrowserMode?: () => BrowserModeValue;
   private readonly getLocalSttConfig: () => Record<string, unknown> | null;
   private readonly getLocalTtsConfig: () => Record<string, unknown> | null;
+  private readonly getLocalSpeechExtensionTtsConfig?: () => Record<string, unknown> | null;
   private readonly getSpeechOutputState: () => { enabled: boolean; mode: 'local' | 'online' };
   private readonly getWindowsSandboxEnvironment: () => Record<string, string>;
 
@@ -204,6 +207,7 @@ export class OpenClawConfigSync {
     this.getBrowserMode = deps.getBrowserMode;
     this.getLocalSttConfig = deps.getLocalSttConfig ?? (() => null);
     this.getLocalTtsConfig = deps.getLocalTtsConfig ?? (() => null);
+    this.getLocalSpeechExtensionTtsConfig = deps.getLocalSpeechExtensionTtsConfig;
     this.getSpeechOutputState =
       deps.getSpeechOutputState ?? (() => ({ enabled: true, mode: 'online' }));
     this.getWindowsSandboxEnvironment = deps.getWindowsSandboxEnvironment ?? (() => ({}));
@@ -274,6 +278,11 @@ export class OpenClawConfigSync {
   }
 
   private applyManagedRuntimeConfiguration(config: Record<string, unknown>): void {
+    if (this.getLocalSpeechExtensionTtsConfig) {
+      const tts = mergeLocalSpeechExtensionTtsConfig(config.tts, this.getLocalSpeechExtensionTtsConfig());
+      if (tts) config.tts = tts;
+      else delete config.tts;
+    }
     // Reply preparation consumes admitted runtime configuration, not a
     // channel dispatcher's temporary projection. Set the surface policy here.
     config.surfaces = buildManagedOpenClawSurfaces(config.surfaces);
@@ -471,14 +480,7 @@ export class OpenClawConfigSync {
         coworkConfig.executionMode === 'sandbox',
         coworkConfig.sandboxNetworkEnabled,
       ),
-      ...(isBundledPluginAvailable(OpenClawExtensionId.STT_LOCAL_CLI)
-        ? {
-            [OpenClawExtensionId.STT_LOCAL_CLI]: {
-              enabled: true,
-              config: this.getLocalSttConfig() ?? {},
-            },
-          }
-        : {}),
+      ...buildManagedLocalSpeechPluginEntries(this.getLocalSttConfig(), isBundledPluginAvailable),
       ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
       ...buildManagedOnlineAsrPluginEntries(existingPlugins),
       ...buildManagedSwarmWorkflowPluginEntries(this.getAgents?.() ?? []),
@@ -930,14 +932,7 @@ export class OpenClawConfigSync {
         coworkConfig.executionMode === 'sandbox',
         coworkConfig.sandboxNetworkEnabled,
       ),
-      ...(isBundledPluginAvailable(OpenClawExtensionId.STT_LOCAL_CLI)
-        ? {
-            [OpenClawExtensionId.STT_LOCAL_CLI]: {
-              enabled: true,
-              config: this.getLocalSttConfig() ?? {},
-            },
-          }
-        : {}),
+      ...buildManagedLocalSpeechPluginEntries(this.getLocalSttConfig(), isBundledPluginAvailable),
       ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
       ...buildManagedSwarmWorkflowPluginEntries(this.getAgents?.() ?? []),
     };
@@ -1115,7 +1110,13 @@ export class OpenClawConfigSync {
           const hasHookConfig = Object.keys(hookConfig).length > 0;
           const hasSubstantiveConfig =
             Boolean(isRecord(canonicalExisting.models) && canonicalExisting.models.providers) ||
-            Boolean(isRecord(canonicalExisting.plugins) && canonicalExisting.plugins.entries) ||
+            Boolean(
+              isRecord(canonicalExisting.plugins) &&
+              (canonicalExisting.plugins.entries ||
+                Array.isArray(canonicalExisting.plugins.allow) ||
+                Array.isArray(canonicalExisting.plugins.deny) ||
+                typeof canonicalExisting.plugins.enabled === 'boolean'),
+            ) ||
             Boolean(isRecord(canonicalExisting.gateway) && canonicalExisting.gateway.mode);
           if (hasHookConfig || hasSubstantiveConfig) {
             const existingDiagnostics = isRecord(canonicalExisting.diagnostics)

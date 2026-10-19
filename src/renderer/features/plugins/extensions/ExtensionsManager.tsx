@@ -19,6 +19,8 @@ import {
 } from '@shared/plugins/extensions';
 import { PluginKind } from '@shared/plugins/marketplace';
 import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
+import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
+import { LOCAL_TTS_PROVIDER_ID } from '@shared/speech/localTts';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -64,6 +66,7 @@ import Tooltip from '@/shared/components/ui/Tooltip';
 import { useOwnerDocument } from '@/shared/dom/ownerDocument';
 
 import AgentTeamSettingsDialog from './AgentTeamSettingsDialog';
+import LocalSpeechExtensionSettingsDialog from './LocalSpeechExtensionSettingsDialog';
 
 const getImportStageLabel = (stage: ExtensionImportStage): string => {
   switch (stage) {
@@ -147,6 +150,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     window.dispatchEvent(new CustomEvent(OPEN_TEAM_RECORDS, { detail: ownerDocument }));
   }, [ownerDocument]);
   const [teamSettingsOpen, setTeamSettingsOpen] = useState(false);
+  const [speechSettingsKind, setSpeechSettingsKind] = useState<LocalSpeechModelKind | null>(null);
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   const searchQuery = sharedSearchQuery ?? localSearchQuery;
   const [importPickerOpen, setImportPickerOpen] = useState(false);
@@ -160,6 +164,13 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     extensions.some(
       extension => extension.id === OpenClawExtensionId.AGENT_TEAM && extension.enabled,
     );
+  useEffect(() => {
+    const id = speechSettingsKind === LocalSpeechModelKind.Asr
+      ? OpenClawExtensionId.STT_LOCAL_CLI : LOCAL_TTS_PROVIDER_ID;
+    if (speechSettingsKind && inventoryReady && !extensions.some(extension => extension.id === id)) {
+      setSpeechSettingsKind(null);
+    }
+  }, [extensions, inventoryReady, speechSettingsKind]);
   useEffect(() => {
     if (!agentTeamEnabled) setTeamSettingsOpen(false);
   }, [agentTeamEnabled]);
@@ -815,6 +826,20 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                 </button>
               </>
             )}
+            {(extension.id === OpenClawExtensionId.STT_LOCAL_CLI || extension.id === LOCAL_TTS_PROVIDER_ID) && (
+              <button type="button"
+                className="pointer-events-auto rounded-lg p-1.5 text-secondary hover:bg-surface-raised"
+                aria-label={`${extension.name} · ${i18nService.t('speechExtensionModelSettings')}`}
+                title={i18nService.t('speechExtensionModelSettings')}
+                disabled={extensionActionBusy}
+                onClick={event => {
+                  event.stopPropagation();
+                  setSpeechSettingsKind(extension.id === OpenClawExtensionId.STT_LOCAL_CLI
+                    ? LocalSpeechModelKind.Asr : LocalSpeechModelKind.Tts);
+                }}>
+                <Cog6ToothIcon className="h-4 w-4" />
+              </button>
+            )}
             {canToggle ? (
               <ExtensionToggle
                 extension={extension}
@@ -1000,6 +1025,10 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
           onClose={() => setTeamSettingsOpen(false)}
           onOpenRuntime={onOpenRuntime}
         />
+      )}
+      {speechSettingsKind && (
+        <LocalSpeechExtensionSettingsDialog kind={speechSettingsKind}
+          onClose={() => setSpeechSettingsKind(null)} />
       )}
       {importPickerOpen &&
         createPortal(

@@ -35,6 +35,31 @@ describe('store IPC', () => {
     });
   });
 
+  it('merges each extension model independently without replacing voice settings', async () => {
+    let config: Record<string, unknown> = { voice: { inputEnabled: false, ttsModelId: 'voice-model' } };
+    get.mockImplementation(() => config);
+    set.mockImplementation((_key, value) => { config = value; });
+    const save = handlers.get(AppConfigIpc.Patch)!;
+
+    await Promise.all([
+      save({}, { localSpeechExtensions: { sttModelId: 'sherpa-onnx-whisper-base' } }),
+      save({}, { localSpeechExtensions: { ttsModelId: 'vits-icefall-zh-aishell3' } }),
+    ]);
+
+    expect(config).toEqual({
+      voice: { inputEnabled: false, ttsModelId: 'voice-model' },
+      localSpeechExtensions: { sttModelId: 'sherpa-onnx-whisper-base', ttsModelId: 'vits-icefall-zh-aishell3' },
+    });
+  });
+
+  it('rejects untrusted extension model fields before writing or applying config', async () => {
+    await expect(handlers.get(AppConfigIpc.Patch)!({}, {
+      localSpeechExtensions: { ttsModelId: 'untrusted.exe', enabled: true },
+    })).rejects.toThrow();
+    expect(set).not.toHaveBeenCalled();
+    expect(onAppConfigChanged).not.toHaveBeenCalled();
+  });
+
   it('waits for the persisted app config to be applied', async () => {
     let resolveApplication: (() => void) | undefined;
     onAppConfigChanged.mockReturnValue(

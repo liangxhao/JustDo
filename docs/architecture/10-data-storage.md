@@ -4,6 +4,13 @@
 
 ## 1. 存储边界
 
+本地语音扩展模型偏好保存在既有 Main KV 的 `app_config.localSpeechExtensions`：
+`sttModelId` 和 `ttsModelId` 分别选择附件转录与工具合成模型，与 `app_config.voice`
+的麦克风/朗读选择独立。缺失或无效旧值使用编译期默认模型，不新增表或迁移。
+Main 对稀疏模型补丁校验固定模型目录并在同一配置队列中合并，避免两种模型同时
+保存时互相覆盖；原有配置应用失败回滚继续生效。下载文件共用现有模型目录，
+Gateway 只接收生成的命令参数，不建立第二份下载或模型索引。
+
 首页 MCP App 文件预览使用 Gateway 创建的专用 `workspace-preview` 原生会话。
 Main 仅在窗口内存中保留请求标识、工作区签名及原生创建回执；产品 `cowork_sessions`、
 消息表和 KV 均不增加预览记录。原生身份与必要元数据仍由 Gateway 保存，Renderer 不读取

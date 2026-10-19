@@ -7,6 +7,11 @@ import { BrowserLinkTarget, normalizeBrowserLinkTarget } from '@shared/browser/b
 import { normalizeBrowserTabLimit } from '@shared/browser/browserTabLimit';
 import { normalizeProxySettings, ProxyMode } from '@shared/network/proxy';
 import { isLegacyCustomProviderKey } from '@shared/providers';
+import {
+  type LocalSpeechExtensionSettings,
+  normalizeLocalSpeechExtensionSettings,
+  parseLocalSpeechExtensionSettingsPatch,
+} from '@shared/speech/localSpeechExtensionSettings';
 import { normalizeLocalSpeechSettings } from '@shared/speech/localSpeechSettings';
 
 import { normalizeAppearanceConfig } from '@/app/appearance';
@@ -169,6 +174,7 @@ export class ConfigService {
           browserProxy: normalizeProxySettings(storedConfig.browserProxy, ProxyMode.SYSTEM),
           appearance: normalizeAppearanceConfig(storedConfig.appearance),
           voice: normalizeLocalSpeechSettings(storedConfig.voice),
+          localSpeechExtensions: normalizeLocalSpeechExtensionSettings(storedConfig.localSpeechExtensions),
           shortcuts: {
             ...defaultConfig.shortcuts!,
             ...(storedConfig.shortcuts ?? {}),
@@ -257,6 +263,7 @@ export class ConfigService {
       browserProxy: normalizeProxySettings(storedConfig.browserProxy, ProxyMode.SYSTEM),
       appearance: normalizeAppearanceConfig(storedConfig.appearance),
       voice: normalizeLocalSpeechSettings(storedConfig.voice),
+      localSpeechExtensions: normalizeLocalSpeechExtensionSettings(storedConfig.localSpeechExtensions),
       shortcuts: {
         ...this.config.shortcuts,
         ...(storedConfig.shortcuts ?? {}),
@@ -280,7 +287,9 @@ export class ConfigService {
     return this.config;
   }
 
-  async updateConfig(newConfig: Partial<AppConfig>) {
+  async updateConfig(newConfig: Omit<Partial<AppConfig>, 'localSpeechExtensions'> & {
+    localSpeechExtensions?: Partial<LocalSpeechExtensionSettings>;
+  }) {
     const update = this.updateConfigQueue.then(async () => {
       const modelRevision = this.modelSelectionRevision;
       const normalizedProviders = normalizeProvidersConfig(
@@ -333,12 +342,18 @@ export class ConfigService {
           ? { appearance: normalizeAppearanceConfig(newConfig.appearance) }
           : {}),
         ...(newConfig.voice ? { voice: normalizeLocalSpeechSettings(newConfig.voice) } : {}),
+        ...(newConfig.localSpeechExtensions ? {
+          localSpeechExtensions: parseLocalSpeechExtensionSettingsPatch(newConfig.localSpeechExtensions),
+        } : {}),
         ...(normalizedProviders ? { providers: normalizedProviders } : {}),
       };
-      const saved = await window.electron.store.patchAppConfig<AppConfig>(patch);
+      const saved = await window.electron.store.patchAppConfig(patch);
       this.config = {
         ...this.config,
         ...saved,
+        localSpeechExtensions: normalizeLocalSpeechExtensionSettings(
+          saved.localSpeechExtensions ?? this.config.localSpeechExtensions,
+        ),
         // A later confirmed selection supersedes this response's snapshot.
         ...(!newConfig.model && modelRevision !== this.modelSelectionRevision
           ? { model: this.config.model }

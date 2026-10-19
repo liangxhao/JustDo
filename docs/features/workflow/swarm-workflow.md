@@ -86,7 +86,7 @@ OpenClaw 原生 `tools.swarm` 配置、collector 状态接口及分组视图保�
 5. 明确失败且所有执行已结束后，底部显示重试图标。排除失败原因后点击，只重跑失败节点，保留已完成阶段；每节点最多三次执行。结果尚不确定时不会显示重试入口。
 6. 最终结果经原生 chat.inject 回到主会话；完整流程仍可从流程子 Tab 查看，默认列出最近二十次。
 
-需要启用 Swarm Workflow 扩展，无需开启 Workboard、agent-team 或 Code Mode。Workboard 对未设置过的用户默认关闭，保留用户明确开启的选择。Swarm Workflow 默认可用，保留用户明确禁用的选择。现有运行时设置的 tools.swarm 控制原生批量委派，不控制本插件。
+需要启用 Swarm Workflow 扩展，无需开启 Workboard、agent-team 或 Code Mode。Workboard 和 Swarm Workflow 对未设置过的用户默认关闭，保留用户已有的明确启停选择。助手名单同步只更新插件配置，不改变启停状态。现有运行时设置的 tools.swarm 控制原生批量委派，不控制本插件。
 
 ## 执行边界
 
