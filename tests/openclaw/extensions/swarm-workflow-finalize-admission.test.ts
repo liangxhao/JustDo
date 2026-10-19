@@ -150,6 +150,18 @@ it('selects an exact admitted start only after prompt preparation creates its ow
   expect(f.applies({ ...f.identity, runId: 'ordinary-other-run' })).toBe(false);
 });
 
+it('keeps tools closed when source identity cannot be read during prompt preparation', async () => {
+  const f = fixture();
+  f.identityReadFails = true;
+  const message = 'Inspect\n\n<swarm-workflow mode="auto"/>';
+  const result = await f.hooks.get('before_prompt_build')({
+    currentUserMessage: message, currentUserMessageId: 'source:user',
+  }, f.identity);
+  expect(result.toolsAllow).toEqual([]);
+  expect(f.state.startTurns.size).toBe(0);
+  expect(f.rpc).not.toHaveBeenCalled();
+});
+
 it('protects stale start admission without authorizing a new generation or incarnation', async () => {
   const f = fixture();
   f.state.startTurns.set(f.identity.sessionKey + '\n' + f.identity.runId, {

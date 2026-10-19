@@ -26,6 +26,14 @@ it.each(Object.values(AGENT_TEAM_MODE))(
       'Members do not inherit this conversation history',
     );
     expect(agentTeamInstruction(mode)).toContain('unknown separately using actual tool receipts');
+    expect(agentTeamInstruction(mode)).toContain('use normally available tools as needed');
+    expect(agentTeamInstruction(mode)).toContain('prepare a preliminary plan');
+    expect(agentTeamInstruction(mode)).toContain('under existing permissions and approvals');
+    expect(agentTeamInstruction(mode)).toContain('Do not complete the delegated work yourself');
+    expect(agentTeamInstruction(mode)).toContain('sufficiently clear, promptly use the selected Agent Team tools');
+    expect(agentTeamInstruction(mode)).toContain('Only when material uncertainty or missing context');
+    expect(agentTeamInstruction(mode)).toContain('do not stop after analysis or a plan');
+    expect(agentTeamInstruction(mode)).not.toContain('Before organizing the team, use');
   },
 );
 

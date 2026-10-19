@@ -13,6 +13,7 @@ import {
 } from '../../../src/shared/cowork/swarm-workflow';
 import { OpenClawExtensionId } from '../../../src/shared/plugins/nativeIds';
 import { FlowStore } from '../../../openclaw-extensions/swarm-workflow/data/store';
+import { AgentTeamLaunchLedger } from '../../../openclaw-extensions/runtime-services/agent-team/launch/agent-team-launch-ledger';
 const requireNative = createRequire(import.meta.url);
 const code = buildSync({
   entryPoints: [path.resolve('openclaw-extensions/swarm-workflow/index.ts')],
@@ -44,6 +45,8 @@ async function fixture() {
   const wait = vi.fn(async (_params: any): Promise<any> => ({ status: 'pending' }));
   const runStates = new Map<string, any>();
   const hooks = new Map<string, any>();
+  const hookOptions = new Map<string, any>();
+  const nativeListeners = new Set<(event: any) => void>();
   let service: any;
   const moduleBox = { exports: {} as any };
   vm.runInNewContext(code, {
@@ -64,7 +67,15 @@ async function fixture() {
   });
   const request = vi.fn(async (method: string, params: any) => {
     if (method === 'agents.list') return { agents };
-    if (method === 'chat.history') return { messages };
+    if (method === 'chat.history') {
+      const offset = params.offset ?? 0;
+      const end = Math.max(0, messages.length - offset);
+      const start = Math.max(0, end - params.limit);
+      return {
+        messages: messages.slice(start, end), totalMessages: messages.length,
+        hasMore: start > 0, ...(start > 0 ? { nextOffset: offset + end - start } : {}),
+      };
+    }
     if (methods.has(method))
       return new Promise((resolve, reject) =>
         methods.get(method)({
@@ -88,6 +99,11 @@ async function fixture() {
   });
   const api = {
     runtime: {
+      state: { resolveStateDir: () => root },
+      events: { onAgentEvent: (listener: (event: any) => void) => {
+        nativeListeners.add(listener);
+        return () => nativeListeners.delete(listener);
+      } },
       config: { current: () => config },
       gateway: { request },
       subagent: { run, waitForRun: async (params: any) => { const result = await wait(params); runStates.set(params.runId, result); return result; },
@@ -109,7 +125,7 @@ async function fixture() {
         : factory.create({ sessionKey: parentKey, sessionId: parent.sessionId, assertInvocationCurrent: () => {} });
       if (created?.name === 'swarm_workflow_start') tool = created;
     },
-    on: (name: string, fn: any) => hooks.set(name, fn),
+    on: (name: string, fn: any, options: any) => { hooks.set(name, fn); hookOptions.set(name, options); },
   };
   moduleBox.exports.default.register(api);
   await service.start({ stateDir: root, gatewayEvents: { emit }, logger: { error: vi.fn() } });
@@ -130,7 +146,7 @@ async function fixture() {
     });
     return { hooks: agentHooks, tools: agentTools, service: agentService };
   };
-  return { emit, root, parent, parentKey, request, run, messages, nodeMessages, getSessionMessages, agents, config, tool, toolFactories, hooks, wait, hook: hooks.get('before_prompt_build'), service, registerAgent, api, methods, registeredToolNames, plugin: moduleBox.exports.default };
+  return { emit, root, parent, parentKey, request, run, messages, nodeMessages, getSessionMessages, agents, config, tool, toolFactories, hooks, hookOptions, nativeListeners, wait, hook: hooks.get('before_prompt_build'), service, registerAgent, api, methods, registeredToolNames, plugin: moduleBox.exports.default };
 }
 it('loads the manifest, tools, application RPCs and durable store under one Swarm Workflow namespace', async () => {
   const manifest = JSON.parse(readFileSync('openclaw-extensions/swarm-workflow/openclaw.plugin.json', 'utf8'));
@@ -452,32 +468,35 @@ it('resolves only the exact current admitted message for the embedded runtime', 
   expect((await f.hook(event, context)).prependSystemContext).toContain('could not be confirmed');
   expect((await f.request('swarmWorkflow.list', { parentKeys: [f.parentKey] }) as any).flows).toHaveLength(0);
   f.messages.push({ role: 'user', content, idempotencyKey: 'current:user' });
-  expect((await f.hook(event, context)).toolsAllow).toEqual(['swarm_workflow_start', 'skills_read', 'skills_search', 'progress_card']);
+  expect((await f.hook(event, context)).toolsAllow).toBeUndefined();
   await f.tool.execute('call-1', { goal: 'Inspect', mode: 'auto', sourceRequestId: 'current:user' });
   await f.tool.execute('call-2', { goal: 'Inspect', mode: 'auto', sourceRequestId: 'current:user' });
   await f.tool.execute('call-3', { goal: 'Inspect', mode: 'auto' });
   expect((await f.request('swarmWorkflow.list', { parentKeys: [f.parentKey] }) as any).flows).toHaveLength(1);
 });
 it.each(['auto', 'research', 'review'] as const)(
-  'allows only the three preparation tools alongside %s workflow launch', async mode => {
+  'preserves the native tool surface for preparation before %s workflow launch', async mode => {
     const f = await fixture();
     const text = 'Inspect project\n\n' + buildSwarmWorkflowInstruction({ mode, verify: true });
     const context = { sessionKey: f.parentKey, runId: 'prepare' };
     f.messages.push({ role: 'user', content: text, idempotencyKey: 'prepare:user' });
     const prompt = await f.hook({ prompt: text, messages: [] }, context);
-    expect(prompt.toolsAllow).toEqual([
-      'swarm_workflow_start', 'skills_read', 'skills_search', 'progress_card',
-    ]);
+    for (let index = 0; index < 25; index++)
+      f.messages.push({ role: 'toolResult', toolName: 'read', content: `Preparation finding ${index}` });
+    // Omitting toolsAllow preserves native permissions and catalog projection;
+    // setting it to '*' would risk replacing other restrictions.
+    expect(prompt).not.toHaveProperty('toolsAllow');
+    expect(prompt.prependSystemContext).toContain('prepare a preliminary plan');
     const before = f.hooks.get('before_tool_call');
     for (const toolName of ['skills_read', 'skills_search', 'progress_card'])
       expect(before({ toolName, params: {} }, context)).toBeUndefined();
     for (const toolName of [
       'ask_user', 'read', 'write', 'exec', 'browser', 'session_status', 'sessions_spawn',
-    ]) expect(before({ toolName, params: {} }, context)).toMatchObject({ block: true });
+    ]) expect(before({ toolName, params: {} }, context)).toBeUndefined();
     expect(before({
       toolName: 'exec', toolKind: 'code_mode_exec', toolInputKind: 'javascript',
     }, context)).toBeUndefined();
-    expect(before({ toolName: 'write', params: {} }, context)).toMatchObject({ block: true });
+    expect(before({ toolName: 'write', params: {} }, context)).toBeUndefined();
     expect((await f.request('swarmWorkflow.list', { parentKeys: [f.parentKey] }) as any).flows).toEqual([]);
     expect(f.run).not.toHaveBeenCalled();
     const correction = await f.hooks.get('before_agent_finalize')({
@@ -486,8 +505,163 @@ it.each(['auto', 'research', 'review'] as const)(
     expect(correction).toMatchObject({ action: 'revise' });
     expect((await f.hook({ prompt: 'Native correction without a marker', messages: [] }, context)).toolsAllow)
       .toEqual(prompt.toolsAllow);
+    const goal = 'Inspect project using the preparation findings and verify the result.';
+    await f.tool.execute('prepared-start', { goal, mode, sourceRequestId: 'prepare:user' });
+    const flows = (await f.request('swarmWorkflow.list', { parentKeys: [f.parentKey] }) as any).flows;
+    expect(flows).toHaveLength(1);
+    expect(flows[0].goal).toBe(goal);
   },
 );
+it('does not reuse an older request when preparation history contains a newer user', async () => {
+  const f = await fixture();
+  const text = 'Inspect\n\n' + buildSwarmWorkflowInstruction({ mode: 'auto', verify: true });
+  const context = { sessionKey: f.parentKey, runId: 'original' };
+  f.messages.push({ role: 'user', content: text, idempotencyKey: 'original:user' });
+  await f.hook({ prompt: text }, context);
+  f.messages.push({ role: 'user', content: 'Cancel that request', idempotencyKey: 'new:user' });
+  for (let index = 0; index < 25; index++)
+    f.messages.push({ role: 'toolResult', content: `Preparation ${index}` });
+  const result = f.hooks.get('before_tool_call')({ toolName: 'swarm_workflow_start', params: { goal: 'Inspect', mode: 'auto' } }, context);
+  expect(result.params.sourceRequestId).toBe('original:user');
+  await expect(f.tool.execute('old-call', result.params)).rejects.toThrow('no longer current');
+  expect((await f.hook({ prompt: 'Native correction' }, context)).toolsAllow).toEqual([]);
+  expect(await f.hooks.get('before_agent_finalize')({ ...context, stopHookActive: false }, context)).toBeUndefined();
+  expect((await f.request('swarmWorkflow.list', { parentKeys: [f.parentKey] }) as any).flows).toEqual([]);
+});
+it.each(['restart', 'identity', 'project', 'permissions', 'policy', 'plan'])(
+  'rejects %s during source history lookup before issuing a native flow admission', async change => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    f.messages.push({ role: 'user', content: 'Use Swarm Workflow to inspect', idempotencyKey: 'source:user' });
+    const request = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async (method, params) => {
+      const result = await request(method, params);
+      if (method === 'chat.history') {
+        if (change === 'restart') {
+          await f.service.stop();
+          await f.service.start({ stateDir: f.root, gatewayEvents: { emit: f.emit }, logger: { error: vi.fn() } });
+        } else if (change === 'identity') f.parent.sessionId = 'changed';
+        else if (change === 'project') f.parent.sessionRoot = path.join(f.root, 'changed');
+        else if (change === 'permissions') f.parent.permissionMode = 'read-only';
+        else if (change === 'policy') Object.assign(f.parent, { toolOverrides: { disabled: ['exec'] } });
+        else Object.assign(f.parent, { pluginExtensions: { 'plan-mode': { state: { enabled: true } } } });
+      }
+      return result;
+    });
+    await expect(f.tool.execute('lookup-race', { goal: 'Inspect', mode: 'auto' })).rejects.toThrow('before flow creation');
+    expect(f.request.mock.calls.some(([method]) => method === 'swarmWorkflow.start')).toBe(false);
+    expect(f.run).not.toHaveBeenCalled();
+  },
+);
+it.each(['expired', 'project', 'permissions', 'policy', 'mode', 'request'])(
+  'rejects %s after source preparation instead of adopting a different launch context', async change => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    const text = 'Inspect\n\n' + buildSwarmWorkflowInstruction({ mode: 'auto', verify: true });
+    f.messages.push({ role: 'user', content: text, idempotencyKey: 'prepare:user' });
+    const context = { sessionKey: f.parentKey, runId: 'prepare' };
+    await f.hook({ prompt: text }, context);
+    const params = { goal: 'Inspect', mode: 'auto', sourceRequestId: 'prepare:user' };
+    if (change === 'expired') vi.setSystemTime(Date.now() + 30 * 60 * 1000 + 1);
+    if (change === 'project') f.parent.sessionRoot = path.join(f.root, 'changed');
+    if (change === 'permissions') f.parent.permissionMode = 'read-only';
+    if (change === 'policy') Object.assign(f.parent, { toolOverrides: { disabled: ['exec'] } });
+    if (change === 'mode') params.mode = 'review';
+    if (change === 'request') params.sourceRequestId = 'other:user';
+    expect(f.hooks.get('before_tool_call')({ toolName: 'swarm_workflow_start', params }, context)).toMatchObject({ block: true });
+    if (change !== 'request')
+      await expect(f.tool.execute('late-launch', params)).rejects.toThrow('before flow creation');
+    expect(f.run).not.toHaveBeenCalled();
+  },
+);
+it('hides a competing Swarm start during a Team launch and rejects a retained tool definition', async () => {
+  const f = await fixture();
+  const startFactory = f.toolFactories.at(-1);
+  const ctx = { sessionKey: f.parentKey, sessionId: f.parent.sessionId, assertInvocationCurrent: vi.fn() };
+  expect(startFactory.create(ctx).name).toBe('swarm_workflow_start');
+  const ledger = new AgentTeamLaunchLedger(f.root);
+  const intent = {
+    generation: 1, sessionKey: f.parentKey, nativeSessionId: f.parent.sessionId,
+    lifecycleRevision: null, clientTurnId: 'team-turn', promptSha256: 'a'.repeat(64),
+    mode: 'discussion', owner: '00000000-0000-0000-0000-000000000000',
+    state: 'verified', corrections: 0,
+  };
+  ledger.write(f.parentKey, intent);
+  expect(startFactory.create(ctx)).toBeNull();
+  await expect(f.tool.execute('competing', { goal: 'Inspect', mode: 'auto' })).rejects.toThrow('Agent Team');
+  expect(f.request.mock.calls.some(([method]) => method === 'swarmWorkflow.start')).toBe(false);
+  ledger.write(f.parentKey, { ...intent, state: 'released' });
+  expect(startFactory.create(ctx).name).toBe('swarm_workflow_start');
+});
+it('blocks competing Team dispatch before native Team admission while preserving preparation and cleanup', async () => {
+  const f = await fixture();
+  const text = 'Inspect\n\n' + buildSwarmWorkflowInstruction({ mode: 'auto', verify: true });
+  f.messages.push({ role: 'user', content: text, idempotencyKey: 'launch:user' });
+  const context = { sessionKey: f.parentKey, runId: 'launch' };
+  await f.hook({ prompt: text }, context);
+  const before = f.hooks.get('before_tool_call');
+  expect(f.hookOptions.get('before_tool_call').priority).toBeGreaterThan(0);
+  for (const event of [
+    { toolName: 'task_assistants', params: { agentId: 'worker' } },
+    { toolName: 'team_discussion', params: { action: 'create' } },
+    { toolName: 'team_discussion', params: { action: 'send' } },
+    { toolName: 'sessions_send', params: { sessionKey: 'agent:worker:justdo:peer' } },
+  ]) expect(before(event, context)).toMatchObject({ block: true });
+  for (const event of [
+    { toolName: 'task_assistants', params: {} },
+    { toolName: 'task_assistants', params: { seal: true } },
+    { toolName: 'task_assistants', params: { review: { verdict: 'passed' } } },
+    { toolName: 'team_discussion', params: { action: 'read' } },
+    { toolName: 'team_discussion', params: { action: 'stop' } },
+    { toolName: 'sessions_send', params: { sessionKey: 'agent:main:subagent:preparation' } },
+    { toolName: 'exec', params: {} },
+  ]) expect(before(event, context)).toBeUndefined();
+  expect(before({ toolName: 'team_discussion', params: { action: 'create' } }, { ...context, runId: 'ordinary' })).toBeUndefined();
+  expect(f.run).not.toHaveBeenCalled();
+});
+it('keeps the selected mode after acceptance until the exact source whole-run terminal', async () => {
+  const f = await fixture();
+  const text = 'Inspect\n\n' + buildSwarmWorkflowInstruction({ mode: 'auto', verify: true });
+  f.messages.push({ role: 'user', content: text, idempotencyKey: 'launch:user' });
+  const context = { sessionKey: f.parentKey, runId: 'launch' };
+  await f.hook({ prompt: text }, context);
+  await f.tool.execute('accept', { goal: 'Inspect', mode: 'auto', sourceRequestId: 'launch:user' });
+  const before = f.hooks.get('before_tool_call');
+  const competing = { toolName: 'team_discussion', params: { action: 'create' } };
+  expect(before(competing, context)).toMatchObject({ block: true });
+  expect((await f.hook({ prompt: 'Native continuation' }, context)).prependSystemContext).toContain('already has an accepted flow');
+  const terminal = {
+    sessionKey: f.parentKey, sessionId: f.parent.sessionId, runId: 'launch',
+    stream: 'lifecycle', data: { phase: 'end', executionSettled: true },
+  };
+  for (const event of [
+    { ...terminal, sessionId: 'other' },
+    { ...terminal, runId: 'other' },
+    { ...terminal, data: { phase: 'end', executionSettled: false } },
+  ]) {
+    for (const listener of f.nativeListeners) listener(event);
+    expect(before(competing, context)).toMatchObject({ block: true });
+  }
+  for (const listener of f.nativeListeners) listener(terminal);
+  expect(before(competing, context)).toBeUndefined();
+  await f.service.stop();
+  expect(f.nativeListeners.size).toBe(0);
+});
+it('does not let a retained source-terminal listener clear a new service generation', async () => {
+  const f = await fixture();
+  const oldListener = [...f.nativeListeners][0];
+  await f.service.stop();
+  await f.service.start({ stateDir: f.root, gatewayEvents: { emit: f.emit }, logger: { error: vi.fn() } });
+  const text = 'Inspect\n\n' + buildSwarmWorkflowInstruction({ mode: 'auto', verify: true });
+  f.messages.push({ role: 'user', content: text, idempotencyKey: 'launch:user' });
+  const context = { sessionKey: f.parentKey, runId: 'launch' };
+  await f.hook({ prompt: text }, context);
+  oldListener({
+    sessionKey: f.parentKey, sessionId: f.parent.sessionId, runId: 'launch',
+    stream: 'lifecycle', data: { phase: 'end', executionSettled: true },
+  });
+  expect(f.hooks.get('before_tool_call')({ toolName: 'team_discussion', params: { action: 'create' } }, context)).toMatchObject({ block: true });
+});
 it('intersects the native roster with live product admission before creating or dispatching work', async () => {
   vi.useFakeTimers();
   const f = await fixture();
@@ -545,7 +719,7 @@ it('requests a self-contained brief in the parent conversation before admitting 
     messages: [],
   };
   const instruction = await f.hook(event, context);
-  expect(instruction.toolsAllow).toEqual(['swarm_workflow_start', 'skills_read', 'skills_search', 'progress_card']);
+  expect(instruction.toolsAllow).toBeUndefined();
   expect(instruction.prependSystemContext).toContain('current attachments');
   expect(instruction.prependSystemContext).toContain('self-contained goal');
   await f.hook(event, context);
@@ -563,24 +737,25 @@ it('requests a self-contained brief in the parent conversation before admitting 
   ).toBeUndefined();
   expect(f.request.mock.calls.some(([method]) => method.startsWith('workboard'))).toBe(false);
 });
-it('limits task actions only for the admitted launch turn and permits Code Mode navigation', async () => {
+it('permits native preparation and Code Mode targets without substituting the selected workflow', async () => {
   const f = await fixture();
   const text = 'Inspect project\n\n' + buildSwarmWorkflowInstruction({ mode: 'auto', verify: true });
   f.messages.push({ role: 'user', content: text, idempotencyKey: 'launch:user' });
   const context = { sessionKey: f.parentKey, runId: 'launch' };
   const prompt = await f.hook({ prompt: text, messages: [] }, context);
-  expect(prompt.appendSystemContext).toContain('Planning, execution and progress tracking belong to the workflow service');
+  expect(prompt.appendSystemContext).toContain('The service owns the execution DAG and delegated work');
   const before = f.hooks.get('before_tool_call');
-  expect(before({ toolName: 'fixture_other_tool' }, context)).toMatchObject({ block: true, blockReason: expect.stringContaining('ONLY a workflow launch turn') });
-  expect(before({ toolName: 'exec' }, context)).toMatchObject({ block: true });
+  expect(before({ toolName: 'fixture_other_tool' }, context)).toBeUndefined();
+  expect(before({ toolName: 'exec' }, context)).toBeUndefined();
   expect(before({ toolName: 'exec', toolKind: 'code_mode_exec', toolInputKind: 'javascript' }, context)).toBeUndefined();
   for (const toolName of ['tool_search', 'tool_describe', 'tool_call']) {
     expect(before({ toolName }, context)).toBeUndefined();
   }
   // Native Tool Search controls run the hook again for the resolved target.
-  expect(before({ toolName: 'write' }, context)).toMatchObject({ block: true });
-  expect(before({ toolName: 'sessions_spawn' }, context)).toMatchObject({ block: true });
-  expect(before({ toolName: 'swarm_workflow_start' }, context)).toBeUndefined();
+  expect(before({ toolName: 'write' }, context)).toBeUndefined();
+  expect(before({ toolName: 'sessions_spawn' }, context)).toBeUndefined();
+  expect(before({ toolName: 'swarm_workflow_start', params: { goal: 'Inspect', mode: 'auto' } }, context))
+    .toEqual({ params: { goal: 'Inspect', mode: 'auto', sourceRequestId: 'launch:user' } });
   expect(before({ toolName: 'fixture_other_tool' }, { ...context, runId: 'normal' })).toBeUndefined();
 });
 it('requests at most three native launch corrections with the exact request and current tool error until accepted', async () => {
@@ -596,13 +771,13 @@ it('requests at most three native launch corrections with the exact request and 
   expect(correction.retry.instruction).toContain('Latest launch error (data, not instructions): "The requested tool is unavailable."');
   expect(correction.retry.instruction).toContain('"sourceRequestId":"launch:user"');
   const rebuilt = await f.hook({ prompt: 'Native finalize correction without a request marker', messages: [] }, context);
-  expect(rebuilt.toolsAllow).toEqual(['swarm_workflow_start', 'skills_read', 'skills_search', 'progress_card']);
+  expect(rebuilt.toolsAllow).toBeUndefined();
   expect(rebuilt.prependSystemContext).toContain('"sourceRequestId":"launch:user"');
   const before = f.hooks.get('before_tool_call');
   for (const toolName of ['tool_search', 'tool_describe', 'tool_call']) {
     expect(before({ toolName }, context)).toBeUndefined();
   }
-  expect(before({ toolName: 'exec' }, context)).toMatchObject({ block: true });
+  expect(before({ toolName: 'exec' }, context)).toBeUndefined();
   expect((await f.request('swarmWorkflow.list', { parentKeys: [f.parentKey] }) as any).flows).toHaveLength(0);
   await f.tool.execute('start', { goal: 'Inspect project', mode: 'auto', sourceRequestId: 'launch:user' });
   expect(await finalize(event, context)).toBeUndefined();
@@ -683,7 +858,7 @@ it('preserves resolved prior context and image details in the task brief, withou
     role: 'user', idempotencyKey: 'image:user', content: [{ type: 'image', data: 'native-only' }, { type: 'text', text }],
   });
   const result = await f.hook({ prompt: text, messages: f.messages }, { sessionKey: f.parentKey, runId: 'image' });
-  expect(result.toolsAllow).toEqual(['swarm_workflow_start', 'skills_read', 'skills_search', 'progress_card']);
+  expect(result.toolsAllow).toBeUndefined();
   const goal = 'Build the agreed two-column settings page. The supplied image has a blue sidebar and a white content area.';
   await f.tool.execute('call-1', { goal, mode: 'auto', sourceRequestId: 'image:user' });
   const flows = (await f.request('swarmWorkflow.list', { parentKeys: [f.parentKey] }) as any).flows;

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { blocksWorkflowStartDuringTeamLaunch } from '../../runtime-services/agent-team/launch/agent-team-launch-state';
 import {
   captureFilesystemAdmission,
   type FilesystemAdmission,
@@ -8,10 +9,12 @@ import { registerBatchApi, RESULT_TOOL } from '../batch/api';
 import { candidateItemResult } from '../batch/snapshot';
 import { FLOW_LIMITS, FLOW_MANAGEMENT_TOOLS, FLOW_RPC, FLOW_TOOLS } from '../contracts/flow';
 import { SUBMISSION_LIMITS, validateSubmission } from '../execution/submission';
+import { parentPolicy } from '../execution/policy';
 import { createManagementTools } from '../management/tools';
 import { parseSwarmWorkflowRequest } from '../prompt/request';
 import type { WorkflowContext } from './context';
-import { entry, managed, object } from './native-context';
+import { entry, inPlanMode, managed, object } from './native-context';
+import { readLatestWorkflowUser } from './source-request';
 
 export function registerWorkflowSubmissionTools(context: WorkflowContext): void {
   const {
@@ -215,6 +218,12 @@ export function registerWorkflowStartTool(context: WorkflowContext): void {
       contextVersion: 2,
       create: ctx => {
         if (!managed(ctx.sessionKey)) return null;
+        const competingTeamLaunch = () =>
+          blocksWorkflowStartDuringTeamLaunch(api.runtime.state.resolveStateDir(), {
+            sessionKey: ctx.sessionKey!,
+            sessionId: ctx.sessionId,
+          });
+        if (competingTeamLaunch()) return null;
         return {
           name: 'swarm_workflow_start',
           label: 'Start Swarm Workflow task flow',
@@ -240,16 +249,53 @@ export function registerWorkflowStartTool(context: WorkflowContext): void {
           async execute(_toolCallId: string, input: unknown, signal?: AbortSignal) {
             if (signal?.aborted) throw new Error('Flow request cancelled.');
             if (!object(input)) throw new Error('Invalid flow request.');
-            const history = await rpc<{ messages?: Array<Record<string, unknown>> }>(
-              'chat.history',
-              {
-                sessionKey: ctx.sessionKey,
-                limit: 20,
-              },
-            );
-            const latestUser = [...(history.messages ?? [])]
-              .reverse()
-              .find(item => item.role === 'user');
+            const generation = state.generation;
+            const parent = entry(ctx.sessionKey!);
+            if (!parent || parent.sessionId !== ctx.sessionId)
+              throw new Error('Native parent identity changed.');
+            const snapshot = {
+              sessionId: parent.sessionId,
+              cwd: parent.sessionRoot,
+              permissionMode: parent.permissionMode,
+              policy: parentPolicy(parent),
+            };
+            const intakeFor = (requestId: unknown) =>
+              [...state.startTurns.entries()].find(
+                ([key, turn]) =>
+                  key.startsWith(ctx.sessionKey + '\n') && turn.requestId === requestId,
+              );
+            let intake = intakeFor(input.sourceRequestId);
+            const assertCurrent = () => {
+              signal?.throwIfAborted();
+              ctx.assertInvocationCurrent();
+              if (competingTeamLaunch())
+                throw new Error('Agent Team is the selected execution mode for this request.');
+              const current = entry(ctx.sessionKey!);
+              if (
+                generation !== state.generation ||
+                !current ||
+                current.sessionId !== snapshot.sessionId ||
+                current.sessionRoot !== snapshot.cwd ||
+                current.permissionMode !== snapshot.permissionMode ||
+                parentPolicy(current) !== snapshot.policy ||
+                inPlanMode(current) ||
+                (intake &&
+                  (state.startTurns.get(intake[0]) !== intake[1] ||
+                    intake[1].generation !== generation ||
+                    intake[1].expiresAt <= Date.now() ||
+                    intake[1].parentId !== snapshot.sessionId ||
+                    intake[1].cwd !== snapshot.cwd ||
+                    intake[1].permissionMode !== snapshot.permissionMode ||
+                    intake[1].policy !== snapshot.policy ||
+                    intake[1].mode !== input.mode))
+              )
+                throw new Error('Swarm Workflow source changed before flow creation.');
+            };
+            const latestUser = await readLatestWorkflowUser({
+              sessionKey: ctx.sessionKey!,
+              rpc,
+              assertCurrent,
+            });
             const content =
               typeof latestUser?.content === 'string'
                 ? latestUser.content
@@ -271,10 +317,8 @@ export function registerWorkflowStartTool(context: WorkflowContext): void {
             if (sourceMarker && sourceMarker.mode !== input.mode)
               throw new Error('The source Swarm Workflow mode does not match.');
             const assignmentRequest = sourceMarker ? sourceMarker.request : content;
-            ctx.assertInvocationCurrent();
-            const parent = entry(ctx.sessionKey!);
-            if (!parent || parent.sessionId !== ctx.sessionId)
-              throw new Error('Native parent identity changed.');
+            intake = intakeFor(sourceRequestId);
+            assertCurrent();
             let filesystem: FilesystemAdmission | undefined;
             if (ctx.fsPolicy && !ctx.sandboxed && parent.permissionMode !== 'read-only')
               filesystem = captureFilesystemAdmission(
@@ -295,12 +339,9 @@ export function registerWorkflowStartTool(context: WorkflowContext): void {
               goal: String(input.goal),
               mode: String(input.mode),
               concurrency: input.concurrency as number | undefined,
-              generation: state.generation,
+              generation,
               expiresAt: Date.now() + 30000,
-              assertCurrent: () => {
-                signal?.throwIfAborted();
-                ctx.assertInvocationCurrent();
-              },
+              assertCurrent,
               filesystem,
             });
             const flow = await rpc(FLOW_RPC.start, {
@@ -312,9 +353,8 @@ export function registerWorkflowStartTool(context: WorkflowContext): void {
               concurrency: input.concurrency,
               admission: token,
             });
-            for (const [key, turn] of state.startTurns)
-              if (key.startsWith(ctx.sessionKey + '\n') && turn.requestId === sourceRequestId)
-                state.startTurns.delete(key);
+            // Keep this run's selected-mode fence after acceptance. Only its
+            // exact native whole-run terminal (or expiry/stop) retires it.
             return {
               details: { flow },
               content: [

@@ -1,170 +1,37 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
 import { withCodexSessionTranscriptMirrorWriteLock } from 'openclaw/plugin-sdk/codex-session-transcript-runtime';
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
-import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 
 import { AgentTeamLaunchLedger } from './agent-team-launch-ledger';
+import {
+  assertNativeIdentity,
+  type Identity,
+  type Launch,
+  type LaunchState,
+  managed,
+  MAX_CORRECTIONS,
+  nativeEntry,
+  NAMESPACE,
+  OPERATIONS,
+  OWNER,
+  parseLaunch,
+  readLaunch,
+  record,
+  type RecordValue,
+} from './agent-team-launch-state';
 
-const NAMESPACE = 'agent-team-launch';
+export { blocksWorkflowStartDuringTeamLaunch } from './agent-team-launch-state';
+
 const POLICY_ID = 'agent-team-launch';
-const OWNER_KEY = Symbol.for('runtime-services.agent-team-launch.owner');
-const OPERATIONS_KEY = Symbol.for('runtime-services.agent-team-launch.operations');
-const processState = globalThis as typeof globalThis & {
-  [OWNER_KEY]?: string;
-  [OPERATIONS_KEY]?: {
-    locks: Map<string, Promise<unknown>>;
-    revoked: Map<string, string>;
-    uncertain: Set<string>;
-  };
-};
-// Scoped hook registrations share a process owner. A fresh process never trusts
-// a persisted verification from its predecessor.
-const OWNER = (processState[OWNER_KEY] ??= randomUUID());
-const OPERATIONS = (processState[OPERATIONS_KEY] ??= {
-  locks: new Map(),
-  revoked: new Map(),
-  uncertain: new Set(),
-});
-const MAX_CORRECTIONS = 2;
-const SAFE_READS = new Set([
-  'read',
-  'web_search',
-  'web_fetch',
-  'memory_search',
-  'memory_get',
-  'skills_search',
-  'skills_read',
+const TEAM_LAUNCH_CONFLICT_TOOLS: ReadonlySet<string> = new Set([
+  'swarm_workflow_start',
+  'team_discussion',
+  'task_assistants',
+  'sessions_send',
 ]);
-// Progress presentation does not execute work or establish a Team receipt.
-const PRESENTATION_TOOLS = new Set(['progress_card']);
-// Native Tool Search wraps catalog targets and runs their trusted policies again.
-// Admitting its control tools does not admit a target, or count as a Team launch.
-const CATALOG_CONTROLS = new Set(['tool_search', 'tool_describe', 'tool_call']);
-const managed = (key: unknown): key is string =>
-  typeof key === 'string' && key.length <= 1024 && /^agent:[^:]+:justdo:[^:]+$/.test(key);
-type RecordValue = Record<string, unknown>;
-const record = (value: unknown): value is RecordValue =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
 
-type LaunchState = 'pending' | 'verified' | 'attempted' | 'launched' | 'cancelled' | 'released';
-type Launch = {
-  generation: number;
-  sessionKey: string;
-  nativeSessionId: string;
-  lifecycleRevision: string | null;
-  clientTurnId: string;
-  promptSha256: string;
-  mode: 'collaboration' | 'discussion';
-  owner: string;
-  state: LaunchState;
-  corrections: number;
-  entryId?: string;
-  transcriptGeneration?: string;
-  wholeSettled?: {
-    runId: string;
-    nativeSessionId: string;
-    phase: 'end' | 'error';
-    seq: number;
-  };
-};
-type Identity = { sessionKey?: string; sessionId?: string; runId?: string };
-
-function parseLaunch(value: unknown): Launch | undefined {
-  if (
-    !record(value) ||
-    !Number.isSafeInteger(value.generation) ||
-    Number(value.generation) < 1 ||
-    !managed(value.sessionKey) ||
-    typeof value.nativeSessionId !== 'string' ||
-    !value.nativeSessionId ||
-    value.nativeSessionId.length > 256 ||
-    typeof value.clientTurnId !== 'string' ||
-    !value.clientTurnId ||
-    value.clientTurnId.length > 256 ||
-    typeof value.promptSha256 !== 'string' ||
-    !/^[a-f0-9]{64}$/.test(value.promptSha256) ||
-    !['collaboration', 'discussion'].includes(String(value.mode)) ||
-    !(
-      value.lifecycleRevision === null ||
-      (typeof value.lifecycleRevision === 'string' && value.lifecycleRevision.length <= 256)
-    ) ||
-    typeof value.owner !== 'string' ||
-    !/^[a-f0-9-]{36}$/.test(value.owner) ||
-    !['pending', 'verified', 'attempted', 'launched', 'cancelled', 'released'].includes(
-      String(value.state),
-    ) ||
-    !Number.isInteger(value.corrections) ||
-    Number(value.corrections) < 0 ||
-    Number(value.corrections) > MAX_CORRECTIONS ||
-    [value.entryId, value.transcriptGeneration].some(
-      item => item !== undefined && (typeof item !== 'string' || !item || item.length > 256),
-    ) ||
-    (value.wholeSettled !== undefined &&
-      (!record(value.wholeSettled) ||
-        value.wholeSettled.runId !== value.clientTurnId ||
-        value.wholeSettled.nativeSessionId !== value.nativeSessionId ||
-        !['end', 'error'].includes(String(value.wholeSettled.phase)) ||
-        !Number.isSafeInteger(value.wholeSettled.seq) ||
-        Number(value.wholeSettled.seq) < 0))
-  )
-    return undefined;
-  // Project closed metadata. Gateway parameters, text, and arbitrary sibling
-  // extension data must never be mirrored into this native namespace.
-  return {
-    generation: Number(value.generation),
-    sessionKey: value.sessionKey,
-    nativeSessionId: value.nativeSessionId,
-    lifecycleRevision: value.lifecycleRevision,
-    clientTurnId: value.clientTurnId,
-    promptSha256: value.promptSha256,
-    mode: value.mode as Launch['mode'],
-    owner: value.owner,
-    state: value.state as LaunchState,
-    corrections: Number(value.corrections),
-    ...(value.entryId === undefined ? {} : { entryId: value.entryId as string }),
-    ...(value.transcriptGeneration === undefined
-      ? {}
-      : { transcriptGeneration: value.transcriptGeneration as string }),
-    ...(value.wholeSettled === undefined
-      ? {}
-      : {
-          wholeSettled: {
-            runId: value.clientTurnId,
-            nativeSessionId: value.nativeSessionId,
-            phase: (value.wholeSettled as RecordValue).phase as 'end' | 'error',
-            seq: Number((value.wholeSettled as RecordValue).seq),
-          },
-        }),
-  };
-}
-
-function nativeEntry(sessionKey: string): RecordValue | undefined {
-  return getSessionEntry({ sessionKey, readConsistency: 'latest' }) as RecordValue | undefined;
-}
-function readLaunch(
-  sessionKey: string,
-  ledger: AgentTeamLaunchLedger,
-): { raw?: unknown; launch?: Launch } {
-  const raw = ledger.read(sessionKey);
-  if (raw !== undefined) {
-    const launch = parseLaunch(raw);
-    return { raw, launch: launch?.sessionKey === sessionKey ? launch : undefined };
-  }
-  const entry = nativeEntry(sessionKey);
-  const extensions = record(entry?.pluginExtensions) ? entry.pluginExtensions : undefined;
-  const state = record(extensions?.['runtime-services'])
-    ? extensions['runtime-services']
-    : undefined;
-  const projected = state?.[NAMESPACE];
-  const launch = parseLaunch(projected);
-  // Native forks may copy extension metadata. A locator for another source is
-  // not an intent for this conversation. Same-key incarnation drift stays unknown.
-  return projected === undefined || (launch && launch.sessionKey !== sessionKey)
-    ? {}
-    : { raw: { unconfirmedProjection: true } };
-}
 function sameRequest(left: Launch, right: Launch): boolean {
   return [
     'sessionKey',
@@ -175,18 +42,6 @@ function sameRequest(left: Launch, right: Launch): boolean {
     'mode',
     'generation',
   ].every(key => left[key as keyof Launch] === right[key as keyof Launch]);
-}
-function assertNativeIdentity(launch: Launch, ctx?: Identity): void {
-  const entry = nativeEntry(launch.sessionKey);
-  if (
-    entry?.sessionId !== launch.nativeSessionId ||
-    (entry.lifecycleRevision ?? null) !== launch.lifecycleRevision ||
-    (ctx &&
-      (ctx.sessionKey !== launch.sessionKey ||
-        ctx.sessionId !== launch.nativeSessionId ||
-        ctx.runId !== launch.clientTurnId))
-  )
-    throw new Error('Agent Team launch identity is unconfirmed.');
 }
 function assertLaunchEligible(launch: Launch): void {
   const entry = nativeEntry(launch.sessionKey);
@@ -231,7 +86,7 @@ function enabled(api: OpenClawPluginApi): boolean {
   );
 }
 
-/** A launch intent narrows the normal native policy. It never grants tools. */
+/** A launch intent checks source identity and Team operations. It never grants tools. */
 export function registerAgentTeamLaunchGuard(api: OpenClawPluginApi): void {
   const ledger = new AgentTeamLaunchLedger(api.runtime.state.resolveStateDir());
   const writeAuthority = new AsyncLocalStorage<(() => void) | undefined>();
@@ -801,23 +656,9 @@ export function registerAgentTeamLaunchGuard(api: OpenClawPluginApi): void {
           !sameRequest(current, launch)
         )
           return deny;
-        if (event.toolName === 'exec')
-          return (launch.mode === 'collaboration' && current.state === 'launched') ||
-            (event.toolKind === 'code_mode_exec' && event.toolInputKind === 'javascript')
-            ? undefined
-            : deny;
-        if (
-          SAFE_READS.has(event.toolName) ||
-          PRESENTATION_TOOLS.has(event.toolName) ||
-          CATALOG_CONTROLS.has(event.toolName)
-        )
-          return;
-        if (
-          launch.mode === 'discussion' &&
-          event.toolName === 'team_discussion' &&
-          event.params.action === 'read'
-        )
-          return;
+        // Preparation uses the native tool policy, including shell and Code Mode
+        // inner tools. It must not mark a Team attempt or grant additional access.
+        if (event.toolName === 'team_discussion' && event.params.action === 'read') return;
         const discovery =
           event.toolName === 'task_assistants' &&
           !event.params.agentId &&
@@ -829,12 +670,9 @@ export function registerAgentTeamLaunchGuard(api: OpenClawPluginApi): void {
             ? event.toolName === 'team_discussion' &&
               ['create', 'stop'].includes(String(event.params.action))
             : ['task_assistants', 'sessions_send', 'assistants_create'].includes(event.toolName);
-        if (!selectedLaunch)
-          return launch.mode === 'collaboration' &&
-            current.state === 'launched' &&
-            event.toolName !== 'team_discussion'
-            ? undefined
-            : deny;
+        if (!selectedLaunch) {
+          return TEAM_LAUNCH_CONFLICT_TOOLS.has(event.toolName) ? deny : undefined;
+        }
         await rpc('attempt', {
           sessionKey: launch.sessionKey,
           nativeSessionId: launch.nativeSessionId,

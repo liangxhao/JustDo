@@ -1,15 +1,24 @@
 import { expect, it } from 'vitest';
 import { lastStartError, startInstructions } from '../../../openclaw-extensions/swarm-workflow/prompt/start';
 
-it('gives launch-only instructions and named direct and Code Mode arguments without losing context resolution', () => {
+it('prefers prompt launch for clear requests and prepares only to resolve uncertainty under native permissions', () => {
   const instruction = startInstructions('review', 'request:user');
-  expect(instruction).toContain('The only permitted task action in this turn is swarm_workflow_start');
-  expect(instruction).toContain('The Swarm Workflow service owns task planning, execution and progress tracking');
+  expect(instruction).toContain('use normally available tools as needed');
+  expect(instruction).toContain('prepare a preliminary plan');
+  expect(instruction).toContain('sufficiently clear, promptly call swarm_workflow_start');
+  expect(instruction).toContain('Only when material uncertainty or missing context');
+  expect(instruction).toContain('do not stop after analysis or a plan');
+  expect(instruction).not.toContain('Before launching, use');
+  expect(instruction).toContain('Existing permissions, approvals and tool restrictions remain in force');
+  expect(instruction).toContain('The Swarm Workflow service owns the execution DAG');
   expect(instruction).toContain('current attachments');
   expect(instruction).toContain('self-contained goal');
-  expect(instruction).toContain('skills_read and skills_search may load installed skill instructions');
-  expect(instruction).toContain('progress_card may present launch status only');
-  expect(instruction).toContain('do not execute the task or establish workflow acceptance');
+  expect(instruction).toContain('Do not complete the delegated task yourself');
+  expect(instruction).toContain('Preparation tool results do not establish workflow acceptance');
+  expect(instruction).toContain('without repeating preparation or side effects');
+  expect(instruction).toContain('Never blindly retry an unknown launch result');
+  expect(instruction).not.toContain('ONLY a workflow launch turn');
+  expect(instruction).not.toContain('The only permitted task action');
   expect(instruction).toContain('"id":"swarm_workflow_start","args":');
   expect(instruction).toContain('"mode":"review","sourceRequestId":"request:user"');
 });

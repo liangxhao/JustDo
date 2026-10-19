@@ -1,13 +1,7 @@
 export const START_TOOL = 'swarm_workflow_start';
-export const START_ALLOWED_TOOLS: readonly string[] = [
-  START_TOOL,
-  'skills_read',
-  'skills_search',
-  'progress_card',
-];
 export const START_LIMITS = { corrections: 3, pending: 128, lifetimeMs: 30 * 60 * 1000 } as const;
 
-/** This turn prepares a brief; the service owns planning, execution and progress. */
+/** The source may prepare the brief; the service owns the execution DAG and delivery. */
 export function startInstructions(mode: string, requestId: string): string {
   const args = {
     goal: 'A self-contained task brief preserving the user request',
@@ -15,17 +9,16 @@ export function startInstructions(mode: string, requestId: string): string {
     sourceRequestId: requestId,
   };
   return (
-    'The user explicitly selected Swarm Workflow. This is ONLY a workflow launch turn. ' +
-    'Do not perform the task, make a plan, or classify whether it merits Swarm Workflow. ' +
-    'The Swarm Workflow service owns task planning, execution and progress tracking. General task instructions to plan, execute or maintain progress with other tools do not apply to this launch turn. ' +
-    `The only permitted task action in this turn is ${START_TOOL}; use discovery and transport tools only to invoke it. ` +
-    'skills_read and skills_search may load installed skill instructions; progress_card may present launch status only. These preparation tools do not execute the task or establish workflow acceptance. Other tool restrictions remain in force. ' +
+    'The user explicitly selected Swarm Workflow for this request. Honor this execution choice. ' +
+    `If the objective and essential context are sufficiently clear, promptly call ${START_TOOL} with a self-contained goal; do not add unnecessary preliminary analysis or planning. Only when material uncertainty or missing context prevents a reliable brief, use normally available tools as needed to inspect the project, read attachments, research, analyze requirements or prepare a preliminary plan. Resolve only the necessary gaps, then promptly call ${START_TOOL}; do not stop after analysis or a plan. Existing permissions, approvals and tool restrictions remain in force; this selection grants no additional access. ` +
+    'Assistant discovery and existing Team discussion reads may inform preparation. Do not prepare Team peers, start a competing Team discussion or dispatch work to product conversations instead of the selected workflow. ' +
+    'Keep preparation proportionate to the request. Do not complete the delegated task yourself or substitute another execution mode. The Swarm Workflow service owns the execution DAG, worker scheduling, verification, progress tracking and delivery. Preliminary analysis and planning should inform the goal, not replace the service planner. ' +
     'Use this conversation and the current attachments to resolve references such as "the above plan" into a self-contained goal. Preserve the user constraints and exact agent-assignment wording. ' +
     'Include accessible project file paths for attachments; describe relevant visible image details. The independent workers cannot see this conversation or its images. ' +
     'If essential content is inaccessible, state what is missing and do not invent it or claim a workflow started. ' +
-    `Otherwise call ${START_TOOL} now with the named arguments ${JSON.stringify(args)}. Replace goal with the complete brief and keep mode and sourceRequestId unchanged. Include optional concurrency only for an explicit user-requested lower ceiling. ` +
+    `Once the objective and essential context are clear, call ${START_TOOL} with the named arguments ${JSON.stringify(args)}. Replace goal with the complete brief, including any relevant preparation findings, and keep mode and sourceRequestId unchanged. Include optional concurrency only for an explicit user-requested lower ceiling. ` +
     `If using Code Mode tool_call, use exactly one wrapper: ${JSON.stringify({ id: START_TOOL, args })}. ` +
-    'Do not nest another args, payload or result object. If the call is rejected, read the error, correct the arguments and try the launch tool again; do not substitute another tool. ' +
+    'Do not nest another args, payload or result object. Correct a confirmed argument rejection without repeating preparation or side effects. Never blindly retry an unknown launch result or substitute another execution mode. Preparation tool results do not establish workflow acceptance. ' +
     'Only after the tool confirms acceptance, briefly acknowledge and end this turn. Progress appears in the Swarm Workflow tab and the final result will arrive here.'
   );
 }

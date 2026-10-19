@@ -8,16 +8,11 @@ import {
 } from '../execution/submission';
 import { MANAGEMENT_GUIDANCE } from '../management/tools';
 import { parseSwarmWorkflowRequest } from '../prompt/request';
-import {
-  lastStartError,
-  START_ALLOWED_TOOLS,
-  START_LIMITS,
-  START_TOOL,
-  startInstructions,
-} from '../prompt/start';
+import { lastStartError, START_LIMITS, START_TOOL, startInstructions } from '../prompt/start';
 import type { WorkflowContext } from './context';
 import { entry, inPlanMode, managed } from './native-context';
 import { resultBudgetAttempt } from './result-budget';
+import { readLatestWorkflowUser } from './source-request';
 
 export function registerWorkflowExecutionHooks(context: WorkflowContext): void {
   const {
@@ -35,25 +30,52 @@ export function registerWorkflowExecutionHooks(context: WorkflowContext): void {
   api.on('agent_end', (event, ctx) =>
     resultBudgets.release(ctx.sessionKey, event.runId ?? ctx.runId),
   );
-  api.on('before_tool_call', (event, ctx) => {
+  const beforeToolCall: Parameters<typeof api.on<'before_tool_call'>>[1] = (event, ctx) => {
+    // Source preparation keeps the native tool surface and policy. Launch identity
+    // is checked by the start tool; assigned workers retain their own restrictions.
     const intake =
       ctx.sessionKey && ctx.runId
         ? state.startTurns.get(ctx.sessionKey + '\n' + ctx.runId)
         : undefined;
     if (
       intake &&
-      intake.generation === state.generation &&
-      intake.expiresAt > Date.now() &&
-      !START_ALLOWED_TOOLS.includes(event.toolName) &&
-      !['tool_call', 'tool_describe', 'tool_search'].includes(event.toolName) &&
-      !(
-        event.toolName === 'exec' &&
-        event.toolKind === 'code_mode_exec' &&
-        event.toolInputKind === 'javascript'
-      ) &&
-      !(event.toolName === 'wait' && (event.toolKind as string | undefined) === 'code_mode_wait')
+      ((event.toolName === 'task_assistants' && Boolean(event.params.agentId)) ||
+        (event.toolName === 'team_discussion' &&
+          ['create', 'send'].includes(String(event.params.action))) ||
+        (event.toolName === 'sessions_send' && managed(event.params.sessionKey)))
     )
-      return { block: true, blockReason: startInstructions(intake.mode, intake.requestId) };
+      return {
+        block: true,
+        blockReason:
+          'Swarm Workflow is the selected execution mode. Read existing Team context or discover assistants for preparation, but do not start a competing Team or dispatch work to product conversations. Use swarm_workflow_start once the brief is ready.',
+      };
+    if (event.toolName === START_TOOL && ctx.sessionKey && ctx.runId) {
+      if (intake) {
+        try {
+          const parent = entry(ctx.sessionKey);
+          if (
+            ctx.abortSignal?.aborted ||
+            intake.generation !== state.generation ||
+            intake.expiresAt <= Date.now() ||
+            !parent ||
+            parent.sessionId !== intake.parentId ||
+            parent.sessionRoot !== intake.cwd ||
+            parent.permissionMode !== intake.permissionMode ||
+            parentPolicy(parent) !== intake.policy ||
+            inPlanMode(parent) ||
+            event.params.mode !== intake.mode ||
+            (event.params.sourceRequestId !== undefined &&
+              event.params.sourceRequestId !== intake.requestId)
+          )
+            throw new Error('The Swarm Workflow launch turn admission changed.');
+          // The native hook binds an omitted optional argument to this admitted
+          // turn. A model-supplied different request is never silently replaced.
+          return { params: { ...event.params, sourceRequestId: intake.requestId } };
+        } catch (error) {
+          return { block: true, blockReason: String(error) };
+        }
+      }
+    }
     if (
       Object.values(FLOW_MANAGEMENT_TOOLS).includes(
         event.toolName as typeof FLOW_MANAGEMENT_TOOLS.status,
@@ -138,7 +160,9 @@ export function registerWorkflowExecutionHooks(context: WorkflowContext): void {
     } catch (error) {
       return { block: true, blockReason: String(error) };
     }
-  });
+  };
+  // Run before Agent Team's default-priority admission hook can record a send.
+  api.on('before_tool_call', beforeToolCall, { priority: 20 });
   api.on('after_tool_call', (event, ctx) => {
     if (ctx.sessionKey && ctx.toolCallId) {
       const key = callKey(ctx.sessionKey, ctx.toolCallId, event.toolName);
@@ -218,13 +242,26 @@ export function registerWorkflowExecutionHooks(context: WorkflowContext): void {
             inPlanMode(parent)
           )
             return;
-          const history = await rpc<{ messages?: Array<Record<string, unknown>> }>('chat.history', {
+          const latest = await readLatestWorkflowUser({
             sessionKey: ctx.sessionKey,
-            limit: 20,
+            rpc,
+            assertCurrent: () => {
+              ctx.hookInvocation?.assertActive();
+              const source = entry(ctx.sessionKey!);
+              if (
+                intake.generation !== state.generation ||
+                intake.expiresAt <= Date.now() ||
+                state.startTurns.get(ctx.sessionKey + '\n' + ctx.runId) !== intake ||
+                !source ||
+                source.sessionId !== intake.parentId ||
+                source.sessionRoot !== intake.cwd ||
+                source.permissionMode !== intake.permissionMode ||
+                parentPolicy(source) !== intake.policy ||
+                inPlanMode(source)
+              )
+                throw new Error('The Swarm Workflow launch turn admission changed.');
+            },
           });
-          const latest = [...(history.messages ?? [])]
-            .reverse()
-            .find(message => message.role === 'user');
           const after = entry(ctx.sessionKey);
           if (
             latest?.idempotencyKey !== intake.requestId ||
@@ -323,6 +360,18 @@ export function registerWorkflowPromptHooks(context: WorkflowContext): void {
     let message = event.currentUserMessage;
     let requestId = event.currentUserMessageId;
     const startGeneration = state.generation;
+    let sourceSessionId: unknown;
+    let sourceCaptured = false;
+    const captureSource = () => {
+      sourceSessionId = entry(ctx.sessionKey)?.sessionId;
+      if (
+        typeof sourceSessionId !== 'string' ||
+        !sourceSessionId ||
+        (ctx.sessionId !== undefined && ctx.sessionId !== sourceSessionId)
+      )
+        throw new Error('The native workflow source identity is unconfirmed.');
+      sourceCaptured = true;
+    };
     const pendingStart = ctx.runId
       ? state.startTurns.get(ctx.sessionKey + '\n' + ctx.runId)
       : undefined;
@@ -330,6 +379,7 @@ export function registerWorkflowPromptHooks(context: WorkflowContext): void {
       ctx.hookInvocation?.assertActive();
       if (
         startGeneration !== state.generation ||
+        (sourceCaptured && entry(ctx.sessionKey!)?.sessionId !== sourceSessionId) ||
         (pendingStart &&
           (pendingStart.generation !== startGeneration ||
             pendingStart.expiresAt <= Date.now() ||
@@ -343,22 +393,16 @@ export function registerWorkflowPromptHooks(context: WorkflowContext): void {
       (event.prompt?.includes('<swarm-workflow ') || pendingStart)
     ) {
       try {
-        const history = await rpc<{ messages?: Array<Record<string, unknown>> }>('chat.history', {
+        captureSource();
+        const admitted = await readLatestWorkflowUser({
           sessionKey: ctx.sessionKey,
-          limit: 20,
+          rpc,
+          assertCurrent: assertStartTurnCurrent,
         });
         assertStartTurnCurrent();
         requestId = pendingStart?.requestId ?? ctx.runId + ':user';
-        if (
-          pendingStart &&
-          !event.prompt?.includes('<swarm-workflow ') &&
-          [...(history.messages ?? [])].reverse().find(item => item.role === 'user')
-            ?.idempotencyKey !== requestId
-        )
+        if (admitted?.idempotencyKey !== requestId)
           throw new Error('The pending Swarm Workflow request is no longer current.');
-        const admitted = history.messages?.find(
-          item => item.role === 'user' && item.idempotencyKey === requestId,
-        );
         if (typeof admitted?.content === 'string') message = admitted.content;
         else if (Array.isArray(admitted?.content))
           message = admitted.content
@@ -382,6 +426,7 @@ export function registerWorkflowPromptHooks(context: WorkflowContext): void {
     }
     try {
       if (!requestId) throw new Error('Missing stable native request identity.');
+      if (!sourceCaptured) captureSource();
       assertStartTurnCurrent();
       if (ctx.runId) {
         const key = ctx.sessionKey + '\n' + ctx.runId;
@@ -423,10 +468,18 @@ export function registerWorkflowPromptHooks(context: WorkflowContext): void {
             expiresAt: Date.now() + START_LIMITS.lifetimeMs,
           });
       }
+      if (
+        state.store
+          ?.all()
+          .some(flow => flow.parentKey === ctx.sessionKey && flow.requestId === requestId)
+      )
+        return {
+          prependSystemContext:
+            'The selected Swarm Workflow request already has an accepted flow. Acknowledge the existing receipt and end this turn. Do not repeat preparation, launch another flow or start a competing Team.',
+        };
       return {
-        toolsAllow: [...START_ALLOWED_TOOLS],
         prependSystemContext: startInstructions(marker.mode, requestId),
-        appendSystemContext: `Swarm Workflow launch turn: the ONLY task action is ${START_TOOL}. Planning, execution and progress tracking belong to the workflow service. Only skills_read, skills_search and progress_card are additionally allowed for skill instructions and launch-status presentation. Do not use other task tools in this launch turn. Resolve the brief, call the launch tool, acknowledge only its accepted receipt, then stop.`,
+        appendSystemContext: `Swarm Workflow is the selected execution mode. If the objective and essential context are sufficiently clear, promptly call ${START_TOOL} with the self-contained brief. Only resolve material uncertainty or missing context before launching; do not add unnecessary analysis or planning, and do not stop after a plan. Existing permissions still apply. The service owns the execution DAG and delegated work. Acknowledge only an accepted launch receipt, then end this turn without duplicating the work.`,
       };
     } catch (error) {
       return {

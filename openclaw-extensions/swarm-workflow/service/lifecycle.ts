@@ -30,6 +30,7 @@ export function registerWorkflowLifecycle(context: WorkflowContext): void {
     prepare,
   } = context;
   let ownedGeneration: number | undefined;
+  let stopSourceEvents: (() => void) | undefined;
   api.registerService({
     id: 'swarm-workflow',
     start(ctx) {
@@ -178,6 +179,19 @@ export function registerWorkflowLifecycle(context: WorkflowContext): void {
           await rpc('chat.inject', { sessionKey: flow.parentKey, message });
         },
       });
+      stopSourceEvents = api.runtime.events.onAgentEvent(event => {
+        if (
+          epoch !== state.generation ||
+          event.stream !== 'lifecycle' ||
+          event.data?.executionSettled !== true ||
+          !['end', 'error'].includes(String(event.data.phase))
+        )
+          return;
+        const key = event.sessionKey + '\n' + event.runId;
+        const source = state.startTurns.get(key);
+        if (source?.generation === epoch && source.parentId === event.sessionId)
+          state.startTurns.delete(key);
+      });
       const tick = () => {
         if (epoch !== state.generation || !state.engine) return;
         state.pending = state.engine
@@ -203,6 +217,8 @@ export function registerWorkflowLifecycle(context: WorkflowContext): void {
     async stop() {
       if (ownedGeneration !== state.generation) return;
       ownedGeneration = undefined;
+      stopSourceEvents?.();
+      stopSourceEvents = undefined;
       ++state.generation;
       submissionCalls.clear();
       managementCalls.clear();

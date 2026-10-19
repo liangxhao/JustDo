@@ -1,12 +1,27 @@
-import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 
 import { buildSync } from 'esbuild';
-import { describe, expect, it, vi } from 'vitest';
+import { Type } from 'typebox';
+import { Check } from 'typebox/value';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 
 const nativeRequire = createRequire(import.meta.url);
+const temporaryRoots = new Set<string>();
+afterAll(() => {
+  for (const directory of temporaryRoots) {
+    if (
+      !directory.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      !path.basename(directory).startsWith('agent-team-catalog-test-')
+    )
+      throw new Error('Unexpected catalog test cleanup directory');
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 const code = buildSync({
   entryPoints: [path.resolve('openclaw-extensions/agent-team/index.ts')],
   bundle: true,
@@ -27,7 +42,9 @@ const guardCode = buildSync({
   write: false,
   external: ['openclaw/plugin-sdk/*'],
 }).outputFiles[0].text;
-function fixture(teamEnabled = true, separateHooks = false) {
+function fixture(teamEnabled = true, separateHooks = false, realSchemas = false) {
+  const stateDir = mkdtempSync(path.join(os.tmpdir(), 'agent-team-catalog-test-'));
+  temporaryRoots.add(stateDir);
   const warn = vi.fn();
   let plan = false;
   let nativeSessionId = 'native-target';
@@ -49,7 +66,9 @@ function fixture(teamEnabled = true, separateHooks = false) {
     Date,
     require: (name: string) =>
       name === 'typebox'
-        ? {
+        ? realSchemas
+          ? { Type }
+          : {
             Type: new Proxy(
               {},
               {
@@ -116,7 +135,12 @@ function fixture(teamEnabled = true, separateHooks = false) {
                   ? {}
                   : nativeRequire(name),
   };
-  new vm.Script(code).runInNewContext(context);
+  const nativeContext = vm.createContext(context);
+  new vm.Script(code).runInContext(nativeContext);
+  const teamLaunchOwner = vm.runInContext(
+    "globalThis[Symbol.for('runtime-services.agent-team-launch.owner')]",
+    nativeContext,
+  );
   const guardModule = { exports: {} as Record<string, any> };
   new vm.Script(guardCode).runInNewContext({
     ...context,
@@ -124,6 +148,7 @@ function fixture(teamEnabled = true, separateHooks = false) {
     module: guardModule,
   });
   const runtime = {
+    state: { resolveStateDir: () => stateDir },
     config: {
       current: () => ({ plugins: { entries: { 'agent-team': { enabled: teamEnabled } } } }),
     },
@@ -222,6 +247,40 @@ function fixture(teamEnabled = true, separateHooks = false) {
     setNativeSessionId: (sessionId: string) => {
       nativeSessionId = sessionId;
     },
+    setTeamLaunch: (
+      sessionKey: string,
+      mode: 'collaboration' | 'discussion',
+      state = 'verified',
+      settled = false,
+    ) => {
+      const directory = path.join(stateDir, 'runtime-services', 'agent-team-launch');
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(
+        path.join(directory, `${createHash('sha256').update(sessionKey).digest('hex')}.json`),
+        JSON.stringify({
+          generation: 1,
+          sessionKey,
+          nativeSessionId,
+          lifecycleRevision: null,
+          clientTurnId: 'catalog-launch',
+          promptSha256: 'a'.repeat(64),
+          mode,
+          owner: teamLaunchOwner,
+          state,
+          corrections: 0,
+          ...(settled
+            ? {
+                wholeSettled: {
+                  runId: 'catalog-launch',
+                  nativeSessionId,
+                  phase: 'end',
+                  seq: 1,
+                },
+              }
+            : {}),
+        }),
+      );
+    },
     setNativePolicy: (policy: Record<string, unknown>) => {
       nativePolicy = policy;
     },
@@ -234,6 +293,114 @@ function fixture(teamEnabled = true, separateHooks = false) {
     stop: () => service?.stop(),
   };
 }
+
+describe('Team launch tool catalog', () => {
+  const sessionKey = 'agent:main:justdo:catalog';
+  const source = { sessionKey, sessionId: 'native-target' };
+
+  it.each(['pending', 'verified'])(
+    'advertises only discussion reading during a %s collaboration launch',
+    state => {
+      const h = fixture(true, false, true);
+      h.setTeamLaunch(sessionKey, 'collaboration', state);
+      const discussion = h.factories.get('team_discussion')!(source);
+      expect(
+        Check(discussion.parameters, {
+          action: 'read',
+          roomId: 'room-1',
+          discussionIds: ['discussion-1'],
+        }),
+      ).toBe(true);
+      expect(
+        Check(discussion.parameters, { action: 'read', discussionIds: ['discussion-1'] }),
+      ).toBe(false);
+      expect(discussion.description).toContain('the existing roomId');
+      for (const action of ['create', 'send', 'stop', 'configure'])
+        expect(Check(discussion.parameters, { action })).toBe(false);
+      expect(
+        Check(discussion.parameters, {
+          action: 'read',
+          roomId: 'room-1',
+          message: 'Dispatch work',
+        }),
+      ).toBe(false);
+      expect(discussion.description).not.toMatch(/create|sessions_send|organize|configure/i);
+      expect(
+        Check(h.factories.get('task_assistants')!(source).parameters, { agentId: 'reviewer' }),
+      ).toBe(true);
+      expect(h.factories.get('assistants_create')!(source)).not.toBeNull();
+      expect(h.emit).not.toHaveBeenCalled();
+      h.stop();
+    },
+  );
+
+  it.each(['pending', 'verified'])(
+    'advertises discovery and the selected discussion actions during a %s launch',
+    state => {
+      const h = fixture(true, false, true);
+      h.setTeamLaunch(sessionKey, 'discussion', state);
+      const members = h.factories.get('task_assistants')!(source);
+      expect(Check(members.parameters, {})).toBe(true);
+      for (const input of [{ agentId: 'reviewer' }, { seal: true }, { review: {} }])
+        expect(Check(members.parameters, input)).toBe(false);
+      expect(members.description).not.toMatch(/sessions_send|prepare a peer|seal|review:/);
+      const discussion = h.factories.get('team_discussion')!(source);
+      for (const action of ['create', 'read', 'stop'])
+        expect(Check(discussion.parameters, { action })).toBe(true);
+      for (const action of ['send', 'configure'])
+        expect(Check(discussion.parameters, { action })).toBe(false);
+      expect(discussion.description).not.toMatch(/action:"send"|configure|sessions_send/);
+      expect(h.emit).not.toHaveBeenCalled();
+      h.stop();
+    },
+  );
+
+  it('does not restrict unrelated conversations or ordinary native tools', () => {
+    const h = fixture(true, false, true);
+    h.setTeamLaunch('agent:main:justdo:another-source', 'discussion');
+    const discussion = h.factories.get('team_discussion')!(source);
+    expect(Check(discussion.parameters, { action: 'send', message: 'Follow up' })).toBe(true);
+    expect(Check(discussion.parameters, { action: 'configure' })).toBe(true);
+    expect(Check(h.factories.get('task_assistants')!(source).parameters, { seal: true })).toBe(
+      true,
+    );
+    expect(h.factories.has('sessions_send')).toBe(false);
+    h.stop();
+  });
+
+  it.each(['cancelled', 'replacement', 'missing-session-id'])(
+    'hides Team tools for %s launch evidence',
+    kind => {
+      const h = fixture(true, false, true);
+      h.setTeamLaunch(sessionKey, 'discussion', kind === 'cancelled' ? 'cancelled' : 'verified');
+      if (kind === 'replacement') h.setNativeSessionId('replacement-native');
+      for (const name of ['team_discussion', 'task_assistants', 'assistants_create'])
+        expect(
+          h.factories.get(name)!({
+            ...source,
+            sessionId: kind === 'missing-session-id' ? undefined : source.sessionId,
+          }),
+        ).toBeNull();
+      h.stop();
+    },
+  );
+
+  it('keeps the narrowed catalog until the accepted launch has an exact whole-run terminal', () => {
+    const h = fixture(true, false, true);
+    h.setTeamLaunch(sessionKey, 'discussion', 'launched');
+    expect(
+      Check(h.factories.get('task_assistants')!(source).parameters, { agentId: 'reviewer' }),
+    ).toBe(false);
+    h.setTeamLaunch(sessionKey, 'discussion', 'launched', true);
+    expect(
+      Check(h.factories.get('task_assistants')!(source).parameters, { agentId: 'reviewer' }),
+    ).toBe(true);
+    expect(Check(h.factories.get('team_discussion')!(source).parameters, { action: 'send' })).toBe(
+      true,
+    );
+    h.stop();
+  });
+});
 
 describe('native peer tool authority', () => {
   it.each([

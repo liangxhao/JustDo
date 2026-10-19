@@ -218,6 +218,13 @@ function fixture(persisted?: Record<string, unknown>, existingStateDir?: string)
     hooks,
     finalizeApplies: (identity: Record<string, unknown> = ctx) =>
       hookOptions.get('before_agent_finalize').appliesToAgentRun(identity),
+    blocksWorkflowStart: (
+      source: { sessionKey: string; sessionId?: string } = {
+        sessionKey: key,
+        sessionId: ctx.sessionId,
+      },
+    ) =>
+      moduleBox.exports.blocksWorkflowStartDuringTeamLaunch(stateDir, source),
     gateway,
     api,
     listeners,
@@ -324,6 +331,57 @@ describe('Agent Team finalize run admission', () => {
 });
 
 describe('explicit Team launch protection', () => {
+  it('does not hide workflow startup without a Team intent or after a proven release', async () => {
+    const f = fixture();
+    expect(f.blocksWorkflowStart()).toBe(false);
+    await f.call('register', intent);
+    expect(f.blocksWorkflowStart()).toBe(true);
+    await f.call('release', {
+      ...request,
+      executionSettled: true,
+      dispatchCleanupComplete: true,
+    });
+    expect(f.blocksWorkflowStart()).toBe(false);
+    const restarted = fixture(f.entry, f.stateDir);
+    restarted.entry.sessionId = 'replacement-native';
+    restarted.entry.lifecycleRevision = 'replacement-revision';
+    expect(restarted.blocksWorkflowStart()).toBe(false);
+  });
+
+  it.each(['collaboration', 'discussion'])(
+    'blocks competing workflow startup while preserving preparation for %s',
+    async mode => {
+      const f = fixture();
+      await f.call('register', { ...intent, mode });
+      expect(f.blocksWorkflowStart()).toBe(true);
+      expect(await f.policy('swarm_workflow_start')).toMatchObject({ allow: false });
+      await f.verify();
+      expect(f.blocksWorkflowStart()).toBe(true);
+      expect(f.blocksWorkflowStart({ sessionKey: key })).toBe(true);
+      for (const tool of ['read', 'exec', 'write', 'sessions_spawn'])
+        expect(await f.policy(tool)).toBeUndefined();
+      expect(await f.policy('swarm_workflow_start')).toMatchObject({ allow: false });
+      expect(f.state().state).toBe('verified');
+      await f.call('cancel', request);
+      expect(f.blocksWorkflowStart()).toBe(true);
+    },
+  );
+
+  it('keeps workflow startup hidden for missing, corrupt or unreadable Team evidence', async () => {
+    const unreadable = fixture();
+    unreadable.entryReadFails = true;
+    expect(unreadable.blocksWorkflowStart()).toBe(true);
+    const f = fixture();
+    f.entry.pluginExtensions = { 'runtime-services': { 'agent-team-launch': { incomplete: true } } };
+    expect(f.blocksWorkflowStart()).toBe(true);
+    f.entry.pluginExtensions = undefined;
+    await f.call('register', intent);
+    f.entry.pluginExtensions = undefined;
+    expect(f.blocksWorkflowStart()).toBe(true);
+    writeFileSync(f.ledgerFile, '{incomplete');
+    expect(f.blocksWorkflowStart()).toBe(true);
+  });
+
   it.each(['collaboration', 'discussion'])(
     'admits native catalog controls for a verified %s launch while gating actual targets',
     async mode => {
@@ -340,9 +398,9 @@ describe('explicit Team launch protection', () => {
       }
       expect(f.state().state).toBe('verified');
       expect(await f.policy('task_assistants')).toBeUndefined();
-      expect(await f.policy('write')).toMatchObject({ allow: false });
-      expect(await f.policy('exec', { command: 'echo forbidden' })).toMatchObject({ allow: false });
-      expect(await f.policy('sessions_spawn')).toMatchObject({ allow: false });
+      for (const tool of ['write', 'exec', 'sessions_spawn'])
+        expect(await f.policy(tool)).toBeUndefined();
+      expect(f.state().state).toBe('verified');
       const wrongMode = mode === 'collaboration' ? 'team_discussion' : 'sessions_send';
       expect(await f.policy(wrongMode, { action: 'create' })).toMatchObject({ allow: false });
       const wrongRun = { ...ctx, runId: 'unrelated-turn' };
@@ -380,7 +438,8 @@ describe('explicit Team launch protection', () => {
     await f.verify();
     f.entry.pluginExtensions = undefined;
     expect((await f.call('inspect', request)).payload.state).toBe('verified');
-    expect(await f.policy('write')).toMatchObject({ allow: false });
+    expect(await f.policy('write')).toBeUndefined();
+    expect(await f.policy('sessions_send')).toMatchObject({ allow: false });
     const fresh = fixture(f.entry, f.stateDir);
     expect((await fresh.call('inspect', request)).payload.state).toBe('unknown');
     expect(await fresh.policy('team_discussion', { action: 'create' })).toMatchObject({
@@ -438,6 +497,7 @@ describe('explicit Team launch protection', () => {
     }
     expect(f.state()).toBeUndefined();
     expect((await f.call('inspect', request)).payload.state).toBe('unknown');
+    expect(f.blocksWorkflowStart()).toBe(true);
     expect(await f.policy('write')).toMatchObject({ allow: false });
   });
 
@@ -577,6 +637,7 @@ describe('explicit Team launch protection', () => {
     expect(f.finalizeApplies(later)).toBe(true);
     expect(await f.policy('write', {}, later)).toMatchObject({ allow: false });
     await f.call('confirm', { ...request, mode: 'discussion', receiptId: 'accepted-discussion' });
+    expect(f.blocksWorkflowStart()).toBe(true);
     expect(f.finalizeApplies(later)).toBe(true);
     expect(await f.policy('write', {}, later)).toMatchObject({ allow: false });
     f.listeners[0]({
@@ -588,11 +649,22 @@ describe('explicit Team launch protection', () => {
       seq: 3,
     });
     await vi.waitFor(() => expect(f.state().wholeSettled?.runId).toBe(ctx.runId));
+    expect(f.blocksWorkflowStart()).toBe(false);
+    expect(await f.policy('swarm_workflow_start')).toMatchObject({ allow: false });
+    expect(await f.policy('swarm_workflow_start', {}, later)).toBeUndefined();
+    expect(f.blocksWorkflowStart({ sessionKey: key, sessionId: 'other' })).toBe(true);
+    f.entry.lifecycleRevision = 'changed-revision';
+    expect(f.blocksWorkflowStart()).toBe(true);
+    f.entry.lifecycleRevision = intent.lifecycleRevision;
+    f.entry.sessionId = 'replacement-native';
+    expect(f.blocksWorkflowStart()).toBe(true);
+    f.entry.sessionId = ctx.sessionId;
+    expect(f.blocksWorkflowStart()).toBe(false);
     expect(f.finalizeApplies(later)).toBe(false);
     expect(f.finalizeApplies()).toBe(true);
     expect(await f.policy('write', {}, later)).toBeUndefined();
     expect(f.state().state).toBe('launched');
-    expect(await f.policy('write')).toMatchObject({ allow: false });
+    expect(await f.policy('write')).toBeUndefined();
     expect(await f.policy('write', {}, { ...later, sessionId: 'other' })).toMatchObject({
       allow: false,
     });
@@ -600,9 +672,11 @@ describe('explicit Team launch protection', () => {
     f.enabled = false;
     expect(await f.policy('write', {}, later)).toBeUndefined();
     const restarted = fixture(f.entry);
+    expect(restarted.blocksWorkflowStart()).toBe(true);
     expect(restarted.finalizeApplies(later)).toBe(true);
     expect(await restarted.policy('write', {}, later)).toMatchObject({ allow: false });
     await f.call('cancel', request);
+    expect(f.blocksWorkflowStart()).toBe(true);
     expect(await f.policy('write', {}, later)).toMatchObject({ allow: false });
   });
 
@@ -936,24 +1010,26 @@ describe('explicit Team launch protection', () => {
     expect(await f.hooks.get('before_agent_finalize')!({}, ctx)).toBeUndefined();
     expect(f.state().corrections).toBe(2);
   });
-  it('restricts the selected mode at both the Code Mode envelope and inner tool boundary', async () => {
+  it('keeps preparation available while checking Team operations inside Code Mode', async () => {
     const f = fixture();
     await f.call('register', intent);
     await f.verify();
-    expect((await f.policy('exec')).allow).toBe(false);
+    expect(await f.policy('exec')).toBeUndefined();
     expect(
       await f.policy('exec', {}, ctx, { toolKind: 'code_mode_exec', toolInputKind: 'javascript' }),
     ).toBeUndefined();
+    expect(await f.policy('swarm_workflow_start')).toMatchObject({ allow: false });
     expect(
       (await f.policy('sessions_send', { sessionKey: 'agent:worker:justdo:peer' })).allow,
     ).toBe(false);
-    expect((await f.policy('write')).allow).toBe(false);
+    expect(await f.policy('write')).toBeUndefined();
+    expect(f.state().state).toBe('verified');
     expect(await f.policy('team_discussion', { action: 'create' })).toBeUndefined();
     expect(f.state().state).toBe('attempted');
     expect(await f.hooks.get('before_agent_finalize')!({}, ctx)).toBeUndefined();
   });
   it.each(['collaboration', 'discussion'])(
-    'adds only skill reads and progress presentation to the %s launch guard',
+    'leaves native preparation tools available throughout a verified %s launch',
     async mode => {
       const f = fixture();
       await f.call('register', { ...intent, mode });
@@ -992,26 +1068,27 @@ describe('explicit Team launch protection', () => {
           'subagents',
           'browser',
         ])
-          expect(await f.policy(tool)).toMatchObject({ allow: false });
-        expect(await f.policy('process', { action: 'list' })).toMatchObject({ allow: false });
-        expect(await f.policy('subagents', { action: 'list' })).toMatchObject({ allow: false });
-        expect(await f.policy('browser', { action: 'snapshot' })).toMatchObject({ allow: false });
-        if (mode === 'collaboration')
-          expect(await f.policy('team_discussion', { action: 'read' })).toMatchObject({
-            allow: false,
-          });
+          expect(await f.policy(tool)).toBeUndefined();
+        expect(await f.policy('process', { action: 'list' })).toBeUndefined();
+        expect(await f.policy('subagents', { action: 'list' })).toBeUndefined();
+        expect(await f.policy('browser', { action: 'snapshot' })).toBeUndefined();
+        expect(await f.policy('team_discussion', { action: 'read' })).toBeUndefined();
+        expect(f.state().state).toBe(phase);
       }
       f.enabled = false;
       for (const tool of additions) expect(await f.policy(tool)).toMatchObject({ allow: false });
     },
   );
-  it('requires accepted launch confirmation before collaboration source effects', async () => {
+  it('does not treat preparation or attempted delegation as accepted collaboration', async () => {
     const f = fixture();
     await f.call('register', { ...intent, mode: 'collaboration' });
     await f.verify();
-    expect((await f.policy('write')).allow).toBe(false);
+    expect(await f.policy('write')).toBeUndefined();
+    expect(await f.policy('exec')).toBeUndefined();
+    expect(f.state().state).toBe('verified');
     await f.policy('sessions_send', { sessionKey: 'agent:worker:justdo:peer' });
-    expect((await f.policy('write')).allow).toBe(false);
+    expect(f.state().state).toBe('attempted');
+    expect(await f.policy('write')).toBeUndefined();
     expect(
       (await f.call('confirm', { ...request, mode: 'discussion', receiptId: 'native-receipt' })).ok,
     ).toBe(false);
