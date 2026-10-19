@@ -222,12 +222,22 @@ if (require.main === module) {
       console.log('[DiagramEditor] Offline assets verified');
       return;
     }
+    const ensure = process.argv.includes('--ensure');
+    if (ensure) {
+      try {
+        verifyDrawioAssets();
+        console.log('[DiagramEditor] Offline assets verified; reusing existing bundle');
+        return;
+      } catch (error) {
+        console.log(`[DiagramEditor] Preparing offline assets: ${error.message}`);
+      }
+    }
     const archiveIndex = process.argv.indexOf('--archive');
     const archive =
       archiveIndex >= 0
         ? process.argv[archiveIndex + 1]
         : path.join(root, 'resources/drawio-cache', `drawio-${upstream.commit}.tar.gz`);
-    if (process.argv.includes('--download')) {
+    if (process.argv.includes('--download') && (!ensure || !fs.existsSync(archive))) {
       fs.mkdirSync(path.dirname(archive), { recursive: true });
       const response = await fetch(
         `https://codeload.github.com/jgraph/drawio/tar.gz/${upstream.commit}`,

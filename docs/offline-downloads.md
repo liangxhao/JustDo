@@ -155,6 +155,8 @@ npm run drawio:verify
 归档在其他获准位置时使用 `npm run drawio:prepare -- --archive "D:\离线资源\drawio-9034053fba80a435e27d68d374bc564b83917ae9.tar.gz"`。
 允许联网的资源准备机也可显式执行 `npm run drawio:prepare -- --download`；该开关仅用于构建资源准备，产品运行时没有下载入口。
 
+开发入口 `npm run electron:dev:openclaw` 已集成 `drawio:prepare -- --ensure --download`，在准备 host runtime 前校验并复用现有资源；缺失或陈旧时优先使用上述本地缓存归档，缓存不存在才下载锁定归档。内网开发机提前复制该归档即可沿用同一个启动命令；已有缓存校验失败时直接报错，不自动下载覆盖。单独执行 `drawio:prepare` 仍默认只使用本地归档，发布构建和产品启动不自动下载。
+
 输出为 `openclaw-extensions/drawio/assets/`，包含完整 Web 编辑器、布局/worker/WASM/公式/形状资源、本地 stdio 服务、标准 App SDK bundle、逐文件哈希和许可证。原始 tar 包及生成目录不提交 Git。npm 依赖、Node 和 esbuild 仍应按本文件第 1 节由完整内网 registry/cache 提供。
 
 资源组装复制到目标 runtime 的 `dist/extensions/drawio/assets/`，预编译扩展和最终打包再次核对资源。缺失、陈旧、篡改或多余文件直接报错；不在打包或启动阶段自动下载。若适配器、锁定依赖或准备脚本变化，重新准备资源并按 OpenClaw 构建规则重建运行时，不能只修改产物哈希。
