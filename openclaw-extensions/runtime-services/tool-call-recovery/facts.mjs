@@ -1,261 +1,97 @@
 const toolCallRecoveryFactsRejectionDiagnostic = 'tool_call_pre_dispatch_rejection';
 const toolCallRecoveryFactsRejectionErrorCode = 'malformed_tool_call_arguments';
 
-const toolCallRecoveryFactsOptionalExclusionFlags = [
-  'yieldDetected',
-  'yieldMessageWaitRegistered',
-  'didSendDeterministicApprovalPrompt',
-  'didDeliverSourceReplyViaMessageTool',
-  'sourceReplyDelivered',
-  'toolAudioAsVoice',
-  'toolTrustedLocalMedia',
-  'hasToolMediaBlockReply',
-  'runtimeContinuationStarted',
-];
-const toolCallRecoveryFactsRequiredDeliveryArrays = [
-  'messagingToolSentTexts',
-  'messagingToolSentMediaUrls',
-  'messagingToolSentTargets',
-];
-const toolCallRecoveryFactsOptionalDeliveryArrays = [
-  'messagingToolSourceReplyPayloads',
-  'toolMediaUrls',
-  'hostOwnedToolMediaUrls',
-  'acceptedSessionSpawns',
-];
-const toolCallRecoveryFactsToolExclusionFlags = ['asyncStarted', 'codeModeSuspended', 'terminate'];
-const toolCallRecoveryFactsToolAsyncIdentities = ['asyncTaskId', 'asyncTaskRunId', 'asyncTaskIds'];
-
 const toolCallRecoveryFactsIsRecord = value =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 const toolCallRecoveryFactsIsNonNegativeSafeInteger = value =>
   Number.isSafeInteger(value) && value >= 0;
-const toolCallRecoveryFactsIsIdentity = value =>
-  typeof value === 'string' && value.trim().length > 0;
-const toolCallRecoveryFactsHasOptionalFlag = value => value !== undefined && value !== false;
-const toolCallRecoveryFactsHasArrayActivity = value => !Array.isArray(value) || value.length > 0;
 
-/** Project native accepted rows only; never retain tool arguments or result payloads. */
-export function projectToolCallRecoveryNestedEvidence(scope, toolMetas, activities) {
-  if (!toolCallRecoveryFactsIsRecord(scope) || !Array.isArray(toolMetas) || !Array.isArray(activities))
-    return null;
-  return {
-    runId: scope.runId,
-    sessionId: scope.sessionId,
-    scopeId: scope.scopeId,
-    toolMetas: toolMetas.map(meta => toolCallRecoveryFactsIsRecord(meta) ? {
-      toolCallId: meta.toolCallId, toolName: meta.toolName,
-      parentToolCallId: meta.parentToolCallId, isError: meta.isError,
-    } : null),
-    activities: activities.map(activity => {
-      if (!toolCallRecoveryFactsIsRecord(activity) || activity.role !== 'custom' ||
-        activity.customType !== 'openclaw.nested-tool.v1' || activity.excludeFromContext !== true ||
-        !toolCallRecoveryFactsIsRecord(activity.details)) return null;
-      const details = activity.details;
-      return {
-        runId: details.runId, scopeId: details.scopeId,
-        toolCallId: details.toolCallId, toolName: details.toolName,
-        parentToolCallId: details.parentToolCallId, isError: details.isError,
-      };
-    }),
-  };
-}
+const toolCallRecoveryFeedbackKinds = [
+  'missing_tool_name', 'empty_arguments', 'non_object_arguments', 'invalid_json', 'native_rejected',
+];
+const toolCallRecoveryFeedbackDetails = [
+  'xml_like_input', 'unterminated_string', 'invalid_escape', 'unexpected_token',
+];
 
-function toolCallRecoveryFactsAddNestedHistory(attempt, runId, calls, results) {
-  const evidence = attempt.toolCallRecoveryNestedEvidence;
-  if (evidence === undefined) return true;
-  if (!toolCallRecoveryFactsIsRecord(evidence) ||
-    !toolCallRecoveryFactsIsIdentity(runId) || evidence.runId !== runId ||
-    !toolCallRecoveryFactsIsIdentity(evidence.sessionId) || evidence.sessionId !== attempt.sessionIdUsed ||
-    !toolCallRecoveryFactsIsIdentity(evidence.scopeId) ||
-    !Array.isArray(evidence.toolMetas) || evidence.toolMetas.length !== attempt.toolMetas.length ||
-    !Array.isArray(evidence.activities) || evidence.activities.length === 0) return false;
-  const metas = new Map();
-  for (const meta of evidence.toolMetas) {
-    if (!toolCallRecoveryFactsIsRecord(meta) ||
-      !toolCallRecoveryFactsIsIdentity(meta.toolCallId) ||
-      !toolCallRecoveryFactsIsIdentity(meta.toolName) ||
-      metas.has(meta.toolCallId) ||
-      (meta.parentToolCallId !== undefined && !toolCallRecoveryFactsIsIdentity(meta.parentToolCallId))) return false;
-    metas.set(meta.toolCallId, meta);
-  }
-  if (!attempt.toolMetas.every(meta => {
-    if (!toolCallRecoveryFactsIsRecord(meta)) return false;
-    const original = metas.get(meta.toolCallId);
-    return original && original.toolName === meta.toolName && original.isError === meta.isError;
-  })) return false;
-  const nested = new Map();
-  for (const activity of evidence.activities) {
-    if (!toolCallRecoveryFactsIsRecord(activity) || activity.runId !== runId ||
-      activity.scopeId !== evidence.scopeId || !toolCallRecoveryFactsIsIdentity(activity.parentToolCallId) ||
-      typeof activity.isError !== 'boolean' || nested.has(activity.toolCallId) || calls.has(activity.toolCallId)) return false;
-    const meta = metas.get(activity.toolCallId);
-    if (!meta || meta.toolName !== activity.toolName || meta.parentToolCallId !== activity.parentToolCallId ||
-      meta.isError !== activity.isError) return false;
-    nested.set(activity.toolCallId, activity);
-  }
-  for (const [id, meta] of metas) {
-    if (meta.parentToolCallId === undefined) {
-      if (calls.get(id) !== meta.toolName || !results.has(id)) return false;
-      continue;
+// JSON-only projection: neither names, parser messages nor argument previews survive.
+function toolCallRecoveryFactsReadFeedback(value) {
+  try {
+    if (!toolCallRecoveryFactsIsRecord(value) || value.version !== 1 ||
+      !toolCallRecoveryFactsIsNonNegativeSafeInteger(value.batchCallCount) || value.batchCallCount === 0 ||
+      !Array.isArray(value.issues) || value.issues.length > 3 || typeof value.omitted !== 'boolean' ||
+      value.localization !== (value.issues.length ? 'located' : 'unlocalized')) return undefined;
+    const issues = [];
+    let previous = -1;
+    for (const issue of value.issues) {
+      if (!toolCallRecoveryFactsIsRecord(issue) ||
+        !toolCallRecoveryFactsIsNonNegativeSafeInteger(issue.callIndex) ||
+        issue.callIndex <= previous || issue.callIndex >= value.batchCallCount ||
+        !toolCallRecoveryFeedbackKinds.includes(issue.kind) ||
+        !toolCallRecoveryFactsIsNonNegativeSafeInteger(issue.argumentChars) ||
+        (issue.detail !== undefined && (issue.kind !== 'invalid_json' || !toolCallRecoveryFeedbackDetails.includes(issue.detail))) ||
+        (issue.position !== undefined && (issue.kind !== 'invalid_json' ||
+          !toolCallRecoveryFactsIsNonNegativeSafeInteger(issue.position) || issue.position > issue.argumentChars))) return undefined;
+      previous = issue.callIndex;
+      issues.push({ callIndex: issue.callIndex, kind: issue.kind, argumentChars: issue.argumentChars,
+        ...(issue.detail === undefined ? {} : { detail: issue.detail }),
+        ...(issue.position === undefined ? {} : { position: issue.position }) });
     }
-    if (!nested.has(id)) return false;
-    const visited = new Set([id]);
-    let parent = meta.parentToolCallId;
-    while (true) {
-      if (visited.has(parent)) return false;
-      visited.add(parent);
-      const owner = metas.get(parent);
-      if (!owner) return false;
-      if (owner.parentToolCallId === undefined) {
-        if (calls.get(parent) !== owner.toolName || !results.has(parent)) return false;
-        break;
-      }
-      if (!nested.has(parent)) return false;
-      parent = owner.parentToolCallId;
-    }
-  }
-  for (const [id, activity] of nested) {
-    calls.set(id, activity.toolName);
-    results.add(id);
-  }
-  return true;
+    return { version: 1, batchCallCount: value.batchCallCount, issues,
+      omitted: value.omitted, localization: value.localization };
+  } catch { return undefined; }
 }
 
-function toolCallRecoveryFactsExcludesAttempt(attempt) {
-  if (typeof attempt.didSendViaMessagingTool !== 'boolean' || attempt.didSendViaMessagingTool) {
-    return true;
-  }
-  if (
-    toolCallRecoveryFactsOptionalExclusionFlags.some(key =>
-      toolCallRecoveryFactsHasOptionalFlag(attempt[key]),
-    )
-  )
-    return true;
-  if (
-    toolCallRecoveryFactsRequiredDeliveryArrays.some(key =>
-      toolCallRecoveryFactsHasArrayActivity(attempt[key]),
-    )
-  )
-    return true;
-  if (
-    toolCallRecoveryFactsOptionalDeliveryArrays.some(
-      key => attempt[key] !== undefined && toolCallRecoveryFactsHasArrayActivity(attempt[key]),
-    )
-  ) {
-    return true;
-  }
-  if (
-    attempt.clientToolCalls !== undefined ||
-    attempt.heartbeatToolResponse !== undefined ||
-    attempt.lastToolError !== undefined
-  ) {
-    return true;
-  }
-  if (
-    attempt.sourceReplyDeliveryState !== undefined &&
-    attempt.sourceReplyDeliveryState !== 'missing'
-  ) {
-    return true;
-  }
-  if (
-    attempt.successfulCronAdds !== undefined &&
-    (!toolCallRecoveryFactsIsNonNegativeSafeInteger(attempt.successfulCronAdds) ||
-      attempt.successfulCronAdds !== 0)
-  ) {
-    return true;
-  }
-  if (!Array.isArray(attempt.toolMetas)) return true;
-  return attempt.toolMetas.some(
-    meta =>
-      !toolCallRecoveryFactsIsRecord(meta) ||
-      !toolCallRecoveryFactsIsIdentity(meta.toolName) ||
-      toolCallRecoveryFactsToolExclusionFlags.some(key =>
-        toolCallRecoveryFactsHasOptionalFlag(meta[key]),
-      ) ||
-      toolCallRecoveryFactsToolAsyncIdentities.some(key => meta[key] !== undefined) ||
-      (meta.isError !== undefined && typeof meta.isError !== 'boolean'),
-  );
-}
-
-/** Verify the entire current user turn, including settled batches from earlier attempts. */
-function toolCallRecoveryFactsHasSettledToolHistory(attempt, runId) {
-  const lifecycle = attempt.itemLifecycle;
-  if (
-    !toolCallRecoveryFactsIsRecord(lifecycle) ||
-    !['startedCount', 'completedCount', 'activeCount'].every(key =>
-      toolCallRecoveryFactsIsNonNegativeSafeInteger(lifecycle[key]),
-    ) ||
-    lifecycle.startedCount !== lifecycle.completedCount ||
-    lifecycle.activeCount !== 0 ||
-    !Array.isArray(attempt.toolMetas) ||
-    attempt.toolMetas.length !== lifecycle.completedCount ||
-    !Array.isArray(attempt.messagesSnapshot)
-  ) {
-    return false;
-  }
-  const snapshot = attempt.messagesSnapshot;
-  const userIndex = snapshot.findLastIndex(
-    message => toolCallRecoveryFactsIsRecord(message) && message.role === 'user',
-  );
-  if (userIndex < 0) return false;
-  const calls = new Map();
-  const results = new Set();
-  for (let index = userIndex + 1; index < snapshot.length; index += 1) {
-    const message = snapshot[index];
-    if (!toolCallRecoveryFactsIsRecord(message) || typeof message.role !== 'string') return false;
-    if (message.role === 'assistant') {
-      if (!Array.isArray(message.content)) return false;
-      for (const block of message.content) {
-        if (!toolCallRecoveryFactsIsRecord(block) || typeof block.type !== 'string') return false;
-        if (block.type === 'thinking' && typeof block.thinking === 'string') continue;
-        if (
-          ['text', 'input_text', 'output_text'].includes(block.type) &&
-          typeof block.text === 'string'
-        ) {
+/** Called only inside native batch rejection; the validator receives a disposable dummy. */
+export function projectToolCallRecoveryRejectionFeedback(calls, finalizeArguments) {
+  try {
+    if (!Array.isArray(calls) || !calls.length || typeof finalizeArguments !== 'function') return undefined;
+    const issues = [];
+    let remaining = 16 * 1024;
+    let omitted = calls.length > 16;
+    for (let callIndex = 0; callIndex < Math.min(calls.length, 16); callIndex += 1) {
+      if (issues.length === 3) { omitted = true; break; }
+      const call = calls[callIndex];
+      if (!toolCallRecoveryFactsIsRecord(call)) { omitted = true; continue; }
+      const raw = call.partialArgs;
+      const argumentChars = typeof raw === 'string' ? raw.length : 0;
+      // Reserve eight full-input passes (including the native parser) before any scan.
+      const cost = (typeof call.name === 'string' ? call.name.length : 0) + argumentChars * 8;
+      if (cost > remaining) { omitted = true; continue; }
+      remaining -= cost;
+      const issue = { callIndex, argumentChars };
+      if (typeof call.name !== 'string' || !call.name.trim()) issue.kind = 'missing_tool_name';
+      else if (typeof raw !== 'string' || !raw.trim()) issue.kind = 'empty_arguments';
+      else {
+        try {
+          finalizeArguments([{ arguments: {}, partialArgs: raw }], dummy => dummy.partialArgs);
           continue;
+        } catch (error) {
+          if (error?.errorCode !== toolCallRecoveryFactsRejectionErrorCode) { omitted = true; continue; }
         }
-        if (block.type !== 'toolCall') return false;
-        if (
-          !toolCallRecoveryFactsIsIdentity(block.id) ||
-          !toolCallRecoveryFactsIsIdentity(block.name) ||
-          calls.has(block.id)
-        )
-          return false;
-        // Async work is excluded separately; it cannot establish ordinary settled history.
-        if (block.async !== undefined && block.async !== false) return false;
-        calls.set(block.id, block.name);
+        issue.kind = 'native_rejected';
+        // Integer preprocessing can change both acceptance and the first error position.
+        if (!/[0-9]{16}/.test(raw)) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (!toolCallRecoveryFactsIsRecord(parsed)) issue.kind = 'non_object_arguments';
+          } catch (error) {
+            issue.kind = 'invalid_json';
+            const message = typeof error?.message === 'string' ? error.message : '';
+            if (raw.trimStart().startsWith('<')) issue.detail = 'xml_like_input';
+            else if (message.startsWith('Unterminated string')) issue.detail = 'unterminated_string';
+            else if (/^Bad (?:escaped character|Unicode escape)/.test(message)) issue.detail = 'invalid_escape';
+            else if (/^(?:Unexpected token|Expected |Unexpected non-whitespace)/.test(message)) issue.detail = 'unexpected_token';
+            // Read only the engine's numeric suffix, never the input excerpt in its message.
+            const position = /\bin JSON at position (\d+)(?: \(line \d+ column \d+\))?$/.exec(message);
+            if (position && Number(position[1]) <= raw.length) issue.position = Number(position[1]);
+          }
+        }
       }
-    } else if (message.role === 'toolResult') {
-      if (
-        !toolCallRecoveryFactsIsIdentity(message.toolCallId) ||
-        !toolCallRecoveryFactsIsIdentity(message.toolName) ||
-        calls.get(message.toolCallId) !== message.toolName ||
-        results.has(message.toolCallId) ||
-        (message.isError !== undefined && typeof message.isError !== 'boolean')
-      ) {
-        return false;
-      }
-      results.add(message.toolCallId);
+      issues.push(issue);
     }
-  }
-  if (calls.size !== results.size) return false;
-  if (!toolCallRecoveryFactsAddNestedHistory(attempt, runId, calls, results)) return false;
-  const observed = new Set();
-  return attempt.toolMetas.every(meta => {
-    if (
-      !toolCallRecoveryFactsIsRecord(meta) ||
-      !toolCallRecoveryFactsIsIdentity(meta.toolCallId) ||
-      !toolCallRecoveryFactsIsIdentity(meta.toolName) ||
-      observed.has(meta.toolCallId) ||
-      calls.get(meta.toolCallId) !== meta.toolName ||
-      !results.has(meta.toolCallId)
-    ) {
-      return false;
-    }
-    observed.add(meta.toolCallId);
-    return true;
-  });
+    return toolCallRecoveryFactsReadFeedback({ version: 1, batchCallCount: calls.length, issues,
+      omitted, localization: issues.length ? 'located' : 'unlocalized' });
+  } catch { return undefined; }
 }
 
 function toolCallRecoveryFactsReadTextPhase(block) {
@@ -307,108 +143,21 @@ function toolCallRecoveryFactsObserveAssistant(assistant) {
   };
 }
 
-// Native model observations are cloned before transcript projection. Compare
-// their producer receipt and native response identity, never object identity.
-function toolCallRecoveryFactsSameObservation(completed, current) {
-  if (!toolCallRecoveryFactsIsRecord(current) || !toolCallRecoveryFactsIsRecord(completed))
-    return false;
-  if (
-    !['role', 'stopReason', 'errorCode', 'timestamp', 'provider', 'model', 'responseId'].every(
-      key => completed[key] === current[key],
-    )
-  )
-    return false;
-  const receipt = assistant =>
-    Array.isArray(assistant.diagnostics)
-      ? assistant.diagnostics.filter(
-          entry =>
-            toolCallRecoveryFactsIsRecord(entry) &&
-            entry.type === toolCallRecoveryFactsRejectionDiagnostic,
-        )
-      : [];
-  const expected = receipt(completed);
-  const actual = receipt(current);
-  return (
-    expected.length === 1 &&
-    actual.length === 1 &&
-    toolCallRecoveryFactsIsNonNegativeSafeInteger(expected[0].timestamp) &&
-    expected[0].timestamp === actual[0].timestamp &&
-    toolCallRecoveryFactsIsRecord(actual[0].details) &&
-    actual[0].details.batchRejected === true &&
-    actual[0].details.streamComplete === true &&
-    actual[0].details.dispatchCount === 0
-  );
-}
-
-/**
- * Projects current native observations without granting authority or changing input.
- * The native caller must bind the producer diagnostic to its live model call and
- * retain the returned exclusion bit across all attempts of the same runner.
- */
-export function observeToolCallRecoveryAttempt(attempt, previousExcluded = false, runId) {
-  const source = toolCallRecoveryFactsIsRecord(attempt) ? attempt : {};
-  const assistant = Object.hasOwn(source, 'currentAttemptCompletedAssistant')
-    ? source.currentAttemptCompletedAssistant
-    : undefined;
+/** Bound by streamAgentResponse to the actual final response, before persistence. */
+export function observeToolCallRecoveryResponse(assistant) {
   const content = toolCallRecoveryFactsObserveAssistant(assistant);
-  const diagnostics = assistant?.diagnostics;
-  const diagnosticArrayValid =
-    diagnostics === undefined ||
-    (Array.isArray(diagnostics) &&
-      diagnostics.every(
-        entry =>
-          toolCallRecoveryFactsIsRecord(entry) && toolCallRecoveryFactsIsIdentity(entry.type),
-      ));
-  const producers = Array.isArray(diagnostics)
-    ? diagnostics.filter(
-        entry =>
-          toolCallRecoveryFactsIsRecord(entry) &&
-          entry.type === toolCallRecoveryFactsRejectionDiagnostic,
-      )
-    : [];
+  const producers = Array.isArray(assistant?.diagnostics)
+    ? assistant.diagnostics.filter(entry => toolCallRecoveryFactsIsRecord(entry) &&
+      entry.type === toolCallRecoveryFactsRejectionDiagnostic) : [];
   const details = producers.length === 1 ? producers[0].details : undefined;
-  const producerConfirmed =
-    toolCallRecoveryFactsIsRecord(details) &&
-    toolCallRecoveryFactsIsNonNegativeSafeInteger(producers[0].timestamp) &&
-    details.batchRejected === true &&
-    details.streamComplete === true &&
-    details.dispatchCount === 0;
-  const latestSnapshotAssistant = Array.isArray(source.messagesSnapshot)
-    ? source.messagesSnapshot.findLast(
-        message => toolCallRecoveryFactsIsRecord(message) && message.role === 'assistant',
-      )
-    : undefined;
-  const currentObservation = source.currentAttemptAssistant ?? latestSnapshotAssistant;
-  const observationMatches =
-    assistant !== undefined &&
-    (currentObservation === undefined ||
-      toolCallRecoveryFactsSameObservation(assistant, currentObservation));
-  const rejected =
-    content.valid &&
-    !content.residualCalls &&
-    diagnosticArrayValid &&
-    producerConfirmed &&
-    observationMatches &&
-    assistant.stopReason === 'error' &&
-    assistant.errorCode === toolCallRecoveryFactsRejectionErrorCode;
-  const malformedAssistant = assistant !== undefined && !content.valid;
-  const allToolsSettled = toolCallRecoveryFactsHasSettledToolHistory(source, runId);
-  return {
-    excluded:
-      previousExcluded !== false ||
-      !toolCallRecoveryFactsIsRecord(attempt) ||
-      toolCallRecoveryFactsExcludesAttempt(source) ||
-      !allToolsSettled ||
-      malformedAssistant ||
-      (producerConfirmed && !observationMatches) ||
-      !diagnosticArrayValid ||
-      producers.length > 1,
-    allToolsSettled,
-    assistant,
-    rejected,
-    streamComplete: rejected,
-    dispatchCount: rejected ? 0 : undefined,
-    hasVisibleText: content.hasVisibleText,
-    commentaryOnly: content.commentaryOnly,
-  };
+  const rejected = content.valid && !content.residualCalls &&
+    Array.isArray(assistant?.diagnostics) && assistant.diagnostics.every(entry =>
+      toolCallRecoveryFactsIsRecord(entry) && entry.type === toolCallRecoveryFactsRejectionDiagnostic) &&
+    assistant.stopReason === 'error' && assistant.errorCode === toolCallRecoveryFactsRejectionErrorCode &&
+    toolCallRecoveryFactsIsNonNegativeSafeInteger(producers[0]?.timestamp) &&
+    toolCallRecoveryFactsIsRecord(details) && details.batchRejected === true &&
+    details.streamComplete === true && details.dispatchCount === 0;
+  return { rejected, streamComplete: rejected, dispatchCount: rejected ? 0 : undefined,
+    feedback: rejected ? toolCallRecoveryFactsReadFeedback(details.feedback) : undefined,
+    hasVisibleText: content.hasVisibleText, commentaryOnly: content.commentaryOnly };
 }

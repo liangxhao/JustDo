@@ -14,6 +14,7 @@
 | [Worktree 验收](worktree-integration-plan.md)             | 真实 Gateway/模型、重启恢复、失败清理与平台验证                        |
 | [内网功能验收](intranet-feature-acceptance.md)            | 公司模型技能审核、企业网页人工介入、冷历史恢复                         |
 | [交互式回答验收](interactive-answers-acceptance.md)       | 真实模型、最终安装包、多平台及原生状态/渐进呈现的依赖                  |
-| [工具调用格式错误恢复](tool-call-format-recovery-plan.md) | 实施中；原生接线、静态产物冻结、真实模型及生命周期验收                 |
+| [工具调用格式错误恢复](tool-call-format-recovery-plan.md) | 同原生循环接线已替代跨 attempt 方案；真实模型与重连验收              |
+| [工具调用具体错误反馈](tool-call-format-feedback-plan.md) | 有界反馈、混合 schema/JSON 纠正与审查已实施；内网纠正率验收           |
 
 计划不能作为产品已支持的证明；单元测试或旧环境通过不能替代当前真实验收。完成后将必要规则和限制写入对应现行说明，并清除本目录的已完成内容。

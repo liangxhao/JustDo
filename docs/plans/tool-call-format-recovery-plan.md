@@ -1,5 +1,10 @@
 # 工具调用格式错误自动恢复方案
 
+> 本文前述跨 attempt 恢复与 nested receipt 桥为历史方案，现由同一 native loop 反馈替代。
+> 当前契约见 [引擎](../architecture/05-agent-engine.md#工具调用格式纠正)及
+> [最新修复与验收](tool-call-format-feedback-plan.md#18-schema-后出现坏-json-的原生循环修复)。
+> 真实模型、profile 和重连验收继续保留。
+
 状态：已 rebase 到 dev 的 OpenClaw `2026.10.4` 基线，迁移、收拢及自动验证已完成。真实环境验收待执行。本方案不启用 `strict`，不要求模型服务器增加能力。
 
 实施边界：纯策略与事实投影位于 Runtime Services；原生侧只有一个 `030-tool-call-format-recovery.cjs`，不再拆分 producer/runner 转换辅助文件，也不增加独立依赖扫描模块。

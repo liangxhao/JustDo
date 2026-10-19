@@ -17,7 +17,8 @@ const supportDirectory = path.join(root, 'openclaw-extensions/runtime-services/t
 const bundle = buildSync({
   stdin: {
     contents: `export * from ${JSON.stringify(path.join(supportDirectory, 'policy.mjs'))};
-      export * from ${JSON.stringify(path.join(supportDirectory, 'facts.mjs'))};`,
+      export * from ${JSON.stringify(path.join(supportDirectory, 'facts.mjs'))};
+      export * from ${JSON.stringify(path.join(supportDirectory, 'loop.mjs'))};`,
     resolveDir: root,
     sourcefile: 'recovery-support-entry.mjs',
   },
@@ -41,7 +42,7 @@ describe('complete native support admission', () => {
     const directory = path.join(fixtureRoot, 'dist/native-support');
     if (complete) {
       fs.mkdirSync(directory, { recursive: true });
-      for (const name of ['policy', 'facts']) {
+      for (const name of ['policy', 'facts', 'loop']) {
         fs.copyFileSync(path.join(supportDirectory, `${name}.mjs`), path.join(directory, `tool-call-recovery-${name}.mjs`));
       }
     }
@@ -60,14 +61,14 @@ describe('complete native support admission', () => {
     expect(() => support.verifySupport(fixtureRoot, root, true)).not.toThrow();
     expect(snapshot(directory)).toEqual(before);
   });
-  it.each(['policy', 'facts'])('rejects missing %s without repairing it', name => {
+  it.each(['policy', 'facts', 'loop'])('rejects missing %s without repairing it', name => {
     const directory = create(true);
     fs.unlinkSync(path.join(directory, `tool-call-recovery-${name}.mjs`));
     const before = snapshot(directory);
     expect(() => support.verifySupport(fixtureRoot, root, true)).toThrow(/partial/);
     expect(snapshot(directory)).toEqual(before);
   });
-  it.each(['policy', 'facts'])('rejects changed %s without modifying another file', name => {
+  it.each(['policy', 'facts', 'loop'])('rejects changed %s without modifying another file', name => {
     const directory = create(true);
     fs.writeFileSync(path.join(directory, `tool-call-recovery-${name}.mjs`), 'changed support');
     const before = snapshot(directory);
@@ -97,10 +98,10 @@ describe('format recovery support binding', () => {
     expect(() => support.verifyBundledSupport(changed, root)).toThrow(/constant.*partial or stale/);
   });
 
-  it('rejects a changed private settlement helper', () => {
+  it('rejects a changed response evidence helper', () => {
     const changed = bundle.replace(
-      'const lifecycle = attempt.itemLifecycle;',
-      'const lifecycle = {};',
+      'const content = toolCallRecoveryFactsObserveAssistant(assistant);',
+      'const content = {};',
     );
 
     expect(changed).not.toBe(bundle);
@@ -108,7 +109,7 @@ describe('format recovery support binding', () => {
   });
 
   it('rejects ambiguous exported function bindings', () => {
-    const changed = `${bundle}\nfunction observeToolCallRecoveryAttempt() { return {}; }`;
+    const changed = `${bundle}\nfunction observeToolCallRecoveryResponse() { return {}; }`;
 
     expect(() => support.verifyBundledSupport(changed, root)).toThrow(/function binding changed/);
   });
@@ -141,6 +142,17 @@ describe('format recovery support binding', () => {
       /missing or partial/,
     );
   });
+
+  it('uses the exact SDK support path and rejects comment, alias and duplicate imports', () => {
+    const file = path.join(root, 'runtime-fixture/node_modules/@openclaw/ai/dist/openai-completions-transport-QYABn8Uz.mjs');
+    const bound = support.bindSupport('function finalizeOpenAICompletionsToolCalls() {}', file, false);
+    expect(bound).toContain('../../../../dist/native-support/tool-call-recovery-facts.mjs');
+    expect(support.bindSupport(bound, file, true)).toBe(bound);
+    const declaration = bound.split('\n')[0];
+    for (const changed of ['// ' + bound, bound.replace('resolveToolCallRecovery,', 'resolveToolCallRecovery as other,'), declaration + '\n' + bound]) {
+      expect(() => support.bindSupport(changed, file, true)).toThrow(/missing or partial/);
+    }
+  });
 });
 
 describe('dynamic-import recovery support initializers', () => {
@@ -150,22 +162,33 @@ describe('dynamic-import recovery support initializers', () => {
     const prefix = '/runtime/dist/';
     const owner = prefix + 'embedded-agent-DOz9dy-9.mjs';
     const nestedOwner = prefix + 'builtin-openclaw-qVsnLx0N.mjs';
+    const coreOwner = prefix + 'agent-core-RzJjRVA2.mjs';
+    const producerOwner = '/runtime/node_modules/@openclaw/ai/dist/openai-completions-transport-QYABn8Uz.mjs';
+    const dispatchOwner = prefix + 'agent-turn-service-CVZmpyt7.mjs';
     const modules: Record<string, string> = {
       [owner]: `import { resolveToolCallRecovery, TOOL_CALL_RECOVERY_LIMIT, TOOL_CALL_RECOVERY_REASON } from ${JSON.stringify(prefix + 'native-support/tool-call-recovery-policy.mjs')};
-        import { observeToolCallRecoveryAttempt, projectToolCallRecoveryNestedEvidence } from ${JSON.stringify(prefix + 'native-support/tool-call-recovery-facts.mjs')};
+        import { observeToolCallRecoveryResponse, projectToolCallRecoveryRejectionFeedback } from ${JSON.stringify(prefix + 'native-support/tool-call-recovery-facts.mjs')};
+        import { createToolCallValidationRecovery } from ${JSON.stringify(prefix + 'native-support/tool-call-recovery-loop.mjs')};
         export function runPreparedEmbeddedLoop(input) {
-          return [resolveToolCallRecovery(input), observeToolCallRecoveryAttempt(input), projectToolCallRecoveryNestedEvidence(input), TOOL_CALL_RECOVERY_LIMIT, TOOL_CALL_RECOVERY_REASON];
+          return [createToolCallValidationRecovery, resolveToolCallRecovery(input), observeToolCallRecoveryResponse(input), projectToolCallRecoveryRejectionFeedback(input), TOOL_CALL_RECOVERY_LIMIT, TOOL_CALL_RECOVERY_REASON];
         }`,
-      [nestedOwner]: `import { projectToolCallRecoveryNestedEvidence } from ${JSON.stringify(prefix + 'native-support/tool-call-recovery-facts.mjs')};
-        export async function runEmbeddedAttemptSettledPhase(input) { return projectToolCallRecoveryNestedEvidence(input); }`,
+      [nestedOwner]: `import { installToolCallValidationRecovery } from ${JSON.stringify(prefix + 'native-support/tool-call-recovery-loop.mjs')};
+        export async function submitEmbeddedAttemptPrompt(input) { return installToolCallValidationRecovery(input.agent, input.recover); }`,
+      [coreOwner]: `import { readToolCallValidationRecovery, prepareToolCallValidationHandoff, assertToolCallValidationModel } from ${JSON.stringify(prefix + 'native-support/tool-call-recovery-loop.mjs')};
+        import { observeToolCallRecoveryResponse } from ${JSON.stringify(prefix + 'native-support/tool-call-recovery-facts.mjs')};
+        export async function streamAgentResponse(input) { return [readToolCallValidationRecovery, prepareToolCallValidationHandoff, assertToolCallValidationModel, observeToolCallRecoveryResponse(input)]; }`,
+      [producerOwner]: `import { projectToolCallRecoveryRejectionFeedback } from ${JSON.stringify(prefix + 'native-support/tool-call-recovery-facts.mjs')};
+        export function finalizeOpenAICompletionsToolCalls(calls, validator) { return projectToolCallRecoveryRejectionFeedback(calls, validator); }`,
+      [dispatchOwner]: `import { projectToolCallRecoveryFailureSummary } from ${JSON.stringify(prefix + 'native-support/tool-call-recovery-policy.mjs')};
+        export function dispatchAgentRunFromGateway(input) { return projectToolCallRecoveryFailureSummary(input.result, input.error, false); }`,
     };
-    for (const name of ['policy', 'facts'])
+    for (const name of ['policy', 'facts', 'loop'])
       modules[prefix + `native-support/tool-call-recovery-${name}.mjs`] = fs.readFileSync(path.join(supportDirectory, `${name}.mjs`), 'utf8');
     const options: Parameters<typeof build>[0] = {
-      stdin: { contents: `export const load = () => import(${JSON.stringify(owner)}); export const loadNested = () => import(${JSON.stringify(nestedOwner)});`, resolveDir: root, sourcefile: 'lazy-recovery-entry.mjs' },
+      stdin: { contents: `export const loadCore = () => import(${JSON.stringify(coreOwner)}); export const load = () => import(${JSON.stringify(owner)}); export const loadNested = () => import(${JSON.stringify(nestedOwner)}); export const loadProducer = () => import(${JSON.stringify(producerOwner)}); export const loadDispatch = () => import(${JSON.stringify(dispatchOwner)});`, resolveDir: root, sourcefile: 'lazy-recovery-entry.mjs' },
       bundle: true, platform: 'node', format: 'esm', write: false,
       plugins: [{ name: 'lazy-recovery-support', setup(plugin) {
-        plugin.onResolve({ filter: /^\/runtime\/dist\// }, args => ({ path: args.path, namespace: 'lazy-recovery' }));
+        plugin.onResolve({ filter: /^\/runtime\// }, args => ({ path: args.path, namespace: 'lazy-recovery' }));
         plugin.onLoad({ filter: /.*/, namespace: 'lazy-recovery' }, args => ({ contents: modules[args.path], loader: 'js' }));
       } }],
     };
@@ -194,15 +217,41 @@ describe('dynamic-import recovery support initializers', () => {
     expect(() => support.verifyBundledSupport(strictLazyBundle, root)).not.toThrow();
   });
 
-  it('requires unconditional fact initialization in the nested receipt owner too', () => {
+  it('requires unconditional loop initialization in the attempt owner too', () => {
     const owner = lazyBundle.indexOf('"lazy-recovery:/runtime/dist/builtin-openclaw-qVsnLx0N.mjs"');
     expect(owner).toBeGreaterThan(0);
     const end = lazyBundle.indexOf('\n});', owner);
     const fragment = lazyBundle.slice(owner, end);
-    expect(fragment).toContain('init_tool_call_recovery_facts();');
-    const missing = lazyBundle.slice(0, owner) + fragment.replace('init_tool_call_recovery_facts();', '') + lazyBundle.slice(end);
+    expect(fragment).toContain('init_tool_call_recovery_loop();');
+    const missing = lazyBundle.slice(0, owner) + fragment.replace('init_tool_call_recovery_loop();', '') + lazyBundle.slice(end);
     expect(() => support.verifyBundledSupport(missing, root)).toThrow(/initialization/);
   });
+
+  it.each(['', 'if (ready) init_tool_call_recovery_facts();',
+    'sideEffect(); init_tool_call_recovery_facts();',
+    'init_tool_call_recovery_facts(); init_tool_call_recovery_facts();'])(
+    'rejects changed SDK producer initialization: %s', replacement => {
+      const owner = lazyBundle.indexOf('"lazy-recovery:/runtime/node_modules/@openclaw/ai/dist/openai-completions-transport-QYABn8Uz.mjs"');
+      expect(owner).toBeGreaterThan(0);
+      const end = lazyBundle.indexOf('\n});', owner);
+      const fragment = lazyBundle.slice(owner, end);
+      expect(fragment).toContain('init_tool_call_recovery_facts();');
+      const missing = lazyBundle.slice(0, owner) + fragment.replace('init_tool_call_recovery_facts();', replacement) + lazyBundle.slice(end);
+      expect(() => support.verifyBundledSupport(missing, root)).toThrow(/initialization/);
+    });
+
+  it.each(['', 'if (ready) init_tool_call_recovery_policy();',
+    'sideEffect(); init_tool_call_recovery_policy();',
+    'init_tool_call_recovery_policy(); init_tool_call_recovery_policy();'])(
+    'requires unconditional initialization in the terminal dispatch owner: %s', replacement => {
+      const owner = lazyBundle.indexOf('"lazy-recovery:/runtime/dist/agent-turn-service-CVZmpyt7.mjs"');
+      expect(owner).toBeGreaterThan(0);
+      const end = lazyBundle.indexOf('\n});', owner);
+      const fragment = lazyBundle.slice(owner, end);
+      expect(fragment).toContain('init_tool_call_recovery_policy();');
+      const altered = lazyBundle.slice(0, owner) + fragment.replace('init_tool_call_recovery_policy();', replacement) + lazyBundle.slice(end);
+      expect(() => support.verifyBundledSupport(altered, root)).toThrow(/initialization/);
+    });
 
   it.each(['"use unknown";', '"use strict"; "use strict";', '("use strict");', 'sideEffect(); "use strict";'])(
     'rejects extra or non-directive initializer prefixes: %s', prefix => {
@@ -267,6 +316,7 @@ describe.skipIf(!nativeFile)('native recovery helper aliases in a real esbuild g
       'recordModelFallbackStop',
       'isRunRetryBudgetExhausted',
       'recordRunRetry',
+      'beginRunAttempt',
     ];
     const helpers = (origin: string) =>
       names
@@ -289,16 +339,18 @@ describe.skipIf(!nativeFile)('native recovery helper aliases in a real esbuild g
       'recovery-graph:loop': `
         import { ${names.join(', ')}, recoverEmbeddedRunAttempt, createProviderReviewRun }
           from 'recovery-graph:second';
-        import { resolveToolCallRecovery, TOOL_CALL_RECOVERY_LIMIT, TOOL_CALL_RECOVERY_REASON }
+        import { resolveToolCallRecovery, TOOL_CALL_RECOVERY_LIMIT, TOOL_CALL_RECOVERY_REASON, projectToolCallRecoveryFailureSummary }
           from ${JSON.stringify(path.join(supportDirectory, 'policy.mjs'))};
-        import { observeToolCallRecoveryAttempt, projectToolCallRecoveryNestedEvidence }
+        import { observeToolCallRecoveryResponse, projectToolCallRecoveryRejectionFeedback }
           from ${JSON.stringify(path.join(supportDirectory, 'facts.mjs'))};
+        import { createToolCallValidationRecovery } from ${JSON.stringify(path.join(supportDirectory, 'loop.mjs'))};
+        export * from ${JSON.stringify(path.join(supportDirectory, 'loop.mjs'))};
         ${patched}
-        export { runPreparedEmbeddedLoop, projectToolCallRecoveryNestedEvidence };`,
+        export { runPreparedEmbeddedLoop, projectToolCallRecoveryRejectionFeedback, projectToolCallRecoveryFailureSummary };`,
       'recovery-graph:entry': `
         import * as first from 'recovery-graph:first';
         export const firstBindings = [${names.map(name => `first.${name}`).join(', ')}];
-        export { runPreparedEmbeddedLoop, projectToolCallRecoveryNestedEvidence } from 'recovery-graph:loop';`,
+        export * from 'recovery-graph:loop';`,
     };
     const result = await build({
       entryPoints: ['recovery-graph:entry'],

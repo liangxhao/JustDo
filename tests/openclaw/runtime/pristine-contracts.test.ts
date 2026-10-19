@@ -352,8 +352,8 @@ describe('OpenClaw pristine artifact contracts', () => {
       '012-managed-session-fork-target-key.cjs': 625,
       '019-plugin-owned-execution.cjs': 1200,
       // The same recovery capability also binds the native accepted nested
-      // receipt owner; projection and graph validation stay in Runtime Services.
-      '030-tool-call-format-recovery.cjs': 650,
+      // receipt and terminal-dispatch owners; projection stays in Runtime Services.
+      '030-tool-call-format-recovery.cjs': 800,
     };
     for (const name of patchFiles) {
       const content = fs.readFileSync(path.join(patchDir, name), 'utf8');

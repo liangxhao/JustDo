@@ -27,7 +27,9 @@ const nativeFile =
 const nativeSource = nativeFile ? fs.readFileSync(path.join(dist, nativeFile), 'utf8') : '';
 let policy: any;
 let facts: any;
+let loop: any;
 beforeAll(async () => {
+  loop = await import(pathToFileURL(path.join(root, 'openclaw-extensions/runtime-services/tool-call-recovery/loop.mjs')).href);
   policy = await import(
     pathToFileURL(
       path.join(root, 'openclaw-extensions/runtime-services/tool-call-recovery/policy.mjs'),
@@ -95,7 +97,7 @@ function harness(responses: any[], stage: string | null = 'initial', options: an
   };
   const snapshot = {
     agentHarness: {},
-    effectiveModel: { api: options.modelApi ?? 'openai-completions' },
+    effectiveModel: { id: 'model', provider: 'provider', api: options.modelApi ?? 'openai-completions' },
     outerContextTokenMeta: {},
     pluginHarnessOwnsTransport: options.pluginHarnessOwnsTransport ?? false,
     providerRuntimeHandle: {},
@@ -128,10 +130,19 @@ function harness(responses: any[], stage: string | null = 'initial', options: an
   const replayInputs: any[] = [];
   const dispatch = vi.fn(async (input: any) => {
     replayInputs.push({ ...input.replayState });
-    const response = responses[cursor++];
-    if (response instanceof Error || typeof response === 'string') throw response;
-    if (!response) throw new Error('Unexpected extra model request');
-    return { dispatchedAttempt: { rawAttempt: response, preparedAttempt: {} }, runtimePlan: {} };
+    let effects = false;
+    while (true) {
+      const response = responses[cursor++];
+      if (response instanceof Error || typeof response === 'string') throw response;
+      if (!response) throw new Error('Unexpected extra model request');
+      effects ||= response.replayMetadata.hadPotentialSideEffects;
+      const feedback = await input.runInput.runParams.toolCallRecovery?.(response.currentAttemptCompletedAssistant, {
+        model: snapshot.effectiveModel, executedCount: 0, committedCount: 0, batchCount: 0, aborted: false,
+      });
+      if (feedback) { prompts.push(feedback.content); continue; }
+      response.replayMetadata.hadPotentialSideEffects = effects;
+      return { dispatchedAttempt: { rawAttempt: response, preparedAttempt: {} }, runtimePlan: {} };
+    }
   });
   const recover = vi.fn(async (input: any) =>
     input.normalizedAttempt.attempt.terminal.source === 'hook:before_agent_run'
@@ -158,6 +169,7 @@ function harness(responses: any[], stage: string | null = 'initial', options: an
   const context: any = {
     ...policy,
     ...facts,
+    ...loop,
     Error,
     Date,
     Boolean,
@@ -305,8 +317,8 @@ describe.skipIf(!nativeFile)('format recovery through the locked native runner',
       'native-loop-fixture.mjs',
     );
     const changed = patched.replace(
-      'toolCallRecoveryState.attempts += 1',
-      'toolCallRecoveryState.attempts += 0',
+      'beginRunAttempt(runRetryBudget); },',
+      'beginRunAttempt({}); },',
     );
     expect(changed).not.toBe(patched);
     expect(() =>
@@ -317,7 +329,7 @@ describe.skipIf(!nativeFile)('format recovery through the locked native runner',
   it('adds exactly two requests and bypasses other retry families on exhaustion', async () => {
     const h = harness([attempt(), attempt(), attempt(), attempt()]);
     const result = await h.run();
-    expect(h.dispatch).toHaveBeenCalledTimes(3);
+    expect(h.dispatch).toHaveBeenCalledTimes(1);
     expect(h.prompts).toHaveLength(2);
     expect(h.decisions.mock.calls.map(([value]) => value.attributes.detail)).toEqual([
       'retry',
@@ -355,42 +367,38 @@ describe.skipIf(!nativeFile)('format recovery through the locked native runner',
       } as any),
     ]);
     await h.run();
-    expect(h.dispatch).toHaveBeenCalledTimes(2);
-    expect(h.replayInputs[1].hadPotentialSideEffects).toBe(true);
+    expect(h.dispatch).toHaveBeenCalledTimes(1);
+    expect(h.terminal.mock.calls[0][0].attempt.replayMetadata.hadPotentialSideEffects).toBe(true);
     expect(h.prompts[0]).toContain('Previously displayed commentary is preserved');
-    expect(h.session.markOwnedTranscriptRetry).toHaveBeenCalledTimes(1);
+    expect(h.session.markOwnedTranscriptRetry).not.toHaveBeenCalled();
   });
 
-  it.each([true, false])('continues only with native accepted nested receipts: receipt=%s', async accepted => {
-    const assistant = failure();
-    const metas = [
-      { toolName: 'show_widget', toolCallId: 'inner', isError: false, replaySafe: false },
-      { toolName: 'tool_call', toolCallId: 'outer', isError: false, replaySafe: false },
-    ];
-    const raw = attempt(assistant, {
-      sessionIdUsed: 'native-session',
-      messagesSnapshot: [{ role: 'user', content: 'inspect' },
-        { role: 'assistant', content: [{ type: 'toolCall', id: 'outer', name: 'tool_call', arguments: {} }] },
-        { role: 'toolResult', toolCallId: 'outer', toolName: 'tool_call', content: [] }, assistant],
-      toolMetas: metas,
-      itemLifecycle: { startedCount: 2, completedCount: 2, activeCount: 0 },
-      replayMetadata: { replaySafe: false, hadPotentialSideEffects: true },
-      toolCallRecoveryNestedEvidence: accepted ? {
-        runId: 'native-run', sessionId: 'native-session', scopeId: 'native-scope',
-        toolMetas: [{ ...metas[0], parentToolCallId: 'outer' }, metas[1]],
-        activities: [{ runId: 'native-run', scopeId: 'native-scope', toolCallId: 'inner',
-          toolName: 'show_widget', parentToolCallId: 'outer', isError: false }],
-      } : null,
-    });
-    const h = harness([raw, attempt({ role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'Done' }] } as any)]);
+  it('passes only this completed attempt feedback into the actual internal prompt seam', async () => {
+    const completed = failure();
+    Object.assign(completed.diagnostics[0].details, { feedback: { version: 1, batchCallCount: 3,
+      issues: [{ callIndex: 1, kind: 'invalid_json', detail: 'xml_like_input', argumentChars: 9 }],
+      omitted: false, localization: 'located' } });
+    const current = structuredClone(completed);
+    Object.assign(current.diagnostics[0].details, { feedback: { version: 1, batchCallCount: 1,
+      issues: [{ callIndex: 0, kind: 'non_object_arguments', argumentChars: 2 }], omitted: false, localization: 'located' } });
+    const h = harness([attempt(completed, { currentAttemptAssistant: current }),
+      attempt({ role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'Done' }] } as any)]);
     await h.run();
-    expect(h.dispatch).toHaveBeenCalledTimes(accepted ? 2 : 1);
-    expect(h.prompts).toHaveLength(accepted ? 1 : 0);
-    expect(h.recover).not.toHaveBeenCalled();
-    expect(h.assistantFailure).not.toHaveBeenCalled();
-    if (accepted) expect(h.replayInputs[1].hadPotentialSideEffects).toBe(true);
-    else expect(h.decisions.mock.calls[0][0].attributes.detail).toBe('tools_unsettled');
-    expect(h.settle).toHaveBeenCalledTimes(1);
+    expect(h.prompts).toHaveLength(1);
+    expect(h.prompts[0]).toContain('Call 2: invalid JSON (XML-like input; use a JSON object)');
+    expect(h.prompts[0]).toContain('all 3 calls were withheld, including valid siblings');
+    expect(h.prompts[0]).not.toContain('Call 1: arguments must');
+    expect(h.dispatch).toHaveBeenCalledTimes(1);
+    expect(h.session.markOwnedTranscriptRetry).not.toHaveBeenCalled();
+  });
+
+  it('continues a current response after earlier native schema errors without restarting the attempt', async () => {
+    const h = harness([attempt(failure(), { lastToolError: { toolName: 'swarm_workflow_verify', errorKind: 'argument-validation' } }),
+      attempt({ role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'Done' }] } as any)]);
+    await h.run();
+    expect(h.dispatch).toHaveBeenCalledTimes(1);
+    expect(h.prompts).toHaveLength(1);
+    expect(h.session.markOwnedTranscriptRetry).not.toHaveBeenCalled();
   });
 
   it.each([new Error('network failed'), 'transport failed'])(
@@ -402,7 +410,7 @@ describe.skipIf(!nativeFile)('format recovery through the locked native runner',
       if (error instanceof Error) expect(thrown).toBe(error);
       else expect(thrown.cause).toBe(error);
       expect(h.failover.recoverThrownHarnessAuthFailure).not.toHaveBeenCalled();
-      expect(h.dispatch).toHaveBeenCalledTimes(2);
+      expect(h.dispatch).toHaveBeenCalledTimes(1);
       expect(h.settle).toHaveBeenCalledTimes(1);
     },
   );
@@ -423,7 +431,7 @@ describe.skipIf(!nativeFile)('format recovery through the locked native runner',
       preReplyGeneration: generation,
     });
     await h.run();
-    expect(h.dispatch).toHaveBeenCalledTimes(3);
+    expect(h.dispatch).toHaveBeenCalledTimes(1);
     expect(generation.assertCurrent).toHaveBeenCalledTimes(1);
     expect(generation.release).toHaveBeenCalledTimes(1);
     expect(generation.assertCurrent.mock.invocationCallOrder[0]).toBeLessThan(
@@ -460,7 +468,7 @@ describe.skipIf(!nativeFile)('format recovery through the locked native runner',
     expect(thrown).toBe(error);
     expect(h.recordedStops.has(thrown)).toBe(true);
     expect(h.settle).toHaveBeenCalledTimes(1);
-    expect(h.dispatch).toHaveBeenCalledTimes(2);
+    expect(h.dispatch).toHaveBeenCalledTimes(1);
   });
 
   it('honors the native total retry budget even before the format budget is spent', async () => {
@@ -471,21 +479,6 @@ describe.skipIf(!nativeFile)('format recovery through the locked native runner',
     expect(h.event).not.toHaveBeenCalled();
     expect(h.prompts).toHaveLength(0);
     expect(h.dispatch).toHaveBeenCalledTimes(1);
-  });
-
-  it('preserves a native hook block encountered after the first format continuation', async () => {
-    const blocked = attempt(undefined, {
-      terminal: { kind: 'failed', source: 'hook:before_agent_run' },
-      currentAttemptAssistant: undefined,
-      currentAttemptCompletedAssistant: undefined,
-    });
-    const h = harness([attempt(), blocked]);
-    const result = await h.run();
-    expect(result.meta.error.kind).toBe('hook_block');
-    expect(h.prompts).toHaveLength(1);
-    expect(h.recover).toHaveBeenCalledTimes(1);
-    expect(h.assistantFailure).not.toHaveBeenCalled();
-    expect(h.dispatch).toHaveBeenCalledTimes(2);
   });
 
   it('settles a finalize-rejected answer after one format correction without delivering or retrying it', async () => {
@@ -525,7 +518,7 @@ describe.skipIf(!nativeFile)('format recovery through the locked native runner',
     expect(result.incompleteTurnText).toContain('finalization hook');
     expect(result.incompleteTurnFallbackSafe).toBe(false);
     expect(result.meta.modelFallbackStopReason).toBe('tool_call_format_recovery');
-    expect(h.dispatch).toHaveBeenCalledTimes(2);
+    expect(h.dispatch).toHaveBeenCalledTimes(1);
     expect(h.prompts).toHaveLength(1);
     expect(h.event.mock.calls.map(([value]) => value.data.retryAttempt)).toEqual([1]);
     expect(h.recover).not.toHaveBeenCalled();
@@ -548,7 +541,7 @@ describe.skipIf(!nativeFile)('format recovery through the locked native runner',
       });
     const h = harness([attempt(), progress(), attempt(), progress(), attempt()]);
     await h.run();
-    expect(h.dispatch).toHaveBeenCalledTimes(5);
+    expect(h.dispatch).toHaveBeenCalledTimes(3);
     expect(h.prompts).toHaveLength(2);
     expect(h.event.mock.calls.map(([value]) => value.data.retryAttempt)).toEqual([1, 2]);
     expect(h.assistantFailure).not.toHaveBeenCalled();
@@ -564,15 +557,5 @@ describe.skipIf(!nativeFile)('format recovery through the locked native runner',
     },
   );
 
-  it('retains an earlier async exclusion when a later attempt reports zero tools', async () => {
-    const earlier = attempt({ role: 'assistant', stopReason: 'stop', content: [] } as any, {
-      normalizedAction: 'retry',
-      yieldDetected: true,
-    });
-    const h = harness([earlier, attempt()]);
-    await h.run();
-    expect(h.dispatch).toHaveBeenCalledTimes(2);
-    expect(h.prompts).toHaveLength(0);
-    expect(h.assistantFailure).not.toHaveBeenCalled();
-  });
+
 });

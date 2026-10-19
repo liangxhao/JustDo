@@ -1,9 +1,9 @@
 'use strict';
 
 // Capability: bounded continuation after an atomic, completed pre-dispatch rejection.
-// Target: locked openclaw@2026.10.4 Completions producer, attempt receipts and run owners.
+// Target: locked openclaw@2026.10.4 Completions producer, native loop and run owners.
 // Scope: initial native model candidate, current transcript, two added requests.
-// Safety: whole-batch zero dispatch, exact settlement, existing writer and abort fences.
+// Safety: whole-batch zero dispatch, same native loop, existing writer and abort fences.
 // Remove when: upstream provides the same producer proof and exclusive continuation.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -91,7 +91,7 @@ function finalizerPlan({ fn, ast, body }) {
   const code = assignments(reject.body, output, 'errorCode');
   const diagnostics = assignments(reject.body, output, 'diagnostics');
   const expectedCode = `${output}.errorCode = ${JSON.stringify(ERROR_CODE)}`;
-  const expectedDiagnostics = `${output}.diagnostics = [...(${output}.diagnostics ?? []), {type:${JSON.stringify(DIAGNOSTIC_TYPE)}, timestamp:Date.now(), details:{batchRejected:true, streamComplete:${options}.terminalStreamComplete === true, dispatchCount:0}}]`;
+  const expectedDiagnostics = `${output}.diagnostics = [...(${output}.diagnostics ?? []), {type:${JSON.stringify(DIAGNOSTIC_TYPE)}, timestamp:Date.now(), details:{batchRejected:true, streamComplete:${options}.terminalStreamComplete === true, dispatchCount:0, feedback:projectToolCallRecoveryRejectionFeedback(${parse.arguments[0].getText(ast)}, ${parse.expression.getText(ast)})}}]`;
   if (code.length || diagnostics.length || body.includes(DIAGNOSTIC_TYPE)) {
     equivalent(one(code, 'rejection error code').getText(ast), expectedCode, [output, options], 'rejection error code');
     equivalent(one(diagnostics, 'rejection diagnostic').getText(ast), expectedDiagnostics, [output, options], 'rejection diagnostic');
@@ -202,7 +202,7 @@ function transformCandidate(source, file, options = {}) {
 
 const CONTRACT = 'TOOL_CALL_FORMAT_RECOVERY_V2026_10_4';
 const NATIVE_REFERENCES = ['emitAgentEvent', 'emitDiagnosticsTimelineEvent', 'isEmbeddedRunTerminalInterrupted',
-  'recordModelFallbackStop', 'isRunRetryBudgetExhausted', 'recordRunRetry'];
+  'recordModelFallbackStop', 'isRunRetryBudgetExhausted', 'recordRunRetry', 'beginRunAttempt'];
 const callNamed = (node, name) =>
   ts.isCallExpression(node) && ts.isIdentifier(node.expression) && new RegExp(`^${name}(?:\\$\\d+|\\d+)?$`).test(node.expression.text);
 const select = (root, predicate, label) => one(nodes(root, predicate), label);
@@ -235,58 +235,36 @@ function transformLoop(source, native) {
   const initial = `(params.modelRoutingProvenance?.stage === "initial" &&
       params.modelRoutingProvenance?.selectionChanged !== true &&
       !pluginHarnessOwnsTransport && effectiveModel.api === "openai-completions")`;
-  const observation = `const toolCallRecoveryFacts = observeToolCallRecoveryAttempt(normalization.dispatchedAttempt.rawAttempt, toolCallRecoveryState.excluded, params.runId);
-toolCallRecoveryState.excluded = toolCallRecoveryFacts.excluded;
-const toolCallRecoveryControlBlock = normalization.dispatchedAttempt.rawAttempt.terminal?.source === "hook:before_agent_run";
-if (toolCallRecoveryFacts.rejected && ${initial} && !toolCallRecoveryControlBlock) toolCallRecoveryState.claimed = true;
-const toolCallRecoveryHandled = !toolCallRecoveryControlBlock && (toolCallRecoveryState.claimed || (toolCallRecoveryFacts.rejected && ${initial}));
-if (toolCallRecoveryFacts.rejected && ${initial} && !toolCallRecoveryControlBlock && normalizedAttempt.action === "proceed") {
-  const toolCallRecoveryDecision = resolveToolCallRecovery({
-    rejected: toolCallRecoveryFacts.rejected, streamComplete: toolCallRecoveryFacts.streamComplete,
-    initialCandidate: ${initial}, allToolsSettled: toolCallRecoveryFacts.allToolsSettled,
-    excluded: toolCallRecoveryState.excluded || Boolean(refusal), hasVisibleText: toolCallRecoveryFacts.hasVisibleText,
-    commentaryOnly: toolCallRecoveryFacts.commentaryOnly, dispatchCount: toolCallRecoveryFacts.dispatchCount,
-    attempts: toolCallRecoveryState.attempts, aborted: ${input}.laneController.abortSignal.aborted ||
-      normalizedAttempt.terminalState.signalOwnedInterruption ||
-      ${native.isEmbeddedRunTerminalInterrupted}(normalizedAttempt.terminalState.outcome)
-  });
-  const toolCallRecoveryBudgetAvailable = !${native.isRunRetryBudgetExhausted}(runRetryBudget);
-  ${native.emitDiagnosticsTimelineEvent}({ type: "mark", name: "model.recovery.decision", runId: params.runId,
-    attributes: { decision: toolCallRecoveryDecision.action === "retry" && toolCallRecoveryBudgetAvailable ? "accepted" : "rejected",
-      reason: TOOL_CALL_RECOVERY_REASON, detail: toolCallRecoveryDecision.action === "retry" && !toolCallRecoveryBudgetAvailable ? "run_budget_exhausted" : toolCallRecoveryDecision.reason,
-      retryAttempt: toolCallRecoveryState.attempts, maxRetries: TOOL_CALL_RECOVERY_LIMIT,
-      allToolsProvenSettled: toolCallRecoveryFacts.allToolsSettled,
-      dispatchCount: toolCallRecoveryFacts.dispatchCount } }, { config: params.config });
-  if (toolCallRecoveryDecision.action === "retry" && toolCallRecoveryBudgetAvailable) {
-    ${input}.laneController.throwIfAborted();
-    assertAdmittedActive();
-    bootstrapPromptWarningSignaturesSeen = normalizedAttempt.bootstrapPromptWarningSignaturesSeen;
-    lastRunPromptUsage = normalizedAttempt.lastRunPromptUsage;
-    accumulatedReplayState = normalizedAttempt.replayState;
-    toolCallRecoveryState.attempts += 1;
-    toolCallRecoveryState.claimed = true;
-    sessionPromptState.markOwnedTranscriptRetry();
-    sessionPromptState.activateInternalPrompt(toolCallRecoveryDecision.instruction);
-    ${native.recordRunRetry}(runRetryBudget, "recovery");
-    const toolCallRecoveryEvent = { stream: "lifecycle", data: {
-      phase: "progress", stage: "retrying", reason: TOOL_CALL_RECOVERY_REASON,
-      retryAttempt: toolCallRecoveryState.attempts, maxRetries: TOOL_CALL_RECOVERY_LIMIT, at: Date.now()
-    }};
-    ${native.emitAgentEvent}({ runId: params.runId, sessionKey: params.sessionKey, ...toolCallRecoveryEvent });
-    await params.onAgentEvent?.(toolCallRecoveryEvent);
-    ${input}.laneController.throwIfAborted();
-    assertAdmittedActive();
-    continue;
-  }
-}`;
+  const observation = 'const toolCallRecoveryHandled = toolCallRecoveryState.claimed;';
+  const capability = `createToolCallValidationRecovery({
+    state: toolCallRecoveryState, observe: observeToolCallRecoveryResponse, resolve: resolveToolCallRecovery,
+    isInitialModel: model => ${initial} && model?.api === effectiveModel.api && model?.provider === effectiveModel.provider && model?.id === effectiveModel.id,
+    isAborted: () => ${input}.laneController.abortSignal.aborted,
+    assertActive: () => { ${input}.laneController.throwIfAborted(); assertAdmittedActive(); },
+    hasBudget: () => !${native.isRunRetryBudgetExhausted}(runRetryBudget),
+    consumeBudget: () => { ${native.recordRunRetry}(runRetryBudget, "recovery"); ${native.beginRunAttempt}(runRetryBudget); },
+    onDecision: (decision, available) => ${native.emitDiagnosticsTimelineEvent}({ type: "mark", name: "model.recovery.decision", runId: params.runId,
+      attributes: { decision: decision.action === "retry" && available ? "accepted" : "rejected", reason: TOOL_CALL_RECOVERY_REASON,
+        detail: decision.action === "retry" && !available ? "run_budget_exhausted" : decision.reason,
+        retryAttempt: toolCallRecoveryState.attempts, maxRetries: TOOL_CALL_RECOVERY_LIMIT } }, { config: params.config }),
+    onRetry: async () => {
+      const toolCallRecoveryEvent = { stream: "lifecycle", data: { phase: "progress", stage: "retrying", reason: TOOL_CALL_RECOVERY_REASON,
+        retryAttempt: toolCallRecoveryState.attempts, maxRetries: TOOL_CALL_RECOVERY_LIMIT, at: Date.now() } };
+      ${native.emitAgentEvent}({ runId: params.runId, sessionKey: params.sessionKey, ...toolCallRecoveryEvent });
+      await params.onAgentEvent?.(toolCallRecoveryEvent);
+    }
+  })`;
   const changes = [];
   const replace = (node, text) => changes.push({ start: node.getStart(), end: node.end, text });
   const insert = (at, text) => changes.push({ start: at, end: at, text: '\n' + text });
   insert(
     statement(call(fn, 'createRunRetryBudget')).end,
-    'const toolCallRecoveryState = { attempts: 0, excluded: false, claimed: false };',
+    'const toolCallRecoveryState = { attempts: 0, claimed: false };',
   );
   insert(statement(call(fn, 'normalizeEmbeddedRunAttempt')).end, observation);
+  const runInput = one(nodes(fn, node => ts.isVariableDeclaration(node) && node.name.getText() === 'attemptRunInput'), 'native attempt input');
+  const runParams = one(properties(runInput.initializer, 'runParams'), 'native run parameters').initializer;
+  insert(runParams.getStart() + 1, `toolCallRecovery: ${initial} ? ${capability} : undefined,`);
   const refresh = select(
     fn,
     node =>
@@ -358,33 +336,124 @@ function transformFinalization(source) {
   }]);
 }
 
-function transformNestedReceipt(source, receiptOwner) {
+function transformAttemptDispatch(source) {
   const ast = parse(source);
-  const fn = one(ast.statements.filter(ts.isFunctionDeclaration), 'nested receipt owner');
-  const input = one(fn.parameters, 'nested receipt input').name.getText();
-  const completed = call(fn, 'completeEmbeddedAttemptResult');
-  const result = one(nodes(fn, node => ts.isVariableDeclaration(node) && node.initializer === completed), 'completed attempt result').name.getText();
-  for (const name of ['attempt', 'sessionRuntime', 'toolBase', 'sessionManager', 'nestedToolActivityState', 'abortable'])
-    if (!nodes(fn, node => ts.isBindingElement(node) && (node.propertyName ?? node.name).getText() === name).length)
-      throw new Error(`${name}: nested receipt binding changed`);
-  const read = call(one([receiptOwner?.fn].filter(Boolean), 'native accepted receipt reader'), 'readAttemptNestedToolActivity').expression.getText();
-  const cleanup = select(fn, node => ts.isTryStatement(node) && node.finallyBlock && nodes(node.finallyBlock, item => callNamed(item, 'cleanupEmbeddedAttemptStreamExecution')).length === 1, 'native attempt cleanup');
-  const text = `
-const toolCallRecoveryNestedState = ${input}.prepared.toolBase.nestedToolActivityState;
-if (toolCallRecoveryNestedState.accepted && ${input}.attempt.model.api === "openai-completions") {
-  toolCallRecoveryNestedEvidence = null;
-  try {
-    const toolCallRecoveryNestedScope = {runId: ${input}.attempt.runId, sessionId: ${input}.prepared.sessionRuntime.sessionManager.getSessionId(), scopeId: toolCallRecoveryNestedState.scopeId};
-    const toolCallRecoveryNestedActivities = await ${input}.preparedStreamRuntime.abortable(${read}(${input}.prepared.sessionRuntime.sessionManager, toolCallRecoveryNestedState));
-    toolCallRecoveryNestedEvidence = projectToolCallRecoveryNestedEvidence(toolCallRecoveryNestedScope,
-      ${input}.preparedStreamRuntime.stream.subscription.toolMetas, toolCallRecoveryNestedActivities);
-  } catch {}
-}`;
+  const owner = one(nodes(ast, node => ts.isVariableDeclaration(node) && node.initializer &&
+    ts.isPropertyAccessExpression(node.initializer) && node.initializer.name.text === 'runParams'), 'native run parameters').name.getText();
+  const params = one(nodes(ast, node => ts.isVariableDeclaration(node) && node.initializer && ts.isObjectLiteralExpression(node.initializer) &&
+    properties(node.initializer, 'operation').some(property => property.initializer?.text === 'attempt')), 'native attempt parameters');
+  return edit(source, [{ start: params.initializer.getStart() + 1, end: params.initializer.getStart() + 1,
+    text: `toolCallRecovery: ${owner}.toolCallRecovery,` }]);
+}
+
+function transformPromptSubmission(source) {
+  const ast = parse(source);
+  const local = key => one(nodes(ast, node => ts.isBindingElement(node) && (node.propertyName ?? node.name).getText() === key), 'prompt ' + key).name.getText();
+  const install = statement(call(ast, 'installProviderPromptHistoryTransform'));
+  const cleanup = statement(call(ast, 'cleanupProviderPromptHistoryTransform'));
   return edit(source, [
-    { start: fn.body.statements.pos, end: fn.body.statements.pos, text: 'let toolCallRecoveryNestedEvidence;\n' },
-    { start: cleanup.tryBlock.statements.end, end: cleanup.tryBlock.statements.end, text },
-    { start: statement(completed).end, end: statement(completed).end, text: `\n${result}.toolCallRecoveryNestedEvidence = toolCallRecoveryNestedEvidence;` },
+    { start: install.end, end: install.end, text: `\nconst toolCallRecoveryCleanup = installToolCallValidationRecovery(${local('activeSession')}.agent, ${local('attempt')}.toolCallRecovery);` },
+    { start: cleanup.getStart(), end: cleanup.getStart(), text: 'toolCallRecoveryCleanup();\n' },
   ]);
+}
+
+function transformCoreStream(source) {
+  const ast = parse(source);
+  const fn = one(ast.statements.filter(ts.isFunctionDeclaration), 'core stream');
+  const config = fn.parameters[1].name.getText();
+  const finalize = one(nodes(ast, node => ts.isFunctionDeclaration(node) && node.name?.text === 'finalizeAssistantMessage'), 'core stream finalization');
+  const terminal = one(finalize.parameters, 'core terminal').name.getText();
+  const changes = [];
+  const result = one(nodes(finalize, node => ts.isVariableDeclaration(node) && node.initializer &&
+    ts.isAwaitExpression(node.initializer) && ts.isCallExpression(node.initializer.expression) &&
+    ts.isPropertyAccessExpression(node.initializer.expression.expression) &&
+    node.initializer.expression.expression.name.text === 'result'), 'core result');
+  const resultName = result.name.getText();
+  const returned = one(nodes(finalize, node => ts.isReturnStatement(node) && node.expression && ts.isObjectLiteralExpression(node.expression)), 'core stream return').expression;
+  const value = key => {
+    const property = one(properties(returned, key), 'core return ' + key);
+    const expression = ts.isShorthandPropertyAssignment(property) ? property.name : property.initializer;
+    if (!ts.isIdentifier(expression)) throw new Error('Core stream binding changed: ' + key);
+    return expression.text;
+  };
+  const executed = value('executedIds'), batches = value('batches');
+  const fragmentCall = call(finalize, 'remainingFragment');
+  const fragment = one(nodes(fn, node => ts.isVariableDeclaration(node) && node.name.getText() === fragmentCall.expression.getText()), 'core fragment');
+  const count = one(nodes(fragment.initializer, node => ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken && ts.isIdentifier(node.left) && node.right.getText() === '0'), 'core committed count').left.getText();
+  const streamOptions = one(nodes(fn, node => ts.isObjectLiteralExpression(node) && properties(node, 'asyncToolExecution').length === 1), 'core stream options');
+  const executionSignal = one(properties(streamOptions, 'signal'), 'core execution signal').initializer.getText();
+  const aborts = nodes(finalize, node => callNamed(node, 'abortFailedResponse'));
+  if (aborts.length !== 2 || aborts[0].arguments[0].getText() !== terminal || aborts[1].arguments[0].getText() !== resultName)
+    throw new Error('Core response abort fences changed');
+  changes.push({ start: finalize.body.statements.pos, end: finalize.body.statements.pos,
+    text: `\nconst toolCallRecoveryTerminal = typeof ${config}.toolCallRecovery === "function" && ${executed}.size === 0 && ${count} === 0 && ${batches}.length === 0 && !${executionSignal}.aborted && observeToolCallRecoveryResponse(${terminal}).rejected;` });
+  changes.push({ start: aborts[0].arguments[0].getStart(), end: aborts[0].arguments[0].end,
+    text: `toolCallRecoveryTerminal ? undefined : ${terminal}` });
+  changes.push({ start: statement(result).end, end: statement(result).end,
+    text: `\nconst toolCallRecoveryHandoff = await prepareToolCallValidationHandoff(${config}, ${resultName}, {executedCount: ${executed}.size, committedCount: ${count}, batchCount: ${batches}.length, aborted: ${executionSignal}.aborted, signal: ${executionSignal}});` });
+  changes.push({ start: aborts[1].arguments[0].getStart(), end: aborts[1].arguments[0].end,
+    text: `toolCallRecoveryHandoff ? undefined : ${resultName}` });
+  const tail = call(finalize, 'remainingFragment').arguments[0];
+  changes.push({ start: tail.getStart(), end: tail.end, text: `toolCallRecoveryHandoff?.message ?? ${resultName}` });
+  changes.push({ start: returned.getStart() + 1, end: returned.getStart() + 1, text: 'toolCallRecoveryFeedback: toolCallRecoveryHandoff?.feedback, toolCallRecoveryModel: toolCallRecoveryHandoff?.model,' });
+  return edit(source, changes);
+}
+
+function transformCoreLoop(source) {
+  const ast = parse(source);
+  const initial = one(ast.statements.filter(ts.isFunctionDeclaration), 'core loop').parameters[2].name.getText();
+  const config = one(nodes(ast, node => ts.isVariableDeclaration(node) && node.initializer?.getText() === initial), 'core active config').name.getText();
+  const pending = one(nodes(ast, node => ts.isVariableDeclaration(node) && /^pendingMessages(?:\$?\d+)?$/.test(node.name.getText())), 'core pending messages').name.getText();
+  const streamed = one(nodes(ast, node => ts.isVariableDeclaration(node) && node.initializer &&
+    ts.isAwaitExpression(node.initializer) && callNamed(node.initializer.expression, 'streamAgentResponse')), 'core streamed response').name.getText();
+  const snapshot = one(nodes(ast, node => ts.isVariableDeclaration(node) && node.initializer && ts.isAwaitExpression(node.initializer) &&
+    ts.isCallExpression(node.initializer.expression) && ts.isPropertyAccessExpression(node.initializer.expression.expression) &&
+    node.initializer.expression.expression.name.text === 'prepareNextTurn'), 'core next turn').name.getText();
+  const stops = nodes(ast, node => ts.isIfStatement(node) &&
+    (node.expression.getText() === `${snapshot}?.stop` || nodes(node.expression, item =>
+      ts.isPropertyAccessExpression(item) && item.name.text === 'shouldStopAfterTurn').length > 0));
+  if (stops.length !== 2) throw new Error('Core continuation stop policy changed');
+  const last = stops.find(node => node.expression.getText() === `${snapshot}?.stop`);
+  const changes = stops.map(node => {
+    const terminal = one(nodes(node.thenStatement, item => ts.isExpressionStatement(item) &&
+      item.getText().includes('type: "agent_end"')), 'core policy stop');
+    return { start: terminal.getStart(), end: terminal.getStart(),
+      text: `if (${streamed}.toolCallRecoveryFeedback) throw new Error("Tool-call correction was stopped by native turn policy");\n` };
+  });
+  changes.push({ start: last.end, end: last.end,
+    text: `\nif (${streamed}.toolCallRecoveryFeedback) { assertToolCallValidationModel(${streamed}.toolCallRecoveryModel, ${config}.model); ${pending}.push(${streamed}.toolCallRecoveryFeedback); }` });
+  return edit(source, changes);
+}
+
+function transformCore(source, file = '<core>', { verifyOnly = false } = {}) {
+  if (!extractFunction(source, 'streamAgentResponse')) return source;
+  const changes = [];
+  const apply = (current, transform) => {
+    const applied = current.includes('toolCallRecovery');
+    const native = applied ? restoreNative(current) : current;
+    const expected = transform(native);
+    if (applied && canonicalHelper(current) !== canonicalHelper(expected)) throw new Error(`${file}: historical or partial core validation handoff`);
+    if (verifyOnly && !applied) throw new Error(`${file}: missing core validation handoff`);
+    return applied ? current : expected;
+  };
+  for (const [name, transform] of [['streamAgentResponse', transformCoreStream], ['runLoop', transformCoreLoop]]) {
+    const part = extractFunction(source, name);
+    if (!part) throw new Error(`${file}: missing ${name}`);
+    const expected = apply('async ' + part.body, transform);
+    changes.push({ start: part.start, end: part.end, text: expected.replace(/^async\s+/, '') });
+  }
+  const method = one(nodes(parse(source), node => ts.isMethodDeclaration(node) && node.name.getText() === 'createLoopConfig'), 'native Agent config');
+  const current = 'function createLoopConfig(options = {}) ' + method.body.getText();
+  const expected = apply(current, native => {
+    const object = one(nodes(parse(native), node => ts.isReturnStatement(node) && node.expression &&
+      ts.isObjectLiteralExpression(node.expression)), 'native config return').expression;
+    return edit(native, [{ start: object.getStart() + 1, end: object.getStart() + 1,
+      text: 'toolCallRecovery: readToolCallValidationRecovery(this),' }]);
+  });
+  const nextBody = one(parse(expected).statements.filter(ts.isFunctionDeclaration), 'native config').body.getText();
+  changes.push({ start: method.body.getStart(), end: method.body.end, text: nextBody });
+  return verifyOnly ? source : edit(source, changes);
 }
 
 function transformTerminal(source) {
@@ -430,19 +499,20 @@ function restoreNative(source) {
             ts.factory.updateVariableDeclarationList(node.declarationList, declarations),
           );
         }
-        if ((ts.isIfStatement(node) || ts.isExpressionStatement(node)) && own(node.expression)) return undefined;
+        if (ts.isIfStatement(node) && own(node.expression)) return undefined;
+        if (ts.isExpressionStatement(node) && own(node.expression) && !callNamed(node.expression, 'abortFailedResponse')) return undefined;
         if (ts.isConditionalExpression(node) && own(node.condition)) {
           const branch = node.whenFalse;
           return ts.visitNode(ts.isParenthesizedExpression(branch) ? branch.expression : branch, visit);
         }
-        if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken && own(node.left)) {
+        if (ts.isBinaryExpression(node) && [ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.QuestionQuestionToken].includes(node.operatorToken.kind) && own(node.left)) {
           const branch = node.right;
           return ts.visitNode(ts.isParenthesizedExpression(branch) ? branch.expression : branch, visit);
         }
         if (ts.isObjectLiteralExpression(node))
           node = ts.factory.updateObjectLiteralExpression(
             node,
-            node.properties.filter(item => item.name?.getText() !== 'toolCallRecoveryHandled'),
+            node.properties.filter(item => !/^toolCallRecovery/.test(item.name?.getText() ?? '')),
           );
         if (ts.isTryStatement(node) && node.catchClause?.variableDeclaration?.name.getText() === 'toolCallRecoveryError') {
           const inner = node.tryBlock.statements;
@@ -471,7 +541,7 @@ function nativeReferences(source, loopSource) {
   return Object.fromEntries(
     NATIVE_REFERENCES.map(name => {
       const origin =
-        name === 'recordModelFallbackStop' ? review : ['recordRunRetry', 'isRunRetryBudgetExhausted'].includes(name) ? loop : recovery;
+        name === 'recordModelFallbackStop' ? review : ['recordRunRetry', 'isRunRetryBudgetExhausted', 'beginRunAttempt'].includes(name) ? loop : recovery;
       const candidates = names(origin, name);
       if (candidates.length > 1) throw new Error(`${name}: ambiguous native recovery binding`);
       return [name, candidates[0] ?? name];
@@ -485,7 +555,8 @@ function transformRunner(source, file = '<runtime>', { verifyOnly = false } = {}
     runPreparedEmbeddedLoop: transformLoop,
     prepareTerminalWithSettledTurnFinalization: transformFinalization,
     resolveEmbeddedRunTerminal: transformTerminal,
-    runEmbeddedAttemptSettledPhase: body => transformNestedReceipt(body, extractFunction(source, 'completeEmbeddedAttemptAfterTurn')),
+    prepareAndDispatchEmbeddedRunAttempt: transformAttemptDispatch,
+    submitEmbeddedAttemptPrompt: transformPromptSubmission,
   };
   for (const [name, transform] of Object.entries(transforms)) {
     const part = extractFunction(source, name);
@@ -504,14 +575,41 @@ function transformRunner(source, file = '<runtime>', { verifyOnly = false } = {}
   return edit(source, changes);
 }
 
+function transformDispatch(source, file = '<runtime>', { verifyOnly = false } = {}) {
+  const part = extractFunction(source, 'dispatchAgentRunFromGateway');
+  if (!part) return source;
+  const { fn, ast, body } = part;
+  const params = one(fn.parameters, 'dispatch parameters').name.getText(ast);
+  const diagnostic = one(nodes(fn, node => ts.isVariableDeclaration(node) && node.initializer && callNamed(node.initializer, 'createAgentRunDiagnostics')), 'dispatch privacy').name.getText(ast);
+  const reader = one(nodes(fn, node => ts.isVariableDeclaration(node) && node.initializer && ts.isBinaryExpression(node.initializer) &&
+    node.initializer.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken && callNamed(node.initializer.left, 'readAgentRunTerminalError')), 'terminal diagnostic reader').initializer.left;
+  const result = one(reader.arguments, 'terminal result').getText(ast);
+  const summary = one(nodes(fn, node => ts.isPropertyAssignment(node) && node.name.getText(ast) === 'summary' &&
+    ts.isConditionalExpression(node.initializer) && ts.isConditionalExpression(node.initializer.whenFalse)), 'dispatch failure summary').initializer;
+  const continuation = one(nodes(fn, node => ts.isArrowFunction(node) && node.parameters.length === 1 &&
+    node.parameters[0].name.getText(ast) === result && nodes(node.body, item => item === reader).length === 1), 'dispatch result owner');
+  const responseResult = one(properties(summary.parent.parent, 'result'), 'dispatch response result');
+  if (!nodes(continuation.body, node => node === summary).length ||
+    (ts.isShorthandPropertyAssignment(responseResult) ? responseResult.name : responseResult.initializer)?.getText(ast) !== result)
+    throw new Error('Dispatch diagnostic lost its exact result');
+  const status = summary.condition.left?.getText(ast);
+  const original = `${status} === "timeout" ? "aborted" : ${status} === "error" ? "failed" : "completed"`;
+  const expected = original.replace('"failed"', `projectToolCallRecoveryFailureSummary(${result}, ${reader.expression.getText(ast)}(${result}), ${params}.abortController.signal.aborted || ${diagnostic}.incognito)`);
+  const applied = summary.getText(ast).includes('projectToolCallRecoveryFailureSummary');
+  equivalent(summary.getText(ast), applied ? expected : original, [params, result, status, diagnostic], 'dispatch failure projection');
+  if (verifyOnly && !applied) throw new Error(`${file}: missing dispatch failure projection`);
+  const next = edit(body, [{ start: summary.getStart(ast), end: summary.end, text: expected }]);
+  return applied ? source : edit(source, [{ start: part.start, end: part.end, text: next }]);
+}
 
 const SUPPORT = [
   {
     source: 'policy.mjs',
     target: 'tool-call-recovery-policy.mjs',
-    names: ['resolveToolCallRecovery', 'TOOL_CALL_RECOVERY_LIMIT', 'TOOL_CALL_RECOVERY_REASON'],
+    names: ['resolveToolCallRecovery', 'TOOL_CALL_RECOVERY_LIMIT', 'TOOL_CALL_RECOVERY_REASON', 'projectToolCallRecoveryFailureSummary'],
   },
-  { source: 'facts.mjs', target: 'tool-call-recovery-facts.mjs', names: ['observeToolCallRecoveryAttempt', 'projectToolCallRecoveryNestedEvidence'] },
+  { source: 'loop.mjs', target: 'tool-call-recovery-loop.mjs', names: ['createToolCallValidationRecovery', 'installToolCallValidationRecovery', 'readToolCallValidationRecovery', 'prepareToolCallValidationHandoff', 'assertToolCallValidationModel'] },
+  { source: 'facts.mjs', target: 'tool-call-recovery-facts.mjs', names: ['observeToolCallRecoveryResponse', 'projectToolCallRecoveryRejectionFeedback'] },
 ];
 const supportSource = (root, entry) => path.join(root, 'openclaw-extensions/runtime-services/tool-call-recovery', entry.source);
 function transformResultTypes(source, verifyOnly = false) {
@@ -528,17 +626,31 @@ function verifyBundledSupport(source, repoRoot) {
   for (const entry of SUPPORT) {
     verifyNativeSupportBindings(source, fs.readFileSync(supportSource(repoRoot, entry), 'utf8'), findMatchingDelimiter,
       { module: entry.target, owner: 'embedded-agent-DOz9dy-9.mjs' });
-    if (entry.source === 'facts.mjs' && extractFunction(source, 'runEmbeddedAttemptSettledPhase'))
+    if (entry.source === 'facts.mjs' && extractFunction(source, 'finalizeOpenAICompletionsToolCalls'))
+      verifyNativeSupportBindings(source, fs.readFileSync(supportSource(repoRoot, entry), 'utf8'), findMatchingDelimiter,
+        { module: entry.target, owner: 'openai-completions-transport-QYABn8Uz.mjs' });
+    if (['facts.mjs', 'loop.mjs'].includes(entry.source) && extractFunction(source, 'streamAgentResponse'))
+      verifyNativeSupportBindings(source, fs.readFileSync(supportSource(repoRoot, entry), 'utf8'), findMatchingDelimiter,
+        { module: entry.target, owner: 'agent-core-RzJjRVA2.mjs' });
+    if (entry.source === 'loop.mjs' && extractFunction(source, 'submitEmbeddedAttemptPrompt'))
       verifyNativeSupportBindings(source, fs.readFileSync(supportSource(repoRoot, entry), 'utf8'), findMatchingDelimiter,
         { module: entry.target, owner: 'builtin-openclaw-qVsnLx0N.mjs' });
+    if (entry.source === 'policy.mjs' && extractFunction(source, 'dispatchAgentRunFromGateway'))
+      verifyNativeSupportBindings(source, fs.readFileSync(supportSource(repoRoot, entry), 'utf8'), findMatchingDelimiter,
+        { module: entry.target, owner: 'agent-turn-service-CVZmpyt7.mjs' });
   }
 }
 function bindSupport(source, file, verifyOnly, entries = SUPPORT) {
   if (isGatewayBundlePath(file)) return source;
   for (const entry of entries) {
-    const module = JSON.stringify(nativeSupportImport(file, entry.target));
+    const sdk = file.replaceAll('\\', '/').endsWith('/node_modules/@openclaw/ai/dist/openai-completions-transport-QYABn8Uz.mjs');
+    const module = JSON.stringify(sdk ? `../../../../dist/native-support/${entry.target}` : nativeSupportImport(file, entry.target));
     const declaration = `import { ${entry.names.join(', ')} } from ${module};`;
-    if (source.includes(declaration)) continue;
+    const imports = parse(source).statements.filter(node => ts.isImportDeclaration(node) && node.moduleSpecifier.text === JSON.parse(module));
+    const clause = imports[0]?.importClause;
+    if (imports.length === 1 && clause && !clause.name && !clause.isTypeOnly && ts.isNamedImports(clause.namedBindings) &&
+      clause.namedBindings.elements.every(node => !node.propertyName && !node.isTypeOnly) &&
+      clause.namedBindings.elements.map(node => node.name.text).join(',') === entry.names.join(',')) continue;
     if (verifyOnly || source.includes(`native-support/${entry.target}`))
       throw new Error(`${file}: missing or partial recovery support import`);
     source = declaration + '\n' + source;
@@ -567,9 +679,11 @@ function processTargets(root, options, verifyOnly) {
   };
   const runnerFiles = ownerFiles('runPreparedEmbeddedLoop');
   const candidateFiles = ownerFiles('runAgentFallbackCandidates');
-  const nestedFiles = ownerFiles('runEmbeddedAttemptSettledPhase');
-  for (const name of ['completeEmbeddedAttemptAfterTurn', 'readAttemptNestedToolActivity'])
-    if (JSON.stringify(ownerFiles(name)) !== JSON.stringify(nestedFiles)) throw new Error(`Recovery nested receipt owner changed: ${name}`);
+  const attemptFiles = ownerFiles('submitEmbeddedAttemptPrompt');
+  const coreFiles = ownerFiles('streamAgentResponse');
+  const dispatchFiles = ownerFiles('dispatchAgentRunFromGateway');
+  if (JSON.stringify(ownerFiles('prepareAndDispatchEmbeddedRunAttempt')) !== JSON.stringify(runnerFiles)) throw new Error('Recovery attempt dispatch owner changed');
+  if (JSON.stringify(ownerFiles('runLoop')) !== JSON.stringify(coreFiles)) throw new Error('Recovery core loop owner changed');
   const types = [
     'agent-harness-runtime-DZjstJNb',
     'agent-harness-runtime-Du4B564s',
@@ -587,7 +701,7 @@ function processTargets(root, options, verifyOnly) {
     for (const name of ['finalizeOpenAICompletionsToolCalls', 'processCompletionsStream'])
       if (!extractFunction(source, name)) throw new Error(`Recovery producer owner changed: ${name}`);
   }
-  const files = [...new Set([dependency.file, ...runnerFiles, ...candidateFiles, ...nestedFiles])];
+  const files = [...new Set([dependency.file, ...runnerFiles, ...candidateFiles, ...attemptFiles, ...coreFiles, ...dispatchFiles])];
   const states = [
     ...files.filter(file => !isGatewayBundlePath(file)).map(file => readRuntimeTextFile(file).includes(CONTRACT)),
     ...types.map(entry => entry.original.includes('"tool_call_format_recovery"')),
@@ -603,11 +717,20 @@ function processTargets(root, options, verifyOnly) {
     let next = transformProducer(original, file, { verifyOnly: verify });
     next = transformCandidate(next, file, { verifyOnly: verify });
     next = transformRunner(next, file, { verifyOnly: verify });
+    next = transformDispatch(next, file, { verifyOnly: verify });
+    next = transformCore(next, file, { verifyOnly: verify });
     if (runnerFiles.includes(file)) {
       next = bindSupport(next, file, verify);
       if (isGatewayBundlePath(file)) verifyBundledSupport(next, repoRoot);
-    } else if (nestedFiles.includes(file)) {
+    } else if (attemptFiles.includes(file) || coreFiles.includes(file)) {
+      next = bindSupport(next, file, verify, SUPPORT.filter(entry =>
+        entry.source === 'loop.mjs' || (coreFiles.includes(file) && entry.source === 'facts.mjs')));
+      if (isGatewayBundlePath(file)) verifyBundledSupport(next, repoRoot);
+    } else if (file === dependency.file) {
       next = bindSupport(next, file, verify, SUPPORT.filter(entry => entry.source === 'facts.mjs'));
+    } else if (dispatchFiles.includes(file)) {
+      next = bindSupport(next, file, verify, SUPPORT.filter(entry => entry.source === 'policy.mjs'));
+      if (isGatewayBundlePath(file)) verifyBundledSupport(next, repoRoot);
     }
     if (!verify) next = `// ${CONTRACT}\n` + next;
     return { file, original, next };
@@ -628,6 +751,8 @@ module.exports = {
     transformCandidate,
     extractFunction,
     transformRunner,
+    transformDispatch,
+    transformCore,
     verifyBundledSupport,
     bindSupport,
     verifySupport,

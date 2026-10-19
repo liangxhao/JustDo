@@ -290,34 +290,55 @@ Worktree 设置页同时接入 Gateway 全局 `worktreeRoot` / `worktreeAccelera
 
 ### 工具调用格式纠正
 
-工具调用格式纠正的恢复契约限定为可信初始模型候选中的同一 OpenAI Completions runner：
-完整响应的工具参数在派发前被整批拒绝，且先前工具及其原生结果已精确结算时，
-从现有历史追加最多两次纠正生成。原有工具权限、审批和 replayUnsafe 事实保留；
-Main 与 Renderer 不重发用户输入、不拼装历史，也不把残缺参数补成可执行命令。
+OpenClaw 先在 Completions producer 校验完整参数 JSON，再在 Agent 工具层校验 schema。
+原生 schema 参数拒绝生成工具错误结果，并在同一 Agent loop 中交给模型纠正；JSON
+解析或对象形状拒绝原本移除整批调用并返回 provider error，因此不会进入该循环。
+030 扩展这条原生循环：只对初始候选、完整响应、整批零派发的格式拒绝提供最多两次
+附加生成。schema、未知工具及执行异常继续使用各自原生处理，不重放用户输入或工具。
 
-纯策略、事实投影和提示由 Runtime Services 目录的无状态叶子模块维护，构建时静态绑定；
-原生所有者掌握当前调用身份、取消、writer fence、累计次数和实际续跑。
-不新增插件恢复回调、执行 RPC、全局 run 注册表或数据库 schema。
-同步 Tool Search 的内层调用使用独立原生回执，不能要求它伪装成模型历史中的工具消息。
-原生 attempt 在清理前通过已有可取消等待读取本 attempt 已接受的嵌套回执，并核对原生
-session/target；Runtime Services 只投影身份、父属及结果状态，逐项核对当前 run、物理会话、
-scope、原始与规范化工具记录、完整父链和外层历史结果，不保留参数或结果正文。
-缺失、重复、异属、循环或未结算的调用继续否决恢复；读取失败不改变原生执行结果。
-首期不跨 runner/候选承接恢复；接管后无法继续时保留真实错误与原生结算，
-不能再经 empty-error、模型回退或 text-only 补全获得另一组机会。
-用户取消、超时、审批等待、yield 和客户端接管仍保持各自原生结果。
-已接管链的完成结果在既有 `meta.modelFallbackStopReason` 声明
-`tool_call_format_recovery`，原有停止原因优先。候选所有者消费此字段，
-避免零正文等待/超时结果被通用空响应分类重新送入 fallback；不改写真实结算元数据。
-纠正后的答案仍受原生 `before_agent_finalize` 约束。钩子要求重写并撤回的草稿
-不能从 completed observation 重新交付；正常运行以原生 `incomplete_turn` 明确失败，
-同时清除正文 payload 和最终正文元数据，不追加请求。取消、超时和等待状态优先保留。
+Runtime Services 的 facts/policy 维护内容无关的诊断和纯策略；loop 模块维护精确 Agent
+对象上的私有 WeakMap 接线。原生 run owner 持有共享计数与总 run budget，通过明确的
+runParams → attemptParams → 当前 Agent → AgentLoopConfig 传递能力，finally 卸载。
+不新增插件公开恢复 API、执行 RPC、全局 run 注册表、历史缓存或数据库 schema。
 
-无正文或 thinking-only 不要求 text phase。存在正文时，只允许逐块确认的 commentary，
-并且没有最终回复或 canonical 终止交付；过程说明按原消息/分段身份保留一份。
-final_answer、阶段不明、未结算异步/委派活动和待审批均不授予格式恢复。
-`stop + tool_calls + 正文` 被移除的协议冲突路径，以及缺少可信终止证据的流，
-不直接归为可恢复的格式错误。
+streamAgentResponse 在提交终态之前，只对实际完成响应及当前响应内三个零计数
+（已执行调用、已提交片段、执行批次）询问恢复能力。原始 SDK 失败、响应身份和 usage
+保持原样；core 仅提交 stop/endTurn:false 的不可执行副本，并返回显式校验反馈。
+runLoop 先执行原生 prepareNextTurn、shouldStopAfterTurn、steering 与取消检查，再将
+反馈作为插件自有的隐藏 custom 消息提交，由原生 generic custom 投影进入模型请求。
+不使用需要 prompt retention 的 runtime-context 载体。停止钩子拒绝
+续跑时由原生失败通道报告原因，不能把待纠正的副本当作任务成功。
+
+同一 loop 保留此前工具结果及嵌套执行所有权，无需退出 attempt、重建历史或额外读取
+嵌套回执。坏 JSON 的整批调用（包括合法兄弟）均未执行；原生 schema 拒绝不保证
+整批原子性，合法兄弟可执行，后续请求保留其真实结果。未完成流、其它 provider
+诊断、refusal、异步片段已提交、取消或模型变更均不借此取得纠正机会。没有恢复能力
+或不符合当前响应零计数时，原生早期 abort fence 保持不变。
+
+两次格式预算只计 JSON/对象格式纠正，schema 失败仍由原生工具循环检测处理。该预算
+跨 loop/compaction/attempt 共享，并消费原有总 run budget；成功调用工具不清零。接管后删除旧的 outer-attempt 格式重试，不允许 empty-error、模型 fallback
+或 text-only 补全另给一组机会。后续断连、503、超时与取消沿真实原生失败及结算通道
+结束；主聊天与 subagent 共用接线，Swarm 不新增节点重试。
+已接管结果在既有 meta.modelFallbackStopReason 使用 tool_call_format_recovery，
+保留已有原因和精确 executionSettled 终态。答案仍受 before_agent_finalize 约束；
+撤回草稿不得重新交付或再请求补全。无正文/thinking-only 不要求 text phase；有正文
+则仍须逐块确认为 commentary，已显示过程说明按原生身份保留一份。
+
+同一条原生拒绝 diagnostic 携带有界格式反馈；Runtime Services 只从当前 completed
+observation 的唯一拒绝记录读取版本 1 白名单。反馈包含同批调用总数、失败调用序号、
+固定错误类别、参数 UTF-16 长度及能可靠取得的真实位置，不包含工具名、参数原文、
+异常消息或结构预览。分类使用原拒绝点的同步 validator 验证一次性 dummy，不修改或
+执行原调用；潜在大整数预处理时省略细因和位置，预算之外的调用不被指认为失败。
+提示明确整批均未派发、合法兄弟也须重新评估，以及此前已完成结果继续有效。
+反馈缺失或非法时保留原有通用提示，不改变准入、排除、次数或终态；主聊天与原生
+subagent 共用这条接线，不增加 Swarm 节点重试。真实模型纠正率仍按
+[具体错误反馈验收](../plans/tool-call-format-feedback-plan.md)进行内网配对实验。
+
+已接管格式纠正链的普通失败，由原生 dispatch 在发布等待回执前调用 Runtime Services
+纯投影，复用当前结果所有者已经脱敏的终态原因。只输出 JSON 编码后不超过 2 KiB 的
+用户摘要，不复制原生私有 symbol、供应商正文或裸 meta.error；不创建错误缓存或第二
+运行登记表。当前取消、超时和隐私会话继续优先，普通未接管失败沿用原生协议。
+投影只修改失败 summary，不改变状态、结算、历史、dedupe 顺序和执行次数。
 
 实际安排纠正后由原生发布 lifecycle progress：`stage: retrying`、
 `reason: tool_call_format`、`retryAttempt: 1..2`、`maxRetries: 2`。

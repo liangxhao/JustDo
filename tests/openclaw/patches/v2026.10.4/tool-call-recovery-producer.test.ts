@@ -6,6 +6,8 @@ import { transformSync } from 'esbuild';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 
+import { projectToolCallRecoveryRejectionFeedback } from '../../../../openclaw-extensions/runtime-services/tool-call-recovery/facts.mjs';
+
 const { __testing: { transformProducer, transformCandidate, extractFunction, transformResultTypes } } =
   require('../../../../scripts/patches/v2026.10.4/030-tool-call-format-recovery.cjs');
 const { nodes } = require('../../../../scripts/openclaw/native-support-contract.cjs');
@@ -67,11 +69,14 @@ function runFixture(source = producer) {
   const patched = transformProducer(source, 'fixture.mjs');
   const confirmed = vi.fn();
   const context = vm.createContext({
+    projectToolCallRecoveryRejectionFeedback,
     finalizeTerminalToolCallArguments(calls: ToolBlock[], read: (call: ToolBlock) => string) {
       const parsed = calls.map(call => {
-        const value: unknown = JSON.parse(read(call));
-        if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected JSON object');
-        return [call, value] as const;
+        try {
+          const value: unknown = JSON.parse(read(call));
+          if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected JSON object');
+          return [call, value] as const;
+        } catch { throw Object.assign(new Error('Rejected'), { errorCode: 'malformed_tool_call_arguments' }); }
       });
       for (const [call, value] of parsed) call.arguments = value;
     },
@@ -103,7 +108,9 @@ describe('tool-call recovery producer', () => {
     expect(output.errorCode).toBe('malformed_tool_call_arguments');
     expect(output.diagnostics).toEqual([{
       type: 'tool_call_pre_dispatch_rejection', timestamp: expect.any(Number),
-      details: { batchRejected: true, streamComplete: true, dispatchCount: 0 },
+      details: { batchRejected: true, streamComplete: true, dispatchCount: 0,
+        feedback: expect.objectContaining({ version: 1, batchCallCount: 2,
+          issues: [expect.objectContaining({ callIndex: 1, kind: 'invalid_json', detail: 'xml_like_input' })] }) },
     }]);
     expect(JSON.stringify(output)).not.toContain('<id>');
   });
@@ -184,6 +191,9 @@ describe('tool-call recovery producer', () => {
       expect(() => transformProducer(weakened, 'native.mjs')).toThrow('partial');
     }
     expect(() => transformProducer(`${extractFunction(patched, 'finalizeOpenAICompletionsToolCalls').body}\n${stream}`, 'native.mjs')).toThrow('partial');
+    const historical = patched.replace(/,\s*feedback:projectToolCallRecoveryRejectionFeedback\(toolCalls,\s*finalizeTerminalToolCallArguments\)/, '');
+    expect(historical).not.toBe(patched);
+    expect(() => transformProducer(historical, 'native.mjs')).toThrow('partial');
   });
 });
 

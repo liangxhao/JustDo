@@ -10,6 +10,26 @@ const { spawn, execFile } = require('node:child_process');
 const WebSocket = require('ws');
 const runtime = process.env.JUSTDO_EXECUTION_RUNTIME;
 const longProbe = process.env.JUSTDO_EXECUTION_LONG === '1';
+const feedbackProbe = process.env.TOOL_CALL_FEEDBACK_PROBE === '1';
+const feedbackFailureProbe = process.env.TOOL_CALL_FEEDBACK_FAILURE;
+const feedbackCase = process.env.TOOL_CALL_FEEDBACK_CASE || 'xml';
+const feedbackOwner = process.env.TOOL_CALL_FEEDBACK_OWNER || 'main';
+const feedbackCases = {
+  xml: { raw: '<private-parameter>', hint: 'invalid JSON (XML-like input; use a JSON object)' },
+  truncated: { raw: '{"command":"private-parameter', hint: 'invalid JSON (unterminated JSON string)' },
+  escape: { raw: '{"command":"private-parameter\\q"}', hint: 'invalid JSON (invalid JSON escape)' },
+  array: { raw: '["private-parameter"]', hint: 'arguments must be a JSON object' },
+  oversized: { raw: '<private-parameter>' + '😀'.repeat(10000), hint: 'Some diagnostics were omitted.' },
+  persistent: { raw: '<private-parameter>', hint: 'invalid JSON (XML-like input; use a JSON object)' },
+};
+if (!Object.hasOwn(feedbackCases, feedbackCase) || !['main', 'sub'].includes(feedbackOwner) ||
+    (feedbackFailureProbe && !['disconnect', 'http', 'http-long'].includes(feedbackFailureProbe)) ||
+    (feedbackCase === 'persistent' && feedbackFailureProbe) ||
+    (feedbackOwner === 'sub' && !feedbackFailureProbe && feedbackCase !== 'persistent')) throw new Error('Unsupported feedback probe scenario.');
+const feedbackExhausted = feedbackCase === 'persistent';
+const gatewayPort = Number(process.env.RUNTIME_EXECUTION_PROBE_PORT || 43241);
+if (!Number.isInteger(gatewayPort) || gatewayPort < 1024 || gatewayPort > 65534) throw new Error('Invalid isolated probe port.');
+const feedbackProviderError = 'Synthetic model service unavailable during format correction';
 if (!runtime) throw new Error('Set JUSTDO_EXECUTION_RUNTIME to an isolated prepared prototype.');
 const base = path.resolve('.agent-tasks/runtime/plugin-owned-execution-' + Date.now());
 const project = path.join(base, 'project');
@@ -25,7 +45,7 @@ for (const id of ['owned-probe', 'other-probe']) {
       try {
         if (operation === 'run') {
           const created = await api.runtime.gateway.request('sessions.create', { key: params.key, agentId: 'main', cwd: ${JSON.stringify(project)}, permissionMode: 'full', displayName: 'Execution probe' }, { scopes: ['operator.admin'] });
-          const result = await api.runtime.subagent.run({ sessionKey: created.key, message: params.message, disableTools: !['fixture background', 'fixture long'].includes(params.message), timeoutSeconds: params.timeoutSeconds ?? 120, managedToolsLifetime: 'run', idempotencyKey: params.id });
+          const result = await api.runtime.subagent.run({ sessionKey: created.key, message: params.message, disableTools: !['fixture background', 'fixture long', 'fixture format sub'].includes(params.message), timeoutSeconds: params.timeoutSeconds ?? 120, managedToolsLifetime: 'run', idempotencyKey: params.id });
           respond(true, result);
         } else respond(true, await api.runtime.subagent[operation === 'describe' ? 'describeRun' : 'cancelRun']({ runId: params.runId }));
       } catch (error) { respond(false, undefined, { code: 'UNAVAILABLE', message: String(error) }); }
@@ -34,6 +54,11 @@ for (const id of ['owned-probe', 'other-probe']) {
 }
 let modelCalls = 0;
 const pendingResponses = new Set();
+const feedbackStages = new Map();
+const feedbackLifecycle = [];
+const feedbackChatEvents = [];
+const feedbackEvidence = [];
+let feedbackFailure;
 const provider = http.createServer((req, res) => {
   let body = '';
   req.on('data', chunk => { body += chunk; });
@@ -42,6 +67,46 @@ const provider = http.createServer((req, res) => {
     const input = JSON.parse(body || '{}');
     fs.writeFileSync(path.join(base, 'provider-input-' + modelCalls + '.json'), JSON.stringify(input, null, 2));
     const content = JSON.stringify(input.messages || []);
+    if (feedbackProbe && /fixture format (main|sub)/.test(content)) {
+      try {
+        const owner = /fixture format (main|sub)/.exec(content)[1];
+        const stage = feedbackStages.get(owner) ?? 0;
+        const file = path.join(project, 'feedback-' + owner + '.txt');
+        if (stage > 0) assert.equal(fs.readFileSync(file, 'utf8'), stage === 3 && !feedbackExhausted ? 'AB' : 'A');
+        if (stage === 2 || (feedbackExhausted && stage === 3)) {
+          assert.ok(content.includes(feedbackCases[feedbackCase].hint));
+          assert.ok(content.includes('all 2 calls were withheld, including valid siblings'));
+          assert.ok((input.messages || []).some(message => message.role === 'tool'));
+          assert.ok(!content.includes('private-parameter'));
+          const correction = (input.messages || []).map(message => typeof message.content === 'string' ? message.content : JSON.stringify(message.content))
+            .find(text => text?.includes('The previous response contained malformed tool calls'));
+          assert.ok(correction, 'Missing actual correction instruction in provider request');
+          assert.ok(Buffer.byteLength(correction) <= 3072);
+          feedbackEvidence.push({ owner, retryAttempt: stage - 1, instructionBytes: Buffer.byteLength(correction), instruction: correction });
+          if (feedbackFailureProbe) {
+            if (feedbackFailureProbe === 'disconnect') { req.socket.destroy(); return; }
+            res.writeHead(503, { 'Content-Type': 'application/json' });
+            const message = feedbackFailureProbe === 'http-long'
+              ? feedbackProviderError + ' token=synthetic-private-provider-token ' + '😀'.repeat(100000)
+              : feedbackProviderError;
+            res.end(JSON.stringify({ error: { message, type: 'service_unavailable', code: 'fixture_model_offline' } }));
+            return;
+          }
+        }
+        const argumentsText = JSON.stringify({ command: `node -e "require('fs').appendFileSync('feedback-${owner}.txt','${stage === 0 ? 'A' : 'B'}')"`, workdir: project });
+        const toolCalls = stage === 3 && !feedbackExhausted ? [] : [{ id: 'feedback-' + owner + '-' + stage, type: 'function', function: { name: 'exec', arguments: argumentsText } }];
+        if (stage === 1 || (feedbackExhausted && stage >= 2)) toolCalls.push({ id: 'feedback-invalid-' + owner + '-' + stage, type: 'function', function: { name: 'exec', arguments: feedbackCases[feedbackCase].raw } });
+        feedbackStages.set(owner, stage + 1);
+        assert.ok(stage < 4, 'Unexpected extra model request');
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.write('data: ' + JSON.stringify({ id: 'feedback-' + modelCalls, object: 'chat.completion.chunk', model: 'fixture', choices: [{ index: 0, delta: toolCalls.length ? { role: 'assistant', tool_calls: toolCalls.map((tool, index) => ({ index, ...tool })) } : { role: 'assistant', content: 'Feedback probe complete.' }, finish_reason: null }] }) + '\n\n');
+        res.end('data: ' + JSON.stringify({ id: 'feedback-' + modelCalls, object: 'chat.completion.chunk', model: 'fixture', choices: [{ index: 0, delta: {}, finish_reason: toolCalls.length ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } }) + '\n\ndata: [DONE]\n\n');
+        return;
+      } catch (error) {
+        feedbackFailure = error;
+        res.writeHead(500); res.end('Synthetic feedback fixture failed'); return;
+      }
+    }
     if (content.includes('fixture hold')) {
       pendingResponses.add(res);
       res.on('close', () => pendingResponses.delete(res));
@@ -82,17 +147,17 @@ let socket;
 let log = '';
 const config = {
   logging: { file: path.join(base, 'native-gateway.log'), level: 'debug', consoleLevel: 'info' },
-  gateway: { mode: 'local', port: 43241, bind: 'loopback', auth: { mode: 'token', token: 'isolated-owned-execution-probe' } },
+  gateway: { mode: 'local', port: gatewayPort, bind: 'loopback', auth: { mode: 'token', token: 'isolated-owned-execution-probe' } },
   agents: { defaults: { workspace: project, skipBootstrap: true, timeoutSeconds: longProbe ? 7200 : 120, model: { primary: 'fixture/fixture' } } },
   tools: { exec: { host: 'gateway', security: 'full', ask: 'off' } },
-  models: { mode: 'replace', providers: { fixture: { baseUrl: 'http://127.0.0.1:43242/v1', apiKey: 'fixture-only', api: 'openai-completions', agentRuntime: { id: 'openclaw' }, request: { allowPrivateNetwork: true }, models: [{ id: 'fixture', name: 'fixture', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 32000, maxTokens: 4000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } },
+  models: { mode: 'replace', providers: { fixture: { baseUrl: 'http://127.0.0.1:' + (gatewayPort + 1) + '/v1', apiKey: 'fixture-only', api: 'openai-completions', agentRuntime: { id: 'openclaw' }, request: { allowPrivateNetwork: true }, models: [{ id: 'fixture', name: 'fixture', api: 'openai-completions', reasoning: false, input: ['text'], contextWindow: 32000, maxTokens: 4000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } },
   plugins: { allow: ['owned-probe', 'other-probe'], entries: { 'owned-probe': { enabled: true }, 'other-probe': { enabled: true } } },
 };
 fs.writeFileSync(path.join(base, 'config.json'), JSON.stringify(config));
 const env = { ...process.env, OPENCLAW_STATE_DIR: path.join(base, 'state'), OPENCLAW_CONFIG_PATH: path.join(base, 'config.json'), OPENCLAW_BUNDLED_PLUGINS_DIR: plugins, OPENCLAW_TEST_TRUST_BUNDLED_PLUGINS_DIR: '1', VITEST: 'true', OPENCLAW_SKIP_CHANNELS: '1', OPENCLAW_SKIP_CRON: '1' };
 function launch() {
   const launcher = process.env.JUSTDO_EXECUTION_BUNDLE === '1' ? [path.join(runtime, 'gateway-launcher.cjs')] : [path.join(runtime, 'openclaw.mjs'), '--openclaw-node-host-child'];
-  child = spawn(process.execPath, [...launcher, 'gateway', 'run', '--allow-unconfigured', '--port', '43241', '--bind', 'loopback'], { env, cwd: base, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+  child = spawn(process.execPath, [...launcher, 'gateway', 'run', '--allow-unconfigured', '--port', String(gatewayPort), '--bind', 'loopback'], { env, cwd: base, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   child.stdout.on('data', c => { log += c; });
   child.stderr.on('data', c => { log += c; });
 }
@@ -102,7 +167,7 @@ async function connect(attempt = 0) {
   for (let i = 0; i < 60; i++) {
     try {
       socket = await new Promise((resolve, reject) => {
-        const ws = new WebSocket('ws://127.0.0.1:43241');
+        const ws = new WebSocket('ws://127.0.0.1:' + gatewayPort);
         challenge = new Promise((ready, failed) => {
           const timer = setTimeout(() => failed(new Error('Gateway challenge timed out.')), 20000);
           ws.once('message', raw => { clearTimeout(timer); const event = JSON.parse(raw); event.event === 'connect.challenge' ? ready(event) : failed(new Error('Missing native challenge.')); });
@@ -124,6 +189,8 @@ async function connect(attempt = 0) {
   });
   socket.on('message', raw => {
     const event = JSON.parse(raw);
+    if (feedbackProbe && event.event === 'agent' && event.payload?.stream === 'lifecycle') feedbackLifecycle.push(event.payload);
+    if (feedbackProbe && event.event === 'chat') feedbackChatEvents.push(event.payload);
     if (event.type !== 'res') return;
     const request = pending.get(event.id);
     if (request) { pending.delete(event.id); event.ok ? request.resolve(event.payload) : request.reject(Object.assign(new Error(JSON.stringify(event.error)), { startupPending: event.error?.retryable === true && event.error?.details?.reason === 'startup-sidecars' })); }
@@ -149,7 +216,7 @@ async function connect(attempt = 0) {
   return rpc;
 }
 async function until(rpc, runId, predicate) {
-  for (let i = 0; i < 40; i++) { const state = await rpc('owned-probe.describe', { runId }); if (predicate(state)) return state; await delay(500); }
+  for (let i = 0; i < 40; i++) { if (feedbackFailure) throw feedbackFailure; const state = await rpc('owned-probe.describe', { runId }); if (predicate(state)) return state; await delay(500); }
   throw new Error('Exact execution evidence did not converge: ' + runId);
 }
 async function stop() {
@@ -165,10 +232,90 @@ async function stop() {
 }
 (async () => {
   try {
-    await new Promise(resolve => provider.listen(43242, '127.0.0.1', resolve));
+    await new Promise(resolve => provider.listen(gatewayPort + 1, '127.0.0.1', resolve));
     launch();
     let rpc = await connect();
     const run = async (name, message, timeoutSeconds) => rpc('owned-probe.run', { key: 'agent:main:subagent:owned-probe-' + name, message, timeoutSeconds, id: 'owned-probe-' + name });
+    if (feedbackProbe) {
+      const key = feedbackOwner === 'sub' ? 'agent:main:subagent:owned-probe-feedback' : 'agent:main:feedback-main';
+      if (feedbackOwner === 'main') await rpc('sessions.create', { key, agentId: 'main', cwd: project, permissionMode: 'full' });
+      if (feedbackOwner === 'main') await rpc('sessions.messages.subscribe', { key });
+      const main = feedbackOwner === 'sub' ? await run('feedback', 'fixture format sub')
+        : await rpc('chat.send', { sessionKey: key, message: 'fixture format main', idempotencyKey: 'format-main' });
+      if (feedbackOwner === 'sub') await rpc('sessions.messages.subscribe', { key });
+      // A wait timeout does not settle or restart execution. Poll the same run
+      // within its configured two-minute budget, including cold-start queueing.
+      let mainResult;
+      let waitTimeouts = 0;
+      do {
+        mainResult = await rpc('agent.wait', { runId: main.runId, timeoutMs: 20000 });
+        if (mainResult.status === 'timeout') waitTimeouts++;
+      } while (mainResult.status === 'timeout' && waitTimeouts < 6);
+      if (feedbackFailure) throw feedbackFailure;
+      const expectsError = Boolean(feedbackFailureProbe || feedbackExhausted);
+      assert.equal(mainResult.status, expectsError ? 'error' : 'ok');
+      const mainTerminal = () => feedbackLifecycle.find(event => event.runId === main.runId && event.sessionKey === key &&
+        event.data?.executionSettled === true && ['end', 'error'].includes(event.data.phase));
+      for (let index = 0; index < 60 && !mainTerminal(); index++) await delay(100);
+      assert.equal(mainTerminal()?.data.phase, expectsError ? 'error' : 'end', 'Missing exact whole-run execution-settled terminal');
+      const record = result => fs.writeFileSync(path.join(base, 'feedback-result.json'), JSON.stringify({ case: feedbackCase, failure: feedbackFailureProbe ?? null,
+        owner: feedbackOwner, modelCalls, waitTimeouts, feedback: feedbackEvidence, ...result, passed: result.waitErrorPreserved !== false }, null, 2));
+      if (expectsError) {
+        const errors = feedbackChatEvents.filter(event => event.runId === main.runId && event.sessionKey === key && event.state === 'error');
+        fs.writeFileSync(path.join(base, 'feedback-observation.json'), JSON.stringify({ result: mainResult, terminal: mainTerminal().data, errors }, null, 2));
+        const expectedReason = feedbackExhausted ? /couldn't finish this reply/i : feedbackFailureProbe === 'disconnect' ? /couldn't connect to the AI service/i
+          : feedbackFailureProbe === 'http-long' ? /the AI service is (?:temporarily overloaded|having trouble)/i
+            : /temporarily overloaded/i;
+        // The native owner deliberately publishes safe classified copy, not raw HTTP bodies.
+        const summary = String(mainResult.error ?? '').slice(0, 300).replaceAll('synthetic-private-provider-token', '[REDACTED]').replaceAll('😀', '*');
+        assert.ok(errors.some(event => expectedReason.test(event.errorMessage ?? '')), 'Latest safe provider failure did not reach chat: ' + JSON.stringify({ summary, eventCount: errors.length }));
+        assert.match(mainTerminal().data.error, expectedReason);
+        for (const error of errors) {
+          assert.match(error.errorMessage ?? '', expectedReason, 'Every final error must retain the latest cause');
+          if (!feedbackExhausted) assert.ok(!/malformed tool call|couldn't generate a response/i.test(error.errorMessage ?? ''));
+          assert.ok(!JSON.stringify(error).includes('😀'));
+        }
+        for (const publicError of [...errors, mainResult, mainTerminal().data]) {
+          const serialized = JSON.stringify(publicError);
+          assert.ok(Buffer.byteLength(serialized) < 3072);
+          assert.ok(!serialized.includes('synthetic-private-provider-token'));
+        }
+        assert.equal(feedbackStages.get(feedbackOwner), feedbackExhausted ? 4 : 2);
+        assert.equal(fs.readFileSync(path.join(project, 'feedback-' + feedbackOwner + '.txt'), 'utf8'), 'A');
+        const retries = feedbackLifecycle.filter(event => event.runId === main.runId && event.sessionKey === key && event.data?.reason === 'tool_call_format');
+        assert.deepEqual(retries.map(event => event.data.retryAttempt), feedbackExhausted ? [1, 2] : [1]);
+        let ownedResult;
+        if (feedbackOwner === 'sub') {
+          ownedResult = await until(rpc, main.runId, state => state.state === 'settled');
+          assert.equal(ownedResult.outcome, 'error');
+          assert.equal(ownedResult.executionSettled, true);
+          assert.equal(ownedResult.cleanupSettled, true);
+        }
+        record({ result: mainResult, terminal: mainTerminal().data, errors, ownedResult, writes: 'A', retries: retries.length,
+          waitErrorPreserved: expectedReason.test(mainResult.error ?? '') });
+        assert.match(mainResult.error, expectedReason, 'Latest failure was lost by agent.wait despite specific chat and settled lifecycle errors');
+        console.log('PASS ' + feedbackOwner + ' ' + (feedbackFailureProbe || feedbackCase) + ': latest safe error, exact settlement, no replay, retries=' + retries.length);
+        return;
+      }
+      assert.equal(feedbackOwner, 'main', 'Successful scenario probes both main and sub automatically');
+      const sub = await run('feedback', 'fixture format sub');
+      await rpc('sessions.messages.subscribe', { key: sub.sessionKey ?? 'agent:main:subagent:owned-probe-feedback' });
+      const result = await until(rpc, sub.runId, state => state.state === 'settled');
+      assert.equal(result.executionSettled, true);
+      assert.equal(result.cleanupSettled, true);
+      assert.equal(result.outcome, 'ok');
+      for (const [runId, sessionKey] of [[main.runId, key], [sub.runId, sub.sessionKey ?? 'agent:main:subagent:owned-probe-feedback']]) {
+        assert.equal(feedbackLifecycle.filter(event => event.runId === runId && event.sessionKey === sessionKey &&
+          event.data?.reason === 'tool_call_format' && event.data.retryAttempt === 1).length, 1);
+      }
+      for (const owner of ['main', 'sub']) {
+        assert.equal(feedbackStages.get(owner), 4);
+        assert.equal(fs.readFileSync(path.join(project, 'feedback-' + owner + '.txt'), 'utf8'), 'AB');
+      }
+      record({ result: mainResult, subResult: result, writes: { main: 'AB', sub: 'AB' }, retries: { main: 1, sub: 1 } });
+      console.log('PASS ' + feedbackCase + ' main chat.send and actual runtime.subagent.run: specific feedback, preserved results, whole-batch zero dispatch, each write once');
+      return;
+    }
     const first = await run('plain', 'fixture normal');
     const complete = await until(rpc, first.runId, s => s.state === 'settled');
     assert.equal(complete.executionSettled, true); assert.equal(complete.cleanupSettled, true);

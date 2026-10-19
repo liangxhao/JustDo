@@ -883,6 +883,17 @@ module.exports = { applyPatch, verifyPatch };
     );
   });
 
+  test('rejects a native tool-validation loop support change after the runtime was built', () => {
+    const { repoRoot, runtimeRoot } = createFixture();
+    const loopSource = path.join(repoRoot, 'openclaw-extensions/runtime-services/tool-call-recovery/loop.mjs');
+    expect(listBuildRecipeFiles(repoRoot)).toContain(loopSource);
+    writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
+    fs.appendFileSync(loopSource, '// changed native loop\n');
+    expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(
+      /source proof is missing, incomplete, or stale/,
+    );
+  });
+
   test('rejects an MXC plugin patch recipe changed after the runtime was built', () => {
     const { repoRoot, runtimeRoot } = createFixture();
     writeOpenClawPatchManifest(runtimeRoot, { repoRoot });

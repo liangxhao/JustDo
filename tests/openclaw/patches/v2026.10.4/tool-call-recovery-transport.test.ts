@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { observeToolCallRecoveryAttempt } from '../../../../openclaw-extensions/runtime-services/tool-call-recovery/facts.mjs';
+import { observeToolCallRecoveryResponse } from '../../../../openclaw-extensions/runtime-services/tool-call-recovery/facts.mjs';
 import { resolveToolCallRecovery } from '../../../../openclaw-extensions/runtime-services/tool-call-recovery/policy.mjs';
 
 type Content = { type: string; text?: string; textSignature?: string; name?: string };
@@ -55,23 +55,13 @@ function receipt(message: Assistant) {
 }
 
 function expectNativeRecoveryAdmission(message: Assistant, commentary: boolean) {
-  const facts = observeToolCallRecoveryAttempt({
-    currentAttemptCompletedAssistant: message,
-    currentAttemptAssistant: structuredClone(message),
-    messagesSnapshot: [context.messages[0], structuredClone(message)],
-    itemLifecycle: { startedCount: 0, completedCount: 0, activeCount: 0 },
-    toolMetas: [],
-    didSendViaMessagingTool: false,
-    messagingToolSentTexts: [],
-    messagingToolSentMediaUrls: [],
-    messagingToolSentTargets: [],
-  });
+  const facts = observeToolCallRecoveryResponse(message);
   expect(facts).toMatchObject({
-    rejected: true, allToolsSettled: true, streamComplete: true, dispatchCount: 0,
-    excluded: false, hasVisibleText: commentary, commentaryOnly: commentary,
+    rejected: true, streamComplete: true, dispatchCount: 0,
+    hasVisibleText: commentary, commentaryOnly: commentary,
   });
   expect(resolveToolCallRecovery({
-    ...facts, initialCandidate: true, aborted: false, attempts: 0,
+    ...facts, allToolsSettled: true, excluded: false, initialCandidate: true, aborted: false, attempts: 0,
   })).toMatchObject({ action: 'retry', reason: 'retry' });
 }
 
@@ -122,7 +112,11 @@ describe.skipIf(!hasRuntime)('actual installed AI SDK SSE transport (requires OP
     const { message, events } = await consume(sse);
     expect(message.stopReason).toBe('error');
     expect(message.errorCode).toBe('malformed_tool_call_arguments');
-    expect(receipt(message)).toEqual([{ type: receiptType, timestamp: expect.any(Number), details: { batchRejected: true, streamComplete: true, dispatchCount: 0 } }]);
+    expect(receipt(message)).toEqual([{ type: receiptType, timestamp: expect.any(Number), details: {
+      batchRejected: true, streamComplete: true, dispatchCount: 0,
+      feedback: { version: 1, batchCallCount: 1, omitted: false, localization: 'located',
+        issues: [{ callIndex: 0, kind: 'invalid_json', detail: 'xml_like_input', argumentChars: 26 }] },
+    } }]);
     expect(message.content.some(block => block.type === 'toolCall')).toBe(false);
     expect(events.filter(entry => entry.type === 'toolcall_end')).toEqual([]);
     expectNativeRecoveryAdmission(message, false);
@@ -137,7 +131,8 @@ describe.skipIf(!hasRuntime)('actual installed AI SDK SSE transport (requires OP
     const { message, events } = await consume(sse);
     expect(message.stopReason).toBe('error');
     expect(message.errorCode).toBe('malformed_tool_call_arguments');
-    expect(receipt(message)[0]?.details).toEqual({ batchRejected: true, streamComplete: true, dispatchCount: 0 });
+    expect(receipt(message)[0]?.details).toMatchObject({ batchRejected: true, streamComplete: true, dispatchCount: 0,
+      feedback: { batchCallCount: 3, issues: [{ callIndex: 2, kind: 'invalid_json', detail: 'unterminated_string' }] } });
     expect(message.content.some(block => block.type === 'toolCall')).toBe(false);
     expect(events.filter(entry => entry.type === 'toolcall_end')).toEqual([]);
     const texts = message.content.filter(block => block.type === 'text');
@@ -171,5 +166,21 @@ describe.skipIf(!hasRuntime)('actual installed AI SDK SSE transport (requires OP
     expect(events.filter(entry => entry.type === 'toolcall_end')).toHaveLength(1);
     expect(message.content.filter(block => block.type === 'toolCall')).toHaveLength(1);
     expect(receipt(message)).toEqual([]);
+  });
+
+  it('attributes only real native failures when integer normalization changes JSON acceptance', async () => {
+    const { message, events } = await consume(event({ role: 'assistant' }) +
+      tool(0, 'exec', '{9007199254740993:0}') +
+      tool(1, 'exec', '{9007199254740993:0 "x":1}') +
+      tool(2, 'exec', '<private>') + event({}, 'tool_calls') + 'data: [DONE]\n\n');
+    expect(message.stopReason).toBe('error');
+    expect(events.filter(entry => entry.type === 'toolcall_end')).toEqual([]);
+    const feedback = receipt(message)[0]?.details?.feedback;
+    expect(feedback).toEqual({ version: 1, batchCallCount: 3, omitted: false, localization: 'located', issues: [
+      { callIndex: 1, kind: 'native_rejected', argumentChars: 26 },
+      { callIndex: 2, kind: 'invalid_json', detail: 'xml_like_input', argumentChars: 9 },
+    ] });
+    expect(JSON.stringify(receipt(message))).not.toContain('private');
+    expectNativeRecoveryAdmission(message, false);
   });
 });
