@@ -28,8 +28,13 @@ function installedFixture(url = 'https://updates.corp.internal/desktop') {
 }
 
 describe('isNsisInstalledApp', () => {
-  test('enables updates only for a Windows packaged install with matching explicit feed artifacts', () => {
-    const fixture = installedFixture();
+  test.each([
+    'https://updates.corp.internal/desktop',
+    'https://xxx.com/electron-app-update',
+    'https://sub.example.com/feed/',
+    'https://updates.invalid/feed?channel=stable',
+  ])('enables updates for a Windows packaged install with matching explicit feed artifacts: %s', url => {
+    const fixture = installedFixture(url);
     expect(isNsisInstalledApp(fixture)).toBe(true);
     expect(isNsisInstalledApp({ ...fixture, isPackaged: false })).toBe(false);
     expect(isNsisInstalledApp({ ...fixture, platform: 'darwin' })).toBe(false);
@@ -44,13 +49,7 @@ describe('isNsisInstalledApp', () => {
     },
   );
 
-  test.each([
-    '',
-    'https://xxx.com/electron-app-update',
-    'https://sub.example.com/feed',
-    'file:///updates',
-    'invalid',
-  ])('rejects inherited packaged placeholder config: %s', url => {
+  test.each(['', '   '])('disables an empty packaged feed: %s', url => {
     expect(isNsisInstalledApp(installedFixture(url))).toBe(false);
   });
 

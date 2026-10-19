@@ -24,36 +24,3 @@ export const APP_UPDATE_CONFIG: AppUpdateConfig = Object.freeze({
     maxReleaseNotesLength: 100000,
   }),
 });
-
-/** Empty and example deployment addresses never enable installed-app networking. */
-export function resolveAppUpdateFeedUrl(value: unknown): string | undefined {
-  if (typeof value !== 'string' || !value.trim()) return undefined;
-  try {
-    const url = new URL(value.trim());
-    const hostname = url.hostname.toLowerCase().replace(/\.$/, '');
-    const placeholders = ['xxx.com', 'example.com', 'example.net', 'example.org'];
-    if (
-      !['http:', 'https:'].includes(url.protocol) ||
-      !hostname ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash ||
-      placeholders.some(host => hostname === host || hostname.endsWith(`.${host}`)) ||
-      hostname.endsWith('.invalid') ||
-      hostname.endsWith('.example')
-    )
-      return undefined;
-    return url.href.replace(/\/+$/, '');
-  } catch {
-    return undefined;
-  }
-}
-
-export function resolveAppUpdateResourceUrl(
-  relativePath: string,
-  feedUrl: unknown = APP_UPDATE_CONFIG.feedUrl,
-): string | undefined {
-  const configured = resolveAppUpdateFeedUrl(feedUrl);
-  return configured ? new URL(relativePath, `${configured}/`).toString() : undefined;
-}

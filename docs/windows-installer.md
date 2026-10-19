@@ -334,11 +334,13 @@ lines containing credentials.
 
 ## Verification
 
-The default deployment has no update feed. Empty or placeholder addresses do
+The default deployment has no update feed. An empty address does
 not produce `app-update.yml`, an update-configuration marker, `latest.yml` or
 release history. Packaging also removes stale copies of those files. Installed
 startup enables automatic checks only when the NSIS installation marker, a
-valid explicit generic feed and the matching configuration marker agree.
+non-empty explicit generic feed and the matching configuration marker agree.
+Configured URLs are used without hostname filtering; their availability is
+the deployment's responsibility.
 Deployments configure their internal feed in `src/config/appUpdate.ts` before
 rebuilding; inherited environment variables cannot silently enable networking.
 

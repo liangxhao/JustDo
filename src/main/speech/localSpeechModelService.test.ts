@@ -45,8 +45,8 @@ afterEach(() => {
 });
 
 describe('LocalSpeechModelService', () => {
-  it.each([undefined, '', 'https://xxx.com/electron-app-update', 'https://example.com/'])(
-    'rejects an unconfigured or placeholder model service without a network request (%s)',
+  it.each([undefined, '', '   '])(
+    'rejects an unconfigured model service without a network request (%s)',
     async baseUrl => {
       const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'speech-model-server-'));
       temporaryRoots.push(userDataPath);
@@ -149,7 +149,7 @@ describe('LocalSpeechModelService', () => {
         notify,
         syncOpenClawConfig,
         artifacts: [artifact],
-        baseUrl: 'https://updates.example.test/speech-models/v1/',
+        baseUrl: 'https://example.com/speech-models/v1/',
         resolveModelDir: modelId => path.join(userDataPath, 'local-speech-models', modelId),
       });
 
@@ -168,7 +168,7 @@ describe('LocalSpeechModelService', () => {
       expect(syncOpenClawConfig).toHaveBeenCalledWith('local-speech-model-installed');
       expect(result.status).toMatchObject({ phase: 'ready', installed: true });
       expect(fetchModel).toHaveBeenCalledWith(
-        `https://updates.example.test/speech-models/v1/${id}.tar.zst`,
+        `https://example.com/speech-models/v1/${id}.tar.zst`,
         { redirect: 'follow' },
       );
       for (const file of requiredFiles) {

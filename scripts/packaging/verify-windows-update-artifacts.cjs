@@ -7,7 +7,6 @@ const yaml = require('js-yaml');
 
 const { readWindowsUpdateConfig } = require('./windows-update-config.cjs');
 const { APP_UPDATE_CONFIG } = require('../../src/config/appUpdate.ts');
-const { resolveAppUpdateFeedUrl } = require('../../src/config/appUpdate.ts');
 const releaseHistoryLimits = APP_UPDATE_CONFIG.releaseHistory;
 
 const UPDATE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
@@ -136,7 +135,7 @@ async function verifyWindowsUpdateArtifacts(
     throw new Error('Packaged app-update.yml does not match the configured Generic feed.');
   }
   if (
-    resolveAppUpdateFeedUrl(readFileSync(configuredMarkerPath, 'utf8')) !== updateConfig.feedUrl
+    readFileSync(configuredMarkerPath, 'utf8').trim() !== updateConfig.feedUrl
   ) {
     throw new Error('Packaged auto-update marker does not match the configured Generic feed.');
   }

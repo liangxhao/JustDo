@@ -4,10 +4,11 @@ import { tmpdir } from 'os';
 import path from 'path';
 import { afterEach, describe, expect, test } from 'vitest';
 
-import { APP_UPDATE_CONFIG, resolveAppUpdateFeedUrl, resolveAppUpdateResourceUrl } from '../../src/config/appUpdate';
+import { APP_UPDATE_CONFIG } from '../../src/config/appUpdate';
+import { resolveAppUpdateResourceUrl } from '../../src/main/core/app/updateResourceUrl';
 
 const { readWindowsUpdateConfig } = require('../../scripts/packaging/windows-update-config.cjs') as {
-  readWindowsUpdateConfig: (env?: Record<string, string>, config?: { feedUrl: unknown }) => { feedUrl: string } | null;
+  readWindowsUpdateConfig: (env?: Record<string, string>, config?: { feedUrl: string }) => { feedUrl: string } | null;
 };
 const { verifyWindowsUpdateArtifacts } = require('../../scripts/packaging/verify-windows-update-artifacts.cjs') as {
   verifyWindowsUpdateArtifacts: (root: string, env?: Record<string, string>, config?: { feedUrl: string } | null) => Promise<unknown>;
@@ -30,14 +31,24 @@ describe('Windows update build configuration', () => {
     expect(resolveAppUpdateResourceUrl('release-history.json')).toBeUndefined();
   });
 
-  test.each(['', '   ', 'not-a-url', 'file:///updates', 'https://xxx.com/feed', 'https://sub.xxx.com./feed', 'https://example.com/feed', 'https://updates.example/feed', 'https://updates.invalid/feed', 'https://u:p@updates.corp.internal/feed', 'https://updates.corp.internal/feed?token=secret'])('rejects an unconfigured or unsafe feed: %s', feedUrl => {
-    expect(resolveAppUpdateFeedUrl(feedUrl)).toBeUndefined();
+  test.each(['', '   '])('disables an empty feed: %s', feedUrl => {
     expect(readWindowsUpdateConfig({}, { feedUrl })).toBeNull();
+    expect(resolveAppUpdateResourceUrl('release-history.json', feedUrl)).toBeUndefined();
   });
 
-  test.each(['https://updates.corp.internal/desktop', 'http://10.12.34.56:8080/updates', 'https://intranet/desktop'])('retains explicit deployment feeds: %s', feedUrl => {
+  test.each([
+    ['https://updates.corp.internal/desktop', 'https://updates.corp.internal/desktop/release-history.json'],
+    ['http://10.12.34.56:8080/updates', 'http://10.12.34.56:8080/updates/release-history.json'],
+    ['https://intranet/desktop', 'https://intranet/desktop/release-history.json'],
+    ['https://xxx.com/feed', 'https://xxx.com/feed/release-history.json'],
+    ['https://sub.xxx.com./feed', 'https://sub.xxx.com./feed/release-history.json'],
+    ['https://example.com/feed/', 'https://example.com/feed/release-history.json'],
+    ['https://updates.example/feed', 'https://updates.example/feed/release-history.json'],
+    ['https://updates.invalid/feed', 'https://updates.invalid/feed/release-history.json'],
+    ['https://u:p@updates.corp.internal/feed?channel=stable#release', 'https://u:p@updates.corp.internal/feed/release-history.json'],
+  ])('retains explicit deployment feeds without hostname filtering: %s', (feedUrl, resourceUrl) => {
     expect(readWindowsUpdateConfig({}, { feedUrl })).toEqual({ feedUrl });
-    expect(resolveAppUpdateResourceUrl('release-history.json', feedUrl)).toBe(`${feedUrl}/release-history.json`);
+    expect(resolveAppUpdateResourceUrl('release-history.json', feedUrl)).toBe(resourceUrl);
   });
 
   test('unconfigured artifact verification succeeds without update files', async () => {
@@ -46,7 +57,7 @@ describe('Windows update build configuration', () => {
 
   test('verifies a configured release and detects an inconsistent packaged marker', async () => {
     const root = temporary();
-    const feedUrl = 'https://updates.corp.internal/desktop';
+    const feedUrl = 'https://example.com/desktop/';
     const body = Buffer.from('fixture installer');
     const sha512 = createHash('sha512').update(body).digest('base64');
     const filename = 'Desktop Setup 2026.10.20.exe';

@@ -28,10 +28,12 @@ disabled; clients download the complete installer and verify its SHA-512 value
 against `latest.yml`.
 
 The Windows Generic feed is configured in `src/config/appUpdate.ts`. Its default
-is empty for offline distribution. Empty, placeholder or invalid addresses disable
+is empty for offline distribution. An empty address disables
 update publishing and installed-app checks; packaging removes stale update YAML,
 configuration markers and release manifests. An installed build requires both
-its NSIS installation marker and matching valid feed/configuration metadata.
+its NSIS installation marker and matching non-empty feed/configuration metadata.
+Configured URLs are used without hostname filtering; deployments are responsible
+for providing a working address.
 Inherited environment variables do not enable a feed.
 
 Configured packaging does not need to reach the feed. Run
