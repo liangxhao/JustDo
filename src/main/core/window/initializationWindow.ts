@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'path';
 
+import { INITIALIZATION_WINDOW_ARGUMENT } from '../../../shared/app/initialization';
 import { DEFAULT_MAIN_WINDOW_SIZE } from '../../../shared/app/windowGeometry';
 import { isAllowedMainWindowNavigation } from './browserPanelSecurity';
 import { registerContentSecurityPolicy } from './contentSecurityPolicy';
@@ -30,6 +31,7 @@ export function createInitializationWindow(options: {
     backgroundColor: '#F8F9FB',
     webPreferences: {
       partition: 'justdo-initialization',
+      additionalArguments: [INITIALIZATION_WINDOW_ARGUMENT],
       preload: options.preloadPath,
       nodeIntegration: false,
       nodeIntegrationInSubFrames: false,

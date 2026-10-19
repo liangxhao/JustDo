@@ -50,6 +50,10 @@ import {
   OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE,
   OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE,
 } from './openclawLauncher';
+import {
+  loadPreparedWindowsRuntimePreload,
+  resolvePreparedWindowsGatewayLauncher,
+} from './preparedGatewayRuntime';
 import { SessionStoreMigrationCoordinator } from './sessionStoreMigration';
 import {
   mergeRegisteredSystemPromptReplacementRules,
@@ -682,7 +686,7 @@ export class OpenClawEngineManager extends EventEmitter {
     }
 
     this.ensureBareEntryFiles(runtime.root);
-    const runtimeCleanupPreload = prepareWindowsRuntimeCleanup(runtime.root);
+    const runtimeCleanupPreload = this.prepareRuntimeCleanup(runtime.root);
     const openclawEntry = resolveOpenClawCliEntry(runtime.root);
     if (!openclawEntry) {
       throw new Error(`OpenClaw CLI entry file is missing in runtime: ${runtime.root}.`);
@@ -1389,6 +1393,10 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   private ensureBareEntryFiles(runtimeRoot: string): void {
+    if (app.isPackaged && process.platform === 'win32') {
+      resolvePreparedWindowsGatewayLauncher(runtimeRoot);
+      return;
+    }
     const t0 = Date.now();
 
     // Fast path: if gateway-bundle.mjs exists, skip full dist extraction.
@@ -1512,6 +1520,9 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   private resolveOpenClawGatewayEntry(runtimeRoot: string): string | null {
+    if (app.isPackaged && process.platform === 'win32') {
+      return resolvePreparedWindowsGatewayLauncher(runtimeRoot);
+    }
     // Windows needs the CJS launcher because utilityProcess.fork() cannot load
     // the ESM bundle directly. macOS/Linux execute the dedicated ESM Gateway
     // bundle, while public CLI commands continue to use openclaw.mjs.
@@ -1673,8 +1684,15 @@ export class OpenClawEngineManager extends EventEmitter {
     }
   }
 
+  private prepareRuntimeCleanup(runtimeRoot: string): string | null {
+    if (app.isPackaged && process.platform === 'win32') {
+      return loadPreparedWindowsRuntimePreload(runtimeRoot);
+    }
+    return prepareWindowsRuntimeCleanup(runtimeRoot);
+  }
+
   private resolveGatewayClientEntry(runtimeRoot: string): string | null {
-    prepareWindowsRuntimeCleanup(runtimeRoot);
+    this.prepareRuntimeCleanup(runtimeRoot);
     const distRoots = [
       path.join(runtimeRoot, 'dist'),
       path.join(runtimeRoot, 'gateway.asar', 'dist'),

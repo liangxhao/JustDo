@@ -31,13 +31,15 @@ module.exports = {
   appId,
   productName,
   executableName: productName,
-  publish: [
-    {
-      provider: 'generic',
-      url: windowsUpdateConfig.feedUrl,
-      publishAutoUpdate: false,
-    },
-  ],
+  publish: windowsUpdateConfig
+    ? [
+        {
+          provider: 'generic',
+          url: windowsUpdateConfig.feedUrl,
+          publishAutoUpdate: false,
+        },
+      ]
+    : null,
   protocols: [
     {
       name: productName,

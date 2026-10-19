@@ -9,6 +9,7 @@
   "afterAllArtifactBuild": "./scripts/packaging/electron-builder-hooks.cjs",
   "files": [
     "package.json",
+    "LICENSE",
     "resources/renderer-preferences.html",
     {
       "from": "dist",
@@ -21,6 +22,7 @@
       "filter": ["**/*", "!**/*.map", "!src/**"]
     },
     "!**/*.map",
+    "!**/*.pdb",
     "!**/*.d.ts",
     "!**/*.d.cts",
     "!**/*.d.mts",
@@ -30,9 +32,6 @@
     "!**/CHANGELOG.md",
     "!**/CHANGELOG",
     "!**/HISTORY.md",
-    "!**/LICENSE",
-    "!**/LICENSE.md",
-    "!**/LICENSE.txt",
     "!**/.eslintrc*",
     "!**/.prettierrc*",
     "!**/tsconfig.json",
@@ -45,6 +44,8 @@
     "!node_modules/better-sqlite3/deps/**",
     "!node_modules/better-sqlite3/src/**",
     "!node_modules/better-sqlite3/binding.gyp",
+    "!node_modules/node-pty/prebuilds/win32-!(${arch})/**/*",
+    "!node_modules/node-pty/third_party/**/*",
     "!node_modules/npm/docs/**",
     "!node_modules/npm/man/**"
   ],
@@ -99,7 +100,10 @@
           "!**/*.spec.*",
           "!**/tests/**",
           "!**/test/**",
-          "!**/__tests__/**"
+          "!**/__tests__/**",
+          "docs/**/*",
+          "skills/**/*",
+          "**/*.md"
         ]
       },
       {
@@ -164,7 +168,10 @@
           "!**/*.spec.*",
           "!**/tests/**",
           "!**/test/**",
-          "!**/__tests__/**"
+          "!**/__tests__/**",
+          "docs/**/*",
+          "skills/**/*",
+          "**/*.md"
         ]
       },
       {

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createZstdCompress } from 'zlib';
 
 import { LocalSpeechModelKind } from '../../shared/speech/localSpeechModels';
+import { getLanguage, setLanguage } from '../core/i18n';
 import { type LocalSpeechModelArtifact, LocalSpeechModelService } from './localSpeechModelService';
 
 const temporaryRoots: string[] = [];
@@ -44,6 +45,80 @@ afterEach(() => {
 });
 
 describe('LocalSpeechModelService', () => {
+  it.each([undefined, '', 'https://xxx.com/electron-app-update', 'https://example.com/'])(
+    'rejects an unconfigured or placeholder model service without a network request (%s)',
+    async baseUrl => {
+      const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'speech-model-server-'));
+      temporaryRoots.push(userDataPath);
+      const fetchModel = vi.fn();
+      const service = new LocalSpeechModelService({
+        userDataPath,
+        fetch: fetchModel,
+        notify: vi.fn(),
+        syncOpenClawConfig: vi.fn(),
+        baseUrl,
+        resolveModelDir: () => path.join(userDataPath, 'local-speech-models', 'test-asr'),
+        artifacts: [
+          {
+            id: 'test-asr',
+            kind: LocalSpeechModelKind.Asr,
+            file: 'test.tar.zst',
+            sha256: 'a'.repeat(64),
+            compressedBytes: 1,
+            requiredFiles: ['model.onnx'],
+          },
+        ],
+      });
+      expect(service.list().models[0].phase).toBe('not-installed');
+      expect(fetchModel).not.toHaveBeenCalled();
+      const previousLanguage = getLanguage();
+      try {
+        setLanguage('en');
+        const result = await service.install(LocalSpeechModelKind.Asr, 'test-asr');
+        expect(result).toMatchObject({
+          success: false,
+          status: {
+            phase: 'error',
+            error: expect.stringContaining('internal speech model server is not configured'),
+          },
+        });
+        expect(fetchModel).not.toHaveBeenCalled();
+      } finally {
+        setLanguage(previousLanguage);
+      }
+    },
+  );
+
+  it('reuses a complete installed model without a configured server', async () => {
+    const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'speech-model-server-'));
+    temporaryRoots.push(userDataPath);
+    const modelDir = path.join(userDataPath, 'local-speech-models', 'test-asr');
+    fs.mkdirSync(modelDir, { recursive: true });
+    fs.writeFileSync(path.join(modelDir, 'model.onnx'), 'already installed');
+    const fetchModel = vi.fn();
+    const service = new LocalSpeechModelService({
+      userDataPath,
+      fetch: fetchModel,
+      notify: vi.fn(),
+      syncOpenClawConfig: vi.fn(),
+      artifacts: [
+        {
+          id: 'test-asr',
+          kind: LocalSpeechModelKind.Asr,
+          file: 'test.tar.zst',
+          sha256: 'a'.repeat(64),
+          compressedBytes: 1,
+          requiredFiles: ['model.onnx'],
+        },
+      ],
+      resolveModelDir: () => modelDir,
+    });
+    expect(await service.install(LocalSpeechModelKind.Asr, 'test-asr')).toMatchObject({
+      success: true,
+      status: { phase: 'ready' },
+    });
+    expect(fetchModel).not.toHaveBeenCalled();
+  });
   it.each([undefined, ...(process.platform === 'win32' ? ['EPERM', 'EBUSY'] : [])])(
     'downloads, verifies, and atomically installs a model archive (rename error: %s)',
     async renameError => {

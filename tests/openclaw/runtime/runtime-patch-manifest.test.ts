@@ -872,6 +872,17 @@ module.exports = { applyPatch, verifyPatch };
     );
   });
 
+  test('rejects a trusted Node CA preload producer changed after the runtime was built', () => {
+    const { repoRoot, runtimeRoot } = createFixture();
+    const certificateSource = path.join(repoRoot, 'src/main/core/network/trustedCertificates.ts');
+    expect(listBuildRecipeFiles(repoRoot)).toContain(certificateSource);
+    writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
+    fs.appendFileSync(certificateSource, '// changed\n');
+    expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(
+      /source proof is missing, incomplete, or stale/,
+    );
+  });
+
   test('rejects an MXC plugin patch recipe changed after the runtime was built', () => {
     const { repoRoot, runtimeRoot } = createFixture();
     writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
@@ -1038,8 +1049,6 @@ module.exports = { applyPatch, verifyPatch };
       'dist/extensions/acpx/node_modules/acpx/dist/runtime.js',
       'dist/extensions/acpx/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js',
       'dist/extensions/acpx/node_modules/@agentclientprotocol/codex-acp/dist/index.js',
-      'dist/extensions/acpx/node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/claude.exe',
-      'dist/extensions/acpx/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe',
     ];
     for (const relativePath of acpxFixtureFiles) {
       const filePath = path.join(runtimeRoot, relativePath);

@@ -28,6 +28,10 @@ Runtime Services 提供嵌套 MCP App 历史的受限恢复 RPC：只读原生�
 表单值只在当前 iframe 内存中，切换保留输入、重载恢复默认值；有界草稿标明省略，
 完整选择可在本地复制。模型质量与发布检查见 [验收清单](../plans/interactive-answers-acceptance.md)。
 
+ACPX 随包保留 ACP 协议适配器及其运行库，组装时移除 Codex/Claude 的平台代理二进制，
+最终打包再次检查不得混入。代理由用户独立安装维护；受管包装器启动时读取本机 PATH
+或显式 CLI 路径，缺少时连接测试报错，不下载、不回退到 SDK 内置代理。
+
 ## 1. 类型与所有权
 
 Windows Electron 42 宿主的同步递归 `fs.rmSync` 会跟随目录 junction，导致原生插件

@@ -13,7 +13,8 @@ adapter processes, isolated adapter state, and permission mediation.
 
 - Startup probing is disabled by default so an unavailable optional adapter
   does not mark the entire ACP backend unhealthy.
-- The product catalog selects which adapters are shipped. Adapter commands are
+- The product catalog selects which protocol adapters are shipped. Agent executables
+  are supplied by the user and are never bundled. Adapter commands are
   build-time definitions and are never accepted from desktop settings.
 - All local extensions use `scripts/openclaw/sync-openclaw-runtime-resources.cjs`.
   Extensions with production dependencies are installed from their lockfile for
@@ -22,7 +23,29 @@ adapter processes, isolated adapter state, and permission mediation.
   slow registries may set `JUSTDO_EXTENSION_NPM_CI_TIMEOUT_MS` to a
   bounded value from 60000 through 3600000.
 
-The installed application never downloads adapters. A clean source build still
+The installed application never downloads adapters or agents. Assembly removes the
+Codex and Claude platform-binary packages pulled in by adapter dependencies, while
+retaining protocol adapters, SDK JavaScript and required native runtime services.
+The generated wrappers resolve local `codex`/`claude` commands from PATH (or
+`CODEX_PATH`/`CLAUDE_CODE_EXECUTABLE`, including the plugin `claudeExecutable`
+setting) at launch. Missing commands fail connection tests with an installation
+diagnostic; they do not trigger a package runner or a bundled-agent fallback.
+Assembly removes agent platform packages at every nested `node_modules` boundary;
+packaging rejects their reintroduction at any depth. Dependency-directory links
+are rejected rather than followed outside the assembled tree.
+
+On Windows, Claude can use native executables, direct `.js`/`.mjs`/`.cjs` entries,
+or npm/pnpm/Yarn Node forwarding `.cmd` shims. The wrapper reads the shim's actual
+local entry, including nested shims, and retains literal fixed CLI arguments.
+It never sends the path or SDK arguments through a command shell. Fixed arguments
+use a generated main-module bridge in the same CLI process, preserving streams,
+exit status and the SDK's direct Stop target.
+Dynamic or ambiguous shims, business batch scripts and Node interpreter switches
+are rejected with a diagnostic asking for the actual JS or executable path.
+Configure that path through `CLAUDE_CODE_EXECUTABLE` or `claudeExecutable`;
+custom interpreter/adapter behavior belongs in an explicit build-time adapter.
+
+A clean source build still
 needs these locked npm artifacts through an approved registry or a pre-warmed
 npm cache. Product variants add or replace adapters through the build-time
 catalog and this vendored extension without patching OpenClaw core. Removing an
@@ -36,7 +59,7 @@ with read-only permissions. The complete extension template is documented in
 
 - Plugin id: `acpx`
 - Source baseline: OpenClaw `v2026.10.4`
-- Local package version: `2026.10.4-local.1`
+- Local package version: `2026.10.4-local.2`
 - Minimum plugin API: `2026.10.4`
 
 The desktop adapter retains its product-specific source fork. It uses acpx

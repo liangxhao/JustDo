@@ -2,7 +2,7 @@
 
 The source target is OpenClaw `v2026.10.4`, commit
 `383c124cc32ffee3f8e56f549b88da94d269a4af`, under `extensions/acpx/`.
-The local package is `2026.10.4-local.1`, requiring plugin API `>=2026.10.4`.
+The local package is `2026.10.4-local.2`, requiring plugin API `>=2026.10.4`.
 
 The previous local package label, `2026.9.8-local.1`, described SDK integration,
 not a complete upstream source refresh. Its actual source ancestor was
@@ -10,6 +10,14 @@ not a complete upstream source refresh. Its actual source ancestor was
 that ancestor, the local fork, and the 10.4 target; it also inspected the official
 9.8 checkpoint (`fc23bc864e4553c2d215e479eeec47b67a0bf943`) to distinguish
 already-applied API adaptations from missing implementation changes.
+
+## Local agent installation policy
+
+The local.2 assembly excludes Codex and Claude platform executables from the
+transport dependency tree. The pinned protocol adapters and required runtime
+libraries remain bundled. Default wrappers require user-installed CLI paths at
+launch and fail without a download when those paths are unavailable. Assembly
+and final archive verification both enforce this boundary.
 
 ## Upstream changes adopted
 

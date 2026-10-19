@@ -1,6 +1,7 @@
 # Third-party notices for the bundled ACP runtime
 
-This extension redistributes third-party packages and platform binaries. The
+This extension redistributes protocol adapters and runtime libraries, but not
+third-party Codex or Claude agent executables. The
 corresponding `LICENSE`, `NOTICE`, and license-bearing `README` files are kept
 inside `node_modules` when the OpenClaw runtime is pruned and packaged.
 
@@ -14,10 +15,10 @@ Direct runtime dependencies include:
 - `smol-toml` — BSD-3-Clause
 - `zod` — MIT
 
-The Claude Agent SDK and its platform packages use the license identified in
-their package metadata and bundled license-bearing files. The Codex platform
-packages are distributed under Apache-2.0. Transitive dependency terms remain
-available beside each installed package.
+The Claude Agent SDK JavaScript uses the license identified in its package
+metadata and bundled license-bearing files. Codex and Claude agent platform
+packages are excluded during assembly. Transitive dependency terms remain
+available beside each shipped package.
 
 ACPX 0.19.5 additionally brings the MIT-licensed `@openclaw/fs-safe` runtime
 and its optional platform packages. Their package license files remain beside

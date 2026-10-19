@@ -12,6 +12,7 @@ const {
   rmSync,
   cpSync,
   lstatSync,
+  realpathSync,
   writeFileSync,
 } = require('fs');
 const { spawnSync } = require('child_process');
@@ -38,7 +39,13 @@ const {
 } = require('../openclaw/sync-openclaw-runtime-resources.cjs');
 const { precompileOpenClawExtensions } = require('../openclaw/precompile-openclaw-extensions.cjs');
 const { readBundledSkillConfig, syncBundledSkills } = require('../runtime/sync-bundled-skills.cjs');
-const { compressTarArchive, packMultipleSources } = require('../openclaw/pack-openclaw-tar.cjs');
+const {
+  compressTarArchive,
+  packMultipleSources,
+  verifyRuntimeKnowledgeEntries,
+  verifyLegalMetadataEntries,
+} = require('../openclaw/pack-openclaw-tar.cjs');
+const { isLegalMetadataFile } = require('../openclaw/prune-openclaw-runtime.cjs');
 const { readWindowsUpdateConfig } = require('./windows-update-config.cjs');
 
 function readBuiltinModelDevelopmentAuthConfig(projectDir) {
@@ -118,9 +125,7 @@ const {
   PATCH_MANIFEST_FILENAME,
   verifyOpenClawPatchManifest,
 } = require('../openclaw/verify-openclaw-runtime-patches.cjs');
-const {
-  PATCH_DEPENDENCY_ARTIFACT_PATHS,
-} = require('../openclaw/openclaw-patch-dependencies.cjs');
+const { PATCH_DEPENDENCY_ARTIFACT_PATHS } = require('../openclaw/openclaw-patch-dependencies.cjs');
 const { createMulticaAgentLauncher } = require('../multica/create-multica-agent-launcher.cjs');
 const {
   verifyMxcNativeBinaries,
@@ -351,27 +356,12 @@ function verifyAcpxArtifactEntryPaths(entryPaths, prefix, installTarget, buildHi
       : []),
     ...(includesCodexAdapter ? ['node_modules/@agentclientprotocol/codex-acp/dist/index.js'] : []),
   ].map(entry => `${acpxPrefix}${entry}`);
-  const claudeNativePrefix =
-    `${acpxPrefix}node_modules/@anthropic-ai/` +
-    `claude-agent-sdk-${installTarget.os}-${installTarget.cpu}/`;
-  const codexNativePrefix = `${acpxPrefix}node_modules/@openai/codex-${installTarget.os}-${installTarget.cpu}/`;
   const missing = requiredEntries.filter(entry => !entryPaths.has(entry));
-  if (
-    includesClaudeAdapter &&
-    !Array.from(entryPaths).some(
-      entry => entry.startsWith(claudeNativePrefix) && /\/claude(?:\.exe)?$/iu.test(entry),
-    )
-  ) {
-    missing.push(`${claudeNativePrefix}**/claude executable`);
-  }
-  if (
-    includesCodexAdapter &&
-    !Array.from(entryPaths).some(
-      entry => entry.startsWith(codexNativePrefix) && /\/codex(?:\.exe)?$/iu.test(entry),
-    )
-  ) {
-    missing.push(`${codexNativePrefix}**/codex executable`);
-  }
+  require('../../openclaw-extensions/acpx/scripts/runtime-dependencies.cjs').verifyExternalAgentPackages(
+    Array.from(entryPaths)
+      .filter(entry => entry.startsWith(acpxPrefix + 'node_modules/'))
+      .map(entry => entry.slice((acpxPrefix + 'node_modules/').length)),
+  );
   if (missing.length > 0) {
     throw new Error(
       `[electron-builder-hooks] Packaged ACPX validation FAILED for ${buildHint}. Missing: ${missing.join(', ')}`,
@@ -442,7 +432,9 @@ function verifyRuntimeCompanionFilesFromBundle(runtimeRoot, gatewayBundlePath, b
 }
 
 function verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint) {
-  require('../../openclaw-extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(path.join(runtimeRoot, 'dist/extensions/drawio/assets'));
+  require('../../openclaw-extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(
+    path.join(runtimeRoot, 'dist/extensions/drawio/assets'),
+  );
   verifyRequiredPathSet(
     runtimeRoot,
     [
@@ -1002,6 +994,23 @@ async function beforePack(context) {
     }
 
     const tarEntryPaths = new Set(tarEntries.map(e => e.path.replace(/\\/g, '/')));
+    const knowledgeCount = verifyRuntimeKnowledgeEntries(
+      tarEntryPaths,
+      'cfmind/',
+      path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
+    );
+    console.log(
+      `[electron-builder-hooks] Verified all ${knowledgeCount} runtime knowledge files in the archive.`,
+    );
+    const legalCount = sources.reduce(
+      (count, source) =>
+        count +
+        verifyLegalMetadataEntries(tarEntryPaths, `${source.prefix}/`, source.dir, source.exclude),
+      0,
+    );
+    console.log(
+      `[electron-builder-hooks] Verified all ${legalCount} legal metadata files in the archive.`,
+    );
     const runtimeCompanionTarEntries = getRuntimeCompanionPathsReferencedByBundle(
       path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current', 'gateway-bundle.mjs'),
     ).map(entry => `cfmind/${entry}`);
@@ -1115,9 +1124,18 @@ async function afterPack(context) {
   verifyPackagedNodeRuntime(context);
   await verifyPackagedOpenClawRuntime(context);
   const diagramResourcesRoot = isMacTarget(context)
-    ? path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Resources')
+    ? path.join(
+        context.appOutDir,
+        `${context.packager.appInfo.productFilename}.app`,
+        'Contents',
+        'Resources',
+      )
     : path.join(context.appOutDir, 'resources');
-  await require('../../openclaw-extensions/drawio/scripts/verify-packaged.cjs').verifyPackagedDrawioAssets(diagramResourcesRoot, isWindowsTarget(context));
+  await verifyPackagedApplicationLegalMetadata(path.join(diagramResourcesRoot, 'app.asar'));
+  await require('../../openclaw-extensions/drawio/scripts/verify-packaged.cjs').verifyPackagedDrawioAssets(
+    diagramResourcesRoot,
+    isWindowsTarget(context),
+  );
   verifyPackagedBrowserExtension(context);
 
   if (isWindowsTarget(context)) {
@@ -1150,6 +1168,127 @@ async function afterPack(context) {
       console.warn(`[electron-builder-hooks] App not found at ${appPath}, skipping icon fix`);
     }
   }
+}
+
+async function verifyPackagedApplicationLegalMetadata(
+  appAsarPath,
+  repoRoot = path.join(__dirname, '../..'),
+) {
+  const entries = new Set(
+    asar.listPackage(appAsarPath).map(entry => entry.replaceAll('\\', '/').replace(/^\//, '')),
+  );
+  const packageRoots = [
+    '',
+    ...[...entries]
+      .filter(entry => /(?:^|\/)node_modules\/(?:@[^/]+\/)?[^/]+\/package\.json$/.test(entry))
+      .map(entry => entry.slice(0, -'package.json'.length)),
+  ];
+  const lockPath = path.join(repoRoot, 'package-lock.json');
+  const sourcePackages = existsSync(lockPath)
+    ? Object.keys(JSON.parse(readFileSync(lockPath, 'utf8')).packages || {})
+    : [];
+  let installedSources;
+  const findInstalledSources = name => {
+    if (!installedSources) {
+      installedSources = new Map();
+      const visited = new Set();
+      const visitPackage = directory => {
+        if (!existsSync(directory) || !statSync(directory).isDirectory()) return;
+        const realDirectory = realpathSync(directory);
+        if (visited.has(realDirectory)) return;
+        visited.add(realDirectory);
+        const manifestPath = path.join(directory, 'package.json');
+        if (existsSync(manifestPath)) {
+          const packageName = JSON.parse(readFileSync(manifestPath, 'utf8')).name;
+          if (packageName) {
+            const sources = installedSources.get(packageName) || [];
+            sources.push(directory);
+            installedSources.set(packageName, sources);
+          }
+        }
+        visitModules(path.join(directory, 'node_modules'));
+      };
+      const visitModules = directory => {
+        if (!existsSync(directory)) return;
+        for (const entry of readdirSync(directory, { withFileTypes: true })) {
+          if (entry.name === '.bin') continue;
+          const target = path.join(directory, entry.name);
+          if (entry.name.startsWith('@') && entry.isDirectory()) {
+            for (const scoped of readdirSync(target)) visitPackage(path.join(target, scoped));
+          } else {
+            visitPackage(target);
+          }
+        }
+      };
+      visitModules(path.join(repoRoot, 'node_modules'));
+    }
+    return installedSources.get(name) || [];
+  };
+  const transformPackage = require('app-builder-lib/out/fileTransformer').createTransformer(
+    repoRoot,
+    require('../../electron-builder.json'),
+    undefined,
+  );
+  const resolveSourceRoot = async prefix => {
+    if (!prefix) return repoRoot;
+    const manifest = asar.extractFile(
+      appAsarPath,
+      path.join(...`${prefix}package.json`.split('/')),
+    );
+    const name = JSON.parse(manifest).name;
+    // electron-builder hoists npm's nested production dependencies. Bind each
+    // staged package to its installed metadata using the builder's actual
+    // metadata transform, rather than assuming its original filesystem path.
+    const candidates = [prefix, ...sourcePackages.filter(
+      relative => relative.split('node_modules/').at(-1) === name,
+    )].map(relative => path.join(repoRoot, relative));
+    // Linked packages can resolve dependencies from an installed tree that is
+    // absent from the root lockfile. Inspect those physical package boundaries
+    // too, with real-path cycle protection, and keep the exact metadata check.
+    candidates.push(...findInstalledSources(name));
+    for (const directory of new Set(candidates)) {
+      const file = path.join(directory, 'package.json');
+      if (!existsSync(file)) continue;
+      const transformed = await transformPackage(file);
+      const expected = transformed == null ? readFileSync(file) : Buffer.from(transformed);
+      if (expected.equals(manifest)) return directory;
+    }
+    throw new Error(
+      `[electron-builder-hooks] Cannot identify packaged dependency source: ${prefix}`,
+    );
+  };
+  let count = 0;
+  const verifyFile = (relative, source) => {
+    if (
+      !entries.has(relative) ||
+      !asar.extractFile(appAsarPath, path.join(...relative.split('/'))).equals(readFileSync(source))
+    ) {
+      throw new Error(
+        `[electron-builder-hooks] Packaged application legal metadata is missing or changed: ${relative}`,
+      );
+    }
+    count++;
+  };
+  const visitLegalDirectory = (relative, source) => {
+    for (const entry of readdirSync(source, { withFileTypes: true })) {
+      const target = `${relative}/${entry.name}`;
+      const sourceFile = path.join(source, entry.name);
+      if (entry.isDirectory()) visitLegalDirectory(target, sourceFile);
+      else if (entry.isFile()) verifyFile(target, sourceFile);
+    }
+  };
+  for (const prefix of packageRoots) {
+    const sourceRoot = await resolveSourceRoot(prefix);
+    for (const entry of readdirSync(sourceRoot, { withFileTypes: true })) {
+      if (!isLegalMetadataFile(entry.name)) continue;
+      const relative = prefix + entry.name;
+      const sourceFile = path.join(sourceRoot, entry.name);
+      if (entry.isDirectory()) visitLegalDirectory(relative, sourceFile);
+      else if (entry.isFile()) verifyFile(relative, sourceFile);
+    }
+  }
+  console.log(`[electron-builder-hooks] Verified ${count} application legal metadata files.`);
+  return count;
 }
 
 function verifyPackagedBrowserExtension(context) {
@@ -1573,6 +1712,11 @@ async function afterAllArtifactBuild(context) {
   // NSIS builds still fail closed in findSingleWindowsInstaller when the EXE is
   // missing or ambiguous.
   if (!hasWindowsInstallerTarget(context?.platformToTargets)) return [];
+  if (!readWindowsUpdateConfig()) {
+    rmSync(path.join(context.outDir, 'latest.yml'), { force: true });
+    rmSync(path.join(context.outDir, 'release-history.json'), { force: true });
+    return [];
+  }
 
   const repoRoot = path.join(__dirname, '../..');
   const packageMetadata = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
@@ -1713,6 +1857,7 @@ async function verifyPackagedOpenClawRuntime(context) {
 }
 
 module.exports = {
+  verifyPackagedApplicationLegalMetadata,
   beforePack,
   readBuiltinModelDevelopmentAuthConfig,
   verifyPackagedBuiltinModelAuthConfig,

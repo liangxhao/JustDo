@@ -13,11 +13,12 @@ afterEach(() => roots.splice(0).forEach(root => fs.rmSync(root, { recursive: tru
 
 const sourcePath = path.resolve('openclaw-extensions/acpx/src/codex-auth-bridge.ts');
 const source = ts.createSourceFile(sourcePath, fs.readFileSync(sourcePath, 'utf8'), ts.ScriptTarget.Latest, true);
-const builder = source.statements.find(statement =>
-  ts.isFunctionDeclaration(statement) && statement.name?.text === 'buildAdapterWrapperScript',
+const builders = source.statements.filter(statement =>
+  ts.isFunctionDeclaration(statement) &&
+  ['buildAdapterWrapperScript', 'buildLocalAgentShimResolverScript'].includes(statement.name?.text ?? ''),
 );
 const buildWrapper = vm.runInNewContext(
-  transformSync(`${builder!.getText(source)}; buildAdapterWrapperScript`, { loader: 'ts' }).code,
+  transformSync(`${builders.map(builder => builder.getText(source)).join('\n')}; buildAdapterWrapperScript`, { loader: 'ts' }).code,
   {
     quoteCommandPart: JSON.stringify,
     OPENCLAW_ACPX_LEASE_ID_ARG: '--openclaw-acpx-lease-id',
@@ -25,7 +26,7 @@ const buildWrapper = vm.runInNewContext(
     RUN_CONFIGURED_COMMAND_SENTINEL: '--openclaw-run-configured',
     renderDiagnosticRedactionRuleSpecs: () => '[]',
   },
-) as (params: { displayName: string; installedBinPath: string; envSetup: string }) => string;
+) as (params: { displayName: string; installedBinPath: string; envSetup: string; localAgent: { command: string; envKey: string } }) => string;
 
 test.each(['missing', 'bundled', 'configured'])('launches the %s adapter without a runtime download', mode => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'acpx-wrapper-'));
@@ -35,6 +36,7 @@ test.each(['missing', 'bundled', 'configured'])('launches the %s adapter without
   const wrapper = path.join(root, 'wrapper.mjs');
   fs.writeFileSync(wrapper, buildWrapper({
     displayName: 'Test',
+    localAgent: { command: process.execPath, envKey: 'ADAPTER_TEST_CLI' },
     installedBinPath: mode === 'bundled' ? adapter : path.join(root, 'removed-capture.mjs'),
     envSetup: 'const env = { ...process.env };',
   }));

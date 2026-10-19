@@ -135,6 +135,9 @@ function pruneMxcSandboxPluginForTarget(pluginDirectory, runtimeTarget) {
       fs.rmSync(path.join(binDirectory, entry.name), { recursive: true, force: true });
     }
   }
+  // The SDK's Linux branch is never selected by a Windows host. Keep the
+  // Windows executor, WSL support DLLs and their pinned verification intact.
+  fs.rmSync(path.join(binDirectory, arch, 'lxc-exec'), { force: true });
 
   const prebuildsDirectory = path.join(sdkDirectory, 'node_modules', 'node-pty', 'prebuilds');
   const selectedPrebuild = `win32-${arch}`;

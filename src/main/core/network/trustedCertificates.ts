@@ -51,6 +51,29 @@ const appendNodeOption = (value: string | undefined, option: string): string => 
   return tokens.includes(option) ? tokens.join(' ') : [...tokens, option].join(' ');
 };
 
+/** Preserves system trust and reads explicit extra PEM through Node's UTF-8 file API. */
+export const buildTrustedCertificatePreload = (): string => String.raw`
+(() => {
+  const filename = process.env.NODE_EXTRA_CA_CERTS;
+  const fs = require('node:fs');
+  const tls = require('node:tls');
+  try {
+    if (typeof tls.getCACertificates !== 'function' || typeof tls.setDefaultCACertificates !== 'function') {
+      throw new Error('The Node runtime does not support managed CA certificates.');
+    }
+    const additional = filename
+      ? fs.readFileSync(filename, 'utf8').match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g)
+      : [];
+    if (!additional) throw new Error('The trusted CA bundle contains no PEM certificates.');
+    const certificates = [...tls.getCACertificates('default'), ...tls.getCACertificates('system'), ...additional];
+    const unique = [...new Set(certificates.map(certificate => certificate.trim()).filter(Boolean))];
+    tls.setDefaultCACertificates(unique);
+  } catch (cause) {
+    throw new Error('Unable to initialize trusted Node CA certificates' + (filename ? ': ' + filename : ''), { cause });
+  }
+})();
+`;
+
 const cleanupLegacyTrustedCaBundle = (userDataPath: string, currentBundlePath: string): void => {
   const legacyBundlePath = path.join(
     userDataPath,

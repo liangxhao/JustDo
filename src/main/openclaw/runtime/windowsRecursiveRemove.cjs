@@ -60,9 +60,28 @@ function installWindowsRecursiveRemove(preloadPath) {
     // and install the same constructor in nested workers.
     const threads = require('node:worker_threads');
     const NativeWorker = threads.Worker;
+    // A default Worker inherits startup preloads while Node filters flags that
+    // cannot be passed explicitly (such as --max-old-space-size). Main can also
+    // install this helper by require(), so only skip injection when this exact
+    // preload was already a startup option. The generated NODE_OPTIONS uses
+    // --require="absolute/path"; preserve quoted Chinese/space paths as one token.
+    const startupOptions = [
+      ...process.execArgv,
+      ...(process.env.NODE_OPTIONS?.match(/(?:[^\s"]+|"[^"]*")+/g) ?? [])
+        .map(value => value.replace(/"/g, '')),
+    ];
+    const isPreloadPath = value => typeof value === 'string' &&
+      path.resolve(value).toLowerCase() === path.resolve(preloadPath).toLowerCase();
+    const inheritsPreload = startupOptions.some((option, index) =>
+      ((option === '--require' || option === '-r') && isPreloadPath(startupOptions[index + 1])) ||
+      (option.startsWith('--require=') && isPreloadPath(option.slice('--require='.length))));
     threads.Worker = class Worker extends NativeWorker {
       constructor(filename, options = {}) {
-        const execArgv = options.execArgv ?? process.execArgv;
+        if (options?.execArgv === undefined && inheritsPreload) {
+          super(filename, options);
+          return;
+        }
+        const execArgv = options?.execArgv ?? process.execArgv;
         if (!Array.isArray(execArgv)) {
           super(filename, options);
           return;

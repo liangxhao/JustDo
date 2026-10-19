@@ -2,6 +2,8 @@ import { EventEmitter } from 'node:events';
 
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+import { INITIALIZATION_WINDOW_ARGUMENT } from '../../../shared/app/initialization';
+
 const electronMocks = vi.hoisted(() => ({ app: {}, createWindow: vi.fn() }));
 vi.mock('electron', () => ({
   app: electronMocks.app,
@@ -69,6 +71,7 @@ test('loads the packaged HTTP renderer in memory and waits for its real load com
   expect(window.loadFile).not.toHaveBeenCalled();
   expect(electronMocks.createWindow.mock.calls[0][0].webPreferences).toMatchObject({
     partition: 'justdo-initialization',
+    additionalArguments: [INITIALIZATION_WINDOW_ARGUMENT],
     nodeIntegration: false,
     nodeIntegrationInSubFrames: false,
     contextIsolation: true,

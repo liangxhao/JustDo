@@ -146,13 +146,26 @@ test.skipIf(process.platform !== 'win32')('protects ESM, explicit-argv and neste
       "console.log('worker cleanup passed');",
     ].join('\n'));
     const { launcherPath } = ensureOpenClawGatewayBundleLauncher(root);
-    const output = execFileSync(require('electron'), [launcherPath], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NODE_DISABLE_COMPILE_CACHE: '1' },
-      encoding: 'utf8',
-      windowsHide: true,
-      timeout: 30_000,
-    });
-    expect(output).toContain('worker cleanup passed');
+    const { preloadPath } = ensureWindowsRuntimePreload(root);
+    const reset = () => {
+      for (const entry of fs.readdirSync(root)) {
+        if (entry.startsWith('host-')) fs.rmSync(path.join(root, entry), { recursive: true });
+      }
+    };
+    const base = { ...process.env, ELECTRON_RUN_AS_NODE: '1', NODE_DISABLE_COMPILE_CACHE: '1', NODE_OPTIONS: '' };
+    for (const [args, env] of [
+      [[launcherPath], base], // Main/launcher require() with normal empty execArgv.
+      [['--max-old-space-size=256', launcherPath], { ...base, NODE_OPTIONS: `--require="${preloadPath.replace(/\\/g, '/')}"` }],
+      [['--max-old-space-size=256', '--require', preloadPath, launcherPath], base],
+      [['--max-old-space-size=256', '--require=' + preloadPath, launcherPath], base],
+      [['--max-old-space-size=256', '-r', preloadPath, launcherPath], base],
+    ] as Array<[string[], NodeJS.ProcessEnv]>) {
+      reset();
+      const output = execFileSync(require('electron'), args, {
+        env, encoding: 'utf8', windowsHide: true, timeout: 30_000,
+      });
+      expect(output).toContain('worker cleanup passed');
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

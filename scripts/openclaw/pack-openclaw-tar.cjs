@@ -24,12 +24,17 @@ const path = require('path');
 const { pipeline } = require('stream/promises');
 const tar = require('tar');
 const { constants: zlibConstants, createZstdCompress } = require('zlib');
+const { isLegalMetadataPath } = require('./prune-openclaw-runtime.cjs');
 
-const WINDOWS_RUNTIME_ZSTD_LEVEL = 10;
+const WINDOWS_RUNTIME_ZSTD_LEVEL = 19;
+const WINDOWS_RUNTIME_ZSTD_WINDOW_LOG = 26;
+// A 64 MiB window finds repeated SDK payloads. Level 19 costs build time while
+// measured installer decoding stays comparable; existing decoder limits apply.
 
 // ── File/dir exclusion rules (same as electron-builder.json filters) ─────────
 
 const EXCLUDED_FILE_PATTERNS = [
+  /\.pdb$/i,
   /\.map$/i,
   /\.d\.ts$/i,
   /\.d\.cts$/i,
@@ -71,11 +76,73 @@ const EXCLUDED_DIRS = new Set([
 
 const EXCLUDED_ENVFILE = /^\.env(\..+)?$/i;
 
-function shouldExclude(entryPath) {
+function isAgentKnowledgePath(entryPath) {
+  const segments = entryPath.replace(/\\/g, '/').split('/');
+  return !segments.includes('node_modules') &&
+    (segments.includes('docs') || segments.includes('skills'));
+}
+
+function listRuntimeKnowledgeFiles(runtimeRoot) {
+  const files = [];
+  const visit = directory => {
+    if (!fs.existsSync(directory)) return;
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const target = path.join(directory, entry.name);
+      const relative = path.relative(runtimeRoot, target).replaceAll('\\', '/');
+      if (shouldExclude(relative)) continue;
+      if (entry.isDirectory()) visit(target);
+      else if (entry.isFile()) files.push(relative);
+    }
+  };
+  visit(path.join(runtimeRoot, 'docs'));
+  visit(path.join(runtimeRoot, 'skills'));
+  for (const entry of fs.readdirSync(runtimeRoot, { withFileTypes: true })) {
+    if (entry.isFile() && /\.md$/i.test(entry.name)) files.push(entry.name);
+  }
+  return files.sort();
+}
+
+function verifyRuntimeKnowledgeEntries(entries, prefix, runtimeRoot) {
+  const required = listRuntimeKnowledgeFiles(runtimeRoot);
+  const missing = required.filter(file => !entries.has(prefix + file));
+  if (missing.length) {
+    throw new Error('Packaged runtime knowledge is incomplete: ' + missing.join(', '));
+  }
+  return required.length;
+}
+
+function verifyLegalMetadataEntries(entries, prefix, sourceRoot, excludedPaths = []) {
+  const required = [];
+  const visit = directory => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const target = path.join(directory, entry.name);
+      const relative = path.relative(sourceRoot, target).replaceAll('\\', '/');
+      if (shouldExcludeFromSource(relative, excludedPaths)) continue;
+      if (entry.isDirectory() && shouldExclude(relative, true)) continue;
+      if (entry.isDirectory()) visit(target);
+      else if (entry.isFile() && isLegalMetadataPath(relative)) required.push(relative);
+    }
+  };
+  visit(sourceRoot);
+  const missing = required.filter(file => !entries.has(prefix + file));
+  if (missing.length) throw new Error('Packaged legal metadata is incomplete: ' + missing.join(', '));
+  return required.length;
+}
+
+function shouldExclude(entryPath, isDirectory = false) {
   const basename = path.basename(entryPath);
   const normalized = entryPath.replace(/\\/g, '/');
   // The prepared editor is a closed, hashed resource set, including legal files.
   if (/(?:^|\/)dist\/extensions\/drawio\/assets(?:\/|$)/.test(normalized)) return false;
+  // Knowledge exceptions never admit credentials or local dependency caches.
+  if (EXCLUDED_ENVFILE.test(basename) || /(?:^|\/)(?:\.venv|\.bin)(?:\/|$)/.test(normalized))
+    return true;
+  // Native knowledge is runtime input. Directory names such as docs/examples
+  // and basenames such as README.md must not trigger generic npm pruning.
+  if (isAgentKnowledgePath(normalized) || /\.md$/i.test(basename)) return false;
+  // Traverse development-only directories to retain notices within them.
+  // License files apply to every bundled dependency, regardless of plugin.
+  if (isDirectory || isLegalMetadataPath(normalized)) return false;
   const isExtensionLegalMetadata =
     /(?:^|\/)dist\/extensions\/(?:acpx|mxc)\//.test(normalized) &&
     /^(?:license|licence|notice|third[_-]party[_-]notices?|readme)(?:\..+)?$/i.test(basename);
@@ -107,10 +174,10 @@ function isPythonDistributionLicense(entryPath) {
   );
 }
 
-function shouldExcludeForSource(entryPath, preservePythonLicenses) {
+function shouldExcludeForSource(entryPath, preservePythonLicenses, isDirectory = false) {
   return preservePythonLicenses && isPythonDistributionLicense(entryPath)
     ? false
-    : shouldExclude(entryPath);
+    : shouldExclude(entryPath, isDirectory);
 }
 
 function shouldExcludeFromSource(entryPath, excludedPaths = []) {
@@ -142,13 +209,13 @@ function packSingleSource(sourceDir, outputTar, prefix) {
       const relPath = relPrefix ? `${relPrefix}/${item.name}` : item.name;
 
       if (item.isDirectory()) {
-        if (EXCLUDED_DIRS.has(item.name.toLowerCase())) {
+        if (shouldExclude(relPath, true)) {
           skipped++;
           continue;
         }
         walk(fullPath, relPath);
       } else if (item.isFile()) {
-        if (shouldExclude(item.name)) {
+        if (shouldExclude(relPath)) {
           skipped++;
           continue;
         }
@@ -168,12 +235,11 @@ function packSingleSource(sourceDir, outputTar, prefix) {
       sync: true,
       // Follow symlinks instead of storing them (avoids Windows issues)
       follow: true,
-      filter: filePath => !shouldExclude(filePath),
+      filter: (filePath, stat) => !shouldExclude(filePath, stat.isDirectory()),
     },
     // Pack all top-level entries (tar will recurse)
     fs.readdirSync(sourceDir).filter(name => {
-      if (EXCLUDED_DIRS.has(name.toLowerCase())) return false;
-      return true;
+      return !shouldExclude(name, true);
     }),
   );
 
@@ -209,7 +275,8 @@ function packMultipleSources(sources, outputTar) {
           continue;
         }
         if (item.isDirectory()) {
-          if (!EXCLUDED_DIRS.has(item.name.toLowerCase())) countFiles(fullPath, relativePath);
+          if (!shouldExcludeForSource(relativePath, preservePythonLicenses, true))
+            countFiles(fullPath, relativePath);
         } else if (item.isFile()) {
           if (!shouldExcludeForSource(relativePath, preservePythonLicenses))
             entries.push(item.name);
@@ -226,8 +293,8 @@ function packMultipleSources(sources, outputTar) {
       prefix,
       sync: true,
       follow: true,
-      filter: filePath =>
-        !shouldExcludeForSource(filePath, preservePythonLicenses) &&
+      filter: (filePath, stat) =>
+        !shouldExcludeForSource(filePath, preservePythonLicenses, stat.isDirectory()) &&
         !shouldExcludeFromSource(filePath, exclude),
     };
 
@@ -237,7 +304,7 @@ function packMultipleSources(sources, outputTar) {
         opts,
         fs
           .readdirSync(dir)
-          .filter(n => !EXCLUDED_DIRS.has(n.toLowerCase()) && !shouldExcludeFromSource(n, exclude)),
+          .filter(n => !shouldExclude(n, true) && !shouldExcludeFromSource(n, exclude)),
       );
       first = false;
     } else {
@@ -247,7 +314,7 @@ function packMultipleSources(sources, outputTar) {
         opts,
         fs
           .readdirSync(dir)
-          .filter(n => !EXCLUDED_DIRS.has(n.toLowerCase()) && !shouldExcludeFromSource(n, exclude)),
+          .filter(n => !shouldExclude(n, true) && !shouldExcludeFromSource(n, exclude)),
       );
     }
   }
@@ -267,6 +334,8 @@ async function compressTarArchive(sourceTar, outputArchive) {
     createZstdCompress({
       params: {
         [zlibConstants.ZSTD_c_compressionLevel]: WINDOWS_RUNTIME_ZSTD_LEVEL,
+        [zlibConstants.ZSTD_c_windowLog]: WINDOWS_RUNTIME_ZSTD_WINDOW_LOG,
+        [zlibConstants.ZSTD_c_enableLongDistanceMatching]: 1,
       },
     }),
     fs.createWriteStream(outputArchive),
@@ -353,4 +422,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { compressTarArchive, packSingleSource, packMultipleSources };
+module.exports = { compressTarArchive, packSingleSource, packMultipleSources, listRuntimeKnowledgeFiles, verifyRuntimeKnowledgeEntries, verifyLegalMetadataEntries };

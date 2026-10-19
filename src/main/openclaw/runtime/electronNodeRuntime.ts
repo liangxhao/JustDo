@@ -2,6 +2,7 @@ import { app } from 'electron';
 import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'fs';
 import { dirname, join, win32 } from 'path';
 
+import { buildTrustedCertificatePreload } from '../../core/network/trustedCertificates';
 import { coworkLog } from '../../cowork/coworkLogger';
 
 let cachedElectronNodeRuntimePath: string | null = null;
@@ -22,6 +23,25 @@ const quoteWindowsBatchArgument = (value: string): string => {
 export const buildWindowsChildProcessPreload = (): string =>
   [
     "'use strict';",
+    buildTrustedCertificatePreload(),
+    '// TLS default CA stores are per thread; native MCP can clear NODE_OPTIONS',
+    '// and workers can pass execArgv: []. Retain this trusted preload explicitly.',
+    "if (typeof __filename === 'string' && require('node:path').isAbsolute(__filename)) {",
+    "  const threads = require('node:worker_threads');",
+    "  const installed = Symbol.for('runtime.trustedCaWorkerPreload');",
+    '  if (!threads[installed]) {',
+    '    const NativeWorker = threads.Worker;',
+    '    const preload = `--require=${__filename}`;',
+    '    threads.Worker = class Worker extends NativeWorker {',
+    '      constructor(filename, options = {}) {',
+    '        const execArgv = options?.execArgv;',
+    '        if (!Array.isArray(execArgv)) { super(filename, options); return; }',
+    '        super(filename, { ...options, execArgv: [preload, ...execArgv.filter(arg => arg !== preload)] });',
+    '      }',
+    '    };',
+    '    Object.defineProperty(threads, installed, { value: true });',
+    '  }',
+    '}',
     "const childProcess = require('node:child_process');",
     "const { syncBuiltinESMExports } = require('node:module');",
     "const { promisify } = require('node:util');",
@@ -124,6 +144,9 @@ export const buildElectronNodeShimScripts = (
   const quotedPreload = quoteWindowsBatchArgument(
     win32.join(shimDir, 'hide-child-process-windows.cjs'),
   );
+  const posixPreload = process.platform === 'win32'
+    ? ` --require ${quotePosixLiteral(join(shimDir, 'hide-child-process-windows.cjs'))}`
+    : '';
   const resolveCliPath = (command: 'npm' | 'npx'): string => {
     if (!npmBinDir) throw new Error('npm bin directory is required for package runner shims.');
     return join(npmBinDir, `${command}-cli.js`);
@@ -132,7 +155,7 @@ export const buildElectronNodeShimScripts = (
   return {
     nodeSh: [
       '#!/usr/bin/env bash',
-      `exec env ELECTRON_RUN_AS_NODE=1 ${quotedElectronSh} "$@"`,
+      `exec env ELECTRON_RUN_AS_NODE=1 ${quotedElectronSh}${posixPreload} "$@"`,
       '',
     ].join('\n'),
     nodeCmd: [

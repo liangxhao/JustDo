@@ -114,6 +114,12 @@ flowchart LR
 - 支持应用需要的会话创建、提示词、取消和关闭流程；
 - 目标机器已可靠安装该命令，或该可执行文件会随应用一起打包。
 
+内置 Codex/Claude 条目只分发 ACP 协议适配器，不分发第三方 Agent 可执行文件。
+用户自行安装对应 CLI；包装器启动时读取 PATH 或 `CODEX_PATH` /
+`CLAUDE_CODE_EXECUTABLE`（Claude 也支持插件 `claudeExecutable` 配置）。
+缺少 CLI 时连接测试失败并提示单独安装，不在线下载，也不使用 SDK 自带代理。
+组装和最终安装包检查拒绝 Codex/Claude 平台二进制依赖；更改适配器版本时需保留此检查。
+
 ### 方式 B：使用现成的 ACP adapter
 
 如果上游提供独立的 ACP adapter npm 包，可以把它锁定到内置 ACPX 扩展中，再通过受管

@@ -82,6 +82,15 @@ sequenceDiagram
 env proxy。未配置代理、命中 `NO_PROXY` 或未命中 Header URL 白名单时，分别保持直连、bypass 或
 不注入业务 Header。
 
+Windows 随包 Node 的 OpenSSL 入口可能无法通过中文路径加载 `NODE_EXTRA_CA_CERTS`。
+Gateway、Node/npm 启动脚本及 MCP 显式 `--require` 共用的用户目录 preload 会在业务代码前
+通过 Node 文件接口读取同一 PEM，并将证书合入现有默认和系统 CA。证书校验保持启用；
+缺失或无效的 CA bundle 明确失败，不转为忽略校验。该过程不修改安装资源或系统证书库。
+普通 MCP 保留其既有环境边界：不自动继承 Gateway 私有 CA 或代理 capability；
+共用 preload 保留系统信任，并只加载传输层实际收到的显式额外 CA，不能绕过原生环境策略。
+随包引擎仍可能打印原生路径加载 warning；release 验证以真实本地 TLS 受信成功、
+不受信失败及系统根保留为准。
+
 手动“重建索引”通过 OpenClaw 原生 `force: true`、`reason: "cli"` 意图触发，缓存与重建由原生运行时处理。当前版本不再依赖旧 `009` 补丁；是否需要重建按真实原生回执判断，不从代理收到请求与否推断成功。补丁处置统一见[当前补丁总账](../../../scripts/patches/v2026.10.4/README.md)。
 
 ## 5. 请求处理

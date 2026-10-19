@@ -1,4 +1,7 @@
-import type { AppInitializationState } from '../../shared/app/initialization';
+import type {
+  AppInitializationState,
+  AppInitializationWindowContext,
+} from '../../shared/app/initialization';
 type DiagnosticScanProgress =
   import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticScanProgress;
 type DiagnosticHistoryUpdate =
@@ -1489,7 +1492,7 @@ interface IElectronAPI {
     get: () => Promise<{ enabled: boolean }>;
     set: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
   };
-  initialization: {
+  initialization: AppInitializationWindowContext & {
     getState: () => Promise<AppInitializationState>;
     relaunch: () => Promise<void>;
     onChanged: (callback: (state: AppInitializationState) => void) => () => void;

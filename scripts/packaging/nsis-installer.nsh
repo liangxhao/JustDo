@@ -789,12 +789,22 @@ FunctionEnd
     JustDoAccountBootstrapComplete:
   ${EndIf}
 
-  ; Capture per-user shell paths before initMultiUser can switch all-users
-  ; installs to the machine shell context. All later log relocation uses these
-  ; fixed values, keeping outer and elevated-inner sessions discoverable.
-  StrCpy $JustDoCurrentUserAppData "$APPDATA"
-  StrCpy $JustDoCurrentUserLocalAppData "$LOCALAPPDATA"
-  StrCpy $JustDoCurrentTemp "$TEMP"
+  ; Resolve the initiating user's paths before selecting or writing any log.
+  ; An elevated inner instance can belong to a different credential account;
+  ; its APPDATA is not the outer desktop user's profile. Synchronize before
+  ; opening handles because UAC_SYNCREGISTERS replaces all general registers.
+  ; Outer instances retain the invoking account's paths, including silent runs.
+  ${If} ${UAC_IsInnerInstance}
+    !insertmacro UAC_AsUser_Call Function JustDoReadDesktopUserPaths ${UAC_SYNCREGISTERS}
+    StrCpy $JustDoCurrentUserAppData $0
+    StrCpy $JustDoCurrentUserLocalAppData $1
+    StrCpy $JustDoCurrentTemp $3
+  ${Else}
+    ; Capture before initMultiUser can switch to the machine shell context.
+    StrCpy $JustDoCurrentUserAppData "$APPDATA"
+    StrCpy $JustDoCurrentUserLocalAppData "$LOCALAPPDATA"
+    StrCpy $JustDoCurrentTemp "$TEMP"
+  ${EndIf}
   StrCpy $JustDoInstallerDirectory "$EXEDIR"
   System::Call 'kernel32::GetTickCount()i.r0'
   StrCpy $JustDoInstallStartedTick $0
@@ -882,14 +892,6 @@ FunctionEnd
 !endif
 
 !macro customInit
-  ; Synchronize before opening handles: UAC_SYNCREGISTERS replaces all general
-  ; registers, including $2, with values from the outer process.
-  ${If} ${UAC_IsInnerInstance}
-    !insertmacro UAC_AsUser_Call Function JustDoReadDesktopUserPaths ${UAC_SYNCREGISTERS}
-    StrCpy $JustDoCurrentUserAppData $0
-    StrCpy $JustDoCurrentUserLocalAppData $1
-    StrCpy $JustDoCurrentTemp $3
-  ${EndIf}
   ; Multi-user state is only valid after electron-builder's initMultiUser macro.
   ; Append it to the session started by preInit instead of truncating early logs.
   ClearErrors

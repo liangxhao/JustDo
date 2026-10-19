@@ -25,7 +25,10 @@ npm 包应通过获准 registry/mirror 提供元数据、精确 tarball、全部
 依赖，保持锁文件和 source lock 的 integrity。当前脚本没有「随便把 tgz 放进 vendor
 即可使用」的准入协议；只预填一个顶层 npm 包缓存不能证明全流程离线。
 ACPX 当前包含 acpx 0.19.5、Claude ACP adapter 0.79.0、Codex ACP adapter 1.12.0，
-完整依赖以 `openclaw-extensions/acpx/package-lock.json` 为准。开发 Node 与打包后
+完整依赖以 `openclaw-extensions/acpx/package-lock.json` 为准。
+ACPX 只随包提供协议适配器；组装时移除传递依赖带入的 Codex/Claude 平台二进制。
+用户须自行安装代理，启动时从本机 PATH 或显式本地路径读取；未安装则连接测试失败，
+应用不代为安装或下载，也不回退到内置代理。开发 Node 与打包后
 Electron Node 环境分开，不能用 host 原生 ABI 代替目标 Electron ABI。
 ACPX 封装与 TypeSafe 源码均以 OpenClaw v2026.10.4 为上游基线，并保留各自
 来源记录中的本地定制。acpx 0.19.5 是独立运行库升级；其版本、传递依赖及目标平台
@@ -157,7 +160,7 @@ npm run drawio:verify
 
 开发入口 `npm run electron:dev:openclaw` 已集成 `drawio:prepare -- --ensure --download`，在准备 host runtime 前校验并复用现有资源；缺失或陈旧时优先使用上述本地缓存归档，缓存不存在才下载锁定归档。内网开发机提前复制该归档即可沿用同一个启动命令；已有缓存校验失败时直接报错，不自动下载覆盖。单独执行 `drawio:prepare` 仍默认只使用本地归档，发布构建和产品启动不自动下载。
 
-输出为 `openclaw-extensions/drawio/assets/`，包含完整 Web 编辑器、布局/worker/WASM/公式/形状资源、本地 stdio 服务、标准 App SDK bundle、逐文件哈希和许可证。原始 tar 包及生成目录不提交 Git。npm 依赖、Node 和 esbuild 仍应按本文件第 1 节由完整内网 registry/cache 提供。
+输出为 `openclaw-extensions/drawio/assets/`，包含浏览器编辑器、布局/worker/WASM/公式/形状资源、本地 stdio 服务、标准 App SDK bundle、逐文件哈希和许可证。准备阶段排除 Java 服务端 `WEB-INF/`、`META-INF/` 目录及 source map，再生成完整性清单；打包阶段不追加裁剪。原始 tar 包及生成目录不提交 Git。npm 依赖、Node 和 esbuild 仍应按本文件第 1 节由完整内网 registry/cache 提供。
 
 资源组装复制到目标 runtime 的 `dist/extensions/drawio/assets/`，预编译扩展和最终打包再次核对资源。缺失、陈旧、篡改或多余文件直接报错；不在打包或启动阶段自动下载。若适配器、锁定依赖或准备脚本变化，重新准备资源并按 OpenClaw 构建规则重建运行时，不能只修改产物哈希。
 

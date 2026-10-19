@@ -1684,17 +1684,18 @@ describe('Windows installer presentation', () => {
       nsisScript.indexOf('Function JustDoReadDesktopUserPaths'),
       nsisScript.indexOf('FunctionEnd', nsisScript.indexOf('Function JustDoReadDesktopUserPaths')),
     );
-    const customInit = nsisScript.slice(
-      nsisScript.indexOf('!macro customInit'),
-      nsisScript.indexOf('!macroend', nsisScript.indexOf('!macro customInit')),
+    const preInit = nsisScript.slice(
+      nsisScript.indexOf('!macro preInit'),
+      nsisScript.indexOf('!macroend', nsisScript.indexOf('!macro preInit')),
     );
     expect(reader).toContain('StrCpy $0 "$JustDoCurrentUserAppData"');
     expect(reader).toContain('StrCpy $1 "$JustDoCurrentUserLocalAppData"');
     expect(reader).toContain('StrCpy $3 "$JustDoCurrentTemp"');
     expect(reader).not.toContain('"$APPDATA"');
-    expect(customInit.indexOf('UAC_AsUser_Call Function JustDoReadDesktopUserPaths')).toBeLessThan(
-      customInit.indexOf('$2 "$JustDoInstallLogPath"'),
-    );
+    const sync = preInit.indexOf('UAC_AsUser_Call Function JustDoReadDesktopUserPaths');
+    expect(sync).toBeGreaterThan(-1);
+    expect(sync).toBeLessThan(preInit.indexOf('Call JustDoSelectInstallLogDirectory'));
+    expect(sync).toBeLessThan(preInit.indexOf('$2 "$JustDoInstallLogPath"'));
   });
 
   it('runs UAC inner process preparation only after the final directory is normalized', () => {

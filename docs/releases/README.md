@@ -8,7 +8,7 @@ Release notes are public, user-facing content. Do not include internal engine,
 component, repository, or project code names; describe their user-visible
 behavior in product language instead.
 
-The Windows packaging hook copies the trimmed Markdown body into
+When an explicit update feed is configured, the Windows packaging hook copies the trimmed Markdown body into
 `latest.yml` as `releaseNotes`. HTML comments are ignored, so a file containing
 only an instructional comment produces `releaseNotes: ''`.
 
@@ -27,11 +27,17 @@ server before atomically replacing `latest.yml`. Differential downloads are
 disabled; clients download the complete installer and verify its SHA-512 value
 against `latest.yml`.
 
-The Windows Generic feed is checked into `src/config/appUpdate.ts`. Packaging
-does not need to reach the feed
-and does not require update environment variables. Run
+The Windows Generic feed is configured in `src/config/appUpdate.ts`. Its default
+is empty for offline distribution. Empty, placeholder or invalid addresses disable
+update publishing and installed-app checks; packaging removes stale update YAML,
+configuration markers and release manifests. An installed build requires both
+its NSIS installation marker and matching valid feed/configuration metadata.
+Inherited environment variables do not enable a feed.
+
+Configured packaging does not need to reach the feed. Run
 `npm run verify:windows-update-artifacts` after packaging and before uploading
-any files.
+any files. This also verifies that an unconfigured build contains no stale update
+metadata.
 
 The current internal distribution does not use Authenticode publisher
 verification. If code signing is introduced later, configure the certificate

@@ -49,6 +49,10 @@ const loadSource = (relative, imports) => {
 };
 const nodeRuntime = loadSource('src/main/openclaw/runtime/electronNodeRuntime.ts', {
   electron: { app: {} },
+  '../../core/network/trustedCertificates': loadSource(
+    'src/main/core/network/trustedCertificates.ts',
+    {},
+  ),
   '../../cowork/coworkLogger': { coworkLog: () => {} },
 });
 const { projectMcpPackageRunner } = loadSource('src/main/openclaw/runtime/mcpPackageRunner.ts', {

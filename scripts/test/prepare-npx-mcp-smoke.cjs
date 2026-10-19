@@ -72,6 +72,10 @@ async function main() {
   const config = { name: 'Npx MCP Smoke', transportType: 'stdio', command: 'npx', args };
   const nodeRuntime = loadSource('src/main/openclaw/runtime/electronNodeRuntime.ts', {
     electron: { app: {} },
+    '../../core/network/trustedCertificates': loadSource(
+      'src/main/core/network/trustedCertificates.ts',
+      {},
+    ),
     '../../cowork/coworkLogger': { coworkLog: () => {} },
   });
   const { projectMcpPackageRunner } = loadSource('src/main/openclaw/runtime/mcpPackageRunner.ts', {

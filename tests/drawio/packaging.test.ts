@@ -21,6 +21,7 @@ it('keeps the closed draw.io asset set while generic package pruning remains act
       ...files.map(file => assetPrefix + file),
       'dist/extensions/drawio/skills/drawio-diagrams/SKILL.md',
       'node_modules/example/README.md',
+      'node_modules/fixture/examples/demo.js',
     ]) {
       const destination = path.join(runtime, file);
       fs.mkdirSync(path.dirname(destination), { recursive: true });
@@ -32,7 +33,8 @@ it('keeps the closed draw.io asset set while generic package pruning remains act
     list({ file: archive, sync: true, onReadEntry: entry => entries.push(entry.path) });
     for (const file of files) expect(entries).toContain('cfmind/' + assetPrefix + file);
     expect(entries).toContain('cfmind/dist/extensions/drawio/skills/drawio-diagrams/SKILL.md');
-    expect(entries).not.toContain('cfmind/node_modules/example/README.md');
+    expect(entries).toContain('cfmind/node_modules/example/README.md');
+    expect(entries).not.toContain('cfmind/node_modules/fixture/examples/demo.js');
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

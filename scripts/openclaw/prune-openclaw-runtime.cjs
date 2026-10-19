@@ -30,6 +30,8 @@ function removeDirectory(dirPath) {
 // ─── Strategy 1: File cleanup patterns ───
 
 const PATTERNS_TO_DELETE = [
+  // Debug symbols are kept by build tooling, not needed to load native modules.
+  /\.pdb$/i,
   // Source maps
   /\.map$/i,
   // TypeScript declarations
@@ -159,15 +161,32 @@ function stubPackage(pkgDir, pkgName, stats) {
 // ─── File cleanup ───
 
 function isLegalMetadataFile(filename) {
-  return (
-    /^(?:license|licence|notice|third[_-]party[_-]notices?)(?:\..+)?$/i.test(filename) ||
-    /^readme(?:\.(?:md|txt|rst))?$/i.test(filename)
-  );
+  return /^(?:licen[cs]es?|copying|copyright|notices?|third[_-]party[_-](?:notices?|licenses?)|patents|authors)(?:[._-].+)?$/i.test(filename);
+}
+
+function isLegalMetadataPath(entryPath) {
+  const segments = entryPath.replaceAll('\\', '/').split('/');
+  return segments.some(isLegalMetadataFile);
 }
 
 function shouldDeleteFile(filename, options = {}) {
-  if (options.preserveLegalFiles && isLegalMetadataFile(filename)) return false;
+  // Markdown can be native agent-readable knowledge, including dependency docs.
+  if (/\.md$/i.test(filename) || isLegalMetadataFile(filename)) return false;
+  if (options.preserveLegalFiles && /^readme(?:\.(?:txt|rst))?$/i.test(filename)) return false;
   return PATTERNS_TO_DELETE.some(pattern => pattern.test(filename));
+}
+
+function isCompiledSdkSourceDirectory(parentDir, entryName) {
+  if (entryName !== 'src') return false;
+  const packagePath = path.join(parentDir, 'package.json');
+  if (!fs.existsSync(packagePath)) return false;
+  const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+  const entryPoints = {
+    openai: ['index.js', 'index.mjs'],
+    '@anthropic-ai/sdk': ['index.js', 'index.mjs'],
+    '@mistralai/mistralai': ['esm/index.js'],
+  }[pkg.name];
+  return Boolean(entryPoints?.every(entry => fs.existsSync(path.join(parentDir, entry))));
 }
 
 function cleanDir(dirPath, stats, options = {}) {
@@ -182,9 +201,17 @@ function cleanDir(dirPath, stats, options = {}) {
     const fullPath = path.join(dirPath, entry.name);
 
     if (entry.isDirectory()) {
-      if (DIRS_TO_DELETE.has(entry.name.toLowerCase())) {
-        removeDirectory(fullPath);
-        stats.dirsRemoved++;
+      if (isLegalMetadataFile(entry.name)) continue;
+      // Only reviewed SDKs with their compiled entry points present qualify.
+      // Retain Markdown even inside these source trees for agent knowledge.
+      if (isCompiledSdkSourceDirectory(dirPath, entry.name)) {
+        cleanDir(fullPath, stats, { ...options, compiledSourceOnly: true });
+        continue;
+      }
+      if (DIRS_TO_DELETE.has(entry.name.toLowerCase()) && !options.compiledSourceOnly) {
+        // Traverse filtered trees so their notices and agent-readable Markdown
+        // survive even when adjacent development-only files are discarded.
+        cleanDir(fullPath, stats, { ...options, compiledSourceOnly: true });
         continue;
       }
       cleanDir(fullPath, stats, options);
@@ -197,7 +224,10 @@ function cleanDir(dirPath, stats, options = {}) {
       } catch {
         /* ignore */
       }
-    } else if (entry.isFile() && shouldDeleteFile(entry.name, options)) {
+    } else if (entry.isFile() &&
+      (shouldDeleteFile(entry.name, options) ||
+        (options.compiledSourceOnly && !/\.md$/i.test(entry.name) &&
+          !isLegalMetadataFile(entry.name)))) {
       try {
         const size = fs.statSync(fullPath).size;
         fs.unlinkSync(fullPath);
@@ -501,6 +531,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  isLegalMetadataFile,
+  isLegalMetadataPath,
   pruneExtensionDependencies,
   pruneRuntimeExtensions,
   shouldPreserveExtensionLegalFiles,

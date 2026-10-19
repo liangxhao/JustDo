@@ -155,8 +155,13 @@ it('routes member input through its own controller and reconciles a lost ACK fro
   );
   const input = await screen.findByRole('textbox', { name: i18nService.t('teamContinueMessage') });
   fireEvent.change(input, { target: { value: 'Inspect revisions' } });
-  fireEvent.click(screen.getByRole('button', { name: i18nService.t('teamRequestContinue') }));
+  const sendButton = screen.getByRole('button', {
+    name: i18nService.t('teamRequestContinue'),
+  }) as HTMLButtonElement;
+  await waitFor(() => expect(sendButton.disabled).toBe(false));
+  fireEvent.click(sendButton);
   await screen.findByText(i18nService.t('teamContinue_unknown'));
+  expect(request).toHaveBeenCalledTimes(1);
   const submitted = request.mock.calls[0][3];
   expect(request).toHaveBeenCalledWith(
     room,

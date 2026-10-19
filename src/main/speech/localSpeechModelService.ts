@@ -7,7 +7,11 @@ import * as tar from 'tar';
 import { setTimeout as delay } from 'timers/promises';
 import { createZstdDecompress } from 'zlib';
 
-import { APP_UPDATE_CONFIG } from '../../config/appUpdate';
+import {
+  APP_UPDATE_CONFIG,
+  resolveAppUpdateFeedUrl,
+  resolveAppUpdateResourceUrl,
+} from '../../config/appUpdate';
 import { LOCAL_ASR_DEFAULT_MODEL_ID } from '../../shared/speech/localAsr';
 import {
   type LocalSpeechModelInstallResult,
@@ -17,6 +21,7 @@ import {
   type LocalSpeechModelStatus,
 } from '../../shared/speech/localSpeechModels';
 import { LOCAL_TTS_MODEL_ID } from '../../shared/speech/localTts';
+import { t } from '../core/i18n';
 import { resolveLocalSpeechModelDir, resolveLocalSpeechModelsRoot } from './localSpeechPaths';
 
 async function renameModelDirectory(source: string, destination: string): Promise<void> {
@@ -242,12 +247,14 @@ export class LocalSpeechModelService {
   }
 
   private resolveBaseUrl(): URL {
-    return this.dependencies.baseUrl
-      ? new URL(this.dependencies.baseUrl)
-      : new URL(
-          `${APP_UPDATE_CONFIG.speechModels.path.replace(/^\/+|\/+$/g, '')}/`,
-          `${APP_UPDATE_CONFIG.feedUrl.replace(/\/+$/, '')}/`,
-        );
+    const configured =
+      this.dependencies.baseUrl !== undefined
+        ? resolveAppUpdateFeedUrl(this.dependencies.baseUrl)
+        : resolveAppUpdateResourceUrl(
+            `${APP_UPDATE_CONFIG.speechModels.path.replace(/^\/+|\/+$/g, '')}/`,
+          );
+    if (!configured) throw new Error(t('localSpeechModelServerNotConfigured'));
+    return new URL(`${configured.replace(/\/+$/, '')}/`);
   }
 
   private async ensureArtifactMetadata(artifact: LocalSpeechModelArtifact): Promise<void> {

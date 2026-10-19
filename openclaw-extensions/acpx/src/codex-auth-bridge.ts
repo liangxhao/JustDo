@@ -213,21 +213,154 @@ function renderDiagnosticRedactionRuleSpecs(): string {
   return JSON.stringify(DIAGNOSTIC_REDACTION_RULES);
 }
 
+function buildLocalAgentShimResolverScript(): string {
+  return String.raw`
+function resolveLocalNodeShim(shimPath, seen = new Set()) {
+  const normalizedShimPath = path.resolve(shimPath);
+  if (seen.has(normalizedShimPath) || seen.size >= 8) {
+    throw new Error("Claude command shim contains a cycle; configure its actual local JS or executable path.");
+  }
+  seen.add(normalizedShimPath);
+  const source = readFileSync(normalizedShimPath, "utf8");
+  const base = path.dirname(normalizedShimPath) + path.sep;
+  const unsupported = () => new Error("Claude command shim is not an unambiguous Node forwarding shim; configure its actual local .js/.mjs/.cjs or .exe path.");
+  function literal(value) {
+    // Expand only the shim directory and escaped percent signs. Do not guess
+    // dynamic environment, positional-parameter or delayed-expansion commands.
+    if (/[%!]/.test(value.replace(/%(?:~dp0|dp0%)|%%/gi, ""))) throw unsupported();
+    return value.replace(/%(?:~dp0|dp0%)|%%/gi, match => match === "%%" ? "%" : base);
+  }
+  function tokenize(line) {
+    const tokens = [];
+    const token = /\s*(?:"([^"\r\n]*)"|([^\s"]+))/gy;
+    let offset = 0;
+    while (offset < line.length) {
+      token.lastIndex = offset;
+      const match = token.exec(line);
+      if (!match || (token.lastIndex < line.length && !/\s/.test(line[token.lastIndex]))) throw unsupported();
+      if (match[2] && /[&|<>()^]/.test(match[2])) throw unsupported();
+      tokens.push(match[1] ?? match[2]);
+      offset = token.lastIndex;
+    }
+    return tokens;
+  }
+  function isNodeProgram(value) {
+    if (value.toLowerCase() === "%_prog%") {
+      const assignments = [...source.matchAll(/^\s*@?set\s+"?_prog=([^"\r\n]+)"?\s*$/gim)];
+      return assignments.length > 0 && assignments.every(match => /(?:^|[\\/])node(?:\.exe)?$/i.test(literal(match[1])));
+    }
+    return /(?:^|[\\/])node(?:\.exe)?$/i.test(literal(value));
+  }
+  const lines = source.split(/\r?\n/).map(line => line.trim().replace(/^@/, "")).filter(Boolean);
+  const isSetLocal = line => /^setlocal(?:\s+(?:DisableDelayedExpansion|EnableExtensions))*$/i.test(line || "");
+  const isPathExt = line => /^set\s+PATHEXT=%PATHEXT:;\.JS;=;%$/i.test(line || "");
+  let invocations;
+  if (/^goto\s+start$/i.test(lines[1] || "")) {
+    // npm's find_dp0 subroutine is the only accepted goto/label/exit flow.
+    // Match its complete sequence; no statements may be inserted or repeated.
+    const localNode = /^if\s+exist\s+"([^"\r\n]+)"\s*\($/i.exec(lines[8] || "")?.[1];
+    const assignedNode = /^set\s+"_prog=([^"\r\n]+)"$/i.exec(lines[9] || "")?.[1];
+    const tail = /^endlocal\s+&\s+goto\s+#_undefined_#\s+2>NUL\s+\|\|\s+title\s+%COMSPEC%\s+&\s+(.+)$/i.exec(lines[14] || "")?.[1];
+    if (lines.length !== 15 || !/^echo\s+off$/i.test(lines[0]) ||
+      lines[2].toLowerCase() !== ":find_dp0" || !/^set\s+dp0=%~dp0$/i.test(lines[3]) ||
+      !/^exit\s+\/b$/i.test(lines[4]) || lines[5].toLowerCase() !== ":start" ||
+      !isSetLocal(lines[6]) || !/^call\s+:find_dp0$/i.test(lines[7]) ||
+      !localNode || !/%(?:dp0%|~dp0)[\\/]node\.exe$/i.test(localNode) ||
+      assignedNode?.toLowerCase() !== localNode.toLowerCase() ||
+      !/^\)\s*else\s*\($/i.test(lines[10]) || !/^set\s+"_prog=node(?:\.exe)?"$/i.test(lines[11]) ||
+      !isPathExt(lines[12]) || lines[13] !== ")" || !tail) throw unsupported();
+    invocations = [tail];
+  } else {
+    let cursor = 0;
+    if (/^echo\s+off$/i.test(lines[cursor] || "")) cursor++;
+    if (isSetLocal(lines[cursor])) cursor++;
+    // pnpm's optional NODE_PATH prelude has exactly one assignment per branch.
+    if (/^if\s+not\s+defined\s+NODE_PATH\s*\($/i.test(lines[cursor] || "")) {
+      if (!/^set\s+"NODE_PATH=[^"\r\n]*"$/i.test(lines[cursor + 1] || "") ||
+        !/^\)\s*else\s*\($/i.test(lines[cursor + 2] || "") ||
+        !/^set\s+"NODE_PATH=[^"\r\n]*"$/i.test(lines[cursor + 3] || "") ||
+        lines[cursor + 4] !== ")") throw unsupported();
+      cursor += 5;
+    } else if (/^set\s+"NODE_PATH=[^"\r\n]*"$/i.test(lines[cursor] || "")) {
+      cursor++;
+    }
+    const remaining = lines.slice(cursor);
+    if (remaining.length === 1) {
+      invocations = remaining;
+    } else {
+      // Yarn/older npm select a Node interpreter in one IF/ELSE. There is one
+      // forwarding statement in each branch, and both must resolve identically.
+      if (!/^if\s+exist\s+"%(?:~dp0|dp0%)[\\/]node\.exe"\s*\($/i.test(remaining[0] || "") ||
+        !/^\)\s*else\s*\($/i.test(remaining[2] || "")) throw unsupported();
+      let branch = 3;
+      if (isSetLocal(remaining[branch])) branch++;
+      if (isPathExt(remaining[branch])) branch++;
+      if (remaining.length !== branch + 2 || remaining[branch + 1] !== ")") throw unsupported();
+      invocations = [remaining[1], remaining[branch]];
+    }
+  }
+  const candidates = [];
+  for (const invocation of invocations) {
+    if (!/%\*\s*$/.test(invocation)) throw unsupported();
+    const tokens = tokenize(invocation.replace(/\s*%\*\s*$/, ""));
+    if (tokens[0]?.toLowerCase() === "call") tokens.shift();
+    let candidate;
+    if (isNodeProgram(tokens[0] || "")) {
+      // Interpreter switches cannot be reinterpreted as CLI arguments. The
+      // supported forwarding contract starts with one explicit JS entry point.
+      const entry = literal(tokens[1] || "");
+      if (!/\.(?:[cm]?js)$/i.test(entry)) throw unsupported();
+      candidate = { entry: path.resolve(path.dirname(normalizedShimPath), entry), args: tokens.slice(2).map(literal) };
+    } else {
+      const nested = literal(tokens[0] || "");
+      if (!/\.cmd$/i.test(nested)) throw unsupported();
+      candidate = resolveLocalNodeShim(path.resolve(path.dirname(normalizedShimPath), nested), new Set(seen));
+      candidate.args.push(...tokens.slice(1).map(literal));
+    }
+    if (!statSync(candidate.entry).isFile()) throw unsupported();
+    candidates.push(candidate);
+  }
+  if (!candidates.length || candidates.some(candidate => JSON.stringify(candidate) !== JSON.stringify(candidates[0]))) throw unsupported();
+  return candidates[0];
+}
+
+function resolveClaudeCommandShim(shimPath) {
+  const { entry, args } = resolveLocalNodeShim(shimPath);
+  if (args.length === 0) return entry;
+  // Run the resolved entry as the main module in the same process. A child
+  // relay would change SDK Stop semantics and could orphan a Windows CLI.
+  const bridge = 'import Module from "node:module";\nprocess.argv.splice(1, 1, ' + JSON.stringify(entry) + ', ...' + JSON.stringify(args) + ');\nModule.runMain(process.argv[1]);\n';
+  const digest = createHash("sha256").update(bridge).digest("hex");
+  const bridgePath = fileURLToPath(new URL("./claude-local-cli-" + digest + ".mjs", import.meta.url));
+  try {
+    writeFileSync(bridgePath, bridge, { encoding: "utf8", flag: "wx" });
+  } catch (error) {
+    if (error.code !== "EEXIST" || readFileSync(bridgePath, "utf8") !== bridge) throw error;
+  }
+  return bridgePath;
+}
+`;
+}
+
 function buildAdapterWrapperScript(params: {
   displayName: string;
   installedBinPath?: string;
+  localAgent: { command: string; envKey: string };
   envSetup: string;
   envConfigSetup?: string;
   openClawWrapperArgs?: string[];
   stderrLogFileNamePrefix?: string;
 }): string {
   return `#!/usr/bin/env node
-import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, statSync, appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 
 ${params.envSetup}
+${buildLocalAgentShimResolverScript()}
 const stderrLogFileNamePrefix = ${params.stderrLogFileNamePrefix ? JSON.stringify(params.stderrLogFileNamePrefix) : 'undefined'};
 const stderrLogMaxChars = 256 * 1024;
 
@@ -439,6 +572,45 @@ if (!command) {
   process.exit(1);
 }
 
+// Explicit commands keep their own launch contract. The bundled transport
+// adapter must use a user-installed CLI and cannot select its bundled SDK CLI.
+if (configuredArgs[0] !== "${RUN_CONFIGURED_COMMAND_SENTINEL}") {
+  const cliName = ${JSON.stringify(params.localAgent.command)};
+  const envKey = ${JSON.stringify(params.localAgent.envKey)};
+  const requested = env[envKey] || cliName;
+  const extensions = process.platform === "win32" ? [".exe", ".cmd", ""] : [""];
+  const roots = path.isAbsolute(requested) || requested.includes("/") || requested.includes("\\\\")
+    ? [""] : (process.env.PATH || "").split(path.delimiter).filter(Boolean);
+  let executable;
+  for (const root of roots) {
+    for (const extension of path.extname(requested) ? [""] : extensions) {
+      const candidate = path.resolve(root, requested + extension);
+      try {
+        accessSync(candidate, process.platform === "win32" ? constants.F_OK : constants.X_OK);
+        if (!statSync(candidate).isFile()) continue;
+        executable = candidate;
+        break;
+      } catch { /* Try the next installed command. */ }
+    }
+    if (executable) break;
+  }
+  if (!executable) {
+    console.error("[openclaw] ${params.displayName} is not installed or not available on PATH; install it separately before enabling delegation.");
+    process.exit(1);
+  }
+  // The SDK cannot execute batch files. Resolve a local Node forwarding shim
+  // without passing paths or SDK arguments through a command shell.
+  if (cliName === "claude" && executable.toLowerCase().endsWith(".cmd")) {
+    try {
+      executable = resolveClaudeCommandShim(executable);
+    } catch (error) {
+      console.error("[openclaw] " + error.message);
+      process.exit(1);
+    }
+  }
+  env[envKey] = executable;
+}
+
 const child = spawn(command, args, {
   detached: process.platform !== "win32",
   env,
@@ -541,6 +713,7 @@ child.on("close", () => {
 function buildCodexAcpWrapperScript(installedBinPath?: string): string {
   return buildAdapterWrapperScript({
     displayName: 'Codex',
+    localAgent: { command: 'codex', envKey: 'CODEX_PATH' },
     installedBinPath,
     stderrLogFileNamePrefix: 'codex-acp-wrapper.stderr',
     openClawWrapperArgs: [OPENCLAW_CODEX_CONFIG_ARG],
@@ -636,6 +809,7 @@ if (openClawCodexConfigs.length > 0) {
 function buildClaudeAcpWrapperScript(installedBinPath?: string, claudeExecutable?: string): string {
   return buildAdapterWrapperScript({
     displayName: 'Claude',
+    localAgent: { command: 'claude', envKey: 'CLAUDE_CODE_EXECUTABLE' },
     installedBinPath,
     envSetup: `const env = {
   ...process.env,

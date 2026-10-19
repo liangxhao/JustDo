@@ -92,6 +92,7 @@ async function prepare(archive) {
   fs.mkdirSync(path.join(output, 'public'), { recursive: true });
   fs.cpSync(path.join(staging, sourceName, 'src/main/webapp'), path.join(output, 'public/editor'), {
     recursive: true,
+    filter: file => includeEditorAsset(path.relative(path.join(staging, sourceName, 'src/main/webapp'), file)),
   });
   fs.copyFileSync(path.join(staging, sourceName, 'LICENSE'), path.join(output, 'LICENSE'));
   fs.copyFileSync(path.join(extension, 'app.css'), path.join(output, 'app.css'));
@@ -215,6 +216,13 @@ async function prepare(archive) {
   console.log(`[DiagramEditor] Prepared ${Object.keys(files).length} verified offline files`);
 }
 
+function includeEditorAsset(relativePath) {
+  const normalized = relativePath.replaceAll('\\', '/');
+  // This plugin serves a browser editor through Node, without a Java server.
+  // Filter before computing integrity.json so the shipped set stays closed.
+  return !/^(?:WEB-INF|META-INF)(?:\/|$)/.test(normalized) && !/\.map$/i.test(normalized);
+}
+
 if (require.main === module) {
   (async () => {
     if (process.argv.includes('--verify')) {
@@ -251,4 +259,4 @@ if (require.main === module) {
     process.exitCode = 1;
   });
 }
-module.exports = { verifyDrawioAssets };
+module.exports = { includeEditorAsset, verifyDrawioAssets };

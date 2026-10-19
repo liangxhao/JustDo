@@ -7,6 +7,7 @@ const yaml = require('js-yaml');
 
 const { readWindowsUpdateConfig } = require('./windows-update-config.cjs');
 const { APP_UPDATE_CONFIG } = require('../../src/config/appUpdate.ts');
+const { resolveAppUpdateFeedUrl } = require('../../src/config/appUpdate.ts');
 const releaseHistoryLimits = APP_UPDATE_CONFIG.releaseHistory;
 
 const UPDATE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
@@ -62,8 +63,24 @@ function sha512File(filePath) {
   });
 }
 
-async function verifyWindowsUpdateArtifacts(releaseDir, env = process.env) {
-  const updateConfig = readWindowsUpdateConfig(env);
+async function verifyWindowsUpdateArtifacts(
+  releaseDir,
+  env = process.env,
+  updateConfig = readWindowsUpdateConfig(env),
+) {
+  if (!updateConfig) {
+    for (const relative of [
+      'latest.yml',
+      'release-history.json',
+      'win-unpacked/resources/app-update.yml',
+      'win-unpacked/resources/.justdo-auto-update-configured',
+    ]) {
+      if (existsSync(path.join(releaseDir, relative))) {
+        throw new Error(`Unconfigured build contains stale update artifact: ${relative}`);
+      }
+    }
+    return { autoUpdateDisabled: true };
+  }
   const manifestPath = path.join(releaseDir, 'latest.yml');
   if (!existsSync(manifestPath)) throw new Error(`Missing update manifest: ${manifestPath}`);
 
@@ -118,6 +135,11 @@ async function verifyWindowsUpdateArtifacts(releaseDir, env = process.env) {
   if (appUpdate?.provider !== 'generic' || appUpdate?.url !== updateConfig.feedUrl) {
     throw new Error('Packaged app-update.yml does not match the configured Generic feed.');
   }
+  if (
+    resolveAppUpdateFeedUrl(readFileSync(configuredMarkerPath, 'utf8')) !== updateConfig.feedUrl
+  ) {
+    throw new Error('Packaged auto-update marker does not match the configured Generic feed.');
+  }
 
   return { installerPath, manifestPath, releaseHistoryPath };
 }
@@ -126,7 +148,11 @@ if (require.main === module) {
   const releaseDir = path.resolve(process.argv[2] || 'release');
   verifyWindowsUpdateArtifacts(releaseDir)
     .then(result =>
-      console.log(`[verify-windows-update-artifacts] Verified ${result.installerPath}`),
+      console.log(
+        result.autoUpdateDisabled
+          ? '[verify-windows-update-artifacts] Verified auto-update is unconfigured.'
+          : `[verify-windows-update-artifacts] Verified ${result.installerPath}`,
+      ),
     )
     .catch(error => {
       console.error(`[verify-windows-update-artifacts] ${error.message}`);

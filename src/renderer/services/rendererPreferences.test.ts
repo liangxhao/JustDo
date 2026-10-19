@@ -265,18 +265,50 @@ describe('renderer preferences across HTTP host restarts', () => {
     expect(browser.removeItem).toHaveBeenCalledWith('justdo-theme-id');
   });
 
-  it('hydrates actual result-filter slice initialization before the app imports it', async () => {
+  it('keeps the transient initialization shell usable without reading or writing the unready Main Store', async () => {
     const { records, store } = fixture();
-    records.set('app.renderer-preferences.v1', {
-      'justdo-scheduled-task-result-preferences-v1': '{"includeRoutine":true,"includeSystem":true}',
+    records.set('app.renderer-preferences.v1', { 'justdo-theme-id': 'midnight' });
+    store.get.mockRejectedValue(new Error('Store not initialized'));
+    const browser = {
+      getItem: vi.fn(() => 'classic-light'),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    };
+    vi.stubGlobal('window', {
+      electron: { store, initialization: { isTransientWindow: true } },
+      localStorage: browser,
     });
-    vi.stubGlobal('window', { electron: { store } });
     const { rendererPreferences } = await import('./rendererPreferences');
+
     await rendererPreferences.initialize();
-    const { default: reducer } = await import('@/features/scheduled-tasks/scheduledTaskSlice');
-    expect(reducer(undefined, { type: 'initial' }).resultFilter).toMatchObject({
-      includeRoutine: true,
-      includeSystem: true,
-    });
+    expect(rendererPreferences.getItem('justdo-theme-id')).toBe('classic-light');
+    rendererPreferences.setItem('justdo-theme-id', 'midnight');
+    rendererPreferences.removeItem('justdo-theme-id');
+    await rendererPreferences.flush();
+
+    expect(store.get).not.toHaveBeenCalled();
+    expect(store.set).not.toHaveBeenCalled();
+    expect(browser.setItem).toHaveBeenCalledWith('justdo-theme-id', 'midnight');
+    expect(browser.removeItem).toHaveBeenCalledWith('justdo-theme-id');
+    expect(records.get('app.renderer-preferences.v1')).toEqual({ 'justdo-theme-id': 'midnight' });
   });
+
+  it.each([undefined, false])(
+    'hydrates actual result-filter slice initialization in a normal window (transient=%s) before the app imports it',
+    async isTransientWindow => {
+      const { records, store } = fixture();
+      records.set('app.renderer-preferences.v1', {
+        'justdo-scheduled-task-result-preferences-v1':
+          '{"includeRoutine":true,"includeSystem":true}',
+      });
+      vi.stubGlobal('window', { electron: { store, initialization: { isTransientWindow } } });
+      const { rendererPreferences } = await import('./rendererPreferences');
+      await rendererPreferences.initialize();
+      const { default: reducer } = await import('@/features/scheduled-tasks/scheduledTaskSlice');
+      expect(reducer(undefined, { type: 'initial' }).resultFilter).toMatchObject({
+        includeRoutine: true,
+        includeSystem: true,
+      });
+    },
+  );
 });

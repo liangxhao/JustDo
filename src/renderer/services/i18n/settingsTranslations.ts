@@ -396,8 +396,8 @@ export const settingsTranslations = {
       '共享已启用的 stdio MCP Server；当前不包含 HTTP 或 SSE Server。',
     externalAgentsFullAccessConfirm:
       '完全访问允许外部 Agent 修改文件并执行命令。仅在你信任该 Agent 及其适配器时启用。是否继续？',
-    externalAgentsClaudeDescription: '允许主 Agent 将适合的任务委派给 Claude。',
-    externalAgentsCodexDescription: '允许主 Agent 将适合的任务委派给 Codex。',
+    externalAgentsClaudeDescription: '将任务委派给本机已安装的 Claude；需自行安装。',
+    externalAgentsCodexDescription: '将任务委派给本机已安装的 Codex；需自行安装。',
     externalAgentsOpenCodeDescription: '允许主 Agent 将适合的任务委派给 OpenCode。',
     externalAgentsDeepSeekHarnessDescription: '允许主 Agent 将适合的任务委派给 DeepSeek Harness。',
     externalAgentsHermesDescription: '允许主 Agent 将适合的任务委派给 Hermes。',
@@ -1354,8 +1354,8 @@ export const settingsTranslations = {
       'Share enabled stdio MCP servers; HTTP and SSE servers are not currently included.',
     externalAgentsFullAccessConfirm:
       'Full access lets external agents modify files and run commands. Enable it only when you trust the agent and its adapter. Continue?',
-    externalAgentsClaudeDescription: 'Allow the main Agent to delegate suitable tasks to Claude.',
-    externalAgentsCodexDescription: 'Allow the main Agent to delegate suitable tasks to Codex.',
+    externalAgentsClaudeDescription: 'Delegate tasks to locally installed Claude. Separate installation required.',
+    externalAgentsCodexDescription: 'Delegate tasks to locally installed Codex. Separate installation required.',
     externalAgentsOpenCodeDescription:
       'Allow the main Agent to delegate suitable tasks to OpenCode.',
     externalAgentsDeepSeekHarnessDescription:

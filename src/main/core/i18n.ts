@@ -16,6 +16,7 @@ export type LanguageType = 'zh' | 'en';
 
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    localSpeechModelServerNotConfigured: '尚未配置内网语音模型服务，请联系管理员配置后再安装模型。',
     coworkBranchCreationPending:
       '该副本或分支尚未完成创建。请在会话列表中检查或删除，暂时无法继续发送。',
     computerOverlayActive: '正在操作电脑',
@@ -155,6 +156,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     browserContextSaveImage: '图片另存为…',
   },
   en: {
+    localSpeechModelServerNotConfigured:
+      'The internal speech model server is not configured. Contact your administrator before installing models.',
     coworkBranchCreationPending:
       'This copy or branch is unfinished. Inspect or delete it in the session list before continuing.',
     computerOverlayActive: 'Operating your computer',

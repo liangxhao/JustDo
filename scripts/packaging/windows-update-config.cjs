@@ -1,12 +1,15 @@
 'use strict';
 
-const { APP_UPDATE_CONFIG } = require('../../src/config/appUpdate.ts');
+const { APP_UPDATE_CONFIG, resolveAppUpdateFeedUrl } = require('../../src/config/appUpdate.ts');
 
-const WINDOWS_UPDATE_CONFIG = Object.freeze({ feedUrl: APP_UPDATE_CONFIG.feedUrl });
-
-function readWindowsUpdateConfig() {
-  return WINDOWS_UPDATE_CONFIG;
+function readWindowsUpdateConfig(_env = process.env, configuration = APP_UPDATE_CONFIG) {
+  // Deployment is explicit in the checked-in configuration. Inherited build
+  // environment values cannot silently turn networking on for an offline build.
+  const feedUrl = resolveAppUpdateFeedUrl(configuration.feedUrl);
+  return feedUrl ? Object.freeze({ feedUrl }) : null;
 }
+
+const WINDOWS_UPDATE_CONFIG = readWindowsUpdateConfig();
 
 module.exports = {
   readWindowsUpdateConfig,

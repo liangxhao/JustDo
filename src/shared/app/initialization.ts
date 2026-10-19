@@ -4,6 +4,12 @@ export const AppInitializationIpc = {
   Relaunch: 'app:initialization:relaunch',
 } as const;
 
+export const INITIALIZATION_WINDOW_ARGUMENT = '--initialization-window';
+
+export type AppInitializationWindowContext = {
+  readonly isTransientWindow: boolean;
+};
+
 export const AppInitializationPhase = {
   Preparing: 'preparing',
   Ready: 'ready',

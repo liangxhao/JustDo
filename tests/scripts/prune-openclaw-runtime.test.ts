@@ -26,6 +26,67 @@ test('preinstalled plugin requirements remain present after runtime pruning on e
   }
 });
 
+test('prunes debug symbols and reviewed SDK sources while keeping Markdown and native binaries', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-prune-'));
+  const files = [
+    'node_modules/openai/package.json',
+    'node_modules/openai/index.js',
+    'node_modules/openai/index.mjs',
+    'node_modules/openai/src/client.ts',
+    'node_modules/openai/src/README.md',
+    'node_modules/openai/src/tests/guide.md',
+    'node_modules/openai/src/LICENSE',
+    'node_modules/openai/src/licenses/MIT',
+    'node_modules/openai/src/THIRD_PARTY_NOTICES/vendor.txt',
+    'node_modules/native/LICENSE.txt',
+    'node_modules/native/NOTICE',
+    'node_modules/native/tests/COPYING',
+    'node_modules/native/tests/guide.md',
+    'node_modules/other/src/client.ts',
+    'node_modules/native/conpty.node',
+    'node_modules/native/conpty.pdb',
+    'node_modules/native/README.md',
+  ];
+  try {
+    for (const file of files) {
+      const target = path.join(root, file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, file.endsWith('package.json') ? '{"name":"openai"}' : 'fixture');
+    }
+    pruneExtensionDependencies(root);
+    for (const file of files) {
+      expect(fs.existsSync(path.join(root, file)), file).toBe(
+        !file.endsWith('.pdb') && file !== 'node_modules/openai/src/client.ts',
+      );
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runtime root and all plugin dependencies preserve legal files without opt-in', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'legal-prune-'));
+  try {
+    const files = ['LICENSE', 'LICENSE-MIT', 'COPYING.txt', 'NOTICE', 'THIRD_PARTY_NOTICES.txt'];
+    for (const file of files) {
+      const target = path.join(root, 'node_modules/fixture', file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, 'fixture');
+    }
+    const { spawnSync } = require('node:child_process');
+    const result = spawnSync(
+      process.execPath,
+      [path.resolve('scripts/openclaw/prune-openclaw-runtime.cjs'), root],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    for (const file of files)
+      expect(fs.existsSync(path.join(root, 'node_modules/fixture', file))).toBe(true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('prunes public-cloud plugins while retaining the intranet OpenAI adapter and local extensions', () => {
   const repoRoot = path.resolve(__dirname, '../..');
   const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-plugin-prune-'));

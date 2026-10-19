@@ -191,6 +191,21 @@ describe('AutoUpdateService', () => {
     expect(updater.checkForUpdates).not.toHaveBeenCalled();
   });
 
+  test('never schedules a first-launch check when the deployment feed is unconfigured', async () => {
+    vi.useFakeTimers();
+    try {
+      const updater = new FakeUpdater();
+      const { service, setLastAutomaticCheckAt } = makeService(updater, false);
+      service.scheduleAutomaticChecks();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(updater.checkForUpdates).not.toHaveBeenCalled();
+      expect(setLastAutomaticCheckAt).not.toHaveBeenCalled();
+      expect(service.getPreferences()).not.toHaveProperty('nextCheckAt');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('does not resolve the Electron updater in unsupported environments', () => {
     const service = new AutoUpdateService({
       currentVersion: '2026.7.23',

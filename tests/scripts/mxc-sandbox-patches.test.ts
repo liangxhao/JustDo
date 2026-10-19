@@ -11,6 +11,25 @@ const nativeContracts = [
   'lifecycle: { destroyOnExit: true, preservePolicy: false }',
 ].join('\n');
 const pristine = () => [pluginPatch.__testing.ORIGINAL, pluginPatch.__testing.HOST_PREP_ORIGINAL, nativeContracts].join('\n');
+
+it.each(['x64', 'arm64'])('omits Linux executors from the Windows %s SDK while retaining native assets', arch => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-target-'));
+  const sdk = path.join(root, 'node_modules/@microsoft/mxc-sdk');
+  try {
+    for (const name of ['x64', 'arm64']) {
+      const bin = path.join(sdk, 'bin', name);
+      fs.mkdirSync(bin, { recursive: true });
+      for (const file of ['wxc-exec.exe', 'lxc-exec', 'wslcsdk.dll']) fs.writeFileSync(path.join(bin, file), file);
+      fs.mkdirSync(path.join(sdk, 'node_modules/node-pty/prebuilds', 'win32-' + name), { recursive: true });
+    }
+    pluginPatch.pruneMxcSandboxPluginForTarget(root, 'win-' + arch);
+    expect(fs.readdirSync(path.join(sdk, 'bin'))).toEqual([arch]);
+    expect(fs.readdirSync(path.join(sdk, 'bin', arch)).sort()).toEqual(['wslcsdk.dll', 'wxc-exec.exe']);
+    expect(fs.readdirSync(path.join(sdk, 'node_modules/node-pty/prebuilds'))).toEqual(['win32-' + arch]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 describe('MXC 10.4 native readiness and retained integration', () => {
   it('keeps native executor probing and policy cleanup while projecting external skills', () => {
     const source = pristine();

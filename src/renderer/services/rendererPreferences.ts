@@ -184,6 +184,9 @@ export function createRendererPreferences(
 }
 
 export const rendererPreferences = createRendererPreferences(
-  () => (typeof window === 'undefined' ? undefined : window.electron?.store),
+  () =>
+    typeof window === 'undefined' || window.electron?.initialization?.isTransientWindow
+      ? undefined
+      : window.electron?.store,
   () => (typeof window === 'undefined' ? undefined : window.localStorage),
 );

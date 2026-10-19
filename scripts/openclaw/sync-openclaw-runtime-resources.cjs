@@ -264,19 +264,6 @@ function verifyDeclaredDependencies(extensionDir) {
   }
 }
 
-function hasMatchingFile(rootDir, pattern) {
-  if (!fs.existsSync(rootDir)) return false;
-  const pending = [rootDir];
-  while (pending.length > 0) {
-    const currentDir = pending.pop();
-    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
-      if (entry.isDirectory()) pending.push(path.join(currentDir, entry.name));
-      else if (entry.isFile() && pattern.test(entry.name)) return true;
-    }
-  }
-  return false;
-}
-
 function verifyAcpxTargetDependencies(extensionDir, installTarget) {
   const manifest = readJsonFile(path.join(extensionDir, 'package.json'));
   if (manifest?.name !== 'acpx-runtime') return;
@@ -284,21 +271,16 @@ function verifyAcpxTargetDependencies(extensionDir, installTarget) {
   const includesClaudeAdapter = Boolean(dependencies['@agentclientprotocol/claude-agent-acp']);
   const includesCodexAdapter = Boolean(dependencies['@agentclientprotocol/codex-acp']);
 
-  const expectedPackages = [
-    ...(includesClaudeAdapter
-      ? [`@anthropic-ai/claude-agent-sdk-${installTarget.os}-${installTarget.cpu}`]
-      : []),
-    ...(includesCodexAdapter ? [`@openai/codex-${installTarget.os}-${installTarget.cpu}`] : []),
-  ];
-  const missing = expectedPackages.filter(
-    packageName =>
-      !fs.existsSync(path.join(extensionDir, 'node_modules', ...packageName.split('/'))),
-  );
-  if (missing.length > 0) {
-    throw new Error(
-      `ACPX dependencies do not match ${installTarget.targetId}. Missing: ${missing.join(', ')}`,
-    );
+  const modulesDir = path.join(extensionDir, 'node_modules');
+  const entries = [];
+  for (const scope of ['@openai', '@anthropic-ai']) {
+    const scopeDir = path.join(modulesDir, scope);
+    if (fs.existsSync(scopeDir)) {
+      entries.push(...fs.readdirSync(scopeDir).map(name => scope + '/' + name));
+    }
   }
+  require('../../openclaw-extensions/acpx/scripts/runtime-dependencies.cjs')
+    .verifyExternalAgentPackages(entries);
 
   const requiredEntries = [
     ...(dependencies.acpx
@@ -343,24 +325,6 @@ function verifyAcpxTargetDependencies(extensionDir, installTarget) {
   const missingEntries = requiredEntries
     .filter(([, entryPath]) => !fs.existsSync(entryPath))
     .map(([label]) => label);
-  const claudeNativeRoot = path.join(
-    extensionDir,
-    'node_modules',
-    '@anthropic-ai',
-    `claude-agent-sdk-${installTarget.os}-${installTarget.cpu}`,
-  );
-  const codexNativeRoot = path.join(
-    extensionDir,
-    'node_modules',
-    '@openai',
-    `codex-${installTarget.os}-${installTarget.cpu}`,
-  );
-  if (includesClaudeAdapter && !hasMatchingFile(claudeNativeRoot, /^claude(?:\.exe)?$/iu)) {
-    missingEntries.push('Claude native executable');
-  }
-  if (includesCodexAdapter && !hasMatchingFile(codexNativeRoot, /^codex(?:\.exe)?$/iu)) {
-    missingEntries.push('Codex native executable');
-  }
   if (missingEntries.length > 0) {
     throw new Error(`ACPX dependency payload is incomplete. Missing: ${missingEntries.join(', ')}`);
   }
@@ -490,6 +454,10 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
     );
     if (canReuseDependencies) {
       try {
+        if (sourcePackage?.name === 'acpx-runtime') {
+          require('../../openclaw-extensions/acpx/scripts/runtime-dependencies.cjs')
+            .removeExternalAgentPackages(extensionTargetDir);
+        }
         verifyDeclaredDependencies(extensionTargetDir);
         verifyAcpxTargetDependencies(extensionTargetDir, installTarget);
       } catch (error) {
@@ -523,6 +491,10 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
       if (usesProductionDependencies) {
         console.log(`[${label}] Installing production dependencies: ${entry.name}`);
         installDependencies(stagingDir, installTarget);
+        if (sourcePackage?.name === 'acpx-runtime') {
+          require('../../openclaw-extensions/acpx/scripts/runtime-dependencies.cjs')
+            .removeExternalAgentPackages(stagingDir);
+        }
         verifyDeclaredDependencies(stagingDir);
         verifyAcpxTargetDependencies(stagingDir, installTarget);
         pruneExtensionDependencies(stagingDir, {

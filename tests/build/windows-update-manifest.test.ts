@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { afterEach, describe, expect, test } from 'vitest';
@@ -11,6 +11,7 @@ const {
   hasWindowsInstallerTarget,
   verifyWindowsInstallerArchive,
   verifyWindowsInstallerArchiveListing,
+  afterAllArtifactBuild,
 } = require('../../scripts/packaging/electron-builder-hooks.cjs') as {
   buildWindowsUpdateManifest: (options: {
     artifactPaths: string[];
@@ -37,6 +38,7 @@ const {
     },
   ) => void;
   verifyWindowsInstallerArchiveListing: (listing: string, productFilename: string) => void;
+  afterAllArtifactBuild: (context: { outDir: string; platformToTargets: Map<{ nodeName: string }, Map<string, unknown>> }) => Promise<string[]>;
 };
 
 const { validateReleaseHistory } = require('../../scripts/packaging/verify-windows-update-artifacts.cjs') as {
@@ -58,6 +60,15 @@ afterEach(() => {
 });
 
 describe('Windows Generic update manifest', () => {
+  test('unconfigured NSIS builds remove stale update metadata without requiring an installer feed', async () => {
+    const directory = makeTemporaryDirectory();
+    for (const name of ['latest.yml', 'release-history.json']) writeFileSync(path.join(directory, name), 'stale');
+    expect(await afterAllArtifactBuild({
+      outDir: directory,
+      platformToTargets: new Map([[{ nodeName: 'win32' }, new Map([['nsis', {}]])]]),
+    })).toEqual([]);
+    for (const name of ['latest.yml', 'release-history.json']) expect(existsSync(path.join(directory, name))).toBe(false);
+  });
   test('distinguishes unpacked directory builds from NSIS installer builds', () => {
     const windows = { nodeName: 'win32' };
 

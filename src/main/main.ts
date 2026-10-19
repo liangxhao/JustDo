@@ -16,7 +16,7 @@ import path from 'path';
 
 import packageJson from '../../package.json';
 import { ACTIVITY_REPORTING_CONFIG } from '../config/activityReporting';
-import { APP_UPDATE_CONFIG } from '../config/appUpdate';
+import { APP_UPDATE_CONFIG, resolveAppUpdateResourceUrl } from '../config/appUpdate';
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../config/builtinModels';
 import { AuthIpc } from '../shared/app/auth';
 import { AppInitializationIpc, AppInitializationStep } from '../shared/app/initialization';
@@ -2063,10 +2063,7 @@ if (multicaBridgeArgv) {
     getLastAutomaticCheckAt: () => getStore().get(APP_UPDATE_LAST_AUTOMATIC_CHECK_AT_KEY),
     setLastAutomaticCheckAt: checkedAt =>
       getStore().set(APP_UPDATE_LAST_AUTOMATIC_CHECK_AT_KEY, checkedAt),
-    releaseHistoryUrl: new URL(
-      'release-history.json',
-      `${APP_UPDATE_CONFIG.feedUrl.replace(/\/+$/, '')}/`,
-    ).toString(),
+    releaseHistoryUrl: resolveAppUpdateResourceUrl('release-history.json'),
     fetchReleaseHistory: (requestUrl, init) =>
       mainProcessFetch(requestUrl, init, {
         maxResponseBytes: APP_UPDATE_CONFIG.releaseHistory.maxBytes,

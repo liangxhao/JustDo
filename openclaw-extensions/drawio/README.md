@@ -28,6 +28,11 @@ the plugin package also exposes `assets:prepare` / `assets:verify`. Build toolin
 uses the repository's installed development dependencies; generated bundles need
 no npm installation at runtime.
 
+Preparation excludes the upstream Java-server `WEB-INF/` and `META-INF/`
+directories and source maps. Browser editor resources, layouts, workers, WASM,
+formulas, shapes and notices remain bundled. Filtering happens before the
+integrity manifest is generated; packaging must preserve that closed set.
+
 The manifest declares the plugin's native skill directory. Its short description
 makes drawing requests discoverable without naming draw.io; the detailed guide
 is loaded on demand and tells the model to search the actual MCP catalog before

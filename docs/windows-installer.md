@@ -188,6 +188,25 @@ bundled packages, MinGit, npm, dependency-manager configuration and local speech
 runtime are read directly from the installation resources. Startup does not
 duplicate these bundles into userData.
 
+Packaged Windows startup consumes the prepared Gateway launcher and runtime
+preload as regular, non-empty files. Main loads the actual preload rather than
+serializing its own bundled function text: minification changes `toString()`
+output and must never cause an installation-directory rewrite. Missing files
+fail runtime readiness clearly; packaged startup does not regenerate them or
+extract an older ASAR fallback. Development and resource preparation retain
+their generation flow. Release verification exercises the minified Main and
+compares all installed resources before and after first and subsequent startup.
+
+The per-user Node preload also reads the configured CA bundle through Node's
+Unicode-aware filesystem API before application code runs. It merges those
+certificates with the default and system roots for Gateway, Node/npm shims and
+the explicit MCP preload. This covers Windows OpenSSL's failure to open some
+Unicode CA paths without disabling certificate validation or changing the
+system certificate store. Ordinary MCP processes do not gain the Gateway's
+private CA or proxy capability implicitly; their existing environment policy
+remains authoritative. The native startup warning can remain; release
+checks require trusted loopback TLS to succeed and unrelated CAs to fail.
+
 The main assistant seeds only `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md` and
 `BOOTSTRAP.md` from the bundled role templates into
 `openclaw/state/agent-workspaces/main`. These are editable, per-user role files;
@@ -246,6 +265,33 @@ Use the interactive checkbox to request data deletion instead.
 
 ## Diagnostics
 
+### Release resource selection
+
+Windows runtime archives use Zstandard level 19 with long-distance matching and
+a 64 MiB window. The installer's default decoder limit remains unchanged.
+Same-input, same-window release measurements compare size, decode time and
+memory: the higher level primarily costs build time. Complete resource extraction
+is measured separately before release. Python bytecode caches,
+the Control UI's precompressed representations and native asset manifest remain
+intact.
+
+Runtime pruning removes native PDB symbols and source files only from reviewed
+SDK packages with compiled entry points present. Markdown is retained. Packaging
+preserves the complete native `docs/` and `skills/` trees, including names such
+as `README.md` and `examples/`, and checks their inventory against the archive.
+Python, MinGit, FFmpeg and speech runtime capabilities remain bundled.
+License, copying, copyright and notice files/directories are retained for every
+bundled dependency, including filtered development trees. Packaging checks the
+runtime archive's legal-file inventory and the application's notices against
+their source bytes; these materials are not treated as removable documentation.
+
+Windows MXC keeps its selected Windows executables and WSL DLLs while excluding
+the Linux `lxc-exec`. The application keeps its target architecture's node-pty
+prebuilds and removes other architectures and redundant `third_party` copies.
+draw.io removes Java-server directories and source maps during its own asset
+preparation, before generating the closed integrity manifest; generic packaging
+continues to copy that prepared set unchanged.
+
 ### Build-time extension staging
 
 Local extension assembly retries `EACCES`, `EBUSY` and `EPERM` directory
@@ -262,7 +308,10 @@ in `install-resource.log`. Both files are append-only across installer runs.
 NSIS uses Windows append-only handles so callback writes and overlapping
 installer processes cannot overwrite records through stale file offsets.
 Log directory failures are non-fatal. Both logs prefer the initiating user's
-Roaming product directory. After old-version removal, setup can use
+Roaming product directory. An elevated inner instance obtains the outer user's
+paths before its first log selection or write, including silent upgrades, so
+alternate administrator credentials never select that administrator's logs.
+After old-version removal, setup can use
 `<install>/logs`; resource extraction can use `resources/install-resource.log`.
 No alternate profile or cache location is created.
 Each run is wrapped in prominent `INSTALL SESSION START` / `INSTALL SESSION END`
@@ -284,6 +333,14 @@ Operation, Result, and the process tree. Do not collect file contents or command
 lines containing credentials.
 
 ## Verification
+
+The default deployment has no update feed. Empty or placeholder addresses do
+not produce `app-update.yml`, an update-configuration marker, `latest.yml` or
+release history. Packaging also removes stale copies of those files. Installed
+startup enables automatic checks only when the NSIS installation marker, a
+valid explicit generic feed and the matching configuration marker agree.
+Deployments configure their internal feed in `src/config/appUpdate.ts` before
+rebuilding; inherited environment variables cannot silently enable networking.
 
 - Static installer contract tests cover current-user bootstrap ordering,
   preservation of the multi-user choices, the fresh-install process skip,

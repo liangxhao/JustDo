@@ -1,9 +1,15 @@
+import vm from 'node:vm';
+
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 
-import { buildOutboundHeaderTrustedCaBundle, buildTrustedCaBundle } from './trustedCertificates';
+import {
+  buildOutboundHeaderTrustedCaBundle,
+  buildTrustedCaBundle,
+  buildTrustedCertificatePreload,
+} from './trustedCertificates';
 
 const tempDirs: string[] = [];
 
@@ -69,3 +75,66 @@ test('keeps the outbound header CA bundle isolated from baseline trust refreshes
   expect(fs.readFileSync(outboundBundlePath as string, 'utf8')).toBe(outboundBundleBeforeRefresh);
   expect(fs.readFileSync(baselineBundlePath as string, 'utf8')).not.toContain(proxyCa);
 });
+
+test('preload reads UTF-8 PEM and preserves current and system roots without disabling verification', () => {
+  const filename = 'C:\\Users\\中文 空格\\trusted.pem';
+  const extra = '-----BEGIN CERTIFICATE-----\nextra\n-----END CERTIFICATE-----';
+  const readFileSync = vi.fn(() => extra);
+  const setDefaultCACertificates = vi.fn();
+  const env = { NODE_EXTRA_CA_CERTS: filename };
+  vm.runInNewContext(buildTrustedCertificatePreload(), {
+    process: { env },
+    require: (name: string) =>
+      name === 'node:fs'
+        ? { readFileSync }
+        : {
+            getCACertificates: (type: string) =>
+              type === 'default' ? ['current', 'shared\n'] : ['system', 'shared'],
+            setDefaultCACertificates,
+          },
+  });
+  expect(readFileSync).toHaveBeenCalledWith(filename, 'utf8');
+  expect(setDefaultCACertificates).toHaveBeenCalledWith(['current', 'shared', 'system', extra]);
+  expect(env).toEqual({ NODE_EXTRA_CA_CERTS: filename });
+});
+
+test('preload without explicit extra CA retains default and system roots without reading private files', () => {
+  const readFileSync = vi.fn();
+  const setDefaultCACertificates = vi.fn();
+  const env = {};
+  vm.runInNewContext(buildTrustedCertificatePreload(), {
+    process: { env },
+    require: (name: string) =>
+      name === 'node:fs'
+        ? { readFileSync }
+        : {
+            getCACertificates: (type: string) => (type === 'default' ? ['default'] : ['system']),
+            setDefaultCACertificates,
+          },
+  });
+  expect(readFileSync).not.toHaveBeenCalled();
+  expect(setDefaultCACertificates).toHaveBeenCalledWith(['default', 'system']);
+  expect(env).toEqual({});
+});
+
+test.each(['missing', 'invalid'])(
+  'preload rejects a %s CA bundle without weakening trust',
+  kind => {
+    const setDefaultCACertificates = vi.fn();
+    expect(() =>
+      vm.runInNewContext(buildTrustedCertificatePreload(), {
+        process: { env: { NODE_EXTRA_CA_CERTS: 'managed.pem' } },
+        require: (name: string) =>
+          name === 'node:fs'
+            ? {
+                readFileSync: () => {
+                  if (kind === 'missing') throw new Error('ENOENT');
+                  return 'not a PEM certificate';
+                },
+              }
+            : { getCACertificates: () => ['current'], setDefaultCACertificates },
+      }),
+    ).toThrow('Unable to initialize trusted Node CA certificates');
+    expect(setDefaultCACertificates).not.toHaveBeenCalled();
+  },
+);

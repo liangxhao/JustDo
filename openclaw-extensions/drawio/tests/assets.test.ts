@@ -4,8 +4,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, it } from 'vitest';
 
-const { verifyDrawioAssets } = require('../scripts/prepare.cjs');
+const { includeEditorAsset, verifyDrawioAssets } = require('../scripts/prepare.cjs');
 const upstream = require('../upstream.json');
+
+it('filters Java-server files and source maps before closing the editor asset manifest', () => {
+  for (const file of ['WEB-INF', 'WEB-INF/lib/server.jar', 'META-INF/manifest.xml', 'service-worker.js.map'])
+    expect(includeEditorAsset(file), file).toBe(false);
+  for (const file of ['', 'index.html', 'js/app.min.js', 'math4/es5/drawio-mathjax.min.js', 'README.md', 'licenses/LICENSE'])
+    expect(includeEditorAsset(file), file).toBe(true);
+});
 it('rejects missing, changed, extra and unpinned packaged diagram assets', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'diagram-integrity-'));
   const names = [
