@@ -237,7 +237,7 @@ export default function SessionSummaryPanel(props: Props) {
           <XMarkIcon className="h-4 w-4" />
         </button>
       </div>
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3 pb-5">
+      <div className="session-summary-panel__body min-h-0 flex-auto space-y-4 overflow-y-auto p-3 pb-5">
         {props.objective && (
           <section>
             {heading('coworkSummaryGoal')}
