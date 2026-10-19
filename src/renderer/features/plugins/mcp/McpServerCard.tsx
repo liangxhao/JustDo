@@ -61,25 +61,14 @@ const McpServerCard = ({
       <div className="flex min-w-0 items-center gap-1.5">
         <div className="min-w-0 truncate">{title}</div>
         {(probeResult?.available ? probeResult.tools.some(mcpToolHasApp) : supportsApps) && (
-          <Tooltip content={i18nService.t('mcpSupportsApps')} position="top">
+          <Tooltip content={i18nService.t('mcpSupportsApps')} position="top" className="shrink-0">
             <span
               tabIndex={0}
-              role="img"
+              role="note"
               aria-label={i18nService.t('mcpSupportsApps')}
-              className="inline-flex shrink-0 rounded text-primary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="inline-flex shrink-0 whitespace-nowrap rounded-md bg-primary/[0.07] px-1.5 py-0.5 text-[10px] font-medium leading-4 text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.7"
-                aria-hidden="true"
-              >
-                <rect x="3" y="4" width="18" height="16" rx="3" />
-                <path d="M3 9h18M8 9v11" />
-              </svg>
+              {i18nService.t('mcpAppBadge')}
             </span>
           </Tooltip>
         )}

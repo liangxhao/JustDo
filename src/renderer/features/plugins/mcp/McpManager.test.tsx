@@ -2,7 +2,7 @@
 
 import { configureStore } from '@reduxjs/toolkit';
 import { getExtensionProvidedManagement } from '@shared/plugins/management';
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
@@ -21,6 +21,7 @@ vi.mock('./mcpService', () => ({
     loadExtensionServers: vi.fn(async () => []),
     getExtensionServers: vi.fn(() => null),
     getServers: vi.fn(() => []),
+    getAppSupport: vi.fn(() => undefined),
     hasServerLoadFailed: vi.fn(() => false),
     setServerEnabled: vi.fn(),
     setExtensionServerEnabled: vi.fn(),
@@ -77,6 +78,7 @@ beforeEach(() => {
   vi.mocked(mcpService.loadServers).mockReset().mockResolvedValue([]);
   vi.mocked(mcpService.setServerEnabled).mockReset();
   vi.mocked(mcpService.getServers).mockReset().mockReturnValue([]);
+  vi.mocked(mcpService.getAppSupport).mockReset().mockReturnValue(undefined);
   Object.defineProperty(window, 'electron', {
     configurable: true,
     value: {
@@ -151,6 +153,46 @@ const customServer: McpServerConfig = {
   createdAt: 1,
   updatedAt: 1,
 };
+
+test('shows compact App labels for confirmed user and extension capabilities only', async () => {
+  vi.mocked(mcpService.loadServers).mockResolvedValue([customServer]);
+  vi.mocked(mcpService.getAppSupport).mockImplementation(server =>
+    server.id === customServer.id || server.id === demoServer('personal').id ? true : undefined,
+  );
+  renderManager();
+  const user = (await screen.findByText(customServer.name)).closest('article')!;
+  const extension = (await screen.findByText('personal-mcp')).closest('article')!;
+  const ordinary = (await screen.findByText('system-mcp')).closest('article')!;
+  expect(within(user).getByText('mcpAppBadge')).toBeTruthy();
+  expect(within(extension).getByText('mcpAppBadge')).toBeTruthy();
+  expect(within(ordinary).queryByText('mcpAppBadge')).toBeNull();
+  expect(mcpService.probeServer).not.toHaveBeenCalled();
+});
+
+test('live tool metadata adds an App label and supersedes a declaration when support is removed', async () => {
+  vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([
+    { ...demoServer('personal'), supportsApps: true },
+  ]);
+  renderManager();
+  const card = (await screen.findByText('personal-mcp')).closest('article')!;
+  expect(within(card).getByText('mcpAppBadge')).toBeTruthy();
+  fireEvent.click(await findCardProbe());
+  await waitFor(() => expect(within(card).queryByText('mcpAppBadge')).toBeNull());
+
+  fireEvent.keyDown(document, { key: 'Escape' });
+  vi.mocked(mcpService.probeServer).mockResolvedValue({
+    success: true,
+    result: {
+      available: true,
+      latencyMs: 5,
+      tools: [{ name: 'open', _meta: { ui: { resourceUri: 'ui://example/app' } } }],
+      resources: [],
+      prompts: [],
+    },
+  });
+  fireEvent.click(await findCardProbe());
+  await waitFor(() => expect(within(card).getByText('mcpAppBadge')).toBeTruthy());
+});
 
 const editableExtensionServer = (): ExtensionProvidedMcpServer => {
   const server = demoServer('personal');

@@ -18,6 +18,7 @@ interface ExtensionMcpCardProps {
   updating: boolean;
   probing: boolean;
   probeResult?: McpProbeResult;
+  supportsApps?: boolean;
 }
 
 const ExtensionMcpCard = ({
@@ -31,6 +32,7 @@ const ExtensionMcpCard = ({
   updating,
   probing,
   probeResult,
+  supportsApps,
 }: ExtensionMcpCardProps) => (
   <McpServerCard
     visualIndex={visualIndex}
@@ -47,7 +49,7 @@ const ExtensionMcpCard = ({
     probeDisabled={probing || updating || !server.supported}
     probing={probing}
     probeResult={probeResult}
-    supportsApps={server.supportsApps}
+    supportsApps={supportsApps ?? server.supportsApps}
     title={
       <span className="block max-w-full truncate text-sm font-medium text-foreground">
         {server.name}

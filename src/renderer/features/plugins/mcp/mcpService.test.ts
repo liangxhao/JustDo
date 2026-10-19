@@ -1,7 +1,119 @@
 // @vitest-environment jsdom
 import { expect, test, vi } from 'vitest';
 
-import type { McpServerConfig } from './mcp';
+import type { ExtensionProvidedMcpServer, McpProbeResult, McpServerConfig } from './mcp';
+
+const appProbeResult = (app = true): McpProbeResult => ({
+  available: true,
+  tools: [{ name: 'open', ...(app ? { uiResourceUri: 'ui://example/app' } : {}) }],
+  resources: [],
+  prompts: [],
+  latencyMs: 5,
+});
+
+const appSupportFixture = async (extension = false) => {
+  vi.resetModules();
+  let changed!: () => void;
+  const server = extension
+    ? ({
+        id: 'extension:provider:example',
+        name: 'Example',
+        providerId: 'provider',
+        enabled: true,
+        supported: true,
+        connectionSummary: 'node app.cjs',
+      } as ExtensionProvidedMcpServer)
+    : ({
+        id: 'example',
+        name: 'Example',
+        enabled: true,
+        transportType: 'stdio',
+        command: 'node',
+        args: ['app.cjs'],
+        updatedAt: 1,
+      } as McpServerConfig);
+  const api = {
+    list: vi.fn(async () => ({ success: true, servers: extension ? [] : [{ ...server }] })),
+    listExtensionServers: vi.fn(async () => ({
+      success: true,
+      extensionServers: extension ? [{ ...server }] : [],
+    })),
+    probe: vi.fn(async () => ({ success: true, result: appProbeResult() })),
+    update: vi.fn(async () => ({ success: true, servers: [{ ...server }] })),
+  };
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: {
+      extensions: { onChanged: (listener: () => void) => ((changed = listener), () => undefined) },
+      mcp: api,
+    },
+  });
+  const { mcpService } = await import('./mcpService');
+  await Promise.all([mcpService.loadServers(), mcpService.loadExtensionServers()]);
+  return { service: mcpService, api, server, changed: () => changed() };
+};
+
+test.each([false, true])(
+  'retains discovered App capability across inventory reloads (extension=%s)',
+  async extension => {
+    const { service, api, server } = await appSupportFixture(extension);
+    expect(service.getAppSupport(server)).toBeUndefined();
+    expect(api.probe).not.toHaveBeenCalled();
+    await service.probeServer(server.id);
+    await Promise.all([service.loadServers(), service.loadExtensionServers()]);
+    expect(service.getAppSupport({ ...server })).toBe(true);
+
+    api.probe.mockResolvedValue({
+      success: true,
+      result: { ...appProbeResult(), available: false },
+    });
+    await service.probeServer(server.id);
+    expect(service.getAppSupport(server)).toBe(true);
+
+    api.probe.mockResolvedValue({ success: true, result: appProbeResult(false) });
+    await service.probeServer(server.id);
+    expect(service.getAppSupport(server)).toBe(false);
+  },
+);
+
+test('configuration changes discard App hints and fence delayed probes', async () => {
+  const { service, api, server } = await appSupportFixture();
+  await service.probeServer(server.id);
+  expect(service.getAppSupport(server)).toBe(true);
+  expect(service.getAppSupport({ ...server, name: 'Another connection' })).toBeUndefined();
+  let finish!: (result: { success: boolean; result: McpProbeResult }) => void;
+  api.probe.mockReturnValueOnce(new Promise(resolve => (finish = resolve)));
+  const pending = service.probeServer(server.id);
+  await service.updateServer(server.id, { command: 'other' });
+  finish({ success: true, result: appProbeResult() });
+  await pending;
+  expect(service.getAppSupport(server)).toBeUndefined();
+});
+
+test('extension changes discard App hints and fence delayed probes', async () => {
+  const { service, api, server, changed } = await appSupportFixture(true);
+  await service.probeServer(server.id);
+  let finish!: (result: { success: boolean; result: McpProbeResult }) => void;
+  api.probe.mockReturnValueOnce(new Promise(resolve => (finish = resolve)));
+  const pending = service.probeServer(server.id);
+  changed();
+  await service.loadExtensionServers();
+  finish({ success: true, result: appProbeResult() });
+  await pending;
+  expect(service.getAppSupport(server)).toBeUndefined();
+});
+
+test('a superseded probe cannot overwrite the newer capability result', async () => {
+  const { service, api, server } = await appSupportFixture();
+  let finish!: (result: { success: boolean; result: McpProbeResult }) => void;
+  api.probe.mockReturnValueOnce(new Promise(resolve => (finish = resolve)));
+  const pending = service.probeServer(server.id);
+  api.probe.mockResolvedValueOnce({ success: true, result: appProbeResult(false) });
+  await service.probeServer(server.id);
+  finish({ success: true, result: appProbeResult() });
+  await pending;
+  expect(service.getAppSupport(server)).toBe(false);
+});
 
 test('an old extension inventory read cannot restore state after a native switch', async () => {
   vi.resetModules();

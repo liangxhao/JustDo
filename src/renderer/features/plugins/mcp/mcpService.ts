@@ -1,3 +1,5 @@
+import { mcpToolHasApp } from '@shared/plugins/mcpAppCapabilities';
+
 import {
   ExtensionProvidedMcpServer,
   McpProbeResult,
@@ -5,6 +7,35 @@ import {
   McpServerConfig,
   McpServerFormData,
 } from '@/features/plugins/mcp/mcp';
+
+type McpInventoryServer = McpServerConfig | ExtensionProvidedMcpServer;
+
+// Memory-only discovery hint. Never persists credentials, catalogs or tool grants.
+const appSupportFingerprint = (server: McpInventoryServer): string =>
+  JSON.stringify(
+    'providerId' in server
+      ? [
+          server.name,
+          server.providerId,
+          server.enabled,
+          server.supported,
+          server.connectionSummary,
+          server.connectionTimeoutMs,
+          server.requestTimeoutMs,
+        ]
+      : [
+          server.name,
+          server.enabled,
+          server.transportType,
+          server.command,
+          server.args,
+          server.env,
+          server.url,
+          server.headers,
+          server.requestTimeoutSeconds,
+          server.updatedAt,
+        ],
+  );
 
 class McpService {
   private servers: McpServerConfig[] = [];
@@ -16,6 +47,36 @@ class McpService {
   private extensionLoad: Promise<ExtensionProvidedMcpServer[]> | null = null;
   private extensionGeneration = 0;
   private watchingExtensions = false;
+  private appSupportGeneration = 0;
+  private probeSequence = 0;
+  private appSupport = new Map<string, { fingerprint: string; supported: boolean }>();
+  private probeGenerations = new Map<string, number>();
+
+  getAppSupport(server: McpInventoryServer): boolean | undefined {
+    const known = this.appSupport.get(server.id);
+    return known?.fingerprint === appSupportFingerprint(server) ? known.supported : undefined;
+  }
+
+  private invalidateAppSupport(): void {
+    this.appSupportGeneration += 1;
+    this.appSupport.clear();
+    this.probeGenerations.clear();
+  }
+
+  private pruneAppSupport(servers: McpInventoryServer[], extension: boolean): void {
+    const current = new Map(servers.map(server => [server.id, appSupportFingerprint(server)]));
+    for (const [id, known] of this.appSupport) {
+      if (id.startsWith('extension:') === extension && current.get(id) !== known.fingerprint) {
+        this.appSupport.delete(id);
+        this.probeGenerations.delete(id);
+      }
+    }
+    for (const id of this.probeGenerations.keys()) {
+      if (id.startsWith('extension:') === extension && !current.has(id)) {
+        this.probeGenerations.delete(id);
+      }
+    }
+  }
 
   getExtensionServers(): ExtensionProvidedMcpServer[] | null {
     return this.extensionServers;
@@ -42,6 +103,7 @@ class McpService {
       const result = await window.electron.mcp.list();
       if (generation !== this.serverGeneration) return this.serverLoad ?? this.servers;
       if (result.success && result.servers) {
+        this.pruneAppSupport(result.servers, false);
         this.servers = result.servers;
         this.serverLoadFailed = false;
       } else {
@@ -76,6 +138,7 @@ class McpService {
     if (!this.watchingExtensions) {
       this.watchingExtensions = true;
       window.electron.extensions.onChanged(() => {
+        this.invalidateAppSupport();
         this.extensionGeneration += 1;
         this.extensionServers = null;
         this.extensionLoad = null;
@@ -88,6 +151,7 @@ class McpService {
     const pending = this.fetchExtensionServers()
       .then(servers => {
         if (generation !== this.extensionGeneration) return this.loadExtensionServers();
+        this.pruneAppSupport(servers, true);
         this.extensionServers = servers;
         return servers;
       })
@@ -130,16 +194,21 @@ class McpService {
     id: string,
     enabled: boolean,
   ): Promise<ExtensionProvidedMcpServer[]> {
+    this.invalidateAppSupport();
     const generation = ++this.extensionGeneration;
     this.extensionLoad = null;
-    const result = await window.electron.mcp.setExtensionEnabled({ id, enabled });
-    if (!result.success) {
-      if (generation === this.extensionGeneration) this.extensionServers = null;
-      throw new Error(`mcpExtensionMutation.${result.code}`);
+    try {
+      const result = await window.electron.mcp.setExtensionEnabled({ id, enabled });
+      if (!result.success) {
+        if (generation === this.extensionGeneration) this.extensionServers = null;
+        throw new Error(`mcpExtensionMutation.${result.code}`);
+      }
+      if (generation !== this.extensionGeneration) return this.loadExtensionServers();
+      this.extensionServers = result.extensionServers;
+      return result.extensionServers;
+    } finally {
+      this.invalidateAppSupport();
     }
-    if (generation !== this.extensionGeneration) return this.loadExtensionServers();
-    this.extensionServers = result.extensionServers;
-    return result.extensionServers;
   }
 
   async readExtensionSettings(id: string) {
@@ -149,6 +218,7 @@ class McpService {
   async createServer(
     data: McpServerFormData,
   ): Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }> {
+    this.invalidateAppSupport();
     const generation = this.serverGeneration;
     try {
       const result = await window.electron.mcp.create(data);
@@ -160,6 +230,8 @@ class McpService {
       const message = error instanceof Error ? error.message : 'Failed to create MCP server';
       console.error('Failed to create MCP server:', error);
       return { success: false, error: message };
+    } finally {
+      this.invalidateAppSupport();
     }
   }
 
@@ -167,6 +239,7 @@ class McpService {
     id: string,
     data: Partial<McpServerFormData>,
   ): Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }> {
+    this.invalidateAppSupport();
     const generation = this.serverGeneration;
     try {
       const result = await window.electron.mcp.update(id, data);
@@ -178,12 +251,15 @@ class McpService {
       const message = error instanceof Error ? error.message : 'Failed to update MCP server';
       console.error('Failed to update MCP server:', error);
       return { success: false, error: message };
+    } finally {
+      this.invalidateAppSupport();
     }
   }
 
   async deleteServer(
     id: string,
   ): Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }> {
+    this.invalidateAppSupport();
     const generation = this.serverGeneration;
     try {
       const result = await window.electron.mcp.delete(id);
@@ -195,10 +271,13 @@ class McpService {
       const message = error instanceof Error ? error.message : 'Failed to delete MCP server';
       console.error('Failed to delete MCP server:', error);
       return { success: false, error: message };
+    } finally {
+      this.invalidateAppSupport();
     }
   }
 
   async setServerEnabled(id: string, enabled: boolean): Promise<McpServerConfig[]> {
+    this.invalidateAppSupport();
     const generation = this.serverGeneration;
     try {
       const result = await window.electron.mcp.setEnabled({ id, enabled });
@@ -209,6 +288,8 @@ class McpService {
     } catch (error) {
       console.error('Failed to update MCP server:', error);
       throw error;
+    } finally {
+      this.invalidateAppSupport();
     }
   }
 
@@ -226,20 +307,46 @@ class McpService {
 
   /** Sync MCP server configuration to OpenClaw. */
   async syncConfig(): Promise<{ success: boolean; tools: number; error?: string }> {
+    this.invalidateAppSupport();
     try {
       return await window.electron.mcp.syncConfig();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to sync MCP configuration';
       console.error('Failed to sync MCP configuration:', error);
       return { success: false, tools: 0, error: message };
+    } finally {
+      this.invalidateAppSupport();
     }
   }
 
   async probeServer(
     id: string,
   ): Promise<{ success: boolean; result?: McpProbeResult; error?: string }> {
+    const server = [...this.servers, ...(this.extensionServers ?? [])].find(item => item.id === id);
+    const fingerprint = server && appSupportFingerprint(server);
+    const generation = this.appSupportGeneration;
+    const probeGeneration = ++this.probeSequence;
+    this.probeGenerations.set(id, probeGeneration);
     try {
-      return await window.electron.mcp.probe(id);
+      const result = await window.electron.mcp.probe(id);
+      const current = [...this.servers, ...(this.extensionServers ?? [])].find(
+        item => item.id === id,
+      );
+      if (
+        result.success &&
+        result.result?.available &&
+        fingerprint &&
+        current &&
+        generation === this.appSupportGeneration &&
+        probeGeneration === this.probeGenerations.get(id) &&
+        fingerprint === appSupportFingerprint(current)
+      ) {
+        this.appSupport.set(id, {
+          fingerprint,
+          supported: result.result.tools.some(mcpToolHasApp),
+        });
+      }
+      return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to probe MCP server';
       console.error('Failed to probe MCP server:', error);
@@ -261,11 +368,17 @@ class McpService {
   }
 
   onConfigSyncStart(callback: () => void): () => void {
-    return window.electron.mcp.onConfigSyncStart(callback);
+    return window.electron.mcp.onConfigSyncStart(() => {
+      this.invalidateAppSupport();
+      callback();
+    });
   }
 
   onConfigSyncDone(callback: (data: { tools: number; error?: string }) => void): () => void {
-    return window.electron.mcp.onConfigSyncDone(callback);
+    return window.electron.mcp.onConfigSyncDone(data => {
+      this.invalidateAppSupport();
+      callback(data);
+    });
   }
 }
 

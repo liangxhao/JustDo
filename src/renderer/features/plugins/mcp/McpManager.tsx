@@ -866,6 +866,7 @@ const McpManager: React.FC<McpManagerProps> = ({
         probeDisabled={probingServerIds.has(server.id)}
         probing={probingServerIds.has(server.id)}
         probeResult={probeResults[server.id]}
+        supportsApps={mcpService.getAppSupport(server)}
         title={
           <span className="block truncate text-sm font-medium text-foreground">{server.name}</span>
         }
@@ -1051,6 +1052,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                                   updating={updatingServerIds.has(server.id)}
                                   probing={probingServerIds.has(server.id)}
                                   probeResult={probeResults[server.id]}
+                                  supportsApps={mcpService.getAppSupport(server)}
                                 />
                               ) : (
                                 renderInstalledCard(server, visualIndex)
@@ -1088,6 +1090,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                               updating={updatingServerIds.has(server.id)}
                               probing={probingServerIds.has(server.id)}
                               probeResult={probeResults[server.id]}
+                              supportsApps={mcpService.getAppSupport(server)}
                             />
                           ))}
                         </div>
