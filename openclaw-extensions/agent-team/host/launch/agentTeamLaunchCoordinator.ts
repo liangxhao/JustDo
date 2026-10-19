@@ -5,6 +5,7 @@ import type Database from 'better-sqlite3';
 import { parsePlanModeState } from '../../../plan-mode/contracts/state';
 import { OpenClawExtensionId } from '../../../runtime-services/contracts/native-ids';
 import { buildCoworkSessionKey } from '../../../runtime-services/contracts/session-key';
+import { hasBlockingGoalExecution } from '../../contracts/goalExecutionAdmission';
 import { normalizeAgentTeamLaunchText } from '../../prompt/agentTeamLaunchText';
 import { AGENT_TEAM_MODE, recognizeAgentTeamMode } from '../../prompt/agentTeamPrompt';
 import type { TeamHostStore as CoworkStore } from '../ports';
@@ -197,7 +198,7 @@ export class AgentTeamLaunchCoordinator {
       !source ||
       source.external ||
       source.nativeParentSessionId ||
-      store.getGoalExecutionSnapshot(sessionId)
+      hasBlockingGoalExecution(store.getGoalExecutionSnapshot(sessionId))
     )
       throw new Error('teamLaunchContractUnavailable');
     return source;

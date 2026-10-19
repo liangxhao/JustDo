@@ -28,7 +28,17 @@ const OPERATIONS = (processState[OPERATIONS_KEY] ??= {
   uncertain: new Set(),
 });
 const MAX_CORRECTIONS = 2;
-const SAFE_READS = new Set(['read', 'web_search', 'web_fetch', 'memory_search', 'memory_get']);
+const SAFE_READS = new Set([
+  'read',
+  'web_search',
+  'web_fetch',
+  'memory_search',
+  'memory_get',
+  'skills_search',
+  'skills_read',
+]);
+// Progress presentation does not execute work or establish a Team receipt.
+const PRESENTATION_TOOLS = new Set(['progress_card']);
 // Native Tool Search wraps catalog targets and runs their trusted policies again.
 // Admitting its control tools does not admit a target, or count as a Team launch.
 const CATALOG_CONTROLS = new Set(['tool_search', 'tool_describe', 'tool_call']);
@@ -796,7 +806,12 @@ export function registerAgentTeamLaunchGuard(api: OpenClawPluginApi): void {
             (event.toolKind === 'code_mode_exec' && event.toolInputKind === 'javascript')
             ? undefined
             : deny;
-        if (SAFE_READS.has(event.toolName) || CATALOG_CONTROLS.has(event.toolName)) return;
+        if (
+          SAFE_READS.has(event.toolName) ||
+          PRESENTATION_TOOLS.has(event.toolName) ||
+          CATALOG_CONTROLS.has(event.toolName)
+        )
+          return;
         if (
           launch.mode === 'discussion' &&
           event.toolName === 'team_discussion' &&

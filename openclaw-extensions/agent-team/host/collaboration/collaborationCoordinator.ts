@@ -15,6 +15,7 @@ import {
   type CollaborationStopMemberInput,
   parseCollaborationSend,
 } from '../../contracts/collaboration';
+import { hasBlockingGoalExecution } from '../../contracts/goalExecutionAdmission';
 import { AgentTeamSettingsService } from '../data/agentTeamSettingsService';
 import { CollaborationStore } from '../data/collaborationStore';
 import type { TeamHostStore as CoworkStore } from '../ports';
@@ -253,11 +254,12 @@ export class CollaborationCoordinator {
           extension.pluginId === OpenClawExtensionId.PLAN_MODE && extension.namespace === 'state',
       )?.value;
       const plan = await runtime.getPlanMode(sessionId);
+      const goalExecution = runtime.getGoalExecution(sessionId);
       if (
         plan.enabled ||
         planState?.enabled === true ||
         planState?.awaitingReview != null ||
-        runtime.getGoalExecution(sessionId)
+        hasBlockingGoalExecution(goalExecution)
       )
         throw new Error('collaborationContinuationUnavailable');
     };

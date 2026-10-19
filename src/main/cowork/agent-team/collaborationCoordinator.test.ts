@@ -339,6 +339,41 @@ describe('direct member message preparation', () => {
           },
     );
   };
+  it.each(['waiting', 'stopped'])(
+    'allows neutral no-Goal %s snapshots for both source and member',
+    async phase => {
+      available();
+      getRuntime.mockReturnValue({
+        getPlanMode: async () => ({ enabled: false }),
+        getGoalExecution: (sessionId: string) => ({
+          sessionId,
+          phase,
+          continuationCount: 0,
+          updatedAt: Date.now(),
+        }),
+      } as unknown as OpenClawRuntimeAdapter);
+      await expect(coordinator.prepareContinuation(input)).resolves.toMatchObject({
+        targetSessionId: 'b',
+      });
+      expect(start).not.toHaveBeenCalled();
+    },
+  );
+  it.each([
+    { phase: 'waiting', goalId: 'goal' },
+    { phase: 'running' },
+    { phase: 'waiting', identityPending: true },
+    { phase: 'stopped', goalId: 'goal' },
+    { phase: 'stopped', identityPending: true },
+  ])('refuses non-neutral Goal execution evidence %j', snapshot => {
+    available();
+    getRuntime.mockReturnValue({
+      getPlanMode: async () => ({ enabled: false }),
+      getGoalExecution: () => snapshot,
+    } as unknown as OpenClawRuntimeAdapter);
+    return expect(coordinator.prepareContinuation(input)).rejects.toThrow(
+      'collaborationContinuationUnavailable',
+    );
+  });
   it('refuses a replaced native member even when its product key is unchanged', async () => {
     available();
     await expect(

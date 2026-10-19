@@ -7,6 +7,9 @@ it('gives launch-only instructions and named direct and Code Mode arguments with
   expect(instruction).toContain('The Swarm Workflow service owns task planning, execution and progress tracking');
   expect(instruction).toContain('current attachments');
   expect(instruction).toContain('self-contained goal');
+  expect(instruction).toContain('skills_read and skills_search may load installed skill instructions');
+  expect(instruction).toContain('progress_card may present launch status only');
+  expect(instruction).toContain('do not execute the task or establish workflow acceptance');
   expect(instruction).toContain('"id":"swarm_workflow_start","args":');
   expect(instruction).toContain('"mode":"review","sourceRequestId":"request:user"');
 });

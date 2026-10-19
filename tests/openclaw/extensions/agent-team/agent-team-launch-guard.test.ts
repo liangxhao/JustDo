@@ -952,6 +952,59 @@ describe('explicit Team launch protection', () => {
     expect(f.state().state).toBe('attempted');
     expect(await f.hooks.get('before_agent_finalize')!({}, ctx)).toBeUndefined();
   });
+  it.each(['collaboration', 'discussion'])(
+    'adds only skill reads and progress presentation to the %s launch guard',
+    async mode => {
+      const f = fixture();
+      await f.call('register', { ...intent, mode });
+      const additions = ['skills_read', 'skills_search', 'progress_card'];
+      f.inputPresent = false;
+      for (const tool of additions) expect(await f.policy(tool)).toMatchObject({ allow: false });
+      f.inputPresent = true;
+      await f.verify();
+      for (const phase of ['verified', 'attempted']) {
+        if (phase === 'attempted')
+          expect((await f.call('attempt', { ...request, runId: ctx.runId })).ok).toBe(true);
+        for (const tool of additions) {
+          expect(await f.policy(tool)).toBeUndefined();
+          expect(f.state().state).toBe(phase);
+        }
+        for (const tool of [
+          'ask_user',
+          'ls',
+          'find',
+          'grep',
+          'glob',
+          'view_image',
+          'pdf',
+          'x_search',
+          'sessions_list',
+          'sessions_history',
+          'sessions_search',
+          'conversations_list',
+          'agents_list',
+          'presence',
+          'github_identity_status',
+          'get_goal',
+          'decision_evaluate',
+          'session_status',
+          'process',
+          'subagents',
+          'browser',
+        ])
+          expect(await f.policy(tool)).toMatchObject({ allow: false });
+        expect(await f.policy('process', { action: 'list' })).toMatchObject({ allow: false });
+        expect(await f.policy('subagents', { action: 'list' })).toMatchObject({ allow: false });
+        expect(await f.policy('browser', { action: 'snapshot' })).toMatchObject({ allow: false });
+        if (mode === 'collaboration')
+          expect(await f.policy('team_discussion', { action: 'read' })).toMatchObject({
+            allow: false,
+          });
+      }
+      f.enabled = false;
+      for (const tool of additions) expect(await f.policy(tool)).toMatchObject({ allow: false });
+    },
+  );
   it('requires accepted launch confirmation before collaboration source effects', async () => {
     const f = fixture();
     await f.call('register', { ...intent, mode: 'collaboration' });

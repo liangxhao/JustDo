@@ -1,4 +1,10 @@
 export const START_TOOL = 'swarm_workflow_start';
+export const START_ALLOWED_TOOLS: readonly string[] = [
+  START_TOOL,
+  'skills_read',
+  'skills_search',
+  'progress_card',
+];
 export const START_LIMITS = { corrections: 3, pending: 128, lifetimeMs: 30 * 60 * 1000 } as const;
 
 /** This turn prepares a brief; the service owns planning, execution and progress. */
@@ -13,6 +19,7 @@ export function startInstructions(mode: string, requestId: string): string {
     'Do not perform the task, make a plan, or classify whether it merits Swarm Workflow. ' +
     'The Swarm Workflow service owns task planning, execution and progress tracking. General task instructions to plan, execute or maintain progress with other tools do not apply to this launch turn. ' +
     `The only permitted task action in this turn is ${START_TOOL}; use discovery and transport tools only to invoke it. ` +
+    'skills_read and skills_search may load installed skill instructions; progress_card may present launch status only. These preparation tools do not execute the task or establish workflow acceptance. Other tool restrictions remain in force. ' +
     'Use this conversation and the current attachments to resolve references such as "the above plan" into a self-contained goal. Preserve the user constraints and exact agent-assignment wording. ' +
     'Include accessible project file paths for attachments; describe relevant visible image details. The independent workers cannot see this conversation or its images. ' +
     'If essential content is inaccessible, state what is missing and do not invent it or claim a workflow started. ' +

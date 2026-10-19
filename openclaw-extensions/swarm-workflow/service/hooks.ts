@@ -8,7 +8,13 @@ import {
 } from '../execution/submission';
 import { MANAGEMENT_GUIDANCE } from '../management/tools';
 import { parseSwarmWorkflowRequest } from '../prompt/request';
-import { lastStartError, START_LIMITS, START_TOOL, startInstructions } from '../prompt/start';
+import {
+  lastStartError,
+  START_ALLOWED_TOOLS,
+  START_LIMITS,
+  START_TOOL,
+  startInstructions,
+} from '../prompt/start';
 import type { WorkflowContext } from './context';
 import { entry, inPlanMode, managed } from './native-context';
 import { resultBudgetAttempt } from './result-budget';
@@ -38,7 +44,7 @@ export function registerWorkflowExecutionHooks(context: WorkflowContext): void {
       intake &&
       intake.generation === state.generation &&
       intake.expiresAt > Date.now() &&
-      event.toolName !== START_TOOL &&
+      !START_ALLOWED_TOOLS.includes(event.toolName) &&
       !['tool_call', 'tool_describe', 'tool_search'].includes(event.toolName) &&
       !(
         event.toolName === 'exec' &&
@@ -418,9 +424,9 @@ export function registerWorkflowPromptHooks(context: WorkflowContext): void {
           });
       }
       return {
-        toolsAllow: [START_TOOL],
+        toolsAllow: [...START_ALLOWED_TOOLS],
         prependSystemContext: startInstructions(marker.mode, requestId),
-        appendSystemContext: `Swarm Workflow launch turn: the ONLY task action is ${START_TOOL}. Planning, execution and progress tracking belong to the workflow service. Do not use other task tools in this launch turn. Resolve the brief, call the launch tool, acknowledge only its accepted receipt, then stop.`,
+        appendSystemContext: `Swarm Workflow launch turn: the ONLY task action is ${START_TOOL}. Planning, execution and progress tracking belong to the workflow service. Only skills_read, skills_search and progress_card are additionally allowed for skill instructions and launch-status presentation. Do not use other task tools in this launch turn. Resolve the brief, call the launch tool, acknowledge only its accepted receipt, then stop.`,
       };
     } catch (error) {
       return {

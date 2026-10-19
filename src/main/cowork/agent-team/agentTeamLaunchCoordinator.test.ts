@@ -50,6 +50,7 @@ function fixture() {
     source,
     deleted: false,
     goal: false,
+    goalSnapshot: undefined as unknown,
     known: true,
     running: false,
     subagents: false,
@@ -74,7 +75,7 @@ function fixture() {
   const store = {
     getSession: () => (state.deleted ? null : source),
     getSessionByNativeKey: () => null,
-    getGoalExecutionSnapshot: () => (state.goal ? { sessionId } : null),
+    getGoalExecutionSnapshot: () => state.goalSnapshot ?? (state.goal ? { sessionId } : null),
     getSessionRunByClientTurnId: () => ({
       sessionId,
       clientTurnId,
@@ -302,6 +303,26 @@ describe('explicit Team launch operation ownership', () => {
     expect(
       await f.coordinator.register({ ...input, prompt: 'Ordinary\u0000message' }),
     ).toBeUndefined();
+  });
+  it.each(['waiting', 'stopped'])(
+    'registers a new Team from a no-Goal %s host snapshot',
+    async phase => {
+      const f = fixture();
+      f.state.goalSnapshot = { sessionId, phase, continuationCount: 0, updatedAt: Date.now() };
+      await expect(f.coordinator.register(input)).resolves.toMatchObject({ state: 'pending' });
+      expect(f.count('agentTeam.launch.register')).toBe(1);
+    },
+  );
+  it.each([
+    { phase: 'stopped', goalId: 'goal' },
+    { phase: 'waiting', identityPending: true },
+    { phase: 'running' },
+    {},
+  ])('rejects an unresolved host Goal snapshot %j', async snapshot => {
+    const f = fixture();
+    f.state.goalSnapshot = snapshot;
+    await expect(f.coordinator.register(input)).rejects.toThrow('teamLaunchContractUnavailable');
+    expect(f.count('agentTeam.launch.register')).toBe(0);
   });
   it.each(['external', 'goal', 'child'] as const)(
     'rejects the %s source contract before registration',

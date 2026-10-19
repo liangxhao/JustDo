@@ -67,5 +67,12 @@ export interface TeamHostRouter {
 
 export interface TeamHostRuntime {
   getPlanMode(sessionId: string): Promise<{ enabled: boolean }>;
-  getGoalExecution(sessionId: string): unknown;
+  getGoalExecution(sessionId: string):
+    | {
+        goalId?: string;
+        phase: string;
+        identityPending?: boolean;
+      }
+    | null
+    | undefined;
 }
