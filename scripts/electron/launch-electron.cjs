@@ -19,7 +19,8 @@ function launchElectron(options = {}) {
     cwd: path.resolve(__dirname, '../..'),
     stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
     env,
-    windowsHide: true,
+    // SW_HIDE suppresses the first native ShowWindow call, including BrowserWindow.show().
+    windowsHide: false,
   });
 }
 

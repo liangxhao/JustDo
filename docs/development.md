@@ -38,7 +38,10 @@ Hook 模块补充 React Refresh 签名；Vite 默认只为 JSX 模块生成这�
 “change in the order of Hooks” 警告；重启开发进程并重新加载 Renderer 后再验证。
 
 开发启动器直接管理 Vite 与 Electron，不通过 concurrently 对 Windows 子进程树
-转发终止信号。Electron 保留独立的父进程 Node IPC 管道；Ctrl+C 先请求当前子进程
+转发终止信号。Electron GUI 进程必须以 `windowsHide: false` 启动，否则 Windows
+会抑制主窗口首次显示，表现为启动后只有托盘图标；后台辅助进程仍可隐藏启动。
+开发启动器通过独立的父进程 Node IPC 管道
+管理 Electron；Ctrl+C 先请求当前子进程
 执行应用正常退出，等待 Main 停止运行及 Gateway、释放原生数据库租约后，再关闭
 Vite。Main 的退出预算为 30 秒，紧急 Gateway 清理另有 17 秒；启动器给予 50 秒，
 仍未退出才强制结束，并最多再等 5 秒。重复终止信号不提前缩短该窗口。
