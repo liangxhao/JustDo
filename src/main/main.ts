@@ -19,7 +19,11 @@ import { ACTIVITY_REPORTING_CONFIG } from '../config/activityReporting';
 import { APP_UPDATE_CONFIG } from '../config/appUpdate';
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../config/builtinModels';
 import { AuthIpc } from '../shared/app/auth';
-import { AppInitializationIpc, AppInitializationStep } from '../shared/app/initialization';
+import {
+  AppInitializationActivity,
+  AppInitializationIpc,
+  AppInitializationStep,
+} from '../shared/app/initialization';
 import { normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../shared/browser/browser';
 import { EmbeddedBrowserGateway } from '../shared/browser/embeddedBrowser';
 import { buildCoworkSessionKey } from '../shared/cowork/sessionKey';
@@ -2122,6 +2126,7 @@ if (multicaBridgeArgv) {
     if (startupPreparationError) throw startupPreparationError;
     await initialization.prepareUserData();
     if (appShutdown.isQuitting()) return;
+    initialization.reportActivity(AppInitializationActivity.Database);
     store = await initStore();
     if (appShutdown.isQuitting()) return;
     mainWindow = null;
@@ -2216,6 +2221,7 @@ if (multicaBridgeArgv) {
 
     // Ensure default working directory exists
     const defaultProjectDir = path.join(os.homedir(), DEFAULT_WORKSPACE_DIRECTORY_NAME, 'project');
+    initialization.reportActivity(AppInitializationActivity.Workspace);
     await initialization.runOptionalTask('prepare default project directory', async () => {
       await fs.promises.mkdir(defaultProjectDir, { recursive: true });
     });
@@ -2250,6 +2256,7 @@ if (multicaBridgeArgv) {
     // endpoint may require the saved system/custom proxy to be reachable.
     bindOpenClawGatewayPortProxyBypass();
     const appConfig = getStore().get<AppConfigSettings>('app_config');
+    initialization.reportActivity(AppInitializationActivity.StartupSettings);
     await applySystemProxyPreference(appConfig);
     if (appShutdown.isQuitting()) return;
     await applyBrowserProxyPreference(appConfig);
@@ -2320,6 +2327,7 @@ if (multicaBridgeArgv) {
     }
 
     let startupSync: Awaited<ReturnType<typeof syncOpenClawConfig>> | undefined;
+    initialization.reportActivity(AppInitializationActivity.DefaultFiles);
     await initialization.runOptionalTask('synchronize assistant configuration', async () => {
       const result = await syncOpenClawConfig({
         reason: 'startup',
@@ -2335,6 +2343,7 @@ if (multicaBridgeArgv) {
     }
     if (appShutdown.isQuitting()) return;
 
+    initialization.reportActivity(AppInitializationActivity.StartupSettings);
     await ensureMulticaBridgeRunning().catch(error => {
       console.error('[MulticaBridge] Failed to start:', error);
       multicaBridgeServer = null;
@@ -2367,6 +2376,7 @@ if (multicaBridgeArgv) {
     }
     if (appShutdown.isQuitting()) return;
 
+    initialization.reportActivity(AppInitializationActivity.Finalize);
     builtinModelCredentialMonitor = new BuiltinModelCredentialMonitor({
       userInfoPath: resolveOutboundHeaderUserInfoPath(),
       refresh: refreshBuiltinModelCredentialFromLoginFile,

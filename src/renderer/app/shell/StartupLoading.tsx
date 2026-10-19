@@ -8,7 +8,7 @@ export default function StartupLoading() {
   return (
     <div className="cowork-home flex min-h-0 flex-1 items-center justify-center overflow-auto px-6 py-12">
       <div
-        className="flex w-full max-w-sm flex-col items-center text-center motion-safe:animate-fade-in-up"
+        className="flex w-full max-w-sm animate-fade-in-up flex-col items-center text-center"
         role="status"
         aria-live="polite"
       >
@@ -38,7 +38,7 @@ export default function StartupLoading() {
           <div className="inline-flex max-w-full items-center gap-2.5 rounded-full border border-border-subtle bg-surface px-4 py-2.5 text-[13px] text-secondary shadow-subtle">
             <span
               aria-hidden="true"
-              className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-border border-t-primary motion-safe:animate-spin"
+              className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-border border-t-primary"
             />
             <span>{i18nService.t('startupPreparing')}</span>
           </div>

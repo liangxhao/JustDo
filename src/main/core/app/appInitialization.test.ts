@@ -3,7 +3,11 @@ import os from 'os';
 import path from 'path';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { AppInitializationPhase, AppInitializationStep } from '../../../shared/app/initialization';
+import {
+  AppInitializationActivity,
+  AppInitializationPhase,
+  AppInitializationStep,
+} from '../../../shared/app/initialization';
 import { AppInitialization } from './appInitialization';
 
 const roots: string[] = [];
@@ -124,4 +128,42 @@ test('does not introduce first-install markers in development or other platforms
   const initialization = new AppInitialization(root, false, vi.fn());
   await initialization.complete();
   expect(fs.readdirSync(root)).toEqual([]);
+});
+
+test('reports real activities without advancing milestones and retains timestamps across snapshots', async () => {
+  const onChanged = vi.fn();
+  const time = vi.spyOn(Date, 'now').mockReturnValue(1000);
+  const initialization = new AppInitialization(temporaryRoot(), false, onChanged);
+  time.mockReturnValue(5000);
+  initialization.reportActivity(AppInitializationActivity.Database);
+  expect(initialization.getState()).toMatchObject({
+    activity: AppInitializationActivity.Database,
+    completedSteps: 0,
+    startedAt: 1000,
+    activityStartedAt: 5000,
+    updatedAt: 5000,
+  });
+  time.mockReturnValue(9000);
+  initialization.reportActivity(AppInitializationActivity.Database);
+  expect(onChanged).toHaveBeenCalledOnce();
+  expect(initialization.getState().activityStartedAt).toBe(5000);
+  initialization.advance(AppInitializationStep.Runtime, 1);
+  expect(initialization.getState()).toMatchObject({
+    activity: AppInitializationActivity.Python,
+    startedAt: 1000,
+    activityStartedAt: 9000,
+  });
+  await initialization.complete();
+  initialization.reportActivity(AppInitializationActivity.EngineStart);
+  expect(initialization.getState().phase).toBe(AppInitializationPhase.Ready);
+  expect(initialization.getState().activity).toBe(AppInitializationActivity.Python);
+});
+
+test('preserves the failed activity and ignores late activity reports', () => {
+  const initialization = new AppInitialization(temporaryRoot(), false, vi.fn());
+  initialization.reportActivity(AppInitializationActivity.Database);
+  initialization.fail(new Error('database unavailable'));
+  const failedState = initialization.getState();
+  initialization.reportActivity(AppInitializationActivity.Python);
+  expect(initialization.getState()).toEqual(failedState);
 });

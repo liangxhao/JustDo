@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  AppInitializationActivity,
   AppInitializationPhase,
   type AppInitializationState,
   AppInitializationStep,
@@ -33,6 +34,10 @@ const preparing: AppInitializationState = {
   totalSteps: 4,
   firstLaunch: true,
   userDataPath: 'C:\\用户 数据',
+  activity: AppInitializationActivity.UserDirectory,
+  startedAt: 1,
+  activityStartedAt: 1,
+  updatedAt: 1,
 };
 function deferred<T>() {
   let resolve!: (value: T) => void;

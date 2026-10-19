@@ -24,6 +24,20 @@ export const AppInitializationStep = {
   Complete: 'complete',
 } as const;
 
+export const AppInitializationActivity = {
+  UserDirectory: 'userDirectory',
+  Database: 'database',
+  Python: 'python',
+  StartupSettings: 'startupSettings',
+  Workspace: 'workspace',
+  DefaultFiles: 'defaultFiles',
+  EngineStart: 'engineStart',
+  Finalize: 'finalize',
+} as const;
+
+export type AppInitializationActivity =
+  (typeof AppInitializationActivity)[keyof typeof AppInitializationActivity];
+
 export type AppInitializationState = {
   phase: (typeof AppInitializationPhase)[keyof typeof AppInitializationPhase];
   step: (typeof AppInitializationStep)[keyof typeof AppInitializationStep];
@@ -31,5 +45,9 @@ export type AppInitializationState = {
   completedSteps: number;
   totalSteps: number;
   userDataPath: string;
+  activity: AppInitializationActivity;
+  startedAt: number;
+  activityStartedAt: number;
+  updatedAt: number;
   error?: string;
 };

@@ -161,6 +161,27 @@ The Renderer subscribes before reading its snapshot and mounts the normal app on
 when Main reports readiness. Failures retain the failed step, directory and actual
 error, with a restart action; reinstalling is unnecessary for a profile problem.
 
+The setup presentation uses a four-step checklist alongside the current operation
+and its explanation. Main publishes closed activity identifiers at the actual
+directory/database, bundled runtime, startup settings, workspace, default files,
+engine startup and finalization boundaries. Setup copy focuses on local folders,
+data files, default assistant files, runtime resources and startup checks.
+Authentication, model access, proxy application and integration setup remain part
+of their existing startup flow, without separate first-launch presentation steps.
+There is no assertion that large runtime bundles are copied into Roaming; their
+installation-resource ownership remains as described below.
+The shared snapshot carries startup, activity-start and last-update
+timestamps, preserving elapsed time across the transient-to-normal window handoff.
+Renderer updates total and current-operation elapsed time every second; timers do
+not advance completed milestones or assert backend health. After 30 seconds on
+one operation it explains possible delays, and after 90 seconds without an activity
+change it explicitly reports the lack of further progress. A new real activity
+resets that hint. Failures freeze elapsed time and expand the data/log locations;
+normal setup keeps those details collapsed. These presentation updates do not add
+startup gates, public downloads, or retry execution.
+Setup entrance, loading-spinner and progress-width animations remain enabled
+regardless of the operating system's reduced-motion preference.
+
 Both the in-memory initialization window and the normal packaged window use the
 application-owned loopback HTTP renderer loader and its immutable-asset/CSP guards.
 Inline-script CSP hashes follow browser line-ending normalization, including

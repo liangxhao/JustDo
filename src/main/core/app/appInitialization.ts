@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  AppInitializationActivity,
   AppInitializationPhase,
   type AppInitializationState,
   AppInitializationStep,
@@ -18,6 +19,7 @@ export class AppInitialization {
     packagedWindows: boolean,
     private readonly onChanged: (state: AppInitializationState) => void,
   ) {
+    const startedAt = Date.now();
     this.state = {
       phase: AppInitializationPhase.Preparing,
       step: AppInitializationStep.UserData,
@@ -25,6 +27,10 @@ export class AppInitialization {
       completedSteps: 0,
       totalSteps: 4,
       userDataPath,
+      activity: AppInitializationActivity.UserDirectory,
+      startedAt,
+      activityStartedAt: startedAt,
+      updatedAt: startedAt,
     };
   }
 
@@ -33,7 +39,30 @@ export class AppInitialization {
   }
 
   advance(step: AppInitializationState['step'], completedSteps: number): void {
-    this.state = { ...this.state, step, completedSteps };
+    const activities = {
+      [AppInitializationStep.UserData]: AppInitializationActivity.UserDirectory,
+      [AppInitializationStep.Runtime]: AppInitializationActivity.Python,
+      [AppInitializationStep.Configuration]: AppInitializationActivity.StartupSettings,
+      [AppInitializationStep.Engine]: AppInitializationActivity.EngineStart,
+      [AppInitializationStep.Complete]: AppInitializationActivity.Finalize,
+    };
+    const now = Date.now();
+    this.state = {
+      ...this.state,
+      step,
+      completedSteps,
+      activity: activities[step],
+      activityStartedAt: now,
+      updatedAt: now,
+    };
+    this.onChanged(this.getState());
+  }
+
+  reportActivity(activity: AppInitializationActivity): void {
+    if (this.state.phase !== AppInitializationPhase.Preparing || this.state.activity === activity)
+      return;
+    const now = Date.now();
+    this.state = { ...this.state, activity, activityStartedAt: now, updatedAt: now };
     this.onChanged(this.getState());
   }
 
@@ -75,6 +104,7 @@ export class AppInitialization {
       phase: AppInitializationPhase.Ready,
       step: AppInitializationStep.Complete,
       completedSteps: this.state.totalSteps,
+      updatedAt: Date.now(),
     };
     this.onChanged(this.getState());
     console.info('[AppInitialization] Application shell ready:', this.getState());
@@ -86,6 +116,7 @@ export class AppInitialization {
       ...this.state,
       phase: AppInitializationPhase.Failed,
       error: error instanceof Error ? error.message : String(error),
+      updatedAt: Date.now(),
     };
     this.onChanged(this.getState());
   }
