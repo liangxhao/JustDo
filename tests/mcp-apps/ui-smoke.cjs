@@ -310,6 +310,57 @@ if (!process.versions.electron) {
           'getComputedStyle(window.fixtureView.shadowRoot.querySelector("header")).display === "none" && window.fixtureView.shadowRoot.querySelector("iframe") === window.fixtureOriginalFrame',
         ),
       );
+      const readsBeforeSwitch = await win.webContents.executeJavaScript(
+        'window.fixtureCalls.filter(call => call.method === "mcp.app.view").length',
+      );
+      await reopened.executeJavaScript(
+        'document.querySelector("#draft").value="edited before switching";true',
+      );
+      await win.webContents.executeJavaScript('window.fixtureSwitchSession(false);true');
+      await until(() =>
+        win.webContents.executeJavaScript(
+          '!window.fixtureView.context.isCurrent() && window.fixtureView.shadowRoot.querySelector("iframe") === window.fixtureOriginalFrame',
+        ),
+      );
+      await win.webContents.executeJavaScript('window.fixtureView.resume();true');
+      if (
+        (await win.webContents.executeJavaScript(
+          'window.fixtureCalls.filter(call => call.method === "mcp.app.view").length',
+        )) !== readsBeforeSwitch
+      )
+        throw new Error('A background App read its view before its session was ready');
+      await win.webContents.executeJavaScript('window.fixtureSwitchSession(true);true');
+      await until(() =>
+        win.webContents.executeJavaScript(
+          '!window.fixtureView.loading && !window.fixtureView.error && Boolean(window.fixtureView.shadowRoot.querySelector("iframe"))',
+        ),
+      );
+      await until(async () => {
+        for (const frame of win.webContents.mainFrame.framesInSubtree) {
+          try {
+            if (
+              await frame.executeJavaScript(
+                'document.body.dataset.initialized === "true" && document.body.dataset.seed === "received"',
+              )
+            )
+              return true;
+          } catch {}
+        }
+      });
+      if (
+        (await win.webContents.executeJavaScript(
+          'window.fixtureCalls.filter(call => call.method === "mcp.app.view").length',
+        )) !== readsBeforeSwitch
+      )
+        throw new Error(
+          'Returning to the App must retain its original iframe without reading the view',
+        );
+      if (
+        !(await reopened.executeJavaScript(
+          'document.querySelector("#draft").value === "edited before switching"',
+        ))
+      )
+        throw new Error('Switching sessions lost the editor input');
       await win.webContents.executeJavaScript('window.fixtureView.closeApp();true');
       await until(() =>
         win.webContents.executeJavaScript(
@@ -342,6 +393,7 @@ if (!process.versions.electron) {
             reopenedAppCanClose: true,
             workspaceHidesDuplicateHeader: true,
             workspaceClosedAppRetainsReopen: true,
+            sessionReturnRetainsEditorAndInput: true,
             themeUpdates: true,
             nativeLifecycle: true,
           },

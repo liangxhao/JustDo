@@ -1492,7 +1492,7 @@ export class ChatController {
 
   /** Switch to a different session */
   switchSession(sessionKey: string, options: SwitchSessionOptions = {}): Promise<void> {
-    this.mcpApps.invalidate();
+    this.mcpApps.invalidate(true);
     return chatControllerSession.switchSession.call(
       this.chatControllerSessionContext,
       sessionKey,

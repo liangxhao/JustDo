@@ -373,6 +373,7 @@ test.each([false, true])(
       }),
     };
     const context = { apps, isCurrent: () => true } as unknown as McpAppViewContext;
+    context.resume = vi.fn(() => ({ ...context }));
     const prepare = vi.fn().mockResolvedValue(context);
     render(
       <McpAppsControls
@@ -431,9 +432,15 @@ test.each([false, true])(
       const reopened = await fileContext.reopen!();
       expect(reopened.preview.viewId).toBe('view');
       expect(launch).toHaveBeenCalledTimes(3);
-      canInteract = false;
-      await expect(fileContext.reopen!()).rejects.toThrow('no longer available');
+      const resumed = fileContext.resume!();
+      expect(context.resume).toHaveBeenCalledOnce();
+      expect(resumed?.reopen).toBeTypeOf('function');
       expect(launch).toHaveBeenCalledTimes(3);
+      expect((await resumed!.reopen!()).preview.viewId).toBe('view');
+      expect(launch).toHaveBeenCalledTimes(4);
+      canInteract = false;
+      await expect(resumed!.reopen!()).rejects.toThrow('no longer available');
+      expect(launch).toHaveBeenCalledTimes(4);
     }
   },
 );

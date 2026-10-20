@@ -19,6 +19,22 @@ const item = (id: string, disabled = false): ComposerFeatureItem => ({
   disabled,
   onSelect: vi.fn(),
 });
+test.each(['click', 'ArrowDown', 'ArrowUp'])(
+  'notifies discovery only when the menu is opened with %s',
+  trigger => {
+    const onOpen = vi.fn();
+    render(<ComposerFeatureMenu items={[item('App')]} label="Features" onOpen={onOpen} />);
+    const button = screen.getByRole('button', { name: 'Features' });
+    if (trigger === 'click') fireEvent.click(button);
+    else fireEvent.keyDown(button, { key: trigger });
+    expect(onOpen).toHaveBeenCalledOnce();
+    fireEvent.keyDown(button, { key: 'ArrowDown' });
+    expect(onOpen).toHaveBeenCalledOnce();
+    fireEvent.keyDown(screen.getByRole('menuitem'), { key: 'Escape' });
+    fireEvent.click(button);
+    expect(onOpen).toHaveBeenCalledTimes(2);
+  },
+);
 test('supports multiple capabilities and skips disabled entries during keyboard navigation', () => {
   const items = [item('First'), item('Unavailable', true), item('Last')];
   render(<ComposerFeatureMenu items={items} label="Features" />);

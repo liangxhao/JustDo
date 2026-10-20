@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { createRef } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
+import type { McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 
 import JustDoChatWrapper, { type JustDoChatWrapperRef } from './JustDoChatWrapper';
@@ -117,6 +118,96 @@ it('blocks captured App entrypoints when branch creation becomes pending', async
   );
   expect(window.electron.mcpApps.prepare).not.toHaveBeenCalled();
   expect(onWidgetDraft).not.toHaveBeenCalled();
+});
+
+it('resumes App bindings only after returning to the same ready native incarnation', async () => {
+  const request = vi.fn().mockResolvedValue({});
+  const client = { generation: 1, request, stop: vi.fn() };
+  const connect = vi.spyOn(ChatController.prototype, 'connect').mockImplementation(async function (
+    this: ChatController,
+  ) {
+    this.state.client = client as never;
+    this.state.connected = true;
+    this.state.currentSessionId = 'native-old';
+    this.state.initialHistoryReady = true;
+  });
+  vi.spyOn(ChatController.prototype, 'switchSession').mockImplementation(async function (
+    this: ChatController,
+    key: string,
+  ) {
+    this.mcpApps.invalidate();
+    this.state.sessionKey = key;
+    this.state.currentSessionId = null;
+    this.state.initialHistoryReady = false;
+    this.mcpApps.refreshBinding();
+  });
+  const onWidgetDraft = vi.fn(() => true);
+  const fixtureView = render(<JustDoChatWrapper onWidgetDraft={onWidgetDraft} />);
+  await waitFor(() => expect(connect).toHaveBeenCalledOnce());
+  const controller = connect.mock.instances[0] as ChatController;
+  const context = (await fixture.mcpControls!.prepare()) as McpAppViewContext;
+  expect(context.isCurrent()).toBe(true);
+
+  fixture.session = { id: 'other', agentId: 'main' };
+  fixtureView.rerender(<JustDoChatWrapper onWidgetDraft={onWidgetDraft} />);
+  expect(context.isCurrent()).toBe(false);
+  expect(context.resume?.()).toBeUndefined();
+  controller.state.currentSessionId = 'native-other';
+  controller.state.initialHistoryReady = true;
+  expect(context.resume?.()).toBeUndefined();
+
+  fixture.session = { id: 'old', agentId: 'main' };
+  fixtureView.rerender(<JustDoChatWrapper onWidgetDraft={onWidgetDraft} />);
+  expect(context.resume?.()).toBeUndefined();
+  controller.state.currentSessionId = 'native-old';
+  controller.state.initialHistoryReady = true;
+  controller.state.historyReadFailed = true;
+  expect(context.resume?.()).toBeUndefined();
+  controller.state.historyReadFailed = false;
+  const resumed = context.resume?.();
+  expect(resumed?.isCurrent()).toBe(true);
+  expect(context.isCurrent()).toBe(false);
+  controller.state.connected = false;
+  expect(context.resume?.()).toBeUndefined();
+  client.generation++;
+  controller.state.connected = true;
+  expect(resumed?.isCurrent()).toBe(false);
+  expect(context.resume?.()?.isCurrent()).toBe(true);
+
+  controller.state.currentSessionId = 'replacement-incarnation';
+  expect(context.resume?.()).toBeUndefined();
+  expect(resumed?.isCurrent()).toBe(false);
+  controller.state.currentSessionId = 'native-old';
+  fixture.session = { ...fixture.session, branchCreationPending: true };
+  fixtureView.rerender(<JustDoChatWrapper onWidgetDraft={onWidgetDraft} />);
+  expect(context.resume?.()).toBeUndefined();
+  expect(window.electron.mcpApps.prepare).not.toHaveBeenCalled();
+  expect(request).not.toHaveBeenCalled();
+});
+
+it('pauses Apps on the home screen without disconnecting and rechecks history when returning', async () => {
+  const connect = vi.spyOn(ChatController.prototype, 'connect').mockImplementation(async function (
+    this: ChatController,
+  ) {
+    this.state.connected = true;
+    this.state.initialHistoryReady = true;
+  });
+  const disconnect = vi.spyOn(ChatController.prototype, 'disconnect').mockImplementation(() => {});
+  const switchSession = vi.spyOn(ChatController.prototype, 'switchSession').mockResolvedValue();
+  const view = render(<JustDoChatWrapper onWidgetDraft={() => true} />);
+  await waitFor(() => expect(connect).toHaveBeenCalledOnce());
+  const controller = connect.mock.instances[0] as ChatController;
+  const invalidate = vi.spyOn(controller.mcpApps, 'invalidate');
+  fixture.session = null as never;
+  view.rerender(<JustDoChatWrapper className="hidden" />);
+  expect(invalidate).toHaveBeenCalledWith(true);
+  expect(disconnect).not.toHaveBeenCalled();
+  fixture.session = { id: 'old', agentId: 'main' };
+  view.rerender(<JustDoChatWrapper onWidgetDraft={() => true} />);
+  expect(switchSession).toHaveBeenCalledExactlyOnceWith('agent:main:justdo:old', {
+    promoteFromSessionKey: undefined,
+  });
+  expect(connect).toHaveBeenCalledOnce();
 });
 
 it('keeps pending branch history readable while blocking direct native sends and mutations', async () => {

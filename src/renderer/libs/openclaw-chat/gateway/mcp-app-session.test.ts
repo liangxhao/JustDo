@@ -43,6 +43,58 @@ function fixture() {
 }
 
 describe('MCP App native session authority', () => {
+  it('suspends a retained presentation without rereading it and rejects responses from before navigation', async () => {
+    const { apps, request } = fixture();
+    const view = apps.bind('mcp-app-retained');
+    await view.view();
+    view.preservePresentation = true;
+    let finish!: (value: unknown) => void;
+    request.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+    );
+    const pending = view.request(McpAppMethod.CallTool, { toolName: 'edit' });
+    const rejected = expect(pending).rejects.toThrow('superseded');
+    apps.invalidate(true);
+    expect(view.suspended).toBe(true);
+    expect(view.isCurrent()).toBe(false);
+    await expect(view.request(McpAppMethod.CallTool)).rejects.toThrow('expired');
+    expect(apps.resume(view)).toBe(true);
+    expect(view.isCurrent()).toBe(true);
+    finish({ ok: true });
+    await rejected;
+    await view.request(McpAppMethod.ListTools);
+    expect(request.mock.calls.filter(([method]) => method === McpAppMethod.View)).toHaveLength(1);
+    apps.reportContext(view.viewId!, 'Editor', { updateId: 'new-selection' } as never);
+    await view.close();
+    expect(request).toHaveBeenLastCalledWith(
+      McpAppMethod.RemoveModelContext,
+      expect.objectContaining({
+        sessionKey: 'agent:a:conversation',
+        viewId: 'mcp-app-retained',
+        updateId: 'new-selection',
+      }),
+      expect.anything(),
+    );
+    expect(apps.getContexts()).toEqual([]);
+  });
+
+  it('does not resume a retained presentation through another connection generation or a hard invalidation', async () => {
+    const { apps, client } = fixture();
+    const view = apps.bind('mcp-app-retained');
+    await view.view();
+    view.preservePresentation = true;
+    apps.invalidate(true);
+    client.generation++;
+    expect(apps.resume(view)).toBe(false);
+    client.generation--;
+    apps.invalidate();
+    expect(view.suspended).toBe(false);
+    expect(apps.resume(view)).toBe(false);
+  });
+
   it('binds plugin resource access to the authenticated view and strips forged scope', async () => {
     const { apps, request, expire } = fixture();
     const uri = `app-file://${'a'.repeat(64)}`;

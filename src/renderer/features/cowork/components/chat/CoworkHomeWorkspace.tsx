@@ -1,7 +1,6 @@
 import type { BrowserPanelTab } from '@shared/browser/browser';
 import { HOME_WORKSPACE_SESSION_ID } from '@shared/preview/filePreview';
 
-import { useBrowserTabLimit } from '@/features/browser/useBrowserTabLimit';
 import { COMPOSER_FRAME_CLASS } from '@/features/cowork/components/composer/composerStyles';
 import CoworkPromptInput, {
   type CoworkPromptInputRef,
@@ -29,10 +28,15 @@ import {
   WORKSPACE_FILES_DISPLAY_TAB_ID,
 } from '../display/displayTabIds';
 import type { CoworkTerminalTab, SessionDisplayState } from '../display/useSessionDisplayState';
+import type { McpAppComposerMenu } from '../mcpApps/McpAppsControls';
 import type { FilePreview } from '../preview/FilePreviewDrawer';
 
 interface CoworkHomeWorkspaceProps {
   homeConversationHeader: React.JSX.Element;
+  chatController?: React.ReactNode;
+  mcpAppMenu?: McpAppComposerMenu;
+  onFeatureMenuOpen?: () => void;
+  maximumBrowserTabs: number;
   greetingKey: string;
   promptInputRef: React.RefObject<CoworkPromptInputRef>;
   handleStartSession: (
@@ -86,8 +90,12 @@ interface CoworkHomeWorkspaceProps {
   closeUnsupportedFilePreview: (filePath: string) => void;
 }
 
-export function CoworkHomeWorkspace({
+export function renderCoworkHomeWorkspace({
   homeConversationHeader,
+  chatController,
+  mcpAppMenu,
+  onFeatureMenuOpen,
+  maximumBrowserTabs,
   greetingKey,
   promptInputRef,
   handleStartSession,
@@ -124,12 +132,12 @@ export function CoworkHomeWorkspace({
   closeFilePreview,
   closeUnsupportedFilePreview,
 }: CoworkHomeWorkspaceProps) {
-  const maximumBrowserTabs = useBrowserTabLimit();
   return (
     <div className="cowork-home flex-1 flex flex-col h-full">
       <div className="cowork-display-host relative flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           {homeConversationHeader}
+          {chatController}
           <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="mx-auto flex min-h-full max-w-5xl flex-col justify-center px-4 py-10">
               <div className="space-y-12">
@@ -153,6 +161,8 @@ export function CoworkHomeWorkspace({
                   <CoworkPet running={false} waiting={false} placement="home" />
                   <div className={COMPOSER_FRAME_CLASS}>
                     <CoworkPromptInput
+                      mcpAppMenu={mcpAppMenu}
+                      onFeatureMenuOpen={onFeatureMenuOpen}
                       ref={promptInputRef}
                       onSubmit={handleStartSession}
                       onStop={handleStopSession}
@@ -254,9 +264,12 @@ export function CoworkHomeWorkspace({
               />
             }
           >
+            {/* Keep this first in both layouts: moving an iframe ancestor resets its document. */}
+            <div key="mcp-app-panels" className="contents">
+              {mcpAppTabs.panels(activeDisplayTabId)}
+            </div>
             {retainedRuntimePanels}
             {recordingReviewTabs.panels(activeDisplayTabId)}
-            {mcpAppTabs.panels(activeDisplayTabId)}
             {filePreviews.map(preview => (
               <FilePreviewDrawer
                 key={fileDisplayTabId(preview.filePath)}

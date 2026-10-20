@@ -8,6 +8,7 @@ const fixture = window as unknown as {
   fixtureCalls: Array<{ method: string; params: unknown }>;
   fixtureReady: boolean;
   fixtureView: McpAppView;
+  fixtureSwitchSession: (active: boolean) => void;
 };
 fixture.fixtureCalls = [];
 const identity = {
@@ -35,14 +36,19 @@ const client = {
     return {};
   },
 };
-const apps = new McpAppSession(() => ({
-  client: client as never,
-  generation: 1,
-  sessionKey: 'agent:a:fixture',
-  sessionId: 'incarnation',
-  agentId: 'a',
-  isCurrent: () => true,
-}));
+let active = true;
+const apps = new McpAppSession(() =>
+  active
+    ? {
+        client: client as never,
+        generation: 1,
+        sessionKey: 'agent:a:fixture',
+        sessionId: 'incarnation',
+        agentId: 'a',
+        isCurrent: () => active,
+      }
+    : undefined,
+);
 const view = new McpAppView();
 view.preview = decodeMcpAppLaunch({
   viewId: identity.viewId,
@@ -53,15 +59,26 @@ view.preview = decodeMcpAppLaunch({
     presentation: { target: 'assistant_message', sandbox: 'scripts' },
   },
 });
-view.context = {
-  apps,
-  sessionKey: 'agent:a:fixture',
-  isCurrent: () => true,
-  canDraft: () => true,
-  addDraft: async () => {
-    fixture.fixtureCalls.push({ method: 'draft', params: {} });
-    return true;
-  },
+const context = () => {
+  const binding = apps.bind();
+  return {
+    apps,
+    sessionKey: 'agent:a:fixture',
+    isCurrent: () => binding.isCurrent(),
+    canDraft: () => active,
+    addDraft: async () => {
+      fixture.fixtureCalls.push({ method: 'draft', params: {} });
+      return true;
+    },
+    resume: () => (active ? context() : undefined),
+  };
+};
+view.context = context();
+fixture.fixtureSwitchSession = value => {
+  apps.invalidate(true);
+  active = value;
+  apps.refreshBinding();
+  if (active) view.resume();
 };
 if (new URLSearchParams(location.search).has('workspace')) {
   const workspace = document.createElement('iframe');

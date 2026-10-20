@@ -7,6 +7,7 @@ const fixture = window as unknown as {
   fixturePayload: Record<string, unknown>;
   fixtureView: McpAppView;
   downloads: unknown[];
+  fixtureSwitchSession: (active: boolean) => void;
 };
 fixture.downloads = [];
 window.electron = {
@@ -36,13 +37,18 @@ const client = {
         }
       : {},
 };
-const apps = new McpAppSession(() => ({
-  client: client as never,
-  generation: 1,
-  sessionKey: 'agent:main:offline',
-  sessionId: 'offline',
-  isCurrent: () => true,
-}));
+let active = true;
+const apps = new McpAppSession(() =>
+  active
+    ? {
+        client: client as never,
+        generation: 1,
+        sessionKey: 'agent:main:offline',
+        sessionId: 'offline',
+        isCurrent: () => active,
+      }
+    : undefined,
+);
 const view = new McpAppView();
 view.preview = decodeMcpAppLaunch({
   viewId: identity.viewId,
@@ -53,12 +59,23 @@ view.preview = decodeMcpAppLaunch({
     presentation: { target: 'assistant_message', sandbox: 'scripts' },
   },
 });
-view.context = {
-  apps,
-  sessionKey: 'agent:main:offline',
-  isCurrent: () => true,
-  canDraft: () => true,
-  addDraft: async () => false,
+const context = () => {
+  const binding = apps.bind();
+  return {
+    apps,
+    sessionKey: 'agent:main:offline',
+    isCurrent: () => binding.isCurrent(),
+    canDraft: () => active,
+    addDraft: async () => false,
+    resume: () => (active ? context() : undefined),
+  };
+};
+view.context = context();
+fixture.fixtureSwitchSession = value => {
+  apps.invalidate(true);
+  active = value;
+  apps.refreshBinding();
+  if (active) view.resume();
 };
 if (new URLSearchParams(location.search).has('list')) mountMcpList();
 else document.body.append(view);

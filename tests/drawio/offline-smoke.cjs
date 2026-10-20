@@ -24,9 +24,10 @@ async function fixture() {
   require('../../openclaw-extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(sourceAssets);
   // No ancestor node_modules: this proves the service/SDK dependencies are bundled.
   const isolated = fs.mkdtempSync(path.join(os.tmpdir(), 'diagram-offline-'));
-  for (const file of ['server.cjs', 'app.js', 'app.css'])
+  for (const file of fs.readdirSync(sourceAssets).filter(file => /\.(cjs|js|css|pack)$/.test(file)))
     fs.copyFileSync(path.join(sourceAssets, file), path.join(isolated, file));
-  fs.symlinkSync(path.join(sourceAssets, 'public'), path.join(isolated, 'public'), 'junction');
+  if (fs.existsSync(path.join(sourceAssets, 'public')))
+    fs.symlinkSync(path.join(sourceAssets, 'public'), path.join(isolated, 'public'), 'junction');
   const transport = new StdioClientTransport({
     command: process.env.DIAGRAM_TEST_NODE || process.execPath,
     args: [path.join(isolated, 'server.cjs')],
@@ -91,7 +92,8 @@ async function fixture() {
       host.close();
       sandbox.close();
       await client.close();
-      fs.unlinkSync(path.join(isolated, 'public'));
+      if (fs.existsSync(path.join(isolated, 'public')))
+        fs.unlinkSync(path.join(isolated, 'public'));
       assert.equal(path.dirname(isolated), os.tmpdir());
       fs.rmSync(isolated, { recursive: true, force: true });
     },
@@ -437,13 +439,53 @@ if (!process.versions.electron) {
         ),
         'The editor has one top toolbar with all export controls',
       );
+      await editor.executeJavaScript(`(() => {
+        const label = [...document.querySelectorAll('foreignObject div')].find(
+          element => element.textContent === 'svg 前即时修改' && !element.childElementCount);
+        const bounds = label.getBoundingClientRect();
+        label.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0,
+          clientX: bounds.x + bounds.width / 2, clientY: bounds.y + bounds.height / 2 }));
+      })()`);
+      await until(
+        () =>
+          editor.executeJavaScript(
+            'Boolean(document.querySelector(".mxCellEditor[contenteditable=true]"))',
+          ),
+        'Edit before switching sessions',
+      );
+      await editor.executeJavaScript(`(() => {
+        const input = document.querySelector('.mxCellEditor[contenteditable=true]');
+        input.textContent = '切换前未保存的修改';
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
+      })()`);
+      await win.webContents.executeJavaScript('window.fixtureSwitchSession(false);true');
+      await win.webContents.executeJavaScript('window.fixtureSwitchSession(true);true');
+      await until(
+        () => win.webContents.executeJavaScript('window.fixtureView.context.isCurrent()'),
+        'Return to the original drawing session',
+      );
+      assert.equal(
+        await win.webContents.executeJavaScript(
+          'window.fixtureView.shadowRoot.querySelector("iframe") === window.fixtureEditorFrame',
+        ),
+        true,
+        'Switching sessions preserves the actual draw.io editor',
+      );
+      assert.equal(
+        await editor.executeJavaScript('document.body.innerText.includes("切换前未保存的修改")'),
+        true,
+        'Unexported draw.io edits survive a session switch',
+      );
       await inner.executeJavaScript('document.querySelector("#save").click()');
       await until(
         () => win.webContents.executeJavaScript('window.downloads.length === 6'),
         'Save from the compact workspace',
       );
       const workspaceSource = await win.webContents.executeJavaScript('window.downloads[5]');
-      assert.match(Buffer.from(workspaceSource.dataBase64, 'base64').toString(), /svg 前即时修改/);
+      assert.match(
+        Buffer.from(workspaceSource.dataBase64, 'base64').toString(),
+        /切换前未保存的修改/,
+      );
       await new Promise(resolve => setTimeout(resolve, 300));
       fs.writeFileSync(
         path.join(output, 'drawio-workspace-toolbar-dark.png'),
@@ -465,13 +507,13 @@ if (!process.versions.electron) {
       await until(
         () =>
           win.webContents.executeJavaScript(
-            'Boolean(document.querySelector("[aria-label=\\"支持交互界面\\"]"))',
+            '[...document.querySelectorAll("[role=note]")].some(note=>note.textContent==="APP")',
           ),
         'MCP interface badge',
       );
       assert.equal(
         await win.webContents.executeJavaScript(
-          'document.querySelectorAll("[aria-label=\\"支持交互界面\\"]").length',
+          '[...document.querySelectorAll("[role=note]")].filter(note=>note.textContent==="APP").length',
         ),
         1,
       );
@@ -496,6 +538,7 @@ if (!process.versions.electron) {
             returnedDiagramCanExport: true,
             workspaceSingleToolbar: true,
             workspaceEditorRetainsEditsAndExports: true,
+            sessionSwitchRetainsUnsavedDrawioEdit: true,
             exports: downloads.map(file => file.mimeType),
             errors,
             viewport,

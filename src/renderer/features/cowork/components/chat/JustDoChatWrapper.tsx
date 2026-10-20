@@ -225,6 +225,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const currentSession = useSelector(selectCurrentSession) as CoworkSession | null;
     const currentSessionId = currentSession?.id;
     const activeProductSessionId = useRef(currentSessionId);
+    const previousProductSessionId = useRef(currentSessionId);
     activeProductSessionId.current = currentSessionId;
     const currentSessionAgentId = currentSession?.agentId;
     const canonicalSessionKey = currentSessionId
@@ -309,22 +310,40 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           throw new Error('Native session changed');
       }
       assertSessionMutationAllowed();
-      const binding = controller.mcpApps.bind();
-      return {
-        apps: controller.mcpApps,
-        sessionKey,
-        isCurrent: () =>
-          activeProductSessionId.current === currentSessionId &&
-          controllerRef.current === controller &&
-          canonicalSessionKeyRef.current === sessionKey &&
-          binding.isCurrent(),
-        canDraft: canDraftWidget,
-        addDraft: addMcpAppDraft,
-        openFile: openMcpAppFile,
-        refresh: prepareMcpApp,
-        addNewDraft: (text, content) =>
-          newMcpAppDraftCallback.current?.(text, content) ?? Promise.resolve(false),
+      const nativeSessionId = controller.state.currentSessionId;
+      const resume = (): McpAppViewContext | undefined => {
+        if (
+          activeProductSessionId.current !== currentSessionId ||
+          controllerRef.current !== controller ||
+          canonicalSessionKeyRef.current !== sessionKey ||
+          controller.state.sessionKey !== sessionKey ||
+          !nativeSessionId ||
+          controller.state.currentSessionId !== nativeSessionId ||
+          !canDraftWidget() ||
+          !controller.mcpApps.ready
+        )
+          return;
+        const binding = controller.mcpApps.bind();
+        return {
+          apps: controller.mcpApps,
+          sessionKey,
+          isCurrent: () =>
+            activeProductSessionId.current === currentSessionId &&
+            controllerRef.current === controller &&
+            canonicalSessionKeyRef.current === sessionKey &&
+            binding.isCurrent(),
+          canDraft: canDraftWidget,
+          addDraft: addMcpAppDraft,
+          openFile: openMcpAppFile,
+          refresh: prepareMcpApp,
+          resume,
+          addNewDraft: (text, content) =>
+            newMcpAppDraftCallback.current?.(text, content) ?? Promise.resolve(false),
+        };
       };
+      const context = resume();
+      if (!context) throw new Error('Native App session changed');
+      return context;
     }, [
       currentSessionId,
       canDraftWidget,
@@ -884,13 +903,22 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     // that can expose an assistant-only snapshot until Gateway history arrives.
     useLayoutEffect(() => {
       const controller = controllerRef.current;
-      if (!controller || !currentSessionId) return;
+      const previousSessionId = previousProductSessionId.current;
+      previousProductSessionId.current = currentSessionId;
+      if (!controller) return;
+      if (!currentSessionId) {
+        if (previousSessionId) controller.mcpApps.invalidate(true);
+        return;
+      }
 
       // Build the gateway session key (same format as the main-process session-key helpers).
       const sessionKey = canonicalSessionKey;
       if (!sessionKey) return;
 
-      if (connectedRef.current && controller.state.sessionKey !== sessionKey) {
+      if (
+        connectedRef.current &&
+        (controller.state.sessionKey !== sessionKey || !previousSessionId)
+      ) {
         const promoteFromSessionKey = promotionSourceByTargetRef.current.get(sessionKey);
         promotionSourceByTargetRef.current.delete(sessionKey);
         void controller.switchSession(sessionKey, { promoteFromSessionKey });

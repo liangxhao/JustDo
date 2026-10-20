@@ -50,6 +50,7 @@ function AppPanel({
   register: (view: McpAppView | null) => void;
 }) {
   const mount = useRef<HTMLDivElement>(null);
+  const currentView = useRef<McpAppView>();
   useLayoutEffect(() => {
     const host = mount.current;
     if (!host) return;
@@ -60,12 +61,28 @@ function AppPanel({
     view.context = entry.context;
     view.fillContainer = true;
     host.append(view);
+    currentView.current = view;
     register(view);
     return () => {
+      currentView.current = undefined;
       register(null);
       view.remove();
     };
   }, [entry, register]);
+  useLayoutEffect(() => {
+    if (!active) return;
+    let listening = true;
+    const resume = () =>
+      queueMicrotask(() => {
+        if (listening) currentView.current?.resume();
+      });
+    resume();
+    const stop = entry.context.apps.subscribe(resume);
+    return () => {
+      listening = false;
+      stop();
+    };
+  }, [active, entry]);
   return <div ref={mount} hidden={!active} className="absolute inset-0 z-20 bg-background" />;
 }
 
@@ -142,15 +159,14 @@ export function useMcpAppTabs(sessionId: string, select: (id: string) => void, o
         update(current => [...current.filter(item => item.id !== entry.id), entry]);
       } else if ('load' in entry) {
         const existing = entriesRef.current.find(item => item.id === entry.id);
+        const view = views.current.get(entry.id);
         if (
           !existing ||
           'attach' in existing ||
           ('load' in existing
             ? existing.failed && existing.retryable !== false
             : entry.retryable !== false &&
-              (!existing.context.isCurrent() ||
-                views.current.get(entry.id)?.error ||
-                views.current.get(entry.id)?.closed))
+              (!(view?.context ?? existing.context).isCurrent() || view?.error || view?.closed))
         )
           loadFile(entry);
       } else {
@@ -234,6 +250,7 @@ export function useMcpAppTabs(sessionId: string, select: (id: string) => void, o
     }));
   return {
     tabs,
+    hasRetainedPanels: entries.some(entry => 'preview' in entry),
     focusFile: (filePath: string) => {
       const entry = entriesRef.current.find(
         item =>

@@ -80,13 +80,13 @@ export class McpAppSession {
     for (const listener of this.listeners) listener();
   }
 
-  invalidate(): void {
+  invalidate(preservePresentations = false): void {
     this.epoch++;
     this.bindingRevision++;
     for (const view of [...this.views]) {
+      if (preservePresentations && view.suspend()) continue;
       void view.close().catch(() => undefined);
     }
-    this.views.clear();
     for (const context of [...this.contexts.values()]) {
       void this.clearContext(context.viewId, context.binding, context.epoch, context.owner).catch(
         () => undefined,
@@ -176,7 +176,7 @@ export class McpAppSession {
 
   bind(viewId?: string): McpAppSessionView {
     const binding = this.capture();
-    const epoch = this.epoch;
+    const scope = { binding, epoch: this.epoch };
     return new McpAppSessionView(
       binding,
       viewId,
@@ -185,21 +185,31 @@ export class McpAppSession {
         this.views.delete(view);
         if (viewId && this.presentations.get(viewId) === view) this.presentations.delete(viewId);
       },
-      view => (viewId ? this.clearContext(viewId, binding, epoch, view) : Promise.resolve()),
+      view =>
+        viewId ? this.clearContext(viewId, scope.binding, scope.epoch, view) : Promise.resolve(),
       view => {
         if (!viewId) return;
         this.presentations.set(viewId, view);
         const context = this.contexts.get(viewId);
         if (
-          context?.epoch === epoch &&
-          context.binding.client === binding.client &&
-          context.binding.generation === binding.generation &&
-          context.binding.sessionKey === binding.sessionKey &&
-          context.binding.sessionId === binding.sessionId
+          context?.epoch === scope.epoch &&
+          context.binding.client === scope.binding.client &&
+          context.binding.generation === scope.binding.generation &&
+          context.binding.sessionKey === scope.binding.sessionKey &&
+          context.binding.sessionId === scope.binding.sessionId
         )
           this.contexts.set(viewId, { ...context, owner: view });
       },
+      next => {
+        scope.binding = next;
+        scope.epoch = this.epoch;
+      },
     );
+  }
+
+  resume(view: McpAppSessionView): boolean {
+    if (!this.views.has(view) || !this.ready) return false;
+    return view.resumeBinding(this.capture());
   }
 
   async discover(signal?: AbortSignal): Promise<McpAppDiscovery> {
@@ -221,6 +231,9 @@ export class McpAppSessionView {
   private fileServer?: string;
   private fileUri?: string;
   private fileWritable = false;
+  preservePresentation = false;
+  suspended = false;
+  private revision = 0;
 
   fileResource(action: 'read' | 'write', input: Record<string, unknown>, signal?: AbortSignal) {
     if (
@@ -251,6 +264,8 @@ export class McpAppSessionView {
     if (!this.canReadHistoricalTool || signal?.aborted)
       throw new Error('Historical App binding expired');
     const abort = new AbortController();
+    const binding = this.binding;
+    const revision = this.revision;
     const combined = signal ? AbortSignal.any([signal, abort.signal]) : abort.signal;
     this.operations.add(abort);
     try {
@@ -266,7 +281,12 @@ export class McpAppSessionView {
         },
         { signal: combined, timeoutMs: 30_000 },
       );
-      if (!this.isCurrent() || combined.aborted)
+      if (
+        !this.isCurrent() ||
+        this.binding !== binding ||
+        this.revision !== revision ||
+        combined.aborted
+      )
         throw new Error('Historical App result superseded');
       return result;
     } finally {
@@ -279,14 +299,44 @@ export class McpAppSessionView {
   }
 
   constructor(
-    private readonly binding: McpAppSessionBinding,
+    private binding: McpAppSessionBinding,
     readonly viewId?: string,
     private readonly retain: (view: McpAppSessionView) => void = () => undefined,
     private readonly forget: (view: McpAppSessionView) => void = () => undefined,
     private readonly clearContext: (view: McpAppSessionView) => Promise<void> = () =>
       Promise.resolve(),
     private readonly present: (view: McpAppSessionView) => void = () => undefined,
+    private readonly rebound: (binding: McpAppSessionBinding) => void = () => undefined,
   ) {}
+
+  suspend(): boolean {
+    if (this.disposed || !this.loaded || !this.preservePresentation) return false;
+    this.suspended = true;
+    this.revision++;
+    for (const operation of this.operations) operation.abort();
+    return true;
+  }
+
+  resumeBinding(binding: McpAppSessionBinding): boolean {
+    const previous = this.binding;
+    if (
+      this.disposed ||
+      !this.suspended ||
+      previous.client !== binding.client ||
+      previous.generation !== binding.generation ||
+      previous.sessionKey !== binding.sessionKey ||
+      previous.sessionId !== binding.sessionId ||
+      previous.agentId !== binding.agentId ||
+      !binding.isCurrent()
+    )
+      return false;
+    this.binding = binding;
+    this.rebound(binding);
+    this.suspended = false;
+    this.revision++;
+    this.present(this);
+    return true;
+  }
 
   get gatewayUrl(): string {
     return this.binding.client.gatewayUrl;
@@ -298,6 +348,7 @@ export class McpAppSessionView {
   isCurrent(): boolean {
     return (
       !this.disposed &&
+      !this.suspended &&
       this.binding.isCurrent() &&
       this.binding.client.generation === this.binding.generation
     );
@@ -341,6 +392,8 @@ export class McpAppSessionView {
     includeIncarnation = false,
   ): Promise<T> {
     if (!this.isCurrent()) throw new Error('MCP App binding expired');
+    const binding = this.binding;
+    const revision = this.revision;
     const params = { ...input };
     for (const field of scopedFields) delete params[field];
     const scope = {
@@ -362,7 +415,13 @@ export class McpAppSessionView {
           timeoutMs: method === McpAppMethod.View ? 10_000 : null,
         },
       );
-      if (!this.isCurrent() || combined.aborted) throw new Error('MCP App response superseded');
+      if (
+        !this.isCurrent() ||
+        this.binding !== binding ||
+        this.revision !== revision ||
+        combined.aborted
+      )
+        throw new Error('MCP App response superseded');
       return result;
     } catch (error) {
       controller.abort();
@@ -378,6 +437,8 @@ export class McpAppSessionView {
     descriptor?: McpAppDescriptor | null,
   ): Promise<McpAppViewPayload> {
     if (!this.viewId) return Promise.reject(new Error('MCP App view identity is required'));
+    const binding = this.binding;
+    const revision = this.revision;
     let result: McpAppViewPayload;
     try {
       result = await this.request<McpAppViewPayload>(McpAppMethod.View, {}, signal);
@@ -385,6 +446,8 @@ export class McpAppSessionView {
       if (
         (error as { details?: { code?: string } }).details?.code !== 'MCP_APP_VIEW_EXPIRED' ||
         !this.isCurrent() ||
+        this.binding !== binding ||
+        this.revision !== revision ||
         signal?.aborted ||
         !this.binding.sessionId ||
         !descriptor ||
@@ -418,6 +481,8 @@ export class McpAppSessionView {
         );
         if (
           !this.isCurrent() ||
+          this.binding !== binding ||
+          this.revision !== revision ||
           combined.aborted ||
           !/^mcp-app-[A-Za-z0-9-]{1,100}$/.test(restored.viewId)
         )
@@ -435,7 +500,13 @@ export class McpAppSessionView {
         if (!this.loaded && this.operations.size === 0) this.forget(this);
       }
     }
-    if (!this.isCurrent() || signal?.aborted) throw new Error('MCP App response superseded');
+    if (
+      !this.isCurrent() ||
+      this.binding !== binding ||
+      this.revision !== revision ||
+      signal?.aborted
+    )
+      throw new Error('MCP App response superseded');
     this.loaded = true;
     this.retain(this);
     this.present(this);
@@ -497,6 +568,8 @@ export class McpAppSessionView {
   close(): Promise<void> {
     if (this.closing) return this.closing;
     this.disposed = true;
+    this.suspended = false;
+    this.revision++;
     for (const operation of this.operations) operation.abort();
     this.forget(this);
     // Native WS has no per-request cancellation or view release. Aborting only
@@ -509,6 +582,8 @@ export class McpAppSessionView {
   detach(): void {
     for (const operation of this.operations) operation.abort();
     this.disposed = true;
+    this.suspended = false;
+    this.revision++;
     this.forget(this);
   }
 }

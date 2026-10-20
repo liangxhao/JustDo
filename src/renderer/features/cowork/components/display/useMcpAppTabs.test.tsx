@@ -4,6 +4,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import type { McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
 
+import { renderCoworkHomeWorkspace } from '../chat/CoworkHomeWorkspace';
 import {
   closeWorkspaceAppControls,
   type McpAppWorkspaceEntry,
@@ -13,13 +14,81 @@ import {
   openWorkspaceAppFile,
   openWorkspaceAppLaunch,
 } from '../mcpApps/workspaceApps';
+import CoworkDisplayPanel from './CoworkDisplayPanel';
 import { useMcpAppTabs } from './useMcpAppTabs';
 
-vi.mock('@/libs/openclaw-chat/components/mcp-app/view', () => ({ McpAppView: class {} }));
+vi.mock('@/libs/openclaw-chat/components/mcp-app/view', () => {
+  class TestAppView extends HTMLElement {
+    resume = vi.fn();
+  }
+  customElements.define('test-mcp-app-view', TestAppView);
+  return { McpAppView: TestAppView };
+});
 vi.mock('@/libs/openclaw-chat/pipeline/native-mcp-app', () => ({
   isNativeMcpAppPreview: () => true,
 }));
+vi.mock('./CoworkDisplayPanel', () => ({
+  default: ({ children }: { children: React.ReactNode }) => <aside>{children}</aside>,
+}));
+vi.mock('../composer/CoworkPromptInput', () => ({ default: () => <div /> }));
+vi.mock('../status/CoworkPet', () => ({ CoworkPet: () => null }));
 afterEach(cleanup);
+
+test('home and conversation layouts retain the same App DOM even when the next scope has no tabs', async () => {
+  const entry = {
+    id: 'home-editor',
+    sessionId: '__home__',
+    preview: { title: 'draw.io', viewId: 'home-view' },
+    context: { isCurrent: () => true, apps: { subscribe: () => () => {} } },
+  } as unknown as McpAppWorkspaceEntry;
+  function Fixture({ home }: { home: boolean }) {
+    const tabs = useMcpAppTabs(home ? '__home__' : 'other', vi.fn(), vi.fn());
+    if (home)
+      return renderCoworkHomeWorkspace({
+        config: { workingDirectory: 'E:/workspace' },
+        homeConversationHeader: <header />,
+        maximumBrowserTabs: 20,
+        promptInputRef: { current: null },
+        terminalTabs: [],
+        filePreviews: [],
+        unsupportedFilePreviews: [],
+        browserTabs: [],
+        homeDisplayTabs: tabs.tabs,
+        recordingReviewTabs: { tabs: [], panels: () => [] },
+        mcpAppTabs: tabs,
+        activeDisplayTabId: entry.id,
+        hasRetainedRuntimePanels: tabs.hasRetainedPanels,
+        retainedRuntimePanels: [],
+      } as unknown as Parameters<typeof renderCoworkHomeWorkspace>[0]);
+    return (
+      <div>
+        <div>
+          <main />
+          {tabs.hasRetainedPanels && (
+            <CoworkDisplayPanel
+              key="cowork-display-panel"
+              {...({} as React.ComponentProps<typeof CoworkDisplayPanel>)}
+            >
+              <div key="mcp-app-panels" className="contents">
+                {tabs.panels(null)}
+              </div>
+            </CoworkDisplayPanel>
+          )}
+        </div>
+      </div>
+    );
+  }
+  const fixture = render(<Fixture home />);
+  await act(async () => openWorkspaceApp(entry));
+  const view = document.querySelector('test-mcp-app-view');
+  expect(view).not.toBeNull();
+  fixture.rerender(<Fixture home={false} />);
+  expect(document.querySelector('test-mcp-app-view')).toBe(view);
+  expect(view?.isConnected).toBe(true);
+  fixture.rerender(<Fixture home />);
+  await act(async () => {});
+  expect(document.querySelector('test-mcp-app-view')).toBe(view);
+});
 
 test('file tabs keep the filename, focus the current view and replace invalidated views', () => {
   let current = true;
@@ -133,6 +202,26 @@ test('reserves and focuses a file tab immediately, deduplicates clicks and never
   expect(select).not.toHaveBeenCalled();
   expect(open).not.toHaveBeenCalled();
   expect(result.current.panels(file.entry.id)[0].props.entry.preview.viewId).toBe('file-ready');
+});
+
+test('repeated file opening keeps the live resumed view instead of relaunching its tool', async () => {
+  const file = pendingFile();
+  const { result } = renderHook(() => useMcpAppTabs('session', vi.fn(), vi.fn()));
+  act(() => openWorkspaceAppFile(file.entry));
+  await act(async () => file.finish());
+  const panel = result.current.panels(file.entry.id)[0];
+  panel.props.entry.context.isCurrent = () => false;
+  panel.props.register({
+    context: { isCurrent: () => true },
+    error: '',
+    closed: false,
+  });
+  const reload = vi.fn();
+
+  act(() => openWorkspaceAppFile({ ...file.entry, load: reload }));
+
+  expect(reload).not.toHaveBeenCalled();
+  expect(result.current.panels(file.entry.id)[0].props.entry).toBe(panel.props.entry);
 });
 
 test('closing a loading file tab aborts the local wait and never resurrects a late view', async () => {
@@ -273,6 +362,53 @@ test('an existing manual App with a failed interface is focused without relaunch
 
   expect(select).toHaveBeenCalledExactlyOnceWith(entry.id);
   expect(pending.load).toHaveBeenCalledOnce();
+});
+
+test('returning to an App tab resumes its view after binding notifications, only while active', async () => {
+  const listeners = new Set<() => void>();
+  const stop = vi.fn();
+  const entry = {
+    id: 'manual:session:drawio',
+    sessionId: 'session',
+    preview: { title: 'draw.io', viewId: 'original' },
+    context: {
+      isCurrent: () => true,
+      apps: {
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+            stop();
+          };
+        },
+      },
+    } as unknown as McpAppViewContext,
+  } as McpAppWorkspaceEntry;
+  function Fixture({ session, activeId }: { session: string; activeId: string | null }) {
+    const tabs = useMcpAppTabs(session, vi.fn(), vi.fn());
+    return <aside>{tabs.panels(activeId)}</aside>;
+  }
+  const fixture = render(<Fixture session="session" activeId={entry.id} />);
+  await act(async () => openWorkspaceApp(entry));
+  const view = document.querySelector('test-mcp-app-view') as HTMLElement & {
+    resume: ReturnType<typeof vi.fn>;
+  };
+  expect(view.resume).toHaveBeenCalledOnce();
+  fixture.rerender(<Fixture session="other" activeId={null} />);
+  expect(listeners.size).toBe(0);
+  fixture.rerender(<Fixture session="session" activeId={entry.id} />);
+  await act(async () => {});
+  expect(document.querySelector('test-mcp-app-view')).toBe(view);
+  expect(view.resume).toHaveBeenCalledTimes(2);
+  await act(async () => listeners.forEach(listener => listener()));
+  expect(view.resume).toHaveBeenCalledTimes(3);
+  act(() => {
+    listeners.forEach(listener => listener());
+    fixture.rerender(<Fixture session="other" activeId={null} />);
+  });
+  await act(async () => {});
+  expect(view.resume).toHaveBeenCalledTimes(3);
+  expect(stop).toHaveBeenCalledTimes(2);
 });
 
 test('advanced controls attach only to the workspace and close by exact owner', () => {

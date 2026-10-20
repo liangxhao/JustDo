@@ -28,12 +28,14 @@ export default function ComposerFeatureMenu({
   disabled = false,
   triggerIcon,
   backLabel,
+  onOpen,
 }: {
   items: readonly ComposerFeatureItem[];
   label: string;
   disabled?: boolean;
   triggerIcon?: ReactNode;
   backLabel?: string;
+  onOpen?: () => void;
 }) {
   const ownerDocument = useOwnerDocument();
   const [open, setOpen] = useState(false);
@@ -129,12 +131,14 @@ export default function ComposerFeatureMenu({
         aria-haspopup="menu"
         aria-controls={open && !disabled ? menuId : undefined}
         onClick={() => {
+          if (!open) onOpen?.();
           enterFromEnd.current = false;
           setPath([]);
           setOpen(!open);
         }}
         onKeyDown={event => {
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            if (!open) onOpen?.();
             event.preventDefault();
             enterFromEnd.current = event.key === 'ArrowUp';
             setPath([]);

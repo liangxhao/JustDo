@@ -285,6 +285,10 @@ export function McpAppsControls({
             throw new Error('File App open was superseded');
           const fileContext = (base: McpAppViewContext): McpAppViewContext => ({
             ...base,
+            resume: () => {
+              const resumed = base.resume?.();
+              return resumed ? fileContext(resumed) : undefined;
+            },
             reopen: async () => {
               const currentInput = findFileApp(fileActions.current.catalog, request.filePath);
               if (

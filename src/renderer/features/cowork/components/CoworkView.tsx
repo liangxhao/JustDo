@@ -204,7 +204,7 @@ import Modal from '@/shared/components/ui/Modal';
 import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
 import { type RootState, store } from '@/store';
 
-import { CoworkHomeWorkspace } from './chat/CoworkHomeWorkspace';
+import { renderCoworkHomeWorkspace } from './chat/CoworkHomeWorkspace';
 import { useCoworkSideChats } from './chat/useCoworkSideChats';
 import type {
   CollaborationContinueRequest,
@@ -964,7 +964,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const currentAgentId = config.allowMainAgentSwitch
     ? agentState.currentAgentId
     : MAIN_USER_AGENT_ID;
-  homeFileOpenerRef.current = useHomeFileApps({
+  const homeApps = useHomeFileApps({
     enabled: !currentSessionId,
     cwd: config.workingDirectory.trim(),
     agentId: currentAgentId,
@@ -990,6 +990,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       return true;
     },
   });
+  homeFileOpenerRef.current = homeApps.openFile;
   const currentSessionMainRunning = useSelector(selectCurrentSessionMainRuntimeRunning);
   const currentSessionRuntimeRunning = currentSession
     ? currentSession.id.startsWith('temp-')
@@ -2122,9 +2123,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     </div>
   );
 
-  const hasRetainedRuntimePanels = Object.values(displayStates).some(
-    displayState => displayState.hasBrowserPanelOpened || displayState.terminalTabs.length > 0,
-  );
+  const hasRetainedRuntimePanels =
+    mcpAppTabs.hasRetainedPanels ||
+    Object.values(displayStates).some(
+      displayState => displayState.hasBrowserPanelOpened || displayState.terminalTabs.length > 0,
+    );
   const renderDisplayLauncher = (onNavigateBrowser?: (url: string) => void) => {
     const replaceStartPage = (openContent: () => string | undefined) => () => {
       const startTab = onNavigateBrowser
@@ -3338,6 +3341,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             </div>
             {/* Messages */}
             <JustDoChatWrapper
+              key="chat-controller"
               onMcpAppMenuChange={setMcpAppMenu}
               onSummaryResourcesChange={setSummaryResources}
               ref={chatWrapperRef}
@@ -3627,6 +3631,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 />
               }
             >
+              {/* Keep this first in both layouts: moving an iframe ancestor resets its document. */}
+              <div key="mcp-app-panels" className="contents">
+                {mcpAppTabs.panels(activeDisplayTabId)}
+              </div>
               {isReviewOpen && (
                 <SessionReviewPanel
                   key={currentSession.id}
@@ -3672,7 +3680,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 </div>
               ))}
               {recordingReviewTabs.panels(activeDisplayTabId)}
-              {mcpAppTabs.panels(activeDisplayTabId)}
               {swarmWorkflowEnabled && swarmWorkflowSessionId === currentSession.id && (
                 <div
                   className="absolute inset-0"
@@ -3886,46 +3893,50 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   ];
 
   // Home view - no current session
-  return (
-    <CoworkHomeWorkspace
-      homeConversationHeader={homeConversationHeader}
-      greetingKey={greetingKey}
-      promptInputRef={promptInputRef}
-      handleStartSession={handleStartSession}
-      handleStopSession={handleStopSession}
-      isStreaming={isStreaming}
-      isEngineReady={isEngineReady}
-      config={config}
-      isDisplayPanelOpen={isDisplayPanelOpen}
-      isWorkspaceDetached={isWorkspaceDetached}
-      hasBrowserPanelOpened={hasBrowserPanelOpened}
-      terminalTabs={terminalTabs}
-      filePreviews={filePreviews}
-      unsupportedFilePreviews={unsupportedFilePreviews}
-      recordingReviewTabs={recordingReviewTabs}
-      mcpAppTabs={mcpAppTabs}
-      hasRetainedRuntimePanels={hasRetainedRuntimePanels}
-      activeDisplayTabId={activeDisplayTabId}
-      closeDisplayPanel={closeDisplayPanel}
-      browserPanelWidth={browserPanelWidth}
-      setSessionField={setSessionField}
-      displaySessionKey={displaySessionKey}
-      homeDisplayTabs={sortDisplayTabs(homeDisplayTabs)}
-      isWorkspaceFilesOpen={isWorkspaceFilesOpen}
-      browserTabs={browserTabs}
-      handleCreateBrowserTab={handleCreateBrowserTab}
-      handleCreateTerminalTab={handleCreateTerminalTab}
-      homeWorkspaceFolderPath={homeWorkspaceFolderPath}
-      handleOpenWorkspaceFiles={handleOpenWorkspaceFiles}
-      terminalWorkingDirectory={terminalWorkingDirectory}
-      activeFilePreview={activeFilePreview}
-      activeUnsupportedFilePath={activeUnsupportedFilePath}
-      retainedRuntimePanels={retainedRuntimePanels}
-      filePreviewDrawerRefs={filePreviewDrawerRefs}
-      closeFilePreview={closeFilePreview}
-      closeUnsupportedFilePreview={closeUnsupportedFilePreview}
-    />
-  );
+  return renderCoworkHomeWorkspace({
+    chatController: chatWrapperRef.current && mcpAppTabs.hasRetainedPanels ? (
+      <JustDoChatWrapper key="chat-controller" ref={chatWrapperRef} className="hidden" />
+    ) : undefined,
+    mcpAppMenu: homeApps.menu,
+    onFeatureMenuOpen: () => void homeApps.discover(),
+    maximumBrowserTabs,
+    homeConversationHeader,
+    greetingKey,
+    promptInputRef,
+    handleStartSession,
+    handleStopSession,
+    isStreaming,
+    isEngineReady,
+    config,
+    isDisplayPanelOpen,
+    isWorkspaceDetached,
+    hasBrowserPanelOpened,
+    terminalTabs,
+    filePreviews,
+    unsupportedFilePreviews,
+    recordingReviewTabs,
+    mcpAppTabs,
+    hasRetainedRuntimePanels,
+    activeDisplayTabId,
+    closeDisplayPanel,
+    browserPanelWidth,
+    setSessionField,
+    displaySessionKey,
+    homeDisplayTabs: sortDisplayTabs(homeDisplayTabs),
+    isWorkspaceFilesOpen,
+    browserTabs,
+    handleCreateBrowserTab,
+    handleCreateTerminalTab,
+    homeWorkspaceFolderPath,
+    handleOpenWorkspaceFiles,
+    terminalWorkingDirectory,
+    activeFilePreview,
+    activeUnsupportedFilePath,
+    retainedRuntimePanels,
+    filePreviewDrawerRefs,
+    closeFilePreview,
+    closeUnsupportedFilePreview,
+  });
 });
 
 CoworkView.displayName = 'CoworkView';

@@ -31,6 +31,8 @@ export interface McpAppViewContext {
   openFile?: (file: { path: string; name: string }) => Promise<boolean>;
   addNewDraft?: (text: string, content: unknown[]) => Promise<boolean>;
   refresh?: () => Promise<McpAppViewContext>;
+  /** Rebind an existing workspace view only after the same native incarnation is ready. */
+  resume?: () => McpAppViewContext | undefined;
   /** Explicit user reopen for a file snapshot; never an automatic tool replay. */
   reopen?: () => Promise<{ context: McpAppViewContext; preview: McpAppPreview }>;
 }
@@ -50,6 +52,7 @@ type Resources = {
   dispose?: () => void;
   teardown?: () => Promise<void>;
   update?: () => void;
+  refreshContext?: () => Promise<void>;
 };
 
 const STYLE = `
@@ -144,6 +147,9 @@ export class McpAppView extends LitElement {
 
   protected willUpdate(_changes: PropertyValues): void {
     if (!this.isConnected) return;
+    if (this.resources && !this.loading && this.resources.session.isCurrent())
+      this.resources.session.preservePresentation =
+        this.fillContainer && Boolean(this.context?.resume);
     if (this.waitingApps !== this.context?.apps) {
       this.stopWaiting?.();
       this.waitingApps = this.context?.apps;
@@ -159,7 +165,11 @@ export class McpAppView extends LitElement {
         this.loading = false;
       }
     }
-    if (this.resources && (!this.resources.session.isCurrent() || !this.context?.isCurrent()))
+    if (
+      this.resources &&
+      !this.resources.session.suspended &&
+      (!this.resources.session.isCurrent() || !this.context?.isCurrent())
+    )
       this.clear();
     if (
       !this.resources &&
@@ -327,7 +337,13 @@ export class McpAppView extends LitElement {
     this.resources = resources;
     this.lastSession = resources.session;
     const stopContext = context.apps.subscribe(() => {
-      if (!this.closed && (!resources.session.isCurrent() || !context.isCurrent())) {
+      if (resources.session.suspended) {
+        this.selection = null;
+        this.confirmation?.respond(false);
+        this.confirmation = undefined;
+        return;
+      }
+      if (!this.closed && (!resources.session.isCurrent() || !this.context?.isCurrent())) {
         this.clear();
         this.error = i18nService.t('mcpAppsUnavailable');
         this.requestUpdate();
@@ -400,10 +416,16 @@ export class McpAppView extends LitElement {
         payload,
         hostContext: buildContext,
         canInteract: () =>
-          current() && this.visible() && context.canDraft() && !this.inactive && !this.closed,
+          current() &&
+          this.visible() &&
+          this.context?.canDraft() === true &&
+          !this.inactive &&
+          !this.closed,
+        canRead: () =>
+          current() && this.visible() && this.context?.canDraft() === true && !this.closed,
         confirmDraft: (content, target) => this.draft(content, target),
         confirmFile: path => this.confirm(path, 'file'),
-        openFile: file => context.openFile?.(file) ?? Promise.resolve(false),
+        openFile: file => this.context?.openFile?.(file) ?? Promise.resolve(false),
         contextChanged: state => {
           this.selection = state;
           context.apps.reportContext(preview.viewId, preview.title, state);
@@ -417,8 +439,9 @@ export class McpAppView extends LitElement {
         host.dispose();
       };
       const { bridge } = host;
+      if (payload.updateModelContextSupported) resources.refreshContext = host.refreshContext;
       bridge.ondownloadfile = async ({ contents }) => {
-        if (this.closed || !current() || !this.visible() || !context.canDraft())
+        if (this.closed || !current() || !this.visible() || !this.context?.canDraft())
           return { isError: true };
         try {
           const input = prepareMcpAppDownload(contents);
@@ -498,6 +521,7 @@ export class McpAppView extends LitElement {
       bridge.setHostContext(buildContext());
       await bridge.sendToolInput({ arguments: payload.toolInput ?? {} });
       if (payload.toolResult) await bridge.sendToolResult(payload.toolResult as never);
+      if (!current()) return;
       resources.update = () => bridge.setHostContext(buildContext());
       const observer = new (owner as Window & typeof globalThis).MutationObserver(() =>
         resources.update?.(),
@@ -516,6 +540,8 @@ export class McpAppView extends LitElement {
         host.dispose();
       };
       if (payload.updateModelContextSupported) await host.refreshContext();
+      if (!current()) return;
+      resources.session.preservePresentation = this.fillContainer && Boolean(this.context?.resume);
       this.loading = false;
     } catch {
       if (this.resources === resources) {
@@ -523,6 +549,25 @@ export class McpAppView extends LitElement {
         this.error = i18nService.t('mcpAppsUnavailable');
       }
     }
+  }
+
+  resume(): void {
+    if (this.closed || this.context?.isCurrent()) return;
+    const context = this.context?.resume?.();
+    if (!context?.isCurrent()) return;
+    if (this.resources?.session.suspended && context.apps.resume(this.resources.session)) {
+      this.context = context;
+      this.error = '';
+      this.resources.update?.();
+      void this.resources.refreshContext?.().catch(() => undefined);
+      this.requestUpdate();
+      return;
+    }
+    this.clear();
+    this.context = context;
+    this.lastSession = undefined;
+    this.error = '';
+    this.requestUpdate();
   }
 
   closeApp(): Promise<void> {
@@ -612,7 +657,7 @@ export class McpAppView extends LitElement {
     } catch {
       if (current()) this.error = i18nService.t('mcpAppsUnavailable');
     } finally {
-      this.loading = false;
+      if (current()) this.loading = false;
     }
   }
 

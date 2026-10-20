@@ -1,12 +1,17 @@
-import { useCallback, useLayoutEffect, useRef } from 'react';
+import { ArrowPathIcon, Squares2X2Icon } from '@heroicons/react/24/outline';
+import { EnginePhase } from '@shared/openclaw/engineStatus';
+import type { McpAppDiscovery, McpAppLaunchInput } from '@shared/plugins/mcpApps';
+import { createElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import type { McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
 import { McpWorkspaceSession } from '@/libs/openclaw-chat/gateway/mcp-workspace-session';
 import { decodeMcpAppLaunch } from '@/libs/openclaw-chat/pipeline/native-mcp-app';
+import { i18nService } from '@/services/i18n';
 
 import { HOME_DISPLAY_SESSION_KEY } from '../display/useSessionDisplayState';
 import { findFileApp, type OpenMcpAppFile } from './fileApps';
-import { openWorkspaceAppFile } from './workspaceApps';
+import type { McpAppComposerMenu } from './McpAppsControls';
+import { openWorkspaceAppFile, openWorkspaceAppLaunch } from './workspaceApps';
 
 interface Options {
   enabled: boolean;
@@ -16,38 +21,84 @@ interface Options {
   addDraft: (text: string) => Promise<boolean>;
 }
 
-/** Homepage has no chat controller; prepare a native workspace only on an explicit file click. */
-export function useHomeFileApps(options: Options): OpenMcpAppFile {
-  const key = JSON.stringify([
-    options.enabled,
-    options.cwd,
-    options.agentId,
-    options.permissionMode,
-  ]);
+/** Preload the real home App catalog without launching an App or sending chat. */
+export function useHomeFileApps(options: Options): {
+  openFile: OpenMcpAppFile;
+  discover: () => Promise<void>;
+  menu: McpAppComposerMenu;
+} {
+  const key = JSON.stringify([options.cwd, options.agentId, options.permissionMode]);
   const latest = useRef({ ...options, key });
   latest.current = { ...options, key };
   const active = useRef(true);
-  const owned = useRef<{ key: string; session: McpWorkspaceSession }>();
+  const owned = useRef<{ key: string; requestId: string; session: McpWorkspaceSession }>();
+  const [catalog, setCatalog] = useState<{
+    owner: NonNullable<typeof owned.current>;
+    value: McpAppDiscovery;
+    isCurrent: () => boolean;
+  }>();
+  const catalogRef = useRef(catalog);
+  catalogRef.current = catalog;
+  const [runtimeReady, setRuntimeReady] = useState(false);
+  const [requestState, setRequestState] = useState<{ key: string; failed: boolean }>();
+  const pending = useRef<{ revision: number; task: Promise<void>; abort: AbortController }>();
+  const discovery = useRef({ revision: 0 }).current;
+  const navigation = useRef(0);
   useLayoutEffect(() => {
     active.current = true;
     return () => {
       active.current = false;
+      discovery.revision++;
+      pending.current?.abort.abort();
+      pending.current = undefined;
+      catalogRef.current = undefined;
       owned.current?.session.dispose();
       owned.current = undefined;
     };
-  }, [key]);
-  return useCallback(async request => {
-    if (!latest.current.enabled || !request.isCurrent()) return false;
+  }, [key, discovery]);
+  useLayoutEffect(() => {
+    navigation.current++;
+    if (!options.enabled) {
+      owned.current?.session.apps.invalidate(true);
+    }
+  }, [options.enabled, discovery]);
+  useEffect(() => {
+    let active = true;
+    let revision = 0;
+    const engine = window.electron.openclaw.engine;
+    const stop = engine.onProgress(status => {
+      revision++;
+      if (active) setRuntimeReady(status.phase === EnginePhase.Running);
+    });
+    const own = revision;
+    void engine
+      .getStatus()
+      .then(result => {
+        if (active && revision === own)
+          setRuntimeReady(result.success && result.status?.phase === EnginePhase.Running);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      stop();
+    };
+  }, []);
+  const owner = useCallback(() => {
+    if (!active.current) throw new Error('App workspace changed');
     let owner = owned.current;
     if (!owner) {
       const scope = latest.current;
+      const requestId = crypto.randomUUID();
       const session = new McpWorkspaceSession(
-        { requestId: crypto.randomUUID(), cwd: scope.cwd, agentId: scope.agentId },
+        { requestId, cwd: scope.cwd, agentId: scope.agentId },
         {
           isCurrent: () => active.current && latest.current.key === scope.key,
-          addDraft: text => latest.current.addDraft(text),
+          canInteract: () => latest.current.enabled,
+          addDraft: text =>
+            latest.current.enabled ? latest.current.addDraft(text) : Promise.resolve(false),
           openFile: async file => {
-            if (!active.current || latest.current.key !== scope.key) return false;
+            if (!active.current || !latest.current.enabled || latest.current.key !== scope.key)
+              return false;
             window.dispatchEvent(
               new CustomEvent('cowork:preview-file', {
                 detail: {
@@ -61,49 +112,262 @@ export function useHomeFileApps(options: Options): OpenMcpAppFile {
           },
         },
       );
-      owner = { key: scope.key, session };
+      owner = { key: scope.key, requestId, session };
       owned.current = owner;
     }
-    const { session } = owner;
-    const current = () => active.current && owned.current === owner;
-    let context: McpAppViewContext;
-    let catalog;
-    try {
-      context = await session.prepare();
-      catalog = await session.apps.discover();
-    } catch {
-      // A missing/disabled runtime must not break the existing ordinary preview.
-      return false;
-    }
-    if (!current() || !request.isCurrent() || !context.isCurrent()) return false;
-    const input = findFileApp(catalog, request.filePath);
-    if (!input) return false;
-    const load = async (signal?: AbortSignal) => {
-      if (!current() || signal?.aborted) throw new Error('App workspace changed');
-      const fresh = await session.prepare();
-      const discovery = await session.apps.discover(signal);
-      const handler = findFileApp(discovery, request.filePath);
-      if (
-        !current() ||
-        !fresh.isCurrent() ||
-        signal?.aborted ||
-        handler?.serverName !== input.serverName ||
-        handler.toolName !== input.toolName
-      )
-        throw new Error('File App is no longer available');
-      const preview = decodeMcpAppLaunch(await session.apps.launch(input, signal));
-      if (!preview || !current() || !fresh.isCurrent() || signal?.aborted)
-        throw new Error('File App open was superseded');
-      const fileContext: McpAppViewContext = { ...fresh, reopen: () => load() };
-      return { preview, context: fileContext };
-    };
-    openWorkspaceAppFile({
-      id: `mcp-app-file:${HOME_DISPLAY_SESSION_KEY}:${request.filePath}`,
-      sessionId: HOME_DISPLAY_SESSION_KEY,
-      filePath: request.filePath,
-      label: request.filePath.split(/[\\/]/).pop() || request.filePath,
-      load,
-    });
-    return true;
+    return owner;
   }, []);
+  const discover = useCallback((): Promise<void> => {
+    if (!active.current || !latest.current.cwd || !latest.current.agentId) return Promise.resolve();
+    const cached = catalogRef.current;
+    if (
+      cached &&
+      cached.owner === owned.current &&
+      cached.owner.key === latest.current.key &&
+      cached.owner.session.connected &&
+      cached.isCurrent()
+    )
+      return Promise.resolve();
+    if (pending.current?.revision === discovery.revision) return pending.current.task;
+    const revision = ++discovery.revision;
+    const key = latest.current.key;
+    const abort = new AbortController();
+    setRequestState({ key, failed: false });
+    const task = (async () => {
+      try {
+        const scope = owner();
+        const result = await scope.session.discover(abort.signal);
+        const current = () =>
+          active.current &&
+          revision === discovery.revision &&
+          latest.current.key === scope.key &&
+          owned.current === scope &&
+          result.isCurrent();
+        if (current()) {
+          const next = { owner: scope, ...result };
+          catalogRef.current = next;
+          setCatalog(next);
+          setRequestState(undefined);
+        }
+      } catch {
+        if (active.current && revision === discovery.revision) {
+          catalogRef.current = undefined;
+          setCatalog(undefined);
+          setRequestState({ key, failed: true });
+        }
+      } finally {
+        if (pending.current?.revision === revision) pending.current = undefined;
+      }
+    })();
+    pending.current = { revision, task, abort };
+    return task;
+  }, [owner, discovery]);
+  useEffect(() => {
+    if (!runtimeReady || !options.cwd || !options.agentId) return;
+    const scope = owner();
+    let active = true;
+    let authenticated = scope.session.connected;
+    let disconnected = false;
+    const stop = scope.session.subscribeConnection(() => {
+      if (!active || latest.current.key !== scope.key || owned.current !== scope) return;
+      if (!scope.session.connected) {
+        disconnected = true;
+        discovery.revision++;
+        pending.current?.abort.abort();
+        catalogRef.current = undefined;
+        setCatalog(undefined);
+        setRequestState({ key: scope.key, failed: true });
+        return;
+      }
+      // Initial preparation is already waiting for the first hello. After a
+      // reconnect, let that old attempt settle before preparing the new owner.
+      if (!authenticated && !disconnected) {
+        authenticated = true;
+        return;
+      }
+      authenticated = true;
+      disconnected = false;
+      void (pending.current?.task ?? Promise.resolve()).then(() => {
+        if (active && owned.current === scope && scope.session.connected) void discover();
+      });
+    });
+    const refresh = () => {
+      if (!active || latest.current.key !== scope.key || owned.current !== scope) return;
+      discovery.revision++;
+      pending.current?.abort.abort();
+      catalogRef.current = undefined;
+      setCatalog(undefined);
+      setRequestState({ key: scope.key, failed: false });
+      void (pending.current?.task ?? Promise.resolve()).then(() => {
+        if (active && owned.current === scope) void discover();
+      });
+    };
+    const stopConfig = window.electron.mcp?.onConfigSyncDone?.(refresh);
+    const stopExtensions = window.electron.extensions?.onChanged?.(refresh);
+    void discover();
+    return () => {
+      active = false;
+      stop();
+      stopConfig?.();
+      stopExtensions?.();
+    };
+  }, [options.cwd, options.agentId, runtimeReady, key, owner, discover, discovery]);
+  const launch = (input: McpAppLaunchInput, label: string) => {
+    if (!latest.current.enabled || !active.current) return;
+    const scope = owner();
+    const epoch = navigation.current;
+    openWorkspaceAppLaunch({
+      id: `mcp-app-entry:${HOME_DISPLAY_SESSION_KEY}:${scope.requestId}:${input.serverName}:${input.toolName}`,
+      sessionId: HOME_DISPLAY_SESSION_KEY,
+      label,
+      retryable: false,
+      load: async signal => {
+        const current = () =>
+          active.current &&
+          latest.current.enabled &&
+          navigation.current === epoch &&
+          owned.current === scope &&
+          !signal.aborted;
+        if (!current()) throw new Error('App workspace changed');
+        const context = await scope.session.prepare();
+        if (!current() || !context.isCurrent()) throw new Error('App workspace changed');
+        const preview = decodeMcpAppLaunch(await scope.session.apps.launch(input, signal));
+        if (!preview || !current() || !context.isCurrent())
+          throw new Error('App launch superseded');
+        return { preview, context };
+      },
+    });
+  };
+  const openFile = useCallback<OpenMcpAppFile>(
+    async request => {
+      if (!latest.current.enabled || !request.isCurrent()) return false;
+      const scope = owner();
+      const epoch = navigation.current;
+      const { session } = scope;
+      const current = () =>
+        active.current &&
+        latest.current.enabled &&
+        navigation.current === epoch &&
+        owned.current === scope;
+      let context: McpAppViewContext;
+      let catalog;
+      try {
+        context = await session.prepare();
+        catalog = await session.apps.discover();
+      } catch {
+        // A missing/disabled runtime must not break the existing ordinary preview.
+        return false;
+      }
+      if (!current() || !request.isCurrent() || !context.isCurrent()) return false;
+      const input = findFileApp(catalog, request.filePath);
+      if (!input) return false;
+      const load = async (signal?: AbortSignal, ownEpoch = navigation.current) => {
+        const currentLoad = () =>
+          active.current &&
+          latest.current.enabled &&
+          owned.current === scope &&
+          navigation.current === ownEpoch;
+        if (!currentLoad() || signal?.aborted) throw new Error('App workspace changed');
+        const fresh = await session.prepare();
+        const discovery = await session.apps.discover(signal);
+        const handler = findFileApp(discovery, request.filePath);
+        if (
+          !currentLoad() ||
+          !fresh.isCurrent() ||
+          signal?.aborted ||
+          handler?.serverName !== input.serverName ||
+          handler.toolName !== input.toolName
+        )
+          throw new Error('File App is no longer available');
+        const preview = decodeMcpAppLaunch(await session.apps.launch(input, signal));
+        if (!preview || !currentLoad() || !fresh.isCurrent() || signal?.aborted)
+          throw new Error('File App open was superseded');
+        const fileContext = (base: McpAppViewContext): McpAppViewContext => ({
+          ...base,
+          resume: () => {
+            const resumed = base.resume?.();
+            return resumed ? fileContext(resumed) : undefined;
+          },
+          reopen: () => load(),
+        });
+        return { preview, context: fileContext(fresh) };
+      };
+      openWorkspaceAppFile({
+        id: `mcp-app-file:${HOME_DISPLAY_SESSION_KEY}:${request.filePath}`,
+        sessionId: HOME_DISPLAY_SESSION_KEY,
+        filePath: request.filePath,
+        label: request.filePath.split(/[\\/]/).pop() || request.filePath,
+        load: signal => load(signal, epoch),
+      });
+      return true;
+    },
+    [owner],
+  );
+  const menuEpoch = navigation.current;
+  const currentCatalog =
+    catalog?.owner === owned.current &&
+    catalog?.owner.key === key &&
+    catalog.owner.session.connected &&
+    catalog.isCurrent() &&
+    options.enabled
+      ? catalog
+      : undefined;
+  const state = requestState?.key === key ? requestState : undefined;
+  return {
+    openFile,
+    discover,
+    menu: {
+      sessionId: HOME_DISPLAY_SESSION_KEY,
+      items: currentCatalog
+        ? currentCatalog.value.servers.flatMap(server => {
+            const entries = server.entrypoints.filter(entry => entry.entrypoint.type === 'global');
+            return entries.map(entry => ({
+              id: `mcp-app:${server.serverName}:${entry.toolName}`,
+              label: entries.length === 1 ? server.label : entry.title || server.label,
+              section: i18nService.t('mcpAppsTitle'),
+              icon: createElement(Squares2X2Icon, { className: 'h-4 w-4' }),
+              onSelect: () => {
+                if (
+                  latest.current.key !== key ||
+                  navigation.current !== menuEpoch ||
+                  !latest.current.enabled ||
+                  owned.current !== currentCatalog.owner ||
+                  catalogRef.current !== currentCatalog ||
+                  !currentCatalog.isCurrent()
+                )
+                  return;
+                launch(
+                  {
+                    serverName: server.serverName,
+                    toolName: entry.toolName,
+                    entrypointType: 'global',
+                  },
+                  server.label,
+                );
+              },
+            }));
+          })
+        : options.enabled && options.cwd && options.agentId
+          ? [
+              {
+                id: 'mcp-app-discovery',
+                label: i18nService.t(
+                  state?.failed
+                    ? 'mcpAppsRetryDiscovery'
+                    : state || runtimeReady
+                      ? 'mcpAppsDiscovering'
+                      : 'mcpAppsUnavailable',
+                ),
+                description: state?.failed ? i18nService.t('mcpAppsDiscoveryFailed') : undefined,
+                section: i18nService.t('mcpAppsTitle'),
+                icon: createElement(ArrowPathIcon, {
+                  className: `h-4 w-4${state && !state.failed ? ' animate-spin' : ''}`,
+                }),
+                disabled: !state?.failed,
+                onSelect: () => void discover(),
+              },
+            ]
+          : [],
+    },
+  };
 }

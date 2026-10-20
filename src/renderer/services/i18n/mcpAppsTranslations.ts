@@ -29,6 +29,8 @@ export const mcpAppsTranslations = {
     mcpAppsChooseDirectory: '选择文件夹',
     mcpAppsFileRequired: '先选择匹配的文件',
     mcpAppsDiscoveryFailed: '无法读取应用入口。',
+    mcpAppsDiscovering: '正在读取应用列表…',
+    mcpAppsRetryDiscovery: '重新读取应用列表',
     mcpAppsOperationUnknown: '未能确认应用操作结果。请先核对状态，勿重复提交。',
     mcpAppsSettings: '服务设置',
     mcpAppsSave: '保存',
@@ -78,6 +80,8 @@ export const mcpAppsTranslations = {
     mcpAppsChooseDirectory: 'Choose folder',
     mcpAppsFileRequired: 'Select a matching file first',
     mcpAppsDiscoveryFailed: 'Could not load app entrypoints.',
+    mcpAppsDiscovering: 'Loading apps…',
+    mcpAppsRetryDiscovery: 'Reload app list',
     mcpAppsOperationUnknown:
       'The app operation is unconfirmed. Check its state before submitting again.',
     mcpAppsSettings: 'Service settings',

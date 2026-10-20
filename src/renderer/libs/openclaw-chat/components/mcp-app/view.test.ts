@@ -9,7 +9,7 @@ afterEach(() => document.body.replaceChildren());
 
 function waitingFixture() {
   let ready = false;
-  const request = vi.fn(async () => {
+  const request = vi.fn(async (_method: string) => {
     throw new Error('Test read completed with an unavailable view');
   });
   const client = { generation: 1, request };
@@ -130,4 +130,82 @@ test('a successful close after reopening does not retain an earlier cleanup warn
   await f.view.closeApp();
 
   expect(f.view.contextCleanupUnconfirmed).toBe(false);
+});
+
+test('resuming a stale workspace view reads its original view without reopening the App tool', async () => {
+  const f = waitingFixture();
+  f.finishBinding();
+  await vi.waitFor(() => expect(f.view.error).not.toBe(''));
+  const original = f.view.context!;
+  const fresh = { ...original };
+  const reopen = vi.fn();
+  original.isCurrent = () => false;
+  original.resume = vi.fn(() => fresh);
+  original.reopen = reopen;
+
+  f.view.resume();
+
+  expect(f.view.error).toBe('');
+  await vi.waitFor(() => expect(f.request).toHaveBeenCalledTimes(2));
+  expect(f.view.context).toBe(fresh);
+  expect(f.request.mock.calls.every(call => call[0] === 'mcp.app.view')).toBe(true);
+  expect(f.request).toHaveBeenLastCalledWith(
+    'mcp.app.view',
+    expect.objectContaining({ viewId: f.view.preview!.viewId }),
+    expect.anything(),
+  );
+  expect(reopen).not.toHaveBeenCalled();
+  f.view.resume();
+  expect(original.resume).toHaveBeenCalledOnce();
+});
+
+test('resuming waits for an admitted binding and never reopens a closed App', async () => {
+  const f = waitingFixture();
+  f.finishBinding();
+  await vi.waitFor(() => expect(f.view.error).not.toBe(''));
+  f.view.context!.isCurrent = () => false;
+  const resume = vi.fn(() => undefined);
+  f.view.context!.resume = resume;
+  f.view.resume();
+  expect(resume).toHaveBeenCalledOnce();
+  expect(f.request).toHaveBeenCalledOnce();
+  await f.view.closeApp();
+  f.view.resume();
+  expect(resume).toHaveBeenCalledOnce();
+  expect(f.view.closed).toBe(true);
+});
+
+test('returning during a stale explicit reopen resumes without waiting or adopting its late result', async () => {
+  const f = waitingFixture();
+  f.finishBinding();
+  await vi.waitFor(() => expect(f.view.error).not.toBe(''));
+  const original = f.view.context!;
+  const fresh = { ...original };
+  let rejectReopen!: (error: Error) => void;
+  const reopen = vi.fn(
+    () =>
+      new Promise<never>((_resolve, reject) => {
+        rejectReopen = reject;
+      }),
+  );
+  original.reopen = reopen;
+  f.view.shadowRoot!.querySelector<HTMLButtonElement>('.status button')!.click();
+  await vi.waitFor(() => expect(reopen).toHaveBeenCalledOnce());
+  expect(f.view.loading).toBe(true);
+  original.isCurrent = () => false;
+  original.resume = () => fresh;
+  f.request.mockImplementation(() => new Promise<never>(() => {}));
+
+  f.view.resume();
+
+  await vi.waitFor(() => expect(f.request).toHaveBeenCalledTimes(2));
+  expect(f.view.context).toBe(fresh);
+  expect(f.view.loading).toBe(true);
+  rejectReopen(new Error('Old file open response arrived after navigation'));
+  await Promise.resolve();
+  await f.view.updateComplete;
+  expect(f.view.context).toBe(fresh);
+  expect(f.view.error).toBe('');
+  expect(f.view.loading).toBe(true);
+  expect(reopen).toHaveBeenCalledOnce();
 });

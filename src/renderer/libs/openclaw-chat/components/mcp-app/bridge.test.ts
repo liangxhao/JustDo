@@ -55,6 +55,7 @@ async function fixture(
   const confirmFile = vi.fn(async () => false);
   const openFile = vi.fn(async () => false);
   const contextChanged = vi.fn();
+  const close = vi.fn();
   const fileResource = vi.fn(async (action: string, params: Record<string, unknown>) =>
     action === 'read'
       ? {
@@ -94,7 +95,7 @@ async function fixture(
     confirmFile,
     openFile,
     contextChanged,
-    close: () => undefined,
+    close,
   });
   const app = new App({ name: 'SDK fixture', version: '1' }, {}, { autoResize: false });
   const [a, b] = pair();
@@ -109,6 +110,7 @@ async function fixture(
     confirmFile,
     openFile,
     contextChanged,
+    close,
     hide: () => {
       interactive = false;
     },
@@ -116,6 +118,21 @@ async function fixture(
 }
 
 describe('MCP Apps SDK round trip', () => {
+  it('a hidden retained App cannot read historical tools or request its own teardown', async () => {
+    const historical = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'saved' }] });
+    const { app, host, close, hide } = await fixture(historical);
+    try {
+      hide();
+      await expect(app.callServerTool({ name: 'report', arguments: {} })).rejects.toThrow();
+      await app.requestTeardown();
+      await Promise.resolve();
+      expect(historical).not.toHaveBeenCalled();
+      expect(close).not.toHaveBeenCalled();
+    } finally {
+      host.dispose();
+      await app.close();
+    }
+  });
   it('routes only the bound plugin file through its adapter and denies background writes', async () => {
     const file = { uri: `app-file://${'a'.repeat(64)}`, name: 'file.xlsx', writable: true };
     const { app, host, request, fileResource, hide } = await fixture(undefined, file);

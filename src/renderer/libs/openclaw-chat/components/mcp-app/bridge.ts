@@ -62,6 +62,7 @@ export interface McpAppBridgeHost {
   payload: McpAppViewPayload;
   hostContext: () => McpUiHostContext;
   canInteract: () => boolean;
+  canRead?: () => boolean;
   confirmDraft: (content: unknown[], target: 'active' | 'new') => Promise<boolean>;
   confirmFile: (path: string) => Promise<boolean>;
   openFile: (file: { path: string; name: string }) => Promise<boolean>;
@@ -144,11 +145,13 @@ export function createMcpAppBridge(host: McpAppBridgeHost): {
 
   bridge.oncalltool = async (params, extra) => {
     if (disposed) throw new Error('MCP App bridge is closed');
-    if (session.canReadHistoricalTool)
+    if (session.canReadHistoricalTool) {
+      if (!(host.canRead?.() ?? host.canInteract())) throw new Error('MCP App is unavailable');
       return result(
         specTypeSchemas.CallToolResult,
         await session.readHistoricalTool(params.name, params.arguments, extra.mcpReq.signal),
       );
+    }
     return result(
       specTypeSchemas.CallToolResult,
       await request(
@@ -287,7 +290,9 @@ export function createMcpAppBridge(host: McpAppBridgeHost): {
       // path has just been authorized by Gateway and is unambiguous to desktop IPC.
       return (await host.openFile({ path, name: file.name })) ? {} : { isError: true };
     });
-  bridge.onrequestteardown = () => host.close();
+  bridge.onrequestteardown = () => {
+    if (!disposed && (host.canRead?.() ?? host.canInteract())) host.close();
+  };
   const stop = session.subscribe(event => {
     if (disposed) return;
     const value = mcpAppRecord(event.payload);
