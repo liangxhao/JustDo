@@ -1,4 +1,4 @@
-import { ArrowPathIcon, Squares2X2Icon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import { EnginePhase } from '@shared/openclaw/engineStatus';
 import type { McpAppDiscovery, McpAppLaunchInput } from '@shared/plugins/mcpApps';
 import { createElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -10,6 +10,7 @@ import { i18nService } from '@/services/i18n';
 
 import { HOME_DISPLAY_SESSION_KEY } from '../display/useSessionDisplayState';
 import { findFileApp, type OpenMcpAppFile } from './fileApps';
+import { McpAppIcon } from './McpAppIcon';
 import type { McpAppComposerMenu } from './McpAppsControls';
 import { openWorkspaceAppFile, openWorkspaceAppLaunch } from './workspaceApps';
 
@@ -325,7 +326,10 @@ export function useHomeFileApps(options: Options): {
               id: `mcp-app:${server.serverName}:${entry.toolName}`,
               label: entries.length === 1 ? server.label : entry.title || server.label,
               section: i18nService.t('mcpAppsTitle'),
-              icon: createElement(Squares2X2Icon, { className: 'h-4 w-4' }),
+              icon: createElement(McpAppIcon, {
+                icons: entry.icons ?? server.icons,
+                label: server.label,
+              }),
               onSelect: () => {
                 if (
                   latest.current.key !== key ||

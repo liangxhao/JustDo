@@ -1,15 +1,15 @@
 // @vitest-environment jsdom
 import type { McpAppDiscovery } from '@shared/plugins/mcpApps';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { type ComponentProps, useState } from 'react';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import type { McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
 import type { GatewayClient } from '@/libs/openclaw-chat/gateway/client';
 import { McpAppSession } from '@/libs/openclaw-chat/gateway/mcp-app-session';
 import { i18nService } from '@/services/i18n';
 
-import ComposerFeatureMenu from '../composer/ComposerFeatureMenu';
+import DisplayPanelLauncher from '../display/DisplayPanelLauncher';
 import { type McpAppComposerMenu, McpAppsControls } from './McpAppsControls';
 import {
   openWorkspaceApp,
@@ -37,27 +37,36 @@ vi.mock('./workspaceApps', () => ({
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
-function ComposerFixture(props: ComponentProps<typeof McpAppsControls>) {
+beforeEach(() => {
+  vi.stubGlobal('electron', {
+    browser: { listHistory: vi.fn().mockResolvedValue({ success: true, entries: [] }) },
+  });
+});
+
+function LauncherFixture(props: ComponentProps<typeof McpAppsControls>) {
   const [menu, setMenu] = useState<McpAppComposerMenu | null>(null);
   return (
     <>
       <section data-testid="conversation">
         <McpAppsControls {...props} onMenuChange={setMenu} />
-        <ComposerFeatureMenu
-          items={menu?.sessionId === props.sessionId ? menu.items : []}
-          label="Features"
-          backLabel="Back"
-        />
       </section>
-      <aside data-testid="workspace-controls" />
+      <aside id="cowork-display-panel">
+        <DisplayPanelLauncher
+          appItems={menu?.sessionId === props.sessionId ? menu.items : []}
+          onCreateBrowser={vi.fn()}
+          onCreateTerminal={vi.fn()}
+        />
+        <div data-testid="workspace-controls" />
+      </aside>
     </>
   );
 }
 
 async function openApps() {
-  fireEvent.click(await screen.findByRole('button', { name: 'Features' }));
+  await screen.findByRole('region', { name: 'Apps' });
 }
 
 test('discovers once authenticated history becomes ready without preparing a session', async () => {
@@ -80,7 +89,7 @@ test('discovers once authenticated history becomes ready without preparing a ses
   const prepare = vi.fn();
   i18nService.setLanguage('en', { persist: false });
   render(
-    <ComposerFixture
+    <LauncherFixture
       apps={apps}
       prepare={prepare}
       sessionId="session"
@@ -95,7 +104,7 @@ test('discovers once authenticated history becomes ready without preparing a ses
     apps.refreshBinding();
   });
   await openApps();
-  await screen.findByRole('menuitem', { name: 'Reports' });
+  await screen.findByRole('button', { name: 'Reports' });
   expect(screen.queryByRole('button', { name: 'Apps' })).toBeNull();
   expect(prepare).not.toHaveBeenCalled();
   act(() => apps.reportContext('view', 'Selected', { updateId: 'selection' }));
@@ -103,7 +112,7 @@ test('discovers once authenticated history becomes ready without preparing a ses
     { viewId: 'view', title: 'Selected', updateId: 'selection' },
   ]);
   expect(screen.queryByText('Selected')).toBeNull();
-  expect(screen.queryByRole('status')).toBeNull();
+  expect(within(screen.getByTestId('conversation')).queryByRole('status')).toBeNull();
   act(() => apps.reportContext('view', 'Univer', { updateId: 'next-selection' }));
   expect(screen.queryByText('Univer')).toBeNull();
   expect(apps.getContexts()[0].updateId).toBe('next-selection');
@@ -124,7 +133,7 @@ function setup(
   } as unknown as McpAppSession;
   const context = { apps, isCurrent: () => true } as McpAppViewContext;
   render(
-    <ComposerFixture
+    <LauncherFixture
       apps={apps}
       prepare={async () => context}
       sessionId="session"
@@ -146,9 +155,9 @@ test('does not expose an empty or still unknown catalog', async () => {
   );
   setup(discover);
   await waitFor(() => expect(discover).toHaveBeenCalledOnce());
-  expect(screen.queryByRole('button', { name: 'Features' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Apps' })).toBeNull();
   complete({ servers: [] });
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Features' })).toBeNull());
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Apps' })).toBeNull());
 });
 
 test('opens advanced app controls only in the workspace and restores focus on Escape', async () => {
@@ -156,8 +165,9 @@ test('opens advanced app controls only in the workspace and restores focus on Es
     servers: [{ serverName: 'reports', label: 'Reports', entrypoints: [], mentionTool: 'search' }],
   }));
   await openApps();
-  const trigger = screen.getByRole('button', { name: 'Features' });
-  fireEvent.click(screen.getByRole('menuitem', { name: 'Reports' }));
+  const trigger = screen.getByRole('button', { name: 'Reports' });
+  trigger.focus();
+  fireEvent.click(trigger);
   const search = screen.getByRole('button', { name: 'Search resources: Reports' });
   expect(openWorkspaceAppControls).toHaveBeenCalledOnce();
   expect(screen.getByTestId('workspace-controls').contains(search)).toBe(true);
@@ -165,8 +175,76 @@ test('opens advanced app controls only in the workspace and restores focus on Es
   expect(screen.queryByRole('menu')).toBeNull();
   fireEvent.keyDown(search, { key: 'Escape' });
   expect(screen.queryByRole('button', { name: 'Search resources: Reports' })).toBeNull();
-  expect(trigger.getAttribute('aria-expanded')).toBe('false');
-  expect(document.activeElement).toBe(trigger);
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
+});
+
+test('Escape restores the selected tab in the detached document after the launcher unmounts', async () => {
+  i18nService.setLanguage('en', { persist: false });
+  const frame = document.createElement('iframe');
+  const unrelatedInput = document.createElement('input');
+  document.body.append(unrelatedInput, frame);
+  const workspaceDocument = frame.contentDocument!;
+  const workspaceWindow = frame.contentWindow!;
+  Object.defineProperty(workspaceWindow, 'requestAnimationFrame', {
+    configurable: true,
+    value: (callback: FrameRequestCallback) => window.requestAnimationFrame(callback),
+  });
+  workspaceDocument.body.innerHTML =
+    '<aside id="cowork-display-panel"><button role="tab" aria-selected="true">Start page</button><div id="launcher"></div><div id="controls"></div></aside>';
+  const tabs = within(workspaceDocument.body);
+  const selectedTab = tabs.getByRole('tab', { name: 'Start page' });
+  const apps = {
+    subscribe: () => () => {},
+    discover: async () => ({
+      servers: [
+        { serverName: 'reports', label: 'Reports', entrypoints: [], mentionTool: 'search' },
+      ],
+    }),
+  } as unknown as McpAppSession;
+  const onMenuChange = vi.fn();
+  const context = { apps, isCurrent: () => true } as McpAppViewContext;
+  try {
+    render(
+      <McpAppsControls
+        apps={apps}
+        prepare={async () => context}
+        sessionId="session"
+        canDraft={() => true}
+        addDraft={vi.fn()}
+        onOnboard={vi.fn()}
+        onMenuChange={onMenuChange}
+      />,
+    );
+    await waitFor(() => expect(onMenuChange.mock.lastCall?.[0].items).toHaveLength(1));
+    const launcher = render(
+      <DisplayPanelLauncher
+        appItems={onMenuChange.mock.lastCall![0].items}
+        onCreateBrowser={vi.fn()}
+        onCreateTerminal={vi.fn()}
+      />,
+      { container: workspaceDocument.getElementById('launcher')! },
+    );
+    vi.mocked(openWorkspaceAppControls).mockImplementationOnce(entry => {
+      launcher.unmount();
+      entry.attach(workspaceDocument.getElementById('controls'));
+    });
+    unrelatedInput.focus();
+    const mainFocus = vi.spyOn(unrelatedInput, 'focus');
+    const trigger = tabs.getByRole('button', { name: 'Reports' });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const search = await tabs.findByRole('button', { name: 'Search resources: Reports' });
+    expect(trigger.isConnected).toBe(false);
+    search.focus();
+    fireEvent.keyDown(search, { key: 'Escape' });
+    await waitFor(() => expect(workspaceDocument.activeElement).toBe(selectedTab));
+    expect(mainFocus).not.toHaveBeenCalled();
+    expect(tabs.queryByRole('button', { name: 'Search resources: Reports' })).toBeNull();
+  } finally {
+    cleanup();
+    frame.remove();
+    unrelatedInput.remove();
+  }
 });
 
 test('resource selection preserves its descriptor and reports a rejected draft', async () => {
@@ -183,11 +261,15 @@ test('resource selection preserves its descriptor and reports a rejected draft',
     addDraft,
   );
   await openApps();
-  fireEvent.click(screen.getByRole('menuitem', { name: 'Reports' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Reports' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Search resources: Reports' }));
   fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'report' } });
   fireEvent.click(screen.getByRole('button', { name: 'Search resources' }));
-  fireEvent.click(await screen.findByRole('button', { name: /^Report/ }));
+  fireEvent.click(
+    await within(screen.getByTestId('workspace-controls')).findByRole('button', {
+      name: /^Report/,
+    }),
+  );
   await waitFor(() => expect(addDraft).toHaveBeenCalledOnce());
   expect(JSON.parse(addDraft.mock.calls[0][0])).toEqual({ serverName: 'reports', resource });
   await screen.findByRole('alert');
@@ -209,7 +291,7 @@ const manualCatalog: McpAppDiscovery = {
   })),
 };
 
-test('groups apps directly in the plus menu and launches the chosen editor once', async () => {
+test('lists apps on the sidebar homepage and launches the chosen editor once', async () => {
   const launch = vi.fn().mockResolvedValue('launched');
   const apps = {
     getContexts: () => [],
@@ -220,7 +302,7 @@ test('groups apps directly in the plus menu and launches the chosen editor once'
   const context = { apps, isCurrent: () => true } as McpAppViewContext;
   const prepare = vi.fn().mockResolvedValue(context);
   render(
-    <ComposerFixture
+    <LauncherFixture
       apps={apps}
       prepare={prepare}
       sessionId="session"
@@ -230,14 +312,13 @@ test('groups apps directly in the plus menu and launches the chosen editor once'
     />,
   );
   await openApps();
-  expect(screen.getByText('Apps').getAttribute('role')).toBe('presentation');
-  expect(screen.queryByRole('menuitem', { name: 'Apps' })).toBeNull();
-  expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual([
+  const launcher = within(screen.getByRole('region', { name: 'Apps' }));
+  expect(launcher.getAllByRole('button').map(item => item.getAttribute('aria-label'))).toEqual([
     'drawio',
     'planner',
   ]);
   expect(prepare).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('menuitem', { name: 'drawio' }));
+  fireEvent.click(screen.getByRole('button', { name: 'drawio' }));
   await waitFor(() => expect(openWorkspaceAppLaunch).toHaveBeenCalledOnce());
   expect(prepare).not.toHaveBeenCalled();
   expect(launch).not.toHaveBeenCalled();
@@ -290,7 +371,7 @@ test.each(['univer', 'future-editor'])(
     } as unknown as McpAppSession;
     const context = { apps, isCurrent: () => true } as McpAppViewContext;
     render(
-      <ComposerFixture
+      <LauncherFixture
         apps={apps}
         prepare={async () => context}
         sessionId="session"
@@ -300,7 +381,7 @@ test.each(['univer', 'future-editor'])(
       />,
     );
     await openApps();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Editor' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Editor' }));
     expect(openWorkspaceAppControls).not.toHaveBeenCalled();
     expect(screen.queryByText('Preview file')).toBeNull();
     const entry = vi.mocked(openWorkspaceAppLaunch).mock.lastCall![0];

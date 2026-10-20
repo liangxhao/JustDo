@@ -17,9 +17,12 @@ import { defaultConfig } from '@/app/config';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
+import type { ComposerFeatureItem } from '../composer/ComposerFeatureMenu';
 import { type RecentBrowserVisit, selectRecentBrowserVisits } from './displayPanelRecentVisits';
 
 interface DisplayPanelLauncherProps {
+  appItems?: readonly ComposerFeatureItem[];
+  appsDisabled?: boolean;
   browserDisabled?: boolean;
   filesDisabled?: boolean;
   onCreateBrowser: (url?: string) => void;
@@ -114,6 +117,8 @@ function RecentVisitIcon({ visit, visible }: { visit: RecentBrowserVisit; visibl
 }
 
 const DisplayPanelLauncher = ({
+  appItems = [],
+  appsDisabled = false,
   browserDisabled = false,
   filesDisabled = false,
   onCreateBrowser,
@@ -268,6 +273,35 @@ const DisplayPanelLauncher = ({
             )}
           </div>
         </section>
+        {appItems.length > 0 && (
+          <section aria-label={i18nService.t('mcpAppsTitle')}>
+            <h2 className="mb-3 text-xs font-semibold">{i18nService.t('mcpAppsTitle')}</h2>
+            <div className="display-launcher__apps">
+              {appItems.map(item => (
+                <button
+                  key={item.id}
+                  type="button"
+                  disabled={appsDisabled || item.disabled}
+                  onClick={item.onSelect}
+                  aria-label={item.label}
+                  title={item.description ? `${item.label}\n${item.description}` : item.label}
+                  className="flex min-w-0 flex-col items-center gap-3 rounded-xl px-2 py-3 text-center transition-colors hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <span
+                    className="flex h-10 w-10 shrink-0 items-center justify-center text-secondary"
+                    aria-hidden="true"
+                  >
+                    {item.icon}
+                  </span>
+                  <span className="w-full truncate text-xs font-medium">{item.label}</span>
+                  {item.description && (
+                    <span className="w-full text-xs text-muted">{item.description}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
         <section aria-label={i18nService.t('coworkLauncherRecentVisits')}>
           <h2 className="mb-4 text-xs font-semibold">
             {i18nService.t('coworkLauncherRecentVisits')}

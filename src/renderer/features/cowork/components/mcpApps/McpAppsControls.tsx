@@ -28,6 +28,7 @@ import { i18nService } from '@/services/i18n';
 
 import type { ComposerFeatureItem } from '../composer/ComposerFeatureMenu';
 import { findFileApp, type OpenMcpAppFile } from './fileApps';
+import { McpAppIcon } from './McpAppIcon';
 import { type AppSettings, appSettingsSchema, McpAppSettings } from './McpAppSettings';
 import { APP_BUTTON, APP_ICON_BUTTON, APP_INPUT } from './mcpAppStyles';
 import { NativeAppQuestions } from './NativeAppQuestions';
@@ -96,7 +97,6 @@ export function McpAppsControls({
   }).current;
   const root = useRef<HTMLDivElement>(null);
   const region = useRef<HTMLDivElement>(null);
-  const returnFocus = useRef<HTMLElement | null>(null);
   const regionId = useId();
   useEffect(() => {
     if (expanded)
@@ -213,7 +213,6 @@ export function McpAppsControls({
   menuActions.current = {
     launch,
     open: server => {
-      returnFocus.current = root.current?.ownerDocument.activeElement as HTMLElement | null;
       setPanelServer(server);
       setSettings(undefined);
       setSearchServer(undefined);
@@ -342,7 +341,7 @@ export function McpAppsControls({
               id: `mcp-app:${server.serverName}`,
               label: server.label,
               section: t('mcpAppsTitle'),
-              icon: <Squares2X2Icon className="h-4 w-4" />,
+              icon: <McpAppIcon icons={entry?.icons ?? server.icons} label={server.label} />,
               disabled: busy || !canDraft() || fileUnavailable,
               onSelect: () => {
                 if (!available()) return;
@@ -375,8 +374,19 @@ export function McpAppsControls({
     };
   }, [apps, catalog, busy, canDraft, filePath, sessionId, onMenuChange, lifecycle]);
   const dismiss = () => {
+    // The launcher may already be unmounted, and controls can live in the
+    // detached workspace document. Restore focus within that same workspace
+    // after its remaining tabs/homepage have rendered.
+    const workspace = panelTarget?.closest<HTMLElement>('#cowork-display-panel');
+    const ownerWindow = panelTarget?.ownerDocument.defaultView;
     if (ownedControls.current) closeWorkspaceAppControls(ownedControls.current);
-    if (returnFocus.current?.isConnected) returnFocus.current.focus();
+    ownerWindow?.requestAnimationFrame(() => {
+      if (!workspace?.isConnected || workspace.closest('[inert], [aria-hidden="true"]')) return;
+      const target =
+        workspace.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]') ??
+        workspace.querySelector<HTMLButtonElement>('.display-launcher__apps button:not(:disabled)');
+      target?.focus({ preventScroll: true });
+    });
   };
   const panelServers = catalog?.servers.filter(
     server => !panelServer || server.serverName === panelServer,

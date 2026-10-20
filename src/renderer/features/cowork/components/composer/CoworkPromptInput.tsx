@@ -22,7 +22,6 @@ import {
 import type { SwarmWorkflowOptions } from '@shared/cowork/swarm-workflow';
 import type { OpenClawModelChoice } from '@shared/openclaw/models';
 import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
-import { HOME_WORKSPACE_SESSION_ID } from '@shared/preview/filePreview';
 import { isLocalAudioAttachment } from '@shared/speech/localAsr';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
@@ -130,7 +129,6 @@ import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 import { type RootState, store } from '@/store';
 
 import { prepareWorkflowComposerSubmission } from '../../../../../../openclaw-extensions/swarm-workflow/browser/composer';
-import type { McpAppComposerMenu } from '../mcpApps/McpAppsControls';
 import { buildAgentTeamFeature } from './AgentTeamSelector';
 import {
   type AgentTeamMode,
@@ -228,8 +226,6 @@ export interface CoworkPromptInputRef {
 }
 
 interface CoworkPromptInputProps {
-  mcpAppMenu?: McpAppComposerMenu | null;
-  onFeatureMenuOpen?: () => void;
   onSubmit: (
     prompt: string,
     attachments?: CoworkAttachmentPayload[],
@@ -332,8 +328,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       onGoalPresenceChange,
       remoteManaged = false,
       mode = 'default',
-      mcpAppMenu,
-      onFeatureMenuOpen,
     } = props;
     const dispatch = useDispatch();
     const draftKey = draftKeyOverride || sessionId || '__home__';
@@ -2026,9 +2020,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             ]
           : []),
         planModeComposerFeature,
-        ...(mcpAppMenu && mcpAppMenu.sessionId === (sessionId ?? HOME_WORKSPACE_SESSION_ID)
-          ? mcpAppMenu.items.map(item => ({ ...item, disabled: disabled || item.disabled }))
-          : []),
         {
           ...swarmWorkflowComposerFeature,
           section: i18nService.t('composerPlugins'),
@@ -3006,7 +2997,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   <div className="relative flex shrink-0 items-center gap-1">
                     {supportsAgentControls && (
                       <ComposerFeatureMenu
-                        onOpen={onFeatureMenuOpen}
                         key={`features:${draftKey}`}
                         backLabel={i18nService.t('teamFeatureBack')}
                         items={composerFeatures}
@@ -3298,7 +3288,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   <div className="flex flex-1 items-center gap-1">
                     {supportsAgentControls && (
                       <ComposerFeatureMenu
-                        onOpen={onFeatureMenuOpen}
                         key={`features:${draftKey}`}
                         backLabel={i18nService.t('teamFeatureBack')}
                         items={composerFeatures}

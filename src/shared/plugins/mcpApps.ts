@@ -159,14 +159,23 @@ export interface McpAppPreview {
   toolCallId: string;
 }
 
+export interface McpAppIcon {
+  src: string;
+  mimeType?: string;
+  sizes?: string[];
+  theme?: 'light' | 'dark';
+}
+
 export interface McpAppDiscoveredServer {
   serverName: string;
   pluginId?: string;
   label: string;
+  icons?: McpAppIcon[];
   entrypoints: Array<{
     toolName: string;
     title: string;
     resourceUri: string;
+    icons?: McpAppIcon[];
     entrypoint: McpAppEntrypoint;
   }>;
   settings?: { readTool: string; updateTool: string };

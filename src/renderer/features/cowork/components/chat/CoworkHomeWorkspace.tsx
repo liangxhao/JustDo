@@ -35,7 +35,6 @@ interface CoworkHomeWorkspaceProps {
   homeConversationHeader: React.JSX.Element;
   chatController?: React.ReactNode;
   mcpAppMenu?: McpAppComposerMenu;
-  onFeatureMenuOpen?: () => void;
   maximumBrowserTabs: number;
   greetingKey: string;
   promptInputRef: React.RefObject<CoworkPromptInputRef>;
@@ -94,7 +93,6 @@ export function renderCoworkHomeWorkspace({
   homeConversationHeader,
   chatController,
   mcpAppMenu,
-  onFeatureMenuOpen,
   maximumBrowserTabs,
   greetingKey,
   promptInputRef,
@@ -161,8 +159,6 @@ export function renderCoworkHomeWorkspace({
                   <CoworkPet running={false} waiting={false} placement="home" />
                   <div className={COMPOSER_FRAME_CLASS}>
                     <CoworkPromptInput
-                      mcpAppMenu={mcpAppMenu}
-                      onFeatureMenuOpen={onFeatureMenuOpen}
                       ref={promptInputRef}
                       onSubmit={handleStartSession}
                       onStop={handleStopSession}
@@ -218,6 +214,7 @@ export function renderCoworkHomeWorkspace({
                 </div>
               ) : (
                 <DisplayPanelLauncher
+                  appItems={mcpAppMenu?.items}
                   visible={isDisplayPanelOpen || isWorkspaceDetached}
                   browserDisabled={browserTabs.length >= maximumBrowserTabs}
                   onCreateBrowser={handleCreateBrowserTab}

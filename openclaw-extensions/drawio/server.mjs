@@ -10,10 +10,21 @@ import { createEditorResource, validateDiagram } from './editor-resource.mjs';
 export { startAssets, validateDiagram } from './editor-resource.mjs';
 const URI = 'ui://drawio/editor';
 const MIME = 'text/html;profile=mcp-app';
+const ICONS = [
+  {
+    src:
+      'data:image/svg+xml,' +
+      encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#f08705"/><g fill="none" stroke="#fff" stroke-width="2"><path d="M16 12v6M8 22v-4h16v4"/><rect x="12" y="5" width="8" height="7" rx="1"/><rect x="4" y="22" width="8" height="6" rx="1"/><rect x="20" y="22" width="8" height="6" rx="1"/></g></svg>',
+      ),
+    mimeType: 'image/svg+xml',
+    sizes: ['32x32'],
+  },
+];
 
 export function createDiagramServer(resource) {
   const server = new Server(
-    { name: 'drawio', version: '1.0.0' },
+    { name: 'drawio', title: 'draw.io', version: '1.0.0', icons: ICONS },
     {
       capabilities: { tools: {}, resources: {} },
       instructions:
@@ -25,6 +36,7 @@ export function createDiagramServer(resource) {
       {
         name: 'create_diagram',
         title: 'draw.io',
+        icons: ICONS,
         description:
           'Create an editable, offline draw.io diagram in the conversation. Use for flowcharts, architecture, UML, ER, process and network diagrams. Supply mxfile or mxGraphModel XML with root cells 0/1, geometry, vertices and edges. Use rounded shapes, restrained colors, readable spacing and orthogonal connectors. Chinese labels are supported. Users can edit, save .drawio and export PNG/SVG directly.',
         inputSchema: {
@@ -42,6 +54,7 @@ export function createDiagramServer(resource) {
       {
         name: 'open_editor',
         title: 'draw.io',
+        icons: ICONS,
         description: 'Open a blank offline draw.io editor from the application menu.',
         inputSchema: { type: 'object', properties: {}, additionalProperties: false },
         annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },

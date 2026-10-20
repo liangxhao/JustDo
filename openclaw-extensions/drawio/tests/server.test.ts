@@ -21,6 +21,11 @@ describe('offline diagram MCP service', () => {
       await client.connect(clientTransport);
       const tools = await client.listTools();
       const manual = tools.tools.find(tool => tool.name === 'open_editor');
+      expect(client.getServerVersion()?.icons).toEqual(manual?.icons);
+      expect(manual?.icons?.[0]).toMatchObject({
+        src: expect.stringMatching(/^data:image\/svg\+xml,/),
+        mimeType: 'image/svg+xml',
+      });
       expect(manual?._meta?.ui).toEqual({ resourceUri: 'ui://drawio/editor', visibility: ['app'] });
       expect(manual?._meta?.['openai/ui']).toEqual({ entrypoints: [{ type: 'global' }] });
       const opened = await client.callTool({ name: 'open_editor', arguments: {} });

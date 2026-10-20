@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { configService } from '@/services/config';
@@ -31,6 +31,45 @@ afterEach(() => {
 });
 
 describe('DisplayPanelLauncher', () => {
+  it('shows Apps between tools and recent visits, preserving actions, icons and availability', () => {
+    const launch = vi.fn();
+    const items = [
+      { id: 'editor', label: 'Editor', icon: <span data-testid="plugin-icon" />, onSelect: launch },
+      { id: 'blocked', label: 'Blocked App', icon: <span />, disabled: true, onSelect: vi.fn() },
+    ];
+    const { container, rerender } = render(
+      <DisplayPanelLauncher
+        appItems={items}
+        onCreateBrowser={vi.fn()}
+        onCreateTerminal={vi.fn()}
+      />,
+    );
+    expect(
+      [...container.querySelectorAll('section')].map(section => section.getAttribute('aria-label')),
+    ).toEqual(['Tools', 'Apps', 'Recently visited']);
+    const apps = within(screen.getByRole('region', { name: 'Apps' }));
+    expect(apps.getByTestId('plugin-icon')).toBeTruthy();
+    fireEvent.click(apps.getByRole('button', { name: 'Editor' }));
+    expect(launch).toHaveBeenCalledOnce();
+    expect((apps.getByRole('button', { name: 'Blocked App' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    rerender(
+      <DisplayPanelLauncher
+        appItems={items}
+        appsDisabled
+        onCreateBrowser={vi.fn()}
+        onCreateTerminal={vi.fn()}
+      />,
+    );
+    fireEvent.click(apps.getByRole('button', { name: 'Editor' }));
+    expect(launch).toHaveBeenCalledOnce();
+    rerender(
+      <DisplayPanelLauncher appItems={[]} onCreateBrowser={vi.fn()} onCreateTerminal={vi.fn()} />,
+    );
+    expect(screen.queryByRole('region', { name: 'Apps' })).toBeNull();
+  });
+
   it('launches each available tool from the tools section', async () => {
     i18nService.setLanguage('en', { persist: false });
     const createBrowser = vi.fn();

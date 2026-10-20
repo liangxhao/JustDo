@@ -51,6 +51,8 @@ The App-only `open_editor` tool advertises a global entrypoint under
 `_meta['openai/ui'].entrypoints`. It opens an empty graph through native App
 discovery and launch, using the same offline resource as `create_diagram`.
 It requires no model request and stays out of the model tool catalog.
+The server and tools advertise an inline SVG through native MCP `icons` metadata
+for the sidebar homepage. The host does not map plugin names to bundled icons.
 
 Recovery runs only after native view expiration. It reads the exact child result
 from the current visible native transcript through public SDK accessors, then

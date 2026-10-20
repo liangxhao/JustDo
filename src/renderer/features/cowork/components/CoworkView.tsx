@@ -2146,6 +2146,23 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     };
     return (
       <DisplayPanelLauncher
+        appItems={
+          currentSessionId
+            ? mcpAppMenu?.sessionId === currentSessionId
+              ? mcpAppMenu.items
+              : []
+            : homeApps.menu.items
+        }
+        appsDisabled={
+          !isEngineReady ||
+          Boolean(
+            currentSession &&
+            (isQuestionInputBlocked ||
+              !historyReadiness?.ready ||
+              historyReadiness.sessionKey !== currentGatewaySessionKey ||
+              currentSessionAgent?.enabled === false),
+          )
+        }
         visible={isWorkspaceVisible}
         showAddressInput={!onNavigateBrowser}
         onNavigateBrowser={onNavigateBrowser}
@@ -3504,7 +3521,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     )}
                     <div className={`${COMPOSER_FRAME_CLASS} relative z-10`}>
                       <CoworkPromptInput
-                        mcpAppMenu={mcpAppMenu}
                         ref={promptInputRef}
                         onSubmit={handleSendMessage}
                         onQueue={handleQueueMessage}
@@ -3894,11 +3910,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   // Home view - no current session
   return renderCoworkHomeWorkspace({
-    chatController: chatWrapperRef.current && mcpAppTabs.hasRetainedPanels ? (
-      <JustDoChatWrapper key="chat-controller" ref={chatWrapperRef} className="hidden" />
-    ) : undefined,
+    chatController:
+      chatWrapperRef.current && mcpAppTabs.hasRetainedPanels ? (
+        <JustDoChatWrapper key="chat-controller" ref={chatWrapperRef} className="hidden" />
+      ) : undefined,
     mcpAppMenu: homeApps.menu,
-    onFeatureMenuOpen: () => void homeApps.discover(),
     maximumBrowserTabs,
     homeConversationHeader,
     greetingKey,

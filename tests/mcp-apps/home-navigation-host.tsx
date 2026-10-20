@@ -72,7 +72,6 @@ function Fixture() {
     return renderCoworkHomeWorkspace({
       homeConversationHeader: <div>New conversation</div>,
       mcpAppMenu: homeApps.menu,
-      onFeatureMenuOpen: () => void homeApps.discover(),
       maximumBrowserTabs: 8,
       greetingKey: 'coworkGreetingSupport',
       promptInputRef,

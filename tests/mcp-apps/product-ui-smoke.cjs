@@ -41,13 +41,13 @@ if (!process.versions.electron) {
   app.setPath('userData', path.join(output, 'profile'));
   let win;
   const server = http.createServer((req, res) => {
-    if (req.url === '/host.js' || req.url === '/product.css') {
+    if (req.url === '/host.js' || req.url === '/host.css' || req.url === '/product.css') {
       res.setHeader('Content-Type', req.url.endsWith('.css') ? 'text/css' : 'text/javascript');
       res.end(fs.readFileSync(path.join(output, req.url.slice(1))));
       return;
     }
     res.end(
-      '<html lang="zh" data-theme="classic-light"><head><meta charset="UTF-8"><link rel="stylesheet" href="/product.css"><style>body{margin:0;padding:32px;font:14px system-ui;background:var(--justdo-background);color:var(--justdo-text-primary)}#root{height:auto;min-height:0;max-width:720px;margin:0 auto;background:var(--justdo-surface);border:1px solid var(--justdo-border);border-radius:16px}</style></head><body><div id="root"></div><script type="module" src="/host.js"></script></body></html>',
+      '<html lang="zh" data-theme="classic-light"><head><meta charset="UTF-8"><link rel="stylesheet" href="/product.css"><link rel="stylesheet" href="/host.css"><style>body{margin:0;padding:32px;font:14px system-ui;background:var(--justdo-background);color:var(--justdo-text-primary)}#root{height:auto;min-height:0;max-width:720px;margin:0 auto;background:var(--justdo-surface);border:1px solid var(--justdo-border);border-radius:16px}</style></head><body><div id="root"></div><script type="module" src="/host.js"></script></body></html>',
     );
   });
   const finish = code => {
@@ -101,28 +101,30 @@ if (!process.versions.electron) {
         throw new Error('Standalone Apps button should be absent');
       await click('添加');
       await until(
-        'Boolean([...document.querySelectorAll("[role=menuitem]")].find(b=>b.getAttribute("aria-label")==="draw.io"))',
+        'Boolean([...document.querySelectorAll("#app-workspace button")].find(b=>b.getAttribute("aria-label")==="draw.io"))',
       );
       if (
         !(await js(
-          'document.querySelector("[role=menu]").getAttribute("aria-label") === "添加" && ["应用","插件"].every(label=>[...document.querySelectorAll("[role=presentation]")].some(group=>group.textContent.trim()===label)) && ![...document.querySelectorAll("[role=menuitem]")].some(item=>item.textContent.trim()==="应用")',
+          'document.querySelector("[role=menu]").getAttribute("aria-label") === "添加" && !document.querySelector("[role=menu]").textContent.includes("应用") && !document.querySelector("[role=menu]").textContent.includes("draw.io") && [...document.querySelectorAll("#app-workspace section")].map(section=>section.getAttribute("aria-label")).join(",") === "工具,应用,最近访问" && [...document.querySelectorAll("#app-workspace button")].find(b=>b.getAttribute("aria-label")==="draw.io").querySelector("img").complete',
         ))
       )
-        throw new Error('Apps and Plugins should be sibling groups in the root menu');
+        throw new Error(
+          'Apps should appear on the sidebar homepage with plugin icons, outside the + menu',
+        );
       if (await js('document.querySelector("[role=menu]").getBoundingClientRect().top < 0'))
         throw new Error('Grouped menu is clipped above the viewport');
-      await capture('apps-group-light');
+      await capture('sidebar-apps-light');
       await js(
         'document.documentElement.dataset.theme="classic-dark";document.documentElement.classList.add("dark");true',
       );
       await until(
         'getComputedStyle(document.querySelector("[role=menuitem]")).color === "rgb(230, 230, 230)"',
       );
-      await capture('apps-group-dark');
+      await capture('sidebar-apps-dark');
       win.setSize(420, 850);
-      await capture('apps-group-narrow');
+      await capture('sidebar-apps-narrow');
       if (await js('document.documentElement.scrollWidth > innerWidth'))
-        throw new Error('Narrow Apps menu overflows horizontally');
+        throw new Error('Narrow sidebar Apps overflow horizontally');
       win.setSize(900, 850);
       await js(
         'document.documentElement.dataset.theme="classic-light";document.documentElement.classList.remove("dark");true',
@@ -165,7 +167,7 @@ if (!process.versions.electron) {
       if (overflow) throw new Error('Narrow controls overflow horizontally');
       if (errors.length) throw new Error(errors.join('; '));
       console.log(
-        'MCP Apps product UI passed: sibling Apps/Plugins groups, multiple apps, catalog, settings, question, light/dark, narrow layout',
+        'MCP Apps product UI passed: sidebar homepage Apps, plugin icons, + menu separation, catalog, settings, question, light/dark, narrow layout',
       );
       finish(0);
     })

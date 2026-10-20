@@ -22,7 +22,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test('the home composer exposes its App menu without pretending to be a product session', async () => {
+test('the home composer keeps Apps out of the + menu', async () => {
   vi.stubGlobal('electron', {
     extensions: {
       list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
@@ -31,33 +31,14 @@ test('the home composer exposes its App menu without pretending to be a product 
     localAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
     localSpeechModels: { onChanged: () => () => {} },
   });
-  const open = vi.fn();
-  const select = vi.fn();
   render(
     <Provider store={store}>
-      <CoworkPromptInput
-        size="large"
-        onSubmit={vi.fn()}
-        onFeatureMenuOpen={open}
-        mcpAppMenu={{
-          sessionId: '__home__',
-          items: [
-            {
-              id: 'drawio',
-              label: 'draw.io',
-              section: i18nService.t('mcpAppsTitle'),
-              icon: <span />,
-              onSelect: select,
-            },
-          ],
-        }}
-      />
+      <CoworkPromptInput size="large" onSubmit={vi.fn()} />
     </Provider>,
   );
   fireEvent.click(screen.getByRole('button', { name: i18nService.t('composerFeatures') }));
-  expect(open).toHaveBeenCalledOnce();
-  fireEvent.click(screen.getByRole('menuitem', { name: 'draw.io' }));
-  expect(select).toHaveBeenCalledOnce();
+  expect(screen.queryByText(i18nService.t('mcpAppsTitle'))).toBeNull();
+  expect(screen.queryByRole('menuitem', { name: 'draw.io' })).toBeNull();
 });
 
 test('keeps model clicks immediate and skips intermediate choices while native confirmation is pending', async () => {
