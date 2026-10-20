@@ -2412,6 +2412,13 @@ describe('OpenClaw auth logout config sync', () => {
           mode: 'replace',
           pricing: { enabled: true },
           providers: {
+            builtin_models: {
+              apiKey: { source: 'exec', provider: 'justdo_login', id: 'X-ACCESS-JWT' },
+              headers: {
+                'X-User-Account': { source: 'exec', provider: 'justdo_login', id: 'X-User-Account' },
+              },
+              models: [{ id: 'builtin-model' }],
+            },
             'custom-provider': {
               apiKey: '${JUSTDO_APIKEY_CUSTOM_1}',
               models: [{ id: 'custom-model' }],
@@ -2489,11 +2496,6 @@ describe('OpenClaw auth logout config sync', () => {
         source: 'exec',
         provider: 'justdo_login',
         id: 'X-ACCESS-JWT',
-      },
-      'X-User-Account': {
-        source: 'exec',
-        provider: 'justdo_login',
-        id: 'X-User-Account',
       },
     });
     expect(config.secrets.providers.justdo_login).toMatchObject({ source: 'exec' });

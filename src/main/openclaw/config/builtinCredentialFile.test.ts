@@ -5,8 +5,9 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { BUILTIN_MODEL_USER_ACCOUNT_FIELD } from '../../providers/builtinModelCredential';
 import {
-  BUILTIN_ACCOUNT_SECRET_ID, BUILTIN_SECRET_ID, BUILTIN_SECRET_SOURCE, openBuiltinCredential,
+  BUILTIN_SECRET_ID, BUILTIN_SECRET_SOURCE, openBuiltinCredential,
   sealBuiltinCredential, syncBuiltinCredentialFile,
 } from './builtinCredentialFile';
 
@@ -42,6 +43,14 @@ describe('encrypted binary builtin credentials', () => {
     const json = JSON.stringify(first.config);
     expect(json).not.toContain(secret);
     expect(json).not.toContain('ciphertext');
+    expect(json).not.toContain(credential.userAccount);
+    expect(first.config.models).toMatchObject({
+      providers: {
+        builtin_models: {
+          apiKey: { source: 'exec', provider: BUILTIN_SECRET_SOURCE, id: BUILTIN_SECRET_ID },
+        },
+      },
+    });
     expect(first.secretsChanged).toBe(true);
     const file = path.join(state, 'credentials', 'credentials.bin');
     const original = fs.readFileSync(file);
@@ -51,6 +60,21 @@ describe('encrypted binary builtin credentials', () => {
     expect(rotated.secretsChanged).toBe(true);
     expect(rotated.config).toEqual(first.config);
     expect(JSON.parse(openBuiltinCredential(fs.readFileSync(file))).accessToken).toBe(`${secret}-rotated`);
+  });
+
+  it('rotates account snapshots without publishing the account through native secret configuration', () => {
+    const state = directory();
+    const input = source();
+    const first = syncBuiltinCredentialFile(input, state, credential);
+    const switched = syncBuiltinCredentialFile(first.config, state, {
+      ...credential, userAccount: 'next-user', accessToken: 'next-user-jwt',
+    });
+    expect(switched.config).toEqual(first.config);
+    expect(JSON.stringify(switched.config)).not.toContain('next-user');
+    expect(JSON.parse(openBuiltinCredential(fs.readFileSync(path.join(state, 'credentials', 'credentials.bin')))))
+      .toMatchObject({ userAccount: 'next-user', accessToken: 'next-user-jwt' });
+    expect(input.models.providers.builtin_models).not.toHaveProperty('headers');
+    expect(switched.secretsChanged).toBe(true);
   });
 
   it('resolves through stdin/stdout without a key in argv or environment, including Unicode paths', () => {
@@ -64,11 +88,14 @@ describe('encrypted binary builtin credentials', () => {
       windowsHide: true, encoding: 'utf8', timeout: 5000,
       input: JSON.stringify({ protocolVersion: 1, provider: BUILTIN_SECRET_SOURCE, ids }),
     });
-    const resolved = run([BUILTIN_SECRET_ID, BUILTIN_ACCOUNT_SECRET_ID]);
+    const resolved = run([BUILTIN_SECRET_ID]);
     expect(resolved.status).toBe(0);
     expect(resolved.stderr).toBe('');
     expect(JSON.parse(resolved.stdout).values[BUILTIN_SECRET_ID]).toBe(secret);
-    expect(JSON.parse(resolved.stdout).values[BUILTIN_ACCOUNT_SECRET_ID]).toBe('test-user');
+    expect(JSON.parse(resolved.stdout).values).toEqual({ [BUILTIN_SECRET_ID]: secret });
+    const accountDenied = run([BUILTIN_MODEL_USER_ACCOUNT_FIELD]);
+    expect(accountDenied.status).not.toBe(0);
+    expect(accountDenied.stdout).toBe('');
     const denied = run(['other']);
     expect(denied.status).not.toBe(0);
     expect(denied.stdout).toBe('');
@@ -89,6 +116,8 @@ describe('encrypted binary builtin credentials', () => {
       authType: 'api-key' as const,
     };
     const result = syncBuiltinCredentialFile(source(), state, developmentCredential);
+    expect((result.config.models as { providers: Record<string, unknown> }).providers.builtin_models)
+      .not.toHaveProperty('headers');
     const provider = (result.config.secrets as { providers: Record<string, {
       command: string; args: string[]; env: Record<string, string>;
     }> }).providers[BUILTIN_SECRET_SOURCE];

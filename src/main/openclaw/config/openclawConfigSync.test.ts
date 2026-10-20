@@ -284,7 +284,7 @@ describe('OpenClaw provider config', () => {
     });
   });
 
-  test('adds JWT identity placeholders only to the built-in provider', () => {
+  test('projects only JWT authentication and leaves account injection to the outbound proxy', () => {
     const selection = buildProviderSelection({
       apiKey: 'access-jwt-auth',
       baseURL: 'https://models.example.test/v1',
@@ -298,11 +298,6 @@ describe('OpenClaw provider config', () => {
         source: 'exec',
         provider: 'justdo_login',
         id: 'X-ACCESS-JWT',
-      },
-      'X-User-Account': {
-        source: 'exec',
-        provider: 'justdo_login',
-        id: 'X-User-Account',
       },
     });
     expect(selection.providerConfig.apiKey).toEqual({
@@ -358,7 +353,6 @@ describe('OpenClaw provider config', () => {
 
     expect(selection.providerConfig.headers).toEqual({
       'X-ACCESS-JWT': { source: 'exec', provider: 'justdo_login', id: 'X-ACCESS-JWT' },
-      'X-User-Account': { source: 'exec', provider: 'justdo_login', id: 'X-User-Account' },
     });
   });
 });

@@ -7,7 +7,6 @@ import { restrictCredentialFile } from './providerSecretFile';
 
 export const BUILTIN_SECRET_SOURCE = 'justdo_login';
 export const BUILTIN_SECRET_ID = 'X-ACCESS-JWT';
-export const BUILTIN_ACCOUNT_SECRET_ID = 'X-User-Account';
 // Public wrapping material: protects against direct inspection, not reverse engineering.
 const WRAPPING_CONTEXT = 'justdo/builtin-credential-file/v1';
 const MAGIC = Buffer.from('JDCR1');
@@ -48,8 +47,8 @@ process.stdin.on('end', () => {
   try {
     const request = JSON.parse(input);
     if (request.protocolVersion !== 1 || request.provider !== ${JSON.stringify(BUILTIN_SECRET_SOURCE)} ||
-        !Array.isArray(request.ids) || request.ids.length < 1 || request.ids.length > 2 ||
-        request.ids.some(id => ![${JSON.stringify(BUILTIN_SECRET_ID)}, ${JSON.stringify(BUILTIN_ACCOUNT_SECRET_ID)}].includes(id))) throw new Error();
+        !Array.isArray(request.ids) || request.ids.length !== 1 ||
+        request.ids[0] !== ${JSON.stringify(BUILTIN_SECRET_ID)}) throw new Error();
     const file = path.join(__dirname, 'credentials.bin');
     if (fs.statSync(file).size > 65536) throw new Error();
     const data = fs.readFileSync(file);
@@ -67,7 +66,6 @@ process.stdin.on('end', () => {
         (credential.authType === 'api-key' ? credential.userAccount !== '' : !credential.userAccount)) throw new Error();
     const available = {
       [${JSON.stringify(BUILTIN_SECRET_ID)}]: credential.accessToken,
-      [${JSON.stringify(BUILTIN_ACCOUNT_SECRET_ID)}]: credential.userAccount,
     };
     process.stdout.write(JSON.stringify({ protocolVersion: 1, values: Object.fromEntries(request.ids.map(id => [id, available[id]])) }));
   } catch {
@@ -91,7 +89,7 @@ function publishPrivateFile(file: string, data: Buffer | string, executable = fa
   }
 }
 
-/** Keep only SecretRefs in JSON; publish an encrypted binary before its reference. */
+/** Keep only JWT SecretRefs in JSON; publish an encrypted binary before its reference. */
 export function syncBuiltinCredentialFile(
   config: Record<string, unknown>,
   stateDir: string,
@@ -104,7 +102,7 @@ export function syncBuiltinCredentialFile(
     if (!value || typeof value !== 'object') return;
     const record = value as Record<string, unknown>;
     if (record.source === 'exec' && record.provider === BUILTIN_SECRET_SOURCE &&
-      [BUILTIN_SECRET_ID, BUILTIN_ACCOUNT_SECRET_ID].includes(String(record.id))) referenced = true;
+      record.id === BUILTIN_SECRET_ID) referenced = true;
     for (const child of Object.values(record)) visit(child);
   };
   visit(next);

@@ -17,7 +17,7 @@
 | 数据           | 来源                    | 允许到达                                     |
 | -------------- | ----------------------- | -------------------------------------------- |
 | mtoken         | 登录组件 user_info.json | Main → 明确配置的换证服务                    |
-| X-User-Account | 同一登录身份            | Main 校验、模型请求身份字段                  |
+| X-User-Account | 同一登录身份            | Main 校验与直发请求、既有出站代理注入       |
 | deviceId       | 本机有效网卡 MAC        | 换证请求；不代表设备密钥绑定                 |
 | JWT            | 换证服务                | Main、私有派生快照、Gateway 内存、模型数据面 |
 | X-Cookie       | 既有登录/工具链         | 不作为 JWT 或模型独立授权                    |
@@ -66,7 +66,9 @@ Main 监听登录文件，通常在剩余 60 秒续签；短生命周期 token �
 
 ## 5. 本地持久化边界
 
-builtin provider 在 SQLite/Renderer 中 apiKey 为空，只保存 base URL、模型与产品标记。openclaw.json 使用 justdo_login exec SecretRef；launch env 不放 JWT。快照只保存 JWT、账号和到期时间，不复制 X-Cookie。
+builtin provider 在 SQLite/Renderer 中 apiKey 为空，只保存 base URL、模型与产品标记。openclaw.json 中的 apiKey 和 X-ACCESS-JWT 使用 justdo_login exec SecretRef；launch env 不放 JWT。内置 provider 不再投影 X-User-Account 请求头，也不把它包装成 SecretRef；exec 解析器只返回 JWT 并拒绝请求账号，避免账号进入原生精确值脱敏名单或模型缓存。私有快照仍保存已验证的 JWT、账号和到期时间，不复制 X-Cookie。
+
+该调整不改变 Main 的 JWT sub/账号校验、Main 直发请求、服务端账号一致性校验或出站代理注入。Gateway 请求所需的 X-User-Account 继续由既有代理按 URL 白名单注入，同名头替换保持既有规则；依赖该身份头的服务必须匹配正确的代理策略。已经进入旧 Gateway 进程的账号脱敏记录不会因配置更新自动清除，需要在更新后重启应用；已有历史中已保存的星号不会据此恢复。
 
 快照采用私有权限及 AES-GCM 包装，但材料可由客户端推导，不抵御同用户逆向；安全依赖短期凭据和服务端验证。解析器只接受已知 secret id，复核期限，通过受限管道返回，不新增长期本地 token 转发服务。
 

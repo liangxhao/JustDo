@@ -51,7 +51,6 @@ import type { OpenClawHookRecord } from '../../plugins/hooks';
 import type { McpServerRecord } from '../../plugins/mcp';
 import {
   BUILTIN_MODEL_JWT_FIELD,
-  BUILTIN_MODEL_USER_ACCOUNT_FIELD,
   isActiveBuiltinModelDevelopmentApiKey,
 } from '../../providers/builtinModelCredential';
 import type { ProviderRawConfig } from '../../providers/providerApiConfig';
@@ -451,7 +450,6 @@ export const buildBuiltinModelSecretRef = (fieldName: string): OpenClawBuiltinSe
 
 export const buildBuiltinModelOpenClawHeaders = (): Record<string, OpenClawBuiltinSecretRef> => ({
   [BUILTIN_MODEL_JWT_FIELD]: buildBuiltinModelSecretRef(BUILTIN_MODEL_JWT_FIELD),
-  [BUILTIN_MODEL_USER_ACCOUNT_FIELD]: buildBuiltinModelSecretRef(BUILTIN_MODEL_USER_ACCOUNT_FIELD),
 });
 
 export const buildManagedOpenClawSecrets = (
