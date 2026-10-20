@@ -70,7 +70,7 @@ describe('Windows Gateway file watching', () => {
     });
 
     expect(env.CHOKIDAR_USEPOLLING).toBe('true');
-    expect(env.CHOKIDAR_INTERVAL).toBe('500');
+    expect(env).not.toHaveProperty('CHOKIDAR_INTERVAL');
     expect(inherited).toEqual({ PATH: 'runtime-bin' });
   });
 
@@ -86,7 +86,7 @@ describe('Windows Gateway file watching', () => {
     );
 
     expect(env.CHOKIDAR_USEPOLLING).toBe('true');
-    expect(env.CHOKIDAR_INTERVAL).toBe('500');
+    expect(env).not.toHaveProperty('CHOKIDAR_INTERVAL');
     expect(env).not.toHaveProperty('chokidar_usepolling');
     expect(env).not.toHaveProperty('chokidar_interval');
   });

@@ -216,7 +216,7 @@ Extension 发布技能的 scope 表示父插件管理，ownershipScope 表示产
 
 导入验证结构与精确目标，复制到受管根。删除先原子移入同卷 `.justdo-skill-trash/delete-*`，避免递归删除中途留下半残 live skill。机会式清理仅处理已知 trash 子目录，不能扫描删除未知项目。
 
-技能导入、同名覆盖更新与删除保持 Gateway 运行；文件服务显式关闭 ManagedDirectoryOperationCoordinator 的 runtime 停启恢复，只保留串行变更与文件锁诊断。Windows Gateway 启动环境使用原生支持的 `CHOKIDAR_USEPOLLING=true`、`CHOKIDAR_INTERVAL=500`，由原生技能监听器和其他 Chokidar 监听器轮询变更，避免长期目录句柄阻止原子重命名。该设置传给 Gateway 及其 worker，不修改应用或 CLI 的基础环境；其他平台保留原生监听方式。外部程序占用或权限问题按真实失败提示，不停止 Gateway 或杀进程。
+技能导入、同名覆盖更新与删除保持 Gateway 运行；文件服务显式关闭 ManagedDirectoryOperationCoordinator 的 runtime 停启恢复，只保留串行变更与文件锁诊断。Windows Gateway 启动环境使用原生支持的 `CHOKIDAR_USEPOLLING=true`，避免长期目录句柄阻止原子重命名；移除继承的轮询间隔，由各原生监听器采用自己的默认值：技能目录为 30 秒，配置文件为 100 毫秒。不能用统一的短间隔反复扫描所有技能目录，否则会持续占用事件循环并拖慢历史加载和页面请求。外部技能文件变化通常在下一次目录轮询后发现，繁忙、扫描和文件稳定性检查可能延后；技能清单和实际执行仍由原生 API 及准入校验决定。该设置传给 Gateway 及其 worker，不修改应用或 CLI 的基础环境；其他平台保留原生监听方式。外部程序占用或权限问题按真实失败提示，不停止 Gateway 或杀进程。
 
 删除后重新查询原生技能清单，成功弹窗明确显示“已删除”。技能消失是删除的预期结果；只有同名技能实际解析到另一个来源时，才追加来源变化说明。批量导入只要有成功项就刷新清单，部分失败弹窗保留成功、失败数量与逐项原因。
 

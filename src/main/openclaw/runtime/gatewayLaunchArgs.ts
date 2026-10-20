@@ -24,10 +24,11 @@ export const buildGatewayLaunchEnvironment = (
   }
   return {
     ...inherited,
-    // OpenClaw's native skill watcher honors these Chokidar settings. Polling
-    // avoids Windows directory handles that block transactional skill changes.
-    // Apply only to Gateway and its workers, preserving the host/CLI environment.
-    ...(useWindowsPolling ? { CHOKIDAR_USEPOLLING: 'true', CHOKIDAR_INTERVAL: '500' } : {}),
+    // Polling avoids Windows directory handles that block skill changes. Let
+    // native owners choose their intervals: skills scan trees every 30 seconds,
+    // while configuration files need faster observation. A shared short interval
+    // keeps all skill roots scanning and starves interactive Gateway requests.
+    ...(useWindowsPolling ? { CHOKIDAR_USEPOLLING: 'true' } : {}),
     // JustDo owns discovery, process supervision, and the WebChat-only channel
     // lifecycle for its embedded Gateway.
     OPENCLAW_DISABLE_BONJOUR: '1',
