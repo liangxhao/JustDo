@@ -167,6 +167,8 @@ import {
   OpenClawAssistantMediaIpc,
   type OpenClawAssistantMediaRequest,
 } from '../shared/openclaw/assistantMedia';
+import { EngineDiagnosticsIpc, type EngineDiagnosticsQuery } from '../shared/openclaw/engineDiagnostics';
+import { EngineIpc } from '../shared/openclaw/engineStatus';
 import { OpenClawHistoryIpc } from '../shared/openclaw/historyIpc';
 import { MemoryIpc } from '../shared/openclaw/memory';
 import { OpenClawModelsIpc } from '../shared/openclaw/models';
@@ -669,6 +671,9 @@ contextBridge.exposeInMainWorld('electron', {
     },
     engine: {
       getStatus: () => ipcRenderer.invoke('openclaw:engine:getStatus'),
+      startGateway: () => ipcRenderer.invoke(EngineIpc.StartGateway),
+      collectDiagnostics: (query: EngineDiagnosticsQuery) => ipcRenderer.invoke(EngineDiagnosticsIpc.Collect, query),
+      cancelDiagnostics: (query: EngineDiagnosticsQuery) => ipcRenderer.invoke(EngineDiagnosticsIpc.Cancel, query),
       restartGateway: () => ipcRenderer.invoke('openclaw:engine:restartGateway'),
       getPort: () => ipcRenderer.invoke('openclaw:engine:getPort'),
       getToken: () => ipcRenderer.invoke('openclaw:engine:getToken'),

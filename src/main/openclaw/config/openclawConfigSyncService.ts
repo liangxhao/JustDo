@@ -3,6 +3,7 @@ import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels'
 import { readModelRef } from '../../../shared/providers/modelRef';
 import type { WindowsSandboxStatus } from '../../../shared/security/windowsSandbox';
 import { ManagedDirectoryRuntimeStopAbortedError } from '../../core/filesystem/managedDirectoryOperations';
+import { t } from '../../core/i18n';
 import type { CoworkStore } from '../../data/coworkStore';
 import { createManagedSessionModelPolicy } from '../../engine/gateway/managedSessionModels';
 import { enqueueSessionModelOperation } from '../../engine/gateway/sessionModelOperations';
@@ -272,6 +273,9 @@ export class OpenClawConfigSyncService {
         return verified.status ?? engineManager.getStatus();
       }
       if (nativeRestart === GatewayConfigRestartOutcome.Pending) return engineManager.getStatus();
+      if (nativeRestart === GatewayConfigRestartOutcome.Unconfirmed) {
+        throw new Error(t('engineRestartUnconfirmed'));
+      }
     }
     const result = await this.restartGatewayOrDefer(reason, true, true);
     return result.status ?? this.deps.getOpenClawEngineManager().getStatus();
@@ -632,6 +636,15 @@ export class OpenClawConfigSyncService {
       const nativeRestart = await requestGatewayConfigRestart(
         engineManager, this.deps.requestGateway, options.reason,
       );
+      if (nativeRestart === GatewayConfigRestartOutcome.Unconfirmed) {
+        return {
+          success: false,
+          changed: syncResult.changed,
+          configSynced: true,
+          status: engineManager.getStatus(),
+          error: t('engineConfigApplicationUnconfirmed'),
+        };
+      }
       if (nativeRestart !== GatewayConfigRestartOutcome.Unavailable) {
         const result = {
           success: true,
@@ -1158,6 +1171,10 @@ export class OpenClawConfigSyncService {
         configSynced: true,
         status,
       };
+    }
+    if (reason === 'proxy-change' && engineManager.canReuseGatewayNetworkEnvironment()) {
+      console.log('[OpenClaw] Proxy preference applied through the existing local network route.');
+      return { success: true, changed, configSynced: true, status };
     }
     const targetProcessGeneration = engineManager.getGatewayProcessGeneration();
     const suspension = await this.prepareGatewayRestartSuspension(targetProcessGeneration);

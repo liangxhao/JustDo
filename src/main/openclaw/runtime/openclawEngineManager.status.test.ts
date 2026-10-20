@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import cliRuntimeFiles from '../../../shared/openclaw/cliRuntimeFiles.json';
+import { GatewayConfigReloadMonitor } from './gatewayConfigReloadMonitor';
 import { OpenClawEngineManager, type OpenClawEngineStatus } from './openclawEngineManager';
 
 vi.mock('electron', () => ({ app: { isPackaged: false, getPath: () => 'fixture-user-data' } }));
@@ -54,6 +55,89 @@ function createManager(phase: 'starting' | 'running' = 'starting') {
 afterEach(() => vi.restoreAllMocks());
 
 describe('Gateway lifecycle during runtime environment reads', () => {
+  it('binds diagnostics to the failure attempt, masks credentials and advances identity on retry', () => {
+    const { manager } = createManager('running');
+    const internal = manager as unknown as { gatewayProcessGeneration: number; setStatus: (status: OpenClawEngineStatus) => void };
+    internal.gatewayProcessGeneration = 7;
+    const time = vi.spyOn(Date, 'now').mockReturnValue(10_000);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    internal.setStatus({ phase: 'starting', version: 'test', canRetry: false });
+    time.mockReturnValue(300_000);
+    internal.setStatus({ phase: 'error', version: 'test', canRetry: true, message: 'api_key=private-secret EADDRINUSE' });
+    const failure = manager.getDiagnosticContext();
+    expect(failure).toMatchObject({ startedAt: 10_000, failedAt: 300_000, processGeneration: 7 });
+    expect(failure.id).toBe(manager.getStatus().diagnosticId);
+    expect(failure.status.message).not.toContain('private-secret');
+    const again = manager.getDiagnosticContext();
+    expect(again.failedAt).toBe(failure.failedAt);
+    internal.setStatus({ phase: 'starting', version: 'test', canRetry: false });
+    expect(manager.getDiagnosticContext().id).not.toBe(failure.id);
+    expect(manager.getStatus().diagnosticId).toBeUndefined();
+  });
+
+  it('publishes native in-process restart and completion only for the current process', () => {
+    const { manager, statuses } = createManager('running');
+    const child = {};
+    const internals = manager as unknown as {
+      gatewayProcess: object;
+      gatewayConfigReloadMonitor: GatewayConfigReloadMonitor;
+      observeGatewayProcessLine: (child: object, line: string) => void;
+    };
+    internals.gatewayProcess = child;
+    internals.gatewayConfigReloadMonitor = new GatewayConfigReloadMonitor();
+
+    internals.observeGatewayProcessLine({}, '[gateway] received SIGUSR1; restarting');
+    expect(statuses).toEqual([]);
+    internals.observeGatewayProcessLine(child, '[gateway] received SIGUSR1; restarting');
+    expect(manager.getStatus()).toMatchObject({ phase: 'starting', restarting: true });
+    internals.observeGatewayProcessLine({}, '[gateway] ready');
+    expect(manager.getStatus().phase).toBe('starting');
+    internals.observeGatewayProcessLine(child, '[gateway] ready');
+    expect(manager.getStatus()).toMatchObject({ phase: 'running' });
+    expect(manager.getStatus().restarting).toBeUndefined();
+  });
+
+  it('keeps a full restart visible through the intermediate stopped state', async () => {
+    const { manager, statuses } = createManager('running');
+    const internals = manager as unknown as {
+      shutdownRequested: boolean;
+      setStatus: (status: OpenClawEngineStatus) => void;
+      startGatewayOnce: () => Promise<OpenClawEngineStatus>;
+    };
+    manager.stopGateway = vi.fn(async () => {
+      internals.setStatus({ phase: 'ready', version: 'test', canRetry: false });
+    });
+    internals.startGatewayOnce = vi.fn(async () => {
+      expect(manager.getStatus()).toMatchObject({ phase: 'starting', restarting: true });
+      internals.setStatus({ phase: 'running', version: 'test', canRetry: false });
+      return manager.getStatus();
+    });
+
+    await expect(manager.restartGateway()).resolves.toMatchObject({ phase: 'running' });
+
+    expect(statuses.map(status => status.phase)).toEqual(['starting', 'starting', 'running']);
+    expect(statuses.slice(0, 2).every(status => status.restarting)).toBe(true);
+    expect(manager.getStatus().restarting).toBeUndefined();
+  });
+
+  it('clears the restarting notice when explicitly stopped during restart preparation', async () => {
+    const { manager } = createManager('running');
+    const internals = manager as unknown as {
+      shutdownRequested: boolean;
+      setStatus: (status: OpenClawEngineStatus) => void;
+      startGatewayOnce: () => Promise<OpenClawEngineStatus>;
+    };
+    manager.stopGateway = vi.fn(async () => {});
+    internals.startGatewayOnce = vi.fn(async () => {
+      internals.shutdownRequested = true;
+      internals.setStatus({ phase: 'ready', version: 'test', canRetry: false });
+      return manager.getStatus();
+    });
+
+    await expect(manager.restartGateway()).resolves.toMatchObject({ phase: 'ready' });
+    expect(manager.getStatus().restarting).toBeUndefined();
+  });
+
   it.each(['starting', 'running'] as const)(
     'preserves %s status when a page checks runtime readiness',
     async phase => {

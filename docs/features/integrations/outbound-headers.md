@@ -133,6 +133,8 @@ Header 名只需满足 HTTP field-name 语法，不强制 `X-` 前缀。Header �
 
 默认构造的代理会在请求时读取当前配置和用户值，使已有 interception origin 内的 path/value 变化可反映；但 `start()` 固化的候选 origin、CA、capability 和 Gateway env 不会自动扩展到全新 origin。生产级配置变更仍应受控重启 Gateway generation 与 proxy，不能把局部动态读取当完整热重载。
 
+非浏览器代理偏好的 system/custom/direct 切换只改变第二跳上游选择。Manager 保留绑定到实际子进程的私有环境快照，由代理核对当前第一跳 URL/capability、证书变量及 bypass 环境；全部匹配且没有待更新启动环境时，新请求使用动态上游，不重启 Gateway，不切断已建立的流或 CONNECT。没有受控本地路由、旧 capability、代理停止或启动环境变化时仍走安全完整重启。此例外不适用于 Extension Header 白名单、候选 origin 或授权策略变化。
+
 ## 7. 本地 Capability
 
 代理监听 loopback 仍不能假定只有 JustDo 可访问。同一用户的其他进程可以连接本地端口，因此每个 HTTP 请求或 CONNECT 必须携带随机 capability。

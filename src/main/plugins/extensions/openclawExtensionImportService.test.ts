@@ -633,10 +633,15 @@ describe('OpenClawExtensionImportService', () => {
     expect(requestGateway).toHaveBeenNthCalledWith(3, 'plugins.list', {});
   });
 
-  it.each([true, false])(
-    'resets native team skill discovery after synchronizing enabled=%s',
-    async enabled => {
-      const requestGateway = vi.fn().mockResolvedValue({ ok: true, restartRequired: false });
+  it.each([
+    { enabled: true, restartRequired: false },
+    { enabled: false, restartRequired: false },
+    { enabled: true, restartRequired: true },
+    { enabled: false, restartRequired: true },
+  ])(
+    'synchronizes Team enabled=$enabled and honors native restartRequired=$restartRequired',
+    async ({ enabled, restartRequired }) => {
+      const requestGateway = vi.fn().mockResolvedValue({ ok: true, restartRequired });
       const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
       const service = new OpenClawExtensionImportService({
         getOpenClawEngineManager: () =>
@@ -649,12 +654,14 @@ describe('OpenClawExtensionImportService', () => {
         ['plugins.setEnabled', { pluginId: 'agent-team', enabled }],
         ['skills.update', { skillKey: 'agent-team', enabled }],
       ]);
-      expect(restartGatewayAfterMutation).toHaveBeenCalledExactlyOnceWith(
-        'extension-status-change',
-      );
-      expect(requestGateway.mock.invocationCallOrder.at(-1)).toBeLessThan(
-        restartGatewayAfterMutation.mock.invocationCallOrder[0],
-      );
+      if (restartRequired) {
+        expect(restartGatewayAfterMutation).toHaveBeenCalledExactlyOnceWith('extension-status-change');
+        expect(requestGateway.mock.invocationCallOrder.at(-1)).toBeLessThan(
+          restartGatewayAfterMutation.mock.invocationCallOrder[0],
+        );
+      } else {
+        expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
+      }
     },
   );
 
@@ -692,7 +699,7 @@ describe('OpenClawExtensionImportService', () => {
     },
   );
 
-  it('resets team discovery even when the skill write fails and native hot reload reports success', async () => {
+  it('reports a failed skill write without restarting a successfully hot-reloaded Team plugin', async () => {
     const requestGateway = vi.fn(async method => {
       if (method === 'skills.update') throw new Error('Skill update unavailable');
       return { ok: true, restartRequired: false };
@@ -707,7 +714,7 @@ describe('OpenClawExtensionImportService', () => {
     await expect(service.setEnabled('agent-team', false)).resolves.toMatchObject({
       success: false,
     });
-    expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-status-change');
+    expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
   });
 
   it('reports partial team skill failure and repairs it when retrying the same state', async () => {
@@ -786,7 +793,7 @@ describe('OpenClawExtensionImportService', () => {
     },
   );
 
-  it('resets stale team discovery after an active Gateway falls back to an unchanged cold toggle', async () => {
+  it('tries native refresh after an active Gateway falls back to an unchanged cold toggle', async () => {
     const stateDir = path.join(fixtureRoot, 'state');
     const configPath = path.join(stateDir, 'openclaw.json');
     const extensionDir = path.join(stateDir, 'extensions', 'agent-team');
@@ -799,7 +806,9 @@ describe('OpenClawExtensionImportService', () => {
         skills: { entries: { 'agent-team': { enabled: true } } },
       }),
     );
-    const requestGateway = vi.fn().mockRejectedValue(new Error('gateway not connected'));
+    const requestGateway = vi.fn()
+      .mockRejectedValueOnce(new Error('gateway not connected'))
+      .mockResolvedValue({ ok: true, restartRequired: false });
     const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
     const runCommand = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
     const service = new OpenClawExtensionImportService({
@@ -821,18 +830,19 @@ describe('OpenClawExtensionImportService', () => {
     });
 
     await expect(service.setEnabled('agent-team', true)).resolves.toEqual({ success: true });
-    expect(requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.setEnabled', {
+    expect(requestGateway).toHaveBeenNthCalledWith(1, 'plugins.setEnabled', {
       pluginId: 'agent-team',
       enabled: true,
     });
-    expect(restartGatewayAfterMutation).toHaveBeenCalledExactlyOnceWith('extension-status-change');
+    expect(requestGateway).toHaveBeenNthCalledWith(2, 'plugins.refresh', {});
+    expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
     expect(runCommand.mock.invocationCallOrder[0]).toBeLessThan(
-      restartGatewayAfterMutation.mock.invocationCallOrder[0],
+      requestGateway.mock.invocationCallOrder[1],
     );
   });
 
-  it('reports a failed team discovery restart and retries it through the same native toggle', async () => {
-    const requestGateway = vi.fn().mockResolvedValue({ ok: true, restartRequired: false });
+  it('reports a required native restart failure and retries it through the same Team toggle', async () => {
+    const requestGateway = vi.fn().mockResolvedValue({ ok: true, restartRequired: true });
     const restartGatewayAfterMutation = vi
       .fn()
       .mockResolvedValueOnce({ phase: 'error', message: 'Skill publication restart failed' })
@@ -2667,7 +2677,7 @@ describe('OpenClawExtensionImportService', () => {
     30_000,
   );
 
-  it('configures bundled Jev credentials without exposing values and refreshes rotated secrets', async () => {
+  it.each([false, true])('refreshes Jev secrets without exposing values and honors plugin restartRequired=%s', async restartRequired => {
     const stateDir = path.join(fixtureRoot, 'state');
     const runtimeRoot = path.join(fixtureRoot, 'runtime');
     const bundledDir = path.join(runtimeRoot, 'dist', 'extensions', 'typesafe');
@@ -2692,24 +2702,25 @@ describe('OpenClawExtensionImportService', () => {
       getGatewayConfigReloadGeneration: vi.fn(),
       waitForGatewayConfigReload: vi.fn(),
     } as unknown as OpenClawEngineManager;
+    let secretReloadFails = false;
+    const requestGateway = vi.fn(async (method: string) => {
+      if (method === 'secrets.reload') {
+        if (secretReloadFails) throw new Error('credential provider unavailable');
+        return { ok: true };
+      }
+      if (method === 'plugins.reload') return { ok: true, restartRequired };
+      return {
+        plugins: [{
+          id: 'typesafe', name: 'TypeSafe AI', installed: true, origin: 'bundled',
+          enabled: false, state: 'disabled', removable: false,
+        }],
+        mutationAllowed: true, diagnostics: [],
+      };
+    });
     const service = new OpenClawExtensionImportService({
       getOpenClawEngineManager: () => manager,
       restartGatewayAfterMutation: restartGateway,
-      requestGateway: vi.fn().mockResolvedValue({
-        plugins: [
-          {
-            id: 'typesafe',
-            name: 'TypeSafe AI',
-            installed: true,
-            origin: 'bundled',
-            enabled: false,
-            state: 'disabled',
-            removable: false,
-          },
-        ],
-        mutationAllowed: true,
-        diagnostics: [],
-      }),
+      requestGateway,
     });
     expect((await service.listCatalog())[0]).toMatchObject({
       canToggle: true,
@@ -2731,11 +2742,17 @@ describe('OpenClawExtensionImportService', () => {
     const catalog = await service.listCatalog();
     expect(catalog[0].configurationFields[0].configured).toBe(true);
     expect(JSON.stringify(catalog)).not.toContain('synthetic-first-key');
-    expect(restartGateway).toHaveBeenCalledTimes(1);
+    expect(restartGateway).toHaveBeenCalledTimes(restartRequired ? 1 : 0);
     await service.updateConfiguration('typesafe', { apiKey: 'synthetic-first-key' });
-    expect(restartGateway).toHaveBeenCalledTimes(1);
+    expect(restartGateway).toHaveBeenCalledTimes(restartRequired ? 1 : 0);
     await service.updateConfiguration('typesafe', { apiKey: 'synthetic-rotated-key' });
-    expect(restartGateway).toHaveBeenCalledTimes(2);
+    expect(restartGateway).toHaveBeenCalledTimes(restartRequired ? 2 : 0);
+    expect(requestGateway.mock.calls.filter(([method]) => method !== 'plugins.list')).toEqual([
+      ['secrets.reload', {}],
+      ['plugins.reload', { plugins: [{ pluginId: 'typesafe' }] }],
+      ['secrets.reload', {}],
+      ['plugins.reload', { plugins: [{ pluginId: 'typesafe' }] }],
+    ]);
     expect(manager.waitForGatewayConfigReload).not.toHaveBeenCalled();
     expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(saved);
     const credentialStore = JSON.parse(
@@ -2744,6 +2761,14 @@ describe('OpenClawExtensionImportService', () => {
     expect(credentialStore[saved.plugins.entries.typesafe.config.apiKey.id.slice(1)]).toBe(
       'synthetic-rotated-key',
     );
+    secretReloadFails = true;
+    await expect(service.updateConfiguration('typesafe', { apiKey: 'retry-key' })).resolves.toMatchObject({
+      success: false, error: 'credential provider unavailable',
+    });
+    expect(restartGateway).toHaveBeenCalledTimes(restartRequired ? 2 : 0);
+    secretReloadFails = false;
+    await expect(service.updateConfiguration('typesafe', { apiKey: 'retry-key' })).resolves.toEqual({ success: true });
+    expect(restartGateway).toHaveBeenCalledTimes(restartRequired ? 3 : 0);
     await expect(
       service.updateConfiguration('../typesafe', { apiKey: 'synthetic-key' }),
     ).resolves.toMatchObject({ success: false });

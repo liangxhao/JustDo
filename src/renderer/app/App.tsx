@@ -57,7 +57,6 @@ import CoworkInteractionModal from '@/features/cowork/components/questions/Cowor
 import CoworkQuestionFloatingWindow, {
   shouldShowCoworkQuestionWindow,
 } from '@/features/cowork/components/questions/CoworkQuestionFloatingWindow';
-import EngineStartupStatusBar from '@/features/cowork/components/status/EngineStartupStatusBar';
 import {
   selectCurrentSessionId,
   selectPendingInteractions,
@@ -917,7 +916,7 @@ const InitializedApp: React.FC = () => {
     },
     [activeApproval, dismissApproval],
   );
-  const windowsStandaloneTitleBar = isWindows ? <WindowHeader /> : null;
+  const windowsStandaloneTitleBar = isWindows ? <WindowHeader showEngineStatus /> : null;
 
   if (!isInitialized) {
     return (
@@ -967,7 +966,6 @@ const InitializedApp: React.FC = () => {
       <div aria-hidden="true" className="draggable fixed inset-x-0 top-0 z-40 h-1.5 select-none" />
       <WorkspaceNotifications>
         <BottomRightStatusStack>
-          <EngineStartupStatusBar />
           {updateToast && (
             <AppUpdateToast
               state={updateToast.state}
@@ -1017,7 +1015,7 @@ const InitializedApp: React.FC = () => {
             className={`col-start-2 col-span-2 row-start-1 min-w-0 pt-1.5 pr-1.5 ${isSidebarCollapsed || mainView !== SidebarView.Home ? 'pl-1.5' : ''}`}
           >
             <div className="overflow-hidden rounded-t-xl bg-background">
-              <WindowHeader />
+              <WindowHeader showEngineStatus />
             </div>
           </div>
         )}

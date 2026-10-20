@@ -8,6 +8,8 @@ import path from 'path';
 
 import OPENCLAW_CLI_ROOT_FILES from '../../../shared/openclaw/cliRuntimeFiles.json';
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../../shared/openclaw/constants';
+import type { EngineFailureContext } from '../../../shared/openclaw/engineDiagnostics';
+import { EnginePhase, type OpenClawEngineStatus } from '../../../shared/openclaw/engineStatus';
 import {
   GatewayPortSetErrorCode,
   validateGatewayPortNumber,
@@ -19,6 +21,7 @@ import type {
 } from '../../../shared/openclaw/sessionMigration';
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 import type { SystemPromptReplacementRule } from '../../../shared/prompts/systemPromptReplacements';
+import { redactLogText } from '../../core/logRedaction';
 import {
   applyTrustedCertificateEnv,
   buildTrustedCaBundle,
@@ -72,18 +75,7 @@ const GATEWAY_RESTART_DELAYS = [3_000, 5_000, 10_000, 20_000, 30_000];
 const APP_PROCESS_STARTED_AT_MS = Date.now();
 const SPEECH_PLUGIN_IDS = new Set(['tts-local-cli', 'openai']);
 
-export type OpenClawEnginePhase =
-  | 'ready'
-  | 'starting'
-  | 'running'
-  | 'error';
-
-export interface OpenClawEngineStatus {
-  phase: OpenClawEnginePhase;
-  version: string | null;
-  message?: string;
-  canRetry: boolean;
-}
+export type { OpenClawEnginePhase, OpenClawEngineStatus } from '../../../shared/openclaw/engineStatus';
 
 export interface OpenClawGatewayConnectionInfo {
   version: string | null;
@@ -130,6 +122,7 @@ export type OpenClawEngineManagerOptions = {
   beginNetworkGeneration?: () => void;
   prepareNetworkGeneration?: () => Promise<void>;
   buildNetworkEnvironment?: (baseEnv: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
+  isNetworkEnvironmentReusable?: (env: Readonly<NodeJS.ProcessEnv>) => boolean;
 };
 
 export type OpenClawGatewayRestartOptions = {
@@ -315,6 +308,7 @@ export class OpenClawEngineManager extends EventEmitter {
   private desiredVersion: string | null;
   private status: OpenClawEngineStatus;
   private gatewayProcess: GatewayProcess | null = null;
+  private readonly gatewayNetworkEnvironments = new WeakMap<object, Readonly<NodeJS.ProcessEnv>>();
   private readonly expectedGatewayExits = new WeakSet<object>();
   private gatewayRestartTimer: NodeJS.Timeout | null = null;
   private gatewayRestartAttempt = 0;
@@ -324,6 +318,10 @@ export class OpenClawEngineManager extends EventEmitter {
   private gatewayPort: number | null = null;
   private startGatewayPromise: Promise<OpenClawEngineStatus> | null = null;
   private restartGatewayPromise: Promise<OpenClawEngineStatus> | null = null;
+  private gatewayRestartInProgress = false;
+  private diagnosticStartedAt = Date.now();
+  private diagnosticId = crypto.randomUUID();
+  private diagnosticFailure: EngineFailureContext | null = null;
   private gatewayProcessGeneration = 0;
   private gatewayLaunchEnvVars: Record<string, string> = {};
   private gatewayLaunchEnvironmentGeneration = 0;
@@ -335,6 +333,7 @@ export class OpenClawEngineManager extends EventEmitter {
   ) => NodeJS.ProcessEnv;
   private readonly beginNetworkGeneration: () => void;
   private readonly prepareNetworkGeneration: () => Promise<void>;
+  private readonly isNetworkEnvironmentReusable: (env: Readonly<NodeJS.ProcessEnv>) => boolean;
 
   constructor(options: OpenClawEngineManagerOptions = {}) {
     super();
@@ -343,6 +342,7 @@ export class OpenClawEngineManager extends EventEmitter {
       options.buildNetworkEnvironment ?? (baseEnv => ({ ...baseEnv }));
     this.beginNetworkGeneration = options.beginNetworkGeneration ?? (() => undefined);
     this.prepareNetworkGeneration = options.prepareNetworkGeneration ?? (async () => undefined);
+    this.isNetworkEnvironmentReusable = options.isNetworkEnvironmentReusable ?? (() => false);
 
     const userDataPath = app.getPath('userData');
     this.baseDir = path.join(userDataPath, 'openclaw');
@@ -393,6 +393,7 @@ export class OpenClawEngineManager extends EventEmitter {
           message: `Bundled OpenClaw runtime is missing. Expected: ${runtime.expectedPathHint}`,
           canRetry: true,
         };
+    if (this.status.phase === EnginePhase.Error) this.setStatus(this.status);
   }
 
   /** Set the managed environment variables injected into the Gateway process. */
@@ -418,6 +419,13 @@ export class OpenClawEngineManager extends EventEmitter {
       this.gatewayLaunchEnvironmentGeneration !==
       this.launchedGatewayEnvironmentGeneration
     );
+  }
+
+  canReuseGatewayNetworkEnvironment(): boolean {
+    if (!isGatewayProcessAlive(this.gatewayProcess) ||
+      this.hasPendingGatewayLaunchEnvironmentChanges()) return false;
+    const env = this.gatewayNetworkEnvironments.get(this.gatewayProcess);
+    return !!env && this.isNetworkEnvironmentReusable(env);
   }
 
   /**
@@ -501,6 +509,24 @@ export class OpenClawEngineManager extends EventEmitter {
 
   getStatus(): OpenClawEngineStatus {
     return { ...this.status };
+  }
+
+  getDiagnosticContext(): EngineFailureContext {
+    const failure = this.diagnosticFailure;
+    const now = Date.now();
+    return {
+      id: this.diagnosticId,
+      startedAt: failure?.startedAt ?? (this.status.phase === EnginePhase.Starting
+        ? this.diagnosticStartedAt
+        : now - 120_000),
+      failedAt: failure?.failedAt ?? now,
+      processGeneration: failure?.processGeneration ?? this.gatewayProcessGeneration,
+      status: this.getStatus(),
+    };
+  }
+
+  getGatewayDiagnosticLogPath(): string {
+    return this.gatewayLogPath;
   }
 
   getGatewayConfigReloadGeneration(): number {
@@ -965,6 +991,8 @@ export class OpenClawEngineManager extends EventEmitter {
         );
         if (
           healthy &&
+          !restartPendingBeforeHealth &&
+          !this.gatewayConfigReloadMonitor.isGatewayRestartPending() &&
           this.gatewayProcess === existingProcess &&
           isGatewayProcessAlive(existingProcess)
         ) {
@@ -1055,6 +1083,13 @@ export class OpenClawEngineManager extends EventEmitter {
       });
       return this.getStatus();
     }
+
+    this.setStatus({
+      phase: EnginePhase.Starting,
+      version: runtime.version,
+      message: 'Preparing OpenClaw gateway...',
+      canRetry: false,
+    });
 
     const migrationPlan = await this.sessionStoreMigration.plan();
     if (migrationPlan.required) {
@@ -1193,6 +1228,7 @@ export class OpenClawEngineManager extends EventEmitter {
     );
 
     this.gatewayProcess = child;
+    this.gatewayNetworkEnvironments.set(child, Object.freeze({ ...gatewayEnv }));
     this.gatewayProcessGeneration += 1;
     this.launchedGatewayEnvironmentGeneration = launchEnvironmentGeneration;
     this.attachGatewayProcessLogs(child);
@@ -1330,13 +1366,38 @@ export class OpenClawEngineManager extends EventEmitter {
 
   private async performGatewayRestart(): Promise<OpenClawEngineStatus> {
     if (this.applicationShuttingDown) return this.getStatus();
-    console.log('[OpenClaw] restartGateway: stopping existing gateway...');
-    await this.stopGateway();
-    // Reset restart counter on manual restart so user can always retry
-    this.gatewayRestartAttempt = 0;
-    console.log('[OpenClaw] restartGateway: starting gateway with new env...');
-    // Do not wait on the restart Promise owned by this very operation.
-    return this.startGatewayOnce();
+    this.gatewayRestartInProgress = true;
+    this.setStatus({
+      phase: EnginePhase.Starting,
+      version: this.getStatus().version,
+      message: 'Restarting OpenClaw gateway...',
+      canRetry: false,
+    });
+    let result: OpenClawEngineStatus;
+    try {
+      console.log('[OpenClaw] restartGateway: stopping existing gateway...');
+      await this.stopGateway();
+      // Reset restart counter on manual restart so user can always retry.
+      this.gatewayRestartAttempt = 0;
+      console.log('[OpenClaw] restartGateway: starting gateway with new env...');
+      // Do not wait on the restart Promise owned by this very operation.
+      result = await this.startGatewayOnce();
+    } catch (error) {
+      this.setStatus({
+        phase: EnginePhase.Error,
+        version: this.getStatus().version,
+        message: error instanceof Error ? error.message : String(error),
+        canRetry: true,
+      });
+      throw error;
+    } finally {
+      this.gatewayRestartInProgress = false;
+    }
+    if (this.shutdownRequested && result.phase === EnginePhase.Starting) {
+      this.setStatus({ ...result, phase: EnginePhase.Ready, restarting: undefined });
+      return this.getStatus();
+    }
+    return result;
   }
 
   private resolveRuntimeMetadata(): RuntimeMetadata {
@@ -2201,7 +2262,25 @@ export class OpenClawEngineManager extends EventEmitter {
 
   private observeGatewayProcessLine(child: GatewayProcess, line: string): void {
     if (this.gatewayProcess !== child) return;
+    const wasRestarting = this.gatewayConfigReloadMonitor.isGatewayRestartPending();
     this.gatewayConfigReloadMonitor.observeLine(line);
+    const isRestarting = this.gatewayConfigReloadMonitor.isGatewayRestartPending();
+    if (isRestarting && !wasRestarting) {
+      this.setStatus({
+        phase: EnginePhase.Starting,
+        version: this.status.version,
+        message: 'Restarting OpenClaw gateway...',
+        canRetry: false,
+        restarting: true,
+      });
+    } else if (wasRestarting && !isRestarting) {
+      this.setStatus({
+        phase: EnginePhase.Running,
+        version: this.status.version,
+        message: 'OpenClaw gateway is running.',
+        canRetry: false,
+      });
+    }
   }
 
   private scheduleGatewayRestart(): void {
@@ -2226,6 +2305,13 @@ export class OpenClawEngineManager extends EventEmitter {
         Math.min(this.gatewayRestartAttempt, GATEWAY_RESTART_DELAYS.length - 1)
       ];
     this.gatewayRestartAttempt++;
+    this.setStatus({
+      phase: EnginePhase.Starting,
+      version: this.status.version,
+      message: 'Waiting to restart OpenClaw gateway...',
+      canRetry: false,
+      restarting: true,
+    });
     console.log(
       `[OpenClaw] scheduling gateway restart attempt ${this.gatewayRestartAttempt}/${GATEWAY_MAX_RESTART_ATTEMPTS} in ${delay}ms`,
     );
@@ -2238,13 +2324,42 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   private setStatus(next: OpenClawEngineStatus): void {
+    const previousPhase = this.status?.phase;
     if (next.phase === 'error') {
       console.error('[OpenClaw] Engine error:', next);
     }
+    const restarting = this.gatewayRestartInProgress ||
+      (this.status?.phase === EnginePhase.Starting && this.status.restarting === true);
+    const phase = this.gatewayRestartInProgress && next.phase === EnginePhase.Ready
+      ? EnginePhase.Starting
+      : next.phase;
+    if (phase === EnginePhase.Starting && this.status?.phase !== EnginePhase.Starting) {
+      this.diagnosticStartedAt = Date.now();
+      this.diagnosticId = crypto.randomUUID();
+      this.diagnosticFailure = null;
+    }
+    if (phase === EnginePhase.Error) this.diagnosticId = crypto.randomUUID();
     this.status = {
       ...next,
-      message: next.message ? next.message.slice(0, 500) : undefined,
+      phase,
+      ...(phase === EnginePhase.Starting && (restarting || next.restarting)
+        ? { restarting: true }
+        : {}),
+      message: next.message ? redactLogText(next.message).slice(0, 500) : undefined,
+      diagnosticId: phase === EnginePhase.Error ? this.diagnosticId : undefined,
     };
+    if (phase === EnginePhase.Error) {
+      const failedAt = Date.now();
+      this.diagnosticFailure = {
+        id: this.diagnosticId,
+        startedAt: previousPhase === EnginePhase.Starting
+          ? this.diagnosticStartedAt ?? failedAt - 120_000
+          : failedAt - 120_000,
+        failedAt,
+        processGeneration: this.gatewayProcessGeneration,
+        status: this.getStatus(),
+      };
+    }
     this.emit('status', this.getStatus());
   }
 }

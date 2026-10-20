@@ -45,7 +45,7 @@ flowchart LR
   Gateway[Gateway] --> Inject[本地 Header 注入代理] --> Header
 ```
 
-非浏览器代理变化保留原有 Gateway 空闲重启流程。浏览器代理变化在独立队列中更新现有 guest sessions、关闭旧连接；新 profile 注册也使用该队列，避免快速切换时旧偏好覆盖新配置。它不改变默认 session、Main 代理状态或 Gateway 环境。自定义浏览器代理的认证只取 `browserProxy` 凭据，不能借用非浏览器代理凭据。详见[浏览器设置](../features/browser/browser-settings-design.md)。
+非浏览器代理变化先更新 Main、默认 session 与动态上游选择；当前 Gateway 子进程仍使用匹配的受控本地代理环境时无需重启，只有不可复用该启动环境时才走空闲完整重启。浏览器代理变化在独立队列中更新现有 guest sessions、关闭旧连接；新 profile 注册也使用该队列，避免快速切换时旧偏好覆盖新配置。它不改变默认 session、Main 代理状态或 Gateway 环境。自定义浏览器代理的认证只取 `browserProxy` 凭据，不能借用非浏览器代理凭据。详见[浏览器设置](../features/browser/browser-settings-design.md)。
 
 ### 可分离的完整侧边栏
 

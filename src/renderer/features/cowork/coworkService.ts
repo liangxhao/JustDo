@@ -1474,6 +1474,19 @@ export class CoworkService {
     return this.openClawStatus;
   }
 
+  async startOpenClawGateway(): Promise<OpenClawEngineStatus> {
+    this.setupOpenClawEngineListeners();
+    const statusRevision = this.openClawStatusRevision;
+    const result = await window.electron.openclaw.engine.startGateway();
+    if (result.status && statusRevision === this.openClawStatusRevision) {
+      this.notifyOpenClawStatus(result.status);
+    }
+    if (!result.success || !result.status) {
+      throw new Error(result.error || result.status?.message || i18nService.t('engineStartFailed'));
+    }
+    return result.status;
+  }
+
   async generateSessionTitle(prompt: string | null, sessionId: string): Promise<string | null> {
     if (!window.electron?.generateSessionTitle) {
       return null;

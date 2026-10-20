@@ -82,14 +82,17 @@ Model settings persist credentials in the existing application config, just like
 other model types; this application config is not an encrypted vault. This is
 filesystem access protection, not encryption at rest.
 
-Changing credentials in the extension dialog restarts an active Gateway through the existing restart
-coordinator to refresh native prepared secrets, including rotations where the
-reference itself is unchanged. Saving the same value is a no-op. Disabling the
-plugin retains its credential for subsequent re-enablement.
+Changing credentials in the extension dialog refreshes native prepared secrets with
+`secrets.reload`, then applies `plugins.reload` to the capturing plugin. A successful
+native hot-application receipt avoids a Gateway restart, including rotations where
+the reference itself is unchanged. The existing coordinator handles a restart only
+when hot application is unavailable or explicitly requires it. Saving the same value
+is a no-op. Disabling the plugin retains its credential for subsequent re-enablement.
 
-If configuration publication or Gateway restart fails after rotation, a pending
-refresh remains in the running application. Retrying the same key still refreshes
-the Gateway; a new application process loads the saved key on startup.
+If configuration publication or runtime refresh fails after rotation, a pending
+refresh remains in the running application. Secret-provider errors are reported
+without attempting a restart. Retrying the same key still refreshes the runtime;
+a new application process loads the saved key on startup.
 
 Full, minimal, login and logout synchronization applies the settings selection
 and preserves secret providers and additional tool policy. Model settings use

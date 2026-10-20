@@ -58,7 +58,42 @@ describe('config in-process restart', () => {
 
   it('allows the suspension-fenced fallback when the RPC is unavailable', async () => {
     const h = harness();
-    h.request.mockRejectedValue(new Error('unknown method'));
+    h.request.mockRejectedValue(Object.assign(new Error('unknown method: gateway.restart.request'), {
+      gatewayCode: 'INVALID_REQUEST',
+    }));
     await expect(h.restart()).resolves.toBe('unavailable');
+  });
+
+  it.each([
+    new Error('connection closed'),
+    Object.assign(new Error('request timed out'), { code: 'CLIENT_TIMEOUT', requestSent: true }),
+    Object.assign(new Error('rejected by policy'), { gatewayCode: 'UNAVAILABLE' }),
+  ])('keeps an uncertain RPC outcome without authorizing cold retry: $message', async error => {
+    const h = harness();
+    h.request.mockRejectedValue(error);
+    await expect(h.restart()).resolves.toBe('unconfirmed');
+    expect(h.manager.waitForGatewayReadyAfter).not.toHaveBeenCalled();
+  });
+
+  it('permits fallback for a request that was definitely not sent', async () => {
+    const h = harness();
+    h.request.mockRejectedValue(Object.assign(new Error('not connected'), { requestSent: false }));
+    await expect(h.restart()).resolves.toBe('unavailable');
+  });
+
+  it.each([
+    new Error('OpenClaw runtime adapter is unavailable.'),
+    new Error('OpenClaw gateway client is unavailable.'),
+    new Error('OpenClaw gateway client connect timeout after 30000ms.'),
+  ])('permits fallback for a host failure before dispatch: $message', async error => {
+    const h = harness();
+    h.request.mockRejectedValue(error);
+    await expect(h.restart()).resolves.toBe('unavailable');
+  });
+
+  it.each([undefined, { ok: true, status: 'unexpected' }, {}])('keeps a malformed receipt unconfirmed: %j', async result => {
+    const h = harness();
+    h.request.mockResolvedValue(result);
+    await expect(h.restart()).resolves.toBe('unconfirmed');
   });
 });

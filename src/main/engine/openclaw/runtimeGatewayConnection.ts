@@ -150,7 +150,12 @@ export async function ensureGatewayClientReady(
 export async function _ensureGatewayClientReadyImpl(
   this: RuntimeGatewayConnectionContext,
 ): Promise<void> {
-  const engineStatus = await this.engineManager.startGateway();
+  // A lost WebSocket does not invalidate the process. Let the authenticated
+  // handshake retry without re-entering startup's process replacement path.
+  const currentStatus = this.engineManager.getStatus();
+  const engineStatus = currentStatus.phase === 'running'
+    ? currentStatus
+    : await this.engineManager.startGateway();
   if (engineStatus.phase !== 'running') {
     throw new Error(engineStatus.message || 'OpenClaw engine is not running.');
   }

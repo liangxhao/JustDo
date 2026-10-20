@@ -77,4 +77,61 @@ describe('CoworkService OpenClaw status ordering', () => {
     expect(observed).toEqual([startingStatus]);
     service.destroy();
   });
+
+  it('uses the dedicated start command and keeps a newer failure event', async () => {
+    let resolveStart!: (result: { success: boolean; status: OpenClawEngineStatus }) => void;
+    const pending = new Promise<{ success: boolean; status: OpenClawEngineStatus }>(resolve => {
+      resolveStart = resolve;
+    });
+    const startGateway = vi.fn(() => pending);
+    const restartGateway = vi.fn();
+    let progressListener: ((status: OpenClawEngineStatus) => void) | undefined;
+    vi.stubGlobal('window', {
+      electron: {
+        openclaw: {
+          engine: {
+            startGateway,
+            restartGateway,
+            onProgress: vi.fn(listener => {
+              progressListener = listener;
+              return vi.fn();
+            }),
+          },
+        },
+      },
+    });
+    const service = new CoworkService();
+    const observed: OpenClawEngineStatus[] = [];
+    service.onOpenClawEngineStatus(status => observed.push(status));
+    const command = service.startOpenClawGateway();
+    const failure: OpenClawEngineStatus = { ...runningStatus, phase: 'error', canRetry: true };
+    progressListener?.(failure);
+    resolveStart({ success: true, status: runningStatus });
+
+    await expect(command).resolves.toEqual(runningStatus);
+    expect(observed).toEqual([failure]);
+    expect(startGateway).toHaveBeenCalledOnce();
+    expect(restartGateway).not.toHaveBeenCalled();
+    service.destroy();
+  });
+
+  it('propagates a failed start command so the title bar can display its reason', async () => {
+    vi.stubGlobal('window', {
+      electron: {
+        openclaw: {
+          engine: {
+            startGateway: vi.fn().mockResolvedValue({
+              success: false,
+              status: { ...startingStatus, phase: 'ready' },
+              error: 'Policy rejected',
+            }),
+            onProgress: vi.fn(() => vi.fn()),
+          },
+        },
+      },
+    });
+    const service = new CoworkService();
+    await expect(service.startOpenClawGateway()).rejects.toThrow('Policy rejected');
+    service.destroy();
+  });
 });

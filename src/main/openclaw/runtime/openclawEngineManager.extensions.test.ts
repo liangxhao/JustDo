@@ -60,6 +60,30 @@ function createManager() {
 afterEach(() => vi.restoreAllMocks());
 
 describe('Gateway source extension preparation', () => {
+  it('waits for an in-process restart even when the old listener still answers health checks', async () => {
+    const { manager, harness } = createManager();
+    const ready = Promise.withResolvers<boolean>();
+    const waitForReady = vi.fn(() => ready.promise);
+    harness.status = { phase: 'starting', version: 'test', canRetry: false, restarting: true };
+    harness.gatewayProcess = { pid: 1234, exitCode: null };
+    Object.assign(harness.gatewayConfigReloadMonitor, {
+      isGatewayRestartPending: () => true,
+      waitForGatewayReadyAfter: waitForReady,
+    });
+    const sync = vi.mocked(syncLocalOpenClawExtensionsIntoRuntime);
+    sync.mockReset();
+
+    const starting = manager.startGateway();
+    await vi.waitFor(() => expect(waitForReady).toHaveBeenCalledOnce());
+    expect(manager.getStatus()).toMatchObject({ phase: 'starting', restarting: true });
+    harness.status = { phase: 'running', version: 'test', canRetry: false };
+    ready.resolve(true);
+
+    await expect(starting).resolves.toMatchObject({ phase: 'running' });
+    expect(sync).not.toHaveBeenCalled();
+    expect(manager.stopGateway).not.toHaveBeenCalled();
+  });
+
   it.each(['starting', 'running'] as const)(
     'keeps readiness and healthy Gateway reuse free of resource copies while %s',
     async phase => {
@@ -79,7 +103,7 @@ describe('Gateway source extension preparation', () => {
   );
 
   it('shares one slow cold preparation and repeats it on an explicit restart', async () => {
-    const { manager } = createManager();
+    const { manager, harness } = createManager();
     const pending = Promise.withResolvers<{ sourceDir: string; copied: string[] }>();
     const sync = vi.mocked(syncLocalOpenClawExtensionsIntoRuntime);
     sync
@@ -89,6 +113,7 @@ describe('Gateway source extension preparation', () => {
     const first = manager.startGateway();
     const second = manager.startGateway();
     await vi.waitFor(() => expect(sync).toHaveBeenCalledOnce());
+    expect(harness.status.phase).toBe('starting');
     await manager.ensureReady();
     expect(sync).toHaveBeenCalledOnce();
     pending.resolve({ sourceDir: 'source', copied: ['plugin'] });

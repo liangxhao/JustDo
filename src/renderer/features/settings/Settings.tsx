@@ -1827,7 +1827,7 @@ const Settings: React.FC<SettingsProps> = ({
 
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
-      <WindowHeader />
+      <WindowHeader showEngineStatus />
       <div className="flex min-h-0 flex-1 overflow-hidden bg-background">
         <SettingsNavigation
           activeTab={activeTab}

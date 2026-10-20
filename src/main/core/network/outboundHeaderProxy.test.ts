@@ -1068,6 +1068,45 @@ test('accepts a dynamic upstream proxy resolver and user info path', () => {
   ).not.toThrow();
 });
 
+test('switches upstream routes for new requests without replacing the Gateway environment', async () => {
+  const servers = [201, 202].map(status => http.createServer((_request, response) => {
+    response.writeHead(status);
+    response.end('fixture');
+  }));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'network-route-'));
+  temporaryDirectories.push(directory);
+  const userInfoPath = path.join(directory, 'user_info.json');
+  fs.writeFileSync(userInfoPath, JSON.stringify({ [HEADER_NAMES.USER_ACCOUNT]: 'fixture' }));
+  updateOutboundHeaderUserInfoCache(userInfoPath, [HEADER_NAMES.USER_ACCOUNT]);
+  let upstream: string | null = null;
+  const outboundProxy = new OutboundHeaderProxy({
+    enabled: true,
+    groups: [{ baseUrlWhitelist: ['http://runtime-route.invalid/'], headerNames: [HEADER_NAMES.USER_ACCOUNT] }],
+  }, async () => upstream, userInfoPath, path.join(directory, 'ca'));
+  try {
+    await Promise.all(servers.map(server => new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))));
+    await outboundProxy.start();
+    const env = outboundProxy.buildGatewayEnvironment({});
+    const proxyUrl = new URL(env.HTTP_PROXY!);
+    const authorization = `Basic ${Buffer.from(`${decodeURIComponent(proxyUrl.username)}:${decodeURIComponent(proxyUrl.password)}`).toString('base64')}`;
+    proxyUrl.username = '';
+    proxyUrl.password = '';
+    for (const index of [0, 1, 0]) {
+      const address = servers[index].address();
+      if (!address || typeof address === 'string') throw new Error('Fixture proxy did not start');
+      upstream = `http://127.0.0.1:${address.port}`;
+      expect(await requestThroughHttpProxy(proxyUrl, 'http://runtime-route.invalid/probe', authorization)).toBe(201 + index);
+      expect(outboundProxy.isGatewayEnvironmentReusable(env)).toBe(true);
+    }
+  } finally {
+    outboundProxy.stop();
+    await Promise.all(servers.map(server => new Promise<void>(resolve => {
+      server.closeAllConnections();
+      server.close(() => resolve());
+    })));
+  }
+});
+
 test('moves remote NO_PROXY entries behind the Gateway local proxy route', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-outbound-proxy-'));
   temporaryDirectories.push(directory);
@@ -1099,6 +1138,12 @@ test('moves remote NO_PROXY entries behind the Gateway local proxy route', async
       no_proxy: '.internal.example',
     };
     const gatewayEnv = outboundProxy.buildGatewayEnvironment(baseEnv);
+    expect(outboundProxy.isGatewayEnvironmentReusable(gatewayEnv)).toBe(true);
+    for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'NO_PROXY', 'no_proxy',
+      'NODE_EXTRA_CA_CERTS', 'REQUESTS_CA_BUNDLE', 'CURL_CA_BUNDLE', 'SSL_CERT_FILE', 'PIP_CERT', 'NODE_USE_ENV_PROXY']) {
+      expect(outboundProxy.isGatewayEnvironmentReusable({ ...gatewayEnv, [key]: 'changed' })).toBe(false);
+    }
+    expect(outboundProxy.isGatewayEnvironmentReusable(baseEnv)).toBe(false);
     expect(gatewayEnv.NO_PROXY?.split(',')).not.toContain('*.example.com');
     expect(gatewayEnv.NO_PROXY?.split(',')).not.toContain('other.example.net');
     expect(gatewayEnv.NO_PROXY?.split(',')).not.toContain('.internal.example');
@@ -1112,6 +1157,12 @@ test('moves remote NO_PROXY entries behind the Gateway local proxy route', async
     expect(overlapLogSpy).toHaveBeenCalledWith(
       '[OutboundHeaderProxy] Reconciled Gateway NO_PROXY overlap: conflictingEntries=["*.example.com"] affectedHeaderNames=["X-User-Account"] disabledHeaderNames=[] action="route remote bypasses through local proxy, then preserve direct upstream bypass"; clients that set a conflicting NO_PROXY after startup may bypass local header injection.',
     );
+    outboundProxy.rotateGatewayCapability();
+    expect(outboundProxy.isGatewayEnvironmentReusable(gatewayEnv)).toBe(false);
+    const nextEnv = outboundProxy.buildGatewayEnvironment({});
+    expect(outboundProxy.isGatewayEnvironmentReusable(nextEnv)).toBe(true);
+    outboundProxy.stop();
+    expect(outboundProxy.isGatewayEnvironmentReusable(nextEnv)).toBe(false);
   } finally {
     overlapLogSpy.mockRestore();
     outboundProxy.stop();

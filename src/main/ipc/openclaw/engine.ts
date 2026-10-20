@@ -9,6 +9,7 @@ import {
   type OpenClawAssistantMediaRequest,
   type OpenClawAssistantMediaResult,
 } from '../../../shared/openclaw/assistantMedia';
+import { type EngineCommandResult,EngineIpc } from '../../../shared/openclaw/engineStatus';
 import {
   type OpenClawSessionMigrationConfirmRequest,
   OpenClawSessionMigrationIpc,
@@ -22,10 +23,13 @@ import {
 } from '../../../shared/openclaw/worktrees';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import { SystemPromptReplacementIpc } from '../../../shared/prompts/systemPromptReplacements';
+import { t } from '../../core/i18n';
+import { redactLogText } from '../../core/logRedaction';
 import { JUSTDO_MANAGED_PYTHON_USER_BASE_ENV } from '../../core/runtime/pythonRuntime';
 import type { CoworkStore } from '../../data/coworkStore';
 import { isWorkspacePathWithin } from '../../engine/openclaw/runtimeAdapterSupport';
 import { WorktreeSettingsService } from '../../openclaw/config/worktreeSettingsService';
+import { isGatewayRestartRequestUnavailable } from '../../openclaw/runtime/gatewayConfigRestart';
 import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
@@ -33,6 +37,7 @@ import type {
 
 interface OpenClawEngineHandlerDependencies {
   getManager: () => OpenClawEngineManager;
+  ensureEngineRunning: () => Promise<OpenClawEngineStatus>;
   getCoworkStore: () => CoworkStore;
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
   reconnectGatewayClient: () => Promise<void>;
@@ -41,7 +46,6 @@ interface OpenClawEngineHandlerDependencies {
 
 const GATEWAY_RESTART_REQUEST_METHOD = 'gateway.restart.request';
 const GATEWAY_IN_PROCESS_RESTART_TIMEOUT_MS = 30_000;
-const GATEWAY_IN_PROCESS_RESTART_MAX_DELAY_MS = 1_000;
 const ASSISTANT_MEDIA_TIMEOUT_MS = 15_000;
 const MAX_ASSISTANT_MEDIA_BYTES = 20 * 1024 * 1024;
 const MAX_ASSISTANT_MEDIA_SOURCE_LENGTH = 2_048;
@@ -251,12 +255,8 @@ export const restartOpenClawGatewayForUser = async ({
   const status = manager.getStatus();
   if (status.phase === 'starting') {
     const started = await manager.startGateway();
-    if (started.phase !== 'running') return started;
-    return restartOpenClawGatewayForUser({
-      getManager,
-      requestGateway,
-      reconnectGatewayClient,
-    });
+    if (started.phase === 'running') reconnectGatewayClientAfterRestart(reconnectGatewayClient);
+    return started;
   }
   const requiresLaunchArgumentRefresh =
     status.phase === 'running' &&
@@ -270,8 +270,10 @@ export const restartOpenClawGatewayForUser = async ({
     !requiresLaunchEnvironmentRefresh
   ) {
     const lifecycleGeneration = manager.getGatewayLifecycleGeneration();
+    let result: GatewayRestartRequestResult | undefined;
+    let unavailable = false;
     try {
-      const result = await requestGateway<GatewayRestartRequestResult>(
+      result = await requestGateway<GatewayRestartRequestResult>(
         GATEWAY_RESTART_REQUEST_METHOD,
         {
           reason: 'justdo-manual-restart',
@@ -280,35 +282,33 @@ export const restartOpenClawGatewayForUser = async ({
           skipDeferral: true,
         },
       );
-      if (!isAcceptedGatewayRestartRequest(result)) {
-        throw new Error('Gateway rejected the in-process restart request.');
+    } catch (error) {
+      if (!isGatewayRestartRequestUnavailable(error)) {
+        throw new Error(`${t('engineRestartUnconfirmed')} ${String(error)}`);
       }
-      const scheduledDelayMs = result.restart?.delayMs;
-      if (
-        typeof scheduledDelayMs === 'number' &&
-        scheduledDelayMs > GATEWAY_IN_PROCESS_RESTART_MAX_DELAY_MS
-      ) {
-        throw new Error(
-          `Gateway delayed the in-process restart by ${scheduledDelayMs}ms.`,
-        );
-      }
-
+      unavailable = true;
+      console.warn(`[OpenClawEngine] Native restart request was not dispatched or is unsupported: ${String(error)}`);
+    }
+    if (result && isAcceptedGatewayRestartRequest(result)) {
+      // Native owns the accepted request, even through cooldown or a lost ready
+      // observation. A timeout must never schedule a second, full restart.
       const ready = await manager.waitForGatewayReadyAfter(
         lifecycleGeneration,
         GATEWAY_IN_PROCESS_RESTART_TIMEOUT_MS,
       );
       if (!ready || manager.getStatus().phase !== 'running') {
-        throw new Error('Gateway did not become ready after the in-process restart.');
+        throw new Error(t('engineRestartReadyUnconfirmed'));
       }
 
       console.log('[OpenClawEngine] Gateway in-process restart completed.');
       reconnectGatewayClientAfterRestart(reconnectGatewayClient);
       return manager.getStatus();
-    } catch (error) {
-      console.warn(
-        `[OpenClawEngine] In-process Gateway restart unavailable; falling back to a full restart: ${String(error)}`,
-      );
     }
+    if (!unavailable && result?.ok !== false) {
+      throw new Error(t('engineRestartUnconfirmed'));
+    }
+    if (manager.getGatewayLifecycleGeneration() !== lifecycleGeneration ||
+      manager.getStatus().phase !== 'running') return manager.getStatus();
   } else if (requiresLaunchArgumentRefresh) {
     console.log(
       '[OpenClawEngine] Gateway port changed; using a full restart to refresh launch arguments.',
@@ -624,12 +624,29 @@ const launchTerminal = async (options: {
 
 export const registerOpenClawEngineHandlers = ({
   getManager,
+  ensureEngineRunning,
   getCoworkStore,
   requestGateway,
   reconnectGatewayClient,
   runConfigMutationExclusive,
 }: OpenClawEngineHandlerDependencies): void => {
   let restartGatewayPromise: Promise<OpenClawEngineStatus> | null = null;
+
+  // Starting is idempotent and retains execution-policy verification. A stale
+  // ready notice must never turn into a restart of an already running engine.
+  ipcMain.handle(EngineIpc.StartGateway, async (): Promise<EngineCommandResult> => {
+    try {
+      const status = await ensureEngineRunning();
+      return { success: status.phase === 'running', status };
+    } catch (error) {
+      console.error('[OpenClawEngine] Start request failed:', error);
+      return {
+        success: false,
+        status: getManager().getStatus(),
+        error: redactLogText(error instanceof Error ? error.message : 'Failed to start AI engine'),
+      };
+    }
+  });
 
   getManager().onSessionMigrationProgress(progress => {
     for (const window of BrowserWindow.getAllWindows()) {

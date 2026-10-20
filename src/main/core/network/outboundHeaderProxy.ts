@@ -958,6 +958,20 @@ export class OutboundHeaderProxy {
     this.authenticatedConnectSockets.clear();
   }
 
+  /** The local first hop is stable; upstream preferences are resolved per request. */
+  isGatewayEnvironmentReusable(env: Readonly<NodeJS.ProcessEnv>): boolean {
+    if (!this.info || !this.capability || !this.activePolicy) return false;
+    const proxyUrl = new URL(this.info.proxyUrl);
+    proxyUrl.username = LOCAL_PROXY_USERNAME;
+    proxyUrl.password = this.capability;
+    const expected = buildGatewayNetworkEnvironment({}, {
+      proxyUrl: proxyUrl.toString(), caBundlePath: this.info.caBundlePath,
+    }, this.bypassEntries);
+    return Object.entries(expected).every(([key, value]) => key === 'NODE_OPTIONS'
+      ? env.NODE_OPTIONS?.split(/\s+/).includes('--use-system-ca')
+      : env[key] === value);
+  }
+
   buildGatewayEnvironment(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     if (!this.info || !this.capability || !this.activePolicy) {
       return { ...baseEnv };

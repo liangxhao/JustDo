@@ -9,9 +9,23 @@ const RestartRequestStatus = {
 } as const;
 export const GatewayConfigRestartOutcome = {
   Unavailable: 'unavailable',
+  Unconfirmed: 'unconfirmed',
   Pending: 'pending',
   Ready: 'ready',
 } as const;
+
+/** Only definite non-dispatch or an authoritative unsupported-method reply permits retry. */
+export function isGatewayRestartRequestUnavailable(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  if ('gatewayCode' in error) {
+    return error.gatewayCode === 'INVALID_REQUEST' &&
+      'message' in error && error.message === `unknown method: ${GATEWAY_RESTART_REQUEST}`;
+  }
+  if ('requestSent' in error) return error.requestSent === false;
+  // These exact host errors originate before client.request is invoked. Generic
+  // transport failures can occur after dispatch and do not establish rejection.
+  return error instanceof Error && /^(?:OpenClaw runtime adapter is unavailable\.|OpenClaw gateway client is unavailable\.|OpenClaw engine is not running\.|OpenClaw gateway client connect timeout after \d+ms\.?)$/.test(error.message);
+}
 
 /** Let the native coordinator retain active work and reuse the loaded runtime. */
 export async function requestGatewayConfigRestart(
@@ -35,11 +49,10 @@ export async function requestGatewayConfigRestart(
       ok?: boolean;
       status?: string;
     }>(GATEWAY_RESTART_REQUEST, { reason, skipDeferral: false });
-    if (
-      result.ok !== true ||
-      !Object.values(RestartRequestStatus).some(status => status === result.status)
-    ) {
-      return GatewayConfigRestartOutcome.Unavailable;
+    if (result.ok === false) return GatewayConfigRestartOutcome.Unavailable;
+    if (result.ok !== true ||
+      !Object.values(RestartRequestStatus).some(status => status === result.status)) {
+      return GatewayConfigRestartOutcome.Unconfirmed;
     }
     accepted = true;
     // Accepted work belongs to the native coordinator, including its deferred
@@ -59,6 +72,9 @@ export async function requestGatewayConfigRestart(
     return ready ? GatewayConfigRestartOutcome.Ready : GatewayConfigRestartOutcome.Pending;
   } catch (error) {
     console.warn(`[OpenClaw] Native config restart request failed: ${String(error)}`);
-    return accepted ? GatewayConfigRestartOutcome.Pending : GatewayConfigRestartOutcome.Unavailable;
+    if (accepted) return GatewayConfigRestartOutcome.Pending;
+    return isGatewayRestartRequestUnavailable(error)
+      ? GatewayConfigRestartOutcome.Unavailable
+      : GatewayConfigRestartOutcome.Unconfirmed;
   }
 }

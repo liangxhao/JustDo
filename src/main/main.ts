@@ -185,6 +185,7 @@ import {
   registerSlashCommandHandlers,
 } from './ipc/openclaw';
 import { readOpenClawAssistantMedia } from './ipc/openclaw/engine';
+import { registerEngineDiagnosticsHandlers } from './ipc/openclaw/engineDiagnostics';
 import {
   registerExtensionHandlers,
   registerHookHandlers,
@@ -225,6 +226,7 @@ import {
 import { OpenClawConfigSyncService } from './openclaw/config/openclawConfigSyncService';
 import { resolveQualifiedAgentModelRef } from './openclaw/models/openclawAgentModels';
 import { SessionPermissionModeCoordinator } from './openclaw/permissions/sessionPermissionModeCoordinator';
+import { createEngineDiagnosticsCollector } from './openclaw/runtime/engineDiagnostics';
 import { ensureExecutionReady } from './openclaw/runtime/executionReadiness';
 import {
   OpenClawEngineManager,
@@ -601,6 +603,7 @@ const getOpenClawEngineManager = (): OpenClawEngineManager => {
       beginNetworkGeneration: () => getOutboundHeaderProxy().rotateGatewayCapability(),
       prepareNetworkGeneration: prepareOutboundHeaderNetworkGeneration,
       buildNetworkEnvironment: baseEnv => getOutboundHeaderProxy().buildGatewayEnvironment(baseEnv),
+      isNetworkEnvironmentReusable: env => getOutboundHeaderProxy().isGatewayEnvironmentReusable(env),
     });
   }
   return openClawEngineManager;
@@ -1568,7 +1571,16 @@ if (multicaBridgeArgv) {
     installationService: pluginInstallationService,
   });
 
+  registerEngineDiagnosticsHandlers({
+    getMainWindow: () => mainWindow,
+    getDiagnosticId: () => getOpenClawEngineManager().getDiagnosticContext().id,
+    collect: createEngineDiagnosticsCollector({
+      getManager: getOpenClawEngineManager,
+      getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
+    }),
+  });
   registerOpenClawEngineHandlers({
+    ensureEngineRunning: ensureOpenClawRunningForCowork,
     runConfigMutationExclusive: operation =>
       getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
     getManager: getOpenClawEngineManager,

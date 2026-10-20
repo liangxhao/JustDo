@@ -113,9 +113,72 @@ history/startup 的响应发布前检查同一 frame；pending 时交回原生�
 
 ## 3. 启动与重启状态
 
-Manager 对外 phase 为 ready、starting、running、error；canRetry 与 message 用于产品反馈。它们不是单个 Agent run 的状态。
+Manager 对外 phase 为 ready、starting、running、error；canRetry 与 message 用于产品反馈。共享契约位于 `src/shared/openclaw/engineStatus.ts`；`starting` 上的 `restarting: true` 由 Main 提供，用于区分首次启动与真实重启。它们不是单个 Agent run 的状态。
 
-运行时文件就绪检查与 CLI 环境读取不改变正在启动或运行中的 Gateway phase；CLI 读取复用该进程已选定的端口，不因端口已被启动进程占用而重新分配。页面切换触发这些读取时，右下角继续显示启动提示，直到进程健康验证成功后隐藏，或按实际失败状态显示错误。资源缺失或版本元数据无效仍报告 error。
+运行时文件就绪检查与 CLI 环境读取不改变正在启动或运行中的 Gateway phase；CLI 读取复用该进程已选定的端口，不因端口已被启动进程占用而重新分配。冷启动的异步资源准备已属于 starting，不能在此期间展示尚未启动的按钮。资源缺失或版本元数据无效仍报告 error。
+
+### 标题栏提示与入口清单
+
+全局引擎提示由 `src/renderer/app/shell/EngineStartupStatusBar.tsx` 渲染，挂载于主界面及设置页的 `WindowHeader`，紧邻 Windows 最小化按钮左侧；其它平台显示在同一标题栏右侧。它不再进入右下角 `BottomRightStatusStack`，不随底部通知投影到工作区。正常运行时隐藏。
+
+| Main 状态                     | 展示            | 可点击操作     |
+| ----------------------------- | --------------- | -------------- |
+| starting，未标记 restarting   | AI 引擎正在启动 | 无             |
+| starting，restarting 为 true  | AI 引擎正在重启 | 无             |
+| error，或启动命令失败         | AI 引擎启动失败 | 查看原因       |
+| ready（资源就绪，进程未运行） | 启动 AI 引擎    | 整段为启动按钮 |
+| running                       | 隐藏            | 无             |
+
+“查看原因”在主文档的独立弹窗展示 Main 的失败消息或启动命令错误，避免标题栏裁切；可重试时提供启动按钮。UI 不查询或提供已退役的旧版运行时迁移入口。状态文案的中英翻译归 `appTranslations.ts`。
+
+#### 按需采集引擎失败诊断
+
+打开“查看原因”即调用 `engine:diagnostics:collect`，自动采集 Main、Gateway 本地输出和可确认来源的原生日志；重新采集与复制均在该弹窗内完成。Main 的 Manager 为失败保留独立 `diagnosticId`、启动/失败时间和进程 generation；新启动及后续失败推进身份。采集请求可携带当前失败 ID，旧 ID 拒绝读取。报告返回固定故障快照，采集期间引擎身份、进程或状态改变时明确标记，不把旧故障当成新进程的原因。
+
+采集实现位于 `main/openclaw/runtime/engineDiagnostics.ts`，IPC 与来源校验位于 `main/ipc/openclaw/engineDiagnostics.ts`。Main 日志来自 logger 当前文件及保留的每日/轮转文件；Gateway 输出只读取 Manager 持有的固定日志路径。原生日志仅通过**已连接客户端**的 `logs.tail` 结构化 `file` 确认，再复用既有安全扫描器。离线、RPC 失败或来源不可信时单独记录缺口，仍采集本地来源；不从日志正文提取路径，不猜临时目录，不启动 Gateway、CLI、修复、模型请求或读取 transcript。Renderer 不能提供文件路径，IPC 仅接受主窗口主框架和合法请求/失败身份。
+
+启动失败按本次启动开始至失败附近的时间关联，保留启动前后 2 秒上下文；运行中发生的错误使用失败前两分钟作为排查窗口，窗口结束不超过点击采集的时刻。复用完整文件捕获大小扫描和多行/UTF-8 拼接，不只取文件尾部，避免五分钟健康超时掩盖启动初期真正的错误。Main 与 Gateway 摘要中的时间按已有日志格式解释；缺少时间或记录过大时明确标记。来源是时间窗口关联，不证明因果、同一原生运行归属或故障已经恢复。
+
+报告优先展示端口占用、资源/ABI、配置、凭据、权限、数据库锁/磁盘、网络、证书及内存等明确记录，再展示一般错误和超时/退出摘要。正常成功记录、配置对象、结构化聊天/模型/工具活动及已识别消息载荷不用于启动归因；未知错误保留可读节选，记录不足时不编造根因。每来源保留最多 30 条优先节选，每条最多 4000 字符；达到展示容量后仍扫描并累计匹配/省略数。来源文件缺失、权限/安全校验、读取超时、文件替换、解析与超长记录分别展示；没有匹配记录不证明不存在错误。
+
+传给 Renderer 前复用 `core/logRedaction.ts` 遮盖常见凭据，原生 JSON 只提取消息/错误/堆栈/错误码等诊断字段。报告包含可读错误与有限启动上下文，路径及错误内容仍可能敏感；界面提示复制分享前检查。报告只保留于本次请求和弹窗，不落产品数据库、不建立日志缓存、不上传。复制从当前已显示报告生成，包含故障身份、时间、版本、进程代次、原因线索、日志节选及缺口；采集中禁用复制，复制失败保留快照并允许重试。
+
+同一主窗口仅允许一个扫描任务。关闭弹窗、刷新、页面导航、窗口销毁或渲染进程退出会取消旧任务，迟到结果不能更新新弹窗；刷新等待旧扫描释放后开始。Renderer 的串行队列跨弹窗重挂载保留；整页刷新丢失该队列时，Main 仍等待已取消任务的所有来源及文件句柄收尾，后继请求在开始前重新核对窗口、框架和故障身份，未取消的并发请求仍拒绝。弹窗正文滚动、操作栏固定，支持 Escape、焦点约束与关闭后返回焦点。该引擎诊断独立于会话右键诊断，不读取会话历史或更改执行结论。
+
+“启动 AI 引擎”通过 `EngineIpc.StartGateway` → Main 的 `ensureOpenClawRunningForCowork`，保留执行策略验证、共享在途启动、复用已运行进程。不能复用 restart IPC，否则过时的 ready 展示可能重启刚刚启动成功的引擎。
+
+Main 为完整重启的停止/准备阶段及崩溃恢复退避阶段连续发布 restarting；原生同进程重启依据当前受管进程的重启/ready 标记发布状态。Renderer 重挂载后读取同一事实，不根据页面访问历史、错误正文或消息推测。热更新、连接重连和延后重启请求本身不等于已开始重启。失败、正常运行和显式停止清除重启展示。
+
+其它类似提示属于局部功能反馈，不使用此全局状态机：
+
+| 位置                 | 代码/翻译                                                                                           | 含义                             |
+| -------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------- |
+| 设置的端口与手动重启 | `settings/runtime`、`settingsTranslations.ts` 的 `openclawGatewayPort*` / `openclawGatewayRestart*` | 端口保存、生效要求及手动恢复结果 |
+| 浏览器模式切换       | `BrowserSettingsTab`、`browserTranslations.ts` 的 `browserModeGatewayRestarting`                    | 当前切换操作的进度               |
+| 插件导入与离线能力   | `pluginsTranslations.ts` 的 `extensionImportStageRestartingGateway` / `gatewayOffline*`             | 插件操作进度或当前连接不可用     |
+| Workboard            | `workboardTranslations.ts` 的 `workboardGatewayUnavailable`                                         | 暂时无法读取，连接恢复后刷新     |
+| 聊天发送与 WebChat   | `chatTranslations.ts` 的 `coworkErrorEngineNotReady` / `chatWebTokenError`                          | 本次操作未能取得执行准入或令牌   |
+
+### 减少非必要重启
+
+普通设置、模型和凭据更新沿用原生热更新与 `secrets.reload`；发送任务不重新投影全量配置，页面查询和浏览器代理调整不重启 Gateway。配置同步等待已有启动完成后再发布普通变更，避免刚启动完成就被替换。手动重启入口在 starting 时只等待现有启动/重启完成并恢复连接，不再紧接着发起第二次重启。
+
+当前重启触发入口的处理如下；设置保存先判断实际变更，页面访问和会话切换本身不是重启理由。
+
+| 操作或触发条件 | 生效方式与重启边界 |
+| --- | --- |
+| Gateway 断线、心跳恢复、审批桥重连 | running 时直接重新进行认证握手，不调用启动健康检查；starting 时加入已有启动，真实退出由 Manager 恢复 |
+| 普通设置、模型、MCP、Hook、技能变更 | 原生配置热更新；仅凭据值变化使用 `secrets.reload`；热更新未完成才请求原生协调重启 |
+| Agent Team / Swarm 等扩展启停 | 原生插件运行时回执；Team 仍单独 `skills.update`，不再保留 9.8 技能发现的强制重启；仅原生要求或网络策略变化才重启 |
+| 扩展安装、卸载及离线 CLI 回退 | 优先使用原生运行时回执、`plugins.reload` / `plugins.refresh`；Windows 真实目录锁恢复仍保留暂停、停止、重试、恢复流程 |
+| 扩展普通配置或 SecretRef 凭据轮换 | 优先配置 reload ACK；无环境变量变更时可刷新 native secrets 后定向 `plugins.reload`，只有原生不能热应用才重启；凭据刷新失败保留待刷新并报告错误 |
+| 非浏览器代理偏好切换 | 核对当前真实子进程的代理 URL/capability、CA、NO_PROXY 环境与活动本地代理一致后，使用动态上游，无需重启；未使用该路由时仍需完整重启刷新继承环境 |
+| 浏览器网页代理、链接打开偏好 | 只更新网页 session 或 UI 偏好，不重启 Gateway |
+| 端口、Windows sandbox 等子进程环境或扩展出站 Header 策略变化 | 仍需完整重启刷新不可变的启动输入及代理 generation；保留 suspension 与进程 generation 校验 |
+| 用户显式重启 | starting 时加入已有工作；running 优先同进程重启；仅明确未发送、不支持或拒绝时可回退，不能对超时/断线的未知请求盲目重试 |
+| 真实进程异常退出 | Manager 有界恢复并递增退避；不因单次 WebSocket 握手失败替换健康进程 |
+
+原生已接受的同进程重启由原生协调器合并与延后，冷却等待或 ready 观察超时不追加完整重启。请求已发出但没有权威回执时报告生效未确认，不宣称成功、不停止引擎、不盲目追加重启；配置同步保留已写入事实，执行准入仍独立核验权限。此策略减少冗余重启，不隐藏真实重启或放宽执行准入。
 
 ```mermaid
 stateDiagram-v2

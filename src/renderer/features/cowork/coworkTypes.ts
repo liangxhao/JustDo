@@ -114,14 +114,7 @@ export interface CoworkApiConfig {
   apiType?: 'openai';
 }
 
-export type OpenClawEnginePhase = 'ready' | 'starting' | 'running' | 'error';
-
-export interface OpenClawEngineStatus {
-  phase: OpenClawEnginePhase;
-  version: string | null;
-  message?: string;
-  canRetry: boolean;
-}
+export type { OpenClawEnginePhase, OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
 
 // Cowork pending extension interaction request
 export interface CoworkInteractionRequest {

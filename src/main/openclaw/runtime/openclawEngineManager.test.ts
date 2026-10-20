@@ -72,6 +72,36 @@ test('leaves managed skill discovery out of the initial OpenClaw config', () => 
   expect(buildInitialOpenClawConfig()).toEqual({ gateway: { mode: 'local' } });
 });
 
+test('only reuses the current live child network environment confirmed by its owner', () => {
+  const manager = Object.create(OpenClawEngineManager.prototype) as OpenClawEngineManager;
+  const current = { pid: 1234, exitCode: null as number | null };
+  const previous = { pid: 1233, exitCode: null };
+  const env = Object.freeze({ HTTP_PROXY: 'http://local-route' });
+  const verify = vi.fn(() => true);
+  const internals = manager as unknown as {
+    gatewayProcess: typeof current | null;
+    gatewayNetworkEnvironments: WeakMap<object, Readonly<NodeJS.ProcessEnv>>;
+    isNetworkEnvironmentReusable: typeof verify;
+  };
+  internals.gatewayProcess = current;
+  internals.gatewayNetworkEnvironments = new WeakMap([[previous, env]]);
+  internals.isNetworkEnvironmentReusable = verify;
+  manager.hasPendingGatewayLaunchEnvironmentChanges = vi.fn(() => false);
+  expect(manager.canReuseGatewayNetworkEnvironment()).toBe(false);
+  expect(verify).not.toHaveBeenCalled();
+  internals.gatewayNetworkEnvironments.set(current, env);
+  expect(manager.canReuseGatewayNetworkEnvironment()).toBe(true);
+  expect(verify).toHaveBeenLastCalledWith(env);
+  verify.mockReturnValueOnce(false);
+  expect(manager.canReuseGatewayNetworkEnvironment()).toBe(false);
+  vi.mocked(manager.hasPendingGatewayLaunchEnvironmentChanges).mockReturnValueOnce(true);
+  expect(manager.canReuseGatewayNetworkEnvironment()).toBe(false);
+  current.exitCode = 0;
+  expect(manager.canReuseGatewayNetworkEnvironment()).toBe(false);
+  internals.gatewayProcess = null;
+  expect(manager.canReuseGatewayNetworkEnvironment()).toBe(false);
+});
+
 test('resolves the public OpenClaw CLI independently from the Gateway bundle', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-openclaw-cli-entry-'));
   try {
@@ -335,6 +365,7 @@ test('ignores lifecycle events from a superseded Gateway process', () => {
     gatewayConfigReloadMonitor: {
       observeLine: (line: string) => void;
       observeGatewayExit: () => void;
+      isGatewayRestartPending: () => boolean;
     };
     expectedGatewayExits: WeakSet<object>;
     shutdownRequested: boolean;
@@ -345,7 +376,7 @@ test('ignores lifecycle events from a superseded Gateway process', () => {
     scheduleGatewayRestart: () => void;
   };
   manager.gatewayProcess = currentChild;
-  manager.gatewayConfigReloadMonitor = { observeLine, observeGatewayExit };
+  manager.gatewayConfigReloadMonitor = { observeLine, observeGatewayExit, isGatewayRestartPending: () => false };
   manager.expectedGatewayExits = new WeakSet();
   manager.shutdownRequested = false;
   manager.status = { version: 'v-test' };
@@ -399,6 +430,7 @@ test('deduplicates concurrent full Gateway restarts', async () => {
   };
   manager.restartGatewayPromise = null;
   manager.gatewayRestartAttempt = 0;
+  Object.assign(manager, { setStatus: vi.fn() });
   manager.stopGateway = stopGateway;
   manager.startGatewayOnce = startGateway;
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -442,6 +474,7 @@ test('queues a trailing restart when new launch inputs arrive during restart', a
   };
   manager.restartGatewayPromise = null;
   manager.gatewayRestartAttempt = 0;
+  Object.assign(manager, { setStatus: vi.fn() });
   manager.stopGateway = stopGateway;
   manager.startGatewayOnce = startGateway;
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -482,6 +515,7 @@ test('queues a trailing restart after an independent Gateway start', async () =>
   manager.startGatewayPromise = activeStart;
   manager.restartGatewayPromise = null;
   manager.gatewayRestartAttempt = 0;
+  Object.assign(manager, { setStatus: vi.fn() });
   manager.stopGateway = stopGateway;
   manager.startGatewayOnce = startGateway;
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -517,6 +551,7 @@ function createDeferredGatewayLifecycle() {
   manager.restartGatewayPromise = null;
   manager.shutdownRequested = false;
   manager.gatewayRestartAttempt = 0;
+  Object.assign(manager, { setStatus: vi.fn() });
   manager.getStatus = () => stopped;
   const stop = vi.fn(async () => { manager.shutdownRequested = true; });
   manager.stopGateway = stop;

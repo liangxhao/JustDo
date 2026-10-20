@@ -7,6 +7,7 @@ import {
   ManagedDirectoryOperationCoordinator,
   managedDirectorySuccess,
 } from '../../core/filesystem/managedDirectoryOperations';
+import { t } from '../../core/i18n';
 import { SessionRpc } from '../../engine/gateway/sessionRpc';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 import { ensureExecutionReady } from '../runtime/executionReadiness';
@@ -292,6 +293,8 @@ describe('OpenClawConfigSyncService', () => {
     getExtensionMcpServerNames?: () => Promise<ReadonlySet<string>>;
     syncError?: string;
     nativeRestartStatus?: string;
+    nativeRestartError?: Error;
+    reusableNetworkEnvironment?: boolean;
     secretsChanged?: boolean;
     secretsReloadFails?: boolean;
     authLogoutFails?: boolean;
@@ -326,6 +329,7 @@ describe('OpenClawConfigSyncService', () => {
       getGatewayLifecycleGeneration: vi.fn(() => 1),
       waitForGatewayReadyAfter: vi.fn(async () => true),
       hasPendingGatewayLaunchEnvironmentChanges: vi.fn(() => false),
+      canReuseGatewayNetworkEnvironment: vi.fn(() => options.reusableNetworkEnvironment ?? false),
       getGatewayPort: vi.fn(() => 18789),
       getConfiguredGatewayPort: vi.fn(() => 18789),
       waitForGatewayConfigReload: vi.fn(async () => options.waitForReload ?? true),
@@ -369,8 +373,11 @@ describe('OpenClawConfigSyncService', () => {
       if (method === 'models.authStatus') {
         return { providers: [] };
       }
-      if (method === 'gateway.restart.request' && options.nativeRestartStatus) {
-        return { ok: true, status: options.nativeRestartStatus };
+      if (method === 'gateway.restart.request') {
+        if (options.nativeRestartError) throw options.nativeRestartError;
+        return options.nativeRestartStatus
+          ? { ok: true, status: options.nativeRestartStatus }
+          : { ok: false };
       }
       if (method === 'gateway.suspend.prepare') {
         if (options.prepareGatewaySuspend) return options.prepareGatewaySuspend();
@@ -1123,11 +1130,35 @@ describe('OpenClawConfigSyncService', () => {
     },
   );
 
-  it('keeps proxy changes on the cold restart path', async () => {
+  it('keeps proxy changes on the cold restart path when the child has no reusable local route', async () => {
     const harness = createHarness({ nativeRestartStatus: 'scheduled' });
     await harness.service.restartGatewayAfterExclusiveMutation('proxy-change');
     expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();
     expect(harness.requestGateway).not.toHaveBeenCalledWith('gateway.restart.request', expect.anything());
+  });
+
+  it.each(['running', 'starting'] as const)('hot-applies proxy preferences through an existing local route in %s', async phase => {
+    const harness = createHarness({ phase, reusableNetworkEnvironment: true });
+    await harness.service.restartGatewayAfterExclusiveMutation('proxy-change');
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.disconnectGatewayClient).not.toHaveBeenCalled();
+    expect(harness.requestGateway).not.toHaveBeenCalled();
+    expect(harness.startGateway).toHaveBeenCalledTimes(phase === 'starting' ? 1 : 0);
+  });
+
+  it.each(['config', 'extension'])('does not repeat a %s restart with an unknown request outcome', async kind => {
+    const harness = createHarness({ waitForReload: false, nativeRestartError: new Error('request timed out') });
+    if (kind === 'config') {
+      await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({
+        success: false, configSynced: true, error: t('engineConfigApplicationUnconfirmed'),
+      });
+    } else {
+      await expect(harness.service.restartGatewayAfterExclusiveMutation('extension-config-change')).rejects.toThrow(t('engineRestartUnconfirmed'));
+    }
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.disconnectGatewayClient).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.requestGateway).not.toHaveBeenCalledWith('gateway.suspend.prepare', expect.anything());
   });
 
   it('keeps extension network policy changes on the cold restart path', async () => {

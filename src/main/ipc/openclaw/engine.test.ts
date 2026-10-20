@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import { EngineIpc } from '../../../shared/openclaw/engineStatus';
 import { WorktreeIpc } from '../../../shared/openclaw/worktrees';
 
 const { ipcHandle } = vi.hoisted(() => ({ ipcHandle: vi.fn() }));
@@ -13,6 +14,7 @@ vi.mock('electron', () => ({
   ipcMain: { handle: ipcHandle },
 }));
 
+import { t } from '../../core/i18n';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import {
   buildWindowsTerminalCandidates,
@@ -607,17 +609,15 @@ describe('manual OpenClaw Gateway restart', () => {
     expect(harness.reconnectGatewayClient).toHaveBeenCalledOnce();
   });
 
-  test('waits for an in-flight start before requesting the user restart', async () => {
+  test('joins an in-flight start without requesting another restart', async () => {
     const harness = createRestartHarness({ phase: 'starting' });
 
     await expect(harness.restart()).resolves.toMatchObject({ phase: 'running' });
 
     expect(harness.manager.startGateway).toHaveBeenCalledOnce();
-    expect(harness.requestGateway).toHaveBeenCalledWith('gateway.restart.request', {
-      reason: 'justdo-manual-restart',
-      skipDeferral: true,
-    });
+    expect(harness.requestGateway).not.toHaveBeenCalled();
     expect(harness.manager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.reconnectGatewayClient).toHaveBeenCalledOnce();
   });
 
   test('uses a full restart when the configured port differs from the active port', async () => {
@@ -641,19 +641,9 @@ describe('manual OpenClaw Gateway restart', () => {
   });
 
   test.each([
-    ['an RPC failure', { requestError: new Error('method unavailable') }],
+    ['an unsupported RPC', { requestError: Object.assign(new Error('unknown method: gateway.restart.request'), { gatewayCode: 'INVALID_REQUEST' }) }],
+    ['an unsent request', { requestError: Object.assign(new Error('not connected'), { requestSent: false }) }],
     ['a rejected request', { requestResult: { ok: false } }],
-    ['a ready failure', { ready: false }],
-    [
-      'a long Gateway cooldown',
-      {
-        requestResult: {
-          ok: true,
-          status: 'scheduled',
-          restart: { delayMs: 10_000 },
-        },
-      },
-    ],
   ])('falls back to a full restart after %s', async (_label, options) => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const harness = createRestartHarness(options);
@@ -662,6 +652,41 @@ describe('manual OpenClaw Gateway restart', () => {
 
     expect(harness.manager.restartGateway).toHaveBeenCalledOnce();
     expect(harness.reconnectGatewayClient).toHaveBeenCalledOnce();
+  });
+
+  test.each([
+    { ready: false },
+    { requestError: Object.assign(new Error('request timed out'), { code: 'CLIENT_TIMEOUT', requestSent: true }) },
+    { requestError: new Error('connection closed') },
+    { requestResult: { ok: true, status: 'unexpected' } },
+  ])('does not repeat an accepted or uncertain restart: %j', async options => {
+    const harness = createRestartHarness(options);
+    await expect(harness.restart()).rejects.toThrow(t('ready' in options ? 'engineRestartReadyUnconfirmed' : 'engineRestartUnconfirmed'));
+    expect(harness.manager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.reconnectGatewayClient).not.toHaveBeenCalled();
+  });
+
+  test('waits for native cooldown without forcing a full restart', async () => {
+    const harness = createRestartHarness({
+      requestResult: { ok: true, status: 'scheduled', restart: { delayMs: 10_000 } },
+    });
+    await expect(harness.restart()).resolves.toMatchObject({ phase: 'running' });
+    expect(harness.manager.waitForGatewayReadyAfter).toHaveBeenCalledWith(7, 30_000);
+    expect(harness.manager.restartGateway).not.toHaveBeenCalled();
+  });
+
+  test('does not retry a restart with a missing receipt', async () => {
+    const harness = createRestartHarness();
+    harness.requestGateway.mockResolvedValueOnce(undefined);
+    await expect(harness.restart()).rejects.toThrow(t('engineRestartUnconfirmed'));
+    expect(harness.manager.restartGateway).not.toHaveBeenCalled();
+  });
+
+  test('does not restart a newer lifecycle after a rejected native request', async () => {
+    const harness = createRestartHarness({ requestResult: { ok: false } });
+    harness.manager.getGatewayLifecycleGeneration.mockReturnValueOnce(7).mockReturnValue(8);
+    await expect(harness.restart()).resolves.toMatchObject({ phase: 'running' });
+    expect(harness.manager.restartGateway).not.toHaveBeenCalled();
   });
 
   test('uses a full restart when the Gateway is not currently running', async () => {
@@ -707,6 +732,7 @@ describe('managed worktree bridge', () => {
       config: { models: { secret: 'private-value' } },
     }));
     registerOpenClawEngineHandlers({
+      ensureEngineRunning: vi.fn(),
       getManager: () => ({
         getStateDir: () => path.resolve('test-state'), onSessionMigrationProgress: vi.fn(),
       }) as unknown as OpenClawEngineManager,
@@ -733,6 +759,7 @@ describe('managed worktree bridge', () => {
         : { removed: true },
     );
     registerOpenClawEngineHandlers({
+      ensureEngineRunning: vi.fn(),
       runConfigMutationExclusive: operation => operation(),
       getCoworkStore: () => ({ listSessions: () => [] }) as never,
       getManager: () => ({ onSessionMigrationProgress: vi.fn() }) as unknown as OpenClawEngineManager,
@@ -761,6 +788,7 @@ describe('managed worktree bridge', () => {
       worktrees: [{ id: 'tree-1', path: '/tmp/tree-1' }],
     }));
     registerOpenClawEngineHandlers({
+      ensureEngineRunning: vi.fn(),
       getManager: () => ({ onSessionMigrationProgress: vi.fn() }) as unknown as OpenClawEngineManager,
       runConfigMutationExclusive: operation => operation(),
       getCoworkStore: () =>
@@ -782,9 +810,49 @@ describe('managed worktree bridge', () => {
 });
 
 describe('OpenClaw Gateway restart IPC', () => {
+  test('starts through policy admission without restarting a now-running engine', async () => {
+    const harness = createRestartHarness();
+    const status = harness.manager.getStatus();
+    const ensureEngineRunning = vi.fn(async () => status);
+    registerOpenClawEngineHandlers({
+      ensureEngineRunning,
+      getManager: () => harness.manager as unknown as OpenClawEngineManager,
+      getCoworkStore: () => ({}) as never,
+      requestGateway: harness.requestGateway,
+      reconnectGatewayClient: harness.reconnectGatewayClient,
+      runConfigMutationExclusive: operation => operation(),
+    });
+    const handler = ipcHandle.mock.calls.find(([name]) => name === EngineIpc.StartGateway)![1];
+
+    await expect(handler()).resolves.toEqual({ success: true, status });
+
+    expect(ensureEngineRunning).toHaveBeenCalledOnce();
+    expect(harness.manager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.requestGateway).not.toHaveBeenCalled();
+  });
+
+  test('returns start admission failures with the current status', async () => {
+    const harness = createRestartHarness({ phase: 'ready' });
+    registerOpenClawEngineHandlers({
+      ensureEngineRunning: vi.fn().mockRejectedValue(new Error('Policy verification failed')),
+      getManager: () => harness.manager as unknown as OpenClawEngineManager,
+      getCoworkStore: () => ({}) as never,
+      requestGateway: harness.requestGateway,
+      reconnectGatewayClient: harness.reconnectGatewayClient,
+      runConfigMutationExclusive: operation => operation(),
+    });
+    const handler = ipcHandle.mock.calls.find(([name]) => name === EngineIpc.StartGateway)![1];
+
+    await expect(handler()).resolves.toMatchObject({
+      success: false, error: 'Policy verification failed', status: { phase: 'ready' },
+    });
+    expect(harness.manager.restartGateway).not.toHaveBeenCalled();
+  });
+
   test('registers the assistant media bridge on its shared channel', () => {
     const harness = createRestartHarness();
     registerOpenClawEngineHandlers({
+      ensureEngineRunning: vi.fn(),
       runConfigMutationExclusive: operation => operation(),
       getCoworkStore: () => ({ listSessions: () => [] }) as never,
       getManager: () => harness.manager as unknown as OpenClawEngineManager,
@@ -806,6 +874,7 @@ describe('OpenClaw Gateway restart IPC', () => {
     const restartError = new Error('restart failed');
     harness.manager.restartGateway.mockRejectedValueOnce(restartError);
     registerOpenClawEngineHandlers({
+      ensureEngineRunning: vi.fn(),
       runConfigMutationExclusive: operation => operation(),
       getCoworkStore: () => ({ listSessions: () => [] }) as never,
       getManager: () => harness.manager as unknown as OpenClawEngineManager,

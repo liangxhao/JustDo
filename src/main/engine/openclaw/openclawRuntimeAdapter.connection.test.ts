@@ -20,6 +20,7 @@ vi.mock('../../cowork/coworkLogger', () => ({
 import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
 import type { GatewayClientCtor, GatewayClientLike, SessionTurn } from '../gateway/types';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
+import { _ensureGatewayClientReadyImpl, type RuntimeGatewayConnectionContext } from './runtimeGatewayConnection';
 
 const createPreparedSessionReceipt = (key = 'agent:main:justdo:session-1') => ({
   key,
@@ -399,6 +400,56 @@ test('ensureGatewayClientReady reuses an already connected Gateway client', asyn
   await internals.ensureGatewayClientReady();
 
   expect(startGateway).not.toHaveBeenCalled();
+});
+
+function createReconnectHarness(phase: string) {
+  const connection = { url: 'ws://127.0.0.1:12345', token: 'fixture', version: 'test', clientEntryPath: 'fixture.mjs' };
+  const manager = {
+    getStatus: vi.fn(() => ({ phase })),
+    startGateway: vi.fn().mockResolvedValue({ phase: 'running' }),
+    getGatewayConnectionInfo: vi.fn(() => connection),
+  };
+  const context = {
+    engineManager: manager,
+    gatewayClient: null,
+    stopGatewayClient: vi.fn(),
+    createGatewayClient: vi.fn().mockResolvedValue(undefined),
+  };
+  return {
+    manager, context, connection,
+    connect: () => _ensureGatewayClientReadyImpl.call(context as unknown as RuntimeGatewayConnectionContext),
+  };
+}
+
+test('reconnects to a running process without re-entering startup health checks', async () => {
+  const h = createReconnectHarness('running');
+  await h.connect();
+  expect(h.manager.startGateway).not.toHaveBeenCalled();
+  expect(h.context.createGatewayClient).toHaveBeenCalledExactlyOnceWith(h.connection);
+});
+
+test.each(['ready', 'starting', 'error'])('awaits engine startup before connecting in %s', async phase => {
+  const h = createReconnectHarness(phase);
+  await h.connect();
+  expect(h.manager.startGateway).toHaveBeenCalledOnce();
+  expect(h.manager.startGateway.mock.invocationCallOrder[0]).toBeLessThan(
+    h.context.createGatewayClient.mock.invocationCallOrder[0],
+  );
+});
+
+test('retries a transient handshake without replacing the running process', async () => {
+  vi.useFakeTimers();
+  try {
+    const h = createReconnectHarness('running');
+    h.context.createGatewayClient.mockRejectedValueOnce(new Error('temporarily unavailable'));
+    const connected = h.connect();
+    await vi.runAllTimersAsync();
+    await connected;
+    expect(h.context.createGatewayClient).toHaveBeenCalledTimes(2);
+    expect(h.manager.startGateway).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test('uses the installation deadline without changing default Gateway request options', async () => {

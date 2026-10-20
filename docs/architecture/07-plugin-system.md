@@ -142,7 +142,7 @@ Document Extraction 和 Web Readability Extraction 保持上游默认启用，�
 协作、记忆和本地语音可选插件继续保留用户明确禁用状态。TypeSafe 沿用模型设置的有条件托管；
 视频由同一个 OpenAI 适配器提供；清空默认视频模型只停止视频使用，不关闭整个插件。
 
-OpenClaw v2026.9.8 的插件管理 RPC 会直接应用运行时变更。CLI 导入等待最终运行时回执：Gateway 已应用则无需额外操作，仅保存到磁盘时调用 `plugins.reload`。卸载 RPC 仍请求重启时，以及 CLI 卸载和启停回退后，优先调用 `plugins.refresh`；原生确认已热应用且无需重启时直接完成，仍需重启、热加载失败或出站代理策略变化时再申请 Gateway 重启。配置应用与重启协调见[引擎](05-agent-engine.md)；保留原生对活动任务的重启延迟，不能与宿主冷重启竞争。运行时代码、凭据/网络策略和 Agent Team 技能发现代次的必要重启不能等同于文件操作的目录锁恢复。
+OpenClaw v2026.10.4 的插件管理 RPC 会直接应用运行时变更。CLI 导入等待最终运行时回执：Gateway 已应用则无需额外操作，仅保存到磁盘时调用 `plugins.reload`。卸载 RPC 仍请求重启时，以及 CLI 卸载和启停回退后，优先调用 `plugins.refresh`；原生确认已热应用且无需重启时直接完成，仍需重启、热加载失败或出站代理策略变化时再申请 Gateway 重启。扩展普通配置先等待配置 reload ACK，无环境变量变更时再尝试定向 `plugins.reload`；SecretRef 更新先调用 `secrets.reload` 刷新准备快照，失败报告并保留待刷新，不能靠重启掩盖。配置应用与重启协调见[引擎](05-agent-engine.md)；保留原生对活动任务的重启延迟，不能与宿主冷重启竞争。原生不支持热应用的运行时代码及网络策略仍可能需要重启；Windows 文件操作的目录锁恢复保持独立。
 
 本地 Extension 的交互式能力审查由 Main 展示，确认后通过 `plugins.install` 将同一 `reviewToken` 交给 v2026.10.4 原生 staging 在提交前核验。不能用 CLI `--accept-capabilities` 代替已确认令牌，否则审查后改变的能力面会被无条件接受。安装 RPC 使用原 CLI 的 10 分钟等待窗口；确认原生提交及运行时代次回执后收敛出站策略和重启要求，超时不回退或重复安装。原生返回持久提交错误时保留提交事实；能力面变化则重新展示审查。可信市场及没有交互式审查的冷 CLI 安装保留现有路径。
 
@@ -594,7 +594,7 @@ Agent Team 的 `team_discussion` 新增 `configure`/`organizerParticipates` 与�
 
 Agent Team 的输入框模式选择只为用户显式选择的单次消息附加模式指令；普通消息不注入团队指令。选择群组讨论时使用 team_discussion，选择任务协作时使用持久 task peers 和 sessions_send；技能明确遵从用户所选模式。UI 发送前检查扩展启用状态，原生执行仍受现有工具准入、来源、Plan 与生命周期限制，不增加运行时补丁。
 
-Agent Team 开关通过原生插件与技能 API 持久化后，在线场景使用现有安全 Gateway 重启协调器刷新技能发现生命周期；离线修改不启动服务。这样避免 9.8 热替换遗留的旧发现配置在后续刷新时清理新发布的技能链接。技能目录发布及模型读取仍归 OpenClaw；不复制生成目录或改写读取工具参数。详见[技能发布与启用流程](../features/assistants/agent-team.md)。
+Agent Team 开关通过原生插件与技能 API 持久化并热应用；10.4 原生技能 watcher 使用当前 owner 和配置并隔离旧回调，不再沿用 9.8 的强制重启。仅原生运行时回执要求或出站策略变化时请求安全重启；技能写入失败保留部分失败并允许同状态修复，离线修改不启动服务。技能目录发布及模型读取仍归 OpenClaw；不复制生成目录或改写读取工具参数。详见[技能发布与启用流程](../features/assistants/agent-team.md)。
 
 ### Agent Team 资源设置
 

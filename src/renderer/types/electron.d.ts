@@ -274,14 +274,7 @@ interface CoworkApiConfig {
   apiType?: 'openai';
 }
 
-type OpenClawEnginePhase = 'ready' | 'starting' | 'running' | 'error';
-
-interface OpenClawEngineStatus {
-  phase: OpenClawEnginePhase;
-  version: string | null;
-  message?: string;
-  canRetry: boolean;
-}
+type OpenClawEngineStatus = import('../../shared/openclaw/engineStatus').OpenClawEngineStatus;
 
 interface WindowState {
   isMaximized: boolean;
@@ -891,6 +884,9 @@ interface IElectronAPI {
     };
     engine: {
       getStatus: () => Promise<{ success: boolean; status?: OpenClawEngineStatus; error?: string }>;
+      startGateway: () => Promise<import('../../shared/openclaw/engineStatus').EngineCommandResult>;
+      collectDiagnostics: (query: import('../../shared/openclaw/engineDiagnostics').EngineDiagnosticsQuery) => Promise<import('../../shared/openclaw/engineDiagnostics').EngineDiagnosticResult>;
+      cancelDiagnostics: (query: import('../../shared/openclaw/engineDiagnostics').EngineDiagnosticsQuery) => Promise<import('../../shared/openclaw/engineDiagnostics').EngineDiagnosticResult>;
       restartGateway: () => Promise<{
         success: boolean;
         status?: OpenClawEngineStatus;
