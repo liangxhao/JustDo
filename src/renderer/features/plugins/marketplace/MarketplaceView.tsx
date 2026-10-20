@@ -112,7 +112,7 @@ export function MarketplaceResults({
           {i18nService.t('marketplaceLoading')}
         </p>
       )}
-      <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
+      <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
         {c.visibleItems.map((item, index) => {
           const local = c.localFor(item);
           if (local && renderInstalled)
