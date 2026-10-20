@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+
 import type {
   SwarmWorkflowDetail,
   SwarmWorkflowIntervention,
@@ -79,5 +80,5 @@ export function useWorkflowIntervention(
     }
   };
 
-  return { text, setText, busy, failed, acceptedAction, setAcceptedAction, notes, send };
+  return { text, setText, busy, failed, acceptedAction, setAcceptedAction, send };
 }

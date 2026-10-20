@@ -78,9 +78,7 @@ test('keeps draft and request identity after a lost reply and reconciles a later
   await screen.findByText('Input saved.');
   expect(screen.queryByRole('alert')).toBeNull();
   expect((input as HTMLTextAreaElement).value).toBe('');
-  expect(f.container.querySelector('[data-user-message]')!.shadowRoot!.textContent).toContain(
-    'Additional evidence',
-  );
+  expect(f.container.querySelector('[data-user-message]')).toBeNull();
 });
 test('running or uncertain nodes only save notes and stale details disable submissions', async () => {
   const f = fixture({ ...detail, canContinue: false, canRetry: false });
@@ -137,7 +135,68 @@ test('reruns only the selected node and never offers a force-success action', as
   expect(f.send.mock.calls[0][4]).toMatchObject({ action: 'retry', text: '' });
 });
 
-test('renders human input with native Markdown and safe rich message controls', () => {
+test('removes the input panel and saved messages when a continued node finishes', async () => {
+  const f = fixture();
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Environment fixed' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send and continue (same session)' }));
+  await screen.findByText('Continuation requested.');
+  const interventions = [{ ...f.send.mock.calls[0][4], createdAt: 1 }];
+  f.rerender(
+    <SwarmWorkflowNodeIntervention
+      {...f.props}
+      detail={{ ...detail, revision: 4, canContinue: false, canRetry: false, interventions }}
+    />,
+  );
+  expect(screen.getByRole('textbox')).toBeTruthy();
+  expect(screen.queryByRole('list')).toBeNull();
+  f.rerender(
+    <SwarmWorkflowNodeIntervention
+      {...f.props}
+      detail={{
+        ...detail,
+        revision: 5,
+        status: 'done',
+        canNote: false,
+        canContinue: false,
+        canRetry: false,
+        interventions,
+      }}
+    />,
+  );
+  expect(f.container.childElementCount).toBe(0);
+  expect(f.send).toHaveBeenCalledOnce();
+});
+
+test('keeps only an unconfirmed-send alert after input becomes unavailable and reconciles acceptance', async () => {
+  const f = fixture();
+  f.send.mockRejectedValueOnce(new Error('lost reply'));
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Additional evidence' } });
+  saveOnly();
+  await screen.findByRole('alert');
+  const closed = { ...detail, canNote: false, canContinue: false, canRetry: false };
+  const prior = { id: 'prior', action: 'note' as const, text: 'Prior evidence', createdAt: 1 };
+  f.rerender(
+    <SwarmWorkflowNodeIntervention {...f.props} detail={{ ...closed, interventions: [prior] }} />,
+  );
+  expect(screen.getByRole('alert')).toBeTruthy();
+  expect(screen.queryByRole('textbox')).toBeNull();
+  expect(screen.queryByRole('list', { name: 'Human input history' })).toBeNull();
+  expect(f.container.querySelector('[data-user-message]')).toBeNull();
+  f.rerender(
+    <SwarmWorkflowNodeIntervention
+      {...f.props}
+      detail={{
+        ...closed,
+        revision: 4,
+        interventions: [prior, { ...f.send.mock.calls[0][4], createdAt: 2 }],
+      }}
+    />,
+  );
+  await waitFor(() => expect(f.container.childElementCount).toBe(0));
+  expect(f.send).toHaveBeenCalledOnce();
+});
+
+test('keeps only the composer without duplicating saved human messages', () => {
   const f = fixture({
     ...detail,
     interventions: [
@@ -145,19 +204,18 @@ test('renders human input with native Markdown and safe rich message controls', 
         id: 'input',
         action: 'note',
         createdAt: 1,
-        text: '**Latest evidence**\n\n> A reviewed source\n\n- Keep existing work\n- Check the result\n\n```js\nconst done = true;\n```\n\n<script>window.bad = true</script>\n\n[unsafe](javascript:alert(1))',
+        text: 'Saved evidence',
       },
+      { id: 'continue', action: 'continue', createdAt: 2, text: 'Environment fixed' },
+      { id: 'retry', action: 'retry', createdAt: 3, text: 'Use the corrected input' },
     ],
   });
-  const shadow = f.container.querySelector('[data-user-message]')!.shadowRoot!;
-  expect(shadow.querySelector('strong')?.textContent).toBe('Latest evidence');
-  expect(shadow.querySelector('blockquote')?.textContent).toContain('A reviewed source');
-  expect(shadow.querySelectorAll('.chat-bubble li')).toHaveLength(2);
-  expect(shadow.querySelector('code')?.textContent).toContain('const done = true;');
-  expect(shadow.querySelector('button[aria-label="' + i18nService.t('copy') + '"]')).not.toBeNull();
-  expect(shadow.querySelector('script')).toBeNull();
-  expect(shadow.querySelector('a[href^="javascript:"]')).toBeNull();
-  expect(screen.getByRole('list', { name: 'Human input history' })).toBeTruthy();
+  expect(screen.getByRole('textbox')).toBeTruthy();
+  expect(screen.queryByRole('list')).toBeNull();
+  expect(f.container.querySelector('[data-user-message]')).toBeNull();
+  expect(screen.queryByText('Saved evidence')).toBeNull();
+  expect(screen.queryByText('Environment fixed')).toBeNull();
+  expect(screen.queryByText('Use the corrected input')).toBeNull();
 });
 
 test('does not submit a Chinese IME composition and blocks repeated sends awaiting acceptance', async () => {

@@ -3,18 +3,15 @@ import {
   BookmarkSquareIcon,
   EllipsisHorizontalIcon,
   ExclamationTriangleIcon,
-  PaperAirplaneIcon,
 } from '@heroicons/react/24/outline';
 import {
   SWARM_WORKFLOW_INTERVENTION_LIMITS,
   type SwarmWorkflowDetail,
-  type SwarmWorkflowInterventionNote,
 } from '@shared/cowork/swarm-workflow';
-import { useEffect, useId, useLayoutEffect, useMemo, useRef } from 'react';
+import { useId, useLayoutEffect, useRef } from 'react';
 
 import { i18nService } from '@/services/i18n';
 
-import { UserMessageContent } from '../chat/UserMessageContent';
 import ComposerFeatureMenu, { type ComposerFeatureItem } from '../composer/ComposerFeatureMenu';
 import {
   COMPOSER_FRAME_CLASS,
@@ -23,39 +20,6 @@ import {
 } from '../composer/composerStyles';
 import { RunControlButton } from '../composer/RunControlButton';
 import { useSwarmWorkflowInterventionState } from './workflowBrowserState';
-
-function InterventionMessage({
-  note,
-  workingDirectory,
-}: {
-  note: SwarmWorkflowInterventionNote;
-  workingDirectory?: string;
-}) {
-  const message = useMemo(() => ({ role: 'user', content: note.text }), [note.text]);
-  const date = new Date(note.createdAt);
-  const label = i18nService.t('swarmWorkflowIntervention_' + note.action);
-  const Icon =
-    note.action === 'retry'
-      ? ArrowPathIcon
-      : note.action === 'continue'
-        ? PaperAirplaneIcon
-        : BookmarkSquareIcon;
-  return (
-    <li className="min-w-0">
-      {note.text && (
-        <UserMessageContent message={message} workingDirectory={workingDirectory} compact />
-      )}
-      <div className="mt-1 flex items-center justify-end gap-1.5 px-1 text-[11px] text-muted">
-        <Icon className="h-3 w-3" aria-hidden="true" />
-        <span>{label}</span>
-        <span aria-hidden="true">·</span>
-        <time dateTime={date.toISOString()} title={date.toLocaleString()}>
-          {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-        </time>
-      </div>
-    </li>
-  );
-}
 
 export default function SwarmWorkflowNodeIntervention({
   sessionId,
@@ -69,7 +33,7 @@ export default function SwarmWorkflowNodeIntervention({
   onChanged: () => void;
 }) {
   const t = (key: string) => i18nService.t(key);
-  const { text, setText, busy, failed, acceptedAction, setAcceptedAction, notes, send } =
+  const { text, setText, busy, failed, acceptedAction, setAcceptedAction, send } =
     useSwarmWorkflowInterventionState({
       sessionId,
       detail,
@@ -77,7 +41,6 @@ export default function SwarmWorkflowNodeIntervention({
       onChanged,
     });
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const notesRef = useRef<HTMLUListElement>(null);
   const errorId = useId();
   useLayoutEffect(() => {
     const input = inputRef.current;
@@ -85,10 +48,7 @@ export default function SwarmWorkflowNodeIntervention({
     input.style.height = 'auto';
     input.style.height = `${Math.min(144, Math.max(48, input.scrollHeight))}px`;
   }, [text, detail.canNote]);
-  useEffect(() => {
-    if (notesRef.current) notesRef.current.scrollTop = notesRef.current.scrollHeight;
-  }, [notes.length]);
-  if (!detail.canNote && !notes.length && !failed) return null;
+  if (!detail.canNote && !failed) return null;
   const moreActions: ComposerFeatureItem[] = [];
   if (detail.canContinue)
     moreActions.push({
@@ -109,21 +69,6 @@ export default function SwarmWorkflowNodeIntervention({
     });
   return (
     <div className="shrink-0 p-3">
-      {!!notes.length && (
-        <ul
-          ref={notesRef}
-          aria-label={t('swarmWorkflowInterventionHistory')}
-          className="my-3 max-h-44 space-y-3 overflow-y-auto overscroll-contain pr-1"
-        >
-          {notes.map(note => (
-            <InterventionMessage
-              key={note.id}
-              note={note}
-              workingDirectory={detail.workingDirectory}
-            />
-          ))}
-        </ul>
-      )}
       {detail.canNote && (
         <div className={COMPOSER_FRAME_CLASS}>
           <div className={COMPOSER_SURFACE_CLASS}>
