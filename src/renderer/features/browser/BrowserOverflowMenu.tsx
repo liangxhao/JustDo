@@ -19,7 +19,6 @@ import { i18nService } from '@/services/i18n';
 import { isDomHTMLElement, useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 export type BrowserOverflowAction =
-  | 'pdf-viewer'
   | 'find'
   | 'print'
   | 'device-tools'
@@ -38,7 +37,6 @@ export default function BrowserOverflowMenu({
   onDismiss,
   disabledActions = [],
   disabledActionHint,
-  pdfCompatibilityMode,
 }: {
   anchor: { left: number; right: number; top: number; bottom: number };
   zoomFactor: number;
@@ -47,7 +45,6 @@ export default function BrowserOverflowMenu({
   onDismiss: () => void;
   disabledActions?: readonly BrowserOverflowAction[];
   disabledActionHint?: string;
-  pdfCompatibilityMode?: boolean;
 }) {
   const ownerDocument = useOwnerDocument();
   const ownerWindow = useOwnerWindow();
@@ -59,11 +56,6 @@ export default function BrowserOverflowMenu({
     icon: React.ReactNode;
     trailing?: React.ReactNode;
   }> = [
-    {
-      action: 'pdf-viewer',
-      label: i18nService.t(pdfCompatibilityMode ? 'browserPdfUseNative' : 'browserPdfUseCompatibility'),
-      icon: <ArrowPathIcon className={iconClass} />,
-    },
     {
       action: 'find',
       label: i18nService.t('browserMenuFind'),
@@ -115,7 +107,9 @@ export default function BrowserOverflowMenu({
   const zoomPercent = Math.round(zoomFactor * 100);
 
   useEffect(() => {
-    const trigger = isDomHTMLElement(ownerDocument.activeElement) ? ownerDocument.activeElement : null;
+    const trigger = isDomHTMLElement(ownerDocument.activeElement)
+      ? ownerDocument.activeElement
+      : null;
     menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
     return () => trigger?.focus();
   }, [ownerDocument]);
@@ -149,11 +143,7 @@ export default function BrowserOverflowMenu({
     return (
       <button
         disabled={disabledActions.includes(action)}
-        title={
-          disabledActions.includes(action)
-            ? disabledActionHint ?? i18nService.t('browserPdfActionUnavailable')
-            : undefined
-        }
+        title={disabledActions.includes(action) ? disabledActionHint : undefined}
         key={action}
         type="button"
         role="menuitem"
@@ -185,7 +175,6 @@ export default function BrowserOverflowMenu({
       >
         {renderItem('find')}
         {renderItem('print')}
-        {pdfCompatibilityMode !== undefined && renderItem('pdf-viewer')}
         <div className="my-1 border-t border-border pt-1">
           <div className="flex items-center gap-3 rounded-md px-2.5 py-1.5 text-sm">
             <span className="min-w-0 flex-1">{i18nService.t('browserMenuZoom')}</span>

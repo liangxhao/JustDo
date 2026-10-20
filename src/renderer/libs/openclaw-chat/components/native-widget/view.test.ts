@@ -74,6 +74,86 @@ function sandbox(view: NativeWidgetView) {
 }
 
 describe('native widget viewer lifecycle', () => {
+  it('expands and collapses the same iframe without reading the document again', async () => {
+    const chat = document.createElement('justdo-chat');
+    document.body.append(chat);
+    const { view, request } = mount(undefined, chat.attachShadow({ mode: 'open' }));
+    await settle(view);
+    const { frame, ready, send } = sandbox(view);
+    ready();
+    await settle(view);
+    send({ type: 'openclaw:widget-size', height: 480 });
+    await settle(view);
+    const dialog = view.shadowRoot!.querySelector('dialog')!;
+    const close = vi.fn(() => {
+      dialog.open = false;
+    });
+    const showModal = vi.fn(() => {
+      dialog.open = true;
+    });
+    dialog.close = close;
+    dialog.showModal = showModal;
+    const expand = () =>
+      view.shadowRoot!.querySelector<HTMLButtonElement>('.view-actions button')!.click();
+    expand();
+    await settle(view);
+    expect(showModal).toHaveBeenCalledOnce();
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    expect(document.body.querySelector('[data-workspace-overlay="true"]')).not.toBeNull();
+    send({ type: 'openclaw:widget-size', height: 960 });
+    await settle(view);
+    expect(frame.style.height).toBe('100%');
+    expand();
+    await settle(view);
+    expect(dialog.hasAttribute('aria-modal')).toBe(false);
+    expect(document.body.querySelector('[data-workspace-overlay="true"]')).toBeNull();
+    expect(frame.style.height).toBe('480px');
+    expect(view.shadowRoot!.querySelector('iframe')).toBe(frame);
+    expect(request).toHaveBeenCalledOnce();
+    expand();
+    dialog.dispatchEvent(new Event('cancel', { cancelable: true }));
+    await settle(view);
+    expect(dialog.getAttribute('role')).toBe('group');
+    expect(dialog.open).toBe(true);
+    expect(document.body.querySelector('[data-workspace-overlay="true"]')).toBeNull();
+    expand();
+    view.remove();
+    expect(document.body.querySelector('[data-workspace-overlay="true"]')).toBeNull();
+  });
+
+  it('clears the workspace overlay immediately when the expanded binding becomes invalid', async () => {
+    const { view, context } = mount();
+    await settle(view);
+    const dialog = view.shadowRoot!.querySelector('dialog')!;
+    dialog.close = vi.fn();
+    dialog.showModal = vi.fn();
+    view.shadowRoot!.querySelector<HTMLButtonElement>('.view-actions button')!.click();
+    expect(document.body.querySelector('[data-workspace-overlay="true"]')).not.toBeNull();
+    view.context = { ...context, isCurrent: () => false };
+    await settle(view);
+    expect(document.body.querySelector('[data-workspace-overlay="true"]')).toBeNull();
+  });
+
+  it('publishes the overlay only in the actual workspace document when a side-chat card expands', async () => {
+    const workspace = document.createElement('iframe');
+    workspace.src = new URL('/workspace.html', window.location.href).href;
+    document.body.append(workspace);
+    const doc = workspace.contentDocument!;
+    doc.write('<!doctype html><html><body></body></html>');
+    doc.close();
+    const { view } = mount();
+    doc.body.append(view);
+    await settle(view);
+    const dialog = view.shadowRoot!.querySelector('dialog')!;
+    dialog.close = vi.fn();
+    dialog.showModal = vi.fn();
+    view.shadowRoot!.querySelector<HTMLButtonElement>('.view-actions button')!.click();
+    expect(doc.body.querySelector('[data-workspace-overlay="true"]')).not.toBeNull();
+    expect(document.body.querySelector('[data-workspace-overlay="true"]')).toBeNull();
+    view.remove();
+    expect(doc.body.querySelector('[data-workspace-overlay="true"]')).toBeNull();
+  });
+
   it('keeps a slow authenticated read and sandbox alive, then clears the notice on render', async () => {
     vi.useFakeTimers();
     let resolve!: (value: unknown) => void;
@@ -122,7 +202,7 @@ describe('native widget viewer lifecycle', () => {
     expect(view.shadowRoot!.querySelector('[role="alert"]')).not.toBeNull();
     expect(view.shadowRoot!.querySelector('iframe')).toBeNull();
     expect(request).toHaveBeenCalledOnce();
-    view.shadowRoot!.querySelector<HTMLButtonElement>('button')!.click();
+    view.shadowRoot!.querySelector<HTMLButtonElement>('.status button')!.click();
     await settle(view);
     view.remove();
     await vi.advanceTimersByTimeAsync(30_000);
@@ -490,7 +570,7 @@ describe('native widget viewer lifecycle', () => {
     );
     view.context = { ...context, canDraft: () => allowed };
     await settle(view);
-    expect(view.shadowRoot!.querySelectorAll('button')).toHaveLength(1);
+    expect(view.shadowRoot!.querySelectorAll('.status button')).toHaveLength(1);
     const action = view as unknown as {
       requestRebuild: (event: MouseEvent) => void;
       renderSuggestion: () => { values: unknown[] };
@@ -501,7 +581,7 @@ describe('native widget viewer lifecycle', () => {
     allowed = true;
     view.context = { ...view.context! };
     await settle(view);
-    expect(view.shadowRoot!.querySelectorAll('button')).toHaveLength(2);
+    expect(view.shadowRoot!.querySelectorAll('.status button')).toHaveLength(2);
     action.requestRebuild({ isTrusted: true } as MouseEvent);
     await settle(view);
     expect(view.shadowRoot!.querySelector('section')).not.toBeNull();
@@ -515,7 +595,7 @@ describe('native widget viewer lifecycle', () => {
     expect(draft).not.toHaveBeenCalled();
     view.context = { ...view.context! };
     await settle(view);
-    expect(view.shadowRoot!.querySelectorAll('button')).toHaveLength(1);
+    expect(view.shadowRoot!.querySelectorAll('.status button')).toHaveLength(1);
     expect(view.shadowRoot!.querySelector('section')).toBeNull();
     allowed = true;
     view.context = { ...view.context! };
@@ -544,7 +624,7 @@ describe('native widget viewer lifecycle', () => {
       vi.fn().mockRejectedValue(new Error('private raw diagnostic')),
     );
     await settle(view);
-    const buttons = view.shadowRoot!.querySelectorAll<HTMLButtonElement>('button');
+    const buttons = view.shadowRoot!.querySelectorAll<HTMLButtonElement>('.status button');
     expect(buttons).toHaveLength(2);
     buttons[1].click();
     await settle(view);
@@ -592,7 +672,7 @@ describe('native widget viewer lifecycle', () => {
     expect(view.shadowRoot!.querySelector('iframe')).toBeNull();
     expect(view.shadowRoot!.querySelector('[role="alert"]')).not.toBeNull();
     expect(request).toHaveBeenCalledTimes(1);
-    view.shadowRoot!.querySelector<HTMLButtonElement>('button')!.click();
+    view.shadowRoot!.querySelector<HTMLButtonElement>('.status button')!.click();
     await settle(view);
     expect(request).toHaveBeenCalledTimes(2);
     expect(request.mock.calls.every(call => call[0] === 'canvas.document.view')).toBe(true);

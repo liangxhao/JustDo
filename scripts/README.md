@@ -165,6 +165,14 @@ forms, popups and redirects without Gateway, user state or public network access
 The optional HTML file is opened unchanged and checks the globe example's canvas
 and loading indicator; that extra check uses the document's own dependencies.
 
+`node scripts/test/browser-native-widget-smoke.cjs` verifies real Chromium widget
+viewport sizing with an isolated profile and local nested sandbox documents. It
+checks expanded height, responsive canvas redraw on resize, draft-suggestion space,
+preserved inline height/input and scrolling inside long documents. A real native
+sidebar view hides during expansion and returns with the same document on collapse
+or unmount. Public network access is blocked; test artifacts stay under
+`.agent-tasks/browser/widget-viewport-*/`.
+
 `node scripts/test/prepare-npx-mcp-smoke.cjs` packs the dependency-free local
 `tests/openclaw/fixtures/npx-mcp-smoke/` package and primes an isolated offline npm
 cache. On Windows it verifies real npx package-bin startup through Main's command

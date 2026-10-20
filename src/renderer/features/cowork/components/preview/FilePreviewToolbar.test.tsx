@@ -33,6 +33,13 @@ vi.mock('./HtmlFilePreview', () => ({
     </div>
   ),
 }));
+vi.mock('./NativeFilePreview', () => ({
+  default: ({ url, isVisible }: { url: string; isVisible: boolean }) => (
+    <div data-testid="native-document-preview" data-visible={isVisible}>
+      {url}
+    </div>
+  ),
+}));
 
 const textPath = 'E:/work/notes.md';
 const imagePath = 'E:/work/image.png';
@@ -69,7 +76,10 @@ function PreviewHarness({ filePath = textPath }: { filePath?: string }) {
           icon: null,
           onSelect: () => setSelected(filePath),
           onClose: async () => {
-            if (filePath === textPath && !(await textPreviewRef.current?.requestTransition()))
+            if (
+              filePath === textPath &&
+              !((await textPreviewRef.current?.requestTransition()) ?? true)
+            )
               return false;
             setSelected(null);
           },
@@ -92,7 +102,11 @@ function PreviewHarness({ filePath = textPath }: { filePath?: string }) {
       <FilePreviewDrawer
         ref={textPreviewRef}
         embedded
-        preview={{ filePath: textPath, editToken: 'text-grant', version: 'v1', content: '# Notes' }}
+        preview={
+          filePath.endsWith('.pdf')
+            ? { kind: 'pdf', filePath, url: 'file:///E:/work/report.pdf' }
+            : { filePath: textPath, editToken: 'text-grant', version: 'v1', content: '# Notes' }
+        }
         isObscured={selected !== textPath}
         onClose={() => setSelected(null)}
       />
@@ -129,6 +143,25 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+
+it('shows a PDF in the native browser with file actions and no source editing', async () => {
+  render(<PreviewHarness filePath="E:/work/report.pdf" />);
+  const preview = screen.getByTestId('native-document-preview');
+  expect(preview.textContent).toBe('file:///E:/work/report.pdf');
+  expect(screen.getByText('File tree')).toBeTruthy();
+  const toolbar = screen.getByRole('toolbar', { name: 'File information' });
+  expect(within(toolbar).getByLabelText('E:/work/report.pdf')).toBeTruthy();
+  expect(within(toolbar).queryByRole('button', { name: 'Edit' })).toBeNull();
+  fireEvent.click(within(toolbar).getByRole('button', { name: 'Show in folder' }));
+  await waitFor(() => expect(shell.showItemInFolder).toHaveBeenCalledWith('E:/work/report.pdf'));
+  expect(shell.authorizePreviewFileEdit).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('tab', { name: 'image.png' }));
+  expect(screen.getByTestId('native-document-preview')).toBe(preview);
+  expect(preview.getAttribute('data-visible')).toBe('false');
+  fireEvent.click(screen.getByRole('tab', { name: 'report.pdf' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Close: report.pdf' }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
 
 it.each(['.html', '.htm', '.xhtml'])(
   'renders a local %s file by default and keeps the file tree while editing and previewing',

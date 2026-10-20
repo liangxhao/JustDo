@@ -107,6 +107,10 @@ describe('browser address resolution', () => {
     ['http://localhost:43127/path', 'http://localhost:43127/path'],
     ['localhost:43127/path', 'https://localhost:43127/path'],
     ['127.0.0.1:8080', 'https://127.0.0.1:8080/'],
+    ['192.168.1.11', 'https://192.168.1.11/'],
+    ['[::1]:8080', 'https://[::1]:8080/'],
+    ['http://11', 'http://0.0.0.11/'],
+    ['https://11', 'https://0.0.0.11/'],
     ['about:blank', 'about:blank'],
   ])('navigates likely web address %j', (input, expected) => {
     expect(resolveBrowserAddressInput(input, BrowserSearchEngine.Baidu)).toBe(expected);
@@ -117,6 +121,18 @@ describe('browser address resolution', () => {
       'https://www.baidu.com/s?wd=%E5%A4%A9%E6%B0%94+%E5%8C%97%E4%BA%AC',
     );
   });
+
+  test.each(['11', '0', '00011', '2026', '2130706433', '13800138000', '  11  '])(
+    'searches bare numeric input %j with the selected engine',
+    input => {
+      expect(resolveBrowserAddressInput(input, BrowserSearchEngine.Baidu)).toBe(
+        `https://www.baidu.com/s?wd=${input.trim()}`,
+      );
+      expect(resolveBrowserAddressInput(input, BrowserSearchEngine.Google)).toBe(
+        `https://www.google.com/search?q=${input.trim()}`,
+      );
+    },
+  );
 
   test('uses Google when it is selected', () => {
     expect(resolveBrowserAddressInput('electron webview', BrowserSearchEngine.Google)).toBe(

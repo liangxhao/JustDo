@@ -46,8 +46,6 @@ import type { BrowserContinueResult } from '@shared/browser/browserIntervention'
 import { RecordingStatus } from '@shared/browser/browserRecording';
 import React, {
   forwardRef,
-  lazy,
-  Suspense,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -82,7 +80,6 @@ import BrowserTabContextMenu, {
 import BrowserClearDataModal from '@/features/browser/data/BrowserClearDataModal';
 import BrowserDataImportModal from '@/features/browser/data/BrowserDataImportModal';
 import { isLikelyPdfUrl } from '@/features/browser/pdf/browserPdf';
-import type { BrowserPdfViewerHandle } from '@/features/browser/pdf/BrowserPdfViewer';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import Tooltip from '@/shared/components/ui/Tooltip';
@@ -154,8 +151,6 @@ const ANNOTATION_NOTICE_DURATION_MS = 3_500;
 // preferences are attach-time only, the suffix makes Fast Refresh replace guests
 // that were created by an older implementation instead of reusing a broken one.
 const BROWSER_WEBVIEW_CAPABILITY_VERSION = 'isolated-session-v4-pdf';
-const BrowserPdfViewer = lazy(() => import('@/features/browser/pdf/BrowserPdfViewer'));
-
 const getBrowserPanelMaxWidth = (availableWidth = window.innerWidth): number =>
   Math.max(BROWSER_PANEL_MIN_WIDTH, availableWidth - 32);
 
@@ -236,6 +231,18 @@ const isAtSourcePreview = (tab: BrowserPanelTab): boolean => getLocalPreviewFile
 export const getBrowserTabAddress = (tab: BrowserPanelTab | null | undefined): string => {
   if (!tab || tab.url === 'about:blank') return '';
   return getLocalPreviewFilePath(tab) ?? tab.url;
+};
+
+const getBrowserAddressDisplay = (address: string): string => {
+  try {
+    const url = new URL(address);
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      return url.host.replace(/^www\./iu, '');
+    }
+  } catch {
+    // Local paths and unfinished address drafts stay readable as entered.
+  }
+  return address;
 };
 
 const normalizeUrl = (raw: string): string | null => {
@@ -319,6 +326,7 @@ interface BrowserPanelProps {
   agentInteractionStates?: readonly BrowserAgentInteractionState[];
   embedded?: boolean;
   pageToolsVisible?: boolean;
+  navigationBarVisible?: boolean;
   renderStartPage?: (navigate: (url: string) => void) => React.ReactNode;
 }
 
@@ -343,12 +351,15 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     agentInteractionStates = [],
     embedded = false,
     pageToolsVisible = true,
+    navigationBarVisible = true,
     renderStartPage,
   },
   ref,
 ) {
   const ownerDocument = useOwnerDocument();
   const ownerWindow = useOwnerWindow();
+  const navigationBarVisibleRef = useRef(navigationBarVisible);
+  navigationBarVisibleRef.current = navigationBarVisible;
   const [tabs, setTabs] = useState<BrowserPanelTab[]>(() => {
     if (initialTabs) {
       const tabs = [...initialTabs];
@@ -362,6 +373,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     return tabs;
   });
   const [urlDraft, setUrlDraft] = useState('');
+  const [isAddressFocused, setIsAddressFocused] = useState(false);
   const [loadingTargets, setLoadingTargets] = useState<Set<string>>(() => new Set());
   const [agentBusyTargets, setAgentBusyTargets] = useState<Set<string>>(() => new Set());
   const [interventionBlocked, setInterventionBlocked] = useState(false);
@@ -431,14 +443,12 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const [httpAuthRequests, setHttpAuthRequests] = useState<BrowserPanelHttpAuthRequest[]>([]);
   const httpAuthRequestsRef = useRef(httpAuthRequests);
   httpAuthRequestsRef.current = httpAuthRequests;
-  const pdfViewersRef = useRef(new Map<string, BrowserPdfViewerHandle>());
-  const pdfZoomFactorsRef = useRef(new Map<string, number>());
-  const [nonPdfUrls, setNonPdfUrls] = useState(new Map<string, string>());
-  const [compatibilityPdfUrls, setCompatibilityPdfUrls] = useState(new Map<string, string>());
   const [credentialOfferTargetId, setCredentialOfferTargetId] = useState<string | null>(null);
   const panelRef = useRef<HTMLElement>(null);
   const addressInputRef = useRef<HTMLInputElement>(null);
   const addressDirtyRef = useRef(false);
+  const showCompactAddress = !isAddressFocused && !addressDirtyRef.current;
+  const displayedAddress = showCompactAddress ? getBrowserAddressDisplay(urlDraft) : urlDraft;
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const webviewsRef = useRef(new Map<string, LiveWebview>());
@@ -466,6 +476,11 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const annotationNoticeTextRef = useRef<string | null>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
   const addressSubmissionSequenceRef = useRef(0);
+
+  useLayoutEffect(() => {
+    // Select after React has replaced the compact domain with the full address.
+    if (isAddressFocused) addressInputRef.current?.select();
+  }, [isAddressFocused]);
 
   const activeTab = tabs.find(tab => tab.targetId === activeTargetId) ?? tabs[0] ?? null;
   activeTargetRef.current = activeTab?.targetId ?? null;
@@ -496,14 +511,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   }, [retainsRecording]);
   const isRecording = !!recorder.session && recorder.session.status !== RecordingStatus.Review;
   const detectedPdfUrl =
-    activeTab &&
-    nonPdfUrls.get(activeTab.targetId) !== activeTab.url &&
-    (activeTab.pdfUrl === activeTab.url || isLikelyPdfUrl(activeTab.url))
+    activeTab && (activeTab.pdfUrl === activeTab.url || isLikelyPdfUrl(activeTab.url))
       ? activeTab.url
-      : null;
-  const activePdfUrl =
-    activeTab && compatibilityPdfUrls.get(activeTab.targetId) === detectedPdfUrl
-      ? detectedPdfUrl
       : null;
   const loading = activeTab ? loadingTargets.has(activeTab.targetId) : false;
   const visibleError = error ?? (activeTab ? loadErrors.get(activeTab.targetId) : null);
@@ -552,7 +561,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
 
   const toggleAnnotationMode = useCallback(
     (nextMode: Exclude<BrowserPanelMode, 'interact'>) => {
-      if (activePdfUrl || isRecording) return;
+      if (isRecording) return;
       setAnnotationToolMenuAnchor(null);
       setHovered(null);
       gestureRef.current = null;
@@ -571,12 +580,12 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       }
       setMode(nextMode);
     },
-    [activePdfUrl, mode, isRecording, clearModeAnnotations],
+    [mode, isRecording, clearModeAnnotations],
   );
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || mode === 'interact' || !activeWebview || activePdfUrl) return;
+    if (!canvas || mode === 'interact' || !activeWebview) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       event.stopPropagation();
@@ -602,14 +611,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     };
     canvas.addEventListener('wheel', onWheel, { passive: false });
     return () => canvas.removeEventListener('wheel', onWheel);
-  }, [
-    mode,
-    activeWebview,
-    activePdfUrl,
-    isCapturing,
-    activeTab?.url,
-    invalidateAnnotationGeometry,
-  ]);
+  }, [mode, activeWebview, isCapturing, activeTab?.url, invalidateAnnotationGeometry]);
 
   useEffect(() => {
     tabsRef.current = tabs;
@@ -899,15 +901,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     [isOpen, openTab],
   );
 
-  const clearNonPdfFallback = useCallback((targetId: string) => {
-    setNonPdfUrls(current => {
-      if (!current.has(targetId)) return current;
-      const next = new Map(current);
-      next.delete(targetId);
-      return next;
-    });
-  }, []);
-
   useEffect(
     () =>
       window.electron.browser.onPanelFaviconUpdated(event => {
@@ -965,10 +958,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           }
         })?.[0];
         if (!targetId) return;
-        clearNonPdfFallback(targetId);
         updateTab(targetId, { pdfUrl: event.url });
       }),
-    [clearNonPdfFallback, updateTab],
+    [updateTab],
   );
 
   const closeTab = useCallback(
@@ -987,18 +979,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           ];
         }
         initialUrlsRef.current.delete(targetId);
-        pdfZoomFactorsRef.current.delete(targetId);
-        setCompatibilityPdfUrls(current => {
-          const next = new Map(current);
-          next.delete(targetId);
-          return next;
-        });
-        setNonPdfUrls(current => {
-          if (!current.has(targetId)) return current;
-          const next = new Map(current);
-          next.delete(targetId);
-          return next;
-        });
         guestElementRefs.current.delete(targetId);
         const nextTabs = currentTabs.filter(tab => tab.targetId !== targetId);
         tabsRef.current = nextTabs;
@@ -1058,6 +1038,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
 
   const runBrowserCommand = useCallback(
     (command: BrowserGuestCommand, sourceTargetId = activeTargetRef.current) => {
+      // A document preview has no browser tab strip or address bar to recover a closed page.
+      if (!navigationBarVisibleRef.current && !['reload', 'back', 'forward'].includes(command))
+        return;
       if (command === 'focus-address') {
         addressInputRef.current?.focus();
         addressInputRef.current?.select();
@@ -1103,14 +1086,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         setTimeout(() => webviewsRef.current.get(nextTab.targetId)?.focus(), 0);
         return;
       }
-      if (command === 'reload' && sourceTargetId) {
-        clearNonPdfFallback(sourceTargetId);
-        const viewer = pdfViewersRef.current.get(sourceTargetId);
-        if (viewer) {
-          viewer.reload();
-          return;
-        }
-      }
       const webview = sourceTargetId ? webviewsRef.current.get(sourceTargetId) : null;
       if (!webview?.isConnected || !readyGuestsRef.current.has(webview)) return;
       try {
@@ -1121,7 +1096,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         // The guest can detach between the toolbar render and the command.
       }
     },
-    [clearAnnotations, clearNonPdfFallback, closeTab, onActiveTargetChange, openTab],
+    [clearAnnotations, closeTab, onActiveTargetChange, openTab],
   );
 
   const handleNavigation = useCallback(
@@ -1209,10 +1184,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       registerAgentTab();
       if (installedGuestsRef.current.has(webview)) return;
       installedGuestsRef.current.add(webview);
-      webview.addEventListener('did-start-navigation', event => {
-        const details = event as GuestEvent;
-        if (details.isMainFrame === true) clearNonPdfFallback(targetId);
-      });
       webview.addEventListener('did-start-loading', () => {
         registerAgentTab();
         updateTab(targetId, { pdfUrl: undefined });
@@ -1264,13 +1235,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         if (details.channel === BROWSER_GUEST_ZOOM_CHANNEL) {
           const [direction] = details.args ?? [];
           if (!isBrowserGuestZoomDirection(direction)) return;
-          const pdfViewer = pdfViewersRef.current.get(targetId);
-          if (pdfViewer) {
-            pdfViewer.setZoom(
-              stepBrowserZoomFactor(pdfZoomFactorsRef.current.get(targetId) ?? 1, direction),
-            );
-            return;
-          }
           try {
             const nextFactor = stepBrowserZoomFactor(webview.getZoomFactor?.() ?? 1, direction);
             webview.setZoomFactor?.(nextFactor);
@@ -1336,14 +1300,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         );
       });
     },
-    [
-      clearNonPdfFallback,
-      closeTab,
-      handleNavigation,
-      invalidateAnnotationGeometry,
-      runBrowserCommand,
-      updateTab,
-    ],
+    [closeTab, handleNavigation, invalidateAnnotationGeometry, runBrowserCommand, updateTab],
   );
   const installGuestRef = useRef(installGuest);
   installGuestRef.current = installGuest;
@@ -1700,7 +1657,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     const tab = tabs.find(candidate => candidate.targetId === targetId);
     if (
       !targetId ||
-      activePdfUrl ||
       !webview ||
       !tab ||
       isCapturing ||
@@ -1836,10 +1792,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       return;
     }
     if (action === 'reload') {
-      clearNonPdfFallback(targetId);
-      const viewer = pdfViewersRef.current.get(targetId);
-      if (viewer) viewer.reload();
-      else webview?.reload();
+      webview?.reload();
       return;
     }
     if (action === 'duplicate') {
@@ -1922,7 +1875,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
 
   const runFind = useCallback(
     (forward = true, findNext = false) => {
-      if (activePdfUrl) return;
       const query = findQuery.trim();
       if (!query || !activeWebview?.findInPage) {
         activeWebview?.stopFind?.('clearSelection');
@@ -1931,7 +1883,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       }
       activeWebview.findInPage(query, { forward, findNext });
     },
-    [activePdfUrl, activeWebview, findQuery],
+    [activeWebview, findQuery],
   );
 
   const closeFind = useCallback(() => {
@@ -1945,11 +1897,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const changeZoom = useCallback(
     (factor: number) => {
       const normalized = Math.min(2, Math.max(0.5, Math.round(factor * 10) / 10));
-      if (activePdfUrl && activeTab) {
-        pdfViewersRef.current.get(activeTab.targetId)?.setZoom(normalized);
-        setZoomFactor(normalized);
-        return;
-      }
       if (!activeWebview || !readyGuestsRef.current.has(activeWebview)) return;
       try {
         activeWebview.setZoomFactor?.(normalized);
@@ -1959,27 +1906,13 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       }
       setZoomFactor(normalized);
     },
-    [activePdfUrl, activeTab, activeWebview],
+    [activeWebview],
   );
 
   const handleOverflowAction = async (action: BrowserOverflowAction) => {
     setOverflowMenuAnchor(null);
-    if (action === 'pdf-viewer' && activeTab && detectedPdfUrl) {
-      clearAnnotations();
-      setCompatibilityPdfUrls(current => {
-        const next = new Map(current);
-        if (activePdfUrl) next.delete(activeTab.targetId);
-        else next.set(activeTab.targetId, detectedPdfUrl);
-        return next;
-      });
-      return;
-    }
-    if (action === 'print' && detectedPdfUrl && !activePdfUrl) {
+    if (action === 'print' && detectedPdfUrl) {
       setNotice(i18nService.t('browserPdfUseToolbar'));
-      return;
-    }
-    if (activePdfUrl && ['find', 'print', 'screenshot', 'device-tools'].includes(action)) {
-      setNotice(i18nService.t('browserPdfActionUnavailable'));
       return;
     }
     if (action === 'find') {
@@ -2044,7 +1977,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   }, [findVisible, runFind]);
 
   useEffect(() => {
-    if (activePdfUrl) return;
     if (!activeWebview || !readyGuestsRef.current.has(activeWebview)) {
       setZoomFactor(1);
       return;
@@ -2056,9 +1988,12 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       // A guest may be detached while React is switching or remounting tabs.
       setZoomFactor(1);
     }
-  }, [activePdfUrl, activeTabTargetId, activeWebview, readyTargets]);
+  }, [activeTabTargetId, activeWebview, readyTargets]);
 
-  const showPageTools = pageToolsVisible && Boolean(activeTab && activeTab.url !== 'about:blank');
+  const showPageTools =
+    navigationBarVisible &&
+    pageToolsVisible &&
+    Boolean(activeTab && activeTab.url !== 'about:blank');
   const annotationElement = inspected ?? regions[regions.length - 1]?.elements?.[0] ?? null;
   const stageWidth = stageRef.current?.clientWidth || 520;
   const stageHeight = stageRef.current?.clientHeight || 400;
@@ -2361,198 +2296,217 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         </form>
       )}
 
-      <form
-        className="flex h-[35px] shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-2"
-        onSubmit={event => {
-          event.preventDefault();
-          void submitUrl();
-        }}
-      >
-        <Tooltip
-          content={i18nService.t('browserPanelBack')}
-          position="bottom"
-          renderInPortal
-          dismissOnClick
-        >
-          <button
-            type="button"
-            className={modeButton(false)}
-            disabled={!canNavigate('back')}
-            onClick={() => runBrowserCommand('back')}
-            aria-label={i18nService.t('browserPanelBack')}
-          >
-            <ArrowLeftIcon className="h-4 w-4" />
-          </button>
-        </Tooltip>
-        <Tooltip
-          content={i18nService.t('browserPanelForward')}
-          position="bottom"
-          renderInPortal
-          dismissOnClick
-        >
-          <button
-            type="button"
-            className={modeButton(false)}
-            disabled={!canNavigate('forward')}
-            onClick={() => runBrowserCommand('forward')}
-            aria-label={i18nService.t('browserPanelForward')}
-          >
-            <ArrowRightIcon className="h-4 w-4" />
-          </button>
-        </Tooltip>
-        <Tooltip
-          content={i18nService.t('browserPanelReload')}
-          position="bottom"
-          renderInPortal
-          dismissOnClick
-        >
-          <button
-            type="button"
-            className={modeButton(false)}
-            disabled={!activeTab || (!activePdfUrl && !readyTargets.has(activeTab.targetId))}
-            onClick={() => runBrowserCommand('reload')}
-            aria-label={i18nService.t('browserPanelReload')}
-          >
-            <ArrowPathIcon className="h-4 w-4" />
-          </button>
-        </Tooltip>
-        <input
-          ref={addressInputRef}
-          value={urlDraft}
-          onChange={event => {
-            addressDirtyRef.current = true;
-            setUrlDraft(event.target.value);
+      {navigationBarVisible && (
+        <form
+          className="flex h-[35px] shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-2"
+          onSubmit={event => {
+            event.preventDefault();
+            void submitUrl();
+            addressInputRef.current?.blur();
           }}
-          className="min-w-28 flex-1 rounded-md border border-border bg-surface-raised px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary"
-          aria-label={i18nService.t('browserPanelAddress')}
-          placeholder={i18nService.t('browserPanelAddressPlaceholder')}
-        />
-        {showPageTools && (
-          <>
-            <BrowserRecordingControls
-              recorder={recorder}
-              disabled={
-                !activeTab ||
-                !readyTargets.has(activeTab.targetId) ||
-                !/^https?:/.test(activeTab.url) ||
-                !!detectedPdfUrl ||
-                mode !== 'interact' ||
-                isCommentComposerOpen ||
-                isCapturing ||
-                agentInteractionLocked
-              }
-            />
-            <div
-              className={`${browserToolbarGroupClassName} ${isRecording ? 'pointer-events-none opacity-40' : ''}`}
-              data-testid="browser-annotation-tool-group"
+        >
+          <Tooltip
+            content={i18nService.t('browserPanelBack')}
+            position="bottom"
+            renderInPortal
+            dismissOnClick
+          >
+            <button
+              type="button"
+              className={modeButton(false)}
+              disabled={!canNavigate('back')}
+              onClick={() => runBrowserCommand('back')}
+              aria-label={i18nService.t('browserPanelBack')}
             >
-              <div className="relative h-8 w-8 shrink-0">
-                <Tooltip
-                  content={annotationActionLabel}
-                  position="bottom"
-                  renderInPortal
-                  dismissOnClick
-                >
+              <ArrowLeftIcon className="h-4 w-4" />
+            </button>
+          </Tooltip>
+          <Tooltip
+            content={i18nService.t('browserPanelForward')}
+            position="bottom"
+            renderInPortal
+            dismissOnClick
+          >
+            <button
+              type="button"
+              className={modeButton(false)}
+              disabled={!canNavigate('forward')}
+              onClick={() => runBrowserCommand('forward')}
+              aria-label={i18nService.t('browserPanelForward')}
+            >
+              <ArrowRightIcon className="h-4 w-4" />
+            </button>
+          </Tooltip>
+          <Tooltip
+            content={i18nService.t('browserPanelReload')}
+            position="bottom"
+            renderInPortal
+            dismissOnClick
+          >
+            <button
+              type="button"
+              className={modeButton(false)}
+              disabled={!activeTab || !readyTargets.has(activeTab.targetId)}
+              onClick={() => runBrowserCommand('reload')}
+              aria-label={i18nService.t('browserPanelReload')}
+            >
+              <ArrowPathIcon className="h-4 w-4" />
+            </button>
+          </Tooltip>
+          <input
+            ref={addressInputRef}
+            value={displayedAddress}
+            onChange={event => {
+              addressDirtyRef.current = true;
+              setUrlDraft(event.target.value);
+            }}
+            onFocus={() => setIsAddressFocused(true)}
+            onBlur={() => setIsAddressFocused(false)}
+            onMouseDown={event => {
+              if (event.button !== 0 || event.currentTarget === ownerDocument.activeElement) return;
+              // Keep the initial click from collapsing the full-address selection.
+              event.preventDefault();
+              event.currentTarget.focus();
+            }}
+            onKeyDown={event => {
+              if (event.key !== 'Escape' || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              addressDirtyRef.current = false;
+              setUrlDraft(getBrowserTabAddress(activeTab));
+              event.currentTarget.blur();
+            }}
+            className={`h-7 min-w-28 flex-1 rounded-full border border-transparent bg-surface-raised px-3 text-xs text-foreground outline-none transition-colors hover:border-border focus:border-primary ${showCompactAddress ? 'truncate text-center' : 'text-left'}`}
+            title={urlDraft || undefined}
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            aria-label={i18nService.t('browserPanelAddress')}
+            placeholder={i18nService.t('browserPanelAddressPlaceholder')}
+          />
+          {showPageTools && (
+            <>
+              <BrowserRecordingControls
+                recorder={recorder}
+                disabled={
+                  !activeTab ||
+                  !readyTargets.has(activeTab.targetId) ||
+                  !/^https?:/.test(activeTab.url) ||
+                  !!detectedPdfUrl ||
+                  mode !== 'interact' ||
+                  isCommentComposerOpen ||
+                  isCapturing ||
+                  agentInteractionLocked
+                }
+              />
+              <div
+                className={`${browserToolbarGroupClassName} ${isRecording ? 'pointer-events-none opacity-40' : ''}`}
+                data-testid="browser-annotation-tool-group"
+              >
+                <div className="relative h-8 w-8 shrink-0">
+                  <Tooltip
+                    content={annotationActionLabel}
+                    position="bottom"
+                    renderInPortal
+                    dismissOnClick
+                  >
+                    <button
+                      type="button"
+                      className={modeButton(mode === annotationTool)}
+                      onClick={() => toggleAnnotationMode(annotationTool)}
+                      aria-label={annotationActionLabel}
+                      aria-pressed={mode === annotationTool}
+                    >
+                      {annotationTool === 'inspect' ? (
+                        <ChatBubbleOvalLeftIcon className="h-4 w-4" />
+                      ) : annotationTool === 'pen' ? (
+                        <PencilIcon className="h-4 w-4" />
+                      ) : (
+                        <RectangleGroupIcon className="h-4 w-4" />
+                      )}
+                    </button>
+                  </Tooltip>
                   <button
                     type="button"
-                    className={modeButton(mode === annotationTool)}
-                    disabled={Boolean(activePdfUrl)}
-                    title={activePdfUrl ? i18nService.t('browserPdfActionUnavailable') : undefined}
-                    onClick={() => toggleAnnotationMode(annotationTool)}
-                    aria-label={annotationActionLabel}
-                    aria-pressed={mode === annotationTool}
+                    className="absolute bottom-0 right-0 z-10 flex h-4 w-4 items-end justify-end p-0.5 text-secondary/80 hover:text-foreground"
+                    aria-label={i18nService.t('browserAnnotationToolSwitch')}
+                    title={i18nService.t('browserAnnotationToolSwitch')}
+                    aria-haspopup="menu"
+                    aria-expanded={annotationToolMenuAnchor !== null}
+                    onClick={event => {
+                      const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
+                      if (!bounds) return;
+                      setAnnotationToolMenuAnchor(current =>
+                        current
+                          ? null
+                          : {
+                              left: bounds.left,
+                              right: bounds.right,
+                              top: bounds.top,
+                              bottom: bounds.bottom,
+                            },
+                      );
+                    }}
                   >
-                    {annotationTool === 'inspect' ? (
-                      <ChatBubbleOvalLeftIcon className="h-4 w-4" />
-                    ) : annotationTool === 'pen' ? (
-                      <PencilIcon className="h-4 w-4" />
-                    ) : (
-                      <RectangleGroupIcon className="h-4 w-4" />
-                    )}
+                    <ChevronDownIcon className="h-2.5 w-2.5 stroke-2" />
                   </button>
-                </Tooltip>
-                <button
-                  type="button"
-                  className="absolute bottom-0 right-0 z-10 flex h-4 w-4 items-end justify-end p-0.5 text-secondary/80 hover:text-foreground"
-                  aria-label={i18nService.t('browserAnnotationToolSwitch')}
-                  disabled={Boolean(activePdfUrl)}
-                  title={i18nService.t('browserAnnotationToolSwitch')}
-                  aria-haspopup="menu"
-                  aria-expanded={annotationToolMenuAnchor !== null}
-                  onClick={event => {
-                    const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
-                    if (!bounds) return;
-                    setAnnotationToolMenuAnchor(current =>
-                      current
-                        ? null
-                        : {
-                            left: bounds.left,
-                            right: bounds.right,
-                            top: bounds.top,
-                            bottom: bounds.bottom,
-                          },
-                    );
-                  }}
-                >
-                  <ChevronDownIcon className="h-2.5 w-2.5 stroke-2" />
-                </button>
+                </div>
               </div>
-            </div>
-          </>
-        )}
-        {browserMode === BrowserMode.Embedded &&
-          onStopTask &&
-          onContinueTask &&
-          !draftKey.startsWith('temp-') && (
-            <BrowserInterventionBar
-              reference={{
-                sessionId: draftKey,
-                targetId: activeTab?.targetId ?? BROWSER_AGENT_PANEL_TARGET_ID,
-                profile: activeTab?.profile ?? 'embedded',
-              }}
-              buttonClassName={modeButton(false)}
-              detailsHost={interventionDetailsHost}
-              active={isOpen}
-              browserOperationRunning={
-                browserOperationRunning &&
-                Boolean(activeTab?.url.trim() && activeTab.url !== 'about:blank')
-              }
-              onStop={onStopTask}
-              onCheckStopped={onCheckTaskStopped}
-              onContinue={onContinueTask}
-              onBlockedChange={setInterventionBlocked}
-            />
+            </>
           )}
-        <Tooltip
-          content={i18nService.t('browserMenuOpen')}
-          position="bottom"
-          renderInPortal
-          dismissOnClick
-        >
-          <button
-            type="button"
-            className={modeButton(overflowMenuAnchor !== null)}
-            aria-label={i18nService.t('browserMenuOpen')}
-            aria-haspopup="menu"
-            aria-expanded={overflowMenuAnchor !== null}
-            onClick={event => {
-              const bounds = event.currentTarget.getBoundingClientRect();
-              setOverflowMenuAnchor(current =>
-                current
-                  ? null
-                  : {
-                      left: bounds.left,
-                      right: bounds.right,
-                      top: bounds.top,
-                      bottom: bounds.bottom,
-                    },
-              );
-            }}
+          {browserMode === BrowserMode.Embedded &&
+            onStopTask &&
+            onContinueTask &&
+            !draftKey.startsWith('temp-') && (
+              <BrowserInterventionBar
+                reference={{
+                  sessionId: draftKey,
+                  targetId: activeTab?.targetId ?? BROWSER_AGENT_PANEL_TARGET_ID,
+                  profile: activeTab?.profile ?? 'embedded',
+                }}
+                buttonClassName={modeButton(false)}
+                detailsHost={interventionDetailsHost}
+                active={isOpen}
+                browserOperationRunning={
+                  browserOperationRunning &&
+                  Boolean(activeTab?.url.trim() && activeTab.url !== 'about:blank')
+                }
+                onStop={onStopTask}
+                onCheckStopped={onCheckTaskStopped}
+                onContinue={onContinueTask}
+                onBlockedChange={setInterventionBlocked}
+              />
+            )}
+          <Tooltip
+            content={i18nService.t('browserMenuOpen')}
+            position="bottom"
+            renderInPortal
+            dismissOnClick
           >
-            <EllipsisVerticalIcon className="h-5 w-5" />
-          </button>
-        </Tooltip>
-      </form>
+            <button
+              type="button"
+              className={modeButton(overflowMenuAnchor !== null)}
+              aria-label={i18nService.t('browserMenuOpen')}
+              aria-haspopup="menu"
+              aria-expanded={overflowMenuAnchor !== null}
+              onClick={event => {
+                const bounds = event.currentTarget.getBoundingClientRect();
+                setOverflowMenuAnchor(current =>
+                  current
+                    ? null
+                    : {
+                        left: bounds.left,
+                        right: bounds.right,
+                        top: bounds.top,
+                        bottom: bounds.bottom,
+                      },
+                );
+              }}
+            >
+              <EllipsisVerticalIcon className="h-5 w-5" />
+            </button>
+          </Tooltip>
+        </form>
+      )}
 
       {visibleError && (
         <div
@@ -2687,48 +2641,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
               }}
             />
           ))}
-          {tabs
-            .filter(
-              tab =>
-                compatibilityPdfUrls.get(tab.targetId) === tab.url &&
-                nonPdfUrls.get(tab.targetId) !== tab.url &&
-                (tab.pdfUrl === tab.url || isLikelyPdfUrl(tab.url)),
-            )
-            .map(tab => (
-              <div
-                key={`${tab.targetId}:${tab.url}`}
-                className="absolute inset-0 z-[4]"
-                style={{
-                  visibility: isOpen && tab.targetId === activeTab?.targetId ? 'visible' : 'hidden',
-                }}
-                aria-hidden={!isOpen || tab.targetId !== activeTab?.targetId}
-              >
-                <Suspense
-                  fallback={
-                    <div className="absolute inset-0 z-[4] flex items-center justify-center bg-neutral-200 text-sm text-secondary dark:bg-neutral-800">
-                      {i18nService.t('browserPdfLoading')}
-                    </div>
-                  }
-                >
-                  <BrowserPdfViewer
-                    ref={viewer => {
-                      if (viewer) pdfViewersRef.current.set(tab.targetId, viewer);
-                      else pdfViewersRef.current.delete(tab.targetId);
-                    }}
-                    url={tab.url}
-                    profile={tab.profile ?? 'embedded'}
-                    active={isOpen && tab.targetId === activeTab?.targetId}
-                    onNotPdf={() =>
-                      setNonPdfUrls(current => new Map(current).set(tab.targetId, tab.url))
-                    }
-                    onZoomChange={factor => {
-                      pdfZoomFactorsRef.current.set(tab.targetId, factor);
-                      if (activeTargetRef.current === tab.targetId) setZoomFactor(factor);
-                    }}
-                  />
-                </Suspense>
-              </div>
-            ))}
           {activeTab?.url === 'about:blank' &&
             (renderStartPage ? (
               isOpen && (
@@ -2758,7 +2670,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
                 </span>
               </button>
             ))}
-          {showPageTools && mode !== 'interact' && !activePdfUrl && (
+          {showPageTools && mode !== 'interact' && (
             <canvas
               ref={canvasRef}
               tabIndex={0}
@@ -2839,15 +2751,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         <BrowserOverflowMenu
           anchor={overflowMenuAnchor}
           zoomFactor={zoomFactor}
-          pdfCompatibilityMode={detectedPdfUrl ? Boolean(activePdfUrl) : undefined}
-          disabledActions={
-            activePdfUrl
-              ? ['find', 'print', 'screenshot', 'device-tools']
-              : detectedPdfUrl
-                ? ['print']
-                : []
-          }
-          disabledActionHint={activePdfUrl ? undefined : i18nService.t('browserPdfUseToolbar')}
+          disabledActions={detectedPdfUrl ? ['print'] : []}
+          disabledActionHint={i18nService.t('browserPdfUseToolbar')}
           onAction={action => void handleOverflowAction(action)}
           onZoomChange={changeZoom}
           onDismiss={() => setOverflowMenuAnchor(null)}

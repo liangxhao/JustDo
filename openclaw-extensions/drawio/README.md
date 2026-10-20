@@ -54,6 +54,13 @@ It requires no model request and stays out of the model tool catalog.
 The server and tools advertise an inline SVG through native MCP `icons` metadata
 for the sidebar homepage. The host does not map plugin names to bundled icons.
 
+The App-only `open_file` tool advertises `.drawio` file entrypoints. Native launch
+checks the session workspace and supplies a view-bound `openclaw-file://` resource;
+the App reads its UTF-8 XML through the standard host resource bridge. The MCP
+process never opens arbitrary local paths. Files are limited to 1 MiB, reject DTD
+and malformed XML, and may contain compressed mxfile diagrams decoded by draw.io.
+Opening leaves the source unchanged; saving uses the existing native Save dialog.
+
 Recovery runs only after native view expiration. It reads the exact child result
 from the current visible native transcript through public SDK accessors, then
 creates a fresh native preview using `prepareHarnessNativeMcpAppPreview`. It

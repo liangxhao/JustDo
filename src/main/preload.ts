@@ -69,8 +69,6 @@ import {
   type BrowserPanelPdfDetectedEvent,
   type BrowserPanelShortcutAction,
   type BrowserPanelShortcutSettings,
-  type BrowserPdfLoadRequest,
-  type BrowserPdfLoadResult,
   type BrowserStatusResult,
   normalizeBrowserPanelFaviconUpdatedEvent,
   normalizeBrowserPanelHttpAuthRequest,
@@ -398,9 +396,6 @@ contextBridge.exposeInMainWorld('electron', {
       workingDirectory?: string,
     ): Promise<BrowserLocalHtmlPreviewResult> =>
       ipcRenderer.invoke(BrowserIpc.CreateLocalHtmlPreview, filePath, workingDirectory),
-    loadPdf: (request: BrowserPdfLoadRequest): Promise<BrowserPdfLoadResult> =>
-      ipcRenderer.invoke(BrowserIpc.LoadPdf, request),
-    cancelPdf: (requestId: string) => ipcRenderer.send(BrowserIpc.CancelPdf, requestId),
     getStatus: (): Promise<BrowserStatusResult> => ipcRenderer.invoke(BrowserIpc.GetStatus),
     canSetMode: (): Promise<BrowserModeSwitchAvailabilityResult> =>
       ipcRenderer.invoke(BrowserIpc.CanSetMode),

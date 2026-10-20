@@ -1,6 +1,10 @@
 export const filePreviewTranslations = {
   zh: {
     coworkFilePreviewFailed: '无法预览此文件',
+    coworkFilePreviewAudio: '音频预览',
+    coworkFilePreviewVideo: '视频预览',
+    coworkFilePreviewMediaFailed:
+      '无法播放此媒体，文件可能损坏或使用了不支持的编码。你可以使用上方的系统应用打开。',
     coworkLocalHtmlPreviewInvalid: '无法预览：请选择有效的本地 HTML 文件',
     coworkFilePreviewResize: '拖动以调整文件预览宽度',
     coworkFilePreviewShowInFolder: '在文件夹中显示',
@@ -51,6 +55,10 @@ export const filePreviewTranslations = {
   },
   en: {
     coworkFilePreviewFailed: 'Unable to preview this file',
+    coworkFilePreviewAudio: 'Audio preview',
+    coworkFilePreviewVideo: 'Video preview',
+    coworkFilePreviewMediaFailed:
+      'This media may be damaged or use an unsupported codec. Use the system app button above to open it.',
     coworkLocalHtmlPreviewInvalid: 'Unable to preview: select a valid local HTML file',
     coworkFilePreviewResize: 'Drag to resize the file preview',
     coworkFilePreviewShowInFolder: 'Show in folder',

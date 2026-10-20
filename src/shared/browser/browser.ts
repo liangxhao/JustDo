@@ -18,8 +18,6 @@ export const BrowserIpc = {
   TestExtensionConnection: 'browser:testExtensionConnection',
   CreateLocalHtmlPreview: 'browser:createLocalHtmlPreview',
   OpenInChrome: 'browser:openInChrome',
-  LoadPdf: 'browser:loadPdf',
-  CancelPdf: 'browser:cancelPdf',
   PanelOpenTab: 'browser:panelOpenTab',
   PanelPdfDetected: 'browser:panelPdfDetected',
   PanelFaviconUpdated: 'browser:panelFaviconUpdated',
@@ -314,19 +312,6 @@ export const normalizeBrowserPanelPdfDetectedEvent = (
   return { url: record.url, guestId: record.guestId as number };
 };
 
-export type BrowserPdfLoadRequest = {
-  requestId: string;
-  url: string;
-  profile: BrowserAgentProfile;
-};
-
-export type BrowserPdfLoadResult =
-  | { success: true; data: Uint8Array }
-  | {
-      success: false;
-      errorCode: 'invalid_request' | 'not_pdf' | 'too_large' | 'load_failed';
-    };
-
 export const normalizeBrowserPanelOpenTabEvent = (
   value: unknown,
 ): BrowserPanelOpenTabEvent | null => {
@@ -469,6 +454,8 @@ export const resolveBrowserAddressInput = (
   const trimmed = raw.trim();
   if (!trimmed) return null;
   if (trimmed === 'about:blank') return trimmed;
+  // URL parsing expands bare numbers to IPv4 addresses; omnibox numbers are search terms.
+  if (/^\d+$/u.test(trimmed)) return buildBrowserSearchUrl(trimmed, searchEngine);
 
   const explicitWebScheme = /^https?:\/\//i.test(trimmed);
   const hasAnyScheme = /^[a-z][a-z0-9+.-]*:(?!\d)/i.test(trimmed);

@@ -13,7 +13,11 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import Editor, { type BeforeMount, type OnMount } from '@monaco-editor/react';
-import { getPreviewableFileExtension } from '@shared/preview/filePreview';
+import {
+  type BrowserFilePreview,
+  getPreviewableFileExtension,
+  isBrowserFilePreview,
+} from '@shared/preview/filePreview';
 import {
   forwardRef,
   useCallback,
@@ -42,6 +46,7 @@ import { observeEditorLayout } from '@/shared/dom/observeEditorLayout';
 import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 import { FilePreviewToolbarContext } from '../shared/FilePreviewToolbarContext';
+import BrowserFilePreviewPanel from './BrowserFilePreviewPanel';
 import HtmlFilePreview from './HtmlFilePreview';
 import type { ImageFilePreview } from './imageFilePreview';
 import ImageFilePreviewPanel from './ImageFilePreviewPanel';
@@ -54,7 +59,7 @@ export interface TextFilePreview {
   version: string;
 }
 
-export type FilePreview = TextFilePreview | ImageFilePreview;
+export type FilePreview = TextFilePreview | ImageFilePreview | BrowserFilePreview;
 
 export interface FilePreviewDrawerHandle {
   requestTransition: () => Promise<boolean>;
@@ -331,11 +336,11 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
     const reloadFromDisk = useCallback(async (): Promise<boolean> => {
       try {
         const result = await window.electron.shell.readPreviewFile(preview.filePath);
-        if (!result.success) {
+        if (!result.success || isBrowserFilePreview(result)) {
           showToast(
-            result.tooLarge
+            !result.success && result.tooLarge
               ? i18nService.t('coworkFilePreviewTooLarge')
-              : result.error || i18nService.t('coworkFilePreviewReloadFailed'),
+              : (!result.success && result.error) || i18nService.t('coworkFilePreviewReloadFailed'),
           );
           return false;
         }
@@ -897,6 +902,13 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
   (props, ref) =>
     props.preview.kind === 'image' ? (
       <ImageFilePreviewPanel
+        preview={props.preview}
+        onClose={props.onClose}
+        isObscured={props.isObscured}
+        embedded={props.embedded}
+      />
+    ) : isBrowserFilePreview(props.preview) ? (
+      <BrowserFilePreviewPanel
         preview={props.preview}
         onClose={props.onClose}
         isObscured={props.isObscured}

@@ -1,8 +1,10 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { pathToFileURL } from 'url';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+import { FilePreviewIpc, MAX_PREVIEW_FILE_BYTES } from '../../../shared/preview/filePreview';
 import { createLocalHtmlPreview } from '../../browser/preview/localHtmlPreviewServer';
 
 const { ipcHandle, openExternal } = vi.hoisted(() => ({
@@ -308,6 +310,107 @@ test('returns a structured unsupported result for a non-previewable file', async
   });
 });
 
+test('prepares a PDF larger than the text limit as an original file URL without text or edit grants', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pdf-preview-'));
+  temporaryDirectories.push(directory);
+  const filePath = path.join(directory, '地球 #100%.PDF');
+  fs.writeFileSync(filePath, Buffer.alloc(MAX_PREVIEW_FILE_BYTES + 1024));
+  const canonicalPath = fs.realpathSync(filePath);
+  const expectedUrl = pathToFileURL(canonicalPath);
+  expectedUrl.hash = 'page=2';
+  const sourceUrl = pathToFileURL(filePath);
+  sourceUrl.hash = 'page=2';
+
+  await expect(readPreviewFile(sourceUrl.href)).resolves.toEqual({
+    success: true,
+    kind: 'pdf',
+    filePath: canonicalPath,
+    url: expectedUrl.href,
+  });
+  await expect(readPreviewFile(path.basename(filePath), directory)).resolves.toEqual({
+    success: true,
+    kind: 'pdf',
+    filePath: canonicalPath,
+    url: pathToFileURL(canonicalPath).href,
+  });
+});
+
+test('rejects missing PDFs and directories before returning a browser preview', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pdf-preview-'));
+  temporaryDirectories.push(directory);
+  const folder = path.join(directory, 'folder.pdf');
+  fs.mkdirSync(folder);
+  await expect(readPreviewFile(folder)).resolves.toMatchObject({ success: false });
+  await expect(readPreviewFile('missing.pdf', directory)).resolves.toEqual({
+    success: false,
+    notFound: true,
+  });
+});
+
+test.each([
+  ['sound.mp3', 'audio'],
+  ['sound.wav', 'audio'],
+  ['sound.flac', 'audio'],
+  ['sound.opus', 'audio'],
+  ['movie.mp4', 'video'],
+  ['movie.webm', 'video'],
+  ['movie.mkv', 'video'],
+])('prepares %s without decoding it as text or creating an edit grant', async (fileName, kind) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'media-preview-'));
+  temporaryDirectories.push(directory);
+  const filePath = path.join(directory, fileName);
+  fs.writeFileSync(filePath, Buffer.alloc(MAX_PREVIEW_FILE_BYTES + 1024));
+  const canonicalPath = fs.realpathSync(filePath);
+  await expect(readPreviewFile(filePath)).resolves.toEqual({
+    success: true,
+    kind,
+    filePath: canonicalPath,
+    url: pathToFileURL(canonicalPath).href,
+  });
+});
+
+test.each([
+  'table.tsv',
+  'records.ndjson',
+  'captions.srt',
+  'changes.patch',
+  'component.vue',
+  'component.svelte',
+  'config.cfg',
+  'notebook.ipynb',
+])('opens %s as editable source without executing or converting it', async fileName => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'source-preview-'));
+  temporaryDirectories.push(directory);
+  const filePath = path.join(directory, fileName);
+  fs.writeFileSync(filePath, 'source text', 'utf8');
+  await expect(readPreviewFile(filePath)).resolves.toMatchObject({
+    success: true,
+    content: 'source text',
+    editToken: expect.any(String),
+  });
+});
+
+test('only allows validated file preview requests from a window main frame', async () => {
+  registerShellHandlers();
+  const handler = ipcHandle.mock.calls.find(([channel]) => channel === FilePreviewIpc.Read)![1];
+  const mainFrame = {};
+  const sender = { id: 11, getType: () => 'window', mainFrame };
+  for (const [event, filePath, directory] of [
+    [{ sender: { ...sender, getType: () => 'webview' }, senderFrame: mainFrame }, 'report.pdf'],
+    [{ sender, senderFrame: {} }, 'report.pdf'],
+    [{ sender, senderFrame: mainFrame }, { path: 'report.pdf' }],
+    [{ sender, senderFrame: mainFrame }, 'report.pdf', 42],
+  ]) {
+    await expect(Promise.resolve(handler(event, filePath, directory))).resolves.toEqual({
+      success: false,
+      error: 'Access denied',
+    });
+  }
+  await expect(
+    handler({ sender, senderFrame: mainFrame }, path.join(os.tmpdir(), 'missing-document.pdf')),
+  ).resolves.toEqual({ success: false, notFound: true });
+});
+
 test('builds the Windows system app chooser command without shell interpolation', () => {
   expect(
     resolveSystemOpenWithCommand('C:\\workspace with spaces\\archive.zip', 'win32', 'C:\\Windows'),
@@ -479,7 +582,7 @@ test('does not recreate a file deleted after it was previewed', async () => {
   expect(fs.existsSync(filePath)).toBe(false);
 });
 
-test.each(['notes.txt#payload', 'unsupported.pdf'])(
+test.each(['notes.txt#payload', 'unsupported.docx'])(
   'rejects a real file whose exact extension is unsupported: %s',
   async fileName => {
     const workingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-preview-'));

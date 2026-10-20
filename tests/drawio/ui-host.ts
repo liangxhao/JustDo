@@ -5,6 +5,7 @@ import { McpAppMethod } from '../../src/shared/plugins/mcpApps';
 import { mountMcpList } from './list-host';
 const fixture = window as unknown as {
   fixturePayload: Record<string, unknown>;
+  fixtureFile: { name: string; resourceUri: string; xml: string } | null;
   fixtureView: McpAppView;
   downloads: unknown[];
   fixtureSwitchSession: (active: boolean) => void;
@@ -21,7 +22,11 @@ window.electron = {
 const identity = {
   viewId: 'drawio-offline',
   serverName: 'drawio',
-  toolName: new URLSearchParams(location.search).has('blank') ? 'open_editor' : 'create_diagram',
+  toolName: new URLSearchParams(location.search).has('file')
+    ? 'open_file'
+    : new URLSearchParams(location.search).has('blank')
+      ? 'open_editor'
+      : 'create_diagram',
   uiResourceUri: 'ui://drawio/editor',
   toolCallId: 'offline-test',
 };
@@ -29,13 +34,15 @@ const client = {
   generation: 1,
   gatewayUrl: 'ws://127.0.0.1:18789',
   subscribeEvents: () => () => undefined,
-  request: async (method: string) =>
-    method === McpAppMethod.View
-      ? {
-          ...fixture.fixturePayload,
-          messageSupported: true,
-        }
-      : {},
+  request: async (method: string, params: Record<string, unknown>) => {
+    if (method === McpAppMethod.View) return { ...fixture.fixturePayload, messageSupported: true };
+    if (method === McpAppMethod.ReadResource) {
+      if (!fixture.fixtureFile || params.uri !== fixture.fixtureFile.resourceUri)
+        throw new Error('Not the opened fixture file');
+      return { contents: [{ uri: params.uri, text: fixture.fixtureFile.xml }] };
+    }
+    return {};
+  },
 };
 let active = true;
 const apps = new McpAppSession(() =>

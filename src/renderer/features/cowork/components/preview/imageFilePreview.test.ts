@@ -21,6 +21,10 @@ describe('sidebar image sources', () => {
 
   it('accepts supported images but rejects executable sources and non-image data', () => {
     expect(isImageFilePath('photo.JPEG')).toBe(true);
+    expect(isImageFilePath('photo.JFIF')).toBe(true);
+    expect(isImageFilePath('animation.apng')).toBe(true);
+    expect(isImageFilePath('photo.jpe')).toBe(true);
+    expect(isImageFilePath('source.psd')).toBe(false);
     expect(isImageFilePath('document.pdf')).toBe(false);
     expect(createImageFilePreview('data:image/png;base64,AA==', '')?.label).toBe('');
     expect(createImageFilePreview('https://example.com/image.png', 'photo')?.label).toBe('photo');

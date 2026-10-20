@@ -199,6 +199,7 @@ export function renderCoworkHomeWorkspace({
               homeDisplayTabs.length === 0 || activeDisplayTabId === WORKSPACE_FILES_DISPLAY_TAB_ID
             }
             tabs={homeDisplayTabs}
+            fileAppCatalog={mcpAppMenu?.fileCatalog}
             workspacePath={homeWorkspaceFolderPath ?? undefined}
             fileContextPath={activeFilePreview?.filePath ?? activeUnsupportedFilePath}
             emptyState={
@@ -277,7 +278,10 @@ export function renderCoworkHomeWorkspace({
                 }}
                 preview={preview}
                 onClose={() => void closeFilePreview(preview.filePath)}
-                isObscured={activeFilePreview?.filePath !== preview.filePath}
+                isObscured={
+                  (!isDisplayPanelOpen && !isWorkspaceDetached) ||
+                  activeFilePreview?.filePath !== preview.filePath
+                }
                 embedded
               />
             ))}

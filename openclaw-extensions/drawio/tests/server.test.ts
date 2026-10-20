@@ -1,6 +1,7 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -12,6 +13,43 @@ beforeAll(async () => {
   delete process.env.DIAGRAM_SERVER_TEST;
 });
 describe('offline diagram MCP service', () => {
+  it('advertises a file entrypoint and passes only the native resource reference to the App', async () => {
+    const native = server.createDiagramServer({ read: async () => ({ contents: [] }) });
+    const client = new Client({ name: 'file-test', version: '1' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await native.connect(serverTransport);
+    try {
+      await client.connect(clientTransport);
+      const tools = await client.listTools();
+      const fileTool = tools.tools.find(tool => tool.name === 'open_file');
+      expect(fileTool?._meta?.ui).toEqual({
+        resourceUri: 'ui://drawio/editor',
+        visibility: ['app'],
+      });
+      expect(fileTool?._meta?.['openai/ui']).toEqual({
+        entrypoints: [{ type: 'file', extensions: ['.drawio'] }],
+      });
+      const file = {
+        name: '采购流程.DRAWIO',
+        resourceUri: 'openclaw-file://12345678-1234-1234-1234-123456789abc',
+      };
+      const opened = await client.callTool({ name: 'open_file', arguments: { file } });
+      expect(opened.isError).not.toBe(true);
+      expect(opened.structuredContent).toEqual({ file });
+      for (const invalid of [
+        { ...file, resourceUri: 'file:///private/diagram.drawio' },
+        { ...file, name: '../diagram.drawio' },
+        { ...file, name: 'spreadsheet.xlsx' },
+      ]) {
+        expect(
+          (await client.callTool({ name: 'open_file', arguments: { file: invalid } })).isError,
+        ).toBe(true);
+      }
+    } finally {
+      await client.close();
+      await native.close();
+    }
+  });
   it('opens an empty editor through the advertised App-only manual entry without drawing arguments', async () => {
     const native = server.createDiagramServer({ read: async () => ({ contents: [] }) });
     const client = new Client({ name: 'manual-test', version: '1' });

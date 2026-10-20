@@ -1,4 +1,4 @@
-import { mkdtemp, rm,writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -52,4 +52,12 @@ test('serves exact byte ranges and rejects unsatisfiable ranges for local media'
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('preserves UNC media hosts when streaming a file preview', async () => {
+  mocks.fetch.mockResolvedValue(new Response('audio'));
+  registerLocalFileProtocol();
+  const handler = mocks.handle.mock.calls.find(call => call[0] === 'localmedia')![1];
+  await handler(new Request('localmedia://local//server/share/sound%20%231.wav'));
+  expect(mocks.fetch).toHaveBeenCalledWith('file://server/share/sound%20%231.wav');
 });

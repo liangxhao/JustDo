@@ -319,6 +319,7 @@ export function useHomeFileApps(options: Options): {
     discover,
     menu: {
       sessionId: HOME_DISPLAY_SESSION_KEY,
+      fileCatalog: currentCatalog?.value,
       items: currentCatalog
         ? currentCatalog.value.servers.flatMap(server => {
             const entries = server.entrypoints.filter(entry => entry.entrypoint.type === 'global');

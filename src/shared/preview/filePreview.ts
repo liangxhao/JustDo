@@ -41,6 +41,47 @@ export const PREVIEWABLE_FILE_EXTENSIONS = [
   '.cpp',
   '.cs',
   '.sql',
+  '.tsv',
+  '.ndjson',
+  '.cfg',
+  '.config',
+  '.cnf',
+  '.srt',
+  '.vtt',
+  '.ass',
+  '.lrc',
+  '.diff',
+  '.patch',
+  '.vue',
+  '.svelte',
+  '.astro',
+  '.rb',
+  '.php',
+  '.lua',
+  '.r',
+  '.kt',
+  '.kts',
+  '.swift',
+  '.scala',
+  '.hpp',
+  '.cc',
+  '.cxx',
+  '.sass',
+  '.styl',
+  '.graphql',
+  '.gql',
+  '.proto',
+  '.ipynb',
+  '.http',
+  '.rest',
+  '.rst',
+  '.adoc',
+  '.tex',
+  '.bib',
+  '.lock',
+  '.mk',
+  '.service',
+  '.desktop',
 ] as const;
 
 export const MAX_PREVIEW_FILE_BYTES = 2 * 1024 * 1024;
@@ -98,14 +139,50 @@ const PREVIEWABLE_EXTENSIONLESS_FILE_NAMES: Record<string, PreviewableFileExtens
   procfile: '.txt',
 };
 
+export const AUDIO_PREVIEW_EXTENSIONS = [
+  '.mp3',
+  '.wav',
+  '.wave',
+  '.ogg',
+  '.oga',
+  '.opus',
+  '.flac',
+  '.m4a',
+  '.m4b',
+  '.aac',
+  '.weba',
+] as const;
+export const VIDEO_PREVIEW_EXTENSIONS = ['.mp4', '.m4v', '.webm', '.mov', '.mkv'] as const;
+
+export type BrowserFilePreviewKind = 'pdf' | 'audio' | 'video';
+
+export interface BrowserFilePreview {
+  kind: BrowserFilePreviewKind;
+  filePath: string;
+  url: string;
+}
+
+export const getBrowserFilePreviewKind = (filePath: string): BrowserFilePreviewKind | null => {
+  const extension = /\.[^.\\/]+$/u.exec(filePath)?.[0].toLowerCase();
+  if (extension === '.pdf') return 'pdf';
+  if (AUDIO_PREVIEW_EXTENSIONS.some(candidate => candidate === extension)) return 'audio';
+  if (VIDEO_PREVIEW_EXTENSIONS.some(candidate => candidate === extension)) return 'video';
+  return null;
+};
+
+export const isBrowserFilePreview = (value: { kind?: string }): value is BrowserFilePreview =>
+  value.kind === 'pdf' || value.kind === 'audio' || value.kind === 'video';
+
 export type FilePreviewReadResult =
   | {
       success: true;
+      kind?: 'text';
       content: string;
       editToken: string;
       filePath: string;
       version: string;
     }
+  | ({ success: true } & BrowserFilePreview)
   | {
       success: false;
       error?: string;

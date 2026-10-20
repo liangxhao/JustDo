@@ -429,6 +429,172 @@ test('withdraws menu actions after native binding changes or controls unmount', 
   expect(launch).not.toHaveBeenCalled();
 });
 
+test('withdraws file icons while rediscovering plugins and ignores an older catalog response', async () => {
+  const listeners = new Map<string, () => void>();
+  const stopConfig = vi.fn();
+  const stopExtensions = vi.fn();
+  vi.stubGlobal('electron', {
+    mcp: {
+      onConfigSyncDone: (listener: () => void) => {
+        listeners.set('config', listener);
+        return stopConfig;
+      },
+    },
+    extensions: {
+      onChanged: (listener: () => void) => {
+        listeners.set('extensions', listener);
+        return stopExtensions;
+      },
+    },
+  });
+  const catalog: McpAppDiscovery = {
+    servers: [
+      {
+        serverName: 'diagrams',
+        label: 'Diagrams',
+        icons: [{ src: 'data:image/png;base64,aWNvbg==' }],
+        entrypoints: [
+          {
+            toolName: 'open_file',
+            title: 'Diagrams',
+            resourceUri: 'ui://diagrams/editor',
+            entrypoint: { type: 'file', extensions: ['.drawio'] },
+          },
+        ],
+      },
+    ],
+  };
+  let resolveOlder!: (catalog: McpAppDiscovery) => void;
+  const discover = vi
+    .fn()
+    .mockResolvedValueOnce(catalog)
+    .mockReturnValueOnce(
+      new Promise<McpAppDiscovery>(resolve => {
+        resolveOlder = resolve;
+      }),
+    )
+    .mockResolvedValueOnce({ servers: [] });
+  const apps = {
+    discoveryRevision: 1,
+    subscribe: () => () => {},
+    discover,
+  } as unknown as McpAppSession;
+  const onMenuChange = vi.fn();
+  const view = render(
+    <McpAppsControls
+      apps={apps}
+      prepare={vi.fn()}
+      sessionId="session"
+      canDraft={() => true}
+      addDraft={vi.fn()}
+      onOnboard={vi.fn()}
+      onMenuChange={onMenuChange}
+    />,
+  );
+  await waitFor(() => expect(onMenuChange.mock.lastCall?.[0].fileCatalog).toBe(catalog));
+  act(() => listeners.get('extensions')!());
+  expect(onMenuChange.mock.lastCall?.[0].fileCatalog).toBeUndefined();
+  await act(async () => listeners.get('config')!());
+  expect(onMenuChange.mock.lastCall?.[0].fileCatalog).toEqual({ servers: [] });
+  await act(async () => resolveOlder(catalog));
+  expect(onMenuChange.mock.lastCall?.[0].fileCatalog).toEqual({ servers: [] });
+  view.unmount();
+  expect(stopConfig).toHaveBeenCalledOnce();
+  expect(stopExtensions).toHaveBeenCalledOnce();
+});
+
+test.each(['resolved', 'rejected'])(
+  'ignores a manual catalog refresh %s after a newer plugin refresh',
+  async completion => {
+    i18nService.setLanguage('en', { persist: false });
+    let refreshPlugins!: () => void;
+    vi.stubGlobal('electron', {
+      extensions: {
+        onChanged: (listener: () => void) => {
+          refreshPlugins = listener;
+          return () => {};
+        },
+      },
+    });
+    const remaining: McpAppDiscovery = {
+      servers: [
+        { serverName: 'reports', label: 'Reports', entrypoints: [], mentionTool: 'search' },
+      ],
+    };
+    const original: McpAppDiscovery = {
+      servers: [
+        ...remaining.servers,
+        {
+          serverName: 'diagrams',
+          label: 'Diagrams',
+          icons: [{ src: 'data:image/png;base64,aWNvbg==' }],
+          entrypoints: [
+            {
+              toolName: 'open_file',
+              title: 'Diagrams',
+              resourceUri: 'ui://diagrams/editor',
+              entrypoint: { type: 'file', extensions: ['.drawio'] },
+            },
+          ],
+        },
+      ],
+    };
+    let resolveManual!: (value: McpAppDiscovery) => void;
+    let rejectManual!: (error: Error) => void;
+    const discover = vi
+      .fn()
+      .mockResolvedValueOnce(original)
+      .mockReturnValueOnce(
+        new Promise<McpAppDiscovery>((resolve, reject) => {
+          resolveManual = resolve;
+          rejectManual = reject;
+        }),
+      )
+      .mockResolvedValueOnce(remaining);
+    const apps = {
+      discoveryRevision: 1,
+      subscribe: () => () => {},
+      discover,
+    } as unknown as McpAppSession;
+    const context = { apps, isCurrent: () => true } as McpAppViewContext;
+    const onMenuChange = vi.fn();
+    render(
+      <>
+        <McpAppsControls
+          apps={apps}
+          prepare={async () => context}
+          sessionId="session"
+          canDraft={() => true}
+          addDraft={vi.fn()}
+          onOnboard={vi.fn()}
+          onMenuChange={onMenuChange}
+        />
+        <aside id="cowork-display-panel">
+          <div data-testid="workspace-controls" />
+        </aside>
+      </>,
+    );
+    await waitFor(() => expect(onMenuChange.mock.lastCall?.[0].fileCatalog).toBe(original));
+    act(() => onMenuChange.mock.lastCall![0].items[0].onSelect());
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('mcpAppsRefresh') }));
+    await waitFor(() => expect(discover).toHaveBeenCalledTimes(2));
+    act(() => refreshPlugins());
+    await waitFor(() => expect(onMenuChange.mock.lastCall?.[0].fileCatalog).toBe(remaining));
+    await act(async () => {
+      if (completion === 'resolved') resolveManual(original);
+      else rejectManual(new Error('Old catalog unavailable'));
+    });
+    expect(onMenuChange.mock.lastCall?.[0].fileCatalog).toBe(remaining);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(
+      await onMenuChange.mock.lastCall![0].openFile({
+        filePath: '/work/flow.drawio',
+        isCurrent: () => true,
+      }),
+    ).toBe(false);
+  },
+);
+
 test.each([false, true])(
   'reserves a file tab only in the current navigation scope without composer loading (stale=%s)',
   async stale => {

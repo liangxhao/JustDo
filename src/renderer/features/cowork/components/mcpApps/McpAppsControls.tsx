@@ -54,6 +54,7 @@ const menuEntries = (server: McpAppDiscoveredServer, filePath?: string) =>
 export interface McpAppComposerMenu {
   sessionId: string;
   items: readonly ComposerFeatureItem[];
+  fileCatalog?: McpAppDiscovery;
   openFile?: OpenMcpAppFile;
 }
 
@@ -93,6 +94,7 @@ export function McpAppsControls({
   const lifecycle = useRef({
     version: 0,
     fileEpoch: 0,
+    catalogRevision: 0,
     operations: new Set<AbortController>(),
   }).current;
   const root = useRef<HTMLDivElement>(null);
@@ -110,16 +112,16 @@ export function McpAppsControls({
     setError('');
     setBusy(false);
     const abort = new AbortController();
-    let discovery = 0;
     let bindingRevision = apps.discoveryRevision;
     const refresh = () => {
-      const own = ++discovery;
+      const own = ++lifecycle.catalogRevision;
+      setCatalog(undefined);
       // Discover only an already-bound native conversation. The mere presence
       // of these controls must not create a session or prepare a model send.
       void apps
         .discover(abort.signal)
         .then(value => {
-          if (abort.signal.aborted || own !== discovery) return;
+          if (abort.signal.aborted || own !== lifecycle.catalogRevision) return;
           setCatalog(value);
           if (!value.servers.length && !value.onboarding?.length && ownedControls.current)
             closeWorkspaceAppControls(ownedControls.current);
@@ -134,14 +136,19 @@ export function McpAppsControls({
         refresh();
       }
     });
+    const stopConfig = window.electron.mcp?.onConfigSyncDone?.(refresh);
+    const stopExtensions = window.electron.extensions?.onChanged?.(refresh);
     return () => {
       if (ownedControls.current) closeWorkspaceAppControls(ownedControls.current);
       abort.abort();
       lifecycle.version++;
       lifecycle.fileEpoch++;
+      lifecycle.catalogRevision++;
       for (const operation of lifecycle.operations) operation.abort();
       lifecycle.operations.clear();
       stop();
+      stopConfig?.();
+      stopExtensions?.();
     };
   }, [apps, sessionId, lifecycle]);
   const run = async (
@@ -171,7 +178,17 @@ export function McpAppsControls({
       if (own === lifecycle.version) setBusy(false);
     }
   };
-  const discover = () => run(async signal => setCatalog(await apps.discover(signal)));
+  const discover = () =>
+    run(async signal => {
+      // Manual and event-driven reads share freshness so neither can restore an older catalog.
+      const own = ++lifecycle.catalogRevision;
+      try {
+        const value = await apps.discover(signal);
+        if (!signal.aborted && own === lifecycle.catalogRevision) setCatalog(value);
+      } catch (error) {
+        if (!signal.aborted && own === lifecycle.catalogRevision) throw error;
+      }
+    });
   const show = (value: unknown, context: McpAppViewContext, signal: AbortSignal) => {
     const preview = decodeMcpAppLaunch(value);
     if (preview && context.isCurrent() && !signal.aborted) {
@@ -257,6 +274,7 @@ export function McpAppsControls({
     const available = () => active && revision === apps.discoveryRevision && canDraft();
     onMenuChange({
       sessionId,
+      fileCatalog: canDraft() ? catalog : undefined,
       openFile: async request => {
         if (!available() || !request.isCurrent()) return false;
         const input = findFileApp(fileActions.current.catalog, request.filePath);

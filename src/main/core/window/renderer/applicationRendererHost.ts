@@ -26,9 +26,6 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
   '.ttf': 'font/ttf',
   '.otf': 'font/otf',
   '.wasm': 'application/wasm',
-  '.bcmap': 'application/octet-stream',
-  '.pfb': 'application/octet-stream',
-  '.icc': 'application/octet-stream',
 };
 const ASSET_EXTENSIONS = new Set([
   '.js',
@@ -48,7 +45,6 @@ const ASSET_EXTENSIONS = new Set([
   '.otf',
   '.wasm',
 ]);
-const PDF_ASSET_EXTENSIONS = new Set(['.js', '.wasm', '.bcmap', '.pfb', '.ttf', '.otf', '.icc']);
 
 type PackagedAssetMetadata = {
   absolutePath: string;
@@ -77,15 +73,11 @@ const allowedPackagedAsset = (relative: string): boolean => {
     )
   )
     return false;
-  if (['index.html', 'image-preview.html', 'workspace.html'].includes(relative)) return true;
+  if (['index.html', 'image-preview.html', 'workspace.html'].includes(relative))
+    return true;
   const extension = path.extname(relative).toLowerCase();
   if (segments[0] === 'assets') return ASSET_EXTENSIONS.has(extension);
-  return (
-    segments.length === 3 &&
-    segments[0] === 'pdfjs' &&
-    ['cmaps', 'standard_fonts', 'wasm', 'iccs'].includes(segments[1]) &&
-    PDF_ASSET_EXTENSIONS.has(extension)
-  );
+  return false;
 };
 
 /** Decode before checking segments so URL normalization cannot hide traversal. */
@@ -174,7 +166,7 @@ const collectPackagedAssets = async (
     )
       return;
     if (stats.isDirectory()) {
-      if (relative && !/^(?:assets|pdfjs)(?:[/\\]|$)/u.test(relative)) return;
+      if (relative && !/^assets(?:[/\\]|$)/u.test(relative)) return;
       if (relative.split(path.sep).length > 16)
         throw new Error('Packaged renderer asset tree too deep');
       for (const child of await readdir(candidate)) {

@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest';
 
-import { getPreviewableFileExtension, PREVIEWABLE_FILE_EXTENSIONS } from './filePreview';
+import {
+  getBrowserFilePreviewKind,
+  getPreviewableFileExtension,
+  PREVIEWABLE_FILE_EXTENSIONS,
+} from './filePreview';
 
 describe('getPreviewableFileExtension', () => {
   test.each(PREVIEWABLE_FILE_EXTENSIONS)(
@@ -38,4 +42,19 @@ describe('getPreviewableFileExtension', () => {
   ])('recognizes common workspace file %s', (filePath, expectedExtension) => {
     expect(getPreviewableFileExtension(filePath)).toBe(expectedExtension);
   });
+});
+
+test.each([
+  ['report.PDF', 'pdf'],
+  ['sound.mp3', 'audio'],
+  ['sound.opus', 'audio'],
+  ['movie.webm', 'video'],
+  ['movie.mkv', 'video'],
+  ['movie.mov', 'video'],
+  ['sound.mp3.exe', null],
+  ['movie.mp4#payload', null],
+  ['report.docx', null],
+  ['legacy.ogv', null],
+])('classifies browser preview path %s', (filePath, expected) => {
+  expect(getBrowserFilePreviewKind(filePath)).toBe(expected);
 });

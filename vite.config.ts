@@ -6,7 +6,6 @@ import electron from 'vite-plugin-electron';
 import renderer from 'vite-plugin-electron-renderer';
 
 import packageJson from './package.json';
-import { pdfAssetsPlugin } from './scripts/build/vite-pdf-assets.mjs';
 import { reactHooksRefreshPlugin } from './scripts/build/vite-react-hooks-refresh.mjs';
 
 // https://vitejs.dev/config/
@@ -26,7 +25,6 @@ export default defineConfig({
   root: rendererRoot,
   envDir: projectRoot,
   plugins: [
-    pdfAssetsPlugin(dependencyRoot),
     {
       name: 'product-name-html',
       transformIndexHtml(html) {

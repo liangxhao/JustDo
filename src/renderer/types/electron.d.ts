@@ -131,8 +131,6 @@ type BrowserMode = import('../../shared/browser/browser').BrowserMode;
 type BrowserModeSwitchAvailabilityResult =
   import('../../shared/browser/browser').BrowserModeSwitchAvailabilityResult;
 type BrowserModeUpdateResult = import('../../shared/browser/browser').BrowserModeUpdateResult;
-type BrowserPdfLoadRequest = import('../../shared/browser/browser').BrowserPdfLoadRequest;
-type BrowserPdfLoadResult = import('../../shared/browser/browser').BrowserPdfLoadResult;
 type BrowserPanelOpenTabEvent = import('../../shared/browser/browser').BrowserPanelOpenTabEvent;
 type BrowserPanelHttpAuthRequest =
   import('../../shared/browser/browser').BrowserPanelHttpAuthRequest;
@@ -487,8 +485,6 @@ interface IElectronAPI {
       filePath: string,
       workingDirectory?: string,
     ) => Promise<BrowserLocalHtmlPreviewResult>;
-    loadPdf: (request: BrowserPdfLoadRequest) => Promise<BrowserPdfLoadResult>;
-    cancelPdf: (requestId: string) => void;
     getStatus: () => Promise<BrowserStatusResult>;
     canSetMode: () => Promise<BrowserModeSwitchAvailabilityResult>;
     setMode: (mode: BrowserMode) => Promise<BrowserModeUpdateResult>;

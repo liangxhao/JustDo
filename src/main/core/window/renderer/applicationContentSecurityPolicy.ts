@@ -10,7 +10,7 @@ export const buildApplicationContentSecurityPolicy = ({
   devServerPort,
   inlineScriptHashes = [],
 }: ApplicationContentSecurityPolicyOptions): string => {
-  const scripts = ["'self'", "'wasm-unsafe-eval'"];
+  const scripts = ["'self'"];
   if (isDev) {
     scripts.push(
       "'unsafe-inline'",

@@ -40,6 +40,14 @@ UML、ER 和网络图使用实际可用的绘图 MCP 工具；先搜索目录，
 会话首页也可从侧边栏首页的真实应用目录选择 draw.io；运行时就绪后按全局工作目录和助手后台预热首页目录，当前显示已有会话时也开始准备。打开侧边栏首页复用结果，点击后才启动画布。加载或读取失败时显示相应状态，避免把尚未完成的读取表现成入口缺失。
 首页与会话页使用固定位置的画布容器，切换时不移动已运行的 iframe 子树，避免浏览器重建内部文档而出现白屏或丢失编辑。
 
+点击首页或会话文件树中的 `.drawio` 文件，以及消息中的本地 `.drawio` 附件，会通过
+同一原生发现目录进入插件的 App-only `open_file` 文件入口。Gateway 校验文件属于
+当前会话工作区后，把绑定当前视图的 `openclaw-file://` 资源引用传给编辑器；插件
+沿标准 AppBridge 读取 UTF-8 XML，不在 MCP 进程中按任意路径读取文件，也不新开
+本地文件服务。支持未压缩图表及由 draw.io 解码的压缩 `mxfile`，文件上限为 1 MiB；
+无效 XML、DTD、超限或读取失败显示打开失败提示。打开不改写原文件，编辑后仍通过
+现有保存对话框保存 `.drawio` 或导出 PNG/SVG。
+
 “MCP Apps 交互界面”是宿主能力开关，不负责安装应用或创建目录入口。
 “沿用原生设置”保留显式原生选择，未配置时开启；改成“启用”并不必然带来界面变化。
 
@@ -84,9 +92,11 @@ HTML 资源保持在原生 2 MiB 上限内，绘图脚本不塞入工具结果�
 
 - `openclaw-extensions/drawio/tests/server.test.ts` 覆盖 XML、DTD、体积限制、HTTP 路径和 CSP；同目录的 `ports.test.ts` 覆盖禁用端口、关闭后重选、重试上限与失败清理，`assets.test.ts` 覆盖资源损坏与缺失。
 - `node tests/drawio/native-smoke.mjs` 使用隔离状态及实际组装的原生运行时，验证插件发现、标准工具元数据、正常工具物化和原生 App 准入，不请求模型。
-- `node tests/mcp-apps/gateway-smoke.cjs --drawio` 使用隔离 Gateway 验证实际绘图服务的手动入口发现、原生启动和视图读取，确认对话仍为空，不发起模型请求。
+- `node tests/mcp-apps/gateway-smoke.cjs --drawio` 使用隔离 Gateway 验证实际绘图服务的手动与文件入口发现、原生启动和文件资源读取，拒绝跨视图和工作区外文件，确认对话仍为空，不发起模型请求。
 - `node tests/drawio/offline-smoke.cjs --runtime` 使用全新 Chromium profile、实际产品视图及原生双层沙箱，拦截公网，验证源文件/PNG/SVG 导出、展开、主题和窄窗口。该 UI 探针只替代 Gateway 身份接口和原生保存对话框；Main 文件保存另有权限与取消测试。
 - `node tests/drawio/offline-smoke.cjs --blank` 验证新手动入口返回的空白画布能够加载和保存，界面不请求公网。
+- `node tests/drawio/offline-smoke.cjs --file` 验证文件入口返回的资源通过产品 AppBridge 加载到真实编辑器，能够修改并保存源文件、导出 PNG/SVG，界面不请求公网；该 UI 探针的文件读取使用隔离 fixture，真实 Gateway 文件准入另由上述 Gateway 探针验证。
+  加 `--compressed` 使用真实压缩 `mxfile` 验证编辑器解码和导出。
 - `node tests/drawio/offline-smoke.cjs --runtime --blank --unsafe-port` 强制隔离服务首次分到真实 `6000` 端口，验证丢弃该端口后的实际 Chromium 编辑器加载和源文件保存；旧版本在相同条件下复现 `ERR_UNSAFE_PORT` 白屏。该探针不修改浏览器端口策略，不占用或停止产品的现有监听。
 - `node tests/drawio/packaged-smoke.cjs` 使用实际 Windows tar/zstd 打包器与发布后的解包校验器验证整个资源集合及许可证；macOS/Linux 使用独立资源复制，避免通用裁剪规则破坏哈希集合。
 - `node tests/drawio/offline-smoke.cjs --serve` 提供隔离的本地交互预览；这是测试页面，不读取用户会话、配置或凭据。

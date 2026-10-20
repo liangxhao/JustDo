@@ -98,6 +98,74 @@ test('unavailable file apps preserve the ordinary unsupported-file preview', asy
   expect(result.current.unsupportedFilePreviews).toEqual(['E:/预算.xlsx']);
 });
 
+test.each([
+  ['tree', 'pdf'],
+  ['message', 'pdf'],
+  ['summary', 'pdf'],
+  ['tree', 'audio'],
+  ['message', 'video'],
+])(
+  'opens from %s as %s in the native sidebar, reuses its tab and preserves the file tree',
+  async (entry, kind) => {
+    const filePath = `E:/output/report.${kind === 'pdf' ? 'pdf' : kind === 'audio' ? 'mp3' : 'webm'}`;
+    const preview = { kind, filePath, url: `file:///${filePath}` };
+    const readPreviewFile = vi.fn().mockResolvedValue({ success: true, ...preview });
+    const openPath = vi.fn();
+    const openAppFile = vi.fn().mockResolvedValue(true);
+    vi.stubGlobal('electron', { shell: { readPreviewFile, openPath } });
+    const { result } = renderHook(() => usePreviewHarness(openAppFile));
+    act(() => result.current.openFiles());
+    const openFile = () =>
+      window.dispatchEvent(
+        new CustomEvent('cowork:preview-file', {
+          detail: {
+            filePath,
+            ...(entry === 'tree' ? { keepWorkspaceFilesOpen: true } : {}),
+            ...(entry === 'summary' ? { openUnsupportedInSystem: true } : {}),
+          },
+        }),
+      );
+    await act(async () => {
+      openFile();
+    });
+    expect(result.current.filePreviews).toEqual([preview]);
+    expect(result.current.isWorkspaceFilesOpen).toBe(true);
+    expect(result.current.preferredDisplayTabId).toBe(fileDisplayTabId(filePath));
+    expect(result.current.unsupportedFilePreviews).toEqual([]);
+    await act(async () => {
+      openFile();
+    });
+    expect(result.current.filePreviews).toHaveLength(1);
+    expect(readPreviewFile).toHaveBeenCalledTimes(1);
+    expect(openPath).not.toHaveBeenCalled();
+    expect(openAppFile).not.toHaveBeenCalled();
+  },
+);
+
+test('ignores a PDF preparation result after switching sessions without revoking a nonexistent edit grant', async () => {
+  let finish!: (value: FilePreviewReadResult) => void;
+  const readPreviewFile = vi.fn(
+    () =>
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+  );
+  const revokePreviewFileEdit = vi.fn();
+  vi.stubGlobal('electron', { shell: { readPreviewFile, revokePreviewFileEdit } });
+  const { result } = renderHook(usePreviewHarness);
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent('cowork:preview-file', { detail: { filePath: 'E:/report.pdf' } }),
+    );
+    result.current.switchSession();
+  });
+  await act(async () =>
+    finish({ success: true, kind: 'pdf', filePath: 'E:/report.pdf', url: 'file:///E:/report.pdf' }),
+  );
+  expect(result.current.filePreviews).toEqual([]);
+  expect(revokePreviewFileEdit).not.toHaveBeenCalled();
+});
+
 test('switching session while the app opens cannot fall back into the new session', async () => {
   let finish!: (opened: boolean) => void;
   const openAppFile = vi.fn(

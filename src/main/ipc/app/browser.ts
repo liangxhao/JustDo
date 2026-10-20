@@ -27,7 +27,6 @@ import {
   type BrowserMode as BrowserModeValue,
   type BrowserModeSwitchAvailabilityResult,
   type BrowserModeUpdateResult,
-  type BrowserPdfLoadResult,
   type BrowserPortOwner,
   isBrowserClearDataRange,
   isBrowserProfileRunning,
@@ -54,7 +53,6 @@ import {
 } from '../../browser/data/browserDataImportService';
 import { readBrowserExtensionPairing } from '../../browser/extension/browserExtensionPairing';
 import { loadBrowserHistoryFavicon } from '../../browser/history/browserHistoryFavicon';
-import { isBrowserPdfLoadRequest, loadBrowserPdf } from '../../browser/pdf/browserPdfService';
 import {
   createLocalHtmlPreview,
   resolveLocalHtmlPreviewFilePath,
@@ -525,17 +523,6 @@ export const registerBrowserHandlers = ({
     }
     return openBrowserUrlInChrome(url);
   });
-  const pdfLoads = new Map<Electron.WebContents, Map<string, AbortController>>();
-  const observedPdfOwners = new WeakSet<Electron.WebContents>();
-  ipcMain.on(BrowserIpc.CancelPdf, (event, requestId: unknown) => {
-    if (
-      event.sender.getType() !== 'window' ||
-      event.senderFrame !== event.sender.mainFrame ||
-      typeof requestId !== 'string'
-    )
-      return;
-    pdfLoads.get(event.sender)?.get(requestId)?.abort();
-  });
   ipcMain.handle(
     BrowserIpc.CreateLocalHtmlPreview,
     (event, filePath: unknown, workingDirectory?: unknown) => {
@@ -550,37 +537,6 @@ export const registerBrowserHandlers = ({
         filePath,
         typeof workingDirectory === 'string' ? workingDirectory : undefined,
       );
-    },
-  );
-  ipcMain.handle(
-    BrowserIpc.LoadPdf,
-    async (event, request: unknown): Promise<BrowserPdfLoadResult> => {
-      if (
-        event.sender.getType() !== 'window' ||
-        event.senderFrame !== event.sender.mainFrame ||
-        !isBrowserPdfLoadRequest(request)
-      ) {
-        return { success: false, errorCode: 'invalid_request' };
-      }
-      const owner = event.sender;
-      const requests = pdfLoads.get(owner) ?? new Map<string, AbortController>();
-      if (requests.has(request.requestId)) return { success: false, errorCode: 'invalid_request' };
-      const controller = new AbortController();
-      requests.set(request.requestId, controller);
-      pdfLoads.set(owner, requests);
-      if (!observedPdfOwners.has(owner)) {
-        observedPdfOwners.add(owner);
-        owner.once('destroyed', () => {
-          pdfLoads.get(owner)?.forEach(pending => pending.abort());
-          pdfLoads.delete(owner);
-        });
-      }
-      try {
-        return await loadBrowserPdf(request, controller.signal);
-      } finally {
-        requests.delete(request.requestId);
-        if (!requests.size) pdfLoads.delete(owner);
-      }
     },
   );
   ipcMain.handle(BROWSER_GUEST_CREDENTIALS_GET_CHANNEL, event => {

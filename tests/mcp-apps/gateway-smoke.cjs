@@ -22,7 +22,11 @@ const { pathToFileURL } = require('node:url');
   const listener = net.createServer();
   await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
   const port = listener.address().port;
+  const sandboxListener = net.createServer();
+  await new Promise(resolve => sandboxListener.listen(0, '127.0.0.1', resolve));
+  const sandboxPort = sandboxListener.address().port;
   await new Promise(resolve => listener.close(resolve));
+  await new Promise(resolve => sandboxListener.close(resolve));
   const config = {
     logging: { file: path.join(state, 'native.jsonl') },
     gateway: { mode: 'local', bind: 'loopback', port, auth: { mode: 'token', token } },
@@ -38,7 +42,7 @@ const { pathToFileURL } = require('node:url');
     },
     plugins: { enabled: historyRecovery, allow: [] },
     mcp: {
-      apps: { enabled: true },
+      apps: { enabled: true, sandboxPort },
       servers: drawio
         ? {
             drawio: {
@@ -330,6 +334,54 @@ const { pathToFileURL } = require('node:url');
       const view = await client.request('mcp.app.view', { ...scope, viewId: launched.viewId });
       assert.match(view.toolResult.structuredContent.xml, /<mxGraphModel>/);
       assert.match(view.html, /DIAGRAM_ASSET_BASE/);
+      const fileEntry = server?.entrypoints.find(
+        item => item.toolName === 'open_file' && item.entrypoint.type === 'file',
+      );
+      assert.deepEqual(fileEntry?.entrypoint.extensions, ['.drawio']);
+      const xml = fs.readFileSync(
+        path.join(root, 'openclaw-extensions/drawio/tests/fixture.xml'),
+        'utf8',
+      );
+      const filePath = path.join(workspace, '采购 图 #%.drawio');
+      fs.writeFileSync(filePath, xml);
+      const opened = await client.request('mcp.app.launch', {
+        ...scope,
+        serverName: 'drawio',
+        toolName: fileEntry.toolName,
+        entrypointType: 'file',
+        filePath,
+      });
+      const fileTarget = { ...scope, viewId: opened.viewId };
+      const fileView = await client.request('mcp.app.view', fileTarget);
+      const file = fileView.toolInput.file;
+      assert.equal(file.name, path.basename(filePath));
+      assert.equal(fileView.fileResourcesSupported, true);
+      assert.deepEqual(fileView.toolResult.structuredContent, { file });
+      const contents = await client.request('mcp.app.readResource', {
+        ...fileTarget,
+        uri: file.resourceUri,
+        _meta: { 'openai/resource': { representation: 'text' } },
+      });
+      assert.equal(contents.contents[0].text, xml);
+      await assert.rejects(() =>
+        client.request('mcp.app.readResource', {
+          ...scope,
+          viewId: launched.viewId,
+          uri: file.resourceUri,
+        }),
+      );
+      const outsideFile = path.join(state, 'outside.drawio');
+      fs.writeFileSync(outsideFile, xml);
+      await assert.rejects(() =>
+        client.request('mcp.app.launch', {
+          ...scope,
+          serverName: 'drawio',
+          toolName: fileEntry.toolName,
+          entrypointType: 'file',
+          filePath: outsideFile,
+        }),
+      );
+      assert.equal(fs.readFileSync(filePath, 'utf8'), xml, 'Opening a diagram must not modify it');
       const history = await client.request('chat.history', {
         sessionKey: scope.sessionKey,
         limit: 10,
@@ -344,6 +396,10 @@ const { pathToFileURL } = require('node:url');
         JSON.stringify(
           {
             manualEntry: entry.toolName,
+            fileEntry: fileEntry.toolName,
+            fileContentsRead: true,
+            foreignViewRejected: true,
+            outsideWorkspaceRejected: true,
             nativeView: true,
             emptyConversation: true,
           },
@@ -351,7 +407,9 @@ const { pathToFileURL } = require('node:url');
           2,
         ),
       );
-      console.log('Manual draw.io discovery and launch passed without a model request.');
+      console.log(
+        'Manual draw.io discovery, file launch and native resource reads passed without a model request.',
+      );
       return;
     }
     assert.ok(

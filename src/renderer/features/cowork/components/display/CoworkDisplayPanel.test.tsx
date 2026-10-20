@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import type { McpAppDiscovery } from '@shared/plugins/mcpApps';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -7,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { i18nService } from '@/services/i18n';
 
 import WorkspaceFilesPanel from '../preview/WorkspaceFilesPanel';
+import WorkspaceFileIcon from '../shared/WorkspaceFileIcon';
 import CoworkDisplayPanel from './CoworkDisplayPanel';
 
 function setupFileTreeLayout() {
@@ -87,6 +89,71 @@ afterEach(() => {
 });
 
 describe('CoworkDisplayPanel', () => {
+  it('shares the current plugin file icon between tabs and the tree and clears it after disable', async () => {
+    const src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg"/%3E';
+    const catalog: McpAppDiscovery = {
+      servers: [
+        {
+          serverName: 'diagrams',
+          label: 'Diagrams',
+          icons: [{ src }],
+          entrypoints: [
+            {
+              toolName: 'open_file',
+              title: 'Diagrams',
+              resourceUri: 'ui://diagrams/editor',
+              entrypoint: { type: 'file', extensions: ['.drawio'] },
+            },
+          ],
+        },
+      ],
+    };
+    vi.stubGlobal('electron', {
+      shell: {
+        listWorkspaceDirectory: vi.fn().mockResolvedValue({
+          success: true,
+          entries: [
+            {
+              kind: 'file',
+              name: 'flow.drawio',
+              relativePath: 'flow.drawio',
+              filePath: '/work/flow.drawio',
+            },
+          ],
+        }),
+      },
+    });
+    const view = (fileAppCatalog?: McpAppDiscovery) => (
+      <CoworkDisplayPanel
+        activeTabId="file"
+        isOpen
+        onClose={() => undefined}
+        fileAppCatalog={fileAppCatalog}
+        tabs={[
+          {
+            id: 'file',
+            label: 'flow.drawio',
+            icon: <WorkspaceFileIcon fileName="flow.drawio" />,
+            onSelect: () => undefined,
+          },
+        ]}
+        sidePanel={<WorkspaceFilesPanel sessionId="preview" onOpenFile={() => undefined} />}
+      >
+        <div>Diagram preview</div>
+      </CoworkDisplayPanel>
+    );
+    const { container, rerender } = render(view(catalog));
+    await waitFor(() => expect(container.querySelectorAll('img')).toHaveLength(4));
+    expect(
+      [...container.querySelectorAll('img')].every(img => img.getAttribute('src') === src),
+    ).toBe(true);
+    expect(
+      screen.getByRole('tab', { name: 'flow.drawio' }).querySelector('img')?.getAttribute('src'),
+    ).toBe(src);
+    rerender(view({ servers: [] }));
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelectorAll('[data-file-icon-kind="file"]')).toHaveLength(2);
+  });
   it('keeps automatic width at half the container until the user resizes it', () => {
     let availableWidth = 1_000;
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => availableWidth);

@@ -21,7 +21,7 @@ describe('shouldApplyApplicationCsp', () => {
     expect(shouldApplyApplicationCsp('https://example.com/', '', false)).toBe(false);
   });
 
-  it('allows bundled PDF WebAssembly without allowing JavaScript eval', () => {
+  it('keeps JavaScript and WebAssembly eval disabled', () => {
     registerContentSecurityPolicy({ isDev: false, devServerPort: 43127 });
     const handler = onHeadersReceived.mock.lastCall?.[0];
     const callback = vi.fn();
@@ -31,7 +31,7 @@ describe('shouldApplyApplicationCsp', () => {
     const scripts = policy
       .split('; ')
       .find((directive: string) => directive.startsWith('script-src'));
-    expect(scripts).toBe("script-src 'self' 'wasm-unsafe-eval'");
+    expect(scripts).toBe("script-src 'self'");
     expect(scripts).not.toContain("'unsafe-eval'");
     expect(policy).toContain("connect-src 'self' *");
   });

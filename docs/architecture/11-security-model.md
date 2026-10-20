@@ -25,7 +25,7 @@ Gateway 是受管组件，但其可加载的 Node Extension 与宿主工具仍�
 
 当前生产源码没有主动追加 no-sandbox。发布检查仍需查看实际启动参数和平台环境，不能仅凭 BrowserWindow preference 宣称 OS 级隔离始终可用。
 
-安装版应用由只读 loopback HTTP 宿主加载，主窗口不再使用 file 页面；资源清单、Host/来源、真实路径和文件版本在宿主边界校验。应用 CSP 允许 PDF.js 所需 wasm-unsafe-eval，生产脚本仅允许 self 和可信打包入口的 SHA-256 内联哈希，不允许普通 JS eval 或任意 inline script；禁止 object、表单提交和被其他页面嵌入。style 保留 inline，connect-src 仍为 self + 通配，frame 允许 self/http/https，因此 CSP 不是网络访问白名单。Widget 使用独立隔离 origin 与认证，本地 HTML 使用 Chromium 原生文件来源规则，二者不能借应用壳 CSP 获得权限。Markdown、Mermaid 和公式输出仍需统一清洗。
+安装版应用由只读 loopback HTTP 宿主加载，主窗口不再使用 file 页面；资源清单、Host/来源、真实路径和文件版本在宿主边界校验。应用 CSP 的生产脚本仅允许 self 和可信打包入口的 SHA-256 内联哈希，不允许 JS／WebAssembly eval 或任意 inline script；禁止 object、表单提交和被其他页面嵌入。style 保留 inline，connect-src 仍为 self + 通配，frame 允许 self/http/https，因此 CSP 不是网络访问白名单。Widget 使用独立隔离 origin 与认证，本地 HTML 使用 Chromium 原生文件来源规则，二者不能借应用壳 CSP 获得权限。Markdown、Mermaid 和公式输出仍需统一清洗。
 
 外链、guest 导航、子 frame、下载和权限请求分别验证。应用自己的认证弹窗不能被网页或 Agent 输入锁劫持；导航、超时和窗口销毁应取消所属请求。
 

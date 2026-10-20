@@ -23,7 +23,7 @@ export const registerLocalFileProtocol = (): void => {
     // Decode only the drive separator; preserve escaped filename characters.
     const pathname = url.pathname.replace(/^\/([A-Za-z])%3A(?=\/)/i, '/$1:');
     if (url.host !== 'local') return new Response(null, { status: 400 });
-    const fileUrl = `file://${pathname}`;
+    const fileUrl = pathname.startsWith('//') ? `file:${pathname}` : `file://${pathname}`;
     const range = request.headers?.get('Range');
     if (!range) return net.fetch(fileUrl);
     const match = /^bytes=(\d*)-(\d*)$/.exec(range);

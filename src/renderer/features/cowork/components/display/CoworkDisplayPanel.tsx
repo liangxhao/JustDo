@@ -1,7 +1,7 @@
 import './CoworkDisplayPanel.css';
 
 import { ArrowTopRightOnSquareIcon, ChevronDownIcon, XMarkIcon } from '@heroicons/react/24/outline';
-import { McpAppEvent } from '@shared/plugins/mcpApps';
+import { type McpAppDiscovery, McpAppEvent } from '@shared/plugins/mcpApps';
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -15,6 +15,7 @@ import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
 
 import FilePathBreadcrumbBar from '../preview/FilePathBreadcrumbBar';
 import { FilePreviewToolbarContext } from '../shared/FilePreviewToolbarContext';
+import { WorkspaceFileIconContext } from '../shared/WorkspaceFileIconContext';
 import DisplayTabContextMenu, { type DisplayTabContextMenuItem } from './DisplayTabContextMenu';
 import { FILE_DISPLAY_TAB_PREFIX, WORKSPACE_FILES_DISPLAY_TAB_ID } from './displayTabIds';
 import DisplayTabListMenu from './DisplayTabListMenu';
@@ -49,6 +50,7 @@ interface CoworkDisplayPanelProps {
   children: React.ReactNode;
   emptyState?: React.ReactNode;
   fileContextPath?: string;
+  fileAppCatalog?: McpAppDiscovery;
   workspacePath?: string;
   isOpen: boolean;
   onClose: () => void;
@@ -80,6 +82,7 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   children,
   emptyState,
   fileContextPath,
+  fileAppCatalog,
   workspacePath,
   isOpen,
   onClose,
@@ -787,7 +790,12 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       )}
     </aside>
   );
-  if (!portal.native) return content;
+  const fileIconContent = (
+    <WorkspaceFileIconContext.Provider value={fileAppCatalog}>
+      {content}
+    </WorkspaceFileIconContext.Provider>
+  );
+  if (!portal.native) return fileIconContent;
   return (
     <>
       <aside
@@ -839,7 +847,7 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
                   className="min-h-0 flex-1"
                   {...(portal.detached && portal.blocked ? { inert: '' } : {})}
                 >
-                  {content}
+                  {fileIconContent}
                 </div>
               </div>
             </div>

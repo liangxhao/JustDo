@@ -16,6 +16,8 @@ let xml = '';
 let name = 'Diagram';
 let ready = false;
 let busy = false;
+let resultRevision = 0;
+let disposed = false;
 let pending:
   | {
       format: 'drawio' | 'png' | 'svg';
@@ -170,12 +172,69 @@ for (const format of ['drawio', 'png', 'svg'] as const)
       };
       post({ action: 'diagram-commit', requestId: id });
     });
-app.ontoolresult = result => {
+app.ontoolresult = async result => {
+  const revision = ++resultRevision;
   const diagram = result.structuredContent as Record<string, unknown> | undefined;
+  if (diagram?.file) {
+    xml = '';
+    busy = true;
+    updateButtons();
+    status.textContent = text('正在打开图表…', 'Opening diagram…');
+    try {
+      const file = diagram.file as Record<string, unknown>;
+      if (
+        typeof file.name !== 'string' ||
+        file.name.length > 255 ||
+        !/^[^/\\]+\.drawio$/i.test(file.name) ||
+        typeof file.resourceUri !== 'string' ||
+        !/^openclaw-file:\/\/[a-f0-9-]{36}$/i.test(file.resourceUri)
+      )
+        throw new Error('Invalid diagram file reference');
+      const resource = await app.readServerResource({
+        uri: file.resourceUri,
+        _meta: { 'openai/resource': { representation: 'text' } },
+      });
+      if (disposed || revision !== resultRevision) return;
+      const content = resource.contents[0];
+      if (
+        resource.contents.length !== 1 ||
+        content?.uri !== file.resourceUri ||
+        !('text' in content) ||
+        new TextEncoder().encode(content.text).length > 1024 * 1024 ||
+        /<!DOCTYPE|<!ENTITY/i.test(content.text)
+      )
+        throw new Error('Invalid diagram file');
+      const document = new DOMParser().parseFromString(content.text, 'application/xml');
+      if (
+        document.querySelector('parsererror') ||
+        !['mxfile', 'mxGraphModel'].includes(document.documentElement.localName)
+      )
+        throw new Error('Invalid diagram XML');
+      xml = content.text;
+      name = file.name.replace(/\.drawio$/i, '');
+      title.textContent = file.name;
+      status.textContent = '';
+      load();
+    } catch {
+      if (!disposed && revision === resultRevision)
+        status.textContent = text(
+          '无法打开图表，请确认文件有效且不超过 1 MiB',
+          'Could not open diagram. Check that it is valid and no larger than 1 MiB.',
+        );
+    } finally {
+      if (!disposed && revision === resultRevision) {
+        busy = false;
+        updateButtons();
+      }
+    }
+    return;
+  }
   if (!diagram || typeof diagram.xml !== 'string') {
     if (result.isError) status.textContent = text('图表生成失败', 'Could not create diagram');
     return;
   }
+  busy = false;
+  status.textContent = '';
   xml = diagram.xml;
   name = typeof diagram.title === 'string' ? diagram.title : 'Diagram';
   title.textContent = name;
@@ -183,6 +242,8 @@ app.ontoolresult = result => {
   updateButtons();
 };
 app.onteardown = async () => {
+  disposed = true;
+  resultRevision++;
   clearTimeout(contextTimer);
   if (pending) clearTimeout(pending.timer);
   return {};

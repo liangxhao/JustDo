@@ -6,14 +6,12 @@ import './native-widget/view';
  * Thinking and Tool presentation belongs exclusively to the canonical timeline.
  */
 import { isLocalHtmlFilePath, parseLocalHtmlLink } from '@shared/browser/browserLinkOpening';
-import { getPreviewableFileExtension } from '@shared/preview/filePreview';
 import { isGatewayInjectedModelRef } from '@shared/providers/modelRef';
 import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { openMessageHtmlLink, openMessageWebLink } from '@/features/browser/messageBrowserLinks';
 import { renderMessageQuoteText } from '@/features/cowork/components/composer/messageQuote';
-import { isImageFilePath } from '@/features/cowork/components/preview/imageFilePreview';
 import {
   getTranscriptMedia,
   isTranscriptImage,
@@ -485,29 +483,12 @@ async function openAttachment(
       openMessageHtmlLink(url, options.workingDirectory);
       return;
     }
-    if (
-      !/^https?:\/\//i.test(url) &&
-      (getPreviewableFileExtension(localPath) || isImageFilePath(localPath))
-    ) {
-      window.dispatchEvent(
-        new CustomEvent('cowork:preview-file', {
-          detail: { filePath: localPath, workingDirectory: options.workingDirectory },
-        }),
-      );
-      return;
-    }
-    const result = await window.electron.shell.openPath(localPath, options.workingDirectory);
-    if (!result.success) {
-      if ('notFound' in result && result.notFound) {
-        window.dispatchEvent(
-          new CustomEvent('app:showToast', {
-            detail: i18nService.t('coworkAttachmentNotFound').replace('{filepath}', url),
-          }),
-        );
-        return;
-      }
-      console.error('[GroupedRender] Failed to open attachment', result.error);
-    }
+    // All local attachments share file-tree routing, including discovered file Apps.
+    window.dispatchEvent(
+      new CustomEvent('cowork:preview-file', {
+        detail: { filePath: localPath, workingDirectory: options.workingDirectory },
+      }),
+    );
   } catch (error) {
     console.error('[GroupedRender] Failed to open attachment', error);
   }

@@ -6,11 +6,8 @@ export interface McpAppFileRequest {
 }
 export type OpenMcpAppFile = (request: McpAppFileRequest) => Promise<boolean>;
 
-/** Ambiguous handlers need an explicit choice; never pick one by plugin name. */
-export function findFileApp(
-  catalog: McpAppDiscovery | undefined,
-  filePath: string,
-): McpAppLaunchInput | undefined {
+/** Opening and file icons must resolve the same unambiguous handler. */
+function findFileAppHandler(catalog: McpAppDiscovery | undefined, filePath: string) {
   const matches =
     catalog?.servers.flatMap(server =>
       server.entrypoints
@@ -21,12 +18,28 @@ export function findFileApp(
               filePath.toLowerCase().endsWith(extension.toLowerCase()),
             ),
         )
-        .map(entry => ({
-          serverName: server.serverName,
-          toolName: entry.toolName,
-          entrypointType: 'file' as const,
-          filePath,
-        })),
+        .map(entry => ({ server, entry })),
     ) ?? [];
   return matches.length === 1 ? matches[0] : undefined;
+}
+
+/** Ambiguous handlers need an explicit choice; never pick one by plugin name. */
+export function findFileApp(
+  catalog: McpAppDiscovery | undefined,
+  filePath: string,
+): McpAppLaunchInput | undefined {
+  const match = findFileAppHandler(catalog, filePath);
+  return match
+    ? {
+        serverName: match.server.serverName,
+        toolName: match.entry.toolName,
+        entrypointType: 'file',
+        filePath,
+      }
+    : undefined;
+}
+
+export function findFileAppIcons(catalog: McpAppDiscovery | undefined, fileName: string) {
+  const match = findFileAppHandler(catalog, fileName);
+  return match?.entry.icons ?? match?.server.icons;
 }

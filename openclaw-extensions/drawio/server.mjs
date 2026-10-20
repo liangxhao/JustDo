@@ -63,9 +63,56 @@ export function createDiagramServer(resource) {
           'openai/ui': { entrypoints: [{ type: 'global' }] },
         },
       },
+      {
+        name: 'open_file',
+        title: 'draw.io',
+        icons: ICONS,
+        description: 'Open an existing .drawio file in the offline editor.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            file: {
+              type: 'object',
+              properties: {
+                name: { type: 'string', maxLength: 255 },
+                resourceUri: { type: 'string', maxLength: 256 },
+              },
+              required: ['name', 'resourceUri'],
+              additionalProperties: false,
+            },
+          },
+          required: ['file'],
+          additionalProperties: false,
+        },
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+        _meta: {
+          ui: { resourceUri: URI, visibility: ['app'] },
+          'openai/ui': { entrypoints: [{ type: 'file', extensions: ['.drawio'] }] },
+        },
+      },
     ],
   }));
   server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
+    if (params.name === 'open_file') {
+      const file = params.arguments?.file;
+      if (
+        !file ||
+        typeof file.name !== 'string' ||
+        file.name.length > 255 ||
+        !/^[^/\\]+\.drawio$/i.test(file.name) ||
+        typeof file.resourceUri !== 'string' ||
+        !/^openclaw-file:\/\/[a-f0-9-]{36}$/i.test(file.resourceUri)
+      )
+        return {
+          isError: true,
+          content: [{ type: 'text', text: 'Invalid diagram file reference' }],
+        };
+      // The native file entrypoint owns this resource. The MCP process never reads a local path.
+      return {
+        content: [],
+        structuredContent: { file: { name: file.name, resourceUri: file.resourceUri } },
+      };
+    }
     if (params.name === 'open_editor') {
       return {
         content: [],

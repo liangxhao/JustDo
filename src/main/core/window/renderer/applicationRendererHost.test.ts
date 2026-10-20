@@ -82,9 +82,8 @@ describe('packaged application renderer host', () => {
     expect((await read(host, '/')).body).toBe(index.body);
     expect((await read(host, '/image-preview.html')).body).toContain('Image preview');
     expect((await read(host, '/assets/main.js')).body).toBe('globalThis.ready = true;');
-    expect((await read(host, '/pdfjs/wasm/decoder.wasm')).headers['content-type']).toBe(
-      'application/wasm',
-    );
+    // Stale support assets from a previous build are no longer served.
+    expect((await read(host, '/pdfjs/wasm/decoder.wasm')).status).toBe(404);
     expect(index.headers['cross-origin-resource-policy']).toBe('same-origin');
     expect(index.headers['access-control-allow-origin']).toBeUndefined();
     expect(index.headers['referrer-policy']).toBe('origin');
@@ -116,7 +115,7 @@ describe('packaged application renderer host', () => {
     const policy = String((await read(host)).headers['content-security-policy']);
     const scripts = policy.split('; ').find(value => value.startsWith('script-src'))!;
     expect(scripts).toMatch(/'sha256-[A-Za-z0-9+/]{43}='/u);
-    expect(scripts).toContain("'wasm-unsafe-eval'");
+    expect(scripts).not.toContain("'wasm-unsafe-eval'");
     expect(scripts).not.toContain("'unsafe-inline'");
     expect(scripts).not.toContain("'unsafe-eval'");
     expect(policy).toContain("frame-ancestors 'none'");

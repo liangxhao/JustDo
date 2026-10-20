@@ -188,7 +188,6 @@
     "markdown-it-texmath": "^1.0.0",
     "mermaid": "^10.9.8",
     "monaco-editor": "0.55.1",
-    "pdfjs-dist": "^6.3.289",
     "postcss": "^8.5.28",
     "prettier": "^3.8.1",
     "proxy-agent": "^6.5.0",

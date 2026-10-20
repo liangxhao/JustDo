@@ -26,13 +26,6 @@ import BrowserPanel, {
 } from './BrowserPanel';
 import { promoteBrowserPanelTabs } from './browserPanelRetention';
 
-const { getPdfDocument } = vi.hoisted(() => ({ getPdfDocument: vi.fn() }));
-
-vi.mock('pdfjs-dist', () => ({
-  getDocument: getPdfDocument,
-  GlobalWorkerOptions: {},
-}));
-
 vi.mock('@/features/cowork/components/composer/LocalSpeechInputButton', () => ({
   LocalSpeechInputButton: () => null,
 }));
@@ -111,7 +104,6 @@ const getClearDataSummary = vi.fn().mockResolvedValue({
 });
 const clearBrowsingData = vi.fn().mockResolvedValue({ success: true });
 const createLocalHtmlPreview = vi.fn();
-const loadPdf = vi.fn().mockResolvedValue({ success: false, errorCode: 'load_failed' });
 const openExternal = vi.fn().mockResolvedValue({ success: true });
 const openLocalHtmlExternal = vi.fn().mockResolvedValue({ success: true });
 const registerAgentTab = vi.fn();
@@ -145,14 +137,10 @@ const defineWebviewMethod = (name: string, value: unknown) => {
   });
 };
 
-const useCompatibilityPdfViewer = () => {
-  fireEvent.click(screen.getByLabelText('More browser options'));
-  fireEvent.click(screen.getByRole('menuitem', { name: 'Try compatibility PDF viewer' }));
-};
-
 function BrowserPanelHarness({
   draftKey = '__home__',
   embedded = false,
+  navigationBarVisible,
   isOpen = true,
   onTabsChange,
   onRecordingRetentionChange,
@@ -168,6 +156,7 @@ function BrowserPanelHarness({
 }: {
   draftKey?: string;
   embedded?: boolean;
+  navigationBarVisible?: boolean;
   isOpen?: boolean;
   onTabsChange?: ComponentProps<typeof BrowserPanel>['onTabsChange'];
   onRecordingRetentionChange?: ComponentProps<typeof BrowserPanel>['onRecordingRetentionChange'];
@@ -203,6 +192,7 @@ function BrowserPanelHarness({
       onContinueTask={onContinueTask}
       renderStartPage={renderStartPage}
       embedded={embedded}
+      navigationBarVisible={navigationBarVisible}
     />
   );
 }
@@ -320,9 +310,21 @@ describe('BrowserPanel embedded webview', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Project docs' }));
     await waitFor(() => expect(loadUrl).toHaveBeenCalledWith('https://example.com/docs'));
     expect(document.querySelectorAll('webview')).toHaveLength(1);
-    expect(
-      (screen.getByRole('textbox', { name: 'Browser address' }) as HTMLInputElement).value,
-    ).toBe('https://example.com/docs');
+    const address = screen.getByRole('textbox', { name: 'Browser address' }) as HTMLInputElement;
+    expect(address.value).toBe('example.com');
+    expect(address.title).toBe('https://example.com/docs');
+    fireEvent.mouseDown(address, { button: 0 });
+    expect(document.activeElement).toBe(address);
+    expect(address.value).toBe('https://example.com/docs');
+    expect(address.selectionStart).toBe(0);
+    expect(address.selectionEnd).toBe(address.value.length);
+    fireEvent.change(address, { target: { value: '中文搜索草稿' } });
+    fireEvent.keyDown(address, { key: 'Escape', isComposing: true });
+    expect(address.value).toBe('中文搜索草稿');
+    expect(document.activeElement).toBe(address);
+    fireEvent.keyDown(address, { key: 'Escape' });
+    expect(address.value).toBe('example.com');
+    expect(document.activeElement).not.toBe(address);
     expect(screen.queryByRole('button', { name: 'Project docs' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Record actions' })).toBeTruthy();
     expect(screen.getByLabelText('Add comment')).toBeTruthy();
@@ -417,8 +419,6 @@ describe('BrowserPanel embedded webview', () => {
     getClearDataSummary.mockClear();
     clearBrowsingData.mockClear();
     createLocalHtmlPreview.mockReset();
-    loadPdf.mockClear();
-    getPdfDocument.mockReset();
     openExternal.mockClear();
     openLocalHtmlExternal.mockClear();
     registerAgentTab.mockClear();
@@ -469,7 +469,6 @@ describe('BrowserPanel embedded webview', () => {
         browser: {
           setRecordingLease: vi.fn().mockResolvedValue(true),
           createLocalHtmlPreview,
-          loadPdf,
           registerAgentTab,
           unregisterAgentTab,
           setAgentActiveTab,
@@ -506,7 +505,6 @@ describe('BrowserPanel embedded webview', () => {
               panelHttpAuthDismissedListener = null;
             };
           },
-          cancelPdf: vi.fn(),
           onAgentInteractionState: (
             listener: (event: {
               sessionId: string;
@@ -636,69 +634,62 @@ describe('BrowserPanel embedded webview', () => {
     );
   });
 
-  it('uses Chromium for PDF by default and switches to compatibility mode only on request', async () => {
-    const url = 'https://arxiv.org/pdf/2609.20859';
+  it.each([
+    'https://example.com/report.pdf',
+    'https://arxiv.org/pdf/2609.20859',
+    'file:///C:/project/report.pdf#page=2',
+  ])('keeps the original Chromium guest for PDF %s', url => {
+    const navigationBarVisible = !url.startsWith('file:');
     const { container } = render(
       <BrowserPanelHarness
-        draftKey="pdf-arxiv-session"
+        draftKey={`native-pdf-${url}`}
+        navigationBarVisible={navigationBarVisible}
         initialTabs={[{ id: 'pdf-tab', targetId: 'pdf-tab', title: '', url }]}
         retainedTargetIds={['pdf-tab']}
       />,
     );
-
-    expect(container.querySelector('webview')?.getAttribute('src')).toBe(url);
-    expect(container.querySelector('[data-browser-pdf-viewer]')).toBeNull();
-    expect(loadPdf).not.toHaveBeenCalled();
-    useCompatibilityPdfViewer();
-    await waitFor(() => expect(container.querySelector('[data-browser-pdf-viewer]')).toBeTruthy());
-    expect(loadPdf).toHaveBeenCalledWith(expect.objectContaining({ url, profile: 'embedded' }));
-    fireEvent.click(screen.getByLabelText('More browser options'));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Use browser PDF viewer' }));
-    expect(container.querySelector('[data-browser-pdf-viewer]')).toBeNull();
+    const webview = container.querySelector('webview')!;
+    expect(webview.getAttribute('src')).toBe(url);
+    expect(webview.getAttribute('plugins')).toBe('true');
+    fireEvent(webview, new Event('dom-ready'));
+    if (navigationBarVisible) {
+      fireEvent.click(screen.getByLabelText('More browser options'));
+      const print = screen.getByRole('menuitem', { name: 'Print' }) as HTMLButtonElement;
+      expect(print.disabled).toBe(true);
+      expect(print.title).toBe(i18nService.t('browserPdfUseToolbar'));
+      for (const name of ['Find in page', i18nService.t('browserMenuScreenshot')]) {
+        expect((screen.getByRole('menuitem', { name }) as HTMLButtonElement).disabled).toBe(false);
+      }
+      fireEvent.keyDown(screen.getByRole('menu', { name: 'Browser menu' }), { key: 'Escape' });
+      fireEvent.click(screen.getByLabelText(i18nService.t('browserPanelReload')));
+    } else {
+      for (const label of [
+        'Browser address',
+        'More browser options',
+        i18nService.t('browserPanelBack'),
+        i18nService.t('browserPanelForward'),
+        i18nService.t('browserPanelReload'),
+      ]) {
+        expect(screen.queryByLabelText(label)).toBeNull();
+      }
+      fireEvent.keyDown(webview, { key: 'w', ctrlKey: true });
+      expect(container.querySelector('webview')).toBe(webview);
+      for (const action of ['new-tab', 'close-tab', 'reopen-tab', 'next-tab', 'previous-tab']) {
+        const tabCommand = new Event('ipc-message');
+        Object.assign(tabCommand, { channel: 'justdo-browser-command', args: [action] });
+        fireEvent(webview, tabCommand);
+        expect([...container.querySelectorAll('webview')]).toEqual([webview]);
+      }
+      const command = new Event('ipc-message');
+      Object.assign(command, { channel: 'justdo-browser-command', args: ['reload'] });
+      fireEvent(webview, command);
+    }
+    expect(reload).toHaveBeenCalledOnce();
+    expect(printPage).not.toHaveBeenCalled();
+    expect(container.querySelector('webview')).toBe(webview);
   });
 
-  it('lays out every PDF page in one continuous scroll surface', async () => {
-    const renderPage = vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() }));
-    const document = {
-      numPages: 3,
-      getPage: vi.fn(async () => ({
-        getViewport: ({ scale }: { scale: number }) => ({
-          width: 612 * scale,
-          height: 792 * scale,
-        }),
-        render: renderPage,
-      })),
-    };
-    loadPdf.mockResolvedValueOnce({
-      success: true,
-      data: new TextEncoder().encode('%PDF-1.7'),
-    });
-    getPdfDocument.mockReturnValue({
-      promise: Promise.resolve(document),
-      destroy: vi.fn().mockResolvedValue(undefined),
-    });
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
-      {} as CanvasRenderingContext2D,
-    );
-
-    const url = 'https://arxiv.org/pdf/2609.20859';
-    const { container } = render(
-      <BrowserPanelHarness
-        draftKey="continuous-pdf-session"
-        initialTabs={[{ id: 'continuous-pdf', targetId: 'continuous-pdf', title: '', url }]}
-        retainedTargetIds={['continuous-pdf']}
-      />,
-    );
-
-    useCompatibilityPdfViewer();
-    await waitFor(() =>
-      expect(container.querySelectorAll('[data-pdf-page-number]')).toHaveLength(3),
-    );
-    expect(container.querySelector('[data-pdf-page-number="1"]')).toBeTruthy();
-    expect(container.querySelector('[data-pdf-page-number="3"]')).toBeTruthy();
-  });
-
-  it('recognizes a generic PDF response without replacing the native viewer', async () => {
+  it('recognizes a PDF response without replacing its Chromium guest', async () => {
     const url = 'https://documents.example.test/download?id=42';
     const { container } = render(
       <BrowserPanelHarness
@@ -707,113 +698,46 @@ describe('BrowserPanel embedded webview', () => {
         retainedTargetIds={['pdf-response']}
       />,
     );
-
+    const webview = container.querySelector('webview')!;
     await waitFor(() => expect(panelPdfDetectedListener).not.toBeNull());
     act(() => panelPdfDetectedListener?.({ url, guestId: 7 }));
-
-    expect(container.querySelector('[data-browser-pdf-viewer]')).toBeNull();
-    expect(loadPdf).not.toHaveBeenCalled();
-    useCompatibilityPdfViewer();
-    await waitFor(() => expect(container.querySelector('[data-browser-pdf-viewer]')).toBeTruthy());
-    expect(loadPdf).toHaveBeenCalledWith(expect.objectContaining({ url, profile: 'embedded' }));
-  });
-
-  it('disables guest-only PDF actions and reloads the visible PDF document', async () => {
-    render(
-      <BrowserPanelHarness
-        draftKey="pdf-actions"
-        initialTabs={[
-          {
-            id: 'pdf-actions',
-            targetId: 'pdf-actions',
-            title: '',
-            url: 'https://example.com/file.pdf',
-          },
-        ]}
-        retainedTargetIds={['pdf-actions']}
-      />,
-    );
-    useCompatibilityPdfViewer();
-    await waitFor(() => expect(loadPdf).toHaveBeenCalledOnce());
-    expect((screen.getByLabelText('Add comment') as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByLabelText('More browser options'));
-    for (const name of ['Find in page', 'Print', i18nService.t('browserMenuScreenshot')]) {
-      expect((screen.getByRole('menuitem', { name }) as HTMLButtonElement).disabled).toBe(true);
-    }
-    fireEvent.keyDown(screen.getByRole('menu', { name: 'Browser menu' }), { key: 'Escape' });
-    fireEvent.click(screen.getByLabelText(i18nService.t('browserPanelReload')));
-    await waitFor(() => expect(loadPdf).toHaveBeenCalledTimes(2));
-    expect(reload).not.toHaveBeenCalled();
-    expect(printPage).not.toHaveBeenCalled();
+    expect((screen.getByRole('menuitem', { name: 'Print' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(container.querySelector('webview')).toBe(webview);
+    expect(webview.getAttribute('src')).toBe(url);
   });
 
-  it('retains PDF viewers when switching tabs without fetching the document again', async () => {
-    const firstUrl = 'https://example.com/first.pdf';
-    const secondUrl = 'https://example.com/second.pdf';
+  it('retains native PDF guests when switching tabs', () => {
     const { container } = render(
       <BrowserPanelHarness
         draftKey="retained-pdfs"
         initialTabs={[
-          { id: 'first', targetId: 'first', title: 'First PDF', url: firstUrl },
-          { id: 'second', targetId: 'second', title: 'Second PDF', url: secondUrl },
+          {
+            id: 'first',
+            targetId: 'first',
+            title: 'First PDF',
+            url: 'https://example.com/first.pdf',
+          },
+          {
+            id: 'second',
+            targetId: 'second',
+            title: 'Second PDF',
+            url: 'file:///C:/project/second.pdf',
+          },
         ]}
         retainedTargetIds={['first', 'second']}
       />,
     );
-    useCompatibilityPdfViewer();
-    fireEvent.click(screen.getByRole('tab', { name: 'Second PDF' }));
-    useCompatibilityPdfViewer();
-    await waitFor(() => expect(loadPdf).toHaveBeenCalledTimes(2));
-    const viewers = [...container.querySelectorAll('[data-browser-pdf-viewer]')];
+    const webviews = [...container.querySelectorAll<HTMLElement>('webview')];
+    expect(webviews).toHaveLength(2);
     fireEvent.click(screen.getByRole('tab', { name: 'Second PDF' }));
     fireEvent.click(screen.getByRole('tab', { name: 'First PDF' }));
-    expect([...container.querySelectorAll('[data-browser-pdf-viewer]')]).toEqual(viewers);
-    expect(loadPdf).toHaveBeenCalledTimes(2);
-  });
-
-  it('falls back to the guest page when a PDF-like URL returns HTML', async () => {
-    loadPdf.mockResolvedValueOnce({ success: false, errorCode: 'not_pdf' });
-    const { container } = render(
-      <BrowserPanelHarness
-        draftKey="html-pdf-path"
-        initialTabs={[
-          { id: 'html-pdf', targetId: 'html-pdf', title: '', url: 'https://example.com/login.pdf' },
-        ]}
-        retainedTargetIds={['html-pdf']}
-      />,
-    );
-    useCompatibilityPdfViewer();
-    await waitFor(() => expect(loadPdf).toHaveBeenCalledOnce());
-    await waitFor(() => expect(container.querySelector('[data-browser-pdf-viewer]')).toBeNull());
-    expect(container.querySelector('webview')).toBeTruthy();
-    expect((screen.getByLabelText('Add comment') as HTMLButtonElement).disabled).toBe(false);
-    act(() => panelPdfDetectedListener?.({ url: 'https://example.com/login.pdf', guestId: 7 }));
-    await waitFor(() => expect(loadPdf).toHaveBeenCalledTimes(2));
-    expect(container.querySelector('[data-browser-pdf-viewer]')).toBeTruthy();
-  });
-
-  it('rechecks an HTML fallback after an explicit PDF URL reload', async () => {
-    loadPdf.mockResolvedValueOnce({ success: false, errorCode: 'not_pdf' });
-    const { container } = render(
-      <BrowserPanelHarness
-        draftKey="reload-html-pdf"
-        initialTabs={[
-          {
-            id: 'retry-html',
-            targetId: 'retry-html',
-            title: '',
-            url: 'https://example.com/retry.pdf',
-          },
-        ]}
-        retainedTargetIds={['retry-html']}
-      />,
-    );
-    fireEvent(container.querySelector('webview')!, new Event('dom-ready'));
-    useCompatibilityPdfViewer();
-    await waitFor(() => expect(loadPdf).toHaveBeenCalledOnce());
-    await waitFor(() => expect(container.querySelector('[data-browser-pdf-viewer]')).toBeNull());
-    fireEvent.click(screen.getByLabelText(i18nService.t('browserPanelReload')));
-    await waitFor(() => expect(loadPdf).toHaveBeenCalledTimes(2));
+    expect([...container.querySelectorAll('webview')]).toEqual(webviews);
+    expect(reload).not.toHaveBeenCalled();
+    expect(webviews[0].style.visibility).toBe('visible');
+    expect(webviews[1].style.visibility).toBe('hidden');
   });
 
   it('registers as soon as a delayed webview attaches without waiting for page readiness', async () => {
@@ -1333,18 +1257,22 @@ describe('BrowserPanel embedded webview', () => {
     expect(loadUrl.mock.instances[0]).toBe(webview);
   });
 
-  it('searches non-address text with the configured default search engine', async () => {
-    render(<BrowserPanelHarness />);
+  it.each([
+    ['electron browser panel', 'https://www.baidu.com/s?wd=electron+browser+panel'],
+    ['11', 'https://www.baidu.com/s?wd=11'],
+  ])(
+    'searches non-address input %s with the configured default search engine',
+    async (query, url) => {
+      render(<BrowserPanelHarness />);
 
-    fireEvent.change(screen.getByLabelText('Browser address'), {
-      target: { value: 'electron browser panel' },
-    });
-    fireEvent.submit(screen.getByLabelText('Browser address').closest('form')!);
+      fireEvent.change(screen.getByLabelText('Browser address'), {
+        target: { value: query },
+      });
+      fireEvent.submit(screen.getByLabelText('Browser address').closest('form')!);
 
-    await waitFor(() =>
-      expect(loadUrl).toHaveBeenCalledWith('https://www.baidu.com/s?wd=electron+browser+panel'),
-    );
-  });
+      await waitFor(() => expect(loadUrl).toHaveBeenCalledWith(url));
+    },
+  );
 
   it('adds the original local HTML as a real tab when a mounted panel opens a message link', async () => {
     let panel: BrowserPanelHandle | null = null;
@@ -1487,7 +1415,7 @@ describe('BrowserPanel embedded webview', () => {
     firstWebview.dispatchEvent(navigated);
 
     await waitFor(() =>
-      expect((screen.getByLabelText('Browser address') as HTMLInputElement).value).toBe(
+      expect((screen.getByLabelText('Browser address') as HTMLInputElement).title).toBe(
         'https://example.com/retained',
       ),
     );
@@ -1501,7 +1429,7 @@ describe('BrowserPanel embedded webview', () => {
     Object.assign(bootstrapNavigation, { url: 'about:blank' });
     restoredWebview.dispatchEvent(bootstrapNavigation);
 
-    expect((screen.getByLabelText('Browser address') as HTMLInputElement).value).toBe(
+    expect((screen.getByLabelText('Browser address') as HTMLInputElement).title).toBe(
       'https://example.com/retained',
     );
   });
@@ -1535,7 +1463,7 @@ describe('BrowserPanel embedded webview', () => {
         }),
       ),
     );
-    expect((screen.getByLabelText('Browser address') as HTMLInputElement).value).toBe(
+    expect((screen.getByLabelText('Browser address') as HTMLInputElement).title).toBe(
       'https://example.com/',
     );
     expect(screen.getByText('1')).toBeTruthy();
@@ -1639,12 +1567,13 @@ describe('BrowserPanel embedded webview', () => {
     fireEvent.change(address, { target: { value: 'typed.example/path' } });
 
     view.rerender(<BrowserPanel {...props} activeTargetId={otherTab.targetId} />);
-    expect(address).toHaveProperty('value', otherTab.url);
+    expect(address).toHaveProperty('value', 'other.example');
+    expect(address).toHaveProperty('title', otherTab.url);
 
     const webview = view.container.querySelectorAll('webview')[1]!;
     webview.setAttribute('src', 'https://other.example/loaded');
     fireEvent(webview, new Event('did-stop-loading'));
-    expect(address).toHaveProperty('value', 'https://other.example/loaded');
+    expect(address).toHaveProperty('title', 'https://other.example/loaded');
   });
 
   it('does not overwrite an address being edited when page metadata changes', async () => {
@@ -1670,7 +1599,7 @@ describe('BrowserPanel embedded webview', () => {
     Object.assign(navigationEvent, { url: 'https://clicked.example/page' });
     webview.dispatchEvent(navigationEvent);
     await waitFor(() =>
-      expect((address as HTMLInputElement).value).toBe('https://clicked.example/page'),
+      expect((address as HTMLInputElement).title).toBe('https://clicked.example/page'),
     );
   });
 
@@ -1703,7 +1632,7 @@ describe('BrowserPanel embedded webview', () => {
     panelOpenTabListener?.({ url: 'https://popup.example/path' });
     await waitFor(() => expect(container.querySelectorAll('webview')).toHaveLength(3));
 
-    const webviews = [...container.querySelectorAll('webview')];
+    const webviews = [...container.querySelectorAll<HTMLElement>('webview')];
     expect(
       webviews.some(webview => webview.getAttribute('src') === 'https://popup.example/path'),
     ).toBe(true);

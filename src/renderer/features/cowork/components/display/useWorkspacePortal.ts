@@ -6,34 +6,12 @@ import { setDockedWorkspaceSurface } from '@/app/shell/dockedWorkspaceSurface';
 import { setWorkspaceNotificationDocument } from '@/app/shell/WorkspaceNotifications';
 import { i18nService } from '@/services/i18n';
 
+import { readWorkspaceOcclusion as readOcclusion } from './workspaceOcclusion';
 import { createWorkspaceWindowControls } from './workspaceWindowControls';
 
 export const WORKSPACE_PRESENTATION_EVENT = 'cowork:workspace-presentation-changed';
 
 export const workspaceKeyboardDocument = new WeakMap<Event, Document>();
-
-const readOcclusion = (rect: DOMRect) => {
-  const blocked = Array.from(document.querySelectorAll('[data-workspace-overlay="true"]')).some(
-    overlay => overlay.getClientRects().length > 0,
-  );
-  const occluded =
-    blocked ||
-    Array.from(
-      document.querySelectorAll(
-        '[role="menu"], [role="listbox"], [role="tooltip"], [data-workspace-occlusion="true"]',
-      ),
-    ).some(element => {
-      if (!element.getClientRects().length) return false;
-      const popup = element.getBoundingClientRect();
-      return (
-        popup.right > rect.left &&
-        popup.left < rect.right &&
-        popup.bottom > rect.top &&
-        popup.top < rect.bottom
-      );
-    });
-  return { blocked, occluded };
-};
 
 const copyAppearance = (
   target: Document,

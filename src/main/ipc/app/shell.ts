@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { dialog, ipcMain, type IpcMainInvokeEvent, Menu, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
-import { pathToFileURL } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 import {
   type FilePreviewEditAuthorizationRequest,
@@ -12,6 +12,7 @@ import {
   type FilePreviewReadResult,
   type FilePreviewWriteRequest,
   type FilePreviewWriteResult,
+  getBrowserFilePreviewKind,
   getPreviewableFileExtension,
   MAX_PREVIEW_FILE_BYTES,
   type WorkspaceDirectoryListResult,
@@ -400,8 +401,15 @@ export const readPreviewFile = async (
   ownerId?: number,
 ): Promise<FilePreviewReadResult> => {
   try {
-    const normalizedPath = resolveShellOpenPath(filePath, workingDirectory);
-    if (!getPreviewableFileExtension(normalizedPath)) {
+    const sourceUrl = /^file:/iu.test(filePath) ? new URL(filePath) : null;
+    const normalizedPath = resolveShellOpenPath(
+      sourceUrl ? fileURLToPath(sourceUrl) : filePath,
+      workingDirectory,
+    );
+    if (
+      !getPreviewableFileExtension(normalizedPath) &&
+      !getBrowserFilePreviewKind(normalizedPath)
+    ) {
       return { success: false, unsupportedType: true };
     }
     const requestedStats = await fs.promises.lstat(normalizedPath);
@@ -409,8 +417,18 @@ export const readPreviewFile = async (
       return { success: false, error: 'Preview file must be a regular file' };
     }
     const canonicalPath = await fs.promises.realpath(normalizedPath);
-    if (!getPreviewableFileExtension(canonicalPath)) {
+    const browserKind = getBrowserFilePreviewKind(canonicalPath);
+    if (!getPreviewableFileExtension(canonicalPath) && !browserKind) {
       return { success: false, unsupportedType: true };
+    }
+    if (browserKind) {
+      // Chromium reads the binary document itself; no text decoding or edit grant.
+      const url = pathToFileURL(canonicalPath);
+      if (sourceUrl) {
+        url.search = sourceUrl.search;
+        url.hash = sourceUrl.hash;
+      }
+      return { success: true, kind: browserKind, filePath: canonicalPath, url: url.href };
     }
     const inspected = await inspectPreviewFile(canonicalPath);
     if (!isFileIdentityEqual(toFileIdentity(requestedStats), inspected.identity)) {
@@ -682,9 +700,21 @@ export const registerShellHandlers = (options: RegisterShellHandlersOptions = {}
     return openPathWithSystemChooser(filePath);
   });
 
-  ipcMain.handle(FilePreviewIpc.Read, (event, filePath: string, workingDirectory?: string) =>
-    readPreviewFile(filePath, workingDirectory, event.sender.id),
-  );
+  ipcMain.handle(FilePreviewIpc.Read, (event, filePath: unknown, workingDirectory?: unknown) => {
+    if (
+      event.sender.getType() !== 'window' ||
+      event.senderFrame !== event.sender.mainFrame ||
+      typeof filePath !== 'string' ||
+      (workingDirectory !== undefined && typeof workingDirectory !== 'string')
+    ) {
+      return { success: false, error: 'Access denied' } satisfies FilePreviewReadResult;
+    }
+    return readPreviewFile(
+      filePath,
+      typeof workingDirectory === 'string' ? workingDirectory : undefined,
+      event.sender.id,
+    );
+  });
 
   ipcMain.handle(
     FilePreviewIpc.ListDirectory,

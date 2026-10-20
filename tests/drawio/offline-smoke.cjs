@@ -77,13 +77,30 @@ async function fixture() {
   await client.connect(transport);
   const tools = await client.listTools();
   assert.equal(tools.tools[0]._meta.ui.resourceUri, 'ui://drawio/editor');
-  const xml = fs.readFileSync(
+  const sourceXml = fs.readFileSync(
     path.join(root, 'openclaw-extensions/drawio/tests/fixture.xml'),
     'utf8',
   );
+  const xml = process.argv.includes('--compressed')
+    ? `<mxfile><diagram name="采购审批">${require('node:zlib')
+        .deflateRawSync(
+          encodeURIComponent(sourceXml.match(/<mxGraphModel[\s\S]*<\/mxGraphModel>/)[0]),
+        )
+        .toString('base64')}</diagram></mxfile>`
+    : sourceXml;
+  const file = process.argv.includes('--file')
+    ? {
+        name: '采购审批流程.drawio',
+        resourceUri: 'openclaw-file://12345678-1234-1234-1234-123456789abc',
+      }
+    : undefined;
   const result = await client.callTool({
-    name: process.argv.includes('--blank') ? 'open_editor' : 'create_diagram',
-    arguments: process.argv.includes('--blank') ? {} : { xml, title: '采购审批流程' },
+    name: file ? 'open_file' : process.argv.includes('--blank') ? 'open_editor' : 'create_diagram',
+    arguments: file
+      ? { file }
+      : process.argv.includes('--blank')
+        ? {}
+        : { xml, title: '采购审批流程' },
   });
   assert.ok(!result.isError);
   const resource = await client.readResource({ uri: 'ui://drawio/editor' });
@@ -114,8 +131,9 @@ async function fixture() {
     csp,
     sandboxUrl: native.r(csp),
     sandboxPort: sandbox.address().port,
-    toolInput: process.argv.includes('--blank') ? {} : { xml },
+    toolInput: file ? { file } : process.argv.includes('--blank') ? {} : { xml },
     toolResult: result,
+    ...(file ? { fileResourcesSupported: true } : {}),
   };
   const host = http.createServer((req, res) => {
     res.setHeader(
@@ -130,7 +148,7 @@ async function fixture() {
     if (req.url === '/product.css')
       return res.end(fs.readFileSync(path.join(output, 'product.css')));
     res.end(
-      `<html lang="zh" data-theme="classic-light"><head><link rel="stylesheet" href="/product.css"><style>html{background:var(--justdo-background);color:var(--justdo-text-primary)}body{max-width:1000px;margin:30px auto;font:14px system-ui}</style></head><body><script>window.fixturePayload=${JSON.stringify(payload).replaceAll('<', '\\u003c')};</script><script type="module" src="/host.js"></script></body></html>`,
+      `<html lang="zh" data-theme="classic-light"><head><link rel="stylesheet" href="/product.css"><style>html{background:var(--justdo-background);color:var(--justdo-text-primary)}body{max-width:1000px;margin:30px auto;font:14px system-ui}</style></head><body><script>window.fixturePayload=${JSON.stringify(payload).replaceAll('<', '\\u003c')};window.fixtureFile=${JSON.stringify(file ? { ...file, xml } : null).replaceAll('<', '\\u003c')};</script><script type="module" src="/host.js"></script></body></html>`,
     );
   });
   await new Promise(resolve =>
@@ -203,6 +221,8 @@ if (!process.versions.electron) {
   let win, running;
   const evidence = {
     runtime: process.argv.includes('--runtime'),
+    file: process.argv.includes('--file'),
+    compressed: process.argv.includes('--compressed'),
     forcedUnsafePort: process.argv.includes('--unsafe-port'),
     portAttempts: [],
     assetOrigin: undefined,
@@ -250,7 +270,14 @@ if (!process.versions.electron) {
       win.webContents.on('did-fail-load', (_event, code, description, url, mainFrame) => {
         evidence.failedLoads.push({ code, description, url, mainFrame });
       });
-      await win.loadURL(running.url + (process.argv.includes('--blank') ? '/?blank=1' : ''));
+      await win.loadURL(
+        running.url +
+          (process.argv.includes('--file')
+            ? '/?file=1'
+            : process.argv.includes('--blank')
+              ? '/?blank=1'
+              : ''),
+      );
       const until = async (fn, label) => {
         for (let i = 0; i < 300; i++) {
           const value = await fn();
@@ -628,6 +655,8 @@ if (!process.versions.electron) {
         JSON.stringify(
           {
             coldProfile: true,
+            file: evidence.file,
+            compressed: evidence.compressed,
             publicRequests: blocked.length,
             expandedCloseReturnsInline: true,
             returnedDiagramRetainsEdits: true,

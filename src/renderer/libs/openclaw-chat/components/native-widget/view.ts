@@ -56,6 +56,7 @@ export class NativeWidgetView extends LitElement {
     height: { state: true },
     suggestion: { state: true },
     slow: { state: true },
+    expanded: { state: true },
   };
   static styles = css`
     :host {
@@ -71,10 +72,88 @@ export class NativeWidgetView extends LitElement {
       color: var(--justdo-text-primary, inherit);
     }
     header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
       padding: 18px 22px 0;
       font-size: 14px;
       font-weight: 600;
       overflow-wrap: anywhere;
+    }
+    .title {
+      min-width: 0;
+    }
+    .view-actions {
+      display: flex;
+      flex-shrink: 0;
+      gap: 4px;
+    }
+    .view-actions button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      margin: 0;
+      padding: 5px;
+      border-color: transparent;
+    }
+    .view-actions button:hover {
+      background: var(--justdo-surface-raised, #eee);
+    }
+    button:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+    dialog {
+      position: static;
+      box-sizing: border-box;
+      width: 100%;
+      max-width: none;
+      max-height: none;
+      padding: 0;
+      margin: 0;
+      border: 0;
+      color: inherit;
+      background: transparent;
+      overflow: visible;
+    }
+    dialog:modal {
+      position: fixed;
+      width: calc(100vw - 48px);
+      height: calc(100vh - 48px);
+      margin: auto;
+      border: 1px solid var(--justdo-border, #ddd);
+      border-radius: 14px;
+      background: var(--justdo-background, #fff);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    dialog:modal > header,
+    dialog:modal > .status {
+      flex: 0 0 auto;
+    }
+    dialog:modal > .frame {
+      flex: 1 1 0;
+      min-height: 48px;
+    }
+    dialog:modal > .suggestion {
+      flex: 0 1 auto;
+      min-height: 0;
+      max-height: 40%;
+      overflow: auto;
+    }
+    dialog::backdrop {
+      background: rgb(0 0 0 / 45%);
+    }
+    dialog:modal header {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      padding-bottom: 10px;
+      background: var(--justdo-background, #fff);
     }
     iframe {
       display: block;
@@ -149,6 +228,8 @@ export class NativeWidgetView extends LitElement {
   declare private height: number;
   declare private suggestion: string;
   declare private slow: boolean;
+  declare private expanded: boolean;
+  private workspaceOverlay?: HTMLElement;
   private binding?: Binding;
   private host?: NativeWidgetSandboxHost;
   private themeObserver?: MutationObserver;
@@ -168,6 +249,7 @@ export class NativeWidgetView extends LitElement {
     this.failureKind = WidgetFailure.LOAD;
     this.suggestion = '';
     this.slow = false;
+    this.expanded = false;
   }
 
   connectedCallback(): void {
@@ -231,6 +313,7 @@ export class NativeWidgetView extends LitElement {
   }
 
   private clear(): void {
+    this.collapse();
     clearTimeout(this.slowTimer);
     this.slowTimer = undefined;
     this.slow = false;
@@ -482,7 +565,9 @@ export class NativeWidgetView extends LitElement {
       Number.isFinite(event.data.deltaY) &&
       event.data.deltaY !== 0
     ) {
-      forwardWidgetScroll(this, event.data.deltaY);
+      if (this.expanded)
+        this.renderRoot.querySelector('dialog')?.scrollBy({ top: event.data.deltaY });
+      else forwardWidgetScroll(this, event.data.deltaY);
       return;
     }
     if (event.data?.type === 'openclaw:widget-runtime-error') {
@@ -494,7 +579,8 @@ export class NativeWidgetView extends LitElement {
       event.data?.type === 'openclaw:widget-size' &&
       typeof event.data.height === 'number' &&
       Number.isFinite(event.data.height) &&
-      event.data.height > 0
+      event.data.height > 0 &&
+      !this.expanded
     )
       this.height = Math.min(8000, Math.max(48, Math.ceil(event.data.height)));
     if (event.data?.type === 'openclaw:widget-bridge-ready') this.postHostState();
@@ -504,6 +590,71 @@ export class NativeWidgetView extends LitElement {
     if (!event.isTrusted || !this.failure || !this.draftAllowed(binding) || !this.preview) return;
     this.suggestion = widgetRebuildDraft(this.preview, this.failureKind, key => i18nService.t(key));
   };
+
+  private collapse(): void {
+    this.workspaceOverlay?.remove();
+    this.workspaceOverlay = undefined;
+    if (!this.expanded) return;
+    const dialog = this.renderRoot.querySelector('dialog');
+    dialog?.close();
+    dialog?.setAttribute('open', '');
+    this.expanded = false;
+  }
+
+  private readonly toggleExpanded = (): void => {
+    if (this.expanded) {
+      this.collapse();
+      return;
+    }
+    const dialog = this.renderRoot.querySelector('dialog');
+    if (!dialog || !this.current()) return;
+    // Top-layer promotion preserves the same iframe document and local inputs.
+    dialog.close();
+    dialog.showModal();
+    this.expanded = true;
+    // Native workspace views sit above CSS/top-layer content. Publish their
+    // existing overlay signal in light DOM, outside the chat's shadow root.
+    const overlay = this.ownerDocument.createElement('div');
+    overlay.dataset.workspaceOverlay = 'true';
+    overlay.setAttribute('aria-hidden', 'true');
+    overlay.style.cssText = 'position:fixed;inset:0;visibility:hidden;pointer-events:none';
+    this.ownerDocument.body.append(overlay);
+    this.workspaceOverlay = overlay;
+  };
+
+  private renderViewActions() {
+    const expandLabel = i18nService.t(
+      this.expanded ? 'coworkWidgetCollapse' : 'coworkWidgetExpand',
+    );
+    return html`<div class="view-actions">
+      <button
+        type="button"
+        title=${expandLabel}
+        aria-label=${expandLabel}
+        aria-expanded=${this.expanded}
+        ?disabled=${!this.current()}
+        @click=${this.toggleExpanded}
+      >
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+          aria-hidden="true"
+        >
+          <path
+            d=${
+              this.expanded
+                ? 'M4 9h5V4m11 5h-5V4M4 15h5v5m11-5h-5v5'
+                : 'M9 4H4v5m11-5h5v5M4 15v5h5m11-5v5h-5'
+            }
+          />
+        </svg>
+      </button>
+    </div>`;
+  }
 
   private renderSuggestion() {
     if (!this.suggestion || !this.draftAllowed()) return nothing;
@@ -549,7 +700,17 @@ export class NativeWidgetView extends LitElement {
       this.failure = false;
       this.requestUpdate();
     };
-    return html`<header>${title}</header>
+    return html`<dialog
+      open
+      role=${this.expanded ? 'dialog' : 'group'}
+      aria-label=${title}
+      aria-modal=${this.expanded ? 'true' : nothing}
+      @cancel=${(event: Event) => {
+        event.preventDefault();
+        this.collapse();
+      }}
+    >
+      <header><span class="title">${title}</span>${this.renderViewActions()}</header>
       ${
         this.failure
           ? html`<div class="status" role="alert">
@@ -580,7 +741,7 @@ export class NativeWidgetView extends LitElement {
                   title=${title}
                   sandbox="allow-scripts allow-same-origin allow-forms"
                   referrerpolicy="origin"
-                  style=${`height:${this.height}px`}
+                  style=${this.expanded ? 'height:100%' : `height:${this.height}px`}
                   @error=${() => {
                     if (this.current(binding)) this.fail();
                   }}
@@ -592,7 +753,8 @@ export class NativeWidgetView extends LitElement {
                 ${i18nService.t(this.context?.isCurrent() ? (this.slow ? 'coworkWidgetLoadingSlow' : 'coworkWidgetLoading') : 'coworkWidgetDisconnected')}
               </div>`
             : nothing
-      }${this.renderSuggestion()}`;
+      }${this.renderSuggestion()}
+    </dialog>`;
   }
 }
 

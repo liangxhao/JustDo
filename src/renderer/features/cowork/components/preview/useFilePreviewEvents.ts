@@ -1,3 +1,8 @@
+import {
+  getBrowserFilePreviewKind,
+  getPreviewableFileExtension,
+  isBrowserFilePreview,
+} from '@shared/preview/filePreview';
 import { type Dispatch, type MutableRefObject, type SetStateAction, useEffect } from 'react';
 
 import { i18nService } from '@/services/i18n';
@@ -118,11 +123,19 @@ export function useFilePreviewEvents({
         preview => fileDisplayTabId(preview.filePath) === requestedTabId,
       );
       const existingUnsupportedPreview = unsupportedFilePreviewsRef.current.find(
-        filePath => fileDisplayTabId(filePath) === requestedTabId,
+        filePath =>
+          !getBrowserFilePreviewKind(detail.filePath!) &&
+          !getPreviewableFileExtension(detail.filePath!) &&
+          fileDisplayTabId(filePath) === requestedTabId,
       );
       let result: Awaited<ReturnType<typeof window.electron.shell.readPreviewFile>>;
       try {
-        if (!existingPreview && !detail.openUnsupportedInSystem && openAppFile) {
+        if (
+          !existingPreview &&
+          !getBrowserFilePreviewKind(detail.filePath) &&
+          !detail.openUnsupportedInSystem &&
+          openAppFile
+        ) {
           const opened = await openAppFile({
             filePath: detail.filePath,
             isCurrent: requestIsCurrent,
@@ -158,7 +171,7 @@ export function useFilePreviewEvents({
         return;
       }
       if (!requestIsCurrent()) {
-        if (result.success) {
+        if (result.success && !isBrowserFilePreview(result)) {
           void window.electron.shell
             .revokePreviewFileEdit(result.editToken)
             .catch((): undefined => undefined);
@@ -171,21 +184,34 @@ export function useFilePreviewEvents({
           preview => fileDisplayTabId(preview.filePath) === resolvedTabId,
         );
         if (duplicate) {
-          void window.electron.shell
-            .revokePreviewFileEdit(result.editToken)
-            .catch((): undefined => undefined);
+          if (!isBrowserFilePreview(result)) {
+            void window.electron.shell
+              .revokePreviewFileEdit(result.editToken)
+              .catch((): undefined => undefined);
+          }
           if (detail.keepWorkspaceFilesOpen === false) setIsWorkspaceFilesOpen(false);
           setPreferredDisplayTabId(resolvedTabId);
           setIsDisplayPanelOpen(true);
           return;
         }
-        const preview: FilePreview = {
-          content: result.content,
-          editToken: result.editToken,
-          filePath: result.filePath,
-          version: result.version,
-        };
+        const preview: FilePreview = isBrowserFilePreview(result)
+          ? {
+              kind: result.kind,
+              filePath: result.filePath,
+              url: result.url,
+            }
+          : {
+              content: result.content,
+              editToken: result.editToken,
+              filePath: result.filePath,
+              version: result.version,
+            };
         setFilePreviews(current => [...current, preview]);
+        if (isBrowserFilePreview(result) || getPreviewableFileExtension(result.filePath)) {
+          setUnsupportedFilePreviews(current =>
+            current.filter(filePath => fileDisplayTabId(filePath) !== resolvedTabId),
+          );
+        }
         if (detail.keepWorkspaceFilesOpen === false) setIsWorkspaceFilesOpen(false);
         setPreferredDisplayTabId(resolvedTabId);
         setIsDisplayPanelOpen(true);

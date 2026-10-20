@@ -55,6 +55,7 @@ it('renders the original file in the existing isolated browser and keeps it moun
     isOpen: true,
     embedded: true,
     pageToolsVisible: false,
+    navigationBarVisible: true,
     initialTabs: [{ url: nativeUrl, sourceFilePath: 'E:/work/地球 #100%.html' }],
   });
   rerender(<HtmlFilePreview filePath="E:/work/地球 #100%.html" isVisible={false} />);

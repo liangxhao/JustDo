@@ -10,6 +10,8 @@ import { store } from '@/store';
 
 import CoworkPromptInput from '../composer/CoworkPromptInput';
 import DisplayPanelLauncher from '../display/DisplayPanelLauncher';
+import WorkspaceFileIcon from '../shared/WorkspaceFileIcon';
+import { WorkspaceFileIconContext } from '../shared/WorkspaceFileIconContext';
 import { useHomeFileApps } from './useHomeFileApps';
 
 interface TestHost {
@@ -90,6 +92,13 @@ const catalog: McpAppDiscovery = {
           resourceUri: 'ui://drawio/editor',
           entrypoint: { type: 'global' },
         },
+        {
+          toolName: 'open_file',
+          title: 'Editor',
+          resourceUri: 'ui://drawio/editor',
+          icons: [{ src: 'data:image/png;base64,aWNvbg==' }],
+          entrypoint: { type: 'file', extensions: ['.drawio'] },
+        },
       ],
     },
   ],
@@ -113,6 +122,9 @@ function Fixture({ home = true }: { home?: boolean }) {
             onCreateBrowser={vi.fn()}
             onCreateTerminal={vi.fn()}
           />
+          <WorkspaceFileIconContext.Provider value={apps.menu.fileCatalog}>
+            <WorkspaceFileIcon fileName="flow.drawio" />
+          </WorkspaceFileIconContext.Provider>
         </>
       ) : (
         <p>Ordinary conversation</p>
@@ -232,6 +244,23 @@ test('configuration completion invalidates a background cache before displaying 
   expect(screen.getByRole('button', { name: 'Updated editor' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'draw.io' })).toBeNull();
   expect(f.discover).toHaveBeenCalledTimes(2);
+  expect(f.launch).not.toHaveBeenCalled();
+});
+
+test('updates home file icons from plugin discovery without launching an App', async () => {
+  const { container } = render(<Fixture />);
+  await waitFor(() =>
+    expect(container.querySelector('[data-file-icon-kind="file"] img')).not.toBeNull(),
+  );
+  const pending = deferred<McpAppDiscovery>();
+  f.discover.mockReturnValueOnce(pending.promise);
+  act(() => {
+    for (const [notify] of f.onExtensionsChanged.mock.calls)
+      notify({ extensionId: 'drawio', enabled: false });
+  });
+  expect(container.querySelector('[data-file-icon-kind="file"] img')).toBeNull();
+  await act(async () => pending.resolve({ servers: [] }));
+  expect(container.querySelector('[data-file-icon-kind="file"] img')).toBeNull();
   expect(f.launch).not.toHaveBeenCalled();
 });
 

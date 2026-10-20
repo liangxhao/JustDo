@@ -1,7 +1,7 @@
 import type { McpAppDiscovery } from '@shared/plugins/mcpApps';
 import { expect, test } from 'vitest';
 
-import { findFileApp } from './fileApps';
+import { findFileApp, findFileAppIcons } from './fileApps';
 
 const catalog: McpAppDiscovery = {
   servers: [
@@ -42,4 +42,26 @@ test('routes only one exact discovered file extension and preserves the original
       filePath,
     ),
   ).toBeUndefined();
+});
+
+test('uses the selected file entry icon before the server icon and refuses ambiguous handlers', () => {
+  const serverIcon = { src: 'data:image/png;base64,c2VydmVy' };
+  const fileIcon = { src: 'data:image/png;base64,ZmlsZQ==' };
+  const server = {
+    ...catalog.servers[0],
+    icons: [serverIcon],
+    entrypoints: catalog.servers[0].entrypoints.map(entry => ({
+      ...entry,
+      ...(entry.entrypoint.type === 'file' ? { icons: [fileIcon] } : {}),
+    })),
+  };
+  expect(findFileAppIcons({ servers: [server] }, '预算.XLSX')).toEqual([fileIcon]);
+  expect(
+    findFileAppIcons({ servers: [{ ...catalog.servers[0], icons: [serverIcon] }] }, '预算.xlsx'),
+  ).toEqual([serverIcon]);
+  expect(
+    findFileAppIcons({ servers: [server, { ...server, serverName: 'other' }] }, '预算.xlsx'),
+  ).toBeUndefined();
+  expect(findFileAppIcons({ servers: [server] }, '图表.drawio')).toBeUndefined();
+  expect(findFileAppIcons(undefined, '预算.xlsx')).toBeUndefined();
 });

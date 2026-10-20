@@ -8,7 +8,7 @@ export interface ImageFilePreview {
 }
 
 export const isImageFilePath = (filePath: string): boolean =>
-  /\.(?:png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i.test(filePath);
+  /\.(?:png|apng|jpe?g|jpe|jfif|pjpeg|pjp|gif|webp|svg|bmp|ico|avif)$/i.test(filePath);
 
 export function createImageFilePreview(
   source: string,

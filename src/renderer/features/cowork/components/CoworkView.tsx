@@ -128,7 +128,8 @@ import UnsupportedFilePreview from '@/features/cowork/components/preview/Unsuppo
 import { useFilePreviewEvents } from '@/features/cowork/components/preview/useFilePreviewEvents';
 import WorkspaceFilesPanel from '@/features/cowork/components/preview/WorkspaceFilesPanel';
 import ExportSessionModal from '@/features/cowork/components/sessions/ExportSessionModal';
-import { getCompactFolderName } from '@/features/cowork/components/shared/path';
+import { getCompactFolderName, getLastPathSegment } from '@/features/cowork/components/shared/path';
+import WorkspaceFileIcon from '@/features/cowork/components/shared/WorkspaceFileIcon';
 import { CoworkPet } from '@/features/cowork/components/status/CoworkPet';
 import { isCoworkRunActive } from '@/features/cowork/components/status/coworkRunActivity';
 import {
@@ -2957,10 +2958,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             ? preview.label || i18nService.t('coworkImagePreviewTitle')
             : preview.filePath.split(/[\\/]/).pop() || preview.filePath,
         icon:
-          preview.kind === 'image' ? (
+          preview.kind === 'image' && /^(?:https?:|image:)/i.test(preview.filePath) ? (
             <PhotoIcon className="h-4 w-4" />
           ) : (
-            <DocumentTextIcon className="h-4 w-4" />
+            <WorkspaceFileIcon fileName={getLastPathSegment(preview.filePath)} />
           ),
         onSelect: () => setPreferredDisplayTabId(fileDisplayTabId(preview.filePath)),
         onClose: () => closeFilePreview(preview.filePath),
@@ -2968,7 +2969,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       ...unsupportedFilePreviews.map(filePath => ({
         id: fileDisplayTabId(filePath),
         label: filePath.split(/[\\/]/).pop() || filePath,
-        icon: <DocumentTextIcon className="h-4 w-4" />,
+        icon: <WorkspaceFileIcon fileName={getLastPathSegment(filePath)} />,
         onSelect: () => setPreferredDisplayTabId(fileDisplayTabId(filePath)),
         onClose: () => closeUnsupportedFilePreview(filePath),
       })),
@@ -3594,6 +3595,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 displayTabs.length === 0 || activeDisplayTabId === WORKSPACE_FILES_DISPLAY_TAB_ID
               }
               tabs={sortDisplayTabs(displayTabs)}
+              fileAppCatalog={
+                mcpAppMenu?.sessionId === currentSession.id ? mcpAppMenu.fileCatalog : undefined
+              }
               workspacePath={currentSessionFolderPath ?? undefined}
               fileContextPath={activeFilePreview?.filePath ?? activeUnsupportedFilePath}
               emptyState={
@@ -3746,7 +3750,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   }}
                   preview={preview}
                   onClose={() => void closeFilePreview(preview.filePath)}
-                  isObscured={activeFilePreview?.filePath !== preview.filePath}
+                  isObscured={
+                    !isWorkspaceVisible || activeFilePreview?.filePath !== preview.filePath
+                  }
                   embedded
                 />
               ))}
@@ -3891,10 +3897,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           ? preview.label || i18nService.t('coworkImagePreviewTitle')
           : preview.filePath.split(/[\\/]/).pop() || preview.filePath,
       icon:
-        preview.kind === 'image' ? (
+        preview.kind === 'image' && /^(?:https?:|image:)/i.test(preview.filePath) ? (
           <PhotoIcon className="h-4 w-4" />
         ) : (
-          <DocumentTextIcon className="h-4 w-4" />
+          <WorkspaceFileIcon fileName={getLastPathSegment(preview.filePath)} />
         ),
       onSelect: () => setPreferredDisplayTabId(fileDisplayTabId(preview.filePath)),
       onClose: () => closeFilePreview(preview.filePath),
@@ -3902,7 +3908,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     ...unsupportedFilePreviews.map(filePath => ({
       id: fileDisplayTabId(filePath),
       label: filePath.split(/[\\/]/).pop() || filePath,
-      icon: <DocumentTextIcon className="h-4 w-4" />,
+      icon: <WorkspaceFileIcon fileName={getLastPathSegment(filePath)} />,
       onSelect: () => setPreferredDisplayTabId(fileDisplayTabId(filePath)),
       onClose: () => closeUnsupportedFilePreview(filePath),
     })),
