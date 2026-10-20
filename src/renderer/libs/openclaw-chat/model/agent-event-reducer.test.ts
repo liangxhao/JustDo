@@ -2,7 +2,6 @@ import type { NormalizedAgentEvent, NormalizedChatEvent } from '@shared/openclaw
 import { beforeEach, describe, expect, test } from 'vitest';
 
 import {
-  canAdvanceAssistantSnapshot,
   hydrateToolPrecedingSegments,
   reduceAgentEvent,
   reduceChatEvent,
@@ -68,6 +67,166 @@ function chat(
 }
 
 describe('agent event reducer', () => {
+  test('updates the same native assistant item across intervening thinking without duplicating text', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(
+      state,
+      agent(1, 'assistant', { itemId: 'reply-1', text: 'Hello' }),
+      dependencies,
+    );
+    const contentId = state.activeTurn!.items[0].id;
+    reduceAgentEvent(state, agent(2, 'thinking', { text: 'Check the answer' }), dependencies);
+    reduceAgentEvent(
+      state,
+      agent(3, 'assistant', { itemId: 'reply-1', text: 'Hello world' }),
+      dependencies,
+    );
+
+    expect(state.activeTurn!.items.filter(item => item.type === 'content')).toEqual([
+      expect.objectContaining({ id: contentId, text: 'Hello world' }),
+    ]);
+    expect(state.activeTurn!.items.find(item => item.type === 'thinking')).toMatchObject({
+      status: 'completed',
+    });
+  });
+
+  test('does not let a recovered older native Content update close current Thinking', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(
+      state,
+      agent(1, 'assistant', { itemId: 'reply-1', text: 'Hello' }),
+      dependencies,
+    );
+    reduceAgentEvent(state, agent(4, 'thinking', { text: 'Current reasoning' }), dependencies);
+    reduceAgentEvent(
+      state,
+      agent(2, 'assistant', { itemId: 'reply-1', text: 'Hello world' }),
+      dependencies,
+      { allowSequenceBackfill: true, replaySnapshot: true },
+    );
+    expect(state.activeTurn!.items.find(item => item.type === 'thinking')).toMatchObject({
+      status: 'running',
+    });
+  });
+
+  test('strips resumed native Content once when a later Tool and cumulative final arrive', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(state, agent(1, 'assistant', { itemId: 'reply-1', text: 'A' }), dependencies);
+    reduceAgentEvent(state, agent(2, 'thinking', { text: 'Checking' }), dependencies);
+    reduceAgentEvent(state, agent(3, 'assistant', { itemId: 'reply-1', text: 'AB' }), dependencies);
+    reduceAgentEvent(
+      state,
+      agent(4, 'tool', { phase: 'start', toolCallId: 'read-1', name: 'read' }),
+      dependencies,
+    );
+    reduceAgentEvent(state, agent(5, 'assistant', { itemId: 'reply-2', text: 'C' }), dependencies);
+    reduceChatEvent(state, chat('final', { message: { content: 'ABC' } }), dependencies);
+    expect(
+      state.activeTurn!.items.filter(item => item.type === 'content').map(item => item.text),
+    ).toEqual(['AB', 'C']);
+  });
+
+  test('preserves delta whitespace for a native assistant owner behind Thinking', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(
+      state,
+      agent(1, 'assistant', { itemId: 'reply-1', text: 'Hello' }),
+      dependencies,
+    );
+    reduceAgentEvent(state, agent(2, 'thinking', { text: 'Checking' }), dependencies);
+    reduceAgentEvent(state, agent(3, 'assistant', { itemId: 'reply-1', delta: ' ' }), dependencies);
+    reduceAgentEvent(
+      state,
+      agent(4, 'assistant', { itemId: 'reply-1', delta: 'world' }),
+      dependencies,
+    );
+    expect(state.activeTurn!.items.filter(item => item.type === 'content')).toEqual([
+      expect.objectContaining({ text: 'Hello world' }),
+    ]);
+  });
+
+  test('does not append a covered native-owner delta after pre-Tool history repairs its text', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(
+      state,
+      agent(1, 'assistant', { itemId: 'reply-1', text: 'Hello' }),
+      dependencies,
+    );
+    const turn = state.activeTurn!;
+    const tool = {
+      id: 'recovered-tool',
+      runId: turn.runId,
+      type: 'tool' as const,
+      toolCallId: 'read-1',
+      name: 'read',
+      status: 'running' as const,
+      firstSeq: 1,
+      lastSeq: 1,
+      startedAt: 105,
+      updatedAt: 105,
+      agentSequencePending: true,
+      agentSequenceUnconfirmed: true,
+    };
+    turn.items.push(tool);
+    turn.toolById.set(tool.toolCallId, tool);
+    hydrateToolPrecedingSegments(
+      turn,
+      tool,
+      [{ type: 'content', text: 'Hello world' }],
+      1,
+      105,
+      dependencies,
+    );
+
+    reduceAgentEvent(state, agent(2, 'assistant', { itemId: 'reply-1', delta: ' ' }), dependencies);
+    reduceAgentEvent(
+      state,
+      agent(3, 'assistant', { itemId: 'reply-1', delta: 'world' }),
+      dependencies,
+    );
+    expect(turn.items.filter(item => item.type === 'content')).toEqual([
+      expect.objectContaining({ text: 'Hello world' }),
+    ]);
+  });
+
+  test('keeps distinct native assistant items even when adjacent snapshots have the same text', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    for (const [seq, itemId] of [
+      [1, 'reply-1'],
+      [2, 'reply-2'],
+    ] as const) {
+      reduceAgentEvent(state, agent(seq, 'assistant', { itemId, text: 'Hello' }), dependencies);
+    }
+    expect(state.activeTurn!.items.filter(item => item.type === 'content')).toHaveLength(2);
+  });
+
+  test('retracts only the named native assistant item after a newer tool and reply arrive', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(
+      state,
+      agent(1, 'assistant', { itemId: 'reply-1', text: 'Preview' }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(2, 'tool', { phase: 'start', toolCallId: 'read-1', name: 'read' }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(3, 'assistant', { itemId: 'reply-2', text: 'Current reply' }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(4, 'assistant', { itemId: 'reply-1', text: '', replace: true }),
+      dependencies,
+    );
+    expect(
+      state.activeTurn!.items.filter(item => item.type === 'content').map(item => item.text),
+    ).toEqual(['', 'Current reply']);
+  });
+
   test('retracts an advanced Chat snapshot and resumes without replaying covered Agent text', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
     reduceAgentEvent(state, agent(1, 'assistant', { text: 'Hello' }), dependencies);
@@ -98,41 +257,32 @@ describe('agent event reducer', () => {
     });
   });
 
-  test('displays consecutive Chat snapshots without replaying delayed Agent deltas', () => {
+  test('displays cumulative Chat snapshots when no Agent text source is available', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
-    reduceAgentEvent(state, agent(1, 'assistant', { text: 'Hello' }), dependencies);
-    for (const [sourceSeq, text] of [[2, 'Hello world'], [3, 'Hello world!']] as const) {
+    for (const [sourceSeq, text] of [
+      [2, 'Hello world'],
+      [3, 'Hello world!'],
+    ] as const) {
       const event = chat('delta', { sourceSeq, message: { role: 'assistant', content: text } });
-      expect(canAdvanceAssistantSnapshot(state, event)).toBe(true);
       expect(reduceChatEvent(state, event, dependencies)).toBe('applied');
       expect(state.activeTurn!.items[0]).toMatchObject({ text });
     }
-    reduceAgentEvent(state, agent(2, 'assistant', { delta: ' world' }), dependencies);
-    reduceChatEvent(state, chat('delta', {
-      sourceSeq: 2, replace: true, message: { content: '' },
-    }), dependencies);
-    expect(state.activeTurn!.items[0]).toMatchObject({ text: 'Hello world!', lastTextSeq: 3 });
-    reduceAgentEvent(state, agent(3, 'assistant', { delta: '!' }), dependencies);
-    expect(state.activeTurn!.items[0]).toMatchObject({ text: 'Hello world!' });
-    reduceAgentEvent(state, agent(4, 'assistant', { delta: ' More' }), dependencies);
-    expect(state.activeTurn!.items[0]).toMatchObject({ text: 'Hello world! More' });
+    expect(state.activeTurn!.items.filter(item => item.type === 'content')).toHaveLength(1);
   });
 
-  test('does not guess snapshot ownership across missing events, replacements or tools', () => {
+  test('preserves intentional repeated text in an authoritative Agent delta', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
-    reduceAgentEvent(state, agent(1, 'assistant', { text: 'Hello' }), dependencies);
-    const event = chat('delta', { sourceSeq: 2, message: { content: 'Hello world' } });
-    for (const override of [
-      { sourceSeq: 1 }, { sourceSeq: 3 }, { sourceSeq: undefined },
-      { replace: true }, { runId: 'other' }, { message: { content: 'Different' } },
-    ]) expect(canAdvanceAssistantSnapshot(state, { ...event, ...override })).toBe(false);
-    reduceAgentEvent(state, agent(2, 'tool', {
-      phase: 'start', toolCallId: 'read-1', name: 'read',
-    }), dependencies);
-    reduceAgentEvent(state, agent(3, 'assistant', { text: 'Answer' }), dependencies);
-    expect(canAdvanceAssistantSnapshot(state, chat('delta', {
-      sourceSeq: 4, message: { content: 'HelloAnswer continues' },
-    }))).toBe(false);
+    reduceAgentEvent(
+      state,
+      agent(1, 'assistant', { itemId: 'reply-1', text: 'Again. ' }),
+      dependencies,
+    );
+    reduceAgentEvent(
+      state,
+      agent(3, 'assistant', { itemId: 'reply-1', delta: 'Again. ' }),
+      dependencies,
+    );
+    expect(state.activeTurn!.items[0]).toMatchObject({ text: 'Again. Again. ' });
   });
 
   test('keeps compaction and its preceding content when later tool history repairs its text segment', () => {

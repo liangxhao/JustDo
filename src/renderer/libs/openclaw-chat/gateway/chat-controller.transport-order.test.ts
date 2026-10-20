@@ -32,6 +32,25 @@ afterEach(() => {
   for (const controller of controllers.splice(0)) controller.disconnect();
 });
 
+test.each([false, true])(
+  'keeps one native assistant owner across thinking updates (background: %s)',
+  async background => {
+    const { controller, emit } = setup();
+    emit('agent', 1, 'assistant', { itemId: 'reply-1', text: 'Hello' });
+    const contentId = controller.state.transcript.activeTurn!.items[0].id;
+    if (background) await controller.switchSession('agent:main:transport-other');
+    emit('agent', 2, 'thinking', { text: 'Checking' });
+    emit('agent', 3, 'assistant', { itemId: 'reply-1', text: 'Hello world' });
+    if (background) await controller.switchSession(sessionKey);
+
+    expect(
+      controller.state.transcript.activeTurn!.items.filter(item => item.type === 'content'),
+    ).toEqual([
+      expect.objectContaining({ id: contentId, text: 'Hello world', assistantItemId: 'reply-1' }),
+    ]);
+  },
+);
+
 test('publishes an empty assistant replacement immediately', () => {
   const { controller, emit } = setup();
   const notify = vi.spyOn(
@@ -43,6 +62,31 @@ test('publishes an empty assistant replacement immediately', () => {
   emit('agent', 2, 'assistant', { text: '', replace: true, progressSegmentFirstSeq: 1 });
   expect(controller.state.transcript.activeTurn?.items[0]).toMatchObject({ text: '' });
   expect(notify).toHaveBeenCalledWith('terminal');
+});
+
+test('does not append covered text twice when an Agent delta coalesces across a Chat snapshot', () => {
+  const { controller, emit } = setup();
+  const reply = 'The answer is ready.';
+  emit('agent', 1, 'assistant', { itemId: 'reply-1', text: 'Result: ' });
+  (
+    controller as unknown as { handleEvent(event: { event: string; payload: unknown }): void }
+  ).handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey,
+      runId,
+      seq: 2,
+      state: 'delta',
+      deltaText: reply,
+      message: { role: 'assistant', content: `Result: ${reply}` },
+    },
+  });
+  // The socket coalesces Agent events 2 and 3. Only the newest seq survives;
+  // the delta still includes event 2, which the parallel Chat snapshot covers.
+  emit('agent', 3, 'assistant', { itemId: 'reply-1', delta: `${reply} Done.` });
+  expect(
+    controller.state.transcript.activeTurn!.items.filter(item => item.type === 'content'),
+  ).toEqual([expect.objectContaining({ text: `Result: ${reply} Done.` })]);
 });
 
 test.each([false, true])(

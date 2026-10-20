@@ -114,7 +114,6 @@ import type {
   GatewayHelloOk,
 } from '@/libs/openclaw-chat/gateway/client';
 import {
-  canAdvanceAssistantSnapshot,
   readPreambleText,
   readToolProgressText,
   reduceAgentEvent,
@@ -1538,7 +1537,6 @@ export class ChatController {
     if (
       payload.state === 'delta' &&
       !isChatTextRetraction(payload) &&
-      !canAdvanceAssistantSnapshot(cached.transcript, payload) &&
       cached.assistantSnapshotRunId &&
       (!payload.runId || payload.runId === cached.assistantSnapshotRunId)
     ) {

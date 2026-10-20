@@ -94,6 +94,15 @@ function agentTailAtSequence(turn: AssistantTurn, seq: number): TurnItem | undef
 }
 
 function textOwnerForEvent(turn: AssistantTurn, event: NormalizedAgentEvent, backfill: boolean) {
+  const assistantItemId = event.stream === 'assistant' ? eventItemId(event.data) : null;
+  if (assistantItemId !== null) {
+    // Native snapshots are cumulative for this message, even when Thinking or
+    // Tool delivery has moved the visual tail to another item.
+    const owned = turn.items.find(
+      item => item.type === 'content' && item.assistantItemId === assistantItemId,
+    );
+    if (owned) return owned;
+  }
   const firstSeq = snapshotSegmentFirstSeq(event);
   if (firstSeq !== null) {
     const type = event.stream === 'thinking' ? 'thinking' : 'content';
@@ -146,6 +155,13 @@ function textOwnerForEvent(turn: AssistantTurn, event: NormalizedAgentEvent, bac
     return matches[0];
   }
   const tail = backfill ? agentTailAtSequence(turn, event.agentSeq) : activeAgentTail(turn);
+  if (
+    tail?.type === 'content' &&
+    assistantItemId !== null &&
+    tail.assistantItemId !== undefined &&
+    tail.assistantItemId !== assistantItemId
+  )
+    return undefined;
   return tail?.type === 'content' && tail.preambleItemId !== undefined ? undefined : tail;
 }
 
@@ -912,10 +928,25 @@ function reduceContent(
   backfill = false,
 ): ContentItem | null {
   const currentOwner = textOwnerForEvent(turn, event, backfill);
-  if (
+  const assistantItemId = eventItemId(event.data);
+  const nativeOwner =
     currentOwner?.type === 'content' &&
-    event.agentSeq <= (currentOwner.chatSnapshotSeq ?? -1)
-  ) return currentOwner;
+    currentOwner.assistantItemId !== undefined &&
+    currentOwner.assistantItemId === assistantItemId
+      ? currentOwner
+      : null;
+  const pendingTool =
+    snapshotSegmentFirstSeq(event) === null ? pendingRecoveredTool(turn) : undefined;
+  const precedingContent = pendingTool ? contentBeforeTool(turn, pendingTool) : undefined;
+  const recoveredTool =
+    pendingTool &&
+    (nativeOwner
+      ? precedingContent === nativeOwner
+      : precedingContent?.assistantItemId === undefined ||
+        assistantItemId === null ||
+        precedingContent.assistantItemId === assistantItemId)
+      ? pendingTool
+      : undefined;
   const snapshot = stringValue(event.data.text);
   const delta = stringValue(event.data.delta);
   // Native agent assistant snapshots are scoped to the current model message.
@@ -924,8 +955,25 @@ function reduceContent(
     event.data.replace !== true && delta !== null && (snapshot === null || !snapshot.trim());
   const text = isDelta ? delta : (snapshot ?? delta);
   if (text === null) return null;
+  // A native ID binds the owner, but does not prove that a queued delta is
+  // newer than the authoritative pre-Tool text restored from history.
+  if (isDelta && recoveredTool && precedingContent?.recoveredSnapshotText) {
+    precedingContent.text = precedingContent.recoveredSnapshotText;
+    precedingContent.lastSeq = Math.max(precedingContent.lastSeq, event.agentSeq);
+    precedingContent.updatedAt = Math.max(precedingContent.updatedAt, event.timestamp);
+    return precedingContent;
+  }
+  if (!backfill && nativeOwner && text && (text.trim() || isDelta)) {
+    const ownerIndex = turn.items.indexOf(nativeOwner);
+    const intervening = turn.items.slice(ownerIndex + 1, activeAgentTailIndex(turn) + 1);
+    if (intervening.length > 0 && intervening.every(item => item.type === 'thinking')) {
+      // The native message resumed after Thinking without opening a new row.
+      // Keep its earlier segment closed so a later cumulative final can strip it.
+      completeRunningThinking(turn, event.agentSeq, event.timestamp);
+    }
+  }
   if (!text.trim()) {
-    const tail = textOwnerForEvent(turn, event, backfill);
+    const tail = currentOwner;
     // Native suppression/retraction uses an authoritative empty replacement.
     // Keep the owner identity so the next delta resumes the same segment.
     if (event.data.replace === true && tail?.type === 'content') {
@@ -936,7 +984,12 @@ function reduceContent(
       tail.updatedAt = event.timestamp;
       return tail;
     }
-    if (isDelta && tail?.type === 'content' && tail.status === 'streaming' && tail.text) {
+    if (
+      isDelta &&
+      tail?.type === 'content' &&
+      (tail.status === 'streaming' || tail === nativeOwner) &&
+      tail.text
+    ) {
       tail.text += text;
       tail.sourceMode = 'delta';
       tail.lastSeq = event.agentSeq;
@@ -945,12 +998,18 @@ function reduceContent(
     }
     return null;
   }
-  if (snapshotSegmentFirstSeq(event) === null && snapshot !== null && snapshot.trim()) {
+  if (
+    !nativeOwner &&
+    snapshotSegmentFirstSeq(event) === null &&
+    snapshot !== null &&
+    snapshot.trim()
+  ) {
     const normalizedSnapshot = snapshot.trim();
     const recovered = turn.items.find(
       (item): item is ContentItem =>
         item.type === 'content' &&
         item.preambleItemId === undefined &&
+        (item.assistantItemId === undefined || item.assistantItemId === assistantItemId) &&
         typeof item.recoveredSnapshotText === 'string' &&
         item.recoveredSnapshotText.startsWith(normalizedSnapshot),
     );
@@ -963,8 +1022,6 @@ function reduceContent(
       return recovered;
     }
   }
-  const recoveredTool =
-    snapshotSegmentFirstSeq(event) === null ? pendingRecoveredTool(turn) : undefined;
   if (recoveredTool) {
     const existing = contentBeforeTool(turn, recoveredTool);
     if (existing) {
@@ -993,13 +1050,18 @@ function reduceContent(
     );
     return hydrated ? (contentBeforeTool(turn, recoveredTool) ?? null) : null;
   }
-  const tail = textOwnerForEvent(turn, event, backfill);
-  if (!backfill && tail?.type !== 'content')
+  const tail = currentOwner;
+  if (!backfill && tail?.type !== 'content') {
     completeRunningThinking(turn, event.agentSeq, event.timestamp);
+    completeStreamingContent(turn, event.agentSeq, event.timestamp);
+  }
   const replace = event.data.replace === true;
   if (
     tail?.type === 'content' &&
-    (tail.status === 'streaming' || backfill || snapshotSegmentFirstSeq(event) !== null)
+    (tail.status === 'streaming' ||
+      backfill ||
+      snapshotSegmentFirstSeq(event) !== null ||
+      tail === nativeOwner)
   ) {
     if (isDelta && !replace) {
       tail.text += text;
@@ -1286,6 +1348,8 @@ export function reduceAgentEvent(
     } else {
       const content = reduceContent(turn, event, dependencies, insertBySequence);
       if (content) content.lastTextSeq = Math.max(content.lastTextSeq ?? -1, event.agentSeq);
+      const assistantItemId = eventItemId(event.data);
+      if (content && assistantItemId !== null) content.assistantItemId = assistantItemId;
       if (content && observation?.action === 'update') {
         content.terminalGuardObservationToken = observation.token;
       }
@@ -1405,30 +1469,6 @@ function finishTurnItems(turn: AssistantTurn, status: TurnStatus, now: number): 
   }
 }
 
-/** Admit only an unambiguous next snapshot; never guess across a missing boundary. */
-export function canAdvanceAssistantSnapshot(
-  state: ChatTranscriptState,
-  event: NormalizedChatEvent,
-): boolean {
-  const turn = state.activeTurn;
-  if (
-    !turn || turn.status !== 'running' || event.runId !== turn.runId ||
-    event.state !== 'delta' || event.replace || event.sourceSeq === undefined
-  ) return false;
-  const tail = activeAgentTail(turn);
-  if (
-    tail?.type !== 'content' || tail.status !== 'streaming' || !tail.text ||
-    tail.preambleItemId !== undefined || tail.terminalGuardObservationToken !== undefined
-  ) return false;
-  // Cumulative Chat text can cross tool/message boundaries. Keep Agent ownership
-  // for those turns until a separate native segment identity is available.
-  if (turn.items.some(item => item !== tail && item.type !== 'thinking')) return false;
-  if (event.sourceSeq !== Math.max(turn.lastAgentSeq, tail.chatSnapshotSeq ?? -1) + 1)
-    return false;
-  const text = extractMessageText(event.message);
-  return text.length > tail.text.length && text.startsWith(tail.text);
-}
-
 export function reduceChatEvent(
   state: ChatTranscriptState,
   event: NormalizedChatEvent,
@@ -1517,7 +1557,6 @@ export function reduceChatEvent(
     ) {
       return 'ignored-sequence';
     }
-    const advancesSnapshot = canAdvanceAssistantSnapshot(state, event);
     const synthetic: NormalizedAgentEvent = {
       runId: turn.runId,
       sessionKey: state.sessionKey,
@@ -1525,7 +1564,7 @@ export function reduceChatEvent(
       lifecycleGeneration: event.lifecycleGeneration,
       agentId: null,
       spawnedBy: null,
-      agentSeq: event.replace || advancesSnapshot
+      agentSeq: event.replace
         ? (event.sourceSeq ?? turn.lastAgentSeq + 1) : turn.lastAgentSeq + 1,
       frameSeq: event.frameSeq,
       deliveryEvent: 'agent',
@@ -1540,7 +1579,6 @@ export function reduceChatEvent(
     const content = reduceContent(turn, synthetic, dependencies);
     if (content) {
       content.lastTextSeq = event.sourceSeq ?? synthetic.agentSeq;
-      if (advancesSnapshot) content.chatSnapshotSeq = event.sourceSeq;
     }
     state.revision += 1;
     return 'applied';

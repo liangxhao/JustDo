@@ -248,53 +248,83 @@ test('shows a stalled-run status at 20 seconds and clears it on model activity',
 });
 
 test.each(['selected', 'background', 'sidechat'] as const)(
-  'renders an advancing Chat snapshot in %s and deduplicates its delayed Agent frame',
+  'keeps Agent text ownership in %s when a delta coalesces across a parallel Chat snapshot',
   async perspective => {
-  const sessionKey = 'agent:main:justdo:session-1';
-  const controller = new ChatController();
-  controller.state.sessionKey = sessionKey;
-  const stream = vi.fn();
-  controller.onStream(stream);
-  const sideStream = vi.fn();
-  if (perspective === 'sidechat') {
-    controller.state.client = {
-      request: vi.fn().mockResolvedValue({ runId: 'run-1', status: 'accepted' }),
-    } as never;
-    controller.state.connected = true;
-    controller.onSideChatStream(sideStream);
-    await controller.sendSideQuestion('what changed?', 'run-1');
-  }
-  const handle = (controller as unknown as {
-    handleEvent(event: { event: string; payload: unknown }): void;
-  }).handleEvent.bind(controller);
-  handle({ event: 'agent', payload: {
-    session: sessionKey, runId: 'run-1', seq: 1, stream: 'assistant', data: { text: 'Hello' },
-  } });
-  if (perspective === 'background') await controller.switchSession('agent:main:other-session');
-  stream.mockClear();
-  handle({ event: 'chat', payload: {
-    sessionKey, runId: 'run-1', seq: 2, state: 'delta',
-    message: { role: 'assistant', content: 'Hello world' },
-  } });
-  if (perspective === 'selected') expect(stream).toHaveBeenCalledWith('stream');
-  const activeItems = () => perspective === 'sidechat'
-    ? sideStream.mock.lastCall?.[0].turn?.items
-    : controller.state.transcript.activeTurn?.items;
-  if (perspective !== 'background') expect(activeItems()).toMatchObject([{ text: 'Hello world' }]);
-  handle({ event: 'agent', payload: {
-    session: sessionKey, runId: 'run-1', seq: 2, stream: 'assistant', data: { delta: ' world' },
-  } });
-  handle({ event: 'chat', payload: {
-    sessionKey, runId: 'run-1', seq: 1, state: 'delta',
-    message: { role: 'assistant', content: 'Hello stale' },
-  } });
-  if (perspective === 'background') {
-    expect(controller.state.transcript.activeTurn).toBeNull();
-    await controller.switchSession(sessionKey);
-  }
-  expect(activeItems()).toMatchObject([{ text: 'Hello world' }]);
-  if (perspective === 'sidechat') expect(controller.state.transcript.activeTurn).toBeNull();
-});
+    const sessionKey = 'agent:main:justdo:session-1';
+    const controller = new ChatController();
+    controller.state.sessionKey = sessionKey;
+    const stream = vi.fn();
+    controller.onStream(stream);
+    const sideStream = vi.fn();
+    if (perspective === 'sidechat') {
+      controller.state.client = {
+        request: vi.fn().mockResolvedValue({ runId: 'run-1', status: 'accepted' }),
+      } as never;
+      controller.state.connected = true;
+      controller.onSideChatStream(sideStream);
+      await controller.sendSideQuestion('what changed?', 'run-1');
+    }
+    const handle = (
+      controller as unknown as {
+        handleEvent(event: { event: string; payload: unknown }): void;
+      }
+    ).handleEvent.bind(controller);
+    handle({
+      event: 'agent',
+      payload: {
+        session: sessionKey,
+        runId: 'run-1',
+        seq: 1,
+        stream: 'assistant',
+        data: { text: 'Hello' },
+      },
+    });
+    if (perspective === 'background') await controller.switchSession('agent:main:other-session');
+    stream.mockClear();
+    handle({
+      event: 'chat',
+      payload: {
+        sessionKey,
+        runId: 'run-1',
+        seq: 2,
+        state: 'delta',
+        message: { role: 'assistant', content: 'Hello world' },
+      },
+    });
+    if (perspective === 'selected') expect(stream).not.toHaveBeenCalled();
+    const activeItems = () =>
+      perspective === 'sidechat'
+        ? sideStream.mock.lastCall?.[0].turn?.items
+        : controller.state.transcript.activeTurn?.items;
+    if (perspective !== 'background') expect(activeItems()).toMatchObject([{ text: 'Hello' }]);
+    handle({
+      event: 'agent',
+      payload: {
+        session: sessionKey,
+        runId: 'run-1',
+        seq: 3,
+        stream: 'assistant',
+        data: { delta: ' world!' },
+      },
+    });
+    handle({
+      event: 'chat',
+      payload: {
+        sessionKey,
+        runId: 'run-1',
+        seq: 1,
+        state: 'delta',
+        message: { role: 'assistant', content: 'Hello stale' },
+      },
+    });
+    if (perspective === 'background') {
+      expect(controller.state.transcript.activeTurn).toBeNull();
+      await controller.switchSession(sessionKey);
+    }
+    expect(activeItems()).toMatchObject([{ text: 'Hello world!' }]);
+    if (perspective === 'sidechat') expect(controller.state.transcript.activeTurn).toBeNull();
+  },
+);
 
 test('renders an OpenClaw commentary delta when its snapshot field is blank', () => {
   const sessionKey = 'agent:main:justdo:session-1';

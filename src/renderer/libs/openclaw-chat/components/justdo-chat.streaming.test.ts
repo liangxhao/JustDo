@@ -9,6 +9,7 @@ import {
   beginAssistantTurn,
   createChatTranscriptState,
 } from '@/libs/openclaw-chat/model/chat-transcript-state';
+import { i18nService } from '@/services/i18n';
 
 import type { JustDoChatElement } from './justdo-chat';
 
@@ -88,6 +89,84 @@ afterEach(() => {
 });
 
 describe('justdo-chat direct-property streaming', () => {
+  test('announces responding when the same native Content resumes after Thinking', async () => {
+    const frames = createAnimationFrameHarness();
+    const controller = prepareController();
+    const handle = gatewayEventHandler(controller);
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.controller = controller;
+    document.body.append(chat);
+    await chat.updateComplete;
+    await frames.drain(chat);
+    const sessionKey = controller.state.sessionKey;
+    for (const [seq, stream, data] of [
+      [1, 'assistant', { itemId: 'reply-1', text: 'Hello' }],
+      [2, 'thinking', { text: 'Checking' }],
+      [3, 'assistant', { itemId: 'reply-1', text: 'Hello world' }],
+    ] as const) {
+      handle({
+        event: 'agent',
+        payload: { sessionKey, runId: 'native-response', seq, stream, data },
+      });
+    }
+    await frames.drain(chat);
+    await chat.updateComplete;
+    expect(chat.shadowRoot?.querySelector('[role="status"].sr-only')?.textContent?.trim()).toBe(
+      i18nService.t('coworkRunStateResponding'),
+    );
+    expect(chat.shadowRoot?.querySelectorAll('.chat-bubble__text')).toHaveLength(1);
+    expect(assistantText(chat)).toBe('Hello world');
+  });
+
+  test('renders one copy inside a Content bubble when Agent deltas overlap a parallel Chat snapshot', async () => {
+    const frames = createAnimationFrameHarness();
+    const controller = prepareController();
+    const handleEvent = gatewayEventHandler(controller);
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.controller = controller;
+    document.body.append(chat);
+    await chat.updateComplete;
+    await frames.drain(chat);
+    const sessionKey = controller.state.sessionKey;
+    const runId = 'overlapping-stream';
+
+    handleEvent({
+      event: 'agent',
+      payload: {
+        sessionKey,
+        runId,
+        seq: 1,
+        stream: 'assistant',
+        data: { itemId: 'reply-1', text: 'Result: ' },
+      },
+    });
+    handleEvent({
+      event: 'chat',
+      payload: {
+        sessionKey,
+        runId,
+        seq: 2,
+        state: 'delta',
+        deltaText: 'Ready.',
+        message: { role: 'assistant', content: 'Result: Ready.' },
+      },
+    });
+    handleEvent({
+      event: 'agent',
+      payload: {
+        sessionKey,
+        runId,
+        seq: 3,
+        stream: 'assistant',
+        data: { itemId: 'reply-1', delta: 'Ready. Done.' },
+      },
+    });
+    await frames.drain(chat);
+    await chat.updateComplete;
+    expect(chat.shadowRoot?.querySelectorAll('.chat-bubble__text')).toHaveLength(1);
+    expect(assistantText(chat)).toBe('Result: Ready. Done.');
+  });
+
   test('stops tool animation and flushes paced content on a confirmed stop without a terminal frame', async () => {
     const frames = createAnimationFrameHarness();
     const controller = prepareController();

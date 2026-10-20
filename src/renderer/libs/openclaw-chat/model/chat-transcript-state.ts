@@ -51,10 +51,10 @@ export interface ContentItem extends BaseTurnItem {
   status: 'streaming' | 'completed' | 'interrupted';
   text: string;
   sourceMode: 'delta' | 'snapshot' | 'replaceable';
+  /** Native assistant message owner; cumulative updates can cross Thinking boundaries. */
+  assistantItemId?: string;
   /** Last text update; lastSeq may also advance when a Tool closes this segment. */
   lastTextSeq?: number;
-  /** Chat snapshot already displayed while its matching Agent frame is in flight. */
-  chatSnapshotSeq?: number;
   /** Native item/preamble commentary owner, separate from assistant reply segments. */
   preambleItemId?: string;
   followingToolCallId?: string;

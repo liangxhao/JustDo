@@ -88,6 +88,7 @@ function itemIdentity(item: TurnItem): Record<string, unknown> {
     status: item.type === 'compaction' ? item.message?.__openclaw?.phase : item.status,
     startedAt: item.startedAt,
     text: 'text' in item ? traceTextIdentity(item.text) : undefined,
+    ...(item.type === 'content' ? { assistantItemId: item.assistantItemId } : {}),
     ...(item.type === 'tool'
       ? {
           toolCallId: item.toolCallId,

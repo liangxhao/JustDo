@@ -293,6 +293,28 @@ describe('optimistic history tail ownership', () => {
     ).toEqual([previous, user]);
   });
 
+  test('keeps active output hidden when a later user input advances the history boundary', () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const turn = beginAssistantTurn(state, { runId: 'run-current' }, dependencies);
+    const prompt = { role: 'user', content: 'start', runId: turn.runId };
+    const reply = {
+      role: 'assistant',
+      content: 'streamed reply',
+      __openclaw: { id: 'reply', runId: turn.runId },
+    };
+    const nextPrompt = { role: 'user', content: 'continue', runId: 'run-next' };
+
+    expect(projectPersistedMessagesForActiveTurn([prompt, reply, nextPrompt], turn)).toEqual([
+      prompt,
+      nextPrompt,
+    ]);
+    expect(projectPersistedMessagesForActiveTurn([prompt, reply, nextPrompt], null)).toEqual([
+      prompt,
+      reply,
+      nextPrompt,
+    ]);
+  });
+
   test('hides a persisted Tool duplicate until a settled active turn is retired', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
     const turn = beginAssistantTurn(state, { runId: 'run-1' }, dependencies);

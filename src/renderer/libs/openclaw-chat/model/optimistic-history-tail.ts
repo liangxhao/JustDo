@@ -120,12 +120,10 @@ export function projectPersistedMessagesForActiveTurn<T>(
   // before its Agent stream ends. Keep it in the authoritative transcript,
   // but leave the active turn as the sole visible owner until that projection
   // retires so Content/Tool output is never rendered twice.
-  let lastUserIndex = -1;
-  messages.forEach((message, index) => {
-    if (messageRole(message) === 'user') lastUserIndex = index;
-  });
-  let projected = messages.filter((message, index) => {
-    if (index <= lastUserIndex || messageRole(message) === 'user') return true;
+  let projected = messages.filter(message => {
+    if (messageRole(message) === 'user') return true;
+    // Followup inputs can be persisted while this run still owns its output.
+    // Exact run ownership must survive a later user row in the same transcript.
     if (isTurnCompactionMessage(activeTurn, message)) return false;
     if (readActiveTurnMessageRunId(message) !== activeTurn.runId) return true;
     // Persisted diagnostics can describe a model attempt rather than the
@@ -144,7 +142,7 @@ export function projectPersistedMessagesForActiveTurn<T>(
   });
   if (activeTurn.toolById.size > 0) {
     const activeToolCallIds = new Set(activeTurn.toolById.keys());
-    lastUserIndex = -1;
+    let lastUserIndex = -1;
     projected.forEach((message, index) => {
       if (messageRole(message) === 'user') lastUserIndex = index;
     });

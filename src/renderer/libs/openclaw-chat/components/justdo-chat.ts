@@ -1589,6 +1589,19 @@ export class JustDoChatElement extends LitElement {
     if (last?.type === 'thinking' && last.status === 'running') {
       return 'coworkRunStateThinking';
     }
+    if (last?.type === 'thinking') {
+      for (let index = turn.items.length - 2; index >= 0; index -= 1) {
+        const item = turn.items[index];
+        if (item.type === 'thinking') continue;
+        if (
+          item.type === 'content' &&
+          item.assistantItemId !== undefined &&
+          (item.lastTextSeq ?? -1) >= last.lastSeq
+        )
+          return 'coworkRunStateResponding';
+        break;
+      }
+    }
     if (last?.type === 'tool' && last.status === 'running') return 'coworkRunStateTool';
     if (last?.type === 'content' && last.status === 'streaming') {
       return 'coworkRunStateResponding';
