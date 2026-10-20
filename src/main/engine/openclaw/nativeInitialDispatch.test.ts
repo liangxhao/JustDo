@@ -431,3 +431,20 @@ describe('Main initial turn delegated to the presenting Renderer', () => {
     expect(s.request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
   });
 });
+
+it('prepares an adopted App incarnation by describe without recreating its native runtime', async () => {
+  const s = setup();
+  s.request.mockImplementation(async method => {
+    if (method !== 'sessions.describe') throw new Error(`Unexpected mutation: ${method}`);
+    return { session: { sessionId: gatewaySessionId, sessionRoot: process.cwd(), permissionMode: 'full' } };
+  });
+  expect(await s.adapter.prepareSession(sessionId, { expectedSessionId: gatewaySessionId })).toEqual({ sessionKey, gatewaySessionId });
+  expect(s.request).toHaveBeenCalledExactlyOnceWith('sessions.describe', { key: sessionKey, agentId: 'main' });
+});
+
+it('rejects a replaced App incarnation before recreating or sending anything', async () => {
+  const s = setup();
+  s.request.mockResolvedValue({ session: { sessionId: 'replacement', sessionRoot: process.cwd(), permissionMode: 'full' } });
+  await expect(s.adapter.prepareSession(sessionId, { expectedSessionId: gatewaySessionId })).rejects.toThrow('identity changed');
+  expect(s.request).toHaveBeenCalledOnce();
+});

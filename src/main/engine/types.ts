@@ -116,6 +116,8 @@ export interface CoworkRuntimeEvents {
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
 
 export type CoworkStartOptions = {
+  /** Main-owned adoption of a prepared homepage App incarnation. Never accepted from IPC. */
+  expectedInitialSessionId?: string;
   /** Main-owned preparation at the actual native send boundary. */
   beforeNativeSend?: () => Promise<void>;
   /** Called only once the owning sender has closed without issuing native chat.send. */
@@ -146,6 +148,7 @@ export type CoworkStopOptions = {
 };
 
 export type CoworkPrepareSessionOptions = {
+  expectedSessionId?: string;
   /** Main's branch creation handler only; ordinary sends must respect the persistent fence. */
   pendingBranchPreparation?: true;
   permissionMode?: PermissionMode;

@@ -6,6 +6,7 @@ import {
 } from '@modelcontextprotocol/client';
 import { AppBridge, type McpUiHostContext } from '@modelcontextprotocol/ext-apps/app-bridge';
 import {
+  MCP_APP_PREPARE_CONTEXT_META,
   McpAppEvent,
   McpAppMethod,
   type McpAppModelContext,
@@ -63,6 +64,7 @@ export interface McpAppBridgeHost {
   hostContext: () => McpUiHostContext;
   canInteract: () => boolean;
   canRead?: () => boolean;
+  canPrepareContext?: () => boolean;
   confirmDraft: (content: unknown[], target: 'active' | 'new') => Promise<boolean>;
   confirmFile: (path: string) => Promise<boolean>;
   openFile: (file: { path: string; name: string }) => Promise<boolean>;
@@ -74,19 +76,32 @@ export function createMcpAppBridge(host: McpAppBridgeHost): {
   bridge: McpAppHostBridge;
   dispose: () => void;
   refreshContext: (clearedUpdateId?: string) => Promise<void>;
+  prepareContext: () => Promise<void>;
 } {
   const { session, payload } = host;
   const interactive = payload.messageSupported === true;
   let disposed = false;
   let context: McpAppModelContext | null = null;
   let revision = 0;
+  let preparingContext = false;
   const subscriptions = new Set<string>();
   const request = (
     method: Parameters<McpAppSessionView['request']>[0],
     params: Record<string, unknown> = {},
     signal?: AbortSignal,
   ) => {
-    if (disposed || !host.canInteract()) throw new Error('MCP App is not interactive');
+    if (preparingContext && method !== McpAppMethod.UpdateModelContext)
+      throw new Error('Only model context updates are allowed during send preparation');
+    if (
+      disposed ||
+      (!host.canInteract() &&
+        !(
+          preparingContext &&
+          method === McpAppMethod.UpdateModelContext &&
+          host.canPrepareContext?.()
+        ))
+    )
+      throw new Error('MCP App is not interactive');
     return session.request(method, params, signal);
   };
   const fileRequest = (
@@ -94,7 +109,8 @@ export function createMcpAppBridge(host: McpAppBridgeHost): {
     params: Record<string, unknown>,
     signal?: AbortSignal,
   ) => {
-    if (disposed || !host.canInteract()) throw new Error('MCP App is not interactive');
+    if (disposed || preparingContext || !host.canInteract())
+      throw new Error('MCP App is not interactive');
     return session.fileResource(action, params, signal);
   };
   const bridge = new McpAppHostBridge(
@@ -221,6 +237,7 @@ export function createMcpAppBridge(host: McpAppBridgeHost): {
       const meta = mcpAppRecord(extra.mcpReq._meta);
       const message = mcpAppRecord(meta?.['openai/message']);
       if (
+        preparingContext ||
         params.role !== 'user' ||
         !params.content.length ||
         (!payload.richModelContextSupported &&
@@ -319,6 +336,38 @@ export function createMcpAppBridge(host: McpAppBridgeHost): {
   return {
     bridge,
     refreshContext,
+    async prepareContext() {
+      if (disposed || !session.isCurrent() || !(host.canPrepareContext?.() ?? host.canInteract()))
+        throw new Error('MCP App context is unavailable');
+      if (!payload.updateModelContextSupported || !bridge.getAppCapabilities()?.tools) return;
+      const preparation = [];
+      const cursors = new Set<string>();
+      let cursor: string | undefined;
+      do {
+        const page = await bridge.listTools(cursor ? { cursor } : {});
+        preparation.push(
+          ...page.tools.filter(tool => tool._meta?.[MCP_APP_PREPARE_CONTEXT_META] === true),
+        );
+        cursor = page.nextCursor;
+        if (cursor && (cursors.has(cursor) || cursors.size >= 16))
+          throw new Error('Invalid App tool pagination');
+        if (cursor) cursors.add(cursor);
+      } while (cursor);
+      if (
+        preparation.length > 1 ||
+        (preparation[0] && preparation[0].annotations?.readOnlyHint !== true)
+      )
+        throw new Error('Invalid App context preparation');
+      if (!preparation.length) return;
+      preparingContext = true;
+      try {
+        const result = await bridge.callTool({ name: preparation[0].name, arguments: {} });
+        if (result.isError || disposed || !session.isCurrent())
+          throw new Error('Could not prepare App context');
+      } finally {
+        preparingContext = false;
+      }
+    },
     dispose() {
       if (disposed) return;
       disposed = true;

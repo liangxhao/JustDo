@@ -133,6 +133,8 @@ export interface McpAppHostApi {
   onQuestionsChanged: (listener: () => void) => () => void;
 }
 
+/** App-owned, read-only preparation tool invoked before a user sends context. */
+export const MCP_APP_PREPARE_CONTEXT_META = 'workspace/prepare-context';
 export type McpAppDisplayMode = 'inline' | 'fullscreen';
 export type McpAppEntrypoint =
   | { type: 'global'; quickAction?: { title: string } }

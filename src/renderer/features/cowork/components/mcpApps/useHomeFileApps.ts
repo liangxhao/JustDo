@@ -15,6 +15,9 @@ import type { McpAppComposerMenu } from './McpAppsControls';
 import { openWorkspaceAppFile, openWorkspaceAppLaunch } from './workspaceApps';
 
 interface Options {
+  currentSessionId?: string | null;
+  sessionIds?: readonly string[];
+  sessionInteractive?: boolean;
   enabled: boolean;
   cwd: string;
   agentId: string;
@@ -27,12 +30,30 @@ export function useHomeFileApps(options: Options): {
   openFile: OpenMcpAppFile;
   discover: () => Promise<void>;
   menu: McpAppComposerMenu;
+  beginStart: (temporarySessionId: string) => string;
+  promote: (from: string, to: string) => void;
+  rollback: (temporarySessionId: string) => void;
 } {
   const key = JSON.stringify([options.cwd, options.agentId, options.permissionMode]);
   const latest = useRef({ ...options, key });
   latest.current = { ...options, key };
   const active = useRef(true);
-  const owned = useRef<{ key: string; requestId: string; session: McpWorkspaceSession }>();
+  type Owner = {
+    key: string;
+    requestId: string;
+    session: McpWorkspaceSession;
+    targetSessionId?: string;
+    valid: boolean;
+  };
+  const owned = useRef<Owner>();
+  const retained = useRef(new Set<Owner>());
+  const hasPendingStart = useCallback(
+    () =>
+      [...retained.current].some(
+        scope => scope.key === latest.current.key && scope.targetSessionId?.startsWith('temp-'),
+      ),
+    [],
+  );
   const [catalog, setCatalog] = useState<{
     owner: NonNullable<typeof owned.current>;
     value: McpAppDiscovery;
@@ -53,7 +74,10 @@ export function useHomeFileApps(options: Options): {
       pending.current?.abort.abort();
       pending.current = undefined;
       catalogRef.current = undefined;
-      owned.current?.session.dispose();
+      if (owned.current) {
+        owned.current.valid = false;
+        owned.current.session.dispose();
+      }
       owned.current = undefined;
     };
   }, [key, discovery]);
@@ -62,7 +86,41 @@ export function useHomeFileApps(options: Options): {
     if (!options.enabled) {
       owned.current?.session.apps.invalidate(true);
     }
-  }, [options.enabled, discovery]);
+    for (const scope of retained.current)
+      if (
+        scope.targetSessionId !== options.currentSessionId ||
+        options.sessionInteractive === false
+      )
+        scope.session.apps.invalidate(true);
+  }, [options.enabled, options.currentSessionId, options.sessionInteractive, discovery]);
+  useEffect(
+    () => () => {
+      for (const scope of retained.current) {
+        scope.valid = false;
+        scope.session.dispose();
+      }
+      retained.current.clear();
+    },
+    [],
+  );
+  const sessionIdsKey = options.sessionIds?.join('\0');
+  useEffect(() => {
+    if (sessionIdsKey === undefined) return;
+    const existing = new Set(sessionIdsKey.split('\0'));
+    for (const scope of retained.current) {
+      const id = scope.targetSessionId;
+      if (
+        !id ||
+        id.startsWith('temp-') ||
+        id === latest.current.currentSessionId ||
+        existing.has(id)
+      )
+        continue;
+      scope.valid = false;
+      scope.session.dispose();
+      retained.current.delete(scope);
+    }
+  }, [sessionIdsKey]);
   useEffect(() => {
     let active = true;
     let revision = 0;
@@ -90,22 +148,31 @@ export function useHomeFileApps(options: Options): {
     if (!owner) {
       const scope = latest.current;
       const requestId = crypto.randomUUID();
+      let created!: Owner;
+      const interactive = () =>
+        created.valid &&
+        (created.targetSessionId
+          ? latest.current.currentSessionId === created.targetSessionId &&
+            latest.current.sessionInteractive !== false
+          : latest.current.enabled && latest.current.key === scope.key);
       const session = new McpWorkspaceSession(
         { requestId, cwd: scope.cwd, agentId: scope.agentId },
         {
-          isCurrent: () => active.current && latest.current.key === scope.key,
-          canInteract: () => latest.current.enabled,
+          isCurrent: () =>
+            created.valid &&
+            (Boolean(created.targetSessionId) ||
+              (active.current && latest.current.key === scope.key)),
+          canInteract: interactive,
           addDraft: text =>
-            latest.current.enabled ? latest.current.addDraft(text) : Promise.resolve(false),
+            interactive() ? latest.current.addDraft(text) : Promise.resolve(false),
           openFile: async file => {
-            if (!active.current || !latest.current.enabled || latest.current.key !== scope.key)
-              return false;
+            if (!interactive()) return false;
             window.dispatchEvent(
               new CustomEvent('cowork:preview-file', {
                 detail: {
                   filePath: file.path,
                   workingDirectory: scope.cwd,
-                  isCurrent: () => active.current && latest.current.key === scope.key,
+                  isCurrent: interactive,
                 },
               }),
             );
@@ -113,7 +180,8 @@ export function useHomeFileApps(options: Options): {
           },
         },
       );
-      owner = { key: scope.key, requestId, session };
+      created = { key: scope.key, requestId, session, valid: true };
+      owner = created;
       owned.current = owner;
     }
     return owner;
@@ -212,9 +280,18 @@ export function useHomeFileApps(options: Options): {
       stopConfig?.();
       stopExtensions?.();
     };
-  }, [options.cwd, options.agentId, runtimeReady, key, owner, discover, discovery]);
+  }, [
+    options.cwd,
+    options.agentId,
+    options.enabled,
+    runtimeReady,
+    key,
+    owner,
+    discover,
+    discovery,
+  ]);
   const launch = (input: McpAppLaunchInput, label: string) => {
-    if (!latest.current.enabled || !active.current) return;
+    if (!latest.current.enabled || !active.current || hasPendingStart()) return;
     const scope = owner();
     const epoch = navigation.current;
     openWorkspaceAppLaunch({
@@ -241,7 +318,7 @@ export function useHomeFileApps(options: Options): {
   };
   const openFile = useCallback<OpenMcpAppFile>(
     async request => {
-      if (!latest.current.enabled || !request.isCurrent()) return false;
+      if (!latest.current.enabled || !request.isCurrent() || hasPendingStart()) return false;
       const scope = owner();
       const epoch = navigation.current;
       const { session } = scope;
@@ -294,7 +371,7 @@ export function useHomeFileApps(options: Options): {
         return { preview, context: fileContext(fresh) };
       };
       openWorkspaceAppFile({
-        id: `mcp-app-file:${HOME_DISPLAY_SESSION_KEY}:${request.filePath}`,
+        id: `mcp-app-file:${HOME_DISPLAY_SESSION_KEY}:${scope.requestId}:${request.filePath}`,
         sessionId: HOME_DISPLAY_SESSION_KEY,
         filePath: request.filePath,
         label: request.filePath.split(/[\\/]/).pop() || request.filePath,
@@ -302,7 +379,7 @@ export function useHomeFileApps(options: Options): {
       });
       return true;
     },
-    [owner],
+    [owner, hasPendingStart],
   );
   const menuEpoch = navigation.current;
   const currentCatalog =
@@ -315,6 +392,54 @@ export function useHomeFileApps(options: Options): {
       : undefined;
   const state = requestState?.key === key ? requestState : undefined;
   return {
+    beginStart: temporarySessionId => {
+      const scope = owned.current;
+      if (
+        !scope ||
+        !scope.valid ||
+        !scope.session.connected ||
+        scope.key !== latest.current.key ||
+        hasPendingStart()
+      )
+        throw new Error('App workspace is unavailable');
+      scope.targetSessionId = temporarySessionId;
+      retained.current.add(scope);
+      owned.current = undefined;
+      return scope.requestId;
+    },
+    promote: (from, to) => {
+      const scope = [...retained.current].find(scope => scope.targetSessionId === from);
+      if (!scope) return;
+      scope.session.adopt(to);
+      scope.targetSessionId = to;
+    },
+    rollback: temporarySessionId => {
+      const scope = [...retained.current].find(
+        scope => scope.targetSessionId === temporarySessionId,
+      );
+      if (!scope) return;
+      if (scope.key !== latest.current.key) {
+        scope.valid = false;
+        scope.session.dispose();
+        retained.current.delete(scope);
+        return;
+      }
+      // New launches are paused until this source is adopted or restored. Any
+      // replacement owner is only catalog prewarming, so it is safe to release.
+      if (owned.current) {
+        owned.current.valid = false;
+        owned.current.session.dispose();
+      }
+      scope.targetSessionId = undefined;
+      retained.current.delete(scope);
+      owned.current = scope;
+      discovery.revision++;
+      pending.current?.abort.abort();
+      pending.current = undefined;
+      catalogRef.current = undefined;
+      setCatalog(undefined);
+      void discover();
+    },
     openFile,
     discover,
     menu: {
@@ -327,6 +452,7 @@ export function useHomeFileApps(options: Options): {
               id: `mcp-app:${server.serverName}:${entry.toolName}`,
               label: entries.length === 1 ? server.label : entry.title || server.label,
               section: i18nService.t('mcpAppsTitle'),
+              disabled: hasPendingStart(),
               icon: createElement(McpAppIcon, {
                 icons: entry.icons ?? server.icons,
                 label: server.label,

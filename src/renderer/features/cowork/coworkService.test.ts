@@ -1733,3 +1733,59 @@ describe('session list startup state', () => {
     expect(store.getState().cowork.sessionListStatus).toBe('ready');
   });
 });
+
+test.each([false, true])(
+  'retains the adopted conversation after preparation fails (navigated=%s)',
+  async navigated => {
+    const temporary: CoworkSession = {
+      id: 'temp-app-start',
+      title: 'Drawing',
+      status: 'running',
+      pinned: false,
+      cwd: 'E:/workspace',
+      executionMode: 'local',
+      permissionMode: 'auto',
+      activeSkillIds: [],
+      agentId: 'main',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const canonical = { ...temporary, id: 'app-start-retained', status: 'error' as const };
+    const selected = navigated ? { ...temporary, id: 'another-chat' } : temporary;
+    const errorOutput = vi.spyOn(console, 'error').mockImplementation(() => {});
+    store.dispatch(setCurrentSession(temporary));
+    const promotion = vi.fn(() =>
+      expect(store.getState().cowork.currentSessionId).toBe(selected.id),
+    );
+    vi.stubGlobal('window', {
+      dispatchEvent: vi.fn(),
+      electron: {
+        cowork: {
+          startSession: vi.fn().mockResolvedValue({
+            success: false,
+            session: canonical,
+            error: 'Could not prepare context',
+          }),
+        },
+      },
+    });
+    try {
+      const starting = coworkService.startSession(
+        { prompt: 'Summarize my drawing', appWorkspaceRequestId: crypto.randomUUID() },
+        { beforeSessionSelected: promotion },
+      );
+      if (navigated) store.dispatch(setCurrentSession(selected));
+      expect(await starting).toMatchObject({ session: null });
+      expect(promotion).toHaveBeenCalledExactlyOnceWith(canonical);
+      expect(store.getState().cowork.currentSessionId).toBe(navigated ? selected.id : canonical.id);
+      expect(store.getState().cowork.sessions.some(session => session.id === canonical.id)).toBe(
+        true,
+      );
+    } finally {
+      store.dispatch(clearCurrentSession());
+      store.dispatch(deleteSession(canonical.id));
+      errorOutput.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  },
+);

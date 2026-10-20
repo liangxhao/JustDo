@@ -27,6 +27,7 @@ function pair(): [Transport, Transport] {
 async function fixture(
   historyTool?: (name: string, args?: Record<string, unknown>) => Promise<unknown>,
   workspaceFile?: { uri: string; name: string; writable: boolean },
+  configure?: (app: App) => void,
 ) {
   let interactive = true;
   const request = vi.fn(
@@ -91,6 +92,7 @@ async function fixture(
     },
     hostContext: () => ({ theme: 'dark', displayMode: 'inline' }),
     canInteract: () => interactive,
+    canPrepareContext: () => true,
     confirmDraft,
     confirmFile,
     openFile,
@@ -98,6 +100,7 @@ async function fixture(
     close,
   });
   const app = new App({ name: 'SDK fixture', version: '1' }, {}, { autoResize: false });
+  configure?.(app);
   const [a, b] = pair();
   await host.bridge.connect(a);
   await app.connect(b);
@@ -346,4 +349,37 @@ describe('MCP Apps SDK round trip', () => {
       await app.close();
     }
   });
+});
+
+it('prepares opted-in App context through the real SDK while other background operations remain denied', async () => {
+  const entered = vi.fn();
+  const { app, host, request, hide } = await fixture(undefined, undefined, app => {
+    app.registerTool(
+      'capture-drawing',
+      {
+        _meta: { 'workspace/prepare-context': true },
+        annotations: { readOnlyHint: true },
+      },
+      async () => {
+        entered();
+        await app.updateModelContext({ content: [{ type: 'text', text: 'last edited node' }] });
+        return { content: [] };
+      },
+    );
+  });
+  try {
+    hide();
+    await host.prepareContext();
+    expect(entered).toHaveBeenCalledOnce();
+    expect(request).toHaveBeenCalledWith(
+      McpAppMethod.UpdateModelContext,
+      { content: [{ type: 'text', text: 'last edited node' }] },
+      expect.any(AbortSignal),
+    );
+    await expect(app.callServerTool({ name: 'edit' })).rejects.toThrow('not interactive');
+    await expect(app.updateModelContext({ content: [] })).rejects.toThrow('not interactive');
+  } finally {
+    host.dispose();
+    await app.close();
+  }
 });

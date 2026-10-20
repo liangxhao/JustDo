@@ -881,8 +881,12 @@ interface IElectronAPI {
     engine: {
       getStatus: () => Promise<{ success: boolean; status?: OpenClawEngineStatus; error?: string }>;
       startGateway: () => Promise<import('../../shared/openclaw/engineStatus').EngineCommandResult>;
-      collectDiagnostics: (query: import('../../shared/openclaw/engineDiagnostics').EngineDiagnosticsQuery) => Promise<import('../../shared/openclaw/engineDiagnostics').EngineDiagnosticResult>;
-      cancelDiagnostics: (query: import('../../shared/openclaw/engineDiagnostics').EngineDiagnosticsQuery) => Promise<import('../../shared/openclaw/engineDiagnostics').EngineDiagnosticResult>;
+      collectDiagnostics: (
+        query: import('../../shared/openclaw/engineDiagnostics').EngineDiagnosticsQuery,
+      ) => Promise<import('../../shared/openclaw/engineDiagnostics').EngineDiagnosticResult>;
+      cancelDiagnostics: (
+        query: import('../../shared/openclaw/engineDiagnostics').EngineDiagnosticsQuery,
+      ) => Promise<import('../../shared/openclaw/engineDiagnostics').EngineDiagnosticResult>;
       restartGateway: () => Promise<{
         success: boolean;
         status?: OpenClawEngineStatus;
@@ -1021,6 +1025,7 @@ interface IElectronAPI {
       ) => Promise<SessionReviewFileResult>;
     };
     startSession: (options: {
+      appWorkspaceRequestId?: string;
       rendererDispatch?: boolean;
       prompt: string;
       gatewayPrompt?: string;

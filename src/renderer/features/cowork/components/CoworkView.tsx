@@ -972,13 +972,24 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     ? agentState.currentAgentId
     : MAIN_USER_AGENT_ID;
   const homeApps = useHomeFileApps({
+    currentSessionId,
+    sessionIds: sessions.map(session => session.id),
+    sessionInteractive:
+      sessionTranscriptMutation === null &&
+      !currentSession?.external?.readOnly &&
+      !currentSession?.branchCreationPending,
     enabled: !currentSessionId,
     cwd: config.workingDirectory.trim(),
     agentId: currentAgentId,
     permissionMode: config.permissionMode,
     addDraft: async text => {
+      const active = store.getState().cowork.currentSession;
       if (
-        currentSessionIdRef.current ||
+        (active?.id !== currentSessionIdRef.current && Boolean(currentSessionIdRef.current)) ||
+        active?.external?.readOnly ||
+        active?.branchCreationPending ||
+        sessionTranscriptMutationRef.current !== null ||
+        active?.id.startsWith('temp-') ||
         !text.trim() ||
         text.length > 4000 ||
         /^\s*[!/]/.test(text)
@@ -986,10 +997,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         return false;
       if (promptInputRef.current) promptInputRef.current.appendValue(text);
       else {
-        const previous = store.getState().cowork.draftPrompts.__home__ ?? '';
+        const draftKey = active?.id ?? HOME_DISPLAY_SESSION_KEY;
+        const previous = store.getState().cowork.draftPrompts[draftKey] ?? '';
         dispatch(
           setDraftPrompt({
-            sessionId: '__home__',
+            sessionId: draftKey,
             draft: previous ? `${previous}\n\n${text}` : text,
           }),
         );
@@ -1216,9 +1228,41 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         console.error('Failed to check cowork API config:', error);
       }
 
+      let hasHomeApps = false;
+      try {
+        hasHomeApps = await mcpAppTabs.prepareContext();
+      } catch {
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: i18nService.t('mcpAppsContextPrepareFailed'),
+          }),
+        );
+        return false;
+      }
+      if (isPendingStartCancelled()) return false;
+      if (hasHomeApps && worktree) {
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: i18nService.t('mcpAppsWorkspaceStartUnavailable'),
+          }),
+        );
+        return false;
+      }
+
       // Create a temporary session with user message to show immediately
       const startInPlanMode = store.getState().cowork.newSessionPlanMode;
       const tempSessionId = `temp-${Date.now()}`;
+      let appWorkspaceRequestId: string | undefined;
+      try {
+        appWorkspaceRequestId = hasHomeApps ? homeApps.beginStart(tempSessionId) : undefined;
+      } catch {
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: i18nService.t('mcpAppsContextPrepareFailed'),
+          }),
+        );
+        return false;
+      }
       if (pendingStartRef.current?.requestId === requestId)
         pendingStartRef.current.temporarySessionId = tempSessionId;
       const titleInput = getMessageTitleInput(prompt, attachments, gatewayPrompt);
@@ -1253,6 +1297,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
       // Immediately show the session detail page with user message
       promoteDisplaySession(HOME_DISPLAY_SESSION_KEY, tempSessionId);
+      mcpAppTabs.promote(HOME_DISPLAY_SESSION_KEY, tempSessionId);
       promoteBrowserPanelTabs(HOME_DISPLAY_SESSION_KEY, tempSessionId);
       browserPanelRefs.current.forEach(panel =>
         panel.promoteRecordingSession(HOME_DISPLAY_SESSION_KEY, tempSessionId),
@@ -1286,6 +1331,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       } = await coworkService.startSession(
         {
           prompt,
+          appWorkspaceRequestId,
           gatewayPrompt,
           title: fallbackTitle,
           cwd: config.workingDirectory || undefined,
@@ -1315,6 +1361,23 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   requestSent: false,
                 });
               if (chatWrapperRef.current?.isInitialDispatchReady(request.sessionKey)) {
+                if (appWorkspaceRequestId) {
+                  try {
+                    if (!(await mcpAppTabs.prepareContext()))
+                      throw new Error('App context is unavailable');
+                  } catch {
+                    throw Object.assign(new Error(i18nService.t('mcpAppsContextPrepareFailed')), {
+                      requestSent: false,
+                    });
+                  }
+                  if (isPendingStartCancelled() || isTransportCancelled())
+                    throw Object.assign(
+                      new Error(i18nService.t('coworkInitialDispatchCancelled')),
+                      {
+                        requestSent: false,
+                      },
+                    );
+                }
                 return chatWrapperRef.current!.dispatchInitialTurn(request.params);
               }
               await new Promise(resolve => setTimeout(resolve, 30));
@@ -1327,6 +1390,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             if (pendingStartRef.current?.requestId === requestId)
               pendingStartRef.current.canonicalSessionId = session.id;
             promoteDisplaySession(tempSessionId, session.id);
+            homeApps.promote(tempSessionId, session.id);
+            mcpAppTabs.promote(tempSessionId, session.id);
             summaryVisibility.promote(tempSessionId, session.id);
             promoteBrowserPanelTabs(tempSessionId, session.id);
             browserPanelRefs.current.forEach(panel =>
@@ -1346,6 +1411,13 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       );
 
       if (!startedSession && (startError || startCancelled)) {
+        if (appWorkspaceRequestId && !pendingStartRef.current?.canonicalSessionId) {
+          homeApps.rollback(tempSessionId);
+          mcpAppTabs.promote(tempSessionId, HOME_DISPLAY_SESSION_KEY);
+          promoteDisplaySession(tempSessionId, HOME_DISPLAY_SESSION_KEY);
+          if (store.getState().cowork.currentSession?.id === tempSessionId)
+            dispatch(clearCurrentSession());
+        }
         const failedSessionId =
           pendingStartRef.current?.requestId === requestId
             ? (pendingStartRef.current.canonicalSessionId ?? tempSessionId)

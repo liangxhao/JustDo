@@ -27,6 +27,14 @@ export class McpWorkspaceSession {
   private bindingPreparation?: Promise<{ isCurrent: () => boolean }>;
   private preparing?: Promise<McpAppViewContext>;
   private disposed = false;
+  private adoptedSessionId?: string;
+
+  adopt(sessionId: string): void {
+    // Main has already adopted the native session. A concurrent disconnect only
+    // invalidates transport; the next preparation must use its canonical owner.
+    if (!this.current()) throw new Error('App workspace is unavailable');
+    this.adoptedSessionId = sessionId;
+  }
 
   constructor(
     private readonly scope: McpAppWorkspaceScope,
@@ -193,13 +201,15 @@ export class McpWorkspaceSession {
     // Establish connectivity before any native creation. An unavailable runtime
     // can then fall back to ordinary previews without an uncertain preparation.
     if (!this.connected) throw new Error('Workspace Gateway is unavailable');
-    const prepared = await window.electron.mcpApps.prepareWorkspace(this.scope);
+    const prepared = this.adoptedSessionId
+      ? await window.electron.mcpApps.prepare(this.adoptedSessionId)
+      : await window.electron.mcpApps.prepareWorkspace(this.scope);
     if (!this.connected || !prepared.success || client.generation !== generation)
       throw new Error('App workspace is unavailable');
     const native = prepared.value;
     const { session } = await client.request<{ session?: { sessionId?: string } }>(
       'sessions.describe',
-      { key: native.sessionKey, agentId: native.agentId },
+      { key: native.sessionKey, agentId: this.scope.agentId },
     );
     if (
       !this.connected ||
@@ -219,7 +229,7 @@ export class McpWorkspaceSession {
         generation,
         sessionKey: native.sessionKey,
         sessionId: native.gatewaySessionId,
-        agentId: native.agentId,
+        agentId: this.scope.agentId,
         isCurrent: () =>
           this.current() &&
           this.binding === binding &&

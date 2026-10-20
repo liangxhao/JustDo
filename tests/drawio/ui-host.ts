@@ -8,9 +8,11 @@ const fixture = window as unknown as {
   fixtureFile: { name: string; resourceUri: string; xml: string } | null;
   fixtureView: McpAppView;
   downloads: unknown[];
+  fixtureModelContext: { updateId: string; content?: unknown } | null;
   fixtureSwitchSession: (active: boolean) => void;
 };
 fixture.downloads = [];
+fixture.fixtureModelContext = null;
 window.electron = {
   mcpApps: {
     downloadFile: async (input: unknown) => {
@@ -35,7 +37,22 @@ const client = {
   gatewayUrl: 'ws://127.0.0.1:18789',
   subscribeEvents: () => () => undefined,
   request: async (method: string, params: Record<string, unknown>) => {
-    if (method === McpAppMethod.View) return { ...fixture.fixturePayload, messageSupported: true };
+    if (method === McpAppMethod.View)
+      return {
+        ...fixture.fixturePayload,
+        messageSupported: true,
+        updateModelContextSupported: true,
+      };
+    if (method === McpAppMethod.UpdateModelContext) {
+      fixture.fixtureModelContext = { updateId: crypto.randomUUID(), content: params.content };
+      return {};
+    }
+    if (method === McpAppMethod.ModelContext) return { state: fixture.fixtureModelContext };
+    if (method === McpAppMethod.RemoveModelContext) {
+      if (fixture.fixtureModelContext?.updateId === params.updateId)
+        fixture.fixtureModelContext = null;
+      return {};
+    }
     if (method === McpAppMethod.ReadResource) {
       if (!fixture.fixtureFile || params.uri !== fixture.fixtureFile.resourceUri)
         throw new Error('Not the opened fixture file');

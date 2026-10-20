@@ -628,3 +628,50 @@ test('rejects pending-input native adoption and omits reserved rows from user co
   expect(store.listSessions()).toEqual([]);
   expect(store.listSessions('main')).toEqual([]);
 });
+
+test('creates a product conversation with the Main-reserved preview identity atomically', () => {
+  const id = '12345678-1234-1234-1234-123456789abc';
+  const created = store.createSession(
+    'Adopted canvas',
+    '/tmp',
+    'local',
+    [],
+    'main',
+    'auto',
+    undefined,
+    undefined,
+    undefined,
+    id,
+  );
+  expect(created.id).toBe(id);
+  expect(store.getSession(id)?.title).toBe('Adopted canvas');
+  expect(() =>
+    store.createSession(
+      'Duplicate',
+      '/tmp',
+      'local',
+      [],
+      'main',
+      'auto',
+      undefined,
+      undefined,
+      undefined,
+      id,
+    ),
+  ).toThrow();
+  expect(store.getSession(id)?.title).toBe('Adopted canvas');
+  expect(() =>
+    store.createSession(
+      'Invalid',
+      '/tmp',
+      'local',
+      [],
+      'main',
+      'auto',
+      undefined,
+      undefined,
+      undefined,
+      '../other',
+    ),
+  ).toThrow('Invalid reserved session identity');
+});

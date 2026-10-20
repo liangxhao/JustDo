@@ -11,10 +11,13 @@ Main 对稀疏模型补丁校验固定模型目录并在同一配置队列中合
 保存时互相覆盖；原有配置应用失败回滚继续生效。下载文件共用现有模型目录，
 Gateway 只接收生成的命令参数，不建立第二份下载或模型索引。
 
-首页 MCP App 文件预览使用 Gateway 创建的专用 `workspace-preview` 原生会话。
+首页 MCP App 文件预览使用 Gateway 创建的原生会话；Main 预留普通产品会话 ID，
+通过既有 canonical key 规则建立原生身份。
 Main 仅在窗口内存中保留请求标识、工作区签名及原生创建回执；产品 `cowork_sessions`、
 消息表和 KV 均不增加预览记录。原生身份与必要元数据仍由 Gateway 保存，Renderer 不读取
-或缓存其 transcript。离开首页或切换工作区后，通过原生删除接口并按创建时的精确
+或缓存其 transcript。用户发送首页首条消息时，以该预留 ID 一次性插入普通产品会话行，
+沿用原生 sessionId、视图及模型上下文，并从预览清理所有权移除，不增加列、表或迁移。
+未被采用的预览在切换工作区或窗口销毁后，通过原生删除接口并按创建时的精确
 sessionId/lifecycleRevision 清理自有会话；拒绝或未知结果不扩大清理范围。
 文件内容与插件文档库的所有权不变，见 [MCP Apps](../features/chat/mcp-apps.md)。
 

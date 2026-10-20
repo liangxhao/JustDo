@@ -631,8 +631,14 @@ export class CoworkStore {
     modelRef?: string,
     forkSource?: { sessionId: string; title: string; entryId: string },
     source?: CoworkSessionSource,
+    reservedSessionId?: string,
   ): CoworkSession {
-    const id = uuidv4();
+    if (
+      reservedSessionId !== undefined &&
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(reservedSessionId)
+    )
+      throw new Error('Invalid reserved session identity');
+    const id = reservedSessionId ?? uuidv4();
     const now = Date.now();
 
     this.db

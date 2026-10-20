@@ -171,6 +171,7 @@ export interface CoworkSessionSummary {
 
 // Start session options
 export interface CoworkStartOptions {
+  appWorkspaceRequestId?: string;
   worktree?: boolean;
   prompt: string;
   /** Runtime-only prompt; the visible optimistic message and title still use prompt. */

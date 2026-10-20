@@ -581,6 +581,28 @@ if (!process.versions.electron) {
         input.textContent = '切换前未保存的修改';
         input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
       })()`);
+      await win.webContents.executeJavaScript('window.fixtureView.prepareContext()');
+      const firstSendContext = await win.webContents.executeJavaScript(
+        'window.fixtureModelContext',
+      );
+      assert.match(
+        JSON.stringify(firstSendContext),
+        /切换前未保存的修改/,
+        'First send captures the current cell text without saving a file',
+      );
+      assert.equal(
+        await win.webContents.executeJavaScript('window.downloads.length'),
+        5,
+        'Context preparation must not export a file',
+      );
+      assert.equal(
+        await win.webContents.executeJavaScript(
+          'window.fixtureView.shadowRoot.querySelector("iframe") === window.fixtureEditorFrame',
+        ),
+        true,
+        'Context preparation keeps the same editor document',
+      );
+      evidence.firstSendContextCapturesUnsavedCell = true;
       await win.webContents.executeJavaScript('window.fixtureSwitchSession(false);true');
       await win.webContents.executeJavaScript('window.fixtureSwitchSession(true);true');
       await until(

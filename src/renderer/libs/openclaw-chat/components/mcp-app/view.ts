@@ -53,6 +53,8 @@ type Resources = {
   teardown?: () => Promise<void>;
   update?: () => void;
   refreshContext?: () => Promise<void>;
+  prepareContext?: () => Promise<void>;
+  preparingContext?: boolean;
 };
 
 const STYLE = `
@@ -420,9 +422,16 @@ export class McpAppView extends LitElement {
           this.visible() &&
           this.context?.canDraft() === true &&
           !this.inactive &&
-          !this.closed,
+          !this.closed &&
+          !resources.preparingContext,
         canRead: () =>
-          current() && this.visible() && this.context?.canDraft() === true && !this.closed,
+          current() &&
+          this.visible() &&
+          this.context?.canDraft() === true &&
+          !this.closed &&
+          !resources.preparingContext,
+        canPrepareContext: () =>
+          current() && this.context?.canDraft() === true && !this.inactive && !this.closed,
         confirmDraft: (content, target) => this.draft(content, target),
         confirmFile: path => this.confirm(path, 'file'),
         openFile: file => this.context?.openFile?.(file) ?? Promise.resolve(false),
@@ -438,10 +447,17 @@ export class McpAppView extends LitElement {
         stopContext();
         host.dispose();
       };
+      resources.prepareContext = host.prepareContext;
       const { bridge } = host;
       if (payload.updateModelContextSupported) resources.refreshContext = host.refreshContext;
       bridge.ondownloadfile = async ({ contents }) => {
-        if (this.closed || !current() || !this.visible() || !this.context?.canDraft())
+        if (
+          this.closed ||
+          resources.preparingContext ||
+          !current() ||
+          !this.visible() ||
+          !this.context?.canDraft()
+        )
           return { isError: true };
         try {
           const input = prepareMcpAppDownload(contents);
@@ -486,6 +502,7 @@ export class McpAppView extends LitElement {
         const link = new URL(requested);
         if (
           !current() ||
+          resources.preparingContext ||
           !this.visible() ||
           !['http:', 'https:'].includes(link.protocol) ||
           link.username ||
@@ -568,6 +585,25 @@ export class McpAppView extends LitElement {
     this.lastSession = undefined;
     this.error = '';
     this.requestUpdate();
+  }
+
+  async prepareContext(): Promise<void> {
+    if (
+      this.loading ||
+      this.error ||
+      this.closed ||
+      !this.resources?.session.isCurrent() ||
+      !this.context?.isCurrent()
+    )
+      throw new Error('App context is not ready');
+    const resources = this.resources;
+    if (resources.preparingContext) throw new Error('App context preparation is already pending');
+    resources.preparingContext = true;
+    try {
+      await resources.prepareContext?.();
+    } finally {
+      resources.preparingContext = false;
+    }
   }
 
   closeApp(): Promise<void> {

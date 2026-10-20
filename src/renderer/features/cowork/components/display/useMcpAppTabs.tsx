@@ -70,7 +70,7 @@ function AppPanel({
       register(null);
       view.remove();
     };
-  }, [entry, register]);
+  }, [entry.preview, entry.context, register]);
   useLayoutEffect(() => {
     if (!active) return;
     let listening = true;
@@ -251,6 +251,28 @@ export function useMcpAppTabs(sessionId: string, select: (id: string) => void, o
       },
     }));
   return {
+    async prepareContext(): Promise<boolean> {
+      const source = latest.current.sessionId;
+      const current = entriesRef.current.filter(
+        entry => entry.sessionId === source && !('attach' in entry),
+      );
+      if (!current.length) return false;
+      for (const entry of current) {
+        const view = views.current.get(entry.id);
+        if ('load' in entry || !view) throw new Error('App is still loading');
+        await view.prepareContext();
+        if (latest.current.sessionId !== source || !entriesRef.current.includes(entry))
+          throw new Error('App workspace changed during preparation');
+      }
+      return true;
+    },
+    promote: (from: string, to: string) => {
+      update(current =>
+        current.map(entry =>
+          entry.sessionId === from && 'preview' in entry ? { ...entry, sessionId: to } : entry,
+        ),
+      );
+    },
     tabs,
     hasRetainedPanels: entries.some(entry => 'preview' in entry),
     focusFile: (filePath: string) => {

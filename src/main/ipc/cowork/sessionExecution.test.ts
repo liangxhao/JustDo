@@ -734,3 +734,148 @@ test.each([
     );
   },
 );
+
+describe('homepage App adoption at first-message admission', () => {
+  const input = {
+    prompt: 'Summarize my current drawing',
+    rendererDispatch: true,
+    clientTurnId: 'fixture-first-send',
+    appWorkspaceRequestId: '12345678-1234-1234-1234-123456789abc',
+  };
+  const setup = async (fails = false, launch?: Partial<AgentTeamLaunchCoordinator>) => {
+    const cwd = path.resolve('first-send-fixture');
+    const frame = { url: 'http://127.0.0.1:43127/' };
+    const owner = Object.assign(new EventEmitter(), {
+      mainFrame: frame,
+      getURL: () => frame.url,
+      isDestroyed: () => false,
+    });
+    const row = session('auto');
+    row.cwd = cwd;
+    const createSession = vi.fn((...args: unknown[]) => ({ ...row, id: args[9] as string }));
+    let persisted = row;
+    const store = {
+      getConfig: () => ({ workingDirectory: cwd, permissionMode: 'auto' }),
+      getAgent: () => ({ enabled: true, model: '' }),
+      getSessionRunByClientTurnId: () => undefined,
+      createSession: (...args: unknown[]) => (persisted = createSession(...args)),
+      getSession: () => persisted,
+      updateSession: vi.fn(),
+    };
+    const native = {
+      sessionId: 'native-app',
+      lifecycleRevision: 'revision-app',
+      sessionRoot: cwd,
+      permissionMode: 'workspace',
+    };
+    const request = vi.fn(async (method: string, raw: unknown) =>
+      method === 'sessions.create'
+        ? {
+            key: (raw as { key: string }).key,
+            sessionId: native.sessionId,
+            entry: native,
+            runStarted: false,
+          }
+        : { session: native },
+    );
+    const { WorkspaceAppSessions } = await import('../../plugins/mcp/workspaceAppSession');
+    const workspaces = new WorkspaceAppSessions({
+      getStore: () => store as unknown as CoworkStore,
+      request: request as never,
+    });
+    const binding = await workspaces.prepare(owner as never, {
+      requestId: input.appWorkspaceRequestId,
+      cwd,
+      agentId: 'main',
+    });
+    const startSession = vi.fn(
+      async (
+        _id: string,
+        _prompt: string,
+        options: { expectedInitialSessionId?: string; onAccepted: () => void },
+      ) => {
+        expect(options.expectedInitialSessionId).toBe(native.sessionId);
+        if (fails) throw new Error('initial sender unavailable');
+        options.onAccepted();
+      },
+    );
+    registerCoworkSessionExecutionHandlers({
+      workspaceAppSessions: workspaces,
+      getMainWindow: () => ({ webContents: owner, isDestroyed: () => false }) as never,
+      ...(launch ? { getAgentTeamLaunch: () => launch as AgentTeamLaunchCoordinator } : {}),
+      ensureEngineRunning: async () => ({ phase: 'running' }) as never,
+      getCoworkStore: () => store as unknown as CoworkStore,
+      getCoworkEngineRouter: () =>
+        ({
+          startSession,
+          stopSession: vi.fn().mockResolvedValue(undefined),
+        }) as unknown as CoworkEngineRouter,
+      waitForConfigUpdates: async () => {},
+      getEngineNotReadyResponse: vi.fn(),
+    });
+    const start = (overrides: Partial<typeof input> = {}) =>
+      handlers.get('cowork:session:start')!(
+        { sender: owner, senderFrame: frame },
+        { ...input, ...overrides },
+      ) as Promise<Record<string, unknown>>;
+    return { start, owner, workspaces, binding, createSession, startSession, request, native };
+  };
+
+  test('uses the preview reserved identity and checks its native incarnation before sending', async () => {
+    const f = await setup();
+    const result = await f.start();
+    expect(result.success).toBe(true);
+    const created = result.session as CoworkSession;
+    expect(f.binding.sessionKey).toBe(`agent:main:justdo:${created.id}`);
+    expect(f.createSession).toHaveBeenCalledOnce();
+    expect(f.startSession).toHaveBeenCalledOnce();
+    await f.workspaces.release(f.owner as never, input.appWorkspaceRequestId);
+    expect(f.request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
+  });
+
+  test('retains the adopted conversation when preparation fails before native send', async () => {
+    const f = await setup(true);
+    const result = await f.start();
+    expect(result).toMatchObject({
+      success: false,
+      error: 'initial sender unavailable',
+      session: { id: expect.any(String) },
+    });
+    f.owner.emit('destroyed');
+    expect(f.request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
+  });
+
+  test('does not adopt an App workspace whose native generation changed', async () => {
+    const f = await setup();
+    f.native.sessionId = 'changed';
+    expect(await f.start()).toMatchObject({ success: false });
+    expect(f.createSession).not.toHaveBeenCalled();
+    expect(f.startSession).not.toHaveBeenCalled();
+  });
+
+  test('returns the adopted conversation when Team preparation is cancelled', async () => {
+    let finishRegistration!: () => void;
+    const registration = new Promise<void>(resolve => {
+      finishRegistration = resolve;
+    });
+    const launch = {
+      register: vi.fn(() => registration),
+      cancel: vi.fn().mockResolvedValue(undefined),
+    };
+    const f = await setup(false, launch as never);
+    const starting = f.start({ prompt: appendAgentTeamInstruction(input.prompt, 'group') });
+    await vi.waitFor(() => expect(launch.register).toHaveBeenCalledOnce());
+    await expect(
+      handlers.get(SessionStartIpc.Cancel)!({}, { clientTurnId: input.clientTurnId }),
+    ).resolves.toMatchObject({ success: true });
+    finishRegistration();
+    await expect(starting).resolves.toMatchObject({
+      success: false,
+      cancelled: true,
+      session: { id: expect.any(String) },
+    });
+    expect(f.startSession).not.toHaveBeenCalled();
+    f.owner.emit('destroyed');
+    expect(f.request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
+  });
+});

@@ -8,6 +8,7 @@ import type { McpAppWorkspaceFileEntry } from './workspaceApps';
 
 interface TestHost {
   isCurrent: () => boolean;
+  canInteract?: () => boolean;
 }
 interface TestConnection {
   connected: boolean;
@@ -19,6 +20,7 @@ const f = vi.hoisted(() => ({
   launch: vi.fn(),
   invalidate: vi.fn(),
   dispose: vi.fn(),
+  adopt: vi.fn(),
   hosts: [] as TestHost[],
   connections: [] as TestConnection[],
   initiallyConnected: true,
@@ -50,6 +52,7 @@ vi.mock('@/libs/openclaw-chat/gateway/mcp-workspace-session', () => ({
       return { value, isCurrent: binding.isCurrent };
     };
     dispose = f.dispose;
+    adopt = f.adopt;
   },
 }));
 vi.mock('@/libs/openclaw-chat/pipeline/native-mcp-app', () => ({
@@ -109,6 +112,8 @@ function setup(running = false) {
   }));
   f.launch.mockResolvedValue({ viewId: 'view' });
   const options = {
+    currentSessionId: null as string | null,
+    sessionInteractive: true,
     enabled: true,
     cwd: 'E:/workspace',
     agentId: 'main',
@@ -448,4 +453,140 @@ test('a close before the first hello cannot leave the prefetch failed or permane
   expect(f.discover).toHaveBeenCalledOnce();
   expect(result.current.menu.items).toEqual([]);
   expect(f.launch).not.toHaveBeenCalled();
+});
+
+test('first-send promotion keeps the same canvas and adopts its owner without a launch replay', async () => {
+  const h = setup();
+  await act(async () => {
+    await h.result.current.openFile(h.request);
+  });
+  const host = f.hosts[0];
+  let requestId: string | undefined;
+  act(() => {
+    requestId = h.result.current.beginStart('temp-first');
+  });
+  expect(requestId).toMatch(/^[a-f0-9-]{36}$/);
+  h.rerender({ ...h.options, enabled: false, currentSessionId: 'temp-first' });
+  expect(host.isCurrent()).toBe(true);
+  expect(host.canInteract?.()).toBe(true);
+  expect(f.invalidate).not.toHaveBeenCalled();
+  act(() => h.result.current.promote('temp-first', 'conversation'));
+  h.rerender({ ...h.options, enabled: false, currentSessionId: 'conversation' });
+  expect(f.adopt).toHaveBeenCalledExactlyOnceWith('conversation');
+  expect(host.isCurrent()).toBe(true);
+  expect(host.canInteract?.()).toBe(true);
+  expect(f.invalidate).not.toHaveBeenCalled();
+  h.rerender({ ...h.options, enabled: false, currentSessionId: 'other' });
+  expect(host.canInteract?.()).toBe(false);
+  expect(f.invalidate).toHaveBeenCalled();
+  expect(f.launch).not.toHaveBeenCalled();
+});
+
+test.each(['temp-failed', 'other-chat'])(
+  'a failed first send restores its owner after navigation to %s',
+  async selected => {
+    const h = setup(true);
+    await act(async () => {
+      await h.result.current.discover();
+    });
+    const originalHost = f.hosts[0];
+    act(() => {
+      h.result.current.beginStart('temp-failed');
+    });
+    h.rerender({ ...h.options, enabled: false, currentSessionId: 'temp-failed' });
+    await act(async () => {});
+    expect(f.hosts.length).toBeGreaterThan(1);
+    h.rerender({ ...h.options, enabled: false, currentSessionId: selected });
+    act(() => h.result.current.rollback('temp-failed'));
+    h.rerender(h.options);
+    expect(originalHost.isCurrent()).toBe(true);
+    expect(originalHost.canInteract?.()).toBe(true);
+    expect(f.adopt).not.toHaveBeenCalled();
+  },
+);
+
+test('a pending first send prevents another home App source from replacing the rollback canvas', async () => {
+  const h = setup(true);
+  await act(async () => h.result.current.openFile(h.request));
+  const original = f.hosts[0];
+  act(() => h.result.current.beginStart('temp-pending'));
+  h.rerender({ ...h.options, enabled: false, currentSessionId: 'temp-pending' });
+  h.rerender(h.options);
+  await act(async () => {});
+
+  expect(await h.result.current.openFile(h.request)).toBe(false);
+  expect(f.open).toHaveBeenCalledOnce();
+  act(() => h.result.current.rollback('temp-pending'));
+  expect(original.isCurrent()).toBe(true);
+  expect(original.canInteract?.()).toBe(true);
+  expect(await h.result.current.openFile(h.request)).toBe(true);
+});
+
+test('rollback refreshes the App catalog when the user has already returned home', async () => {
+  const h = setup(true);
+  await act(async () => h.result.current.discover());
+  act(() => h.result.current.beginStart('temp-pending'));
+  h.rerender({ ...h.options, enabled: false, currentSessionId: 'temp-pending' });
+  h.rerender(h.options);
+  await act(async () => {});
+  expect(h.result.current.menu.fileCatalog?.servers).toHaveLength(1);
+
+  await act(async () => h.result.current.rollback('temp-pending'));
+
+  expect(h.result.current.menu.fileCatalog?.servers).toHaveLength(1);
+});
+
+test('a failed first send releases its preview when the homepage configuration changed', async () => {
+  const h = setup();
+  await act(async () => h.result.current.openFile(h.request));
+  const original = f.hosts[0];
+  act(() => h.result.current.beginStart('temp-old-config'));
+  h.rerender({ ...h.options, cwd: 'E:/another-workspace' });
+
+  act(() => h.result.current.rollback('temp-old-config'));
+
+  expect(original.isCurrent()).toBe(false);
+  expect(f.dispose).toHaveBeenCalledOnce();
+});
+
+test('opening the same file on a new homepage keeps the adopted canvas in a different tab', async () => {
+  const h = setup();
+  await act(async () => h.result.current.openFile(h.request));
+  const originalEntry = f.open.mock.lastCall![0] as McpAppWorkspaceFileEntry;
+  const originalHost = f.hosts[0];
+  act(() => {
+    h.result.current.beginStart('temp-first');
+    h.result.current.promote('temp-first', 'canonical-chat');
+  });
+  h.rerender({ ...h.options, enabled: false, currentSessionId: 'canonical-chat' });
+  h.rerender(h.options);
+
+  await act(async () => h.result.current.openFile(h.request));
+  const nextEntry = f.open.mock.lastCall![0] as McpAppWorkspaceFileEntry;
+
+  expect(nextEntry.id).not.toBe(originalEntry.id);
+  expect(originalHost.isCurrent()).toBe(true);
+  expect(f.dispose).not.toHaveBeenCalled();
+});
+
+test('an adopted canvas pauses during a transcript mutation in its own conversation', async () => {
+  const h = setup();
+  await act(async () => {
+    await h.result.current.openFile(h.request);
+  });
+  const originalHost = f.hosts[0];
+  act(() => {
+    h.result.current.beginStart('temp-first');
+    h.result.current.promote('temp-first', 'conversation');
+  });
+  h.rerender({ ...h.options, enabled: false, currentSessionId: 'conversation' });
+  expect(originalHost.canInteract?.()).toBe(true);
+  h.rerender({
+    ...h.options,
+    enabled: false,
+    currentSessionId: 'conversation',
+    sessionInteractive: false,
+  });
+  expect(originalHost.canInteract?.()).toBe(false);
+  expect(f.invalidate).toHaveBeenCalled();
 });

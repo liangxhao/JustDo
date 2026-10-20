@@ -6,6 +6,8 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 const fixture = vi.hoisted(() => ({
   read: vi.fn(),
+  update: vi.fn().mockResolvedValue({}),
+  prepare: undefined as undefined | (() => Promise<unknown>),
   app: {} as {
     ontoolresult: (result: { structuredContent: Record<string, unknown> }) => Promise<void>;
     onteardown: () => Promise<unknown>;
@@ -17,9 +19,13 @@ vi.mock('@modelcontextprotocol/ext-apps', () => ({
       fixture.app = this as unknown as typeof fixture.app;
     }
     readServerResource = fixture.read;
+    updateModelContext = fixture.update;
+    registerTool = (_name: string, _config: unknown, callback: () => Promise<unknown>) => {
+      fixture.prepare = callback;
+    };
     connect = async () => {};
     getHostContext = () => ({ locale: 'en', theme: 'light' });
-    getHostCapabilities = () => ({});
+    getHostCapabilities = () => ({ updateModelContext: { text: {} } });
   },
   applyDocumentTheme: vi.fn(),
   applyHostStyleVariables: vi.fn(),
@@ -41,6 +47,7 @@ const loaded = () =>
 beforeEach(async () => {
   vi.resetModules();
   fixture.read.mockReset();
+  fixture.update.mockReset().mockResolvedValue({});
   document.body.innerHTML =
     '<span id="title"></span><span id="status"></span><button id="save"></button>' +
     '<button id="png"></button><button id="svg"></button><iframe id="editor"></iframe>';
@@ -120,4 +127,63 @@ test.each(['new result', 'teardown'])('ignores a file read completed after %s', 
   resolve(resource(original));
   await pending;
   expect(loaded()).toEqual(before);
+});
+
+test('first-send preparation commits current cell editing and waits for the native context update', async () => {
+  await fixture.app.ontoolresult({
+    structuredContent: { xml: original, title: 'Current drawing' },
+  });
+  let resolveUpdate!: () => void;
+  fixture.update.mockImplementation(
+    () =>
+      new Promise<void>(resolve => {
+        resolveUpdate = resolve;
+      }),
+  );
+  let settled = false;
+  const preparing = fixture.prepare!().then(() => {
+    settled = true;
+  });
+  const commit = JSON.parse(posted.at(-1)!) as { action: string; requestId: string };
+  expect(commit.action).toBe('diagram-commit');
+  const frame = document.querySelector<HTMLIFrameElement>('#editor')!.contentWindow!;
+  const emit = (data: unknown) =>
+    message(
+      new MessageEvent('message', { source: frame, origin: 'null', data: JSON.stringify(data) }),
+    );
+  emit({ event: 'diagram-committed', requestId: commit.requestId });
+  const request = JSON.parse(posted.at(-1)!) as {
+    action: string;
+    requestId: string;
+    format: string;
+  };
+  expect(request).toMatchObject({ action: 'export', format: 'xml', requestId: commit.requestId });
+  const edited = original.replace('<root>', '<root><!-- 最后未提交文字 -->');
+  emit({ event: 'export', format: 'xml', xml: edited, message: request });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  expect(fixture.update).toHaveBeenCalledExactlyOnceWith({
+    content: [{ type: 'text', text: `Current draw.io diagram (Current drawing):\n${edited}` }],
+  });
+  resolveUpdate();
+  await preparing;
+  expect(settled).toBe(true);
+  expect(document.querySelector<HTMLButtonElement>('#save')!.disabled).toBe(false);
+});
+
+test('first-send preparation rejects a failed native context update without discarding the diagram', async () => {
+  await fixture.app.ontoolresult({ structuredContent: { xml: original } });
+  fixture.update.mockRejectedValue(new Error('native context unavailable'));
+  const preparing = fixture.prepare!();
+  const rejected = expect(preparing).rejects.toThrow('native context unavailable');
+  const commit = JSON.parse(posted.at(-1)!) as { requestId: string };
+  const frame = document.querySelector<HTMLIFrameElement>('#editor')!.contentWindow!;
+  const emit = (data: unknown) =>
+    message(
+      new MessageEvent('message', { source: frame, origin: 'null', data: JSON.stringify(data) }),
+    );
+  emit({ event: 'diagram-committed', requestId: commit.requestId });
+  emit({ event: 'export', format: 'xml', xml: original, message: { requestId: commit.requestId } });
+  await rejected;
+  expect(loaded()).toHaveLength(1);
 });

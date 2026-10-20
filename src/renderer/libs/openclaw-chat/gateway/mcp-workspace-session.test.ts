@@ -58,10 +58,11 @@ function setup() {
     agentId: 'main',
   };
   const prepareWorkspace = vi.fn(async () => ({ success: true, value: native }));
+  const prepare = vi.fn(async () => ({ success: true, value: native }));
   const releaseWorkspace = vi.fn().mockResolvedValue({ success: true, value: null });
   const getPort = vi.fn().mockResolvedValue({ success: true, port: 12345 });
   vi.stubGlobal('electron', {
-    mcpApps: { prepareWorkspace, releaseWorkspace },
+    mcpApps: { prepare, prepareWorkspace, releaseWorkspace },
     openclaw: {
       engine: { getPort, getToken: async () => ({ success: true, token: 'fixture-token' }) },
     },
@@ -83,6 +84,7 @@ function setup() {
     session,
     scope,
     native,
+    prepare,
     prepareWorkspace,
     releaseWorkspace,
     getPort,
@@ -259,6 +261,28 @@ describe('homepage MCP workspace connection', () => {
     expect(next.isCurrent()).toBe(true);
     expect(first.isCurrent()).toBe(false);
     f.session.dispose();
+  });
+
+  it('records adoption while disconnected and prepares only the canonical conversation after reconnect', async () => {
+    const f = setup();
+    const first = await f.session.prepare();
+    const client = fixture.clients[0];
+    client.connected = false;
+    client.options.onClose?.({ code: 1006, reason: 'disconnect during promotion' });
+
+    expect(() => f.session.adopt('canonical-chat')).not.toThrow();
+    expect(first.isCurrent()).toBe(false);
+    expect(f.prepare).not.toHaveBeenCalled();
+    client.generation++;
+    client.connected = true;
+    client.options.onHello?.({ type: 'hello-ok', protocol: 4 });
+
+    const resumed = await f.session.prepare();
+    expect(resumed.isCurrent()).toBe(true);
+    expect(f.prepare).toHaveBeenCalledExactlyOnceWith('canonical-chat');
+    expect(f.prepareWorkspace).toHaveBeenCalledOnce();
+    f.session.dispose();
+    expect(() => f.session.adopt('another-chat')).toThrow('unavailable');
   });
 
   it('publishes authenticated connection state and waits for the new hello on the same reconnecting client', async () => {

@@ -364,6 +364,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     options: CoworkStartOptions = {},
   ): Promise<void> {
     await this.runTurn(sessionId, prompt, {
+      expectedInitialSessionId: options.expectedInitialSessionId,
       skillIds: options.skillIds,
       confirmationMode: options.confirmationMode,
       attachments: options.attachments,
@@ -417,6 +418,34 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const nativePermissionMode = toOpenClawSessionPermissionMode(permissionMode);
 
     await this.ensureGatewayClientReady();
+    if (options.expectedSessionId) {
+      const client = this.requireGatewayClient();
+      const generation = this.gatewayClientGeneration;
+      const { session: entry } = await client.request<{
+        session?: Record<string, unknown>;
+      }>('sessions.describe', { key: sessionKey, agentId: session.agentId });
+      if (this.gatewayClient !== client || this.gatewayClientGeneration !== generation ||
+        entry?.sessionId !== options.expectedSessionId)
+        throw new Error('The prepared App conversation identity changed.');
+      this.assertPreparedSessionEntry(entry, nativePermissionMode, workspaceRoot);
+      if (typeof entry.modelOverride === 'string' && entry.modelOverride.trim()) {
+        const configGeneration = this.engineManager.getGatewayConfigReloadGeneration();
+        await reconcilePreparedManagedSessionModel({
+          client,
+          isCurrentConnection: () => this.gatewayClient === client &&
+            this.gatewayClientGeneration === generation &&
+            this.engineManager.getGatewayConfigReloadGeneration() === configGeneration,
+          sessionKey,
+          gatewaySessionId: options.expectedSessionId,
+          agentId: options.agentId || session.agentId || DEFAULT_MANAGED_AGENT_ID,
+          getPersistedModelRef: () => this.store.getSession(sessionId)?.modelRef,
+          persistModelRef: modelRef => this.store.updateSession(sessionId, { modelRef }),
+        });
+      }
+      await ensureProjectGitRepository(workspaceRoot);
+      this.rememberSessionKey(sessionId, sessionKey);
+      return { sessionKey, gatewaySessionId: options.expectedSessionId };
+    }
     if (session.nativeSessionKey) {
       if (sessionKey !== session.nativeSessionKey) {
         throw new Error('The native session key does not match its persisted binding.');
@@ -941,6 +970,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     sessionId: string,
     prompt: string,
     options: {
+      expectedInitialSessionId?: string;
       skillIds?: string[];
       confirmationMode?: 'modal' | 'text';
       attachments?: CoworkAttachmentPayload[];
@@ -1017,6 +1047,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.store.updateSession(sessionId, { status: 'running' });
       this.emit('activity', sessionId, 'user', Date.now());
       const preparedSession = await this.prepareSession(sessionId, {
+        expectedSessionId: options.expectedInitialSessionId,
         permissionMode: session.permissionMode,
         workspaceRoot: options.workspaceRoot,
         agentId,

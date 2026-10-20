@@ -6,6 +6,7 @@ import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments
 import { hasMessageInput } from '../../../shared/cowork/messageInput';
 import { NativeSessionDispatchIpc } from '../../../shared/cowork/nativeSessionDispatch';
 import { type CancelSessionStartInput, SessionStartIpc } from '../../../shared/cowork/sessionStart';
+import type { McpAppWorkspaceBinding } from '../../../shared/plugins/mcpApps';
 import { resolvePermissionMode } from '../../../shared/security/approvals';
 import { resolveTaskWorkingDirectory } from '../../core/filesystem/taskWorkspace';
 import { t } from '../../core/i18n';
@@ -17,10 +18,12 @@ import {
   createSessionWorktree,
   discardPreparedWorktreeSession,
 } from '../../openclaw/sessions/worktreeSession';
+import type { WorkspaceAppSessions } from '../../plugins/mcp/workspaceAppSession';
 import { cancelAgentTeamLaunchWithoutWaiting } from './agentTeamLaunchCancellation';
 import { captureInitialDispatchLease, NativeSessionDispatcher } from './nativeSessionDispatch';
 
 interface SessionExecutionHandlerDependencies {
+  workspaceAppSessions?: WorkspaceAppSessions;
   getMainWindow?: () => BrowserWindow | null;
   getAgentTeamLaunch?: () => AgentTeamLaunchCoordinator;
   ensureEngineRunning: () => Promise<OpenClawEngineStatus>;
@@ -37,6 +40,7 @@ interface SessionExecutionHandlerDependencies {
 }
 
 interface StartSessionOptions {
+  appWorkspaceRequestId?: string;
   rendererDispatch?: boolean;
   worktree?: boolean;
   prompt: string;
@@ -68,6 +72,7 @@ export const registerCoworkSessionExecutionHandlers = ({
   requestGateway,
   getMainWindow,
   getAgentTeamLaunch,
+  workspaceAppSessions,
 }: SessionExecutionHandlerDependencies): void => {
   const nativeDispatcher = new NativeSessionDispatcher();
   ipcMain.handle(NativeSessionDispatchIpc.Respond, (event, input: unknown) =>
@@ -181,6 +186,17 @@ export const registerCoworkSessionExecutionHandlers = ({
       if (options.worktree !== undefined && typeof options.worktree !== 'boolean') {
         return { success: false, error: t('worktreeSelectionInvalid') };
       }
+      if (
+        options.appWorkspaceRequestId !== undefined &&
+        (!options.rendererDispatch ||
+          options.worktree ||
+          !workspaceAppSessions ||
+          typeof options.appWorkspaceRequestId !== 'string' ||
+          !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(
+            options.appWorkspaceRequestId,
+          ))
+      )
+        return { success: false, error: t('coworkInitialDispatchInvalid') };
       if (options.worktree && !requestGateway) {
         return { success: false, error: t('worktreeCreateUnavailable') };
       }
@@ -243,15 +259,32 @@ export const registerCoworkSessionExecutionHandlers = ({
         return { success: false, error: 'agentUnavailable' };
       const initialModelRef = agentId === 'main' ? undefined : agent.model.trim() || undefined;
       let resolvedWorkspaceRoot = resolveTaskWorkingDirectory(selectedWorkspaceRoot);
-      const session = store.createSession(
-        options.title?.trim() || fallbackTitle,
-        resolvedWorkspaceRoot,
-        config.executionMode || 'local',
-        options.activeSkillIds || [],
-        agentId,
-        permissionMode,
-        initialModelRef,
-      );
+      const createSession = (reservedSessionId?: string) =>
+        store.createSession(
+          options.title?.trim() || fallbackTitle,
+          resolvedWorkspaceRoot,
+          config.executionMode || 'local',
+          options.activeSkillIds || [],
+          agentId,
+          permissionMode,
+          initialModelRef,
+          undefined,
+          undefined,
+          reservedSessionId,
+        );
+      let appBinding: McpAppWorkspaceBinding | undefined;
+      let session: ReturnType<CoworkStore['createSession']>;
+      if (options.appWorkspaceRequestId) {
+        const adopted = await workspaceAppSessions!.adopt(
+          event.sender,
+          { requestId: options.appWorkspaceRequestId, cwd: resolvedWorkspaceRoot, agentId },
+          createSession,
+          () => !operation?.cancelled && dispatchLease?.isCurrent() !== false,
+        );
+        session = adopted.value;
+        appBinding = adopted.binding;
+        if (operation) operation.sessionId = session.id;
+      } else session = createSession();
       if (options.worktree) {
         resolvedWorkspaceRoot = await createSessionWorktree(store, session, requestGateway!);
         if (operation?.cancelled) {
@@ -275,7 +308,11 @@ export const registerCoworkSessionExecutionHandlers = ({
         });
         if (operation?.cancelled) {
           await getAgentTeamLaunch().cancel(session.id, options.clientTurnId);
-          return { success: false, cancelled: true };
+          return {
+            success: false,
+            cancelled: true,
+            ...(appBinding ? { session: store.getSession(session.id) ?? session } : {}),
+          };
         }
       }
       store.updateSession(session.id, { status: 'running' });
@@ -306,6 +343,7 @@ export const registerCoworkSessionExecutionHandlers = ({
           agentId,
           clientTurnId: options.clientTurnId,
           planMode: options.planMode === true,
+          ...(appBinding ? { expectedInitialSessionId: appBinding.gatewaySessionId } : {}),
           ...(options.rendererDispatch
             ? {
                 dispatchChatSend: (
@@ -392,8 +430,18 @@ export const registerCoworkSessionExecutionHandlers = ({
     } catch (error) {
       return {
         success: false,
-        ...(options?.worktree && operation?.cancelled ? { cancelled: true } : {}),
-        error: error instanceof Error ? t(error.message) : 'Failed to start session',
+        ...(options?.appWorkspaceRequestId && operation?.sessionId
+          ? { session: getCoworkStore().getSession(operation.sessionId) ?? undefined }
+          : {}),
+        ...((options?.worktree || options?.appWorkspaceRequestId) && operation?.cancelled
+          ? { cancelled: true }
+          : {}),
+        error:
+          options?.appWorkspaceRequestId && !operation?.sessionId
+            ? t('mcpAppsContextPrepareFailed')
+            : error instanceof Error
+              ? t(error.message)
+              : 'Failed to start session',
       };
     } finally {
       dispatchLease?.dispose();

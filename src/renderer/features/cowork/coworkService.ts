@@ -776,6 +776,14 @@ export class CoworkService {
       if (nativeStart.deleted || (nativeStart.deletion && (await nativeStart.deletion))) {
         return { session: null, cancelled: true };
       }
+      if (result.session && options.appWorkspaceRequestId && !dispatchedSessionId) {
+        // Adoption can finish before dispatch or after navigation. Move the
+        // retained canvas to its canonical owner without changing navigation.
+        const select = store.getState().cowork.currentSession?.id === temporarySessionId;
+        hooks.beforeSessionSelected?.(result.session);
+        dispatchedSessionId = result.session.id;
+        store.dispatch(addSession({ session: result.session, select }));
+      }
       if (result.success && result.session) {
         const planModeEnabled = pendingTemporarySessionId
           ? (store.getState().cowork.planModeBySession[pendingTemporarySessionId] ??

@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { WebContents } from 'electron';
 import { describe, expect, it, vi } from 'vitest';
 
+import { parseManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 import { WorkspaceAppSessions } from './workspaceAppSession';
 
 function fixture() {
@@ -53,6 +54,63 @@ function fixture() {
 }
 
 describe('homepage native App workspace ownership', () => {
+  it('adopts its reserved product identity without recreating or deleting the live preview', async () => {
+    const f = fixture();
+    const binding = await f.service.prepare(f.owner, f.input);
+    const create = vi.fn((id: string) => ({ id }));
+    const adopted = await f.service.adopt(f.owner, f.input, create, () => true);
+    expect(adopted.binding).toEqual(binding);
+    expect(create).toHaveBeenCalledExactlyOnceWith(
+      parseManagedSessionKey(binding.sessionKey)!.sessionId,
+      binding,
+    );
+    await f.service.release(f.owner, f.input.requestId);
+    (f.owner as unknown as EventEmitter).emit('destroyed');
+    expect(f.created()).toHaveLength(1);
+    expect(f.request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
+    await expect(f.service.adopt(f.owner, f.input, create, () => true)).rejects.toThrow();
+    expect(create).toHaveBeenCalledOnce();
+  });
+
+  it.each(['owner', 'incarnation', 'permission', 'cancelled', 'folder'])(
+    'refuses %s changes during adoption',
+    async kind => {
+      const f = fixture();
+      const binding = await f.service.prepare(f.owner, f.input);
+      const entry = f.sessions.get(binding.sessionKey)!;
+      if (kind === 'incarnation') entry.sessionId = 'replacement';
+      if (kind === 'permission') entry.permissionMode = 'full';
+      if (kind === 'folder') f.configure({ workingDirectory: path.resolve('another-folder') });
+      const create = vi.fn();
+      await expect(
+        f.service.adopt(
+          kind === 'owner' ? ({} as WebContents) : f.owner,
+          f.input,
+          create,
+          () => kind !== 'cancelled',
+        ),
+      ).rejects.toThrow();
+      expect(create).not.toHaveBeenCalled();
+      expect(f.created()).toHaveLength(1);
+    },
+  );
+
+  it('keeps preview ownership if product creation fails', async () => {
+    const f = fixture();
+    await f.service.prepare(f.owner, f.input);
+    await expect(
+      f.service.adopt(
+        f.owner,
+        f.input,
+        () => {
+          throw new Error('database failed');
+        },
+        () => true,
+      ),
+    ).rejects.toThrow('database failed');
+    await f.service.release(f.owner, f.input.requestId);
+    expect(f.request.mock.calls.filter(([method]) => method === 'sessions.delete')).toHaveLength(1);
+  });
   it('prepares once on explicit use, without a product chat or model send', async () => {
     const f = fixture();
     expect(f.request).not.toHaveBeenCalled();
@@ -62,7 +120,7 @@ describe('homepage native App workspace ownership', () => {
     ]);
     expect(first).toEqual(second);
     expect(f.created()).toHaveLength(1);
-    expect(first.sessionKey).toMatch(/^agent:main:workspace-preview:/);
+    expect(parseManagedSessionKey(first.sessionKey)?.agentId).toBe('main');
     expect(f.created()[0][1]).toEqual({
       key: first.sessionKey,
       agentId: 'main',

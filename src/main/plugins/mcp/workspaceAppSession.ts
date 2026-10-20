@@ -10,6 +10,7 @@ import {
   toOpenClawSessionPermissionMode,
 } from '../../../shared/security/approvals';
 import type { CoworkStore } from '../../data/coworkStore';
+import { buildManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 
 interface Dependencies {
   getStore: () => CoworkStore;
@@ -18,7 +19,11 @@ interface Dependencies {
 interface WorkspaceEntry {
   signature: string;
   released: boolean;
-  task: Promise<{ binding: McpAppWorkspaceBinding; lifecycleRevision: string }>;
+  task: Promise<{
+    binding: McpAppWorkspaceBinding;
+    lifecycleRevision: string;
+    productSessionId: string;
+  }>;
   releaseTask?: Promise<null>;
 }
 
@@ -30,7 +35,9 @@ export class WorkspaceAppSessions {
   constructor(private readonly deps: Dependencies) {}
 
   private async create(scope: ReturnType<WorkspaceAppSessions['scope']>) {
-    const sessionKey = `agent:${scope.agentId}:workspace-preview:${randomUUID()}`;
+    // Reserve the ordinary conversation identity without creating a product row.
+    const productSessionId = randomUUID();
+    const sessionKey = buildManagedSessionKey(productSessionId, scope.agentId);
     const result = await this.deps.request<{
       key: string;
       sessionId: string;
@@ -54,6 +61,7 @@ export class WorkspaceAppSessions {
     return {
       binding: { sessionKey, gatewaySessionId: result.sessionId, agentId: scope.agentId },
       lifecycleRevision: result.entry.lifecycleRevision,
+      productSessionId,
     };
   }
 
@@ -173,5 +181,42 @@ export class WorkspaceAppSessions {
       return null;
     })();
     return entry.releaseTask;
+  }
+
+  /** First-send adoption preserves the native runtime, views and their pending context. */
+  async adopt<T>(
+    owner: WebContents,
+    raw: unknown,
+    create: (productSessionId: string, binding: McpAppWorkspaceBinding) => T,
+    isCurrent: () => boolean,
+  ): Promise<{ value: T; binding: McpAppWorkspaceBinding }> {
+    const scope = this.scope(raw);
+    const entries = this.owners.get(owner);
+    const entry = entries?.get(scope.requestId);
+    if (!entry || entry.released || entry.signature !== scope.signature)
+      throw new Error('App workspace is no longer available');
+    const { binding, productSessionId } = await entry.task;
+    const { session } = await this.deps.request<{ session?: Record<string, unknown> }>(
+      'sessions.describe',
+      { key: binding.sessionKey, agentId: binding.agentId },
+    );
+    if (
+      entry.released ||
+      owner.isDestroyed() ||
+      !isCurrent() ||
+      entries?.get(scope.requestId) !== entry ||
+      this.scope(raw).signature !== scope.signature ||
+      session?.sessionId !== binding.gatewaySessionId ||
+      session.sessionRoot !== scope.cwd ||
+      session.permissionMode !== scope.permissionMode
+    )
+      throw new Error('Native App workspace changed before first send');
+    // No await between product creation and retiring preview ownership. A window
+    // cleanup must never delete the newly adopted conversation.
+    const value = create(productSessionId, binding);
+    entry.released = true;
+    entries.delete(scope.requestId);
+    if (!entries.size) this.owners.delete(owner);
+    return { value, binding };
   }
 }

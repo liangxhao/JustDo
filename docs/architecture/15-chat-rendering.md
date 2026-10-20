@@ -30,13 +30,23 @@ MCP 容器在两种布局中都固定为面板的第一个直接子节点。仅�
 加载时显示状态，失败提供显式重读，启动应用仍须点击真实入口。
 `WorkspaceAppSessions` 通过现有 Main Gateway 客户端按当前设置创建并核对专用原生会话，
 不写产品会话表、不读写 transcript 正文；原生 MCP Apps 不接受 incognito 会话，因而使用
-产品中立的 `workspace-preview` 会话键，并记录原生创建回执中的 sessionId/lifecycleRevision。
+预留的普通会话标识及既有 canonical key，并记录原生创建回执中的 sessionId/lifecycleRevision。
 `McpWorkspaceSession` 为首页各文件共享一条受认证的 Renderer 连接和现有 `McpAppSession`，
 发现真实 global/file 入口，不发送聊天或读取历史，不另建 MCP transport。文件和手动界面复用工作区标签和
 标准桥；离开首页仅暂停已加载界面，同一作用域返回时保留已发现入口并重新核对。
 连接恢复先等待当前代次的认证 hello，再刷新目录；不复用上一代已完成的连接等待。
 配置上下文变化即时失效，迟到结果不能重建标签。清理只请求原生按精确创建身份删除自有
 预览会话，不处理用户聊天或工作区文件，不把连接关闭当作已发出操作取消的证明。
+
+首页首条发送前，宿主通过标准 App tools 发现带 `workspace/prepare-context: true` 元数据的
+只读准备工具。draw.io 在同一内部编辑器提交当前文字、导出 XML 并等待原生模型上下文回执；
+准备期间仅允许上下文更新，不开放其它工具、文件、消息、下载或链接操作。
+Main 在实际首条发送准入中核对窗口、请求、助手、工作目录、权限和原生 sessionId 后，
+以预留 ID 原子创建普通产品会话，停止预览删除所有权；不重建原生会话或复制 App 正文。
+原生 describe 不投影 lifecycleRevision，视图生命周期在实际发送前的第二次认证准备中
+由 Gateway 验证；初始发送另携捕获的 sessionId 只读准备，拒绝 incarnation 替换。
+侧栏标签仅更新产品归属，保持同一个 App 元素、iframe、bridge 与连接。新首页使用新的
+预览作用域，已采用的画布只在所属对话可交互；关闭窗口或释放旧预览不会删除该对话。
 
 “设置 / 外观”的消息区域宽度默认 60%，表示窗口最大化时对话正文和输入框占各自可用
 显示区域的比例。普通窗口宽度不超过默认 1280px 时尽量展开，消息区与输入框两侧各

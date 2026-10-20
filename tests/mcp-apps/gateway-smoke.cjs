@@ -18,6 +18,36 @@ const { pathToFileURL } = require('node:url');
   fs.mkdirSync(workspace);
   const receiptsPath = path.join(state, 'receipts.json');
   const drawio = process.argv.includes('--drawio');
+  const firstSend = process.argv.includes('--first-send');
+  assert.ok(!firstSend || drawio, '--first-send requires --drawio');
+  const modelInputs = [];
+  const model = firstSend
+    ? require('node:http').createServer(async (request, response) => {
+        let body = '';
+        for await (const chunk of request) body += chunk;
+        modelInputs.push(JSON.parse(body));
+        response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        response.end(
+          `data: ${JSON.stringify({
+            id: 'first-send-fixture',
+            object: 'chat.completion.chunk',
+            model: 'fixture',
+            choices: [
+              {
+                index: 0,
+                delta: { role: 'assistant', content: 'Diagram received.' },
+                finish_reason: 'stop',
+              },
+            ],
+            usage: { prompt_tokens: 100, completion_tokens: 5, total_tokens: 105 },
+          })}\n\ndata: [DONE]\n\n`,
+        );
+      })
+    : undefined;
+  if (model) {
+    await new Promise(resolve => model.listen(0, '127.0.0.1', resolve));
+    model.unref();
+  }
   const token = randomBytes(24).toString('hex');
   const listener = net.createServer();
   await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
@@ -62,6 +92,34 @@ const { pathToFileURL } = require('node:url');
     },
   };
   const configPath = path.join(state, 'openclaw.json');
+  if (firstSend) {
+    config.agents.defaults.model = { primary: 'fixture/fixture' };
+    config.agents.defaults.models = { 'fixture/fixture': { agentRuntime: { id: 'openclaw' } } };
+    config.agents.defaults.skipBootstrap = true;
+    config.agents.defaults.heartbeat = { every: '0m' };
+    config.models = {
+      mode: 'replace',
+      catalogRefresh: { enabled: false },
+      providers: {
+        fixture: {
+          baseUrl: `http://127.0.0.1:${model.address().port}/v1`,
+          api: 'openai-completions',
+          apiKey: 'fixture-only',
+          agentRuntime: { id: 'openclaw' },
+          request: { allowPrivateNetwork: true },
+          models: [
+            {
+              id: 'fixture',
+              name: 'Fixture',
+              input: ['text'],
+              contextWindow: 200000,
+              maxTokens: 2000,
+            },
+          ],
+        },
+      },
+    };
+  }
   if (historyRecovery) {
     const fixture = path.join(state, 'history-probe');
     fs.mkdirSync(fixture);
@@ -137,6 +195,11 @@ const { pathToFileURL } = require('node:url');
       : { calls: {}, cancellations: 0 };
   const scope = { sessionKey: 'agent:main:mcp-app-smoke', agentId: 'main' };
   const fileEvents = [];
+  const runEvents = [];
+  let appWorkspaces;
+  let appOwner;
+  let appScope;
+  let appBinding;
   try {
     await until(async () => {
       try {
@@ -182,6 +245,7 @@ const { pathToFileURL } = require('node:url');
           resolve(value);
         },
         onEvent: event => {
+          if (firstSend) runEvents.push(event);
           if (event.event === 'mcp.app.resourceUpdated') fileEvents.push(event.payload);
         },
         onConnectError: error => {
@@ -194,7 +258,34 @@ const { pathToFileURL } = require('node:url');
     console.log('Isolated Gateway hello ready');
     for (const method of ['mcp.app.cancel', 'mcp.app.release'])
       assert.ok(!hello.features.methods.includes(method));
-    await client.request('sessions.create', { key: scope.sessionKey, cwd: workspace });
+    if (firstSend) {
+      const serviceFile = path.join(state, 'workspace-sessions.cjs');
+      require('esbuild').buildSync({
+        entryPoints: [path.join(root, 'src/main/plugins/mcp/workspaceAppSession.ts')],
+        outfile: serviceFile,
+        bundle: true,
+        platform: 'node',
+        format: 'cjs',
+      });
+      const { WorkspaceAppSessions } = require(serviceFile);
+      appOwner = Object.assign(new (require('node:events').EventEmitter)(), {
+        isDestroyed: () => false,
+      });
+      appScope = {
+        requestId: require('node:crypto').randomUUID(),
+        cwd: workspace,
+        agentId: 'main',
+      };
+      appWorkspaces = new WorkspaceAppSessions({
+        getStore: () => ({
+          getConfig: () => ({ workingDirectory: workspace, permissionMode: 'auto' }),
+          getAgent: () => ({ enabled: true }),
+        }),
+        request: (method, params) => client.request(method, params),
+      });
+      appBinding = await appWorkspaces.prepare(appOwner, appScope);
+      scope.sessionKey = appBinding.sessionKey;
+    } else await client.request('sessions.create', { key: scope.sessionKey, cwd: workspace });
     console.log('Isolated native session prepared');
     const catalog = await client.request('mcp.app.discover', scope);
     console.log('Native MCP App discovery returned');
@@ -391,6 +482,72 @@ const { pathToFileURL } = require('node:url');
         0,
         'Opening the blank editor must not submit a model prompt',
       );
+      if (firstSend) {
+        const target = { ...scope, viewId: launched.viewId };
+        const edited = xml.replace('<root>', '<root><!-- FIRST_SEND_UNSAVED_NODE_42 -->');
+        await client.request('mcp.app.updateModelContext', {
+          ...target,
+          content: [{ type: 'text', text: `Current draw.io diagram:\n${edited}` }],
+        });
+        const adopted = await appWorkspaces.adopt(
+          appOwner,
+          appScope,
+          id => ({ id }),
+          () => true,
+        );
+        assert.equal(adopted.binding.sessionKey, appBinding.sessionKey);
+        assert.ok(appBinding.sessionKey.endsWith(`:${adopted.value.id}`));
+        await appWorkspaces.release(appOwner, appScope.requestId);
+        appOwner.emit('destroyed');
+        const stillLive = await client.request('sessions.describe', { key: scope.sessionKey });
+        assert.equal(stillLive.session.sessionId, appBinding.gatewaySessionId);
+        const sent = await client.request('chat.send', {
+          sessionKey: scope.sessionKey,
+          message: 'Summarize my current diagram.',
+          idempotencyKey: require('node:crypto').randomUUID(),
+        });
+        const terminal = await until(
+          () =>
+            runEvents.find(
+              event =>
+                event.event === 'agent' &&
+                event.payload?.runId === sent.runId &&
+                event.payload?.stream === 'lifecycle' &&
+                event.payload?.data?.executionSettled === true,
+            ),
+          90000,
+        );
+        assert.equal(terminal.payload.data.phase, 'end');
+        assert.match(
+          JSON.stringify(modelInputs),
+          /FIRST_SEND_UNSAVED_NODE_42/,
+          'The first model input must include the edited App XML',
+        );
+        assert.match(JSON.stringify(modelInputs), /MCP App context snapshots/);
+        const retained = await client.request('mcp.app.view', target);
+        assert.equal(retained.messageSupported, true);
+        assert.equal(retained.updateModelContextSupported, true);
+        assert.equal(
+          (await client.request('sessions.describe', { key: scope.sessionKey })).session.sessionId,
+          appBinding.gatewaySessionId,
+        );
+        fs.writeFileSync(
+          path.join(state, 'first-send-proof.json'),
+          JSON.stringify(
+            {
+              firstModelReceivedEditedDiagram: true,
+              sameNativeSession: true,
+              viewRemainsInteractive: true,
+              adoptedSessionSurvivesWindowCleanup: true,
+              executionSettled: true,
+              modelRequests: modelInputs.length,
+            },
+            null,
+            2,
+          ),
+        );
+        console.log('First-send native App context adoption and model input passed.');
+      }
       fs.writeFileSync(
         path.join(state, 'drawio-manual-proof.json'),
         JSON.stringify(
@@ -408,7 +565,9 @@ const { pathToFileURL } = require('node:url');
         ),
       );
       console.log(
-        'Manual draw.io discovery, file launch and native resource reads passed without a model request.',
+        firstSend
+          ? 'Manual draw.io and first-send context checks passed with a local synthetic model.'
+          : 'Manual draw.io discovery, file launch and native resource reads passed without a model request.',
       );
       return;
     }
@@ -652,6 +811,7 @@ const { pathToFileURL } = require('node:url');
     );
     console.log('MCP Apps real Gateway smoke passed. Artifacts: ' + state);
   } finally {
+    model?.close();
     clearTimeout(timeout);
     if (client) await client.stopAndWait().catch(() => client.stop());
     child.kill();

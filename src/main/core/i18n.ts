@@ -18,6 +18,7 @@ export type LanguageType = 'zh' | 'en';
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
     ...startupWindowTranslations.zh,
+    mcpAppsContextPrepareFailed: '图表内容暂时无法同步，请检查应用状态后重新发送。画布修改已保留。',
     localSpeechModelServerNotConfigured: '尚未配置内网语音模型服务，请联系管理员配置后再安装模型。',
     localSpeechModelRangeIgnored: '模型服务未按请求返回文件分段，请联系管理员检查分段下载支持。',
     localSpeechModelRangeInvalid: '模型服务返回的文件分段与请求不符，请联系管理员检查模型服务。',
@@ -90,7 +91,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     agentTeamSkillSyncFailed: '扩展开关已保存，但 Agent Team 技能同步未完成。请重试同一开关操作。',
     engineRestartUnconfirmed: '重启请求的结果尚未确认，未追加重启。请稍后查看引擎状态。',
     engineRestartReadyUnconfirmed: '引擎已接受重启，但尚未确认就绪。未追加重启，请稍后查看状态。',
-    engineConfigApplicationUnconfirmed: '设置已保存，但重启请求的结果尚未确认。未追加重启，设置是否生效仍待确认。',
+    engineConfigApplicationUnconfirmed:
+      '设置已保存，但重启请求的结果尚未确认。未追加重启，设置是否生效仍待确认。',
     extensionCredentialRefreshUnconfirmed: '扩展凭据已保存，但尚未确认运行时刷新成功。',
     extensionRuntimeServiceFailed: '扩展服务启动失败，请查看运行时诊断。',
     extensionUninstallUnconfirmed: '扩展卸载结果尚未确认，请稍后刷新状态；未重复执行卸载。',
@@ -165,6 +167,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
   },
   en: {
     ...startupWindowTranslations.en,
+    mcpAppsContextPrepareFailed:
+      'Could not sync the diagram. Check the app and send again. Your edits are preserved.',
     localSpeechModelRangeIgnored:
       'The model server ignored the requested download range. Contact your administrator to check range support.',
     localSpeechModelRangeInvalid:
@@ -253,10 +257,14 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'The selected provider is not ready. Please check its configuration and authentication.',
     selectedModelRouteChanged:
       'The selected model route has changed. Please select the model again.',
-    sessionModelPreparationChanged: 'The connection or configuration changed while preparing the model. Try again.',
-    sessionModelConfigurationUnavailable: 'The model configuration could not be read. Try again later.',
-    sessionModelIdentityChanged: 'The session identity changed while preparing the model. The operation has stopped.',
-    sessionModelPreparationUnconfirmed: 'The session model could not be confirmed. Select the model again and retry.',
+    sessionModelPreparationChanged:
+      'The connection or configuration changed while preparing the model. Try again.',
+    sessionModelConfigurationUnavailable:
+      'The model configuration could not be read. Try again later.',
+    sessionModelIdentityChanged:
+      'The session identity changed while preparing the model. The operation has stopped.',
+    sessionModelPreparationUnconfirmed:
+      'The session model could not be confirmed. Select the model again and retry.',
     extensionConversionNotImplemented:
       'This extension requires conversion to OpenClaw format. Conversion is not implemented yet.',
     extensionImportSourceChanged: 'The import source changed during preparation. Please try again.',

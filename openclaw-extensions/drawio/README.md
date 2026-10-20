@@ -69,6 +69,13 @@ reinstates tool grants. Local unsaved edits are not a durable transcript.
 
 ## Host boundary
 
+The App exposes a read-only standard App tool with
+`_meta['workspace/prepare-context'] = true`. Before first send the generic host
+discovers this opt-in tool, commits active cell editing, exports current XML and
+waits for `updateModelContext` to finish. It does not save a file or call business
+MCP tools. Homepage adoption preserves the same native session, iframe and local
+undo stack; it neither relaunches the editor nor copies XML into product storage.
+
 The host owns generic MCP App discovery/rendering, file downloads and native Save
 dialogs. Default enablement, runtime fingerprinting and packaging retain thin
 integration calls/declarations in the host. End-to-end host/runtime/package probes

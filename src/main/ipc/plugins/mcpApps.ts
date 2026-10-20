@@ -20,6 +20,7 @@ interface Dependencies {
   getCoworkStore: () => CoworkStore;
   getCoworkEngineRouter: () => CoworkEngineRouter;
   requestGateway?: <T>(method: string, params?: unknown) => Promise<T>;
+  workspaceAppSessions?: WorkspaceAppSessions;
 }
 const text = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0 && value.length <= 2048;
@@ -37,7 +38,9 @@ export function registerMcpAppHandlers(deps: Dependencies): void {
     if (!deps.requestGateway) throw new Error('Gateway is unavailable');
     return deps.requestGateway<T>(method, params);
   };
-  const workspaces = new WorkspaceAppSessions({ getStore: deps.getCoworkStore, request });
+  const workspaces =
+    deps.workspaceAppSessions ??
+    new WorkspaceAppSessions({ getStore: deps.getCoworkStore, request });
   const target = (id: unknown) => {
     const current = session(id);
     const sessionKey =

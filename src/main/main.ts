@@ -74,7 +74,10 @@ import { resolveAppUpdateResourceUrl } from './core/app/updateResourceUrl';
 import { APP_NAME, DEV_SERVER_URL_SWITCH, INSTALLER_QUIT_SWITCH } from './core/appConstants';
 import { resolveDevelopmentDataDirectory } from './core/development/developmentDataDirectory';
 import { getDevServerUrlFromCommandLine } from './core/development/devServerHandoff';
-import { bindDevelopmentParentShutdown, createDevSessionLifecycle } from './core/development/devSessionLifecycle';
+import {
+  bindDevelopmentParentShutdown,
+  createDevSessionLifecycle,
+} from './core/development/devSessionLifecycle';
 import { ManagedDirectoryOperationCoordinator } from './core/filesystem/managedDirectoryOperations';
 import { setLanguage, t } from './core/i18n';
 import { getLogFilePath, getRecentMainLogEntries, initLogger } from './core/logger';
@@ -249,6 +252,7 @@ import {
   PluginManager,
   readNativeMcpServerNames,
 } from './plugins';
+import { WorkspaceAppSessions } from './plugins/mcp/workspaceAppSession';
 import { SkillWorkshopService } from './plugins/skills/skillWorkshopService';
 import {
   getBuiltinModelAuthConfig,
@@ -604,7 +608,8 @@ const getOpenClawEngineManager = (): OpenClawEngineManager => {
       beginNetworkGeneration: () => getOutboundHeaderProxy().rotateGatewayCapability(),
       prepareNetworkGeneration: prepareOutboundHeaderNetworkGeneration,
       buildNetworkEnvironment: baseEnv => getOutboundHeaderProxy().buildGatewayEnvironment(baseEnv),
-      isNetworkEnvironmentReusable: env => getOutboundHeaderProxy().isGatewayEnvironmentReusable(env),
+      isNetworkEnvironmentReusable: env =>
+        getOutboundHeaderProxy().isGatewayEnvironmentReusable(env),
     });
   }
   return openClawEngineManager;
@@ -730,7 +735,9 @@ const getEngineNotReadyResponse = (status: OpenClawEngineStatus) => {
   };
 };
 
-const ensureOpenClawRunningForCowork = async (options: { prepareComputerForSend?: boolean } = {}) => {
+const ensureOpenClawRunningForCowork = async (
+  options: { prepareComputerForSend?: boolean } = {},
+) => {
   bindOpenClawGatewayPortProxyBypass();
   return ensureExecutionReady({
     manager: getOpenClawEngineManager(),
@@ -803,9 +810,10 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
           undefined,
           normalizeLocalSpeechSettings(getStore().get<AppConfigSettings>('app_config')?.voice),
         ),
-      getLocalSpeechExtensionTtsConfig: () => buildLocalSpeechExtensionTtsConfig(
-        getStore().get<AppConfigSettings>('app_config')?.localSpeechExtensions,
-      ),
+      getLocalSpeechExtensionTtsConfig: () =>
+        buildLocalSpeechExtensionTtsConfig(
+          getStore().get<AppConfigSettings>('app_config')?.localSpeechExtensions,
+        ),
       getSpeechOutputState: () => {
         const settings = normalizeLocalSpeechSettings(
           getStore().get<AppConfigSettings>('app_config')?.voice,
@@ -1694,7 +1702,13 @@ if (multicaBridgeArgv) {
       requestGateway: <T>(method: string, params?: unknown) =>
         getCoworkEngineService().requestGateway<T>(method, params),
     }));
+  const workspaceAppSessions = new WorkspaceAppSessions({
+    getStore: getCoworkStore,
+    request: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
+  });
   registerCoworkSessionExecutionHandlers({
+    workspaceAppSessions,
     getMainWindow: () => mainWindow,
     getAgentTeamLaunch,
     ensureEngineRunning: () => ensureOpenClawRunningForCowork({ prepareComputerForSend: true }),
@@ -1707,6 +1721,7 @@ if (multicaBridgeArgv) {
   });
 
   registerCoworkSessionHandlers({
+    workspaceAppSessions,
     getAgentTeamLaunch,
     getCollaboration: () => bindCollaboration.coordinator(),
     getCoworkStore,

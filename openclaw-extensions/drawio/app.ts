@@ -24,6 +24,7 @@ let pending:
       id: string;
       phase: 'committing' | 'exporting';
       timer: ReturnType<typeof setTimeout>;
+      context?: { resolve: () => void; reject: (error: Error) => void };
     }
   | undefined;
 let contextTimer: ReturnType<typeof setTimeout> | undefined;
@@ -36,6 +37,18 @@ const post = (data: object) => editor.contentWindow?.postMessage(JSON.stringify(
 const load = () => {
   if (ready && xml) post({ action: 'load', xml, autosave: 1, title: name, saveAndExit: '0' });
 };
+const publishContext = async () => {
+  clearTimeout(contextTimer);
+  if (
+    disposed ||
+    new TextEncoder().encode(xml).length > 1024 * 1024 ||
+    !app.getHostCapabilities()?.updateModelContext
+  )
+    throw new Error('Diagram context is unavailable');
+  await app.updateModelContext({
+    content: [{ type: 'text', text: `Current draw.io diagram (${name}):\n${xml}` }],
+  });
+};
 const updateContext = () => {
   clearTimeout(contextTimer);
   if (
@@ -44,11 +57,7 @@ const updateContext = () => {
   )
     return;
   contextTimer = setTimeout(() => {
-    void app
-      .updateModelContext({
-        content: [{ type: 'text', text: `Current draw.io diagram (${name}):\n${xml}` }],
-      })
-      .catch(() => undefined);
+    void publishContext().catch(() => undefined);
   }, 1000);
 };
 async function download(format: 'drawio' | 'png' | 'svg', data: string) {
@@ -141,10 +150,18 @@ window.addEventListener('message', event => {
     )
       return;
     const format = pending.format;
+    const context = pending.context;
     clearTimeout(pending.timer);
     pending = undefined;
     busy = false;
-    if (format === 'drawio' && typeof data.xml === 'string') {
+    if (context) {
+      if (typeof data.xml !== 'string') context.reject(new Error('Invalid diagram export'));
+      else {
+        xml = data.xml;
+        void publishContext().then(context.resolve, context.reject);
+      }
+      updateButtons();
+    } else if (format === 'drawio' && typeof data.xml === 'string') {
       xml = data.xml;
       void download(format, xml);
     } else if (typeof data.data === 'string') void download(format, data.data);
@@ -172,6 +189,40 @@ for (const format of ['drawio', 'png', 'svg'] as const)
       };
       post({ action: 'diagram-commit', requestId: id });
     });
+// Standard App tool: the host discovers this opt-in contract without knowing the
+// plugin name, and waits for the actual native context update before first send.
+app.registerTool(
+  'prepare_context',
+  {
+    description: 'Commit current editing and publish the current diagram as conversation context.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    _meta: { 'workspace/prepare-context': true },
+  },
+  async () => {
+    if (!ready || !xml || busy || pending || disposed)
+      return { isError: true, content: [{ type: 'text', text: 'Diagram is not ready' }] };
+    await new Promise<void>((resolve, reject) => {
+      clearTimeout(contextTimer);
+      const id = crypto.randomUUID();
+      busy = true;
+      updateButtons();
+      pending = {
+        format: 'drawio',
+        id,
+        phase: 'committing',
+        context: { resolve, reject },
+        timer: setTimeout(() => {
+          pending = undefined;
+          busy = false;
+          updateButtons();
+          reject(new Error('Diagram context preparation timed out'));
+        }, 10_000),
+      };
+      post({ action: 'diagram-commit', requestId: id });
+    });
+    return { content: [] };
+  },
+);
 app.ontoolresult = async result => {
   const revision = ++resultRevision;
   const diagram = result.structuredContent as Record<string, unknown> | undefined;
@@ -246,6 +297,7 @@ app.onteardown = async () => {
   resultRevision++;
   clearTimeout(contextTimer);
   if (pending) clearTimeout(pending.timer);
+  pending?.context?.reject(new Error('Diagram closed during context preparation'));
   return {};
 };
 const syncHostStyle = () => {

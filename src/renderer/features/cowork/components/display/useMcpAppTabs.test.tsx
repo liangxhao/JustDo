@@ -20,6 +20,7 @@ import { useMcpAppTabs } from './useMcpAppTabs';
 vi.mock('@/libs/openclaw-chat/components/mcp-app/view', () => {
   class TestAppView extends HTMLElement {
     resume = vi.fn();
+    prepareContext = vi.fn().mockResolvedValue(undefined);
   }
   customElements.define('test-mcp-app-view', TestAppView);
   return { McpAppView: TestAppView };
@@ -131,6 +132,46 @@ test('a file open in another session is never focused', () => {
   );
   expect(result.current.tabs).toEqual([]);
   expect(result.current.focusFile('E:/预算.xlsx')).toBe(false);
+});
+
+test('a new homepage source for the same file preserves the adopted editor and its local edits', async () => {
+  let tabs!: ReturnType<typeof useMcpAppTabs>;
+  function Fixture({ sessionId }: { sessionId: string }) {
+    tabs = useMcpAppTabs(sessionId, vi.fn(), vi.fn());
+    return <div>{tabs.panels(null)}</div>;
+  }
+  const context = {
+    isCurrent: () => true,
+    apps: { subscribe: () => () => {} },
+  } as unknown as McpAppViewContext;
+  const file = (source: string): McpAppWorkspaceFileEntry => ({
+    id: `mcp-app-file:__home__:${source}:E:/diagram.drawio`,
+    sessionId: '__home__',
+    filePath: 'E:/diagram.drawio',
+    label: 'diagram.drawio',
+    load: async () => ({
+      preview: { title: 'draw.io', viewId: source } as McpAppWorkspaceEntry['preview'],
+      context,
+    }),
+  });
+  const fixture = render(<Fixture sessionId="__home__" />);
+  await act(async () => openWorkspaceAppFile(file('first-source')));
+  const original = document.querySelector('test-mcp-app-view')!;
+  const edit = document.createElement('input');
+  edit.value = 'unsaved diagram text';
+  original.append(edit);
+  act(() => tabs.promote('__home__', 'canonical-chat'));
+  fixture.rerender(<Fixture sessionId="canonical-chat" />);
+  fixture.rerender(<Fixture sessionId="__home__" />);
+
+  await act(async () => openWorkspaceAppFile(file('next-source')));
+
+  expect(document.querySelectorAll('test-mcp-app-view')).toHaveLength(2);
+  expect(original.isConnected).toBe(true);
+  expect(edit.value).toBe('unsaved diagram text');
+  fixture.rerender(<Fixture sessionId="canonical-chat" />);
+  expect(tabs.tabs[0].id).toBe(file('first-source').id);
+  expect(original.querySelector('input')).toBe(edit);
 });
 
 test('a file App closed by its own UI is not focused as an existing editor', () => {
@@ -440,4 +481,28 @@ test('advanced controls attach only to the workspace and close by exact owner', 
   expect(onClose).toHaveBeenCalledOnce();
   expect(attach).toHaveBeenLastCalledWith(null);
   view.unmount();
+});
+
+test('promotes the App panel to the new conversation without replacing its element or local input', async () => {
+  const entry = {
+    id: 'home-drawing',
+    sessionId: '__home__',
+    preview: { title: 'draw.io', viewId: 'drawing' },
+    context: { isCurrent: () => true, apps: { subscribe: () => () => {} } },
+  } as unknown as McpAppWorkspaceEntry;
+  let controller!: ReturnType<typeof useMcpAppTabs>;
+  function Fixture({ sessionId }: { sessionId: string }) {
+    controller = useMcpAppTabs(sessionId, vi.fn(), vi.fn());
+    return <div>{controller.panels(entry.id)}</div>;
+  }
+  const rendered = render(<Fixture sessionId="__home__" />);
+  await act(async () => openWorkspaceApp(entry));
+  const element = document.querySelector('test-mcp-app-view')!;
+  element.append(document.createTextNode('unsaved node text'));
+  await act(async () => expect(await controller.prepareContext()).toBe(true));
+  act(() => controller.promote('__home__', 'conversation'));
+  rendered.rerender(<Fixture sessionId="conversation" />);
+  expect(document.querySelector('test-mcp-app-view')).toBe(element);
+  expect(element.textContent).toBe('unsaved node text');
+  expect(controller.tabs.map(tab => tab.id)).toEqual([entry.id]);
 });
