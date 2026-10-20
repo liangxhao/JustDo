@@ -58,6 +58,6 @@ files. The host controls display and follow-up drafts; no button is proof that
 an agent task ran.
 
 If the native tool or kind is unavailable, explain the limitation briefly.
-For a requested interactive deliverable, create a normal HTML artifact under
-the project's `.agent-tasks/interactive-ui/` and return its file link for the
-existing preview. For a simple comparison, a text table is enough.
+For a requested interactive deliverable, create a normal HTML artifact and
+return its file link for the existing preview. For a simple comparison, a text
+table is enough.

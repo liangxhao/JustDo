@@ -199,4 +199,4 @@ Bridge failures offer a brief retryable error, and bridge success never claims
 model acceptance. Existing host confirmation and explicit user send remain.
 Use `verify-gateway.mjs <runtime-dir> --ui --interaction-contract --presentation`
 for native renderer/viewer checks and synthetic screenshots in light/dark themes
-at 840/312px card widths. Outputs stay under `.agent-tasks/interactive-ui/presentation/`.
+at 840/312px card widths.

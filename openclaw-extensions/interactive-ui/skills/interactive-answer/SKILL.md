@@ -152,6 +152,6 @@ Do not claim to update an earlier document in place or persist unfinished inputs
 Use only the descriptor returned by the real native tool. Never invent Canvas
 IDs, embed URLs, manifests or Gateway state files. If the kind is unavailable,
 use text for a simple answer. If an interactive artifact is explicitly requested,
-use the ordinary native HTML kind when available, or a project HTML file under
-`.agent-tasks/interactive-ui/` with its normal preview link. Never imitate an
+use the ordinary native HTML kind when available, or a project HTML file with
+its normal preview link. Never imitate an
 inline widget by writing native state or opening privileged URLs.
