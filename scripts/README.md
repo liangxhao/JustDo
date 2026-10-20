@@ -158,6 +158,13 @@ bundle and its dynamic TypeSafe SDK with an isolated file SecretRef and local
 synthetic provider. It covers first use, rotation, unavailable-owner denial and
 recovery without a chat model or user credentials.
 
+`node scripts/test/browser-local-html-smoke.cjs [html-file]` verifies native Chromium
+file pages in a disposable Electron guest with the production navigation helpers.
+It checks parent-directory assets/links, network modules and frames, Blob workers,
+forms, popups and redirects without Gateway, user state or public network access.
+The optional HTML file is opened unchanged and checks the globe example's canvas
+and loading indicator; that extra check uses the document's own dependencies.
+
 `node scripts/test/prepare-npx-mcp-smoke.cjs` packs the dependency-free local
 `tests/openclaw/fixtures/npx-mcp-smoke/` package and primes an isolated offline npm
 cache. On Windows it verifies real npx package-bin startup through Main's command

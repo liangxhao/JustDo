@@ -91,6 +91,17 @@ export const isAllowedBrowserPanelUrl = (value: string): boolean => {
   }
 };
 
+// Guest navigation also supports Chromium's native local and generated documents.
+// Network-only callers keep using isAllowedBrowserPanelUrl.
+export const isAllowedBrowserPanelNavigationUrl = (value: string): boolean => {
+  if (isAllowedBrowserPanelUrl(value) || value === 'about:srcdoc') return true;
+  try {
+    return ['file:', 'data:', 'blob:'].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+};
+
 type MainWindowNavigationOptions = {
   appRoot?: string;
   devServerUrl: string;

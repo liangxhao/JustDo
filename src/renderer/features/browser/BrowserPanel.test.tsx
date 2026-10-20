@@ -1325,30 +1325,88 @@ describe('BrowserPanel embedded webview', () => {
     );
   });
 
-  it('opens a file URL through the isolated local HTML preview', async () => {
+  it('adds the original local HTML as a real tab when a mounted panel opens a message link', async () => {
+    let panel: BrowserPanelHandle | null = null;
+    const { container } = render(
+      <BrowserPanelHarness
+        draftKey="native-message-link"
+        panelRef={instance => {
+          panel = instance;
+        }}
+      />,
+    );
+    const url = 'file:///C:/reports/%E8%AF%A6%E6%83%85.html?mode=3d#camera';
+    act(() => {
+      expect(
+        panel?.openTab(url, {
+          targetId: 'native-message-target',
+          sourceFilePath: 'C:\\reports\\详情.html',
+          sourcePreviewUrl: url,
+        }),
+      ).toBe(true);
+    });
+
+    expect(
+      [...container.querySelectorAll('webview')].some(view => view.getAttribute('src') === url),
+    ).toBe(true);
+    expect((screen.getByLabelText('Browser address') as HTMLInputElement).value).toBe(
+      'C:\\reports\\详情.html',
+    );
+    await waitFor(() =>
+      expect(registerAgentTab).toHaveBeenCalledWith(
+        expect.objectContaining({ targetId: 'native-message-target' }),
+      ),
+    );
+  });
+
+  it.each([
+    'file:///C:/Users/lianghao/justdo/project/ai-assistant-3d/index.html',
+    'C:\\Users\\lianghao\\justdo\\project\\ai-assistant-3d\\index.html',
+  ])('opens the local address %s with native Chromium handling', async address => {
     createLocalHtmlPreview.mockResolvedValue({
       success: true,
-      url: 'http://127.0.0.1:43128/token/index.html',
+      url: 'file:///C:/Users/lianghao/justdo/project/ai-assistant-3d/index.html',
       filePath: 'C:\\Users\\lianghao\\justdo\\project\\ai-assistant-3d\\index.html',
       rootPath: 'C:\\Users\\lianghao\\justdo\\project\\ai-assistant-3d',
-      previewRootUrl: 'http://127.0.0.1:43128/token/',
+      previewRootUrl: 'file:///C:/Users/lianghao/justdo/project/ai-assistant-3d/',
     });
-    const { container } = render(<BrowserPanelHarness />);
+    const { container } = render(<BrowserPanelHarness draftKey={`native-address-${address}`} />);
     const fileUrl = 'file:///C:/Users/lianghao/justdo/project/ai-assistant-3d/index.html';
 
     fireEvent.change(screen.getByLabelText('Browser address'), {
-      target: { value: fileUrl },
+      target: { value: address },
     });
     fireEvent.submit(screen.getByLabelText('Browser address').closest('form')!);
 
-    await waitFor(() => expect(createLocalHtmlPreview).toHaveBeenCalledWith(fileUrl));
-    expect(loadUrl).toHaveBeenCalledWith('http://127.0.0.1:43128/token/index.html');
+    await waitFor(() => expect(createLocalHtmlPreview).toHaveBeenCalledWith(address));
+    expect(loadUrl).toHaveBeenCalledWith(fileUrl);
     expect((screen.getByLabelText('Browser address') as HTMLInputElement).value).toBe(
       'C:\\Users\\lianghao\\justdo\\project\\ai-assistant-3d\\index.html',
     );
 
     fireEvent(container.querySelector('webview')!, new Event('dom-ready'));
     expect(setZoomFactor).toHaveBeenCalledWith(1);
+  });
+
+  it.each([
+    ['file:///C:/summary/%E8%AF%A6%E6%83%85%20%23100%25.html', 'C:\\summary\\详情 #100%.html'],
+    ['file:///tmp/summary.html', '/tmp/summary.html'],
+    ['file://server/share/summary.html', '\\\\server\\share\\summary.html'],
+    ['https://example.com/summary', 'https://example.com/summary'],
+    ['data:text/html,summary', 'data:text/html,summary'],
+  ])('shows the actual destination after leaving a local HTML for %s', (url, address) => {
+    expect(
+      getBrowserTabAddress({
+        id: 'local-navigation',
+        targetId: 'local-navigation',
+        title: '',
+        url,
+        sourceFilePath: 'C:\\reports\\chapter\\entry.html',
+        sourcePreviewUrl: 'file:///C:/reports/chapter/entry.html',
+        sourceRootPath: 'C:\\reports\\chapter',
+        sourcePreviewRootUrl: 'file:///C:/reports/chapter/',
+      }),
+    ).toBe(address);
   });
 
   it('ignores a stale local file preview when a newer address submission finishes first', async () => {

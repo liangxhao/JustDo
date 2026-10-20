@@ -25,7 +25,7 @@ Gateway 是受管组件，但其可加载的 Node Extension 与宿主工具仍�
 
 当前生产源码没有主动追加 no-sandbox。发布检查仍需查看实际启动参数和平台环境，不能仅凭 BrowserWindow preference 宣称 OS 级隔离始终可用。
 
-安装版应用由只读 loopback HTTP 宿主加载，主窗口不再使用 file 页面；资源清单、Host/来源、真实路径和文件版本在宿主边界校验。应用 CSP 允许 PDF.js 所需 wasm-unsafe-eval，生产脚本仅允许 self 和可信打包入口的 SHA-256 内联哈希，不允许普通 JS eval 或任意 inline script；禁止 object、表单提交和被其他页面嵌入。style 保留 inline，connect-src 仍为 self + 通配，frame 允许 self/http/https，因此 CSP 不是网络访问白名单。Widget 与本地 HTML 使用各自隔离 origin、认证或资源根规则，不能借应用壳 CSP 获得权限。Markdown、Mermaid 和公式输出仍需统一清洗。
+安装版应用由只读 loopback HTTP 宿主加载，主窗口不再使用 file 页面；资源清单、Host/来源、真实路径和文件版本在宿主边界校验。应用 CSP 允许 PDF.js 所需 wasm-unsafe-eval，生产脚本仅允许 self 和可信打包入口的 SHA-256 内联哈希，不允许普通 JS eval 或任意 inline script；禁止 object、表单提交和被其他页面嵌入。style 保留 inline，connect-src 仍为 self + 通配，frame 允许 self/http/https，因此 CSP 不是网络访问白名单。Widget 使用独立隔离 origin 与认证，本地 HTML 使用 Chromium 原生文件来源规则，二者不能借应用壳 CSP 获得权限。Markdown、Mermaid 和公式输出仍需统一清洗。
 
 外链、guest 导航、子 frame、下载和权限请求分别验证。应用自己的认证弹窗不能被网页或 Agent 输入锁劫持；导航、超时和窗口销毁应取消所属请求。
 
@@ -55,6 +55,8 @@ ask/auto/full 映射原生 guarded/workspace/full。权限期望先保存产品�
 ## 5. 文件读取、编辑与产物
 
 文件预览不是通用 fs API。扩展名、普通文件、symlink、realpath、大小和文件身份需在读取边界检查。编辑 token 绑定 canonical path、owner、版本摘要和期限；真正写入重新验证，采用同目录临时文件与原子替换，冲突显式返回。
+
+本地 HTML 校验文件存在与类型后，以原生 `file://` 交给 Chromium guest 或 Chrome；不再启动预览服务器，也不注入预览 CSP、目录范围或静态资源类型白名单。页面跳转、父目录资源、表单和内嵌页面沿用浏览器规则；同源、CORS、文件来源限制、`webSecurity`、context isolation、沙箱和无 Node/完整应用 bridge 保持生效。通用网络请求仍检查元数据主机及解析地址。此调整只适用于无特权 browser guest，不改变应用壳只读 loopback 宿主、CSP、导航准入或 Widget 的认证与隔离。
 
 浏览器 Agent 上传限任务工作区内真实普通文件；PDF/下载目标验证真实父目录、拒绝覆盖并做 canonical reservation，防止并发争抢同一产物。取消和窗口销毁释放 reservation 并清理部分文件。
 

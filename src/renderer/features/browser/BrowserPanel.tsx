@@ -196,11 +196,16 @@ export const createBrowserPanelTab = (
 };
 
 const getLocalPreviewFilePath = (tab: BrowserPanelTab): string | null => {
-  if (!tab.sourceFilePath || !tab.sourcePreviewUrl) return null;
   try {
     const current = new URL(tab.url);
+    if (current.protocol === 'file:') {
+      const pathname = decodeURIComponent(current.pathname);
+      if (current.hostname) return `\\\\${current.hostname}${pathname.replace(/\//gu, '\\')}`;
+      return /^\/[a-z]:\//iu.test(pathname) ? pathname.slice(1).replace(/\//gu, '\\') : pathname;
+    }
+    if (!tab.sourceFilePath || !tab.sourcePreviewUrl) return null;
     const source = new URL(tab.sourcePreviewUrl);
-    if (current.origin !== source.origin) return null;
+    if (current.protocol !== source.protocol || current.origin !== source.origin) return null;
     if (current.pathname === source.pathname) return tab.sourceFilePath;
     if (!tab.sourceRootPath || !tab.sourcePreviewRootUrl) return null;
     const previewRoot = new URL(tab.sourcePreviewRootUrl);
@@ -223,7 +228,7 @@ const getLocalPreviewFilePath = (tab: BrowserPanelTab): string | null => {
     const separator = tab.sourceRootPath.includes('\\') ? '\\' : '/';
     return `${tab.sourceRootPath.replace(/[\\/]+$/u, '')}${separator}${relativeSegments.join(separator)}`;
   } catch {
-    return tab.url === tab.sourcePreviewUrl ? tab.sourceFilePath : null;
+    return tab.url === tab.sourcePreviewUrl ? (tab.sourceFilePath ?? null) : null;
   }
 };
 
@@ -237,12 +242,13 @@ export const getBrowserTabAddress = (tab: BrowserPanelTab | null | undefined): s
 const normalizeUrl = (raw: string): string | null => {
   const trimmed = raw.trim();
   if (!trimmed) return null;
-  if (trimmed === 'about:blank') return trimmed;
+  if (trimmed === 'about:blank' || trimmed === 'about:srcdoc') return trimmed;
   const hasScheme = /^[a-z][a-z0-9+.-]*:(?![0-9])/i.test(trimmed);
-  if (hasScheme && !/^https?:\/\//i.test(trimmed)) return null;
   try {
     const parsed = new URL(hasScheme ? trimmed : `https://${trimmed}`);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : null;
+    return ['http:', 'https:', 'file:', 'data:', 'blob:'].includes(parsed.protocol)
+      ? parsed.toString()
+      : null;
   } catch {
     return null;
   }
@@ -254,7 +260,8 @@ const resolveAddressInput = (raw: string): string | null =>
     normalizeBrowserSearchEngine(configService.getConfig().browserSearchEngine),
   );
 
-const isLocalFileAddress = (raw: string): boolean => /^file:/iu.test(raw.trim());
+const isLocalFileAddress = (raw: string): boolean =>
+  /^(?:file:|[a-z]:[\\/]|\\\\|\/)/iu.test(raw.trim());
 
 export const getBrowserTabDisplayTitle = (tab: BrowserPanelTab): string => {
   if (tab.customTitle) return tab.customTitle;
@@ -1234,9 +1241,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         const currentUrl = webview.getURL() || retainedTab?.url || 'about:blank';
         if (retainedTab && isAtSourcePreview({ ...retainedTab, url: currentUrl })) {
           try {
-            // Electron persists zoom per host. Every isolated local preview is served from
-            // 127.0.0.1, so a zoom chosen for an earlier preview would otherwise leak into
-            // unrelated files (and can break canvas libraries that derive input from DPR).
+            // Start local documents at their default zoom so a previously visited
+            // page's zoom cannot change their canvas coordinate/DPR expectations.
             webview.setZoomFactor?.(1);
             if (activeTargetRef.current === targetId) setZoomFactor(1);
           } catch {

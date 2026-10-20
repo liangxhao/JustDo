@@ -114,7 +114,7 @@ generation/session/docId/mount，加入草稿时再次核对。仅传封闭 load
 
 原生私有 prompt port 只接收当前 frame 的真实用户激活，检查可见性、焦点、当前会话和长度/速率；拒绝 slash/执行前缀。草稿能力默认关闭，由当前 React consumer 的实时回调决定；只读会话或转录修改时撤销该能力、清除旧建议，并在私有消息、重建与加入草稿入口再次校验。能力切换保留原 iframe、端口与本地选择，不重新读取文档。建议以可读文字在紧凑行内区域展示供用户确认，可信「加入草稿」点击只追加当前 composer 文字，保留附件与已有草稿；发送仍由用户操作。没有 dashboard/MCP/tool/resource 权限。固定 scenario 不访问外部网络，原生任意 HTML 类型仍沿用原生 CSP/CDN/media 边界，不承诺全类型断网。用户入口与限制见 [交互式回答](../features/chat/interactive-answers.md)，未完成验收见 [验收清单](../plans/interactive-answers-acceptance.md)。
 
-消息中的普通网页 URL、Markdown 链接和 `MEDIA` 附件共享浏览器打开偏好，打开当前会话内置网页 Tab 或已安装的 Chrome。句子中的本地 HTML 路径和 Markdown HTML 链接转换为受控点击标记，主窗口不导航到 file URL；文件查找与 URL 查询参数、锚点分离，路径只解码一次，裸文件路径中的 `%`、`#` 保持原名。Main 沿用本地预览服务校验文件及资源根目录，再通过主窗口主 frame 专用 IPC 打开 HTTP(S) 预览 URL。已挂载的内置浏览器通过自身 handle 创建实际 Tab，容量拒绝时不插入外层虚假 Tab。该偏好只影响用户点击，不改变 Gateway 的 browser Tool 模式或原生消息所有权。详见[浏览器设置](../features/browser/browser-settings-design.md)。
+消息中的普通网页 URL、Markdown 链接和 `MEDIA` 附件共享浏览器打开偏好，打开当前会话内置网页 Tab 或已安装的 Chrome。句子中的本地 HTML 路径和 Markdown HTML 链接转换为受控点击标记，主窗口不导航到 file URL；文件查找与 URL 查询参数、锚点分离，路径只解码一次，裸文件路径中的 `%`、`#` 保持原名。Main 校验 HTML 文件后，通过主窗口主 frame 专用 IPC 选择内置 browser guest 或 Chrome，以原生 file URL 打开；不再发布本地 HTTP 预览站点或附加目录范围与预览 CSP。已挂载的内置浏览器通过自身 handle 创建实际 Tab，容量拒绝时不插入外层虚假 Tab。该偏好只影响用户点击，不改变 Gateway 的 browser Tool 模式或原生消息所有权。详见[浏览器设置](../features/browser/browser-settings-design.md)。
 
 右侧工作区支持整区分离，覆盖 agent-team、Swarm Workflow、临时侧聊、文件、浏览器、
 终端及其他 Tab。其 React/Redux 与 Gateway 客户端仍属于主 Renderer；
@@ -500,7 +500,7 @@ browser 来源覆盖内置侧栏浏览器，以及原生隔离、日常 Chrome �
 
 原生显示裁剪若将 `web_fetch` 的 JSON 截在末尾 `text` 字符串中，仅在存在原生截断后缀时读取该字段之前可完整解析的 metadata；地址、HTTP 成功状态和 externalContent 归属仍须全部通过校验。正文中的链接、缺失或被截断的来源标记以及其它损坏 JSON 不用于补全来源，不修补正文或重新抓取网页。
 
-摘要条目复用原有打开通路，不调用 `artifacts.download`，不下载、暂存或自动另存副本。原生 artifact metadata 按已有 attachment identity 或原生消息 seq 关联当前已加载的交付引用，优先使用附件明确指向的文件路径或网页地址；不透明引用仅在同条消息的原始 MEDIA 文件路径及附件名称均无歧义时关联，并与原文件条目去重。同一 seq 的名称匹配不能覆盖另一个明确的 artifact ID；不从文件名搜索其它消息或猜测磁盘路径。已有文件进入侧边栏预览，不支持预览的格式和过大文件直接用系统默认工具打开；网页打开浏览器 Tab，本地 HTML 复用受保护的预览站点并明确在工作区展示。已加载内联图片直接复用图片预览，不落地；只有内联文档内容但没有原文件地址的条目显示不可打开提示。附件内容按点击从既有历史 owner 解析，不在摘要 metadata 中复制 base64；解析和预览绑定当前会话与导航 generation，切换会话后的旧读取不切换 Tab 或打开系统工具。列表仅展示 metadata，查询失败保留已确认条目并提示读取失败；用户重新打开摘要可重试。
+摘要条目复用原有打开通路，不调用 `artifacts.download`，不下载、暂存或自动另存副本。原生 artifact metadata 按已有 attachment identity 或原生消息 seq 关联当前已加载的交付引用，优先使用附件明确指向的文件路径或网页地址；不透明引用仅在同条消息的原始 MEDIA 文件路径及附件名称均无歧义时关联，并与原文件条目去重。同一 seq 的名称匹配不能覆盖另一个明确的 artifact ID；不从文件名搜索其它消息或猜测磁盘路径。已有文件进入侧边栏预览，不支持预览的格式和过大文件直接用系统默认工具打开；网页打开浏览器 Tab，本地 HTML 通过原生 file URL 加载并明确在工作区展示。已加载内联图片直接复用图片预览，不落地；只有内联文档内容但没有原文件地址的条目显示不可打开提示。附件内容按点击从既有历史 owner 解析，不在摘要 metadata 中复制 base64；解析和预览绑定当前会话与导航 generation，切换会话后的旧读取不切换 Tab 或打开系统工具。列表仅展示 metadata，查询失败保留已确认条目并提示读取失败；用户重新打开摘要可重试。
 
 摘要浮层按内容自然增高，正文以内容高度作为 flex 布局基础，不使用零基础高度压缩初始展示。最大高度按浮层实际顶部到当前视口底部的剩余空间计算，并保留 16px 底部留白；窗口最大化时可利用新增纵向空间。标题栏保持完整高度，只有正文超出可用高度或用户手动缩小面板时才在面板内滚动；内容更新、展开和收起时自然重排。
 左下角手柄支持拖动调整宽高，右上角保持锚定；聚焦手柄后可用方向键以 16px 步长调整。

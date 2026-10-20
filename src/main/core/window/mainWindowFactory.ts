@@ -46,11 +46,6 @@ import {
 import { trackBrowserFavicon } from '../../browser/history/browserFavicon';
 import { trackBrowserHistory } from '../../browser/history/browserHistoryTracking';
 import {
-  isAllowedLocalHtmlPreviewResource,
-  isLocalHtmlPreviewUrl,
-  isSameLocalHtmlPreviewScope,
-} from '../../browser/preview/localHtmlPreviewServer';
-import {
   importFileOriginRendererPreferences,
   type RendererPreferenceStore,
 } from '../app/rendererPreferencesImporter';
@@ -59,7 +54,7 @@ import { registerBrowserProxySession } from '../network/systemProxyPreference';
 import { BrowserHttpAuthRequests, BrowserPermissionState } from './browserPanelRequestState';
 import {
   browserPermissionKeys,
-  isAllowedBrowserPanelUrl,
+  isAllowedBrowserPanelNavigationUrl,
   isAllowedExternalBrowserUrl,
   isAllowedMainWindowNavigation,
   isBlockedBrowserMetadataHost,
@@ -332,7 +327,6 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       );
     });
   };
-  const localPreviewScopesByGuestId = new Map<number, string>();
   let browserPanelShortcuts = DEFAULT_BROWSER_PANEL_SHORTCUTS;
   const handleBrowserPanelShortcuts = (event: Electron.IpcMainEvent, value: unknown) => {
     if (
@@ -480,7 +474,10 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       webPreferences.disableDialogs = false;
       webPreferences.navigateOnDragDrop = false;
 
-      if (!browserProfileFromPartition(params.partition) || !isAllowedBrowserPanelUrl(params.src)) {
+      if (
+        !browserProfileFromPartition(params.partition) ||
+        !isAllowedBrowserPanelNavigationUrl(params.src)
+      ) {
         event.preventDefault();
         return;
       }
@@ -495,20 +492,6 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       }
     });
     host.on('did-attach-webview', (_event, guestContents) => {
-      let localPreviewScopeUrl = isLocalHtmlPreviewUrl(guestContents.getURL())
-        ? guestContents.getURL()
-        : null;
-      const bindLocalPreviewScope = (url: string): void => {
-        if (localPreviewScopeUrl || !isLocalHtmlPreviewUrl(url)) return;
-        localPreviewScopeUrl = url;
-        localPreviewScopesByGuestId.set(guestContents.id, url);
-      };
-      if (localPreviewScopeUrl) {
-        localPreviewScopesByGuestId.set(guestContents.id, localPreviewScopeUrl);
-      }
-      const canNavigateWithinPreviewScope = (url: string): boolean => {
-        return !localPreviewScopeUrl || isSameLocalHtmlPreviewScope(localPreviewScopeUrl, url);
-      };
       let externalProtocolPromptPending = false;
       const requestExternalProtocol = (url: string): void => {
         if (externalProtocolPromptPending || !isAllowedExternalBrowserUrl(url)) return;
@@ -548,7 +531,6 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
           requestExternalProtocol(url);
           return { action: 'deny' };
         }
-        if (!canNavigateWithinPreviewScope(url)) return { action: 'deny' };
         if (details.postBody) {
           mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
             url,
@@ -557,7 +539,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
           });
           return { action: 'deny' };
         }
-        if (isAllowedBrowserPanelUrl(url)) {
+        if (isAllowedBrowserPanelNavigationUrl(url)) {
           mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
             url: url || 'about:blank',
             openerGuestId: guestContents.id,
@@ -590,13 +572,12 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         guestContents.send(BROWSER_GUEST_COMMAND_CHANNEL, command);
       });
       guestContents.on('will-navigate', (event, url) => {
-        bindLocalPreviewScope(url);
         if (isAllowedExternalBrowserUrl(url)) {
           event.preventDefault();
           requestExternalProtocol(url);
           return;
         }
-        if (!isAllowedBrowserPanelUrl(url) || !canNavigateWithinPreviewScope(url)) {
+        if (!isAllowedBrowserPanelNavigationUrl(url)) {
           event.preventDefault();
         }
       });
@@ -604,42 +585,35 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         if (isBrowserPdfStreamNavigation(event.url, event.isMainFrame, event.frame?.parent?.url)) {
           return;
         }
-        if (event.isMainFrame) bindLocalPreviewScope(event.url);
-        if (!isAllowedBrowserPanelUrl(event.url) || !canNavigateWithinPreviewScope(event.url)) {
+        if (!isAllowedBrowserPanelNavigationUrl(event.url)) {
           event.preventDefault();
         }
       });
       guestContents.on('will-redirect', (event, url) => {
-        if (!isAllowedBrowserPanelUrl(url) || !canNavigateWithinPreviewScope(url)) {
+        if (!isAllowedBrowserPanelNavigationUrl(url)) {
           event.preventDefault();
         }
       });
-      const recordFaviconData = trackBrowserHistory(guestContents, () => !localPreviewScopeUrl);
-      trackBrowserFavicon(
-        guestContents,
-        (event, cacheSignal) => {
-          if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
-            mainWindow.webContents.send(BrowserIpc.PanelFaviconUpdated, event);
+      const recordFaviconData = trackBrowserHistory(guestContents, () => true);
+      trackBrowserFavicon(guestContents, (event, cacheSignal) => {
+        if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+          mainWindow.webContents.send(BrowserIpc.PanelFaviconUpdated, event);
+        }
+        if (event.faviconUrl) {
+          try {
+            recordFaviconData(event.faviconUrl, cacheSignal);
+          } catch {
+            console.warn('[BrowserFavicon] Could not persist the loaded icon.');
           }
-          if (event.faviconUrl) {
-            try {
-              recordFaviconData(event.faviconUrl, cacheSignal);
-            } catch {
-              console.warn('[BrowserFavicon] Could not persist the loaded icon.');
-            }
-          }
-        },
-        url =>
-          !localPreviewScopeUrl || isAllowedLocalHtmlPreviewResource(localPreviewScopeUrl, url),
-      );
+        }
+      });
       guestContents.on('context-menu', (_contextEvent, params) => {
         const template: Electron.MenuItemConstructorOptions[] = [];
-        if (params.linkURL && isAllowedBrowserPanelUrl(params.linkURL)) {
+        if (params.linkURL && isAllowedBrowserPanelNavigationUrl(params.linkURL)) {
           template.push(
             {
               label: t('browserContextOpenLinkNewTab'),
               click: () => {
-                if (!canNavigateWithinPreviewScope(params.linkURL)) return;
                 mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
                   url: params.linkURL,
                   openerGuestId: guestContents.id,
@@ -670,7 +644,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         if (
           params.mediaType === 'image' &&
           params.srcURL &&
-          isAllowedBrowserPanelUrl(params.srcURL)
+          isAllowedBrowserPanelNavigationUrl(params.srcURL)
         ) {
           template.push(
             {
@@ -698,7 +672,6 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         });
       });
       guestContents.once('destroyed', () => {
-        localPreviewScopesByGuestId.delete(guestContents.id);
         browserPermissions.destroy(guestContents.id);
         pendingBrowserHttpAuth.cancelGuest(guestContents.id);
       });
@@ -741,14 +714,8 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   };
   const installBrowserRequestGuard = (browserSession: Electron.Session) =>
     browserSession.webRequest.onBeforeRequest((details, callback) => {
-      const localPreviewScopeUrl = localPreviewScopesByGuestId.get(details.webContentsId);
-      const blockPreviewRequest = Boolean(
-        localPreviewScopeUrl &&
-        !isAllowedLocalHtmlPreviewResource(localPreviewScopeUrl, details.url),
-      );
       const isMainFrame = details.resourceType === 'mainFrame';
-      const blockGuestMainFrame = isMainFrame && !isAllowedBrowserPanelUrl(details.url);
-      if (blockPreviewRequest || blockGuestMainFrame) {
+      if (isMainFrame && !isAllowedBrowserPanelNavigationUrl(details.url)) {
         callback({ cancel: true });
         return;
       }

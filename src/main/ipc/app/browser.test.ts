@@ -1,5 +1,8 @@
 import { clipboard, ipcMain } from 'electron';
+import fs from 'fs';
+import os from 'os';
 import path from 'path';
+import { pathToFileURL } from 'url';
 import { describe, expect, test, vi } from 'vitest';
 
 import { BrowserIpc, BrowserMode } from '../../../shared/browser/browser';
@@ -111,6 +114,23 @@ describe('opening message links in Chrome', () => {
       error: 'Chrome unavailable',
     });
     expect(launch).toHaveBeenCalledWith(url);
+  });
+
+  test('opens an existing local HTML in Chrome with its original file URL', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-chrome-html-'));
+    try {
+      const filePath = path.join(directory, '季度报告 #100%.html');
+      fs.writeFileSync(filePath, '<p>Report</p>');
+      const url = pathToFileURL(filePath);
+      url.search = '?mode=3d';
+      url.hash = '#camera';
+      const launch = vi.fn().mockResolvedValue({ success: true });
+
+      await expect(openBrowserUrlInChrome(url.href, launch)).resolves.toEqual({ success: true });
+      expect(launch).toHaveBeenCalledWith(url.href);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
 

@@ -55,7 +55,10 @@ import {
 import { readBrowserExtensionPairing } from '../../browser/extension/browserExtensionPairing';
 import { loadBrowserHistoryFavicon } from '../../browser/history/browserHistoryFavicon';
 import { isBrowserPdfLoadRequest, loadBrowserPdf } from '../../browser/pdf/browserPdfService';
-import { createLocalHtmlPreview } from '../../browser/preview/localHtmlPreviewServer';
+import {
+  createLocalHtmlPreview,
+  resolveLocalHtmlPreviewFilePath,
+} from '../../browser/preview/localHtmlPreviewServer';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 import type { OpenClawCliEnvironment } from '../../openclaw/runtime/openclawEngineManager';
 
@@ -226,7 +229,12 @@ export const openBrowserUrlInChrome = async (
   url: unknown,
   launch: (url: string) => Promise<BrowserActionResult> = launchOrFocusChrome,
 ): Promise<BrowserActionResult> => {
-  if (!isWebBrowserLink(url)) return { success: false, error: 'Invalid browser URL.' };
+  if (
+    typeof url !== 'string' ||
+    (!isWebBrowserLink(url) && !(await resolveLocalHtmlPreviewFilePath(url)))
+  ) {
+    return { success: false, error: 'Invalid browser URL.' };
+  }
   return launch(url);
 };
 

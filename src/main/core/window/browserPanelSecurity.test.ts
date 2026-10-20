@@ -9,6 +9,7 @@ import {
 } from '../../../shared/browser/browser';
 import {
   browserPermissionKeys,
+  isAllowedBrowserPanelNavigationUrl,
   isAllowedBrowserPanelUrl,
   isAllowedExternalBrowserUrl,
   isAllowedMainWindowNavigation,
@@ -104,6 +105,30 @@ describe('isAllowedBrowserPanelUrl', () => {
     expect(isBlockedBrowserMetadataHost('fd00:ec2::254')).toBe(true);
     expect(isBlockedBrowserMetadataHost('192.168.1.10')).toBe(false);
     expect(isBlockedBrowserMetadataHost('127.0.0.1')).toBe(false);
+  });
+});
+
+describe('native browser guest navigation', () => {
+  it.each([
+    'file:///C:/reports/../summary.html',
+    'file:///tmp/report.html',
+    'https://example.com/linked-page',
+    'http://localhost:43127/frame',
+    'data:text/html,hello',
+    'blob:https://example.com/document',
+    'about:blank',
+    'about:srcdoc',
+  ])('allows Chromium to handle %s without local preview scope restrictions', url => {
+    expect(isAllowedBrowserPanelNavigationUrl(url)).toBe(true);
+  });
+
+  it.each([
+    'javascript:alert(1)',
+    'localfile:///C:/secret.txt',
+    'chrome://settings',
+    'http://169.254.169.254/latest/meta-data',
+  ])('keeps application protocols and metadata protections for %s', url => {
+    expect(isAllowedBrowserPanelNavigationUrl(url)).toBe(false);
   });
 });
 
