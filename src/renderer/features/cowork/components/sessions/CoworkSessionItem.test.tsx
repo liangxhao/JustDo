@@ -11,6 +11,14 @@ import type { CoworkSessionSummary } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
 
 import CoworkSessionItem from './CoworkSessionItem';
+const fixture = vi.hoisted(() => ({ presentation: {} as { copyAllowed?: boolean } }));
+vi.mock('@/features/plugins/app/runtime', () => ({
+  appBrowserRegistry: {
+    sessionPresentation: () => fixture.presentation,
+    subscribe: () => () => {},
+    getContextRevision: () => 0,
+  },
+}));
 
 const renderSessionItem = (options?: {
   isRuntimeRunning?: boolean;
@@ -19,6 +27,7 @@ const renderSessionItem = (options?: {
   metadata?: Pick<CoworkSessionSummary, 'source' | 'external'>;
   withGroups?: boolean;
 }) => {
+  fixture.presentation = options?.collaboration ? { copyAllowed: false } : {};
   const onSelect = vi.fn();
   const onExport = vi.fn();
   const onCopy = vi.fn();
@@ -37,9 +46,6 @@ const renderSessionItem = (options?: {
             updatedAt: 2,
             ...options?.metadata,
             ...(options?.worktree ? { nativeSessionKey: 'agent:main:subagent:tree-1' } : {}),
-            ...(options?.collaboration
-              ? { collaboration: { memberCount: 3, deleting: false } }
-              : {}),
           }}
           hasUnread={false}
           isActive
@@ -54,9 +60,11 @@ const renderSessionItem = (options?: {
           onTogglePinned={vi.fn()}
           onToggleSelection={vi.fn()}
           onEnterBatchMode={vi.fn()}
-          groups={options?.withGroups
-            ? [{ id: 'work', name: 'Work', color: '#359daf', sortOrder: 0, createdAt: 1 }]
-            : []}
+          groups={
+            options?.withGroups
+              ? [{ id: 'work', name: 'Work', color: '#359daf', sortOrder: 0, createdAt: 1 }]
+              : []
+          }
           onMoveToGroup={onMoveToGroup}
         />
       </DndContext>
@@ -72,13 +80,20 @@ describe('CoworkSessionItem context menu session actions', () => {
   it.each([
     { source: CoworkSessionSource.BrowserExtension },
     ...Object.values(ExternalSessionSource).map(origin => ({
-      external: { origin, readOnly: true as const, status: ExternalSessionStatus.Completed, sessionKey: 'key' },
+      external: {
+        origin,
+        readOnly: true as const,
+        status: ExternalSessionStatus.Completed,
+        sessionKey: 'key',
+      },
     })),
   ])('prevents manual grouping and dragging for source conversations: %j', metadata => {
     i18nService.setLanguage('en', { persist: false });
     const { onMoveToGroup } = renderSessionItem({ metadata, withGroups: true });
     expect(screen.queryByRole('menuitem', { name: /Move to Group/ })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Planning' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Planning' }).getAttribute('aria-disabled')).toBe(
+      'true',
+    );
     expect(onMoveToGroup).not.toHaveBeenCalled();
   });
 
@@ -88,7 +103,9 @@ describe('CoworkSessionItem context menu session actions', () => {
     fireEvent.mouseEnter(screen.getByRole('menuitem', { name: /Move to Group/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Work' }));
     expect(onMoveToGroup).toHaveBeenCalledExactlyOnceWith('work');
-    expect(screen.getByRole('button', { name: 'Planning' }).getAttribute('aria-disabled')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Planning' }).getAttribute('aria-disabled')).toBe(
+      'false',
+    );
   });
 
   it('opens diagnostics for the clicked running session without selecting its chat', async () => {
@@ -136,7 +153,7 @@ describe('CoworkSessionItem context menu session actions', () => {
     i18nService.setLanguage('en', { persist: false });
     const { onExport, onCopy } = renderSessionItem();
 
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Export main conversation' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Export conversation' }));
     expect(onExport).toHaveBeenCalledTimes(1);
     expect(onCopy).not.toHaveBeenCalled();
 
@@ -149,7 +166,7 @@ describe('CoworkSessionItem context menu session actions', () => {
     i18nService.setLanguage('en', { persist: false });
     renderSessionItem({ isRuntimeRunning: true });
 
-    const exportItem = screen.getByRole('menuitem', { name: 'Export main conversation' });
+    const exportItem = screen.getByRole('menuitem', { name: 'Export conversation' });
     const copyItem = screen.getByRole('menuitem', { name: 'Copy current session' });
     expect(exportItem.hasAttribute('disabled')).toBe(true);
     expect(exportItem.getAttribute('title')).toBe(
@@ -167,7 +184,9 @@ describe('CoworkSessionItem context menu session actions', () => {
     const copyItem = screen.getByRole('menuitem', { name: 'Copy current session' });
     expect(copyItem.hasAttribute('disabled')).toBe(true);
     expect(copyItem.getAttribute('title')).toBe(i18nService.t('worktreeCopyUnavailable'));
-    expect(screen.getByRole('menuitem', { name: 'Export main conversation' }).hasAttribute('disabled')).toBe(false);
+    expect(
+      screen.getByRole('menuitem', { name: 'Export conversation' }).hasAttribute('disabled'),
+    ).toBe(false);
     fireEvent.click(copyItem);
     expect(onCopy).not.toHaveBeenCalled();
   });
@@ -193,5 +212,5 @@ it('keeps task menus focused and does not offer an incomplete collaboration copy
   i18nService.setLanguage('en', { persist: false });
   renderSessionItem({ collaboration: true });
   expect(screen.queryByRole('menuitem', { name: 'Copy current session' })).toBeNull();
-  expect(screen.getByRole('menuitem', { name: 'Export main conversation' })).toBeTruthy();
+  expect(screen.getByRole('menuitem', { name: 'Export conversation' })).toBeTruthy();
 });

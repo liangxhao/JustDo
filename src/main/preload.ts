@@ -1,6 +1,12 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 import {
+  type AppPluginEvent,
+  type AppPluginInvocation,
+  AppPluginIpc,
+  type AppPluginSnapshot,
+} from '../../packages/app-plugin-sdk/contracts';
+import {
   type AgentRuntimeSettings,
   AgentRuntimeSettingsIpc,
 } from '../shared/agents/agentRuntimeSettings';
@@ -98,17 +104,6 @@ import {
   BrowserRecordingChannel,
   type BrowserRecordingLease,
 } from '../shared/browser/browserRecording';
-import {
-  type AgentTeamKind,
-  type AgentTeamOverrides,
-  type AgentTeamSettings,
-  AgentTeamSettingsIpc,
-} from '../shared/cowork/agent-team/agentTeamSettings';
-import { CollaborationIpc } from '../shared/cowork/agent-team/collaboration';
-import {
-  TeamDiscussionIpc,
-  type TeamDiscussionSend,
-} from '../shared/cowork/agent-team/teamDiscussion';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import {
   type DiagnosticHistoryUpdate,
@@ -151,13 +146,6 @@ import {
   type CoworkSubtaskChangedEvent,
 } from '../shared/cowork/subagentDetails';
 import { SwarmIpc } from '../shared/cowork/swarm';
-import {
-  type SwarmWorkflowAction,
-  type SwarmWorkflowChangedEvent,
-  type SwarmWorkflowIntervention,
-  SwarmWorkflowIpc,
-  type SwarmWorkflowOptions,
-} from '../shared/cowork/swarm-workflow';
 import {
   type WorkspaceSurfaceInvalidated,
   type WorkspaceSurfaceUpdate,
@@ -794,50 +782,23 @@ contextBridge.exposeInMainWorld('electron', {
       getDaily: (options: UsageStatsOptions) => ipcRenderer.invoke(UsageStatsIpc.GetDaily, options),
     },
   },
-  agentTeamSettings: {
-    read: () => ipcRenderer.invoke(AgentTeamSettingsIpc.Read),
-    save: (value: AgentTeamSettings, expectedRevision: number) =>
-      ipcRenderer.invoke(AgentTeamSettingsIpc.Save, { value, expectedRevision }),
-    readTeam: (kind: AgentTeamKind, roomId: string) =>
-      ipcRenderer.invoke(AgentTeamSettingsIpc.ReadTeam, { kind, roomId }),
-    saveTeam: (
-      kind: AgentTeamKind,
-      roomId: string,
-      value: AgentTeamOverrides,
-      expectedRevision: number,
-    ) =>
-      ipcRenderer.invoke(AgentTeamSettingsIpc.SaveTeam, { kind, roomId, value, expectedRevision }),
-  },
-  collaboration: {
-    prepareContinuation: (
-      input: import('../shared/cowork/agent-team/collaboration').CollaborationContinuePreparation,
-    ) => ipcRenderer.invoke(CollaborationIpc.PrepareContinuation, input),
-    read: (sessionId: string) => ipcRenderer.invoke(CollaborationIpc.Read, sessionId),
-    readMessages: (sessionId: string, deliveryIds: string[]) =>
-      ipcRenderer.invoke(CollaborationIpc.ReadMessages, { sessionId, deliveryIds }),
-    list: () => ipcRenderer.invoke(CollaborationIpc.List),
-    create: (sessionId: string, agentIds: string[]) =>
-      ipcRenderer.invoke(CollaborationIpc.Create, { sessionId, agentIds }),
-    stop: (sessionId: string) => ipcRenderer.invoke(CollaborationIpc.Stop, sessionId),
-    stopMember: (
-      input: import('../shared/cowork/agent-team/collaboration').CollaborationStopMemberInput,
-    ) => ipcRenderer.invoke(CollaborationIpc.StopMember, input),
-  },
-  teamDiscussion: {
-    participation: (input: { roomId: string; expectedRevision: number; enabled: boolean }) =>
-      ipcRenderer.invoke(TeamDiscussionIpc.Participation, input),
-    createTask: (input: { roomId: string; requestId: string }) =>
-      ipcRenderer.invoke(TeamDiscussionIpc.CreateTask, input),
-    list: () => ipcRenderer.invoke(TeamDiscussionIpc.List),
-    create: (input: unknown) => ipcRenderer.invoke(TeamDiscussionIpc.Create, input),
-    read: (roomId: string, beforeDiscussionId?: string, exactDiscussionIds?: string[]) =>
-      ipcRenderer.invoke(TeamDiscussionIpc.Read, roomId, beforeDiscussionId, exactDiscussionIds),
-    send: (input: TeamDiscussionSend) => ipcRenderer.invoke(TeamDiscussionIpc.Send, input),
-    enqueue: (input: TeamDiscussionSend) => ipcRenderer.invoke(TeamDiscussionIpc.Enqueue, input),
-    cancelPending: (input: { roomId: string; requestId: string }) =>
-      ipcRenderer.invoke(TeamDiscussionIpc.CancelPending, input),
-    stop: (roomId: string) => ipcRenderer.invoke(TeamDiscussionIpc.Stop, roomId),
-    delete: (roomId: string) => ipcRenderer.invoke(TeamDiscussionIpc.Delete, roomId),
+  appPlugins: {
+    onEvent: (listener: (event: AppPluginEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: AppPluginEvent) => listener(value);
+      ipcRenderer.on(AppPluginIpc.Event, handler);
+      return () => ipcRenderer.removeListener(AppPluginIpc.Event, handler);
+    },
+    snapshot: () => ipcRenderer.invoke(AppPluginIpc.Snapshot),
+    review: (id: string) => ipcRenderer.invoke(AppPluginIpc.Review, id),
+    approve: (input: { id: string; hash: string; token: string }) =>
+      ipcRenderer.invoke(AppPluginIpc.Approve, input),
+    invoke: (input: AppPluginInvocation) => ipcRenderer.invoke(AppPluginIpc.Invoke, input),
+    onChanged: (listener: (snapshot: AppPluginSnapshot[]) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: AppPluginSnapshot[]) =>
+        listener(snapshot);
+      ipcRenderer.on(AppPluginIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(AppPluginIpc.Changed, handler);
+    },
   },
   agents: {
     delete: (agentId: string) => ipcRenderer.invoke(AgentIpc.Delete, agentId),
@@ -949,12 +910,12 @@ contextBridge.exposeInMainWorld('electron', {
       clientTurnId: string;
       startedAt: number;
       modelRef?: string;
-      agentTeamPrompt?: string;
+      pluginPrompt?: string;
     }) => ipcRenderer.invoke('cowork:session:run:begin', input),
-    markTeamSubmissionStarted: (input: { sessionId: string; clientTurnId: string }) =>
-      ipcRenderer.invoke(SessionRunIpc.TeamSubmissionStarted, input),
-    abortTeamSubmissionBeforeSend: (input: { sessionId: string; clientTurnId: string }) =>
-      ipcRenderer.invoke(SessionRunIpc.TeamSubmissionAbortedBeforeSend, input),
+    markPluginSubmissionStarted: (input: { sessionId: string; clientTurnId: string }) =>
+      ipcRenderer.invoke(SessionRunIpc.PluginSubmissionStarted, input),
+    abortPluginSubmissionBeforeSend: (input: { sessionId: string; clientTurnId: string }) =>
+      ipcRenderer.invoke(SessionRunIpc.PluginSubmissionAbortedBeforeSend, input),
     bindSessionRun: (input: { id: string; rootRunId: string }) =>
       ipcRenderer.invoke('cowork:session:run:bind', input),
     listSessionRuns: (sessionId: string) =>
@@ -1098,61 +1059,6 @@ contextBridge.exposeInMainWorld('electron', {
     getSubTaskStatus: (sessionId?: string, forceRefresh?: boolean) =>
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.Status, sessionId, forceRefresh),
     getSwarmSnapshot: (sessionId: string) => ipcRenderer.invoke(SwarmIpc.Snapshot, sessionId),
-    getSwarmWorkflows: (sessionId: string) => ipcRenderer.invoke(SwarmWorkflowIpc.List, sessionId),
-    getSwarmWorkflowActivity: () => ipcRenderer.invoke(SwarmWorkflowIpc.Activity),
-    getSwarmWorkflowSummary: (sessionId: string) =>
-      ipcRenderer.invoke(SwarmWorkflowIpc.Summary, sessionId),
-    onSwarmWorkflowsChanged: (callback: (event: SwarmWorkflowChangedEvent) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, event: SwarmWorkflowChangedEvent) =>
-        callback(event);
-      ipcRenderer.on(SwarmWorkflowIpc.Changed, handler);
-      return () => ipcRenderer.removeListener(SwarmWorkflowIpc.Changed, handler);
-    },
-    getSwarmWorkflowBatch: (
-      sessionId: string,
-      flowId: string,
-      stageId: string,
-      options: import('../shared/cowork/swarm-workflow').SwarmWorkflowBatchOptions,
-    ) => ipcRenderer.invoke(SwarmWorkflowIpc.Batch, sessionId, flowId, stageId, options),
-    retrySwarmWorkflowBatch: (
-      sessionId: string,
-      flowId: string,
-      stageId: string,
-      revision: number,
-      operationId: string,
-      itemIds?: string[],
-    ) =>
-      ipcRenderer.invoke(
-        SwarmWorkflowIpc.RetryBatch,
-        sessionId,
-        flowId,
-        stageId,
-        revision,
-        operationId,
-        itemIds,
-      ),
-    getSwarmWorkflowDetail: (
-      sessionId: string,
-      flowId: string,
-      nodeId: string,
-      sourceId?: string,
-    ) => ipcRenderer.invoke(SwarmWorkflowIpc.Detail, sessionId, flowId, nodeId, sourceId),
-    controlSwarmWorkflow: (
-      sessionId: string,
-      id: string,
-      revision: number,
-      action: SwarmWorkflowAction,
-    ) => ipcRenderer.invoke(SwarmWorkflowIpc.Control, sessionId, id, revision, action),
-    interveneSwarmWorkflow: (
-      sessionId: string,
-      id: string,
-      nodeId: string,
-      revision: number,
-      intervention: SwarmWorkflowIntervention,
-    ) =>
-      ipcRenderer.invoke(SwarmWorkflowIpc.Intervene, sessionId, id, nodeId, revision, intervention),
-    prepareSwarmWorkflow: (options: SwarmWorkflowOptions, sessionId?: string) =>
-      ipcRenderer.invoke(SwarmWorkflowIpc.Prepare, options, sessionId),
     getSubTaskDetails: (sessionKey: string, taskId?: string) =>
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.Get, sessionKey, taskId),
     listSubTaskDescendants: (sessionId: string) =>

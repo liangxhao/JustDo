@@ -123,7 +123,7 @@ stateDiagram-v2
 
 停止交给原生取消语义，包含队列、后代和审批清理，Main 保留产品 stop latch 与回执。协作任务还冻结用户轮次并停止成员，防止迟到 peer send 重启旧工作。错误事件只有匹配运行及终态语义才结算，不能将任意工具错误视作整个会话结束。
 
-协作流程标题栏可直接停止全队，来源已空闲时也保留入口；并发全队停止共享成员取消请求，并等待全部请求返回后报告部分失败。成员实时工作详情另有单执行停止入口，通过显式 `collaboration:stop-member` IPC 核对房间、成员、原生 SID 和当前 run，再发原生 `sessions.abort({key,runId})`。该路径不调用产品会话停止，也不触发全队级联，不清空后续输入或关闭协作轮次；停止 ACK 与执行结算保持分离，旧身份不能取消替换后的运行。
+协作流程标题栏可直接停止全队，来源已空闲时也保留入口；并发全队停止共享成员取消请求，并等待全部请求返回后报告部分失败。成员实时工作详情另有单执行停止入口，通过显式 通用 appPlugins invoke 的 `collaboration.stop-member` 命令 IPC 核对房间、成员、原生 SID 和当前 run，再发原生 `sessions.abort({key,runId})`。该路径不调用产品会话停止，也不触发全队级联，不清空后续输入或关闭协作轮次；停止 ACK 与执行结算保持分离，旧身份不能取消替换后的运行。
 
 ## 6. Goal 自动续跑
 
@@ -199,7 +199,7 @@ Main 从 `ipc/cowork/sessionExecution.ts`、`sessions.ts`、`sessionRuntime.ts`�
 
 Cowork 界面保持单层领域结构：`display` 组合标签、选择和会话面板状态，`preview` 渲染文件并浏览工作区，`terminal` 承载 Gateway 终端，`review` 展示工作区差异，`approvals` 处理执行与计划审核。`subagents` 展示原生子任务和 collector 分组；独立插件的工作流图、节点历史及介入界面归 `swarm-workflow`。跨领域的文件图标、文档样式、图形样式和连接辅助归 `shared`；这些公共模块不持有新的运行或 transcript 状态。
 
-Swarm Workflow 的产品会话协调、返回值验证和助手名单投影归插件 `host/`，通过 live ports 读取 Main 的真实会话、运行时和助手资源。Main `cowork/swarm-workflow/` 是薄门面，`ipc/cowork/swarm-workflow/` 只绑定 Electron。API 归插件 contracts，shared 门面仅追加 Electron 通道名；浏览器图形、选择、轮询、批次/详情/介入与输入框准入逻辑归插件 `browser/`，Renderer 负责 preload ports、共享聊天和 UI/Tab。禁用后隐藏 Workflow 入口、退休 Tab 并停止读取，快速关开和迟到响应受 disable revision 约束；重新启用从原有 DAG 读取，不推断停止服务等于原生取消。DAG、批次状态、运行生命周期和未调用 launch 的证明由可选 Workflow 插件持有，通用原生 SDK 契约和文件系统准入由 Runtime Services 提供，原生子任务入口独立。
+Swarm Workflow 的产品协调、配置投影、资源 preflight 和 UI 均由独立插件的 `host/`、`app/browser/` 通过通用 Desktop SDK 注册；Core 保留普通产品会话和基础能力，移除专属 IPC/preload 及 shared 门面。关闭撤销贡献和旧 epoch，重新启用读取保留 DAG，不重放未知 launch。通用执行/文件系统底座归 Runtime Services。见 [应用插件宿主](17-app-plugin-host.md)。
 
 回归应覆盖准入前取消、重复 clientTurn、原生先完成后响应、停止失败、会话切换迟到事件、Plan reset、Goal fence、协作删除部分成功和历史恢复。对应 handler、Store、Adapter 与 controller 都有领域测试；一次正常发送不能替代这些边界验证。
 
@@ -236,4 +236,4 @@ Swarm Workflow 的产品会话协调、返回值验证和助手名单投影归�
 
 协作使用 `task_assistants({seal:true})` 显式收束；delivery.state 仍为接收状态，executionOutcome 来自精确 whole-run 终态。批次还需组织者 closing run 终态，不另发重复总结。事件缺失保留未确认。见[实施与边界](../features/assistants/agent-team.md)。
 
-Team 业务纯合约及提示归属可选插件的 `contracts/`、`prompt/`，托管与执行共用的身份和输入协议归属 Runtime Services 的 `agent-team/contracts/`；`shared/cowork/agent-team/` 只提供纯合约转出与 IPC，Graph 投影归插件。主进程协调、队列、用户附件、资源偏好及元数据事务归插件 `host/`，Main 原路径保留薄桥接和唯一实例的 Electron/生命周期接线；实际数据库、产品会话和运行能力通过 typed host ports 注入。Renderer 的草稿、继续协作状态、队列规则和消息格式归插件 `browser/`，仍在对应进程内执行，原生注册入口不加载 host/browser。可选插件组合协作、群聊执行及各自历史读取；必需 Runtime Services 独立持有禁用后发送保护、离线控制、holding 托管、无正文回执和发起保护，两个插件均不导入应用实现，常驻插件也不反向依赖可选插件。Renderer 的协作 Graph 与群聊界面分别在 `components/collaboration/` 和 `discussions/`，`display/` 组合真实团队页签，标题栏菜单和本次模式选择分别留在 `chat/`、`composer/`。完整归属及依赖图见 [Agent Team 模块边界](../features/assistants/agent-team.md#模块边界)。
+Team 的原生合约、提示、协调/队列/附件/数据库规则及全部界面均归自己的 `contracts/`、`prompt/`、`host/`、`app/`、`browser/`。应用通过通用 Desktop SDK 的配置、提交、删除、界面插槽提供基础端口，不认识 Team 专属桥。常驻 Runtime Services 保留关闭后必须存在的发送保护、holding、无正文回执和合法清理，不提供 Team 历史或设置入口。实际 SQLite 同库事务及原生 transcript 所有权保持。见 [Agent Team 模块边界](../features/assistants/agent-team.md#模块边界)及[应用插件宿主](17-app-plugin-host.md)。

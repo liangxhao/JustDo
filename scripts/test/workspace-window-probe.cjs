@@ -15,6 +15,7 @@ const output = fs.mkdtempSync(path.join(artifacts, 'integration-'));
     format: 'iife',
     outfile: path.join(output, 'bundle.js'),
     tsconfig: path.join(root, 'tsconfig.json'),
+    alias: { '@app-plugin/sdk/browser-runtime': path.join(fixture, 'appPluginRuntime.ts') },
     define: { 'process.env.NODE_ENV': '"production"', 'import.meta.env': '{}' },
     logOverride: { 'empty-import-meta': 'silent' },
     loader: { '.ttf': 'file', '.woff': 'file', '.woff2': 'file', '.png': 'file', '.webp': 'file' },

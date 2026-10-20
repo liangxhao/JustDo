@@ -1,6 +1,8 @@
 import path from 'path';
 import { describe, expect, test } from 'vitest';
 
+import { buildManagedSwarmWorkflowPluginEntries } from '../../../../plugins/extensions/swarm-workflow/host/config';
+import { appNativePolicies } from '../../../../tests/plugin-host/nativePolicies';
 import {
   AgentRuntimeDelegationMode,
   AgentRuntimeSessionVisibility,
@@ -25,7 +27,6 @@ import {
   buildAuthScopedOpenClawConfig,
   buildManagedCapabilityPluginEntries,
   buildManagedOpenClawSurfaces,
-  buildManagedSwarmWorkflowPluginEntries,
   buildOpenClawHookConfig,
   listKnownOpenClawWorkspaceDirs,
 } from './openclawConfigBuilders';
@@ -33,7 +34,7 @@ import {
   applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,
   buildBuiltinMemorySearchConfig,
-  buildDefaultOpenClawPluginEntries,
+  buildDefaultOpenClawPluginEntries as buildCoreDefaultOpenClawPluginEntries,
   buildManagedAcpxPluginEntry,
   buildManagedExternalAgentEntries,
   buildManagedOpenClawAcpConfig,
@@ -52,7 +53,7 @@ import {
   buildProviderSelection,
   hasOpenClawConfigChanged,
   mergeAgentEntriesWithManagedMainSettings,
-  mergeOpenClawPluginConfig,
+  mergeOpenClawPluginConfig as mergeCoreOpenClawPluginConfig,
   mergeOpenClawSkillConfig,
   OPENCLAW_FALLBACK_EXEC_MODE,
   OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
@@ -137,12 +138,12 @@ describe('Windows native sandbox config', () => {
   });
 
   test('keeps trusted collaboration tools available inside the sandbox', () => {
-    expect(buildManagedOpenClawSandboxToolConfig('sandbox')).toEqual({
+    expect(buildManagedOpenClawSandboxToolConfig('sandbox', { skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }.sandboxTools)).toEqual({
       tools: {
         alsoAllow: ['task_assistants', 'assistants_create', 'team_discussion', 'decision_evaluate'],
       },
     });
-    expect(buildManagedOpenClawSandboxToolConfig('local')).toEqual({
+    expect(buildManagedOpenClawSandboxToolConfig('local', { skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }.sandboxTools)).toEqual({
       tools: {
         alsoAllow: [
           'task_assistants',
@@ -798,6 +799,8 @@ describe('OpenClaw managed ACP config', () => {
     const settings = createDefaultExternalAgentSettings();
     settings.agents.codex.enabled = true;
     const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
       getAgents: () => [],
       engineManager: { getStateDir: () => '/state' },
     } as never);
@@ -1516,11 +1519,11 @@ describe('optional agent-team configuration', () => {
       'justdo-team': { silentReply: { group: 'disallow' } },
     };
     const original = structuredClone(existing);
-    expect(buildManagedOpenClawSurfaces(existing)).toEqual({
+    expect(buildManagedOpenClawSurfaces(existing, { skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }.surfaces)).toEqual({
       ...existing,
       'justdo-team': { silentReply: { group: 'allow' } },
     });
-    expect(buildManagedOpenClawSurfaces(undefined)).toEqual({
+    expect(buildManagedOpenClawSurfaces(undefined, { skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }.surfaces)).toEqual({
       'justdo-team': { silentReply: { group: 'allow' } },
     });
     expect(existing).toEqual(original);
@@ -1678,3 +1681,6 @@ test('includes workspaces declared by current keyed native agent entries', () =>
     path.join(configuredWorkspace, 'planner'),
   ]));
 });
+function buildDefaultOpenClawPluginEntries(available: (id: string) => boolean) { return buildCoreDefaultOpenClawPluginEntries(available, appNativePolicies); }
+
+function mergeOpenClawPluginConfig(...args: Parameters<typeof mergeCoreOpenClawPluginConfig>) { return mergeCoreOpenClawPluginConfig(args[0], args[1], args[2], args[3], Object.keys(appNativePolicies)); }

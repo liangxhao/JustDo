@@ -1,0 +1,58 @@
+{
+  "manifestVersion": 1,
+  "apiVersion": 1,
+  "id": "agent-team",
+  "version": "1.0.0",
+  "nativePluginId": "agent-team",
+  "entries": {
+    "main": "main.mjs",
+    "browser": "browser.mjs",
+    "presentation": "presentation.mjs"
+  },
+  "capabilities": [
+    "sessions.lifecycle",
+    "storage.transaction",
+    "native.connected",
+    "native.execution",
+    "assistants.create"
+  ],
+  "commands": [
+    "collaboration.list",
+    "collaboration.read",
+    "collaboration.messages",
+    "collaboration.create",
+    "collaboration.stop",
+    "collaboration.stop-member",
+    "collaboration.continue",
+    "discussion.list",
+    "discussion.create",
+    "discussion.read",
+    "discussion.send",
+    "discussion.enqueue",
+    "discussion.cancel",
+    "discussion.stop",
+    "discussion.delete",
+    "discussion.create-task",
+    "discussion.participation",
+    "settings.read",
+    "settings.save",
+    "settings.read-team",
+    "settings.save-team"
+  ],
+  "slots": [
+    "workspace.tab",
+    "plugin.settings",
+    "plugin.history",
+    "composer.mode",
+    "session.summary",
+    "application.page",
+    "interactions.presentation",
+    "session.presentation",
+    "session.details",
+    "messages.presentation"
+  ],
+  "native": {
+    "defaultEnabled": false,
+    "userToggleable": true
+  }
+}

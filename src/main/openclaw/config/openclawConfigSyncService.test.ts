@@ -2234,6 +2234,32 @@ describe('OpenClawConfigSyncService', () => {
     },
   );
 
+  it('explicitly starts a stopped Gateway and restores its bridge after a directory mutation', async () => {
+    const harness = createHarness({ phase: 'ready' });
+
+    await expect(harness.service.startGatewayAfterExclusiveMutation(undefined)).resolves.toEqual({
+      running: true,
+      message: undefined,
+    });
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+    expect(harness.connectGatewayClient).toHaveBeenCalledOnce();
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.requestGateway).not.toHaveBeenCalledWith('gateway.suspend.resume', expect.anything());
+  });
+
+  it('fails closed if the authenticated bridge cannot resume after a directory mutation', async () => {
+    const harness = createHarness({ phase: 'ready' });
+    harness.connectGatewayClient.mockRejectedValueOnce(new Error('bridge unavailable'));
+
+    await expect(harness.service.startGatewayAfterExclusiveMutation(undefined)).resolves.toMatchObject({
+      running: false,
+      message: expect.stringContaining('Gateway was stopped'),
+    });
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+    expect(harness.disconnectGatewayClient).toHaveBeenCalledOnce();
+  });
+
   it('keeps proxy changes on the cold restart path when the child has no reusable local route', async () => {
     const harness = createHarness({ nativeRestartStatus: 'scheduled' });
     await harness.service.restartGatewayAfterExclusiveMutation('proxy-change');

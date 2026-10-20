@@ -9,7 +9,7 @@ import { registerDiscussionHolding } from '../../../../plugins/extensions/runtim
 import {
   serializeTeamDiscussionSend,
   TeamDiscussionGateway as Gateway,
-} from '../../../../src/shared/cowork/agent-team/teamDiscussion';
+} from '../../../../plugins/extensions/agent-team/contracts/teamDiscussion';
 
 const sdk = vi.hoisted(() => ({ append: vi.fn(), read: vi.fn() }));
 vi.mock('openclaw/plugin-sdk/session-transcript-runtime', () => ({

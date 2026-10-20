@@ -121,16 +121,15 @@ export const mergeManagedOptionalToolPolicy = (
     : { allow: undefined, alsoAllow: allowed };
 };
 
-export const OPENCLAW_COLLABORATION_TOOLS = [
-  'task_assistants',
-  'assistants_create',
-  'team_discussion',
-] as const;
 
-export const buildManagedOpenClawSandboxToolConfig = (mode: CoworkExecutionMode) => ({
+
+export const buildManagedOpenClawSandboxToolConfig = (
+  mode: CoworkExecutionMode,
+  pluginTools: string[] = [],
+) => ({
   tools: {
     alsoAllow: [
-      ...OPENCLAW_COLLABORATION_TOOLS,
+      ...pluginTools,
       OPENCLAW_DECISION_EVALUATION_TOOL,
       ...(mapExecutionModeToSandboxMode(mode) === 'all' ? [] : [OPENCLAW_MCP_TOOL_OWNER]),
     ],
@@ -140,6 +139,7 @@ export const buildManagedOpenClawSandboxToolConfig = (mode: CoworkExecutionMode)
 export const buildManagedOpenClawExecutionToolConfig = (
   mode: CoworkExecutionMode,
   sourceTools: unknown,
+  pluginTools: string[] = [],
 ) => {
   const tools = isRecord(sourceTools) ? sourceTools : {};
   return {
@@ -152,7 +152,7 @@ export const buildManagedOpenClawExecutionToolConfig = (
       host: resolveOpenClawExecHost(mode),
       mode: OPENCLAW_FALLBACK_EXEC_MODE,
     },
-    sandbox: buildManagedOpenClawSandboxToolConfig(mode),
+    sandbox: buildManagedOpenClawSandboxToolConfig(mode, pluginTools),
   };
 };
 

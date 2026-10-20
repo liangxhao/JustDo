@@ -1,10 +1,10 @@
 import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
+import { expect, test } from 'vitest';
+
 import {
   buildSwarmWorkflowInstruction,
   stripSwarmWorkflowInstruction,
-} from '@shared/cowork/swarm-workflow';
-import { expect, test } from 'vitest';
-
+} from '../../../../../plugins/extensions/swarm-workflow/app/contracts/index';
 import { parseEditorDraftPayload } from '../model/input/editor-draft';
 import { normalizeMessage } from './message-normalizer';
 

@@ -172,7 +172,7 @@ test.each(['```', '~~~~', '> ```'])(
     expect(renderMessageQuoteText(withRealQuote, 'Quote')).toBe(
       example +
         '\n\n> ' +
-        i18nService.t('teamCollaborationBatchReferenceDisplay').replace('{member}', 'worker'),
+        i18nService.t('extensionBatchReferenceDisplay').replace('{member}', 'worker'),
     );
   },
 );

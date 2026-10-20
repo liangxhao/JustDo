@@ -227,6 +227,12 @@ files or restoring them; a standalone copy of a live database without its matchi
 WAL can omit committed data. These files are local diagnostic artifacts and must
 not be committed.
 
+`node scripts/test/plugin-host/verify-plugin-host-assumptions.mjs` checks app
+plugin architecture assumptions with disposable modules, an in-memory database,
+and a hidden Electron window. It verifies ESM generation caching, shared React
+Hooks, and the actual immutable renderer host/CSP without user Gateway or app
+state. It is a design probe, not a production plugin loader or full Team acceptance.
+
 `test/smart-canvas/verify-gateway.mjs <runtime-dir>` verifies the locked native
 Gateway with an isolated local synthetic provider. It checks real widget tools,
 authenticated document views, history/restart, prompt bridges and explicit plugin
@@ -396,9 +402,9 @@ Use `--history-toggle-only` to isolate history RPC registration, disabled receip
 reconciliation and restored native history after re-enabling.
 Concurrency metrics use public native lifecycle events; queued cancellation and
 source participation share the production permit pool. `node
-scripts/test/agent-team/probe-agent-team-ui.cjs` captures isolated desktop/narrow/draft views
-using the built Renderer CSS, including Team/global settings at narrow widths;
-the native bridge is a fixture.
+scripts/test/agent-team/probe-agent-team-ui.cjs` delegates to the independent built Browser artifact probe: real shared React,
+registered Team/Workflow views and modes, fixture application/Gateway ports.
+It no longer imports removed application feature components.
 
 `node scripts/openclaw/agent-team/probe-agent-team-settings.mjs <runtime-directory>` verifies
 the public group SDK's per-request strategy, turn budget, mention and cancellation
@@ -413,3 +419,23 @@ of a silent round, exact mentions, borrowed-source identity, source summary, who
 cancellation and provider failure. Fixture artifacts stay in ignored `.tmp/`; no user
 configuration, credentials or history is accessed. This checks native execution contracts,
 not real-model discussion quality or the complete Main/Renderer flow.
+
+`plugins:app:build` discovers app manifests and produces independent Native/Main/UI
+packages plus a portable SDK. `plugins:app:sdk` emits the SDK alone; the builder also
+accepts a source directory and destination for author-owned packages. No application
+business imports are permitted in these artifacts. `plugins:app:verify` runs portable
+SDK and actual built Main/Chromium smoke probes. Additional isolated negative controls in
+`scripts/test/plugin-host/` cover authorization lifetimes, retained cleanup, cold process
+stop, native execution receipts, resource veto and structured input. See
+`docs/architecture/17-app-plugin-host.md` for supported scope and remaining acceptance.
+
+Runtime resource preparation and Electron startup build current app companions through
+their npm lifecycle hooks. Native resource sync copies the complete built package so
+the executed native entry matches its companion's binding. When invoking
+`sync-openclaw-runtime-resources.cjs` directly, run `npm run plugins:app:build` first;
+missing artifacts fail explicitly rather than rebuilding a different native entry.
+
+`node scripts/test/plugin-host/verify-inventory-veto.mjs` exercises the actual Main
+manager, registry and journal SQL with private in-memory SQLite and a fixture native
+identity. A failed resource inventory must retain its business/deletion fence after
+a package preflight veto; this probe does not start a Gateway or use user state.

@@ -1,7 +1,8 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 
+import type { AgentTeamLaunchCoordinator } from '../../../../plugins/extensions/agent-team/host/launch/agentTeamLaunchCoordinator';
+import { behaviorSessionParticipants } from '../../../../tests/plugin-host/mainBehaviorParticipants';
 import { SessionRunBeginErrorCode } from '../../../shared/cowork/sessionRun';
-import type { AgentTeamLaunchCoordinator } from '../../cowork/agent-team/agentTeamLaunchCoordinator';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import {
@@ -58,14 +59,16 @@ function fixture(
   } as unknown as RuntimeSessionStatusContext;
   registerCoworkSessionHandlers({ getCoworkStore: () => store,
     getStartupEngineNotReadyResponse,
-    getAgentTeamLaunch,
+    ...(getAgentTeamLaunch ? {
+      getSessionPlugins: () => behaviorSessionParticipants(undefined, getAgentTeamLaunch()),
+    } : {}),
     getCoworkEngineRouter: () => ({ getSessionRuntimeStatus: (id: string, options: Parameters<typeof getSessionRuntimeStatus>[1]) =>
       getSessionRuntimeStatus.call(context, id, options) }) as CoworkEngineRouter,
     setSessionPermissionMode: vi.fn() });
   return { context, request, native, source, state, beginSessionRun, key, unknownRuns,
     checkpoint, getLatestSessionRun, finishSessionRun, reopenSessionRun,
-    send: (agentTeamPrompt?: string) => handlers.get('cowork:session:run:begin')!({}, {
-      ...next, ...(agentTeamPrompt ? { agentTeamPrompt } : {}),
+    send: (pluginPrompt?: string) => handlers.get('cowork:session:run:begin')!({}, {
+      ...next, ...(pluginPrompt ? { pluginPrompt } : {}),
     }) };
 }
 

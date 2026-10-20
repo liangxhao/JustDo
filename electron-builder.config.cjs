@@ -23,6 +23,10 @@ const windowsUpdateConfig = readWindowsUpdateConfig();
 
 module.exports = {
   ...baseConfig,
+  extraResources: [
+    ...baseConfig.extraResources,
+    { from: 'build/app-plugins', to: 'app-plugins', filter: ['**/*', '!packages/**'] },
+  ],
   // The project prepares Electron-specific better-sqlite3 binaries explicitly.
   // Gateway native dependencies are assembled with its separate Node runtime.
   // Disabling the automatic rebuild avoids requiring a local C++ toolchain and

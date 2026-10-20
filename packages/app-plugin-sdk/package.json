@@ -1,0 +1,36 @@
+{
+  "name": "@app-plugin/sdk",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./application": "./application.ts",
+    "./browser-runtime": "./browser-runtime.ts",
+    "./browser": "./browser.ts",
+    "./contracts": "./contracts.ts",
+    "./interactions": "./interactions.ts",
+    "./history-presentation": "./history-presentation.ts",
+    "./main": "./main.ts",
+    "./metadata": "./metadata.ts",
+    "./native": "./native.ts",
+    "./native-contract": "./native-contract.ts",
+    "./native-profile": "./native-profile.ts",
+    "./presentation": "./presentation.ts",
+    "./rendering": "./rendering.ts",
+    "./ui": "./ui.ts"
+  },
+  "peerDependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "files": [
+    "*.js",
+    "*.d.ts",
+    "README.md"
+  ],
+  "dependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0"
+  }
+}

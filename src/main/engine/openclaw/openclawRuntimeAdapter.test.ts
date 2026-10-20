@@ -678,34 +678,21 @@ test('publishes Workboard revision invalidations without projecting card data', 
   expect(listener).toHaveBeenCalledWith({ epoch: 'epoch-1', revision: 7 });
 });
 
-test('validates workflow notices and resolves only owned parent sessions', () => {
+test('forwards native plugin events without adding product-specific routing', () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const listener = vi.fn();
-  adapter.on('swarmWorkflowChanged', listener);
-  const change = { parentKey: 'agent:main:justdo:session-1', flowId: 'flow', revision: 7 };
-  for (const payload of [
-    null, [], {}, { ...change, revision: 0 }, { ...change, revision: 1.5 },
-    { ...change, flowId: 'x'.repeat(81) },
-    { ...change, parentKey: 'agent:review:justdo:session-1' },
-    { ...change, parentKey: 'agent:main:justdo:missing' },
-  ]) {
-    adapter.handleGatewayEvent({ event: 'plugin.swarm-workflow.changed', payload });
-  }
-  expect(listener).not.toHaveBeenCalled();
-  adapter.handleGatewayEvent({ event: 'plugin.swarm-workflow.changed', payload: {
-    ...change, content: 'must not be forwarded',
-  } });
-  expect(listener).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session-1', flowId: 'flow', revision: 7 });
-  adapter.handleGatewayEvent({ event: 'plugin.swarm-workflow.reset', payload: {} });
-  expect(listener).toHaveBeenLastCalledWith({});
+  adapter.on('gatewayEvent', listener);
+  const event = { event: 'plugin.example.changed', payload: { revision: 7 } };
+  adapter.handleGatewayEvent(event);
+  expect(listener).toHaveBeenCalledExactlyOnceWith(event);
 });
 
-test('invalidates workflows only when the current replacement Gateway client is usable', async () => {
+test('invalidates native projections only when the current replacement Gateway client is usable', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const listener = vi.fn();
-  adapter.on('swarmWorkflowChanged', listener);
+  adapter.on('workboardChanged', listener);
   const hellos: Array<() => void> = [];
   class Client {
     constructor(options: { onHelloOk: () => void }) { hellos.push(options.onHelloOk); }

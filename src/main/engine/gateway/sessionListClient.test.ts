@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { bindPluginGatewayClient, runWithPluginRequestBinding } from './pluginRequestBinding';
 import { SessionListClient } from './sessionListClient';
 import type { GatewayClientLike } from './types';
 
@@ -19,6 +20,38 @@ function harness() {
 }
 
 describe('session list request sharing', () => {
+  it('does not join plugin-bound reads to ordinary or other plugin requests', async () => {
+    const h = harness();
+    const client = bindPluginGatewayClient(h.client);
+    const ordinary = client.request('sessions.list', {});
+    const expected = {
+      pluginId: 'plugin-a', registrationId: '11111111-1111-4111-8111-111111111111', processId: 123,
+      gatewayMethods: [],
+    };
+    const assertCurrent = vi.fn();
+    const owned = runWithPluginRequestBinding(expected, assertCurrent, () =>
+      client.request('sessions.list', {}));
+    const sameOwner = runWithPluginRequestBinding(expected, assertCurrent, () =>
+      client.request('sessions.list', {}));
+    const other = '22222222-2222-4222-8222-222222222222';
+    runWithPluginRequestBinding({ ...expected, registrationId: other }, assertCurrent, () =>
+      client.request('sessions.list', {}));
+    expect(owned).not.toBe(ordinary);
+    expect(sameOwner).not.toBe(owned);
+    expect(h.request).toHaveBeenCalledTimes(4);
+    expect(h.request.mock.calls[1]).toEqual(['plugin-a.app.dispatch', {
+      registrationId: expected.registrationId, processId: 123, method: 'sessions.list', params: {},
+    }, undefined]);
+    expect(h.request.mock.calls[2][1].registrationId).toBe(expected.registrationId);
+    expect(h.request.mock.calls[3][1].registrationId).toBe(other);
+    expect(assertCurrent).toHaveBeenCalledTimes(3);
+    h.first.resolve({ sessions: [] });
+    await Promise.all([ordinary, owned, sameOwner]);
+    runWithPluginRequestBinding(expected, () => { throw new Error('retired'); }, () => {
+      expect(() => client.request('sessions.list', {})).toThrow('retired');
+    });
+    expect(h.request).toHaveBeenCalledTimes(4);
+  });
   it('keeps a successful read when its diagnostic logger fails', async () => {
     const h = harness();
     const log = vi.spyOn(console, 'info').mockImplementation(() => { throw new Error('logger unavailable'); });

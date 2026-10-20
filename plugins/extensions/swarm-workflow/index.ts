@@ -1,4 +1,6 @@
+import { withAppNative } from '@app-plugin/sdk/native';
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
+import { dispatchGatewayMethod } from 'openclaw/plugin-sdk/gateway-method-runtime';
 
 import { createWorkflowContext } from './service/context';
 import { registerWorkflowGateway } from './service/gateway';
@@ -10,7 +12,7 @@ import {
   registerWorkflowSubmissionTools,
 } from './service/tools';
 
-export default {
+const plugin = {
   id: 'swarm-workflow',
   name: 'Swarm Workflow',
   reload: {
@@ -33,3 +35,4 @@ export default {
     registerWorkflowStartTool(context);
   },
 };
+export default withAppNative(plugin, dispatchGatewayMethod);

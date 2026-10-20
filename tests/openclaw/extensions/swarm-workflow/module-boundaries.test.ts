@@ -41,7 +41,7 @@ it('keeps required Runtime Services independent of the optional workflow impleme
 });
 
 it('exposes browser-safe application contracts through plugin contracts and prompts only', async () => {
-  const result = await bundle('src/shared/cowork/swarm-workflow/index.ts', 'browser');
+  const result = await bundle('plugins/extensions/swarm-workflow/app/contracts/index.ts', 'browser');
   const inputs = Object.keys(result.metafile!.inputs).map(file => file.replaceAll('\\', '/'));
   expect(inputs.some(file => file.startsWith('src/main/'))).toBe(false);
   const pluginInputs = inputs.filter(file => file.startsWith('plugins/extensions/'));
@@ -50,14 +50,13 @@ it('exposes browser-safe application contracts through plugin contracts and prom
 });
 
 it('keeps product workflow coordination independent of Electron IPC', async () => {
-  const result = await bundle('src/main/cowork/swarm-workflow/swarmWorkflowCoordinator.ts');
+  const result = await bundle('plugins/extensions/swarm-workflow/host/coordinator.ts');
   const imports = Object.values(result.metafile!.inputs).flatMap(input => input.imports);
   expect(imports.some(item => item.path === 'electron')).toBe(false);
   expect(imports.some(item => item.path.startsWith('openclaw/plugin-sdk'))).toBe(false);
   const inputs = Object.keys(result.metafile!.inputs).map(file => file.replaceAll('\\', '/'));
-  expect(inputs.filter(file => file.startsWith('src/'))).toEqual([
-    'src/main/cowork/swarm-workflow/swarmWorkflowCoordinator.ts',
-  ]);
+  expect(inputs.filter(file => file.startsWith('src/'))).toEqual([]);
+  expect(inputs).toContain('plugins/extensions/swarm-workflow/host/coordinator.ts');
   expect(
     Object.keys(result.metafile!.inputs).some(file =>
       file.replaceAll('\\', '/').startsWith('src/main/ipc/'),

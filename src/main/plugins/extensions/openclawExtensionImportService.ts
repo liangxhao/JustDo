@@ -16,7 +16,6 @@ import {
   type OpenClawExtensionConfigurationField,
   type OpenClawPluginCapabilityReview,
 } from '../../../shared/plugins/extensions';
-import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
 import {
   PluginOperationStage,
   toPluginOperationStage,
@@ -30,6 +29,7 @@ import {
 import { extractZipSafely } from '../../core/filesystem/safeZipExtractor';
 import { t } from '../../core/i18n';
 import type { EffectiveOutboundHeaderPolicySnapshot } from '../../core/network/outboundHeaderPolicyService';
+import type { GatewayClientLike } from '../../engine/gateway/types';
 import type { GatewayRequestOptions } from '../../engine/types';
 import { restrictCredentialFile } from '../../openclaw/config/models/providerSecretFile';
 import { requireOpenClawCliExecutable } from '../../openclaw/runtime/launch/cliNodeRuntime';
@@ -126,6 +126,9 @@ type ExtensionCatalogProjection = () => InstalledOpenClawExtension[];
 type OpenClawExtensionImportServiceDeps = {
   getOpenClawEngineManager: () => OpenClawEngineManager;
   getManagedPluginIds?: () => string[];
+  getNativeSkillIds?: (extensionId: string) => string[];
+  requiresHotToggle?: (extensionId: string) => boolean;
+  getConnectedGatewayClient?: () => Pick<GatewayClientLike, 'request'> | null;
   requestGateway?: <T>(
     method: string,
     params?: unknown,
@@ -928,8 +931,8 @@ export class OpenClawExtensionImportService {
     params: unknown,
     options?: GatewayRequestOptions,
     progress?: NativePluginAdmissionProgress,
+    requestGateway = this.deps.requestGateway,
   ): Promise<T> {
-    const requestGateway = this.deps.requestGateway;
     if (!requestGateway) throw new Error('The native plugin Gateway is unavailable.');
     const manager = this.deps.getOpenClawEngineManager();
     const pid = manager.getGatewayProcessId?.();
@@ -980,7 +983,11 @@ export class OpenClawExtensionImportService {
   private restartGatewayAfterMutation(reason: string): Promise<{
     phase: string;
     message?: string;
+    deferred?: boolean;
   }> {
+    const manager = this.deps.getOpenClawEngineManager();
+    if (manager.isGatewayMutationInProgress?.())
+      return Promise.resolve({ phase: manager.getStatus().phase, deferred: true });
     if (!this.deps.restartGatewayAfterMutation) {
       throw new Error('The safe Gateway restart coordinator is unavailable.');
     }
@@ -1013,45 +1020,103 @@ export class OpenClawExtensionImportService {
     }
   }
 
-  private async syncAgentTeamSkill(enabled: boolean, viaGateway: boolean): Promise<void> {
-    try {
-      if (viaGateway && this.deps.requestGateway) {
-        const result = await this.deps.requestGateway<{ ok: boolean }>('skills.update', {
-          skillKey: OpenClawExtensionId.AGENT_TEAM,
-          enabled,
-        });
-        if (!result.ok) throw new Error('Skill update rejected');
-        return;
+  private async syncExtensionSkills(
+    extensionId: string,
+    enabled: boolean,
+    viaGateway: boolean,
+    requestGateway = this.deps.requestGateway,
+  ): Promise<void> {
+    for (const skillId of this.deps.getNativeSkillIds?.(extensionId) ?? []) {
+      try {
+        if (viaGateway && requestGateway) {
+          const result = await requestGateway<{ ok: boolean }>('skills.update', {
+            skillKey: skillId,
+            enabled,
+          });
+          if (!result.ok) throw new Error('Skill update rejected');
+          continue;
+        }
+        const manager = this.deps.getOpenClawEngineManager();
+        const cli = await manager.buildCliEnvironment();
+        const result = await this.runCommand(
+          requireOpenClawCliExecutable(cli.env),
+          [
+            cli.openclawEntry,
+            'config',
+            'set',
+            `skills.entries.${skillId}.enabled`,
+            String(enabled),
+            '--strict-json',
+          ],
+          {
+            cwd: cli.runtimeRoot,
+            env: { ...cli.env, OPENCLAW_HOME: manager.getBaseDir(), ELECTRON_RUN_AS_NODE: '1' },
+          },
+        );
+        if (result.exitCode !== 0) throw new Error('Skill update rejected');
+        const config = readJsonRecord(manager.getConfigPath());
+        const skills = isRecord(config.skills) ? config.skills : {};
+        const entries = isRecord(skills.entries) ? skills.entries : {};
+        const entry = entries[skillId];
+        if (!isRecord(entry) || entry.enabled !== enabled)
+          throw new Error('Skill update not persisted');
+      } catch {
+        // The plugin write may already have committed. Report the skill failure
+        // without replaying the plugin mutation.
+        throw new Error(t('appPluginSkillSyncFailed'));
       }
-      const manager = this.deps.getOpenClawEngineManager();
-      const cli = await manager.buildCliEnvironment();
-      const result = await this.runCommand(
-        requireOpenClawCliExecutable(cli.env),
-        [
-          cli.openclawEntry,
-          'config',
-          'set',
-          'skills.entries.agent-team.enabled',
-          String(enabled),
-          '--strict-json',
-        ],
-        {
-          cwd: cli.runtimeRoot,
-          env: { ...cli.env, OPENCLAW_HOME: manager.getBaseDir(), ELECTRON_RUN_AS_NODE: '1' },
-        },
-      );
-      if (result.exitCode !== 0) throw new Error('Skill update rejected');
-      const config = readJsonRecord(manager.getConfigPath());
-      const skills = isRecord(config.skills) ? config.skills : {};
-      const entries = isRecord(skills.entries) ? skills.entries : {};
-      const entry = entries[OpenClawExtensionId.AGENT_TEAM];
-      if (!isRecord(entry) || entry.enabled !== enabled)
-        throw new Error('Skill update not persisted');
-    } catch {
-      // The plugin write may already have committed. The same toggle is safe to
-      // retry and must repair the skill even if the plugin already has that state.
-      throw new Error(t('agentTeamSkillSyncFailed'));
     }
+  }
+
+  private captureConnectedGatewayRequest(): OpenClawExtensionImportServiceDeps['requestGateway'] {
+    const client = this.deps.getConnectedGatewayClient?.();
+    const manager = this.deps.getOpenClawEngineManager();
+    const pid = manager.getGatewayProcessId();
+    if (!client || !pid || manager.getStatus().phase !== 'running') return undefined;
+    const generation = manager.getGatewayProcessGeneration();
+    return <T>(method: string, params?: unknown, options?: GatewayRequestOptions): Promise<T> => {
+      if (manager !== this.deps.getOpenClawEngineManager() ||
+          client !== this.deps.getConnectedGatewayClient?.() ||
+          pid !== manager.getGatewayProcessId() || generation !== manager.getGatewayProcessGeneration() ||
+          manager.getStatus().phase !== 'running')
+        return Promise.reject(Object.assign(new Error('OpenClaw gateway client is unavailable.'), {
+          code: 'CLIENT_CLOSED', requestSent: false,
+        }));
+      options?.assertBeforeSend?.();
+      if (client !== this.deps.getConnectedGatewayClient?.() ||
+          pid !== manager.getGatewayProcessId() || generation !== manager.getGatewayProcessGeneration() ||
+          manager.getStatus().phase !== 'running')
+        return Promise.reject(Object.assign(new Error('OpenClaw gateway client is unavailable.'), {
+          code: 'CLIENT_CLOSED', requestSent: false,
+        }));
+      return options
+        ? client.request<T>(method, params, { timeoutMs: options.timeoutMs })
+        : client.request<T>(method, params);
+    };
+  }
+
+  private async waitForHotSkillApplication(
+    skillIds: string[],
+    enabled: boolean,
+    requestGateway: NonNullable<OpenClawExtensionImportServiceDeps['requestGateway']>,
+  ): Promise<void> {
+    for (const delay of [0, 100, 250, 500, 1000, 2000, 5000]) {
+      if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+      const snapshot = await requestGateway<{
+        valid?: boolean;
+        configRevisionHash?: string;
+        appliedConfigHash?: string;
+        config?: { skills?: { entries?: Record<string, { enabled?: boolean }> } };
+      }>('config.get', {});
+      if (
+        snapshot.valid === true &&
+        typeof snapshot.configRevisionHash === 'string' && snapshot.configRevisionHash.length > 0 &&
+        snapshot.configRevisionHash === snapshot.appliedConfigHash &&
+        skillIds.every(id => snapshot.config?.skills?.entries?.[id]?.enabled === enabled)
+      )
+        return;
+    }
+    throw new Error('Native skill configuration has not been applied.');
   }
 
   private async inspectCapabilityReview(params: {
@@ -1282,7 +1347,16 @@ export class OpenClawExtensionImportService {
   }
 
   private async readCatalog(): Promise<ExtensionCatalogProjection> {
-    if (!this.deps.requestGateway) return () => this.listInstalled();
+    // Inventory is observational, including notification and Renderer refetches
+    // after a hot toggle. Never recover a disconnected Gateway from this path.
+    const connectedOnly = this.deps.getConnectedGatewayClient !== undefined;
+    const requestGateway = connectedOnly
+      ? this.captureConnectedGatewayRequest()
+      : this.deps.requestGateway;
+    if (!requestGateway) {
+      if (connectedOnly) throw new Error(t('extensionCatalogUnavailable'));
+      return () => this.listInstalled();
+    }
     const manager = this.deps.getOpenClawEngineManager();
 
     type PluginCatalogEntry = {
@@ -1309,8 +1383,11 @@ export class OpenClawExtensionImportService {
       mutationAllowed: boolean;
     };
     try {
-      result = await this.deps.requestGateway('plugins.list', {});
+      result = await requestGateway('plugins.list', {});
     } catch (error) {
+      // A partial local inventory would erase bundled cards and publish false
+      // disabled states. Consumers retain their last successful catalog instead.
+      if (connectedOnly) throw error;
       if (!isGatewayUnavailableError(error)) throw error;
       return () => this.listInstalled().map(extension => ({
         ...extension,
@@ -1322,6 +1399,7 @@ export class OpenClawExtensionImportService {
     const localExtensions = this.listInstalled();
     const packages = await this.readPackageOwnership(localExtensions);
     if (
+      !connectedOnly &&
       localExtensions.some(extension => {
         const owner = packages.find(owner => owner.ownerId === extension.id);
         const pluginIds = owner?.pluginIds ?? [extension.id];
@@ -1338,7 +1416,7 @@ export class OpenClawExtensionImportService {
     ) {
       try {
         await this.requestPluginMutation('plugins.refresh', {});
-        result = await this.deps.requestGateway('plugins.list', {});
+        result = await requestGateway('plugins.list', {});
       } catch (error) {
         console.warn(
           '[OpenClawExtensionImportService] Failed to refresh externally changed plugin inventory:',
@@ -1661,7 +1739,7 @@ export class OpenClawExtensionImportService {
         }
         onProgress?.(PluginOperationStage.RESTARTING_GATEWAY);
         const status = await this.restartGatewayAfterMutation('extension-config-change');
-        if (status.phase !== 'running') {
+        if (status.phase !== 'running' && !status.deferred) {
           return {
             success: false,
             error:
@@ -1726,7 +1804,7 @@ export class OpenClawExtensionImportService {
             ? 'extension-network-policy-change'
             : 'extension-delete',
         );
-        return status.phase === 'running'
+        return status.phase === 'running' || status.deferred
           ? undefined
           : status.message ||
               'Extension state changed, but the OpenClaw Gateway failed to restart.';
@@ -1946,6 +2024,16 @@ export class OpenClawExtensionImportService {
     );
   }
 
+  private async readToggleState(extensionId: string): Promise<boolean | undefined> {
+    const installed = await this.resolveInstalledExtension(extensionId);
+    if (installed) return installed.enabled;
+    const manager = this.deps.getOpenClawEngineManager();
+    const bundled = findBundledExtensionDirectory(manager, extensionId);
+    return bundled && readExtensionId(bundled) === extensionId
+      ? isExtensionEnabled(manager, extensionId)
+      : undefined;
+  }
+
   private async setEnabledExclusive(
     extensionId: string,
     enabled: boolean,
@@ -1956,9 +2044,16 @@ export class OpenClawExtensionImportService {
     if (this.deps.getManagedPluginIds?.().includes(extensionId)) {
       return { success: false, error: 'Managed extensions cannot be changed here.' };
     }
+    const hotToggle = this.deps.requiresHotToggle?.(extensionId) === true;
+    const requestGateway = hotToggle
+      ? this.captureConnectedGatewayRequest()
+      : this.deps.requestGateway;
+    if (hotToggle && !requestGateway)
+      return { success: false, error: t('extensionHotToggleUnavailable') };
     const manager = this.deps.getOpenClawEngineManager();
     const initialPhase = manager.getStatus().phase;
     const wasRuntimeActive = initialPhase === 'running' || initialPhase === 'starting';
+    const nativeSkills = this.deps.getNativeSkillIds?.(extensionId) ?? [];
     const policyDigestBefore = this.deps.outboundHeaderPolicy?.reconcile().digest;
     let gatewayMayNeedRestore = false;
     const convergeColdState = async (forceRestart = false): Promise<string | undefined> => {
@@ -1977,7 +2072,7 @@ export class OpenClawExtensionImportService {
             ? 'extension-network-policy-change'
             : 'extension-status-change',
         );
-        return status.phase === 'running'
+        return status.phase === 'running' || status.deferred
           ? undefined
           : status.message ||
               'Extension status changed, but the OpenClaw Gateway failed to restart.';
@@ -1987,7 +2082,7 @@ export class OpenClawExtensionImportService {
           : 'Extension status changed, but the OpenClaw Gateway failed to restart.';
       }
     };
-    if (this.deps.requestGateway) {
+    if (requestGateway) {
       try {
         onProgress?.(enabled ? PluginOperationStage.ENABLING : PluginOperationStage.DISABLING);
         const result = await this.requestPluginMutation<{
@@ -2009,26 +2104,35 @@ export class OpenClawExtensionImportService {
                 enabled ? PluginOperationStage.ENABLING : PluginOperationStage.DISABLING,
               ),
           },
+          requestGateway,
         );
+        if (hotToggle && result.restartRequired)
+          return { success: false, error: t('extensionHotToggleRestartRequired') };
         let skillSyncError: string | undefined;
-        if (extensionId === OpenClawExtensionId.AGENT_TEAM) {
+        if ((this.deps.getNativeSkillIds?.(extensionId)?.length ?? 0) > 0) {
           // A skills.* mutation invalidates persisted session skill snapshots even
           // when native filesystem watching is disabled. The extension owns this skill.
           try {
-            await this.syncAgentTeamSkill(enabled, true);
+            await this.syncExtensionSkills(extensionId, enabled, true, requestGateway);
+            if (hotToggle) await this.waitForHotSkillApplication(nativeSkills, enabled, requestGateway);
           } catch {
-            skillSyncError = t('agentTeamSkillSyncFailed');
+            skillSyncError = t('extensionSkillSyncFailed');
           }
         }
         const policyDigestAfter = this.deps.outboundHeaderPolicy?.reconcile().digest;
-        if (result.restartRequired || policyDigestAfter !== policyDigestBefore) {
+        if (hotToggle && policyDigestAfter !== policyDigestBefore)
+          return { success: false, error: t('extensionHotToggleRestartRequired') };
+        if (
+          result.restartRequired ||
+          policyDigestAfter !== policyDigestBefore
+        ) {
           onProgress?.(PluginOperationStage.RESTARTING_GATEWAY);
           const status = await this.restartGatewayAfterMutation(
             policyDigestAfter !== policyDigestBefore
               ? 'extension-network-policy-change'
               : 'extension-status-change',
           );
-          if (status.phase !== 'running') {
+          if (status.phase !== 'running' && !status.deferred) {
             return {
               success: false,
               error:
@@ -2041,23 +2145,27 @@ export class OpenClawExtensionImportService {
           ? { success: false, error: skillSyncError }
           : { success: true, warnings: result.warnings };
       } catch (error) {
-        if (isGatewayUnavailableError(error) && isGatewayMutationNotSent(error)) {
-          // Offline recovery requires evidence that no native mutation was sent.
+        if (isGatewayUnavailableError(error)) {
+          if (isRecord(error) && 'gatewayCode' in error)
+            return {
+              success: false,
+              error: error instanceof Error ? error.message : 'Failed to update plugin status',
+            };
+          if (!isGatewayMutationNotSent(error))
+            return {
+              success: false,
+              error: error instanceof Error ? error.message : t('extensionToggleUnconfirmed'),
+              operationUnconfirmed: true,
+            };
+          if (hotToggle)
+            return { success: false, error: t('extensionHotToggleUnavailable') };
+          // Only proof that dispatch never started permits the offline mutation.
           gatewayMayNeedRestore = wasRuntimeActive;
-        } else if (
-          isGatewayUnavailableError(error) &&
-          (!isRecord(error) || !('gatewayCode' in error))
-        ) {
-          return {
-            success: false,
-            error: error instanceof Error ? error.message : 'Plugin status update is unconfirmed.',
-            operationUnconfirmed: true,
-          };
         } else {
           const consent = enabled ? readCapabilityConsentDetails(error) : null;
           if (consent) {
             try {
-              const inspected = await this.deps.requestGateway<{
+              const inspected = await requestGateway<{
                 ok: true;
                 reviewToken: string;
                 declared: OpenClawPluginCapabilityReview['declared'];
@@ -2090,14 +2198,14 @@ export class OpenClawExtensionImportService {
         }
       }
     }
-    const installed = await this.resolveInstalledExtension(extensionId);
-    if (!installed) return { success: false, error: 'Extension is not installed.' };
-    if (installed.enabled === enabled) {
-      if (extensionId === OpenClawExtensionId.AGENT_TEAM) {
+    const previous = await this.readToggleState(extensionId);
+    if (previous === undefined) return { success: false, error: 'Extension is not installed.' };
+    if (previous === enabled) {
+      if ((this.deps.getNativeSkillIds?.(extensionId)?.length ?? 0) > 0) {
         try {
-          await this.syncAgentTeamSkill(enabled, false);
+          await this.syncExtensionSkills(extensionId, enabled, false);
         } catch {
-          return { success: false, error: t('agentTeamSkillSyncFailed') };
+          return { success: false, error: t('extensionSkillSyncFailed') };
         }
       }
       const convergenceError = await convergeColdState(gatewayMayNeedRestore);
@@ -2136,8 +2244,8 @@ export class OpenClawExtensionImportService {
       }
 
       onProgress?.(PluginOperationStage.CONFIRMING);
-      const updated = await this.resolveInstalledExtension(extensionId);
-      if (!updated || updated.enabled !== enabled) {
+      const updated = await this.readToggleState(extensionId);
+      if (updated !== enabled) {
         const convergenceError = await convergeColdState(gatewayMayNeedRestore);
         return {
           success: false,
@@ -2147,8 +2255,7 @@ export class OpenClawExtensionImportService {
         };
       }
 
-      if (extensionId === OpenClawExtensionId.AGENT_TEAM)
-        await this.syncAgentTeamSkill(enabled, false);
+      if (nativeSkills.length > 0) await this.syncExtensionSkills(extensionId, enabled, false);
       const convergenceError = await convergeColdState(wasRuntimeActive);
       return convergenceError ? { success: false, error: convergenceError } : { success: true };
     } catch (error) {
@@ -2275,7 +2382,7 @@ export class OpenClawExtensionImportService {
         ) {
           reportOperationProgress(PluginOperationStage.RESTARTING_GATEWAY);
           const status = await this.restartGatewayAfterMutation('extension-network-policy-change');
-          if (status.phase !== 'running') {
+          if (status.phase !== 'running' && !status.deferred) {
             throw new Error(
               status.message ||
                 'Extension network policy changed, but the Gateway failed to restart.',
@@ -2325,13 +2432,21 @@ export class OpenClawExtensionImportService {
         artifactPluginIds = await readExtensionArtifactPluginIds(manager, pluginDirectory);
         extensionId = artifactPluginIds[0];
       }
+      const appCompanion = fs.existsSync(path.join(pluginDirectory, 'app', 'app.artifact.json'));
+      if (appCompanion && extensionId) {
+        // Native execution waits for the separate companion code approval.
+        updateExtensionAllowlist(
+          manager.getConfigPath(), extensionId, 'add',
+          this.deps.getManagedPluginIds?.() ?? [], true,
+        );
+      }
       const installArgs = [
         cli.openclawEntry,
         'plugins',
         'install',
         installSourcePath,
         '--force',
-        ...(options?.preserveActivation ? ['--no-enable'] : []),
+        ...(options?.preserveActivation || appCompanion ? ['--no-enable'] : []),
         ...(this.deps.requestGateway || options?.trustMarketplaceSource
           ? ['--accept-capabilities']
           : []),
@@ -2503,7 +2618,8 @@ export class OpenClawExtensionImportService {
           result.exitCode === 0 &&
           extensionId &&
           !this.deps.requestGateway &&
-          !options?.preserveActivation
+          !options?.preserveActivation &&
+          !appCompanion
         ) {
           try {
             updateExtensionAllowlist(
@@ -2635,7 +2751,7 @@ export class OpenClawExtensionImportService {
           const status = await this.restartGatewayAfterMutation(
             networkPolicyChanged ? 'extension-network-policy-change' : 'extension-import',
           );
-          if (status.phase !== 'running') {
+          if (status.phase !== 'running' && !status.deferred) {
             return {
               success: false,
               extensionId,

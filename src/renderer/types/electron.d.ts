@@ -13,11 +13,6 @@ type DiagnosticListResult =
   import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticListResult;
 type DiagnosticExportResult =
   import('../../shared/cowork/diagnostics/sessionDiagnostics').DiagnosticExportResult;
-import type {
-  TeamDiscussionResult,
-  TeamDiscussionRoom,
-  TeamDiscussionSend,
-} from '@shared/cowork/agent-team/teamDiscussion';
 
 import type {
   AgentFileName,
@@ -764,102 +759,7 @@ interface IElectronAPI {
       callback: (data: { tools: number; error?: string; requestId?: string }) => void,
     ) => () => void;
   };
-  teamDiscussion: {
-    participation: (input: {
-      roomId: string;
-      expectedRevision: number;
-      enabled: boolean;
-    }) => Promise<TeamDiscussionResult<TeamDiscussionRoom>>;
-    createTask: (input: {
-      roomId: string;
-      requestId: string;
-    }) => Promise<TeamDiscussionResult<string>>;
-    list: () => Promise<TeamDiscussionResult<TeamDiscussionRoom[]>>;
-    create: (input: unknown) => Promise<TeamDiscussionResult<TeamDiscussionRoom>>;
-    read: (
-      id: string,
-      beforeDiscussionId?: string,
-      exactDiscussionIds?: string[],
-    ) => Promise<
-      TeamDiscussionResult<
-        import('@shared/cowork/agent-team/teamDiscussion').TeamDiscussionReadResult
-      >
-    >;
-    send: (input: TeamDiscussionSend) => Promise<TeamDiscussionResult<TeamDiscussionRoom>>;
-    enqueue: (input: TeamDiscussionSend) => Promise<TeamDiscussionResult<TeamDiscussionRoom>>;
-    cancelPending: (input: {
-      roomId: string;
-      requestId: string;
-    }) => Promise<TeamDiscussionResult<TeamDiscussionRoom>>;
-    stop: (id: string) => Promise<TeamDiscussionResult<TeamDiscussionRoom>>;
-    delete: (id: string) => Promise<TeamDiscussionResult<void>>;
-  };
-  agentTeamSettings: {
-    read: () => Promise<
-      TeamDiscussionResult<
-        import('@shared/cowork/agent-team/agentTeamSettings').AgentTeamSettingsSnapshot
-      >
-    >;
-    save: (
-      value: import('@shared/cowork/agent-team/agentTeamSettings').AgentTeamSettings,
-      expectedRevision: number,
-    ) => Promise<
-      TeamDiscussionResult<
-        import('@shared/cowork/agent-team/agentTeamSettings').AgentTeamSettingsSnapshot
-      >
-    >;
-    readTeam: (
-      kind: import('@shared/cowork/agent-team/agentTeamSettings').AgentTeamKind,
-      roomId: string,
-    ) => Promise<
-      TeamDiscussionResult<
-        import('@shared/cowork/agent-team/agentTeamSettings').AgentTeamSettingsView
-      >
-    >;
-    saveTeam: (
-      kind: import('@shared/cowork/agent-team/agentTeamSettings').AgentTeamKind,
-      roomId: string,
-      value: import('@shared/cowork/agent-team/agentTeamSettings').AgentTeamOverrides,
-      expectedRevision: number,
-    ) => Promise<
-      TeamDiscussionResult<
-        import('@shared/cowork/agent-team/agentTeamSettings').AgentTeamSettingsView
-      >
-    >;
-  };
-  collaboration: {
-    prepareContinuation: (
-      input: import('@shared/cowork/agent-team/collaboration').CollaborationContinuePreparation,
-    ) => Promise<
-      AgentResult<
-        import('@shared/cowork/agent-team/collaboration').CollaborationContinuePreparationReceipt
-      >
-    >;
-    read: (
-      sessionId: string,
-    ) => Promise<
-      AgentResult<import('@shared/cowork/agent-team/collaboration').CollaborationSnapshot>
-    >;
-    readMessages: (
-      sessionId: string,
-      deliveryIds: string[],
-    ) => Promise<
-      AgentResult<import('@shared/cowork/agent-team/collaboration').CollaborationMessageResult[]>
-    >;
-    list: () => Promise<
-      AgentResult<import('@shared/cowork/agent-team/collaboration').CollaborationRoomEntry[]>
-    >;
-    create: (
-      sessionId: string,
-      agentIds: string[],
-    ) => Promise<
-      AgentResult<import('@shared/cowork/agent-team/collaboration').CollaborationSnapshot>
-    >;
-    stop: (sessionId: string) => Promise<AgentResult<void>>;
-    stopMember: (
-      input: import('@shared/cowork/agent-team/collaboration').CollaborationStopMemberInput,
-    ) => Promise<AgentResult<void>>;
-  };
+  appPlugins: import('../../../packages/app-plugin-sdk/contracts').AppPluginBridge;
   agents: {
     delete: (agentId: string) => Promise<AgentResult<void>>;
     save: (input: AgentProfileInput) => Promise<AgentResult<Agent>>;
@@ -1210,11 +1110,11 @@ interface IElectronAPI {
       errorCode?: SessionRunBeginErrorCode;
       error?: string;
     }>;
-    markTeamSubmissionStarted: (input: {
+    markPluginSubmissionStarted: (input: {
       sessionId: string;
       clientTurnId: string;
     }) => Promise<{ success: boolean; error?: string }>;
-    abortTeamSubmissionBeforeSend: (input: {
+    abortPluginSubmissionBeforeSend: (input: {
       sessionId: string;
       clientTurnId: string;
     }) => Promise<{ success: boolean; error?: string }>;
@@ -1374,16 +1274,6 @@ interface IElectronAPI {
     ) => () => void;
     onSessionGoalChanged: (callback: (data: { sessionId: string }) => void) => () => void;
     getSwarmSnapshot: import('../../shared/cowork/swarm').SwarmApi['getSwarmSnapshot'];
-    getSwarmWorkflows: import('../../shared/cowork/swarm-workflow').SwarmWorkflowApi['getSwarmWorkflows'];
-    getSwarmWorkflowActivity: import('../../shared/cowork/swarm-workflow').SwarmWorkflowApi['getSwarmWorkflowActivity'];
-    getSwarmWorkflowSummary: import('../../shared/cowork/swarm-workflow').SwarmWorkflowApi['getSwarmWorkflowSummary'];
-    onSwarmWorkflowsChanged: import('../../shared/cowork/swarm-workflow').SwarmWorkflowEventsApi['onSwarmWorkflowsChanged'];
-    getSwarmWorkflowBatch: import('../../shared/cowork/swarm-workflow').SwarmWorkflowApi['getSwarmWorkflowBatch'];
-    retrySwarmWorkflowBatch: import('../../shared/cowork/swarm-workflow').SwarmWorkflowApi['retrySwarmWorkflowBatch'];
-    getSwarmWorkflowDetail: import('../../shared/cowork/swarm-workflow').SwarmWorkflowApi['getSwarmWorkflowDetail'];
-    controlSwarmWorkflow: import('../../shared/cowork/swarm-workflow').SwarmWorkflowApi['controlSwarmWorkflow'];
-    interveneSwarmWorkflow: import('../../shared/cowork/swarm-workflow').SwarmWorkflowApi['interveneSwarmWorkflow'];
-    prepareSwarmWorkflow: import('../../shared/cowork/swarm-workflow').SwarmWorkflowApi['prepareSwarmWorkflow'];
     getSubTaskStatus: (
       sessionId?: string,
       forceRefresh?: boolean,

@@ -53,6 +53,7 @@ function startObserving(): void {
   let active = true;
   let requestRevision = 0;
   let changeRevision = 0;
+  let catalogUnavailable = true;
   const changes = new Map<string, { revision: number; enabled: boolean }>();
   const refresh = async () => {
     if (!getEngineReadinessSnapshot().ready) return;
@@ -60,7 +61,9 @@ function startObserving(): void {
     const observedChange = changeRevision;
     try {
       const result = await window.electron.extensions.list();
-      if (!active || request !== requestRevision || !result.success) return;
+      if (!active || request !== requestRevision) return;
+      catalogUnavailable = !result.success;
+      if (!result.success) return;
       const enabled = new Map(result.extensions.map(item => [item.id, item.enabled]));
       for (const [id, change] of changes) {
         if (change.revision > observedChange) enabled.set(id, change.enabled);
@@ -73,6 +76,7 @@ function startObserving(): void {
       }
       publishSettings({ loaded: true, enabled, disabledRevisions });
     } catch {
+      if (active && request === requestRevision) catalogUnavailable = true;
       // Keep observed settings while the runtime is temporarily unavailable.
     }
   };
@@ -97,11 +101,15 @@ function startObserving(): void {
     if (ready && !wasReady) void refresh();
     wasReady = ready;
   });
+  const stopReadiness = window.electron.appPlugins?.onChanged(() => {
+    if (catalogUnavailable) void refresh();
+  });
   window.addEventListener('focus', refresh);
   stopObserving = () => {
     active = false;
     stop();
     stopEngine();
+    stopReadiness?.();
     window.removeEventListener('focus', refresh);
   };
   void refresh();

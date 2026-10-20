@@ -149,13 +149,15 @@ export const isBundledPluginAvailable = (pluginId: string): boolean => {
   return hasBundledOpenClawExtension(pluginId);
 };
 
-export const isUserToggleableBundledPlugin = (pluginId: string): boolean =>
+export const isUserToggleableBundledPlugin = (
+  pluginId: string,
+  appPolicies: Record<string, { defaultEnabled: boolean; userToggleable: boolean }> = {},
+): boolean =>
+  appPolicies[pluginId]?.userToggleable === true ||
   pluginId === OpenClawExtensionId.MEMORY_CORE ||
   pluginId === OpenClawExtensionId.WORKBOARD ||
-  pluginId === OpenClawExtensionId.AGENT_TEAM ||
   pluginId === OpenClawExtensionId.SMART_CANVAS ||
   pluginId === OpenClawExtensionId.DRAWIO ||
-  pluginId === OpenClawExtensionId.SWARM_WORKFLOW ||
   pluginId === OpenClawExtensionId.TYPESAFE ||
   pluginId === OpenClawExtensionId.STT_LOCAL_CLI ||
   pluginId === LOCAL_TTS_PROVIDER_ID;

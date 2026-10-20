@@ -13,7 +13,7 @@ import {
 import {
   TeamDiscussionGateway,
   type TeamDiscussionRoom,
-} from '../../../../src/shared/cowork/agent-team/teamDiscussion';
+} from '../../../../plugins/extensions/agent-team/contracts/teamDiscussion';
 
 const sdk = vi.hoisted(() => ({
   dispatch: vi.fn(),

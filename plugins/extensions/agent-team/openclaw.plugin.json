@@ -10,6 +10,7 @@
     "onCapabilities": ["tool"]
   },
   "contracts": {
+    "gatewayMethodDispatch": ["authenticated-request"],
     "tools": ["task_assistants", "assistants_create", "team_discussion"]
   },
   "configSchema": {

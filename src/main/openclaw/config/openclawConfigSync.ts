@@ -42,7 +42,6 @@ import {
   buildManagedOpenClawSubagentConfig,
   buildManagedOpenClawSurfaces,
   buildManagedOpenClawTtsPluginEntries,
-  buildManagedSwarmWorkflowPluginEntries,
   buildMissingEmbeddedBrowserResult,
   buildOpenClawConfigMeta,
   buildOpenClawHookConfig,
@@ -117,7 +116,6 @@ export {
   mergeOpenClawSkillConfig,
   OPENCLAW_ACP_BACKEND,
   OPENCLAW_AGENT_TIMEOUT_SECONDS,
-  OPENCLAW_COLLABORATION_TOOLS,
   OPENCLAW_FALLBACK_EXEC_MODE,
   OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
   OPENCLAW_MAX_SKILLS_IN_PROMPT,
@@ -199,6 +197,9 @@ export class OpenClawConfigSync {
   private readonly getMcpServers?: () => McpServerRecord[];
   private readonly getHooks?: () => OpenClawHookRecord[];
   private readonly getAgents?: () => Agent[];
+  private readonly getAppPluginDefaults: () => Record<string, { defaultEnabled: boolean; userToggleable: boolean }>;
+  private readonly getAppPluginEntries?: () => Record<string, unknown>;
+  private readonly getAppPluginPolicy?: () => { sandboxTools?: string[]; surfaces?: Record<string, unknown> };
   private readonly getBrowserMode?: () => BrowserModeValue;
   private readonly getControlUiEnabled: () => boolean;
   private readonly getLocalSttConfig: () => Record<string, unknown> | null;
@@ -220,6 +221,9 @@ export class OpenClawConfigSync {
     this.getMcpServers = deps.getMcpServers;
     this.getHooks = deps.getHooks;
     this.getAgents = deps.getAgents;
+    this.getAppPluginDefaults = deps.getAppPluginDefaults ?? (() => ({}));
+    this.getAppPluginEntries = deps.getAppPluginEntries;
+    this.getAppPluginPolicy = deps.getAppPluginPolicy;
     this.getBrowserMode = deps.getBrowserMode;
     this.getControlUiEnabled = deps.getControlUiEnabled ?? (() => false);
     this.getLocalSttConfig = deps.getLocalSttConfig ?? (() => null);
@@ -393,9 +397,8 @@ export class OpenClawConfigSync {
     }
     // Reply preparation consumes admitted runtime configuration, not a
     // channel dispatcher's temporary projection. Set the surface policy here.
-    config.surfaces = buildManagedOpenClawSurfaces(config.surfaces);
-    if (this.nativeVideoSelection === undefined && this.restoreUnmanagedVideo)
-      this.restoreUnmanagedVideo(config);
+    config.surfaces = buildManagedOpenClawSurfaces(config.surfaces, this.getAppPluginPolicy?.().surfaces);
+    if (this.nativeVideoSelection === undefined && this.restoreUnmanagedVideo) this.restoreUnmanagedVideo(config);
     const availableExtensionIds = listAvailableOpenClawExtensionIds(
       this.engineManager.getStateDir(),
       isRecord(config.plugins) ? config.plugins : {},
@@ -560,13 +563,15 @@ export class OpenClawConfigSync {
       }
     }
 
+    const appEntries = this.getAppPluginEntries?.() ?? {};
+    const appPolicies = this.getAppPluginDefaults();
     const workspaceDir = (coworkConfig.workingDirectory || '').trim();
     // Default workspace to stateDir/workspace so skills are found in stateDir/skills
     const defaultWorkspaceDir = path.join(this.engineManager.getStateDir(), 'workspace');
     const resolvedWorkspaceDir = workspaceDir ? path.resolve(workspaceDir) : defaultWorkspaceDir;
     seedMainRoleFiles(this.engineManager.getStateDir(), this.engineManager.getRuntimeRoot?.());
     const preinstalledPluginIds = readPreinstalledPluginIds().filter(
-      id => !isUserToggleableBundledPlugin(id) && isBundledPluginAvailable(id),
+      id => !isUserToggleableBundledPlugin(id, appPolicies) && isBundledPluginAvailable(id),
     );
     const agentRuntimeSettings = this.getAgentRuntimeSettings();
     const browserMode = normalizeBrowserMode(this.getBrowserMode?.());
@@ -595,9 +600,9 @@ export class OpenClawConfigSync {
       ),
       ...buildManagedLocalSpeechPluginEntries(this.getLocalSttConfig(), isBundledPluginAvailable),
       ...(!this.getSpeechModelSettings ? buildManagedOpenClawTtsPluginEntries(managedTtsConfig) : {}),
-      ...buildManagedSwarmWorkflowPluginEntries(this.getAgents?.() ?? []),
+      ...appEntries,
     };
-    const defaultPluginEntries = buildDefaultOpenClawPluginEntries();
+    const defaultPluginEntries = buildDefaultOpenClawPluginEntries(isBundledPluginAvailable, appPolicies);
     const mcpServers = mergeNativeMcpOverrides(
       existingConfig,
       buildOpenClawMcpServers(mcpServerRecords, agentRuntimeSettings.mcp.requestTimeoutSeconds),
@@ -736,6 +741,7 @@ export class OpenClawConfigSync {
         ...buildManagedOpenClawExecutionToolConfig(
           coworkConfig.executionMode || 'local',
           connectivityTools,
+          this.getAppPluginPolicy?.().sandboxTools,
         ),
         loopDetection: {
           enabled: true,
@@ -767,6 +773,7 @@ export class OpenClawConfigSync {
           pluginEntries,
           [...trustedInstalledExtensionIds, ...Object.keys(defaultPluginEntries)],
           availableExtensionIds,
+          Object.keys(appEntries),
         );
         return Object.keys(mergedPlugins).length > 0
           ? {
@@ -1041,6 +1048,8 @@ export class OpenClawConfigSync {
       localTtsConfig,
       this.getSpeechOutputState(),
     );
+    const appEntries = this.getAppPluginEntries?.() ?? {};
+    const appPolicies = this.getAppPluginDefaults();
     const bundledExtensionEntries = {
       ...buildManagedBundledExtensionEntries(
         agentRuntimeSettings,
@@ -1052,9 +1061,9 @@ export class OpenClawConfigSync {
       ),
       ...buildManagedLocalSpeechPluginEntries(this.getLocalSttConfig(), isBundledPluginAvailable),
       ...(!this.getSpeechModelSettings ? buildManagedOpenClawTtsPluginEntries(managedTtsConfig) : {}),
-      ...buildManagedSwarmWorkflowPluginEntries(this.getAgents?.() ?? []),
+      ...appEntries,
     };
-    const defaultPluginEntries = buildDefaultOpenClawPluginEntries();
+    const defaultPluginEntries = buildDefaultOpenClawPluginEntries(isBundledPluginAvailable, appPolicies);
     const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
       this.engineManager.getStateDir(),
     );
@@ -1115,12 +1124,15 @@ export class OpenClawConfigSync {
           ...buildManagedOpenClawExecutionToolConfig(
             coworkConfig.executionMode || 'local',
             connectivityTools,
+            this.getAppPluginPolicy?.().sandboxTools,
           ),
         },
         plugins: mergeOpenClawPluginConfig(
           applyDefaultOpenClawPluginEntries({}, defaultPluginEntries),
           bundledExtensionEntries,
           [...trustedInstalledExtensionIds, ...Object.keys(defaultPluginEntries)],
+          null,
+          Object.keys(appEntries),
         ),
         meta: buildOpenClawConfigMeta(this.engineManager.getDesiredVersion()),
         // The managed permission extension is part of Gateway readiness even
@@ -1372,6 +1384,7 @@ export class OpenClawConfigSync {
                     ...buildManagedOpenClawExecutionToolConfig(
                       coworkConfig.executionMode || 'local',
                       existingTools,
+                      this.getAppPluginPolicy?.().sandboxTools,
                     ),
                   },
                   plugins: mergeOpenClawPluginConfig(
@@ -1379,6 +1392,7 @@ export class OpenClawConfigSync {
                     bundledExtensionEntries,
                     [...trustedInstalledExtensionIds, ...Object.keys(defaultPluginEntries)],
                     availableExtensionIds,
+                    Object.keys(appEntries),
                   ),
                   meta: minimalConfig.meta,
                 },

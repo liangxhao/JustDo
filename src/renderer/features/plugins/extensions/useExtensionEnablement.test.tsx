@@ -119,6 +119,40 @@ test('ignores a catalog read retired by a new preparation phase', async () => {
   expect(getExtensionEnabled(result.current, OpenClawExtensionId.SWARM_WORKFLOW)).toBe(false);
 });
 
+test('retries an unavailable catalog on Native readiness and retains observed enablement during loss', async () => {
+  const f = fixture();
+  let ready: (() => void) | undefined;
+  const release = vi.fn();
+  Object.assign(window.electron, {
+    appPlugins: {
+      onChanged: (listener: () => void) => {
+        ready = listener;
+        return release;
+      },
+    },
+  });
+  f.list
+    .mockResolvedValueOnce({ success: false, error: 'Unavailable' })
+    .mockResolvedValue(catalog(true));
+  const { result, unmount } = renderHook(() => useExtensionEnablement());
+  await waitFor(() => expect(f.list).toHaveBeenCalledOnce());
+  await act(async () => ready?.());
+  await waitFor(() => expect(result.current.loaded).toBe(true));
+  expect(getExtensionEnabled(result.current, OpenClawExtensionId.SWARM_WORKFLOW)).toBe(true);
+  act(() => ready?.());
+  expect(f.list).toHaveBeenCalledTimes(2);
+  f.list.mockResolvedValueOnce({ success: false, error: 'Disconnected' });
+  await act(async () => window.dispatchEvent(new Event('focus')));
+  expect(getExtensionEnabled(result.current, OpenClawExtensionId.SWARM_WORKFLOW)).toBe(true);
+  f.list.mockResolvedValue(catalog(false));
+  await act(async () => ready?.());
+  await waitFor(() =>
+    expect(getExtensionEnabled(result.current, OpenClawExtensionId.SWARM_WORKFLOW)).toBe(false),
+  );
+  unmount();
+  expect(release).toHaveBeenCalledOnce();
+});
+
 test('retains disable revisions across a batched disable and enable for open UI retirement', async () => {
   const f = fixture();
   f.list.mockResolvedValue({

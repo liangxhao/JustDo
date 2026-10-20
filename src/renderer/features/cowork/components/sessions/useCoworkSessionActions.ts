@@ -1,5 +1,4 @@
-import type { CollaborationRoom } from '@shared/cowork/agent-team/collaboration';
-import { useEffect } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 
 import { type JustDoChatWrapperRef } from '@/features/cowork/components/chat/JustDoChatWrapper';
 import { coworkService } from '@/features/cowork/coworkService';
@@ -8,9 +7,22 @@ import {
   COWORK_SESSION_LIST_ACTION_EVENT,
   type CoworkSessionListActionDetail,
 } from '@/features/cowork/sessionListActions';
+import { appBrowserRegistry } from '@/features/plugins/app/runtime';
 import { i18nService } from '@/services/i18n';
 
-import { COLLABORATION_DISPLAY_TAB_ID } from '../display/tabs/displayTabIds';
+/** Presentation can narrow a transcript action without changing native execution authority. */
+export function getSessionTranscriptActionError(
+  action: 'copy' | 'export',
+  sessionId: string,
+  runtimeRunning: boolean,
+): string | undefined {
+  const presentation = appBrowserRegistry.sessionPresentation(sessionId);
+  if (runtimeRunning || presentation.status === 'running')
+    return action === 'copy' ? 'coworkCopyWaitForCompletion' : 'coworkExportWaitForCompletion';
+  if (action === 'copy' ? presentation.copyAllowed === false : presentation.exportAllowed === false)
+    return action === 'copy' ? 'coworkCopySessionFailed' : 'coworkExportFailed';
+  return undefined;
+}
 
 interface CoworkSessionActionsOptions {
   setPendingSessionListAction: React.Dispatch<
@@ -18,9 +30,6 @@ interface CoworkSessionActionsOptions {
   >;
   pendingSessionListAction: CoworkSessionListActionDetail | null;
   currentSession: CoworkSession | null;
-  setCollaborationSessionId: React.Dispatch<React.SetStateAction<string | null>>;
-  collaborationRooms: CollaborationRoom[];
-  setCollaborationMemberId: React.Dispatch<React.SetStateAction<string | undefined>>;
   setPreferredDisplayTabId: React.Dispatch<React.SetStateAction<string | null>>;
   setIsDisplayPanelOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setIsWorkspaceFilesOpen: React.Dispatch<React.SetStateAction<boolean>>;
@@ -42,9 +51,6 @@ export function useCoworkSessionActions({
   setPendingSessionListAction,
   pendingSessionListAction,
   currentSession,
-  setCollaborationSessionId,
-  collaborationRooms,
-  setCollaborationMemberId,
   setPreferredDisplayTabId,
   setIsDisplayPanelOpen,
   setIsWorkspaceFilesOpen,
@@ -59,11 +65,14 @@ export function useCoworkSessionActions({
   setIsSessionExportOpen,
   sessionTranscriptMutation,
 }: CoworkSessionActionsOptions) {
+  const pluginRevision = useSyncExternalStore(
+    appBrowserRegistry.subscribe,
+    appBrowserRegistry.getContextRevision,
+  );
   useEffect(() => {
     const handleSessionListAction = (event: Event) => {
       const detail = (event as CustomEvent<CoworkSessionListActionDetail>).detail;
-      if (!detail?.sessionId || !['copy', 'export', 'collaboration'].includes(detail.action))
-        return;
+      if (!detail?.sessionId || !['copy', 'export'].includes(detail.action)) return;
       setPendingSessionListAction(detail);
     };
     window.addEventListener(COWORK_SESSION_LIST_ACTION_EVENT, handleSessionListAction);
@@ -78,38 +87,15 @@ export function useCoworkSessionActions({
       setPendingSessionListAction(null);
       return;
     }
-    if (pendingSessionListAction.action === 'collaboration') {
-      if (!currentSession.external) {
-        setCollaborationSessionId(currentSession.id);
-        const requestedMemberId = pendingSessionListAction.memberSessionId;
-        const room = collaborationRooms.find(item => item.anchorSessionId === currentSession.id);
-        setCollaborationMemberId(
-          room?.members.some(member => member.sessionId === requestedMemberId)
-            ? requestedMemberId
-            : undefined,
-        );
-        setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID);
-        setIsDisplayPanelOpen(true);
-        setIsWorkspaceFilesOpen(false);
-      }
-      setPendingSessionListAction(null);
-      return;
-    }
-    if (
-      currentSessionRuntimeRunning ||
-      collaborationRooms
-        .find(room => room.anchorSessionId === currentSession.id)
-        ?.members.some(member =>
-          sessions.some(session => session.id === member.sessionId && session.status === 'running'),
-        )
-    ) {
+    const actionError = getSessionTranscriptActionError(
+      pendingSessionListAction.action,
+      currentSession.id,
+      currentSessionRuntimeRunning,
+    );
+    if (actionError) {
       window.dispatchEvent(
         new CustomEvent('app:showToast', {
-          detail: i18nService.t(
-            pendingSessionListAction.action === 'export'
-              ? 'coworkExportWaitForCompletion'
-              : 'coworkCopyWaitForCompletion',
-          ),
+          detail: i18nService.t(actionError),
         }),
       );
       setPendingSessionListAction(null);
@@ -148,6 +134,19 @@ export function useCoworkSessionActions({
     const openExportWhenReady = () => {
       if (settled) return;
       attempts += 1;
+      const actionError = getSessionTranscriptActionError(
+        'export',
+        pendingSessionListAction.sessionId,
+        currentSessionRuntimeRunning,
+      );
+      if (actionError) {
+        settled = true;
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', { detail: i18nService.t(actionError) }),
+        );
+        setPendingSessionListAction(null);
+        return;
+      }
       if (currentSessionIdRef.current !== pendingSessionListAction.sessionId) {
         if (attempts >= 100) {
           settled = true;
@@ -184,15 +183,13 @@ export function useCoworkSessionActions({
     currentSession,
     currentSessionRuntimeRunning,
     pendingSessionListAction,
-    collaborationRooms,
+    pluginRevision,
     sessions,
     setIsDisplayPanelOpen,
     setIsWorkspaceFilesOpen,
     setPreferredDisplayTabId,
     sessionTranscriptMutation,
     setPendingSessionListAction,
-    setCollaborationSessionId,
-    setCollaborationMemberId,
     sessionTranscriptMutationRef,
     setSessionTranscriptMutation,
     currentSessionIdRef,

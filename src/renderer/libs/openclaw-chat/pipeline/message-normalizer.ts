@@ -6,17 +6,15 @@ import {
   parseBrowserAnnotationPrompt,
 } from '@shared/browser/browser';
 import { parseRecordingContext, serializeRecording } from '@shared/browser/browserRecording';
-import { stripAgentTeamInstruction } from '@shared/cowork/agent-team/agentTeamPrompt';
-import {
-  isTeamDiscussionAgentId,
-  isTeamDiscussionId,
-  TEAM_DISCUSSION_CHANNEL,
-} from '@shared/cowork/agent-team/teamDiscussion';
 import { parseCoworkSessionKey } from '@shared/cowork/sessionKey';
 import { stripSwarmInstruction } from '@shared/cowork/swarm';
-import { stripSwarmWorkflowInstruction } from '@shared/cowork/swarm-workflow';
 import { modelRefFromIdentity, normalizeModelRef } from '@shared/providers/modelRef';
 
+import {
+  pluginMessagePresentation,
+  pluginMessageText,
+  pluginReplyMirror,
+} from '@/features/plugins/app/messagePresentation';
 import { stripOpenClawLogHintText } from '@/libs/openclaw-chat/pipeline/system-message-display';
 import { stripInboundMetadata } from '@/libs/openclaw-chat/shims/backend-helpers';
 import {
@@ -30,6 +28,7 @@ import { mediaKindFromMime } from '@/libs/openclaw-chat/shims/media-core';
 import type { MessageContentItem, NormalizedMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
+import { stripAppInput } from '../../../../../plugins/extensions/runtime-services/contracts/app-input';
 import { normalizeEmbedHeight, previewFromEmbedShortcode } from './embed-presentation';
 import { scanEmbedShortcodes } from './embed-shortcodes';
 import { isNativeCanvasPreview } from './native-canvas';
@@ -55,46 +54,12 @@ export function isTrustedPeerInput(message: unknown): boolean {
   );
 }
 
-/** Native group dispatch is internal input, not a message authored by the user. */
-export function isTeamDiscussionInput(message: unknown): boolean {
-  const raw = asRecord(message);
-  const provenance = asRecord(raw?.provenance);
-  const nativeMetadata = asRecord(raw?.__openclaw);
-  const transport = asRecord(nativeMetadata?.transport);
-  return (
-    raw?.role === 'user' &&
-    ((provenance?.kind === 'inter_session' &&
-      provenance.sourceChannel === TEAM_DISCUSSION_CHANNEL &&
-      provenance.sourceTool === 'team_discussion') ||
-      transport?.channel === TEAM_DISCUSSION_CHANNEL)
-  );
-}
+/** Optional native-input presentation is registered by its current plugin. */
+export const isTeamDiscussionInput = (message: unknown): boolean =>
+  pluginMessagePresentation(message) !== undefined;
 
-/** Public group output belongs to the group timeline, not a member's execution history. */
-export function isTeamDiscussionReplyMirror(message: unknown): boolean {
-  const outer = asRecord(message);
-  const raw = asRecord(outer?.message) ?? outer;
-  const mirror = asRecord(raw?.openclawDeliveryMirror);
-  const delivery = asRecord(raw?.openclawDelivery);
-  if (
-    raw?.role !== 'assistant' ||
-    raw.provider !== 'openclaw' ||
-    raw.model !== 'delivery-mirror' ||
-    mirror?.kind !== 'channel-final' ||
-    !isTeamDiscussionAgentId(delivery?.speakerAgentId) ||
-    typeof mirror.sourceMessageId !== 'string'
-  )
-    return false;
-  const [channel, roomId, discussionId, sequence, extra] = mirror.sourceMessageId.split(':');
-  return (
-    channel === TEAM_DISCUSSION_CHANNEL &&
-    isTeamDiscussionId(roomId) &&
-    isTeamDiscussionId(discussionId) &&
-    /^[1-9]\d*$/.test(sequence ?? '') &&
-    Number.isSafeInteger(Number(sequence)) &&
-    extra === undefined
-  );
-}
+/** Optional plugin delivery mirrors are projected only by the admitted owner. */
+export const isPluginReplyMirror = (message: unknown): boolean => pluginReplyMirror(message);
 
 function pickTrimmedString(...values: unknown[]): string | null {
   for (const value of values) {
@@ -701,7 +666,9 @@ function expandUserDisplayContent(
   includeLegacyTextFields = false,
 ): MessageContentItem[] {
   const displayText = stripSwarmInstruction(
-    stripSwarmWorkflowInstruction(stripAgentTeamInstruction(stripInboundMetadata(text))),
+    // Preserve exact authored suffix boundaries before generic whitespace cleanup.
+    // Browser-only prompts may project to a text part containing just that suffix.
+    stripAppInput(stripInboundMetadata(pluginMessageText(stripAppInput(text)))),
   );
   const browserPrompt = parseBrowserAnnotationPrompt(displayText);
   if (!browserPrompt) return expandUserTextMediaContent(displayText, includeLegacyTextFields);
@@ -929,9 +896,9 @@ export function normalizeMessage(
   // Do not infer it from message text or a model-supplied sender label.
   const peerSource = parseCoworkSessionKey(peerSourceKey)?.agentId || peerSourceKey;
   const senderLabel = projectTeamInput
-    ? i18nService.t('teamDiscussionDispatcher')
+    ? (pluginMessagePresentation(m)?.senderLabel ?? null)
     : projectPeerInput
-      ? [i18nService.t('collaborationIncomingMessage'), peerSource].filter(Boolean).join(' · ')
+      ? [i18nService.t('nativePeerIncomingMessage'), peerSource].filter(Boolean).join(' · ')
       : typeof m.senderLabel === 'string' && m.senderLabel.trim()
         ? m.senderLabel.trim()
         : null;
@@ -975,7 +942,7 @@ export function normalizeMessage(
     senderLabel,
     // The colon makes this display identity distinct from every native agent ID.
     senderId: projectTeamInput
-      ? 'team-discussion:dispatcher'
+      ? (pluginMessagePresentation(m)?.senderId ?? null)
       : projectPeerInput
         ? peerSource || null
         : null,

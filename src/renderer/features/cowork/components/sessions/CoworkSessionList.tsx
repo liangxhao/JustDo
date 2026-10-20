@@ -9,9 +9,12 @@ import {
   useSensors,
 } from '@dnd-kit/core';
 import { ChatBubbleLeftRightIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
-import { SESSION_LIST_PAGE_SIZE, type SessionDirectoryEntry } from '@shared/cowork/sessionDirectory';
-import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
+import {
+  SESSION_LIST_PAGE_SIZE,
+  type SessionDirectoryEntry,
+} from '@shared/cowork/sessionDirectory';
 import React, { useEffect, useMemo, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import CoworkSessionItem from '@/features/cowork/components/sessions/CoworkSessionItem';
@@ -21,7 +24,6 @@ import SessionGroupPanel from '@/features/cowork/components/sessions/SessionGrou
 import {
   selectExpandedGroupIds,
   selectGroups,
-  selectSessionDirectory,
   selectUnreadSessionIds,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
@@ -43,17 +45,13 @@ import {
   partitionSidebarSessions,
   type SessionDateGroupKey,
 } from '@/features/cowork/sessionPresentation';
-import { useExtensionAvailability } from '@/features/plugins/extensions/useExtensionEnablement';
+import { appBrowserRegistry } from '@/features/plugins/app/runtime';
 import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
 
-import { useCollaborationRooms } from '../collaboration/CollaborationPanel';
-import { useTeamDiscussionRooms } from '../discussions/teamDiscussionNavigation';
-import { useSwarmWorkflowActivity } from '../swarm-workflow/useSwarmWorkflowActivity';
-import { collectRelatedRunningSessionIds } from './sessionListActivity';
 import SessionListPageFooter, { type SessionListPageFooterProps } from './SessionListPageFooter';
 
-type ListDirectoryEntry = SessionDirectoryEntry & Pick<CoworkSessionSummary, 'collaboration'>;
+type ListDirectoryEntry = SessionDirectoryEntry;
 
 interface DateGroupPage {
   key: SessionDateGroupKey;
@@ -77,7 +75,6 @@ interface UngroupedDroppableZoneProps {
   onRenameSession: (sessionId: string, title: string) => void;
   onExportSession: (sessionId: string) => void;
   onCopySession: (sessionId: string) => void;
-  onCollaborationSession?: (sessionId: string) => void;
   onTogglePinned: (sessionId: string, pinned: boolean) => void;
   onToggleSelection: (sessionId: string) => void;
   onEnterBatchMode: (sessionId: string) => void;
@@ -110,7 +107,6 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
   onRenameSession,
   onExportSession,
   onCopySession,
-  onCollaborationSession,
   onTogglePinned,
   onToggleSelection,
   onEnterBatchMode,
@@ -137,9 +133,6 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
       onRename={title => onRenameSession(session.id, title)}
       onExport={() => onExportSession(session.id)}
       onCopy={() => onCopySession(session.id)}
-      onCollaboration={
-        onCollaborationSession ? () => onCollaborationSession(session.id) : undefined
-      }
       onTogglePinned={() => onTogglePinned(session.id, !session.pinned)}
       onToggleSelection={() => onToggleSelection(session.id)}
       onEnterBatchMode={() => onEnterBatchMode(session.id)}
@@ -209,7 +202,6 @@ interface UngroupedSessionListProps {
   onRenameSession: (sessionId: string, title: string) => void;
   onExportSession: (sessionId: string) => void;
   onCopySession: (sessionId: string) => void;
-  onCollaborationSession?: (sessionId: string) => void;
   onToggleSelection: (sessionId: string) => void;
   onEnterBatchMode: (sessionId: string) => void;
   groupRecentSessionsByDate?: boolean;
@@ -231,20 +223,16 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   onRenameSession,
   onExportSession,
   onCopySession,
-  onCollaborationSession,
   onToggleSelection,
   onEnterBatchMode,
   groupRecentSessionsByDate = false,
 }) => {
   const dispatch = useDispatch();
-  const rooms = useCollaborationRooms();
-  const discussions = useTeamDiscussionRooms();
-  const swarmAvailability = useExtensionAvailability(OpenClawExtensionId.SWARM_WORKFLOW);
-  const workflowActivity = useSwarmWorkflowActivity(
-    inputDirectory.map(session => session.id),
-    swarmAvailability,
+  const pluginRevision = useSyncExternalStore(
+    appBrowserRegistry.subscribe,
+    appBrowserRegistry.getContextRevision,
   );
-  const allSessions = useSelector(selectSessionDirectory);
+
   const unreadSessionIds = useSelector(selectUnreadSessionIds);
   const sessionRuntimeActivity = useSelector(
     (state: RootState) => state.cowork.sessionRuntimeActivity,
@@ -252,26 +240,16 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   const directory = useMemo<ListDirectoryEntry[]>(
     () =>
       inputDirectory.map(session => {
-        const room = rooms.find(room => room.anchorSessionId === session.id);
-        if (!room) return session;
-        const members = allSessions.filter(item =>
-          room.members.some(member => member.sessionId === item.id),
-        );
-        const running =
-          room.members.some(member => sessionRuntimeActivity[member.sessionId]) ||
-          members.some(item => item.status === 'running');
+        const presentation = appBrowserRegistry.sessionPresentation(session.id);
         return {
           ...session,
-          status: room.deleting
-            ? ('error' as const)
-            : running
-              ? ('running' as const)
-              : session.status,
-          updatedAt: Math.max(session.updatedAt, ...members.map(item => item.updatedAt)),
-          collaboration: { memberCount: room.members.length, deleting: Boolean(room.deleting) },
+          status: presentation.status ?? session.status,
+          updatedAt: Math.max(session.updatedAt, presentation.updatedAt ?? 0),
         };
       }),
-    [inputDirectory, rooms, allSessions, sessionRuntimeActivity],
+    // Registry projections live outside React; revision changes invalidate this metadata view.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [inputDirectory, pluginRevision],
   );
   const summaryById = useMemo(
     () => new Map(inputSessions.map(session => [session.id, session])),
@@ -285,10 +263,8 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
           .filter(([, running]) => running)
           .map(([sessionId]) => sessionId),
         ...directory.filter(session => session.status === 'running').map(session => session.id),
-        ...collectRelatedRunningSessionIds(rooms, discussions, sessionRuntimeActivity),
-        ...Object.keys(workflowActivity).filter(sessionId => workflowActivity[sessionId]),
       ]),
-    [sessionRuntimeActivity, directory, rooms, discussions, workflowActivity],
+    [sessionRuntimeActivity, directory],
   );
   const groups = useSelector(selectGroups);
   const expandedGroupIds = useSelector(selectExpandedGroupIds);
@@ -460,8 +436,13 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
       if (session.groupId) result.get(session.groupId)?.push(session);
     }
     for (const sessions of result.values()) {
-      sessions.sort((a, b) => Number(b.pinned) - Number(a.pinned) ||
-        b.updatedAt - a.updatedAt || b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+      sessions.sort(
+        (a, b) =>
+          Number(b.pinned) - Number(a.pinned) ||
+          b.updatedAt - a.updatedAt ||
+          b.createdAt - a.createdAt ||
+          a.id.localeCompare(b.id),
+      );
     }
     return result;
   }, [regularSessions, groups]);
@@ -480,10 +461,13 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
       if (midnightTimer) clearTimeout(midnightTimer);
       const now = new Date();
       const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
-      midnightTimer = setTimeout(() => {
-        setCalendarRefreshKey(Date.now());
-        scheduleNextMidnight();
-      }, Math.max(1, nextMidnight - Date.now() + 100));
+      midnightTimer = setTimeout(
+        () => {
+          setCalendarRefreshKey(Date.now());
+          scheduleNextMidnight();
+        },
+        Math.max(1, nextMidnight - Date.now() + 100),
+      );
     };
     const refreshWhenVisible = () => {
       if (document.visibilityState !== 'visible') return;
@@ -505,17 +489,29 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   const pageEntries = (key: string, entries: ListDirectoryEntry[], all = false) =>
     all ? entries : entries.slice(0, pageLimits[key] ?? SESSION_LIST_PAGE_SIZE);
   const visibleEntries = [
-    ...sourceGroups.flatMap(group => expandedSourceGroupIds.has(group.id)
-      ? pageEntries(`source:${group.id}`, group.sessions) : []),
-    ...groups.flatMap(group => expandedGroupIds.includes(group.id)
-      ? pageEntries(`group:${group.id}`, groupedSessionsByGroupId.get(group.id) ?? []) : []),
+    ...sourceGroups.flatMap(group =>
+      expandedSourceGroupIds.has(group.id) ? pageEntries(`source:${group.id}`, group.sessions) : [],
+    ),
+    ...groups.flatMap(group =>
+      expandedGroupIds.includes(group.id)
+        ? pageEntries(`group:${group.id}`, groupedSessionsByGroupId.get(group.id) ?? [])
+        : [],
+    ),
     ...(groupRecentSessionsByDate
-      ? dateGroups.flatMap(group => collapsedDateGroupKeys.has(group.key)
-        ? [] : pageEntries(`date:${group.key}`, group.sessions,
-          !DEFAULT_COLLAPSED_SESSION_DATE_GROUP_KEYS.includes(group.key)))
+      ? dateGroups.flatMap(group =>
+          collapsedDateGroupKeys.has(group.key)
+            ? []
+            : pageEntries(
+                `date:${group.key}`,
+                group.sessions,
+                !DEFAULT_COLLAPSED_SESSION_DATE_GROUP_KEYS.includes(group.key),
+              ),
+        )
       : unGroupedSessions),
   ];
-  const missingIds = visibleEntries.filter(entry => !summaryById.has(entry.id)).map(entry => entry.id);
+  const missingIds = visibleEntries
+    .filter(entry => !summaryById.has(entry.id))
+    .map(entry => entry.id);
   const requestKey = JSON.stringify(missingIds);
   useEffect(() => {
     if (requestKey === '[]') return;
@@ -529,7 +525,9 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
         if (!cancelled) setFailedRequestKey(requestKey);
       },
     );
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [requestKey, retryRevision]);
 
   const visibleIdsKey = JSON.stringify(
@@ -554,10 +552,11 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
       loadFailed: failed,
       hasMore: page.length < entries.length,
       onRetry: () => setRetryRevision(revision => revision + 1),
-      onShowMore: () => setPageLimits(current => ({
-        ...current,
-        [key]: (current[key] ?? SESSION_LIST_PAGE_SIZE) + SESSION_LIST_PAGE_SIZE,
-      })),
+      onShowMore: () =>
+        setPageLimits(current => ({
+          ...current,
+          [key]: (current[key] ?? SESSION_LIST_PAGE_SIZE) + SESSION_LIST_PAGE_SIZE,
+        })),
     };
   };
   const toggleDateGroup = (key: SessionDateGroupKey) => {
@@ -661,7 +660,6 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
                 onRename={onRenameSession}
                 onExportSession={onExportSession}
                 onCopySession={onCopySession}
-                onCollaborationSession={onCollaborationSession}
                 onTogglePinned={handleTogglePinned}
                 onToggleSelection={onToggleSelection}
                 onEnterBatchMode={onEnterBatchMode}
@@ -703,7 +701,6 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
                     onRename={onRenameSession}
                     onExportSession={onExportSession}
                     onCopySession={onCopySession}
-                    onCollaborationSession={onCollaborationSession}
                     onTogglePinned={handleTogglePinned}
                     onToggleSelection={onToggleSelection}
                     onEnterBatchMode={onEnterBatchMode}
@@ -726,8 +723,11 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
           <UngroupedDroppableZone
             unGroupedSessions={groupRecentSessionsByDate ? [] : resolveSummaries(unGroupedSessions)}
             dateGroups={dateGroups.map(group => {
-              const { sessions, ...footer } = pageProps(`date:${group.key}`, group.sessions,
-                !DEFAULT_COLLAPSED_SESSION_DATE_GROUP_KEYS.includes(group.key));
+              const { sessions, ...footer } = pageProps(
+                `date:${group.key}`,
+                group.sessions,
+                !DEFAULT_COLLAPSED_SESSION_DATE_GROUP_KEYS.includes(group.key),
+              );
               return {
                 key: group.key,
                 count: group.sessions.length,
@@ -749,7 +749,6 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
             onRenameSession={onRenameSession}
             onExportSession={onExportSession}
             onCopySession={onCopySession}
-            onCollaborationSession={onCollaborationSession}
             onTogglePinned={handleTogglePinned}
             onToggleSelection={onToggleSelection}
             onEnterBatchMode={onEnterBatchMode}

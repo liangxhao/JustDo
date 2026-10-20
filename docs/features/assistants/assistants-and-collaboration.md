@@ -26,6 +26,8 @@ Git 初始化由产品单独执行：普通会话通过原生工程根目录和�
 
 模型创建使用 `assistants_create`，底层调用原生 `agents.create/update/files`；未完成的创建保持禁用以便恢复。档案模型为空时继承应用默认模型；长期助手可选独立模型。main 的旧档案模型覆盖不影响新会话或输入框，保存 main 时清除该旧覆盖。
 
+创建助手会热更新原生配置。App 插件请求桥按真实注册、调用者权限和取消状态核验，不能把全局配置重载尚未收尾当作插件退役，或丢弃原生已经确认的创建响应。角色文件最终读回成功后，启用产品档案前仍须再次核对当前 Main 请求权限。撤权或结果未知时保留同一 disabled/preparing 身份，不删除、不换 ID，也不自动重放创建或写入；需要恢复时沿既有显式重试流程核验。
+
 删除非 main、非默认助手前检查原生活动工作。删除后设置中隐藏该档案，拒绝修改与新任务邀请；历史图仍保留名称、原生身份、角色文件和消息归属。定时任务的技能库整理卡从当前成员、搜索与聚合状态中排除已删除助手，但原生任务和历史结果仍保留；这个显示过滤不撤销原生执行。不会调用会清除原生会话索引的 `agents.delete`，也不删除项目文件。同名新档案获得新身份；已删除身份的中断创建重试必须在原生写入前拒绝。数据约束见[存储设计](../../architecture/10-data-storage.md)。
 
 ### 可编辑角色模板
@@ -157,9 +159,9 @@ stateDiagram-v2
 
 ## 维护和验证入口
 
-- `src/main/cowork/agent-team/collaborationCoordinator.test.ts`：成员准备、可信来源、原生回执、停止和删除流程。
-- `src/main/data/agent-team/collaborationStore.test.ts`：唯一约束、预算、状态迁移及恢复。
-- `src/shared/cowork/agent-team/collaboration.test.ts`：参数、路由和状态合约。
+- `plugins/extensions/agent-team/host/collaboration/collaborationCoordinator.test.ts`：成员准备、可信来源、原生回执、停止和删除流程。
+- `plugins/extensions/agent-team/host/data/collaborationStore.test.ts`：唯一约束、预算、状态迁移及恢复。
+- `plugins/extensions/agent-team/app/contracts/collaboration.test.ts`：参数、路由和状态合约。
 - `tests/openclaw/extensions/agent-team/collaboration.test.ts`：扩展工具、hooks 和原生通信接入。
 - `src/main/openclaw/config/openclawConfigSync.logout.test.ts`：可选扩展开关保留。
 

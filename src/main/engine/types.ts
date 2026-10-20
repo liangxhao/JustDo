@@ -124,9 +124,6 @@ export interface CoworkRuntimeEvents {
   sessionDeleted: (sessionId: string) => void;
   cronChanged: (payload: unknown) => void;
   workboardChanged: (payload: unknown) => void;
-  swarmWorkflowChanged: (
-    event: import('../../shared/cowork/swarm-workflow').SwarmWorkflowChangedEvent,
-  ) => void;
   taskChanged: (event: { sessionId?: string }) => void;
 }
 

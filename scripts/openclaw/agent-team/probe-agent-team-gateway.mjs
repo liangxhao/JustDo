@@ -8,9 +8,12 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   writeFileSync,
   copyFileSync,
+  cpSync,
   existsSync,
+  statSync,
   symlinkSync,
 } from 'node:fs';
 import net from 'node:net';
@@ -19,6 +22,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { buildSync } from 'esbuild';
+import gatewayBundleLauncher from '../../../src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs';
 
 const repoRoot = path.resolve(import.meta.dirname, '../../..');
 const runtimeSource = path.resolve(
@@ -28,18 +32,26 @@ const runtimeSource = path.resolve(
 // Narrow launch regressions can omit the already independent capacity matrix.
 const skipConcurrencyMatrix = process.argv.includes('--skip-concurrency-matrix');
 const historyToggleOnly = process.argv.includes('--history-toggle-only');
-const state = mkdtempSync(path.join(os.tmpdir(), 'justdo-team-gateway-'));
-const workspace = path.join(state, 'workspace');
-const project = path.join(state, 'project');
+const coldStartOnly = process.argv.includes('--cold-start-only');
+const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'justdo-team-gateway-'));
+// Native watches admit the config directory's parent and each workspace's
+// parent. Keep those authorities private, as in the desktop layout: a config
+// directly under fixtureRoot would observe the shared OS temp directory, and
+// a project directly under state would observe SQLite, logs and runtime I/O.
+const state = path.join(fixtureRoot, 'gateway-state');
+const workspace = path.join(state, 'agent-workspaces');
+const project = path.join(fixtureRoot, 'projects', 'room');
+mkdirSync(state);
+mkdirSync(path.dirname(project));
 // Isolated package layout preserves genuine bundled-plugin provenance without
 // modifying the installed runtime or bypassing native plugin trust checks.
-const runtime = path.join(state, 'runtime');
+const runtime = path.join(fixtureRoot, 'runtime');
 mkdirSync(runtime);
 for (const entry of readdirSync(runtimeSource, { withFileTypes: true })) {
   if (entry.name === 'dist') continue;
   const source = path.join(runtimeSource, entry.name),
     target = path.join(runtime, entry.name);
-  if (entry.isDirectory()) symlinkSync(source, target, 'junction');
+  if (statSync(source).isDirectory()) symlinkSync(source, target, 'junction');
   else copyFileSync(source, target);
 }
 mkdirSync(path.join(runtime, 'dist'));
@@ -47,7 +59,9 @@ for (const entry of readdirSync(path.join(runtimeSource, 'dist'), { withFileType
   if (entry.name === 'extensions') continue;
   const source = path.join(runtimeSource, 'dist', entry.name),
     target = path.join(runtime, 'dist', entry.name);
-  if (entry.isDirectory()) symlinkSync(source, target, 'junction');
+  // Native public surfaces must remain physically inside this isolated package;
+  // 10.4 correctly rejects dist junctions escaping the owning runtime root.
+  if (entry.isDirectory()) cpSync(source, target, { recursive: true });
   else copyFileSync(source, target);
 }
 const bundledPath = path.join(runtime, 'dist', 'extensions');
@@ -62,9 +76,9 @@ await new Promise(resolve => portServer.listen(0, '127.0.0.1', resolve));
 const port = portServer.address().port;
 await new Promise(resolve => portServer.close(resolve));
 let modelRequests = 0;
-const startTracking = async () => client.request('teamProbe.metrics', { reset: true });
+const startTracking = async () => requestTeam('teamProbe.metrics', { reset: true });
 async function checkTracking(limit, count) {
-  const metrics = await client.request('teamProbe.metrics', {});
+  const metrics = await requestTeam('teamProbe.metrics', {});
   assert.equal(metrics.started, count, 'count actual native starts, not SDK turn reservations');
   assert.equal(metrics.settled, count, 'every actual run must settle');
   assert.equal(metrics.active, 0);
@@ -81,6 +95,7 @@ let heldRequests = 0;
 let organizerNativeContexts = 0;
 const organizerContextChecks = [];
 const toolObservations = [];
+const lifecycleObservations = [];
 const launchObservations = [];
 let reviewDeliveryIds = [];
 let reviewerFinishResponse;
@@ -97,9 +112,18 @@ const model = createServer(async (request, response) => {
     )
     .join('\n');
   if (modelContext.includes('The initiating message is relayed by the organizing assistant')) {
+    const senders = mainBinding.readConversationSenders(body.messages);
     organizerContextChecks.push({
-      sender: /"sender"\s*:\s*\{\s*"id":\s*"agent:alice"/.test(modelContext),
-      bot: /"is_bot":\s*true/.test(modelContext),
+      request: modelRequests,
+      relayRoles: body.messages
+        .filter(message =>
+          JSON.stringify(message.content).includes(
+            'The initiating message is relayed by the organizing assistant',
+          ),
+        )
+        .map(message => message.role),
+      sender: senders.some(sender => sender.id === 'agent:alice'),
+      bot: senders.some(sender => sender.id === 'agent:alice' && sender.isBot),
       relay: modelContext.includes('not a direct user message'),
       authorization: modelContext.includes('does not grant additional user authorization'),
     });
@@ -318,14 +342,21 @@ copyFileSync(
   path.join(planPath, 'openclaw.plugin.json'),
 );
 const cfg = {
+  logging: { file: path.join(state, 'native.log'), level: 'debug', consoleLevel: 'info' },
   gateway: { mode: 'local', bind: 'loopback', port, auth: { mode: 'token', token } },
   update: { checkOnStart: false, auto: { enabled: false } },
   agents: {
     ownership: 'explicit',
-    entries: { alice: {}, bob: {}, carol: {}, dave: {}, erin: {}, frank: {} },
+    // The narrow history check does not exercise the six-member capacity matrix.
+    entries: Object.fromEntries(
+      (historyToggleOnly
+        ? ['alice', 'bob']
+        : ['alice', 'bob', 'carol', 'dave', 'erin', 'frank']
+      ).map(agentId => [agentId, { workspace: path.join(workspace, agentId) }]),
+    ),
     defaults: {
       maxConcurrent: 6,
-      workspace,
+      workspace: path.join(workspace, 'alice'),
       skipBootstrap: true,
       heartbeat: { every: '0m' },
       systemAgent: { agentId: 'alice' },
@@ -373,20 +404,52 @@ const cfg = {
 };
 const configPath = path.join(state, 'openclaw.json');
 writeFileSync(configPath, JSON.stringify(cfg));
+const mainBindingPath = path.join(state, 'main-plugin-binding.mjs');
+buildSync({
+  absWorkingDir: repoRoot,
+  stdin: {
+    contents: `export { bindPluginGatewayClient, runWithPluginRequestBinding }
+      from './src/main/engine/gateway/pluginRequestBinding';
+      export { isAppNativeHandshake } from './packages/app-plugin-sdk/native-contract';
+      export { readConversationSenders } from './tests/openclaw/fixtures/agent-team-model-context';
+      export { buildGatewayLaunchEnvironment } from './src/main/openclaw/runtime/launch/gatewayLaunchArgs';`,
+    resolveDir: repoRoot,
+    loader: 'ts',
+  },
+  outfile: mainBindingPath,
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+});
+const mainBinding = await import(pathToFileURL(mainBindingPath));
+// Exercise the desktop launch policy, including its Windows filesystem watcher
+// configuration, rather than an independently maintained environment.
 const env = {
-  ...process.env,
+  ...mainBinding.buildGatewayLaunchEnvironment(
+    gatewayBundleLauncher.buildOpenClawCompileCacheEnvironment(
+      process.env,
+      path.join(state, '.compile-cache'),
+    ),
+    { appStartedAtMs: Date.now(), stateDir: state },
+  ),
   OPENCLAW_HOME: state,
   OPENCLAW_STATE_DIR: state,
   OPENCLAW_CONFIG_PATH: configPath,
   OPENCLAW_NO_RESPAWN: '1',
   OPENCLAW_DISABLE_BUNDLED_PLUGINS: '0',
   OPENCLAW_BUNDLED_PLUGINS_DIR: bundledPath,
+  OPENCLAW_DEBUG: '1',
 };
 Object.assign(process.env, env);
 const child = spawn(
   process.execPath,
   [
-    path.join(runtime, 'gateway-launcher.cjs'),
+    path.join(
+      runtime,
+      existsSync(path.join(runtime, 'gateway-launcher.cjs'))
+        ? 'gateway-launcher.cjs'
+        : 'openclaw.mjs',
+    ),
     'gateway',
     'run',
     '--allow-unconfigured',
@@ -395,6 +458,7 @@ const child = spawn(
   ],
   { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] },
 );
+const childClosed = new Promise(resolve => child.once('close', resolve));
 let output = '';
 child.stdout.on('data', chunk => {
   output += chunk;
@@ -407,8 +471,103 @@ let hostHandler;
 let hostLifecycleObserver;
 let nativeSourceRun;
 let gatewayConnections = 0;
+let appBinding;
+const appClient = mainBinding.bindPluginGatewayClient({
+  request: (...args) => client.request(...args),
+});
+function withAppBinding(operation) {
+  const admitted = appBinding;
+  return mainBinding.runWithPluginRequestBinding(
+    admitted,
+    () =>
+      assert.equal(appBinding, admitted, 'the admitted Native registration must remain current'),
+    operation,
+  );
+}
+function requestTeam(method, params, options) {
+  return withAppBinding(() => appClient.request(method, params, options));
+}
+async function awaitAppNativeRegistration() {
+  const deadline = Date.now() + 45000;
+  while (Date.now() < deadline) {
+    try {
+      const receipt = await client.request('agent-team.app.handshake', {}, { timeoutMs: 2000 });
+      assert.ok(mainBinding.isAppNativeHandshake(receipt));
+      assert.equal(receipt.pluginId, 'agent-team');
+      appBinding = {
+        pluginId: receipt.pluginId,
+        registrationId: receipt.registrationId,
+        processId: receipt.processId,
+        gatewayMethods: receipt.gatewayMethods,
+      };
+      return;
+    } catch {
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+  }
+  throw new Error('Native config must settle before plugin execution');
+}
 const watchdog = setTimeout(() => child.kill(), 360000);
+async function verifySkillDiscovery() {
+  const skillPath = path.join(state, 'skills/polling-probe');
+  await client.request('skills.status', { agentId: 'alice' });
+  mkdirSync(skillPath, { recursive: true });
+  for (let revision = 0; revision < 3; revision++) {
+    const description = `Synthetic polling revision ${revision}.`;
+    const startedAt = performance.now();
+    writeFileSync(
+      path.join(skillPath, 'SKILL.md'),
+      `---\nname: polling-probe\ndescription: ${description}\n---\n# Polling probe\n`,
+    );
+    let found = false;
+    do {
+      const report = await client.request(
+        'skills.status',
+        { agentId: 'alice' },
+        { timeoutMs: 5000 },
+      );
+      found = report.skills.some(
+        skill => skill.name === 'polling-probe' && skill.description === description,
+      );
+      if (found) break;
+      await new Promise(resolve => setTimeout(resolve, 500));
+    } while (performance.now() - startedAt < 5000);
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    assert.ok(
+      found && elapsedMs < 5000,
+      'skill file changes must remain discoverable within the UI refresh window',
+    );
+    console.log(JSON.stringify({ check: 'native-skill-file-discovery', revision, elapsedMs }));
+  }
+  const retiredPath = path.join(state, 'retired-polling-probe');
+  renameSync(skillPath, retiredPath);
+  const deletedAt = performance.now();
+  let removed = false;
+  do {
+    const report = await client.request('skills.status', { agentId: 'alice' }, { timeoutMs: 5000 });
+    removed = !report.skills.some(skill => skill.name === 'polling-probe');
+    if (removed) break;
+    await new Promise(resolve => setTimeout(resolve, 200));
+  } while (performance.now() - deletedAt < 5000);
+  assert.ok(
+    removed && performance.now() - deletedAt < 5000,
+    'atomic skill removal must remain available while Gateway watches the directory',
+  );
+  console.log(
+    JSON.stringify({
+      check: 'native-skill-atomic-removal',
+      elapsedMs: Math.round(performance.now() - deletedAt),
+    }),
+  );
+}
 async function verifyHistoryToggle(serviceInput, members) {
+  const historyInput = {
+    roomId: 'service',
+    discussionIds: ['service-discussion'],
+    members: members.map(member => ({ agentId: member.agentId, sessionId: member.sessionId })),
+  };
+  const originalHistory = await requestTeam('teamDiscussion.history', historyInput);
+  assert.equal(originalHistory.messages.filter(message => message.role === 'assistant').length, 2);
   const collaborationHistoryInput = {
     lookups: [
       {
@@ -422,7 +581,7 @@ async function verifyHistoryToggle(serviceInput, members) {
   };
   const missingReceipt = { messages: [{ deliveryId: 'history-availability' }] };
   assert.deepEqual(
-    await client.request('collaboration.messages', collaborationHistoryInput),
+    await requestTeam('collaboration.messages', collaborationHistoryInput),
     missingReceipt,
   );
   const config = await client.request('config.get', {});
@@ -451,17 +610,9 @@ async function verifyHistoryToggle(serviceInput, members) {
     'completed',
     'independent runtime services must reconcile receipts when Agent Team is disabled',
   );
-  const historyInput = {
-    roomId: 'service',
-    discussionIds: ['service-discussion'],
-    members: members.map(member => ({
-      agentId: member.agentId,
-      sessionId: member.sessionId,
-    })),
-  };
-  await assert.rejects(() => client.request('teamDiscussion.history', historyInput));
-  await assert.rejects(() => client.request('collaboration.messages', collaborationHistoryInput));
-  await assert.rejects(() => client.request('teamDiscussion.start', serviceInput));
+  await assert.rejects(() => requestTeam('teamDiscussion.history', historyInput));
+  await assert.rejects(() => requestTeam('collaboration.messages', collaborationHistoryInput));
+  await assert.rejects(() => requestTeam('teamDiscussion.start', serviceInput));
   // Retain a disabled discovery source, then follow the application toggle's
   // native write -> skill sync -> safe restart ordering. Old discovery inputs
   // must not remove the enabled skill when another file watch refreshes later.
@@ -484,27 +635,41 @@ async function verifyHistoryToggle(serviceInput, members) {
   while (gatewayConnections === connectionsBeforeRestart && Date.now() < restartDeadline)
     await new Promise(resolve => setTimeout(resolve, 100));
   assert.ok(gatewayConnections > connectionsBeforeRestart, 'safe native restart must reconnect');
-  const restoredHistory = await client.request('teamDiscussion.history', historyInput);
+  await awaitAppNativeRegistration();
+  const restoredHistory = await requestTeam('teamDiscussion.history', historyInput);
   assert.equal(restoredHistory.messages.filter(message => message.role === 'assistant').length, 2);
+  assert.deepEqual(restoredHistory.messages, originalHistory.messages);
   assert.deepEqual(
-    await client.request('collaboration.messages', collaborationHistoryInput),
+    await requestTeam('collaboration.messages', collaborationHistoryInput),
     missingReceipt,
   );
   await client.request('skills.status', { agentId: 'alice' });
   assert.equal(existsSync(publishedSkill), true);
-  const watchSkill = path.join(workspace, 'skills/publication-probe');
+  const watchSkill = path.join(workspace, 'alice', 'skills/publication-probe');
   mkdirSync(watchSkill, { recursive: true });
   for (let revision = 0; revision < 3; revision++) {
+    const description = `Synthetic publication regression ${revision}.`;
     writeFileSync(
       path.join(watchSkill, 'SKILL.md'),
-      `---\nname: publication-probe\ndescription: Synthetic publication regression.\n---\n# Revision ${revision}\n`,
+      `---\nname: publication-probe\ndescription: ${description}\n---\n# Revision ${revision}\n`,
     );
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    const refreshDeadline = Date.now() + 5000;
+    let refreshed = false;
+    do {
+      const report = await client.request('skills.status', { agentId: 'alice' });
+      refreshed = report.skills.some(
+        skill => skill.name === 'publication-probe' && skill.description === description,
+      );
+      if (refreshed) break;
+      await new Promise(resolve => setTimeout(resolve, 200));
+    } while (Date.now() < refreshDeadline);
+    assert.ok(refreshed, 'native workspace watch must observe the exact skill revision');
     await client.request('skills.update', { skillKey: 'agent-team', enabled: true });
     assert.equal(existsSync(publishedSkill), true, 'refresh must retain the enabled native skill');
   }
 }
 async function runChecks() {
+  let coldResult;
   const deadline = Date.now() + 45000;
   let healthy = false;
   while (Date.now() < deadline) {
@@ -520,24 +685,30 @@ async function runChecks() {
     await new Promise(resolve => setTimeout(resolve, 300));
   }
   assert.ok(healthy, 'fixture Gateway must become healthy');
-  // Existing packaged-runtime smoke harness uses this same client discovery.
-  // It is test-only; production adapters import only public plugin SDK exports.
-  const clientFile = readdirSync(path.join(runtime, 'dist')).find(
-    file =>
-      /^client-.*\.mjs$/.test(file) &&
-      readFileSync(path.join(runtime, 'dist', file), 'utf8').includes('GatewayClient as t'),
+  // Match the public Native SDK used by the managed desktop backend; chunk
+  // names and minified export aliases are not a runtime contract.
+  const { GatewayClient } = await import(
+    pathToFileURL(path.join(runtime, 'dist/plugin-sdk/gateway-runtime.js')).href
   );
-  assert.ok(clientFile);
-  const { t: GatewayClient } = await import(pathToFileURL(path.join(runtime, 'dist', clientFile)));
+  assert.equal(typeof GatewayClient, 'function', 'Prepared runtime exposes public GatewayClient');
   const hello = await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('Fixture handshake timed out')), 15000);
     client = new GatewayClient({
       url: `ws://127.0.0.1:${port}`,
       token,
       clientName: 'gateway-client',
+      role: 'operator',
       mode: 'backend',
       scopes: ['operator.admin'],
+      // Match the managed desktop backend: its loopback token authenticates
+      // this connection without opening a second native state writer in Main.
+      deviceIdentity: null,
+      sharedStateMode: 'read-only',
       onEvent: event => {
+        if (event.event === 'agent' && event.payload.stream === 'lifecycle') {
+          const { runId, sessionKey, sessionId, data } = event.payload;
+          lifecycleObservations.push({ runId, sessionKey, sessionId, data });
+        }
         if (event.event === 'agent') hostLifecycleObserver?.(event.payload);
         if (event.event === 'plugin.agent-team.requested' && hostHandler) {
           nativeSourceRun = event.payload.sourceRunId;
@@ -557,50 +728,97 @@ async function runChecks() {
     client.start();
   });
   assert.ok(hello.features.methods.includes('teamProbe.run'), 'packaged SDK plugin must register');
-  for (const agentId of ['alice', 'bob']) {
-    const prepared = await client.request('sessions.create', {
-      key: `agent:${agentId}:justdo-team:group:fixture`,
-      cwd: project,
-      permissionMode: 'read-only',
-    });
-    assert.equal(prepared.entry.sessionRoot, project);
-    assert.equal(prepared.entry.permissionMode, 'read-only');
-  }
-  const result = await client.request('teamProbe.run', {}, { timeoutMs: 45000 });
-  assert.equal(modelRequests, 4);
-  assert.equal(result.executions.length, 2);
-  assert.equal(result.references.length, 2);
-  const toolResults = toolObservations
-    .filter(item => item.results)
-    .map(item => JSON.stringify(item.results));
-  assert.equal(toolResults.length, 2);
-  assert.ok(
-    toolResults.every(
-      text => text.includes('ROOM_PROJECT_MARKER') && !text.includes('WRONG_AGENT_WORKSPACE'),
-    ),
-    'all participants must read from the room project',
-  );
-  const beforeCommand = modelRequests;
-  await assert.rejects(
-    client.request('teamProbe.run', { message: '/reset' }, { timeoutMs: 10000 }),
-    /teamDiscussionCommandsUnavailable/,
-  );
-  assert.equal(modelRequests, beforeCommand);
-  const history = await client.request('teamDiscussion.history', {
-    roomId: 'fixture',
-    discussionIds: ['fixture-discussion'],
-    members: result.executions.map(execution => ({
-      agentId: execution.agentId,
-      sessionId: execution.sessionId,
-    })),
-  });
-  assert.equal(history.messages.filter(message => message.role === 'user').length, 1);
-  assert.equal(history.messages.filter(message => message.role === 'assistant').length, 2);
-  for (const reference of result.references)
+  // HELLO precedes completion of Native config activation. Use the same public
+  // read-only admission receipt as Main. Do not prewarm skills or models.
+  await awaitAppNativeRegistration();
+  if (!historyToggleOnly) {
+    // Keep the independent tool/CWD/command matrix and its original 30s/45s
+    // limits in the full probe, outside the history registration check.
+    const coldMembers = new Map();
+    for (const agentId of ['alice', 'bob']) {
+      const prepared = await client.request('sessions.create', {
+        key: `agent:${agentId}:justdo-team:group:fixture`,
+        cwd: project,
+        permissionMode: 'read-only',
+      });
+      assert.equal(prepared.entry.sessionRoot, project);
+      assert.equal(prepared.entry.permissionMode, 'read-only');
+      coldMembers.set(agentId, prepared.entry);
+    }
+    const coldStartedAt = performance.now();
+    const result = await requestTeam('teamProbe.run', {}, { timeoutMs: 45000 });
+    coldResult = result;
+    const coldElapsedMs = Math.round(performance.now() - coldStartedAt);
     assert.ok(
-      history.messages.some(message => message.id === `${reference.agentId}:${reference.entryId}`),
+      coldElapsedMs < 30000,
+      'cold tool execution and delivery must fit the original budget',
     );
-  const prepared = await client.request('teamDiscussion.prepare', {
+    assert.deepEqual(
+      result.outcomes.toSorted((a, b) => a.agentId.localeCompare(b.agentId)),
+      [
+        { agentId: 'alice', outcome: 'completed' },
+        { agentId: 'bob', outcome: 'completed' },
+      ],
+    );
+    for (const execution of result.executions) {
+      const member = coldMembers.get(execution.agentId);
+      assert.ok(member, 'execution must belong to a prepared member');
+      assert.equal(execution.sessionId, member.sessionId);
+      assert.equal(execution.lifecycleRevision, member.lifecycleRevision);
+      assert.equal(execution.sessionKey, `agent:${execution.agentId}:justdo-team:group:fixture`);
+      assert.ok(execution.runId);
+    }
+    assert.equal(modelRequests, 4);
+    assert.equal(result.executions.length, 2);
+    assert.equal(result.references.length, 2);
+    const toolResults = toolObservations
+      .filter(item => item.results)
+      .map(item => JSON.stringify(item.results));
+    assert.equal(toolResults.length, 2);
+    assert.ok(
+      toolResults.every(
+        text => text.includes('ROOM_PROJECT_MARKER') && !text.includes('WRONG_AGENT_WORKSPACE'),
+      ),
+      'all participants must read from the room project',
+    );
+    const beforeCommand = modelRequests;
+    await assert.rejects(
+      requestTeam('teamProbe.run', { message: '/reset' }, { timeoutMs: 10000 }),
+      /teamDiscussionCommandsUnavailable/,
+    );
+    assert.equal(modelRequests, beforeCommand);
+    const history = await requestTeam('teamDiscussion.history', {
+      roomId: 'fixture',
+      discussionIds: ['fixture-discussion'],
+      members: result.executions.map(execution => ({
+        agentId: execution.agentId,
+        sessionId: execution.sessionId,
+      })),
+    });
+    assert.equal(history.messages.filter(message => message.role === 'user').length, 1);
+    assert.equal(history.messages.filter(message => message.role === 'assistant').length, 2);
+    for (const reference of result.references)
+      assert.ok(
+        history.messages.some(
+          message => message.id === `${reference.agentId}:${reference.entryId}`,
+        ),
+      );
+    console.log(
+      JSON.stringify({
+        check: 'cold-team-tool-cwd',
+        elapsedMs: coldElapsedMs,
+        abortBudgetMs: 30000,
+        rpcBudgetMs: 45000,
+        completed: result.outcomes.length,
+        delivered: result.references.length,
+      }),
+    );
+    // The cold-only proof ends at native tool execution and history delivery.
+    // Workspace skill watching is a separate matrix with its own refresh contract.
+    if (coldStartOnly) return;
+    await verifySkillDiscovery();
+  }
+  const prepared = await requestTeam('teamDiscussion.prepare', {
     roomId: 'service',
     agentIds: ['alice', 'bob'],
     cwd: project,
@@ -632,11 +850,16 @@ async function runChecks() {
     discussionId: 'service-discussion',
     members: prepared.members,
   };
-  await client.request('teamDiscussion.start', serviceInput);
+  const admittedAt = Date.now();
+  await requestTeam('teamDiscussion.start', serviceInput);
+  if (historyToggleOnly)
+    console.log(
+      JSON.stringify({ check: 'bound-product-start-accepted', elapsedMs: Date.now() - admittedAt }),
+    );
   let receipt;
-  const serviceDeadline = Date.now() + 20000;
+  const serviceDeadline = Date.now() + (historyToggleOnly ? 90000 : 20000);
   do {
-    receipt = await client.request('teamDiscussion.status', {
+    receipt = await requestTeam('teamDiscussion.status', {
       roomId: 'service',
       discussionId: 'service-discussion',
     });
@@ -645,8 +868,15 @@ async function runChecks() {
   } while (Date.now() < serviceDeadline);
   assert.equal(receipt.state, 'completed');
   assert.equal(receipt.executions.length, 2);
+  for (const execution of receipt.executions) {
+    const member = prepared.members.find(item => item.agentId === execution.agentId);
+    assert.ok(member);
+    assert.equal(execution.sessionId, member.sessionId);
+    assert.equal(execution.lifecycleRevision, member.lifecycleRevision);
+    assert.equal(execution.outcome, 'completed');
+  }
   const afterService = modelRequests;
-  await client.request('teamDiscussion.start', serviceInput);
+  await requestTeam('teamDiscussion.start', serviceInput);
   assert.equal(modelRequests, afterService, 'replaying admission must not call models');
   if (historyToggleOnly) {
     await verifyHistoryToggle(serviceInput, prepared.members);
@@ -661,17 +891,17 @@ async function runChecks() {
     );
     return;
   }
-  const cancelled = await client.request('teamDiscussion.stop', {
+  const cancelled = await requestTeam('teamDiscussion.stop', {
     roomId: 'service',
     discussionId: 'cancel-before-start',
   });
   assert.equal(cancelled.state, 'cancelled');
-  await client.request('teamDiscussion.start', {
+  await requestTeam('teamDiscussion.start', {
     ...serviceInput,
     discussionId: 'cancel-before-start',
   });
   assert.equal(modelRequests, afterService, 'late admission after stop must remain cancelled');
-  const messageMembers = await client.request('teamDiscussion.prepare', {
+  const messageMembers = await requestTeam('teamDiscussion.prepare', {
     roomId: 'message-room',
     agentIds: ['alice', 'bob'],
     cwd: project,
@@ -685,7 +915,7 @@ async function runChecks() {
     readOnly: false,
     members: messageMembers.members.map(member => ({ ...member, name: member.agentId })),
   };
-  await client.request('teamDiscussion.start', {
+  await requestTeam('teamDiscussion.start', {
     room: messageRoom,
     members: messageMembers.members,
     discussionId: 'message-discussion',
@@ -700,7 +930,7 @@ async function runChecks() {
   });
   const messageDeadline = Date.now() + 20000;
   do {
-    receipt = await client.request('teamDiscussion.status', {
+    receipt = await requestTeam('teamDiscussion.status', {
       roomId: 'message-room',
       discussionId: 'message-discussion',
     });
@@ -708,7 +938,7 @@ async function runChecks() {
     await new Promise(resolve => setTimeout(resolve, 100));
   } while (Date.now() < messageDeadline);
   assert.equal(receipt.state, 'completed');
-  const messageHistory = await client.request('teamDiscussion.history', {
+  const messageHistory = await requestTeam('teamDiscussion.history', {
     roomId: 'message-room',
     discussionIds: ['message-discussion'],
     members: messageMembers.members.map(member => ({
@@ -722,18 +952,18 @@ async function runChecks() {
     ),
     'message-tool output must enter the public native history',
   );
-  await client.request('teamProbe.run', { hold: true });
+  await requestTeam('teamProbe.run', { hold: true });
   const holdDeadline = Date.now() + 15000;
   while (!heldRequests && Date.now() < holdDeadline)
     await new Promise(resolve => setTimeout(resolve, 100));
   assert.ok(heldRequests, 'native model execution must start before cancellation');
-  const stopped = await client.request('teamProbe.stop', {}, { timeoutMs: 15000 });
+  const stopped = await requestTeam('teamProbe.stop', {}, { timeoutMs: 15000 });
   assert.equal(stopped.stopped, true);
   assert.ok(heldRequests <= 2, 'cancellation must prevent a second group round');
   // Public production dispatcher limiter: real native runs, tools, late settled events and multiple rounds.
   for (const capacity of skipConcurrencyMatrix ? [] : [1, 2, 6]) {
     const roomId = `limited-${capacity}`;
-    const preparedLimit = await client.request('teamDiscussion.prepare', {
+    const preparedLimit = await requestTeam('teamDiscussion.prepare', {
       roomId,
       agentIds:
         capacity === 6
@@ -748,7 +978,7 @@ async function runChecks() {
       members: preparedLimit.members.map(member => ({ ...member, name: member.agentId })),
     };
     await startTracking();
-    await client.request('teamDiscussion.start', {
+    await requestTeam('teamDiscussion.start', {
       room: roomLimit,
       members: preparedLimit.members,
       discussionId: roomId,
@@ -765,7 +995,7 @@ async function runChecks() {
     const deadlineLimit = Date.now() + 60000;
     let limited;
     do {
-      limited = await client.request('teamDiscussion.status', { roomId, discussionId: roomId });
+      limited = await requestTeam('teamDiscussion.status', { roomId, discussionId: roomId });
       if (limited.state !== 'running') break;
       await new Promise(resolve => setTimeout(resolve, 100));
     } while (Date.now() < deadlineLimit);
@@ -775,7 +1005,7 @@ async function runChecks() {
   }
   const heldBeforeLimit = heldRequests;
   const cancelledMembers = (
-    await client.request('teamDiscussion.prepare', {
+    await requestTeam('teamDiscussion.prepare', {
       roomId: 'limited-1',
       agentIds: ['alice', 'bob'],
       cwd: project,
@@ -783,7 +1013,7 @@ async function runChecks() {
     })
   ).members;
   await startTracking();
-  await client.request('teamDiscussion.start', {
+  await requestTeam('teamDiscussion.start', {
     room: {
       ...serviceRoom,
       id: 'limited-1',
@@ -804,7 +1034,7 @@ async function runChecks() {
   const waitLimit = Date.now() + 15000;
   while (heldRequests === heldBeforeLimit && Date.now() < waitLimit)
     await new Promise(resolve => setTimeout(resolve, 100));
-  let cancelledLimit = await client.request(
+  let cancelledLimit = await requestTeam(
     'teamDiscussion.stop',
     { roomId: 'limited-1', discussionId: 'limited-cancel' },
     { timeoutMs: 15000 },
@@ -812,7 +1042,7 @@ async function runChecks() {
   const cancelledDeadline = Date.now() + 15000;
   while (cancelledLimit.state === 'unknown' && Date.now() < cancelledDeadline) {
     await new Promise(resolve => setTimeout(resolve, 50));
-    cancelledLimit = await client.request('teamDiscussion.status', {
+    cancelledLimit = await requestTeam('teamDiscussion.status', {
       roomId: 'limited-1',
       discussionId: 'limited-cancel',
     });
@@ -836,7 +1066,7 @@ async function runChecks() {
     absWorkingDir: repoRoot,
     stdin: {
       contents:
-        "export {AgentTeamSettingsService} from './src/main/data/agent-team/agentTeamSettingsService'; export {TeamDiscussionCoordinator} from './src/main/cowork/agent-team/teamDiscussionCoordinator'; export {CollaborationCoordinator} from './src/main/cowork/agent-team/collaborationCoordinator'; export {initializeTeamDiscussionTables} from './src/main/data/agent-team/teamDiscussionStore'; export {initializeCollaborationTables,CollaborationStore} from './src/main/data/agent-team/collaborationStore';",
+        "export {AgentTeamSettingsService} from './plugins/extensions/agent-team/host/data/agentTeamSettingsService'; export {TeamDiscussionCoordinator} from './plugins/extensions/agent-team/host/discussion/teamDiscussionCoordinator'; export {CollaborationCoordinator} from './plugins/extensions/agent-team/host/collaboration/collaborationCoordinator'; export {initializeTeamDiscussionTables} from './plugins/extensions/agent-team/host/data/teamDiscussionStore'; export {initializeCollaborationTables,CollaborationStore} from './plugins/extensions/agent-team/host/data/collaborationStore';",
       resolveDir: repoRoot,
     },
     outfile: hostBundle,
@@ -888,7 +1118,10 @@ async function runChecks() {
     listAgents: () => ['alice', 'bob', 'carol'].map(id => ({ id, name: id, enabled: true })),
     getSessionRuns: () => [{ rootRunId: nativeSourceRun, state: 'running' }],
   };
-  const requestGateway = (method, params) => client.request(method, params, { timeoutMs: 45000 });
+  // Host entry points capture their registration once; nested requests retain
+  // that admission across awaits, as they do in the actual Main host.
+  const requestGateway = (method, params) =>
+    appClient.request(method, params, { timeoutMs: 45000 });
   const discussionHost = new host.TeamDiscussionCoordinator({
     getDatabase: () => database,
     getStore: () => hostStore,
@@ -905,20 +1138,50 @@ async function runChecks() {
     requestGateway,
     discussion: (...args) => discussionHost.fromAgent(...args),
   });
-  hostHandler = payload => collaborationHost.handle(payload);
-  hostLifecycleObserver = payload => collaborationHost.observeExecution(payload);
+  hostHandler = payload => withAppBinding(() => collaborationHost.handle(payload));
+  hostLifecycleObserver = payload =>
+    withAppBinding(() => collaborationHost.observeExecution(payload));
+  const callDiscussionHost = (method, ...args) =>
+    withAppBinding(() => discussionHost[method](...args));
+  // Progress reads use exact Native receipts; history is loaded after settlement.
+  const readSettledDiscussion = async (roomId, deadline) => {
+    const run = discussionHost.metadata.latestRun(roomId);
+    assert.ok(run, 'a sent discussion must have an exact native run');
+    let status;
+    while (Date.now() < deadline) {
+      status = await requestTeam(
+        'teamDiscussion.status',
+        {
+          roomId,
+          discussionId: run.discussionId,
+        },
+        { timeoutMs: Math.max(1, deadline - Date.now()) },
+      );
+      if (status.state === 'completed' || status.state === 'failed') break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.ok(
+      Date.now() <= deadline && ['completed', 'failed'].includes(status?.state),
+      'the exact native discussion must settle within the original budget',
+    );
+    assert.equal(status.discussionId, run.discussionId);
+    assert.equal(status.roomId, roomId);
+    const result = await callDiscussionHost('read', roomId);
+    assert.ok(Date.now() <= deadline, 'native history must load within the original budget');
+    return result;
+  };
   await client.request('sessions.create', {
     key: 'agent:alice:justdo:organizer',
     cwd: project,
     permissionMode: 'guarded',
   });
   const launchSource = (
-    await client.request('teamDiscussion.summary', {
+    await requestTeam('teamDiscussion.summary', {
       operation: 'source',
       sessionKey: 'agent:alice:justdo:organizer',
     })
   ).source;
-  await client.request('agentTeam.launch.register', {
+  await requestTeam('agentTeam.launch.register', {
     expectedGeneration: 0,
     sessionKey: 'agent:alice:justdo:organizer',
     nativeSessionId: launchSource.sessionId,
@@ -941,8 +1204,17 @@ async function runChecks() {
   while (Date.now() < organizedDeadline) {
     const room = discussionHost.metadata.list()[0];
     if (room) {
-      organized = await discussionHost.read(room.id);
-      if (organized.latestRun?.state === 'completed') break;
+      const run = discussionHost.metadata.latestRun(room.id);
+      if (run) {
+        const status = await requestTeam('teamDiscussion.status', {
+          roomId: room.id,
+          discussionId: run.discussionId,
+        });
+        if (status.state === 'completed') {
+          organized = await callDiscussionHost('read', room.id);
+          break;
+        }
+      }
     }
     await new Promise(resolve => setTimeout(resolve, 150));
   }
@@ -970,7 +1242,7 @@ async function runChecks() {
     launchObservations[4].includes('Explicit Agent Team launch is unconfirmed'),
     'native tool_call must still gate its write target',
   );
-  await client.request('agentTeam.launch.confirm', {
+  await requestTeam('agentTeam.launch.confirm', {
     sessionKey: 'agent:alice:justdo:organizer',
     nativeSessionId: launchSource.sessionId,
     clientTurnId: 'organizer-request',
@@ -997,7 +1269,9 @@ async function runChecks() {
     'both native members must receive assistant-attributed organizer context',
   );
   assert.ok(
-    organizerContextChecks.every(check => check.sender && check.relay && check.authorization),
+    organizerContextChecks.every(
+      check => check.sender && check.bot && check.relay && check.authorization,
+    ),
     'native model input must identify the assistant relay and its authorization boundary',
   );
   assert.ok(
@@ -1007,7 +1281,7 @@ async function runChecks() {
   const summaryDeadline = Date.now() + 20000;
   let summary;
   do {
-    await discussionHost.reconcile();
+    await callDiscussionHost('reconcile');
     summary = discussionHost.metadata.summary(organized.latestRun.discussionId);
     if (summary?.state === 'delivered' || summary?.state === 'failed') break;
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -1022,12 +1296,12 @@ async function runChecks() {
   });
   assert.ok(JSON.stringify(summaryHistory).includes('TEAM_SUMMARY_COMPLETE'));
   const countAfterSummary = modelRequests;
-  await discussionHost.reconcile();
+  await callDiscussionHost('reconcile');
   assert.equal(modelRequests, countAfterSummary, 'delivered summaries must not be resent');
   const settleRoomSummaries = async roomId => {
     const deadline = Date.now() + 30000;
     while (discussionHost.metadata.hasUnsettledSummary(roomId) && Date.now() < deadline) {
-      await discussionHost.reconcile();
+      await callDiscussionHost('reconcile');
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     assert.equal(
@@ -1041,15 +1315,15 @@ async function runChecks() {
   const defaultSettings = teamSettings.read();
   defaultSettings.value.discussion.maxConcurrent = 1;
   teamSettings.save(defaultSettings.value, defaultSettings.revision);
-  const sourceBefore = await client.request('teamProbe.sessionPolicy', { key: sourceKey });
-  const participating = await discussionHost.setParticipation({
+  const sourceBefore = await requestTeam('teamProbe.sessionPolicy', { key: sourceKey });
+  const participating = await callDiscussionHost('setParticipation', {
     roomId: organized.room.id,
     expectedRevision: organized.room.revision,
     enabled: true,
   });
   assert.equal(participating.members.filter(member => member.ownership === 'source').length, 1);
   await startTracking();
-  await discussionHost.send({
+  await callDiscussionHost('send', {
     roomId: participating.id,
     requestId: 'source-participation',
     expectedRevision: participating.revision,
@@ -1057,18 +1331,19 @@ async function runChecks() {
     selectedAgentIds: [],
     rounds: 1,
   });
-  let sourceRound;
-  const participationDeadline = Date.now() + 25000;
-  do {
-    sourceRound = await discussionHost.read(participating.id);
-    if (sourceRound.latestRun?.state === 'completed' || sourceRound.latestRun?.state === 'failed')
-      break;
-    await new Promise(resolve => setTimeout(resolve, 100));
-  } while (Date.now() < participationDeadline);
+  const sourceWaitStartedAt = Date.now();
+  const sourceRound = await readSettledDiscussion(participating.id, sourceWaitStartedAt + 25000);
   assert.equal(
     sourceRound.latestRun?.state,
     'completed',
     'production source participation must settle',
+  );
+  console.log(
+    JSON.stringify({
+      check: 'source-participation-settlement',
+      elapsedMs: Date.now() - sourceWaitStartedAt,
+      budgetMs: 25000,
+    }),
   );
   await checkTracking(1, 3);
   await settleRoomSummaries(participating.id);
@@ -1081,7 +1356,7 @@ async function runChecks() {
     ),
     'original source must publish to the group',
   );
-  const sourceAfter = await client.request('teamProbe.sessionPolicy', { key: sourceKey });
+  const sourceAfter = await requestTeam('teamProbe.sessionPolicy', { key: sourceKey });
   assert.equal(
     sourceAfter.sessionId,
     sourceBefore.sessionId,
@@ -1092,7 +1367,7 @@ async function runChecks() {
     sourceBefore.delivery,
     'source participation must preserve canonical delivery',
   );
-  await discussionHost.send({
+  await callDiscussionHost('send', {
     roomId: participating.id,
     requestId: 'source-only',
     expectedRevision: participating.revision,
@@ -1100,14 +1375,7 @@ async function runChecks() {
     selectedAgentIds: ['alice'],
     rounds: 1,
   });
-  let directRound;
-  const directDeadline = Date.now() + 25000;
-  do {
-    directRound = await discussionHost.read(participating.id);
-    if (directRound.latestRun?.state === 'completed' || directRound.latestRun?.state === 'failed')
-      break;
-    await new Promise(resolve => setTimeout(resolve, 100));
-  } while (Date.now() < directDeadline);
+  const directRound = await readSettledDiscussion(participating.id, Date.now() + 25000);
   assert.equal(directRound.latestRun?.state, 'completed');
   await settleRoomSummaries(participating.id);
   assert.ok(
@@ -1119,19 +1387,19 @@ async function runChecks() {
     ),
     'source-only mentions retain the public question',
   );
-  await discussionHost.setParticipation({
+  await callDiscussionHost('setParticipation', {
     roomId: participating.id,
     expectedRevision: participating.revision,
     enabled: false,
   });
-  const afterDisable = await discussionHost.read(participating.id, undefined, [
+  const afterDisable = await callDiscussionHost('read', participating.id, undefined, [
     sourceRound.latestRun.discussionId,
   ]);
   assert.ok(
     afterDisable.messages.some(message => message.agentId === 'alice'),
     'public source replies survive opting out',
   );
-  await discussionHost.stop(participating.id);
+  await callDiscussionHost('stop', participating.id);
   await client.request('sessions.patch', { key: sourceKey, toolOverrides: { webSearch: false } });
   const restrictedDescription = await client.request('sessions.describe', { key: sourceKey });
   assert.equal(
@@ -1139,16 +1407,16 @@ async function runChecks() {
     false,
     'source overrides must persist independently of global config',
   );
-  const restrictedSource = await client.request('teamProbe.sessionPolicy', { key: sourceKey });
+  const restrictedSource = await requestTeam('teamProbe.sessionPolicy', { key: sourceKey });
   assert.equal(restrictedSource.toolOverrides.webSearch, false);
   for (const action of ['create', 'send']) {
-    await client.request('collaboration.bind', {
+    await requestTeam('collaboration.bind', {
       sessionKey: sourceKey,
       runId: nativeSourceRun,
       toolCallId: `restricted-${action}`,
     });
     await assert.rejects(
-      client.request('collaboration.dispatch', {
+      requestTeam('collaboration.dispatch', {
         operation: 'discussion',
         sessionKey: sourceKey,
         toolCallId: `restricted-${action}`,
@@ -1164,19 +1432,19 @@ async function runChecks() {
     namespace: 'state',
     value: { enabled: true, updatedAt: Date.now() },
   });
-  const plannedSource = await client.request('teamProbe.sessionPolicy', { key: sourceKey });
+  const plannedSource = await requestTeam('teamProbe.sessionPolicy', { key: sourceKey });
   assert.equal(
     plannedSource.planEnabled,
     true,
-    'native getSessionEntry must retain the registered Plan slot used by collaboration',
+    'native getSessionEntry must retain the registered Plan state used by collaboration',
   );
-  await client.request('collaboration.bind', {
+  await requestTeam('collaboration.bind', {
     sessionKey: sourceKey,
     runId: nativeSourceRun,
     toolCallId: 'planned-create',
   });
   await assert.rejects(
-    client.request('collaboration.dispatch', {
+    requestTeam('collaboration.dispatch', {
       operation: 'discussion',
       sessionKey: sourceKey,
       toolCallId: 'planned-create',
@@ -1284,7 +1552,7 @@ async function runChecks() {
     JSON.stringify(reviewHistory).includes('REVIEW_FINDINGS_NATIVE'),
     'review findings remain in native history',
   );
-  const afterSourceDelete = await discussionHost.read(participating.id, undefined, [
+  const afterSourceDelete = await callDiscussionHost('read', participating.id, undefined, [
     sourceRound.latestRun.discussionId,
   ]);
   assert.equal(afterSourceDelete.historyUnavailable, false);
@@ -1301,8 +1569,8 @@ async function runChecks() {
         ok: true,
         stateDirectory: state,
         modelRequests,
-        executions: result.executions.length,
-        references: result.references.length,
+        executions: coldResult.executions.length,
+        references: coldResult.references.length,
         projectReadVerified: true,
         commandsRejected: true,
         historyVerified: true,
@@ -1334,7 +1602,21 @@ try {
   await runChecks();
 } catch (error) {
   console.error(error.stack ?? error.message);
-  console.error(JSON.stringify({ modelRequests, toolObservations }));
+  const metrics = await client
+    ?.request('teamProbe.metrics', {}, { timeoutMs: 2000 })
+    .catch(() => undefined);
+  console.error(
+    JSON.stringify({
+      modelRequests,
+      organizerContextChecks,
+      tools: toolObservations.map(item => ({
+        offered: item.offered?.length,
+        results: item.results?.length,
+      })),
+      lifecycleObservations,
+      metrics,
+    }),
+  );
   process.exitCode = 1;
 } finally {
   clearTimeout(watchdog);
@@ -1355,6 +1637,7 @@ try {
     await exited;
     clearTimeout(forceStop);
   }
+  await childClosed;
   model.closeAllConnections();
   await new Promise(resolve => model.close(resolve));
   writeFileSync(path.join(state, 'probe.log'), output.replaceAll(token, '<fixture-token>'));

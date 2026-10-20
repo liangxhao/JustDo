@@ -1,3 +1,4 @@
+import { appPluginTranslations } from '../../shared/plugins/app/appPluginTranslations';
 /**
  * Lightweight i18n module for the Electron main process.
  *
@@ -9,7 +10,6 @@
  *   setLanguage('en');
  *   const label = t('trayStartConversation'); // "Start Conversation"
  */
-
 import { PRODUCT_NAME } from '../../shared/productMetadata';
 import { startupWindowTranslations } from './window/startupWindowTranslations';
 
@@ -34,6 +34,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     localSpeechModelRangeInvalid: '模型服务返回的文件分段与请求不符，请联系管理员检查模型服务。',
     coworkBranchCreationPending:
       '该副本或分支尚未完成创建。请在会话列表中检查或删除，暂时无法继续发送。',
+    ...appPluginTranslations.zh,
     computerOverlayActive: '正在操作电脑',
     computerOverlayWaiting: '电脑操作待续',
     windowMinimize: '最小化',
@@ -106,7 +107,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     sessionStoragePreparationChanged: '准备期间会话或连接已变更，请重新发送。',
     extensionConversionNotImplemented: `该扩展不满足 ${PRODUCT_NAME} 的扩展格式。请使用包含 openclaw.plugin.json 和已编译运行入口的原生扩展包；其他插件格式不能直接导入。`,
     extensionImportSourceChanged: '导入准备期间源目录发生变化，请重试。',
-    agentTeamSkillSyncFailed: '扩展开关已保存，但 Agent Team 技能同步未完成。请重试同一开关操作。',
     engineRestartUnconfirmed: '重启请求的结果尚未确认，未追加重启。请稍后查看引擎状态。',
     engineRestartReadyUnconfirmed: '引擎已接受重启，但尚未确认就绪。未追加重启，请稍后查看状态。',
     engineConfigApplicationUnconfirmed:
@@ -116,10 +116,15 @@ const translations: Record<LanguageType, Record<string, string>> = {
     extensionRuntimeServiceFailed: '扩展服务启动失败，请查看运行时诊断。',
     extensionOperationBusy: '另一个插件或配置操作仍在处理中，请等待完成后再试。',
     extensionUninstallUnconfirmed: '扩展卸载结果尚未确认，请稍后刷新状态；未重复执行卸载。',
+    extensionToggleUnconfirmed: '扩展开关结果尚未确认，请稍后刷新状态；未重复执行启停。',
+    extensionHotToggleUnavailable: '暂时无法连接插件热更新服务，请恢复 Gateway 连接后再操作。',
+    extensionCatalogUnavailable: 'Gateway 连接暂时不可用，插件列表将在连接恢复后刷新。',
+    extensionHotToggleRestartRequired: '原生运行时未完成插件热更新；已保留配置，但未重启 Gateway。',
     extensionInstallUnconfirmed: '原生运行时未确认扩展安装结果，请稍后刷新状态。',
     extensionInstallReceiptIncomplete:
       '扩展安装已保存，但 Gateway 运行态回执不完整，请刷新扩展状态。',
     extensionPackageOwnershipUnconfirmed: '暂时无法确认扩展包与原生条目的归属，请稍后刷新状态。',
+    extensionSkillSyncFailed: '扩展开关已保存，但 插件技能同步未完成。请重试同一开关操作。',
     skillSettingApplyUnconfirmed: '技能设置已保存，暂时无法同步状态。',
     builtinModelAuthenticationUnavailable: '内置模型认证已失效，请等待登录凭据刷新。',
     credentialStorageUnavailable: '操作系统安全凭据存储不可用，无法安全保存内置凭据。',
@@ -208,6 +213,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'The internal speech model server is not configured. Contact your administrator before installing models.',
     coworkBranchCreationPending:
       'This copy or branch is unfinished. Inspect or delete it in the session list before continuing.',
+    ...appPluginTranslations.en,
     computerOverlayActive: 'Operating your computer',
     computerOverlayWaiting: 'Between computer actions',
     windowMinimize: 'Minimize',
@@ -308,8 +314,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     sessionStoragePreparationChanged: 'The conversation or connection changed during preparation. Please send again.',
     extensionConversionNotImplemented: `This extension does not meet ${PRODUCT_NAME}'s extension format requirements. Use a native extension package containing openclaw.plugin.json and a compiled runtime entry. Other plugin formats cannot be imported directly.`,
     extensionImportSourceChanged: 'The import source changed during preparation. Please try again.',
-    agentTeamSkillSyncFailed:
-      'The extension setting was saved, but the Agent Team skill could not be synchronized. Retry the same toggle.',
     engineRestartUnconfirmed:
       'The restart request outcome is unconfirmed. No additional restart was requested. Check the engine status later.',
     engineRestartReadyUnconfirmed:
@@ -325,12 +329,22 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'Another plugin or configuration operation is still in progress. Wait for it to finish, then try again.',
     extensionUninstallUnconfirmed:
       'The extension uninstall result is not confirmed. Refresh its status later; uninstall was not repeated.',
+    extensionToggleUnconfirmed:
+      'The extension toggle result is not confirmed. Refresh its status later; the toggle was not repeated.',
+    extensionCatalogUnavailable:
+      'The Gateway connection is unavailable. The plugin list will refresh when it reconnects.',
+    extensionHotToggleUnavailable:
+      'Plugin hot reload is unavailable. Restore the Gateway connection before trying again.',
+    extensionHotToggleRestartRequired:
+      'The native runtime did not complete plugin hot reload. Configuration was retained and the Gateway was not restarted.',
     extensionInstallUnconfirmed:
       'The native runtime did not confirm the extension installation. Refresh its status later.',
     extensionInstallReceiptIncomplete:
       'The extension installation was saved, but its Gateway runtime receipt is incomplete. Refresh its status.',
     extensionPackageOwnershipUnconfirmed:
       'The extension package ownership could not be confirmed. Refresh its status later.',
+    extensionSkillSyncFailed:
+      'The extension setting was saved, but the extension skills could not be synchronized. Retry the same toggle.',
     skillSettingApplyUnconfirmed:
       'The skill setting was saved, but its status could not be synchronized.',
     builtinModelAuthenticationUnavailable:

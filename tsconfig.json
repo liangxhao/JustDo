@@ -20,9 +20,14 @@
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["src/shared/*"],
-      "@/*": ["src/renderer/*"]
+      "@/*": ["src/renderer/*"],
+      "@app-plugin/sdk/*": ["./packages/app-plugin-sdk/*"]
     }
   },
   "include": ["src/renderer", "src/shared"],
-  "references": [{ "path": "./tsconfig.node.json" }]
-} 
+  "references": [
+    {
+      "path": "./tsconfig.node.json"
+    }
+  ]
+}

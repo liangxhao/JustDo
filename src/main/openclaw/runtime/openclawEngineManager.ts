@@ -310,6 +310,8 @@ export class OpenClawEngineManager extends EventEmitter {
   private diagnosticStartedAt = Date.now();
   private diagnosticId = crypto.randomUUID();
   private diagnosticFailure: EngineFailureContext | null = null;
+  private gatewayMutationLease = false;
+  private gatewayMutationUnresolved = false;
   private gatewayProcessGeneration = 0;
   private gatewayLaunchEnvVars: Record<string, string> = {};
   private gatewayLaunchEnvironmentGeneration = 0;
@@ -630,6 +632,7 @@ export class OpenClawEngineManager extends EventEmitter {
     if (this.gatewayShutdown?.failure) throw this.gatewayShutdownFailure();
     if (!this.applicationShuttingDown && this.canStartGateway && !this.canStartGateway())
       throw new Error('Startup history preparation has not completed.');
+    if (this.gatewayMutationLease || this.gatewayMutationUnresolved) return this.getStatus();
     // Consumers need the final lifecycle result, including configuration restarts
     // queued while a cold start is preparing its environment.
     let status: OpenClawEngineStatus;
@@ -648,6 +651,7 @@ export class OpenClawEngineManager extends EventEmitter {
 
   private startGatewayOnce(): Promise<OpenClawEngineStatus> {
     if (this.gatewayShutdown?.failure) return Promise.reject(this.gatewayShutdownFailure());
+    if (this.gatewayMutationLease || this.gatewayMutationUnresolved) return Promise.resolve(this.getStatus());
     if (this.applicationShuttingDown) return Promise.resolve(this.getStatus());
     if (this.canStartGateway && !this.canStartGateway())
       return Promise.reject(new Error('Startup history preparation has not completed.'));
@@ -1277,8 +1281,10 @@ export class OpenClawEngineManager extends EventEmitter {
       const child = this.gatewayProcess;
       console.log('[OpenClaw] stopping gateway process...');
       await this.stopGatewayProcess(child).catch(error => {
+        this.gatewayMutationUnresolved = true;
         throw this.gatewayShutdown?.failure ? this.gatewayShutdownFailure() : error;
       });
+      this.gatewayMutationUnresolved = false;
       console.log('[OpenClaw] gateway process stopped');
       if (this.gatewayProcess === child) this.gatewayProcess = null;
     }
@@ -1301,12 +1307,26 @@ export class OpenClawEngineManager extends EventEmitter {
     });
     this.gatewayPortListener?.(null);
   }
+  /** Native package changes cannot race a live instance or an automatic restart. */
+  async withStoppedGatewayForMutation<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.gatewayMutationLease) throw new Error('appPluginUnavailable');
+    this.gatewayMutationLease = true;
+    try {
+      await this.stopGateway();
+      await Promise.allSettled([this.startGatewayPromise, this.restartGatewayPromise].filter((promise): promise is Promise<OpenClawEngineStatus> => promise !== null));
+      await this.stopGateway();
+      if (this.gatewayProcess) throw new Error('appPluginCleanupUnresolved');
+      this.gatewayMutationUnresolved = false;
+      return await operation();
+    } finally { this.gatewayMutationLease = false; }
+  }
+  isGatewayMutationInProgress(): boolean { return this.gatewayMutationLease; }
 
   async restartGateway(
     options: OpenClawGatewayRestartOptions = {},
   ): Promise<OpenClawEngineStatus> {
     if (this.gatewayShutdown?.failure) throw this.gatewayShutdownFailure();
-    if (this.applicationShuttingDown) return this.getStatus();
+    if (this.applicationShuttingDown || this.gatewayMutationLease || this.gatewayMutationUnresolved) return this.getStatus();
     if (this.restartGatewayPromise) {
       if (!options.afterCurrent) {
         console.log(
@@ -2197,6 +2217,9 @@ export class OpenClawEngineManager extends EventEmitter {
       if (isCurrentProcess) {
         this.gatewayConfigReloadMonitor.observeGatewayExit();
         this.gatewayProcess = null;
+        // A stop timeout retains this owner until its actual exit is observed.
+        // A superseded process cannot release the current owner's fence.
+        this.gatewayMutationUnresolved = false;
       }
       if (this.expectedGatewayExits.has(child)) {
         this.expectedGatewayExits.delete(child);

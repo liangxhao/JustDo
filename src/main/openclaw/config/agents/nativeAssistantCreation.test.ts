@@ -128,6 +128,79 @@ describe('native persistent assistant creation', () => {
     expect(agents.get(result.agentId)?.enabled).toBe(true);
     expect(changed).toHaveBeenCalledOnce();
   });
+  it('keeps the profile preparing when its Main owner retires during final role verification', async () => {
+    const original = request.getMockImplementation()!;
+    let releaseVerification!: () => void;
+    let beginVerification!: () => void;
+    const verification = new Promise<void>(resolve => {
+      releaseVerification = resolve;
+    });
+    const verifying = new Promise<void>(resolve => {
+      beginVerification = resolve;
+    });
+    let roleReads = 0;
+    request.mockImplementation(async (method, params) => {
+      const result = await original(method, params);
+      if (method === 'agents.files.get' && ++roleReads === 2) {
+        beginVerification();
+        await verification;
+      }
+      return result;
+    });
+    let active = true;
+    const assertActive = () => {
+      if (!active) throw new Error('appPluginRetired');
+    };
+
+    const creation = service.create(input, 'retired-during-verification', assertActive);
+    await verifying;
+    active = false;
+    releaseVerification();
+    const result = await creation;
+
+    expect(result).toMatchObject({ status: 'incomplete', error: 'appPluginRetired' });
+    expect(agents.get(result.agentId)?.enabled).toBe(false);
+    expect(native.get(result.agentId)?.content).toBe(input.instructions);
+    const record = db.prepare('SELECT value FROM kv').get() as { value: string };
+    expect(JSON.parse(record.value)).toMatchObject({ stage: 'preparing' });
+    expect(changed).not.toHaveBeenCalled();
+    expect(request.mock.calls.map(([method]) => method)).toEqual([
+      'agents.list',
+      'agents.create',
+      'agents.list',
+      'agents.update',
+      'agents.files.get',
+      'agents.files.set',
+      'agents.files.get',
+    ]);
+  });
+  it('retains the prepared identity without replaying an unknown final role verification', async () => {
+    const original = request.getMockImplementation()!;
+    let roleReads = 0;
+    request.mockImplementation(async (method, params) => {
+      const result = await original(method, params);
+      if (method === 'agents.files.get' && ++roleReads === 2)
+        throw Object.assign(new Error('verification response lost'), {
+          code: 'CLIENT_TIMEOUT',
+          requestSent: true,
+        });
+      return result;
+    });
+
+    const result = await service.create(input, 'unknown-verification', () => {});
+
+    expect(result).toMatchObject({ status: 'incomplete', error: 'verification response lost' });
+    expect(agents.get(result.agentId)?.enabled).toBe(false);
+    expect(native.get(result.agentId)?.content).toBe(input.instructions);
+    const record = db.prepare('SELECT value FROM kv').get() as { value: string };
+    expect(JSON.parse(record.value)).toMatchObject({ stage: 'preparing' });
+    expect(agents.size).toBe(1);
+    expect(native.size).toBe(1);
+    expect(request.mock.calls.filter(([method]) => method === 'agents.create')).toHaveLength(1);
+    expect(request.mock.calls.filter(([method]) => method === 'agents.files.set')).toHaveLength(1);
+    expect(roleReads).toBe(2);
+    expect(changed).not.toHaveBeenCalled();
+  });
   it('reuses the same call and same-name requests without overwriting an assistant', async () => {
     const first = await service.create(input, 'call', () => {});
     expect(await service.create(input, 'call', () => {})).toMatchObject({

@@ -204,6 +204,11 @@ npm test
 Read the matching contract before editing; use [feature index](docs/features/README.md)
 for other areas. Current validation limits belong in the owning feature or architecture document.
 
+App plugin Main/UI loading, SDK contributions, independent packaging and lifecycle
+follow [App plugin host](docs/architecture/17-app-plugin-host.md) and
+[SDK authoring](packages/app-plugin-sdk/README.md). Team and Workflow application
+business stays inside its plugin; Core composes only generic capabilities.
+
 | Task                                                       | Required documents                                                                                                                                                              |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Architecture, directories, process/IPC boundaries          | [Architecture](docs/architecture/02-architecture.md), [process model](docs/architecture/03-process-model.md)                                                                    |

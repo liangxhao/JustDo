@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import type { AppUiState } from '@app-plugin/sdk/browser';
 
 export interface CollaborationContinueRequest {
   requestId: string;
@@ -43,6 +44,28 @@ interface ContinueDraft {
 const drafts = new Map<string, ContinueDraft>();
 const listeners = new Set<() => void>();
 let requestsRevision = 0;
+let storage: AppUiState | undefined;
+export function bindContinueDraftStorage(state: AppUiState): () => void {
+  drafts.clear();
+  const saved = state.get('continuation-drafts');
+  if (Array.isArray(saved))
+    for (const entry of saved) {
+      if (
+        Array.isArray(entry) &&
+        typeof entry[0] === 'string' &&
+        entry[1] &&
+        typeof entry[1].text === 'string' &&
+        Array.isArray(entry[1].attachments) &&
+        Number.isSafeInteger(entry[1].inputEpoch)
+      )
+        drafts.set(entry[0], entry[1]);
+    }
+  storage = state;
+  requestsRevision++;
+  return () => {
+    if (storage === state) storage = undefined;
+  };
+}
 
 export function getContinueDraft(key: string): ContinueDraft {
   let draft = drafts.get(key);
@@ -56,6 +79,7 @@ export function updateContinueDraft(key: string, update: Partial<ContinueDraft>)
   const previous = getContinueDraft(key);
   const next = { ...previous, ...update };
   drafts.set(key, next);
+  storage?.set('continuation-drafts', [...drafts]);
   if (
     previous.lastRequestId !== next.lastRequestId ||
     previous.status !== next.status ||

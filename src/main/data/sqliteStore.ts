@@ -4,8 +4,6 @@ import { EventEmitter } from 'events';
 import path from 'path';
 
 import { DB_FILENAME } from '../core/appConstants';
-import { initializeCollaborationTables } from './agent-team/collaborationStore';
-import { initializeTeamDiscussionTables } from './agent-team/teamDiscussionStore';
 import { transformAppConfigCredentials } from './appConfigCredentials';
 import { initializeSessionDiagnosticsTables } from './sessionDiagnosticsStore';
 
@@ -242,9 +240,6 @@ export class SqliteStore {
         updated_at INTEGER NOT NULL
       );
     `);
-
-    initializeCollaborationTables(this.db);
-    initializeTeamDiscussionTables(this.db);
 
     // Create MCP servers table
     this.db.exec(`

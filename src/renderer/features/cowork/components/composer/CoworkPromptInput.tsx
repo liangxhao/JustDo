@@ -15,7 +15,6 @@ import { FolderIcon } from '@heroicons/react/24/solid';
 import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
 import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
 import { recordingImagesInStepOrder } from '@shared/browser/browserRecording';
-import { appendAgentTeamInstruction } from '@shared/cowork/agent-team/agentTeamPrompt';
 import {
   GoalExecutionPhase,
   type GoalExecutionSnapshot,
@@ -31,9 +30,7 @@ import {
   parseGoalStartObjective,
   shouldClearSlashCommandComposerBeforeExecution,
 } from '@shared/cowork/slashCommands';
-import type { SwarmWorkflowOptions } from '@shared/cowork/swarm-workflow';
 import type { OpenClawModelChoice } from '@shared/openclaw/models';
-import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 import { isLocalAudioAttachment } from '@shared/speech/localAsr';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
@@ -89,11 +86,7 @@ import {
   selectDraftPrompts,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
-import {
-  clearSubmittedAgentTeamMode,
-  removeDraftMessageQuotes,
-  setDraftAgentTeamMode,
-} from '@/features/cowork/coworkSlice';
+import { removeDraftMessageQuotes } from '@/features/cowork/coworkSlice';
 import {
   clearDraftAttachments,
   clearDraftBrowserAnnotations,
@@ -111,10 +104,9 @@ import {
   matchesOpenClawModelRef,
   resolveOpenClawModelRef,
 } from '@/features/models/openclawModelRef';
-import {
-  getExtensionEnabled,
-  useExtensionEnablement,
-} from '@/features/plugins/extensions/useExtensionEnablement';
+import { blocksAppComposerSubmission } from '@/features/plugins/app/composerAdmission';
+import { useAppComposer } from '@/features/plugins/app/useAppComposer';
+import { useExtensionEnablement } from '@/features/plugins/extensions/useExtensionEnablement';
 import { ActiveSkillBadge } from '@/features/plugins/skills';
 import type { ChatContextUsageSnapshot } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { configService } from '@/services/config';
@@ -126,13 +118,7 @@ import Modal from '@/shared/components/ui/Modal';
 import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 import { type RootState, store } from '@/store';
 
-import { prepareWorkflowComposerSubmission } from '../../../../../../plugins/extensions/swarm-workflow/browser/composer';
-import { buildAgentTeamFeature } from './AgentTeamSelector';
-import {
-  type AgentTeamMode,
-  submitAgentTeamMessage,
-  teamSubmissionConflict,
-} from './agentTeamSubmission';
+import type { AppSubmission } from '../../../../../../packages/app-plugin-sdk/contracts';
 import { isImagePath } from './attachments/composerAttachmentFiles';
 import { useComposerAttachments } from './attachments/useComposerAttachments';
 import ComposerFeatureMenu from './ComposerFeatureMenu';
@@ -154,7 +140,6 @@ import {
   submitMessageQuoteDrafts,
   submittedMessageQuotes,
 } from './draft/messageQuote';
-import { useComposerFeatureDraft } from './draft/useComposerFeatureDraft';
 import PlanModeBadge from './PlanModeBadge';
 import { ConversationAgentSelector } from './selection/ConversationAgentSelector';
 import { isComposerSendShortcut } from './sendShortcut';
@@ -162,8 +147,6 @@ import { createGoalReadRetry } from './submission/goalReadRetry';
 import { readGoalState } from './submission/goalReadState';
 import { canClearSubmittedDraft } from './submission/sessionSubmission';
 import { useGoalReadiness } from './submission/useGoalReadiness';
-import { buildSwarmWorkflowComposerFeature } from './swarmWorkflowComposerFeature';
-import { blocksSwarmWorkflowGoalSubmission } from './swarmWorkflowSubmission';
 import { usePlanModeComposerFeature } from './usePlanModeComposerFeature';
 
 // CoworkAttachment is aliased from the Redux-persisted DraftAttachment type
@@ -199,7 +182,7 @@ interface CoworkPromptInputProps {
     attachments?: CoworkAttachmentPayload[],
     gatewayPrompt?: string,
     worktree?: boolean,
-    swarmWorkflow?: SwarmWorkflowOptions,
+    pluginSubmission?: AppSubmission,
     submission?: ComposerSubmissionMetadata,
   ) => boolean | void | Promise<boolean | void>;
   onQueue?: (
@@ -306,59 +289,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const dispatch = useDispatch();
     const draftKey = draftKeyOverride || sessionId || '__home__';
     const extensionEnablement = useExtensionEnablement();
-    const {
-      value: swarmWorkflowOptions,
-      setValue: setSwarmWorkflowOptions,
-      clearAccepted: clearAcceptedSwarmWorkflow,
-      isCurrent: isCurrentSwarmWorkflow,
-    } = useComposerFeatureDraft<SwarmWorkflowOptions>(
+    const appComposer = useAppComposer(
       draftKey,
-      OpenClawExtensionId.SWARM_WORKFLOW,
-      extensionEnablement,
+      !remoteManaged && mode !== 'side-chat',
+      selectedMode => {
+        ownerWindow.requestAnimationFrame(() => {
+          if (currentDraftKeyRef.current !== draftKey) return;
+          const input = textareaRef.current;
+          input?.focus();
+          if (selectedMode.selectionCaret === 'start') input?.setSelectionRange(0, 0);
+        });
+      },
     );
-    const teamDrafts = useSelector((state: RootState) => state.cowork.draftAgentTeamModes);
-    const teamSelection = teamDrafts?.[draftKey];
-    const teamEnabled = getExtensionEnabled(extensionEnablement, OpenClawExtensionId.AGENT_TEAM);
-    const teamDisabledRevision =
-      extensionEnablement.disabledRevisions.get(OpenClawExtensionId.AGENT_TEAM) ?? 0;
-    const previousTeamRevision = useRef(teamDisabledRevision);
-    useEffect(() => {
-      if (teamEnabled === false || previousTeamRevision.current !== teamDisabledRevision) {
-        for (const [key, draft] of Object.entries(teamDrafts ?? {}))
-          dispatch(clearSubmittedAgentTeamMode({ draftKey: key, id: draft.id }));
-      }
-      previousTeamRevision.current = teamDisabledRevision;
-    }, [teamEnabled, teamDisabledRevision, teamDrafts, dispatch]);
-    const teamMode =
-      remoteManaged || mode === 'side-chat' || teamEnabled !== true
-        ? undefined
-        : teamSelection?.mode;
-    const currentTeamSelection = useRef({
-      teamMode,
-      id: teamSelection?.id,
-      revision: teamDisabledRevision,
-    });
-    currentTeamSelection.current = {
-      teamMode,
-      id: teamSelection?.id,
-      revision: teamDisabledRevision,
-    };
-    const teamSendContext = useRef({ draftKey, active: true });
-    if (teamSendContext.current.draftKey !== draftKey)
-      teamSendContext.current = { draftKey, active: true };
-    useEffect(() => {
-      teamSendContext.current.active = true;
-      return () => {
-        teamSendContext.current.active = false;
-      };
-    }, []);
-    const setTeamMode = (selected?: AgentTeamMode) =>
-      dispatch(
-        setDraftAgentTeamMode({
-          draftKey,
-          draft: selected ? { id: crypto.randomUUID(), mode: selected } : undefined,
-        }),
-      );
     const planModeEnabled = useSelector((state: RootState) =>
       sessionId
         ? (state.cowork.planModeBySession[sessionId] ?? false)
@@ -366,6 +308,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     );
     const currentDraftKeyRef = useRef(draftKey);
     currentDraftKeyRef.current = draftKey;
+    const composerSendContext = useRef({ key: draftKey, active: true });
+    if (composerSendContext.current.key !== draftKey) {
+      composerSendContext.current.active = false;
+      composerSendContext.current = { key: draftKey, active: true };
+    }
+    useEffect(() => {
+      const context = composerSendContext.current;
+      context.active = true;
+      return () => {
+        context.active = false;
+      };
+    }, [draftKey]);
     const isSideChat = mode === 'side-chat';
     const messageQuotes = useSelector(
       (state: RootState) => state.cowork.draftMessageQuotes?.[draftKey] ?? EMPTY_MESSAGE_QUOTES,
@@ -387,110 +341,71 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         queue = false,
         submission?: ComposerSubmissionMetadata,
       ) => {
-        const context = teamSendContext.current;
         const submit = queue ? queuePrompt : submitPrompt;
         if (!submit) return false;
-        let instruction: string | undefined;
-        if (swarmWorkflowOptions) {
-          const prepared = await prepareWorkflowComposerSubmission({
-            options: swarmWorkflowOptions,
+        const sendContext = composerSendContext.current;
+        const isSubmissionCurrent = () =>
+          sendContext.active &&
+          composerSendContext.current === sendContext &&
+          currentDraftKeyRef.current === draftKey &&
+          appComposer.isCurrentSelection();
+        const quotes = [...submittedMessageQuotes(prompt, messageQuotes, isSideChat)];
+        const baseGateway =
+          quotedGatewayPrompt(prompt, gatewayPrompt, quotes, isSideChat) ?? prompt;
+        try {
+          const prepared = await appComposer.prepare({
+            prompt: baseGateway,
             sessionId,
-            prompt,
             planModeEnabled,
-            isSelectionCurrent: () => isCurrentSwarmWorkflow(draftKey, swarmWorkflowOptions),
-            isDraftCurrent: () => currentDraftKeyRef.current === draftKey,
-            prepare: (options, id) => window.electron.cowork.prepareSwarmWorkflow(options, id),
+            queued: queue,
           });
-          if (!prepared.success) {
-            if (prepared.messageKey)
-              window.dispatchEvent(
-                new CustomEvent('app:showToast', {
-                  detail: i18nService.t(prepared.messageKey),
-                }),
-              );
-            return false;
-          }
-          // The draft can retire between the helper resolving and this continuation.
-          if (
-            currentDraftKeyRef.current !== draftKey ||
-            !isCurrentSwarmWorkflow(draftKey, swarmWorkflowOptions)
-          )
-            return false;
-          instruction = prepared.instruction;
-        }
-        const submittedQuotes = [...submittedMessageQuotes(prompt, messageQuotes, isSideChat)];
-        const label = i18nService.t('messageQuoteContext');
-        const result = await submitAgentTeamMessage({
-          mode: teamMode,
-          queued: queue,
-          enabled: async () => {
-            const extensions = await window.electron.extensions.list();
-            if (!extensions.success) throw new Error('Extension lookup failed');
-            return extensions.extensions.some(item => item.id === 'agent-team' && item.enabled);
-          },
-          isCurrent: () =>
-            context.active &&
-            teamSendContext.current === context &&
-            (!teamMode ||
-              (currentTeamSelection.current.teamMode === teamMode &&
-                currentTeamSelection.current.id === teamSelection?.id &&
-                currentTeamSelection.current.revision === teamDisabledRevision)),
-          report: key =>
-            window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t(key) })),
-          accepted: () => {
-            if (teamSelection)
-              dispatch(clearSubmittedAgentTeamMode({ draftKey, id: teamSelection.id }));
-          },
-          submit: () =>
-            submitMessageQuoteDrafts(
-              submittedQuotes,
-              () =>
-                submit(
-                  appendMessageQuotes(prompt, submittedQuotes, label, isSideChat),
-                  !isSideChat && submittedQuotes.length
-                    ? [...(attachments ?? []), ...messageQuoteAttachments(submittedQuotes)]
-                    : attachments,
-                  teamMode
-                    ? appendAgentTeamInstruction(
-                        quotedGatewayPrompt(prompt, gatewayPrompt, submittedQuotes, isSideChat) ??
-                          prompt,
-                        teamMode,
-                      )
-                    : instruction
-                      ? (quotedGatewayPrompt(prompt, gatewayPrompt, submittedQuotes, isSideChat) ??
-                          prompt) +
-                        '\n\n' +
-                        instruction
-                      : quotedGatewayPrompt(prompt, gatewayPrompt, submittedQuotes, isSideChat),
-                  canSelectWorktree && useWorktree,
-                  swarmWorkflowOptions,
-                  submission,
+          if (!isSubmissionCurrent()) return false;
+          const result = await submitMessageQuoteDrafts(
+            quotes,
+            () =>
+              isSubmissionCurrent() &&
+              submit(
+                appendMessageQuotes(
+                  prompt,
+                  quotes,
+                  i18nService.t('messageQuoteContext'),
+                  isSideChat,
                 ),
-              ids => dispatch(removeDraftMessageQuotes({ draftKey, ids })),
-            ),
-        });
-        if (result !== false && swarmWorkflowOptions) {
-          clearAcceptedSwarmWorkflow(draftKey, swarmWorkflowOptions);
+                !isSideChat && quotes.length
+                  ? [...(attachments ?? []), ...messageQuoteAttachments(quotes)]
+                  : attachments,
+                prepared.prompt === prompt && !gatewayPrompt ? undefined : prepared.prompt,
+                canSelectWorktree && useWorktree,
+                prepared.submission,
+                submission,
+              ),
+            ids => dispatch(removeDraftMessageQuotes({ draftKey, ids })),
+          );
+          if (result !== false) appComposer.accepted();
+          return result;
+        } catch (error) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', {
+              detail: i18nService.t(
+                error instanceof Error ? error.message : 'appPluginSubmitUnavailable',
+              ),
+            }),
+          );
+          return false;
         }
-        return result;
       },
       [
+        appComposer,
         messageQuotes,
-        submitPrompt,
-        queuePrompt,
-        dispatch,
-        draftKey,
         isSideChat,
+        queuePrompt,
+        submitPrompt,
+        draftKey,
+        sessionId,
+        planModeEnabled,
         canSelectWorktree,
         useWorktree,
-        swarmWorkflowOptions,
-        isCurrentSwarmWorkflow,
-        clearAcceptedSwarmWorkflow,
-        teamMode,
-        teamSelection,
-        teamDisabledRevision,
-        planModeEnabled,
-        sessionId,
+        dispatch,
       ],
     );
     const supportsAttachments = !remoteManaged && !isSideChat;
@@ -588,7 +503,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       renderedModelContextRef.current = { key: modelSelectionContextKey };
       sendPreparationRef.current = null;
     }
-    const preparingSend = sendPreparation === sendPreparationRef.current &&
+    const preparingSend =
+      sendPreparation === sendPreparationRef.current &&
       sendPreparation?.contextKey === modelSelectionContextKey;
     const [goalActionPending, setGoalActionPending] = useState(false);
     const goalActionPendingRef = useRef(false);
@@ -684,22 +600,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     };
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const teamComposerFeature = buildAgentTeamFeature(teamMode, option => {
-      setSwarmWorkflowOptions(undefined);
-      setTeamMode(option);
-      ownerWindow.requestAnimationFrame(() => textareaRef.current?.focus());
-    });
-    const swarmWorkflowComposerFeature = buildSwarmWorkflowComposerFeature({
-      swarmWorkflow: swarmWorkflowOptions,
-      selectSwarmWorkflow: option => {
-        setTeamMode(undefined);
-        setSwarmWorkflowOptions(option);
-        ownerWindow.requestAnimationFrame(() => {
-          textareaRef.current?.focus();
-          textareaRef.current?.setSelectionRange(0, 0);
-        });
-      },
-    });
     const slashMenuRef = useRef<HTMLDivElement>(null);
     const folderButtonRef = useRef<HTMLButtonElement>(null);
     const dragDepthRef = useRef(0);
@@ -1046,7 +946,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         if (shouldClear) {
           setValue('');
           dispatch(clearDraftAttachments(draftKey));
-          dispatch(setDraftAgentTeamMode({ draftKey }));
+          appComposer.clear();
         }
         ownerWindow.requestAnimationFrame(() => {
           textareaRef.current?.focus();
@@ -1057,7 +957,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         window.removeEventListener('cowork:focus-input', handleFocusInput);
         if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
       };
-    }, [dispatch, draftKey, ownerWindow, setValue]);
+    }, [dispatch, draftKey, ownerWindow, setValue, appComposer]);
 
     useEffect(() => {
       if (workingDirectory?.trim()) {
@@ -1088,38 +988,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       async (promptOverride?: string, submission?: ComposerSubmissionMetadata) => {
         const promptValue = promptOverride ?? value;
         const trimmedValue = promptValue.trim();
-        if (teamMode && isRunActive) {
-          window.dispatchEvent(
-            new CustomEvent('app:showToast', { detail: i18nService.t('teamFeatureBusy') }),
-          );
-          return;
-        }
-        // Refuse before any goal mutation, attachment staging or
-        // draft clearing: those routes bypass the normal Swarm Workflow send wrapper.
         if (
-          teamMode &&
-          teamSubmissionConflict({
+          blocksAppComposerSubmission(appComposer.selected, {
+            running: isRunActive,
+            plan: planModeEnabled,
             prompt: trimmedValue,
-            plan: !!planModeEnabled,
-            goalStatus: sessionGoalRef.current?.status,
             completionFeedback: completionFeedbackRef.current !== null,
-          })
-        ) {
-          window.dispatchEvent(
-            new CustomEvent('app:showToast', { detail: i18nService.t('teamFeatureConflict') }),
-          );
-          return;
-        }
-        if (
-          blocksSwarmWorkflowGoalSubmission({
-            swarmWorkflowSelected: Boolean(swarmWorkflowOptions),
             goalStatus: sessionGoalRef.current?.status,
-            completionFeedback: completionFeedbackRef.current !== null,
           })
         ) {
           window.dispatchEvent(
             new CustomEvent('app:showToast', {
-              detail: i18nService.t('swarmWorkflowGoalConflict'),
+              detail: i18nService.t('appPluginSubmitUnavailable'),
             }),
           );
           return;
@@ -1601,8 +1481,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         isStopPending,
         disabled,
         onSubmit,
-        swarmWorkflowOptions,
-        teamMode,
+        appComposer,
         planModeEnabled,
         messageQuotes,
         attachments,
@@ -1630,50 +1509,62 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const preparedSubmitRef = useRef(submitPreparedPrompt);
     preparedSubmitRef.current = submitPreparedPrompt;
-    const handleSubmit = useCallback(async (promptOverride?: string) => {
-      if (sendPreparationRef.current?.contextKey === modelSelectionContextKey) return;
-      const submission = { startedAt: Date.now() };
-      const owner = { contextKey: modelSelectionContextKey, token: Symbol() };
-      const modelContext = renderedModelContextRef.current;
-      const sendContext = teamSendContext.current;
-      const prompt = promptOverride ?? latestValueRef.current;
-      sendPreparationRef.current = owner;
-      setSendPreparation(owner);
-      try {
-        // Home sends pin their captured model explicitly in Main. Existing
-        // sessions must join the actual selection receipt, never its error-swallowing queue tail.
-        if (sessionId) {
-          try {
-            if (!(await waitForComposerModelSelection(modelSelectionContextKey))) return;
-          } catch (error) {
-            if (sendPreparationRef.current === owner &&
-              renderedModelContextRef.current === modelContext &&
-              teamSendContext.current === sendContext && sendContext.active) {
-              window.dispatchEvent(new CustomEvent('app:showToast', {
-                detail: i18nService.t('coworkModelPreparationFailed')
-                  .replace('{error}', error instanceof Error ? error.message : String(error)),
-              }));
+    const handleSubmit = useCallback(
+      async (promptOverride?: string) => {
+        if (sendPreparationRef.current?.contextKey === modelSelectionContextKey) return;
+        const submission = { startedAt: Date.now() };
+        const owner = { contextKey: modelSelectionContextKey, token: Symbol() };
+        const modelContext = renderedModelContextRef.current;
+        const sendContext = composerSendContext.current;
+        const isCurrentSelection = appComposer.isCurrentSelection;
+        const prompt = promptOverride ?? latestValueRef.current;
+        sendPreparationRef.current = owner;
+        setSendPreparation(owner);
+        try {
+          // Home sends pin their captured model explicitly in Main. Existing
+          // sessions must join the actual selection receipt, never its error-swallowing queue tail.
+          if (sessionId) {
+            try {
+              if (!(await waitForComposerModelSelection(modelSelectionContextKey))) return;
+            } catch (error) {
+              if (
+                sendPreparationRef.current === owner &&
+                renderedModelContextRef.current === modelContext &&
+                composerSendContext.current === sendContext &&
+                sendContext.active
+              ) {
+                window.dispatchEvent(
+                  new CustomEvent('app:showToast', {
+                    detail: i18nService
+                      .t('coworkModelPreparationFailed')
+                      .replace('{error}', error instanceof Error ? error.message : String(error)),
+                  }),
+                );
+              }
+              return;
             }
-            return;
+          } else {
+            // Allow the same-tick model selection to render its current capabilities.
+            await Promise.resolve();
           }
-        } else {
-          // Allow the same-tick model selection to render its current capabilities.
-          await Promise.resolve();
+          if (
+            sendPreparationRef.current !== owner ||
+            renderedModelContextRef.current !== modelContext ||
+            composerSendContext.current !== sendContext ||
+            !sendContext.active ||
+            !isCurrentSelection()
+          )
+            return;
+          await preparedSubmitRef.current(prompt, submission);
+        } finally {
+          if (sendPreparationRef.current === owner) {
+            sendPreparationRef.current = null;
+            if (composerSendContext.current.active) setSendPreparation(null);
+          }
         }
-        if (
-          sendPreparationRef.current !== owner ||
-          renderedModelContextRef.current !== modelContext ||
-          teamSendContext.current !== sendContext ||
-          !sendContext.active
-        ) return;
-        await preparedSubmitRef.current(prompt, submission);
-      } finally {
-        if (sendPreparationRef.current === owner) {
-          sendPreparationRef.current = null;
-          if (teamSendContext.current.active) setSendPreparation(null);
-        }
-      }
-    }, [modelSelectionContextKey, sessionId]);
+      },
+      [modelSelectionContextKey, sessionId, appComposer],
+    );
 
     const handleSlashCommandSelect = useCallback(
       (command: SlashCommandDef, executeInstant = true) => {
@@ -1780,7 +1671,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           resetSlashMenuState();
         }
       },
-      [disabled, setValue, refreshSlashCommands, resetSlashMenuState, supportsSlashCommands, updateSlashMenu],
+      [
+        disabled,
+        setValue,
+        refreshSlashCommands,
+        resetSlashMenuState,
+        supportsSlashCommands,
+        updateSlashMenu,
+      ],
     );
 
     const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -2051,16 +1949,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             ]
           : []),
         planModeComposerFeature,
-        {
-          ...swarmWorkflowComposerFeature,
-          section: i18nService.t('composerPlugins'),
+        ...appComposer.features.map(feature => ({
+          ...feature,
           disabled: disabled || isRunActive,
-        },
-        {
-          ...teamComposerFeature,
-          section: i18nService.t('composerPlugins'),
-          disabled: disabled || isRunActive,
-        },
+        })),
       ],
       extensionEnablement,
     );
@@ -2141,9 +2033,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         const replacesWholeDraft = hasSelection && start === 0 && end === value.length;
         const consumeSelectedFeature = () => {
           if (!replacesWholeDraft) return;
-          if (teamSelection)
-            dispatch(clearSubmittedAgentTeamMode({ draftKey, id: teamSelection.id }));
-          if (swarmWorkflowOptions) clearAcceptedSwarmWorkflow(draftKey, swarmWorkflowOptions);
+          appComposer.clear();
         };
         const draftIsCurrent = () =>
           currentDraftKeyRef.current === draftKey && latestValueRef.current === value;
@@ -2197,17 +2087,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             break;
         }
       },
-      [
-        value,
-        setValue,
-        closeContextMenu,
-        draftKey,
-        swarmWorkflowOptions,
-        clearAcceptedSwarmWorkflow,
-        ownerWindow,
-        teamSelection,
-        dispatch,
-      ],
+      [value, setValue, closeContextMenu, appComposer, draftKey, ownerWindow],
     );
 
     const contextMenuItems = useMemo(() => {
@@ -2911,23 +2791,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 <FeatureTextarea
                   containerClassName={isLarge ? undefined : 'basis-full'}
                   key={draftKey}
-                  featureLabel={
-                    teamMode
-                      ? `${i18nService.t('teamTitle')} · ${i18nService.t(teamMode === 'group' ? 'teamGroup' : 'teamTask')}`
-                      : swarmWorkflowOptions
-                        ? i18nService.t('swarmWorkflowTitle')
-                        : undefined
+                  featureLabel={appComposer.token?.label}
+                  featureIcon={appComposer.token?.icon}
+                  removeLabel={
+                    appComposer.token?.removeLabel ?? i18nService.t('appPluginRemoveMode')
                   }
-                  featureIcon={
-                    teamMode ? teamComposerFeature.icon : swarmWorkflowComposerFeature.icon
-                  }
-                  removeLabel={i18nService.t(
-                    teamMode ? 'teamFeatureRemove' : 'swarmWorkflowRemoveToken',
-                  )}
-                  onRemoveFeature={() => {
-                    setTeamMode(undefined);
-                    setSwarmWorkflowOptions(undefined);
-                  }}
+                  onRemoveFeature={appComposer.clear}
                   onLayoutChange={resizeTextarea}
                   ref={textareaRef}
                   value={value}
@@ -2943,10 +2812,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 />
                 <div className="flex flex-nowrap items-center justify-between gap-1 px-3 pb-2 pt-1.5">
                   <div className="relative flex shrink-0 items-center gap-1">
+                    {appComposer.options}
                     {supportsAgentControls && (
                       <ComposerFeatureMenu
                         key={`features:${draftKey}`}
-                        backLabel={i18nService.t('teamFeatureBack')}
+                        backLabel={i18nService.t('back')}
                         items={composerFeatures}
                         label={i18nService.t('composerFeatures')}
                         disabled={composerFeatures.every(item => item.disabled)}
@@ -3014,7 +2884,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                             models={selectableModels}
                             disabled={disabled || preparingSend}
                             onChange={nextModel => {
-                              if (sendPreparationRef.current?.contextKey === modelSelectionContextKey) return;
+                              if (
+                                sendPreparationRef.current?.contextKey === modelSelectionContextKey
+                              )
+                                return;
                               return selectComposerModel(nextModel, {
                                 dispatch,
                                 modelSelectionContextKey,
@@ -3047,23 +2920,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 <FeatureTextarea
                   containerClassName={isLarge ? undefined : 'basis-full'}
                   key={draftKey}
-                  featureLabel={
-                    teamMode
-                      ? `${i18nService.t('teamTitle')} · ${i18nService.t(teamMode === 'group' ? 'teamGroup' : 'teamTask')}`
-                      : swarmWorkflowOptions
-                        ? i18nService.t('swarmWorkflowTitle')
-                        : undefined
+                  featureLabel={appComposer.token?.label}
+                  featureIcon={appComposer.token?.icon}
+                  removeLabel={
+                    appComposer.token?.removeLabel ?? i18nService.t('appPluginRemoveMode')
                   }
-                  featureIcon={
-                    teamMode ? teamComposerFeature.icon : swarmWorkflowComposerFeature.icon
-                  }
-                  removeLabel={i18nService.t(
-                    teamMode ? 'teamFeatureRemove' : 'swarmWorkflowRemoveToken',
-                  )}
-                  onRemoveFeature={() => {
-                    setTeamMode(undefined);
-                    setSwarmWorkflowOptions(undefined);
-                  }}
+                  onRemoveFeature={appComposer.clear}
                   onLayoutChange={resizeTextarea}
                   ref={textareaRef}
                   value={value}
@@ -3079,10 +2941,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
                 {!remoteManaged && (
                   <div className="flex flex-1 items-center gap-1">
+                    {appComposer.options}
                     {supportsAgentControls && (
                       <ComposerFeatureMenu
                         key={`features:${draftKey}`}
-                        backLabel={i18nService.t('teamFeatureBack')}
+                        backLabel={i18nService.t('back')}
                         items={composerFeatures}
                         label={i18nService.t('composerFeatures')}
                         disabled={composerFeatures.every(item => item.disabled)}
@@ -3137,7 +3000,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           </div>
         </div>
         {disabled && disabledMessage && (
-          <p role="status" className="px-3 pb-2 text-xs text-secondary">{disabledMessage}</p>
+          <p role="status" className="px-3 pb-2 text-xs text-secondary">
+            {disabledMessage}
+          </p>
         )}
         {/* Context menu for textarea */}
         {contextMenuPos && (

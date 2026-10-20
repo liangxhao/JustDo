@@ -18,6 +18,30 @@ test('Gateway and separately loaded SDK share activation, rotation, revocation a
   fs.mkdirSync(path.join(root, 'dist/plugin-sdk'), { recursive: true });
   fs.writeFileSync(path.join(root, 'package.json'), '{"type":"module"}');
   fs.writeFileSync(
+    path.join(root, 'dist/plugin-sdk/plugin-runtime.js'),
+    "export * from '../execution-frame.js'; export * from '../request-scope.js';",
+  );
+  fs.writeFileSync(
+    path.join(root, 'dist/plugin-sdk/gateway-method-runtime.js'),
+    "export * from '../request-scope.js';",
+  );
+  fs.writeFileSync(
+    path.join(root, 'dist/execution-frame.js'),
+    `import { AsyncLocalStorage } from 'node:async_hooks';
+    class RuntimeFrame { constructor(gatewayScope) { this.gatewayScope = gatewayScope; } }
+    const frames = new AsyncLocalStorage();
+    export function createPluginExecutionFrame(scope) { return new RuntimeFrame(scope); }
+    export function getPluginRuntimeExecutionFrame() {
+      const frame = frames.getStore(); return frame instanceof RuntimeFrame ? frame : undefined;
+    }
+    export const withPluginRuntimeFrame = (frame, run) => frames.run(frame, run);`,
+  );
+  fs.writeFileSync(
+    path.join(root, 'dist/request-scope.js'),
+    `import { getPluginRuntimeExecutionFrame } from './execution-frame.js';
+    export function getPluginRuntimeGatewayRequestScope() { return getPluginRuntimeExecutionFrame()?.gatewayScope; }`,
+  );
+  fs.writeFileSync(
     path.join(root, 'dist/owners.js'),
     `import { isSecretResolutionError } from './errors.js';
     export const revoked = new Set();
@@ -212,6 +236,8 @@ test('Gateway and separately loaded SDK share activation, rotation, revocation a
     export * from './cli-history-boundary.js';
     export * from './peer-dispatch.js';
     export * from './session-access.js';
+    export * from './request-scope.js';
+    export * from './execution-frame.js';
   `,
   );
   const original = fs.readFileSync(path.join(root, 'dist/state.js'), 'utf8');
@@ -234,8 +260,19 @@ test('Gateway and separately loaded SDK share activation, rotation, revocation a
     import * as accessSdk from './dist/plugin-sdk/session-visibility.js';
     import * as broken from './broken-bundle.mjs';
     import * as host from './gateway-bundle.mjs';
+    import * as appSdk from './dist/plugin-sdk/plugin-runtime.js';
     import * as nativeOwners from './dist/owners.js';
     import * as nativeErrors from './dist/errors.js';
+    const requestScope = { pluginId: 'synthetic-plugin' };
+    const frame = appSdk.createPluginExecutionFrame(requestScope);
+    await appSdk.withPluginRuntimeFrame(frame, async () => {
+      await Promise.resolve();
+      assert.equal(appSdk.getPluginRuntimeGatewayRequestScope(), requestScope);
+      assert.equal(host.getPluginRuntimeGatewayRequestScope(), requestScope);
+      assert.equal(host.getPluginRuntimeExecutionFrame(), frame);
+      assert.equal(broken.getPluginRuntimeGatewayRequestScope(), undefined);
+    });
+    assert.equal(host.getPluginRuntimeGatewayRequestScope(), undefined);
     const revokeAccess = accessSdk.registerScopedSessionAccessProvider(request =>
       request.target === 'peer' ? { expectedSessionId: 'exact-peer-sid' } : undefined);
     assert.equal(broken.resolveAccess({ target: 'peer' }), undefined);
@@ -381,15 +418,30 @@ test('Gateway and separately loaded SDK share activation, rotation, revocation a
   expect(fs.readFileSync(path.join(root, 'gateway-bundle.mjs'), 'utf8')).not.toContain(
     'let snapshot',
   );
+  expect(fs.readFileSync(path.join(root, 'gateway-bundle.mjs'), 'utf8')).toContain(
+    'function getPluginRuntimeGatewayRequestScope(',
+  );
 });
 
-test.each(['secret-input-runtime', 'reply-runtime'])(
+test.each([
+  'secret-input-runtime',
+  'reply-runtime',
+  'session-visibility',
+  'plugin-runtime',
+  'gateway-method-runtime',
+])(
   'fails clearly when the pinned %s SDK entry is missing',
   missing => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'missing-native-sdk-'));
     roots.push(root);
     fs.mkdirSync(path.join(root, 'dist/plugin-sdk'), { recursive: true });
-    for (const name of ['secret-input-runtime', 'reply-runtime'])
+    for (const name of [
+      'secret-input-runtime',
+      'reply-runtime',
+      'session-visibility',
+      'plugin-runtime',
+      'gateway-method-runtime',
+    ])
       if (name !== missing) fs.writeFileSync(path.join(root, 'dist/plugin-sdk', `${name}.js`), '');
     expect(() => createSharedSdkModulesPlugin(root, esbuild)).toThrow(`Missing native ${missing}`);
   },

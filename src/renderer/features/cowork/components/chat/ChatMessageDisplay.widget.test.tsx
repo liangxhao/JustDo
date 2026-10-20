@@ -40,13 +40,31 @@ it('renders native widget history in a workspace chat through its own sandbox ha
     presentation: { target: 'assistant_message', sandbox: 'scripts' },
     view: { id: 'cv_workspace' },
   };
+  const history = [{
+    role: 'toolResult',
+    toolName: 'show_widget',
+    toolCallId: 'call-1',
+    content: [{ type: 'text', text: JSON.stringify(descriptor) }],
+    __openclaw: { id: 'widget-entry', seq: 1 },
+  }];
   const client = {
     generation: 1,
     gatewayUrl: 'ws://127.0.0.1:18789',
-    request: vi.fn().mockResolvedValue({
-      html: '<!doctype html><p>Native workspace content</p>',
-      sandboxPort: 18790,
-      sandboxUrl: '/mcp-app-sandbox',
+    request: vi.fn(async (method: string, params: unknown) => {
+      if (method === 'chat.history') {
+        expect(params).toMatchObject({ sessionKey: 'agent:main:workspace' });
+        return {
+          messages: history, sessionId: 'native-workspace', totalMessages: 1, hasMore: false,
+          sessionInfo: { sessionId: 'native-workspace', activeLeafEntryId: 'widget-entry' },
+        };
+      }
+      if (method !== 'canvas.document.view') throw new Error(`Unexpected Native RPC: ${method}`);
+      expect(params).toEqual({ docId: 'cv_workspace' });
+      return {
+        html: '<!doctype html><p>Native workspace content</p>',
+        sandboxPort: 18790,
+        sandboxUrl: '/mcp-app-sandbox',
+      };
     }),
     stop: vi.fn(),
   };
@@ -55,17 +73,9 @@ it('renders native widget history in a workspace chat through its own sandbox ha
     connected: true,
     client,
     sessionKey: 'agent:main:workspace',
-    initialHistoryReady: true,
-    chatMessages: [
-      {
-        role: 'toolResult',
-        toolName: 'show_widget',
-        toolCallId: 'call-1',
-        content: [{ type: 'text', text: JSON.stringify(descriptor) }],
-      },
-    ],
   });
-  controller.state.visibleChatMessages = controller.state.chatMessages;
+  await expect(controller.loadHistory()).resolves.toBe(true);
+  expect(controller.getLoadedMessages()).toEqual(history);
   const root = doc.createElement('div');
   doc.body.append(root);
   render(<ChatMessageDisplay controller={controller} fullWidth />, { container: root });
@@ -122,6 +132,9 @@ it('renders native widget history in a workspace chat through its own sandbox ha
     { type: 'openclaw:scenario-draft-policy', available: false },
     new URL(frame.src).origin,
   );
-  expect(client.request).toHaveBeenCalledOnce();
+  expect(client.request).toHaveBeenCalledTimes(2);
+  expect(client.request.mock.calls.map(([method]) => method)).toEqual([
+    'chat.history', 'canvas.document.view',
+  ]);
   expect(client.request).toHaveBeenCalledWith('canvas.document.view', { docId: 'cv_workspace' });
 });

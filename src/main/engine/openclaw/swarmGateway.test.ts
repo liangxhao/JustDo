@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest';
 
-import { buildSwarmWorkflowInstruction } from '../../../shared/cowork/swarm-workflow';
+import { buildSwarmWorkflowInstruction } from '../../../../plugins/extensions/swarm-workflow/app/contracts/index';
 import { parseSwarmSnapshot, readSwarmSnapshot } from './swarmGateway';
 
 const snapshot = {

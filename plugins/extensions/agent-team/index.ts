@@ -1,4 +1,6 @@
+import { withAppNative } from '@app-plugin/sdk/native';
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
+import { dispatchGatewayMethod } from 'openclaw/plugin-sdk/gateway-method-runtime';
 
 import { registerCollaborationHistory } from './collaboration/collaboration-history';
 import { registerCollaborationService } from './collaboration/service';
@@ -20,4 +22,4 @@ const plugin = {
     registerDiscussionHistory(api);
   },
 };
-export default plugin;
+export default withAppNative(plugin, dispatchGatewayMethod);

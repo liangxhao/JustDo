@@ -6,8 +6,9 @@ import { DatabaseSync } from 'node:sqlite';
 import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { AgentTeamLaunchCoordinator } from '../../../../plugins/extensions/agent-team/host/launch/agentTeamLaunchCoordinator';
 import { appendAgentTeamInstruction } from '../../../../plugins/extensions/agent-team/prompt/agentTeamPrompt';
-import { AgentTeamLaunchCoordinator } from '../../cowork/agent-team/agentTeamLaunchCoordinator';
+import { behaviorSessionParticipants } from '../../../../tests/plugin-host/mainBehaviorParticipants';
 import { CoworkStore } from '../../data/coworkStore';
 import { CoworkEngineRouter } from '../../engine/cowork/coworkEngineRouter';
 import type { GatewayClientLike, GatewayEventFrame } from '../../engine/gateway/types';
@@ -138,11 +139,11 @@ function fixture(options: { bound?: boolean; customAgent?: boolean; checkpoint?:
   const launch = new AgentTeamLaunchCoordinator({ getStore: () => store, getDatabase: () => database,
     getRouter: () => router, requestGateway: request });
   registerCoworkSessionHandlers({ getCoworkStore: () => store, getCoworkEngineRouter: () => router,
-    setSessionPermissionMode: vi.fn(), getAgentTeamLaunch: () => launch });
+    setSessionPermissionMode: vi.fn(), getSessionPlugins: () => behaviorSessionParticipants(undefined, launch) });
   const changed = (payload: Record<string, unknown> = { reason: 'create', agentId, catalogChanged: true, ts: Date.now() }) =>
     seam.handleGatewayEvent({ event: 'sessions.changed', payload });
   const send = () => ipc.get('cowork:session:run:begin')!({}, { sessionId: product.id, clientTurnId: 'next-input', startedAt: 10,
-    agentTeamPrompt: appendAgentTeamInstruction('Synthetic selection', 'group') });
+    pluginPrompt: appendAgentTeamInstruction('Synthetic selection', 'group') });
   const setRead = (next: PointRead) => { pointRead = next; };
   const assertNoExecution = () => {
     expect(methods).not.toContain('sessions.list'); expect(methods).not.toContain('chat.send'); expect(methods).not.toContain('agent');

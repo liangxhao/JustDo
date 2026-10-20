@@ -31,27 +31,20 @@ type ExtensionHandlerDependencies = {
   extensionImportService: OpenClawExtensionImportService;
   installationService: PluginInstallationService;
   onMarketplacePluginDeleted?: (kind: typeof PluginKind.EXTENSION, runtimeId: string) => void;
-  beforeAgentTeamDisable?: () => Promise<() => void>;
+  mutateAppPlugin?: <T>(id: string, enabled: boolean, operation: () => Promise<T>) => Promise<T>;
+  mutateAppPackage?: <T>(operation: () => Promise<T>) => Promise<T>;
 };
 
 export const registerExtensionHandlers = ({
   extensionImportService,
   installationService,
   onMarketplacePluginDeleted,
-  beforeAgentTeamDisable,
+  mutateAppPlugin,
+  mutateAppPackage,
 }: ExtensionHandlerDependencies): void => {
   // Mutations can persist before reporting a restart error. Publish observed state,
   // including installs/removals, and keep catalog notifications in completion order.
   let stateNotification = Promise.resolve();
-  let agentTeamMutation = Promise.resolve();
-  const withAgentTeamMutation = <T>(operation: () => Promise<T>): Promise<T> => {
-    const pending = agentTeamMutation.then(operation);
-    agentTeamMutation = pending.then(
-      (): void => undefined,
-      (): void => undefined,
-    );
-    return pending;
-  };
   const publishExtensionState = (extensionId: string): Promise<boolean> => {
     const notification = stateNotification.then(async () => {
       try {
@@ -84,20 +77,24 @@ export const registerExtensionHandlers = ({
       if (request.payload.kind !== PluginKind.EXTENSION) {
         return { success: false, error: 'Invalid extension installation payload' };
       }
-      const result = await extensionImportService.importPath(
-        request.payload.sourcePath,
-        request.onProgress,
-        request.payload.reviewToken,
-        {
-          trustMarketplaceSource: request.origin === PluginInstallOrigin.MARKETPLACE,
-          preserveActivation: request.operation === MarketplaceInstallOperation.UPDATE,
-          ...(request.onProgress
-            ? {
-                onOperationProgress: stage => request.onProgress?.({ stage, percent: 0 }),
-              }
-            : {}),
-        },
-      );
+      const payload = request.payload;
+      const install = () =>
+        extensionImportService.importPath(
+          payload.sourcePath,
+          request.onProgress,
+          payload.reviewToken,
+          {
+            trustMarketplaceSource: request.origin === PluginInstallOrigin.MARKETPLACE,
+            preserveActivation: request.operation === MarketplaceInstallOperation.UPDATE,
+            ...(request.onProgress
+              ? { onOperationProgress: (stage: PluginOperationStage) => request.onProgress?.({ stage, percent: 0 }) }
+              : {}),
+          },
+        );
+      const result = await (mutateAppPackage &&
+      (request.payload.reviewToken || request.origin === PluginInstallOrigin.MARKETPLACE)
+        ? mutateAppPackage(install)
+        : install());
       if (
         (result.success || result.installationCommitted) &&
         result.extensionId &&
@@ -243,7 +240,8 @@ export const registerExtensionHandlers = ({
         let result;
         let refreshWarning = false;
         try {
-          result = await extensionImportService.delete(extensionId, progress.report);
+          const remove = () => extensionImportService.delete(extensionId, progress.report);
+          result = await (mutateAppPackage ? mutateAppPackage(remove) : remove());
           progress.result(result);
         } catch (error) {
           progress.captureFailure();
@@ -292,14 +290,9 @@ export const registerExtensionHandlers = ({
         }
         const extensionId = request.extensionId.trim();
         const mutate = async () => {
-          let releaseDisable: (() => void) | undefined;
           let result;
           let refreshWarning = false;
           try {
-            if (extensionId === OpenClawExtensionId.AGENT_TEAM && !request.enabled) {
-              if (!beforeAgentTeamDisable) throw new Error('teamDiscussionUnavailable');
-              releaseDisable = await beforeAgentTeamDisable();
-            }
             result = await extensionImportService.setEnabled(
               extensionId,
               request.enabled,
@@ -313,7 +306,6 @@ export const registerExtensionHandlers = ({
             progress?.captureFailure();
             throw error;
           } finally {
-            releaseDisable?.();
             progress?.report(PluginOperationStage.REFRESHING_INVENTORY);
             refreshWarning = !(await publishExtensionState(extensionId));
           }
@@ -322,11 +314,12 @@ export const registerExtensionHandlers = ({
             ...(refreshWarning ? { refreshWarning: true as const } : {}),
           });
         };
-        if (extensionId === OpenClawExtensionId.AGENT_TEAM)
-          return await withAgentTeamMutation(mutate);
-        return await (extensionId === OpenClawExtensionId.TYPESAFE
+        const apply = () => extensionId === OpenClawExtensionId.TYPESAFE
           ? enqueueAppConfigUpdate(mutate)
-          : mutate());
+          : mutate();
+        return await (mutateAppPlugin
+          ? mutateAppPlugin(extensionId, request.enabled, apply)
+          : apply());
       } catch (error) {
         const errorMsg =
           error instanceof Error ? error.message : 'Failed to update extension status';

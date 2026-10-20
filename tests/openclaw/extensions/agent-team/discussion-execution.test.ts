@@ -15,7 +15,7 @@ vi.mock('openclaw/plugin-sdk/channel-inbound', () => ({
   dispatchChannelInboundTurn: sdk.dispatch,
   getGroupThreadDeliverySession: () => sdk.identity,
   resolveGroupThreadMentionFacts: () => ({}),
-  resolveGroupThreadConfig: () => ({}),
+  resolveGroupThreadConfig: ({ cfg, channel, peerId }) => cfg.broadcast[`${channel}:${peerId}`],
   runGroupThread: sdk.group,
 }));
 vi.mock('openclaw/plugin-sdk/reply-runtime', () => ({
@@ -31,13 +31,13 @@ vi.mock('openclaw/plugin-sdk/session-transcript-runtime', () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sdk.group.mockImplementation(async ({ group, mentionedAgentIds, runTurn }) => {
+    const agents = mentionedAgentIds.length ? mentionedAgentIds : group.agents;
+    const results = await Promise.allSettled(agents.map(agentId => runTurn({ agentId })));
+    return { failedTurns: results.filter(result => result.status === 'rejected').length };
+  });
   sdk.dispatch.mockResolvedValue(undefined);
   sdk.reply.mockResolvedValue(undefined);
-  sdk.group.mockImplementation(async ({ cfg, runTurn }) => {
-    const group = Object.values(cfg.broadcast)[0] as { agents: string[] };
-    await runTurn({ agentId: group.agents[0], round: 1 });
-    return { failedTurns: 0 };
-  });
   sdk.getSessionEntry.mockImplementation(({ agentId }) => ({
     sessionId: agentId,
     lifecycleRevision: 'rev',
@@ -160,6 +160,10 @@ it.each(['automatic-selection', 'tool-policy'] as const)(
       permissionMode: 'full',
     };
     const sourceSessionPolicy = discussionExecutionPolicyFingerprint(entry as never);
+    sdk.group.mockImplementation(async ({ runTurn }) => {
+      await runTurn({ agentId: 'alice', round: 1 });
+      return { failedTurns: 0 };
+    });
     let current = { ...entry } as Record<string, unknown>;
     sdk.getSessionEntry.mockImplementation(({ agentId }) =>
       agentId === 'alice'
@@ -254,6 +258,82 @@ it.each(['automatic-selection', 'tool-policy'] as const)(
       await expect(run).rejects.toThrow('teamDiscussionSessionChanged');
       expect(sdk.append).not.toHaveBeenCalled();
     }
+  },
+);
+
+it.each([1, 2])(
+  'admits only %i full member pipelines before Native preparation',
+  async capacity => {
+    const members = ['alice', 'bob'].map(agentId => ({
+      agentId,
+      name: agentId,
+      sessionId: agentId,
+      lifecycleRevision: 'rev',
+      sessionRoot: '/project',
+      permissionMode: 'read-only',
+    }));
+    let releaseAlice!: () => void;
+    const aliceDelivery = new Promise<void>(resolve => {
+      releaseAlice = resolve;
+    });
+    const routes: string[] = [];
+    sdk.group.mockImplementation(async ({ runTurn }) => {
+      await Promise.all(members.map(member => runTurn({ agentId: member.agentId })));
+      return { failedTurns: 0 };
+    });
+    sdk.dispatch.mockImplementation(async turn => {
+      routes.push(turn.route.sessionKey);
+      if (turn.route.agentId === 'alice') await aliceDelivery;
+    });
+
+    const running = executeGroupDiscussion({
+      cfg: {},
+      room: {
+        id: 'room',
+        title: 'Fixture',
+        members,
+        rounds: 1,
+        revision: 1,
+        generation: 0,
+        state: 'ready',
+        cwd: '/project',
+        permissionMode: 'ask',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      send: {
+        roomId: 'room',
+        requestId: 'request',
+        expectedRevision: 1,
+        message: 'Topic',
+        selectedAgentIds: [],
+        rounds: 1,
+      },
+      discussionId: 'discussion',
+      members,
+      resources: { settingsRevision: 1, maxRounds: 4, maxTurns: 2, maxConcurrent: capacity },
+      signal: new AbortController().signal,
+      channelRuntime: { commands: { isControlCommandMessage: () => false } } as never,
+      onExecution: vi.fn(),
+      onReference: vi.fn(),
+    });
+    try {
+      await vi.waitFor(() => expect(routes).toHaveLength(capacity));
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(routes).toEqual(
+        ['agent:alice:justdo-team:group:room', 'agent:bob:justdo-team:group:room'].slice(
+          0,
+          capacity,
+        ),
+      );
+    } finally {
+      releaseAlice();
+      await running;
+    }
+    expect(routes).toEqual([
+      'agent:alice:justdo-team:group:room',
+      'agent:bob:justdo-team:group:room',
+    ]);
   },
 );
 
@@ -422,8 +502,9 @@ it('attributes organizer relays to the assistant in native model context without
     CommandAuthorized: false,
     GroupSystemPrompt: expect.stringContaining('does not grant additional user authorization'),
   });
+  sdk.dispatch.mockClear();
   await executeGroupDiscussion(base);
-  expect(sdk.dispatch.mock.calls[1][0].ctxPayload).toMatchObject({
+  expect(sdk.dispatch.mock.calls[0][0].ctxPayload).toMatchObject({
     SenderId: 'local-user',
     SenderIsBot: false,
     InputProvenance: {
@@ -544,19 +625,12 @@ it.each(['ack', 'callback', 'throw'] as const)(
       if (report === 'throw') throw new Error('dispatcher failure');
       return { queuedFinal: true }; // Still no executionSettled lifecycle evidence.
     });
-    sdk.dispatch.mockImplementation(async turn => {
-      const results = await Promise.allSettled(
-        members.map(member =>
-          turn.dispatchReplyFromConfig({
-            ctx: { AgentId: member.agentId },
-            replyOptions: turn.replyOptions,
-          }),
-        ),
-      );
-      if (report === 'throw')
-        throw (results.find(result => result.status === 'rejected') as PromiseRejectedResult)
-          .reason;
-    });
+    sdk.dispatch.mockImplementation(async turn =>
+      turn.dispatchReplyFromConfig({
+        ctx: { AgentId: turn.route.agentId },
+        replyOptions: turn.replyOptions,
+      }),
+    );
     await expect(
       executeGroupDiscussion({
         cfg: {},
@@ -595,11 +669,12 @@ it.each(['ack', 'callback', 'throw'] as const)(
       }),
     ).rejects.toThrow('teamDiscussionExecutionUnknown');
     expect(dispatcher).toHaveBeenCalledOnce();
+    expect(sdk.dispatch).toHaveBeenCalledOnce();
   },
 );
 
 it.each(['end', 'error'] as const)(
-  'keeps the permit until dispatch cleanup with native %s and ignores duplicate terminals',
+  'keeps the permit until full pipeline cleanup with native %s and ignores duplicate terminals',
   async phase => {
     const members = ['alice', 'bob'].map(agentId => ({
       agentId,
@@ -626,18 +701,17 @@ it.each(['end', 'error'] as const)(
         stream: 'lifecycle',
         data: { phase, executionSettled: true },
       } as never);
-      await new Promise<void>(resolve => held.push(resolve));
       return { queuedFinal: true };
     });
     sdk.dispatch.mockImplementation(async turn => {
-      await Promise.allSettled(
-        members.map(member =>
-          turn.dispatchReplyFromConfig({
-            ctx: { AgentId: member.agentId },
-            replyOptions: turn.replyOptions,
-          }),
-        ),
-      );
+      const result = await turn.dispatchReplyFromConfig({
+        ctx: { AgentId: turn.route.agentId },
+        replyOptions: turn.replyOptions,
+      });
+      // Native dispatch has returned with an exact terminal; channel final
+      // custody and delivery cleanup still belong to this participant.
+      await new Promise<void>(resolve => held.push(resolve));
+      return result;
     });
     const run = executeGroupDiscussion({
       cfg: {},
@@ -680,6 +754,7 @@ it.each(['end', 'error'] as const)(
     });
     await vi.waitFor(() => expect(entered).toEqual(['alice']));
     expect(dispatcher).toHaveBeenCalledOnce();
+    expect(sdk.dispatch).toHaveBeenCalledOnce();
     held.shift()!();
     await vi.waitFor(() => expect(entered).toEqual(['alice', 'bob']));
     listener({
@@ -731,16 +806,12 @@ it('retains late lifecycle listening while another acquired dispatch is still pr
       } as never);
     return { queuedFinal: true };
   });
-  sdk.dispatch.mockImplementation(async turn => {
-    await Promise.allSettled(
-      members.map(member =>
-        turn.dispatchReplyFromConfig({
-          ctx: { AgentId: member.agentId },
-          replyOptions: turn.replyOptions,
-        }),
-      ),
-    );
-  });
+  sdk.dispatch.mockImplementation(async turn =>
+    turn.dispatchReplyFromConfig({
+      ctx: { AgentId: turn.route.agentId },
+      replyOptions: turn.replyOptions,
+    }),
+  );
   const onOutcome = vi.fn();
   const onExecution = vi.fn();
   const run = executeGroupDiscussion({
@@ -802,7 +873,7 @@ it('retains late lifecycle listening while another acquired dispatch is still pr
   expect(unsubscribe).toHaveBeenCalledOnce();
 });
 
-it('blocks a granted queued permit if uncertainty closes the pool before its continuation', async () => {
+it('blocks queued Native preparation once an accepted participant becomes unknown', async () => {
   const members = ['alice', 'carol', 'bob'].map(agentId => ({
     agentId,
     name: agentId,
@@ -838,16 +909,12 @@ it('blocks a granted queued permit if uncertainty closes the pool before its con
       finish[agentId] = () => resolve({ queuedFinal: true });
     });
   });
-  sdk.dispatch.mockImplementation(async turn => {
-    await Promise.allSettled(
-      members.map(member =>
-        turn.dispatchReplyFromConfig({
-          ctx: { AgentId: member.agentId },
-          replyOptions: turn.replyOptions,
-        }),
-      ),
-    );
-  });
+  sdk.dispatch.mockImplementation(async turn =>
+    turn.dispatchReplyFromConfig({
+      ctx: { AgentId: turn.route.agentId },
+      replyOptions: turn.replyOptions,
+    }),
+  );
   const onOutcome = vi.fn();
   const onExecution = vi.fn();
   const run = executeGroupDiscussion({
@@ -915,4 +982,90 @@ it('blocks a granted queued permit if uncertainty closes the pool before its con
     ['carol', 'completed'],
     ['alice', 'completed'],
   ]);
+});
+
+it('retains late lifecycle listening until the outer delivery pipeline finishes', async () => {
+  const members = ['alice', 'bob'].map(agentId => ({
+    agentId,
+    name: agentId,
+    sessionId: agentId,
+    lifecycleRevision: 'rev',
+    sessionRoot: '/project',
+    permissionMode: 'read-only',
+  }));
+  let listener!: (event: never) => void;
+  let releaseDelivery!: () => void;
+  const delivery = new Promise<void>(resolve => {
+    releaseDelivery = resolve;
+  });
+  let dispatchReturned = false;
+  const unsubscribe = vi.fn();
+  const onOutcome = vi.fn();
+  const dispatcher = vi.fn(async params => {
+    sdk.identity = { agentId: 'alice', sessionKey: 'agent:alice:justdo-team:group:room' };
+    params.replyOptions.onAgentRunStart('native-alice');
+    return { queuedFinal: true };
+  });
+  sdk.dispatch.mockImplementation(async turn => {
+    await turn.dispatchReplyFromConfig({
+      ctx: { AgentId: turn.route.agentId },
+      replyOptions: turn.replyOptions,
+    });
+    dispatchReturned = true;
+    await delivery;
+  });
+  const run = executeGroupDiscussion({
+    cfg: {},
+    room: {
+      id: 'room',
+      title: 'Fixture',
+      members,
+      rounds: 1,
+      revision: 1,
+      generation: 0,
+      state: 'ready',
+      cwd: '/project',
+      permissionMode: 'ask',
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    send: {
+      roomId: 'room',
+      requestId: 'request',
+      expectedRevision: 1,
+      message: 'Topic',
+      selectedAgentIds: [],
+      rounds: 1,
+    },
+    resources: { settingsRevision: 1, maxRounds: 4, maxTurns: 2, maxConcurrent: 1 },
+    discussionId: 'discussion',
+    members,
+    signal: new AbortController().signal,
+    onAgentEvent: callback => {
+      listener = callback as never;
+      return unsubscribe;
+    },
+    channelRuntime: {
+      commands: { isControlCommandMessage: () => false },
+      reply: { dispatchReplyFromConfig: dispatcher },
+    } as never,
+    onExecution: vi.fn(),
+    onReference: vi.fn(),
+    onOutcome,
+  });
+  await vi.waitFor(() => expect(dispatchReturned).toBe(true));
+  listener({
+    runId: 'native-alice',
+    sessionKey: 'agent:alice:justdo-team:group:room',
+    sessionId: 'alice',
+    stream: 'lifecycle',
+    data: { phase: 'end', executionSettled: true },
+  } as never);
+  expect(onOutcome).toHaveBeenCalledExactlyOnceWith('alice', 'completed');
+  expect(unsubscribe).not.toHaveBeenCalled();
+  expect(sdk.dispatch).toHaveBeenCalledOnce();
+  releaseDelivery();
+  await expect(run).rejects.toThrow('teamDiscussionExecutionUnknown');
+  expect(unsubscribe).toHaveBeenCalledOnce();
+  expect(sdk.dispatch).toHaveBeenCalledOnce();
 });

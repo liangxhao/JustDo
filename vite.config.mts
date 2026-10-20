@@ -9,13 +9,14 @@ import packageJson from './package.json' with { type: 'json' };
 import { reactHooksRefreshPlugin } from './scripts/build/vite-react-hooks-refresh.mjs';
 import { startupPresentationPlugin } from './scripts/build/startupPresentationPlugin.mjs';
 import applicationLicenses from './scripts/packaging/application-license-assets.cjs';
+import { appPluginAssetsPlugin } from './scripts/plugins/vite-app-plugin-assets.mjs';
 
 // https://vitejs.dev/config/
 const devPort = Number(process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port);
 const isProductionBuild = process.env.NODE_ENV !== 'development';
 const projectRoot = import.meta.dirname;
 const rendererRoot = path.join(projectRoot, 'src/renderer');
-const dependencyRoot = fs.realpathSync(path.join(projectRoot, 'node_modules'));
+const dependencyRoot = path.dirname(fs.realpathSync(path.join(projectRoot, 'node_modules/react')));
 const { createApplicationLicensePlugin } = applicationLicenses;
 const escapedProductName = packageJson.productName.replace(
   /[&<>"']/g,
@@ -28,6 +29,7 @@ export default defineConfig({
   root: rendererRoot,
   envDir: projectRoot,
   plugins: [
+    appPluginAssetsPlugin(projectRoot),
     {
       name: 'product-name-html',
       transformIndexHtml(html) {

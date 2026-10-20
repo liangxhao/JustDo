@@ -14,7 +14,7 @@ import CoworkDisplayPanel from '@/features/cowork/components/display/CoworkDispl
 import DisplayTabContextMenu from '@/features/cowork/components/display/tabs/DisplayTabContextMenu';
 import { useDraggableModal } from '@/features/cowork/components/shared/useDraggableModal';
 import { CoworkPet } from '@/features/cowork/components/status/CoworkPet';
-import SwarmWorkflowPanel from '@/features/cowork/components/swarm-workflow/SwarmWorkflowPanel';
+import SwarmWorkflowPanel from '../../../plugins/extensions/swarm-workflow/app/browser/SwarmWorkflowPanel';
 import TerminalPanel from '@/features/cowork/components/terminal/TerminalPanel';
 import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
 import { observeEditorLayout } from '@/shared/dom/observeEditorLayout';

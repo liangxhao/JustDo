@@ -11,7 +11,6 @@ import {
   PhotoIcon,
   QueueListIcon,
   ShareIcon,
-  UserGroupIcon,
 } from '@heroicons/react/24/outline';
 import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
 import { SaveTextFileErrorCode } from '@shared/app/dialogIpc';
@@ -24,12 +23,6 @@ import {
 } from '@shared/browser/browser';
 import { BrowserLinkTarget, isWebBrowserLink } from '@shared/browser/browserLinkOpening';
 import { recordingImagesInStepOrder } from '@shared/browser/browserRecording';
-import { recognizeAgentTeamMode } from '@shared/cowork/agent-team/agentTeamPrompt';
-import type {
-  CollaborationDelivery,
-  CollaborationMember,
-  CollaborationRoom,
-} from '@shared/cowork/agent-team/collaboration';
 import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
 import { CoworkInteractionKind } from '@shared/cowork/interactions/interactions';
 import {
@@ -40,10 +33,9 @@ import { getMessageTitleInput } from '@shared/cowork/messageInput';
 import { REVIEW_OPEN_EVENT, REVIEW_TAB_ID } from '@shared/cowork/sessionReview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { isGoalEditCommand } from '@shared/cowork/slashCommands';
-import type { SwarmWorkflowOptions } from '@shared/cowork/swarm-workflow';
 import { ExternalSessionSource } from '@shared/integrations/externalSession';
 import { type ProgressCard, type ProgressCardViewState } from '@shared/openclaw/progressCard';
-import { OpenClawExtensionId, OpenClawToolName } from '@shared/plugins/nativeIds';
+import { OpenClawToolName } from '@shared/plugins/nativeIds';
 import { HOME_WORKSPACE_SESSION_ID } from '@shared/preview/filePreview';
 import {
   forwardRef,
@@ -63,7 +55,10 @@ import ApplicationLoading, {
   useInitialWorkspaceReadiness,
 } from '@/app/shell/startup/routing/ApplicationLoading';
 import { RendererStartupActivity } from '@/app/shell/startup/routing/startupPresentation';
-import { getEngineReadinessSnapshot, useEngineReadiness } from '@/app/shell/startup/routing/useEngineReadiness';
+import {
+  getEngineReadinessSnapshot,
+  useEngineReadiness,
+} from '@/app/shell/startup/routing/useEngineReadiness';
 import {
   BROWSER_ANNOTATION_MAX_COUNT,
   BROWSER_ANNOTATION_MAX_IMAGE_BYTES,
@@ -163,8 +158,6 @@ import { loadSpawnedSubtask } from '@/features/cowork/components/subagents/spawn
 import SubagentMessageDrawer from '@/features/cowork/components/subagents/SubagentMessageDrawer';
 import SubtaskListPanel from '@/features/cowork/components/subagents/SubtaskListPanel';
 import type { Subtask } from '@/features/cowork/components/subagents/subtaskPresentation';
-import SwarmWorkflowPanel from '@/features/cowork/components/swarm-workflow/SwarmWorkflowPanel';
-import { useSwarmWorkflowDiscovery } from '@/features/cowork/components/swarm-workflow/useSwarmWorkflowDiscovery';
 import TerminalPanel from '@/features/cowork/components/terminal/TerminalPanel';
 import {
   selectCoworkConfig,
@@ -203,14 +196,14 @@ import {
   createSessionExportDocument,
 } from '@/features/cowork/sessionExport';
 import { type CoworkSessionListActionDetail } from '@/features/cowork/sessionListActions';
-import { useExtensionAvailability } from '@/features/plugins/extensions/useExtensionEnablement';
+import { AppPluginSlot } from '@/features/plugins/app/AppPluginSlot';
+import { useAppWorkspace } from '@/features/plugins/app/useAppWorkspace';
 import { clearActiveSkills } from '@/features/plugins/skills/skillSlice';
 import type { SettingsOpenOptions } from '@/features/settings/Settings';
 import type {
   ChatContextUsageSnapshot,
   RewindEditorDraft,
 } from '@/libs/openclaw-chat/gateway/chat-controller';
-import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import type { QueuedInputSnapshot } from '@/libs/openclaw-chat/gateway/input/chat-pending-inputs';
 import type {
   SessionSummaryResources,
@@ -226,17 +219,10 @@ import Modal from '@/shared/components/ui/Modal';
 import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
 import { type RootState, store } from '@/store';
 
+import type { AppSubmission } from '../../../../../packages/app-plugin-sdk/contracts';
+import { readAppInput } from '../../../../../plugins/extensions/runtime-services/contracts/app-input';
 import { renderCoworkHomeWorkspace } from './chat/CoworkHomeWorkspace';
 import { useCoworkSideChats } from './chat/useCoworkSideChats';
-import type {
-  CollaborationContinueRequest,
-  CollaborationContinueStatus,
-} from './collaboration/collaborationContinueDraft';
-import {
-  sendCollaborationMemberMessage,
-  submitCollaborationContinuation,
-} from './collaboration/collaborationContinueSubmission';
-import { useCollaborationRooms } from './collaboration/CollaborationPanel';
 import type { MessageQuoteHandler } from './composer/draft/messageQuote';
 import {
   bindSessionSubmissionRun,
@@ -245,13 +231,9 @@ import {
   type SessionSubmission,
   stopSessionSubmission,
 } from './composer/submission/sessionSubmission';
-import { OPEN_TEAM_PANEL, useTeamDiscussionRooms } from './discussions/teamDiscussionNavigation';
-import { buildAgentTeamEntries, groupTeamKey } from './display/summary/agentTeamEntries';
-import AgentTeamPanel from './display/summary/AgentTeamPanel';
 import {
   BROWSER_DISPLAY_TAB_PREFIX,
   browserDisplayTabId,
-  COLLABORATION_DISPLAY_TAB_ID,
   FILE_DISPLAY_TAB_PREFIX,
   fileDisplayTabId,
   MAX_TERMINAL_TABS,
@@ -260,7 +242,6 @@ import {
   SUBAGENTS_DISPLAY_TAB_ID,
   SUMMARY_RESOURCE_DISPLAY_TAB_IDS,
   type SummaryResourceListKind,
-  SWARM_WORKFLOW_DISPLAY_TAB_ID,
   TERMINAL_DISPLAY_TAB_PREFIX,
   WORKSPACE_FILES_DISPLAY_TAB_ID,
 } from './display/tabs/displayTabIds';
@@ -270,7 +251,10 @@ import { useWebpageEmbedTabs } from './display/tabs/useWebpageEmbedTabs';
 import { useWidgetReferenceTabs } from './display/tabs/useWidgetReferenceTabs';
 import SessionReviewPanel from './review/SessionReviewPanel';
 import type { SessionTranscriptMutation } from './sessions/useCoworkSessionActions';
-import { useCoworkSessionActions } from './sessions/useCoworkSessionActions';
+import {
+  getSessionTranscriptActionError,
+  useCoworkSessionActions,
+} from './sessions/useCoworkSessionActions';
 import { useCoworkRuntimePolling } from './status/useCoworkRuntimePolling';
 import { useSessionFocusRefresh } from './status/useSessionFocusRefresh';
 
@@ -376,66 +360,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     const observer = observeChatContentWidth(pane, window.electron?.window, pane.parentElement);
     chatWidthCleanupRef.current = observer.dispose;
   }, []);
-  const { enabled: agentTeamEnabled, disabledRevision: agentTeamDisabledRevision } =
-    useExtensionAvailability(OpenClawExtensionId.AGENT_TEAM);
-  const agentTeamAvailabilityRef = useRef({
-    enabled: agentTeamEnabled,
-    revision: agentTeamDisabledRevision,
-  });
-  agentTeamAvailabilityRef.current = {
-    enabled: agentTeamEnabled,
-    revision: agentTeamDisabledRevision,
-  };
-  const { enabled: swarmWorkflowEnabled, disabledRevision: swarmWorkflowDisabledRevision } =
-    useExtensionAvailability(OpenClawExtensionId.SWARM_WORKFLOW);
   const [isWorkspaceDetached, setIsWorkspaceDetached] = useState(false);
-  const [teamPanelSelection, setTeamPanelSelection] = useState<{ key?: string; version: number }>({
-    version: 0,
-  });
-  const [collaborationMemberId, setCollaborationMemberId] = useState<string | undefined>();
-  const selectTeamPanel = useCallback((key?: string) => {
-    setCollaborationMemberId(undefined);
-    setTeamPanelSelection(current => ({ key, version: current.version + 1 }));
-  }, []);
-  const collaborationRooms = useCollaborationRooms({
-    activeSessionId: currentSessionId,
-    onFirstCollaboration: sessionId => {
-      if (!agentTeamEnabled) return;
-      selectTeamPanel();
-      setCollaborationSessionId(sessionId);
-      setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID);
-      setIsDisplayPanelOpen(true);
-      setIsWorkspaceFilesOpen(false);
-    },
-  });
-  const discussionRooms = useTeamDiscussionRooms(room => {
-    if (!agentTeamEnabled || room.sourceSessionId !== currentSessionId) return;
-    selectTeamPanel(groupTeamKey(room.id));
-    setCollaborationSessionId(currentSessionId);
-    setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID);
-    setIsDisplayPanelOpen(true);
-    setIsWorkspaceFilesOpen(false);
-  });
   const sessions = useSelector(selectSessionDirectory);
   const config = useSelector(selectCoworkConfig);
-  const [collaborationSessionId, setCollaborationSessionId] = useState<string | null>(null);
-  useEffect(() => {
-    setCollaborationSessionId(null);
-    setCollaborationMemberId(undefined);
-  }, [agentTeamDisabledRevision]);
-  useEffect(() => {
-    if (!agentTeamEnabled) {
-      setCollaborationSessionId(null);
-      setCollaborationMemberId(undefined);
-    }
-  }, [agentTeamEnabled]);
-  const [swarmWorkflowSessionId, setSwarmWorkflowSessionId] = useState<string | null>(null);
-  useEffect(() => {
-    setSwarmWorkflowSessionId(null);
-  }, [swarmWorkflowDisabledRevision]);
-  useEffect(() => {
-    if (!swarmWorkflowEnabled) setSwarmWorkflowSessionId(null);
-  }, [swarmWorkflowEnabled]);
   const [isInitialized, setIsInitialized] = useState(false);
   const [startupActivity, setStartupActivity] = useState<RendererStartupActivity>(
     RendererStartupActivity.Conversations,
@@ -674,27 +601,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     visiblePlanInteraction !== null &&
     (planInteraction === null ||
       retainedPlanInteraction?.requestId === visiblePlanInteraction.requestId);
-  useEffect(() => {
-    const open = (event: Event) => {
-      if (!agentTeamEnabled) return;
-      const { sessionId, roomId, teamKey } = (
-        event as CustomEvent<{ sessionId: string; roomId: string; teamKey?: string }>
-      ).detail;
-      selectTeamPanel(teamKey ?? groupTeamKey(roomId));
-      setCollaborationSessionId(sessionId);
-      setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID);
-      setIsDisplayPanelOpen(true);
-      setIsWorkspaceFilesOpen(false);
-    };
-    window.addEventListener(OPEN_TEAM_PANEL, open);
-    return () => window.removeEventListener(OPEN_TEAM_PANEL, open);
-  }, [
-    agentTeamEnabled,
-    selectTeamPanel,
-    setIsDisplayPanelOpen,
-    setIsWorkspaceFilesOpen,
-    setPreferredDisplayTabId,
-  ]);
   const recordingReviewTabs = useRecordingReviewTabs(
     displaySessionKey,
     id => {
@@ -750,6 +656,15 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       : false;
   };
   const openAppFile = useCallback<OpenMcpAppFile>(request => appFileOpenerRef.current(request), []);
+  const openAppWorkspace = useCallback(
+    (id: string) => {
+      setPreferredDisplayTabId(id);
+      setIsDisplayPanelOpen(true);
+      setIsWorkspaceFilesOpen(false);
+    },
+    [setPreferredDisplayTabId, setIsDisplayPanelOpen, setIsWorkspaceFilesOpen],
+  );
+  const appWorkspace = useAppWorkspace(currentSessionId, openAppWorkspace);
   const unorderedDisplayTabIds = useMemo(
     () => [
       ...(isBrowserPanelOpen ? browserTabs.map(tab => browserDisplayTabId(tab.targetId)) : []),
@@ -761,14 +676,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       ...(selectedSubagent ? [SUBAGENT_DISPLAY_TAB_ID] : []),
       ...(isSubagentsTabOpen ? [SUBAGENTS_DISPLAY_TAB_ID] : []),
       ...summaryResourceTabs.map(kind => SUMMARY_RESOURCE_DISPLAY_TAB_IDS[kind]),
-      ...(agentTeamEnabled && collaborationSessionId && collaborationSessionId === currentSessionId
-        ? [COLLABORATION_DISPLAY_TAB_ID]
-        : []),
-      ...(swarmWorkflowEnabled &&
-      swarmWorkflowSessionId &&
-      swarmWorkflowSessionId === currentSessionId
-        ? [SWARM_WORKFLOW_DISPLAY_TAB_ID]
-        : []),
+      ...appWorkspace.views.map(view => view.tabId),
       ...(isReviewOpen ? [REVIEW_TAB_ID] : []),
       ...sideChatTabs.map(tab => tab.id),
       ...recordingReviewTabs.tabs.map(tab => tab.id),
@@ -778,11 +686,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       ...webpageReferences.tabs.map(tab => tab.id),
     ],
     [
-      agentTeamEnabled,
-      collaborationSessionId,
-      swarmWorkflowSessionId,
-      swarmWorkflowEnabled,
-      currentSessionId,
+      appWorkspace.views,
       browserTabs,
       filePreviews,
       isBrowserPanelOpen,
@@ -840,19 +744,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     window.addEventListener(REVIEW_OPEN_EVENT, listener);
     return () => window.removeEventListener(REVIEW_OPEN_EVENT, listener);
   }, [currentSessionId, openReview]);
-  const openSwarmWorkflow = useCallback(() => {
-    if (!swarmWorkflowEnabled || !currentSessionId) return;
-    setSwarmWorkflowSessionId(currentSessionId);
-    setPreferredDisplayTabId(SWARM_WORKFLOW_DISPLAY_TAB_ID);
-    setIsDisplayPanelOpen(true);
-    setIsWorkspaceFilesOpen(false);
-  }, [
-    swarmWorkflowEnabled,
-    currentSessionId,
-    setPreferredDisplayTabId,
-    setIsDisplayPanelOpen,
-    setIsWorkspaceFilesOpen,
-  ]);
   const activeDisplayTabId =
     preferredDisplayTabId && availableDisplayTabIds.includes(preferredDisplayTabId)
       ? preferredDisplayTabId
@@ -1022,9 +913,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const isOpenClawEngine = useSelector(selectIsOpenClawEngine);
   const engineReadiness = useEngineReadiness();
   const isEngineReady = !isOpenClawEngine || engineReadiness.ready;
-  const engineUnavailableMessage = isEngineReady ? undefined : i18nService.t(
-    engineReadiness.pending ? 'enginePreparingSend' : 'engineUnavailableSend',
-  );
+  const engineUnavailableMessage = isEngineReady
+    ? undefined
+    : i18nService.t(engineReadiness.pending ? 'enginePreparingSend' : 'engineUnavailableSend');
   const agentState = useSelector((state: RootState) => state.agent);
   const availableModels = useSelector((state: RootState) => state.model.availableModels);
   const globalSelectedModel = useSelector((state: RootState) => state.model.selectedModel);
@@ -1113,12 +1004,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     summaryResources?.sessionKey === currentGatewaySessionKey ? summaryResources : null;
   const summaryObjective =
     goalPresence.sessionId === currentSessionId ? goalPresence.objective : undefined;
-  const summaryTeamEntries =
-    agentTeamEnabled && currentSessionId
-      ? buildAgentTeamEntries(currentSessionId, collaborationRooms, discussionRooms, key =>
-          i18nService.t(key),
-        )
-      : [];
   const progressCard =
     progressCardState?.sessionKey === currentGatewaySessionKey ? progressCardState.card : null;
   const summaryVisibility = useSessionSummaryVisibility(
@@ -1126,18 +1011,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     !!summaryObjective ||
       !!progressCard ||
       subtasks.length > 0 ||
-      summaryTeamEntries.length > 0 ||
+      appWorkspace.hasSummary ||
+      appWorkspace.views.length > 0 ||
       !!currentSummaryResources?.outputs.length ||
       !!currentSummaryResources?.sources.length,
-  );
-  const swarmWorkflowDiscovery = useSwarmWorkflowDiscovery(
-    currentSessionId,
-    undefined,
-    {
-      enabled: swarmWorkflowEnabled,
-      disabledRevision: swarmWorkflowDisabledRevision,
-    },
-    summaryVisibility.visible,
   );
   const handleGoalResumeAccepted = useCallback((sessionId: string, runId: string) => {
     if (currentSessionIdRef.current !== sessionId) return;
@@ -1240,7 +1117,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     attachments?: CoworkAttachmentPayload[],
     gatewayPrompt?: string,
     worktree?: boolean,
-    _swarmWorkflow?: SwarmWorkflowOptions,
+    _pluginSubmission?: AppSubmission,
     submission?: ComposerSubmissionMetadata,
   ): Promise<boolean | void> => {
     const modelRef = captureHomeComposerModelRef(store.getState(), currentAgentId);
@@ -1739,8 +1616,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   const requestFilePreviewTransition = useCallback(
     async (options?: FilePreviewNavigationOptions): Promise<boolean> => {
+      if (options?.canCommit?.() === false) return false;
       for (const drawer of filePreviewDrawerRefs.current.values()) {
         if (!(await drawer.requestTransition())) return false;
+        if (options?.canCommit?.() === false) return false;
       }
       if (options?.preserveTabs) return true;
       filePreviewRequestIdRef.current += 1;
@@ -2260,9 +2139,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     setPendingSessionListAction,
     pendingSessionListAction,
     currentSession,
-    setCollaborationSessionId,
-    collaborationRooms,
-    setCollaborationMemberId,
     setPreferredDisplayTabId,
     setIsDisplayPanelOpen,
     setIsWorkspaceFilesOpen,
@@ -2389,8 +2265,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               })
             : undefined
         }
-        sideChatDisabled={!isEngineReady || Boolean(currentSessionId?.startsWith('temp-')) || !isOpenClawEngine}
-        terminalDisabled={!isEngineReady || !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS}
+        sideChatDisabled={
+          !isEngineReady || Boolean(currentSessionId?.startsWith('temp-')) || !isOpenClawEngine
+        }
+        terminalDisabled={
+          !isEngineReady || !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS
+        }
       />
     );
   };
@@ -2548,23 +2428,25 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       prompt: string,
       attachments?: CoworkAttachmentPayload[],
       gatewayPrompt?: string,
-      submission?: boolean | { clientTurnId: string },
-      _swarmWorkflow?: SwarmWorkflowOptions,
+      submission?: boolean | { clientTurnId: string; assertCurrent?(): void },
+      _pluginSubmission?: AppSubmission,
       composerSubmission?: ComposerSubmissionMetadata,
     ) => {
       if (currentSession.branchCreationPending || currentSession.external?.readOnly) return false;
       if (goalPresence.sessionId !== currentSession.id || !goalPresence.ready) return false;
       if (!ensureOpenClawReadyForSubmit() || pendingStartRef.current?.cancelled) return false;
       const outboundPrompt = gatewayPrompt ?? prompt;
-      const explicitTeam = recognizeAgentTeamMode(outboundPrompt) !== undefined;
+      const explicitPlugin = readAppInput(outboundPrompt) !== undefined;
       // The previous run may have finished while a queue acknowledgement was
       // lost. Preserve its idempotency identity even though the composer is idle.
       if (chatWrapperRef.current?.hasUnconfirmedQueuedInput()) {
         // This exact application suffix is only a restriction hint, not launch
         // authority. A queued native execution has no proven intent lineage yet.
-        if (explicitTeam) {
+        if (explicitPlugin) {
           window.dispatchEvent(
-            new CustomEvent('app:showToast', { detail: i18nService.t('teamFeatureBusy') }),
+            new CustomEvent('app:showToast', {
+              detail: i18nService.t('appPluginSubmitUnavailable'),
+            }),
           );
           return false;
         }
@@ -2580,6 +2462,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       let requestUnknown = false;
       let nativeSendIssued = false;
       const ensureSubmissionCurrent = () => {
+        if (typeof submission === 'object') submission.assertCurrent?.();
         if (operation.cancelled || currentGatewaySessionKeyRef.current !== targetSessionKey) {
           throw new Error('The message submission context changed');
         }
@@ -2602,26 +2485,33 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             sessionId: currentSession.id,
             clientTurnId,
             startedAt,
-            ...(explicitTeam ? { agentTeamPrompt: outboundPrompt } : {}),
+            ...(explicitPlugin ? { pluginPrompt: outboundPrompt } : {}),
           });
           runTimingId = timing.id;
           operation.receiptId = timing.id;
           ensureSubmissionCurrent();
           const chatWrapper = chatWrapperRef.current;
           if (!chatWrapper) throw new Error('Chat controller is not ready');
-          if (explicitTeam) {
-            const marked = await window.electron.cowork.markTeamSubmissionStarted({
+          if (explicitPlugin) {
+            const marked = await window.electron.cowork.markPluginSubmissionStarted({
               sessionId: currentSession.id,
               clientTurnId,
             });
             if (!marked.success)
-              throw new Error(marked.error || i18nService.t('teamLaunchUnconfirmed'));
+              throw new Error(marked.error || i18nService.t('appPluginSubmitUnavailable'));
             ensureSubmissionCurrent();
           }
           await chatWrapper.sendMessage(prompt, attachments, gatewayPrompt, {
             propagateRequestFailure: true,
             expectedSessionKey: targetSessionKey,
-            isCancelled: () => operation.cancelled,
+            isCancelled: () => {
+              try {
+                ensureSubmissionCurrent();
+                return false;
+              } catch {
+                return true;
+              }
+            },
             onRequestUnknown: async runId => {
               operation.runId = runId;
               requestUnknown = true;
@@ -2646,12 +2536,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         },
         async err => {
           const cancelled = operation.cancelled;
-          if (explicitTeam && !nativeSendIssued) {
+          if (explicitPlugin && !nativeSendIssued) {
             // This failed sender cannot resume. Native abandonment still checks
             // exact user-input absence, dispatcher idle and the generation fence.
             operation.cancelled = true;
             await window.electron.cowork
-              .abortTeamSubmissionBeforeSend({ sessionId: currentSession.id, clientTurnId })
+              .abortPluginSubmissionBeforeSend({ sessionId: currentSession.id, clientTurnId })
               .catch(() => undefined);
           }
           if (runTimingId && !requestUnknown)
@@ -2683,112 +2573,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           pendingMessageSubmissionsRef.current.delete(currentSession.id);
         }
       });
-    };
-
-    const handleCollaborationContinue = async (
-      room: CollaborationRoom,
-      member: CollaborationMember,
-      delivery: CollaborationDelivery | undefined,
-      input: CollaborationContinueRequest,
-      controller: ChatController,
-    ): Promise<CollaborationContinueStatus> => {
-      const sourceId = currentSession.id;
-      const sourceKey = currentGatewaySessionKey;
-      const memberClient = controller.state.client;
-      const memberNativeSessionId = controller.state.currentSessionId;
-      const memberHello = controller.state.hello;
-      const teamRevision = agentTeamAvailabilityRef.current.revision;
-      const assertCurrent = () => {
-        if (
-          currentSessionIdRef.current !== sourceId ||
-          !controller.state.connected ||
-          controller.state.client !== memberClient ||
-          controller.state.hello !== memberHello ||
-          controller.state.currentSessionId !== memberNativeSessionId ||
-          !memberNativeSessionId ||
-          controller.state.sessionKey !== member.sessionKey ||
-          currentGatewaySessionKeyRef.current !== sourceKey ||
-          currentSession.external ||
-          !agentTeamAvailabilityRef.current.enabled ||
-          agentTeamAvailabilityRef.current.revision !== teamRevision ||
-          currentSessionRuntimeRunningRef.current ||
-          goalPresence.sessionId !== sourceId ||
-          !goalPresence.ready ||
-          goalPresence.hasGoal ||
-          pendingMessageSubmissionsRef.current.has(sourceId) ||
-          chatWrapperRef.current?.hasUnconfirmedQueuedInput()
-        )
-          throw new Error('collaborationContinuationUnavailable');
-      };
-      try {
-        assertCurrent();
-        if (!input.message.trim() || input.message.trimStart().startsWith('/')) return 'rejected';
-        const prepared = await window.electron.collaboration.prepareContinuation({
-          sourceSessionId: sourceId,
-          roomId: room.id,
-          targetSessionKey: member.sessionKey,
-          nativeSessionId: memberNativeSessionId!,
-          ...(delivery ? { priorDeliveryId: delivery.id } : {}),
-        });
-        assertCurrent();
-        if (!prepared.success) throw new Error(prepared.error);
-        if (
-          prepared.value.sourceSessionId !== sourceId ||
-          prepared.value.targetSessionId !== member.sessionId ||
-          prepared.value.targetSessionKey !== member.sessionKey ||
-          prepared.value.sourceAgentId !== currentSession.agentId
-        )
-          throw new Error('collaborationInvalidRecipient');
-        const recheckAdmission = async () => {
-          const current = await window.electron.collaboration.prepareContinuation({
-            sourceSessionId: sourceId,
-            roomId: room.id,
-            targetSessionKey: member.sessionKey,
-            nativeSessionId: memberNativeSessionId!,
-            expectedControlGeneration: prepared.value.controlGeneration,
-            ...(delivery ? { priorDeliveryId: delivery.id } : {}),
-          });
-          assertCurrent();
-          if (!current.success) throw new Error(current.error);
-          if (JSON.stringify(current.value) !== JSON.stringify(prepared.value))
-            throw new Error('collaborationInvalidRecipient');
-        };
-        return await submitCollaborationContinuation(input, {
-          target: prepared.value,
-          cwd: currentSession.cwd,
-          assertCurrent,
-          supportsImages: () => {
-            const state = store.getState();
-            return (
-              resolveAgentModelSelection({
-                agentId: member.agentId,
-                agentModel:
-                  state.agent.agents.find(agent => agent.id === member.agentId)?.model ?? '',
-                sessionModel: controller.state.contextUsage?.modelRef ?? undefined,
-                availableModels: state.model.availableModels,
-                fallbackModel: state.model.selectedModel,
-              }).selectedModel?.supportsImage === true
-            );
-          },
-          stageAudio: (path, cwd) => window.electron.localAsr.stageAttachment(path, cwd),
-          readImage: path => window.electron.dialog.readFileAsDataUrl(path),
-          beforeSubmit: recheckAdmission,
-          submit: (target, message, images, clientTurnId) =>
-            sendCollaborationMemberMessage(
-              controller,
-              target,
-              message,
-              images,
-              clientTurnId,
-              assertCurrent,
-              recheckAdmission,
-            ),
-        });
-      } catch (error) {
-        const key = error instanceof Error ? error.message : 'collaborationContinuationUnavailable';
-        window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t(key) }));
-        return 'rejected';
-      }
     };
 
     continueBrowserTaskRef.current = async (sessionId, prompt) => {
@@ -3046,8 +2830,25 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
     const handleExportSession = async (includeRawData: boolean): Promise<boolean> => {
       try {
+        const actionError = getSessionTranscriptActionError(
+          'export',
+          currentSession.id,
+          currentSessionRuntimeRunningRef.current,
+        );
+        if (actionError) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', { detail: i18nService.t(actionError) }),
+          );
+          return false;
+        }
         const snapshot = chatWrapperRef.current?.getExportSnapshot();
-        if (!snapshot || snapshot.isLoading) {
+        if (
+          !snapshot ||
+          snapshot.isLoading ||
+          currentSessionIdRef.current !== currentSession.id ||
+          snapshot.sessionKey !== currentGatewaySessionKey ||
+          currentGatewaySessionKeyRef.current !== currentGatewaySessionKey
+        ) {
           window.dispatchEvent(
             new CustomEvent('app:showToast', {
               detail: i18nService.t('coworkExportHistoryLoading'),
@@ -3063,7 +2864,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           includeRawData,
         });
         const result = await window.electron.dialog.saveTextFile({
-          title: i18nService.t('collaborationExportMain'),
+          title: i18nService.t('sessionExportMain'),
           defaultFileName: buildSessionExportFileName(currentSession.title),
           content: `${JSON.stringify({ ...document, scope: 'main', exportedAt: new Date().toISOString() }, null, 2)}\n`,
           filters: [{ name: 'JSON', extensions: ['json'] }],
@@ -3249,34 +3050,16 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           },
         };
       }),
-      ...(swarmWorkflowEnabled && swarmWorkflowSessionId === currentSession.id
-        ? [
-            {
-              id: SWARM_WORKFLOW_DISPLAY_TAB_ID,
-              label: i18nService.t('swarmWorkflowTitle'),
-              icon: <ShareIcon className="h-4 w-4" />,
-              onSelect: () => setPreferredDisplayTabId(SWARM_WORKFLOW_DISPLAY_TAB_ID),
-              onClose: () => {
-                setSwarmWorkflowSessionId(null);
-                selectAdjacentDisplayTabAfterClose(SWARM_WORKFLOW_DISPLAY_TAB_ID);
-              },
-            },
-          ]
-        : []),
-      ...(agentTeamEnabled && collaborationSessionId === currentSession.id
-        ? [
-            {
-              id: COLLABORATION_DISPLAY_TAB_ID,
-              label: i18nService.t('teamTitle'),
-              icon: <UserGroupIcon className="h-4 w-4" />,
-              onSelect: () => setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID),
-              onClose: () => {
-                setCollaborationSessionId(null);
-                selectAdjacentDisplayTabAfterClose(COLLABORATION_DISPLAY_TAB_ID);
-              },
-            },
-          ]
-        : []),
+      ...appWorkspace.views.map(view => ({
+        id: view.tabId,
+        label: i18nService.t(view.labelKey),
+        icon: view.icon ?? <ShareIcon className="h-4 w-4" />,
+        onSelect: () => setPreferredDisplayTabId(view.tabId),
+        onClose: () => {
+          appWorkspace.close(view.tabId);
+          selectAdjacentDisplayTabAfterClose(view.tabId);
+        },
+      })),
       ...sideChatTabs.map(tab => ({
         id: tab.id,
         label: tab.label,
@@ -3406,6 +3189,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 >
                   <SearchIcon className="h-4 w-4" />
                 </button>
+                <AppPluginSlot slot="chat.action" context={{ session: currentSession }} />
                 <div>
                   <button
                     ref={summaryToggleRef}
@@ -3447,27 +3231,17 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     }
                     tasks={subtasks}
                     resources={currentSummaryResources}
-                    workflowCount={swarmWorkflowDiscovery.count}
-                    teamEntries={summaryTeamEntries}
-                    teamEnabled={agentTeamEnabled}
+                    pluginEntries={
+                      <AppPluginSlot
+                        slot="session.summary"
+                        context={{ session: currentSession, onClose: summaryVisibility.close }}
+                      />
+                    }
                     onClose={summaryVisibility.close}
                     onOpenSubagents={() => {
                       summaryVisibility.close();
                       setIsSubagentsTabOpen(true);
                       setPreferredDisplayTabId(SUBAGENTS_DISPLAY_TAB_ID);
-                      setIsWorkspaceFilesOpen(false);
-                      openDisplayPanel();
-                    }}
-                    onOpenWorkflow={() => {
-                      summaryVisibility.close();
-                      openSwarmWorkflow();
-                    }}
-                    onOpenTeam={() => {
-                      if (!agentTeamEnabled) return;
-                      summaryVisibility.close();
-                      selectTeamPanel();
-                      setCollaborationSessionId(currentSession.id);
-                      setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID);
                       setIsWorkspaceFilesOpen(false);
                       openDisplayPanel();
                     }}
@@ -3692,9 +3466,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               onAssistantMessageFork={
                 sessionTranscriptMutation === null &&
                 (!currentSession.nativeSessionKey || !!currentSession.historyBinding) &&
-                !collaborationRooms.some(room =>
-                  room.members.some(member => member.sessionId === currentSession.id),
-                ) &&
                 !currentSessionRuntimeRunning &&
                 !currentSession.id.startsWith('temp-')
                   ? handleAssistantMessageFork
@@ -3934,36 +3705,60 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 </div>
               ))}
               {recordingReviewTabs.panels(activeDisplayTabId)}
-              {swarmWorkflowEnabled && swarmWorkflowSessionId === currentSession.id && (
+              {appWorkspace.views.map(view => (
                 <div
+                  key={`${view.pluginId}:${view.epoch}:${view.id}`}
                   className="absolute inset-0"
-                  hidden={activeDisplayTabId !== SWARM_WORKFLOW_DISPLAY_TAB_ID}
+                  hidden={activeDisplayTabId !== view.tabId}
                 >
-                  <SwarmWorkflowPanel
-                    key={currentSession.id}
-                    sessionId={currentSession.id}
-                    active={
-                      activeDisplayTabId === SWARM_WORKFLOW_DISPLAY_TAB_ID && isWorkspaceVisible
-                    }
+                  <AppPluginSlot
+                    slot="workspace.tab"
+                    pluginId={view.pluginId}
+                    contributionId={view.id}
+                    context={{
+                      session: currentSession,
+                      selection: view.selection,
+                      selectionRevision: view.selectionRevision,
+                      active: activeDisplayTabId === view.tabId && isWorkspaceVisible,
+                      draft: {
+                        focus: () => requestAnimationFrame(() => promptInputRef.current?.focus()),
+                        append: text =>
+                          window.dispatchEvent(
+                            new CustomEvent('cowork:append-draft', {
+                              detail: { sessionId: currentSession.id, text },
+                            }),
+                          ),
+                      },
+                      onOpenSubtask: openSubtask,
+                      submitUserTurn: {
+                        assertReady: () => {
+                          if (
+                            currentSessionIdRef.current !== currentSession.id ||
+                            currentGatewaySessionKeyRef.current !== currentGatewaySessionKey ||
+                            currentSession.external ||
+                            currentSessionRuntimeRunningRef.current ||
+                            goalPresence.sessionId !== currentSession.id ||
+                            !goalPresence.ready ||
+                            goalPresence.hasGoal ||
+                            pendingMessageSubmissionsRef.current.has(currentSession.id) ||
+                            chatWrapperRef.current?.hasUnconfirmedQueuedInput()
+                          )
+                            throw new Error('appPluginSubmitUnavailable');
+                        },
+                        supportsImages: () => promptInputRef.current?.supportsImages() === true,
+                        send: input =>
+                          handleSendMessage(input.display, input.attachments, input.gateway, {
+                            clientTurnId: input.clientTurnId,
+                            assertCurrent: input.assertCurrent,
+                          }),
+                        outcomeUnknown: () =>
+                          pendingMessageSubmissionsRef.current.get(currentSession.id)?.unknown ===
+                          true,
+                      },
+                    }}
                   />
                 </div>
-              )}
-              {agentTeamEnabled &&
-                collaborationSessionId === currentSession.id &&
-                activeDisplayTabId === COLLABORATION_DISPLAY_TAB_ID && (
-                  <AgentTeamPanel
-                    key={currentSession.id}
-                    selectionRequest={teamPanelSelection}
-                    onFocusComposer={() =>
-                      requestAnimationFrame(() => promptInputRef.current?.focus())
-                    }
-                    source={currentSession}
-                    selectedMemberId={collaborationMemberId}
-                    onSelect={setCollaborationMemberId}
-                    onOpenSubtask={openSubtask}
-                    onRequestContinue={handleCollaborationContinue}
-                  />
-                )}
+              ))}
               <SubagentMessageDrawer
                 parentSessionId={selectedSubagent?.parentSessionId ?? currentSession.id}
                 subagent={selectedSubagent}

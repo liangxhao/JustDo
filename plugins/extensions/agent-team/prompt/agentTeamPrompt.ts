@@ -1,4 +1,5 @@
 import { stripCollaborationContinuation } from './collaborationContinuationPrompt';
+import { unwrapAppInput } from '../../runtime-services/contracts/app-input';
 
 export const AGENT_TEAM_MODE = { GROUP: 'group', TASK: 'task' } as const;
 export type AgentTeamMode = (typeof AGENT_TEAM_MODE)[keyof typeof AGENT_TEAM_MODE];
@@ -34,6 +35,7 @@ export function appendAgentTeamInstruction(prompt: string, mode: AgentTeamMode):
 
 /** Display/editor projection only; never rewrite native history or outbound task text. */
 export function stripAgentTeamInstruction(text: string): string {
+  text = unwrapAppInput(text);
   const continuation = stripCollaborationContinuation(text);
   if (continuation !== text) return continuation;
   if (!text.endsWith(`</${REQUEST_TAG}>`)) return text;
@@ -46,6 +48,7 @@ export function stripAgentTeamInstruction(text: string): string {
 
 /** Launch admission recognizes only the currently authored explicit selection suffix. */
 export function recognizeAgentTeamMode(prompt: string): AgentTeamMode | undefined {
+  prompt = unwrapAppInput(prompt);
   return Object.values(AGENT_TEAM_MODE).find(mode =>
     prompt.endsWith(appendAgentTeamInstruction('', mode)),
   );

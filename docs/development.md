@@ -14,6 +14,8 @@ npm run electron:dev:openclaw
 
 首次启动会准备当前平台的 OpenClaw runtime 和开发资源。后续只修改应用代码时，可直接运行 `npm run electron:dev`；修改运行时补丁或扩展后需重新准备 runtime，再重启应用。
 
+`electron:dev` 和隔离开发入口都会先构建独立 App 插件，首次检出无需手工生成 `build/app-plugins/catalog.json`。修改插件源码后重新运行对应启动命令即可生成当前产物；运行中的应用仍遵守插件代次与重启契约。
+
 | 命令                                                                     | 用途                                        |
 | ------------------------------------------------------------------------ | ------------------------------------------- |
 | `npm run electron:dev:openclaw`                                          | 准备 host runtime 并启动完整桌面应用        |

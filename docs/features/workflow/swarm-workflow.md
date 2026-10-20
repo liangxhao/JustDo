@@ -2,31 +2,33 @@
 
 Swarm Workflow 是本产品的独立任务流插件，与 OpenClaw 原生 collector 分组、SubAgent 控制树、agent-team 长期协作和 Workboard 工作事项分别管理。本文统一维护普通阶段、主会话管理和人工介入；批次参数与调度见[批量执行契约](swarm-workflow-batches.md)。
 
-Renderer 的 Workflow 面板、节点历史和介入呈现位于 `features/cowork/components/swarm-workflow/`，与原生子任务的 `subagents/` 平级。两者复用的图形样式和会话连接辅助位于 Cowork 的 `shared/`；Workflow 专属样式留在插件界面目录。目录归位不增加应用工作流或消息缓存，原生插件服务继续拥有持久 DAG 和执行状态。
+Renderer 的 Workflow 面板、节点历史和介入呈现位于 `plugins/extensions/swarm-workflow/app/browser/`，与原生子任务的 `subagents/` 平级。两者复用的图形样式和会话连接辅助位于 Cowork 的 `shared/`；Workflow 专属样式留在插件界面目录。目录归位不增加应用工作流或消息缓存，原生插件服务继续拥有持久 DAG 和执行状态。
 
 ## 模块归属与依赖
 
-流程协议和提示是插件能力的一部分，应用不再维护第二份实现。插件的 `contracts/` 提供内部流程/批次模型、对外视图和校验，`prompt/` 统一请求标记解析和发起提示；应用通过浏览器安全的 `src/shared/cowork/swarm-workflow/` 门面复用它们，API 契约也由插件维护，门面只额外声明 Electron 通道名。内部和对外协议共享 Gateway 方法、节点类型及介入上限，主会话准入与显示清理使用同一精确标记解析器。
+流程协议、提示、配置与视图由插件维护。Main 协调和完整 React UI 分别在 `host/`、`app/browser/`，通过独立清单和通用 Desktop SDK 注册；应用移除 Workflow 专属 IPC/preload、shared 门面及编译期业务引用。参见 [应用插件宿主](../../architecture/17-app-plugin-host.md)与 [SDK 构建说明](../../../packages/app-plugin-sdk/README.md)。
 
 `execution/` 拥有 DAG 推进、规划、策略、介入和结果提交；`batch/` 拥有输入冻结、单项目录、结果分页及批次存储操作；`data/` 管理插件流程库；`management/` 提供主会话工具与通知。`service/` 绑定这些能力与原生 Gateway：context 提供身份、权限、当前引擎和原生会话准备，state 保留进程共享状态，lifecycle 管理启动实例的代次、循环与停止，hooks、gateway、tools 各自注册原生入口。`index.ts` 仅组合注册，域模块通过同一个 context 访问实时状态，不复制引擎或服务代次。各助手注册实例仍共享同一服务，同时保持独立调用授权。
 
 原生 managed-subagent 的通用运行终态/清理契约属于 Runtime Services `execution/`；Workflow 专属的未调用启动本地证明归 `execution/launch-admission.ts`，引擎和生命周期复用同一 class 身份，不以错误名称推断未发送；通用权限指纹、真实目录身份和可信文件系统准入属于其 `filesystem/`，纯准入类型属于 `contracts/`。Workflow 单向复用这些能力，Runtime Services 不依赖可选 Workflow，也不持有流程库。两个插件都不导入应用 `src`。资源同步从仓库源代码打包 Workflow 的这些相邻依赖，发布后的插件入口不需要解析相邻插件的 TypeScript。
 
-产品会话仍由 Main 持有，但 Workflow 专属协调实现归插件 `host/coordinator.ts`，通过 `host/ports.ts` 获得实时 runtime getter、会话存在性、父键与规划状态能力。Main `cowork/swarm-workflow/` 只保留稳定门面，IPC 只绑定 Electron 通道；插件不导入 Main 控制器或 native SDK。宿主继续提供真实产品助手名单和资源可用性，`host/config.ts` 负责启用/软删除过滤及配置投影，不能以原生名单替代产品已禁用/删除状态。`contracts/api.ts` 声明应用访问能力，shared 门面只追加 Electron 通道名。
+产品会话仍由 Main 持有，插件通过 SDK 实时端口读取真实会话、runtime 和产品助手名单。`host/config.ts` 保持启用/软删除过滤，不能用原生名单替代。原生、Main 和 Browser 入口独立，插件不导入应用实现。包变更必须确认实际 Gateway 停止后再后台重新启动，软件保持打开；普通启停撤回并重建 epoch。
 
-插件 `browser/` 拥有主图选择/动作状态、批次过滤与游标、详情读取、人工介入幂等 ID 对账、发现轮询、图形布局/视口、输入框准备与消息键、双语字典。业务 hook 通过结构型 browser ports 访问实际 preload，既不读取 `window.electron`，也不导入 `src`。React 组件继续组合共享聊天渲染、菜单、图标、i18n 服务、原生连接和 Tab；产品 Goal 状态只由宿主翻译为当前提交是否被旧 Goal 占用。Browser 状态只保留当前界面所需投影和草稿，原生会话正文仍归 Gateway，不新增持久化/Redux transcript 缓存。原生注册入口不导入 host/browser，shared 契约门面不导入 browser，Main 和 Renderer 入口不能相互打包。
+插件 `app/browser/` 拥有全部 Workflow React 组件、图形/批次/详情/介入状态、轮询、输入选项及双语翻译；SDK 提供真实共享 React、UI primitives、只读产品元数据、草稿/导航效果及原生历史视图。业务不读取 `window.electron` 或导入 `src`。投影只随当前挂载保留，原生正文继续归 Gateway。
 
-流程列表通过 Gateway 插件事件刷新，不再每 2.5 秒定时查询。FlowStore 在创建、更新和批次展开事务成功提交后发布 `plugin.swarm-workflow.changed`，只携带父会话键、流程 ID 和 revision；回滚不发布。Main 校验通知并映射真实产品会话，再通过显式 preload 订阅转发无正文变更通知。首次进入和切换会话先订阅、再读取快照；同会话连续通知在 50 毫秒窗口内合并，旧 revision 和其他会话通知不触发读取，读取途中再有变化则串行补读，旧响应不能覆盖最新状态。插件服务启动和 Gateway 连接恢复发送全量失效通知，补齐断线期间遗漏的变化；查询失败保留原有失败呈现，等待下一次通知或手动刷新。工作流面板复用聊天页的同一快照，独立使用面板时也沿用相同订阅逻辑。节点详情和批次分页仍保持各自按需读取契约；事件不替代原生运行终态证据。
+流程列表通过 Gateway 插件事件刷新，不再每 2.5 秒定时查询。FlowStore 在创建、更新和批次展开事务成功提交后发布 `plugin.swarm-workflow.changed`，只携带父会话键、流程 ID 和 revision；回滚不发布。Workflow 的 Main 插件校验通知并映射真实产品会话，经通用应用插件事件桥转发无正文变更通知。首次进入和切换会话先订阅、再读取快照；同会话连续通知在 50 毫秒窗口内合并，旧 revision 和其他会话通知不触发读取，读取途中再有变化则串行补读，旧响应不能覆盖最新状态。插件服务启动和 Gateway 连接恢复发送全量失效通知，补齐断线期间遗漏的变化；查询失败保留原有失败呈现，等待下一次通知或手动刷新。工作流面板与摘要分别观察完整列表和轻量数量，同类观察共享订阅与在途读取。节点详情和批次分页仍保持各自按需读取契约；事件不替代原生运行终态证据。
 
 宿主从真实产品会话解析原生身份后，按插件与 Gateway 共用的父键契约去重、筛选；通道、外部和工作节点会话键不作为 Workflow 父身份发送，不改写或猜测托管键。已解析身份但没有受支持父键的会话，列表直接返回空流程及非活动状态，避免侧栏观察产生无效 RPC 和失败重试；详情、控制、介入和批次操作仍拒绝。产品会话缺失、原生身份未知或 Gateway 不可用继续返回失败，不能伪造空结果。Gateway 的父身份与流程归属校验保持不变。
 
-关闭 Workflow 后，应用立即隐藏摘要入口并退休已打开 Tab，browser discovery 清空当前投影、取消订阅和待处理刷新并拒绝旧响应。每次 disable revision 也使快速关开时的旧快照失效；重新启用后重新读取保留的流程。临时 Gateway 故障仍保留最近一次成功数量，不能把故障误当显式禁用。插件停止并不证明原生运行已取消，现有 DAG 和未知运行证据继续保留，恢复时仍不自动重放不确定派发。原生 collector 快照和子任务控制继续走独立 subtasks 入口。
+关闭 Workflow 后，应用立即隐藏摘要入口并退休已打开 Tab，browser discovery 清空当前投影、取消订阅和待处理刷新并拒绝旧响应。每次 disable revision 也使快速关开时的旧快照失效；重新启用后重新读取保留的流程。同一业务 epoch 的读取暂时失败保留最近成功数量；失去 Native 运行证明则撤回整个业务 epoch 和 Tab，仅保留通用宿主最后确认的活动正证据，不能从断线推断流程已停止。插件停止并不证明原生运行已取消，现有 DAG 和未知运行证据继续保留，恢复时仍不自动重放不确定派发。原生 collector 快照和子任务控制继续走独立 subtasks 入口。
+
+源聊天的普通 Stop 和 Workflow 图中的停止是两个操作：停止源聊天或准备下一条消息，不自动停止其既有 Workflow。Workflow 没有 Team 式 Main 发起收据，不能借通用提交参与者去取消源会话下的所有流程。用户明确在 Workflow 中停止时，仍通过精确父身份、流程及 revision 走原生控制；删除源会话和改包继续检查全部流程与未清理节点，未结算时保持保护。同包启停不重启 Gateway，关闭后的旧聊天文本由独立纯展示入口保持格式，不恢复业务入口。
 
 ```mermaid
 flowchart LR
   UI[React Workflow 界面] --> Browser[Workflow browser 状态与提示]
   Browser --> Port[Renderer preload ports]
-  Port --> IPC[Electron Workflow IPC]
+  Port --> IPC[通用应用插件桥]
   IPC --> Host[Workflow host 协调与配置]
   Main[Main 会话与运行时资源] -.实时 typed ports.-> Host
   Host --> Gateway[原生 Gateway]
@@ -44,17 +46,17 @@ flowchart LR
 
 插件显示名和用户界面的功能名称统一为 **Swarm Workflow**，中文和英文界面的功能菜单、输入框标签及右侧 Tab 均使用此英文名称，强调持久化任务工作流，区别于 Agent Team 和原生 Swarm 分组。内部命名同步统一，首次发布前不保留旧名称别名或迁移逻辑：
 
-| 范围                    | 名称                                                     |
-| ----------------------- | -------------------------------------------------------- |
+| 范围                    | 名称                                                    |
+| ----------------------- | ------------------------------------------------------- |
 | 插件 ID / 源码目录      | `swarm-workflow` / `plugins/extensions/swarm-workflow/` |
-| 插件包                  | `openclaw-swarm-workflow`                                |
-| 模型工具                | `swarm_workflow_*`                                       |
-| Gateway 方法 / 应用 IPC | `swarmWorkflow.*` / `cowork:swarm-workflow:*`            |
-| 消息发起标记            | `<swarm-workflow mode="auto\|research\|review"/>`        |
-| 进程内服务注册键        | `Symbol.for('swarm-workflow.service')`                   |
-| 流程数据库              | `stateDir/swarm-workflow/flows.sqlite`                   |
-| 批次产物目录            | `.agent-tasks/swarm-workflow/`                           |
-| 应用类型、组件和翻译键  | `SwarmWorkflow*` / `swarmWorkflow*`                      |
+| 插件包                  | `openclaw-swarm-workflow`                               |
+| 模型工具                | `swarm_workflow_*`                                      |
+| Gateway 方法 / App 命令 | `swarmWorkflow.*` / `workflow.*`                        |
+| 消息发起标记            | `<swarm-workflow mode="auto\|research\|review"/>`       |
+| 进程内服务注册键        | `Symbol.for('swarm-workflow.service')`                  |
+| 流程数据库              | `stateDir/swarm-workflow/flows.sqlite`                  |
+| 批次产物目录            | `.agent-tasks/swarm-workflow/`                          |
+| 应用类型、组件和翻译键  | `SwarmWorkflow*` / `swarmWorkflow*`                     |
 
 OpenClaw 原生 `tools.swarm` 配置、collector 状态接口及分组视图保持其原生命名，不与本插件共用协议或状态存储。
 
@@ -81,7 +83,7 @@ OpenClaw 原生 `tools.swarm` 配置、collector 状态接口及分组视图保�
 
 1. 在消息输入框下方点击附件按钮左侧的加号，在功能菜单选择 Swarm；输入框首行显示不可拆分的 Swarm 标签，正文紧随其后。点击标签（键盘 Enter/空格亦可）、光标在正文开头按退格，或选中标签按删除键，整块移除标签即取消本次选择。全选后删除或替换草稿也清除标签。菜单默认自动分工，选择只影响本次提交，不改变正在执行的工作流。已有未完成目标或处于目标结果反馈时，拒绝 Swarm 提交并保留草稿，避免消息被旧目标续跑路径消费。
 2. 输入目标并发送。插件核验本次请求后，主会话利用已有上下文和附件整理完整任务说明，通过专用工具建立持久化流程，再由后台自动规划任务。
-3. 右侧 Swarm Tab 自动打开，展示规划、任务依赖、独立验收和汇总交付。同一会话的多个流程通过横向子 Tab 切换，样式与 Agent Team 一致；标签超出面板宽度时横向滚动，并将选中标签保持在可见范围。点击节点查看阶段结果或失败原因，节点与批次详情中仍保留流程子 Tab，切换流程返回该流程的图。新发现的流程自动选中，普通状态刷新保留手动选择。
+3. 点击来源会话的 Workflow 摘要，进入右侧 Swarm Tab，展示规划、任务依赖、独立验收和汇总交付；发现流程不会强制重开用户已关闭的 Tab。同一会话的多个流程通过横向子 Tab 切换，样式与 Agent Team 一致；标签超出面板宽度时横向滚动，并将选中标签保持在可见范围。点击节点查看阶段结果或失败原因，节点与批次详情中仍保留流程子 Tab，切换流程返回该流程的图。新发现的流程自动选中，普通状态刷新保留手动选择。
 4. 暂停只停止新任务派发，已经执行的任务继续；继续从原状态推进。停止请求取消本流程已有运行，确认终态后才显示已停止。暂停/停止要求原生父会话身份仍一致，修改项目、权限或开启规划模式后仍能使用；恢复、重试和节点介入继续严格核验创建时的项目、权限与策略。
 5. 明确失败且所有执行已结束后，底部显示重试图标。排除失败原因后点击，只重跑失败节点，保留已完成阶段；每节点最多三次执行。结果尚不确定时不会显示重试入口。
 6. 最终结果经原生 chat.inject 回到主会话；完整流程仍可从流程子 Tab 查看，默认列出最近二十次。
@@ -165,7 +167,7 @@ prompt build 后冻结：精确来源发起记录、节点提交 owner，以及�
 - 使用真实依赖线、状态图标和短任务标题；窄面板双列，宽面板三列。
 - 保留直角依赖线；参考 Agent-Team 使用 2px 普通线、3.5px 悬停/键盘聚焦线及 5/4 虚线，箭头继承线色，未满足依赖使用虚线。节点显示执行助手，详情保留完整名称。
 - 首次进入、切换流程或会话时，按画布实际宽高自动缩放并居中显示整图；隐藏的 Tab 在激活并获得有效尺寸后适配。自适应状态随画布尺寸及图形布局变化更新，手动拖动或缩放后保留用户视图，点击「适应画布」恢复自适应。支持鼠标左键拖动平移、以鼠标位置为中心的滚轮缩放及工具栏缩放。节点及连线上短点击打开详情，拖动超过阈值后抑制详情点击；从详情返回保留视图位置。键盘仍可选择节点和连线。
-- 右上角「摘要」打开且窗口可见后，才通过 `swarmWorkflow.summary` 读取当前会话全部历史的流程数量与活动标记；不读取节点、结果或批次项。数量不受完整列表最近 20 条的展示上限影响。点击流程条目打开 Workflow Tab；完成后的历史流程也保留入口，暂时查询失败保留最后成功数量，切换到无流程会话时隐藏。历史流程不再因启动或切换聊天自动展开摘要；其他摘要内容继续沿用每会话一次的自动展开规则。选择输入框标签本身不查询工作流。
+- 当前聊天的插件常驻观察者在窗口可见时通过 `swarmWorkflow.summary` 读取全部历史的流程数量与活动标记，关闭的摘要也能发现入口并沿用每会话一次的自动展开规则；不读取节点、结果或批次项。数量不受完整列表最近 20 条的展示上限影响。点击摘要条目打开 Workflow Tab，完整流程只在可见面板中加载；历史流程保留入口，暂时查询失败保留最后成功数量，切换到无流程会话时隐藏。选择输入框标签本身不查询工作流。
 - 新流程出现时切换到新图；普通状态刷新保留手动选择的历史流程。跨层依赖使用两侧直角绕行通道，避免线条穿过中间节点。
 - Workflow Tab 可见时才通过 `swarmWorkflow.list` 读取最近 20 条完整流程；切换到其他 Tab、隐藏窗口或关闭面板即撤销完整列表观察。再次打开先核验原生状态；切换聊天后丢弃旧响应，断连保留旧图并禁止基于旧状态控制。关闭界面不停止后台调度、重启核验或原生工具清理。
 - 会话列表通过一份 `swarmWorkflow.activity` 轻量快照观察后台活动，不遍历普通历史会话或读取完整流程。覆盖运行中／停止中，以及暂停或阻塞后仍有准备中、运行中或结果未确认节点的流程；批次按实际执行项状态统计。Main 只向仍存在且精确拥有原生父 key 的产品会话投影活动标记。该投影不参与主输入框执行状态或发送准入。
@@ -254,13 +256,13 @@ flowchart LR
 
 ### 人工发送入口与当前验证范围
 
-| 入口 | 实际调用与准入 | 执行边界 |
-| --- | --- | --- |
-| 主会话首次选择 Swarm | composer → Main `prepareSwarmWorkflow` → 插件 health 与精确父会话规划状态；普通聊天发送后，由真实 `swarm_workflow_start` 工具接受流程 | 准备成功只返回指令，不代表流程已接受；必须有工具接受回执 |
-| 已有主会话继续发消息 | 普通聊天输入 → 当前父会话的 status/control/intervene 工具 | 只管理明确的本会话流程；新消息不隐式重新启动流程或节点 |
-| 节点运行中补充 | Main coordinator → `swarmWorkflow.intervene(note)` → 插件同步保存操作 | 零新增模型派发，不发送 `chat.send` 或 `sessions.steer`，留待下一次执行读取 |
-| 失败节点发送并继续 | 同一入口的 `continue`，原生 whole-run 与工具清理均收敛、依赖和父策略仍有效 | 保持节点 sessionKey/sessionId，创建新 runId，用户消息保持输入原文 |
-| 失败节点重新执行 | 同一入口的 `retry`，保持失败尝试及原生收敛证据 | 新 sessionKey/sessionId/runId；不重跑已完成工作，旧回执不能完成新运行 |
+| 入口                 | 实际调用与准入                                                                                                                        | 执行边界                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| 主会话首次选择 Swarm | composer → Main `prepareSwarmWorkflow` → 插件 health 与精确父会话规划状态；普通聊天发送后，由真实 `swarm_workflow_start` 工具接受流程 | 准备成功只返回指令，不代表流程已接受；必须有工具接受回执                   |
+| 已有主会话继续发消息 | 普通聊天输入 → 当前父会话的 status/control/intervene 工具                                                                             | 只管理明确的本会话流程；新消息不隐式重新启动流程或节点                     |
+| 节点运行中补充       | Main coordinator → `swarmWorkflow.intervene(note)` → 插件同步保存操作                                                                 | 零新增模型派发，不发送 `chat.send` 或 `sessions.steer`，留待下一次执行读取 |
+| 失败节点发送并继续   | 同一入口的 `continue`，原生 whole-run 与工具清理均收敛、依赖和父策略仍有效                                                            | 保持节点 sessionKey/sessionId，创建新 runId，用户消息保持输入原文          |
+| 失败节点重新执行     | 同一入口的 `retry`，保持失败尝试及原生收敛证据                                                                                        | 新 sessionKey/sessionId/runId；不重跑已完成工作，旧回执不能完成新运行      |
 
 发送准备、介入和控制不查询全局 `sessions.list`。主会话规划状态使用精确的
 `sessions.describe`；流程查询是本父会话的 `swarmWorkflow.list`，不是全局会话扫描。

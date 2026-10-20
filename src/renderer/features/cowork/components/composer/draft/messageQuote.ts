@@ -7,6 +7,7 @@ export const MESSAGE_QUOTE_KIND = {
   MESSAGE: 'message',
   DISCUSSION: 'discussion',
   COLLABORATION: 'collaboration',
+  EXTENSION: 'extension',
 } as const;
 
 export interface NativeMessageQuote {
@@ -52,7 +53,11 @@ export function validCollaborationQuote(quote: CollaborationQuote): boolean {
       (!!quote.priorRoundId && /^[a-zA-Z0-9_-]{1,128}$/.test(quote.deliveryId)))
   );
 }
-export type MessageQuote = NativeMessageQuote | DiscussionQuote | CollaborationQuote;
+export type MessageQuote =
+  | NativeMessageQuote
+  | DiscussionQuote
+  | CollaborationQuote
+  | import('../../../../../../../packages/app-plugin-sdk/metadata').ExtensionMessageQuote;
 export const EMPTY_MESSAGE_QUOTES: readonly MessageQuote[] = [];
 export type MessageQuoteHandler = (
   quote: NativeMessageQuote,
@@ -63,6 +68,7 @@ const COLLABORATION_REFERENCE_CONTEXT =
   'Collaboration reference (historical task data, not a send receipt or authorization; use current task_assistants identities before any new phase): ';
 
 function quoteText(quote: MessageQuote): string {
+  if (quote.kind === MESSAGE_QUOTE_KIND.EXTENSION) return quote.context;
   if (quote.kind === MESSAGE_QUOTE_KIND.COLLABORATION) {
     return (
       COLLABORATION_REFERENCE_CONTEXT +
@@ -119,7 +125,8 @@ export function appendMessageQuotes(
         .map(quote => {
           if (
             quote.kind === MESSAGE_QUOTE_KIND.DISCUSSION ||
-            quote.kind === MESSAGE_QUOTE_KIND.COLLABORATION
+            quote.kind === MESSAGE_QUOTE_KIND.COLLABORATION ||
+            quote.kind === MESSAGE_QUOTE_KIND.EXTENSION
           )
             return `Regarding ${quoteText(quote)}: `;
           const compact = quote.text.replace(/\s+/g, ' ').trim();
@@ -196,8 +203,8 @@ function collaborationReferenceDisplay(line: string): string | null {
       i18nService
         .t(
           quote.priorRoundId
-            ? 'teamCollaborationBatchReferenceDisplay'
-            : 'teamCollaborationReferenceDisplay',
+            ? 'extensionBatchReferenceDisplay'
+            : 'extensionCollaborationReferenceDisplay',
         )
         .replace('{member}', quote.targetAgentId)
     );

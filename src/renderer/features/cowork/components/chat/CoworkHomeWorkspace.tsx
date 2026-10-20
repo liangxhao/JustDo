@@ -47,7 +47,7 @@ interface CoworkHomeWorkspaceProps {
     attachments?: CoworkAttachmentPayload[],
     gatewayPrompt?: string,
     worktree?: boolean,
-    swarmWorkflow?: import('@shared/cowork/swarm-workflow').SwarmWorkflowOptions,
+    pluginSubmission?: import('../../../../../../packages/app-plugin-sdk/contracts').AppSubmission,
     submission?: ComposerSubmissionMetadata,
   ) => Promise<boolean | void>;
   handleStopSession: () => Promise<boolean>;

@@ -369,6 +369,15 @@ function cleanInterruptedExtensionStaging(targetDir) {
 function bundleProductExtension(sourceDir, targetDir) {
   const pkg = readJsonFile(path.join(sourceDir, 'package.json'));
   if (pkg?.justdo?.bundle !== true) return;
+  if (pkg.app) {
+    const repo = path.resolve(sourceDir, '../../..');
+    const catalog = readJsonFile(path.join(repo, 'build/app-plugins/catalog.json'));
+    const entry = catalog?.find(item => item.id === path.basename(sourceDir));
+    if (!entry || !/^[a-f0-9]{64}$/.test(entry.hash)) throw new Error('Build app plugins before syncing native runtime resources');
+    const built = path.join(repo, 'build/app-plugins/packages', entry.id, entry.hash);
+    replaceExtensionSources(built, targetDir);
+    return;
+  }
   const isRuntimeServices =
     pkg.name === 'runtime-services' && path.basename(sourceDir) === 'runtime-services';
   const entries = pkg.openclaw?.extensions;

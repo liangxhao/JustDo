@@ -19,7 +19,7 @@ vi.mock('react-redux', () => ({
   useSelector: (selector: (value: typeof state) => unknown) => selector(state),
 }));
 vi.mock('@/store', () => ({ store: { getState: () => state } }));
-vi.mock('@/features/cowork/components/collaboration/CollaborationPanel', () => ({
+vi.mock('../../../../plugins/extensions/agent-team/app/browser/collaboration/CollaborationPanel', () => ({
   useCollaborationRooms: () => [],
 }));
 vi.mock('@/features/cowork/coworkSelectors', () => ({

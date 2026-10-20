@@ -436,6 +436,7 @@ test('ignores lifecycle events from a superseded Gateway process', () => {
       isGatewayRestartPending: () => boolean;
     };
     expectedGatewayExits: WeakSet<object>;
+    gatewayMutationUnresolved: boolean;
     shutdownRequested: boolean;
     status: { version: string };
     attachGatewayExitHandlers: (child: EventEmitter) => void;
@@ -446,6 +447,7 @@ test('ignores lifecycle events from a superseded Gateway process', () => {
   manager.gatewayProcess = currentChild;
   manager.gatewayConfigReloadMonitor = { observeLine, observeGatewayExit, isGatewayRestartPending: () => false };
   manager.expectedGatewayExits = new WeakSet();
+  manager.gatewayMutationUnresolved = true;
   manager.shutdownRequested = false;
   manager.status = { version: 'v-test' };
   manager.setStatus = setStatus;
@@ -463,6 +465,7 @@ test('ignores lifecycle events from a superseded Gateway process', () => {
   expect(setStatus).not.toHaveBeenCalled();
   expect(scheduleGatewayRestart).not.toHaveBeenCalled();
   expect(manager.gatewayProcess).toBe(currentChild);
+  expect(manager.gatewayMutationUnresolved).toBe(true);
 
   manager.observeGatewayProcessLine(currentChild, '[gateway] ready');
   manager.attachGatewayExitHandlers(currentChild);
@@ -473,7 +476,66 @@ test('ignores lifecycle events from a superseded Gateway process', () => {
   expect(setStatus).toHaveBeenCalledOnce();
   expect(scheduleGatewayRestart).toHaveBeenCalledOnce();
   expect(manager.gatewayProcess).toBeNull();
+  expect(manager.gatewayMutationUnresolved).toBe(false);
 });
+
+test.each(['startGateway', 'restartGateway'] as const)(
+  'retains the native shutdown failure fence for %s after the exact process closes',
+  async operation => {
+    vi.useFakeTimers();
+    try {
+      const child = Object.assign(new EventEmitter(), {
+        pid: 1234,
+        exitCode: null as number | null,
+        connected: true,
+        send: vi.fn(),
+        kill: vi.fn(),
+      });
+      const stopped = { phase: 'ready', version: 'fixture', canRetry: false };
+      const running = { phase: 'running', version: 'fixture', canRetry: false };
+      const launch = vi.fn(async () => running);
+      const manager = Object.assign(Object.create(OpenClawEngineManager.prototype), {
+        gatewayProcess: child,
+        expectedGatewayExits: new WeakSet(),
+        gatewayMutationUnresolved: false,
+        gatewayMutationLease: false,
+        startGatewayPromise: null,
+        restartGatewayPromise: null,
+        gatewayConfigReloadMonitor: { observeGatewayExit: vi.fn() },
+        resolveRuntimeMetadata: () => ({ root: 'fixture', version: 'fixture' }),
+        setStatus: vi.fn(),
+        getStatus: () => stopped,
+        doStartGateway: launch,
+      }) as {
+        gatewayProcess: typeof child | null;
+        gatewayMutationUnresolved: boolean;
+        attachGatewayExitHandlers: (process: typeof child) => void;
+        stopGateway: () => Promise<void>;
+        startGateway: () => Promise<unknown>;
+        restartGateway: () => Promise<unknown>;
+      };
+      manager.attachGatewayExitHandlers(child);
+      const stop = expect(manager.stopGateway()).rejects.toThrow(t('gatewayShutdownUnconfirmed'));
+      await vi.advanceTimersByTimeAsync(SHUTDOWN_BUDGET_MS.gatewayStop);
+      await stop;
+      expect(manager.gatewayMutationUnresolved).toBe(true);
+      expect(manager.gatewayProcess).toBe(child);
+      await expect(manager[operation]()).rejects.toThrow(t('gatewayShutdownUnconfirmed'));
+      expect(launch).not.toHaveBeenCalled();
+
+      child.exitCode = 0;
+      child.emit('exit', 0);
+      child.emit('close', 0, null);
+
+      expect(manager.gatewayProcess).toBeNull();
+      expect(manager.gatewayMutationUnresolved).toBe(false);
+      await expect(manager[operation]()).rejects.toThrow(t('gatewayShutdownUnconfirmed'));
+      expect(launch).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
 
 test('deduplicates concurrent full Gateway restarts', async () => {
   let finishStop: (() => void) | undefined;

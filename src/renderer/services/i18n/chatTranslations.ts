@@ -2,6 +2,7 @@ import { PRODUCT_NAME } from '@shared/productMetadata';
 
 export const chatTranslations = {
   zh: {
+    exportSession: '导出对话',
     coworkSummaryTitle: '摘要',
     coworkSummaryResize: '拖动调整摘要大小，也可使用方向键',
     coworkSummaryGoal: '目标',
@@ -13,7 +14,6 @@ export const chatTranslations = {
     coworkSummaryOutputsNone: '暂无',
     coworkSummarySources: '来源',
     coworkSummarySourcesNone: '暂无来源',
-    coworkSummaryAgentTeam: 'Agent Team',
     coworkSummaryViewAll: '查看全部',
     coworkSummaryAttachment: '附件',
     coworkSummaryOutputsUnavailable: '输出内容暂时无法读取，请稍后重试。',
@@ -756,6 +756,7 @@ export const chatTranslations = {
     composerFeatures: '功能',
   },
   en: {
+    exportSession: 'Export conversation',
     coworkSummaryTitle: 'Summary',
     coworkSummaryResize: 'Drag to resize summary, or use arrow keys',
     coworkSummaryGoal: 'Goal',
@@ -767,7 +768,6 @@ export const chatTranslations = {
     coworkSummaryOutputsNone: 'None',
     coworkSummarySources: 'Sources',
     coworkSummarySourcesNone: 'No sources',
-    coworkSummaryAgentTeam: 'Agent Team',
     coworkSummaryViewAll: 'View all',
     coworkSummaryAttachment: 'Attachment',
     coworkSummaryOutputsUnavailable: 'Outputs are temporarily unavailable. Please retry later.',

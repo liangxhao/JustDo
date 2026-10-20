@@ -5,8 +5,7 @@ import {
   InformationCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { coworkService } from '@/features/cowork/coworkService';
 import type {
@@ -17,24 +16,25 @@ import type {
   SessionGroup,
 } from '@/features/cowork/coworkTypes';
 import type { SessionDetailStats } from '@/features/cowork/sessionPresentation';
-import { useExtensionAvailability } from '@/features/plugins/extensions/useExtensionEnablement';
+import { AppPluginSlot, useAppViews } from '@/features/plugins/app/AppPluginSlot';
+import type { AppView } from '@/features/plugins/app/browserRegistry';
+import { appBrowserRegistry } from '@/features/plugins/app/runtime';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
 
-import { useCollaborationRooms } from '../collaboration/CollaborationPanel';
 import QueryingIndicator from '../shared/QueryingIndicator';
 import { useDraggableModal } from '../shared/useDraggableModal';
 import SessionTotalTokenUsageModal from '../status/SessionTotalTokenUsageModal';
-import CollaborationTaskDetails from './CollaborationTaskDetails';
 
 interface CoworkSessionDetailsModalProps {
-  memberView?: boolean;
   sessionSummary: CoworkSessionSummary;
   groups: SessionGroup[];
   isRuntimeRunning: boolean;
   returnFocusRef?: React.RefObject<HTMLElement | null>;
   onClose: () => void;
   onBack?: () => void;
+  /** Inspected child sessions retain the product's native statistics view. */
+  defaultView?: boolean;
 }
 
 const statusLabels: Record<CoworkSessionStatus, string> = {
@@ -60,6 +60,14 @@ const formatNumber = (value: number): string =>
 
 const ACTIVE_SESSION_DETAILS_REFRESH_MS = 5_000;
 
+function getDetailsPresentation(view: AppView, sessionId: string) {
+  try {
+    return view.detailsPresentation?.(sessionId) ?? 'append';
+  } catch {
+    return 'hidden';
+  }
+}
+
 const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
   sessionSummary,
   groups,
@@ -67,20 +75,30 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
   returnFocusRef,
   onClose,
   onBack,
-  memberView = false,
+  defaultView = false,
 }) => {
-  const { enabled: agentTeamEnabled, disabledRevision } = useExtensionAvailability(
-    OpenClawExtensionId.AGENT_TEAM,
-  );
-  const rooms = useCollaborationRooms();
-  const room =
-    agentTeamEnabled && !memberView
-      ? rooms.find(room => room.anchorSessionId === sessionSummary.id)
-      : undefined;
-  const [selectedMember, setSelectedMember] = useState<CoworkSessionSummary>();
-  useEffect(() => {
-    setSelectedMember(undefined);
-  }, [agentTeamEnabled, disabledRevision]);
+  const views = useAppViews('session.details');
+  useSyncExternalStore(appBrowserRegistry.subscribe, appBrowserRegistry.getContextRevision);
+  const detailViews = defaultView
+    ? []
+    : views
+        .map(view => ({ view, presentation: getDetailsPresentation(view, sessionSummary.id) }))
+        .filter(entry => entry.presentation !== 'hidden');
+  const replacesDetails = detailViews.some(entry => entry.presentation === 'replace');
+  const [selectedDetails, setSelectedDetails] = useState<{
+    summary: CoworkSessionSummary;
+    owner: AppView;
+    anchorSessionId: string;
+  }>();
+  const selectedOwner =
+    selectedDetails &&
+    selectedDetails.anchorSessionId === sessionSummary.id &&
+    detailViews.find(({ view }) => view === selectedDetails.owner);
+  const inspectingChild = !!selectedOwner;
+  const inspectionVersion = useRef(0);
+  const mountedRef = useRef(true);
+  const rootSessionIdRef = useRef(sessionSummary.id);
+  rootSessionIdRef.current = sessionSummary.id;
   const [session, setSession] = useState<CoworkSession | null>(null);
   const [stats, setStats] = useState<SessionDetailStats | null>(null);
   const [gatewaySessionId, setGatewaySessionId] = useState<string | null>(null);
@@ -102,6 +120,28 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
     dialogRef,
     sessionSummary.id,
   );
+
+  useEffect(() => {
+    mountedRef.current = true;
+    const version = inspectionVersion;
+    const returnFocusTarget = returnFocusRef?.current;
+    previouslyFocusedRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    return () => {
+      mountedRef.current = false;
+      version.current++;
+      if (!defaultView) {
+        const focusTarget = returnFocusTarget ?? previouslyFocusedRef.current;
+        requestAnimationFrame(() => {
+          if (focusTarget?.isConnected) focusTarget.focus();
+        });
+      }
+    };
+  }, [defaultView, returnFocusRef]);
+
+  useEffect(() => {
+    if (selectedDetails && !selectedOwner) setSelectedDetails(undefined);
+  }, [selectedDetails, selectedOwner]);
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -164,10 +204,7 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
   }, [isRuntimeRunning, reloadKey, sessionSummary.id, sessionSummary.updatedAt]);
 
   useEffect(() => {
-    if (selectedMember) return;
-    const returnFocusTarget = returnFocusRef?.current;
-    previouslyFocusedRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (inspectingChild) return;
     closeButtonRef.current?.focus();
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -209,12 +246,8 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
     document.addEventListener('keydown', handleKeyDown, true);
     return () => {
       document.removeEventListener('keydown', handleKeyDown, true);
-      const focusTarget = returnFocusTarget ?? previouslyFocusedRef.current;
-      requestAnimationFrame(() => {
-        if (focusTarget?.isConnected) focusTarget.focus();
-      });
     };
-  }, [returnFocusRef, selectedMember]);
+  }, [inspectingChild]);
 
   const retry = useCallback(() => setReloadKey(value => value + 1), []);
   const copySessionId = useCallback(async () => {
@@ -264,18 +297,20 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
       ]
     : [];
 
-  if (agentTeamEnabled && selectedMember)
+  if (selectedDetails && selectedOwner) {
     return (
       <CoworkSessionDetailsModal
-        key={selectedMember.id}
-        memberView
-        sessionSummary={selectedMember}
+        key={selectedDetails.summary.id}
+        defaultView
+        sessionSummary={selectedDetails.summary}
         groups={groups}
-        isRuntimeRunning={selectedMember.status === 'running'}
-        onBack={() => setSelectedMember(undefined)}
+        isRuntimeRunning={selectedDetails.summary.status === 'running'}
+        onBack={() => setSelectedDetails(undefined)}
         onClose={onClose}
       />
     );
+  }
+
   return (
     <Modal
       onClose={onClose}
@@ -343,14 +378,56 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
         </div>
 
         <div className="max-h-[calc(84vh-73px)] overflow-y-auto px-5 py-5">
-          {room && <CollaborationTaskDetails room={room} onSelect={setSelectedMember} />}
-          {!room && isLoading && (
+          {detailViews.map(({ view }) => (
+            <AppPluginSlot
+              key={`${view.pluginId}:${view.epoch}:${view.id}`}
+              slot="session.details"
+              pluginId={view.pluginId}
+              contributionId={view.id}
+              context={{
+                ...(session ? { session } : {}),
+                sessionSummary,
+                onClose,
+                onInspectSession: summary => {
+                  if (typeof summary?.id !== 'string' || !summary.id) return;
+                  const sessionId = summary.id;
+                  const version = ++inspectionVersion.current;
+                  const isCurrent = () =>
+                    mountedRef.current &&
+                    rootSessionIdRef.current === sessionSummary.id &&
+                    version === inspectionVersion.current &&
+                    appBrowserRegistry
+                      .getViews()
+                      .some(
+                        current =>
+                          current === view &&
+                          current.slot === 'session.details' &&
+                          getDetailsPresentation(current, sessionSummary.id) !== 'hidden',
+                      );
+                  if (!isCurrent()) return;
+                  // A plugin supplies an identity, while Main's details result owns the metadata.
+                  void coworkService
+                    .getSessionDetails(sessionId)
+                    .then(result => {
+                      if (!isCurrent() || result.session?.id !== sessionId) return;
+                      setSelectedDetails({
+                        summary: result.session,
+                        owner: view,
+                        anchorSessionId: sessionSummary.id,
+                      });
+                    })
+                    .catch(() => undefined);
+                },
+              }}
+            />
+          ))}
+          {!replacesDetails && isLoading && (
             <div className="flex min-h-52 items-center justify-center">
               <QueryingIndicator size="md" />
             </div>
           )}
 
-          {!room && !isLoading && loadFailed && (
+          {!replacesDetails && !isLoading && loadFailed && (
             <div className="flex min-h-52 flex-col items-center justify-center text-center">
               <p className="text-sm text-secondary">{i18nService.t('sessionDetailsLoadFailed')}</p>
               <button
@@ -364,7 +441,7 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
             </div>
           )}
 
-          {!room && !isLoading && session && stats && (
+          {!replacesDetails && !isLoading && session && stats && (
             <div className="space-y-5">
               {refreshFailed && (
                 <div

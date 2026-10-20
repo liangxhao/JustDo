@@ -2,6 +2,22 @@ import { i18nService } from '@/services/i18n';
 
 import { MESSAGE_QUOTE_KIND, type MessageQuote } from './messageQuote';
 
+function quoteLabel(quote: MessageQuote): string {
+  const key =
+    quote.kind === MESSAGE_QUOTE_KIND.EXTENSION
+      ? quote.labelKey
+      : quote.kind === MESSAGE_QUOTE_KIND.DISCUSSION
+        ? 'extensionDiscussionReference'
+        : quote.kind === MESSAGE_QUOTE_KIND.COLLABORATION
+          ? 'extensionCollaborationReference'
+          : undefined;
+  if (key) {
+    const label = i18nService.t(key);
+    if (label !== key) return label;
+  }
+  return i18nService.t('messageQuoteLabel');
+}
+
 export default function MessageQuoteCards({
   quotes,
   onRemove,
@@ -18,15 +34,7 @@ export default function MessageQuoteCards({
           className="max-w-full rounded-lg border border-border px-3 py-2 text-sm"
         >
           <div className="flex items-center gap-2">
-            <span>
-              {i18nService.t(
-                quote.kind === MESSAGE_QUOTE_KIND.DISCUSSION
-                  ? 'teamDiscussionReference'
-                  : quote.kind === MESSAGE_QUOTE_KIND.COLLABORATION
-                    ? 'teamCollaborationReference'
-                    : 'messageQuoteLabel',
-              )}
-            </span>
+            <span>{quoteLabel(quote)}</span>
             <button
               type="button"
               aria-label={i18nService.t('messageQuoteRemove')}

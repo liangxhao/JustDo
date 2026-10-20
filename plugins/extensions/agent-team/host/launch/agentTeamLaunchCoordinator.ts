@@ -144,6 +144,29 @@ export class AgentTeamLaunchCoordinator {
   private readonly cancellations = new Map<string, number>();
   private readonly reconciling = new Set<string>();
   constructor(private readonly deps: Dependencies) {}
+  protectedSessionIds(): string[] {
+    const rows = this.deps
+      .getDatabase()
+      .prepare('SELECT key,value FROM kv WHERE key LIKE ?')
+      .all(PREFIX + '%') as { key: string; value: string }[];
+    return rows.flatMap(row => {
+      const sessionId = row.key.slice(PREFIX.length);
+      try {
+        return parseReceipt(JSON.parse(row.value), sessionId).state === 'released'
+          ? []
+          : [sessionId];
+      } catch {
+        return [sessionId];
+      }
+    });
+  }
+  hasReadableReceipt(sessionId: string): boolean {
+    try {
+      return this.load(sessionId) !== undefined;
+    } catch {
+      return false;
+    }
+  }
 
   private load(sessionId: string): Loaded | undefined {
     const row = this.deps

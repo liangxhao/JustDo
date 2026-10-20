@@ -51,7 +51,8 @@ const composition = ts.transpileModule(`
   const opening = (async () => {
     ${statements.slice(0, windowIndex + 1).map(node => node.getText(source)).join('\n')}
   })().catch(${failure.getText(source)});
-  return { opening, preparation: () => startupEnginePreparationController };
+  return { opening, preparation: () => startupEnginePreparationController,
+    readStore: () => getStore(), readManager: () => getOpenClawEngineManager() };
 `, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
 
 function fixture() {
@@ -61,9 +62,25 @@ function fixture() {
   let rejectStore!: (error: Error) => void;
   const data = new Promise<object>((resolve, reject) => { resolveStore = resolve; rejectStore = reject; });
   const createStore = vi.fn(() => { calls.push('store'); return data; });
+  const database = {};
+  const productStore = { getDatabase: () => database };
+  let readStore!: () => object;
+  let readManager!: () => unknown;
   const engine = { getStatus: () => ({ phase: EnginePhase.Ready, version: 'test', canRetry: false }),
     getGatewayProcessGeneration: () => 0, getGatewayLifecycleGeneration: () => 0 };
   const createManager = vi.fn(function () { calls.push('engine'); return engine; });
+  const plugins = {
+    prepare: vi.fn(async () => {
+      expect(readStore()).toBe(productStore);
+      calls.push('plugins');
+      // Discovery reads runtime metadata through the actual guarded getter.
+      readManager();
+    }),
+    initializeDatabase: vi.fn((value: object) => {
+      expect(value).toBe(database);
+      calls.push('plugin-schema');
+    }),
+  };
   const context = {
     AppInitializationActivity, AppInitializationIpc, AppInitializationPhase, AppInitializationTask, AppInitializationTaskStatus,
     StartupRoute, StartupEnginePreparation,
@@ -78,6 +95,7 @@ function fixture() {
     startupStartedAt: 1, startupDatabaseRuntime: {}, startupHistoryAdmissionReady: false,
     packageJson: { version: '1.0.0', devServer: { port: 43127 } },
     SqliteStore: { create: createStore }, OpenClawEngineManager: createManager,
+    getAppPlugins: () => plugins,
     app: { whenReady: async () => {}, isReady: () => true, getPath: () => 'unused-startup-profile' },
     appShutdown: { isQuitting: () => state.quitting },
     prepareOpenClawExecution: vi.fn(), prepareOutboundHeaderNetworkGeneration: vi.fn(),
@@ -93,9 +111,13 @@ function fixture() {
   const execute = new Function(...Object.keys(context), composition);
   const owner = execute(...Object.values(context)) as {
     opening: Promise<void>; preparation: () => StartupEnginePreparation | undefined;
+    readStore: () => object; readManager: () => unknown;
   };
+  readStore = owner.readStore;
+  readManager = owner.readManager;
   const snapshot = () => handlers.get(AppInitializationIpc.GetState)?.() as AppInitializationState | undefined;
-  return { calls, state, owner, createStore, createManager, resolveStore, rejectStore, snapshot };
+  return { calls, state, owner, createStore, createManager,
+    resolveStore: () => resolveStore(productStore), rejectStore, snapshot };
 }
 
 test.each([false, true])('startup state is readable before Store opens and engine creation respects quitting=%s', async quitting => {
@@ -105,7 +127,7 @@ test.each([false, true])('startup state is readable before Store opens and engin
   expect(f.createManager).not.toHaveBeenCalled();
   expect(f.owner.preparation()).toBeUndefined();
   f.state.quitting = quitting;
-  f.resolveStore({});
+  f.resolveStore();
   await f.owner.opening;
   if (quitting) {
     expect(f.createManager).not.toHaveBeenCalled();
@@ -113,7 +135,8 @@ test.each([false, true])('startup state is readable before Store opens and engin
     expect(f.calls).not.toContain('main-window');
   } else {
     expect(f.owner.preparation()).toBeInstanceOf(StartupEnginePreparation);
-    expect(f.calls).toEqual(['admission', 'user-data', 'store', 'engine', 'main-window']);
+    expect(f.calls).toEqual(['admission', 'user-data', 'store', 'plugins', 'engine',
+      'plugin-schema', 'main-window']);
   }
 });
 

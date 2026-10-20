@@ -9,6 +9,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { isSourceGroupedSession } from '@shared/cowork/sessionSource';
 import { ExternalSessionSource } from '@shared/integrations/externalSession';
+import { useSyncExternalStore } from 'react';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import CoworkSessionDetailsModal from '@/features/cowork/components/sessions/CoworkSessionDetailsModal';
@@ -17,6 +18,7 @@ import type {
   CoworkSessionSummary,
   SessionGroup,
 } from '@/features/cowork/coworkTypes';
+import { appBrowserRegistry } from '@/features/plugins/app/runtime';
 import { i18nService } from '@/services/i18n';
 import ListChecksIcon from '@/shared/components/icons/ListChecksIcon';
 import PencilSquareIcon from '@/shared/components/icons/PencilSquareIcon';
@@ -40,7 +42,6 @@ interface CoworkSessionItemProps {
   onRename: (title: string) => void;
   onExport: () => void;
   onCopy: () => void;
-  onCollaboration?: () => void;
   onTogglePinned: () => void;
   onToggleSelection: () => void;
   onEnterBatchMode: () => void;
@@ -413,6 +414,8 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     title?: string;
   }
 
+  useSyncExternalStore(appBrowserRegistry.subscribe, appBrowserRegistry.getContextRevision);
+  const pluginPresentation = appBrowserRegistry.sessionPresentation(session.id);
   const menuItems = useMemo(() => {
     const items: MenuItem[] = [
       {
@@ -442,13 +445,13 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
       },
       {
         key: 'export',
-        label: i18nService.t('collaborationExportMain'),
+        label: i18nService.t('exportSession'),
         onClick: handleExportClick,
         tone: 'neutral' as const,
-        disabled: isRuntimeRunning || session.collaboration?.deleting,
+        disabled: isRuntimeRunning || pluginPresentation.exportAllowed === false,
         title: isRuntimeRunning ? i18nService.t('coworkExportWaitForCompletion') : undefined,
       },
-      ...(!session.collaboration
+      ...(pluginPresentation.copyAllowed !== false
         ? [
             {
               key: 'copy',
@@ -493,7 +496,8 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     });
     return items;
   }, [
-    session.collaboration,
+    pluginPresentation.exportAllowed,
+    pluginPresentation.copyAllowed,
     session.nativeSessionKey,
     session.historyBinding,
     batchLabel,
@@ -636,8 +640,8 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                   )}
                   <Tooltip
                     content={
-                      session.collaboration?.deleting
-                        ? `${session.title} · ${i18nService.t('collaborationDeletePending')}`
+                      pluginPresentation.titleSuffix
+                        ? `${session.title} · ${pluginPresentation.titleSuffix}`
                         : session.title
                     }
                     position="top"
@@ -651,9 +655,9 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                     >
                       {session.title}
                     </h3>
-                    {session.collaboration?.deleting && (
+                    {Boolean(pluginPresentation.titleSuffix) && (
                       <p className="truncate text-[10px] text-red-500">
-                        {i18nService.t('collaborationDeletePending')}
+                        {pluginPresentation.titleSuffix}
                       </p>
                     )}
                   </Tooltip>
@@ -811,9 +815,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
             {/* Content */}
             <div className="px-5 pb-4">
               <p className="text-sm text-secondary">
-                {i18nService.t(
-                  session.collaboration ? 'collaborationDeleteConfirm' : 'deleteTaskConfirmMessage',
-                )}
+                {pluginPresentation.deletionMessage ?? i18nService.t('deleteTaskConfirmMessage')}
               </p>
             </div>
 
@@ -839,7 +841,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
         <CoworkSessionDiagnosticsModal
           sessionId={session.id}
           sessionTitle={session.title}
-          isCollaboration={Boolean(session.collaboration)}
+          scopeLabel={pluginPresentation.diagnosticScopeLabel}
           returnFocusRef={sessionItemRef}
           onClose={() => setShowDiagnostics(false)}
         />

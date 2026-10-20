@@ -39,7 +39,7 @@ import {
 interface Props {
   sessionId: string;
   sessionTitle: string;
-  isCollaboration?: boolean;
+  scopeLabel?: string;
   returnFocusRef?: React.RefObject<HTMLElement | null>;
   onClose: () => void;
 }
@@ -52,7 +52,7 @@ const buttonClass = 'diagnostics-button';
 export default function CoworkSessionDiagnosticsModal({
   sessionId,
   sessionTitle,
-  isCollaboration,
+  scopeLabel,
   returnFocusRef,
   onClose,
 }: Props) {
@@ -391,7 +391,7 @@ export default function CoworkSessionDiagnosticsModal({
               <p className="diagnostics-session-title" title={sessionTitle}>
                 {sessionTitle}
               </p>
-              {isCollaboration && <p className="diagnostics-muted">{t('diagnosticsMain')}</p>}
+              {scopeLabel && <p className="diagnostics-muted">{scopeLabel}</p>}
             </div>
           </div>
           <button

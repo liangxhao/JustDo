@@ -7,6 +7,25 @@ export type LanguageType = 'zh' | 'en';
 class I18nService {
   private currentLanguage: LanguageType = 'zh';
   private listeners = new Set<() => void>();
+  private pluginTranslations = new Map<string, Record<LanguageType, Record<string, string>>>();
+  registerPluginTranslations(
+    id: string,
+    dictionaries: Record<LanguageType, Record<string, string>>,
+  ): () => void {
+    if (
+      Object.keys(dictionaries.en).sort().join('\0') !==
+      Object.keys(dictionaries.zh).sort().join('\0')
+    )
+      throw new Error('appPluginInvalidRequest');
+    this.pluginTranslations.set(id, dictionaries);
+    this.listeners.forEach(listener => listener());
+    return () => {
+      if (this.pluginTranslations.get(id) === dictionaries) {
+        this.pluginTranslations.delete(id);
+        this.listeners.forEach(listener => listener());
+      }
+    };
+  }
 
   async initialize(): Promise<void> {
     // ConfigService.init must have established its real baseline first. Language
@@ -49,7 +68,11 @@ class I18nService {
   }
 
   t(key: string): string {
-    const translation = translations[this.currentLanguage][key];
+    const translation =
+      translations[this.currentLanguage][key] ??
+      [...this.pluginTranslations.values()]
+        .map(dictionary => dictionary[this.currentLanguage][key])
+        .find(value => value !== undefined);
     if (translation) return translation;
 
     console.warn(`Translation missing for key: ${key} in language: ${this.currentLanguage}`);

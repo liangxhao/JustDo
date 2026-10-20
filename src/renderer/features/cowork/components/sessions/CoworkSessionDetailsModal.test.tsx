@@ -4,49 +4,73 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { coworkService } from '@/features/cowork/coworkService';
+import type { AppView } from '@/features/plugins/app/browserRegistry';
 import { i18nService } from '@/services/i18n';
 
 import CoworkSessionDetailsModal from './CoworkSessionDetailsModal';
 
-const team = vi.hoisted(() => ({ enabled: false, disabledRevision: 0 }));
-vi.mock('@/features/plugins/extensions/useExtensionEnablement', () => ({
-  useExtensionAvailability: () => team,
+const team = vi.hoisted(() => ({ views: [] as AppView[], revision: 0 }));
+vi.mock('@/features/plugins/app/AppPluginSlot', () => ({
+  useAppViews: () => team.views,
+  AppPluginSlot: ({
+    contributionId,
+    context,
+  }: {
+    contributionId?: string;
+    context: import('../../../../../../packages/app-plugin-sdk/browser').AppViewContext;
+  }) => {
+    const view = team.views.find(item => item.id === contributionId);
+    return view ? <view.component {...context} /> : null;
+  },
 }));
-vi.mock('../collaboration/CollaborationPanel', () => ({
-  useCollaborationRooms: () => [{ id: 'team', anchorSessionId: 'source', members: [] }],
-}));
-vi.mock('./CollaborationTaskDetails', () => ({
-  default: ({ onSelect }: { onSelect: (session: unknown) => void }) => (
-    <button
-      onClick={() =>
-        onSelect({
-          id: 'peer',
-          title: 'Reviewer',
-          status: 'completed',
-          pinned: false,
-          createdAt: 1,
-          updatedAt: 2,
-        })
-      }
-    >
-      Team member
-    </button>
-  ),
+vi.mock('@/features/plugins/app/runtime', () => ({
+  appBrowserRegistry: {
+    subscribe: () => () => undefined,
+    getViews: () => team.views,
+    getContextRevision: () => team.revision,
+  },
 }));
 beforeEach(() => {
-  team.enabled = false;
-  team.disabledRevision = 0;
+  team.views = [];
+  team.revision = 0;
 });
 
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  document.getElementById('details-return-focus')?.remove();
 });
 
 describe('CoworkSessionDetailsModal', () => {
-  it('hides team member navigation on disable while retaining ordinary source details', () => {
-    vi.spyOn(coworkService, 'getSessionDetails').mockReturnValue(new Promise(() => undefined));
+  it('withdraws plugin detail contributions while retaining ordinary source details', async () => {
+    vi.spyOn(coworkService, 'getSessionDetails').mockResolvedValue({
+      session: {
+        id: 'source',
+        title: 'Source task',
+        status: 'completed',
+        pinned: false,
+        executionMode: 'local',
+        permissionMode: 'full',
+        activeSkillIds: [],
+        cwd: '',
+        agentId: 'main',
+        createdAt: 1,
+        updatedAt: 2,
+      },
+      gatewaySessionId: 'native-source',
+      stats: {
+        summary: '',
+        messageCount: 0,
+        userMessageCount: 0,
+        assistantMessageCount: 0,
+        toolCallCount: 0,
+        models: [],
+        tokenUsage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        totalTokens: 0,
+        hasTokenUsage: false,
+      },
+    });
     const props = {
       sessionSummary: {
         id: 'source',
@@ -61,17 +85,127 @@ describe('CoworkSessionDetailsModal', () => {
       onClose: vi.fn(),
     };
     const view = render(<CoworkSessionDetailsModal {...props} />);
-    expect(screen.queryByRole('button', { name: 'Team member' })).toBeNull();
-    team.enabled = true;
+    expect(screen.queryByRole('button', { name: 'Plugin details' })).toBeNull();
+    await screen.findByText('native-source');
+    team.views = [
+      {
+        id: 'details',
+        pluginId: 'example',
+        epoch: 'first',
+        slot: 'session.details',
+        labelKey: 'details',
+        component: () => <button>Plugin details</button>,
+      },
+    ];
     view.rerender(<CoworkSessionDetailsModal {...props} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Team member' }));
-    expect(screen.getByRole('button', { name: i18nService.t('back') })).toBeTruthy();
-    team.enabled = false;
-    team.disabledRevision++;
+    expect(screen.getByRole('button', { name: 'Plugin details' })).toBeTruthy();
+    team.views = [];
+    team.revision++;
     view.rerender(<CoworkSessionDetailsModal {...props} />);
-    expect(screen.queryByRole('button', { name: 'Team member' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Plugin details' })).toBeNull();
     expect(screen.queryByRole('button', { name: i18nService.t('back') })).toBeNull();
     expect(screen.getByRole('button', { name: i18nService.t('close') })).toBeTruthy();
+  });
+
+  it('replaces anchor statistics, inspects authoritative member details, and withdraws with its owner', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    const nativeDetails = (id: string) => ({
+      session: {
+        id,
+        title: id === 'member' ? 'Authoritative member' : 'Anchor',
+        status: 'completed' as const,
+        pinned: false,
+        executionMode: 'local' as const,
+        permissionMode: 'full' as const,
+        activeSkillIds: [],
+        cwd: '',
+        agentId: 'main',
+        createdAt: 1,
+        updatedAt: 2,
+      },
+      gatewaySessionId: `native-${id}`,
+      stats: {
+        summary: `Statistics for ${id}`,
+        messageCount: 7,
+        userMessageCount: 2,
+        assistantMessageCount: 5,
+        toolCallCount: 3,
+        models: [],
+        tokenUsage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        totalTokens: 0,
+        hasTokenUsage: false,
+      },
+    });
+    vi.spyOn(coworkService, 'getSessionDetails').mockImplementation(async id => nativeDetails(id));
+    const loadSession = vi.spyOn(coworkService, 'loadSession');
+    const detailsView: AppView = {
+      id: 'details',
+      pluginId: 'example',
+      epoch: 'first',
+      slot: 'session.details',
+      labelKey: 'details',
+      detailsPresentation: id => (id === 'anchor' ? 'replace' : 'hidden'),
+      component: ({ onInspectSession }) => (
+        <button
+          onClick={() =>
+            onInspectSession?.({
+              id: 'member',
+              title: 'Untrusted plugin title',
+              status: 'error',
+              pinned: false,
+              createdAt: 0,
+              updatedAt: 0,
+            })
+          }
+        >
+          Inspect member
+        </button>
+      ),
+    };
+    team.views = [detailsView];
+    const props = {
+      sessionSummary: nativeDetails('anchor').session,
+      groups: [],
+      isRuntimeRunning: false,
+      onClose: vi.fn(),
+    };
+    const returnFocus = document.createElement('button');
+    returnFocus.id = 'details-return-focus';
+    document.body.append(returnFocus);
+    returnFocus.focus();
+    const view = render(<CoworkSessionDetailsModal {...props} />);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByText('native-anchor')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect member' }));
+    expect(await screen.findByText('native-member')).toBeTruthy();
+    expect(screen.getByText('Authoritative member')).toBeTruthy();
+    expect(screen.queryByText('Untrusted plugin title')).toBeNull();
+    expect(screen.getByText('Statistics for member')).toBeTruthy();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: i18nService.t('close') }),
+      ),
+    );
+    expect(loadSession).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('back') }));
+    expect(screen.getByRole('button', { name: 'Inspect member' })).toBeTruthy();
+    expect(screen.queryByText('native-member')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect member' }));
+    await screen.findByText('native-member');
+    team.views = [];
+    team.revision++;
+    view.rerender(<CoworkSessionDetailsModal {...props} />);
+    expect(await screen.findByText('native-anchor')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: i18nService.t('back') })).toBeNull();
+    team.views = [{ ...detailsView, epoch: 'second' }];
+    view.rerender(<CoworkSessionDetailsModal {...props} />);
+    expect(screen.getByRole('button', { name: 'Inspect member' })).toBeTruthy();
+    expect(screen.queryByText('native-member')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect member' }));
+    await screen.findByText('native-member');
+    view.unmount();
+    await waitFor(() => expect(document.activeElement).toBe(returnFocus));
   });
   it('keeps returning to the assistant list separate from closing details', () => {
     vi.spyOn(coworkService, 'getSessionDetails').mockReturnValue(new Promise(() => undefined));
@@ -79,7 +213,6 @@ describe('CoworkSessionDetailsModal', () => {
     const onClose = vi.fn();
     render(
       <CoworkSessionDetailsModal
-        memberView
         sessionSummary={{
           id: 'peer',
           title: 'Reviewer',

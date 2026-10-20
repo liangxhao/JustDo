@@ -1,90 +1,80 @@
 # 输入框功能菜单
 
 消息输入框下方的“+”菜单是通用功能入口。“文件和文件夹”复用原有附件选择动作；
-计划模式作为内置入口，Swarm Workflow 和 Agent Team 等启用的扩展入口显示在“插件”分组。
-菜单不持有插件业务参数、草稿或执行逻辑。主界面两种输入框布局共用同一组注册项，
-没有可见功能时菜单自身隐藏加号。
+计划模式作为内置入口，Swarm Workflow 和 Agent Team 等已准入插件显示在“插件”分组。
+菜单不持有插件业务参数或执行逻辑。两种输入框布局共用注册项，没有可见功能时隐藏加号。
 
 ```mermaid
 flowchart LR
-  Adapter[各功能入口适配器] --> Registration[注册项数组]
-  Catalog[原生插件启用设置与开关事件] --> Enablement[当前输入框的插件状态快照]
-  Registration --> Filter[按所属插件过滤]
-  Enablement --> Filter
-  Filter --> Menu[通用加号菜单]
-  Menu --> Action[适配器选择动作]
-  Action --> Draft[功能自身的草稿和提交逻辑]
-  Draft --> Tag[通用原子标签]
+  Native[当前 Native 注册证明] --> Host[通用 Browser Registry]
+  Package[插件 Browser 注册模式] --> Host
+  Host --> Modes[当前 epoch 的模式贡献]
+  Modes --> Composer[useAppComposer]
+  Builtin[附件 / 计划模式] --> Menu[通用功能菜单]
+  Composer --> Menu
+  Menu --> Selection[按聊天保存的模式选择]
+  Selection --> Token[通用原子标签]
+  Selection --> Prepare[插件 prepare + 宿主提交围栏]
 ```
 
 ## 接入契约
 
-每个适配器提供 `ComposerFeatureRegistration`：稳定且唯一的 `id`、已翻译的名称、
-图标、选择动作，以及可选的说明、分组标题 `section`、选中/禁用状态和 `extensionId`。
-注册顺序决定展示顺序，一个插件可以提供多个独立入口；应用内置功能可以省略
-`extensionId`。名称和说明仍须提供中英文翻译。
+插件通过 `AppBrowserHost.registerMode` 声明 `AppComposerMode`，包含稳定 ID、翻译键、
+图标和 `prepare`。可选 `order`、`group` 描述排序、父级图标和返回文案；
+`selectionLabelKey`、`removeLabelKey`、`selectionCaret` 描述标签及选择后的输入焦点。
+名称、说明和操作文案保留中英文翻译，宿主不按业务 ID 选择图标或排序。
+贡献只在当前插件精确 epoch 有效，未知、关闭或未准入的插件不显示入口。
 
-`buildComposerFeatures` 只按所属插件是否已确认启用过滤注册项；未确认、关闭或
-目录中缺失的插件都不展示。`disabled` 表示可见但当前不可操作，区别于插件关闭。
-选择动作、默认参数、取消选择和发送前的权限核验由各功能适配器及其业务流程负责。
-Swarm Workflow 的这些默认参数与展示定义放在 `swarmWorkflowComposerFeature.tsx`。
-Agent Team 的适配器 `buildAgentTeamFeature` 提供群组讨论 / 任务协作二级菜单，
-同样声明 `extensionId`。二级项支持 `children` 与 `menuitemradio`；菜单路径只保存
-稳定 ID，每次渲染使用当前注册项和回调，关闭插件会回到仍可用的根菜单项。
-方向键左右进入/返回二级菜单，Escape 返回触发按钮。
-群聊发送指令要求省略 `organizerParticipates`，由服务读取用户设置；出厂默认不参与，
-用户明确要求参与或不参与时才传入覆盖值。选择群聊模式本身不覆盖该设置。
-菜单使用圆角面板和紧凑单行菜单项，说明与名称并排显示；分组标题由调用方翻译，
-连续相同分组只展示一次标题。附件选择仍由 `useComposerAttachments` 打开原生选择框，
-不依赖任何插件启用状态；运行中允许排队时仍可添加附件，Swarm Workflow 项保持禁用。
+`useAppComposer` 将模式转为通用 `ComposerFeatureItem`，再与附件和计划模式组装。
+无需在 `CoworkPromptInput` 增加插件业务 import。旧版业务适配器及独立启用快照已由
+Browser Registry 替代，Native/Main/Browser 准入流程见[应用插件宿主](../../architecture/17-app-plugin-host.md)。
 
-新增功能时实现适配器，将其返回值加入 `CoworkPromptInput` 的注册项数组，并在该
-功能自己的提交路径中处理业务参数。通用菜单、启用状态读取和过滤函数无需新增
-插件分支。这里是明确接入的 Renderer 适配器契约，不执行外部插件提供的 UI 代码。
-需要输入框标签的功能可使用 `useComposerFeatureDraft` 保存类型明确的选项对象；
-它统一处理按聊天分隔、关闭后取消选择、发送快照核对和仅清理已接收的选择。
-
-计划模式由 `usePlanModeComposerFeature` 调用既有 `setPlanMode` 保存，展示当前选择；
-它不声明 `extensionId`，不被通用插件目录过滤。保存中禁止重复切换；运行中不能新开启，
-已有选择仍可关闭。保存失败显示提示，不伪造成功状态。
+展示顺序保留原版：Swarm Workflow、Agent Team；Team 二级项为群组讨论、任务协作。
+父级按任一子项选中而高亮，子菜单不重复显示“插件”分组标题，返回文案由插件提供。
+菜单保留圆角、阴影、紧凑单行项及说明，宿主样式不受后加载插件的 Tailwind utility 覆盖。
+方向键左右进入/返回二级菜单，Escape 返回触发按钮；菜单路径只保存稳定 ID，
+每次渲染读取当前注册项和回调。
 
 ## 状态与交互
 
-每个输入框通过 `useExtensionEnablement` 一次读取整个原生插件目录，并使用一个
-开关事件订阅覆盖所有注册项。按插件 ID 合并在读取期间发生的开关，避免关闭
-一个插件后被旧响应重新显示，也避免它的事件丢弃其他插件的目录结果。较旧的
-目录请求不能覆盖较新的读取。窗口重新获得焦点时刷新，暂时读取失败保留已知
-设置；初次读取失败不视为已启用。快照只保存启用元数据，不增加 Redux 状态或历史缓存。
+`FeatureTextarea` 接收标签名称、图标和删除文案，统一处理正文、输入法与可访问性。
+Team 标签保留 `Agent Team · 子项`，再次选相同模式建立新的选择快照；通过删除按钮
+或光标位于正文开头时的退格取消选择。选择后恢复输入焦点，Workflow 将光标置于开头，Team 保留位置。
+标签不写入正文或原生历史。
 
-Main 在启停尝试结束后重读实际插件目录并通知全部仍存在的窗口，安装和卸载也
-走同一通知路径。即使操作因运行时重启失败而返回错误，已经保存的关闭状态仍
-会移除入口；读取失败不伪造状态，不改变操作原有结果。通知读取串行，避免旧
-目录响应晚于新响应到达。自定义导入和市场安装共用同一安装适配器。
+Team 与 Workflow 选择互斥，按聊天保留草稿；关闭插件清理自己的旧选择，保留正文、
+附件和引用，不清理其他插件。即使关闭和重开被 React 合并，旧 epoch 的选择也失效。
+重新启用不自动弹出菜单、重建旧选择或重放发送。菜单项消失后按现有规则转移焦点；
+全部入口消失时关闭菜单。
 
-关闭某插件时只移除属于它的菜单项，其他插件和内置功能仍可使用。被移除项若
-正在获得键盘焦点，菜单将焦点移到剩余可用项；剩余项原有焦点继续保留。
-全部入口消失时关闭菜单，恢复入口后不自动弹出。
+取消、替换标签、切换聊天或关闭插件后，异步准备完成的旧发送必须再次核对选择、
+草稿及 epoch。失败不清理正文，已接受发送只清理对应快照，不能删除后来的新选择。
+模型准备前捕获模式，实际发送前重查，不能因插件撤回而把原插件请求降为普通消息。
+通用显示过滤不能代替 Main/Gateway 的执行权限校验。
 
-`FeatureTextarea` 接收标签名称与适配器图标，不预设任何插件图标。原子标签的
-删除、正文编辑、输入法与可访问性交互统一复用；标签不写入正文或原生聊天历史。
-Swarm Workflow 关闭后清除自己的标签选择，保留正文、附件及引用，重新启用后需要重新选择。
-Agent Team 使用既有 cowork 草稿映射，同样在关闭时清除所有聊天的 Team 选择；
-Swarm Workflow 与 Team 选择互斥，独立启用开关不清理另一插件的草稿。
-关闭版本按插件 ID 单独递增；即使 React 合并快速关闭/开启事件，旧选择仍然失效。
-取消、替换标签或切换聊天后，异步准备完成的旧发送必须再次核对当前选择；失败
-不清理正文，已接受发送也只清理对应选项快照，不能删掉用户后来做的新选择。
-通用显示过滤不能代替各功能在 Main/Gateway 的执行权限校验。
+附件不依赖插件状态；计划模式仍由既有 Core 保存，保存中禁止重复切换。
+运行中允许排队时仍可添加附件，插件模式继续受输入框的运行和排队条件约束；已有计划模式可关闭，
+新开启继续受运行状态约束。插件模式的默认参数和执行准备归插件。
 
-Team 与 Swarm 的模式选择明确本次协作方式。目标与必要上下文足够明确时，指令要求优先尽快使用所选工具发起；仅在存在实质歧义或缺少必要上下文时，才先按现有原生权限读取材料、分析需求或初步规划，补齐缺口后回到发起，不停留在计划阶段。选择本身不增加权限，不用发起白名单额外禁用目录中的普通工具；实际 Team 操作、Workflow 启动、来源身份、停止和接纳回执继续按各自契约核验。准备不等于创建成功，Swarm 的正式依赖图、执行和验收仍归工作流服务。
+群聊指令省略 `organizerParticipates` 时沿用用户设置；选择模式不覆盖它。
+Team 与 Workflow 的目标和上下文明确时优先发起所选工具；存在实质歧义或缺失必要
+上下文时先读取和分析，再回到发起。选择不增加执行权限，准备不等于创建成功，
+正式执行、来源身份、停止与接纳回执按各插件契约核验。
 
 ## 回归验证
 
-覆盖多个插件独立开关、一个插件多个入口、内置入口、未知/缺失插件、在途目录
-与开关竞态、目录响应顺序、失去/恢复入口后的菜单焦点，以及适配器图标和原子
-标签的现有正文编辑行为。
-另覆盖已保存但重启失败、安装/卸载、多窗口广播、快速开关合并更新、取消后
-异步发送失效、聊天切换与旧发送清理，以及一个插件关闭时其他插件草稿不受影响。
+定向测试覆盖菜单顺序、子项、父级选择、标签和删除文案、两种输入框焦点、退格、
+跨聊天快照及 epoch 失效；同时覆盖工作区入口归属、插件关闭和旧异步操作。
+
+`node scripts/test/plugin-host/verify-ui-parity.mjs` 使用隔离 Chromium、真实 Core 菜单和
+侧栏以及独立构建的两插件 Browser/CSS，对照固定的改造前菜单工厂，检查实际样式、
+子菜单、标签、右侧 Team Tab、Portal 设置弹窗及关闭撤回。探针不启动 Gateway、
+不读取用户数据，也不代表完整产品 UI 或真实模型业务验收。
 
 ## 实现核对入口
 
-[菜单注册与过滤](../../../src/renderer/features/cowork/components/composer/composerFeatures.tsx)；[计划模式入口](../../../src/renderer/features/cowork/components/composer/usePlanModeComposerFeature.tsx)；[输入框组装](../../../src/renderer/features/cowork/components/composer/CoworkPromptInput.tsx)。这些入口用于核对当前实现，测试文件列出回归场景，不表示本轮文档维护重新执行了相应测试。
+[菜单](../../../src/renderer/features/cowork/components/composer/ComposerFeatureMenu.tsx)、
+[模式组装与选择](../../../src/renderer/features/plugins/app/useAppComposer.tsx)、
+[输入框](../../../src/renderer/features/cowork/components/composer/CoworkPromptInput.tsx)、
+[Team 模式](../../../plugins/extensions/agent-team/app/browser/index.tsx)、
+[Workflow 模式](../../../plugins/extensions/swarm-workflow/app/browser/index.tsx)。

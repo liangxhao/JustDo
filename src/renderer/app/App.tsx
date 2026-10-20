@@ -1,14 +1,19 @@
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
-import { parseTeamDiscussionSessionKey } from '@shared/cowork/agent-team/teamDiscussion';
 import { CoworkInteractionKind } from '@shared/cowork/interactions/interactions';
-import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
 import { BuiltinModelIpc } from '@shared/providers/builtinModels';
 import {
   type ApprovalDecision,
   type ApprovalRequest,
   type ApprovalResolved,
 } from '@shared/security/approvals';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { applyAppearanceConfig } from '@/app/appearance';
@@ -17,7 +22,10 @@ import { defaultConfig, getProviderDisplayName } from '@/app/config';
 import BottomRightStatusStack from '@/app/shell/BottomRightStatusStack';
 import Sidebar from '@/app/shell/Sidebar';
 import { SidebarView } from '@/app/shell/sidebarNavigation';
-import ApplicationLoading, { useInitializationFailure, useStartupActivity } from '@/app/shell/startup/routing/ApplicationLoading';
+import ApplicationLoading, {
+  useInitializationFailure,
+  useStartupActivity,
+} from '@/app/shell/startup/routing/ApplicationLoading';
 import { RendererStartupActivity } from '@/app/shell/startup/routing/startupPresentation';
 import Toast, { type ToastContent } from '@/app/shell/Toast';
 import WindowHeader from '@/app/shell/window/WindowHeader';
@@ -32,23 +40,6 @@ import {
 } from '@/features/cowork/approvalQueue';
 import { CoworkView, type CoworkViewHandle } from '@/features/cowork/components';
 import ExecApprovalModal from '@/features/cowork/components/approvals/ExecApprovalModal';
-import {
-  OPEN_TEAM_PANEL,
-  prepareDiscussionSource,
-  TEAM_ROOM_FOCUSED,
-} from '@/features/cowork/components/discussions/teamDiscussionNavigation';
-import TeamDiscussionView, {
-  useAgentTeamEntry,
-} from '@/features/cowork/components/discussions/TeamDiscussionView';
-import {
-  appendDiscussionReference,
-  appendTeamResultDraft,
-} from '@/features/cowork/components/discussions/teamResultDraft';
-import {
-  OPEN_TEAM_RECORDS,
-  openTeamHistoryEntry,
-} from '@/features/cowork/components/display/summary/agentTeamHistory';
-import AgentTeamHistoryDialog from '@/features/cowork/components/display/summary/AgentTeamHistoryDialog';
 import { workspaceKeyboardDocument } from '@/features/cowork/components/display/workspace/useWorkspacePortal';
 import {
   type FilePreviewNavigationOptions,
@@ -70,7 +61,12 @@ import {
   getEnabledProviderModels,
 } from '@/features/models/modelConfig';
 import { setConfiguredModels } from '@/features/models/modelSlice';
-import { useExtensionAvailability } from '@/features/plugins/extensions/useExtensionEnablement';
+import { AppPageSlot } from '@/features/plugins/app/AppPageSlot';
+import { appBrowserRegistry } from '@/features/plugins/app/runtime';
+import {
+  APP_PLUGIN_SHOW_SETTINGS_EVENT,
+  type AppSettingsNavigationRequest,
+} from '@/features/plugins/app/settingsNavigation';
 import PluginsView from '@/features/plugins/PluginsView';
 import { CronView } from '@/features/scheduled-tasks/components';
 import { scheduledTaskService } from '@/features/scheduled-tasks/scheduledTaskService';
@@ -86,79 +82,33 @@ import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { matchesShortcut } from '@/services/shortcuts';
 import { themeService } from '@/services/theme';
-import { isDomHTMLElement, OwnerDocumentContext } from '@/shared/dom/ownerDocument';
-import { type RootState, store } from '@/store';
+import { isDomHTMLElement } from '@/shared/dom/ownerDocument';
 
 const InitializedApp: React.FC = () => {
   useEffect(() => {
-    const widthObserver = observeChatContentWidth(document.documentElement, window.electron?.window);
+    const widthObserver = observeChatContentWidth(
+      document.documentElement,
+      window.electron?.window,
+    );
     return widthObserver.dispose;
   }, []);
 
-  const { enabled: agentTeamEnabled, disabledRevision: agentTeamDisabledRevision } =
-    useExtensionAvailability(OpenClawExtensionId.AGENT_TEAM);
-  const [teamHistoryDocument, setTeamHistoryDocument] = useState<Document | null>(null);
-  const [teamEntry, setTeamEntry] = useAgentTeamEntry();
-  const teamEntryRef = useRef(teamEntry);
-  teamEntryRef.current = teamEntry;
-  useEffect(() => {
-    setTeamHistoryDocument(null);
-    setTeamEntry(null);
-  }, [agentTeamDisabledRevision, setTeamEntry]);
-  useEffect(() => {
-    const open = () => {
-      if (!agentTeamEnabled) return;
-      setTeamHistoryDocument(null);
-      setTeamEntry(null);
-      setMainView('cowork');
-    };
-    const focus = (event: Event) =>
-      setFocusedTeamRoomId((event as CustomEvent<string | null>).detail);
-    window.addEventListener(OPEN_TEAM_PANEL, open);
-    window.addEventListener(TEAM_ROOM_FOCUSED, focus);
-    return () => {
-      window.removeEventListener(OPEN_TEAM_PANEL, open);
-      window.removeEventListener(TEAM_ROOM_FOCUSED, focus);
-    };
-  }, [agentTeamEnabled, setTeamEntry]);
-  const [focusedTeamRoomId, setFocusedTeamRoomId] = useState<string | null>(null);
-  const teamAgents = useSelector((state: RootState) => state.agent.agents);
-  useEffect(() => {
-    if (teamEntry?.roomId) setFocusedTeamRoomId(teamEntry.roomId);
-  }, [teamEntry]);
+  useSyncExternalStore(appBrowserRegistry.subscribe, appBrowserRegistry.getContextRevision);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
   const [mainView, setMainView] = useState<SidebarView>(SidebarView.Home);
-  const teamNavigationContext = useRef({ mainView, showSettings, teamEntry });
+  const [appPageVisible, setAppPageVisible] = useState(false);
+  const pageNavigation = useRef({ mainView, showSettings, revision: 0 });
   if (
-    teamNavigationContext.current.mainView !== mainView ||
-    teamNavigationContext.current.showSettings !== showSettings ||
-    teamNavigationContext.current.teamEntry !== teamEntry
-  )
-    teamNavigationContext.current = { mainView, showSettings, teamEntry };
-  useEffect(() => {
-    const open = (event: Event) => {
-      if (agentTeamEnabled) setTeamHistoryDocument((event as CustomEvent<Document>).detail);
+    pageNavigation.current.mainView !== mainView ||
+    pageNavigation.current.showSettings !== showSettings
+  ) {
+    pageNavigation.current = {
+      mainView,
+      showSettings,
+      revision: pageNavigation.current.revision + 1,
     };
-    window.addEventListener(OPEN_TEAM_RECORDS, open);
-    return () => window.removeEventListener(OPEN_TEAM_RECORDS, open);
-  }, [agentTeamEnabled]);
-  useEffect(() => {
-    if (!agentTeamEnabled) {
-      setTeamHistoryDocument(null);
-      if (teamEntry) setTeamEntry(null);
-    }
-  }, [agentTeamEnabled, teamEntry, setTeamEntry]);
-  useEffect(() => {
-    setTeamHistoryDocument(null);
-  }, [teamEntry, showSettings, mainView]);
-  useEffect(() => {
-    const ownerWindow = teamHistoryDocument?.defaultView;
-    if (!ownerWindow) return;
-    const close = () => setTeamHistoryDocument(null);
-    ownerWindow.addEventListener('pagehide', close);
-    return () => ownerWindow.removeEventListener('pagehide', close);
-  }, [teamHistoryDocument]);
+  }
   const [isInitialized, setIsInitialized] = useState(false);
   const [startupActivity, setStartupActivity] = useStartupActivity(
     RendererStartupActivity.Preferences,
@@ -179,9 +129,6 @@ const InitializedApp: React.FC = () => {
   const dispatch = useDispatch();
   const currentSessionId = useSelector(selectCurrentSessionId);
   const pendingInteractions = useSelector(selectPendingInteractions);
-  useEffect(() => {
-    setTeamEntry(null);
-  }, [mainView, currentSessionId, setTeamEntry]);
   const isWindows = window.electron.platform === 'win32';
 
   const dismissApproval = useCallback((approval: Pick<ApprovalRequest, 'id' | 'kind'>) => {
@@ -326,7 +273,11 @@ const InitializedApp: React.FC = () => {
         void agentService.loadAgents();
       } catch (error) {
         console.error('Failed to initialize app:', error);
-        setInitError(error instanceof Error ? error : Object.assign(new Error('Application initialization failed'), { cause: error }));
+        setInitError(
+          error instanceof Error
+            ? error
+            : Object.assign(new Error('Application initialization failed'), { cause: error }),
+        );
         setIsInitialized(true);
       }
     };
@@ -480,11 +431,20 @@ const InitializedApp: React.FC = () => {
     });
     setShowSettings(true);
   }, []);
+  useEffect(() => {
+    const show = (event: Event) => {
+      const options = (event as CustomEvent<Partial<AppSettingsNavigationRequest> | null>).detail;
+      if (typeof options === 'object' && options?.initialTab === 'runtime')
+        handleShowSettings({ initialTab: 'runtime' });
+    };
+    window.addEventListener(APP_PLUGIN_SHOW_SETTINGS_EVENT, show);
+    return () => window.removeEventListener(APP_PLUGIN_SHOW_SETTINGS_EVENT, show);
+  }, [handleShowSettings]);
 
   const handleShowCowork = useCallback(() => {
-    setTeamEntry(null);
+    appBrowserRegistry.dismissPages();
     setMainView('cowork');
-  }, [setTeamEntry]);
+  }, []);
 
   const requestCoworkNavigation = useCallback(
     async (options?: FilePreviewNavigationOptions): Promise<boolean> => {
@@ -497,52 +457,52 @@ const InitializedApp: React.FC = () => {
     await runGuardedFilePreviewNavigation(
       requestCoworkNavigation,
       () => {
-        setTeamEntry(null);
+        appBrowserRegistry.dismissPages();
         setMainView('scheduledTasks');
       },
       { preserveTabs: true },
     );
-  }, [requestCoworkNavigation, setTeamEntry]);
+  }, [requestCoworkNavigation]);
 
   const handleShowWorkboard = useCallback(async () => {
     if (!workboardEnabled) return;
     await runGuardedFilePreviewNavigation(
       requestCoworkNavigation,
       () => {
-        setTeamEntry(null);
+        appBrowserRegistry.dismissPages();
         setMainView('workboard');
       },
       {
         preserveTabs: true,
       },
     );
-  }, [requestCoworkNavigation, workboardEnabled, setTeamEntry]);
+  }, [requestCoworkNavigation, workboardEnabled]);
 
   const handleShowPlugins = useCallback(async () => {
     await runGuardedFilePreviewNavigation(
       requestCoworkNavigation,
       () => {
-        setTeamEntry(null);
+        appBrowserRegistry.dismissPages();
         setMainView('plugins');
       },
       {
         preserveTabs: true,
       },
     );
-  }, [requestCoworkNavigation, setTeamEntry]);
+  }, [requestCoworkNavigation]);
 
   const handleShowMemory = useCallback(async () => {
     await runGuardedFilePreviewNavigation(
       requestCoworkNavigation,
       () => {
-        setTeamEntry(null);
+        appBrowserRegistry.dismissPages();
         setMainView('memory');
       },
       {
         preserveTabs: true,
       },
     );
-  }, [requestCoworkNavigation, setTeamEntry]);
+  }, [requestCoworkNavigation]);
 
   const handleToggleSidebar = useCallback(() => {
     setIsSidebarCollapsed(prev => !prev);
@@ -555,7 +515,7 @@ const InitializedApp: React.FC = () => {
         () => {
           const shouldClearInput = mainView === 'cowork' || !!currentSessionId;
           coworkService.clearSession();
-          setTeamEntry(null);
+          appBrowserRegistry.dismissPages();
           setMainView('cowork');
           window.setTimeout(() => {
             window.dispatchEvent(
@@ -569,7 +529,7 @@ const InitializedApp: React.FC = () => {
         prepare,
       );
     },
-    [mainView, currentSessionId, requestCoworkNavigation, setTeamEntry],
+    [mainView, currentSessionId, requestCoworkNavigation],
   );
   const handleNewChat = useCallback(() => handlePreparedNewChat(), [handlePreparedNewChat]);
 
@@ -847,13 +807,14 @@ const InitializedApp: React.FC = () => {
     [pendingInteractions],
   );
   const activeQuestionInteraction = structuredQuestionInteractions.find(interaction => {
-    const group = parseTeamDiscussionSessionKey(interaction.toolInput.sessionKey);
-    if (group)
-      return Boolean(!showSettings && mainView === 'cowork' && group.roomId === focusedTeamRoomId);
+    const presentation = appBrowserRegistry.interactionPresentation(
+      interaction.toolInput.sessionKey,
+    );
+    if (presentation) return !showSettings && mainView === 'cowork' && presentation.visible;
     return shouldShowCoworkQuestionWindow(
       interaction.sessionId,
       currentSessionId,
-      !teamEntry && !showSettings && mainView === 'cowork',
+      !appPageVisible && !showSettings && mainView === 'cowork',
     );
   });
   const activeQuestionRequestId = activeQuestionInteraction?.requestId ?? null;
@@ -876,9 +837,7 @@ const InitializedApp: React.FC = () => {
         key={interaction.requestId}
         interaction={interaction}
         sourceLabel={
-          parseTeamDiscussionSessionKey(interaction.toolInput.sessionKey)
-            ? `${i18nService.t('teamGroup')} · ${teamAgents.find(agent => agent.id === parseTeamDiscussionSessionKey(interaction.toolInput.sessionKey)?.agentId)?.name ?? ''}`
-            : undefined
+          appBrowserRegistry.interactionPresentation(interaction.toolInput.sessionKey)?.label
         }
         isVisible={!activeApproval && interaction.requestId === activeQuestionRequestId}
         onRespond={result => handleInteractionResponse(interaction.requestId, result)}
@@ -889,7 +848,6 @@ const InitializedApp: React.FC = () => {
     activeQuestionRequestId,
     activeApproval,
     handleInteractionResponse,
-    teamAgents,
   ]);
 
   const interactionModal = useMemo(() => {
@@ -956,7 +914,9 @@ const InitializedApp: React.FC = () => {
               <div className="w-16 h-16 rounded-full bg-red-500 flex items-center justify-center shadow-lg">
                 <ChatBubbleLeftRightIcon className="h-8 w-8 text-white" />
               </div>
-              <div className="text-foreground text-xl font-medium text-center">{i18nService.t('initializationError')}</div>
+              <div className="text-foreground text-xl font-medium text-center">
+                {i18nService.t('initializationError')}
+              </div>
               <button
                 onClick={() => handleShowSettings()}
                 className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-xl shadow-md transition-colors text-sm font-medium"
@@ -1036,25 +996,29 @@ const InitializedApp: React.FC = () => {
           className={`${showSettings ? 'hidden' : ''} col-start-3 row-start-2 min-h-0 min-w-0 pb-1.5 pr-1.5 ${isSidebarCollapsed || mainView !== SidebarView.Home ? 'pl-1.5' : ''}`}
         >
           <div className="relative h-full min-h-0 rounded-b-xl bg-background overflow-hidden">
-            {mainView === 'scheduledTasks' && !teamEntry && (
+            {mainView === 'scheduledTasks' && (
               <CronView
                 isSidebarCollapsed={false}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
               />
             )}
-            {mainView === 'workboard' && workboardEnabled && !teamEntry && (
+            {mainView === 'workboard' && workboardEnabled && (
               <WorkboardView
                 isSidebarCollapsed={false}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
               />
             )}
-            {mainView === 'plugins' && !teamEntry && (
+            {mainView === 'plugins' && (
               <PluginsView
                 isActive={!showSettings}
                 onManageSpeechModels={(kind, target) =>
-                  handleShowSettings({ initialTab: 'model', speechModels: kind, speechModelTarget: target })
+                  handleShowSettings({
+                    initialTab: 'model',
+                    speechModels: kind,
+                    speechModelTarget: target,
+                  })
                 }
                 onOpenRuntime={() => handleShowSettings({ initialTab: 'runtime' })}
                 isSidebarCollapsed={false}
@@ -1062,67 +1026,14 @@ const InitializedApp: React.FC = () => {
                 onNewChat={handleNewChat}
               />
             )}
-            {mainView === 'memory' && !teamEntry && (
+            {mainView === 'memory' && (
               <MemoryView
                 isSidebarCollapsed={false}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
               />
             )}
-            {agentTeamEnabled && teamEntry && (
-              <div className="h-full">
-                <TeamDiscussionView
-                  key={teamEntry.roomId ?? teamEntry.sourceSessionId ?? 'new'}
-                  entry={teamEntry}
-                  onRoomFocused={setFocusedTeamRoomId}
-                  onPrepareSourceDraft={async (sessionId, draft) => {
-                    await prepareDiscussionSource(
-                      sessionId,
-                      {
-                        requestTransition: requestCoworkNavigation,
-                        isCurrent: () => teamEntryRef.current === teamEntry,
-                        reportError: error =>
-                          showToast(
-                            i18nService.t(
-                              error instanceof Error ? error.message : 'teamDiscussionUnavailable',
-                            ),
-                          ),
-                      },
-                      () => {
-                        appendTeamResultDraft(sessionId, draft);
-                        setTeamEntry(null);
-                        setMainView('cowork');
-                      },
-                    );
-                  }}
-                  onReferenceSource={async (sessionId, quote) => {
-                    await prepareDiscussionSource(
-                      sessionId,
-                      {
-                        requestTransition: requestCoworkNavigation,
-                        isCurrent: () => teamEntryRef.current === teamEntry,
-                        reportError: error =>
-                          showToast(
-                            i18nService.t(
-                              error instanceof Error ? error.message : 'teamDiscussionUnavailable',
-                            ),
-                          ),
-                      },
-                      () => {
-                        appendDiscussionReference(sessionId, quote);
-                        setTeamEntry(null);
-                        setMainView('cowork');
-                      },
-                    );
-                  }}
-                  onClose={() => {
-                    setTeamEntry(null);
-                    setMainView('cowork');
-                  }}
-                />
-              </div>
-            )}
-            <div className={mainView === 'cowork' && !teamEntry ? 'h-full' : 'hidden'}>
+            <div className={mainView === 'cowork' && !appPageVisible ? 'h-full' : 'hidden'}>
               <CoworkView
                 ref={coworkViewRef}
                 onRequestAppSettings={handleShowSettings}
@@ -1141,29 +1052,22 @@ const InitializedApp: React.FC = () => {
                 }
               />
             </div>
+            <div className={mainView === 'cowork' && appPageVisible ? 'h-full' : 'hidden'}>
+              <AppPageSlot
+                onVisibleChange={setAppPageVisible}
+                context={{
+                  active: !showSettings && mainView === 'cowork',
+                  navigation: {
+                    revision: pageNavigation.current.revision,
+                    requestTransition: requestCoworkNavigation,
+                    showChat: () => setMainView('cowork'),
+                  },
+                }}
+              />
+            </div>
           </div>
         </div>
       </div>
-      {agentTeamEnabled && teamHistoryDocument && (
-        <OwnerDocumentContext.Provider value={teamHistoryDocument}>
-          <AgentTeamHistoryDialog
-            onClose={() => setTeamHistoryDocument(null)}
-            onOpen={async (entry, isCurrent) => {
-              const context = teamNavigationContext.current;
-              const origin = currentSessionId;
-              await openTeamHistoryEntry(entry, {
-                requestTransition: requestCoworkNavigation,
-                isCurrent: () =>
-                  isCurrent() &&
-                  teamNavigationContext.current === context &&
-                  [origin, entry.sourceSessionId].includes(
-                    store.getState().cowork.currentSession?.id ?? null,
-                  ),
-              });
-            }}
-          />
-        </OwnerDocumentContext.Provider>
-      )}
       {questionWindows}
       <div hidden={Boolean(activeApproval)}>{interactionModal}</div>
       {activeApproval && (

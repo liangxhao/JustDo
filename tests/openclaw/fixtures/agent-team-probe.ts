@@ -3,14 +3,16 @@ import agentTeamPlugin from '../../../plugins/extensions/agent-team';
 // Loaded only by the isolated Gateway probe, never by the application manifest.
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
+import { dispatchGatewayMethod } from 'openclaw/plugin-sdk/gateway-method-runtime';
+import { withAppNative } from '../../../packages/app-plugin-sdk/native';
 
 import { executeGroupDiscussion } from '../../../plugins/extensions/agent-team/discussion/discussion-execution';
 import {
   teamDiscussionSessionKey,
   TeamDiscussionState,
-} from '../../../src/shared/cowork/agent-team/teamDiscussion';
+} from '../../../plugins/extensions/agent-team/contracts/teamDiscussion';
 
-export default {
+const plugin = {
   kind: 'bundled-channel-entry' as const,
   description: 'Optional task collaboration and local group discussions',
   configSchema: { type: 'object' as const, additionalProperties: false, properties: {} },
@@ -63,14 +65,14 @@ export default {
           | {
               sessionId?: string;
               delivery?: unknown;
-              justdoPlanMode?: { enabled?: boolean };
+              pluginExtensions?: { 'plan-mode'?: { state?: { enabled?: boolean } } };
               toolOverrides?: unknown;
             }
           | undefined;
         respond(true, {
           sessionId: entry?.sessionId,
           delivery: entry?.delivery,
-          planEnabled: entry?.justdoPlanMode?.enabled === true,
+          planEnabled: entry?.pluginExtensions?.['plan-mode']?.state?.enabled === true,
           toolOverrides: entry?.toolOverrides,
         });
       },
@@ -116,10 +118,11 @@ export default {
           });
           const executions: unknown[] = [];
           const references: unknown[] = [];
+          const outcomes: Array<{ agentId: string; outcome: string }> = [];
           const controller = new AbortController();
           const hold = params.hold === true;
           const promise = executeGroupDiscussion({
-            cfg: api.config,
+            cfg: structuredClone(api.runtime.config.current()),
             room: {
               id: roomId,
               title: 'Fixture',
@@ -151,6 +154,7 @@ export default {
             onAgentEvent: api.runtime.events.onAgentEvent,
             signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]),
             onExecution: execution => executions.push(execution),
+            onOutcome: (agentId, outcome) => outcomes.push({ agentId, outcome: String(outcome) }),
             onReference: reference => references.push(reference),
           });
           if (hold) {
@@ -169,8 +173,11 @@ export default {
             return;
           }
           await promise;
-          respond(true, { executions, references });
+          respond(true, { executions, references, outcomes });
         } catch (error) {
+          api.logger.error(
+            `[teamProbe] ${error instanceof Error ? (error.stack ?? error.message) : 'Fixture failed'}`,
+          );
           respond(false, undefined, {
             code: 'invalid_request',
             message: error instanceof Error ? error.message : 'Fixture failed',
@@ -181,3 +188,4 @@ export default {
     );
   },
 };
+export default withAppNative(plugin, dispatchGatewayMethod);

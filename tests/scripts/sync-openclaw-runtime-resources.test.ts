@@ -1,6 +1,9 @@
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { expect, test, vi } from 'vitest';
 
@@ -221,6 +224,191 @@ test('stages all local extensions and installs only declared production dependen
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });
+
+test('syncs rebuilt App packages with exact native bindings and nested companion entries', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'app-runtime-resources-'));
+  const repoRoot = path.join(tempRoot, 'repo');
+  const runtimeRoot = path.join(tempRoot, 'runtime');
+  const sourceRoot = path.join(repoRoot, 'plugins/extensions');
+  const destination = path.join(repoRoot, 'build/app-plugins');
+  const ids = ['sample-one', 'sample-two'];
+  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  const build = () =>
+    execFileSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '--eval',
+        `import { buildAppPlugins } from ${JSON.stringify(pathToFileURL(path.resolve('scripts/plugins/build-app-plugins.mjs')).href)}; await buildAppPlugins({ sourceRoot: process.argv[1], destination: process.argv[2] });`,
+        sourceRoot,
+        destination,
+      ],
+      { cwd: path.resolve('.'), timeout: 30_000, stdio: 'pipe' },
+    );
+
+  try {
+    for (const id of ids) {
+      const source = path.join(sourceRoot, id);
+      fs.mkdirSync(source, { recursive: true });
+      fs.writeFileSync(
+        path.join(source, 'package.json'),
+        JSON.stringify({
+          name: id,
+          version: '1.0.0',
+          type: 'module',
+          justdo: { bundle: true },
+          openclaw: { extensions: ['./index.ts'] },
+          app: { main: 'main.ts', browser: 'browser.ts' },
+        }),
+      );
+      fs.writeFileSync(
+        path.join(source, 'app.plugin.json'),
+        JSON.stringify({
+          manifestVersion: 1,
+          apiVersion: 1,
+          id,
+          nativePluginId: id,
+          version: '1.0.0',
+          entries: { main: 'main/index.mjs', browser: 'ui/index.mjs' },
+          capabilities: [],
+          commands: [],
+          slots: [],
+        }),
+      );
+      fs.writeFileSync(
+        path.join(source, 'openclaw.plugin.json'),
+        JSON.stringify({
+          id,
+          configSchema: { type: 'object', properties: {} },
+        }),
+      );
+      fs.writeFileSync(
+        path.join(source, 'index.ts'),
+        `export const revision = 1; export default { id: ${JSON.stringify(id)}, register(api) { api.seenRevision = revision; } };`,
+      );
+      fs.writeFileSync(path.join(source, 'main.ts'), 'export function register() {}');
+      fs.writeFileSync(path.join(source, 'browser.ts'), 'export function register() {}');
+    }
+
+    // A clean checkout must fail explicitly rather than silently re-bundle native code.
+    expect(() => syncLocalExtensions(repoRoot, runtimeRoot, 'test')).toThrow(
+      'Build app plugins before syncing native runtime resources',
+    );
+    build();
+    const firstCatalog = JSON.parse(
+      fs.readFileSync(path.join(destination, 'catalog.json'), 'utf8'),
+    );
+    expect(syncLocalExtensions(repoRoot, runtimeRoot, 'test').copied).toEqual(ids);
+    fs.writeFileSync(
+      path.join(sourceRoot, ids[0], 'index.ts'),
+      `export const revision = 2; export default { id: ${JSON.stringify(ids[0])}, register(api) { api.seenRevision = revision; } };`,
+    );
+    build();
+    const catalog = JSON.parse(fs.readFileSync(path.join(destination, 'catalog.json'), 'utf8'));
+    expect(catalog[0].hash).not.toBe(firstCatalog[0].hash);
+    expect(syncLocalExtensions(repoRoot, runtimeRoot, 'test').copied).toEqual(ids);
+
+    for (const { id, hash } of catalog) {
+      const target = path.join(runtimeRoot, 'dist/extensions', id);
+      const built = path.join(destination, 'packages', id, hash);
+      const nativeBytes = fs.readFileSync(path.join(target, 'index.js'));
+      const binding = JSON.parse(
+        fs.readFileSync(path.join(target, 'app/native.binding.json'), 'utf8'),
+      );
+      expect(nativeBytes.equals(fs.readFileSync(path.join(built, 'index.js')))).toBe(true);
+      expect(createHash('sha256').update(nativeBytes).digest('hex')).toBe(binding.sha256);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(target, 'app/app.artifact.json'), 'utf8')).hash,
+      ).toBe(hash);
+      expect(fs.readFileSync(path.join(target, 'app/main/index.mjs'), 'utf8')).toContain(
+        'register',
+      );
+      expect(fs.readFileSync(path.join(target, 'app/ui/index.mjs'), 'utf8')).toContain('register');
+      expect(
+        JSON.parse(fs.readFileSync(path.join(target, 'package.json'), 'utf8')).openclaw.extensions,
+      ).toEqual(['./index.js']);
+      expect(fs.existsSync(path.join(target, 'index.ts'))).toBe(false);
+      expect(fs.existsSync(path.join(target, 'app.plugin.json'))).toBe(false);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(target, 'openclaw.plugin.json'), 'utf8')).contracts
+          .gatewayMethodDispatch,
+      ).toEqual(['authenticated-request']);
+    }
+
+    // A custom Native entry imports no application SDK. The App builder still
+    // supplies its receipt/dispatch boundary and preserves the author's exports.
+    const publicSdkStub = path.join(tempRoot, 'node_modules/openclaw');
+    fs.mkdirSync(publicSdkStub, { recursive: true });
+    fs.writeFileSync(
+      path.join(publicSdkStub, 'package.json'),
+      JSON.stringify({
+        name: 'openclaw',
+        type: 'module',
+        exports: { './plugin-sdk/gateway-method-runtime': './dispatch.js' },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(publicSdkStub, 'dispatch.js'),
+      'export async function dispatchGatewayMethod(method, params, options) { return { ok: true, payload: { method, params, options } }; }',
+    );
+    const entry = path.join(runtimeRoot, 'dist/extensions', ids[0], 'index.js');
+    const proof = JSON.parse(
+      execFileSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '--eval',
+          `
+            import assert from 'node:assert/strict';
+            import { pathToFileURL } from 'node:url';
+            const source = process.argv[1];
+            const module = await import(pathToFileURL(source).href);
+            assert.equal(module.revision, 2);
+            const handlers = new Map();
+            const api = {
+              id: ${JSON.stringify(ids[0])}, source,
+              lifecycle: { signal: new AbortController().signal, onDispose: () => () => {} },
+              registerGatewayMethod: (name, handler) => handlers.set(name, handler),
+            };
+            module.default.register(api);
+            assert.equal(api.seenRevision, 2);
+            assert.equal(handlers.size, 2);
+            let receipt;
+            const request = (params, respond) => ({
+              params, respond, client: { connect: { client: { mode: 'backend' } } },
+              context: { isConfigReloadSettled: () => true,
+                getGatewayMethodRegistry: () => ({ descriptors: () => [] }),
+              },
+              hasCurrentClientAuthority: () => true,
+            });
+            handlers.get(api.id + '.app.handshake')(request({}, (ok, value) => {
+              assert.equal(ok, true); receipt = value;
+            }));
+            assert.equal(receipt.pluginId, api.id);
+            assert.equal(receipt.processId, process.pid);
+            const options = { expectFinal: true, timeoutMs: 2000 };
+            await handlers.get(api.id + '.app.dispatch')(request({
+              registrationId: receipt.registrationId, processId: receipt.processId,
+              method: 'sessions.list', params: { limit: 7 }, options,
+            }, (ok, payload) => {
+              assert.equal(ok, true);
+              assert.deepEqual(payload, { method: 'sessions.list', params: { limit: 7 }, options });
+            }));
+            console.log(JSON.stringify({ automaticNativeBridge: true, namedExportsPreserved: true }));
+          `,
+          entry,
+        ],
+        { cwd: tempRoot, timeout: 10_000, encoding: 'utf8' },
+      ),
+    );
+    expect(proof).toEqual({ automaticNativeBridge: true, namedExportsPreserved: true });
+  } finally {
+    logSpy.mockRestore();
+    expect(path.dirname(tempRoot)).toBe(path.resolve(os.tmpdir()));
+    expect(path.basename(tempRoot)).toMatch(/^app-runtime-resources-/u);
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+}, 30_000);
 
 test('reuses locked target dependencies without reinstalling them', () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-resources-'));

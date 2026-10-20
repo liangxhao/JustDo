@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import { appNativePolicies } from '../../../../tests/plugin-host/nativePolicies';
 import {
   AgentRuntimeCodeMode,
   createDefaultAgentRuntimeSettings,
@@ -40,6 +41,9 @@ const optionalInventory = vi.hoisted(() => ({ computerAvailable: false }));
 vi.mock('../../plugins/extensions/openclawLocalExtensions', async importOriginal => {
   const actual =
     await importOriginal<typeof import('../../plugins/extensions/openclawLocalExtensions')>();
+  // Source plugins remain fixed in this file; fixture installation paths stay real.
+  const localInventory = actual.inspectLocalOpenClawExtensions();
+  const localIds = new Set(localInventory.ids);
   const bundledIds = [
     'browser',
     'workboard',
@@ -48,6 +52,7 @@ vi.mock('../../plugins/extensions/openclawLocalExtensions', async importOriginal
     'openai',
     'mxc',
     'document-extract',
+    'drawio',
     'web-readability',
     'tts-local-cli',
   ];
@@ -59,8 +64,10 @@ vi.mock('../../plugins/extensions/openclawLocalExtensions', async importOriginal
     ...actual,
     listBundledOpenClawExtensionIds: () => inventory(),
     inspectBundledOpenClawExtensions: () => ({ complete: true, ids: inventory() }),
+    listLocalOpenClawExtensionIds: () => [...localInventory.ids],
+    inspectLocalOpenClawExtensions: () => ({ ...localInventory, ids: [...localInventory.ids] }),
     hasBundledOpenClawExtension: (id: string) =>
-      inventory().includes(id) || actual.listLocalOpenClawExtensionIds().includes(id),
+      inventory().includes(id) || localIds.has(id),
   };
 });
 
@@ -100,6 +107,10 @@ const createConfigurationFixture = (
     } },
   } : {} }) as never);
   const sync = new OpenClawConfigSync({
+    getAppPluginDefaults: () => appNativePolicies,
+    getAppPluginPolicy: () => ({
+      sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'],
+    }),
     engineManager: {
       getConfigPath: () => configPath,
       getStateDir: () => stateDir,
@@ -388,6 +399,8 @@ test.each(['full', 'minimal'])(
         : {};
     setStoreGetter(() => ({ get: () => appConfig }) as never);
     const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,
@@ -491,6 +504,8 @@ test.each([
   const settings = createDefaultAgentRuntimeSettings();
   settings.codeMode.mode = codeMode;
   const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
     engineManager: {
       getConfigPath: () => configPath,
       getStateDir: () => stateDir,
@@ -678,6 +693,8 @@ test.each(['full', 'minimal'])(
         : {};
     setStoreGetter(() => ({ get: () => appConfig }) as never);
     const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,
@@ -843,6 +860,8 @@ test.each([
         : {};
     setStoreGetter(() => ({ get: () => appConfig }) as never);
     const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,
@@ -1021,6 +1040,8 @@ const writeMinimalConfig = (
   executionMode: 'local' | 'sandbox' = 'local',
 ): OpenClawConfigSyncResult => {
   const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
     engineManager: {
       getDesiredVersion: () => '2026.6.11',
       getStateDir: () => path.dirname(configPath),
@@ -1172,6 +1193,8 @@ describe('OpenClaw auth logout config sync', () => {
         restrict(filePath);
       });
       const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
         engineManager: {
           getConfigPath: () => configPath,
           getStateDir: () => path.dirname(configPath),
@@ -1228,6 +1251,8 @@ describe('OpenClaw auth logout config sync', () => {
       };
       fs.writeFileSync(configPath, JSON.stringify({ env }));
       const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
         engineManager: {
           getConfigPath: () => configPath,
           getStateDir: () => stateDir,
@@ -1288,6 +1313,8 @@ describe('OpenClaw auth logout config sync', () => {
           : {};
       setStoreGetter(() => ({ get: () => appConfig }) as never);
       const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
         engineManager: {
           getConfigPath: () => configPath,
           getStateDir: () => stateDir,
@@ -1369,6 +1396,8 @@ describe('OpenClaw auth logout config sync', () => {
           : {};
       setStoreGetter(() => ({ get: () => appConfig }) as never);
       const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
         engineManager: {
           getConfigPath: () => configPath,
           getStateDir: () => stateDir,
@@ -1460,6 +1489,8 @@ describe('OpenClaw auth logout config sync', () => {
       setStoreGetter(() => ({ get: () => appConfig }) as never);
       const settings = createDefaultAgentRuntimeSettings();
       const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
         engineManager: {
           getConfigPath: () => configPath,
           getStateDir: () => stateDir,
@@ -1525,6 +1556,8 @@ describe('OpenClaw auth logout config sync', () => {
           : {};
       setStoreGetter(() => ({ get: () => appConfig }) as never);
       const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
         engineManager: {
           getConfigPath: () => configPath,
           getStateDir: () => stateDir,
@@ -1589,6 +1622,8 @@ describe('OpenClaw auth logout config sync', () => {
         enabled: true, mode: 'local',
       };
       const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
         engineManager: {
           getConfigPath: () => configPath,
           getStateDir: () => stateDir,
@@ -1864,6 +1899,8 @@ describe('OpenClaw auth logout config sync', () => {
     const runtimeSettings = createDefaultAgentRuntimeSettings();
     runtimeSettings.mcp.requestTimeoutSeconds = 300;
     const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getDesiredVersion: () => '2026.6.11',
         getStateDir: () => directory,
@@ -2071,7 +2108,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.tools.exec.mode).toBe('ask');
     expect(config.tools.fs.workspaceOnly).toBe(true);
     expect(config.plugins.enabled).toBe(true);
-    expect(config.plugins.allow).toEqual([
+    expect([...config.plugins.allow].sort()).toEqual([
       'ask-user-question',
       'workboard',
       'agent-team',
@@ -2089,7 +2126,7 @@ describe('OpenClaw auth logout config sync', () => {
       'plan-mode',
       'embedded-browser',
       'mxc',
-    ]);
+    ].sort());
     expect(config.plugins.deny).toBeUndefined();
     expect(config.plugins.entries['ask-user-question']).toEqual({
       enabled: true,
@@ -2168,7 +2205,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.plugins.entries['workspace-plugin']).toEqual({ enabled: true });
     expect(config.plugins.entries['agent-workspace-plugin']).toEqual({ enabled: true });
     expect(config.plugins.entries['removed-plugin']).toBeUndefined();
-    expect(config.plugins.allow).toEqual([
+    expect([...config.plugins.allow].sort()).toEqual([
       'external-plugin',
       'workspace-plugin',
       'agent-workspace-plugin',
@@ -2189,7 +2226,7 @@ describe('OpenClaw auth logout config sync', () => {
       'plan-mode',
       'embedded-browser',
       'mxc',
-    ]);
+    ].sort());
     expect(config.plugins.deny).toBeUndefined();
   });
 
@@ -2307,6 +2344,8 @@ describe('OpenClaw auth logout config sync', () => {
     setStoreGetter(() => ({ get: () => appConfig }) as never);
     let browserMode: BrowserModeValue = nativeMode;
     const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => directory,
@@ -2405,7 +2444,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
 
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.plugins.allow).toEqual([
+    expect([...config.plugins.allow].sort()).toEqual([
       'justdo-skill-only-example',
       'workboard',
       'agent-team',
@@ -2426,7 +2465,7 @@ describe('OpenClaw auth logout config sync', () => {
       'mxc',
       'stt-local-cli',
       'tts-local-cli',
-    ]);
+    ].sort());
     expect(config.plugins.entries.browser).toEqual({ enabled: true });
     expect(config.plugins.bundledDiscovery).toBeUndefined();
   });
@@ -2600,6 +2639,8 @@ describe('OpenClaw auth logout config sync', () => {
 
   test('builds canonical Agent entries with a custom fallback', () => {
     const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getStateDir: () => '/state',
         getDesiredVersion: () => '2026.6.11',
@@ -2712,6 +2753,8 @@ describe('OpenClaw auth logout config sync', () => {
         }) as never,
     );
     const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,
@@ -2782,6 +2825,8 @@ describe('OpenClaw auth logout config sync', () => {
         }) as never,
     );
     const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {},
       getCoworkConfig: () => ({}),
       getAgentRuntimeSettings: createDefaultAgentRuntimeSettings,
@@ -2864,6 +2909,8 @@ describe('OpenClaw auth logout config sync', () => {
         }) as never,
     );
     const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,
@@ -3081,6 +3128,8 @@ test.each(['full', 'minimal'])(
       },
     };
     const createSync = () => new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,
@@ -3301,6 +3350,8 @@ test.each(['full', 'minimal'])(
       },
     };
     const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,
@@ -3405,6 +3456,8 @@ test.each(['full', 'minimal'])(
         : {};
     setStoreGetter(() => ({ get: () => appConfig }) as never);
     const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,
@@ -3482,6 +3535,8 @@ test.each(['full', 'minimal'])(
       },
     };
     const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'justdo-team': { silentReply: { group: 'allow' } } } }),
       engineManager: {
         getConfigPath: () => configPath,
         getStateDir: () => stateDir,

@@ -3,8 +3,6 @@ import {
   ArrowPathIcon,
   ArrowUpTrayIcon,
   ChevronDownIcon,
-  ClockIcon,
-  Cog6ToothIcon,
   ExclamationTriangleIcon,
   FolderIcon,
   QuestionMarkCircleIcon,
@@ -26,7 +24,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 
 import { getEngineReadinessSnapshot } from '@/app/shell/startup/routing/useEngineReadiness';
-import { OPEN_TEAM_RECORDS } from '@/features/cowork/components/display/summary/agentTeamHistory';
+import AppExtensionActions, {
+  AppExtensionDialog,
+  type AppExtensionSelection,
+} from '@/features/plugins/app/AppExtensionActions';
+import AppPluginRestartNotice from '@/features/plugins/app/AppPluginRestartNotice';
 import {
   canToggleExtension,
   ExtensionGroupId,
@@ -77,9 +79,7 @@ import SearchIcon from '@/shared/components/icons/SearchIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
 import Modal from '@/shared/components/ui/Modal';
 import Tooltip from '@/shared/components/ui/Tooltip';
-import { useOwnerDocument } from '@/shared/dom/ownerDocument';
 
-import AgentTeamSettingsDialog from './AgentTeamSettingsDialog';
 import LocalSpeechExtensionSettingsButton from './LocalSpeechExtensionSettingsButton';
 import LocalSpeechExtensionSettingsDialog from './LocalSpeechExtensionSettingsDialog';
 
@@ -191,17 +191,12 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   visibility = 'all',
   requestedExtensionId,
   onRequestedExtensionHandled,
-  onOpenRuntime,
   onManageSpeechModels,
   isActive = true,
 }) => {
-  const ownerDocument = useOwnerDocument();
-  const openTeamRecords = useCallback(() => {
-    window.dispatchEvent(new CustomEvent(OPEN_TEAM_RECORDS, { detail: ownerDocument }));
-  }, [ownerDocument]);
-  const [teamSettingsOpen, setTeamSettingsOpen] = useState(false);
   const [speechSettingsKind, setSpeechSettingsKind] = useState<LocalSpeechModelKind | null>(null);
   const [localSearchQuery, setLocalSearchQuery] = useState('');
+  const [appAction, setAppAction] = useState<AppExtensionSelection | null>(null);
   const searchQuery = sharedSearchQuery ?? localSearchQuery;
   const [importPickerOpen, setImportPickerOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -210,29 +205,17 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   const [extensions, setExtensions] = useState<InstalledOpenClawExtension[]>([]);
   const [loadingExtensions, setLoadingExtensions] = useState(true);
   const [inventoryReady, setInventoryReady] = useState(false);
-  const agentTeamEnabled =
-    inventoryReady &&
-    extensions.some(
-      extension => extension.id === OpenClawExtensionId.AGENT_TEAM && extension.enabled,
-    );
   useEffect(() => {
+    if (!speechSettingsKind || !inventoryReady) return;
     const id =
       speechSettingsKind === LocalSpeechModelKind.Asr
         ? OpenClawExtensionId.STT_LOCAL_CLI
         : LOCAL_TTS_PROVIDER_ID;
-    if (
-      speechSettingsKind &&
-      inventoryReady &&
-      !extensions.some(extension => extension.id === id)
-    ) {
-      setSpeechSettingsKind(null);
-    }
+    if (!extensions.some(extension => extension.id === id)) setSpeechSettingsKind(null);
   }, [extensions, inventoryReady, speechSettingsKind]);
-  useEffect(() => {
-    if (!agentTeamEnabled) setTeamSettingsOpen(false);
-  }, [agentTeamEnabled]);
   const inventoryGeneration = useRef(0);
   const inventoryMounted = useRef(false);
+  const inventoryUnavailable = useRef(true);
   const latestInventoryRead = useRef<Promise<InstalledOpenClawExtension[] | null> | null>(null);
   const [pendingDelete, setPendingDelete] = useState<InstalledOpenClawExtension | null>(null);
   const [deletingExtensionId, setDeletingExtensionId] = useState<string | null>(null);
@@ -314,6 +297,12 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
             throw new Error(result.error || i18nService.t('extensionListFailed'));
           if (!isCurrent())
             return inventoryMounted.current ? latestInventoryRead.current : result.extensions;
+          if (inventoryUnavailable.current) {
+            setActionOutcome(current =>
+              current?.title === i18nService.t('extensionListFailed') ? null : current,
+            );
+          }
+          inventoryUnavailable.current = false;
           setExtensions(result.extensions);
           setSelectedExtension(current => {
             if (!current) return null;
@@ -325,6 +314,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
           return result.extensions;
         } catch (error) {
           if (!isCurrent()) return inventoryMounted.current ? latestInventoryRead.current : null;
+          inventoryUnavailable.current = true;
           setInventoryReady(false);
           if (options.reportFailure !== false && getEngineReadinessSnapshot().ready)
             setActionOutcome({
@@ -354,14 +344,15 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     });
     const stop = window.electron.extensions.onChanged(event => {
       if (!inventoryMounted.current) return;
-      if (event.extensionId === OpenClawExtensionId.AGENT_TEAM && !event.enabled)
-        setTeamSettingsOpen(false);
       setExtensions(current =>
         current.map(extension =>
           extension.id === event.extensionId ? { ...extension, enabled: event.enabled } : extension,
         ),
       );
       refresh.request();
+    });
+    const stopReadiness = window.electron.appPlugins?.onChanged(() => {
+      if (inventoryUnavailable.current) void loadExtensions();
     });
     return () => {
       const pending = pendingReviewRef.current;
@@ -373,6 +364,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       latestInventoryRead.current = null;
       stop();
       refresh.dispose();
+      stopReadiness?.();
     };
   }, [loadExtensions]);
 
@@ -857,7 +849,8 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       !selectedExtension ||
       extensionActionBusy ||
       selectedExtension.management?.configure.allowed === false
-    ) return;
+    )
+      return;
     const values = Object.fromEntries(
       selectedExtension.configurationFields.flatMap(field => {
         const textField = !field.sensitive && field.type === 'string';
@@ -1006,34 +999,13 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
               id={extension.id}
               disabled={extensionActionBusy}
             />
-            {extension.id === OpenClawExtensionId.AGENT_TEAM && agentTeamEnabled && (
-              <>
-                <button
-                  type="button"
-                  className="pointer-events-auto rounded-lg p-1.5 text-secondary hover:bg-surface-raised"
-                  aria-label={i18nService.t('teamAllRecords')}
-                  title={i18nService.t('teamAllRecords')}
-                  onClick={event => {
-                    event.stopPropagation();
-                    openTeamRecords();
-                  }}
-                >
-                  <ClockIcon className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  className="pointer-events-auto rounded-lg p-1.5 text-secondary hover:bg-surface-raised"
-                  aria-label={i18nService.t('agentTeamSettings')}
-                  title={i18nService.t('agentTeamSettings')}
-                  onClick={event => {
-                    event.stopPropagation();
-                    setTeamSettingsOpen(true);
-                  }}
-                >
-                  <Cog6ToothIcon className="h-4 w-4" />
-                </button>
-              </>
-            )}
+            <AppExtensionActions
+              extensionId={extension.id}
+              onOpen={selection => {
+                setSelectedExtension(null);
+                setAppAction(selection);
+              }}
+            />
             {(extension.id === OpenClawExtensionId.STT_LOCAL_CLI ||
               extension.id === LOCAL_TTS_PROVIDER_ID) && (
               <LocalSpeechExtensionSettingsButton
@@ -1133,6 +1105,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
 
   return (
     <div className="space-y-4">
+      <AppPluginRestartNotice />
       <MarketplaceToolbar
         controller={marketplace}
         hasLocalMatches={filteredExtensions.length > 0}
@@ -1206,12 +1179,6 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         </section>
       )}
 
-      {agentTeamEnabled && teamSettingsOpen && (
-        <AgentTeamSettingsDialog
-          onClose={() => setTeamSettingsOpen(false)}
-          onOpenRuntime={onOpenRuntime}
-        />
-      )}
       {speechSettingsKind && (
         <LocalSpeechExtensionSettingsDialog
           kind={speechSettingsKind}
@@ -1491,31 +1458,14 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                       </button>
                     </Tooltip>
                   )}
-                {selectedExtension.id === OpenClawExtensionId.AGENT_TEAM && agentTeamEnabled && (
-                  <>
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-primary hover:bg-surface-raised"
-                      onClick={() => {
-                        closeExtensionDetails();
-                        openTeamRecords();
-                      }}
-                    >
-                      <ClockIcon aria-hidden="true" className="h-4 w-4" />
-                      {i18nService.t('teamAllRecords')}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-lg px-3 py-2 text-sm text-primary hover:bg-surface-raised"
-                      onClick={() => {
-                        closeExtensionDetails();
-                        setTeamSettingsOpen(true);
-                      }}
-                    >
-                      {i18nService.t('agentTeamSettings')}
-                    </button>
-                  </>
-                )}
+                <AppExtensionActions
+                  extensionId={selectedExtension.id}
+                  variant="details"
+                  onOpen={selection => {
+                    setSelectedExtension(null);
+                    setAppAction(selection);
+                  }}
+                />
                 {(selectedExtension.management?.remove.allowed ??
                   selectedExtension.removable === true) && (
                   <Tooltip content={i18nService.t('extensionDelete')} position="top">
@@ -1766,6 +1716,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
           document.body,
         )}
 
+      <AppExtensionDialog selection={appAction} onClose={() => setAppAction(null)} />
       <OperationResultModal result={actionOutcome} onClose={() => setActionOutcome(null)} />
     </div>
   );

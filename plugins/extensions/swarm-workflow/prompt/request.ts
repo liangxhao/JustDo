@@ -1,10 +1,12 @@
 import { SwarmWorkflowMode, type SwarmWorkflowOptions } from '../contracts/options';
+import { unwrapAppInput } from '../../runtime-services/contracts/app-input';
 
 export function buildSwarmWorkflowInstruction(options: SwarmWorkflowOptions): string {
   return `<swarm-workflow mode="${options.mode}"/>`;
 }
 
 export function parseSwarmWorkflowRequest(text: string) {
+  text = unwrapAppInput(text);
   for (const mode of Object.values(SwarmWorkflowMode)) {
     const suffix = '\n\n' + buildSwarmWorkflowInstruction({ mode, verify: true });
     if (text.endsWith(suffix)) return { mode, request: text.slice(0, -suffix.length) };

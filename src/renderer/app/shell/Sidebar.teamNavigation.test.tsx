@@ -3,7 +3,19 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { coworkService } from '@/features/cowork/coworkService';
-import { requestCoworkSessionListAction } from '@/features/cowork/sessionListActions';
+const workspaceSelected = vi.hoisted(() => vi.fn());
+vi.mock('@/features/plugins/app/runtime', () => ({
+  appBrowserRegistry: {
+    subscribe: () => () => {},
+    getContextRevision: () => 0,
+    sessionPresentation: () => ({}),
+    sessionNavigation: (id: string) => ({
+      sessionId: id,
+      isCurrent: () => true,
+      selected: workspaceSelected,
+    }),
+  },
+}));
 
 import Sidebar from './Sidebar';
 
@@ -23,18 +35,16 @@ vi.mock('@/features/cowork/coworkSelectors', () => ({
   selectGroups: () => [],
   selectIsOpenClawEngine: () => true,
 }));
-vi.mock('@/features/cowork/components/collaboration/CollaborationPanel', () => ({
+vi.mock('../../../../plugins/extensions/agent-team/app/browser/collaboration/CollaborationPanel', () => ({
   useCollaborationRooms: () => [],
 }));
 vi.mock('@/features/cowork/components/sessions/CoworkSearchModal', () => ({ default: () => null }));
 vi.mock('@/features/cowork/components/sessions/CoworkSessionList', () => ({
-  default: ({ onCollaborationSession }: { onCollaborationSession: (id: string) => void }) => (
-    <button onClick={() => onCollaborationSession('source')}>collaboration</button>
+  default: ({ onSelectSession }: { onSelectSession: (id: string) => void }) => (
+    <button onClick={() => onSelectSession('source')}>collaboration</button>
   ),
 }));
-vi.mock('@/features/cowork/sessionListActions', () => ({
-  requestCoworkSessionListAction: vi.fn(),
-}));
+
 vi.mock('@/features/auth/AuthEntry', () => ({ default: () => null }));
 vi.mock('@/services/config', () => ({
   configService: { getConfig: () => ({ sidebarPinnedItems: ['memory', 'workboard'] }) },
@@ -88,7 +98,7 @@ it.each([
   await act(async () => {
     finish();
   });
-  expect(requestCoworkSessionListAction).not.toHaveBeenCalled();
+  expect(workspaceSelected).not.toHaveBeenCalled();
 });
 
 it('keeps normal collaboration navigation valid when selecting its anchor', async () => {
@@ -121,8 +131,5 @@ it('keeps normal collaboration navigation valid when selecting its anchor', asyn
   await act(async () => {
     finish();
   });
-  expect(requestCoworkSessionListAction).toHaveBeenCalledWith({
-    action: 'collaboration',
-    sessionId: 'source',
-  });
+  expect(workspaceSelected).toHaveBeenCalledOnce();
 });

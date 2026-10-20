@@ -6,7 +6,7 @@ import { getSessionEntry, patchSessionEntry } from 'openclaw/plugin-sdk/session-
 import { afterEach, expect, it, vi } from 'vitest';
 
 import { registerDiscussionService } from '../../../../plugins/extensions/agent-team/discussion/discussion-service';
-import { TeamDiscussionGateway } from '../../../../src/shared/cowork/agent-team/teamDiscussion';
+import { TeamDiscussionGateway } from '../../../../plugins/extensions/agent-team/contracts/teamDiscussion';
 
 const sdk = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock('../../../../plugins/extensions/agent-team/discussion/discussion-execution', () => ({

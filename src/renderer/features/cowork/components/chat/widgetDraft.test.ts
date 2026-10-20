@@ -173,6 +173,7 @@ describe('native widget draft integration', () => {
   it('does not restore cleared input when a widget suggestion follows the focus-and-clear event', () => {
     const state = fixture();
     runInNewContext(focusInputExpression, {
+      appComposer: { clear: vi.fn() },
       setValue: state.setValue,
       dispatch: state.dispatch,
       clearDraftAttachments: vi.fn(),
@@ -195,6 +196,7 @@ describe('native widget draft integration', () => {
       const current = state.visible.current;
       const clearSubmittedAgentTeamMode = vi.fn(value => value);
       const menu = runInNewContext(contextMenuExpression, {
+        appComposer: { clear: clearSubmittedAgentTeamMode },
         value: current,
         latestValueRef: state.latestValueRef,
         setValue: state.setValue,
@@ -220,10 +222,7 @@ describe('native widget draft integration', () => {
       }) as (action: 'cut' | 'paste') => Promise<void>;
       await menu(action);
       expect(state.visible.current).toBe(action === 'cut' ? '' : 'Pasted text');
-      expect(clearSubmittedAgentTeamMode).toHaveBeenCalledExactlyOnceWith({
-        draftKey: 'session-1',
-        id: 'team-selection-1',
-      });
+      expect(clearSubmittedAgentTeamMode).toHaveBeenCalledOnce();
 
       state.callback!('native-key-1', 'Widget suggestion');
 

@@ -1,4 +1,3 @@
-import { buildManagedSwarmWorkflowPluginEntries as buildWorkflowEntries } from '../../../../../plugins/extensions/swarm-workflow/host/config';
 import { type AgentRuntimeSettings } from '../../../../shared/agents/agentRuntimeSettings';
 import {
   BrowserMode,
@@ -8,7 +7,6 @@ import { EXTERNAL_AGENT_CATALOG } from '../../../../shared/integrations/external
 import { type ExternalAgentSettings } from '../../../../shared/integrations/externalAgents';
 import { OpenClawExtensionId } from '../../../../shared/plugins/nativeIds';
 import { LOCAL_TTS_PROVIDER_ID } from '../../../../shared/speech/localTts';
-import type { Agent } from '../../../data/coworkStore';
 import {
   buildBundledExtensionEntries,
   bundledOpenClawExtensions,
@@ -82,6 +80,7 @@ export const mergeOpenClawPluginConfig = (
   managedEntries: Record<string, unknown>,
   trustedInstalledExtensionIds: string[] = [],
   availableExtensionIds: readonly string[] | null = null,
+  appProjectionIds: readonly string[] = [],
 ): Record<string, unknown> => {
   const retainedRegistrationIds = new Set<string>();
   for (const field of ['entries', 'installs'] as const) {
@@ -144,7 +143,7 @@ export const mergeOpenClawPluginConfig = (
       if (
         (pluginId === OpenClawExtensionId.STT_LOCAL_CLI ||
           pluginId === LOCAL_TTS_PROVIDER_ID ||
-          pluginId === OpenClawExtensionId.SWARM_WORKFLOW) &&
+          appProjectionIds.includes(pluginId)) &&
         isRecord(value)
       ) {
         const previous = isRecord(sourcePlugins.entries) ? sourcePlugins.entries[pluginId] : null;
@@ -159,11 +158,7 @@ export const mergeOpenClawPluginConfig = (
             ...(typeof previous.enabled === 'boolean' ? { enabled: previous.enabled } : {}),
           };
         }
-        if (
-          pluginId === OpenClawExtensionId.SWARM_WORKFLOW &&
-          isRecord(previous) &&
-          isRecord(value)
-        ) {
+        if (appProjectionIds.includes(pluginId) && isRecord(previous) && isRecord(value)) {
           value = {
             ...previous,
             ...value,
@@ -173,6 +168,13 @@ export const mergeOpenClawPluginConfig = (
             },
           };
         }
+        if (
+          appProjectionIds.includes(pluginId) &&
+          isRecord(previous) &&
+          typeof previous.enabled === 'boolean' &&
+          isRecord(value)
+        )
+          value = { ...value, enabled: previous.enabled };
         if (isRecord(previous) && previous.enabled === false && isRecord(value))
           value = { ...value, enabled: false };
       }
@@ -270,23 +272,23 @@ export const mergeOpenClawSkillConfig = (
 
 export const buildDefaultOpenClawPluginEntries = (
   isAvailable: (id: string) => boolean = isBundledPluginAvailable,
+  appPolicies: Record<string, { defaultEnabled: boolean; userToggleable: boolean }> = {},
 ): Record<string, unknown> =>
   Object.fromEntries(
-    (
-      [
+    [
+      ...Object.entries(appPolicies).map(([id, policy]) => [id, policy.defaultEnabled] as const),
+      ...([
         [OpenClawExtensionId.WORKBOARD, false],
-        [OpenClawExtensionId.AGENT_TEAM, false],
         [OpenClawExtensionId.SMART_CANVAS, true],
         [OpenClawExtensionId.DRAWIO, true],
         // Native desktop control requires explicit opt-in, preserved across syncs.
         [OpenClawExtensionId.CUA_COMPUTER, false],
-        [OpenClawExtensionId.SWARM_WORKFLOW, false],
         [OpenClawExtensionId.TYPESAFE, false],
         // The prepared agent runtime rejects a selected memory plugin omitted from
         // an explicit allowlist, even if Gateway startup already loaded its service.
         [OpenClawExtensionId.MEMORY_CORE, true],
-      ] as const
-    )
+      ] as const),
+    ]
       .filter(([id]) => isAvailable(id))
       .map(([id, enabled]) => [id, { enabled }]),
   );
@@ -298,13 +300,9 @@ export const buildManagedCapabilityPluginEntries = (
   Object.fromEntries(
     APPLICATION_CAPABILITY_PLUGIN_IDS.filter(isAvailable).map(id => [id, { enabled: true }]),
   );
-
-export const buildManagedSwarmWorkflowPluginEntries = (
-  agents: Pick<Agent, 'id' | 'enabled' | 'deletedAt'>[],
-  isAvailable: (id: string) => boolean = isBundledPluginAvailable,
-): Record<string, unknown> => buildWorkflowEntries(agents, isAvailable);
-
-export const listManagedOpenClawPluginIds = (): string[] => [
+export const listManagedOpenClawPluginIds = (
+  appPolicies: Record<string, { defaultEnabled: boolean; userToggleable: boolean }> = {},
+): string[] => [
   ...new Set([
     ...(isBundledPluginAvailable(OpenClawExtensionId.BROWSER) ? [OpenClawExtensionId.BROWSER] : []),
     ...(isBundledPluginAvailable(OpenClawExtensionId.CUA_COMPUTER)
@@ -312,12 +310,13 @@ export const listManagedOpenClawPluginIds = (): string[] => [
       : []),
     ...Object.keys(buildManagedCapabilityPluginEntries()),
     ...readPreinstalledPluginIds().filter(
-      id => !isUserToggleableBundledPlugin(id) && isBundledPluginAvailable(id),
+      id => !isUserToggleableBundledPlugin(id, appPolicies) && isBundledPluginAvailable(id),
     ),
     ...bundledOpenClawExtensions
       .filter(
         extension =>
-          !isUserToggleableBundledPlugin(extension.id) && isBundledPluginAvailable(extension.id),
+          !isUserToggleableBundledPlugin(extension.id, appPolicies) &&
+          isBundledPluginAvailable(extension.id),
       )
       .map(extension => extension.id),
   ]),

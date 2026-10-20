@@ -1,17 +1,13 @@
-import { TEAM_DISCUSSION_CHANNEL } from '../../../shared/cowork/agent-team/teamDiscussion';
 import { isRecord } from './configShape';
 
-/** The discussion surface permits native ambient silence without relaxing direct replies. */
-export const buildManagedOpenClawSurfaces = (existing: unknown): Record<string, unknown> => {
-  const surfaces = isRecord(existing) ? existing : {};
-  return {
-    ...surfaces,
-    [TEAM_DISCUSSION_CHANNEL]: {
-      ...(isRecord(surfaces[TEAM_DISCUSSION_CHANNEL]) ? surfaces[TEAM_DISCUSSION_CHANNEL] : {}),
-      silentReply: { group: 'allow' },
-    },
-  };
-};
+/** Native surfaces retain user settings and accept explicit plugin-owned contributions. */
+export const buildManagedOpenClawSurfaces = (
+  existing: unknown,
+  contributions: Record<string, unknown> = {},
+): Record<string, unknown> => ({
+  ...(isRecord(existing) ? existing : {}),
+  ...contributions,
+});
 
 /** Bind native Windows browser profiles to the bundled session launcher. */
 export const projectManagedOpenClawBrowserConfig = (

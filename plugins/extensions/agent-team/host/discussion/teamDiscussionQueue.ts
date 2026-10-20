@@ -48,6 +48,10 @@ interface SavedInput {
 /** Serial product admission around native storage and the existing native discussion service. */
 export class TeamDiscussionQueueCoordinator {
   private readonly dispatching = new Set<string>();
+  // Acknowledged inert cancellations only; never admission or execution evidence.
+  // Restarting the host rechecks Native custody rather than persisting a second authority.
+  private readonly confirmedCancellations = new Set<string>();
+  private cancellationOffset = 0;
   constructor(private readonly context: QueueContext) {
     context.queue.recover();
   }
@@ -252,9 +256,58 @@ export class TeamDiscussionQueueCoordinator {
     }
     return { ...room, pendingInputs };
   }
-  async reconcile(): Promise<void> {
+  private async reconcileCancellations(): Promise<void> {
     const { queue, metadata, requestConnectedGateway: request } = this.context;
     if (!request) return;
+    const pending: Array<{
+      keys: string[];
+      params: { roomId: string; generation: number; requestIds?: string[] };
+    }> = [];
+    for (const room of metadata.list()) {
+      const inputs = queue.list(room.id);
+      const generation = queue.generation(room.id);
+      const generationKey = JSON.stringify([room.id, generation]);
+      // Explicit all-cancel already advanced the durable Main generation. Replaying
+      // that fence cannot cancel newly saved inputs within the same generation.
+      if (
+        inputs.some(input => input.generation < generation) &&
+        !this.confirmedCancellations.has(generationKey)
+      )
+        pending.push({ keys: [generationKey], params: { roomId: room.id, generation } });
+      const cancelled = inputs.filter(
+        input =>
+          input.generation === generation &&
+          input.state === 'cancelled' &&
+          !this.confirmedCancellations.has(JSON.stringify([room.id, generation, input.requestId])),
+      );
+      for (let offset = 0; offset < cancelled.length; offset += 3) {
+        const batch = cancelled.slice(offset, offset + 3);
+        pending.push({
+          keys: batch.map(input => JSON.stringify([room.id, generation, input.requestId])),
+          params: { roomId: room.id, generation, requestIds: batch.map(input => input.requestId) },
+        });
+      }
+    }
+    const offset = pending.length ? this.cancellationOffset % pending.length : 0;
+    const batch = [...pending.slice(offset), ...pending.slice(0, offset)].slice(0, 16);
+    this.cancellationOffset = offset + batch.length;
+    for (const cancellation of batch) {
+      try {
+        const receipt = await request<{ cancelled?: boolean }>(
+          TeamDiscussionGateway.HoldingCancel,
+          cancellation.params,
+        );
+        if (receipt.cancelled === true)
+          cancellation.keys.forEach(key => this.confirmedCancellations.add(key));
+      } catch {
+        // No local outcome is inferred from a failed inert-custody cleanup.
+      }
+    }
+  }
+  async reconcile(options: { cleanupOnly?: boolean } = {}): Promise<void> {
+    const { queue, metadata, requestConnectedGateway: request } = this.context;
+    if (!request) return;
+    if (options.cleanupOnly) await this.reconcileCancellations();
     // Explicit plugin disable cancels native saved receipts; connection loss does not.
     for (const room of metadata.list().filter(item => queue.hasActive(item.id))) {
       for (const input of queue.list(room.id, true)) {
@@ -266,6 +319,11 @@ export class TeamDiscussionQueueCoordinator {
               const status = await request<{ roomId: string; discussionId: string; state: string }>(
                 TeamDiscussionGateway.Status,
                 { roomId: room.id, discussionId: run.discussionId },
+              ).catch(() =>
+                request<{ roomId: string; discussionId: string; state: string }>(
+                  TeamDiscussionGateway.OfflineControl,
+                  { operation: 'status', roomId: room.id, discussionId: run.discussionId },
+                ),
               );
               if (
                 status.roomId === room.id &&
@@ -309,7 +367,7 @@ export class TeamDiscussionQueueCoordinator {
           /* No write, no retry and no inference from a missing receipt. */
         }
       }
-      await this.dispatch(room.id);
+      if (!options.cleanupOnly) await this.dispatch(room.id);
     }
   }
   private async dispatch(roomId: string): Promise<void> {

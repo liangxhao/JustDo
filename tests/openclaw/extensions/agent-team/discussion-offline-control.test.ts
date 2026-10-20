@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 import { registerDiscussionOfflineControl } from '../../../../plugins/extensions/runtime-services/agent-team/discussion/discussion-offline-control';
 import { DiscussionLedger } from '../../../../plugins/extensions/runtime-services/agent-team/discussion/discussion-ledger';
-import { TeamDiscussionGateway } from '../../../../src/shared/cowork/agent-team/teamDiscussion';
+import { TeamDiscussionGateway } from '../../../../plugins/extensions/agent-team/contracts/teamDiscussion';
 
 const roots: string[] = [];
 afterEach(() => {

@@ -17,6 +17,7 @@ import { repeat } from 'lit/directives/repeat.js';
 
 import type { MessageQuoteHandler } from '@/features/cowork/components/composer/draft/messageQuote';
 import type { OpenMessageFileLink } from '@/features/cowork/components/preview/messageFileLinks';
+import { subscribeMessagePresentation } from '@/features/plugins/app/messagePresentation';
 import {
   renderMessageBlock,
   renderMessageBlockWithTrailingStream,
@@ -106,8 +107,8 @@ import { projectWaitingStatus } from '@/libs/openclaw-chat/model/turn/run-activi
 import { buildChatItems } from '@/libs/openclaw-chat/pipeline/build-chat-items';
 import { extractTextCached } from '@/libs/openclaw-chat/pipeline/message-extract';
 import {
+  isPluginReplyMirror,
   isTeamDiscussionInput,
-  isTeamDiscussionReplyMirror,
   isTrustedPeerInput,
 } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import type {
@@ -454,6 +455,16 @@ export class JustDoChatElement extends LitElement {
   private _controller: ChatController | null = null;
   private _controllerUnsubscribe: (() => void) | null = null;
   private _streamUnsubscribe: (() => void) | null = null;
+  private unsubscribeMessagePresentation: (() => void) | null = null;
+  private readonly handleMessagePresentationChanged = () => {
+    this.peerFilteredHistory = new WeakMap();
+    this.peerPerspectiveHistory = new WeakMap();
+    this.persistedTimelineCache.clear();
+    this.persistedTimelineRenderCache.clear();
+    this.historySearchIndex.clear();
+    this.persistedRenderRevision++;
+    this.requestUpdate();
+  };
   private activeSearchIndex = -1;
 
   get controller(): ChatController | null {
@@ -639,7 +650,7 @@ export class JustDoChatElement extends LitElement {
         // A room-owned session also stores public group mirrors, including
         // borrowed-source replies. They are not this member's model execution.
         projected = messages
-          .filter(message => !isTeamDiscussionReplyMirror(message))
+          .filter(message => !isPluginReplyMirror(message))
           .map(message =>
             isTrustedPeerInput(message) && message.role === 'assistant'
               ? { ...message, role: 'user' }
@@ -975,6 +986,7 @@ export class JustDoChatElement extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    this.unsubscribeMessagePresentation ??= subscribeMessagePresentation(this.handleMessagePresentationChanged);
     if (this._controller && !this._controllerUnsubscribe)
       this.subscribeController(this._controller);
     this.requestUpdate();
@@ -1009,6 +1021,8 @@ export class JustDoChatElement extends LitElement {
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    this.unsubscribeMessagePresentation?.();
+    this.unsubscribeMessagePresentation = null;
     this.removeEventListener(NATIVE_WIDGET_CONTEXT_REQUEST, this.handleWidgetContext);
     this.removeEventListener(WEBPAGE_EMBED_CONTEXT_REQUEST, this.handleWebpageEmbedContext);
     getWebpageEmbedPresentations(this.ownerDocument).refresh(this);

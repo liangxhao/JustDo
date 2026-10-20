@@ -153,7 +153,7 @@ export class TeamDiscussionCoordinator {
     }
   }
   /** Receipt metadata only. Completion remains observable with every team panel closed. */
-  async reconcile(): Promise<void> {
+  async reconcile(options: { cleanupOnly?: boolean } = {}): Promise<void> {
     if (this.reconciling || !this.deps.requestConnectedGateway) return;
     this.reconciling = true;
     try {
@@ -208,6 +208,7 @@ export class TeamDiscussionCoordinator {
           room?.sourceSessionId && this.deps.getStore().getSession(room.sourceSessionId);
         if (!room) continue;
         const cancel =
+          options.cleanupOnly === true ||
           summary.state === 'stopping' ||
           this.stopping.has(room.id) ||
           this.deleting.has(room.id) ||
@@ -216,17 +217,8 @@ export class TeamDiscussionCoordinator {
           source.agentId !== room.summarySource.agentId;
         try {
           const request = this.deps.requestConnectedGateway;
-          const state = await request<{ state: TeamDiscussionSummary['state']; runId?: string }>(
-            TeamDiscussionGateway.Summary,
-            {
-              operation: cancel ? 'stop' : summary.state === 'pending' ? 'start' : 'status',
-              roomId: room.id,
-              discussionId: summary.discussionId,
-              ...(summary.state === 'pending' ? { room } : {}),
-            },
-          ).catch(async error => {
-            if (!cancel && summary.state === 'pending') throw error;
-            return request<{ state: TeamDiscussionSummary['state']; runId?: string }>(
+          const offline = () =>
+            request<{ state: TeamDiscussionSummary['state']; runId?: string }>(
               TeamDiscussionGateway.OfflineControl,
               {
                 operation: cancel ? 'summary-stop' : 'summary-status',
@@ -234,12 +226,28 @@ export class TeamDiscussionCoordinator {
                 discussionId: summary.discussionId,
               },
             );
-          });
+          // Cleanup has no summary-start capability. Required Native custody also
+          // checks the real config, so a temporary lost Main proof cannot stop an
+          // enabled plugin's summary or turn a failed read into rejection evidence.
+          const state = options.cleanupOnly
+            ? await offline()
+            : await request<{ state: TeamDiscussionSummary['state']; runId?: string }>(
+                TeamDiscussionGateway.Summary,
+                {
+                  operation: cancel ? 'stop' : summary.state === 'pending' ? 'start' : 'status',
+                  roomId: room.id,
+                  discussionId: summary.discussionId,
+                  ...(summary.state === 'pending' ? { room } : {}),
+                },
+              ).catch(async error => {
+                if (!cancel && summary.state === 'pending') throw error;
+                return offline();
+              });
           // Unknown admission never causes an automatic resend. Native receipt owns recovery.
           this.metadata.updateSummary(summary.discussionId, state.state, state.runId);
           if (state.state !== summary.state) this.deps.onChanged();
         } catch (error) {
-          if (summary.state === 'pending') {
+          if (!options.cleanupOnly && summary.state === 'pending') {
             const knownRejection =
               error instanceof Error &&
               /teamDiscussion(?:Disabled|SessionChanged|InvalidInput|RequestConflict|HistoryUnavailable|SourcePolicyUnsupported)/.test(
@@ -255,7 +263,7 @@ export class TeamDiscussionCoordinator {
           this.metadata.recordSummaryAttempt(summary.discussionId);
         }
       }
-      await this.queueCoordinator.reconcile();
+      await this.queueCoordinator.reconcile(options);
     } finally {
       this.reconciling = false;
     }

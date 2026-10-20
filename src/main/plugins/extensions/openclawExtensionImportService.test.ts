@@ -235,6 +235,7 @@ describe('OpenClawExtensionImportService', () => {
         }),
       } as unknown as OpenClawEngineManager;
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () => manager,
         runCommand: vi
           .fn()
@@ -335,6 +336,7 @@ describe('OpenClawExtensionImportService', () => {
       } as unknown as OpenClawEngineManager;
       const runCommand = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () => manager,
         runCommand,
       });
@@ -362,7 +364,10 @@ describe('OpenClawExtensionImportService', () => {
     const archivePath = path.join(fixtureRoot, 'foreign.tgz');
     await tar.create({ file: archivePath, cwd: fixtureRoot, gzip: true }, ['foreign']);
     const getOpenClawEngineManager = vi.fn();
-    const service = new OpenClawExtensionImportService({ getOpenClawEngineManager });
+    const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
+      getOpenClawEngineManager,
+    });
 
     const createTemporaryDirectory = vi.spyOn(fs, 'mkdtempSync');
     await expect(service.importPath(archivePath)).resolves.toEqual({
@@ -448,6 +453,7 @@ describe('OpenClawExtensionImportService', () => {
       buildCliEnvironment: vi.fn(),
     } as unknown as OpenClawEngineManager;
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
       requestGateway,
       runCommand,
@@ -473,6 +479,7 @@ describe('OpenClawExtensionImportService', () => {
       const runCommand = vi.fn();
       const requestGateway = vi.fn();
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () =>
           ({ getStatus: () => ({ phase: 'ready' }) }) as OpenClawEngineManager,
         getManagedPluginIds: () => [extensionId],
@@ -524,6 +531,7 @@ describe('OpenClawExtensionImportService', () => {
         mutationAllowed: true,
       });
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () =>
           ({
             getStateDir: () => fixtureRoot,
@@ -571,6 +579,7 @@ describe('OpenClawExtensionImportService', () => {
       mutationAllowed: true,
     });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({
           getStatus: () => ({ phase: 'ready' }),
@@ -591,6 +600,139 @@ describe('OpenClawExtensionImportService', () => {
       }),
     ]);
     expect(requestGateway).toHaveBeenCalledWith('plugins.list', {});
+  });
+
+  describe('connected-only catalog reads', () => {
+    const fixture = () => {
+      const manager = {
+        getStatus: vi.fn(() => ({ phase: 'running' })),
+        getGatewayProcessId: vi.fn<() => number | null>(() => 123),
+        getGatewayProcessGeneration: vi.fn(() => 1),
+        getConfigPath: () => path.join(fixtureRoot, 'openclaw.json'),
+        startGateway: vi.fn(),
+        restartGateway: vi.fn(),
+      };
+      const request = vi.fn().mockResolvedValue({
+        plugins: [],
+        diagnostics: [],
+        mutationAllowed: true,
+      });
+      const client = { request };
+      const getConnectedGatewayClient = vi.fn<() => typeof client | null>(() => client);
+      const ordinaryRequest = vi.fn().mockRejectedValue(new Error('Unexpected runtime recovery'));
+      const runCommand = vi.fn();
+      const restartGatewayAfterMutation = vi.fn();
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () => manager as unknown as OpenClawEngineManager,
+        getConnectedGatewayClient,
+        requestGateway: ordinaryRequest,
+        restartGatewayAfterMutation,
+        runCommand,
+      });
+      const listInstalled = vi.spyOn(service, 'listInstalled').mockReturnValue([]);
+      return {
+        manager,
+        request,
+        getConnectedGatewayClient,
+        ordinaryRequest,
+        runCommand,
+        restartGatewayAfterMutation,
+        service,
+        listInstalled,
+      };
+    };
+
+    it.each(['disconnected', 'starting', 'missing-process'])(
+      'rejects an unavailable catalog without recovering the %s Gateway',
+      async unavailable => {
+        const f = fixture();
+        if (unavailable === 'disconnected') f.getConnectedGatewayClient.mockReturnValue(null);
+        if (unavailable === 'starting') f.manager.getStatus.mockReturnValue({ phase: 'starting' });
+        if (unavailable === 'missing-process') f.manager.getGatewayProcessId.mockReturnValue(null);
+
+        await expect(f.service.listCatalog()).rejects.toThrow();
+
+        expect(f.request).not.toHaveBeenCalled();
+        expect(f.ordinaryRequest).not.toHaveBeenCalled();
+        expect(f.listInstalled).not.toHaveBeenCalled();
+        expect(f.manager.startGateway).not.toHaveBeenCalled();
+        expect(f.manager.restartGateway).not.toHaveBeenCalled();
+        expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+        expect(f.runCommand).not.toHaveBeenCalled();
+      },
+    );
+
+    it('preserves a lost catalog response as unavailable instead of returning local inventory', async () => {
+      const f = fixture();
+      const disconnected = Object.assign(new Error('Gateway closed during inventory read'), {
+        code: 'CLIENT_CLOSED',
+        requestSent: true,
+      });
+      f.request.mockRejectedValue(disconnected);
+
+      await expect(f.service.listCatalog()).rejects.toBe(disconnected);
+
+      expect(f.request).toHaveBeenCalledExactlyOnceWith('plugins.list', {});
+      expect(f.ordinaryRequest).not.toHaveBeenCalled();
+      expect(f.listInstalled).not.toHaveBeenCalled();
+      expect(f.manager.startGateway).not.toHaveBeenCalled();
+      expect(f.manager.restartGateway).not.toHaveBeenCalled();
+      expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+      expect(f.runCommand).not.toHaveBeenCalled();
+    });
+
+    it.each(['missing-entry', 'older-version'])(
+      'does not mutate Native inventory when local ownership has a %s mismatch',
+      async mismatch => {
+        const f = fixture();
+        const plugin = {
+          id: 'feature-plugin',
+          name: 'Feature Plugin',
+          version: '1.0.0',
+          installed: true,
+          enabled: true,
+          state: 'enabled',
+          origin: 'local',
+        };
+        f.request.mockResolvedValue({
+          plugins: mismatch === 'missing-entry' ? [] : [plugin],
+          diagnostics: [],
+          mutationAllowed: true,
+        });
+        f.listInstalled.mockReturnValue([
+          {
+            id: plugin.id,
+            name: plugin.name,
+            description: '',
+            version: '2.0.0',
+            installPath: path.join(fixtureRoot, 'installed-plugin'),
+            enabled: true,
+            missingRequirements: [],
+            configurationFields: [],
+          },
+        ]);
+
+        const catalog = await f.service.listCatalog();
+
+        expect(catalog).toEqual(
+          mismatch === 'missing-entry'
+            ? []
+            : [
+                expect.objectContaining({
+                  id: plugin.id,
+                  version: '1.0.0',
+                  enabled: true,
+                }),
+              ],
+        );
+        expect(f.request).toHaveBeenCalledExactlyOnceWith('plugins.list', {});
+        expect(f.ordinaryRequest).not.toHaveBeenCalled();
+        expect(f.manager.startGateway).not.toHaveBeenCalled();
+        expect(f.manager.restartGateway).not.toHaveBeenCalled();
+        expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+        expect(f.runCommand).not.toHaveBeenCalled();
+      },
+    );
   });
 
   it.each([
@@ -693,6 +835,7 @@ describe('OpenClawExtensionImportService', () => {
       JSON.stringify({ description: 'Search and retrieve persistent memory.' }),
     );
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({
           getStatus: () => ({ phase: 'ready' }),
@@ -728,6 +871,7 @@ describe('OpenClawExtensionImportService', () => {
     ]);
 
     const externalService = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({
           getStateDir: () => stateDir,
@@ -796,6 +940,7 @@ describe('OpenClawExtensionImportService', () => {
         mutationAllowed: true,
       });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({
           getStateDir: () => stateDir,
@@ -823,6 +968,7 @@ describe('OpenClawExtensionImportService', () => {
       const requestGateway = vi.fn().mockResolvedValue({ ok: true, restartRequired });
       const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () =>
           ({ getStatus: () => ({ phase: 'running' }) }) as OpenClawEngineManager,
         requestGateway,
@@ -857,6 +1003,7 @@ describe('OpenClawExtensionImportService', () => {
       const requestGateway = vi.fn().mockResolvedValue({ ok: true, restartRequired });
       const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () =>
           ({ getStatus: () => ({ phase: 'running' }) }) as OpenClawEngineManager,
         requestGateway,
@@ -887,6 +1034,7 @@ describe('OpenClawExtensionImportService', () => {
     });
     const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({ getStatus: () => ({ phase: 'running' }) }) as OpenClawEngineManager,
       requestGateway,
@@ -907,6 +1055,7 @@ describe('OpenClawExtensionImportService', () => {
     });
     const runCommand = vi.fn();
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({ getStatus: () => ({ phase: 'running' }) }) as OpenClawEngineManager,
       requestGateway,
@@ -915,7 +1064,7 @@ describe('OpenClawExtensionImportService', () => {
     });
     await expect(service.setEnabled('agent-team', true)).resolves.toMatchObject({
       success: false,
-      error: expect.stringContaining('Agent Team'),
+      error: expect.stringMatching(/技能|skills/u),
     });
     expect(runCommand).not.toHaveBeenCalled();
     await expect(service.setEnabled('agent-team', true)).resolves.toEqual({ success: true });
@@ -954,6 +1103,7 @@ describe('OpenClawExtensionImportService', () => {
         return { exitCode: 0, stdout: '', stderr: '' };
       });
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () =>
           ({
             getStatus: () => ({ phase: 'ready' }),
@@ -996,6 +1146,7 @@ describe('OpenClawExtensionImportService', () => {
     const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
     const runCommand = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({
           getStatus: () => ({ phase: 'running' }),
@@ -1032,6 +1183,7 @@ describe('OpenClawExtensionImportService', () => {
       .mockResolvedValueOnce({ phase: 'error', message: 'Skill publication restart failed' })
       .mockResolvedValueOnce({ phase: 'running' });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({ getStatus: () => ({ phase: 'running' }) }) as OpenClawEngineManager,
       requestGateway,
@@ -1061,6 +1213,7 @@ describe('OpenClawExtensionImportService', () => {
         .mockResolvedValueOnce({ ok: true, restartRequired });
       const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () =>
           ({
             getStateDir: () => path.join(fixtureRoot, 'state'),
@@ -1090,6 +1243,7 @@ describe('OpenClawExtensionImportService', () => {
       .mockRejectedValueOnce(new Error('Hot refresh unavailable'));
     const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({
           getStateDir: () => path.join(fixtureRoot, 'state'),
@@ -1111,6 +1265,7 @@ describe('OpenClawExtensionImportService', () => {
       .mockResolvedValueOnce({ ok: true, restartRequired: false })
       .mockResolvedValueOnce({ ok: true, restartRequired: true, removed: ['files'] });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({
           getStateDir: () => path.join(fixtureRoot, 'state'),
@@ -1172,6 +1327,7 @@ describe('OpenClawExtensionImportService', () => {
       });
     const runCommand = vi.fn();
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
       requestGateway,
       runCommand,
@@ -1239,6 +1395,7 @@ describe('OpenClawExtensionImportService', () => {
       buildCliEnvironment: vi.fn(),
     } as unknown as OpenClawEngineManager;
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
       requestGateway,
       runCommand,
@@ -1415,6 +1572,7 @@ describe('OpenClawExtensionImportService', () => {
       return { phase: 'running' };
     });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
       requestGateway,
       runCommand,
@@ -1457,6 +1615,7 @@ describe('OpenClawExtensionImportService', () => {
     const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
     const runCommand = vi.fn();
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
       requestGateway,
       restartGatewayAfterMutation,
@@ -1506,6 +1665,7 @@ describe('OpenClawExtensionImportService', () => {
       })
       .mockResolvedValueOnce({ ok: true, restartRequired: false, warnings: ['Reviewed'] });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({ getStatus: () => ({ phase: 'ready' }) }) as OpenClawEngineManager,
       requestGateway,
@@ -1566,6 +1726,7 @@ describe('OpenClawExtensionImportService', () => {
       });
     const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({
           getStatus: () => ({ phase: 'ready' }),
@@ -1625,6 +1786,7 @@ describe('OpenClawExtensionImportService', () => {
     });
     const runCommand = vi.fn();
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({
           getStatus: () => ({ phase }),
@@ -1686,6 +1848,7 @@ describe('OpenClawExtensionImportService', () => {
       .mockReturnValue({ overwrite: false, enabled: false, groups: [], digest: 'after' });
     const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({
           getStatus: () => ({ phase: 'running' }),
@@ -1747,6 +1910,7 @@ describe('OpenClawExtensionImportService', () => {
     }));
     const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({
           getStatus: () => ({ phase: 'ready' }),
@@ -1787,6 +1951,7 @@ describe('OpenClawExtensionImportService', () => {
         Object.assign(new Error('gateway not connected'), { code: 'UNAVAILABLE' }),
       );
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({
           getStateDir: () => stateDir,
@@ -1814,6 +1979,7 @@ describe('OpenClawExtensionImportService', () => {
     );
     const runCommand = vi.fn();
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({ getStatus: () => ({ phase: 'ready' }) }) as OpenClawEngineManager,
       requestGateway,
@@ -2180,6 +2346,7 @@ describe('OpenClawExtensionImportService', () => {
       } as unknown as OpenClawEngineManager;
       const runCommand = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () => manager,
         getManagedPluginIds: () => ['automation-permission', 'workboard'],
         restartGatewayAfterMutation: () => restartGateway(),
@@ -2270,6 +2437,7 @@ describe('OpenClawExtensionImportService', () => {
         }),
       } as unknown as OpenClawEngineManager;
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () => manager,
         requestGateway,
         restartGatewayAfterMutation: restartGateway,
@@ -2312,6 +2480,7 @@ describe('OpenClawExtensionImportService', () => {
           message: 'restart failed',
         });
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () =>
           ({
             getStatus: () => ({ phase: 'running' }),
@@ -2463,6 +2632,7 @@ describe('OpenClawExtensionImportService', () => {
       runtime: { generation: 1, pluginIds: ['reviewed-extension'] },
     });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
       requestGateway,
       inspectCapabilityReview,
@@ -2939,6 +3109,7 @@ describe('OpenClawExtensionImportService', () => {
       }),
     } as unknown as OpenClawEngineManager;
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
       requestGateway: vi.fn(),
     });
@@ -3028,6 +3199,7 @@ describe('OpenClawExtensionImportService', () => {
         digest: 'before-import',
       });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
       runCommand,
       restartGatewayAfterMutation,
@@ -3101,6 +3273,7 @@ describe('OpenClawExtensionImportService', () => {
     } as unknown as OpenClawEngineManager;
     const runCommand = vi.fn();
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
       runCommand,
       directoryOperations: new ManagedDirectoryOperationCoordinator({
@@ -3147,6 +3320,7 @@ describe('OpenClawExtensionImportService', () => {
         processes: [{ name: 'explorer', pid: 10856 }],
       });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
       runCommand: vi.fn().mockResolvedValue({
         exitCode: 1,
@@ -3195,6 +3369,7 @@ describe('OpenClawExtensionImportService', () => {
     }));
     const runCommand = vi.fn();
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
       runCommand,
       directoryOperations: new ManagedDirectoryOperationCoordinator({ findLockingProcesses }),
@@ -3232,6 +3407,7 @@ describe('OpenClawExtensionImportService', () => {
       } as unknown as OpenClawEngineManager;
       const runCommand = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () => manager,
         runCommand,
       });
@@ -3395,6 +3571,7 @@ describe('OpenClawExtensionImportService', () => {
         waitForGatewayConfigReload: vi.fn(),
       } as unknown as OpenClawEngineManager;
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () => manager,
         restartGatewayAfterMutation: restartGateway,
       });
@@ -3454,6 +3631,7 @@ describe('OpenClawExtensionImportService', () => {
       getConfigPath: vi.fn().mockReturnValue(path.join(stateDir, 'openclaw.json')),
     } as unknown as OpenClawEngineManager;
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
     });
 
@@ -3497,6 +3675,7 @@ describe('OpenClawExtensionImportService', () => {
       JSON.stringify({ description: 'Package summary.' }),
     );
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({
           getStateDir: () => stateDir,
@@ -3528,6 +3707,7 @@ describe('OpenClawExtensionImportService', () => {
       getConfigPath: vi.fn().mockReturnValue(path.join(stateDir, 'openclaw.json')),
     } as unknown as OpenClawEngineManager;
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
     });
 
@@ -3565,6 +3745,7 @@ describe('OpenClawExtensionImportService', () => {
       getConfigPath: vi.fn().mockReturnValue(path.join(stateDir, 'openclaw.json')),
     } as unknown as OpenClawEngineManager;
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
     });
 
@@ -3652,6 +3833,7 @@ describe('OpenClawExtensionImportService', () => {
         waitForGatewayConfigReload: vi.fn().mockResolvedValue(true),
       } as unknown as OpenClawEngineManager;
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () => manager,
         requestGateway: vi.fn().mockResolvedValue({
           plugins: [
@@ -3746,6 +3928,7 @@ describe('OpenClawExtensionImportService', () => {
         restart.mockRejectedValueOnce(new Error('Synthetic restart failure'));
       if (failure === 'restart-error') restart.mockResolvedValueOnce({ phase: 'error' });
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () =>
           ({
             getStateDir: () => stateDir,
@@ -3796,6 +3979,7 @@ describe('OpenClawExtensionImportService', () => {
       );
       fs.writeFileSync(configPath, '{}');
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () =>
           ({
             getStateDir: () => stateDir,
@@ -3841,6 +4025,7 @@ describe('OpenClawExtensionImportService', () => {
       }),
     );
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () =>
         ({
           getStateDir: () => stateDir,
@@ -3896,6 +4081,7 @@ describe('OpenClawExtensionImportService', () => {
         restartGateway,
       } as unknown as OpenClawEngineManager;
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () => manager,
         restartGatewayAfterMutation: () => restartGateway(),
       });
@@ -3978,6 +4164,7 @@ describe('OpenClawExtensionImportService', () => {
         .fn()
         .mockResolvedValue({ ready: true, configuration: { concurrency: scenario.reported } });
       const service = new OpenClawExtensionImportService({
+        getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
         getOpenClawEngineManager: () => manager,
         requestGateway,
         restartGatewayAfterMutation: restart,
@@ -4047,6 +4234,7 @@ describe('OpenClawExtensionImportService', () => {
       return { exitCode: 0, stdout: '', stderr: '' };
     });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
       restartGatewayAfterMutation: () => restartGateway(),
       runCommand,
@@ -4116,6 +4304,7 @@ describe('OpenClawExtensionImportService', () => {
       return { exitCode: 0, stdout: '', stderr: '' };
     });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
       restartGatewayAfterMutation: () => restartGateway(),
       runCommand,
@@ -4172,6 +4361,7 @@ describe('OpenClawExtensionImportService', () => {
       return { exitCode: 0, stdout: '', stderr: '' };
     });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
       restartGatewayAfterMutation: () => restartGateway(),
       runCommand,
@@ -4218,6 +4408,7 @@ describe('OpenClawExtensionImportService', () => {
       restartGateway,
     } as unknown as OpenClawEngineManager;
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
       runCommand: vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' }),
     });
@@ -4270,6 +4461,7 @@ describe('OpenClawExtensionImportService', () => {
       stderr: 'npm error code E404: package is missing from the configured registry',
     });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
       runCommand,
     });
@@ -4328,6 +4520,7 @@ describe('OpenClawExtensionImportService', () => {
         'Also not a valid hook pack: Error: package.json missing openclaw.hooks',
     });
     const service = new OpenClawExtensionImportService({
+      getNativeSkillIds: id => (id === 'agent-team' ? ['agent-team'] : []),
       getOpenClawEngineManager: () => manager,
       runCommand,
     });

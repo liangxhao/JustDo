@@ -9,6 +9,7 @@
   },
   "configContracts": { "configurationStatusMethod": "swarmWorkflow.health" },
   "contracts": {
+    "gatewayMethodDispatch": ["authenticated-request"],
     "tools": [
       "swarm_workflow_start",
       "swarm_workflow_status",

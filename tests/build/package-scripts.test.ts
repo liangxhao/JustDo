@@ -107,13 +107,13 @@ test('starts Electron as soon as the quiet readiness probes succeed', () => {
   expect(devRunner).not.toMatch(/delay:|verbose: true/);
 });
 
-test('prepares the local speech runtime before starting Electron in development', () => {
+test('builds App companions and prepares browser and speech runtimes before Electron development', () => {
   const packageJson = JSON.parse(
     fs.readFileSync(path.resolve(__dirname, '../..', 'package.json'), 'utf8'),
   ) as { scripts: Record<string, string> };
 
   expect(packageJson.scripts['preelectron:dev']).toBe(
-    'npm run browser-extension:prepare && npm run setup:local-tts',
+    'npm run plugins:app:build && node scripts/plugins/prepare-development-app-plugins.mjs && npm run browser-extension:prepare && npm run setup:local-tts',
   );
 });
 
@@ -126,7 +126,7 @@ test('uses Vite native Monaco workers without emitting the legacy duplicate bund
   expect(viteConfig).not.toContain('vite-plugin-monaco-editor');
   expect(viteConfig).not.toContain('monacoEditorPlugin');
   expect(packageJson.devDependencies).not.toHaveProperty('vite-plugin-monaco-editor');
-  expect(viteConfig).toContain("fs.realpathSync(path.join(projectRoot, 'node_modules'))");
+  expect(viteConfig).toContain("path.dirname(fs.realpathSync(path.join(projectRoot, 'node_modules/react')))");
   expect(viteConfig).toContain('allow: [projectRoot, dependencyRoot]');
 });
 
@@ -245,7 +245,7 @@ test('uses a target-aware and runtime-verified Electron-native rebuild', () => {
   expect(packageJson.scripts.postinstall).not.toContain('electron-builder install-app-deps');
   expect(packageJson.scripts['precompile:electron']).toBe('npm run rebuild:electron-native');
   expect(packageJson.scripts['prestart:electron']).toBe(
-    'npm run rebuild:electron-native && npm run browser-extension:prepare',
+    'npm run plugins:app:build && node scripts/plugins/prepare-development-app-plugins.mjs && npm run rebuild:electron-native && npm run browser-extension:prepare',
   );
   expect(rebuildScript).toContain("'--platform'");
   expect(rebuildScript).toContain("'--arch'");
@@ -267,6 +267,17 @@ test('uses a target-aware and runtime-verified Electron-native rebuild', () => {
   expect(builderHooks).toContain('verifyMxcArtifactEntryPaths(');
 });
 
+test('builds current App companions before native resource sync and isolated development', () => {
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'),
+  ) as { scripts: Record<string, string> };
+
+  expect(packageJson.scripts['preopenclaw:resources']).toBe('npm run plugins:app:build');
+  expect(packageJson.scripts['preelectron:dev:isolated']).toBe(
+    'npm run plugins:app:build && node scripts/plugins/prepare-development-app-plugins.mjs',
+  );
+});
+
 test('restores Electron native modules after tests even when Vitest fails', () => {
   const packageJson = JSON.parse(
     fs.readFileSync(path.resolve(__dirname, '../..', 'package.json'), 'utf8'),
@@ -277,7 +288,8 @@ test('restores Electron native modules after tests even when Vitest fails', () =
   );
 
   expect(packageJson.scripts.test).toBe('node scripts/test/run-tests.cjs');
-  expect(packageJson.scripts).not.toHaveProperty('pretest');
+  expect(packageJson.scripts.pretest).toBe('npm run plugins:app:build');
+  expect(packageJson.scripts.pretest).not.toContain('rebuild');
   expect(testRunner).toContain("['rebuild', 'better-sqlite3', '--foreground-scripts']");
   expect(testRunner).toContain("path.join(__dirname, '../electron/rebuild-electron-native.cjs')");
   expect(testRunner).toContain('finally');

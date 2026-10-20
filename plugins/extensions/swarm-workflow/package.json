@@ -10,5 +10,10 @@
   },
   "justdo": {
     "bundle": true
+  },
+  "app": {
+    "main": "host/app.ts",
+    "browser": "app/browser/index.tsx",
+    "presentation": "app/presentation.ts"
   }
 }

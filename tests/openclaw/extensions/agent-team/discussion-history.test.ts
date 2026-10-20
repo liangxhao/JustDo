@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest';
 
 import { registerDiscussionHistory } from '../../../../plugins/extensions/agent-team/discussion/discussion-history';
-import { TeamDiscussionGateway } from '../../../../src/shared/cowork/agent-team/teamDiscussion';
+import { TeamDiscussionGateway } from '../../../../plugins/extensions/agent-team/contracts/teamDiscussion';
 
 const sdk = vi.hoisted(() => ({ transcript: vi.fn() }));
 vi.mock('openclaw/plugin-sdk/session-transcript-runtime', () => ({

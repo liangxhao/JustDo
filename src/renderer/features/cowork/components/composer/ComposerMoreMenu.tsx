@@ -3,25 +3,12 @@ import { useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
 
-export const OPEN_AGENT_TEAM = 'app:open-agent-team';
-export interface AgentTeamEntry {
-  cwd?: string;
-  draft?: string;
-  sourceSessionId?: string;
-  roomId?: string;
-}
-export function openAgentTeam(detail: AgentTeamEntry = {}): void {
-  window.dispatchEvent(new CustomEvent(OPEN_AGENT_TEAM, { detail }));
-}
-
 export default function ComposerMoreMenu({
   onAddFile,
   disabled,
-  team,
 }: {
   onAddFile: () => void;
   disabled: boolean;
-  team?: AgentTeamEntry;
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -66,18 +53,6 @@ export default function ComposerMoreMenu({
           >
             {i18nService.t('coworkAddFile')}
           </button>
-          {team && (
-            <button
-              type="button"
-              className="block w-full rounded-lg p-2 text-left hover:bg-surface-raised"
-              onClick={() => {
-                setOpen(false);
-                openAgentTeam(team);
-              }}
-            >
-              {i18nService.t('teamManualSetup')}
-            </button>
-          )}
         </div>
       )}
     </div>

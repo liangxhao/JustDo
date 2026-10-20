@@ -4,11 +4,11 @@ import { getHookManagement } from '@shared/plugins/management';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+import { hookService } from '@/features/plugins/hooks/hookService';
 import PluginOperationFeedback from '@/features/plugins/shared/PluginOperationFeedback';
 
 import type { HookEntry } from './hook';
 import HookManager from './HookManager';
-import { hookService } from './hookService';
 
 vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
   getEngineReadinessSnapshot: () => ({ ready: true }),

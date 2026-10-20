@@ -56,7 +56,7 @@ it.each([
   'agentTeamLaunchText',
   'collaborationContinuationPrompt',
 ])('application contract %s remains safe for the renderer', async name => {
-  const inputs = await dependencies(`src/shared/cowork/agent-team/${name}.ts`, 'browser');
+  const inputs = await dependencies(`plugins/extensions/agent-team/app/contracts/${name}.ts`, 'browser');
   expect(inputs.some(file => file.startsWith('src/main/'))).toBe(false);
   expect(
     inputs
@@ -69,7 +69,7 @@ it.each(['collaboration', 'teamDiscussion', 'agentTeamLaunch'])(
   '%s coordination has no Electron IPC dependency',
   async name => {
     const result = await build({
-      entryPoints: [path.resolve(`src/main/cowork/agent-team/${name}Coordinator.ts`)],
+      entryPoints: [path.resolve(`plugins/extensions/agent-team/host/${{collaboration:'collaboration',teamDiscussion:'discussion',agentTeamLaunch:'launch'}[name]}/${name}Coordinator.ts`)],
       bundle: true,
       write: false,
       platform: 'node',
@@ -81,9 +81,7 @@ it.each(['collaboration', 'teamDiscussion', 'agentTeamLaunch'])(
     expect(imports.some(item => item.path === 'electron')).toBe(false);
     expect(imports.some(item => item.path.startsWith('openclaw/plugin-sdk'))).toBe(false);
     const inputs = Object.keys(result.metafile!.inputs).map(file => file.replaceAll('\\', '/'));
-    expect(inputs.filter(file => file.startsWith('src/'))).toEqual([
-      `src/main/cowork/agent-team/${name}Coordinator.ts`,
-    ]);
+    expect(inputs.filter(file => file.startsWith('src/'))).toEqual([]);
   },
 );
 

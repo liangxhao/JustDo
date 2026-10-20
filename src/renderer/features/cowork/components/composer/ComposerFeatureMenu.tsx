@@ -22,6 +22,7 @@ export interface ComposerFeatureItem {
   error?: boolean;
   onSelect: () => void;
   children?: readonly ComposerFeatureItem[];
+  backLabel?: string;
   role?: 'menuitem' | 'menuitemradio';
 }
 
@@ -166,8 +167,8 @@ export default function ComposerFeatureMenu({
               <button
                 ref={back}
                 type="button"
-                title={backLabel ?? parent.label}
-                aria-label={backLabel ?? parent.label}
+                title={parent.backLabel ?? backLabel ?? parent.label}
+                aria-label={parent.backLabel ?? backLabel ?? parent.label}
                 onClick={goBack}
                 onKeyDown={event => {
                   if (event.key === 'ArrowLeft') {

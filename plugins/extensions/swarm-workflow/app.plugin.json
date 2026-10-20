@@ -1,0 +1,40 @@
+{
+  "manifestVersion": 1,
+  "apiVersion": 1,
+  "id": "swarm-workflow",
+  "version": "1.0.0",
+  "nativePluginId": "swarm-workflow",
+  "entries": {
+    "main": "main.mjs",
+    "browser": "browser.mjs",
+    "presentation": "presentation.mjs"
+  },
+  "capabilities": [
+    "sessions.read",
+    "native.connected",
+    "native.config"
+  ],
+  "commands": [
+    "workflow.prepare",
+    "workflow.list",
+    "workflow.activity",
+    "workflow.summary",
+    "workflow.detail",
+    "workflow.control",
+    "workflow.intervene",
+    "workflow.batch",
+    "workflow.retry-batch"
+  ],
+  "slots": [
+    "workspace.tab",
+    "composer.mode",
+    "session.summary",
+    "session.presentation",
+    "application.page",
+    "messages.presentation"
+  ],
+  "native": {
+    "defaultEnabled": false,
+    "userToggleable": true
+  }
+}

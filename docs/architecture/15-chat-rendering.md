@@ -1,5 +1,7 @@
 # 聊天渲染：原生历史、实时流与交互投影
 
+桌面可选业务使用独立 Native/Main/Browser 插件包；通用 SDK、可信代码审核、冷包变更和历史清理所有权见 [应用插件宿主](17-app-plugin-host.md)。
+
 助手 `[embed]` 与结构化 URL Canvas 共用有序纯扫描/分类，交给独立网页 anchor 与 Main
 固定 guest；不要求 `show_widget`，不复用 Widget/MCP App 权限或草稿桥。实时/历史保持
 文字顺序和代码区语义，固定/放大/侧栏拆出停靠复用通用稳定展示载体。普通 URL 使用无

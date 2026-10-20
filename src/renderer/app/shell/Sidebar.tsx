@@ -2,19 +2,16 @@ import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
 import type { CoworkSessionMessageSearchMatch } from '@shared/cowork/sessionSearch';
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 import { useSelector } from 'react-redux';
 
-import { useCollaborationRooms } from '@/features/cowork/components/collaboration/CollaborationPanel';
 import {
   type FilePreviewNavigationOptions,
   runGuardedFilePreviewNavigation,
 } from '@/features/cowork/components/preview/filePreviewNavigation';
-import {
-  resolveCollaborationNavigation,
-  toggleVisibleSessionSelection,
-} from '@/features/cowork/components/sessions/collaborationNavigation';
 import CoworkSearchModal from '@/features/cowork/components/sessions/CoworkSearchModal';
 import CoworkSessionList from '@/features/cowork/components/sessions/CoworkSessionList';
+import { toggleVisibleSessionSelection } from '@/features/cowork/components/sessions/sessionSelection';
 import {
   selectCoworkSessions,
   selectCurrentSessionId,
@@ -26,6 +23,7 @@ import {
   type CoworkSessionListAction,
   requestCoworkSessionListAction,
 } from '@/features/cowork/sessionListActions';
+import { appBrowserRegistry } from '@/features/plugins/app/runtime';
 import { i18nService } from '@/services/i18n';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
@@ -93,7 +91,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   const handleVisibleSessionIdsChange = useCallback((ids: string[]) => {
     setDisplayedSessionIds(current =>
       current.length === ids.length && current.every((id, index) => id === ids[index])
-        ? current : ids,
+        ? current
+        : ids,
     );
   }, []);
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
@@ -132,21 +131,14 @@ const Sidebar: React.FC<SidebarProps> = ({
       async () => {
         if (requestId !== sessionNavigationRequestRef.current) return;
         onShowCowork();
-        const target = resolveCollaborationNavigation(sessionId, collaborationRooms);
+        const target = appBrowserRegistry.sessionNavigation(sessionId);
         const loaded = await coworkService.loadSession(target.sessionId, {
-          canSelect: () => requestId === sessionNavigationRequestRef.current,
+          canSelect: () => requestId === sessionNavigationRequestRef.current && target.isCurrent(),
         });
         if (requestId !== sessionNavigationRequestRef.current || !loaded) return;
         selected = store.getState().cowork.currentSession?.id === target.sessionId;
         if (selected && match && target.sessionId === match.sessionId) onRevealSearchMatch?.(match);
-        if (
-          requestId === sessionNavigationRequestRef.current &&
-          loaded &&
-          target.memberSessionId &&
-          store.getState().cowork.currentSession?.id === target.sessionId
-        ) {
-          requestCoworkSessionListAction({ action: 'collaboration', ...target });
-        }
+        if (selected && target.isCurrent()) target.selected();
       },
       { preserveTabs: true },
     );
@@ -166,14 +158,9 @@ const Sidebar: React.FC<SidebarProps> = ({
     await coworkService.renameSession(sessionId, title);
   };
 
-  const collaborationRooms = useCollaborationRooms();
-  const collaborationAnchors = new Map(
-    collaborationRooms.flatMap(room =>
-      room.members.map(member => [member.sessionId, room.anchorSessionId] as const),
-    ),
-  );
+  useSyncExternalStore(appBrowserRegistry.subscribe, appBrowserRegistry.getContextRevision);
   const visibleDirectory = directory.filter(session => {
-    const anchor = collaborationAnchors.get(session.id);
+    const anchor = appBrowserRegistry.sessionPresentation(session.id).anchorSessionId;
     if (anchor && anchor !== session.id) return false;
     return (
       Boolean(session.external) || (session.agentId || MAIN_USER_AGENT_ID) === MAIN_USER_AGENT_ID
@@ -335,7 +322,10 @@ const Sidebar: React.FC<SidebarProps> = ({
             onVisibleSessionIdsChange={handleVisibleSessionIdsChange}
             isLoading={sessionListStatus === 'loading'}
             loadFailed={sessionListStatus === 'error'}
-            currentSessionId={collaborationAnchors.get(currentSessionId || '') || currentSessionId}
+            currentSessionId={
+              appBrowserRegistry.sessionPresentation(currentSessionId || '').anchorSessionId ||
+              currentSessionId
+            }
             isBatchMode={isBatchMode}
             selectedIds={visibleSelection}
             onSelectSession={handleSelectSession}
@@ -343,9 +333,6 @@ const Sidebar: React.FC<SidebarProps> = ({
             onRenameSession={handleRenameSession}
             onExportSession={sessionId => void handleSessionListAction(sessionId, 'export')}
             onCopySession={sessionId => void handleSessionListAction(sessionId, 'copy')}
-            onCollaborationSession={sessionId =>
-              void handleSessionListAction(sessionId, 'collaboration')
-            }
             onToggleSelection={handleToggleSelection}
             onEnterBatchMode={handleEnterBatchMode}
           />

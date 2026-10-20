@@ -44,6 +44,9 @@ import type { ManagedSpeechModelSettings } from './speech/speechModelConfig';
 
 type OpenClawConfigSyncServiceDeps = {
   getCoworkStore: () => CoworkStore;
+  getAppPluginEntries?: () => Record<string, unknown>;
+  getAppPluginDefaults?: () => Record<string, { defaultEnabled: boolean; userToggleable: boolean }>;
+  getAppPluginPolicy?: () => { sandboxTools?: string[]; surfaces?: Record<string, unknown> };
   getOpenClawEngineManager: () => OpenClawEngineManager;
   getMcpStore: () => McpStore;
   getExtensionMcpServerNames?: () => Promise<ReadonlySet<string>>;
@@ -1795,6 +1798,9 @@ export class OpenClawConfigSyncService {
         getMcpServers: () => this.deps.getMcpStore().listServers(),
         getHooks: () => this.deps.getHookStore().listHooks(),
         getAgents: () => this.deps.getCoworkStore().listAgents(),
+        getAppPluginEntries: this.deps.getAppPluginEntries,
+        getAppPluginDefaults: this.deps.getAppPluginDefaults,
+        getAppPluginPolicy: this.deps.getAppPluginPolicy,
         getBrowserMode: this.deps.getBrowserMode,
         getControlUiEnabled: this.deps.getControlUiEnabled,
         getDecisionModelCategory: this.deps.getDecisionModelCategory,

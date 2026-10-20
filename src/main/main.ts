@@ -32,7 +32,6 @@ import { BrowserMode, normalizeBrowserDownloadSettings, normalizeBrowserMode } f
 import { EmbeddedBrowserGateway } from '../shared/browser/embeddedBrowser';
 import { buildCoworkSessionKey } from '../shared/cowork/sessionKey';
 import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
-import { SwarmWorkflowIpc } from '../shared/cowork/swarm-workflow';
 import {
   WORKSPACE_WINDOW_BOUNDS_KEY,
   type WorkspaceWindowBounds,
@@ -107,6 +106,7 @@ import {
 import { enableSystemCaForCurrentProcess } from './core/network/trustedCertificates';
 import { applyDependencyManagerConfigEnv } from './core/runtime/dependencyManagerConfig';
 import { ensurePythonRuntimeReady } from './core/runtime/pythonRuntime';
+import { isApplicationRendererOrigin } from './core/window/browserPanelSecurity';
 import { bindComputerOverlay } from './core/window/computer/bindComputerOverlay';
 import { registerContentSecurityPolicy } from './core/window/contentSecurityPolicy';
 import {
@@ -124,7 +124,6 @@ import {
   getWorkspaceWindowManager,
   isWorkspaceBrowserHost,
 } from './core/window/workspaceWindowManager';
-import { AgentTeamLaunchCoordinator } from './cowork/agent-team/agentTeamLaunchCoordinator';
 import { orderDiagnosticMainLogs } from './cowork/diagnostics/logSources';
 import { readDiagnosticRuntimeArtifact } from './cowork/diagnostics/runtimeInfo';
 import { SessionDiagnosticsService } from './cowork/diagnostics/service';
@@ -189,13 +188,9 @@ import {
   registerCoworkUtilityHandlers,
   registerDefaultModelHandlers,
   registerSessionGroupHandlers,
-  registerSwarmWorkflowHandlers,
   registerWindowsSandboxHandlers,
   waitForCoworkConfigUpdates,
 } from './ipc/cowork';
-import { registerAgentTeamSettingsHandlers } from './ipc/cowork/agent-team/agentTeamSettings';
-import { registerCollaborationHandlers } from './ipc/cowork/agent-team/collaboration';
-import { registerTeamDiscussionHandlers } from './ipc/cowork/agent-team/teamDiscussion';
 import { registerSessionDiagnosticsHandlers } from './ipc/cowork/sessionDiagnostics';
 import { registerSessionReviewHandlers } from './ipc/cowork/sessionReview';
 import {
@@ -222,6 +217,7 @@ import {
   registerSkillHandlers,
   registerSkillWorkshopHandlers,
 } from './ipc/plugins';
+import { registerAppPluginHandlers } from './ipc/plugins/app';
 import { registerMediaGenerationModelHandlers } from './ipc/providers/mediaGenerationModels';
 import {
   getCronJobService,
@@ -276,6 +272,9 @@ import {
   PluginManager,
   readNativeMcpServerNames,
 } from './plugins';
+import { AppApprovalStore } from './plugins/app/approvalStore';
+import { startAppDevelopmentAssets } from './plugins/app/developmentAssets';
+import { AppPluginManager, discoverAppCandidates } from './plugins/app/manager';
 import { WorkspaceAppSessions } from './plugins/mcp/workspaceAppSession';
 import { SkillWorkshopService } from './plugins/skills/skillWorkshopService';
 import {
@@ -526,6 +525,96 @@ let agentCliIntegrationService: AgentCliIntegrationService | null = null;
 let appServerIntegrationService: AppServerIntegrationService | null = null;
 let agentCommandService: AgentCommandService | null = null;
 let cliExternalSessionStore: ExternalSessionStore | null = null;
+let appPlugins: AppPluginManager | undefined;
+let stopAppDevelopmentAssets: (() => Promise<void>) | undefined;
+let appApprovalStore: AppApprovalStore | undefined;
+const getAppApprovalStore = () =>
+  (appApprovalStore ??= new AppApprovalStore(
+    path.join(app.getPath('userData'), 'app-plugins', 'approvals.json'),
+  ));
+const getAppPlugins = (): AppPluginManager =>
+  (appPlugins ??= new AppPluginManager({
+    retentionRoot: path.join(app.getPath('userData'), 'app-plugins', 'artifacts'),
+    withStoppedGateway: operation =>
+      getOpenClawEngineManager().withStoppedGatewayForMutation(operation),
+    isGatewayConnected: () => !!getOpenClawRuntimeAdapter()?.getGatewayClient(),
+    getGatewayProcessId: () => getOpenClawEngineManager().getGatewayProcessId(),
+    getGatewayProcessGeneration: () => getOpenClawEngineManager().getGatewayProcessGeneration(),
+    readDesiredEnabled: id => {
+      try {
+        const config = JSON.parse(
+          fs.readFileSync(getOpenClawEngineManager().getConfigPath(), 'utf8'),
+        );
+        const plugins = config.plugins;
+        return (
+          plugins?.enabled !== false &&
+          plugins?.entries?.[id]?.enabled === true &&
+          !plugins?.deny?.includes(id) &&
+          (!plugins?.allow?.length || plugins.allow.includes(id))
+        );
+      } catch {
+        return undefined;
+      }
+    },
+    approveArtifact: (id, hash) => getAppApprovalStore().approve(id, hash),
+    candidates: async () =>
+      discoverAppCandidates(
+        app.isPackaged
+          ? path.join(process.resourcesPath, 'app-plugins')
+          : path.join(app.getAppPath(), 'build/app-plugins'),
+        getOpenClawEngineManager().getRuntimeRoot(),
+        getOpenClawExtensionImportService().listInstalled(),
+        await getAppApprovalStore().read(),
+        path.join(app.getPath('userData'), 'app-plugins', 'artifacts'),
+        await getAppApprovalStore().history(),
+      ),
+    broadcast: (channel, payload) =>
+      BrowserWindow.getAllWindows().forEach(window => {
+        if (!window.isDestroyed() && !window.webContents.isDestroyed())
+          window.webContents.send(channel, payload);
+      }),
+    resources: {
+      getDatabase: () => getStore().getDatabase(),
+      getSessions: getCoworkStore,
+      getExecution: getCoworkEngineRouter,
+      getNativeStateDirectory: () => getOpenClawEngineManager().getStateDir(),
+      getRuntime: getOpenClawRuntimeAdapter,
+      ensureReady: ensureOpenClawRunningForCowork,
+      requestGateway: (method, params) => getCoworkEngineService().requestGateway(method, params),
+      requestConnectedGateway: (method, params) => {
+        const client = getOpenClawRuntimeAdapter()?.getGatewayClient();
+        if (!client) return Promise.reject(new Error('appPluginUnavailable'));
+        return client.request(method, params);
+      },
+      onNativeEvent: listener => {
+        const runtime = getOpenClawRuntimeAdapter();
+        if (!runtime) throw new Error('appPluginUnavailable');
+        runtime.on('gatewayEvent', listener);
+        return () => {
+          runtime.off('gatewayEvent', listener);
+        };
+      },
+      onSessionStopped: listener => {
+        const router = getCoworkEngineRouter();
+        router.on('sessionStopped', listener);
+        return () => {
+          router.off('sessionStopped', listener);
+        };
+      },
+      sessionsChanged: notifyCoworkSessionsChanged,
+      createAssistant: (input, identity, assertActive) =>
+        new NativeAssistantCreation({
+          getDatabase: () => getStore().getDatabase(),
+          getStore: getCoworkStore,
+          getStateDir: () => getOpenClawEngineManager().getStateDir(),
+          exclusive: operation =>
+            getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
+          requestGateway: (method, params) =>
+            getCoworkEngineService().requestGateway(method, params),
+          onChanged: notifyCoworkSessionsChanged,
+        }).create(input, identity, assertActive),
+    },
+  }));
 
 const initStore = async (): Promise<SqliteStore> => {
   if (!storeInitPromise) {
@@ -600,7 +689,7 @@ const getOpenClawDirectoryOperations = (): ManagedDirectoryOperationCoordinator 
 };
 
 const getApplicationManagedPluginIds = (): string[] => {
-  const managed = listManagedOpenClawPluginIds();
+  const managed = listManagedOpenClawPluginIds(getAppPlugins().getBundledNativePolicies());
   const decision = getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.decision;
   let videoProviderId: string | undefined;
   try {
@@ -621,6 +710,8 @@ const getOpenClawExtensionImportService = (): OpenClawExtensionImportService => 
   openClawExtensionImportService ??= new OpenClawExtensionImportService({
     getOpenClawEngineManager,
     getManagedPluginIds: getApplicationManagedPluginIds,
+    requiresHotToggle: id => getAppPlugins().isAppCompanion(id),
+    getConnectedGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
     requestGateway: <T>(method: string, params?: unknown, options?: GatewayRequestOptions) =>
       getCoworkEngineService().requestGateway<T>(method, params, options),
     runConfigMutationExclusive: operation =>
@@ -633,6 +724,7 @@ const getOpenClawExtensionImportService = (): OpenClawExtensionImportService => 
           : reason,
       );
     },
+    getNativeSkillIds: id => getAppPlugins().registry.nativePolicy(id).skills ?? [],
     directoryOperations: getOpenClawDirectoryOperations(),
     outboundHeaderPolicy: {
       inspectExtension: extensionRoot =>
@@ -750,6 +842,10 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
   if (!openClawConfigSyncService) {
     openClawConfigSyncService = new OpenClawConfigSyncService({
       getCoworkStore,
+      getAppPluginDefaults: () => getAppPlugins().getBundledNativePolicies(),
+      getAppPluginEntries: () =>
+        getAppPlugins().registry.projectNativeConfig(getCoworkStore().listAgents()),
+      getAppPluginPolicy: () => getAppPlugins().registry.nativePolicy(),
       getOpenClawEngineManager,
       getMcpStore,
       getExtensionMcpServerNames: () =>
@@ -1528,7 +1624,8 @@ if (agentBridgeArgv) {
   });
   registerMarketplaceHandlers(pluginManager);
   registerExtensionHandlers({
-    beforeAgentTeamDisable: () => getTeamDiscussionCoordinator().cancelPendingForDisable(),
+    mutateAppPlugin: (id, enabled, operation) => getAppPlugins().mutate(id, enabled, operation),
+    mutateAppPackage: operation => getAppPlugins().mutatePackage(operation),
     extensionImportService: getOpenClawExtensionImportService(),
     installationService: pluginInstallationService,
     onMarketplacePluginDeleted: (kind, runtimeId) =>
@@ -1658,15 +1755,6 @@ if (agentBridgeArgv) {
     sessionPermissionModeRuntimeBound = true;
   };
 
-  let agentTeamLaunch: AgentTeamLaunchCoordinator | undefined;
-  const getAgentTeamLaunch = () =>
-    (agentTeamLaunch ??= new AgentTeamLaunchCoordinator({
-      getStore: getCoworkStore,
-      getDatabase: () => getStore().getDatabase(),
-      getRouter: getCoworkEngineRouter,
-      requestGateway: <T>(method: string, params?: unknown) =>
-        getCoworkEngineService().requestGateway<T>(method, params),
-    }));
   const workspaceAppSessions = new WorkspaceAppSessions({
     getStore: getCoworkStore,
     request: <T>(method: string, params?: unknown, options?: GatewayRequestOptions) =>
@@ -1691,7 +1779,7 @@ if (agentBridgeArgv) {
     getStartupEngineNotReadyResponse,
     workspaceAppSessions,
     getMainWindow: () => mainWindow,
-    getAgentTeamLaunch,
+    getSessionPlugins: () => getAppPlugins().sessions,
     ensureEngineRunning: () => ensureOpenClawRunningForCowork({ prepareComputerForSend: true }),
     getCoworkStore,
     getCoworkEngineRouter,
@@ -1705,8 +1793,7 @@ if (agentBridgeArgv) {
     getStartupEngineNotReadyResponse,
     onSessionsChanged: notifyCoworkSessionsChanged,
     workspaceAppSessions,
-    getAgentTeamLaunch,
-    getCollaboration: () => bindCollaboration.coordinator(),
+    getSessionPlugins: () => getAppPlugins().sessions,
     getCoworkStore,
     getCoworkEngineRouter,
     requestGateway: <T>(method: string, params?: unknown) =>
@@ -1734,75 +1821,23 @@ if (agentBridgeArgv) {
     getRuntime: getOpenClawRuntimeAdapter,
     hasSession: sessionId => Boolean(getCoworkStore().getSession(sessionId)),
   });
-  registerSwarmWorkflowHandlers({
-    getRuntime: getOpenClawRuntimeAdapter,
-    hasSession: sessionId => Boolean(getCoworkStore().getSession(sessionId)),
-  });
-
-  const nativeAssistantCreation = new NativeAssistantCreation({
-    getDatabase: () => getStore().getDatabase(),
-    getStore: getCoworkStore,
-    getStateDir: () => getOpenClawEngineManager().getStateDir(),
-    exclusive: operation => getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
-    requestGateway: <T>(method: string, params?: unknown) =>
-      getCoworkEngineService().requestGateway<T>(method, params),
-    onChanged: notifyCoworkSessionsChanged,
-  });
-  const bindCollaboration = registerCollaborationHandlers({
-    onExecution: payload => getAgentTeamLaunch().observeExecution(payload),
-    onLaunchAccepted: receipt => getAgentTeamLaunch().confirm(receipt),
-    stopDiscussions: (sessionId, requireSettled) =>
-      getTeamDiscussionCoordinator().stopForSource(sessionId, requireSettled),
-    discussion: (sessionId, input, identity, assertActive) =>
-      getTeamDiscussionCoordinator().fromAgent(sessionId, input, identity, assertActive),
-    createAssistant: (input, identity, assertActive) =>
-      nativeAssistantCreation.create(input, identity, assertActive),
-    onSessionsChanged: notifyCoworkSessionsChanged,
-    getDatabase: () => getStore().getDatabase(),
-    getStore: getCoworkStore,
-    getRouter: getCoworkEngineRouter,
-    getRuntime: getOpenClawRuntimeAdapter,
-    requestGateway: <T>(method: string, params?: unknown) =>
-      getCoworkEngineService().requestGateway<T>(method, params),
-  });
+  registerAppPluginHandlers(
+    getAppPlugins,
+    contents =>
+      !!mainWindow &&
+      isWorkspaceBrowserHost(mainWindow.webContents.id, contents.id) &&
+      isApplicationRendererOrigin(contents.getURL(), {
+        isDev,
+        devServerUrl,
+        applicationUrl: mainWindow.webContents.getURL(),
+      }),
+  );
 
   registerAgentHandlers({
     getStore: getCoworkStore,
     syncConfig: () => syncOpenClawConfig({ reason: 'agent-profile-change' }),
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
-  });
-
-  registerAgentTeamSettingsHandlers(() => getStore().getDatabase());
-  const getTeamDiscussionCoordinator = registerTeamDiscussionHandlers({
-    isExtensionEnabled: () => {
-      try {
-        const config = JSON.parse(
-          fs.readFileSync(getOpenClawEngineManager().getConfigPath(), 'utf8'),
-        );
-        const plugins = config.plugins;
-        return (
-          plugins?.enabled !== false &&
-          plugins?.entries?.[OpenClawExtensionId.AGENT_TEAM]?.enabled === true &&
-          !plugins?.deny?.includes(OpenClawExtensionId.AGENT_TEAM) &&
-          (!plugins?.allow?.length || plugins.allow.includes(OpenClawExtensionId.AGENT_TEAM))
-        );
-      } catch {
-        return false;
-      }
-    },
-    isSourceDeleting: sessionId => bindCollaboration.coordinator().isSourceDeleting(sessionId),
-    getDatabase: () => getStore().getDatabase(),
-    getStore: getCoworkStore,
-    ensureReady: ensureOpenClawRunningForCowork,
-    requestConnectedGateway: async <T>(method: string, params?: unknown) => {
-      const client = getOpenClawRuntimeAdapter()?.getGatewayClient();
-      if (!client) throw new Error('teamDiscussionUnavailable');
-      return client.request<T>(method, params);
-    },
-    requestGateway: <T>(method: string, params?: unknown) =>
-      getCoworkEngineService().requestGateway<T>(method, params),
-    onChanged: notifyCoworkSessionsChanged,
   });
 
   registerCoworkInteractionHandlers({
@@ -2008,7 +2043,8 @@ if (agentBridgeArgv) {
         () => { disposeComputerOverlay?.(); disposeComputerOverlay = undefined; },
         () => devSessionLifecycle?.stop(),
         () => detachDevelopmentParent?.(),
-        () => { if (store) getTeamDiscussionCoordinator().dispose(); },
+        () => appPlugins?.dispose(),
+        () => stopAppDevelopmentAssets?.(),
         () => builtinModelCredentialMonitor?.stop(),
         () => loginService?.dispose(),
         () => customerRegistrationService?.stop(),
@@ -2279,6 +2315,9 @@ if (agentBridgeArgv) {
     initialization.reportActivity(AppInitializationActivity.Database);
     store = await initStore();
     if (appShutdown.isQuitting()) return;
+    await getAppPlugins().prepare();
+    if (appShutdown.isQuitting()) return;
+    getAppPlugins().initializeDatabase(store.getDatabase());
     // Engine construction requires the admitted Store. Keep startup state IPC
     // available before this point so preparation failures remain readable.
     if (startupCoordinator.route === StartupRoute.Normal) {
@@ -2290,6 +2329,11 @@ if (agentBridgeArgv) {
       });
     }
     initialization.setTaskStatus(AppInitializationTask.UserData, AppInitializationTaskStatus.Complete);
+    if (isDev && !app.isPackaged)
+      stopAppDevelopmentAssets = await startAppDevelopmentAssets(
+        path.join(app.getAppPath(), 'build/app-plugins/development-assets.json'),
+      );
+    if (appShutdown.isQuitting()) return;
     mainWindow = null;
     registerContentSecurityPolicy({
       isDev,
@@ -2448,8 +2492,12 @@ if (agentBridgeArgv) {
         getStore().get<{ computerOverlayRemotePreview?: unknown }>('app_config')
           ?.computerOverlayRemotePreview === true,
     );
-    bindCollaboration();
-    getTeamDiscussionCoordinator().startReconciliation();
+    await getAppPlugins().activate();
+    getOpenClawRuntimeAdapter()!.on('gatewayReady', () => {
+      void getAppPlugins().refresh();
+    });
+    getOpenClawRuntimeAdapter()!.on('gatewayDisconnected', () => getAppPlugins().invalidate());
+    await getAppPlugins().refresh();
     bindSessionPermissionModeRuntime();
     bindCoworkRuntimeForwarder(coworkEngineRouter, getCoworkStore);
     coworkEngineRouter.on('cronChanged', payload => {
@@ -2470,13 +2518,6 @@ if (agentBridgeArgv) {
       BrowserWindow.getAllWindows().forEach(window => {
         if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
           window.webContents.send(CoworkSubagentDetailsIpc.Changed, event);
-        }
-      });
-    });
-    coworkEngineRouter.on('swarmWorkflowChanged', event => {
-      BrowserWindow.getAllWindows().forEach(window => {
-        if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
-          window.webContents.send(SwarmWorkflowIpc.Changed, event);
         }
       });
     });

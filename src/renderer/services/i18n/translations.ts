@@ -3,12 +3,12 @@ import { browserRecordingTranslations } from '@/features/browser/recording/brows
 import type { LanguageType } from '@/services/i18n';
 
 import { askUserQuestionTranslations } from '../../../../plugins/extensions/ask-user-question/browser/translations';
+import { appPluginTranslations } from '../../../shared/plugins/app/appPluginTranslations';
 import { appTranslations } from './appTranslations.mts';
 import { assistantTranslations } from './assistantTranslations';
 import { authTranslations } from './authTranslations';
 import { browserTranslations } from './browserTranslations';
 import { chatTranslations } from './chatTranslations';
-import { collaborationTranslations } from './collaborationTranslations';
 import { filePreviewTranslations } from './filePreviewTranslations';
 import { getHomeGreetingTranslations } from './homeGreetings';
 import { initializationTranslations } from './initializationTranslations.mts';
@@ -23,8 +23,6 @@ import { settingsTranslations } from './settingsTranslations';
 import { skillWorkshopTranslations } from './skillWorkshopTranslations';
 import { startupTranslations } from './startupTranslations.mts';
 import { swarmTranslations } from './swarmTranslations';
-import { swarmWorkflowTranslations } from './swarmWorkflowTranslations';
-import { teamDiscussionTranslations } from './teamDiscussionTranslations';
 import { terminalTranslations } from './terminalTranslations';
 import { workboardTranslations } from './workboardTranslations';
 import { workspaceDisplayTranslations } from './workspaceDisplayTranslations';
@@ -32,6 +30,7 @@ import { workspaceDisplayTranslations } from './workspaceDisplayTranslations';
 export const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
     ...askUserQuestionTranslations.zh,
+    ...appPluginTranslations.zh,
     ...appTranslations.zh,
     ...assistantTranslations.zh,
     ...authTranslations.zh,
@@ -39,7 +38,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...browserInterventionTranslations.zh,
     ...browserRecordingTranslations.zh,
     ...chatTranslations.zh,
-    ...collaborationTranslations.zh,
     ...filePreviewTranslations.zh,
     ...getHomeGreetingTranslations('zh'),
     ...initializationTranslations.zh,
@@ -54,14 +52,13 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...settingsTranslations.zh,
     ...skillWorkshopTranslations.zh,
     ...swarmTranslations.zh,
-    ...swarmWorkflowTranslations.zh,
-    ...teamDiscussionTranslations.zh,
     ...terminalTranslations.zh,
     ...workboardTranslations.zh,
     ...workspaceDisplayTranslations.zh,
   },
   en: {
     ...askUserQuestionTranslations.en,
+    ...appPluginTranslations.en,
     ...appTranslations.en,
     ...assistantTranslations.en,
     ...authTranslations.en,
@@ -69,7 +66,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...browserInterventionTranslations.en,
     ...browserRecordingTranslations.en,
     ...chatTranslations.en,
-    ...collaborationTranslations.en,
     ...filePreviewTranslations.en,
     ...getHomeGreetingTranslations('en'),
     ...initializationTranslations.en,
@@ -84,8 +80,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...settingsTranslations.en,
     ...skillWorkshopTranslations.en,
     ...swarmTranslations.en,
-    ...swarmWorkflowTranslations.en,
-    ...teamDiscussionTranslations.en,
     ...terminalTranslations.en,
     ...workboardTranslations.en,
     ...workspaceDisplayTranslations.en,

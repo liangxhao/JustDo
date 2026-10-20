@@ -2,7 +2,7 @@ import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
 import { describe, expect, test } from 'vitest';
 
 import {
-  isTeamDiscussionReplyMirror,
+  isPluginReplyMirror,
   normalizeMessage,
 } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 
@@ -120,7 +120,7 @@ describe('ordered assistant webpage embeds', () => {
   });
 });
 
-describe('isTeamDiscussionReplyMirror', () => {
+describe('isPluginReplyMirror', () => {
   const mirror = {
     role: 'assistant',
     provider: 'openclaw',
@@ -134,10 +134,10 @@ describe('isTeamDiscussionReplyMirror', () => {
   };
 
   test('recognizes public mirrors independently of text, speaker or envelope', () => {
-    expect(isTeamDiscussionReplyMirror(mirror)).toBe(true);
-    expect(isTeamDiscussionReplyMirror({ message: mirror })).toBe(true);
+    expect(isPluginReplyMirror(mirror)).toBe(true);
+    expect(isPluginReplyMirror({ message: mirror })).toBe(true);
     expect(
-      isTeamDiscussionReplyMirror({
+      isPluginReplyMirror({
         ...mirror,
         content: [],
         openclawDelivery: { speakerAgentId: 'main', mediaUrls: ['report.pdf'] },
@@ -154,7 +154,7 @@ describe('isTeamDiscussionReplyMirror', () => {
     { openclawDelivery: { speakerAgentId: '' } },
     { openclawDelivery: { speakerAgentId: 'invalid:agent' } },
   ])('keeps ordinary or incomplete records with the same text: %o', fields => {
-    expect(isTeamDiscussionReplyMirror({ ...mirror, ...fields })).toBe(false);
+    expect(isPluginReplyMirror({ ...mirror, ...fields })).toBe(false);
   });
 
   test.each([
@@ -170,7 +170,7 @@ describe('isTeamDiscussionReplyMirror', () => {
     'justdo-team:room:invalid/discussion:1',
   ])('keeps mirrors without an exact group output locator: %s', sourceMessageId => {
     expect(
-      isTeamDiscussionReplyMirror({
+      isPluginReplyMirror({
         ...mirror,
         openclawDeliveryMirror: { ...mirror.openclawDeliveryMirror, sourceMessageId },
       }),

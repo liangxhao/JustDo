@@ -6,10 +6,8 @@ import { afterEach, expect, test, vi } from 'vitest';
 import type { ExtensionEnablement } from '@/features/plugins/extensions/useExtensionEnablement';
 import { i18nService } from '@/services/i18n';
 
-import { buildAgentTeamFeature } from './AgentTeamSelector';
 import ComposerFeatureMenu, { type ComposerFeatureItem } from './ComposerFeatureMenu';
 import { buildComposerFeatures } from './composerFeatures';
-import { buildSwarmWorkflowComposerFeature } from './swarmWorkflowComposerFeature';
 
 afterEach(cleanup);
 const item = (id: string, disabled = false): ComposerFeatureItem => ({
@@ -18,6 +16,30 @@ const item = (id: string, disabled = false): ComposerFeatureItem => ({
   icon: <span />,
   disabled,
   onSelect: vi.fn(),
+});
+
+test('uses the declared group back label without inserting a root section inside its submenu', () => {
+  const child = { ...item('Choice'), role: 'menuitemradio' as const };
+  render(
+    <ComposerFeatureMenu
+      label="Features"
+      backLabel="Generic back"
+      items={[
+        {
+          ...item('Group'),
+          section: 'Plugins',
+          backLabel: 'Back to features',
+          children: [child],
+        },
+      ]}
+    />,
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Features' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Group' }));
+  expect(screen.getByRole('button', { name: 'Back to features' }).title).toBe('Back to features');
+  expect(screen.queryByText('Plugins')).toBeNull();
+  fireEvent.click(screen.getByRole('menuitemradio', { name: 'Choice' }));
+  expect(child.onSelect).toHaveBeenCalledOnce();
 });
 test.each(['click', 'ArrowDown', 'ArrowUp'])(
   'notifies discovery only when the menu is opened with %s',
@@ -285,3 +307,31 @@ test('an open submenu uses the current mode and callback after rerendering', () 
   expect(select).toHaveBeenCalledWith('group');
   expect(oldSelect).not.toHaveBeenCalled();
 });
+
+// Synthetic contributions exercise the shared menu independently of any bundled plugin.
+function buildAgentTeamFeature(value: 'group' | 'task', select: (value: 'group' | 'task') => void) {
+  return {
+    ...item('Team'),
+    extensionId: 'agent-team',
+    children: ['group', 'task'].map(mode => ({
+      ...item(mode),
+      role: 'menuitemradio' as const,
+      selected: value === mode,
+      onSelect: () => select(mode as 'group' | 'task'),
+    })),
+  };
+}
+function buildSwarmWorkflowComposerFeature({
+  selectSwarmWorkflow,
+  swarmWorkflow,
+}: {
+  selectSwarmWorkflow: (options: { mode: 'auto'; verify: true }) => void;
+  swarmWorkflow?: { mode: 'auto'; verify: true };
+}) {
+  return {
+    ...item('Swarm Workflow'),
+    extensionId: 'swarm-workflow',
+    selected: !!swarmWorkflow,
+    onSelect: () => selectSwarmWorkflow({ mode: 'auto', verify: true }),
+  };
+}

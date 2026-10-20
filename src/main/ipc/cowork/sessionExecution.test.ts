@@ -5,9 +5,11 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+import type { CollaborationCoordinator } from '../../../../plugins/extensions/agent-team/host/collaboration/collaborationCoordinator';
+import type { AgentTeamLaunchCoordinator } from '../../../../plugins/extensions/agent-team/host/launch/agentTeamLaunchCoordinator';
 import { appendAgentTeamInstruction } from '../../../../plugins/extensions/agent-team/prompt/agentTeamPrompt';
+import { behaviorSessionParticipants } from '../../../../tests/plugin-host/mainBehaviorParticipants';
 import { SessionStartIpc } from '../../../shared/cowork/sessionStart';
-import type { AgentTeamLaunchCoordinator } from '../../cowork/agent-team/agentTeamLaunchCoordinator';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 
@@ -40,7 +42,7 @@ vi.mock('electron', () => ({
   },
 }));
 
-import { registerCoworkSessionExecutionHandlers } from './sessionExecution';
+import { registerCoworkSessionExecutionHandlers as registerGenericHandlers } from './sessionExecution';
 
 test('rejects startup input before waiting for config or starting the engine', async () => {
   const waitForConfigUpdates = vi.fn(() => new Promise<void>(() => {}));
@@ -1030,3 +1032,18 @@ describe('homepage App adoption at first-message admission', () => {
     expect(f.request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
   });
 });
+function registerCoworkSessionExecutionHandlers(
+  input: Parameters<typeof registerGenericHandlers>[0] & {
+    getCollaboration?: () => CollaborationCoordinator;
+    getAgentTeamLaunch?: () => AgentTeamLaunchCoordinator;
+  },
+) {
+  const collaboration = input.getCollaboration?.();
+  const launch = input.getAgentTeamLaunch?.();
+  registerGenericHandlers({
+    ...input,
+    ...(collaboration || launch
+      ? { getSessionPlugins: () => behaviorSessionParticipants(collaboration, launch) }
+      : {}),
+  });
+}

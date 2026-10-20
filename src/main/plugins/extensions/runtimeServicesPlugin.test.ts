@@ -27,6 +27,7 @@ const sdk = vi.hoisted(() => ({
   fetchWithSsrFGuard: vi.fn(),
   ssrfPolicyFromHttpBaseUrlAllowedHostname: vi.fn(() => ({ allowedHostnames: ['example.test'] })),
 }));
+vi.mock('openclaw/plugin-sdk/plugin-runtime', () => ({}));
 
 vi.mock('openclaw/plugin-sdk/codex-session-transcript-runtime', () => ({
   withCodexSessionTranscriptMirrorWriteLock: vi.fn(),

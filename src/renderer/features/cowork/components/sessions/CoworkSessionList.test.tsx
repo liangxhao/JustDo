@@ -2,8 +2,6 @@
 
 import type { DragEndEvent } from '@dnd-kit/core';
 import { configureStore } from '@reduxjs/toolkit';
-import type { CollaborationRoomEntry } from '@shared/cowork/agent-team/collaboration';
-import type { TeamDiscussionRoom } from '@shared/cowork/agent-team/teamDiscussion';
 import { CoworkSessionSource } from '@shared/cowork/sessionSource';
 import { ExternalSessionSource, ExternalSessionStatus } from '@shared/integrations/externalSession';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -40,22 +38,25 @@ vi.mock('@dnd-kit/core', async importOriginal => {
 });
 
 const activities = vi.hoisted(() => ({
-  collaborations: [] as CollaborationRoomEntry[],
-  discussions: [] as TeamDiscussionRoom[],
-  workflows: {} as Record<string, boolean>,
+  presentation: {} as Record<string, { status?: 'running'; updatedAt?: number }>,
+  revision: 0,
+  listeners: new Set<() => void>(),
 }));
-vi.mock('@/features/cowork/components/collaboration/CollaborationPanel', () => ({
-  useCollaborationRooms: () => activities.collaborations,
+vi.mock('@/features/plugins/app/runtime', () => ({
+  appBrowserRegistry: {
+    subscribe: (listener: () => void) => {
+      activities.listeners.add(listener);
+      return () => activities.listeners.delete(listener);
+    },
+    getContextRevision: () => activities.revision,
+    sessionPresentation: (id: string) => activities.presentation[id] ?? {},
+    sessionNavigation: () => undefined,
+  },
 }));
-vi.mock('@/features/cowork/components/discussions/teamDiscussionNavigation', () => ({
-  useTeamDiscussionRooms: () => activities.discussions,
-}));
-vi.mock('@/features/plugins/extensions/useExtensionEnablement', () => ({
-  useExtensionAvailability: () => ({ enabled: false, disabledRevision: 0 }),
-}));
-vi.mock('@/features/cowork/components/swarm-workflow/useSwarmWorkflowActivity', () => ({
-  useSwarmWorkflowActivity: () => activities.workflows,
-}));
+const notifyPresentation = () => {
+  activities.revision++;
+  activities.listeners.forEach(listener => listener());
+};
 vi.mock('@/features/cowork/coworkService', () => ({
   coworkService: {
     ensureSessionSummaries: vi.fn(async () => true),
@@ -69,9 +70,7 @@ vi.mock('@/services/i18n', () => ({
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
-  activities.collaborations = [];
-  activities.discussions = [];
-  activities.workflows = {};
+  activities.presentation = {};
   vi.mocked(coworkService.ensureSessionSummaries).mockReset().mockResolvedValue(true);
   vi.mocked(coworkService.moveSessionToGroup).mockReset().mockResolvedValue(true);
   dragHandlers.onDragEnd = undefined;
@@ -80,31 +79,41 @@ afterEach(() => {
 describe('session list pages', () => {
   it('keeps complete counts while requesting only expanded date pages and retains page size after collapse', async () => {
     const now = Date.now();
-    const historical = Array.from({ length: 45 }, (_, index) => summary(
-      `Historical ${index + 1}`, now - 12 * 86_400_000 - index,
-    ));
+    const historical = Array.from({ length: 45 }, (_, index) =>
+      summary(`Historical ${index + 1}`, now - 12 * 86_400_000 - index),
+    );
     const today = summary('Today chat', now);
     const sessions = [today, ...historical];
     const directory = sessions.map(({ title: _title, ...entry }) => entry);
     const store = createStore();
     const onVisibleSessionIdsChange = vi.fn();
     const ConnectedList = () => {
-      const summaries = useSelector((state: ReturnType<typeof store.getState>) => state.cowork.sessions);
-      return <CoworkSessionList
-        {...createProps(summaries)}
-        directory={directory}
-        groupRecentSessionsByDate
-        onVisibleSessionIdsChange={onVisibleSessionIdsChange}
-      />;
+      const summaries = useSelector(
+        (state: ReturnType<typeof store.getState>) => state.cowork.sessions,
+      );
+      return (
+        <CoworkSessionList
+          {...createProps(summaries)}
+          directory={directory}
+          groupRecentSessionsByDate
+          onVisibleSessionIdsChange={onVisibleSessionIdsChange}
+        />
+      );
     };
     vi.mocked(coworkService.ensureSessionSummaries).mockImplementation(async ids => {
-      store.dispatch(setSessions([
-        ...store.getState().cowork.sessions,
-        ...sessions.filter(session => ids.includes(session.id)),
-      ]));
+      store.dispatch(
+        setSessions([
+          ...store.getState().cowork.sessions,
+          ...sessions.filter(session => ids.includes(session.id)),
+        ]),
+      );
       return true;
     });
-    render(<Provider store={store}><ConnectedList /></Provider>);
+    render(
+      <Provider store={store}>
+        <ConnectedList />
+      </Provider>,
+    );
     await waitFor(() => expect(screen.getByText('Today chat')).toBeTruthy());
     expect(coworkService.ensureSessionSummaries).toHaveBeenCalledExactlyOnceWith(['Today chat']);
     const group = screen.getByRole('button', { name: /^Previous 30 Days · 45/ });
@@ -114,7 +123,8 @@ describe('session list pages', () => {
     expect(screen.queryByText('Historical 21')).toBeNull();
     expect(vi.mocked(coworkService.ensureSessionSummaries).mock.calls[1][0]).toHaveLength(20);
     expect(onVisibleSessionIdsChange).toHaveBeenLastCalledWith([
-      today.id, ...historical.slice(0, 20).map(session => session.id),
+      today.id,
+      ...historical.slice(0, 20).map(session => session.id),
     ]);
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
     await waitFor(() => expect(screen.getByText('Historical 40')).toBeTruthy());
@@ -133,16 +143,22 @@ describe('session list pages', () => {
 
   it('pages manual and source groups separately while keeping the full header totals', () => {
     const store = createStore();
-    store.dispatch(setGroups([{ id: 'work', name: 'Work', color: '#359daf', sortOrder: 0, createdAt: 1 }]));
+    store.dispatch(
+      setGroups([{ id: 'work', name: 'Work', color: '#359daf', sortOrder: 0, createdAt: 1 }]),
+    );
     const manual = Array.from({ length: 24 }, (_, index) => ({
-      ...summary(`Manual ${index + 1}`, 100 - index), groupId: 'work',
+      ...summary(`Manual ${index + 1}`, 100 - index),
+      groupId: 'work',
     }));
     const browser = Array.from({ length: 25 }, (_, index) => ({
-      ...summary(`Browser ${index + 1}`, 100 - index), source: CoworkSessionSource.BrowserExtension,
+      ...summary(`Browser ${index + 1}`, 100 - index),
+      source: CoworkSessionSource.BrowserExtension,
     }));
-    render(<Provider store={store}>
-      <CoworkSessionList {...createProps([...manual, ...browser])} groupRecentSessionsByDate />
-    </Provider>);
+    render(
+      <Provider store={store}>
+        <CoworkSessionList {...createProps([...manual, ...browser])} groupRecentSessionsByDate />
+      </Provider>,
+    );
     const manualHeader = screen.getByText('Work').closest('.session-group-header')!;
     const browserHeader = screen.getByRole('button', { name: /^Chrome\s*25$/ });
     fireEvent.click(manualHeader);
@@ -160,18 +176,30 @@ describe('session list pages', () => {
 
   it('preserves loaded rows after a page failure and retries only missing summaries', async () => {
     const now = Date.now();
-    const sessions = Array.from({ length: 25 }, (_, index) => summary(
-      `History ${index + 1}`, now - 12 * 86_400_000 - index,
-    ));
+    const sessions = Array.from({ length: 25 }, (_, index) =>
+      summary(`History ${index + 1}`, now - 12 * 86_400_000 - index),
+    );
     const directory = sessions.map(({ title: _title, ...entry }) => entry);
     const store = createStore();
     store.dispatch(setSessions(sessions.slice(0, 20)));
     const ConnectedList = () => {
-      const summaries = useSelector((state: ReturnType<typeof store.getState>) => state.cowork.sessions);
-      return <CoworkSessionList {...createProps(summaries)} directory={directory} groupRecentSessionsByDate />;
+      const summaries = useSelector(
+        (state: ReturnType<typeof store.getState>) => state.cowork.sessions,
+      );
+      return (
+        <CoworkSessionList
+          {...createProps(summaries)}
+          directory={directory}
+          groupRecentSessionsByDate
+        />
+      );
     };
     vi.mocked(coworkService.ensureSessionSummaries).mockResolvedValueOnce(false);
-    render(<Provider store={store}><ConnectedList /></Provider>);
+    render(
+      <Provider store={store}>
+        <ConnectedList />
+      </Provider>,
+    );
     fireEvent.click(screen.getByRole('button', { name: /^Previous 30 Days · 25/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy());
@@ -193,14 +221,16 @@ describe('session list pages', () => {
     const member = summary('Hidden member', now);
     const store = createStore();
     store.dispatch(setSessionDirectory([anchor, member]));
-    activities.collaborations = [{
-      id: 'team', anchorSessionId: anchor.id,
-      members: [{ agentId: 'worker', sessionId: member.id, sessionKey: 'member-key' }],
-      rounds: [],
-    }];
-    render(<Provider store={store}>
-      <CoworkSessionList {...createProps([anchor])} directory={[anchor]} groupRecentSessionsByDate />
-    </Provider>);
+    activities.presentation[anchor.id] = { updatedAt: member.updatedAt };
+    render(
+      <Provider store={store}>
+        <CoworkSessionList
+          {...createProps([anchor])}
+          directory={[anchor]}
+          groupRecentSessionsByDate
+        />
+      </Provider>,
+    );
     const today = screen.getByRole('button', { name: /^Today · 1/ }).closest('section')!;
     expect(within(today).getByText(anchor.title)).toBeTruthy();
     expect(screen.queryByText(member.title)).toBeNull();
@@ -256,8 +286,14 @@ describe('fixed source group membership', () => {
   const renderWithManualGroup = (session: CoworkSessionSummary) => {
     const store = createStore();
     store.dispatch(setSessions([session]));
-    store.dispatch(setGroups([{ id: 'work', name: 'Work', color: '#359daf', sortOrder: 0, createdAt: 1 }]));
-    render(<Provider store={store}><CoworkSessionList {...createProps([session])} /></Provider>);
+    store.dispatch(
+      setGroups([{ id: 'work', name: 'Work', color: '#359daf', sortOrder: 0, createdAt: 1 }]),
+    );
+    render(
+      <Provider store={store}>
+        <CoworkSessionList {...createProps([session])} />
+      </Provider>,
+    );
     return store;
   };
 
@@ -265,16 +301,21 @@ describe('fixed source group membership', () => {
     { source: CoworkSessionSource.BrowserExtension },
     {
       external: {
-        origin: ExternalSessionSource.Cli, readOnly: true as const,
-        status: ExternalSessionStatus.Completed, sessionKey: 'key',
+        origin: ExternalSessionSource.Cli,
+        readOnly: true as const,
+        status: ExternalSessionStatus.Completed,
+        sessionKey: 'key',
       },
     },
-  ])('rejects dragging a source conversation to a manual group or ungrouped: %j', async metadata => {
-    renderWithManualGroup({ ...summary('Source chat', 1), ...metadata });
-    await dragTo('Source chat', 'group-work');
-    await dragTo('Source chat', 'ungrouped');
-    expect(coworkService.moveSessionToGroup).not.toHaveBeenCalled();
-  });
+  ])(
+    'rejects dragging a source conversation to a manual group or ungrouped: %j',
+    async metadata => {
+      renderWithManualGroup({ ...summary('Source chat', 1), ...metadata });
+      await dragTo('Source chat', 'group-work');
+      await dragTo('Source chat', 'ungrouped');
+      expect(coworkService.moveSessionToGroup).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(['cli', 'browserExtension', 'missing'])(
     'rejects moving a regular conversation into a nonmanual target %s',
@@ -290,7 +331,10 @@ describe('fixed source group membership', () => {
     const store = renderWithManualGroup(summary('Regular chat', 1));
     vi.mocked(coworkService.moveSessionToGroup).mockResolvedValue(false);
     await dragTo('Regular chat', 'group-work');
-    expect(coworkService.moveSessionToGroup).toHaveBeenCalledExactlyOnceWith('Regular chat', 'work');
+    expect(coworkService.moveSessionToGroup).toHaveBeenCalledExactlyOnceWith(
+      'Regular chat',
+      'work',
+    );
     expect(store.getState().cowork.sessions[0].groupId).toBeUndefined();
   });
 
@@ -346,18 +390,11 @@ it.each([1, 3, 15, 60])(
 );
 
 it('shows source activity for background Team, discussions and Swarm without changing main execution state', () => {
-  activities.collaborations = [
-    {
-      id: 'team',
-      anchorSessionId: 'Team',
-      members: [{ agentId: 'worker', sessionId: 'peer', sessionKey: 'peer-key' }],
-      rounds: [{ id: 'batch', state: 'open', pending: 1 }],
-    },
-  ];
-  activities.discussions = [
-    { id: 'group', sourceSessionId: 'Discussion', state: 'running' } as TeamDiscussionRoom,
-  ];
-  activities.workflows = { Swarm: true };
+  activities.presentation = {
+    Team: { status: 'running' },
+    Discussion: { status: 'running' },
+    Swarm: { status: 'running' },
+  };
   const store = createStore();
   store.dispatch(
     setSessionRuntimeSnapshot({
@@ -377,7 +414,7 @@ it('shows source activity for background Team, discussions and Swarm without cha
       <CoworkSessionList {...props} />
     </Provider>
   );
-  const { rerender } = render(view());
+  render(view());
   for (const id of ['Team', 'Discussion', 'Swarm']) {
     expect(
       within(screen.getByRole('button', { name: id })).getByTitle(
@@ -391,76 +428,38 @@ it('shows source activity for background Team, discussions and Swarm without cha
     ),
   ).toBeNull();
   expect(store.getState().cowork.sessionMainRuntimeActivity).toEqual({});
-  activities.collaborations = [];
-  activities.discussions = [];
-  activities.workflows = {};
-  rerender(view());
+  act(() => {
+    activities.presentation = {};
+    notifyPresentation();
+  });
   expect(screen.queryByTitle(translations.en.coworkStatusRunning)).toBeNull();
 });
 
-it.each(['open', 'closing'] as const)(
-  'follows actual Team activity while preserving a historical %s delivery without its terminal receipt',
-  state => {
-    const historical: CollaborationRoomEntry = {
-      id: 'team',
-      anchorSessionId: 'Team',
-      members: [
-        { agentId: 'source', sessionId: 'Team', sessionKey: 'source-key' },
-        { agentId: 'worker', sessionId: 'peer', sessionKey: 'peer-key' },
-      ],
-      rounds: [{ id: 'historical', state, pending: 1 }],
-    };
-    activities.collaborations = [historical];
-    const store = createStore();
-    store.dispatch(setSessions([summary('Team', 1), summary('peer', 1)]));
-    const props = createProps([summary('Team', 1)]);
-    render(
-      <Provider store={store}>
-        <CoworkSessionList {...props} />
-      </Provider>,
+it('updates plugin activity without granting main execution state', () => {
+  const store = createStore();
+  const props = createProps([summary('Source', 1)]);
+  render(
+    <Provider store={store}>
+      <CoworkSessionList {...props} />
+    </Provider>,
+  );
+  const indicator = () =>
+    within(screen.getByRole('button', { name: 'Source' })).queryByTitle(
+      translations.en.coworkStatusRunning,
     );
-    const indicator = () =>
-      within(screen.getByRole('button', { name: 'Team' })).queryByTitle(
-        translations.en.coworkStatusRunning,
-      );
-    expect(indicator()).toBeNull();
-
-    act(() => {
-      store.dispatch(
-        setSessionRuntimeSnapshot({
-          sessionId: 'peer',
-          snapshot: {
-            revision: 1,
-            known: true,
-            mainRunning: true,
-            subagentRunning: false,
-            running: true,
-          },
-        }),
-      );
-    });
-    expect(indicator()).toBeTruthy();
-    expect(store.getState().cowork.sessionMainRuntimeActivity.Team).toBeUndefined();
-
-    act(() => {
-      store.dispatch(
-        setSessionRuntimeSnapshot({
-          sessionId: 'peer',
-          snapshot: {
-            revision: 2,
-            known: true,
-            mainRunning: false,
-            subagentRunning: false,
-            running: false,
-          },
-        }),
-      );
-    });
-    expect(indicator()).toBeNull();
-    expect(historical.rounds).toEqual([{ id: 'historical', state, pending: 1 }]);
-    expect(store.getState().cowork.sessionMainRuntimeActivity).toEqual({});
-  },
-);
+  expect(indicator()).toBeNull();
+  act(() => {
+    activities.presentation.Source = { status: 'running' };
+    notifyPresentation();
+  });
+  expect(indicator()).toBeTruthy();
+  expect(store.getState().cowork.sessionMainRuntimeActivity).toEqual({});
+  act(() => {
+    activities.presentation = {};
+    notifyPresentation();
+  });
+  expect(indicator()).toBeNull();
+});
 
 describe('sidebar browser extension group', () => {
   it('shows only Chrome and CLI source groups and keeps browser sessions out of manual groups', () => {
@@ -494,12 +493,16 @@ describe('sidebar browser extension group', () => {
     expect(screen.queryByText('Browser newer')).toBeNull();
     expect(screen.queryByText('Browser older')).toBeNull();
     expect(screen.getByText('Desktop chat')).toBeTruthy();
-    expect(
-      screen.getByRole('button', { name: /^CLI\s*1$/ }).getAttribute('aria-expanded'),
-    ).toBe('false');
+    expect(screen.getByRole('button', { name: /^CLI\s*1$/ }).getAttribute('aria-expanded')).toBe(
+      'false',
+    );
     expect(screen.queryByText('External clients')).toBeNull();
-    expect(screen.getAllByRole('button').filter(button => button.classList.contains('session-group-header'))
-      .map(button => button.textContent)).toEqual(['CLI1', 'Chrome2', 'Work0']);
+    expect(
+      screen
+        .getAllByRole('button')
+        .filter(button => button.classList.contains('session-group-header'))
+        .map(button => button.textContent),
+    ).toEqual(['CLI1', 'Chrome2', 'Work0']);
 
     fireEvent.click(browserGroup);
     const panel = browserGroup.nextElementSibling as HTMLElement;
@@ -525,7 +528,11 @@ describe('sidebar browser extension group', () => {
     };
     const store = createStore();
     const props = { ...createProps([cli]), currentSessionId: cli.id };
-    render(<Provider store={store}><CoworkSessionList {...props} /></Provider>);
+    render(
+      <Provider store={store}>
+        <CoworkSessionList {...props} />
+      </Provider>,
+    );
 
     const group = screen.getByRole('button', { name: /^CLI\s*1$/ });
     expect(group.getAttribute('aria-expanded')).toBe('true');

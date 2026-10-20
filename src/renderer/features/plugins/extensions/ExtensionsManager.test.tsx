@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 
-import { defaultAgentTeamSettings } from '@shared/cowork/agent-team/agentTeamSettings';
 import type {
   ExtensionChangedEvent,
   ExtensionImportResult,
@@ -13,9 +12,40 @@ import { PluginOperationStage } from '@shared/plugins/pluginOperation';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { OPEN_TEAM_RECORDS } from '@/features/cowork/components/display/summary/agentTeamHistory';
 import PluginOperationFeedback from '@/features/plugins/shared/PluginOperationFeedback';
 import { getPluginOperationOwner } from '@/features/plugins/shared/pluginOperationService';
+
+import type { AppView } from '../app/browserRegistry';
+const app = vi.hoisted(() => ({
+  views: [] as AppView[],
+  listeners: new Set<() => void>(),
+}));
+vi.mock('@/features/plugins/app/runtime', () => ({
+  appBrowserRegistry: {
+    subscribe: (listener: () => void) => {
+      app.listeners.add(listener);
+      return () => app.listeners.delete(listener);
+    },
+    getViews: () => app.views,
+  },
+}));
+function publishAppViews(epoch: string | null) {
+  app.views = epoch
+    ? ['settings', 'history'].map(kind => ({
+        id: kind,
+        pluginId: extension.id,
+        epoch,
+        slot: 'plugin.' + kind,
+        labelKey: 'example.' + kind,
+        component: ({ onClose }: { onClose?: () => void }) => (
+          <div role="dialog" aria-label={'example.' + kind}>
+            <button onClick={onClose}>closePlugin</button>
+          </div>
+        ),
+      }))
+    : [];
+  app.listeners.forEach(listener => listener());
+}
 
 import ExtensionsManager from './ExtensionsManager';
 
@@ -56,9 +86,12 @@ vi.mock('@/features/plugins/marketplace/usePluginMarketplace', async importOrigi
 
 vi.mock('@/services/i18n', () => ({
   i18nService: {
-    t: (key: string) => key === 'extensionDeleteSuccess'
-      ? 'Extension "{name}" deleted'
-      : key === 'pluginImportPartialSummary' ? '{successCount} succeeded and {failureCount} failed.' : key,
+    t: (key: string) =>
+      key === 'extensionDeleteSuccess'
+        ? 'Extension "{name}" deleted'
+        : key === 'pluginImportPartialSummary'
+          ? '{successCount} succeeded and {failureCount} failed.'
+          : key,
     getLanguage: () => 'en',
   },
 }));
@@ -108,32 +141,43 @@ const deferred = <T,>() => {
 test.each([1, 2])('reports the real reason and counts for %s rejected imports', async count => {
   const paths = ['C:/imports/first', 'C:/imports/second'].slice(0, count);
   const importPath = vi.fn().mockResolvedValue({
-    success: false, error: 'Invalid native package', failedStage: 'validating',
+    success: false,
+    error: 'Invalid native package',
+    failedStage: 'validating',
   });
   Object.defineProperty(window, 'electron', {
     configurable: true,
     value: {
       extensions: {
         list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
-        importPath, onChanged: () => () => undefined,
+        importPath,
+        onChanged: () => () => undefined,
       },
-      dialog: { selectFolders: vi.fn().mockResolvedValue({
-        success: true, paths,
-      }) },
+      dialog: {
+        selectFolders: vi.fn().mockResolvedValue({
+          success: true,
+          paths,
+        }),
+      },
     },
   });
   render(<ExtensionsManager />);
   fireEvent.click(await screen.findByRole('button', { name: 'importExtension' }));
   fireEvent.click(screen.getByRole('button', { name: /selectExtensionFolders/ }));
-  await waitFor(() => expect(getPluginOperationOwner().failureSnapshot()).toEqual([
-    expect.objectContaining({
-      label: count === 1 ? 'first' : 'importExtension',
-      message: count === 1 ? 'Invalid native package' : '0 succeeded and 2 failed.',
-      items: paths.map(sourcePath => expect.objectContaining({
-        label: sourcePath.split('/').pop(), failedStage: 'validating',
-      })),
-    }),
-  ]));
+  await waitFor(() =>
+    expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+      expect.objectContaining({
+        label: count === 1 ? 'first' : 'importExtension',
+        message: count === 1 ? 'Invalid native package' : '0 succeeded and 2 failed.',
+        items: paths.map(sourcePath =>
+          expect.objectContaining({
+            label: sourcePath.split('/').pop(),
+            failedStage: 'validating',
+          }),
+        ),
+      }),
+    ]),
+  );
   expect(importPath).toHaveBeenCalledTimes(count);
   cleanup();
 });
@@ -269,10 +313,49 @@ test('keeps accumulated errors when the next review response arrives after unmou
 describe('ExtensionsManager extension toggle', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    app.views = [];
   });
 
   afterEach(() => {
     cleanup();
+  });
+
+  test('recovers an unavailable catalog on Native readiness without clearing observed cards', async () => {
+    const ready = new Set<(snapshots: []) => void>();
+    const release = vi.fn();
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({ success: false, error: 'Gateway unavailable' })
+      .mockResolvedValue({ success: true, extensions: [extension] });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list,
+          onChanged: vi.fn(() => vi.fn()),
+          onImportProgress: vi.fn(() => vi.fn()),
+        },
+        appPlugins: {
+          snapshot: async () => [],
+          onChanged: (listener: (snapshots: []) => void) => {
+            ready.add(listener);
+            return () => {
+              ready.delete(listener);
+              release();
+            };
+          },
+        },
+      },
+    });
+    const view = render(<ExtensionsManager />);
+    await screen.findByText('Gateway unavailable');
+    act(() => ready.forEach(listener => listener([])));
+    await screen.findByText(extension.name);
+    act(() => ready.forEach(listener => listener([])));
+    expect(list).toHaveBeenCalledTimes(2);
+    view.unmount();
+    expect(release).toHaveBeenCalled();
+    expect(ready.size).toBe(0);
   });
 
   test.each([true, false])(
@@ -425,6 +508,49 @@ describe('ExtensionsManager extension toggle', () => {
       ).toBeTruthy();
       expect(setEnabled).not.toHaveBeenCalled();
       expect(screen.queryByRole('heading', { name: id, level: 2 })).toBeNull();
+    },
+  );
+
+  test.each(['stt-local-cli', 'tts-local-cli'])(
+    'closes %s model settings only after a successful inventory confirms removal',
+    async id => {
+      const installed = { ...extension, id, name: id, enabled: true };
+      const list = vi.fn().mockResolvedValue({ success: true, extensions: [installed] });
+      let changed!: (event: ExtensionChangedEvent) => void;
+      Object.defineProperty(window, 'electron', {
+        configurable: true,
+        value: {
+          extensions: {
+            list,
+            onChanged: vi.fn((listener: typeof changed) => {
+              changed = listener;
+              return vi.fn();
+            }),
+            onImportProgress: vi.fn(() => vi.fn()),
+          },
+          localSpeechModels: {
+            list: vi.fn(async () => ({ supported: true, models: [] })),
+            onChanged: vi.fn(() => vi.fn()),
+          },
+        },
+      });
+      render(<ExtensionsManager />);
+      const settingsName = `${id} · speechExtensionModelSettings`;
+      fireEvent.click(await screen.findByRole('button', { name: settingsName }));
+      expect(screen.getByRole('dialog', { name: settingsName })).toBeTruthy();
+
+      list.mockResolvedValue({ success: true, extensions: [{ ...installed, enabled: false }] });
+      await act(async () => changed({ extensionId: id, enabled: false }));
+      expect(screen.getByRole('dialog', { name: settingsName })).toBeTruthy();
+
+      list.mockResolvedValue({ success: false, extensions: [], error: 'Inventory unavailable' });
+      await act(async () => changed({ extensionId: id, enabled: false }));
+      expect(screen.getByRole('dialog', { name: settingsName })).toBeTruthy();
+
+      list.mockResolvedValue({ success: true, extensions: [] });
+      await act(async () => changed({ extensionId: id, enabled: false }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: settingsName })).toBeNull());
+      expect(list).toHaveBeenCalledTimes(4);
     },
   );
 
@@ -632,138 +758,72 @@ describe('ExtensionsManager extension toggle', () => {
   );
 
   test.each([false, true])(
-    'exposes Agent Team records and settings only with enabled=%s',
-    async enabled => {
-      const setEnabled = vi.fn();
-      const received = vi.fn();
+    'exposes declared settings and history only while admitted=%s',
+    async admitted => {
+      publishAppViews(admitted ? 'epoch-1' : null);
       Object.defineProperty(window, 'electron', {
         configurable: true,
         value: {
           extensions: {
-            list: vi.fn(async () => ({
-              success: true,
-              extensions: [{ ...extension, id: 'agent-team', name: 'Agent Team', enabled }],
-            })),
-            setEnabled,
+            list: vi.fn(async () => ({ success: true, extensions: [extension] })),
             onChanged: vi.fn(() => vi.fn()),
           },
         },
       });
-      window.addEventListener(OPEN_TEAM_RECORDS, received);
-      try {
-        render(<ExtensionsManager />);
-        await screen.findByText('Agent Team');
-        if (!enabled) {
-          expect(screen.queryByRole('button', { name: 'teamAllRecords' })).toBeNull();
-          expect(screen.queryByRole('button', { name: 'agentTeamSettings' })).toBeNull();
-          expect(received).not.toHaveBeenCalled();
-          expect(setEnabled).not.toHaveBeenCalled();
-          return;
-        }
-        expect(screen.getByRole('button', { name: 'agentTeamSettings' })).toBeTruthy();
-        fireEvent.click(await screen.findByRole('button', { name: 'teamAllRecords' }));
-        expect(received).toHaveBeenCalledTimes(1);
-        expect(received.mock.calls[0][0].detail).toBe(document);
-        expect(setEnabled).not.toHaveBeenCalled();
-        expect(screen.queryByRole('heading', { name: 'Agent Team', level: 2 })).toBeNull();
-      } finally {
-        window.removeEventListener(OPEN_TEAM_RECORDS, received);
+      render(<ExtensionsManager />);
+      await screen.findByText(extension.name);
+      expect(screen.queryByRole('button', { name: 'example.settings' }) !== null).toBe(admitted);
+      expect(screen.queryByRole('button', { name: 'example.history' }) !== null).toBe(admitted);
+      if (admitted) {
+        fireEvent.click(screen.getByRole('button', { name: 'example.history' }));
+        expect(screen.getByRole('dialog', { name: 'example.history' })).toBeTruthy();
       }
     },
   );
 
-  test('opens Agent Team records from details after closing the details dialog', async () => {
-    const received = vi.fn();
+  test('keeps a plugin dialog mounted when its extension details close', async () => {
+    publishAppViews('epoch-1');
     Object.defineProperty(window, 'electron', {
       configurable: true,
       value: {
         extensions: {
-          list: vi.fn(async () => ({
-            success: true,
-            extensions: [{ ...extension, id: 'agent-team', name: 'Agent Team', enabled: true }],
-          })),
+          list: vi.fn(async () => ({ success: true, extensions: [extension] })),
           onChanged: vi.fn(() => vi.fn()),
         },
       },
     });
-    window.addEventListener(OPEN_TEAM_RECORDS, received);
-    try {
-      render(<ExtensionsManager requestedExtensionId="agent-team" />);
-      await screen.findByRole('heading', { name: 'Agent Team', level: 2 });
-      const history = screen.getAllByRole('button', { name: 'teamAllRecords' });
-      fireEvent.click(history.find(button => button.textContent === 'teamAllRecords')!);
-      expect(received).toHaveBeenCalledTimes(1);
-      expect(received.mock.calls[0][0].detail).toBe(document);
-      expect(screen.queryByRole('heading', { name: 'Agent Team', level: 2 })).toBeNull();
-    } finally {
-      window.removeEventListener(OPEN_TEAM_RECORDS, received);
-    }
+    render(<ExtensionsManager requestedExtensionId={extension.id} />);
+    await screen.findByRole('heading', { name: extension.name, level: 2 });
+    const buttons = screen.getAllByRole('button', { name: 'example.history' });
+    fireEvent.click(buttons[buttons.length - 1]);
+    expect(screen.queryByRole('heading', { name: extension.name, level: 2 })).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'example.history' })).toBeTruthy();
   });
 
-  test('hides disabled Agent Team actions in its details', async () => {
+  test('withdraws an open dialog immediately and never reopens it in a new epoch', async () => {
+    publishAppViews('epoch-1');
     Object.defineProperty(window, 'electron', {
       configurable: true,
       value: {
         extensions: {
-          list: vi.fn(async () => ({
-            success: true,
-            extensions: [{ ...extension, id: 'agent-team', name: 'Agent Team', enabled: false }],
-          })),
+          list: vi.fn(async () => ({ success: true, extensions: [extension] })),
           onChanged: vi.fn(() => vi.fn()),
-        },
-      },
-    });
-    render(<ExtensionsManager requestedExtensionId="agent-team" />);
-    await screen.findByRole('heading', { name: 'Agent Team', level: 2 });
-    expect(screen.queryByRole('button', { name: 'teamAllRecords' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'agentTeamSettings' })).toBeNull();
-  });
-
-  test('closes Team settings immediately on disable and does not reopen them on enable', async () => {
-    let changed!: (event: ExtensionChangedEvent) => void;
-    const disabledRead = deferred<{ success: boolean; extensions: InstalledOpenClawExtension[] }>();
-    const team = { ...extension, id: 'agent-team', name: 'Agent Team', enabled: true };
-    const list = vi
-      .fn()
-      .mockResolvedValueOnce({ success: true, extensions: [team] })
-      .mockReturnValueOnce(disabledRead.promise)
-      .mockResolvedValue({ success: true, extensions: [team] });
-    Object.defineProperty(window, 'electron', {
-      configurable: true,
-      value: {
-        extensions: {
-          list,
-          onChanged: (listener: typeof changed) => {
-            changed = listener;
-            return vi.fn();
-          },
-        },
-        agentTeamSettings: {
-          read: vi.fn(async () => ({
-            success: true,
-            value: { version: 1, revision: 0, value: defaultAgentTeamSettings() },
-          })),
         },
       },
     });
     render(<ExtensionsManager />);
-    fireEvent.click(await screen.findByRole('button', { name: 'agentTeamSettings' }));
-    await screen.findByRole('dialog');
-    act(() => changed({ extensionId: team.id, enabled: false }));
+    fireEvent.click(await screen.findByRole('button', { name: 'example.settings' }));
+    expect(screen.getByRole('dialog', { name: 'example.settings' })).toBeTruthy();
+    act(() => publishAppViews(null));
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'teamAllRecords' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'agentTeamSettings' })).toBeNull();
-    await act(async () => changed({ extensionId: team.id, enabled: true }));
-    await act(async () =>
-      disabledRead.resolve({ success: true, extensions: [{ ...team, enabled: false }] }),
-    );
-    expect(screen.getByRole('button', { name: 'teamAllRecords' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'example.history' })).toBeNull();
+    act(() => publishAppViews('epoch-2'));
+    expect(screen.getByRole('button', { name: 'example.settings' })).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'agentTeamSettings' }));
-    await screen.findByRole('dialog');
-    await act(async () => {
-      changed({ extensionId: team.id, enabled: false });
-      changed({ extensionId: team.id, enabled: true });
+    fireEvent.click(screen.getByRole('button', { name: 'example.settings' }));
+    act(() => {
+      publishAppViews(null);
+      publishAppViews('epoch-3');
     });
     expect(screen.queryByRole('dialog')).toBeNull();
   });
@@ -1139,7 +1199,8 @@ describe('ExtensionsManager extension toggle', () => {
       ],
     });
     const updateConfiguration = vi.fn(async ({ values }: { values: Record<string, string> }) => {
-      if (Object.prototype.hasOwnProperty.call(values, 'serviceUrl')) serviceUrl = values.serviceUrl || undefined;
+      if (Object.prototype.hasOwnProperty.call(values, 'serviceUrl'))
+        serviceUrl = values.serviceUrl || undefined;
       if (values.concurrency) concurrency = Number(values.concurrency);
       if (values.apiKey) credentialConfigured = true;
       return { success: true };
@@ -1179,18 +1240,20 @@ describe('ExtensionsManager extension toggle', () => {
     fireEvent.change(numberInput, { target: { value: '4' } });
     fireEvent.click(screen.getByRole('button', { name: 'save' }));
 
-    await waitFor(() => expect(updateConfiguration).toHaveBeenNthCalledWith(
-      1,
-      {
-        extensionId: extension.id,
-        values: {
-          serviceUrl: 'http://model.internal:8080/v1',
-          apiKey: 'synthetic-ui-key',
-          concurrency: '4',
+    await waitFor(() =>
+      expect(updateConfiguration).toHaveBeenNthCalledWith(
+        1,
+        {
+          extensionId: extension.id,
+          values: {
+            serviceUrl: 'http://model.internal:8080/v1',
+            apiKey: 'synthetic-ui-key',
+            concurrency: '4',
+          },
         },
-      },
-      { requestId: expect.any(String) },
-    ));
+        { requestId: expect.any(String) },
+      ),
+    );
     await waitFor(() => expect(credentialInput.value).toBe(''));
     expect(urlInput.value).toBe('http://model.internal:8080/v1');
     expect(numberInput.value).toBe('4');
@@ -1207,11 +1270,13 @@ describe('ExtensionsManager extension toggle', () => {
     fireEvent.change(urlInput, { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: 'save' }));
 
-    await waitFor(() => expect(updateConfiguration).toHaveBeenNthCalledWith(
-      2,
-      { extensionId: extension.id, values: { serviceUrl: '', concurrency: '4' } },
-      { requestId: expect.any(String) },
-    ));
+    await waitFor(() =>
+      expect(updateConfiguration).toHaveBeenNthCalledWith(
+        2,
+        { extensionId: extension.id, values: { serviceUrl: '', concurrency: '4' } },
+        { requestId: expect.any(String) },
+      ),
+    );
     await screen.findByRole('status');
     expect(urlInput.value).toBe('');
     expect((screen.getByLabelText('API credential') as HTMLInputElement).placeholder).toBe(
@@ -1279,24 +1344,28 @@ describe('ExtensionsManager extension toggle', () => {
     let managed = true;
     const list = vi.fn(async () => ({
       success: true,
-      extensions: [{
-        ...extension,
-        id: 'typesafe',
-        name: 'TypeSafe AI',
-        enabled: true,
-        origin: 'bundled',
-        managed,
-        canToggle: !managed,
-        configurationFields: [{
-          path: 'serviceUrl',
-          label: 'Service URL',
-          type: 'string' as const,
-          sensitive: false,
-          configured: true,
-          value: 'http://inference.corp/v1',
-        }],
-        ...getExtensionManagement({ managed, canToggle: !managed, configurationFieldCount: 1 }),
-      }],
+      extensions: [
+        {
+          ...extension,
+          id: 'typesafe',
+          name: 'TypeSafe AI',
+          enabled: true,
+          origin: 'bundled',
+          managed,
+          canToggle: !managed,
+          configurationFields: [
+            {
+              path: 'serviceUrl',
+              label: 'Service URL',
+              type: 'string' as const,
+              sensitive: false,
+              configured: true,
+              value: 'http://inference.corp/v1',
+            },
+          ],
+          ...getExtensionManagement({ managed, canToggle: !managed, configurationFieldCount: 1 }),
+        },
+      ],
     }));
     Object.defineProperty(window, 'electron', {
       configurable: true,

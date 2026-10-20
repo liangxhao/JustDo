@@ -3,9 +3,14 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { AppConfigIpc } from '../../../shared/app/appConfig';
 import { ExtensionIpc } from '../../../shared/plugins/extensions';
 import { PluginKind } from '../../../shared/plugins/marketplace';
-import { PluginOperationIpc } from '../../../shared/plugins/pluginOperation';
+import {
+  PluginOperationAction,
+  PluginOperationIpc,
+  PluginOperationStage,
+} from '../../../shared/plugins/pluginOperation';
 import { enqueueAppConfigUpdate } from '../../data/appConfigUpdateQueue';
-import type { OpenClawExtensionImportService } from '../../plugins/extensions';
+import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
+import { OpenClawExtensionImportService } from '../../plugins/extensions';
 import type { PluginInstallationService } from '../../plugins/installation';
 import { registerStoreHandlers } from '../app/store';
 
@@ -28,7 +33,10 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-function fixture(beforeAgentTeamDisable?: () => Promise<() => void>) {
+function fixture(
+  beforeAgentTeamDisable?: () => Promise<() => void>,
+  mutateAppPackage?: <T>(operation: () => Promise<T>) => Promise<T>,
+) {
   const sender = { isDestroyed: vi.fn(() => false), send: vi.fn() };
   const peer = { isDestroyed: vi.fn(() => false), send: vi.fn() };
   windows.getAllWindows.mockReturnValue([
@@ -54,11 +62,118 @@ function fixture(beforeAgentTeamDisable?: () => Promise<() => void>) {
   registerExtensionHandlers({
     extensionImportService: service as unknown as OpenClawExtensionImportService,
     installationService: installation as unknown as PluginInstallationService,
-    beforeAgentTeamDisable,
+    mutateAppPackage,
+    mutateAppPlugin: (() => {
+      let lane: Promise<unknown> = Promise.resolve();
+      return <T>(_id: string, enabled: boolean, operation: () => Promise<T>) => {
+        const next = lane
+          .catch(() => undefined)
+          .then(async () => {
+            const release =
+              !enabled && _id === 'agent-team' ? await beforeAgentTeamDisable?.() : undefined;
+            try {
+              return await operation();
+            } finally {
+              release?.();
+            }
+          });
+        lane = next;
+        return next;
+      };
+    })(),
     onMarketplacePluginDeleted: forgetMarketplace,
   });
   return { service, installation, sender, peer, forgetMarketplace, event: { sender } };
 }
+
+function hotToggleIpcFixture(connectionLoss: 'before-toggle' | 'after-plugin-write') {
+  const sender = { isDestroyed: () => false, send: vi.fn() };
+  windows.getAllWindows.mockReturnValue([
+    { isDestroyed: () => false, webContents: sender },
+  ]);
+  const manager = {
+    getStatus: () => ({ phase: 'running' }),
+    getGatewayProcessId: () => 123,
+    getGatewayProcessGeneration: () => 1,
+    startGateway: vi.fn(),
+    restartGateway: vi.fn(),
+    withStoppedGatewayForMutation: vi.fn(),
+  };
+  const connectedRequest = vi.fn(async <T>(method: string): Promise<T> => {
+    if (method !== 'plugins.setEnabled') throw new Error(`Unexpected Native request: ${method}`);
+    client = null;
+    return { ok: true, restartRequired: false } as T;
+  });
+  let client: { request: typeof connectedRequest } | null =
+    connectionLoss === 'before-toggle' ? null : { request: connectedRequest };
+  // Model the ordinary request's lifecycle side effect so a notification or list
+  // accidentally entering that path fails this boundary test.
+  const ordinaryRequest = vi.fn(async <T>(): Promise<T> => {
+    manager.startGateway();
+    return { plugins: [], diagnostics: [], mutationAllowed: true } as T;
+  });
+  const runCommand = vi.fn();
+  const restartGatewayAfterMutation = vi.fn();
+  const service = new OpenClawExtensionImportService({
+    getOpenClawEngineManager: () => manager as unknown as OpenClawEngineManager,
+    requiresHotToggle: () => true,
+    getNativeSkillIds: () => ['agent-team'],
+    getConnectedGatewayClient: () => client,
+    requestGateway: ordinaryRequest,
+    restartGatewayAfterMutation,
+    runCommand,
+  });
+  vi.spyOn(service, 'listInstalled').mockReturnValue([]);
+  registerExtensionHandlers({
+    extensionImportService: service,
+    installationService: {
+      registerInstaller: vi.fn(),
+    } as unknown as PluginInstallationService,
+  });
+  return {
+    sender,
+    manager,
+    connectedRequest,
+    ordinaryRequest,
+    restartGatewayAfterMutation,
+    runCommand,
+    event: { sender },
+  };
+}
+
+test.each(['before-toggle', 'after-plugin-write'] as const)(
+  'does not recover Gateway through hot-toggle notification or list after connection loss: %s',
+  async connectionLoss => {
+    const f = hotToggleIpcFixture(connectionLoss);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await handlers.get(ExtensionIpc.SetEnabled)!(f.event, {
+      extensionId: 'agent-team',
+      enabled: true,
+    });
+    expect(result).toMatchObject({ success: false, error: expect.any(String) });
+    // Loss after a committed write remains unconfirmed; neither notification
+    // nor a subsequent renderer reload may fabricate a disabled/empty catalog.
+    expect(f.sender.send).not.toHaveBeenCalled();
+    expect(await handlers.get(ExtensionIpc.List)!(f.event)).toMatchObject({
+      success: false,
+      error: expect.any(String),
+    });
+    expect(f.connectedRequest.mock.calls).toEqual(
+      connectionLoss === 'before-toggle'
+        ? []
+        : [['plugins.setEnabled', { pluginId: 'agent-team', enabled: true }]],
+    );
+    expect(f.ordinaryRequest).not.toHaveBeenCalled();
+    expect(f.manager.startGateway).not.toHaveBeenCalled();
+    expect(f.manager.restartGateway).not.toHaveBeenCalled();
+    expect(f.manager.withStoppedGatewayForMutation).not.toHaveBeenCalled();
+    expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+    expect(f.runCommand).not.toHaveBeenCalled();
+    expect(f.sender.send).not.toHaveBeenCalled();
+  },
+);
 
 test('publishes the actual disabled setting even if a saved toggle reports a restart failure', async () => {
   const f = fixture();
@@ -351,7 +466,7 @@ test('serialized notifications prevent an older catalog response from arriving a
     extensionId: 'feature-plugin',
     enabled: true,
   });
-  await vi.waitFor(() => expect(f.service.setEnabled).toHaveBeenCalledTimes(2));
+  expect(f.service.setEnabled).toHaveBeenCalledOnce();
   expect(f.service.listCatalog).toHaveBeenCalledOnce();
   resolve([{ id: 'feature-plugin', enabled: false }]);
   await Promise.all([first, second]);
@@ -491,18 +606,6 @@ test('keeps the extension configuration unchanged when the required queue fence 
   expect(f.service.setEnabled).not.toHaveBeenCalled();
 });
 
-test('rejects Agent Team disable without its Main queue owner integration', async () => {
-  vi.spyOn(console, 'error').mockImplementation(() => {});
-  const f = fixture();
-  expect(
-    await handlers.get(ExtensionIpc.SetEnabled)!(f.event, {
-      extensionId: 'agent-team',
-      enabled: false,
-    }),
-  ).toMatchObject({ success: false, error: 'teamDiscussionUnavailable' });
-  expect(f.service.setEnabled).not.toHaveBeenCalled();
-});
-
 test('does not invoke the Agent Team queue fence for another extension', async () => {
   const fence = vi.fn();
   const f = fixture(fence);
@@ -599,6 +702,28 @@ test.each([
       management: { configure: { allowed: !rollback }, enable: { allowed: !rollback } },
     }],
   });
+});
+
+test('saves native configuration without entering the companion package replacement flow', async () => {
+  const mutateAppPackage = vi.fn(async <T>(operation: () => Promise<T>) => operation());
+  const f = fixture(undefined, mutateAppPackage);
+  const values = { globalConcurrency: '2' };
+  const context = { requestId: 'workflow-config-save' };
+  f.service.updateConfiguration.mockResolvedValue({ success: true, pending: true });
+
+  await expect(handlers.get(ExtensionIpc.UpdateConfiguration)!(f.event, {
+    extensionId: 'swarm-workflow', values,
+  }, context)).resolves.toEqual({ success: true, pending: true });
+
+  expect(f.service.updateConfiguration).toHaveBeenCalledExactlyOnceWith(
+    'swarm-workflow', values, expect.any(Function),
+  );
+  expect(mutateAppPackage).not.toHaveBeenCalled();
+  expect(f.sender.send).toHaveBeenCalledWith(PluginOperationIpc.Progress,
+    expect.objectContaining({
+      ...context, kind: PluginKind.EXTENSION,
+      action: PluginOperationAction.SAVE, stage: PluginOperationStage.QUEUED,
+    }));
 });
 
 test('holds the settings lane through a TypeSafe mutation and keeps other extension edits independent', async () => {

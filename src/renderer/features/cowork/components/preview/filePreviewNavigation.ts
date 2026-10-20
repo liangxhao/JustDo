@@ -1,5 +1,6 @@
 export interface FilePreviewNavigationOptions {
   preserveTabs?: boolean;
+  canCommit?(): boolean;
 }
 
 export function isFilePreviewWithinPath(filePath: string, sourcePath: string): boolean {

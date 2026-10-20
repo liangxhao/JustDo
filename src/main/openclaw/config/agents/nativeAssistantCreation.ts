@@ -171,6 +171,7 @@ export class NativeAssistantCreation {
           { agentId: id, name: 'AGENTS.md' },
         );
         if (verified.file?.content !== input.instructions) throw new Error('agentRuntimeUnknown');
+        assertActive();
         db.transaction(() => {
           store.saveAgentProfile({ ...profile, enabled: true });
           db.prepare('UPDATE kv SET value = ?, updated_at = ? WHERE key = ?').run(

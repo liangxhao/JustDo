@@ -1,12 +1,12 @@
 import { composeBrowserGatewayPrompt, parseBrowserAnnotationPrompt } from '@shared/browser/browser';
+import { expect, test } from 'vitest';
+
 import {
   AGENT_TEAM_MODE,
   appendAgentTeamInstruction,
   stripAgentTeamInstruction,
-} from '@shared/cowork/agent-team/agentTeamPrompt';
-import { appendCollaborationContinuation } from '@shared/cowork/agent-team/collaborationContinuationPrompt';
-import { expect, test } from 'vitest';
-
+} from '../../../../../../plugins/extensions/agent-team/app/contracts/agentTeamPrompt';
+import { appendCollaborationContinuation } from '../../../../../../plugins/extensions/agent-team/app/contracts/collaborationContinuationPrompt';
 import { projectGatewayHistoryForDisplay } from '../../pipeline/history-display-normalizer';
 import { normalizeMessage } from '../../pipeline/message-normalizer';
 import type { GatewayMessage } from '../../types';

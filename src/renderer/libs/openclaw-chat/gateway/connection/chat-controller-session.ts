@@ -2,11 +2,6 @@ import { type NormalizedAgentEvent } from '@shared/openclaw/agentEvent';
 import { type ProgressCard } from '@shared/openclaw/progressCard';
 import { isGatewayInjectedModelRef, readModelRef } from '@shared/providers/modelRef';
 
-import type {
-  GatewayClient,
-  GatewayEventFrame,
-  GatewayHelloOk,
-} from '@/libs/openclaw-chat/gateway/client';
 import {
   type AssistantTurnTiming,
   bindAssistantTurnRunId,
@@ -33,6 +28,7 @@ import {
   SessionLiveState,
   SwitchSessionOptions,
 } from '../chat-controller-support';
+import type { GatewayClient, GatewayEventFrame, GatewayHelloOk } from '../client';
 export interface ChatControllerSessionContext {
   readonly chatMessagesBySession: Map<string, ChunkedMessageHistory>;
   readonly historySourceBySession: Map<string, HistorySource>;

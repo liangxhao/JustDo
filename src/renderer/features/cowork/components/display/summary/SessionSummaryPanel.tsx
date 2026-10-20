@@ -1,11 +1,6 @@
 import './SessionSummaryPanel.css';
 
-import {
-  LinkIcon,
-  ShareIcon,
-  UserGroupIcon,
-  XMarkIcon,
-} from '@heroicons/react/24/outline';
+import { LinkIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import type { ProgressCard } from '@shared/openclaw/progressCard';
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
@@ -21,7 +16,6 @@ import SubagentIcon from '../../subagents/SubagentIcon';
 import type { Subtask } from '../../subagents/subtaskPresentation';
 import { isActiveSubtask } from '../../subagents/subtaskPresentation';
 import type { SummaryResourceListKind } from '../tabs/displayTabIds';
-import { type AgentTeamEntry, AgentTeamKind } from './agentTeamEntries';
 import { SessionSummaryResourceIcon } from './SessionSummaryResourceList';
 
 export function summarySubagentCounts(tasks: readonly Subtask[]) {
@@ -45,13 +39,9 @@ interface Props {
   };
   tasks: readonly Subtask[];
   resources: SessionSummaryResources | null;
-  workflowCount: number;
-  teamEntries: readonly AgentTeamEntry[];
-  teamEnabled: boolean;
+  pluginEntries?: React.ReactNode;
   onClose: () => void;
   onOpenSubagents: () => void;
-  onOpenWorkflow: () => void;
-  onOpenTeam: () => void;
   onOpenResource: (resource: SummaryResource) => void;
   onOpenResourceList: (kind: SummaryResourceListKind) => void;
 }
@@ -146,15 +136,6 @@ export default function SessionSummaryPanel(props: Props) {
     });
   };
   const counts = summarySubagentCounts(props.tasks);
-  const teamCountLabel = [
-    { kind: AgentTeamKind.TASK, key: 'teamSummaryTaskCount' },
-    { kind: AgentTeamKind.GROUP, key: 'teamSummaryGroupCount' },
-  ]
-    .flatMap(({ kind, key }) => {
-      const count = props.teamEntries.filter(entry => entry.kind === kind).length;
-      return count > 0 ? [i18nService.t(key).replace('{count}', String(count))] : [];
-    })
-    .join(i18nService.t('teamSummaryCountSeparator'));
   const subagentStatuses = [
     { count: counts.running, key: 'coworkSummaryRunning', className: 'text-primary' },
     { count: counts.completed, key: 'coworkSummaryCompleted', className: '' },
@@ -218,7 +199,7 @@ export default function SessionSummaryPanel(props: Props) {
           <XMarkIcon className="h-4 w-4" />
         </button>
       </div>
-      <div className="session-summary-panel__body min-h-0 flex-auto space-y-4 overflow-y-auto p-3 pb-5">
+      <div className="session-summary-panel__body grid min-h-0 flex-auto auto-rows-max grid-cols-1 content-start gap-4 overflow-y-auto p-3 pb-5">
         {props.objective && (
           <section>
             {heading('coworkSummaryGoal')}
@@ -303,38 +284,7 @@ export default function SessionSummaryPanel(props: Props) {
             />
           </section>
         )}
-        {props.workflowCount > 0 && (
-          <button
-            type="button"
-            className={`${rowClass} py-2 text-sm`}
-            aria-label={`${i18nService.t('swarmWorkflowTitle')} ${props.workflowCount}`}
-            onClick={props.onOpenWorkflow}
-          >
-            <ShareIcon className="h-4 w-4 shrink-0 text-secondary" />
-            <span className="min-w-0 flex-1">{i18nService.t('swarmWorkflowTitle')}</span>
-            <span className="text-secondary">{props.workflowCount}</span>
-          </button>
-        )}
-        {props.teamEnabled && props.teamEntries.length > 0 && (
-          <div className="flex min-w-0 items-center gap-1">
-            <button
-              type="button"
-              className={`${rowClass} flex-1 py-2 text-sm`}
-              aria-label={[i18nService.t('coworkSummaryAgentTeam'), teamCountLabel]
-                .filter(Boolean)
-                .join(' ')}
-              onClick={props.onOpenTeam}
-            >
-              <UserGroupIcon className="h-4 w-4 shrink-0 text-secondary" />
-              <span className="shrink-0">{i18nService.t('coworkSummaryAgentTeam')}</span>
-              {teamCountLabel && (
-                <span className="min-w-0 flex-1 text-right text-xs text-secondary tabular-nums">
-                  {teamCountLabel}
-                </span>
-              )}
-            </button>
-          </div>
-        )}
+        {props.pluginEntries}
       </div>
       <button
         type="button"

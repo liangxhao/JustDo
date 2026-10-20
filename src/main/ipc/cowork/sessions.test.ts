@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+import type { AgentTeamLaunchCoordinator } from '../../../../plugins/extensions/agent-team/host/launch/agentTeamLaunchCoordinator';
 import { appendAgentTeamInstruction } from '../../../../plugins/extensions/agent-team/prompt/agentTeamPrompt';
+import { behaviorSessionParticipants } from '../../../../tests/plugin-host/mainBehaviorParticipants';
 import { CoworkSessionCopyIpc } from '../../../shared/cowork/sessionCopy';
 import {
   SESSION_SUMMARY_BATCH_LIMIT,
@@ -10,7 +12,6 @@ import { CoworkSessionForkIpc } from '../../../shared/cowork/sessionFork';
 import { SessionRunBeginErrorCode } from '../../../shared/cowork/sessionRun';
 import { SessionRunIpc } from '../../../shared/cowork/sessionRun';
 import { CoworkSessionSearchIpc } from '../../../shared/cowork/sessionSearch';
-import type { AgentTeamLaunchCoordinator } from '../../cowork/agent-team/agentTeamLaunchCoordinator';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 
@@ -24,8 +25,8 @@ vi.mock('electron', () => ({
   },
 }));
 
-import type { CollaborationCoordinator } from '../../cowork/agent-team/collaborationCoordinator';
-import { registerCoworkSessionHandlers } from './sessions';
+import type { CollaborationCoordinator } from '../../../../plugins/extensions/agent-team/host/collaboration/collaborationCoordinator';
+import { registerCoworkSessionHandlers as registerGenericHandlers } from './sessions';
 
 type IpcHandler = (...args: unknown[]) => Promise<unknown>;
 
@@ -981,7 +982,7 @@ test('registers the exact explicit input before the source run and fences native
       sessionId: 'source',
       clientTurnId: 'client',
       startedAt: 1,
-      agentTeamPrompt: prompt,
+      pluginPrompt: prompt,
     }),
   ).resolves.toMatchObject({ success: true });
   expect(events).toEqual(['registered', 'reserved']);
@@ -989,14 +990,14 @@ test('registers the exact explicit input before the source run and fences native
     expect.objectContaining({ prompt, clientTurnId: 'client', sessionId: 'source' }),
   );
   await expect(
-    handler(SessionRunIpc.TeamSubmissionStarted)(null, {
+    handler(SessionRunIpc.PluginSubmissionStarted)(null, {
       sessionId: 'source',
       clientTurnId: 'wrong',
     }),
   ).resolves.toMatchObject({ success: false });
   expect(launch.markSubmissionStarted).not.toHaveBeenCalled();
   await expect(
-    handler(SessionRunIpc.TeamSubmissionStarted)(null, {
+    handler(SessionRunIpc.PluginSubmissionStarted)(null, {
       sessionId: 'source',
       clientTurnId: 'client',
     }),
@@ -1054,7 +1055,7 @@ test.each(['task', 'group'] as const)(
   async mode => {
     const { launch, beginSessionRun, handler, input } = registerTeamFollowupFixture();
     await expect(
-      handler(null, { ...input, agentTeamPrompt: appendAgentTeamInstruction('New team', mode) }),
+      handler(null, { ...input, pluginPrompt: appendAgentTeamInstruction('New team', mode) }),
     ).resolves.toMatchObject({ success: false });
     expect(launch.releaseIfSettled).toHaveBeenCalledWith('source');
     expect(launch.register).not.toHaveBeenCalled();
@@ -1089,7 +1090,9 @@ test('does not let a failed guard cancellation prevent stopping the actual sourc
   const handler = mocks.handle.mock.calls.find(
     ([name]) => name === 'cowork:session:stop',
   )![1] as IpcHandler;
-  await expect(handler(null, 'source')).resolves.toEqual({ success: true });
+  await expect(handler(null, 'source')).resolves.toEqual({
+    success: true,
+  });
   expect(stopSession).toHaveBeenCalledWith('source', { diagnosticUserInitiated: true });
 });
 
@@ -1130,7 +1133,7 @@ test('releases a closed pre-send sender only through the exact guard client cont
     setSessionPermissionMode: vi.fn(),
   });
   const handler = mocks.handle.mock.calls.find(
-    ([name]) => name === SessionRunIpc.TeamSubmissionAbortedBeforeSend,
+    ([name]) => name === SessionRunIpc.PluginSubmissionAbortedBeforeSend,
   )![1] as IpcHandler;
   await expect(
     handler(null, { sessionId: 'source', clientTurnId: 'exact-client' }),
@@ -3173,3 +3176,19 @@ test('a local specialist conversation is not remotely managed', async () => {
     remoteManaged: false,
   });
 });
+
+function registerCoworkSessionHandlers(
+  input: Parameters<typeof registerGenericHandlers>[0] & {
+    getCollaboration?: () => CollaborationCoordinator;
+    getAgentTeamLaunch?: () => AgentTeamLaunchCoordinator;
+  },
+) {
+  const collaboration = input.getCollaboration?.();
+  const launch = input.getAgentTeamLaunch?.();
+  registerGenericHandlers({
+    ...input,
+    ...(collaboration || launch
+      ? { getSessionPlugins: () => behaviorSessionParticipants(collaboration, launch) }
+      : {}),
+  });
+}

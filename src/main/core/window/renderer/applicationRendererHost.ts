@@ -3,6 +3,7 @@ import { lstat, readdir, readFile, realpath } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import path from 'node:path';
 
+import { readAppAsset } from '../../../plugins/app/assets';
 import { buildApplicationContentSecurityPolicy } from './applicationContentSecurityPolicy';
 
 const LOOPBACK_HOST = '127.0.0.1';
@@ -246,6 +247,23 @@ export const startApplicationRendererHost = async (
       return;
     }
     const relative = requestAssetPath(request.url);
+    if (relative?.startsWith('assets/app-plugins/')) {
+      const bytes = await readAppAsset(relative);
+      if (!bytes || closed || response.destroyed) {
+        reject(response, 404);
+        return;
+      }
+      response.writeHead(200, {
+        'Content-Type': CONTENT_TYPES[path.extname(relative)],
+        'Content-Length': bytes.byteLength,
+        'Cache-Control': 'no-store',
+        'Content-Security-Policy': policy,
+        'X-Content-Type-Options': 'nosniff',
+        'Cross-Origin-Resource-Policy': 'same-origin',
+      });
+      response.end(request.method === 'HEAD' ? undefined : bytes);
+      return;
+    }
     const asset = relative ? assets.get(relative) : undefined;
     if (!asset) {
       reject(response, 404);

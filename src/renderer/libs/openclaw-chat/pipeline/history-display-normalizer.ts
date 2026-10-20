@@ -1,5 +1,4 @@
 import { parseBrowserAnnotationPrompt } from '@shared/browser/browser';
-import { stripAgentTeamInstruction } from '@shared/cowork/agent-team/agentTeamPrompt';
 import { appendErrorDisplayDetail } from '@shared/openclaw/errorDisplay';
 import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
@@ -19,6 +18,8 @@ import {
   splitMediaFromOutput,
   stripInboundMetadata,
 } from '@/libs/openclaw-chat/shims/backend-helpers';
+
+import { stripAppInput } from '../../../../../plugins/extensions/runtime-services/contracts/app-input';
 
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 const AGENT_RUN_FAILED_BEFORE_REPLY = 'The agent run failed before producing a reply.';
@@ -414,7 +415,9 @@ function projectBrowserAnnotationForDisplay(message: unknown): unknown {
   const record = asRecord(message);
   if (!record || String(record.role ?? '').toLowerCase() !== 'user') return message;
   const projectText = (value: string): unknown[] | null => {
-    const normalized = stripAgentTeamInstruction(stripInboundMetadata(value));
+    // Optional projections run at render time so a late installed presentation
+    // can update already loaded native history, and uninstall restores raw text.
+    const normalized = stripAppInput(stripInboundMetadata(value));
     const parsed = parseBrowserAnnotationPrompt(normalized);
     if (!parsed)
       return normalized !== stripInboundMetadata(value)

@@ -1,7 +1,6 @@
 import { createSlice, original, PayloadAction } from '@reduxjs/toolkit';
 import type { BrowserAnnotationDraft } from '@shared/browser/browser';
 import type { BrowserRecordingDraft } from '@shared/browser/browserRecording';
-import type { AgentTeamMode } from '@shared/cowork/agent-team/agentTeamPrompt';
 import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
 import type { SessionDirectoryEntry } from '@shared/cowork/sessionDirectory';
 import { DEFAULT_MAX_GOAL_CONTINUATION_TURNS } from '@shared/cowork/sessionGoal';
@@ -43,7 +42,6 @@ interface CoworkState {
   currentSession: CoworkSession | null;
   draftPrompts: Record<string, string>;
   draftMessageQuotes: Record<string, MessageQuote[]>;
-  draftAgentTeamModes: Record<string, { id: string; mode: AgentTeamMode }>;
   /** Keyed by draftKey (sessionId or '__home__'), stores pending attachments */
   draftAttachments: Record<string, DraftAttachment[]>;
   /** Browser annotations are generated context and remain scoped to one composer draft. */
@@ -80,7 +78,6 @@ const initialState: CoworkState = {
   currentSession: null,
   draftPrompts: {},
   draftMessageQuotes: {},
-  draftAgentTeamModes: {},
   draftAttachments: {},
   draftBrowserAnnotations: {},
   draftBrowserRecordings: {},
@@ -382,22 +379,19 @@ const coworkSlice = createSlice({
       }
     },
 
-    setDraftAgentTeamMode(
-      state,
-      action: PayloadAction<{ draftKey: string; draft?: { id: string; mode: AgentTeamMode } }>,
-    ) {
-      if (action.payload.draft)
-        state.draftAgentTeamModes[action.payload.draftKey] = action.payload.draft;
-      else delete state.draftAgentTeamModes[action.payload.draftKey];
-    },
-    clearSubmittedAgentTeamMode(state, action: PayloadAction<{ draftKey: string; id: string }>) {
-      if (state.draftAgentTeamModes[action.payload.draftKey]?.id === action.payload.id)
-        delete state.draftAgentTeamModes[action.payload.draftKey];
-    },
     addDraftMessageQuote(state, action: PayloadAction<{ draftKey: string; quote: MessageQuote }>) {
       const { draftKey, quote } = action.payload;
       const quotes = state.draftMessageQuotes[draftKey] ?? [];
       if (quotes.length >= 8 || !quote.text.trim()) return;
+      if (
+        quote.kind === MESSAGE_QUOTE_KIND.EXTENSION &&
+        (!/^[a-z][a-z0-9-]{0,95}$/u.test(quote.pluginId) ||
+          (quote.labelKey !== undefined &&
+            (typeof quote.labelKey !== 'string' || quote.labelKey.length > 128)) ||
+          typeof quote.context !== 'string' ||
+          quote.context.length > 8192)
+      )
+        return;
       if (quote.kind === MESSAGE_QUOTE_KIND.DISCUSSION) {
         if (
           !quote.roomId ||
@@ -424,7 +418,7 @@ const coworkSlice = createSlice({
           )
         )
           return;
-      } else if (!quote.sessionKey) return;
+      } else if (quote.kind !== MESSAGE_QUOTE_KIND.EXTENSION && !quote.sessionKey) return;
       state.draftMessageQuotes[draftKey] = [
         ...quotes,
         { ...quote, text: quote.text.slice(0, 12_000) },
@@ -505,7 +499,6 @@ const coworkSlice = createSlice({
         interaction => interaction.sessionId !== action.payload,
       );
       delete state.draftMessageQuotes[action.payload];
-      delete state.draftAgentTeamModes[action.payload];
       delete state.draftBrowserAnnotations[action.payload];
       delete state.draftBrowserRecordings[action.payload];
     },
@@ -516,7 +509,6 @@ const coworkSlice = createSlice({
         clearSessionModelSelectionState(state, sessionId);
         delete state.planModeBySession[sessionId];
         delete state.draftMessageQuotes[sessionId];
-        delete state.draftAgentTeamModes[sessionId];
         delete state.draftBrowserAnnotations[sessionId];
         delete state.draftBrowserRecordings[sessionId];
       }
@@ -968,8 +960,6 @@ export const {
   setSessionRuntimeActivities,
   setDraftPrompt,
   addDraftMessageQuote,
-  setDraftAgentTeamMode,
-  clearSubmittedAgentTeamMode,
   removeDraftMessageQuotes,
   setDraftAttachments,
   addDraftAttachment,

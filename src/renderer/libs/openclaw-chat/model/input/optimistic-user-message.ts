@@ -1,12 +1,12 @@
 import { parseBrowserAnnotationPrompt } from '@shared/browser/browser';
-import { stripAgentTeamInstruction } from '@shared/cowork/agent-team/agentTeamPrompt';
 import { parseGoalStartObjective } from '@shared/cowork/slashCommands';
 import { stripSwarmInstruction } from '@shared/cowork/swarm';
-import { stripSwarmWorkflowInstruction } from '@shared/cowork/swarm-workflow';
 
+import { pluginMessageText } from '@/features/plugins/app/messagePresentation';
 import { getTranscriptMedia } from '@/libs/openclaw-chat/attachments';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
+import { stripAppInput } from '../../../../../../plugins/extensions/runtime-services/contracts/app-input';
 import { unwrapToolMessage } from '../tools/tool-message-adapter';
 
 function messageRecord(message: GatewayMessage): Record<string, unknown> {
@@ -18,27 +18,41 @@ function messageRole(message: GatewayMessage): string {
 }
 
 const MEDIA_CONTENT_TYPES = new Set([
-  'attachment', 'attachment_error', 'image', 'image_url', 'input_image',
-  'audio', 'input_audio', 'video', 'file', 'document',
+  'attachment',
+  'attachment_error',
+  'image',
+  'image_url',
+  'input_image',
+  'audio',
+  'input_audio',
+  'video',
+  'file',
+  'document',
 ]);
 
 function messageInputKey(message: GatewayMessage): string | null {
   const record = messageRecord(message);
   const metadata = record.__openclaw;
-  const key = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
-    ? (metadata as Record<string, unknown>).idempotencyKey ?? record.idempotencyKey
-    : record.idempotencyKey;
+  const key =
+    metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+      ? ((metadata as Record<string, unknown>).idempotencyKey ?? record.idempotencyKey)
+      : record.idempotencyKey;
   return typeof key === 'string' && key.trim() ? key : null;
 }
 
 function hasMessageMedia(message: GatewayMessage): boolean {
   const record = messageRecord(message);
   if (getTranscriptMedia(record).length > 0) return true;
-  return [record.content, record.openclawDisplayContent].some(content =>
-    Array.isArray(content) && content.some(block =>
-      block && typeof block === 'object' && !Array.isArray(block) &&
-      MEDIA_CONTENT_TYPES.has(String((block as Record<string, unknown>).type)),
-    ),
+  return [record.content, record.openclawDisplayContent].some(
+    content =>
+      Array.isArray(content) &&
+      content.some(
+        block =>
+          block &&
+          typeof block === 'object' &&
+          !Array.isArray(block) &&
+          MEDIA_CONTENT_TYPES.has(String((block as Record<string, unknown>).type)),
+      ),
   );
 }
 
@@ -64,9 +78,10 @@ function messageContentIdentity(message: GatewayMessage): {
   const recordings: unknown[] = [];
   const annotationIds: Array<string | null> = [];
   const addAnnotation = (value: unknown) => {
-    const id = value && typeof value === 'object' && !Array.isArray(value)
-      ? (value as Record<string, unknown>).id
-      : null;
+    const id =
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? (value as Record<string, unknown>).id
+        : null;
     annotationIds.push(typeof id === 'string' && id.trim() ? id : null);
   };
   const addRecording = (value: unknown) => {
@@ -79,9 +94,7 @@ function messageContentIdentity(message: GatewayMessage): {
     recordings.push(steps.map(step => [step?.id, step?.action, step?.pageId]));
   };
   const textPart = (source: string) => {
-    const text = stripSwarmInstruction(
-      stripSwarmWorkflowInstruction(stripAgentTeamInstruction(source)),
-    );
+    const text = stripSwarmInstruction(pluginMessageText(stripAppInput(source)));
     const browser = parseBrowserAnnotationPrompt(text);
     if (browser?.recording) addRecording(browser.recording);
     browser?.annotations.forEach(addAnnotation);

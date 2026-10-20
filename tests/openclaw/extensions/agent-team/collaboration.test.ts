@@ -53,6 +53,26 @@ function fixture(teamEnabled = true, separateHooks = false, realSchemas = false)
   const providers: Array<(request: any) => unknown> = [];
   const hooks = new Map<string, (...args: any[]) => any>();
   const methods = new Map<string, (...args: any[]) => any>();
+  const methodDescriptors = new Map<string, Record<string, unknown>>();
+  const registerGatewayMethod = (
+    name: string,
+    handler: (...args: any[]) => any,
+    options: any = {},
+  ) => {
+    if (methods.has(name)) return;
+    methods.set(name, handler);
+    methodDescriptors.set(
+      name,
+      Object.freeze({
+        name,
+        handler,
+        owner: { kind: 'plugin', pluginId: 'agent-team' },
+        scope: options.scope ?? 'operator.admin',
+        profileAccess: options.profileAccess ?? 'required',
+        ...(options.sessionAccess ? { sessionAccess: options.sessionAccess } : {}),
+      }),
+    );
+  };
   const factories = new Map<string, (...args: any[]) => any>();
   const toolOptions = new Map<string, Record<string, unknown>>();
   let service: any;
@@ -64,76 +84,84 @@ function fixture(teamEnabled = true, separateHooks = false, realSchemas = false)
     setTimeout,
     clearTimeout,
     Date,
+    process,
     require: (name: string) =>
-      name === 'typebox'
-        ? realSchemas
-          ? { Type }
-          : {
-              Type: new Proxy(
-                {},
-                {
-                  get:
-                    () =>
-                    (...args: unknown[]) =>
-                      args,
-                },
-              ),
-            }
-        : name === 'openclaw/plugin-sdk/routing'
-          ? {
-              isSubagentSessionKey: (key: string) =>
-                /^(?:agent:[^:]+:)?subagent:/i.test(key.trim()),
-              isAcpSessionKey: (key: string) => /^(?:agent:[^:]+:)?acp:/i.test(key.trim()),
-            }
-          : name === 'openclaw/plugin-sdk/session-store-runtime'
-            ? {
-                getSessionEntry: () => ({
-                  ...nativePolicy,
-                  sessionId: nativeSessionId,
-                  pluginExtensions: { 'plan-mode': { state: { enabled: plan } } },
-                }),
+      name === 'openclaw/plugin-sdk/gateway-method-runtime'
+        ? {
+            dispatchGatewayMethod: async (method: string, params: unknown) => ({
+              ok: true,
+              payload: await runtime.gateway.request(method, params),
+            }),
+          }
+        : name === 'typebox'
+          ? realSchemas
+            ? { Type }
+            : {
+                Type: new Proxy(
+                  {},
+                  {
+                    get:
+                      () =>
+                      (...args: unknown[]) =>
+                        args,
+                  },
+                ),
               }
-            : name === 'openclaw/plugin-sdk/codex-session-transcript-runtime'
+          : name === 'openclaw/plugin-sdk/routing'
+            ? {
+                isSubagentSessionKey: (key: string) =>
+                  /^(?:agent:[^:]+:)?subagent:/i.test(key.trim()),
+                isAcpSessionKey: (key: string) => /^(?:agent:[^:]+:)?acp:/i.test(key.trim()),
+              }
+            : name === 'openclaw/plugin-sdk/session-store-runtime'
               ? {
-                  withCodexSessionTranscriptMirrorWriteLock: vi.fn(async (target, run) => {
-                    if (target.sessionId !== nativeSessionId)
-                      throw new Error('Incorrect physical transcript ID');
-                    return run({
-                      readMessageFacts: async ({
-                        idempotencyKeys,
-                      }: {
-                        idempotencyKeys: string[];
-                      }) => ({
-                        anchorsByIdempotencyKey: new Map(
-                          transcriptEntries.flatMap((entry, index) =>
-                            idempotencyKeys.includes(entry.idempotencyKey)
-                              ? [[entry.idempotencyKey, { entryId: `entry-${index}` }]]
-                              : [],
-                          ),
-                        ),
-                      }),
-                    });
+                  getSessionEntry: () => ({
+                    ...nativePolicy,
+                    sessionId: nativeSessionId,
+                    pluginExtensions: { 'plan-mode': { state: { enabled: plan } } },
                   }),
                 }
-              : name === 'openclaw/plugin-sdk/session-visibility'
+              : name === 'openclaw/plugin-sdk/codex-session-transcript-runtime'
                 ? {
-                    createSessionVisibilityChecker: {
-                      registerScopedAccessProvider: (provider: (request: any) => unknown) => {
-                        providers.push(provider);
-                        return () => {
-                          const index = providers.indexOf(provider);
-                          if (index >= 0) providers.splice(index, 1);
-                        };
-                      },
-                    },
+                    withCodexSessionTranscriptMirrorWriteLock: vi.fn(async (target, run) => {
+                      if (target.sessionId !== nativeSessionId)
+                        throw new Error('Incorrect physical transcript ID');
+                      return run({
+                        readMessageFacts: async ({
+                          idempotencyKeys,
+                        }: {
+                          idempotencyKeys: string[];
+                        }) => ({
+                          anchorsByIdempotencyKey: new Map(
+                            transcriptEntries.flatMap((entry, index) =>
+                              idempotencyKeys.includes(entry.idempotencyKey)
+                                ? [[entry.idempotencyKey, { entryId: `entry-${index}` }]]
+                                : [],
+                            ),
+                          ),
+                        }),
+                      });
+                    }),
                   }
-                : [
-                      'openclaw/plugin-sdk/reply-runtime',
-                      'openclaw/plugin-sdk/channel-inbound',
-                      'openclaw/plugin-sdk/session-transcript-runtime',
-                    ].includes(name)
-                  ? {}
-                  : nativeRequire(name),
+                : name === 'openclaw/plugin-sdk/session-visibility'
+                  ? {
+                      createSessionVisibilityChecker: {
+                        registerScopedAccessProvider: (provider: (request: any) => unknown) => {
+                          providers.push(provider);
+                          return () => {
+                            const index = providers.indexOf(provider);
+                            if (index >= 0) providers.splice(index, 1);
+                          };
+                        },
+                      },
+                    }
+                  : [
+                        'openclaw/plugin-sdk/reply-runtime',
+                        'openclaw/plugin-sdk/channel-inbound',
+                        'openclaw/plugin-sdk/session-transcript-runtime',
+                      ].includes(name)
+                    ? {}
+                    : nativeRequire(name),
   };
   const nativeContext = vm.createContext(context);
   new vm.Script(code).runInContext(nativeContext);
@@ -167,14 +195,38 @@ function fixture(teamEnabled = true, separateHooks = false, realSchemas = false)
           }
           methods.get(name)!({
             params,
+            client: { connect: { client: { mode: 'backend' } } },
+            req: { method: name },
+            context: {
+              isConfigReloadSettled: () => true,
+              getGatewayMethodRegistry: () => ({
+                descriptors: () => Object.freeze([...methodDescriptors.values()]),
+              }),
+            },
+            hasCurrentClientAuthority: () => true,
             respond: (ok: boolean, result: unknown, error: { message: string }) =>
               ok ? resolve(result) : reject(new Error(error.message)),
           });
         }),
     },
   };
+  const nativeApi = () => {
+    const disposers = new Set<() => void | Promise<void>>();
+    return {
+      id: 'agent-team',
+      source: path.resolve('plugins/extensions/agent-team/index.ts'),
+      lifecycle: {
+        signal: new AbortController().signal,
+        onDispose: (dispose: () => void | Promise<void>) => {
+          disposers.add(dispose);
+          return () => disposers.delete(dispose);
+        },
+      },
+    };
+  };
   if (teamEnabled)
     moduleBox.exports.default.register({
+      ...nativeApi(),
       logger: { warn },
       runtime,
       registerChannel: () => undefined,
@@ -183,8 +235,7 @@ function fixture(teamEnabled = true, separateHooks = false, realSchemas = false)
       registerService: (value: any) => {
         service = value;
       },
-      registerGatewayMethod: (name: string, callback: (...args: any[]) => any) =>
-        methods.set(name, callback),
+      registerGatewayMethod,
       registerTool: () => undefined,
       on: (name: string, callback: (...args: any[]) => any) => {
         if (!separateHooks) hooks.set(name, callback);
@@ -193,6 +244,7 @@ function fixture(teamEnabled = true, separateHooks = false, realSchemas = false)
   // Production can materialize tool factories in a separate registration instance.
   if (teamEnabled)
     moduleBox.exports.default.register({
+      ...nativeApi(),
       logger: { warn },
       runtime,
       registerChannel: () => undefined,
@@ -227,8 +279,7 @@ function fixture(teamEnabled = true, separateHooks = false, realSchemas = false)
       const previous = hooks.get(name);
       hooks.set(name, async (...args) => (await callback(...args)) ?? previous?.(...args));
     },
-    registerGatewayMethod: (name: string, callback: (...args: any[]) => any) =>
-      methods.set(name, callback),
+    registerGatewayMethod,
   });
   service?.start({ gatewayEvents: { emit } });
   return {
@@ -403,6 +454,33 @@ describe('Team launch tool catalog', () => {
 });
 
 describe('native peer tool authority', () => {
+  it('registers the actual public Native bridge alongside collaboration handlers', async () => {
+    const h = fixture();
+    try {
+      const receipt = (await h.runtime.gateway.request('agent-team.app.handshake', {})) as any;
+      expect(receipt).toMatchObject({ pluginId: 'agent-team', processId: process.pid });
+      expect(
+        await h.runtime.gateway.request('agent-team.app.dispatch', {
+          registrationId: receipt.registrationId,
+          processId: receipt.processId,
+          method: 'chat.message.get',
+          params: { messageId: 'entry-0' },
+        }),
+      ).toEqual({ ok: false, unavailableReason: 'not_found' });
+      const history = receipt.gatewayMethods.find(
+        (item: any) => item.method === 'collaboration.messages',
+      );
+      expect(history).toBeTruthy();
+      const params = Object.freeze({ lookups: Object.freeze([]) });
+      await expect(h.runtime.gateway.request(history.alias, params)).rejects.toThrow(
+        'Invalid collaboration message lookup',
+      );
+      expect(Object.keys(params)).toEqual(['lookups']);
+      expect(h.methods.has('collaboration.messages')).toBe(true);
+    } finally {
+      h.stop();
+    }
+  });
   it.each([
     [
       'collaboration.bind',
