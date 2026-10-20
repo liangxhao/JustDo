@@ -23,7 +23,7 @@ test('selects four newest distinct web pages without mutating source history', (
 test('excludes unsafe URLs and uses the hostname when the title is empty', () => {
   const entries = [
     'javascript:alert(1)',
-    'file:///secret.txt',
+    'data:text/plain,secret',
     'about:blank',
     'invalid',
     'https://user:password@example.com/',
@@ -55,6 +55,35 @@ test('uses the declared website icon, including CDN icons', () => {
     },
   ]);
   expect(visit.faviconUrl).toBe('https://cdn.example.com/assets/brand.svg');
+});
+
+test('shows native files with real paths and excludes retired preview service addresses', () => {
+  const url = 'file:///C:/reports/%E5%9C%B0%E7%90%83.html?mode=3d#camera';
+  expect(
+    selectRecentBrowserVisits([
+      {
+        url: `http://127.0.0.1:43210/${'a'.repeat(32)}/x.html`,
+        title: 'Old globe',
+        lastVisitAt: 3,
+        visitCount: 1,
+      },
+      { url, title: ' ', lastVisitAt: 2, visitCount: 1 },
+      {
+        url: 'http://127.0.0.1:3000/index.html',
+        title: 'Local dev',
+        lastVisitAt: 1,
+        visitCount: 1,
+      },
+    ]),
+  ).toEqual([
+    { url, title: '地球.html', host: 'C:\\reports\\地球.html', faviconUrl: '' },
+    {
+      url: 'http://127.0.0.1:3000/index.html',
+      title: 'Local dev',
+      host: '127.0.0.1',
+      faviconUrl: 'http://127.0.0.1:3000/favicon.ico',
+    },
+  ]);
 });
 
 test.each([

@@ -24,6 +24,7 @@ import {
   buildChromeCookieDetails,
   chromeTimestampToUnixMs,
   sanitizeBrowserHistoryUrl,
+  sanitizeBrowserVisitUrl,
 } from './browserDataSanitizers';
 
 const profileIdPattern = /^(?:Default|Profile [1-9][0-9]{0,2})$/;
@@ -439,7 +440,7 @@ export const importChromeData = async (
           let importedCount = 0;
           for (const row of rows) {
             throwIfImportAborted(signal);
-            const url = sanitizeBrowserHistoryUrl(row.url);
+            const url = sanitizeBrowserVisitUrl(row.url);
             if (!url) continue;
             const timestamp = chromeTimestampToUnixMs(row.last_visit_time);
             insert.run(url, row.title.slice(0, 512), timestamp, row.visit_count);
@@ -584,7 +585,7 @@ export const getImportedCredentials = (origin: string): BrowserImportedCredentia
 };
 
 export const recordBrowserHistory = (url: string, title: string, faviconUrl?: string): void => {
-  const safeUrl = sanitizeBrowserHistoryUrl(url);
+  const safeUrl = sanitizeBrowserVisitUrl(url);
   if (!safeUrl) return;
   const db = openImportedDataDb();
   try {
@@ -608,7 +609,7 @@ export const recordBrowserHistory = (url: string, title: string, faviconUrl?: st
 };
 
 export const updateBrowserHistoryFavicon = (url: string, faviconUrl: string): void => {
-  const safeUrl = sanitizeBrowserHistoryUrl(url);
+  const safeUrl = sanitizeBrowserVisitUrl(url);
   const safeFaviconUrl = sanitizeBrowserHistoryUrl(faviconUrl);
   if (!safeUrl || !safeFaviconUrl) return;
   const db = openImportedDataDb();
@@ -623,7 +624,7 @@ export const updateBrowserHistoryFavicon = (url: string, faviconUrl: string): vo
 };
 
 export const updateBrowserHistoryFaviconData = (url: string, dataUrl: string): void => {
-  const safeUrl = sanitizeBrowserHistoryUrl(url);
+  const safeUrl = sanitizeBrowserVisitUrl(url);
   if (!safeUrl || !isBrowserFaviconDataUrl(dataUrl)) return;
   const db = openImportedDataDb();
   try {
@@ -653,7 +654,7 @@ export const clearBrowserHistoryFaviconDataSince = (since: number | null): void 
 export const readBrowserHistoryFavicon = (
   url: string,
 ): { faviconUrl: string; faviconDataUrl: string } | null => {
-  const safeUrl = sanitizeBrowserHistoryUrl(url);
+  const safeUrl = sanitizeBrowserVisitUrl(url);
   const dbPath = path.join(app.getPath('userData'), 'browser-import.sqlite');
   if (!safeUrl || !fs.existsSync(dbPath)) return null;
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
@@ -699,20 +700,22 @@ export const listBrowserHistory = (query: string): BrowserHistoryEntry[] => {
       visit_count: number;
       favicon_url: string;
     }>;
-    return rows.map(row => ({
-      url: row.url,
-      title: row.title,
-      lastVisitAt: row.last_visit_at,
-      visitCount: row.visit_count,
-      ...(row.favicon_url ? { faviconUrl: row.favicon_url } : {}),
-    }));
+    return rows
+      .filter(row => sanitizeBrowserVisitUrl(row.url) !== null)
+      .map(row => ({
+        url: row.url,
+        title: row.title,
+        lastVisitAt: row.last_visit_at,
+        visitCount: row.visit_count,
+        ...(row.favicon_url ? { faviconUrl: row.favicon_url } : {}),
+      }));
   } finally {
     db.close();
   }
 };
 
 export const deleteBrowserHistory = (urls: string[]): number => {
-  const values = urls.filter(url => /^https?:\/\//i.test(url) && url.length <= 4096).slice(0, 500);
+  const values = urls.filter(url => sanitizeBrowserVisitUrl(url) !== null).slice(0, 500);
   if (!values.length) return 0;
   invalidateBrowserFaviconCache();
   const db = openImportedDataDb();

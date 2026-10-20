@@ -41,6 +41,45 @@ afterEach(() => {
 });
 
 describe('browser history favicon storage', () => {
+  test('persists, searches and deletes native file visits with their actual file URL', () => {
+    const url = 'file:///C:/reports/%E5%9C%B0%E7%90%83%20%23100%25.html?mode=3d#camera';
+    recordBrowserHistory(url, '3D globe');
+    recordBrowserHistory(url, 'Interactive globe');
+
+    expect(listBrowserHistory('globe')).toEqual([
+      {
+        url,
+        title: 'Interactive globe',
+        lastVisitAt: expect.any(Number),
+        visitCount: 2,
+      },
+    ]);
+    expect(deleteBrowserHistory([url])).toBe(1);
+    expect(listBrowserHistory('')).toEqual([]);
+  });
+
+  test('omits stored retired preview addresses without deleting or inventing source paths', () => {
+    recordBrowserHistory('http://127.0.0.1:3000/index.html', 'Local development');
+    const url = `http://127.0.0.1:43210/${'a'.repeat(32)}/x.html`;
+    const db = new Database(path.join(directory, 'browser-import.sqlite'));
+    db.prepare(
+      'INSERT INTO imported_history(url,title,last_visit_at,visit_count) VALUES (?,?,?,?)',
+    ).run(url, 'Old globe', 10, 1);
+    db.close();
+
+    expect(listBrowserHistory('').map(entry => entry.url)).toEqual([
+      'http://127.0.0.1:3000/index.html',
+    ]);
+    recordBrowserHistory(url, 'Old globe');
+    const unchanged = new Database(path.join(directory, 'browser-import.sqlite'), {
+      readonly: true,
+    });
+    expect(
+      unchanged.prepare('SELECT visit_count FROM imported_history WHERE url = ?').get(url),
+    ).toEqual({ visit_count: 1 });
+    unchanged.close();
+  });
+
   test('clearing icon caches respects visit time and retains history and source URLs', () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(100);
     recordBrowserHistory('https://example.com/old', 'Old', 'https://example.com/icon.png');

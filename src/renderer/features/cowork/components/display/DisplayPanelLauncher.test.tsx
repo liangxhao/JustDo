@@ -149,6 +149,21 @@ describe('DisplayPanelLauncher', () => {
     expect(createBrowser).toHaveBeenCalledWith('https://example.com/docs');
   });
 
+  it('reopens the actual local file and shows its native path without requesting a network icon', async () => {
+    const url = 'file:///C:/reports/%E5%9C%B0%E7%90%83.html?mode=3d#camera';
+    listHistory.mockResolvedValue({
+      success: true,
+      entries: [{ url, title: 'Globe', lastVisitAt: 1, visitCount: 1 }],
+    });
+    const createBrowser = vi.fn();
+    render(<DisplayPanelLauncher onCreateBrowser={createBrowser} onCreateTerminal={vi.fn()} />);
+    const button = await screen.findByRole('button', { name: 'Globe' });
+    expect(button.title).toBe('Globe\nC:\\reports\\地球.html');
+    fireEvent.click(button);
+    expect(createBrowser).toHaveBeenCalledWith(url);
+    expect(loadHistoryFavicon).not.toHaveBeenCalled();
+  });
+
   it('deletes a recent page from history, fills its place, and keeps it removed on reopening', async () => {
     let entries = [5, 4, 3, 2, 1].map(lastVisitAt => ({
       url: `https://example.com/${lastVisitAt}`,

@@ -11,6 +11,7 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { isBrowserFaviconDataUrl, resolveBrowserAddressInput } from '@shared/browser/browser';
+import { getBrowserLocalFilePath } from '@shared/browser/browserHistory';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { defaultConfig } from '@/app/config';
@@ -78,7 +79,7 @@ function RecentVisitIcon({ visit, visible }: { visit: RecentBrowserVisit; visibl
   const [loadedUrl, setLoadedUrl] = useState<string>();
   const [retry, setRetry] = useState(false);
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || getBrowserLocalFilePath(visit.url) !== null) return;
     let cancelled = false;
     void window.electron.browser
       .loadHistoryFavicon(visit.url, retry)
@@ -319,7 +320,7 @@ const DisplayPanelLauncher = ({
                     type="button"
                     disabled={navigationDisabled || deletingUrl === visit.url}
                     onClick={() => openAddress(visit.url)}
-                    title={`${visit.title}\n${visit.url}`}
+                    title={`${visit.title}\n${getBrowserLocalFilePath(visit.url) ?? visit.url}`}
                     className="flex w-full min-w-0 flex-col items-center gap-3 rounded-xl px-2 py-3 text-center transition-colors hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <RecentVisitIcon key={visit.faviconUrl} visit={visit} visible={visible} />

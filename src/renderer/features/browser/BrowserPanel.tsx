@@ -41,6 +41,7 @@ import {
   resolveBrowserPanelShortcutAction,
   stepBrowserZoomFactor,
 } from '@shared/browser/browser';
+import { getBrowserLocalFilePath } from '@shared/browser/browserHistory';
 import type { BrowserContinueResult } from '@shared/browser/browserIntervention';
 import { RecordingStatus } from '@shared/browser/browserRecording';
 import React, {
@@ -199,9 +200,7 @@ const getLocalPreviewFilePath = (tab: BrowserPanelTab): string | null => {
   try {
     const current = new URL(tab.url);
     if (current.protocol === 'file:') {
-      const pathname = decodeURIComponent(current.pathname);
-      if (current.hostname) return `\\\\${current.hostname}${pathname.replace(/\//gu, '\\')}`;
-      return /^\/[a-z]:\//iu.test(pathname) ? pathname.slice(1).replace(/\//gu, '\\') : pathname;
+      return getBrowserLocalFilePath(tab.url);
     }
     if (!tab.sourceFilePath || !tab.sourcePreviewUrl) return null;
     const source = new URL(tab.sourcePreviewUrl);
@@ -1612,7 +1611,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       });
   };
 
-  const submitUrl = async (rawAddress = urlDraft) => {
+  const submitUrl = async (rawAddress = urlDraft, useNativeFileUrl = false) => {
     const submissionSequence = ++addressSubmissionSequenceRef.current;
     const targetId = activeTargetRef.current;
     const activeTab = tabsRef.current.find(tab => tab.targetId === targetId);
@@ -1621,6 +1620,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     let url: string | null;
     if (activeTab && address === getBrowserTabAddress(activeTab)) {
       url = activeTab.url;
+    } else if (useNativeFileUrl && getBrowserLocalFilePath(address) !== null) {
+      // History already contains a browser URL, including non-HTML documents.
+      url = new URL(address).href;
     } else if (isLocalFileAddress(address)) {
       try {
         const preview = await window.electron.browser.createLocalHtmlPreview(address);
@@ -1670,7 +1672,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     });
     setLoadingTargets(current => new Set(current).add(targetId));
     updateTab(targetId, { url, ...source });
-    if (activeTargetRef.current === targetId) setUrlDraft(source?.sourceFilePath ?? url);
+    if (activeTargetRef.current === targetId)
+      setUrlDraft(source?.sourceFilePath ?? getBrowserLocalFilePath(url) ?? url);
     try {
       await webview.loadURL(url);
     } catch (loadError) {
@@ -2728,7 +2731,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
             (renderStartPage ? (
               isOpen && (
                 <div className="absolute inset-0 z-[5] bg-background">
-                  {renderStartPage(url => void submitUrl(url))}
+                  {renderStartPage(url => void submitUrl(url, true))}
                 </div>
               )
             ) : (

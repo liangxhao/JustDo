@@ -6,6 +6,7 @@ import {
   chromeTimestampToUnixMs,
   mapChromeCookieSameSite,
   sanitizeBrowserHistoryUrl,
+  sanitizeBrowserVisitUrl,
   stripChromeCookieHostDigest,
 } from './browserDataSanitizers';
 
@@ -24,6 +25,20 @@ describe('browserDataSanitizers', () => {
     expect(mapChromeCookieSameSite(1)).toBe('lax');
     expect(mapChromeCookieSameSite(2)).toBe('strict');
     expect(mapChromeCookieSameSite(3)).toBe('unspecified');
+  });
+
+  it('records native file visits without allowing disk URLs as network favicon sources', () => {
+    const url = 'file:///C:/reports/%E5%9C%B0%E7%90%83%20%23100%25.html?mode=3d#camera';
+    expect(sanitizeBrowserVisitUrl(url)).toBe(url);
+    expect(sanitizeBrowserHistoryUrl(url)).toBeNull();
+    expect(sanitizeBrowserVisitUrl('javascript:alert(1)')).toBeNull();
+    expect(sanitizeBrowserVisitUrl(`http://127.0.0.1:43210/${'a'.repeat(32)}/x.html`)).toBeNull();
+    expect(sanitizeBrowserVisitUrl('http://127.0.0.1:3000/index.html')).toBe(
+      'http://127.0.0.1:3000/index.html',
+    );
+    expect(sanitizeBrowserVisitUrl('file:///C:/report.html?token=secret#camera')).not.toContain(
+      'secret',
+    );
   });
 
   it('requires and strips the host digest for cookie databases version 24 and later', () => {

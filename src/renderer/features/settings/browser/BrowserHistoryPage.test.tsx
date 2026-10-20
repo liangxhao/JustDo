@@ -75,4 +75,20 @@ describe('BrowserHistoryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Click again to clear' }));
     await waitFor(() => expect(clearHistory).toHaveBeenCalledOnce());
   });
+
+  it('displays the decoded native path for a local page', async () => {
+    listHistory.mockResolvedValueOnce({
+      success: true,
+      entries: [
+        {
+          url: 'file:///C:/reports/%E5%9C%B0%E7%90%83.html',
+          title: 'Globe',
+          lastVisitAt: entries[0].lastVisitAt,
+          visitCount: 1,
+        },
+      ],
+    });
+    render(<BrowserHistoryPage onBack={vi.fn()} />);
+    expect(await screen.findByText('C:\\reports\\地球.html')).toBeTruthy();
+  });
 });

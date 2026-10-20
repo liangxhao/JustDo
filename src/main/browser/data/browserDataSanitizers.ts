@@ -1,5 +1,10 @@
 import { createHash } from 'crypto';
 
+import {
+  getBrowserLocalFilePath,
+  isTemporaryBrowserPreviewUrl,
+} from '../../../shared/browser/browserHistory';
+
 const CHROME_EPOCH_OFFSET_MS = 11_644_473_600_000;
 const REDACTED_URL_VALUE = '[REDACTED]';
 const SENSITIVE_URL_PARAMETER =
@@ -50,6 +55,13 @@ export const sanitizeBrowserHistoryUrl = (value: string): string | null => {
   } catch {
     return null;
   }
+};
+
+export const sanitizeBrowserVisitUrl = (value: string): string | null => {
+  if (value.length > 4096 || isTemporaryBrowserPreviewUrl(value)) return null;
+  const webUrl = sanitizeBrowserHistoryUrl(value);
+  if (webUrl) return webUrl;
+  return getBrowserLocalFilePath(value) !== null ? sanitizeBrowserUrl(value) : null;
 };
 
 export const mapChromeCookieSameSite = (

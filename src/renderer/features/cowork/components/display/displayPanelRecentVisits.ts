@@ -1,4 +1,8 @@
 import type { BrowserHistoryEntry } from '@shared/browser/browser';
+import {
+  getBrowserLocalFilePath,
+  isTemporaryBrowserPreviewUrl,
+} from '@shared/browser/browserHistory';
 
 export interface RecentBrowserVisit {
   url: string;
@@ -17,14 +21,20 @@ export function selectRecentBrowserVisits(
   for (const entry of [...entries].sort((a, b) => b.lastVisitAt - a.lastVisitAt)) {
     try {
       const parsed = new URL(entry.url);
-      if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password)
+      const localFilePath = getBrowserLocalFilePath(entry.url);
+      if (
+        (!['https:', 'http:'].includes(parsed.protocol) && localFilePath === null) ||
+        parsed.username ||
+        parsed.password ||
+        isTemporaryBrowserPreviewUrl(entry.url)
+      )
         continue;
       const url = parsed.href;
       if (seen.has(url)) continue;
       seen.add(url);
-      const host = parsed.hostname.replace(/^www\./, '');
-      let faviconUrl = new URL('/favicon.ico', parsed).href;
-      if (entry.faviconUrl) {
+      const host = localFilePath ?? parsed.hostname.replace(/^www\./, '');
+      let faviconUrl = localFilePath === null ? new URL('/favicon.ico', parsed).href : '';
+      if (entry.faviconUrl && localFilePath === null) {
         try {
           const icon = new URL(entry.faviconUrl);
           if (['https:', 'http:'].includes(icon.protocol) && !icon.username && !icon.password) {
@@ -34,10 +44,11 @@ export function selectRecentBrowserVisits(
           // Old or invalid icon metadata falls back to the site's favicon.
         }
       }
-      visits.push({ url, host, title: entry.title.trim() || host, faviconUrl });
+      const fallbackTitle = localFilePath?.split(/[\\/]/u).pop() || host;
+      visits.push({ url, host, title: entry.title.trim() || fallbackTitle, faviconUrl });
       if (visits.length === MAX_RECENT_VISITS) break;
     } catch {
-      // Invalid or non-web history entries are not launch targets.
+      // Invalid or unsupported history entries are not launch targets.
     }
   }
   return visits;

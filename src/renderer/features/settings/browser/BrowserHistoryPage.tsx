@@ -7,6 +7,7 @@ import {
   TrashIcon,
 } from '@heroicons/react/24/outline';
 import type { BrowserHistoryEntry } from '@shared/browser/browser';
+import { getBrowserLocalFilePath } from '@shared/browser/browserHistory';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
@@ -22,7 +23,7 @@ export const browserHistoryDateKey = (timestamp: number): string => {
 
 const displayHost = (url: string): string => {
   try {
-    return new URL(url).hostname.replace(/^www\./, '');
+    return getBrowserLocalFilePath(url) ?? new URL(url).hostname.replace(/^www\./, '');
   } catch {
     return url;
   }

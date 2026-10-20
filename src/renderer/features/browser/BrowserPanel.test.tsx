@@ -335,6 +335,27 @@ describe('BrowserPanel embedded webview', () => {
     expect(screen.queryByTestId('browser-annotation-tool-group')).toBeNull();
   });
 
+  it.each(['report.pdf', 'notes.txt', 'image.png'])(
+    'reopens a recent local %s directly in the existing start-page guest',
+    async fileName => {
+      const url = `file:///C:/reports/${fileName}`;
+      render(
+        <BrowserPanelHarness
+          draftKey={`native-recent-${fileName}`}
+          renderStartPage={navigate => <button onClick={() => navigate(url)}>Recent file</button>}
+        />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Recent file' }));
+
+      await waitFor(() => expect(loadUrl).toHaveBeenCalledWith(url));
+      expect(createLocalHtmlPreview).not.toHaveBeenCalled();
+      expect(document.querySelectorAll('webview')).toHaveLength(1);
+      expect((screen.getByLabelText('Browser address') as HTMLInputElement).value).toBe(
+        `C:\\reports\\${fileName}`,
+      );
+    },
+  );
+
   it('does not mount the start page of a hidden browser panel', () => {
     const renderStartPage = vi.fn(() => <div>Start page</div>);
     render(
