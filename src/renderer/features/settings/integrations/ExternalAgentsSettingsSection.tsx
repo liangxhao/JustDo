@@ -480,7 +480,7 @@ const ExternalAgentsSettingsSection: React.FC<Props> = ({
                         checked={enabled}
                         onChange={event => updateAgent(definition.id, event.target.checked)}
                         className="peer sr-only"
-                        aria-label={`${definition.name} ${i18nService.t('enabled')}`}
+                        aria-label={`${definition.name} ${i18nService.t('externalAgentsEnabledState')}`}
                       />
                       <span className="relative h-4 w-7 rounded-full bg-border-input shadow-inner transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-3 after:w-3 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:bg-primary peer-checked:after:translate-x-3 peer-focus-visible:ring-2 peer-focus-visible:ring-primary/30" />
                     </label>

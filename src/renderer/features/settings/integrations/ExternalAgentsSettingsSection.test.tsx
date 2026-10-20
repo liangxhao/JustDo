@@ -39,7 +39,7 @@ describe('ExternalAgentsSettingsSection', () => {
     expect(screen.getByText('DeepSeek Harness')).toBeTruthy();
     expect(screen.getByText('Hermes')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Claude enabled' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Claude externalAgentsEnabledState' }));
 
     expect(onChange).toHaveBeenCalledWith({
       ...settings,

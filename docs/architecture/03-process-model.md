@@ -168,6 +168,8 @@ flowchart LR
 
 Main 通过 webContents 事件通知会话变化、目标执行、审批、结果和更新状态。preload 为监听器返回 unsubscribe。通知可以丢失或重复，消费者重连后应查询权威状态，而不是假设收到过全部历史事件。
 
+`extensions:changed` 在每个窗口的 preload 中共用一个底层 IPC 监听器，再分发给扩展卡片和页面，避免正常的多组件订阅触发 EventEmitter 监听器数量警告。首次订阅时注册，最后一个订阅释放时移除；各订阅独立取消，单个回调异常不阻断其余订阅。不缓存或重放通知，扩展清单仍由 Main/Gateway 查询提供。
+
 账号入口通过 `auth` 的四个显式操作查询、登录、退出和重试服务同步，仅主窗口 main frame
 可调用。Main 的 LoginService 持有账号操作队列与 SDK 取消身份；SDK 在 Main 确认身份后
 返回凭据，产品原子写入登录文件，再 await 现有模型与 Header 生命周期入口。

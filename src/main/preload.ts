@@ -189,7 +189,6 @@ import {
 } from '../shared/openclaw/workboard';
 import { WorktreeIpc } from '../shared/openclaw/worktrees';
 import {
-  type ExtensionChangedEvent,
   type ExtensionDeleteRequest,
   type ExtensionImportProgress,
   type ExtensionImportRequest,
@@ -273,6 +272,7 @@ import {
 } from '../shared/speech/onlineAsr';
 import { type OnlineTtsConfigurationUpdate, OnlineTtsIpc } from '../shared/speech/onlineTts';
 import { SpeechSynthesisIpc } from '../shared/speech/speechSynthesis';
+import { createExtensionChangedSubscription } from './preload/extensions';
 import { createMcpAppPreloadApi } from './preload/mcpApps';
 
 // 暴露安全的 API 到渲染进程
@@ -342,12 +342,7 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on(ExtensionIpc.ImportProgress, handler);
       return () => ipcRenderer.removeListener(ExtensionIpc.ImportProgress, handler);
     },
-    onChanged: (callback: (event: ExtensionChangedEvent) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: ExtensionChangedEvent) =>
-        callback(data);
-      ipcRenderer.on(ExtensionIpc.Changed, handler);
-      return () => ipcRenderer.removeListener(ExtensionIpc.Changed, handler);
-    },
+    onChanged: createExtensionChangedSubscription(),
   },
   hooks: {
     list: () => ipcRenderer.invoke(HookIpc.List),

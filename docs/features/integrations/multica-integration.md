@@ -15,8 +15,18 @@ runtime profiles must be changed to Codex; old conversations are not migrated.
 Start a new Multica conversation after switching protocols. For a Windows
 development checkout, `npm run electron:dev` rebuilds the launcher automatically;
 `npm run multica:dev-agent` can also rebuild it while the application is running.
-Isolated development uses its own data directory and launcher. Packaged builds
-generate the launcher during packaging.
+Development launchers live inside the checkout at
+`.agent-tasks/multica/development/<profile-hash>/<productName>-agent.exe`, not in
+Roaming. The hash comes from the absolute user-data path, so normal and isolated
+development profiles have separate launchers bound to their own bridge metadata.
+User data and bridge metadata retain their existing locations. Packaged Windows
+builds generate the launcher alongside the main executable in the installation
+directory. Windows status and the copyable command resolve the current
+checkout/install target even when the shared profile contains an older launcher
+path; an existing launcher from another environment cannot establish readiness.
+Refreshing an enabled integration validates and saves its current launcher.
+After changing environments or launcher locations, copy the current command into
+Multica's runtime settings again.
 
 Model discovery (`debug models` and `model/list`) lists enabled, configured chat
 models with available provider credentials. Model IDs are provider-qualified

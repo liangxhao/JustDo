@@ -1,11 +1,23 @@
+import { EventEmitter } from 'node:events';
+
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { AppInitializationIpc, INITIALIZATION_WINDOW_ARGUMENT } from '../shared/app/initialization';
+import { type ExtensionChangedEvent, ExtensionIpc } from '../shared/plugins/extensions';
 
-const electronMocks = vi.hoisted(() => ({ expose: vi.fn(), invoke: vi.fn() }));
+const electronMocks = vi.hoisted(() => ({
+  expose: vi.fn(),
+  invoke: vi.fn(),
+  on: vi.fn(),
+  removeListener: vi.fn(),
+}));
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: electronMocks.expose },
-  ipcRenderer: { invoke: electronMocks.invoke },
+  ipcRenderer: {
+    invoke: electronMocks.invoke,
+    on: electronMocks.on,
+    removeListener: electronMocks.removeListener,
+  },
   webUtils: {},
 }));
 
@@ -13,6 +25,9 @@ const originalArgv = process.argv;
 afterEach(() => {
   process.argv = originalArgv;
   vi.clearAllMocks();
+  electronMocks.on.mockReset();
+  electronMocks.removeListener.mockReset();
+  vi.restoreAllMocks();
   vi.resetModules();
 });
 
@@ -37,3 +52,96 @@ test.each([
     expect(electronMocks.invoke).toHaveBeenCalledWith(AppInitializationIpc.GetState);
   },
 );
+
+async function extensionSubscriptions() {
+  const emitter = new EventEmitter();
+  electronMocks.on.mockImplementation((channel, handler) => emitter.on(channel, handler));
+  electronMocks.removeListener.mockImplementation((channel, handler) =>
+    emitter.removeListener(channel, handler),
+  );
+  await import('./preload');
+  const bridge = electronMocks.expose.mock.calls[0][1] as {
+    extensions: { onChanged: (callback: (event: ExtensionChangedEvent) => void) => () => void };
+  };
+  const change = { extensionId: 'example-extension', enabled: false };
+  return { emitter, subscribe: bridge.extensions.onChanged, change };
+}
+
+test('shares one IPC listener across many cards and releases it after the last subscriber', async () => {
+  const { emitter, subscribe, change } = await extensionSubscriptions();
+  const callbacks = Array.from({ length: 24 }, () => vi.fn());
+  const releases = callbacks.map(callback => subscribe(callback));
+
+  expect(emitter.listenerCount(ExtensionIpc.Changed)).toBe(1);
+  expect(electronMocks.on).toHaveBeenCalledOnce();
+  emitter.emit(ExtensionIpc.Changed, { sender: 'private IPC event' }, change);
+  for (const callback of callbacks) expect(callback).toHaveBeenCalledExactlyOnceWith(change);
+
+  releases[0]();
+  releases[0]();
+  emitter.emit(ExtensionIpc.Changed, {}, change);
+  expect(callbacks[0]).toHaveBeenCalledOnce();
+  expect(callbacks[1]).toHaveBeenCalledTimes(2);
+  expect(emitter.listenerCount(ExtensionIpc.Changed)).toBe(1);
+
+  for (const release of releases) release();
+  expect(emitter.listenerCount(ExtensionIpc.Changed)).toBe(0);
+  expect(electronMocks.removeListener).toHaveBeenCalledOnce();
+
+  const next = vi.fn();
+  const release = subscribe(next);
+  expect(emitter.listenerCount(ExtensionIpc.Changed)).toBe(1);
+  expect(next).not.toHaveBeenCalled();
+  releases[0]();
+  emitter.emit(ExtensionIpc.Changed, {}, change);
+  expect(next).toHaveBeenCalledExactlyOnceWith(change);
+  release();
+  expect(emitter.listenerCount(ExtensionIpc.Changed)).toBe(0);
+});
+
+test('keeps repeated subscriptions of the same callback independent', async () => {
+  const { emitter, subscribe, change } = await extensionSubscriptions();
+  const callback = vi.fn();
+  const first = subscribe(callback);
+  const second = subscribe(callback);
+
+  emitter.emit(ExtensionIpc.Changed, {}, change);
+  expect(callback).toHaveBeenCalledTimes(2);
+  first();
+  first();
+  emitter.emit(ExtensionIpc.Changed, {}, change);
+  expect(callback).toHaveBeenCalledTimes(3);
+  second();
+  expect(emitter.listenerCount(ExtensionIpc.Changed)).toBe(0);
+});
+
+test('isolates callback failures and respects subscription changes during delivery', async () => {
+  const { emitter, subscribe, change } = await extensionSubscriptions();
+  const error = new Error('subscriber failed');
+  const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const removed = vi.fn();
+  const added = vi.fn();
+  let remove = () => {};
+  let add = () => {};
+  const first = subscribe(() => {
+    remove();
+    add = subscribe(added);
+    throw error;
+  });
+  remove = subscribe(removed);
+  const last = vi.fn();
+  const releaseLast = subscribe(last);
+
+  emitter.emit(ExtensionIpc.Changed, {}, change);
+
+  expect(log).toHaveBeenCalledWith('[ExtensionsPreload] Change listener failed:', error);
+  expect(removed).not.toHaveBeenCalled();
+  expect(added).not.toHaveBeenCalled();
+  expect(last).toHaveBeenCalledExactlyOnceWith(change);
+  first();
+  emitter.emit(ExtensionIpc.Changed, {}, change);
+  expect(added).toHaveBeenCalledExactlyOnceWith(change);
+  add();
+  releaseLast();
+  expect(emitter.listenerCount(ExtensionIpc.Changed)).toBe(0);
+});

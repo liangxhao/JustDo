@@ -50,9 +50,16 @@ export class MulticaIntegrationService {
     const state = this.options.getStore().get<PersistedState>(STATE_KEY);
     const bridge = this.options.getBridgeState();
     const detected = await this.detectMultica();
-    const launcherPath = state?.launcherPath ?? '';
+    // Windows launchers belong to the current checkout/install, not the shared profile.
+    const currentWindowsTarget =
+      process.platform === 'win32' && state?.enabled
+        ? path.resolve(this.options.getLauncherTarget().path)
+        : null;
+    const launcherPath = currentWindowsTarget ?? state?.launcherPath ?? '';
     const launcherReady =
-      state?.enabled === true && Boolean(launcherPath) && fs.existsSync(launcherPath);
+      state?.enabled === true &&
+      Boolean(launcherPath) &&
+      fs.statSync(launcherPath, { throwIfNoEntry: false })?.isFile() === true;
     return {
       enabled: state?.enabled === true,
       supported: supportedPlatform(),
@@ -68,7 +75,7 @@ export class MulticaIntegrationService {
       manualSetup: {
         protocolFamily: 'codex',
         displayName: PRODUCT_NAME,
-        command: state?.command ?? '',
+        command: currentWindowsTarget?.replaceAll('\\', '/') ?? state?.command ?? '',
         description: 'Local desktop Agent runtime',
       },
     };
@@ -117,7 +124,7 @@ export class MulticaIntegrationService {
     try {
       await this.options.ensureBridgeRunning();
       const state = this.options.getStore().get<PersistedState>(STATE_KEY);
-      if (state?.enabled && (!state.launcherPath || !fs.existsSync(state.launcherPath))) {
+      if (state?.enabled) {
         return this.enable();
       }
       return { success: true, status: await this.getStatus() };
