@@ -33,6 +33,13 @@ directories and source maps. Browser editor resources, layouts, workers, WASM,
 formulas, shapes and notices remain bundled. Filtering happens before the
 integrity manifest is generated; packaging must preserve that closed set.
 
+The asset service checks OS-assigned loopback ports against Chromium/WHATWG
+restrictions before publishing a resource origin or CSP. A rejected port (such
+as 6000) is closed before another allocation, with at most 32 attempts. Failure
+is explicit; browser restrictions are never disabled. `tests/ports.test.ts`
+covers allocation and cleanup, and the host's offline smoke probe accepts
+`--unsafe-port` to exercise a real blocked first allocation in Chromium.
+
 The manifest declares the plugin's native skill directory. Its short description
 makes drawing requests discoverable without naming draw.io; the detailed guide
 is loaded on demand and tells the model to search the actual MCP catalog before

@@ -1,6 +1,7 @@
 'use strict';
 // Actual bundled draw.io + standard MCP + actual product host + native sandbox.
 // Only the Gateway identity facade and native Save dialog are fixtures in this UI test.
+// --unsafe-port forces the first service allocation to Chromium's blocked port 6000.
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
@@ -11,6 +12,38 @@ const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '../..');
 const output = path.join(root, '.agent-tasks/drawio/ui');
 fs.mkdirSync(output, { recursive: true });
+
+// This runs only inside the isolated MCP service, never in the product or browser.
+function forceFirstUnsafePort(report) {
+  const net = require('node:net');
+  const fs = require('node:fs');
+  const original = net.Server.prototype.listen;
+  let forced = false;
+  net.Server.prototype.listen = function (...args) {
+    const options = args[0];
+    const port = typeof options === 'object' ? options.port : options;
+    const host = typeof options === 'object' ? options.host : args[1];
+    if (port !== 0 || host !== '127.0.0.1') return original.apply(this, args);
+    const force = !forced;
+    forced = true;
+    if (force) {
+      // A running product may already own 127.0.0.1:6000. This remains an actual
+      // loopback allocation; Chromium rejects the advertised port before I/O.
+      if (typeof options === 'object') args[0] = { ...options, port: 6000, host: '127.0.0.2' };
+      else {
+        args[0] = 6000;
+        args[1] = '127.0.0.2';
+      }
+    }
+    this.prependOnceListener('listening', () => {
+      fs.appendFileSync(
+        report,
+        JSON.stringify({ requestedPort: port, forced: force, port: this.address().port }) + '\n',
+      );
+    });
+    return original.apply(this, args);
+  };
+}
 
 async function fixture() {
   const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
@@ -28,9 +61,16 @@ async function fixture() {
     fs.copyFileSync(path.join(sourceAssets, file), path.join(isolated, file));
   if (fs.existsSync(path.join(sourceAssets, 'public')))
     fs.symlinkSync(path.join(sourceAssets, 'public'), path.join(isolated, 'public'), 'junction');
+  const portReport = path.join(isolated, 'port-attempts.jsonl');
+  const serviceArgs = [path.join(isolated, 'server.cjs')];
+  if (process.argv.includes('--unsafe-port')) {
+    const shim = path.join(isolated, 'force-unsafe-port.cjs');
+    fs.writeFileSync(shim, `(${forceFirstUnsafePort.toString()})(${JSON.stringify(portReport)});`);
+    serviceArgs.unshift('--require', shim);
+  }
   const transport = new StdioClientTransport({
     command: process.env.DIAGRAM_TEST_NODE || process.execPath,
-    args: [path.join(isolated, 'server.cjs')],
+    args: serviceArgs,
     stderr: 'pipe',
   });
   const client = new Client({ name: 'offline-test', version: '1' });
@@ -50,6 +90,16 @@ async function fixture() {
   assert.equal(resource.contents[0].mimeType, 'text/html;profile=mcp-app');
   assert.ok(Buffer.byteLength(resource.contents[0].text) < 2 * 1024 * 1024);
   const csp = resource.contents[0]._meta.ui.csp;
+  const portAttempts = fs.existsSync(portReport)
+    ? fs
+        .readFileSync(portReport, 'utf8')
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line))
+    : [];
+  if (process.argv.includes('--unsafe-port')) {
+    assert.deepEqual(portAttempts[0], { requestedPort: 0, forced: true, port: 6000 });
+  }
   const dist = path.join(root, 'vendor/openclaw-runtime/current/dist');
   const moduleFile = fs.readdirSync(dist).find(file => /^sandbox-host-.*\.mjs$/.test(file));
   const native = await import(pathToFileURL(path.join(dist, moduleFile)).href);
@@ -88,6 +138,8 @@ async function fixture() {
   );
   return {
     url: `http://127.0.0.1:${host.address().port}`,
+    assetOrigin: csp.resourceDomains[0],
+    portAttempts,
     close: async () => {
       host.close();
       sandbox.close();
@@ -149,18 +201,39 @@ if (!process.versions.electron) {
   app.setPath('userData', profile);
   app.commandLine.appendSwitch('disable-background-networking');
   let win, running;
+  const evidence = {
+    runtime: process.argv.includes('--runtime'),
+    forcedUnsafePort: process.argv.includes('--unsafe-port'),
+    portAttempts: [],
+    assetOrigin: undefined,
+    editorReady: false,
+    sourceExported: false,
+    publicRequests: [],
+    requestErrors: [],
+    failedLoads: [],
+    errors: [],
+  };
+  const savePortEvidence = error => {
+    if (!evidence.forcedUnsafePort) return;
+    fs.writeFileSync(
+      path.join(output, `unsafe-port-${evidence.runtime ? 'runtime' : 'local'}-result.json`),
+      JSON.stringify({ ...evidence, ...(error ? { failure: String(error) } : {}) }, null, 2),
+    );
+  };
   app
     .whenReady()
     .then(async () => {
       running = await fixture();
+      evidence.assetOrigin = running.assetOrigin;
+      evidence.portAttempts = running.portAttempts;
       win = new BrowserWindow({
         show: false,
         width: 1100,
         height: 850,
         webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false },
       });
-      const blocked = [],
-        errors = [];
+      const blocked = evidence.publicRequests,
+        errors = evidence.errors;
       win.webContents.session.webRequest.onBeforeRequest((details, callback) => {
         const allowed =
           ['127.0.0.1', ''].includes(new URL(details.url).hostname) ||
@@ -171,11 +244,26 @@ if (!process.versions.electron) {
       win.webContents.on('console-message', event => {
         if (event.level === 'error') errors.push(event.message);
       });
+      win.webContents.session.webRequest.onErrorOccurred(details => {
+        evidence.requestErrors.push({ error: details.error, url: details.url });
+      });
+      win.webContents.on('did-fail-load', (_event, code, description, url, mainFrame) => {
+        evidence.failedLoads.push({ code, description, url, mainFrame });
+      });
       await win.loadURL(running.url + (process.argv.includes('--blank') ? '/?blank=1' : ''));
       const until = async (fn, label) => {
         for (let i = 0; i < 300; i++) {
           const value = await fn();
           if (value) return value;
+          if (
+            evidence.forcedUnsafePort &&
+            (evidence.failedLoads.some(failure =>
+              failure.description.includes('ERR_UNSAFE_PORT'),
+            ) ||
+              evidence.requestErrors.some(failure => failure.error.includes('ERR_UNSAFE_PORT')) ||
+              errors.some(message => message.includes('ERR_UNSAFE_PORT')))
+          )
+            throw new Error(`${label}: Chromium rejected the real asset port with ERR_UNSAFE_PORT`);
           await new Promise(resolve => setTimeout(resolve, 100));
         }
         throw new Error(`${label} timed out: ${JSON.stringify(errors)}`);
@@ -189,7 +277,9 @@ if (!process.versions.electron) {
               )
             )
               return frame;
-          } catch {}
+          } catch {
+            /* Wait for the isolated App document. */
+          }
       }, 'App ready');
       if (process.argv.includes('--blank')) {
         const blankEditor = await until(async () => {
@@ -206,6 +296,7 @@ if (!process.versions.electron) {
             }
           }
         }, 'Blank editor');
+        evidence.editorReady = true;
         assert.equal(
           await blankEditor.executeJavaScript('document.body.innerText.includes("提交申请")'),
           false,
@@ -220,6 +311,7 @@ if (!process.versions.electron) {
         const source = Buffer.from(saved.dataBase64, 'base64').toString();
         assert.match(source, /mxfile/);
         assert.doesNotMatch(source, /vertex="1"/);
+        evidence.sourceExported = true;
         assert.deepEqual(blocked, [], 'Manual editing must use local assets only');
         await blankEditor.executeJavaScript(
           'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
@@ -241,9 +333,12 @@ if (!process.versions.electron) {
               )
             )
               return frame;
-          } catch {}
+          } catch {
+            /* Wait for the local editor document. */
+          }
       }, 'Diagram rendered');
       assert.ok(editor);
+      evidence.editorReady = true;
       let currentLabel = '提交申请';
       for (const format of ['save', 'png', 'svg']) {
         const editedLabel = `${format} 前即时修改`;
@@ -308,6 +403,7 @@ if (!process.versions.electron) {
       const latestSource = await win.webContents.executeJavaScript('window.downloads[3]');
       const latestBytes = Buffer.from(latestSource.dataBase64, 'base64');
       assert.match(latestBytes.toString(), /svg 前即时修改/);
+      evidence.sourceExported = true;
       fs.writeFileSync(path.join(output, latestSource.fileName), latestBytes);
       assert.deepEqual(blocked, [], 'No public request is needed');
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -550,11 +646,23 @@ if (!process.versions.electron) {
       );
     })
     .then(async () => {
+      if (evidence.forcedUnsafePort) {
+        assert.notEqual(new URL(running.assetOrigin).port, '6000');
+        assert.ok(running.portAttempts.length >= 2, 'The service must retry the blocked port');
+        assert.deepEqual(
+          evidence.requestErrors.filter(failure => failure.error.includes('ERR_UNSAFE_PORT')),
+          [],
+          'Chromium must never receive the rejected allocation',
+        );
+      }
+      savePortEvidence();
+      if (evidence.forcedUnsafePort) console.log(JSON.stringify(evidence, null, 2));
       win?.destroy();
       await running?.close();
       app.exit(0);
     })
     .catch(async error => {
+      savePortEvidence(error);
       console.error(error);
       win?.destroy();
       await running?.close();

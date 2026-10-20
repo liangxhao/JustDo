@@ -66,6 +66,12 @@ Gateway 拥有 MCP 进程、工具目录、执行、权限和原生视图。Main
 
 HTML 资源保持在原生 2 MiB 上限内，绘图脚本不塞入工具结果或消息缓存。每个 MCP 进程在 `127.0.0.1` 随机端口提供打包资源，URL 含随机能力路径；仅允许 GET/HEAD、精确 Host 和根目录内真实文件。不存在文件写入、代理、配置读取或图表内容 HTTP 接口。
 
+随机端口在发布资源 URL 和 CSP 前，必须通过 Chromium/WHATWG 的禁用端口检查。
+操作系统可能分配到 `6000` 等浏览器拒绝访问的端口；此时先关闭监听，再重新分配，
+最多尝试 32 次，耗尽则明确报错。只重选静态资源监听端口，不重放工具或画布启动，
+也不通过浏览器参数放开禁用端口。否则外层 MCP App 即使握手成功，内部编辑器仍会
+因 `ERR_UNSAFE_PORT` 无法加载。
+
 编辑器、形状库、布局、数学公式资源和字体文件随构建产物提供。HTTP CSP 限制脚本、样式、字体、图片、worker 和连接为本机资源（必要的 data/blob 除外）；云存储、插件加载、在线图标和更新流程关闭。外部图片、远程字体等内容不会由代理或公网 fallback 补齐，图表应使用内置形状、本机字体或内嵌图片。编辑器 iframe 的消息只接受精确发送窗口；Opaque sandbox 下的 `*` 目标用于与自己创建的父/子窗口通信，不替代宿主 AppBridge 的来源检查。
 
 ## 构建和验证
@@ -76,11 +82,12 @@ HTML 资源保持在原生 2 MiB 上限内，绘图脚本不塞入工具结果�
 
 准备脚本先验证归档哈希，再构建 MCP 服务和标准 App SDK bundle，生成每个文件的 SHA-256 清单并保留第三方许可证。组装和打包同时检查源码指纹、缺失文件、多余文件和逐文件内容。未准备、陈旧或不完整的资源使构建失败，不能退回在线版本。适配器、来源锁定与构建脚本进入 OpenClaw build recipe。
 
-- `openclaw-extensions/drawio/tests/server.test.ts` 覆盖 XML、DTD、体积限制、HTTP 路径和 CSP；同目录的 `assets.test.ts` 覆盖资源损坏与缺失。
+- `openclaw-extensions/drawio/tests/server.test.ts` 覆盖 XML、DTD、体积限制、HTTP 路径和 CSP；同目录的 `ports.test.ts` 覆盖禁用端口、关闭后重选、重试上限与失败清理，`assets.test.ts` 覆盖资源损坏与缺失。
 - `node tests/drawio/native-smoke.mjs` 使用隔离状态及实际组装的原生运行时，验证插件发现、标准工具元数据、正常工具物化和原生 App 准入，不请求模型。
 - `node tests/mcp-apps/gateway-smoke.cjs --drawio` 使用隔离 Gateway 验证实际绘图服务的手动入口发现、原生启动和视图读取，确认对话仍为空，不发起模型请求。
 - `node tests/drawio/offline-smoke.cjs --runtime` 使用全新 Chromium profile、实际产品视图及原生双层沙箱，拦截公网，验证源文件/PNG/SVG 导出、展开、主题和窄窗口。该 UI 探针只替代 Gateway 身份接口和原生保存对话框；Main 文件保存另有权限与取消测试。
 - `node tests/drawio/offline-smoke.cjs --blank` 验证新手动入口返回的空白画布能够加载和保存，界面不请求公网。
+- `node tests/drawio/offline-smoke.cjs --runtime --blank --unsafe-port` 强制隔离服务首次分到真实 `6000` 端口，验证丢弃该端口后的实际 Chromium 编辑器加载和源文件保存；旧版本在相同条件下复现 `ERR_UNSAFE_PORT` 白屏。该探针不修改浏览器端口策略，不占用或停止产品的现有监听。
 - `node tests/drawio/packaged-smoke.cjs` 使用实际 Windows tar/zstd 打包器与发布后的解包校验器验证整个资源集合及许可证；macOS/Linux 使用独立资源复制，避免通用裁剪规则破坏哈希集合。
 - `node tests/drawio/offline-smoke.cjs --serve` 提供隔离的本地交互预览；这是测试页面，不读取用户会话、配置或凭据。
 - `node tests/drawio/real-model-smoke.mjs` 是需明确授权后手动执行的真实模型验证，不进入 `npm test`。它读取已配置模型的文件 SecretRef 和应用代理设置，向独立原生会话发送普通的虚构审批流程需求，不点名 draw.io、不提示工具选择，不读取已有聊天或工作区内容、不配置模型 fallback。保留应用正常工具策略、完整冻结插件集和当前插件技能；没有绘图专用 allowlist、强制工具选择或精简工具目录，并核验本轮至少 50 项工具可用。要求精确的运行终态、历史中的实际模型身份和原生绘图工具结果，再由真实 `ChatController` 通过认证连接读取历史，让产品消息时间线自动创建 MCP Apps 界面。冷启动浏览器阻断公网，实际修改单元格并确认源文件保存该修改，验证 PNG/SVG 导出和展开；仅替代原生保存目的地。`DIAGRAM_TEST_PROMPT` 可指定另一个自然语言绘图需求；可加 `--serve` 保留半小时的隔离预览，截图与证明写入忽略的 `.agent-tasks/drawio/`。模型请求按已有网络配置运行，编辑器零公网请求与模型服务联网是两项独立检查。

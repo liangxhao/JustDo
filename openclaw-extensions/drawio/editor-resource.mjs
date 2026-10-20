@@ -7,6 +7,18 @@ import { SaxesParser } from 'saxes';
 const URI = 'ui://drawio/editor';
 const MIME = 'text/html;profile=mcp-app';
 const MAX_XML_BYTES = 1024 * 1024;
+const MAX_PORT_ATTEMPTS = 32;
+// An OS-assigned port can still be forbidden to the embedded browser (e.g. X11/6000).
+// Chromium net/base/port_util.cc plus WHATWG Fetch's additional blocked ports:
+// https://chromium.googlesource.com/chromium/src/+/refs/heads/main/net/base/port_util.cc
+// https://fetch.spec.whatwg.org/#port-blocking
+const BROWSER_BLOCKED_PORTS = new Set([
+  0, 1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102,
+  103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465,
+  512, 513, 514, 515, 526, 530, 531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993,
+  995, 1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668,
+  6669, 6679, 6697, 10080,
+]);
 const types = {
   '.html': 'text/html',
   '.js': 'text/javascript',
@@ -24,6 +36,47 @@ const types = {
   '.wasm': 'application/wasm',
   '.txt': 'text/plain',
 };
+
+async function listenForBrowser(http) {
+  for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt++) {
+    await new Promise((resolve, reject) => {
+      const cleanup = () => {
+        http.removeListener('error', onError);
+        http.removeListener('listening', onListening);
+      };
+      const onError = error => {
+        cleanup();
+        reject(error);
+      };
+      const onListening = () => {
+        cleanup();
+        resolve();
+      };
+      http.once('error', onError);
+      http.once('listening', onListening);
+      try {
+        http.listen(0, '127.0.0.1');
+      } catch (error) {
+        onError(error);
+      }
+    });
+    const address = http.address();
+    const valid =
+      address &&
+      typeof address === 'object' &&
+      Number.isInteger(address.port) &&
+      address.port >= 0 &&
+      address.port <= 65535;
+    if (valid && !BROWSER_BLOCKED_PORTS.has(address.port)) return address.port;
+    // Do not publish a rejected origin. Finish closing it before allocating again.
+    await new Promise((resolve, reject) => {
+      http.close(error => (error ? reject(error) : resolve()));
+      http.closeAllConnections();
+    });
+    if (!valid) throw new Error('Offline diagram assets did not receive a valid TCP address.');
+  }
+  throw new Error('Could not allocate a browser-safe port for offline diagram assets.');
+}
 
 /** Read-only, capability-scoped assets. Never exposes diagrams, config, or filesystem APIs. */
 export async function startAssets(root) {
@@ -66,11 +119,8 @@ export async function startAssets(root) {
       deny(404);
     }
   });
-  await new Promise((resolve, reject) => {
-    http.once('error', reject);
-    http.listen(0, '127.0.0.1', resolve);
-  });
-  origin = `http://127.0.0.1:${http.address().port}`;
+  const port = await listenForBrowser(http);
+  origin = `http://127.0.0.1:${port}`;
   return { http, origin, base: `${origin}/${token}/` };
 }
 
