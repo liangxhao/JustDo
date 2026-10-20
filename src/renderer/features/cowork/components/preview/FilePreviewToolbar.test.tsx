@@ -26,6 +26,13 @@ vi.mock('@/libs/openclaw-chat/components/markdown', () => ({
 vi.mock('./PreviewMarkdown', () => ({
   default: ({ html }: { html: string }) => <div>{html}</div>,
 }));
+vi.mock('./HtmlFilePreview', () => ({
+  default: ({ filePath, isVisible }: { filePath: string; isVisible: boolean }) => (
+    <div data-testid="html-rendered-preview" data-visible={isVisible}>
+      {filePath}
+    </div>
+  ),
+}));
 
 const textPath = 'E:/work/notes.md';
 const imagePath = 'E:/work/image.png';
@@ -39,7 +46,8 @@ const shell = {
   openPathWith: vi.fn(),
 };
 
-function PreviewHarness() {
+function PreviewHarness({ filePath = textPath }: { filePath?: string }) {
+  const textPath = filePath;
   const [selected, setSelected] = useState<string | null>(textPath);
   const [treeOpen, setTreeOpen] = useState(true);
   const textPreviewRef = useRef<FilePreviewDrawerHandle>(null);
@@ -121,6 +129,48 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+
+it.each(['.html', '.htm', '.xhtml'])(
+  'renders a local %s file by default and keeps the file tree while editing and previewing',
+  async extension => {
+    const path = `E:/work/page${extension}`;
+    render(<PreviewHarness filePath={path} />);
+    expect(screen.getByTestId('html-rendered-preview')).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: 'File editor' })).toBeNull();
+    expect(screen.getByText('File tree')).toBeTruthy();
+    expect(shell.authorizePreviewFileEdit).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const editor = await screen.findByRole('textbox', { name: 'File editor' });
+    expect(shell.authorizePreviewFileEdit).toHaveBeenCalledWith({
+      editToken: 'text-grant',
+      expectedVersion: 'v1',
+    });
+    fireEvent.change(editor, { target: { value: '<h1>Updated page</h1>' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save and preview' }));
+    await screen.findByTestId('html-rendered-preview');
+    expect(shell.writePreviewFile).toHaveBeenCalledWith({
+      content: '<h1>Updated page</h1>',
+      editToken: 'text-grant',
+      expectedVersion: 'v1',
+    });
+    expect(screen.getByText('File tree')).toBeTruthy();
+  },
+);
+
+it('keeps the HTML draft in the editor when saving before preview fails', async () => {
+  shell.writePreviewFile.mockResolvedValue({ success: false, conflict: true });
+  render(<PreviewHarness filePath="E:/work/page.html" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+  fireEvent.change(await screen.findByRole('textbox', { name: 'File editor' }), {
+    target: { value: '<h1>Unsaved page</h1>' },
+  });
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save and preview' })));
+  expect(screen.queryByTestId('html-rendered-preview')).toBeNull();
+  expect((screen.getByRole('textbox', { name: 'File editor' }) as HTMLTextAreaElement).value).toBe(
+    '<h1>Unsaved page</h1>',
+  );
+});
 
 it('keeps the active file actions beside its path while retaining drafts across tabs and tree visibility', async () => {
   render(<PreviewHarness />);

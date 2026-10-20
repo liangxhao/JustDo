@@ -23,6 +23,8 @@ export const PREVIEWABLE_FILE_EXTENSIONS = [
   '.tsx',
   '.jsonc',
   '.html',
+  '.htm',
+  '.xhtml',
   '.css',
   '.scss',
   '.less',

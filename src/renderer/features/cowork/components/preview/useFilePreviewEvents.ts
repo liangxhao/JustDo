@@ -39,7 +39,7 @@ export function useFilePreviewEvents({
       src: string,
       label = '',
       workingDirectory?: string,
-      keepWorkspaceFilesOpen = false,
+      keepWorkspaceFilesOpen = true,
     ) => {
       const preview = createImageFilePreview(src, label, workingDirectory);
       if (!preview) return;
@@ -129,7 +129,7 @@ export function useFilePreviewEvents({
           });
           if (!requestIsCurrent()) return;
           if (opened) {
-            if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
+            if (detail.keepWorkspaceFilesOpen === false) setIsWorkspaceFilesOpen(false);
             return;
           }
         }
@@ -138,7 +138,7 @@ export function useFilePreviewEvents({
             await openInSystem();
             return;
           }
-          if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
+          if (detail.keepWorkspaceFilesOpen === false) setIsWorkspaceFilesOpen(false);
           setPreferredDisplayTabId(requestedTabId);
           setIsDisplayPanelOpen(true);
           return;
@@ -174,7 +174,7 @@ export function useFilePreviewEvents({
           void window.electron.shell
             .revokePreviewFileEdit(result.editToken)
             .catch((): undefined => undefined);
-          if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
+          if (detail.keepWorkspaceFilesOpen === false) setIsWorkspaceFilesOpen(false);
           setPreferredDisplayTabId(resolvedTabId);
           setIsDisplayPanelOpen(true);
           return;
@@ -186,7 +186,7 @@ export function useFilePreviewEvents({
           version: result.version,
         };
         setFilePreviews(current => [...current, preview]);
-        if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
+        if (detail.keepWorkspaceFilesOpen === false) setIsWorkspaceFilesOpen(false);
         setPreferredDisplayTabId(resolvedTabId);
         setIsDisplayPanelOpen(true);
         return;
@@ -201,7 +201,7 @@ export function useFilePreviewEvents({
             ? current
             : [...current, detail.filePath!],
         );
-        if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
+        if (detail.keepWorkspaceFilesOpen === false) setIsWorkspaceFilesOpen(false);
         setPreferredDisplayTabId(requestedTabId);
         setIsDisplayPanelOpen(true);
         return;

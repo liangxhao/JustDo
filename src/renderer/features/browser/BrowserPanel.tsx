@@ -318,6 +318,7 @@ interface BrowserPanelProps {
   retainedTargetIds?: readonly string[];
   agentInteractionStates?: readonly BrowserAgentInteractionState[];
   embedded?: boolean;
+  pageToolsVisible?: boolean;
   renderStartPage?: (navigate: (url: string) => void) => React.ReactNode;
 }
 
@@ -341,6 +342,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     retainedTargetIds,
     agentInteractionStates = [],
     embedded = false,
+    pageToolsVisible = true,
     renderStartPage,
   },
   ref,
@@ -2056,7 +2058,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     }
   }, [activePdfUrl, activeTabTargetId, activeWebview, readyTargets]);
 
-  const showPageTools = Boolean(activeTab && activeTab.url !== 'about:blank');
+  const showPageTools = pageToolsVisible && Boolean(activeTab && activeTab.url !== 'about:blank');
   const annotationElement = inspected ?? regions[regions.length - 1]?.elements?.[0] ?? null;
   const stageWidth = stageRef.current?.clientWidth || 520;
   const stageHeight = stageRef.current?.clientHeight || 400;

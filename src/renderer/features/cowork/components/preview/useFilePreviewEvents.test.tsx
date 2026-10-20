@@ -314,6 +314,56 @@ test('keeps the open-file tab selected after the chosen file cannot be read', as
   expect(result.current.filePreviews).toHaveLength(0);
 });
 
+test.each(['html', 'image', 'existing', 'unsupported'])(
+  'preserves the visible file tree by default when opening an %s file',
+  async kind => {
+    const filePath = kind === 'image' ? 'E:/page.png' : 'E:/page.html';
+    const readPreviewFile = vi
+      .fn()
+      .mockResolvedValue(
+        kind === 'unsupported'
+          ? { success: false, unsupportedType: true }
+          : { success: true, filePath, content: '<h1>Page</h1>', editToken: 'grant', version: '1' },
+      );
+    vi.stubGlobal('electron', { shell: { readPreviewFile } });
+    const { result } = renderHook(usePreviewHarness);
+    const openFile = () =>
+      window.dispatchEvent(new CustomEvent('cowork:preview-file', { detail: { filePath } }));
+    if (kind === 'existing')
+      await act(async () => {
+        openFile();
+      });
+    act(() => result.current.openFiles());
+    await act(async () => {
+      openFile();
+    });
+    expect(result.current.isWorkspaceFilesOpen).toBe(true);
+    expect(result.current.preferredDisplayTabId).toBe(fileDisplayTabId(filePath));
+  },
+);
+
+test('still honors an explicit request to hide the file tree', async () => {
+  const filePath = 'E:/page.html';
+  const readPreviewFile = vi.fn().mockResolvedValue({
+    success: true,
+    filePath,
+    content: '<h1>Page</h1>',
+    editToken: 'grant',
+    version: '1',
+  });
+  vi.stubGlobal('electron', { shell: { readPreviewFile } });
+  const { result } = renderHook(usePreviewHarness);
+  act(() => result.current.openFiles());
+  await act(async () => {
+    window.dispatchEvent(
+      new CustomEvent('cowork:preview-file', {
+        detail: { filePath, keepWorkspaceFilesOpen: false },
+      }),
+    );
+  });
+  expect(result.current.isWorkspaceFilesOpen).toBe(false);
+});
+
 test('reuses the image preview tab when a recording screenshot is opened repeatedly', () => {
   const { result } = renderHook(usePreviewHarness);
   const openScreenshot = () =>

@@ -38,6 +38,8 @@ const FILE_PREVIEW_EDITOR_LANGUAGES: Record<PreviewableFileExtension, FilePrevie
   '.go': 'go',
   '.h': 'cpp',
   '.html': 'html',
+  '.htm': 'html',
+  '.xhtml': 'html',
   '.ini': 'ini',
   '.java': 'java',
   '.js': 'javascript',

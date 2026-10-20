@@ -30,6 +30,8 @@ describe('file preview editor state', () => {
     ['.ts', 'typescript'],
     ['.tsx', 'typescript'],
     ['.html', 'html'],
+    ['.htm', 'html'],
+    ['.xhtml', 'html'],
     ['.css', 'css'],
     ['.scss', 'scss'],
     ['.less', 'less'],
