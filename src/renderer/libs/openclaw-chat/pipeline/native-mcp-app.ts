@@ -18,15 +18,18 @@ export function isNativeMcpAppPreview(value: unknown): value is McpAppPreview {
   return Boolean(value && typeof value === 'object' && admitted.has(value));
 }
 
-/** Hide only native history's duplicate Canvas for an already admitted App. */
+/** Hide exact native placeholders for admitted Apps or confirmed failed calls. */
 export function isNativeMcpAppFallbackPreview(
   value: unknown,
   apps: ReadonlyMap<string, McpAppPreview>,
+  failedApps?: ReadonlyMap<string, McpAppDescriptor>,
 ): boolean {
   const fallback = record(value);
   const descriptor = readMcpAppDescriptor(fallback?.mcpApp);
   const app = descriptor ? apps.get(descriptor.viewId) : undefined;
-  const expected = app?.descriptor;
+  const expected = isNativeMcpAppPreview(app)
+    ? app.descriptor
+    : descriptor && failedApps?.get(descriptor.viewId);
   return Boolean(
     fallback?.kind === 'canvas' &&
     fallback.render === 'url' &&
@@ -34,7 +37,6 @@ export function isNativeMcpAppFallbackPreview(
     fallback.url === undefined &&
     descriptor &&
     fallback.viewId === descriptor.viewId &&
-    isNativeMcpAppPreview(app) &&
     expected &&
     (
       [
@@ -50,10 +52,7 @@ export function isNativeMcpAppFallbackPreview(
   );
 }
 
-function preview(
-  value: unknown,
-  toolCallId: string,
-): (McpAppPreview & { descriptor: McpAppDescriptor }) | undefined {
+function previewDescriptor(value: unknown): McpAppDescriptor | undefined {
   const native = record(value);
   const descriptor = readMcpAppDescriptor(native?.mcpApp);
   const view = record(native?.view);
@@ -66,7 +65,17 @@ function preview(
     presentation.sandbox !== 'scripts'
   )
     return;
-  const title = typeof view.title === 'string' ? view.title.slice(0, 200) : descriptor.serverName;
+  return descriptor;
+}
+
+function preview(
+  value: unknown,
+  toolCallId: string,
+): (McpAppPreview & { descriptor: McpAppDescriptor }) | undefined {
+  const descriptor = previewDescriptor(value);
+  if (!descriptor) return;
+  const viewTitle = record(record(value)?.view)?.title;
+  const title = typeof viewTitle === 'string' ? viewTitle.slice(0, 200) : descriptor.serverName;
   const result: McpAppPreview & { descriptor: McpAppDescriptor } = {
     kind: 'mcp-app',
     viewId: descriptor.viewId,
@@ -127,40 +136,56 @@ export function decodeNativeMcpAppResult(
  * retained descriptor with the exact native tool-role result and call ID.
  * The authenticated view read verifies the view's live session and requester.
  */
-export function decodeNativeMcpAppHistoryResult(
+function readNativeMcpAppHistoryPreview(
   value: unknown,
   toolName: string | undefined,
   toolCallId: string | undefined,
-): McpAppPreview | undefined {
+) {
   const source = record(value);
   if (
     !source ||
     typeof source.role !== 'string' ||
     !nativeToolRoles.has(source.role.toLowerCase()) ||
-    failed(source) ||
     !toolName ||
     !/^[A-Za-z0-9_-]+__.+$/.test(toolName) ||
     !toolCallId
   )
     return;
   const details = record(source.details);
-  if (failed(details)) return;
-  const candidate = preview(details?.mcpAppPreview, toolCallId);
+  const descriptor = previewDescriptor(details?.mcpAppPreview);
   if (
-    !candidate ||
-    candidate.descriptor.toolCallId !== toolCallId ||
-    (details?.mcpServer !== undefined && details.mcpServer !== candidate.descriptor.serverName) ||
-    (details?.mcpTool !== undefined && details.mcpTool !== candidate.descriptor.toolName)
+    !descriptor ||
+    descriptor.toolCallId !== toolCallId ||
+    (details?.mcpServer !== undefined && details.mcpServer !== descriptor.serverName) ||
+    (details?.mcpTool !== undefined && details.mcpTool !== descriptor.toolName)
   )
     return;
-  return candidate;
+  return { source, details, descriptor, toolCallId };
+}
+
+export function decodeNativeMcpAppHistoryResult(
+  value: unknown,
+  toolName: string | undefined,
+  toolCallId: string | undefined,
+): McpAppPreview | undefined {
+  const history = readNativeMcpAppHistoryPreview(value, toolName, toolCallId);
+  if (!history || failed(history.source) || failed(history.details)) return;
+  return preview(history.details?.mcpAppPreview, history.toolCallId);
+}
+
+/** Suppression evidence only: a failed call never admits a view or grants reads. */
+export function readFailedNativeMcpAppHistoryDescriptor(
+  value: unknown,
+  toolName: string | undefined,
+  toolCallId: string | undefined,
+): McpAppDescriptor | undefined {
+  const history = readNativeMcpAppHistoryPreview(value, toolName, toolCallId);
+  if (!history || (!failed(history.source) && !failed(history.details))) return;
+  return history.descriptor;
 }
 
 /** Native ToolSearch persists each target as its own authenticated activity. */
-export function decodeNativeNestedMcpAppHistoryResult(
-  value: unknown,
-  result: unknown,
-): McpAppPreview | undefined {
+function readNativeNestedMcpAppHistoryResult(value: unknown, result: unknown) {
   const source = record(value);
   const child = record(result);
   if (
@@ -192,7 +217,25 @@ export function decodeNativeNestedMcpAppHistoryResult(
     );
   });
   if (!call) return;
-  return decodeNativeMcpAppHistoryResult(child, child.toolName, child.toolCallId);
+  return { child, toolName: child.toolName, toolCallId: child.toolCallId };
+}
+
+export function decodeNativeNestedMcpAppHistoryResult(
+  value: unknown,
+  result: unknown,
+): McpAppPreview | undefined {
+  const nested = readNativeNestedMcpAppHistoryResult(value, result);
+  if (!nested) return;
+  return decodeNativeMcpAppHistoryResult(nested.child, nested.toolName, nested.toolCallId);
+}
+
+export function readFailedNativeNestedMcpAppHistoryDescriptor(
+  value: unknown,
+  result: unknown,
+): McpAppDescriptor | undefined {
+  const nested = readNativeNestedMcpAppHistoryResult(value, result);
+  if (!nested) return;
+  return readFailedNativeMcpAppHistoryDescriptor(nested.child, nested.toolName, nested.toolCallId);
 }
 
 /** A direct authenticated launch response uses the same descriptor admission. */

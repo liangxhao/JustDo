@@ -347,6 +347,23 @@ describe('native show_widget descriptors', () => {
     }
   });
 
+  it.each([
+    '[embed ref="widget-123" url="https://example.test/preview" /]',
+    '[embed viewId="widget-123" url="https://example.test/preview" /]',
+    '[embed ref="widget-123" url="/__openclaw__/canvas/documents/other-view/index.html" /]',
+  ])('preserves explicit preview URLs despite a matching native reference: %s', text => {
+    expect(stripNativeWidgetFallbacks(text, new Set(['widget-123']))).toBe(text);
+  });
+
+  it('removes a matching native document URL even when its reference is different', () => {
+    expect(
+      stripNativeWidgetFallbacks(
+        '[embed ref="other-view" url="/__openclaw__/canvas/documents/widget-123/index.html" /]',
+        new Set(['widget-123']),
+      ),
+    ).toBe('');
+  });
+
   it('removes only same-document fallback shortcodes once a canonical widget exists', () => {
     const duplicate = '[embed url="/__openclaw__/canvas/documents/widget-123/index.html" /]';
     const unrelated = '[embed url="https://example.test" viewId="other-document" /]';

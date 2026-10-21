@@ -101,7 +101,11 @@ describe('native MCP App history projection', () => {
   it.each([
     { ...fallback.preview, url: 'https://example.test/other' },
     { ...fallback.preview, viewId: 'other-view' },
+    { ...fallback.preview, render: 'native' },
+    { ...fallback.preview, surface: 'node_panel' },
     { ...fallback.preview, mcpApp: { ...descriptor, serverName: 'other' } },
+    { ...fallback.preview, mcpApp: { ...descriptor, toolName: 'other' } },
+    { ...fallback.preview, mcpApp: { ...descriptor, uiResourceUri: 'ui://demo/other' } },
     { ...fallback.preview, mcpApp: { ...descriptor, toolCallId: 'other' } },
     { ...fallback.preview, mcpApp: { ...descriptor, originSessionKey: 'agent:other:session' } },
   ])('preserves an unrelated or mismatched preview %#', preview => {
@@ -117,9 +121,145 @@ describe('native MCP App history projection', () => {
     ).toBe(true);
   });
 
-  it('does not remove an unadmitted preview when the corresponding tool failed', () => {
+  it('removes only the failed native App placeholder and retains the tool failure', () => {
     const timeline = projectPersistedTimeline([
       { ...projectedResult, isError: true },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: `Correcting the input. [embed ref="${descriptor.viewId}" /]` },
+          fallback,
+        ],
+      },
+    ]);
+    expect(timeline.some(item => item.kind === 'mcp-app')).toBe(false);
+    expect(
+      timeline
+        .filter(item => item.kind === 'history-message')
+        .flatMap(item => (item.message as { content: unknown[] }).content),
+    ).toEqual([{ type: 'text', text: 'Correcting the input. ' }]);
+    expect(
+      timeline
+        .filter(item => item.kind === 'process-summary')
+        .flatMap(item => item.items)
+        .some(
+          item =>
+            item.type === 'tool' &&
+            item.toolCallId === descriptor.toolCallId &&
+            item.status === 'failed',
+        ),
+    ).toBe(true);
+  });
+
+  it('preserves explicit URL embeds even when they reuse a failed App reference', () => {
+    const text = [
+      `[embed ref="${descriptor.viewId}" url="https://example.test/preview" /]`,
+      `[embed viewId="${descriptor.viewId}" url="https://example.test/other" /]`,
+      `[embed ref="${descriptor.viewId}" url="/__openclaw__/canvas/documents/other-view/index.html" /]`,
+      `\`[embed ref="${descriptor.viewId}" /]\``,
+      `\`\`\`text\n[embed ref="${descriptor.viewId}" /]\n\`\`\``,
+    ].join('\n');
+    const timeline = projectPersistedTimeline([
+      { ...projectedResult, isError: true },
+      { role: 'assistant', content: [{ type: 'text', text }] },
+    ]);
+
+    expect(
+      timeline
+        .filter(item => item.kind === 'history-message')
+        .flatMap(item => (item.message as { content: unknown[] }).content),
+    ).toEqual([{ type: 'text', text }]);
+  });
+
+  it('keeps the successful retry after a failed native ToolSearch App result', () => {
+    const failedDescriptor = { ...descriptor, viewId: 'failed-view', toolCallId: nestedCallId };
+    const failedActivity = {
+      ...nestedActivity,
+      content: [
+        nestedCall,
+        {
+          ...nestedResult,
+          isError: true,
+          content: [{ type: 'text', text: 'Invalid XML' }],
+          details: {
+            mcpAppPreview: {
+              ...nestedResult.details.mcpAppPreview,
+              view: { id: failedDescriptor.viewId, title: 'show UI' },
+              mcpApp: failedDescriptor,
+            },
+          },
+        },
+      ],
+    };
+    const failedFallback = {
+      ...fallback,
+      preview: { ...fallback.preview, viewId: failedDescriptor.viewId, mcpApp: failedDescriptor },
+    };
+    const messages = [
+      failedActivity,
+      { role: 'assistant', content: [failedFallback] },
+      projectedResult,
+      { role: 'assistant', content: [{ type: 'text', text: 'Ready.' }, fallback] },
+    ];
+    const before = structuredClone(messages);
+    const timeline = projectPersistedTimeline(messages);
+
+    expect(
+      timeline.filter(item => item.kind === 'mcp-app').map(item => item.preview.viewId),
+    ).toEqual([descriptor.viewId]);
+    expect(
+      timeline
+        .filter(item => item.kind === 'history-message')
+        .flatMap(item => (item.message as { content: unknown[] }).content),
+    ).toEqual([{ type: 'text', text: 'Ready.' }]);
+    expect(messages).toEqual(before);
+  });
+
+  it.each([
+    { ...fallback.preview, url: 'https://example.test/other' },
+    { ...fallback.preview, viewId: 'other-view' },
+    { ...fallback.preview, mcpApp: { ...descriptor, serverName: 'other' } },
+    { ...fallback.preview, mcpApp: { ...descriptor, toolCallId: 'other' } },
+    { ...fallback.preview, mcpApp: { ...descriptor, originSessionKey: 'agent:other:session' } },
+    { ...fallback.preview, mcpApp: { ...descriptor, resultMetaState: 'unavailable' } },
+    { ...fallback.preview, render: 'native' },
+    { ...fallback.preview, surface: 'node_panel' },
+    { ...fallback.preview, mcpApp: { ...descriptor, toolName: 'other' } },
+    { ...fallback.preview, mcpApp: { ...descriptor, uiResourceUri: 'ui://demo/other' } },
+  ])('preserves unrelated previews alongside a failed native App %#', preview => {
+    const block = { ...fallback, preview };
+    const timeline = projectPersistedTimeline([
+      { ...projectedResult, isError: true },
+      { role: 'assistant', content: [block] },
+    ]);
+    expect(timeline.some(item => item.kind === 'mcp-app')).toBe(false);
+    expect(
+      timeline
+        .filter(item => item.kind === 'history-message')
+        .some(item => JSON.stringify(item.message).includes(JSON.stringify(block))),
+    ).toBe(true);
+  });
+
+  it.each([
+    { ...projectedResult, role: 'assistant' },
+    { ...projectedResult, role: 'user' },
+    { ...projectedResult, toolName: 'read' },
+    { ...projectedResult, toolCallId: 'different-call' },
+    { ...projectedResult, toolCallId: undefined },
+    { ...projectedResult, details: { ...projectedResult.details, mcpServer: 'different' } },
+    { ...projectedResult, details: { ...projectedResult.details, mcpTool: 'different' } },
+    {
+      ...projectedResult,
+      details: {
+        mcpAppPreview: {
+          ...projectedResult.details.mcpAppPreview,
+          view: { id: 'different-view' },
+        },
+      },
+    },
+  ])('does not hide a placeholder using an uncorrelated or non-native failure %#', source => {
+    const timeline = projectPersistedTimeline([
+      { ...source, isError: true },
       { role: 'assistant', content: [fallback] },
     ]);
     expect(timeline.some(item => item.kind === 'mcp-app')).toBe(false);
@@ -127,6 +267,29 @@ describe('native MCP App history projection', () => {
       timeline
         .filter(item => item.kind === 'history-message')
         .some(item => JSON.stringify(item.message).includes(JSON.stringify(fallback))),
+    ).toBe(true);
+  });
+
+  it.each([
+    { ...nestedCall, id: 'different-call' },
+    { ...nestedCall, name: 'demo__different' },
+    { ...nestedCall, runId: 'different-run' },
+    { ...nestedCall, parentToolCallId: 'different-parent' },
+  ])('does not hide a placeholder using a mismatched failed ToolSearch activity %#', call => {
+    const child = { ...nestedResult, isError: true };
+    const block = {
+      ...fallback,
+      preview: { ...fallback.preview, mcpApp: child.details.mcpAppPreview.mcpApp },
+    };
+    const timeline = projectPersistedTimeline([
+      { ...nestedActivity, content: [call, child] },
+      { role: 'assistant', content: [block] },
+    ]);
+    expect(timeline.some(item => item.kind === 'mcp-app')).toBe(false);
+    expect(
+      timeline
+        .filter(item => item.kind === 'history-message')
+        .some(item => JSON.stringify(item.message).includes(JSON.stringify(block))),
     ).toBe(true);
   });
 

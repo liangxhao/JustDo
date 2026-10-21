@@ -54,7 +54,7 @@ export function isNativeWidgetFallbackPreview(
   );
 }
 
-/** Suppress only a fallback for a document already admitted by a real tool. */
+/** Suppress only fallbacks identified by native tool results. */
 export function stripNativeWidgetFallbacks(text: string, docIds: ReadonlySet<string>): string {
   if (!docIds.size || !text.toLowerCase().includes('[embed')) return text;
   const codeRanges = Array.from(
@@ -77,8 +77,10 @@ export function stripNativeWidgetFallbacks(text: string, docIds: ReadonlySet<str
         ),
       );
       const ref = attrs.get('ref') ?? attrs.get('viewid');
-      if (ref && docIds.has(ref)) return '';
       const url = attrs.get('url');
+      // Native embeds use an explicit URL before their ref. A matching ref
+      // alone cannot identify an external or different document as a duplicate.
+      if (url === undefined && ref && docIds.has(ref)) return '';
       const document = url?.match(
         /^\/__openclaw__\/canvas\/documents\/([A-Za-z0-9._-]+)\/index\.html$/,
       );

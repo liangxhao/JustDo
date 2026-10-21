@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest';
 import {
   decodeMcpAppLaunch,
   decodeMcpAppQuestionPreview,
+  decodeNativeMcpAppHistoryResult,
   decodeNativeMcpAppResult,
   isNativeMcpAppPreview,
+  readFailedNativeMcpAppHistoryDescriptor,
 } from './native-mcp-app';
 
 const descriptor = {
@@ -44,6 +46,26 @@ describe('native MCP App admission', () => {
     expect(isNativeMcpAppPreview(app)).toBe(true);
     expect(isNativeMcpAppPreview({ ...app })).toBe(false);
   });
+
+  it.each([
+    { isError: true },
+    { ok: false },
+    { status: 'error' },
+    { status: 'failed' },
+    { details: { ...result.details, status: 'error' } },
+  ])(
+    'uses explicit native failure only to identify a placeholder, never to admit a view %#',
+    failure => {
+      const source = { role: 'toolResult', ...result, ...failure };
+      const identity = readFailedNativeMcpAppHistoryDescriptor(source, 'demo__show', 'call-1');
+      expect(identity).toEqual(descriptor);
+      expect(isNativeMcpAppPreview(identity)).toBe(false);
+      expect(decodeNativeMcpAppHistoryResult(source, 'demo__show', 'call-1')).toBeUndefined();
+      expect(
+        readFailedNativeMcpAppHistoryDescriptor(source, 'demo__show', 'other'),
+      ).toBeUndefined();
+    },
+  );
 
   it('rejects forged tool identities, failures and embedded prose', () => {
     expect(

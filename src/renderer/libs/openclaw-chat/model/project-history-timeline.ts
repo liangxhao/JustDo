@@ -1,6 +1,7 @@
 import { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { normalizeToolTerminalStatus } from '@shared/openclaw/messageDomain';
+import type { McpAppDescriptor } from '@shared/plugins/mcpApps';
 import { isGatewayInjectedModelRef } from '@shared/providers/modelRef';
 
 import { getTranscriptMedia } from '@/libs/openclaw-chat/attachments';
@@ -17,6 +18,8 @@ import {
   decodeNativeMcpAppResult,
   decodeNativeNestedMcpAppHistoryResult,
   isNativeMcpAppFallbackPreview,
+  readFailedNativeMcpAppHistoryDescriptor,
+  readFailedNativeNestedMcpAppHistoryDescriptor,
 } from '../pipeline/native-mcp-app';
 import { type ThinkingItem, type ToolItem } from './chat-transcript-state';
 import {
@@ -233,6 +236,7 @@ export function projectPersistedTimeline(
   const presentedWidgets = new WeakSet<ToolItem>();
   const presentedWidgetDocIds = new Set<string>();
   const presentedAppViewIds = new Set<string>();
+  const failedApps = new Map<string, McpAppDescriptor>();
   const syntheticRunIds = new Set<string>();
   const toolEpochByItem = new WeakMap<ToolItem, number>();
   let toolEpoch = 0;
@@ -561,6 +565,12 @@ export function projectPersistedTimeline(
     const role = roleOf(source);
     if (TOOL_RESULT_ROLES.has(role)) {
       const tool = applyToolResult(source, fallbackId, runId, sequence, timestamp);
+      const failedApp = readFailedNativeMcpAppHistoryDescriptor(
+        source,
+        readToolName(source),
+        readToolCallId(source) ?? undefined,
+      );
+      if (failedApp) failedApps.set(failedApp.viewId, failedApp);
       const app =
         tool.status === 'completed'
           ? (decodeNativeMcpAppHistoryResult(
@@ -833,6 +843,8 @@ export function projectPersistedTimeline(
       if (isToolResultType(type)) {
         flushVisibleBlocks();
         const tool = applyToolResult(toolSource, itemId, runId, blockIndex, timestamp);
+        const failedApp = readFailedNativeNestedMcpAppHistoryDescriptor(message, block);
+        if (failedApp) failedApps.set(failedApp.viewId, failedApp);
         const app =
           tool.status === 'completed'
             ? decodeNativeNestedMcpAppHistoryResult(message, block)
@@ -874,7 +886,7 @@ export function projectPersistedTimeline(
       item.kind === 'mcp-app' ? [[item.preview.viewId, item.preview] as const] : [],
     ),
   );
-  const fallbackIds = new Set([...nativeDocIds, ...nativeApps.keys()]);
+  const fallbackIds = new Set([...nativeDocIds, ...nativeApps.keys(), ...failedApps.keys()]);
   // A history refresh can expose an in-flight Tool before its result, notably
   // when a subagent announce is persisted behind a long sessions_yield call.
   // Keep the same invariant as the live projection: only settled Thinking and
@@ -894,11 +906,12 @@ export function projectPersistedTimeline(
       const cleaned = content.flatMap(block => {
         const record = asToolRecord(block);
         // Native history can also expand a fallback into a Canvas block.
-        // Remove only the same admitted document/App; preserve external embeds.
+        // Remove only the same admitted document/App or confirmed failed App;
+        // preserve unrelated and external embeds, and keep the failed Tool.
         if (
           record?.type === 'canvas' &&
           (isNativeWidgetFallbackPreview(record.preview, nativeDocIds) ||
-            isNativeMcpAppFallbackPreview(record.preview, nativeApps))
+            isNativeMcpAppFallbackPreview(record.preview, nativeApps, failedApps))
         ) {
           changed = true;
           return [];
