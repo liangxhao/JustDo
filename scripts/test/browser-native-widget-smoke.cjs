@@ -111,7 +111,8 @@ if(event.source===parent&&event.data.method==='ui/notifications/sandbox-resource
 inner=document.createElement('iframe');inner.sandbox='allow-scripts allow-forms';inner.srcdoc=event.data.params.html;
 inner.onload=()=>parent.postMessage({method:'ui/notifications/sandbox-resource-loaded',params:{renderId:event.data.params.renderId}},event.origin);
 document.body.replaceChildren(inner);
-}else if(inner&&event.source===inner.contentWindow)parent.postMessage(event.data,'*');});
+}else if(inner&&event.source===parent)inner.contentWindow.postMessage(event.data,'*');
+else if(inner&&event.source===inner.contentWindow)parent.postMessage(event.data,'*');});
 parent.postMessage({method:'ui/notifications/sandbox-proxy-ready',params:{sandboxUrl:location.href}},'*');
 </script></body>`);
       });

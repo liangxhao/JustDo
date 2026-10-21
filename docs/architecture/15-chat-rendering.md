@@ -89,6 +89,22 @@ client/session/generation/docId 校验，不增加工作区窗口 preload 或权
 
 桌面 `show_widget` 使用独立 webview，固定同源 `widget-viewer.html` 承载原生 sandbox
 iframe；专用内存 session 复用 `browserProxy`，不共享浏览器 Cookie、profile 或工具能力。
+webview 使用 flex 布局，让 Electron 内部的 guest iframe 填满实际外框；仅给 block
+webview 设置高度会留下默认 150px 的内部视口，出现顶部画面和下方空白。尺寸验证须
+核对外框、guest、原生 shell 与内层文档的实际视口，并覆盖放大、收起和窗口 resize。
+放大视口由 `dialog:modal` 样式直接控制。viewer 以实际 frame 的 client 尺寸和模态状态
+发布单调递增的布局代次，放大、收起和窗口调整都更新代次；尺寸应用前再次核对实际
+外框。认证 HTML 仅在本次内存挂载时加入尺寸适配脚本，原生历史、CSP、资源和业务脚本
+保持原内容，不增加运行时补丁。独立全屏画布页面若隐藏正文溢出、只有一个顶层容器、
+画布直接填满该容器且控件为浮层，放大时临时将容器高度适配到全部可用视口，解除
+原先 `70vh` 等高度与最小高度限制，让文档原有 ResizeObserver 重新绘制。收起恢复
+原高度声明与优先级；容器保留 overflow 裁切，避免旧画布尺寸在重新绘制前撑高正文。
+多面板、普通文档、嵌套画布和带正文流说明的图表保持原布局；业务脚本主动修改的属性
+不会在恢复时被覆盖。适配不拉伸画布位图，不重新加载文档。脚本在 opaque 文档内等待自身视口吻合目标尺寸，
+再报告正文高度、实测视口和代次；不以固定延迟猜测嵌套 frame 或 guest IPC 已完成。
+宿主验证原 frame/source/origin、挂载随机身份、布局代次和视口尺寸；跨 guest 的高度
+事件也携带代次，旧报告与原生无代次报告不能覆盖收起后的高度。动态内容仍按当前
+代次测量；绑定替换和卸载断开观察器并销毁旧桥，不重载运行中的文档来恢复尺寸。
 Main 在 attach 前核对固定 origin/path/mount，强制最小 preload、sandbox、contextIsolation
 和无 Node，禁止导航、新窗口、下载和权限请求；guest 必须等待专用 session 代理就绪。
 认证读取继续属于当前聊天 client，只传当前 HTML/沙箱 URL、主题与草稿策略，不传 token。
@@ -107,7 +123,7 @@ Electron guest 失败显示现有恢复入口，不回退主 session iframe。�
 发起：跨文档调用 `postMessage` 会携带调用者的源窗口，不能仅替换监听目标。
 工作区静态启动模块在自己的文档中安装只读、受限发送函数，完成后才发布 portal root；
 组件按 frame 当前文档选择发送入口，限定已连接的原生组件 iframe、准确的沙箱路径与
-origin、五类封闭消息（含滚动握手）。未放宽原生 `source === parent`、CSP 或权限；入口缺失时资源
+origin、封闭的资源/主题/草稿/滚动/布局消息。未放宽原生 `source === parent`、CSP 或权限；入口缺失时资源
 投递按失败处理。断开期间不创建文档绑定，重挂载主动更新并重新读取当前原生文档。
 
 原生 Tool Search 可以通过 `tool_call` 调用 `show_widget`，历史保留外层工具结果及独立嵌套

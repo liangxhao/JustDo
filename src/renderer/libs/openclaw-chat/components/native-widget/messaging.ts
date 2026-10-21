@@ -22,6 +22,7 @@ function postInCurrentDocument(
       'openclaw:widget-chat-host',
       'openclaw:widget-board-host',
       'openclaw:scenario-draft-policy',
+      WIDGET_LAYOUT_REQUEST,
     ].includes(data.type)
   ) {
     return false;
@@ -66,3 +67,4 @@ export function postNativeWidgetMessage(
     return false;
   }
 }
+import { WIDGET_LAYOUT_REQUEST } from './sizing';

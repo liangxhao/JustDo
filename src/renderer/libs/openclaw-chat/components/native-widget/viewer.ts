@@ -20,6 +20,7 @@ const nonce = crypto.randomUUID();
 const emit = (event: Parameters<WidgetViewerBridge['emit']>[0]) => bridge?.emit(event);
 const sendState = () => {
   if (!host || !state) return;
+  if (state.layout) host.setLayout(state.layout);
   const origin = new URL(host.url).origin;
   postNativeWidgetMessage(host.frame, { type: 'openclaw:widget-theme', ...state.theme }, origin);
   postNativeWidgetMessage(host.frame, { type: 'openclaw:widget-chat-host' }, origin);
@@ -51,7 +52,7 @@ bridge?.onState(value => {
 bridge?.onInitialize((value: WidgetViewerInitialize) => {
   if (host || frame) return;
   mountId = value.mountId;
-  state ??= { draftAllowed: value.draftAllowed, theme: value.theme };
+  state ??= { draftAllowed: value.draftAllowed, theme: value.theme, layout: value.layout };
   if (
     new URL(location.href).searchParams.get('mount') !== mountId ||
     typeof value.html !== 'string' ||
@@ -116,19 +117,10 @@ bridge?.onInitialize((value: WidgetViewerInitialize) => {
       for (const extra of event.ports) extra.close();
       return;
     }
-    host.handleMessage(event);
+    const size = host.handleMessage(event);
+    if (size) emit({ mountId, type: 'height', ...size });
     if (event.data?.type === 'openclaw:widget-runtime-error') fail(true);
     if (event.data?.type === 'openclaw:widget-bridge-ready') sendState();
-    if (
-      event.data?.type === 'openclaw:widget-size' &&
-      Number.isFinite(event.data.height) &&
-      event.data.height > 0
-    )
-      emit({
-        mountId,
-        type: 'height',
-        height: Math.min(8000, Math.max(48, Math.ceil(event.data.height))),
-      });
     if (
       event.data?.type === 'openclaw:widget-scroll' &&
       host.loaded &&

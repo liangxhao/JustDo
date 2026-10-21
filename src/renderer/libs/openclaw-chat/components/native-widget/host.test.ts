@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { NativeWidgetSandboxHost, resolveNativeSandboxUrl, WIDGET_TIMEOUT_MS } from './host';
+import { WIDGET_LAYOUT_REQUEST, WIDGET_MEASURED_HEIGHT } from './sizing';
 
 const gateway = 'ws://127.0.0.1:18789';
 const hostOrigin = 'http://127.0.0.1:43180';
@@ -66,7 +67,8 @@ describe('native sandbox transport', () => {
     expect(post).not.toHaveBeenCalled();
     transport.handleMessage(message(frame.contentWindow, new URL(url).origin, ready));
     const params = post.mock.calls[0][0].params;
-    expect(params.html).toBe('<p>widget</p>');
+    expect(params.html).toContain('<p>widget</p>');
+    expect(params.html).toContain('widget-view:measured-height');
     transport.handleMessage(
       message(frame.contentWindow, new URL(url).origin, {
         method: 'ui/notifications/sandbox-resource-loaded',
@@ -104,5 +106,57 @@ describe('native sandbox transport', () => {
     expect(failed).toHaveBeenCalledOnce();
     expect(frame.getAttribute('src')).toBeNull();
     transport.dispose();
+  });
+
+  it('admits only the current sizing identity, revision and source viewport', () => {
+    const widget = document.createElement('justdo-native-widget');
+    const frame = document.createElement('iframe');
+    frame.src = 'http://127.0.0.1:18790/mcp-app-sandbox';
+    widget.attachShadow({ mode: 'open' }).append(frame);
+    document.body.append(widget);
+    const post = vi.spyOn(frame.contentWindow!, 'postMessage');
+    const host = new NativeWidgetSandboxHost(
+      frame,
+      frame.src,
+      '<body>fixture</body>',
+      vi.fn(),
+      vi.fn(),
+    );
+    const receive = (
+      data: unknown,
+      source = frame.contentWindow,
+      origin = new URL(frame.src).origin,
+    ) => host.handleMessage(new MessageEvent('message', { data, source, origin }));
+    receive({ method: 'ui/notifications/sandbox-proxy-ready', params: { sandboxUrl: frame.src } });
+    const first = { revision: 1, expanded: true, width: 840, height: 877 };
+    host.setLayout(first);
+    const { id } = post.mock.calls.find(([data]) => data?.type === WIDGET_LAYOUT_REQUEST)![0];
+    const measured = {
+      type: WIDGET_MEASURED_HEIGHT,
+      id,
+      revision: 1,
+      width: 840,
+      viewportHeight: 877,
+      height: 877,
+    };
+    expect(receive(measured)).toEqual({ height: 877, revision: 1 });
+    host.setLayout({ ...first, revision: 2, expanded: false, height: 420 });
+    host.setLayout(first);
+    expect(receive(measured)).toBeUndefined();
+    const current = { ...measured, revision: 2, viewportHeight: 420, height: 640 };
+    expect(receive(current)).toEqual({ height: 640, revision: 2 });
+    expect(receive(current, window)).toBeUndefined();
+    expect(receive(current, frame.contentWindow, 'https://evil.test')).toBeUndefined();
+    for (const patch of [
+      { id: 'old' },
+      { width: 700 },
+      { viewportHeight: 877 },
+      { height: Infinity },
+      { height: '640' },
+    ])
+      expect(receive({ ...current, ...patch })).toBeUndefined();
+    expect(receive({ type: 'openclaw:widget-size', height: 877 })).toBeUndefined();
+    host.dispose();
+    expect(receive(current)).toBeUndefined();
   });
 });

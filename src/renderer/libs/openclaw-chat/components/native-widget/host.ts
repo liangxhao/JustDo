@@ -1,4 +1,12 @@
+import type { WidgetViewportLayout } from '@shared/widgets/viewer';
+
 import { postNativeWidgetMessage } from './messaging';
+import {
+  WIDGET_LAYOUT_READY,
+  WIDGET_LAYOUT_REQUEST,
+  WIDGET_MEASURED_HEIGHT,
+  withWidgetSizing,
+} from './sizing';
 
 /** Minimal adapter for OpenClaw's native sandbox transport; no dashboard authority. */
 export const NATIVE_WIDGET_CONTEXT_REQUEST = 'native-widget-context-request';
@@ -91,6 +99,8 @@ export class NativeWidgetSandboxHost {
   private ready = false;
   private delivered = false;
   private renderId = crypto.randomUUID();
+  private sizingId = crypto.randomUUID();
+  private layout?: WidgetViewportLayout;
   private timer: ReturnType<typeof setTimeout>;
 
   constructor(
@@ -109,7 +119,18 @@ export class NativeWidgetSandboxHost {
     return this.delivered;
   }
 
-  handleMessage(event: MessageEvent): void {
+  setLayout(layout: WidgetViewportLayout): void {
+    if (this.layout && layout.revision < this.layout.revision) return;
+    this.layout = layout;
+    if (this.active && this.delivered)
+      postNativeWidgetMessage(
+        this.frame,
+        { type: WIDGET_LAYOUT_REQUEST, id: this.sizingId, layout },
+        new URL(this.url).origin,
+      );
+  }
+
+  handleMessage(event: MessageEvent): { height: number; revision: number } | undefined {
     if (
       !this.active ||
       event.source !== this.frame.contentWindow ||
@@ -127,7 +148,7 @@ export class NativeWidgetSandboxHost {
         {
           jsonrpc: '2.0',
           method: 'ui/notifications/sandbox-resource-ready',
-          params: { html: this.html, renderId: this.renderId },
+          params: { html: withWidgetSizing(this.html, this.sizingId), renderId: this.renderId },
         },
         event.origin,
       );
@@ -146,6 +167,32 @@ export class NativeWidgetSandboxHost {
       clearTimeout(this.timer);
       this.onRendered();
     }
+    if (
+      this.delivered &&
+      event.data?.type === WIDGET_LAYOUT_READY &&
+      event.data.id === this.sizingId &&
+      this.layout
+    )
+      this.setLayout(this.layout);
+    const value = event.data;
+    const layout = this.layout;
+    if (
+      this.delivered &&
+      value?.type === WIDGET_MEASURED_HEIGHT &&
+      value.id === this.sizingId &&
+      layout &&
+      value.revision === layout.revision &&
+      Number.isFinite(value.height) &&
+      value.height > 0 &&
+      Number.isFinite(value.width) &&
+      Math.abs(value.width - layout.width) <= 1 &&
+      Number.isFinite(value.viewportHeight) &&
+      Math.abs(value.viewportHeight - layout.height) <= 1
+    )
+      return {
+        height: Math.min(8000, Math.max(48, Math.ceil(value.height))),
+        revision: layout.revision,
+      };
   }
 
   dispose(): void {

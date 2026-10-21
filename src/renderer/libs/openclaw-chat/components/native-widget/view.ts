@@ -1,3 +1,4 @@
+import type { WidgetViewportLayout } from '@shared/widgets/viewer';
 import { css, html, LitElement, nothing, type PropertyValues } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 
@@ -158,10 +159,23 @@ export class NativeWidgetView extends LitElement {
     }
     iframe,
     webview {
-      display: block;
       width: 100%;
+      height: var(--widget-height);
       border: 0;
       min-height: 48px;
+    }
+    dialog:modal iframe,
+    dialog:modal webview {
+      /* Follow top-layer promotion immediately, before the next Lit update. */
+      height: 100%;
+    }
+    iframe {
+      display: block;
+    }
+    webview {
+      /* Electron's internal guest iframe stretches through this flex host.
+         A block host leaves the actual guest viewport at its default 150px. */
+      display: flex;
     }
     .frame {
       position: relative;
@@ -243,6 +257,9 @@ export class NativeWidgetView extends LitElement {
   private failureKind: WidgetFailureKind = WidgetFailure.LOAD;
   private slowTimer?: ReturnType<typeof setTimeout>;
   private scrollNonce = '';
+  private layoutObserver?: ResizeObserver;
+  private layout?: WidgetViewportLayout;
+  private layoutRevision = 0;
 
   constructor() {
     super();
@@ -319,7 +336,10 @@ export class NativeWidgetView extends LitElement {
   }
 
   private clear(): void {
-    this.collapse();
+    this.collapse(false);
+    this.layoutObserver?.disconnect();
+    this.layoutObserver = undefined;
+    this.layout = undefined;
     clearTimeout(this.slowTimer);
     this.slowTimer = undefined;
     this.slow = false;
@@ -392,6 +412,7 @@ export class NativeWidgetView extends LitElement {
   }
 
   protected updated(): void {
+    if (this.guest || this.host) this.syncLayout();
     const webview = this.renderRoot.querySelector<WidgetWebview>('webview');
     if (webview && this.view && this.current() && !this.guest && !this.failure) {
       const binding = this.binding!;
@@ -409,13 +430,7 @@ export class NativeWidgetView extends LitElement {
           this.ready = true;
           this.postHostState();
         }
-        if (
-          event.type === 'height' &&
-          Number.isFinite(event.height) &&
-          event.height > 0 &&
-          !this.expanded
-        )
-          this.height = Math.min(8000, Math.max(48, Math.ceil(event.height)));
+        if (event.type === 'height') this.updateHeight(event.height, event.revision);
         if (event.type === 'scroll' && this.ready && Number.isFinite(event.deltaY)) {
           const delta = Math.max(-8000, Math.min(8000, event.deltaY));
           if (this.expanded) this.renderRoot.querySelector('dialog')?.scrollBy({ top: delta });
@@ -434,6 +449,7 @@ export class NativeWidgetView extends LitElement {
           if (text) this.suggestion = text;
         }
       });
+      this.observeLayout(webview);
       this.observeTheme();
       this.postHostState();
       return;
@@ -457,6 +473,7 @@ export class NativeWidgetView extends LitElement {
         if (this.current(binding) && !this.failure) this.fail();
       },
     );
+    this.observeLayout(frame);
     this.observeTheme();
     frame.src = this.view.url;
   }
@@ -471,6 +488,8 @@ export class NativeWidgetView extends LitElement {
   }
 
   private fail(kind: WidgetFailureKind = WidgetFailure.LOAD): void {
+    this.layoutObserver?.disconnect();
+    this.layoutObserver = undefined;
     clearTimeout(this.slowTimer);
     this.slowTimer = undefined;
     this.slow = false;
@@ -536,12 +555,14 @@ export class NativeWidgetView extends LitElement {
     });
     if (this.guest) {
       this.guest.update({
+        layout: this.layout,
         theme: { mode: styles.colorScheme === 'dark' ? 'dark' : 'light', tokens },
         draftAllowed:
           !this.failure && this.draftAllowed() && this.ownerDocument.visibilityState !== 'hidden',
       });
       return;
     }
+    if (this.layout) this.host!.setLayout(this.layout);
     const target = new URL(this.host!.url).origin;
     postNativeWidgetMessage(
       this.host!.frame,
@@ -633,7 +654,8 @@ export class NativeWidgetView extends LitElement {
       for (const port of event.ports) port.close();
       return;
     }
-    host.handleMessage(event);
+    const size = host.handleMessage(event);
+    if (size) this.updateHeight(size.height, size.revision);
     if (
       event.data?.type === 'openclaw:widget-scroll' &&
       host.loaded &&
@@ -653,14 +675,6 @@ export class NativeWidgetView extends LitElement {
       this.fail(WidgetFailure.RUNTIME);
       return;
     }
-    if (
-      event.data?.type === 'openclaw:widget-size' &&
-      typeof event.data.height === 'number' &&
-      Number.isFinite(event.data.height) &&
-      event.data.height > 0 &&
-      !this.expanded
-    )
-      this.height = Math.min(8000, Math.max(48, Math.ceil(event.data.height)));
     if (event.data?.type === 'openclaw:widget-bridge-ready') this.postHostState();
   };
 
@@ -669,7 +683,49 @@ export class NativeWidgetView extends LitElement {
     this.suggestion = widgetRebuildDraft(this.preview, this.failureKind, key => i18nService.t(key));
   };
 
-  private collapse(): void {
+  private observeLayout(frame: HTMLElement): void {
+    const owner = this.ownerDocument.defaultView;
+    if (owner?.ResizeObserver) {
+      this.layoutObserver = new owner.ResizeObserver(() => this.syncLayout());
+      this.layoutObserver.observe(frame);
+    }
+    this.syncLayout();
+  }
+
+  private syncLayout(): void {
+    if (!this.current() || this.failure) return;
+    const frame = this.renderRoot.querySelector<HTMLElement>('webview, iframe');
+    if (!frame) return;
+    const width = frame.clientWidth;
+    const height = frame.clientHeight;
+    if (width <= 0 || height <= 0) return;
+    if (
+      this.layout?.width === width &&
+      this.layout.height === height &&
+      this.layout.expanded === this.expanded
+    )
+      return;
+    this.layout = { revision: ++this.layoutRevision, expanded: this.expanded, width, height };
+    this.postHostState();
+  }
+
+  private updateHeight(height: unknown, revision: unknown): void {
+    this.syncLayout();
+    if (
+      this.expanded ||
+      this.failure ||
+      !this.current() ||
+      !this.layout ||
+      revision !== this.layout.revision ||
+      typeof height !== 'number' ||
+      !Number.isFinite(height) ||
+      height <= 0
+    )
+      return;
+    this.height = Math.min(8000, Math.max(48, Math.ceil(height)));
+  }
+
+  private collapse(publishLayout = true): void {
     this.workspaceOverlay?.remove();
     this.workspaceOverlay = undefined;
     if (!this.expanded) return;
@@ -677,6 +733,7 @@ export class NativeWidgetView extends LitElement {
     dialog?.close();
     dialog?.setAttribute('open', '');
     this.expanded = false;
+    if (publishLayout) this.syncLayout();
   }
 
   private readonly toggleExpanded = (): void => {
@@ -690,6 +747,7 @@ export class NativeWidgetView extends LitElement {
     dialog.close();
     dialog.showModal();
     this.expanded = true;
+    this.syncLayout();
     // Native workspace views sit above CSS/top-layer content. Publish their
     // existing overlay signal in light DOM, outside the chat's shadow root.
     const overlay = this.ownerDocument.createElement('div');
@@ -780,6 +838,7 @@ export class NativeWidgetView extends LitElement {
     };
     return html`<dialog
       open
+      style=${`--widget-height:${this.height}px`}
       role=${this.expanded ? 'dialog' : 'group'}
       aria-label=${title}
       aria-modal=${this.expanded ? 'true' : nothing}
@@ -816,17 +875,12 @@ export class NativeWidgetView extends LitElement {
               html`<div class=${this.ready ? 'frame' : 'frame loading'}>
                 ${!this.ready ? html`<div class="status" role="status">${i18nService.t(this.slow ? 'coworkWidgetLoadingSlow' : 'coworkWidgetLoading')}</div>` : nothing}${
                   window.electron
-                    ? html`<webview
-                        .inert=${!this.ready}
-                        aria-label=${title}
-                        style=${this.expanded ? 'height:100%' : `height:${this.height}px`}
-                      ></webview>`
+                    ? html`<webview .inert=${!this.ready} aria-label=${title}></webview>`
                     : html`<iframe
                         .inert=${!this.ready}
                         title=${title}
                         sandbox="allow-scripts allow-same-origin allow-forms"
                         referrerpolicy="origin"
-                        style=${this.expanded ? 'height:100%' : `height:${this.height}px`}
                         @error=${() => {
                           if (this.current(binding)) this.fail();
                         }}

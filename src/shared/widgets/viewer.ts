@@ -8,9 +8,17 @@ export const WidgetViewerIpc = {
   Event: 'widget-viewer:event',
 } as const;
 
+export type WidgetViewportLayout = {
+  revision: number;
+  expanded: boolean;
+  width: number;
+  height: number;
+};
+
 export type WidgetViewerState = {
   draftAllowed: boolean;
   theme: { mode: 'light' | 'dark'; tokens: Record<string, string> };
+  layout?: WidgetViewportLayout;
 };
 export type WidgetViewerInitialize = WidgetViewerState & {
   mountId: string;
@@ -20,7 +28,7 @@ export type WidgetViewerInitialize = WidgetViewerState & {
 export type WidgetViewerEvent = { mountId: string } & (
   | { type: 'ready' }
   | { type: 'failure'; runtime: boolean }
-  | { type: 'height'; height: number }
+  | { type: 'height'; height: number; revision: number }
   | { type: 'scroll'; deltaY: number }
   | { type: 'draft'; text: string }
 );

@@ -2,12 +2,13 @@
 import './view';
 
 import { WIDGET_VIEWER_PARTITION, WidgetViewerIpc } from '@shared/widgets/viewer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatScrollController } from '../../controllers/chat-scroll-controller';
 import { decodeNativeCanvasResult } from '../../pipeline/native-canvas';
 import type { NativeWidgetContext } from './host';
 import { NATIVE_WIDGET_OWNER_MESSENGER } from './messaging';
+import { WIDGET_LAYOUT_REQUEST, WIDGET_MEASURED_HEIGHT } from './sizing';
 import { NativeWidgetView } from './view';
 
 const result = {
@@ -31,6 +32,9 @@ async function settle(view: NativeWidgetView): Promise<void> {
   await Promise.resolve();
   await view.updateComplete;
 }
+function inlineHeight(view: NativeWidgetView): string {
+  return view.shadowRoot!.querySelector('dialog')!.style.getPropertyValue('--widget-height');
+}
 function mount(request = vi.fn().mockResolvedValue(result), parent: Node = document.body) {
   const client = { generation: 1, gatewayUrl: 'ws://127.0.0.1:18789', request };
   const context: NativeWidgetContext = {
@@ -46,6 +50,37 @@ function mount(request = vi.fn().mockResolvedValue(result), parent: Node = docum
   parent.appendChild(view);
   return { view, client, context, request };
 }
+
+const actualRect = HTMLElement.prototype.getBoundingClientRect;
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return Math.round(this.getBoundingClientRect().width);
+  });
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return Math.round(this.getBoundingClientRect().height);
+  });
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    const root = this.getRootNode() as ShadowRoot;
+    if (
+      ['iframe', 'webview'].includes(this.localName) &&
+      root.host?.localName === 'justdo-native-widget'
+    ) {
+      const dialog = root.querySelector('dialog')!;
+      const height =
+        dialog.getAttribute('aria-modal') === 'true'
+          ? 877
+          : parseFloat(dialog.style.getPropertyValue('--widget-height')) || 420;
+      return new DOMRect(0, 0, 840, height);
+    }
+    return actualRect.call(this);
+  });
+});
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -71,7 +106,20 @@ function sandbox(view: NativeWidgetView) {
       params: { renderId: resource.params.renderId },
     });
   };
-  return { frame, post, send, ready };
+  const measured = (height: unknown, revision?: number) => {
+    const request = post.mock.calls
+      .filter(([data]) => data?.type === WIDGET_LAYOUT_REQUEST)
+      .slice(-1)[0]![0];
+    return {
+      type: WIDGET_MEASURED_HEIGHT,
+      id: request.id,
+      height,
+      revision: revision ?? request.layout.revision,
+      width: request.layout.width,
+      viewportHeight: request.layout.height,
+    };
+  };
+  return { frame, post, send, ready, measured, size: (height: unknown) => send(measured(height)) };
 }
 
 describe('native widget viewer lifecycle', () => {
@@ -198,11 +246,11 @@ describe('native widget viewer lifecycle', () => {
       );
     emit({ mountId: 'stale', type: 'height', height: 780 });
     await settle(view);
-    expect(guest.style.height).toBe('420px');
+    expect(inlineHeight(view)).toBe('420px');
     emit({ mountId: init.mountId, type: 'ready' });
-    emit({ mountId: init.mountId, type: 'height', height: 570 });
+    emit({ mountId: init.mountId, type: 'height', height: 570, revision: init.layout.revision });
     await settle(view);
-    expect(guest.style.height).toBe('570px');
+    expect(inlineHeight(view)).toBe('570px');
     context.canDraft = () => false;
     view.requestUpdate();
     await settle(view);
@@ -223,10 +271,10 @@ describe('native widget viewer lifecycle', () => {
     document.body.append(chat);
     const { view, request } = mount(undefined, chat.attachShadow({ mode: 'open' }));
     await settle(view);
-    const { frame, ready, send } = sandbox(view);
+    const { frame, ready, size } = sandbox(view);
     ready();
     await settle(view);
-    send({ type: 'openclaw:widget-size', height: 480 });
+    size(480);
     await settle(view);
     const dialog = view.shadowRoot!.querySelector('dialog')!;
     const close = vi.fn(() => {
@@ -244,14 +292,14 @@ describe('native widget viewer lifecycle', () => {
     expect(showModal).toHaveBeenCalledOnce();
     expect(dialog.getAttribute('aria-modal')).toBe('true');
     expect(document.body.querySelector('[data-workspace-overlay="true"]')).not.toBeNull();
-    send({ type: 'openclaw:widget-size', height: 960 });
+    size(960);
     await settle(view);
-    expect(frame.style.height).toBe('100%');
+    expect(inlineHeight(view)).toBe('480px');
     expand();
     await settle(view);
     expect(dialog.hasAttribute('aria-modal')).toBe(false);
     expect(document.body.querySelector('[data-workspace-overlay="true"]')).toBeNull();
-    expect(frame.style.height).toBe('480px');
+    expect(inlineHeight(view)).toBe('480px');
     expect(view.shadowRoot!.querySelector('iframe')).toBe(frame);
     expect(request).toHaveBeenCalledOnce();
     expand();
@@ -277,6 +325,74 @@ describe('native widget viewer lifecycle', () => {
     await settle(view);
     expect(document.body.querySelector('[data-workspace-overlay="true"]')).toBeNull();
   });
+
+  it.each(['browser', 'desktop'])(
+    'rejects delayed sizes from an old viewport revision in a %s card',
+    async kind => {
+      vi.useFakeTimers();
+      if (kind === 'desktop') vi.stubGlobal('electron', {});
+      const { view } = mount();
+      await settle(view);
+      let send: (height: number, revision?: number) => void;
+      let revision: () => number;
+      if (kind === 'desktop') {
+        const guest = view.shadowRoot!.querySelector('webview')! as HTMLElement & {
+          send: ReturnType<typeof vi.fn>;
+        };
+        guest.send = vi.fn().mockResolvedValue(undefined);
+        guest.dispatchEvent(new Event('dom-ready'));
+        const { mountId } = guest.send.mock.calls[0][1];
+        revision = () => guest.send.mock.lastCall![1].layout.revision;
+        send = (height, measuredRevision = revision()) =>
+          guest.dispatchEvent(
+            Object.assign(new Event('ipc-message'), {
+              channel: WidgetViewerIpc.Event,
+              args: [{ mountId, type: 'height', height, revision: measuredRevision }],
+            }),
+          );
+      } else {
+        const sandboxHost = sandbox(view);
+        sandboxHost.ready();
+        revision = () => sandboxHost.measured(420).revision;
+        send = (height, measuredRevision) =>
+          sandboxHost.send(sandboxHost.measured(height, measuredRevision));
+      }
+      const dialog = view.shadowRoot!.querySelector('dialog')!;
+      dialog.close = vi.fn();
+      dialog.showModal = vi.fn();
+      const toggle = () =>
+        view.shadowRoot!.querySelector<HTMLButtonElement>('.view-actions button')!.click();
+      const inlineRevision = revision();
+      toggle();
+      await settle(view);
+      const expandedRevision = revision();
+      expect(expandedRevision).toBeGreaterThan(inlineRevision);
+      send(877);
+      toggle();
+      await settle(view);
+      const collapsedRevision = revision();
+      expect(collapsedRevision).toBeGreaterThan(expandedRevision);
+      setTimeout(() => send(877, expandedRevision), 2000);
+      await vi.advanceTimersByTimeAsync(2500);
+      await settle(view);
+      expect(inlineHeight(view)).toBe('420px');
+      send(640);
+      await settle(view);
+      expect(inlineHeight(view)).toBe('640px');
+      send(877, collapsedRevision);
+      await settle(view);
+      expect(inlineHeight(view)).toBe('640px');
+      send(660);
+      await settle(view);
+      expect(inlineHeight(view)).toBe('660px');
+      view.preview = preview('replacement');
+      await settle(view);
+      expect(inlineHeight(view)).toBe('420px');
+      send(900);
+      await settle(view);
+      expect(inlineHeight(view)).toBe('420px');
+    },
+  );
 
   it('publishes the overlay only in the actual workspace document when a side-chat card expands', async () => {
     const workspace = document.createElement('iframe');
@@ -847,11 +963,12 @@ describe('native widget viewer lifecycle', () => {
   it('fits short and tall native content, rounds up fractional heights and resets size when the document changes', async () => {
     const { view } = mount();
     await settle(view);
-    const frame = view.shadowRoot!.querySelector('iframe')!;
+    const { frame, ready, measured } = sandbox(view);
+    ready();
     const resize = async (height: unknown, source = frame.contentWindow) => {
       window.dispatchEvent(
         new MessageEvent('message', {
-          data: { type: 'openclaw:widget-size', height },
+          data: measured(height),
           origin: new URL(frame.src).origin,
           source,
         }),
@@ -859,24 +976,24 @@ describe('native widget viewer lifecycle', () => {
       await settle(view);
     };
     await resize(72.5);
-    expect(frame.style.height).toBe('73px');
+    expect(inlineHeight(view)).toBe('73px');
     await resize(24);
-    expect(frame.style.height).toBe('48px');
+    expect(inlineHeight(view)).toBe('48px');
     await resize(2600);
-    expect(frame.style.height).toBe('2600px');
+    expect(inlineHeight(view)).toBe('2600px');
     await resize(9000);
-    expect(frame.style.height).toBe('8000px');
+    expect(inlineHeight(view)).toBe('8000px');
     for (const invalid of [0, -1, NaN, Infinity, '200']) await resize(invalid);
     await resize(200, window);
-    expect(frame.style.height).toBe('8000px');
+    expect(inlineHeight(view)).toBe('8000px');
 
     view.preview = preview('widget-2');
     await settle(view);
     const replacement = view.shadowRoot!.querySelector('iframe')!;
     expect(replacement).not.toBe(frame);
-    expect(replacement.style.height).toBe('420px');
+    expect(inlineHeight(view)).toBe('420px');
     await resize(600);
-    expect(replacement.style.height).toBe('420px');
+    expect(inlineHeight(view)).toBe('420px');
   });
 
   it('bounds concurrent history reads without failing newer retained widgets behind expired documents', async () => {

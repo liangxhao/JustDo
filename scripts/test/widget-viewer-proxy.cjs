@@ -76,6 +76,32 @@ window.fixture.socket=new WebSocket(data.socketUrl);window.fixture.socket.onclos
         blockDescendantFrames: true,
         resourceDomains: ['http://widget.fixture.invalid'],
       };
+      const viewportContent = process.argv.includes('--viewport-content');
+      const partialViewportContent = process.argv.includes('--partial-viewport-content');
+      const content = partialViewportContent
+        ? `<style>
+html,body{width:100%;height:100%;overflow:hidden;background:#000}
+#scene{width:100vw;height:70vh;min-height:480px;position:relative}canvas{display:block}
+#input{position:absolute;top:12px;left:12px}#send{position:absolute;bottom:12px;left:12px}
+</style><div id="scene"><canvas></canvas><input id="input" value="Original">
+<button id="send" onclick="openclaw.prompt.send('Analyze fixture')">Continue</button></div><script>
+const canvas=document.querySelector('canvas'),scene=document.getElementById('scene');
+function draw(){canvas.width=scene.clientWidth;canvas.height=scene.clientHeight;
+canvas.style.width=canvas.width+'px';canvas.style.height=canvas.height+'px';
+const context=canvas.getContext('2d');context.fillStyle='#287d68';context.fillRect(0,0,canvas.width,canvas.height)}
+new ResizeObserver(draw).observe(scene);draw()</script>`
+        : viewportContent
+          ? `<style>
+html,body{height:100%;overflow:hidden;background:#000}
+#scene{height:100vh;position:relative}canvas{display:block;width:100%;height:100%}
+#input{position:fixed;top:12px;left:12px}#send{position:fixed;bottom:12px;left:12px}
+</style><div id="scene"><canvas></canvas></div><input id="input" value="Original">
+<button id="send" onclick="openclaw.prompt.send('Analyze fixture')">Continue</button><script>
+const canvas=document.querySelector('canvas');
+function draw(){canvas.width=innerWidth;canvas.height=innerHeight;
+const context=canvas.getContext('2d');context.fillStyle='#287d68';context.fillRect(0,0,canvas.width,canvas.height)}
+addEventListener('resize',draw);draw()</script>`
+          : `<div id="scene" style="height:420px;background:linear-gradient(#061825,#287d68)"></div><input id="input" value="Original"><button id="send" onclick="openclaw.prompt.send('Analyze fixture')">Continue</button>`;
       fs.writeFileSync(
         path.join(fixture, 'native.json'),
         JSON.stringify({
@@ -83,7 +109,7 @@ window.fixture.socket=new WebSocket(data.socketUrl);window.fixture.socket.onclos
           sandboxPath: sandboxPath(policy),
           html: wrap(
             'Proxy fixture',
-            `<input id="input" value="Original"><button id="send" onclick="openclaw.prompt.send('Analyze fixture')">Continue</button><script src="http://widget.fixture.invalid/asset.js"></script><script>window.documentIdentity=Math.random();window.blocked=false;fetch('http://widget.fixture.invalid/blocked').catch(()=>window.blocked=true)</script>`,
+            `${content}<script src="http://widget.fixture.invalid/asset.js"></script><script>window.documentIdentity=Math.random();window.blocked=false;fetch('http://widget.fixture.invalid/blocked').catch(()=>window.blocked=true)</script>`,
             { scriptOrigins: ['http://widget.fixture.invalid'] },
           ),
         }),
@@ -121,7 +147,7 @@ window.fixture.socket=new WebSocket(data.socketUrl);window.fixture.socket.onclos
       delete env.ELECTRON_RUN_AS_NODE;
       const result = require('node:child_process').spawnSync(
         require('electron'),
-        [__filename, fixture, ...(process.argv.includes('--workspace') ? ['--workspace'] : [])],
+        [__filename, fixture, ...process.argv.slice(3).filter(value => value.startsWith('--'))],
         { cwd: root, env, windowsHide: true, stdio: 'inherit', timeout: 60000 },
       );
       if (result.error) throw result.error;
@@ -264,6 +290,58 @@ window.fixture.socket=new WebSocket(data.socketUrl);window.fixture.socket.onclos
         () => inner.executeJavaScript('window.proxyAssetLoaded && window.blocked'),
         'allowed script through proxy and blocked connect',
       );
+      const partialViewportContent = process.argv.includes('--partial-viewport-content');
+      const canvasContent = partialViewportContent || process.argv.includes('--viewport-content');
+      const assertViewport = async label => {
+        let dimensions;
+        await until(async () => {
+          const tag = await read(
+            '(()=>{const f=window.fixture.view.shadowRoot.querySelector("webview");return {width:f.clientWidth,height:f.clientHeight}})()',
+          );
+          const container = await read(
+            '(()=>{const f=window.fixture.view.shadowRoot.querySelector(".frame");return {width:f.clientWidth,height:f.clientHeight}})()',
+          );
+          const viewer = await guest.executeJavaScript('({width:innerWidth,height:innerHeight})');
+          const shell = await outer.executeJavaScript('({width:innerWidth,height:innerHeight})');
+          const document = await inner.executeJavaScript('({width:innerWidth,height:innerHeight})');
+          const canvas = canvasContent
+            ? await inner.executeJavaScript(
+                '(()=>{const r=document.querySelector("canvas").getBoundingClientRect();return {width:r.width,height:r.height}})()',
+              )
+            : tag;
+          dimensions = { tag, container, viewer, shell, document, canvas };
+          return [container, viewer, shell, document, canvas].every(
+            size =>
+              Math.abs(tag.height - size.height) <= 1 && Math.abs(tag.width - size.width) <= 1,
+          );
+        }, label).catch(error => {
+          throw new Error(`${error.message}: ${JSON.stringify(dimensions)}`);
+        });
+        return dimensions.tag;
+      };
+      if (partialViewportContent)
+        await until(() => read('window.fixture.view.height===480'), 'initial scene minimum height');
+      else if (!canvasContent)
+        await until(() => read('window.fixture.view.height>420'), 'initial content measurement');
+      const inlineViewport = await assertViewport('all native guest frames fill the inline card');
+      assert.ok(
+        canvasContent
+          ? inlineViewport.height === (partialViewportContent ? 480 : 420)
+          : inlineViewport.height > 420,
+        'The full scene and controls determine the inline height',
+      );
+      assert.ok(
+        await inner.executeJavaScript(
+          'document.getElementById("send").getBoundingClientRect().bottom<=innerHeight',
+        ),
+        'Bottom controls must be inside the visible inline viewport',
+      );
+      await read('window.fixture.view.style.width="280px"');
+      const narrowViewport = await assertViewport('all native guest frames follow a narrow card');
+      assert.equal(narrowViewport.width, await read('window.fixture.view.clientWidth'));
+      assert.ok(narrowViewport.width < 300);
+      await read('window.fixture.view.style.removeProperty("width")');
+      await assertViewport('all native guest frames return from a narrow card');
       assert.ok(proxyRequests.some(url => url === 'http://widget.fixture.invalid/asset.js'));
       assert.ok(!proxyRequests.some(url => url.includes('/blocked')));
       assert.equal(
@@ -361,8 +439,91 @@ window.fixture.socket=new WebSocket(data.socketUrl);window.fixture.socket.onclos
       const identity = await inner.executeJavaScript('window.documentIdentity');
       await inner.executeJavaScript('document.getElementById("input").value="Preserved"');
       await read('window.fixture.view.shadowRoot.querySelector(".view-actions button").click()');
+      const expandedViewport = await assertViewport(
+        'all native guest frames fill the expanded card',
+      );
+      assert.ok(expandedViewport.height > inlineViewport.height);
+      const expandedReport = canvasContent
+        ? await until(
+            () =>
+              read(
+                'window.fixture.events.map(args=>args[0]).findLast(value=>value.type==="height"&&value.height===window.fixture.view.shadowRoot.querySelector("webview").getBoundingClientRect().height)',
+              ),
+            'height report measured in the expanded viewport',
+          )
+        : undefined;
       assert.equal(await inner.executeJavaScript('window.documentIdentity'), identity);
+      owner.setSize(760, 650);
+      if (workspace) {
+        const size = owner.getContentBounds();
+        workspace.setBounds({ x: 0, y: 0, width: size.width, height: size.height });
+      }
+      const resizedViewport = await assertViewport(
+        'all native guest frames follow a window resize',
+      );
+      assert.ok(resizedViewport.width < expandedViewport.width);
+      assert.ok(resizedViewport.height < expandedViewport.height);
+      if (partialViewportContent) {
+        owner.setSize(1100, 1050);
+        workspace?.setBounds({ x: 0, y: 0, width: 1100, height: 1050 });
+        await assertViewport('70vh canvas fills a tall expanded viewport');
+        const presentation = workspace?.webContents ?? owner.webContents;
+        for (const zoom of [0.8, 1.25, 1.5]) {
+          presentation.setZoomFactor(zoom);
+          await assertViewport('canvas follows expanded window zoom');
+        }
+        presentation.setZoomFactor(1);
+      }
+      owner.setSize(900, 700);
+      workspace?.setBounds({ x: 0, y: 0, width: 900, height: 700 });
+      await assertViewport('all native guest frames return after the window resize');
       await read('window.fixture.view.shadowRoot.querySelector(".view-actions button").click()');
+      const collapsedViewport = await assertViewport(
+        'all native guest frames return to inline height',
+      );
+      assert.equal(collapsedViewport.height, inlineViewport.height);
+      await new Promise(resolve => setTimeout(resolve, 600));
+      assert.equal(
+        (await assertViewport('inline height stays restored after queued size reports')).height,
+        inlineViewport.height,
+      );
+      if (expandedReport) {
+        // Delay real captured guest events well beyond any animation-frame wait.
+        // Replaying the old layout must never resize the restored viewport.
+        for (const delay of [0, 200, 1200]) {
+          await new Promise(resolve => setTimeout(resolve, delay));
+          await guest.executeJavaScript(
+            `window.widgetViewer.emit(${JSON.stringify(expandedReport)})`,
+          );
+          await new Promise(resolve => setTimeout(resolve, 150));
+          assert.equal(
+            (await assertViewport('late expanded reports cannot grow the inline card')).height,
+            inlineViewport.height,
+          );
+        }
+      }
+      for (let attempt = 0; attempt < 6; attempt++) {
+        await read('window.fixture.view.shadowRoot.querySelector(".view-actions button").click()');
+        owner.setSize(900, 1050);
+        workspace?.setBounds({ x: 0, y: 0, width: 900, height: 1050 });
+        await read('window.fixture.view.shadowRoot.querySelector(".view-actions button").click()');
+        await new Promise(resolve => setTimeout(resolve, 100));
+        assert.equal(
+          (await assertViewport('inline height survives a resize during collapse')).height,
+          inlineViewport.height,
+        );
+        owner.setSize(900, 700);
+        workspace?.setBounds({ x: 0, y: 0, width: 900, height: 700 });
+      }
+      if (!canvasContent) {
+        await inner.executeJavaScript('document.getElementById("scene").style.height="520px"');
+        await until(
+          async () =>
+            (await assertViewport('content can grow after collapse')).height >=
+            inlineViewport.height + 100,
+          'updated content height',
+        );
+      }
       assert.equal(
         await inner.executeJavaScript('document.getElementById("input").value'),
         'Preserved',
@@ -429,7 +590,7 @@ window.fixture.socket=new WebSocket(data.socketUrl);window.fixture.socket.onclos
         'No unhandled guest-manager rejection during crash, replacement or disposal',
       );
       console.log(
-        'Widget proxy integration passed: native sandbox, isolated storage, proxied script, CSP, preserved input, default-session socket, crash/retry, rapid replacements and disposal without unhandled rejections.',
+        'Widget proxy integration passed: native viewport sizing through expand/resize/collapse, isolated storage, proxied script, CSP, preserved input, default-session socket, crash/retry, rapid replacements and disposal without unhandled rejections.',
       );
     })
     .catch(error => {

@@ -165,10 +165,24 @@ and loading indicator; that extra check uses the document's own dependencies.
 `node scripts/test/widget-viewer-proxy.cjs <runtime-dir>` verifies the dedicated
 desktop widget session with the locked native sandbox and canonical HTML wrapper.
 It uses a temporary profile and a local fake proxy, checking allowed script routing,
-unchanged CSP blocking, storage isolation, trusted-click draft suggestions, capability
-revocation, preserved input across expansion, guest crash/retry recovery, rapid
-replacement without unhandled asynchronous IPC rejections, and an
-unaffected default-session WebSocket during proxy changes. Add `--workspace` to run the same checks in a real
+unchanged CSP blocking, storage isolation, trusted-click draft suggestions and
+capability revocation. It verifies matching viewport dimensions across the webview,
+viewer and both native sandbox frames during inline display, expansion, window
+resize and collapse, with bottom controls visible and local input preserved.
+It also covers immediate collapse during window resizing and subsequent content
+growth. Add `--viewport-content` for a canvas that fills `100vh`, verifying no blank
+strip and no retained expanded height. Add `--partial-viewport-content` to reproduce
+a standalone canvas container authored with `70vh` and a 480px minimum: expansion
+must fit the actual canvas to the full viewport, including tall windows and zoom
+changes; collapse must restore 480px without stale canvas overflow growing the card.
+The canvas uses its own ResizeObserver to redraw, preserving local input. Ordinary
+flow content remains separately covered by the default fixture.
+It captures real expanded-size events and
+replays them after collapse with up to 1.2 seconds of extra delay to verify that
+old layout revisions cannot resize the inline card.
+It also checks guest crash/retry recovery, rapid replacement without unhandled
+asynchronous IPC rejections, and an unaffected default-session WebSocket during
+proxy changes. Add `--workspace` to run the same checks in a real
 workspace WebContentsView without the application preload. No personal Gateway
 is started and temporary fixture files are removed on completion.
 After `npm run build`, add `--built-viewer` to exercise the emitted viewer assets

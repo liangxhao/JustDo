@@ -32,6 +32,7 @@ it('sends only admitted messages to the connected native sandbox with its exact 
     'openclaw:widget-theme',
     'openclaw:widget-board-host',
     'openclaw:scenario-draft-policy',
+    'widget-view:layout',
   ])
     expect(postNativeWidgetMessage(frame, { type }, origin)).toBe(true);
   expect(
@@ -42,6 +43,7 @@ it('sends only admitted messages to the connected native sandbox with its exact 
     null,
     'text',
     { type: 'tools/call' },
+    { type: 'widget-view:measured-height' },
     { method: 'tools/call' },
     { type: message.type, method: 'chat.send' },
   ])
