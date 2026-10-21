@@ -300,7 +300,10 @@ export class JustDoChatElement extends LitElement {
       await this.historyRenderComplete;
       return shifted;
     },
-    () => this._controller?.showNewerHistory() ?? false,
+    () => {
+      const shifted = this._controller?.showNewerHistory() ?? false;
+      return shifted ? this.historyRenderComplete.then(() => true) : false;
+    },
   );
   private readonly streamRenderScheduler = new StreamRenderScheduler(
     () => this.publishStreamFrame(),
@@ -880,6 +883,9 @@ export class JustDoChatElement extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    if (this._controller && !this._controllerUnsubscribe)
+      this.subscribeController(this._controller);
+    this.requestUpdate();
     this.addEventListener(NATIVE_WIDGET_CONTEXT_REQUEST, this.handleWidgetContext);
     this.addEventListener(McpAppEvent.ContextRequest, this.handleMcpAppContext);
     this.addEventListener(TOOL_OUTPUT_REQUEST, this.handleToolOutputRequest);
@@ -957,6 +963,10 @@ export class JustDoChatElement extends LitElement {
     this.animationWindow.requestAnimationFrame(() => void this.renderMermaidDiagrams());
   }
 
+  protected shouldUpdate(): boolean {
+    return this.isConnected;
+  }
+
   protected willUpdate(changedProperties: Map<string | number | symbol, unknown>): void {
     this.renderStartedAt = performance.now();
     this.historyDisclosureState.capture(this.renderRoot);
@@ -1029,7 +1039,10 @@ export class JustDoChatElement extends LitElement {
     this.richMessageControls ??= new RichMessageControls(this.renderRoot as ShadowRoot, element =>
       this.chatScrollController.preserveAnchorForInteraction(element),
     );
-    this.richMessageControls.reset(this.processSummarySessionIdentity ?? '');
+    this.richMessageControls.reset(
+      this._controller?.state.sessionKey ?? '',
+      this.processSummarySessionIdentity ?? '',
+    );
     this.richMessageControls.onQuote = this.onMessageQuote;
     this.richMessageControls.sync();
     this.chatScrollController.afterRender(transcriptRevision);
@@ -1351,6 +1364,7 @@ export class JustDoChatElement extends LitElement {
       '.mermaid-block:not([data-mermaid-rendered])',
     );
     for (const block of blocks) {
+      if (!this.isConnected || !block.isConnected) return;
       if (block.closest('details:not([open])')) continue;
       const hostRect = this.getBoundingClientRect();
       const blockRect = block.getBoundingClientRect();
@@ -1509,6 +1523,7 @@ export class JustDoChatElement extends LitElement {
   }
 
   private emitSearchMatchCount(): void {
+    if (!this.isConnected) return;
     const total = this.getSearchMatchCount();
     if (this.activeSearchIndex >= total) {
       this.activeSearchIndex = total > 0 ? total - 1 : -1;

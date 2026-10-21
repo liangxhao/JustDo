@@ -59,11 +59,18 @@ describe('projectPersistedTimeline', () => {
     }
   });
 
-  test('gives sibling projections of one native owner distinct, prefix-independent keys', () => {
+  test('keeps native commentary and primary projection keys stable when siblings cross a window edge', () => {
     const siblings: GatewayMessage[] = [
       {
         role: 'assistant',
         content: [{ type: 'text', text: 'Commentary' }],
+        openclawStreamFallback: { source: 'segment', itemId: 'commentary-1' },
+        __openclaw: { id: 'owner' },
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'More commentary' }],
+        openclawStreamFallback: { source: 'segment', itemId: 'commentary-2' },
         __openclaw: { id: 'owner' },
       },
       {
@@ -73,7 +80,7 @@ describe('projectPersistedTimeline', () => {
       },
     ];
     const keys = projectPersistedTimeline(siblings).map(item => item.key);
-    expect(new Set(keys).size).toBe(2);
+    expect(new Set(keys).size).toBe(3);
     expect(
       projectPersistedTimeline([
         { role: 'user', content: 'Earlier', __openclaw: { id: 'earlier' } },
@@ -82,6 +89,17 @@ describe('projectPersistedTimeline', () => {
         .slice(1)
         .map(item => item.key),
     ).toEqual(keys);
+    expect(projectPersistedTimeline(siblings.slice(1)).map(item => item.key)).toEqual(
+      keys.slice(1),
+    );
+    expect(projectPersistedTimeline(siblings.slice(0, 1)).map(item => item.key)).toEqual(
+      keys.slice(0, 1),
+    );
+    expect(
+      projectPersistedTimeline([
+        { ...siblings[0], content: [{ type: 'text', text: 'Updated commentary' }] },
+      ]).map(item => item.key),
+    ).toEqual(keys.slice(0, 1));
   });
 
   test('retains native identity and emits a split message diagnostic once after its content', () => {

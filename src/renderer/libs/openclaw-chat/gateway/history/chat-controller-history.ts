@@ -17,6 +17,7 @@ import {
 import { ChunkedMessageHistory } from '@/libs/openclaw-chat/model/history/chunked-message-history';
 import { reconcileHistory } from '@/libs/openclaw-chat/model/history/history-reconciler';
 import {
+  HISTORY_RENDER_WINDOW_SIZE,
   latestHistoryWindow,
   shiftHistoryWindowNewer,
   shiftHistoryWindowOlder,
@@ -437,6 +438,23 @@ export function showNewerHistory(this: ChatControllerHistoryContext): boolean {
 export function showLatestHistory(this: ChatControllerHistoryContext): boolean {
   this.newerHistoryNavigationRevision += 1;
   return this.applyHistoryWindow(latestHistoryWindow(this.currentMessageHistory.length));
+}
+
+/** Explicit source navigation jumps once; wheel traversal still uses overlapping steps. */
+export function showHistoryEntry(this: ChatControllerHistoryContext, entryId: string): boolean {
+  const normalizedEntryId = entryId.trim();
+  if (!normalizedEntryId) return false;
+  const index = this.currentMessageHistory.toArray().findIndex(message => {
+    const marker = asRecord(asRecord(message)?.__openclaw);
+    return marker?.id === normalizedEntryId;
+  });
+  if (index < 0) return false;
+  this.newerHistoryNavigationRevision += 1;
+  if (index >= this.state.historyWindowStart && index < this.state.historyWindowEnd) return true;
+  const count = this.currentMessageHistory.length;
+  const start = Math.min(index, Math.max(0, count - HISTORY_RENDER_WINDOW_SIZE));
+  this.applyHistoryWindow({ start, end: Math.min(count, start + HISTORY_RENDER_WINDOW_SIZE) });
+  return true;
 }
 
 export function getLoadedMessages(this: ChatControllerHistoryContext): unknown[] {

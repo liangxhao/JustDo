@@ -26,17 +26,31 @@ test('retains open and closed choices across window removal and returning summar
   expect(state.returningSummaries(['thinking', 'tool'])).toEqual({ open: null, collapsed: [] });
 });
 
-test('carries a partial process choice when paging reveals the beginning of the same group', () => {
-  const state = new HistoryDisclosureState();
-  state.reset('native-session');
-  expect(state.expanded('partial-group', false, ['native-commentary'])).toBe(false);
-  const root = document.createElement('div');
-  root.innerHTML = '<details data-completed-process-key="partial-group" open></details>';
-  state.capture(root);
-  expect(state.expanded('whole-group', false, ['native-thinking', 'native-commentary'])).toBe(true);
-  expect(state.expanded('unrelated-group', false, ['different-source'])).toBe(false);
-  state.clear();
-  expect(state.expanded('whole-group', false, ['native-thinking', 'native-commentary'])).toBe(
-    false,
-  );
-});
+test.each([false, true])(
+  'keeps the latest choice across partial and whole process shapes (initially open: %s)',
+  initialOpen => {
+    const state = new HistoryDisclosureState();
+    state.reset('native-session');
+    expect(state.expanded('partial-group', false, ['native-commentary'])).toBe(false);
+    const root = document.createElement('div');
+    root.innerHTML = '<details data-completed-process-key="partial-group"></details>';
+    root.querySelector('details')!.open = initialOpen;
+    state.capture(root);
+    const wholeSources = ['native-thinking', 'native-commentary'];
+    expect(state.expanded('whole-group', false, wholeSources)).toBe(initialOpen);
+    root.innerHTML = '<details data-completed-process-key="whole-group"></details>';
+    root.querySelector('details')!.open = !initialOpen;
+    state.capture(root);
+    expect(state.expanded('partial-group', initialOpen, ['native-commentary'])).toBe(!initialOpen);
+    root.innerHTML = '<details data-completed-process-key="partial-group"></details>';
+    root.querySelector('details')!.open = initialOpen;
+    state.capture(root);
+    // The older whole-group member still has the opposite choice.
+    expect(state.expanded('whole-group', !initialOpen, wholeSources)).toBe(initialOpen);
+    expect(state.expanded('unrelated-group', false, ['different-source'])).toBe(false);
+    state.clear();
+    expect(state.expanded('whole-group', false, ['native-thinking', 'native-commentary'])).toBe(
+      false,
+    );
+  },
+);

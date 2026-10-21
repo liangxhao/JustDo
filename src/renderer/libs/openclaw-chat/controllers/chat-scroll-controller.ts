@@ -9,7 +9,6 @@ export class ChatScrollController {
   private hasContentBelow = false;
   private programmatic = false;
   private lastScrollTop = 0;
-  private previousScrollTop = 0;
   private previousRevision = -1;
   private unseenRevisions = 0;
   private resizeObserver: ResizeObserver | null = null;
@@ -27,7 +26,7 @@ export class ChatScrollController {
   constructor(
     private readonly onStateChange: () => void,
     private readonly onNearTop?: () => boolean | void | Promise<boolean>,
-    private readonly onNearBottom?: () => boolean,
+    private readonly onNearBottom?: () => boolean | Promise<boolean>,
   ) {}
 
   get state(): { mode: ChatScrollMode; unseenRevisions: number } {
@@ -72,7 +71,6 @@ export class ChatScrollController {
 
   beforeRender(): void {
     if (!this.host) return;
-    this.previousScrollTop = this.host.scrollTop;
     if (this.navigationTargetTop !== null) {
       this.pausedAnchors = [];
     } else if (!this.interactionAnchor) {
@@ -99,7 +97,7 @@ export class ChatScrollController {
       if (survivingAnchor) {
         const nextOffset = survivingAnchor.element.getBoundingClientRect().top;
         this.setScrollTop(
-          Math.max(0, this.previousScrollTop + (nextOffset - survivingAnchor.offset)),
+          Math.max(0, host.scrollTop + (nextOffset - survivingAnchor.offset)),
           true,
         );
       }
@@ -309,7 +307,8 @@ export class ChatScrollController {
       this.pausedAnchors = this.captureVisibleAnchorsNow(host);
       return;
     }
-    const nextMode: ChatScrollMode = distance <= 0.5 ? 'follow' : 'paused';
+    const nextMode: ChatScrollMode =
+      distance <= 0.5 && this.pendingNewerHistoryShift === null ? 'follow' : 'paused';
     if (nextMode !== this.mode) {
       this.mode = nextMode;
       if (nextMode === 'follow') this.unseenRevisions = 0;
@@ -439,7 +438,10 @@ export class ChatScrollController {
         this.releaseNewerHistoryShift(token);
         return false;
       }
-      queueMicrotask(() => this.releaseNewerHistoryShift(token));
+      void Promise.resolve(shifted).then(
+        () => this.releaseNewerHistoryShift(token),
+        () => this.releaseNewerHistoryShift(token),
+      );
       return true;
     } catch (error) {
       this.releaseNewerHistoryShift(token);

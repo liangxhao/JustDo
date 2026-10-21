@@ -117,24 +117,25 @@ describe('source-preserving message readers', () => {
       '<tr><td>a\tb</td><td>line\n&quot;quoted&quot;</td><td><a href="https://example.test">link</a></td></tr>';
     expect(tableToTsv(table)).toBe('"a\tb"\t"line\n""quoted"""\tlink');
   });
-  test('retains code preferences through DOM replacement but clears them on session switch', () => {
+  test('retains code preferences through DOM replacement but clears them on incarnation change', () => {
     const root = document.createElement('div');
     document.body.append(root);
     const source =
       '<div data-group-key="entry"><div class="code-block-wrapper"><div class="code-block-header"></div><pre><code>  text\n</code></pre></div></div>';
     root.innerHTML = source;
     const controls = new RichMessageControls(root, vi.fn());
-    controls.reset('one');
+    controls.reset('one', 'native-one:0');
     controls.sync();
     root.querySelectorAll<HTMLButtonElement>('.message-reader-actions button')[1].click();
     expect(root.querySelector('.is-wrapped')).not.toBeNull();
     root.innerHTML = source;
     controls.sync();
     expect(root.querySelector('.is-wrapped')).not.toBeNull();
-    controls.reset('two');
+    controls.reset('one', 'native-one:1');
     root.innerHTML = source;
     controls.sync();
     expect(root.querySelector('.is-wrapped')).toBeNull();
+    controls.dispose();
     root.remove();
   });
   test('bounds a 2 MB output and reports copy failure without success feedback', async () => {

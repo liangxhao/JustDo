@@ -20,6 +20,7 @@ export class RichMessageControls {
   onQuote: MessageQuoteHandler | undefined;
   private selectionBar: HTMLElement | null = null;
   private scope = '';
+  private preferenceScope = '';
   private toolOpen = new Set<string>();
   rememberTool(details: HTMLDetailsElement) {
     const key = details.dataset.toolIdentity;
@@ -201,10 +202,11 @@ export class RichMessageControls {
           : (current + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length;
     items[next]?.focus();
   };
-  reset(scope: string) {
-    if (scope !== this.scope) {
+  reset(scope: string, preferenceScope = scope) {
+    if (scope !== this.scope || preferenceScope !== this.preferenceScope) {
       this.clearCopyFeedback();
       this.scope = scope;
+      this.preferenceScope = preferenceScope;
       this.preferences.clear();
       this.toolOpen.clear();
       this.dismissSelection();

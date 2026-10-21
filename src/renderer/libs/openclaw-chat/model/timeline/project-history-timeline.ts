@@ -664,13 +664,23 @@ export function projectPersistedTimeline(
     const message = unwrapToolMessage(outerMessage);
     if (!message) return;
     const nativeKey = deterministicHistoryKey(outerMessage, messageIndex);
-    // Native history can expose multiple projections of one source entry.
-    // Disambiguate within that entry, never with a window-relative ordinal.
-    const occurrence = messageOccurrences.get(nativeKey) ?? 0;
-    messageOccurrences.set(nativeKey, occurrence + 1);
-    const messageKey = occurrence === 0 ? nativeKey : `${nativeKey}:projection:${occurrence}`;
-    const runId = runIdOf(outer, message, messageKey);
-    if (runId === messageKey) syntheticRunIds.add(runId);
+    // Commentary sidecars retain the owner's entry id but expose a native item id.
+    // Use it even when the window cuts off the owner's other projections.
+    const fallback = asToolRecord(message.openclawStreamFallback ?? outer.openclawStreamFallback);
+    const itemId =
+      typeof fallback?.itemId === 'string' && fallback.itemId.trim() ? fallback.itemId : '';
+    const projectionKey =
+      fallback?.source === 'segment' && itemId
+        ? `${nativeKey}:segment:${JSON.stringify(itemId)}`
+        : nativeKey;
+    // Unknown duplicate shapes have no stronger discriminator; keep them distinct
+    // without treating their ordinal as native execution identity.
+    const occurrence = messageOccurrences.get(projectionKey) ?? 0;
+    messageOccurrences.set(projectionKey, occurrence + 1);
+    const messageKey =
+      occurrence === 0 ? projectionKey : `${projectionKey}:projection:${occurrence}`;
+    const runId = runIdOf(outer, message, nativeKey);
+    if (runId === nativeKey) syntheticRunIds.add(runId);
     const timestamp = timestampOf(outer, message);
     const role = roleOf(message);
     const marker =

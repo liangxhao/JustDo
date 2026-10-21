@@ -70,9 +70,10 @@ const setup = async () => {
     this.state.connected = true;
     this.state.initialHistoryReady = true;
     this.state.currentSessionId = 'native-one';
+    this.state.historyHasMore = true;
   });
   vi.spyOn(ChatController.prototype, 'switchSession').mockResolvedValue();
-  const older = vi.spyOn(ChatController.prototype, 'showOlderHistory').mockResolvedValue(false);
+  const older = vi.spyOn(ChatController.prototype, 'loadOlderHistory').mockResolvedValue(false);
   const ref = createRef<JustDoChatWrapperRef>();
   const view = render(<JustDoChatWrapper ref={ref} />);
   await waitFor(() => expect(connect).toHaveBeenCalledOnce());
@@ -136,4 +137,64 @@ it('cancels a pending reveal when navigation changes during a Lit update', async
   });
   expect(fixture.chat.revealMessage).not.toHaveBeenCalled();
   expect(older).not.toHaveBeenCalled();
+});
+
+it('jumps directly to an entry in more than 10,000 loaded messages', async () => {
+  const { ref, controller, older } = await setup();
+  const messages = Array.from({ length: 12_000 }, (_, index) => ({
+    role: 'user',
+    content: `Message ${index}`,
+    __openclaw: { id: `entry-${index}` },
+  }));
+  (
+    controller as unknown as {
+      setCurrentSessionMessages(
+        messages: unknown[],
+        options: { resetLoadedHistory: boolean },
+      ): void;
+    }
+  ).setCurrentSessionMessages(messages, { resetLoadedHistory: true });
+  fixture.chat.revealMessage.mockImplementation(() => controller.state.historyWindowStart === 0);
+  await act(async () => {
+    expect(await ref.current!.revealMessage('entry-0', identity)).toBe(true);
+  });
+  expect(controller.state.visibleChatMessages).toHaveLength(250);
+  expect(fixture.chat.revealMessage).toHaveBeenCalledOnce();
+  expect(older).not.toHaveBeenCalled();
+});
+
+it('continues making transport progress without a window traversal attempt limit', async () => {
+  const { ref, controller, older } = await setup();
+  let loaded = false;
+  older.mockImplementation(async () => {
+    loaded = older.mock.calls.length > 100;
+    return true;
+  });
+  fixture.chat.revealMessage.mockImplementation(() => loaded);
+  await act(async () => {
+    expect(await ref.current!.revealMessage('entry-old', identity)).toBe(true);
+  });
+  expect(older).toHaveBeenCalledTimes(101);
+  controller.disconnect();
+});
+
+it('stops when a loaded native entry is intentionally absent from the rendered display', async () => {
+  const { ref, controller, older } = await setup();
+  vi.spyOn(controller, 'showHistoryEntry').mockReturnValue(true);
+  fixture.chat.revealMessage.mockReturnValue(false);
+  expect(await ref.current!.revealMessage('hidden-entry', identity)).toBe(false);
+  expect(fixture.chat.revealMessage).toHaveBeenCalledOnce();
+  expect(older).not.toHaveBeenCalled();
+});
+
+it('rejects a physical session replacement while an older page is being read', async () => {
+  const { ref, controller, older } = await setup();
+  fixture.chat.revealMessage.mockReturnValue(false);
+  older.mockImplementation(async () => {
+    controller.state.currentSessionId = 'replacement-native-one';
+    return true;
+  });
+  expect(await ref.current!.revealMessage('entry-old', identity)).toBe(false);
+  expect(older).toHaveBeenCalledOnce();
+  expect(fixture.chat.revealMessage).toHaveBeenCalledOnce();
 });

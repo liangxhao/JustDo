@@ -17,6 +17,55 @@ afterEach(() => {
 });
 
 describe('justdo-chat last user message actions', () => {
+  test('quotes with the native session key while display preferences use a physical identity', async () => {
+    const controller = new ChatController();
+    const sessionKey = 'agent:main:quote-session';
+    controller.state.sessionKey = sessionKey;
+    controller.state.currentSessionId = 'quote-physical-session';
+    controller.state.connected = true;
+    (
+      controller as unknown as {
+        setCurrentSessionMessages(
+          messages: unknown[],
+          options: { resetLoadedHistory: boolean },
+        ): void;
+      }
+    ).setCurrentSessionMessages(
+      [{ role: 'assistant', content: 'Reply to quote', __openclaw: { id: 'reply' } }],
+      { resetLoadedHistory: true },
+    );
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    const onQuote = vi.fn();
+    chat.controller = controller;
+    chat.onMessageQuote = onQuote;
+    document.body.append(chat);
+    await chat.updateComplete;
+    const root = chat.shadowRoot!;
+    const source = root.querySelector<HTMLElement>('[data-assistant-entry="reply"]')!;
+    expect(source).not.toBeNull();
+    const range = document.createRange();
+    range.selectNodeContents(source);
+    Object.defineProperty(root, 'getSelection', {
+      value: () => ({ isCollapsed: false, rangeCount: 1, getRangeAt: () => range }),
+    });
+    for (const target of ['composer', 'side-chat'] as const) {
+      source.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      root
+        .querySelectorAll<HTMLButtonElement>('[role=menuitem]')
+        [target === 'composer' ? 1 : 2].click();
+      expect(onQuote).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          sessionKey,
+          entryId: 'reply',
+          text: expect.stringContaining('Reply to quote'),
+        }),
+        target,
+      );
+    }
+    chat.remove();
+    controller.disconnect();
+  });
+
   test('only exposes actions for the latest persisted user message while idle', async () => {
     const controller = new ChatController();
     const messages = [

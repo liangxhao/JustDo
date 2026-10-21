@@ -43,6 +43,7 @@
       <button id="animation">Check process animation</button>
       <button id="snapshot">Snapshot renderer</button>
       <button id="read-page">Page while reading</button>
+      <button id="newer-page">Newer paging during stream</button>
       <button id="restore-state">Check expanded state</button>
       <pre id="metrics">Ready. Uses a local mock Gateway; no real sessions or models.</pre>
     </header>
@@ -317,6 +318,37 @@
         );
         publish();
       }
+      async function newer() {
+        metrics.newerAnchorChecks = [];
+        commitTimes = [];
+        while (controller.state.historyWindowEnd < controller.state.loadedMessageCount) {
+          const anchor = [
+            ...chat.shadowRoot.querySelectorAll('.chat-container > .chat-history-row'),
+          ].at(-5);
+          chat.chatScrollController.navigateTo(
+            chat.scrollTop +
+              anchor.getBoundingClientRect().top -
+              chat.getBoundingClientRect().top -
+              40,
+            'instant',
+          );
+          chat.chatScrollController.preserveAnchorForInteraction(anchor);
+          const top = anchor.getBoundingClientRect().top;
+          controller.showNewerHistory();
+          await settle();
+          metrics.newerAnchorChecks.push({
+            retained: anchor.isConnected,
+            driftPx: anchor.isConnected
+              ? +(anchor.getBoundingClientRect().top - top).toFixed(2)
+              : null,
+          });
+          metrics.maxNewerAnchorDriftPx = Math.max(
+            0,
+            ...metrics.newerAnchorChecks.map(value => Math.abs(value.driftPx ?? 0)),
+          );
+          publish();
+        }
+      }
       function emit(stream, data) {
         streamRun ??= 'fixture-running';
         controller.handleEvent({
@@ -334,6 +366,7 @@
         });
       }
       async function stream(loadPages = false) {
+        if (loadPages === 'newer') await older();
         if (!controller) await open();
         emit('thinking', { text: 'Checking the next configuration.' });
         const revision = chat.persistedTimelineCache.revision;
@@ -356,7 +389,7 @@
           }
           if (loadPages && index === 10) {
             pageComplete = false;
-            pendingPage = older(true).finally(() => {
+            pendingPage = (loadPages === 'newer' ? newer() : older(true)).finally(() => {
               pageComplete = true;
             });
           }
@@ -391,6 +424,7 @@
       document.querySelector('#read-page').onclick = action(() => older(true));
       document.querySelector('#stream').onclick = action(() => stream());
       document.querySelector('#running-page').onclick = action(() => stream(true));
+      document.querySelector('#newer-page').onclick = action(() => stream('newer'));
       document.querySelector('#animation').onclick = action(async () => {
         if (!controller) await open();
         const summary = [...chat.shadowRoot.querySelectorAll('.completed-process > summary')].at(

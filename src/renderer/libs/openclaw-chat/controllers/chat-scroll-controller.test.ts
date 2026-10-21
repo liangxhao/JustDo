@@ -351,6 +351,44 @@ describe('ChatScrollController', () => {
     controller.disconnect();
   });
 
+  test('restores the reading row after the browser clamps a shrinking history window', () => {
+    const target = host() as ReturnType<typeof host> & {
+      shadowRoot: { querySelector: () => object; querySelectorAll: () => object[] };
+      getBoundingClientRect: () => { top: number };
+    };
+    target.clientHeight = 600;
+    target.scrollHeight = 250 * 30;
+    let scrollTop = 230 * 30;
+    let contentTop = scrollTop;
+    Object.defineProperty(target, 'scrollTop', {
+      get: () => Math.min(scrollTop, target.scrollHeight - target.clientHeight),
+      set: (value: number) => {
+        scrollTop = Math.max(0, Math.min(value, target.scrollHeight - target.clientHeight));
+      },
+    });
+    const anchor = {
+      isConnected: true,
+      getBoundingClientRect: () => ({
+        top: contentTop - target.scrollTop,
+        bottom: contentTop - target.scrollTop + 30,
+      }),
+    };
+    target.shadowRoot = { querySelector: () => ({}), querySelectorAll: () => [anchor] };
+    target.getBoundingClientRect = () => ({ top: 0 });
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target as unknown as HTMLElement);
+    controller.preserveAnchorForInteraction(anchor as unknown as HTMLElement);
+    controller.beforeRender();
+    // A newer window removes 64 rows before adding the first eight rows.
+    contentTop -= 64 * 30;
+    target.scrollHeight = (250 - 64 + 8) * 30;
+    expect(anchor.getBoundingClientRect().top).toBe(-240);
+    controller.afterRender(1);
+    expect(anchor.getBoundingClientRect().top).toBe(0);
+    expect(target.scrollTop).toBe(4_980);
+    controller.disconnect();
+  });
+
   test('falls back to a nearby anchor when the clicked disclosure is replaced', () => {
     const target = host() as ReturnType<typeof host> & {
       shadowRoot: { querySelector: () => object; querySelectorAll: () => object[] };
@@ -511,6 +549,35 @@ describe('ChatScrollController', () => {
     target.emitScroll();
 
     expect(showNewer).toHaveBeenCalledTimes(2);
+  });
+
+  test('waits for all progressive commits before accepting another newer shift', async () => {
+    const target = host();
+    target.scrollTop = 300;
+    let finish!: (shifted: boolean) => void;
+    const showNewer = vi.fn(
+      () =>
+        new Promise<boolean>(resolve => {
+          finish = resolve;
+        }),
+    );
+    const controller = new ChatScrollController(vi.fn(), undefined, showNewer);
+    controller.connect(target as unknown as HTMLElement);
+    for (let frame = 0; frame < 8; frame += 1) {
+      target.scrollTop += 20;
+      target.emitScroll();
+      await Promise.resolve();
+    }
+    expect(showNewer).toHaveBeenCalledOnce();
+    target.scrollTop = target.scrollHeight - target.clientHeight;
+    target.emitScroll();
+    expect(controller.state.mode).toBe('paused');
+    finish(true);
+    await Promise.resolve();
+    target.scrollTop += 20;
+    target.emitScroll();
+    expect(showNewer).toHaveBeenCalledTimes(2);
+    controller.disconnect();
   });
 
   test('does not treat completed auto navigation as user history traversal', () => {

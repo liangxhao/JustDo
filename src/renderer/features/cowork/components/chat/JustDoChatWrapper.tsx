@@ -630,14 +630,15 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
             controllerRef.current === controller &&
             canonicalSessionKeyRef.current === expectedKey &&
             (options.isCurrent?.() ?? true);
-          for (let attempt = 0; attempt < 100; attempt += 1) {
-            if (!isCurrent()) return false;
+          let waitDeadline = Date.now() + 10_000;
+          while (isCurrent()) {
             if (controller.state.sessionKey === expectedKey && controller.state.historyReadFailed)
               return false;
             if (
               controller.state.sessionKey !== expectedKey ||
               !controller.state.initialHistoryReady
             ) {
+              if (Date.now() >= waitDeadline) return false;
               await new Promise<void>(resolve => window.setTimeout(resolve, 100));
               continue;
             }
@@ -646,6 +647,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
               (options.sessionId && controller.state.currentSessionId !== options.sessionId)
             )
               return false;
+            const entryLoaded = controller.showHistoryEntry(normalizedEntryId);
             const chat = chatElementRef.current;
             if (chat) {
               await chat.updateComplete;
@@ -658,13 +660,18 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
               if (!controller.state.initialHistoryReady) continue;
               if (controller.state.historyReadFailed) return false;
               if (chat.revealMessage(normalizedEntryId)) return true;
+              // A loaded entry can be intentionally hidden by native display rules.
+              if (entryLoaded) return false;
             }
-            if (!controller.state.chatLoading && !controller.state.historyLoadingOlder) {
-              const advanced = await controller.showOlderHistory();
+            if (chat && !controller.state.chatLoading && !controller.state.historyLoadingOlder) {
+              if (!controller.state.historyHasMore) return false;
+              const advanced = await controller.loadOlderHistory();
               if (!isCurrent()) return false;
-              const entryLoaded = hasEntryId(controller.getLoadedMessages(), normalizedEntryId);
-              if (!advanced && !controller.state.historyHasMore && !entryLoaded) return false;
+              if (!advanced) return false;
+              waitDeadline = Date.now() + 10_000;
+              continue;
             }
+            if (Date.now() >= waitDeadline) return false;
             await new Promise<void>(resolve => window.setTimeout(resolve, 25));
           }
           return false;
@@ -1054,16 +1061,6 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     );
   },
 );
-
-function hasEntryId(messages: readonly unknown[], entryId: string): boolean {
-  return messages.some(message => {
-    if (!message || typeof message !== 'object' || Array.isArray(message)) return false;
-    const record = message as Record<string, unknown>;
-    const metadata = record.__openclaw;
-    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return false;
-    return (metadata as Record<string, unknown>).id === entryId;
-  });
-}
 
 // ─── Gateway Connection ─────────────────────────────────────────────────────
 

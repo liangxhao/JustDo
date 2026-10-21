@@ -1142,6 +1142,10 @@ export class ChatController {
     return chatControllerHistory.showLatestHistory.call(this.chatControllerHistoryContext);
   }
 
+  showHistoryEntry(entryId: string): boolean {
+    return chatControllerHistory.showHistoryEntry.call(this.chatControllerHistoryContext, entryId);
+  }
+
   /** Materialize every loaded page only for explicit whole-history consumers such as export. */
   getLoadedMessages(): unknown[] {
     return chatControllerHistory.getLoadedMessages.call(this.chatControllerHistoryContext);
