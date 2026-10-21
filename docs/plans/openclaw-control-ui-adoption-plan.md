@@ -214,7 +214,7 @@ webhook 必须显式配置，默认内部结果，不因新增 UI 把通知发�
 
 **已接入基础**：真实 `show_widget`、认证 `canvas.document.view`、HTTP(S) viewer
 能力声明、原生 sandbox/资源、历史恢复、尺寸/主题、失败重试与用户确认加入草稿均已
-实现。可选 Interactive UI 提供固定组件 kind；真实模型、安装平台及原生状态/渐进协议的
+实现。可选 Widget Kit 提供固定组件 kind；真实模型、安装平台及原生状态/渐进协议的
 剩余验收统一见[交互式回答验收](interactive-answers-acceptance.md)。不再将基础 inline
 viewer 列为待开发，也不把旧普通 iframe 的能力当作当前 Widget 契约。
 

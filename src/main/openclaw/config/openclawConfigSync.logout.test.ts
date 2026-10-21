@@ -1639,7 +1639,7 @@ describe('OpenClaw auth logout config sync', () => {
       'ask-user-question',
       'workboard',
       'agent-team',
-      'interactive-ui',
+      'widget-kit',
       'drawio',
       'swarm-workflow',
       'typesafe',
@@ -1739,7 +1739,7 @@ describe('OpenClaw auth logout config sync', () => {
       'agent-workspace-plugin',
       'workboard',
       'agent-team',
-      'interactive-ui',
+      'widget-kit',
       'drawio',
       'swarm-workflow',
       'typesafe',
@@ -1994,7 +1994,7 @@ describe('OpenClaw auth logout config sync', () => {
       'justdo-skill-only-example',
       'workboard',
       'agent-team',
-      'interactive-ui',
+      'widget-kit',
       'drawio',
       'swarm-workflow',
       'typesafe',
@@ -2620,15 +2620,15 @@ test.each([true, false])(
 );
 
 test.each([true, false])(
-  'keeps Interactive UI enabled=%s across startup and auth sync',
+  'keeps Widget Kit enabled=%s across startup and auth sync',
   enabled => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'interactive-ui-config-'));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'widget-kit-config-'));
     temporaryDirectories.push(directory);
     const configPath = path.join(directory, 'openclaw.json');
     expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.plugins.entries['interactive-ui']).toEqual({ enabled: false });
-    config.plugins.entries['interactive-ui'] = { enabled };
+    expect(config.plugins.entries['widget-kit']).toEqual({ enabled: false });
+    config.plugins.entries['widget-kit'] = { enabled };
     fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
     for (const reason of [
       'cowork-config-change',
@@ -2637,7 +2637,7 @@ test.each([true, false])(
     ]) {
       expect(writeMinimalConfig(configPath, reason).ok).toBe(true);
       expect(
-        JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries['interactive-ui'],
+        JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries['widget-kit'],
       ).toEqual({ enabled });
     }
   },

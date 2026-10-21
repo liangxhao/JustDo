@@ -165,6 +165,95 @@ describe('openclawLocalExtensions', () => {
     expect(fs.existsSync(path.join(targetExtensionsDir, 'automation-permission'))).toBe(true);
   });
 
+  it.each([
+    { packageName: 'openclaw-interactive-ui', pluginId: 'interactive-ui', retired: true },
+    { packageName: 'third-party', pluginId: 'interactive-ui', retired: false },
+    { packageName: 'openclaw-interactive-ui', pluginId: 'other-plugin', retired: false },
+  ])(
+    'retires only the previous app-owned widget bundle on development startup ($packageName, $pluginId)',
+    async ({ packageName, pluginId, retired }) => {
+      electronApp.isPackaged = false;
+      electronApp.getAppPath.mockReturnValue(resourcesDir);
+      const sourceDir = path.join(resourcesDir, 'openclaw-extensions', 'widget-kit');
+      const runtimeRoot = path.join(resourcesDir, 'runtime');
+      const targetExtensionsDir = path.join(runtimeRoot, 'dist', 'extensions');
+      const previous = path.join(targetExtensionsDir, 'interactive-ui');
+      fs.mkdirSync(sourceDir, { recursive: true });
+      fs.mkdirSync(previous, { recursive: true });
+      fs.writeFileSync(
+        path.join(sourceDir, 'openclaw.plugin.json'),
+        JSON.stringify({ id: 'widget-kit' }),
+      );
+      fs.writeFileSync(path.join(sourceDir, 'index.ts'), 'export default {};');
+      fs.writeFileSync(
+        path.join(previous, 'openclaw.plugin.json'),
+        JSON.stringify({ id: pluginId }),
+      );
+      fs.writeFileSync(path.join(previous, 'package.json'), JSON.stringify({ name: packageName }));
+      fs.writeFileSync(path.join(previous, 'index.js'), 'export default {};');
+
+      expect((await syncLocalOpenClawExtensionsIntoRuntime(runtimeRoot)).copied).toEqual([
+        'widget-kit',
+      ]);
+      expect(fs.existsSync(previous)).toBe(!retired);
+      expect(inspectOpenClawExtensionDirectory(targetExtensionsDir).ids.sort()).toEqual(
+        retired ? ['widget-kit'] : [pluginId, 'widget-kit'].sort(),
+      );
+    },
+  );
+
+  it.each(['interactive-ui', 'widget-kit'])(
+    'does not retire when %s is a directory link',
+    async linkedId => {
+      electronApp.isPackaged = false;
+      electronApp.getAppPath.mockReturnValue(resourcesDir);
+      const sourceDir = path.join(resourcesDir, 'openclaw-extensions', 'widget-kit');
+      const runtimeRoot = path.join(resourcesDir, 'runtime');
+      const targetExtensionsDir = path.join(runtimeRoot, 'dist', 'extensions');
+      const externalDir = path.join(resourcesDir, 'external-widget-bundle');
+      const previous = path.join(targetExtensionsDir, 'interactive-ui');
+      const linkedDir = path.join(targetExtensionsDir, linkedId);
+      fs.mkdirSync(sourceDir, { recursive: true });
+      fs.mkdirSync(targetExtensionsDir, { recursive: true });
+      fs.mkdirSync(externalDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(sourceDir, 'openclaw.plugin.json'),
+        JSON.stringify({ id: 'widget-kit' }),
+      );
+      fs.writeFileSync(
+        path.join(externalDir, 'openclaw.plugin.json'),
+        JSON.stringify({ id: linkedId }),
+      );
+      fs.writeFileSync(
+        path.join(externalDir, 'package.json'),
+        JSON.stringify({ name: `openclaw-${linkedId}` }),
+      );
+      if (linkedId === 'widget-kit') {
+        fs.mkdirSync(previous, { recursive: true });
+        fs.writeFileSync(
+          path.join(previous, 'openclaw.plugin.json'),
+          JSON.stringify({ id: 'interactive-ui' }),
+        );
+        fs.writeFileSync(
+          path.join(previous, 'package.json'),
+          JSON.stringify({ name: 'openclaw-interactive-ui' }),
+        );
+      }
+      const marker = path.join(externalDir, 'keep.txt');
+      fs.writeFileSync(marker, 'preserve external content');
+      try {
+        fs.symlinkSync(externalDir, linkedDir, process.platform === 'win32' ? 'junction' : 'dir');
+      } catch {
+        return;
+      }
+
+      await syncLocalOpenClawExtensionsIntoRuntime(runtimeRoot);
+      expect(fs.existsSync(previous)).toBe(true);
+      expect(fs.lstatSync(linkedDir).isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(marker, 'utf8')).toBe('preserve external content');
+    },
+  );
+
   it('does not sync through an extensions directory link outside the runtime root', async () => {
     electronApp.isPackaged = false;
     electronApp.getAppPath.mockReturnValue(resourcesDir);

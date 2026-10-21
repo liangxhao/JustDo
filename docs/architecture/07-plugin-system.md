@@ -15,16 +15,28 @@ Runtime Services 提供嵌套 MCP App 历史的受限恢复 RPC：只读原生�
 按原工具和原参数读取已记录结果，缺省值按当前 schema 核对，不执行原业务工具或恢复旧工具授权。
 会话 incarnation、生命周期和配置权限变化立即使恢复视图失效，详见[MCP Apps](../features/chat/mcp-apps.md)。
 
-`openclaw-extensions/interactive-ui` 内部按 `scenario/` 和 `ui/` 聚合各自的 schema、
-组合器、渲染逻辑、文案与样式；`document/` 提供共用的 HTML/JSON 安全序列化和资源
-初始化。两种 kind 独立校验与登记，不通过场景 schema 借用通用文档能力。
+`openclaw-extensions/widget-kit` 在 `ui/` 聚合通用固定组件的 schema、组合器、
+渲染逻辑、文案与样式；`document/` 提供 HTML/JSON 安全序列化和资源初始化。
+组件单元测试归插件 `tests/`，宿主边界及打包集成测试保留在主工程。
+插件 ID、目录及公共资源已改为 Widget Kit 命名；构建核对旧包名和 manifest ID 后
+移除旧 `interactive-ui` 随包产物。新 ID `widget-kit` 按默认关闭重新显式启用，
+不迁移旧开关或改写原生历史；引用旧资源的文档需要重新生成。
+开发启动的源码同步同样在替代插件到位后核对旧身份并清理，不跟随目录链接删除，
+避免未重新组装运行时的开发环境同时保留新旧类型注册。
 
 该扩展是随通用本地扩展流程捆绑的可选组件插件：用原生
-`registerBoardWidgetContentKind` 注册 `scenario-explorer` 与可组合的 `interactive-answer`，严格校验 JSON，输出固定组件 body
+`registerBoardWidgetContentKind` 只注册可组合的 `interactive-answer`，严格校验 JSON，输出固定组件 body
 及只读 JS resource，由 native `show_widget` 负责包装及文档所有权。默认关闭，可在扩展页显式启用/禁用，配置同步保留用户选择；按需 skill 与插件一起提供，不改变 8 个内置技能或每轮注入指导。不新增 tool/MCP/RPC/数据库或 runtime patch。固定 renderer 的继续按钮只在当前原生私有 prompt port 可用时启用，建议由宿主确认后加入草稿；未获得 dashboard/tools/resources 执行权限。用户流程与限制见 [交互式回答](../features/chat/interactive-answers.md)。
 
-`interactive-answer` 提供 table/compare/chart/form/steps，不接受表达式、脚本或外部提交；固定
-测算仍由 scenario 负责。两种 kind 使用不同公共 renderer 资源。搜索、排序、选择、
+插件只发布通用 `visualize` 技能，指导原生 `show_widget` 的真实发现与调用，
+以 HTML/SVG 和本地脚本承载按任务设计的可视化及交互。静态可视化无需控件或草稿桥，
+本地交互与会话后续动作分别按需添加。固定组件 schema 按需读取，
+不作为通用能力上限；团队测算的技能、内容类型、专属资源和实现均已删除。
+技能要求生成内容自包含、无公网依赖，未改动原生 CSP、存储或草稿授权协议。
+
+`interactive-answer` 提供 table/compare/chart/form/steps，不接受表达式、脚本或外部提交；
+表单多选以一组原生复选框呈现，支持空初值与组级必选，草稿按选项分别记录布尔值。
+组件只发布 `/__widget_kit__/ui.js` 资源。搜索、排序、选择、
 表单值只在当前 iframe 内存中，切换保留输入、重载恢复默认值；有界草稿标明省略，
 完整选择可在本地复制。模型质量与发布检查见 [验收清单](../plans/interactive-answers-acceptance.md)。
 

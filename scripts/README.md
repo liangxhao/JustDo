@@ -89,39 +89,36 @@ files or restoring them; a standalone copy of a live database without its matchi
 WAL can omit committed data. These files are local diagnostic artifacts and must
 not be committed.
 
-`test/interactive-ui/verify-gateway.mjs <runtime-dir>` verifies the locked native
+`test/widget-kit/verify-gateway.mjs <runtime-dir>` verifies the locked native
 Gateway with an isolated local synthetic provider. It checks real widget tools,
 authenticated document views, history/restart, prompt bridges and explicit plugin
 disable, then cleans up temporary services and credentials. No user state is used.
 
-Add `--ui` for the `interactive-answer` component path: the actual native `show_widget`
-tool receives the five component kinds, both extension kinds register distinct
-public resources, and authenticated views survive history/restart. Explicit
-disable removes both kinds and their public resources without rewriting stored
-documents. Run this separately from scenario variants and `--tool-dispatch`.
-`test/interactive-ui/verify-runtime.mjs <runtime-dir>` also checks both kinds
-against the locked native registrar, including duplicate-path rejection.
+The default path exercises the single `interactive-answer` registration with all
+five component kinds and multiselect form fields. It checks the public renderer,
+authenticated views, history/restart and disable without rewriting documents.
+`test/widget-kit/verify-runtime.mjs <runtime-dir>` checks the native registrar,
+including duplicate-kind and duplicate-resource rejection.
 
-Add `--interaction-contract` to `verify-gateway.mjs --ui` to verify rejected hidden-send
-fields, same-name inline document creation, and the actual native private prompt port
-in a hidden, isolated Electron browser. Chromium input exercises real activation;
-programmatic prompt calls must fail. The probe then explicitly submits the returned
-synthetic text to the same session and verifies model input/history. Bridge resolution
-is not a model receipt. No personal state or runtime patches are changed.
+Add `--interaction-contract` to verify rejected hidden-send fields, same-name
+inline document creation and the native private prompt port in a hidden,
+isolated Electron browser. Real Chromium activation is required; programmatic
+prompts fail. The fixture explicitly submits the returned text separately and
+checks model input/history. Bridge resolution is not a model receipt.
 
-Add `--presentation` to `--ui --interaction-contract` for the actual Lit widget viewer
-and native iframe chain. It checks fixed components, the scenario calculator and
-HTML in light/dark themes at 840/312px card widths, live native viewport resizing,
-and a trusted click that produces one readable inline suggestion. Synthetic screenshots
-and a verification summary remain under `.agent-tasks/interactive-ui/presentation/`.
-The test window stays nearly transparent and does not take focus. These checks do
-not replace real-model quality or installed-app/workspace acceptance.
+Add `--presentation` with `--interaction-contract` for the actual Lit viewer and
+native iframe chain. It checks fixed components and HTML in light/dark themes at
+840/312px card widths, live viewport resizing, form multi-selection and a trusted
+click producing a readable suggestion. These checks do not replace actual-model
+quality or installed-app/workspace acceptance.
 
-Add `--tool-dispatch` to the verifier for native Tool Search directory mode:
-the synthetic model invokes the exact core `show_widget` through `tool_call`,
-with generic HTML and the scenario plugin disabled. This checks the actual
-dispatcher envelope, authenticated view and history/restart identity separately
-from the direct scenario path. Do not combine it with `--ui`/`--retention`/`--extreme`.
+Add `--retention` separately to verify 33 native creations retain only the newest
+32 documents in one synthetic session while preserving another session.
+
+Add `--tool-dispatch` separately for native Tool Search directory mode with the
+plugin disabled. The synthetic model invokes the exact core `show_widget`
+through `tool_call` with generic HTML, checking the dispatcher envelope,
+authenticated view and history/restart without duplicate execution.
 
 `node scripts/openclaw/agent-team/probe-agent-team-routing.mjs <runtime-directory>` compares
 ordinary group broadcast routing with a public `runGroupThread` callback that

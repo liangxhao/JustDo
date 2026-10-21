@@ -57,7 +57,7 @@
 | Hermes Desktop 已有实现      | [内嵌预览][hermes-inline] 将工作目录 HTML 放进消息中的 opaque iframe；[成果卡片][hermes-artifact] 由用户点击打开右侧面板；[官方桌面说明][hermes-desktop] 区分 Hide 与 Close，隐藏保留页面实例 | 借鉴轻量消息内容与持续工作区的分工、点击展开、隐藏保活；不移植其文件读取准入、成果正文缓存或隐藏用户消息机制 |
 | Hermes MCP Apps 候选         | [PR #75828][hermes-mcp-pr] 描述 sandbox iframe 卡片与桥接，查询时 state=open、merged=false；[功能请求 #61095][hermes-mcp-issue] 仍开放                                                        | 作为交互案例和测试素材参考，不写成 Hermes 已发布完整 MCP Apps，也不以该 PR 替代锁定 OpenClaw 契约            |
 | CopilotKit OpenIntelligentUI | [架构][copilot-architecture] 组合原生组件和 generateSandboxedUi，局部控件在 iframe 计算，明确跟进才启动新轮；其可选 MCP assembler 返回 HTML 文本，不等同于整套网页渲染运行时                  | 借鉴按任务选形态、渐进加载、真实可用控件和明确跟进；本期沿用 Gateway，不新增 AG-UI/Deep Agents 执行链        |
-| Thesys Open Intelligent UI   | [作者仓库][thesys-iui] 通过 OpenUI Lang 组合受控组件，变量驱动局部计算与界面更新                                                                                                              | 说明丰富交互也可用受控组件完成；不为 MCP Apps 接入引入第二套生成语言或替换现有 Interactive UI                |
+| Thesys Open Intelligent UI   | [作者仓库][thesys-iui] 通过 OpenUI Lang 组合受控组件，变量驱动局部计算与界面更新                                                                                                              | 说明丰富交互也可用受控组件完成；不为 MCP Apps 接入引入第二套生成语言或替换现有 Widget Kit                |
 
 Hermes 本地只读 checkout 为 dce1e9b37581dd62e480a9064dc04a709c2940d3（2026-10-09）；另通过 GitHub 获取并核对 2026-10-17 的 main 快照 0ab43d4f67e41be75f4f6c0fa14a86dbcfd3e5b3 中上述内嵌预览、成果卡片与识别文件。当前结论只涉及读到的实现和 PR 状态，不将较旧的 inline 功能请求仍开放理解为主分支完全没有内嵌能力。PR 截图与作者测试声明也不是本产品验收结果。
 
@@ -270,7 +270,7 @@ S0必须在独立Gateway与合成MCP server中回答两个问题：
 
 ## 9. 配置、数据与发布
 
-mcp.apps.enabled 使用显式产品设置和现有 Main 配置/KV、串行应用流程；读取并保留已有明确的原生 enabled 选择，未配置时开启以支持内置 draw.io。设置只控制宿主交互能力，手动入口仍由 MCP 服务声明，不绑定 Interactive UI 插件开关，也不新增必须安装的产品 MCP 代理插件。
+mcp.apps.enabled 使用显式产品设置和现有 Main 配置/KV、串行应用流程；读取并保留已有明确的原生 enabled 选择，未配置时开启以支持内置 draw.io。设置只控制宿主交互能力，手动入口仍由 MCP 服务声明，不绑定 Widget Kit 插件开关，也不新增必须安装的产品 MCP 代理插件。
 
 统一合成mcp对象，覆盖完整、最小、登录/退出及恢复分支：管理enabled，保留sessionIdleTtlMs、既有server和明确的可选状态。sandboxPort/Origin由受支持的宿主配置和原生结果决定，不加入公网默认值。已有自定义但当前桌面不支持的origin应明确报错，不默默改写为可用。
 

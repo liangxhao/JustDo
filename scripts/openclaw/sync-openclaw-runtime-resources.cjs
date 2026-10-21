@@ -406,6 +406,16 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
   ) {
     fs.rmSync(retiredCollaboration, { recursive: true, force: true });
   }
+  // Widget Kit replaces this exact app-owned bundle. Keeping both would claim
+  // the same native content kind; matching both identities protects other packages.
+  const retiredWidgetBundle = path.join(targetDir, 'interactive-ui');
+  if (
+    readJsonFile(path.join(sourceDir, 'widget-kit', 'openclaw.plugin.json'))?.id === 'widget-kit' &&
+    readJsonFile(path.join(retiredWidgetBundle, 'package.json'))?.name === 'openclaw-interactive-ui' &&
+    readJsonFile(path.join(retiredWidgetBundle, 'openclaw.plugin.json'))?.id === 'interactive-ui'
+  ) {
+    fs.rmSync(retiredWidgetBundle, { recursive: true, force: true });
+  }
 
   const entries = fs
     .readdirSync(sourceDir, { withFileTypes: true })

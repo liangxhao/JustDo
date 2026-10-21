@@ -52,7 +52,7 @@ Hermes 的隐藏发送、文件预览和文件覆盖不是 OpenClaw 内联文档
 
 ## 实际验证与能力判定
 
-验证日期：2026-10-17，Windows x64 / Node 24.21.0。
+验证日期：2026-10-21，Windows x64 / Node 24.21.0。
 使用已准备的 OpenClaw `2026.10.4`，包 SHA-256：
 `b6588b64f66016de8c020c9ff0b29ed4713b87af0ef955d3864066dcbfb038d3`。
 Gateway 使用独立临时配置、状态、端口和本机合成模型，未读取个人 transcript。
@@ -60,8 +60,8 @@ Gateway 使用独立临时配置、状态、端口和本机合成模型，未读
 
 | 能力 | 判定与证据 |
 | --- | --- |
-| 固定 table / compare / chart / form / steps | 原生 registrar 与真实 Gateway 均通过；两个 kind 和资源可同时注册，禁用后资源不可读，原文档不被改写 |
-| 认证读取、历史与重启恢复 | 基础 Gateway `--ui` 验证通过；恢复不重新调用模型 |
+| 固定 table / compare / chart / form / steps | 原生 registrar 与真实 Gateway 均通过；只注册 interactive-answer 类型及其只读资源，禁用后资源不可读，原文档不被改写 |
+| 认证读取、历史与重启恢复 | 基础 Gateway 组件验证曾通过；恢复不重新调用模型 |
 | `display_kind: hidden` / `displayKind: hidden` / `silent` | 真实 Gateway 参数校验拒绝，且未触发模型；不在本计划支持隐藏发送 |
 | 同名 `show_widget` 原位更新内联文档 | 真实调用生成不同 docId，旧 HTML hash 不变；`name` 的稳定更新语义属于 pinned dashboard |
 | HTML 输入通过原生私有 port 回传 | 隐藏 Electron 专项通过：真实可信点击把输入值 `5000` 带入私有端口；无用户激活的程序调用返回 false，未产生建议 |
@@ -73,18 +73,18 @@ Gateway 使用独立临时配置、状态、端口和本机合成模型，未读
 `nativePromptBridge`、`programmaticPromptBlocked`、`bridgeResolutionIsNotModelReceipt`、
 `explicitFollowupReachedModelAndHistory` 均为 true。
 基础桥接使用受控最小宿主；新增 `--presentation` 进一步挂载实际 Lit viewer 与原生沙箱，
-验证五种固定组件、测算和 HTML 的明暗主题、840/312px 卡片宽度、原生视口动态缩放，
-以及一次真实点击产生可读行内建议。29 张截图和验证摘要写入
-`.agent-tasks/interactive-ui/presentation/`（合成数据，不提交图片）。
+验证五种固定组件和 HTML 的明暗主题、840/312px 卡片宽度、原生视口动态缩放，
+包括表单多选及一次真实点击产生可读行内建议。25 张截图和验证摘要写入
+`.agent-tasks/widget-kit/presentation/`（合成数据，不提交图片）。
 完整 React 应用、真实模型质量及最终安装包验收仍未完成，不能把本轮结果当作产品全链路验收。
 
 可重复运行（在本分支工作区，显式传入已准备的运行时目录）：
 
 ```powershell
-node scripts/test/interactive-ui/verify-runtime.mjs <runtime-dir>
-node scripts/test/interactive-ui/verify-gateway.mjs <runtime-dir> --ui
-node scripts/test/interactive-ui/verify-gateway.mjs <runtime-dir> --ui --interaction-contract
-node scripts/test/interactive-ui/verify-gateway.mjs <runtime-dir> --ui --interaction-contract --presentation
+node scripts/test/widget-kit/verify-runtime.mjs <runtime-dir>
+node scripts/test/widget-kit/verify-gateway.mjs <runtime-dir>
+node scripts/test/widget-kit/verify-gateway.mjs <runtime-dir> --interaction-contract
+node scripts/test/widget-kit/verify-gateway.mjs <runtime-dir> --interaction-contract --presentation
 ```
 
 第三条补充真实 Gateway 参数拒绝、同名文档行为，以及隐藏 Electron 内实际原生沙箱的
@@ -97,13 +97,15 @@ node scripts/test/interactive-ui/verify-gateway.mjs <runtime-dir> --ui --interac
 ## 剩余验收
 
 模型指导、固定 renderer 的视觉和可读草稿、行内确认已落实，按需原生 HTML 示例位于
-`openclaw-extensions/interactive-ui/skills/interactive-answer/references/native-html.md`。
+`openclaw-extensions/widget-kit/skills/visualize/references/native-html.md`。
 不再保留已完成的实施步骤；当前产品契约以功能和架构文档为准。
 
-实际配置模型与 Windows 完整开发应用已完成主聊天的固定表单、自由 HTML 表单、
-比较/图表和测算组件实测。两类表单均完成“继续分析 → 加入草稿 → 发送 → 模型反馈”，
+2026-10-17 的实际配置模型与 Windows 完整开发应用历史验收覆盖主聊天固定表单、
+自由 HTML 表单、比较/图表和当时的测算组件。两类表单均完成
+“继续分析 → 加入草稿 → 发送 → 模型反馈”，
 保留原草稿；后续新表单保留已确认的四项默认值。重启原生历史、切换会话旧建议失效、
-测算卡片明暗切换亦有实际记录，详见[验收结果](interactive-answers-acceptance.md)。
+测算卡片明暗切换亦有历史记录，详见[验收结果](interactive-answers-acceptance.md)。
+测算组件现已删除，其历史结果不作为当前 Widget Kit 的覆盖证明。
 
 - 继续补齐真实模型表格、分步说明与普通问题不调用组件；补测首次可见耗时与生成稳定性。
   自然请求仍出现自由 HTML 布局不佳、额外说明或不存在的操作提示，不能认定视觉质量稳定通过。
