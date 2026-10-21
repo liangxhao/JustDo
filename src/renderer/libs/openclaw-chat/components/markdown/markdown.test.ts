@@ -236,6 +236,163 @@ describe('Markdown front matter', () => {
   });
 });
 
+describe('Markdown headings and dividers', () => {
+  test.each([
+    ['completed', toSanitizedMarkdownHtml],
+    ['streaming', toStreamingMarkdownHtml],
+  ] as const)(
+    'keeps a single bold line between adjacent dividers at body size in %s messages',
+    (_mode, render) => {
+      const container = document.createElement('div');
+
+      container.innerHTML = render('---\n**哈哈哈**\n---\n\n');
+
+      expect(Array.from(container.children, element => element.tagName)).toEqual(['HR', 'P', 'HR']);
+      expect(container.querySelector('p > strong')?.textContent).toBe('哈哈哈');
+    },
+  );
+
+  test('recognizes chained divider sections without promoting their text to headings', () => {
+    const container = document.createElement('div');
+
+    container.innerHTML = toSanitizedMarkdownHtml('---\nFirst\n---\nSecond\n---');
+
+    expect(Array.from(container.children, element => element.tagName)).toEqual([
+      'HR',
+      'P',
+      'HR',
+      'P',
+      'HR',
+    ]);
+    expect(Array.from(container.querySelectorAll('p'), paragraph => paragraph.textContent)).toEqual(
+      ['First', 'Second'],
+    );
+  });
+
+  test('keeps adjacent divider sections inside their blockquote', () => {
+    const container = document.createElement('div');
+
+    container.innerHTML = toSanitizedMarkdownHtml('> ---\n> **哈哈哈**\n> ---');
+
+    expect(
+      Array.from(container.querySelector('blockquote')!.children, element => element.tagName),
+    ).toEqual(['HR', 'P', 'HR']);
+    expect(container.querySelector('blockquote > p > strong')?.textContent).toBe('哈哈哈');
+  });
+
+  test.each([
+    '---\n\nTitle\n---',
+    '***\nTitle\n---',
+    '___\nTitle\n---',
+    '---\n> Title\n> ---',
+    '> ---\nTitle\n---',
+  ])(
+    'preserves a single-line title without an adjacent matching divider in the same container: %j',
+    source => {
+      const container = document.createElement('div');
+
+      container.innerHTML = toSanitizedMarkdownHtml(source);
+
+      expect(container.querySelector('h2')?.textContent).toBe('Title');
+      expect(container.querySelectorAll('hr')).toHaveLength(1);
+    },
+  );
+
+  test.each([
+    ['completed', toSanitizedMarkdownHtml],
+    ['streaming', toStreamingMarkdownHtml],
+  ] as const)(
+    'keeps multiline status text before a divider at body size in %s messages',
+    (_mode, render) => {
+      const source = [
+        '全部 5 个批次（batch 4-8）完整确认。**20/48 session 完成**，启动已提交（batch 9-11 sessions 17-22），继续检查活跃状态并继续启动剩余 sessions（23-48）：',
+        '',
+        '---',
+        '**A4 累计：20/48 session 完成（TASK 1-76 完成）**',
+        '**活跃中：batch 9（LTCC+FEM，runId:2e9ec2e8）**',
+        '**活跃中：batch 10（SW+SPDT，runId:4537431b）**',
+        '**启动中：sessions 21-22（巴伦+LED）**',
+        '**待启动：sessions 23-48**',
+        '---',
+        '',
+        '检查当前活跃 agent 并继续启动剩余批次：',
+        '',
+        '',
+      ].join('\n');
+      const container = document.createElement('div');
+
+      container.innerHTML = render(source);
+
+      expect(container.querySelector('h1, h2, h3, h4, h5, h6')).toBeNull();
+      expect(container.querySelectorAll('hr')).toHaveLength(2);
+      const status = container.querySelectorAll('p')[1];
+      expect(status.querySelectorAll('strong')).toHaveLength(5);
+      expect(status.querySelectorAll('br')).toHaveLength(4);
+      expect(status.textContent).toContain('待启动：sessions 23-48');
+    },
+  );
+
+  test.each(['---', '-----', '  ---  '])('treats %j after multiline prose as a divider', marker => {
+    const container = document.createElement('div');
+
+    container.innerHTML = toSanitizedMarkdownHtml(`First line\r\nSecond line\r\n${marker}`);
+
+    expect(container.querySelector('h2')).toBeNull();
+    expect(container.querySelector('p')?.textContent).toBe('First line\nSecond line');
+    expect(container.lastElementChild?.tagName).toBe('HR');
+  });
+
+  test('preserves single-line Setext headings and explicit ATX headings', () => {
+    const container = document.createElement('div');
+
+    container.innerHTML = toSanitizedMarkdownHtml(
+      '# Explicit title\n\nSingle-line title\n---\n\nUnderlined title\n===',
+    );
+
+    expect(
+      Array.from(container.querySelectorAll('h1, h2'), heading => heading.textContent),
+    ).toEqual(['Explicit title', 'Single-line title', 'Underlined title']);
+    expect(container.querySelectorAll('hr')).toHaveLength(0);
+  });
+
+  test.each(['=', '===', '-', '--'])(
+    'preserves multiline Setext headings when %j is not a divider',
+    marker => {
+      const container = document.createElement('div');
+
+      container.innerHTML = toSanitizedMarkdownHtml(`First line\nSecond line\n${marker}`);
+
+      expect(container.querySelector(marker.startsWith('=') ? 'h1' : 'h2')?.textContent).toBe(
+        'First line\nSecond line',
+      );
+      expect(container.querySelector('hr')).toBeNull();
+    },
+  );
+
+  test.each([
+    ['blockquote', '> First line\n> Second line\n> ---'],
+    ['li', '- First line\n  Second line\n  ---'],
+  ])('keeps multiline dividers inside their %s container', (selector, source) => {
+    const container = document.createElement('div');
+
+    container.innerHTML = toSanitizedMarkdownHtml(source);
+
+    expect(container.querySelector('h2')).toBeNull();
+    expect(container.querySelector(`${selector} > hr`)).not.toBeNull();
+    expect(container.querySelectorAll('hr')).toHaveLength(1);
+  });
+
+  test('preserves multiline divider examples inside code fences', () => {
+    const source = 'First line\nSecond line\n---\n';
+    const container = document.createElement('div');
+
+    container.innerHTML = toSanitizedMarkdownHtml(`\x60\x60\x60text\n${source}\x60\x60\x60`);
+
+    expect(container.querySelector('code')?.textContent).toBe(source);
+    expect(container.querySelector('hr, h2')).toBeNull();
+  });
+});
+
 describe('Markdown autolinks', () => {
   test.each(['，', '。', '；', '！', '？', '、'])(
     'ends a bare URL before the CJK punctuation %s',

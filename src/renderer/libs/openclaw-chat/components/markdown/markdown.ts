@@ -572,6 +572,58 @@ export const md = new MarkdownIt({
   linkify: true,
 });
 
+// Treat --- after multiline prose, or a single line directly enclosed by dash
+// dividers, as a divider. Preserve other Setext headings, tables and literal code
+// without rewriting the source or container structure.
+md.core.ruler.after('block', 'setext_divider', state => {
+  const sourceLines = state.src.split('\n');
+  const tokens: typeof state.tokens = [];
+  for (let index = 0; index < state.tokens.length; index += 1) {
+    const opening = state.tokens[index];
+    const content = state.tokens[index + 1];
+    const closing = state.tokens[index + 2];
+    if (
+      opening.type !== 'heading_open' ||
+      opening.markup !== '-' ||
+      content?.type !== 'inline' ||
+      !content.map ||
+      closing?.type !== 'heading_close'
+    ) {
+      tokens.push(opening);
+      continue;
+    }
+
+    const [firstLine, dividerLine] = content.map;
+    const dividerMarkup = sourceLines[dividerLine]?.match(/-{3,}[ \t]*$/u)?.[0].trim();
+    const previous = tokens[tokens.length - 1];
+    const hasOpeningDivider =
+      previous?.type === 'hr' &&
+      /^-{3,}$/u.test(previous.markup) &&
+      previous.level === opening.level &&
+      previous.map?.[1] === firstLine;
+    if (!dividerMarkup || (dividerLine - firstLine < 2 && !hasOpeningDivider)) {
+      tokens.push(opening);
+      continue;
+    }
+
+    opening.type = 'paragraph_open';
+    opening.tag = 'p';
+    opening.markup = '';
+    opening.map = [firstLine, dividerLine];
+    closing.type = 'paragraph_close';
+    closing.tag = 'p';
+    closing.markup = '';
+    const divider = new state.Token('hr', 'hr', 0);
+    divider.block = true;
+    divider.level = opening.level;
+    divider.markup = dividerMarkup;
+    divider.map = [dividerLine, dividerLine + 1];
+    tokens.push(opening, content, closing, divider);
+    index += 2;
+  }
+  state.tokens = tokens;
+});
+
 const nativeHtmlPathHref = (filePath: string): string => {
   if (/^file:/iu.test(filePath)) return filePath;
   const encoded = encodeURI(filePath);
