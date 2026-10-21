@@ -122,9 +122,11 @@ flowchart LR
   Tool --> Native[Gateway 原生文档与历史]
   Native --> View[认证 canvas.document.view]
   View --> Host[聊天 viewer]
-  Host --> Outer[独立 origin transport shell]
+  Host --> Guest[卡片专用 webview / browserProxy]
+  Guest --> Outer[独立 origin transport shell]
   Outer --> Inner[opaque iframe]
-  Inner -->|可信点击 / 私有 port| Host
+  Inner -->|可信点击 / 私有 port| Guest
+  Guest -->|绑定当前挂载的语义事件| Host
   Host -->|用户确认| Draft[当前聊天草稿]
   Draft -->|用户发送| Run[正常会话执行]
 ```
@@ -147,8 +149,16 @@ Main 保留产品配置与执行生命周期；当前用户发起的首条消息
 
 Gateway 拥有原生 HTML、文档保留及 transcript；Renderer 直接消费实时和历史投影。
 外层独立 origin、内层 opaque sandbox，消息逐阶段检查 source/origin/renderId。
-工作区组件以实际 ownerDocument/defaultView 处理样式、主题、激活与沙箱消息，
-不借用主窗口激活，也不增加子文档 preload。该链路不授予 dashboard、MCP、tool
+桌面卡片使用固定 `widget-viewer.html?mount=<UUID>` 与独立内存 session，跟随浏览器代理，
+不修改默认 session、Main 或 Gateway 的代理。Main 只给当前应用 origin 的固定页面装配
+最小 preload；等待代理就绪后才装载原生 sandbox，不向生成 HTML 暴露该桥。
+认证 HTML 仍由现有聊天控制器读取，只在内存传给 guest；不传 Gateway 凭据。
+工作区组件以实际 ownerDocument/defaultView 处理主题、可见性与当前绑定；可信点击和
+私有 port 的准入在 guest 自身文档核对激活、焦点和可见性，外部聊天再次核对当前
+client/session/generation/docId、可见 webview 与文本限制，保留“加入草稿 / 取消”。
+失败不回退到未配置代理的主 Renderer iframe。普通浏览器 WebChat 仍使用 iframe 和浏览器
+自身网络。原生 CSP 与资源规则不变，代理不能让被禁止的纹理、CDN 或 fetch 获得权限。
+该链路不授予 dashboard、MCP、tool
 或 resource 执行权限，不新增产品数据库、Redux slice 或运行时补丁。
 
 跨进程和窗口生命周期见 [进程模型](../../architecture/03-process-model.md)，

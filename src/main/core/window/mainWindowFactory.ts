@@ -71,6 +71,7 @@ import {
   shouldAllowSystemAudioCapture,
 } from './mediaPermission';
 import { loadPackagedRenderer } from './renderer/packagedRendererLoader';
+import { createWidgetViewerGuests } from './widgetViewerGuest';
 import { registerWindowAppearance } from './windowAppearance';
 import { getWindowChromeOptions } from './windowChrome';
 import { WorkspaceWindowManager } from './workspaceWindowManager';
@@ -79,6 +80,7 @@ type MainWindowFactoryOptions = {
   appName: string;
   firstLaunch: boolean;
   browserGuestPreloadPath: string;
+  widgetViewerPreloadPath: string;
   devServerUrl: string;
   getBackgroundColor: () => string;
   getIconPath: () => string | undefined;
@@ -195,6 +197,13 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     systemAudioCaptureFrame = undefined;
   });
   const windowSession = mainWindow.webContents.session;
+  const widgetViewers = createWidgetViewerGuests(
+    options.widgetViewerPreloadPath,
+    options.getProxyCredentials,
+    options.isDev
+      ? { isDev: true, devServerPort: Number(new URL(options.devServerUrl).port) }
+      : undefined,
+  );
   const browserPanelSession = session.fromPartition(BROWSER_PANEL_PARTITION);
   const importedBrowserSession = session.fromPartition(BROWSER_IMPORTED_PROFILE_PARTITION);
   const browserPanelSessions = new Map<string, Electron.Session>([
@@ -463,6 +472,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   });
   const configureBrowserHost = (host: Electron.WebContents): void => {
     host.on('will-attach-webview', (event, webPreferences, params) => {
+      if (widgetViewers.prepare(event, webPreferences, params, host)) return;
       webPreferences.preload = options.browserGuestPreloadPath;
       webPreferences.nodeIntegration = false;
       webPreferences.nodeIntegrationInSubFrames = false;
@@ -489,7 +499,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       if (!browserPanelSessions.has(params.partition)) {
         const browserSession = session.fromPartition(params.partition);
         browserPanelSessions.set(params.partition, browserSession);
-        void registerBrowserProxySession(browserSession);
+        void registerBrowserProxySession(browserSession).catch(() => {});
         configureBrowserSessionPermissions(browserSession);
         installBrowserRequestGuard(browserSession);
         installBrowserPdfDetection(browserSession);
@@ -497,6 +507,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       }
     });
     host.on('did-attach-webview', (_event, guestContents) => {
+      if (widgetViewers.attach(guestContents, host)) return;
       let externalProtocolPromptPending = false;
       const requestExternalProtocol = (url: string): void => {
         if (externalProtocolPromptPending || !isAllowedExternalBrowserUrl(url)) return;

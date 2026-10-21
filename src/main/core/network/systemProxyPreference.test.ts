@@ -218,4 +218,51 @@ describe('independent browser proxy preferences', () => {
     expect(targetSession.setProxy).toHaveBeenLastCalledWith({ mode: ProxyMode.DIRECT });
     expect(mocks.setProxy).not.toHaveBeenCalled();
   });
+
+  test('retries a failed memory session registration without retaining its rejected attempt', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const widget = {
+        storagePath: null,
+        setProxy: vi
+          .fn()
+          .mockRejectedValueOnce(new Error('Proxy failed'))
+          .mockResolvedValue(undefined),
+        closeAllConnections: vi.fn().mockResolvedValue(undefined),
+      } as unknown as Electron.Session;
+      await expect(registerBrowserProxySession(widget)).rejects.toThrow('Proxy failed');
+      await expect(registerBrowserProxySession(widget)).resolves.toBeUndefined();
+      expect(widget.setProxy).toHaveBeenCalledTimes(2);
+      expect(widget.closeAllConnections).toHaveBeenCalledOnce();
+      expect(mocks.setProxy).not.toHaveBeenCalled();
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  test('applies browser proxy changes to a distinct memory-only widget session', async () => {
+    const widget = {
+      storagePath: null,
+      setProxy: vi.fn().mockResolvedValue(undefined),
+      closeAllConnections: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Electron.Session;
+    await registerBrowserProxySession(widget);
+    await registerBrowserProxySession(widget);
+    expect(widget.setProxy).toHaveBeenCalledOnce();
+    await applyBrowserProxyPreference({
+      browserProxy: {
+        mode: ProxyMode.CUSTOM,
+        custom: { protocol: ProxyProtocol.HTTP, host: '127.0.0.1', port: '8181' },
+      },
+    });
+    expect(widget.setProxy).toHaveBeenLastCalledWith({
+      mode: 'fixed_servers',
+      proxyRules: 'http://127.0.0.1:8181',
+      proxyBypassRules: '<local>;localhost;127.0.0.1;::1',
+    });
+    expect(mocks.setProxy).not.toHaveBeenCalled();
+    expect(mocks.applySystemProxyEnv).not.toHaveBeenCalled();
+    await applyBrowserProxyPreference({ browserProxy: { mode: ProxyMode.DIRECT } });
+    expect(widget.setProxy).toHaveBeenLastCalledWith({ mode: ProxyMode.DIRECT });
+  });
 });

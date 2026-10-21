@@ -40,13 +40,14 @@ HTTP 响应携带生产 CSP、`no-store`、`nosniff` 与同源资源策略。脚
 
 ### 浏览器与非浏览器的代理范围
 
-产品配置为两类请求保留独立代理偏好。`proxy`（以及既有 `useSystemProxy` 标志）只用于 Main、默认 Electron session 与 Gateway 进程环境，默认直连；`browserProxy` 只用于应用持有的浏览器 guest sessions，默认系统代理。浏览器模式与用户 Chrome 自身的网络配置不由这个 guest 偏好改写。
+产品配置为两类请求保留独立代理偏好。`proxy`（以及既有 `useSystemProxy` 标志）只用于 Main、默认 Electron session 与 Gateway 进程环境，默认直连；`browserProxy` 用于应用持有的浏览器 guest sessions 及原生 Widget 专用内存 session，默认系统代理。Widget 不共享浏览器 profile 存储。浏览器模式与用户 Chrome 自身的网络配置不由这个 guest 偏好改写。
 
 ```mermaid
 flowchart LR
   AP[非浏览器代理设置] --> Default[Main / 默认 session]
   AP --> Header[Gateway outbound-header 上游]
   BP[浏览器代理设置] --> Guest[内置浏览器 guest sessions]
+  BP --> Widget[Widget 独立内存 session]
   Gateway[Gateway] --> Inject[本地 Header 注入代理] --> Header
 ```
 
@@ -56,8 +57,9 @@ flowchart LR
 
 侧边栏从首次展示起就使用固定的 `workspace.html` 文档承载。主 Renderer
 与工作区文档在开发和安装版均同 origin，安装版共享上述只读 HTTP 宿主。
-静态请求只允许工作区入口携带单个 UUID 格式的 `generation` 参数；其他入口
-或额外参数均拒绝。静态读取不授予原生窗口能力，窗口创建仍须匹配 Main 的当前授予。
+静态请求仅允许工作区入口携带单个 UUID 格式的 `generation` 参数，以及 Widget viewer
+入口携带单个 UUID 格式的 `mount` 参数；其他入口或额外参数均拒绝。静态读取不授予
+原生窗口能力，窗口创建仍须匹配 Main 的当前授予。
 主 Renderer
 通过 React portal 渲染完整工具区；该文档没有应用入口脚本、preload 或
 `window.electron`，也不创建第二个 Redux store。源组件闭包仍调用主 Renderer

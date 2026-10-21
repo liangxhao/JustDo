@@ -6,7 +6,9 @@
 
 ## 独立浏览器代理
 
-“设置 → 浏览器 → 浏览器代理”保存 `app_config.browserProxy`，默认使用系统代理；可独立选择不使用代理或自定义 HTTP/HTTPS 代理。只作用于应用持有的 Electron 浏览器 guest session，包括默认、导入和任务隔离 profile。用户 Chrome、扩展及 OpenClaw 管理的独立 Chrome 仍使用各自浏览器的代理配置。
+“设置 → 浏览器 → 浏览器代理”保存 `app_config.browserProxy`，默认使用系统代理；可独立选择不使用代理或自定义 HTTP/HTTPS 代理。作用于应用持有的 Electron 浏览器 guest session（默认、导入和任务隔离 profile）以及聊天 `show_widget` 的专用 guest session。卡片只复用代理偏好，使用独立内存 partition，不共享浏览器 Cookie、登录或历史。用户 Chrome、扩展及 OpenClaw 管理的独立 Chrome 仍使用各自浏览器的代理配置。
+
+卡片专用会话先完成代理配置，再装载原生 sandbox。代理切换可关闭卡片中的现有网络连接，但不触及主 Renderer、其他嵌入内容或聊天 Gateway 连接。代理不扩大原生 CSP、资源 allowlist 或网络授权；被原生策略禁止的请求仍失败。普通浏览器中的 WebChat 没有 Electron session 控制，继续使用浏览器自身网络配置。
 
 浏览器代理草稿由设置页统一持有，切换标签页不丢失；代理区域和页底的“保存”使用同一个提交与校验流程，“取消”丢弃尚未保存的代理修改。自定义代理必须有有效的主机和端口；保存失败保留草稿供修改或重试。
 

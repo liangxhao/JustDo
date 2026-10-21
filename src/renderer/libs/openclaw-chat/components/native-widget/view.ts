@@ -4,7 +4,8 @@ import { keyed } from 'lit/directives/keyed.js';
 import { i18nService } from '@/services/i18n';
 
 import { isNativeCanvasPreview, type NativeCanvasPreview } from '../../pipeline/native-canvas';
-import { acceptWidgetDraft } from './draft';
+import { acceptWidgetDraft, acceptWidgetDraftText, widgetFrameInteractable } from './draft';
+import { NativeWidgetGuestHost, type WidgetWebview } from './guest';
 import {
   MAX_WIDGET_BYTES,
   NATIVE_WIDGET_CONTEXT_REQUEST,
@@ -155,7 +156,8 @@ export class NativeWidgetView extends LitElement {
       padding-bottom: 10px;
       background: var(--justdo-background, #fff);
     }
-    iframe {
+    iframe,
+    webview {
       display: block;
       width: 100%;
       border: 0;
@@ -232,6 +234,7 @@ export class NativeWidgetView extends LitElement {
   private workspaceOverlay?: HTMLElement;
   private binding?: Binding;
   private host?: NativeWidgetSandboxHost;
+  private guest?: NativeWidgetGuestHost;
   private themeObserver?: MutationObserver;
   private listenerDocument?: Document;
   private listenerWindow?: Window;
@@ -253,6 +256,9 @@ export class NativeWidgetView extends LitElement {
   }
 
   connectedCallback(): void {
+    // Create native webviews in their actual embedder document, including when
+    // this component reconnects after being adopted by a workspace document.
+    this.renderOptions.creationScope = this.ownerDocument;
     super.connectedCallback();
     const ownerWindow = this.ownerDocument.defaultView;
     if (ownerWindow) {
@@ -326,6 +332,8 @@ export class NativeWidgetView extends LitElement {
     this.binding = undefined;
     this.host?.dispose();
     this.host = undefined;
+    this.guest?.dispose();
+    this.guest = undefined;
     this.themeObserver?.disconnect();
     this.themeObserver = undefined;
     this.view = undefined;
@@ -346,7 +354,7 @@ export class NativeWidgetView extends LitElement {
     if (this.current()) {
       if (!this.draftAllowed()) this.suggestion = '';
       this.postDraftPolicy(
-        Boolean(this.promptPort && this.ownerDocument.visibilityState !== 'hidden'),
+        Boolean((this.guest || this.promptPort) && this.ownerDocument.visibilityState !== 'hidden'),
       );
       return;
     }
@@ -382,6 +390,52 @@ export class NativeWidgetView extends LitElement {
   }
 
   protected updated(): void {
+    const webview = this.renderRoot.querySelector<WidgetWebview>('webview');
+    if (webview && this.view && this.current() && !this.guest && !this.failure) {
+      const binding = this.binding!;
+      this.guest = new NativeWidgetGuestHost(webview, this.view.url, this.view.html, event => {
+        if (!this.current(binding)) return;
+        if (event.type === 'failure') {
+          this.fail(event.runtime ? WidgetFailure.RUNTIME : WidgetFailure.LOAD);
+          return;
+        }
+        if (this.failure) return;
+        if (event.type === 'ready') {
+          clearTimeout(this.slowTimer);
+          this.slowTimer = undefined;
+          this.slow = false;
+          this.ready = true;
+          this.postHostState();
+        }
+        if (
+          event.type === 'height' &&
+          Number.isFinite(event.height) &&
+          event.height > 0 &&
+          !this.expanded
+        )
+          this.height = Math.min(8000, Math.max(48, Math.ceil(event.height)));
+        if (event.type === 'scroll' && this.ready && Number.isFinite(event.deltaY)) {
+          const delta = Math.max(-8000, Math.min(8000, event.deltaY));
+          if (this.expanded) this.renderRoot.querySelector('dialog')?.scrollBy({ top: delta });
+          else forwardWidgetScroll(this, delta);
+        }
+        if (
+          event.type === 'draft' &&
+          this.ready &&
+          this.draftAllowed(binding) &&
+          widgetFrameInteractable(webview)
+        ) {
+          const text = acceptWidgetDraftText(
+            event.text,
+            `${binding.context.sessionKey}\0${binding.docId}\0${binding.context.generation}`,
+          );
+          if (text) this.suggestion = text;
+        }
+      });
+      this.observeTheme();
+      this.postHostState();
+      return;
+    }
     const frame = this.renderRoot.querySelector<HTMLIFrameElement>('iframe');
     if (!frame || !this.view || !this.current() || this.host || this.failure) return;
     const binding = this.binding!;
@@ -401,13 +455,17 @@ export class NativeWidgetView extends LitElement {
         if (this.current(binding) && !this.failure) this.fail();
       },
     );
+    this.observeTheme();
+    frame.src = this.view.url;
+  }
+
+  private observeTheme(): void {
     const ownerWindow = this.ownerDocument.defaultView!;
     this.themeObserver = new ownerWindow.MutationObserver(() => this.postHostState());
     this.themeObserver.observe(this.ownerDocument.documentElement, {
       attributes: true,
       attributeFilter: ['class', 'style', 'data-theme', 'data-theme-mode'],
     });
-    frame.src = this.view.url;
   }
 
   private fail(kind: WidgetFailureKind = WidgetFailure.LOAD): void {
@@ -421,6 +479,8 @@ export class NativeWidgetView extends LitElement {
     if (kind === WidgetFailure.LOAD) {
       this.host?.dispose();
       this.host = undefined;
+      this.guest?.dispose();
+      this.guest = undefined;
       this.themeObserver?.disconnect();
       this.themeObserver = undefined;
       this.view = undefined;
@@ -431,7 +491,7 @@ export class NativeWidgetView extends LitElement {
   }
 
   private postHostState(): void {
-    if (!this.host || !this.current()) return;
+    if ((!this.host && !this.guest) || !this.current()) return;
     const styles = this.ownerDocument.defaultView!.getComputedStyle(
       this.ownerDocument.documentElement,
     );
@@ -470,9 +530,17 @@ export class NativeWidgetView extends LitElement {
       'scrollbar-size': '6px',
       'scrollbar-thumb-inset': '1px',
     });
-    const target = new URL(this.host.url).origin;
+    if (this.guest) {
+      this.guest.update({
+        theme: { mode: styles.colorScheme === 'dark' ? 'dark' : 'light', tokens },
+        draftAllowed:
+          !this.failure && this.draftAllowed() && this.ownerDocument.visibilityState !== 'hidden',
+      });
+      return;
+    }
+    const target = new URL(this.host!.url).origin;
     postNativeWidgetMessage(
-      this.host.frame,
+      this.host!.frame,
       {
         type: 'openclaw:widget-theme',
         mode: styles.colorScheme === 'dark' ? 'dark' : 'light',
@@ -480,9 +548,9 @@ export class NativeWidgetView extends LitElement {
       },
       target,
     );
-    postNativeWidgetMessage(this.host.frame, { type: 'openclaw:widget-chat-host' }, target);
+    postNativeWidgetMessage(this.host!.frame, { type: 'openclaw:widget-chat-host' }, target);
     postNativeWidgetMessage(
-      this.host.frame,
+      this.host!.frame,
       { type: 'openclaw:widget-board-host', nonce: this.scrollNonce },
       target,
     );
@@ -493,10 +561,16 @@ export class NativeWidgetView extends LitElement {
 
   private readonly onVisibility = (): void =>
     this.postDraftPolicy(
-      this.ownerDocument.visibilityState !== 'hidden' && Boolean(this.promptPort),
+      this.ownerDocument.visibilityState !== 'hidden' && Boolean(this.guest || this.promptPort),
     );
 
   private postDraftPolicy(available: boolean): void {
+    this.guest?.setDraftAllowed(
+      available &&
+        !this.failure &&
+        this.ownerDocument.visibilityState !== 'hidden' &&
+        this.draftAllowed(),
+    );
     if (!this.host) return;
     postNativeWidgetMessage(
       this.host.frame,
@@ -736,16 +810,24 @@ export class NativeWidgetView extends LitElement {
           ? keyed(
               this.version,
               html`<div class=${this.ready ? 'frame' : 'frame loading'}>
-                ${!this.ready ? html`<div class="status" role="status">${i18nService.t(this.slow ? 'coworkWidgetLoadingSlow' : 'coworkWidgetLoading')}</div>` : nothing}<iframe
-                  .inert=${!this.ready}
-                  title=${title}
-                  sandbox="allow-scripts allow-same-origin allow-forms"
-                  referrerpolicy="origin"
-                  style=${this.expanded ? 'height:100%' : `height:${this.height}px`}
-                  @error=${() => {
-                    if (this.current(binding)) this.fail();
-                  }}
-                ></iframe>
+                ${!this.ready ? html`<div class="status" role="status">${i18nService.t(this.slow ? 'coworkWidgetLoadingSlow' : 'coworkWidgetLoading')}</div>` : nothing}${
+                  window.electron
+                    ? html`<webview
+                        .inert=${!this.ready}
+                        aria-label=${title}
+                        style=${this.expanded ? 'height:100%' : `height:${this.height}px`}
+                      ></webview>`
+                    : html`<iframe
+                        .inert=${!this.ready}
+                        title=${title}
+                        sandbox="allow-scripts allow-same-origin allow-forms"
+                        referrerpolicy="origin"
+                        style=${this.expanded ? 'height:100%' : `height:${this.height}px`}
+                        @error=${() => {
+                          if (this.current(binding)) this.fail();
+                        }}
+                      ></iframe>`
+                }
               </div>`,
             )
           : !this.failure

@@ -77,7 +77,18 @@ origin 与主题、观察主题和可见性；监听目标在连接时捕获，�
 shadow 样式使用文档本地 style，避免主窗口注册的构造样式表跨文档采用失败。
 草稿的视口、焦点、瞬时用户激活与隐藏策略也以组件所在文档为准；不能借用主窗口
 的激活或尺寸，隐藏时收到私有端口同样不公告草稿可用。窗口变化仍需通过当前
-client/session/generation/docId 校验，不增加子窗口 preload 或权限。
+client/session/generation/docId 校验，不增加工作区窗口 preload 或权限。
+
+桌面 `show_widget` 使用独立 webview，固定同源 `widget-viewer.html` 承载原生 sandbox
+iframe；专用内存 session 复用 `browserProxy`，不共享浏览器 Cookie、profile 或工具能力。
+Main 在 attach 前核对固定 origin/path/mount，强制最小 preload、sandbox、contextIsolation
+和无 Node，禁止导航、新窗口、下载和权限请求；guest 必须等待专用 session 代理就绪。
+认证读取继续属于当前聊天 client，只传当前 HTML/沙箱 URL、主题与草稿策略，不传 token。
+guest 内沿用 source/origin/renderId、私有 prompt port 和真实激活检查；封闭语义事件通过
+当前 webview 回到聊天组件，再检查当前绑定、焦点、可见性和速率。加入草稿仍需用户确认。
+切会话、卸载或宿主导航销毁旧 guest；放大只提升原有 dialog，保留同一文档与本地输入。
+Electron guest 失败显示现有恢复入口，不回退主 session iframe。普通浏览器继续原 iframe
+路径。代理只影响原生策略已允许的请求，不放宽 CSP 或添加 OpenClaw patch。
 
 发给沙箱的资源、主题、宿主状态和草稿策略必须从实际父窗口的 JavaScript realm
 发起：跨文档调用 `postMessage` 会携带调用者的源窗口，不能仅替换监听目标。

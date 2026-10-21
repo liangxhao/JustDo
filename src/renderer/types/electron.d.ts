@@ -1688,6 +1688,8 @@ interface IElectronAPI {
 declare global {
   interface Window {
     electron: IElectronAPI;
+    /** Present only in the fixed native widget viewer's minimal preload. */
+    widgetViewer?: import('../../shared/widgets/viewer').WidgetViewerBridge;
   }
 }
 

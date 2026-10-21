@@ -2,7 +2,7 @@ const timestampsByKey = new Map<string, number[]>();
 const MAX_PROMPTS = 10;
 const RATE_WINDOW_MS = 10 * 60_000;
 
-export function widgetFrameInteractable(frame: HTMLIFrameElement): boolean {
+export function widgetFrameInteractable(frame: HTMLElement): boolean {
   const doc = frame.ownerDocument;
   const ownerWindow = doc.defaultView;
   if (!ownerWindow || !frame.isConnected || doc.visibilityState === 'hidden' || !doc.hasFocus())
@@ -23,7 +23,10 @@ export function widgetFrameInteractable(frame: HTMLIFrameElement): boolean {
   )
     return false;
   let active = doc.activeElement;
-  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+  // Electron's webview has its own internal shadow iframe. The visible guest
+  // element is the focus boundary; do not descend past it into implementation DOM.
+  while (active !== frame && active?.shadowRoot?.activeElement)
+    active = active.shadowRoot.activeElement;
   return active === frame;
 }
 
@@ -43,6 +46,16 @@ export function acceptWidgetDraft(
     frame.ownerDocument.defaultView?.navigator.userActivation?.isActive !== true
   )
     return;
+  return acceptWidgetDraftText(raw, key, now);
+}
+
+/** Used after the trusted guest has checked its own native activation and frame. */
+export function acceptWidgetDraftText(
+  raw: unknown,
+  key: string,
+  now = Date.now(),
+): string | undefined {
+  if (typeof raw !== 'string' || raw.length > 4000 || !raw.trim() || /^\s*[!/]/.test(raw)) return;
   const timestamps = (timestampsByKey.get(key) ?? []).filter(time => time > now - RATE_WINDOW_MS);
   if (timestamps.length >= MAX_PROMPTS) return;
   if (!timestampsByKey.has(key) && timestampsByKey.size >= 100)

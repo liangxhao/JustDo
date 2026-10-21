@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import './view';
 
+import { WIDGET_VIEWER_PARTITION, WidgetViewerIpc } from '@shared/widgets/viewer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatScrollController } from '../../controllers/chat-scroll-controller';
@@ -74,6 +75,73 @@ function sandbox(view: NativeWidgetView) {
 }
 
 describe('native widget viewer lifecycle', () => {
+  it.each(['crash', 'send'])(
+    'recovers from a desktop guest %s without recursive IPC failures',
+    async kind => {
+      vi.stubGlobal('electron', {});
+      const { view, context } = mount();
+      await settle(view);
+      const guest = view.shadowRoot!.querySelector('webview')! as HTMLElement & {
+        send: ReturnType<typeof vi.fn>;
+      };
+      guest.send = vi.fn();
+      guest.dispatchEvent(new Event('dom-ready'));
+      guest.send.mockImplementation(() => {
+        throw new Error('Guest unavailable');
+      });
+      if (kind === 'crash') guest.dispatchEvent(new Event('render-process-gone'));
+      else {
+        context.canDraft = () => false;
+        view.requestUpdate();
+      }
+      await settle(view);
+      expect(view.shadowRoot!.querySelector('[role="alert"]')).not.toBeNull();
+      expect(view.shadowRoot!.querySelector('webview')).toBeNull();
+      expect(view.shadowRoot!.querySelector('iframe')).toBeNull();
+      expect(guest.send.mock.calls.length).toBeLessThanOrEqual(2);
+    },
+  );
+  it('isolates desktop cards in a guest and rejects stale events without a direct fallback', async () => {
+    vi.stubGlobal('electron', {});
+    const { view, request, context } = mount();
+    await settle(view);
+    const guest = view.shadowRoot!.querySelector('webview')! as HTMLElement & {
+      src: string;
+      send: ReturnType<typeof vi.fn>;
+    };
+    expect(view.shadowRoot!.querySelector('iframe')).toBeNull();
+    expect(guest.getAttribute('partition')).toBe(WIDGET_VIEWER_PARTITION);
+    guest.send = vi.fn();
+    guest.dispatchEvent(new Event('dom-ready'));
+    const init = guest.send.mock.calls[0][1];
+    expect(init.html).toBe(result.html);
+    expect(new URL(guest.src).searchParams.get('mount')).toBe(init.mountId);
+    const emit = (data: unknown) =>
+      guest.dispatchEvent(
+        Object.assign(new Event('ipc-message'), { channel: WidgetViewerIpc.Event, args: [data] }),
+      );
+    emit({ mountId: 'stale', type: 'height', height: 780 });
+    await settle(view);
+    expect(guest.style.height).toBe('420px');
+    emit({ mountId: init.mountId, type: 'ready' });
+    emit({ mountId: init.mountId, type: 'height', height: 570 });
+    await settle(view);
+    expect(guest.style.height).toBe('570px');
+    context.canDraft = () => false;
+    view.requestUpdate();
+    await settle(view);
+    expect(guest.send.mock.lastCall![1].draftAllowed).toBe(false);
+    expect(view.shadowRoot!.querySelector('webview')).toBe(guest);
+    expect(request).toHaveBeenCalledOnce();
+    emit({ mountId: init.mountId, type: 'failure', runtime: false });
+    await settle(view);
+    expect(view.shadowRoot!.querySelector('webview')).toBeNull();
+    expect(view.shadowRoot!.querySelector('iframe')).toBeNull();
+    expect(view.shadowRoot!.querySelector('[role="alert"]')).not.toBeNull();
+    emit({ mountId: init.mountId, type: 'ready' });
+    await settle(view);
+    expect(view.shadowRoot!.querySelector('[role="alert"]')).not.toBeNull();
+  });
   it('expands and collapses the same iframe without reading the document again', async () => {
     const chat = document.createElement('justdo-chat');
     document.body.append(chat);

@@ -1142,6 +1142,9 @@ const IMAGE_PREVIEW_PRELOAD_PATH = app.isPackaged
 const BROWSER_GUEST_PRELOAD_PATH = app.isPackaged
   ? path.join(__dirname, 'browserGuestPreload.js')
   : path.join(__dirname, '../dist-electron/browserGuestPreload.js');
+const WIDGET_VIEWER_PRELOAD_PATH = app.isPackaged
+  ? path.join(__dirname, 'widgetViewerPreload.js')
+  : path.join(__dirname, '../dist-electron/widgetViewerPreload.js');
 
 // 获取应用图标路径（Windows 使用 .ico，其他平台使用 .png）
 const getAppIconPath = (): string | undefined => {
@@ -1916,6 +1919,7 @@ if (multicaBridgeArgv) {
       getIconPath: getAppIconPath,
       getRendererPreferenceStore: getStore,
       browserGuestPreloadPath: BROWSER_GUEST_PRELOAD_PATH,
+      widgetViewerPreloadPath: WIDGET_VIEWER_PRELOAD_PATH,
       getBrowserDownloadSettings: () => {
         const config = getStore().get<AppConfigSettings>('app_config');
         return normalizeBrowserDownloadSettings({

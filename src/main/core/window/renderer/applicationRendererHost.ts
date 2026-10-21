@@ -73,7 +73,9 @@ const allowedPackagedAsset = (relative: string): boolean => {
     )
   )
     return false;
-  if (['index.html', 'image-preview.html', 'workspace.html'].includes(relative))
+  if (
+    ['index.html', 'image-preview.html', 'workspace.html', 'widget-viewer.html'].includes(relative)
+  )
     return true;
   const extension = path.extname(relative).toLowerCase();
   if (segments[0] === 'assets') return ASSET_EXTENSIONS.has(extension);
@@ -96,9 +98,11 @@ const requestAssetPath = (rawUrl: string | undefined): string | null => {
     if (queryIndex !== -1) {
       const query = new URLSearchParams(rawUrl.slice(queryIndex + 1));
       if (
-        pathname !== '/workspace.html' ||
+        !['/workspace.html', '/widget-viewer.html'].includes(pathname) ||
         [...query].length !== 1 ||
-        !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/iu.test(query.get('generation') ?? '')
+        !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/iu.test(
+          query.get(pathname === '/workspace.html' ? 'generation' : 'mount') ?? '',
+        )
       )
         return null;
     }

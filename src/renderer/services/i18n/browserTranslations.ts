@@ -350,7 +350,7 @@ export const browserTranslations = {
     browserMessagePage: 'page',
     browserProxySettings: '浏览器代理',
     browserProxyDescription:
-      '仅用于侧边栏内置浏览器，默认使用系统代理。Chrome 和浏览器扩展沿用浏览器自身的代理设置。',
+      '用于侧边栏内置浏览器和聊天可视化卡片，默认使用系统代理。Chrome 和浏览器扩展沿用浏览器自身的代理设置。',
   },
   en: {
     browserSettings: 'Browser',
@@ -719,6 +719,6 @@ export const browserTranslations = {
     browserMessagePage: 'page',
     browserProxySettings: 'Browser Proxy',
     browserProxyDescription:
-      "Applies only to the embedded sidebar browser and defaults to the system proxy. Chrome and browser extensions use their browser's own proxy settings.",
+      "Applies to the embedded sidebar browser and chat visualization cards, defaulting to the system proxy. Chrome and browser extensions use their browser's own proxy settings.",
   },
 };

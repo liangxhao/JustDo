@@ -162,6 +162,17 @@ forms, popups and redirects without Gateway, user state or public network access
 The optional HTML file is opened unchanged and checks the globe example's canvas
 and loading indicator; that extra check uses the document's own dependencies.
 
+`node scripts/test/widget-viewer-proxy.cjs <runtime-dir>` verifies the dedicated
+desktop widget session with the locked native sandbox and canonical HTML wrapper.
+It uses a temporary profile and a local fake proxy, checking allowed script routing,
+unchanged CSP blocking, storage isolation, trusted-click draft suggestions, capability
+revocation, preserved input across expansion, guest crash/retry recovery, and an
+unaffected default-session WebSocket during proxy changes. Add `--workspace` to run the same checks in a real
+workspace WebContentsView without the application preload. No personal Gateway
+is started and temporary fixture files are removed on completion.
+After `npm run build`, add `--built-viewer` to exercise the emitted viewer assets
+and minimal preload under the immutable packaged-asset host and production CSP.
+
 `node scripts/test/browser-native-widget-smoke.cjs` verifies real Chromium widget
 viewport sizing with an isolated profile and local nested sandbox documents. It
 checks expanded height, responsive canvas redraw on resize, draft-suggestion space,

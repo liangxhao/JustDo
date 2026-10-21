@@ -133,6 +133,19 @@ export default defineConfig({
         },
         onstart() {},
       },
+      {
+        entry: 'src/main/widgetViewerPreload.ts',
+        vite: {
+          root: projectRoot,
+          build: {
+            outDir: 'dist-electron',
+            sourcemap: !isProductionBuild,
+            minify: isProductionBuild ? 'esbuild' : false,
+            rollupOptions: { checks: { pluginTimings: false } },
+          },
+        },
+        onstart() {},
+      },
     ]),
     renderer(),
   ],
@@ -156,6 +169,7 @@ export default defineConfig({
         main: path.join(rendererRoot, 'index.html'),
         imagePreview: path.join(rendererRoot, 'image-preview.html'),
         workspace: path.join(rendererRoot, 'workspace.html'),
+        widgetViewer: path.join(rendererRoot, 'widget-viewer.html'),
       },
       checks: {
         pluginTimings: false,

@@ -60,6 +60,7 @@ describe('packaged application renderer host', () => {
       '<html><body><div id="workspace-root">Workspace</div></body></html>',
     );
     await writeFile(path.join(dist, 'assets', 'main.js'), 'globalThis.ready = true;');
+    await writeFile(path.join(dist, 'widget-viewer.html'), '<html>Widget viewer</html>');
     await writeFile(path.join(dist, 'assets', 'theme.css'), ':root { color: black; }');
     await writeFile(path.join(dist, 'pdfjs', 'wasm', 'decoder.wasm'), 'fixture');
     await writeFile(path.join(directory, 'secret.js'), 'SECRET');
@@ -88,6 +89,21 @@ describe('packaged application renderer host', () => {
     expect(index.headers['access-control-allow-origin']).toBeUndefined();
     expect(index.headers['referrer-policy']).toBe('origin');
     expect(index.headers['cache-control']).toBe('no-store');
+  });
+
+  it('serves the immutable widget viewer with only its bounded mount query', async () => {
+    host = await startApplicationRendererHost(dist);
+    const mount = '2e4ec192-521e-4b76-b132-e34598e41bb2';
+    expect((await read(host, `/widget-viewer.html?mount=${mount}`)).body).toContain(
+      'Widget viewer',
+    );
+    for (const query of [
+      'mount=bad',
+      `generation=${mount}`,
+      `mount=${mount}&mount=${mount}`,
+      `mount=${mount}&token=secret`,
+    ])
+      expect((await read(host, `/widget-viewer.html?${query}`)).status).toBe(404);
   });
 
   it.each(['\r\n', '\r'])(

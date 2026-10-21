@@ -25,7 +25,7 @@ export type SystemProxySettings = {
   browserProxy?: Partial<ProxySettings>;
 };
 
-const dynamicBrowserSessions = new Map<string, Electron.Session>();
+const dynamicBrowserSessions = new Map<Electron.Session, Promise<void>>();
 let currentBrowserProxySettings = defaultBrowserProxySettings;
 
 export const getBrowserProxyCredentials = (): {
@@ -103,16 +103,23 @@ const applyProxyToSessions = async (
 export const registerBrowserProxySession = async (
   targetSession: Electron.Session,
 ): Promise<void> => {
-  const key = targetSession.storagePath;
-  if (!key || dynamicBrowserSessions.has(key)) return;
-  dynamicBrowserSessions.set(key, targetSession);
+  // Memory-only widget sessions have no storagePath. Session identity also
+  // prevents duplicate registration without sharing browser profile storage.
+  const registered = dynamicBrowserSessions.get(targetSession);
+  if (registered) {
+    await registered;
+    await browserProxyApplyQueue;
+    return;
+  }
   const operation = browserProxyApplyQueue.then(() =>
     applyProxyToSessions([targetSession], currentBrowserProxySettings),
   );
+  dynamicBrowserSessions.set(targetSession, operation);
   browserProxyApplyQueue = operation.catch(error => {
+    dynamicBrowserSessions.delete(targetSession);
     console.error('[SystemProxy] Failed to apply proxy mode to browser profile:', error);
   });
-  await browserProxyApplyQueue;
+  await operation;
 };
 
 export const getProxyPreferenceSignature = (config?: SystemProxySettings): string => {
@@ -195,7 +202,7 @@ export const applyBrowserProxyPreference = (config?: SystemProxySettings): Promi
       ...new Set([
         session.fromPartition(BROWSER_PANEL_PARTITION),
         session.fromPartition(BROWSER_IMPORTED_PROFILE_PARTITION),
-        ...dynamicBrowserSessions.values(),
+        ...dynamicBrowserSessions.keys(),
       ]),
     ];
     try {

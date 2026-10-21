@@ -26,6 +26,31 @@ function focusedFrame(doc = document) {
 }
 
 describe('native widget draft admission', () => {
+  it('treats a focused webview as the boundary even when its internal shadow iframe is active', () => {
+    const widget = document.createElement('div');
+    document.body.append(widget);
+    const root = widget.attachShadow({ mode: 'open' });
+    const guest = document.createElement('div');
+    guest.tabIndex = 0;
+    root.append(guest);
+    const internal = document.createElement('iframe');
+    guest.attachShadow({ mode: 'open' }).append(internal);
+    internal.focus();
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    vi.spyOn(guest, 'getBoundingClientRect').mockReturnValue({
+      width: 500,
+      height: 400,
+      top: 10,
+      bottom: 410,
+      left: 10,
+      right: 510,
+    } as DOMRect);
+    expect(widgetFrameInteractable(guest)).toBe(true);
+    const other = document.createElement('button');
+    document.body.append(other);
+    other.focus();
+    expect(widgetFrameInteractable(guest)).toBe(false);
+  });
   it('uses only the frame owner viewport and activation across workspace documents', () => {
     const workspace = document.createElement('iframe');
     document.body.append(workspace);
