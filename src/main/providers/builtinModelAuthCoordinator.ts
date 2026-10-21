@@ -4,6 +4,7 @@ type Dependencies = {
   exchange: () => Promise<BuiltinModelCredential | null>;
   getActive: () => BuiltinModelCredential | null;
   login: () => Promise<void>;
+  invalidate?: () => void;
   logout: () => Promise<void>;
 };
 
@@ -50,7 +51,13 @@ export class BuiltinModelAuthCoordinator {
   async logout(): Promise<void> {
     const generation = ++this.generation;
     this.applied = undefined;
-    await this.dependencies.logout();
-    if (generation === this.generation) this.applied = null;
+    try {
+      this.dependencies.invalidate?.();
+    } finally {
+      // Snapshot revocation can fail on Windows. Still enter the existing config
+      // cleanup, whose failure stops Gateway instead of retaining usable secrets.
+      await this.dependencies.logout();
+      if (generation === this.generation) this.applied = null;
+    }
   }
 }

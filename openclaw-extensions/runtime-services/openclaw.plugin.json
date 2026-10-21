@@ -2,6 +2,7 @@
   "id": "runtime-services",
   "name": "Runtime Services",
   "description": "Provides runtime progress, history detail, and embedding capabilities.",
+  "providers": ["builtin_models"],
   "activation": {
     "onStartup": true,
     "onCapabilities": ["hook"]

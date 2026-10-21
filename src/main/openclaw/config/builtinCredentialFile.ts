@@ -2,11 +2,20 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID }
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { type BuiltinModelCredential } from '../../providers/builtinModelCredential';
+import {
+  BUILTIN_SECRET_ID,
+  BUILTIN_SECRET_SOURCE,
+  MODEL_AUTH_SESSION_ENV,
+  MODEL_AUTH_SESSION_PATTERN,
+  MODEL_AUTH_TYPE_ENV,
+} from '../../../../openclaw-extensions/runtime-services/contracts/model-auth';
+import {
+  type BuiltinModelCredential,
+  getActiveBuiltinModelCredentialSessionId,
+} from '../../providers/builtinModelCredential';
 import { restrictCredentialFile } from './providerSecretFile';
 
-export const BUILTIN_SECRET_SOURCE = 'justdo_login';
-export const BUILTIN_SECRET_ID = 'X-ACCESS-JWT';
+export { BUILTIN_SECRET_ID, BUILTIN_SECRET_SOURCE };
 // Public wrapping material: protects against direct inspection, not reverse engineering.
 const WRAPPING_CONTEXT = 'justdo/builtin-credential-file/v1';
 const MAGIC = Buffer.from('JDCR1');
@@ -60,7 +69,12 @@ process.stdin.on('end', () => {
     cipher.setAuthTag(data.subarray(17, 33));
     const value = Buffer.concat([cipher.update(data.subarray(33)), cipher.final()]).toString('utf8');
     const credential = JSON.parse(value);
+    const sessionId = process.env[${JSON.stringify(MODEL_AUTH_SESSION_ENV)}];
+    const authType = process.env[${JSON.stringify(MODEL_AUTH_TYPE_ENV)}];
     if (!credential || typeof credential.accessToken !== 'string' || !credential.accessToken ||
+        typeof sessionId !== 'string' || !${MODEL_AUTH_SESSION_PATTERN}.test(sessionId) ||
+        credential.authSessionId !== sessionId ||
+        !['jwt', 'api-key'].includes(authType) || (credential.authType || 'jwt') !== authType ||
         typeof credential.userAccount !== 'string' ||
         !Number.isInteger(credential.expiresAt) || credential.expiresAt <= Date.now() / 1000 + 15 ||
         (credential.authType === 'api-key' ? credential.userAccount !== '' : !credential.userAccount)) throw new Error();
@@ -95,6 +109,7 @@ export function syncBuiltinCredentialFile(
   stateDir: string,
   credential: BuiltinModelCredential | null,
   runtimePath = process.execPath,
+  authSessionId = getActiveBuiltinModelCredentialSessionId(),
 ): { config: Record<string, unknown>; secretsChanged: boolean } {
   const next = structuredClone(config);
   let referenced = false;
@@ -111,13 +126,14 @@ export function syncBuiltinCredentialFile(
   if (!referenced) {
     // Logout removes the snapshot so the old JWT cannot be resolved again.
     const existed = fs.existsSync(credentialFile);
-    if (existed) fs.unlinkSync(credentialFile);
+    revokeBuiltinCredentialFile(stateDir);
     const providers = (next.secrets as { providers?: Record<string, unknown> } | undefined)?.providers;
     if (providers) delete providers[BUILTIN_SECRET_SOURCE];
     return { config: next, secretsChanged: existed };
   }
   if (!credential || credential.expiresAt <= Date.now() / 1000 + 15) throw new Error('Builtin credential is unavailable.');
-  const serializedCredential = JSON.stringify(credential);
+  if (!authSessionId || !MODEL_AUTH_SESSION_PATTERN.test(authSessionId)) throw new Error('Builtin credential session is unavailable.');
+  const serializedCredential = JSON.stringify({ ...credential, authSessionId });
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   let secretsChanged = true;
   if (fs.existsSync(credentialFile)) {
@@ -151,6 +167,8 @@ export function syncBuiltinCredentialFile(
       [BUILTIN_SECRET_SOURCE]: {
         source: 'exec', command, args, env: {
           ELECTRON_RUN_AS_NODE: '1',
+          [MODEL_AUTH_SESSION_ENV]: authSessionId,
+          [MODEL_AUTH_TYPE_ENV]: credential.authType ?? 'jwt',
           ...(process.platform === 'win32' ? {
             JUSTDO_CREDENTIAL_RUNTIME: runtimePath, JUSTDO_CREDENTIAL_RESOLVER: resolver,
             PATHEXT: '.EXE;.COM',
@@ -165,4 +183,14 @@ export function syncBuiltinCredentialFile(
     },
   };
   return { config: next, secretsChanged };
+}
+
+/** Revoke captured exec providers before awaiting catalog/config cleanup. */
+export function revokeBuiltinCredentialFile(stateDir: string): void {
+  const file = path.join(stateDir, 'credentials', 'credentials.bin');
+  try {
+    fs.unlinkSync(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
 }

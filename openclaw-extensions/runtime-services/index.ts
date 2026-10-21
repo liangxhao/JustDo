@@ -18,6 +18,7 @@ import {
 import { isEmptyFailureSourceContent, projectFailurePartialContent } from './history-failure';
 import { registerScheduledTaskHistory } from './scheduled-task-history';
 import { registerMcpAppHistory } from './mcp-app-history';
+import { buildBuiltinModelAuthProvider } from './model-auth';
 
 const PLUGIN_ID = 'runtime-services';
 const MAX_DETAIL_IDS = 250;
@@ -237,6 +238,7 @@ const plugin = {
   name: 'Runtime Services',
   description: 'Provides runtime progress, history detail, and embedding capabilities.',
   register(api: OpenClawPluginApi) {
+    api.registerProvider(buildBuiltinModelAuthProvider());
     registerAgentTeamRuntimeServices(api);
     registerScheduledTaskHistory(api);
     registerMcpAppHistory(api);

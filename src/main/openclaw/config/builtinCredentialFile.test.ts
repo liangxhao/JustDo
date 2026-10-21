@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { BUILTIN_MODEL_USER_ACCOUNT_FIELD } from '../../providers/builtinModelCredential';
 import {
   BUILTIN_SECRET_ID, BUILTIN_SECRET_SOURCE, openBuiltinCredential,
-  sealBuiltinCredential, syncBuiltinCredentialFile,
+  sealBuiltinCredential, syncBuiltinCredentialFile as syncCredentialFile,
 } from './builtinCredentialFile';
 
 const directories: string[] = [];
@@ -26,6 +26,9 @@ const source = () => ({
 });
 const secret = 'synthetic-short-lived-jwt';
 const credential = { accessToken: secret, userAccount: 'test-user', expiresAt: Math.floor(Date.now() / 1000) + 300 };
+const sessionId = 'a'.repeat(32);
+const syncBuiltinCredentialFile = (config: Record<string, unknown>, state: string, value: typeof credential | null, session = sessionId) =>
+  syncCredentialFile(config, state, value, process.execPath, session);
 
 describe('encrypted binary builtin credentials', () => {
   it('uses authenticated randomized ciphertext and rejects modification', () => {
@@ -68,8 +71,8 @@ describe('encrypted binary builtin credentials', () => {
     const first = syncBuiltinCredentialFile(input, state, credential);
     const switched = syncBuiltinCredentialFile(first.config, state, {
       ...credential, userAccount: 'next-user', accessToken: 'next-user-jwt',
-    });
-    expect(switched.config).toEqual(first.config);
+    }, 'b'.repeat(32));
+    expect(switched.config).not.toEqual(first.config);
     expect(JSON.stringify(switched.config)).not.toContain('next-user');
     expect(JSON.parse(openBuiltinCredential(fs.readFileSync(path.join(state, 'credentials', 'credentials.bin')))))
       .toMatchObject({ userAccount: 'next-user', accessToken: 'next-user-jwt' });
@@ -100,7 +103,7 @@ describe('encrypted binary builtin credentials', () => {
     expect(denied.status).not.toBe(0);
     expect(denied.stdout).toBe('');
     expect(denied.stderr).not.toContain(secret);
-    fs.writeFileSync(path.join(state, 'credentials', 'credentials.bin'), sealBuiltinCredential(JSON.stringify({ ...credential, expiresAt: 1 })));
+    fs.writeFileSync(path.join(state, 'credentials', 'credentials.bin'), sealBuiltinCredential(JSON.stringify({ ...credential, authSessionId: sessionId, expiresAt: 1 })));
     const expired = run([BUILTIN_SECRET_ID]);
     expect(expired.status).not.toBe(0);
     expect(expired.stdout).toBe('');
@@ -142,5 +145,26 @@ describe('encrypted binary builtin credentials', () => {
     const loggedOut = syncBuiltinCredentialFile({}, state, null);
     expect(loggedOut.secretsChanged).toBe(true);
     expect(fs.existsSync(path.join(state, 'credentials', 'credentials.bin'))).toBe(false);
+  });
+
+  it('rejects the old resolver after relogin even for the same account', () => {
+    const state = directory();
+    const first = syncBuiltinCredentialFile(source(), state, credential);
+    const provider = (first.config.secrets as { providers: Record<string, {
+      command: string; args: string[]; env: Record<string, string>;
+    }> }).providers[BUILTIN_SECRET_SOURCE];
+    const run = () => spawnSync(provider.command, provider.args, {
+      env: provider.env, windowsHide: true, encoding: 'utf8', timeout: 5000,
+      input: JSON.stringify({ protocolVersion: 1, provider: BUILTIN_SECRET_SOURCE, ids: [BUILTIN_SECRET_ID] }),
+    });
+    syncBuiltinCredentialFile(first.config, state, { ...credential, accessToken: 'rotated' });
+    expect(JSON.parse(run().stdout).values[BUILTIN_SECRET_ID]).toBe('rotated');
+    syncBuiltinCredentialFile({}, state, null);
+    expect(run().status).not.toBe(0);
+    syncBuiltinCredentialFile(source(), state, { ...credential, accessToken: 'next-login' }, 'b'.repeat(32));
+    const denied = run();
+    expect(denied.status).not.toBe(0);
+    expect(denied.stdout).toBe('');
+    expect(denied.stderr).toBe('Builtin credential resolution failed.');
   });
 });

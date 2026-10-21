@@ -10,6 +10,7 @@ import {
   BuiltinModelCredentialFailureCode,
   clearActiveBuiltinModelCredential,
   getActiveBuiltinModelCredential,
+  getActiveBuiltinModelCredentialSessionId,
   inspectBuiltinModelCredential,
   readBuiltinModelCredential,
   refreshActiveBuiltinModelCredential,
@@ -229,6 +230,27 @@ describe('built-in model credential', () => {
       [BUILTIN_MODEL_JWT_FIELD]: accessToken,
       [BUILTIN_MODEL_USER_ACCOUNT_FIELD]: 'user-123',
     });
+  });
+
+  test('retains the login session across renewal and temporary expiry, but revokes it on logout', () => {
+    const publish = () => setActiveBuiltinModelCredential({
+      accessToken: createJwt('user-123', {
+        iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 300,
+      }), userAccount: 'user-123', expiresAt: Math.floor(Date.now() / 1000) + 300,
+    });
+    publish();
+    const session = getActiveBuiltinModelCredentialSessionId();
+    expect(session).toMatch(/^[a-f0-9]{32}$/);
+    vi.setSystemTime((NOW_SECONDS + 240) * 1000);
+    publish();
+    expect(getActiveBuiltinModelCredentialSessionId()).toBe(session);
+    vi.setSystemTime((NOW_SECONDS + 600) * 1000);
+    expect(getActiveBuiltinModelCredentialSessionId()).toBeNull();
+    publish();
+    expect(getActiveBuiltinModelCredentialSessionId()).toBe(session);
+    clearActiveBuiltinModelCredential();
+    publish();
+    expect(getActiveBuiltinModelCredentialSessionId()).not.toBe(session);
   });
 
   test('refreshes the in-memory credential from the login handoff file', () => {

@@ -15,6 +15,7 @@ const setup = () => {
     exchange: vi.fn(async (): Promise<BuiltinModelCredential | null> => credential),
     getActive: vi.fn((): BuiltinModelCredential | null => credential),
     login: vi.fn(async () => undefined),
+    invalidate: vi.fn(),
     logout: vi.fn(async () => undefined),
   };
   return { dependencies, coordinator: new BuiltinModelAuthCoordinator(dependencies) };
@@ -84,6 +85,38 @@ test('retries credential removal after a failed logout synchronization', async (
   dependencies.getActive.mockReturnValue(null);
   dependencies.logout.mockRejectedValueOnce(new Error('disk unavailable'));
   await expect(coordinator.logout()).rejects.toThrow('disk unavailable');
+  await coordinator.refresh();
+  expect(dependencies.logout).toHaveBeenCalledTimes(2);
+});
+
+test('awaits native cleanup even when synchronous snapshot revocation fails', async () => {
+  const { dependencies, coordinator } = setup();
+  const cleanup = deferred<undefined>();
+  const failure = new Error('snapshot locked');
+  dependencies.invalidate.mockImplementationOnce(() => { throw failure; });
+  dependencies.logout.mockImplementationOnce(() => cleanup.promise);
+  let settled = false;
+  const logout = coordinator.logout();
+  const observed = logout.catch(error => { settled = true; return error; });
+  await Promise.resolve();
+  expect(dependencies.logout).toHaveBeenCalledOnce();
+  expect(settled).toBe(false);
+  cleanup.resolve(undefined);
+  expect(await observed).toBe(failure);
+  dependencies.getActive.mockReturnValue(null);
+  dependencies.exchange.mockResolvedValue(null);
+  await coordinator.refresh();
+  expect(dependencies.logout).toHaveBeenCalledOnce();
+});
+
+test('retains the native cleanup failure when snapshot revocation also fails', async () => {
+  const { dependencies, coordinator } = setup();
+  dependencies.invalidate.mockImplementationOnce(() => { throw new Error('snapshot locked'); });
+  dependencies.logout.mockRejectedValueOnce(new Error('Gateway cleanup failed'));
+  await expect(coordinator.logout()).rejects.toThrow('Gateway cleanup failed');
+  expect(dependencies.logout).toHaveBeenCalledOnce();
+  dependencies.getActive.mockReturnValue(null);
+  dependencies.exchange.mockResolvedValue(null);
   await coordinator.refresh();
   expect(dependencies.logout).toHaveBeenCalledTimes(2);
 });

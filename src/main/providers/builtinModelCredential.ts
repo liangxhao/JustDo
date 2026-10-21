@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 import fs from 'fs';
 
 export const BUILTIN_MODEL_JWT_FIELD = 'X-ACCESS-JWT';
@@ -78,6 +80,25 @@ type JwtPayload = {
 };
 
 let activeCredential: BuiltinModelCredential | null = null;
+let credentialSession: { id: string; account: string; authType: string } | null = null;
+
+const applyActiveCredential = (credential: BuiltinModelCredential | null): void => {
+  if (!credential) {
+    clearActiveBuiltinModelCredential();
+    return;
+  }
+  const authType = credential.authType ?? 'jwt';
+  if (!credentialSession || credentialSession.account !== credential.userAccount ||
+    credentialSession.authType !== authType ||
+    (authType === 'api-key' && activeCredential?.accessToken !== credential.accessToken)) {
+    credentialSession = { id: randomBytes(16).toString('hex'), account: credential.userAccount, authType };
+  }
+  activeCredential = credential;
+};
+
+/** Stable across JWT rotation, revoked by logout, login replacement or auth rejection. */
+export const getActiveBuiltinModelCredentialSessionId = (): string | null =>
+  getActiveBuiltinModelCredential() ? credentialSession?.id ?? null : null;
 
 const normalizeCredentialValue = (value: unknown, maxLength: number): string => {
   if (typeof value !== 'string') {
@@ -189,23 +210,23 @@ export const setActiveBuiltinModelCredential = (
   credential: BuiltinModelCredential | null,
   maxLifetime = DEFAULT_MAX_JWT_LIFETIME_SECONDS,
 ): void => {
-  activeCredential = credential
+  applyActiveCredential(credential
     ? validateBuiltinModelCredential(credential.accessToken, credential.userAccount, undefined, maxLifetime)
-    : null;
+    : null);
 };
 
 export const setActiveBuiltinModelDevelopmentApiKey = (
   apiKeyValue: unknown,
 ): BuiltinModelCredential | null => {
   const apiKey = normalizeCredentialValue(apiKeyValue, MAX_JWT_LENGTH);
-  activeCredential = apiKey
+  applyActiveCredential(apiKey
     ? Object.freeze({
         accessToken: apiKey,
         userAccount: '',
         expiresAt: Number.MAX_SAFE_INTEGER,
         authType: 'api-key' as const,
       })
-    : null;
+    : null);
   return activeCredential;
 };
 
@@ -262,4 +283,5 @@ export const getBuiltinModelRequestHeaders = (): Record<string, string> | null =
 
 export const clearActiveBuiltinModelCredential = (): void => {
   activeCredential = null;
+  credentialSession = null;
 };

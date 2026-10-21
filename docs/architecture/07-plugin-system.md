@@ -10,6 +10,11 @@
 宿主只提供通用发现、消息展示、工作区文件入口及原生 RPC 约定，文件格式解析、
 容量限制和编辑存储归外部插件所有，不增加 marketplace kind 或业务 Provider。
 
+Runtime Services 还拥有 `builtin_models` 的请求级认证 Provider 包装：通过公开 SDK
+重新解析 Main 发布的会话绑定 exec SecretRef，让运行中的长任务跟随 JWT 续签，
+并在退出、换账号或重新登录后拒绝旧任务借用新凭据；模型传输与执行仍由原生拥有。
+详见[内置模型认证](../features/integrations/authentication-builtin-model-lifecycle.md#长任务的请求级凭据)。
+
 Runtime Services 提供嵌套 MCP App 历史的受限恢复 RPC：只读原生当前可见历史和当前
 策略许可的 UI resource，使用公开 SDK 借用原生连接。挂载时主动取数的历史 App 可以
 按原工具和原参数读取已记录结果，缺省值按当前 schema 核对，不执行原业务工具或恢复旧工具授权。

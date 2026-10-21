@@ -42,8 +42,8 @@ test.skipIf(!fs.existsSync(dist))('native JWT references protect tokens without 
         providerName: 'builtin_models', apiKey: '', baseURL: 'http://127.0.0.1:9/v1', apiType: 'openai',
         models: [{ id: 'fixture' }], embeddingModels: [{ id: 'embedding-fixture' }],
       }]) },
-    }, directory, { accessToken: 'jwt-fixture-one', userAccount: 'user-fixture', expiresAt: Math.floor(Date.now() / 1000) + 300 });
-    const rotatedSnapshot = sealBuiltinCredential(JSON.stringify({ accessToken: 'jwt-fixture-two', userAccount: 'user-fixture', expiresAt: Math.floor(Date.now() / 1000) + 300 }));
+    }, directory, { accessToken: 'jwt-fixture-one', userAccount: 'user-fixture', expiresAt: Math.floor(Date.now() / 1000) + 300 }, process.execPath, 'a'.repeat(32));
+    const rotatedSnapshot = sealBuiltinCredential(JSON.stringify({ accessToken: 'jwt-fixture-two', userAccount: 'user-fixture', expiresAt: Math.floor(Date.now() / 1000) + 300, authSessionId: 'a'.repeat(32) }));
     const url = (name: string) => JSON.stringify(pathToFileURL(path.join(dist, name)).href);
     const script = `
       import fs from 'node:fs';

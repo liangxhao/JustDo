@@ -64,6 +64,31 @@ Main 监听登录文件，通常在剩余 60 秒续签；短生命周期 token �
 
 有效轮换更新派生快照并通知原生 secrets.reload，不为每次 token 变化重启 Gateway。配置本身变化则走原生配置 watcher 与受管同步。
 
+### 长任务的请求级凭据
+
+原生运行会捕获 `resolvedApiKey` 和模型请求头；`secrets.reload` 更新后续准入使用的快照，
+不能改写已经运行的任务闭包。只做后台换证会使长任务在旧 JWT 到期后，下一次模型请求仍携带旧值。
+
+必需的 Runtime Services 通过公开 Provider API 为 `builtin_models` 注册 `wrapStreamFn`
+和 `wrapSimpleCompletionStreamFn`。每次模型请求通过原生 `resolveSecretRefValues` 无缓存解析
+同一受管 exec SecretRef，复用其路径、权限、输出大小和超时校验；保留原生模型传输、
+工具结果、取消和执行结算。仅克隆本次请求的模型和 options，同步替换 `apiKey`、
+`Authorization` 和大小写不敏感的 `X-ACCESS-JWT`，不修改运行快照或重放任务。
+开发 API key 模式仅使用 Bearer，不新增 JWT 头；自定义 provider 不进入此包装。
+
+Main 为每次模型登录生成随机 `authSessionId`。JWT 正常续签和临时到期后的同身份恢复保持此标识；
+显式退出、mtoken/账号/换证配置变化、认证拒绝和应用重启都会撤销旧标识。
+派生快照记录该标识，受管 exec 配置的 `MODEL_AUTH_SESSION_ID`、`MODEL_AUTH_TYPE`
+仅携带非秘密会话标识与认证类型。任务保留其原 exec 环境，解析器每次核对当前快照的
+会话与认证类型，因此同账号重新登录也不能让旧任务借用新登录的 JWT。
+凭据失效时 Main 在等待目录或配置清理前同步删除派生快照。
+同步删除若因文件占用或权限失败，退出协调器仍等待原有 provider/config 清理；
+后续清理失败继续走既有 Gateway 停止保护，不能因撤销异常跳过清理。应用退出同样保留运行时关闭流程。
+
+缺失、到期、会话不符、解析失败或请求路由不匹配均拒绝发送，不回退捕获的旧 JWT；
+已取消的请求不再进入模型传输。该机制不依赖新增本地 HTTP 服务、公网服务或 runtime patch，
+也不能撤回已经发出的远端请求。
+
 ## 5. 本地持久化边界
 
 builtin provider 在 SQLite/Renderer 中 apiKey 为空，只保存 base URL、模型与产品标记。openclaw.json 中的 apiKey 和 X-ACCESS-JWT 使用 justdo_login exec SecretRef；launch env 不放 JWT。内置 provider 不再投影 X-User-Account 请求头，也不把它包装成 SecretRef；exec 解析器只返回 JWT 并拒绝请求账号，避免账号进入原生精确值脱敏名单或模型缓存。私有快照仍保存已验证的 JWT、账号和到期时间，不复制 X-Cookie。
@@ -94,6 +119,11 @@ ACTIVITY_REPORTING_CONFIG 默认开启，控制 startup、周期心跳和失败�
 
 ## 9. 验证与限制
 
-测试覆盖 claims、期限、跨账号迟到响应、退出后重试、必需/可选发现、SecretRef 轮换和敏感值不外泄。真实部署另验签发方/JWKS、Team 白名单、预算限流、管理路由拒绝与并发。
+测试覆盖 claims、期限、跨账号迟到响应、退出后重试、必需/可选发现、SecretRef 轮换和敏感值不外泄。
+`runtime-services/tests/model-auth.test.ts` 覆盖请求级凭据替换、路由隔离、失败拒绝与取消；
+`tests/openclaw/runtime/builtin-model-auth.test.ts` 使用当前安装的原生凭据解析器、运行凭据包装和
+真实 Completions 传输，在内存 HTTP 宿主中模拟同一任务跨过 30 分钟 JWT 到期点，
+验证后续请求的两个认证头均使用新 JWT，以及退出、同账号重新登录后的旧任务拒绝。
+测试不访问真实模型或 JWT 服务。真实部署另验签发方/JWKS、Team 白名单、预算限流、管理路由拒绝与并发。
 
 JWT 是 bearer token，在剩余有效期内可重放；MAC deviceId 不是设备签名。若需要防重放，必须由身份系统提供设备密钥绑定等额外协议，客户端不能自行宣称已实现。

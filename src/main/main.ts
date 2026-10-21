@@ -212,6 +212,7 @@ import {
   registerOnlineTtsHandlers,
   registerSpeechSynthesisHandlers,
 } from './ipc/speech';
+import { revokeBuiltinCredentialFile } from './openclaw/config/builtinCredentialFile';
 import {
   buildLocalSpeechExtensionSttConfig,
   buildLocalSpeechExtensionTtsConfig,
@@ -877,6 +878,7 @@ const getBuiltinModelTokenExchange = (): BuiltinModelTokenExchange => {
     getDevelopmentApiKey: () =>
       resolveBuiltinModelDevelopmentApiKey(getBuiltinModelAuthConfig(), app.isPackaged),
     fetch: (url, init) => mainProcessFetch(url, init, { maxResponseBytes: 32_768 }),
+    onInvalidated: () => revokeBuiltinCredentialFile(getOpenClawEngineManager().getStateDir()),
   });
   return builtinModelTokenExchange;
 };
@@ -886,6 +888,13 @@ const getBuiltinModelAuthCoordinator = (): BuiltinModelAuthCoordinator => {
     exchange: () => getBuiltinModelTokenExchange().refresh(),
     getActive: getActiveBuiltinModelCredential,
     login: () => getBuiltinModelLifecycle().refreshAfterLogin(),
+    invalidate: () => {
+      try {
+        builtinModelTokenExchange?.suspend();
+      } finally {
+        clearActiveBuiltinModelCredential();
+      }
+    },
     logout: () => getBuiltinModelLifecycle().refreshAfterLogout(),
   });
   return builtinModelAuthCoordinator;
@@ -908,8 +917,6 @@ export const refreshAfterLogin = async (): Promise<void> => {
 export const refreshAfterLogout = (): Promise<void> => {
   customerRegistrationService?.stop();
   updateOutboundHeaderUserInfoCache();
-  builtinModelTokenExchange?.suspend();
-  clearActiveBuiltinModelCredential();
   return getBuiltinModelAuthCoordinator().logout();
 };
 
@@ -1972,7 +1979,11 @@ if (multicaBridgeArgv) {
     builtinModelCredentialMonitor?.stop();
     loginService?.dispose();
     customerRegistrationService?.stop();
-    builtinModelTokenExchange?.invalidate();
+    try {
+      builtinModelTokenExchange?.invalidate();
+    } catch {
+      console.warn('[BuiltinModelTokenExchange] Snapshot revocation failed; continuing runtime shutdown.');
+    }
     builtinModelAuthCoordinator?.initialize(null);
     clearActiveBuiltinModelCredential();
     await clearBrowserExtensionAppServer(app.getPath('userData')).catch(error => {

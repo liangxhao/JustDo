@@ -61,6 +61,7 @@ type Dependencies = {
   getConfig: () => BuiltinModelAuthConfig;
   getDevelopmentApiKey?: () => string;
   fetch: (url: string, init: RequestInit) => Promise<Response>;
+  onInvalidated?: () => void;
 };
 
 const readLogin = (file: string): Login | null => {
@@ -116,6 +117,7 @@ export class BuiltinModelTokenExchange {
     this.pending = null;
     this.identity = null;
     clearActiveBuiltinModelCredential();
+    this.dependencies.onInvalidated?.();
   }
 
   suspend(): void {
@@ -199,7 +201,10 @@ export class BuiltinModelTokenExchange {
       if (!response.ok) {
         httpStatus = response.status;
         await response.body?.cancel().catch((): void => undefined);
-        if ([400, 401, 403].includes(response.status) && generation === this.generation) clearActiveBuiltinModelCredential();
+        if ([400, 401, 403].includes(response.status) && generation === this.generation) {
+          clearActiveBuiltinModelCredential();
+          this.dependencies.onInvalidated?.();
+        }
         throw new TokenExchangeError(`Token exchange HTTP ${response.status}`);
       }
       stage = 'response';

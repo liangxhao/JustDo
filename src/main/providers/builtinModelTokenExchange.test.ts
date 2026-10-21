@@ -79,6 +79,43 @@ test('uses a development API key without login or token exchange', async () => {
   });
   expect(fetch).not.toHaveBeenCalled();
 });
+
+test('revokes the published snapshot synchronously before a replacement login exchange or logout', async () => {
+  login();
+  const onInvalidated = vi.fn();
+  const fetch = vi.fn(async () => {
+    expect(onInvalidated).toHaveBeenCalled();
+    return success();
+  });
+  const service = new BuiltinModelTokenExchange({
+    userInfoPath: path.join(directory, 'user_info.json'), getConfig: () => config, fetch, onInvalidated,
+  });
+  await service.refresh();
+  onInvalidated.mockClear();
+  login('user-1', 'replacement-login');
+  await service.refresh();
+  expect(onInvalidated).toHaveBeenCalledOnce();
+  onInvalidated.mockClear();
+  service.suspend();
+  expect(onInvalidated).toHaveBeenCalledOnce();
+  expect(getActiveBuiltinModelCredential()).toBeNull();
+});
+
+test('revokes the published snapshot immediately when the exchange rejects authentication', async () => {
+  login();
+  const onInvalidated = vi.fn();
+  const fetch = vi.fn(async () => success());
+  const service = new BuiltinModelTokenExchange({
+    userInfoPath: path.join(directory, 'user_info.json'), getConfig: () => config, fetch, onInvalidated,
+  });
+  await service.refresh();
+  onInvalidated.mockClear();
+  vi.setSystemTime((NOW + 240) * 1000);
+  fetch.mockResolvedValueOnce(new Response('', { status: 401 }));
+  await expect(service.refresh()).rejects.toThrow('Model authentication token exchange failed.');
+  expect(onInvalidated).toHaveBeenCalledOnce();
+  expect(getActiveBuiltinModelCredential()).toBeNull();
+});
 afterEach(() => {
   clearActiveBuiltinModelCredential();
   vi.restoreAllMocks();
