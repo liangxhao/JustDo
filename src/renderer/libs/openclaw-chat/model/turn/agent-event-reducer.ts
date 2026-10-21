@@ -37,7 +37,12 @@ import { projectAssistantTextScope, recordAssistantTextScope } from './assistant
 import { compactionEventId, findTurnCompaction } from './compaction-item';
 
 export type TranscriptReduceResult =
-  'applied' | 'ignored-session' | 'ignored-run' | 'ignored-sequence' | 'ignored-stream';
+  | 'applied'
+  | 'ignored-session'
+  | 'ignored-run'
+  | 'ignored-sequence'
+  | 'ignored-stream'
+  | 'needs-text-snapshot';
 
 export interface RecoveredPreToolSegment {
   type: 'thinking' | 'content';
@@ -49,6 +54,8 @@ export interface AgentEventReduceOptions {
   allowSequenceBackfill?: boolean;
   /** An independently delivered recovery snapshot, not a consumed live event. */
   replaySnapshot?: boolean;
+  /** Causal Chat coverage captured before an authenticated native snapshot request. */
+  chatFallbackCoveredThrough?: number;
 }
 
 export function readPreambleText(data: Record<string, unknown>): string | null {
@@ -89,6 +96,7 @@ function segmentStartedAt(event: NormalizedAgentEvent): number {
 function agentTailAtSequence(turn: AssistantTurn, seq: number): TurnItem | undefined {
   let preceding: TurnItem | undefined;
   for (const item of turn.items) {
+    if (item.type === 'content' && item.chatFallback) continue;
     if (item.firstSeq > seq) break;
     preceding = item;
   }
@@ -108,7 +116,12 @@ function textOwnerForEvent(turn: AssistantTurn, event: NormalizedAgentEvent, bac
   const firstSeq = snapshotSegmentFirstSeq(event);
   if (firstSeq !== null) {
     const type = event.stream === 'thinking' ? 'thinking' : 'content';
-    const owned = turn.items.find(item => item.type === type && item.firstSeq === firstSeq);
+    const owned = turn.items.find(
+      item =>
+        item.type === type &&
+        item.firstSeq === firstSeq &&
+        !(item.type === 'content' && item.chatFallback),
+    );
     if (owned) return owned;
     // History may have restored an unsequenced pre-Tool segment first. Bind it
     // within the known Tool sequence or completion boundaries. An assistant
@@ -168,9 +181,10 @@ function textOwnerForEvent(turn: AssistantTurn, event: NormalizedAgentEvent, bac
 }
 
 function finishTextBeforeKnownBoundaries(turn: AssistantTurn): void {
-  for (let index = 0; index < turn.items.length - 1; index += 1) {
-    const item = turn.items[index];
-    const next = turn.items[index + 1];
+  const nativeItems = turn.items.filter(item => !(item.type === 'content' && item.chatFallback));
+  for (let index = 0; index < nativeItems.length - 1; index += 1) {
+    const item = nativeItems[index];
+    const next = nativeItems[index + 1];
     if (item.type === 'thinking' && item.status === 'running') item.status = 'completed';
     if (item.type === 'content') {
       if (item.status === 'streaming') item.status = 'completed';
@@ -202,7 +216,14 @@ function activeAgentTailIndex(turn: AssistantTurn): number {
   const pendingToolIndex = turn.items.findIndex(
     item => item.type === 'tool' && item.agentSequencePending === true,
   );
-  return (pendingToolIndex < 0 ? turn.items.length : pendingToolIndex) - 1;
+  let index = (pendingToolIndex < 0 ? turn.items.length : pendingToolIndex) - 1;
+  while (
+    index >= 0 &&
+    turn.items[index].type === 'content' &&
+    (turn.items[index] as ContentItem).chatFallback
+  )
+    index -= 1;
+  return index;
 }
 
 function pendingRecoveredTool(turn: AssistantTurn): ToolItem | undefined {
@@ -232,7 +253,7 @@ function contentBeforeTool(turn: AssistantTurn, tool: ToolItem): ContentItem | u
   for (let index = toolIndex - 1; index >= 0; index -= 1) {
     const item = turn.items[index];
     if (isTextSegmentBoundary(item)) break;
-    if (item.type === 'content') return item;
+    if (item.type === 'content' && !item.chatFallback) return item;
   }
   return undefined;
 }
@@ -685,7 +706,11 @@ function stripCompletedContentSegments(
 ): string {
   let text = snapshot;
   const completed = turn.items.filter(
-    (item): item is ContentItem => item.type === 'content' && item.status !== 'streaming',
+    (item): item is ContentItem =>
+      item.type === 'content' &&
+      !item.chatFallback &&
+      !item.assistantTextSourcePending &&
+      item.status !== 'streaming',
   );
   // Persisted history and the retained live turn can describe the same prefix.
   // Consume their overlapping suffix/prefix once, by occurrence, so a repeated
@@ -1011,6 +1036,7 @@ function reduceContent(
     const recovered = turn.items.find(
       (item): item is ContentItem =>
         item.type === 'content' &&
+        !item.chatFallback &&
         item.preambleItemId === undefined &&
         (item.assistantItemId === undefined || item.assistantItemId === assistantItemId) &&
         typeof item.recoveredSnapshotText === 'string' &&
@@ -1309,18 +1335,29 @@ export function reduceAgentEvent(
     return 'applied';
   }
   const isSequenceBackfill = admission === 'ignored-sequence';
+  const restoresCurrentBaseline =
+    options.replaySnapshot === true &&
+    event.stream === 'assistant' &&
+    event.data.assistantTextSnapshot === true &&
+    typeof event.data.text === 'string' &&
+    previousTurn?.assistantTextRecoveryOwnerIds?.has(eventItemId(event.data) ?? '') === true &&
+    event.agentSeq === previousTurn.activityEventSeqById?.get(activityEventIdentity(event));
   if (
     isSequenceBackfill &&
     (!options.allowSequenceBackfill ||
       !previousTurn ||
-      !acceptsBackfillSequence(previousTurn, event))
+      (!acceptsBackfillSequence(previousTurn, event) && !restoresCurrentBaseline))
   ) {
     return 'ignored-sequence';
   }
   if (admission === 'ignored-run' || admission === 'ignored-terminal') return 'ignored-run';
   // Snapshot owners may be newer than the live transport. Their fences dedupe
   // that owner's delayed frames, without discarding other owners in between.
-  if (previousTurn?.runId === event.runId && !acceptsBackfillSequence(previousTurn, event)) {
+  if (
+    previousTurn?.runId === event.runId &&
+    !acceptsBackfillSequence(previousTurn, event) &&
+    !restoresCurrentBaseline
+  ) {
     if (!options.replaySnapshot) {
       previousTurn.lastAgentSeq = Math.max(previousTurn.lastAgentSeq, event.agentSeq);
     }
@@ -1341,13 +1378,40 @@ export function reduceAgentEvent(
   const insertBySequence =
     options.replaySnapshot === true ||
     isSequenceBackfill ||
-    event.agentSeq <= (turn.lastSnapshotAgentSeq ?? -1);
+    event.agentSeq <= (turn.lastSnapshotAgentSeq ?? -1) ||
+    turn.items.some(item => item.type === 'content' && item.chatFallback);
+  const hasChatFallback = turn.items.some(item => item.type === 'content' && item.chatFallback);
+  const textOwnerId = event.stream === 'assistant' ? eventItemId(event.data) : null;
   const textScope =
     event.stream === 'assistant' ||
     (event.stream === 'item' && readPreambleText(event.data) !== null)
       ? readAssistantTextScope(event.data)
       : null;
   const acceptsTextScope = !textScope || recordAssistantTextScope(turn, event, textScope);
+  if (
+    acceptsTextScope &&
+    textOwnerId &&
+    hasChatFallback &&
+    typeof event.data.text !== 'string' &&
+    typeof event.data.delta === 'string' &&
+    !turn.assistantTextBaselineOwnerIds?.has(textOwnerId) &&
+    !turn.items.some(item => item.type === 'content' && item.assistantItemId === textOwnerId)
+  ) {
+    (turn.assistantTextRecoveryOwnerIds ??= new Set()).add(textOwnerId);
+    return 'needs-text-snapshot';
+  }
+  if (acceptsTextScope && textOwnerId && typeof event.data.text === 'string') {
+    (turn.assistantTextBaselineOwnerIds ??= new Set()).add(textOwnerId);
+    turn.assistantTextRecoveryOwnerIds?.delete(textOwnerId);
+  }
+  if (
+    acceptsTextScope &&
+    event.stream === 'assistant' &&
+    !textOwnerId &&
+    typeof event.data.text === 'string'
+  ) {
+    turn.assistantTextUnkeyedBaseline = true;
+  }
   let projectionScopeId = textScope?.id;
   if (event.stream === 'thinking') {
     reduceThinking(turn, event, dependencies, insertBySequence);
@@ -1355,6 +1419,10 @@ export function reduceAgentEvent(
     const observation = readTerminalGuardObservation(event.data);
     if (observation?.action === 'commit' || observation?.action === 'rollback') {
       applyTerminalGuardObservationDecision(turn, observation);
+      if (observation.action === 'rollback') {
+        delete turn.assistantTextSourceSelected;
+        turn.assistantTextRecoveryOwnerIds?.clear();
+      }
     } else {
       const content = acceptsTextScope
         ? reduceContent(turn, event, dependencies, insertBySequence)
@@ -1363,6 +1431,7 @@ export function reduceAgentEvent(
       const assistantItemId = eventItemId(event.data);
       if (content && assistantItemId !== null) content.assistantItemId = assistantItemId;
       if (content && textScope) content.assistantTextScopeId = textScope.id;
+      if (content && hasChatFallback) content.assistantTextSourcePending = true;
       projectionScopeId ??= content?.assistantTextScopeId;
       if (content && observation?.action === 'update') {
         content.terminalGuardObservationToken = observation.token;
@@ -1373,6 +1442,9 @@ export function reduceAgentEvent(
   } else if (event.stream === 'item' && readPreambleText(event.data) !== null) {
     const content = acceptsTextScope ? reducePreamble(turn, event, dependencies) : null;
     if (content && textScope) content.assistantTextScopeId = textScope.id;
+    if (content && hasChatFallback) {
+      content.assistantTextSourcePending = true;
+    }
     projectionScopeId ??= content?.assistantTextScopeId;
   } else if (event.stream === 'compaction') {
     const phase = event.data.phase;
@@ -1438,6 +1510,8 @@ export function reduceAgentEvent(
     projectAssistantTextScope(turn, event, projectionScopeId, insertAgentItemBySequence);
   }
 
+  const needsTextSnapshot = acceptsTextScope && reconcileChatTextSource(turn, event, options);
+
   // New Gateway releases can add non-display streams (for example plan and
   // run_status). They still advance the per-run high-water mark used to reject
   // stale or duplicate events. Agent sequences are ordered but not contiguous:
@@ -1452,7 +1526,71 @@ export function reduceAgentEvent(
     finishTextBeforeKnownBoundaries(turn);
   }
   state.revision += 1;
-  return 'applied';
+  return needsTextSnapshot ? 'needs-text-snapshot' : 'applied';
+}
+
+function reconcileChatTextSource(
+  turn: AssistantTurn,
+  event: NormalizedAgentEvent,
+  options: AgentEventReduceOptions,
+): boolean {
+  const observation =
+    event.stream === 'assistant' ? readTerminalGuardObservation(event.data) : null;
+  if (observation?.action === 'rollback' || observation?.action === 'commit') return false;
+  const fallbacks = turn.items.filter(
+    (item): item is ContentItem => item.type === 'content' && item.chatFallback === true,
+  );
+  const pending = turn.items.filter(
+    (item): item is ContentItem =>
+      item.type === 'content' && item.assistantTextSourcePending === true,
+  );
+  const hasNativeBody = pending.some(item => item.text.trim());
+  const hasBaseline =
+    Boolean(turn.assistantTextBaselineOwnerIds?.size || turn.assistantTextUnkeyedBaseline) &&
+    hasNativeBody;
+  const textEvent =
+    (event.stream === 'assistant' &&
+      (typeof event.data.text === 'string' || typeof event.data.delta === 'string')) ||
+    readPreambleText(event.data) !== null;
+  const coveredThrough =
+    options.replaySnapshot && options.chatFallbackCoveredThrough !== undefined
+      ? options.chatFallbackCoveredThrough
+      : textEvent
+        ? event.agentSeq
+        : -1;
+  const coversChat = fallbacks.every(
+    item => item.chatSourceSeq !== undefined && item.chatSourceSeq <= coveredThrough,
+  );
+  const missingBaseline = [...(turn.assistantTextRecoveryOwnerIds ?? [])].some(
+    id => !turn.assistantTextBaselineOwnerIds?.has(id),
+  );
+  if (hasBaseline && coversChat && !missingBaseline) {
+    turn.items = turn.items.filter(item => !(item.type === 'content' && item.chatFallback));
+    for (const item of pending) delete item.assistantTextSourcePending;
+    turn.assistantTextRecoveryOwnerIds?.clear();
+    turn.assistantTextSourceSelected = true;
+    return false;
+  }
+  if (!fallbacks.length) {
+    for (const item of pending) delete item.assistantTextSourcePending;
+    if (
+      event.stream === 'assistant' &&
+      turn.items.some(
+        item => item.type === 'content' && item.assistantItemId !== undefined && item.text.trim(),
+      )
+    ) {
+      turn.assistantTextSourceSelected = true;
+    }
+    return false;
+  }
+  if (textEvent && (pending.length || missingBaseline)) {
+    for (const item of pending) {
+      if (item.assistantItemId)
+        (turn.assistantTextRecoveryOwnerIds ??= new Set()).add(item.assistantItemId);
+    }
+    return Boolean(turn.assistantTextRecoveryOwnerIds?.size);
+  }
+  return false;
 }
 
 function extractMessageText(message: unknown): string {
@@ -1567,15 +1705,83 @@ export function reduceChatEvent(
         item.lastTextSeq = event.sourceSeq ?? item.lastTextSeq;
         item.updatedAt = dependencies.now();
       }
+      turn.items = turn.items.filter(
+        item =>
+          !(
+            item.type === 'content' &&
+            item.chatFallback &&
+            (event.sourceSeq === undefined || (item.chatSourceSeq ?? -1) <= event.sourceSeq)
+          ),
+      );
+      if (!turn.items.some(item => item.type === 'content' && item.chatFallback)) {
+        for (const item of turn.items) {
+          if (item.type === 'content') delete item.assistantTextSourcePending;
+        }
+        turn.assistantTextRecoveryOwnerIds?.clear();
+      }
       state.revision += 1;
       return 'applied';
     }
+    if (turn.assistantTextSourceSelected) return 'ignored-stream';
     if (
       event.sourceSeq !== undefined &&
       (event.sourceSeq <= (turn.assistantSuppressionSeq ?? -1) ||
         (event.replace && (activeAgentTail(turn)?.lastSeq ?? -1) > event.sourceSeq))
     ) {
       return 'ignored-sequence';
+    }
+    // Older unkeyed Agent streams keep their existing single-lane behavior.
+    // Keyed native messages are accumulated separately from this Chat preview.
+    const legacyContent = turn.items.some(
+      item =>
+        item.type === 'content' &&
+        !item.chatFallback &&
+        !item.assistantTextSourcePending &&
+        item.assistantItemId === undefined &&
+        item.preambleItemId === undefined,
+    );
+    if (!legacyContent) {
+      const preview = turn.items.find(
+        (item): item is ContentItem => item.type === 'content' && item.chatFallback === true,
+      );
+      if (
+        preview &&
+        event.sourceSeq !== undefined &&
+        preview.chatSourceSeq !== undefined &&
+        event.sourceSeq <= preview.chatSourceSeq
+      )
+        return 'ignored-sequence';
+      const text =
+        messageText !== null
+          ? stripCompletedContentSegments(turn, messageText)
+          : `${preview?.text ?? ''}${event.deltaText ?? ''}`;
+      if (!text && !preview) return 'ignored-stream';
+      const sequence = event.sourceSeq ?? turn.lastAgentSeq + 1;
+      if (preview) {
+        preview.text = text;
+        preview.lastSeq = sequence;
+        preview.lastTextSeq = sequence;
+        preview.chatSourceSeq = event.sourceSeq;
+        preview.updatedAt = dependencies.now();
+      } else {
+        insertAgentItemBySequence(turn, {
+          id: dependencies.createId('content'),
+          runId: turn.runId,
+          type: 'content',
+          status: 'streaming',
+          text,
+          firstSeq: sequence,
+          lastSeq: sequence,
+          lastTextSeq: sequence,
+          startedAt: dependencies.now(),
+          updatedAt: dependencies.now(),
+          sourceMode: 'snapshot',
+          chatFallback: true,
+          chatSourceSeq: event.sourceSeq,
+        });
+      }
+      state.revision += 1;
+      return 'applied';
     }
     const synthetic: NormalizedAgentEvent = {
       runId: turn.runId,
@@ -1606,6 +1812,10 @@ export function reduceChatEvent(
   const now = dependencies.now();
   const finalText = extractMessageText(event.message);
   if (finalText && event.state === 'final') {
+    turn.items = turn.items.filter(item => !(item.type === 'content' && item.chatFallback));
+    for (const item of turn.items) {
+      if (item.type === 'content') delete item.assistantTextSourcePending;
+    }
     const currentSegmentText = stripCompletedContentSegments(turn, finalText);
     const tail = activeAgentTail(turn);
     if (tail?.type === 'content' && currentSegmentText) {

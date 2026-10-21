@@ -441,6 +441,20 @@ owner，历史补载不能令其复活。消息完成不代表 whole-run 执行�
 空替换撤回及 final 仍沿用原有身份、序号和终态校验。绘制直接展示已准入正文，
 不增加逐字播放或额外等待，也不推测 Gateway 尚未发布的文字。
 
+Chat 先到时，兜底 Content 与 Agent 原生 owner 分开累积；前者不能成为后者的
+增量基线。Chat 的 `sourceSeq` 是覆盖水位，Tool/item flush 也可发布该水位，不能
+直接等同于正文 item 身份。兜底按已知水位定位，不提前推进 Agent 水位或切断
+Thinking；待交接的原生正文暂不投影。只有完整基线的原生正文追上覆盖水位，才
+原子移除兜底并展示原生 items，保留较长预览且不重复追加。
+
+首个 Agent delta 缺少基线，或覆盖水位来自较晚的 flush 时，控制器沿现有认证
+`chat.history` 读取该 run/owner 的 keyed `assistantTextSnapshot`。请求开始时固定
+Chat 水位，较晚 Chat 不能被旧响应覆盖；按精确 turn、run、物理会话、生命周期、
+history generation 和 client generation 拒绝过期响应。每 turn 单请求并最多尝试
+3 次；缺正文的 metadata-only 快照或读取失败保留 Chat。初始空帧、Thinking 和
+生命周期事件不能锁定正文来源。commentary、撤回、前后台与侧聊沿用同一交接规则；
+不以相同字符串猜 owner，不新增正文缓存或执行终态来源。
+
 已准入的正文直接使用当前 transcript 文本渲染，同一动画帧内的更新只合并绘制，
 不再维护逐字播放队列或为播放保留终态副本。即使一次收到很长的快照，也在首次
 绘制时完整显示；工具边界、撤回、停止和历史接管继续遵守原生事件身份与顺序。

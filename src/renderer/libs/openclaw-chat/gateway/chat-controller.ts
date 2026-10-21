@@ -45,6 +45,10 @@ import {
 } from './compaction/chat-controller-compaction';
 import * as chatControllerSession from './connection/chat-controller-session';
 import { type ChatControllerSessionContext } from './connection/chat-controller-session';
+import {
+  hasSelectedAssistantTextSource,
+  recoverAssistantText,
+} from './execution/assistant-text-recovery';
 import * as chatControllerProgress from './execution/chat-controller-progress';
 import { type ChatControllerProgressContext } from './execution/chat-controller-progress';
 import * as chatControllerRecovery from './execution/chat-controller-recovery';
@@ -1613,6 +1617,27 @@ export class ChatController {
       allowSequenceBackfill:
         event.deliveryEvent === 'session.tool' || hasStableProgressOwner(event),
     });
+    if (reduceResult === 'needs-text-snapshot') {
+      const transcript = cached.transcript;
+      const client = this.state.client;
+      cached.chatSending = true;
+      cached.chatRunId = event.runId;
+      void recoverAssistantText({
+        transcript,
+        client,
+        dependencies: this.transcriptDependencies,
+        isCurrent: () => this.state.client === client &&
+          this.findLiveSessionState(sessionKey, event.sessionId)?.[1] === cached &&
+          cached.transcript === transcript,
+        notify: () => {
+          if (transcript.activeTurn?.assistantTextSourceSelected) {
+            cached.assistantSnapshotRunId = event.runId;
+            cached.ignoredDeltaAfterAssistantSnapshotCount = 0;
+          }
+        },
+      });
+      return;
+    }
     if (reduceResult !== 'applied') return;
 
     if (event.stream === 'compaction') {
@@ -1639,7 +1664,9 @@ export class ChatController {
       cached.chatSending = true;
       cached.chatRunId = event.runId;
     }
-    if (event.stream === 'assistant') {
+    if (event.stream === 'assistant' && hasSelectedAssistantTextSource(
+      cached.transcript.activeTurn, event.data, backgroundAssistantText,
+    )) {
       cached.assistantSnapshotRunId = event.runId;
       cached.ignoredDeltaAfterAssistantSnapshotCount = 0;
     }
@@ -1762,6 +1789,27 @@ export class ChatController {
         replaySnapshot: options.replaySnapshot === true,
       },
     );
+    if (reduceResult === 'needs-text-snapshot') {
+      const transcript = this.state.transcript;
+      const client = this.state.client;
+      this.state.chatSending = true;
+      this.state.chatRunId = event.runId;
+      void recoverAssistantText({
+        transcript,
+        client,
+        dependencies: this.transcriptDependencies,
+        isCurrent: () => this.state.client === client && this.state.transcript === transcript,
+        notify: () => {
+          if (transcript.activeTurn?.assistantTextSourceSelected) {
+            this.assistantSnapshotRunId = event.runId;
+            this.ignoredDeltaAfterAssistantSnapshotCount = 0;
+          }
+          this.notifyStream('terminal');
+        },
+      });
+      this.notifyStream();
+      return;
+    }
     if (reduceResult === 'applied') {
       // A bounded history snapshot can arrive after newer live activity. Its
       // missing owner still repairs the transcript, but must not rewind the

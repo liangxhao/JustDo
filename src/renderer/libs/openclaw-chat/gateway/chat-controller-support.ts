@@ -262,6 +262,12 @@ export function cloneAssistantTurn(turn: AssistantTurn): AssistantTurn {
     ...turn,
     items,
     toolById,
+    ...(turn.assistantTextBaselineOwnerIds
+      ? { assistantTextBaselineOwnerIds: new Set(turn.assistantTextBaselineOwnerIds) }
+      : {}),
+    ...(turn.assistantTextRecoveryOwnerIds
+      ? { assistantTextRecoveryOwnerIds: new Set(turn.assistantTextRecoveryOwnerIds) }
+      : {}),
     ...(turn.activityEventSeqById
       ? { activityEventSeqById: new Map(turn.activityEventSeqById) }
       : {}),
@@ -773,7 +779,7 @@ export function collectActiveThinkingText(turn: AssistantTurn | null): string | 
 export function collectActiveContentText(turn: AssistantTurn | null): string | null {
   const text = (turn?.items ?? [])
     .filter(item => item.type === 'content')
-    .filter(item => !item.assistantTextScopeSuppressed)
+    .filter(item => !item.assistantTextScopeSuppressed && !item.assistantTextSourcePending)
     .map(item => item.text)
     .filter(Boolean)
     .join('')
@@ -811,7 +817,7 @@ export function completeTruncatedTerminalFromActiveTurn(
   }
   const contentCandidates = (turn?.items ?? [])
     .filter(item => item.type === 'content')
-    .filter(item => !item.assistantTextScopeSuppressed)
+    .filter(item => !item.assistantTextScopeSuppressed && !item.assistantTextSourcePending)
     .map(item => item.text);
   const thinkingCandidates = (turn?.items ?? [])
     .filter(item => item.type === 'thinking')

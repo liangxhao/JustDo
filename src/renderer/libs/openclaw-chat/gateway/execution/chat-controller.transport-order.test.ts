@@ -1,5 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest';
 
+import { projectTurnItems } from '../../model/timeline/project-turn-items';
 import { ChatController } from '../chat-controller';
 
 const controllers: ChatController[] = [];
@@ -88,6 +89,88 @@ test('does not append covered text twice when an Agent delta coalesces across a 
     controller.state.transcript.activeTurn!.items.filter(item => item.type === 'content'),
   ).toEqual([expect.objectContaining({ text: `Result: ${reply} Done.` })]);
 });
+
+test.each([
+  { background: false, deltaOnly: false },
+  { background: true, deltaOnly: false },
+  { background: false, deltaOnly: true },
+  { background: true, deltaOnly: true },
+])(
+  'replaces an early Chat preview with its native Agent owner across delayed Thinking: %j',
+  async ({ background, deltaOnly }) => {
+    const { controller, emit } = setup();
+    const chat = (seq: number, text: string, replace = false) =>
+      (
+        controller as unknown as { handleEvent(event: { event: string; payload: unknown }): void }
+      ).handleEvent({
+        event: 'chat',
+        payload: {
+          sessionKey,
+          runId,
+          seq,
+          state: 'delta',
+          replace,
+          message: { role: 'assistant', content: [{ type: 'text', text }] },
+        },
+      });
+    const scope = { id: 'source-message-3' };
+    const visible = () =>
+      projectTurnItems(controller.state.transcript.activeTurn).flatMap(item =>
+        item.kind === 'content' ? [item.item.text] : [],
+      );
+
+    // Captured delivery order: Chat 256, then the flush of Thinking 255,
+    // then Agent assistant 256. Chat must not invent a position at 254.
+    if (deltaOnly) emit('agent', 250, 'assistant', { itemId: 'reply-3', text: '' });
+    emit('agent', 253, 'thinking', { text: 'Check the diagram' });
+    chat(256, 'XML');
+    expect(visible()).toEqual(['XML']);
+    expect(controller.state.transcript.activeTurn?.lastAgentSeq).toBe(253);
+    if (background) await controller.switchSession('agent:main:transport-other');
+    emit('agent', 255, 'thinking', { text: 'Check the diagram and retry' });
+    emit('agent', 256, 'assistant', {
+      itemId: 'reply-3',
+      assistantTextScope: scope,
+      ...(deltaOnly ? { delta: 'XML' } : { text: 'XML', delta: 'XML' }),
+    });
+    if (background) await controller.switchSession(sessionKey);
+
+    const turn = controller.state.transcript.activeTurn!;
+    expect(turn.items.filter(item => item.type === 'thinking')).toEqual([
+      expect.objectContaining({ text: 'Check the diagram and retry' }),
+    ]);
+    expect(turn.items.filter(item => item.type === 'content')).toEqual([
+      expect.objectContaining({
+        text: 'XML',
+        assistantItemId: 'reply-3',
+        assistantTextScopeId: scope.id,
+        firstSeq: 256,
+      }),
+    ]);
+    emit('agent', 257, 'assistant', {
+      itemId: 'reply-3',
+      assistantTextScope: scope,
+      delta: ' 少了闭合标签，修正后重试：',
+    });
+    expect(visible()).toEqual(['XML 少了闭合标签，修正后重试：']);
+    emit('agent', 261, 'item', {
+      kind: 'preamble',
+      phase: 'update',
+      itemId: 'commentary-3',
+      assistantTextScope: scope,
+      progressText: 'XML 少了闭合标签，修正后重试：',
+    });
+    expect(visible()).toEqual(['XML 少了闭合标签，修正后重试：']);
+    emit('agent', 263, 'assistant', {
+      itemId: 'reply-3',
+      text: '',
+      replace: true,
+      assistantTextScope: { ...scope, commentaryItemIds: ['commentary-3'] },
+    });
+    chat(263, '', true);
+    expect(visible()).toEqual(['XML 少了闭合标签，修正后重试：']);
+  },
+);
 
 test.each([false, true])(
   'honors native chat suppression after assistant snapshots (background: %s)',

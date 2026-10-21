@@ -55,6 +55,10 @@ export interface ContentItem extends BaseTurnItem {
   assistantItemId?: string;
   /** Last text update; lastSeq may also advance when a Tool closes this segment. */
   lastTextSeq?: number;
+  /** Chat is a cumulative alternative, never an Agent message baseline. */
+  chatFallback?: true;
+  chatSourceSeq?: number;
+  assistantTextSourcePending?: true;
   /** Native item/preamble commentary owner, separate from assistant reply segments. */
   preambleItemId?: string;
   /** Explicit native model-message association across assistant/preamble lanes. */
@@ -94,6 +98,11 @@ export interface AssistantTurn {
   lastAgentSeq: number;
   /** Recovery snapshots are sparse and must never advance the live event fence. */
   lastSnapshotAgentSeq?: number;
+  /** Identity-only coordination of the two native text delivery lanes. */
+  assistantTextBaselineOwnerIds?: Set<string>;
+  assistantTextUnkeyedBaseline?: true;
+  assistantTextRecoveryOwnerIds?: Set<string>;
+  assistantTextSourceSelected?: true;
   /** Empty cumulative chat snapshots suppress older assistant owners, including unseen ones. */
   assistantSuppressionSeq?: number;
   /**

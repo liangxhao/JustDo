@@ -604,7 +604,6 @@ describe('agent event reducer', () => {
     );
     expect(state.activeTurn!.items).toMatchObject([
       { type: 'tool', output: 'done', status: 'completed' },
-      { type: 'content', text: '' },
     ]);
   });
 

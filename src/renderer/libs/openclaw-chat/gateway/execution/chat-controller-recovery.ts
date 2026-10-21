@@ -86,6 +86,7 @@ import {
   summarizeMessageForDebug,
   withThinkingContent,
 } from '../chat-controller-support';
+import { hasSelectedAssistantTextSource, recoverAssistantText } from './assistant-text-recovery';
 export interface ChatControllerRecoveryContext {
   postFinalHistoryReloadTimer: NodeJS.Timeout | null;
   postFinalHistoryRecovery: PostFinalHistoryRecovery | null;
@@ -1138,12 +1139,35 @@ export function handleTimelineEvent(
               hasStableProgressOwner(normalized.event),
           },
         );
+        if (reduceResult === 'needs-text-snapshot') {
+          const client = this.state.client;
+          const sideRunId = normalized.event.runId;
+          void recoverAssistantText({
+            transcript,
+            client,
+            dependencies: this.transcriptDependencies,
+            isCurrent: () => this.state.client === client &&
+              this.sideChatTranscripts.get(sideRunId) === transcript &&
+              this.pendingSideChats.get(sideRunId) === pending,
+            notify: () => {
+              if (transcript.activeTurn?.assistantTextSourceSelected) {
+                this.sideChatAssistantSnapshotRunIds.add(sideRunId);
+              }
+              this.publishSideChatStream(sideRunId, pending.sessionKey, 'terminal');
+            },
+          });
+          this.publishSideChatStream(sideRunId, pending.sessionKey, 'stream');
+          return;
+        }
         if (reduceResult === 'applied') {
           if (normalized.event.stream === 'assistant') {
             const observation = readTerminalGuardObservation(normalized.event.data);
             if (observation?.action === 'rollback') {
               this.sideChatAssistantSnapshotRunIds.delete(normalized.event.runId);
-            } else {
+            } else if (hasSelectedAssistantTextSource(
+              transcript.activeTurn, normalized.event.data,
+              assistantEventText(normalized.event.data),
+            )) {
               this.sideChatAssistantSnapshotRunIds.add(normalized.event.runId);
             }
           }
@@ -1852,7 +1876,9 @@ export function handleAgentEvent(
       this.scheduleDeferredHistoryReload(this.state.sessionKey, 'initial-history-missing');
     }
 
-    this.assistantSnapshotRunId = runId ?? this.state.chatRunId;
+    if (hasSelectedAssistantTextSource(this.state.transcript.activeTurn, data, text)) {
+      this.assistantSnapshotRunId = runId ?? this.state.chatRunId;
+    }
     this.updateRunActivity(runId, 'responding', { modelActivity: true });
 
     debugLog('[ChatCtrl] ▶ assistant', {

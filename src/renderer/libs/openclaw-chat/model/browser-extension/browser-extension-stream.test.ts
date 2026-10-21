@@ -32,6 +32,7 @@ const agent = (
 const chat = (
   state: 'delta' | 'final' | 'error' | 'aborted',
   text: string,
+  sourceSeq?: number,
 ): BrowserExtensionStreamEvent => ({
   kind: 'chat',
   event: {
@@ -40,6 +41,7 @@ const chat = (
     sessionId: null,
     lifecycleGeneration: null,
     frameSeq: 100,
+    sourceSeq,
     state,
     message: { content: text },
     replace: false,
@@ -382,6 +384,7 @@ describe('extension live projection', () => {
     view.accept(
       agent(1, 'assistant', {
         text: 'Tentative',
+        itemId: 'candidate-1',
         justdoTerminalGuardObservation: { token: 'a', action: 'update' },
       }),
     );
@@ -389,6 +392,8 @@ describe('extension live projection', () => {
       agent(2, 'assistant', { justdoTerminalGuardObservation: { token: 'a', action: 'rollback' } }),
     );
     expect(items(view)).toEqual([user]);
+    expect(view.accept(chat('delta', 'Corrected', 3))).toBe(true);
+    expect(items(view).slice(-1)[0]?.text).toBe('Corrected');
     view.accept(agent(3, 'assistant', { text: 'Corrected' }));
     expect(items(view).slice(-1)[0]?.text).toBe('Corrected');
   });

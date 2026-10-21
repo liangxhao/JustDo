@@ -211,10 +211,13 @@ export class BrowserExtensionStream {
               Number.isSafeInteger(value.event.data.progressSegmentFirstSeq),
           })
         : reduceChatEvent(this.state, value.event, this.dependencies);
-    if (result !== 'applied') return false;
+    if (result !== 'applied' && result !== 'needs-text-snapshot') return false;
     if (value.kind === 'agent' && value.event.stream === 'assistant') {
-      this.agentTextRun =
-        readTerminalGuardObservation(value.event.data)?.action === 'rollback' ? null : event.runId;
+      if (readTerminalGuardObservation(value.event.data)?.action === 'rollback') {
+        this.agentTextRun = null;
+      } else if (this.state.activeTurn?.assistantTextSourceSelected) {
+        this.agentTextRun = event.runId;
+      }
     }
     return true;
   }
@@ -227,7 +230,13 @@ export class BrowserExtensionStream {
     const historical = turns[index] ?? { id: turn.id, items: [] };
     const live = turn.items
       .filter(item => item.type !== 'compaction')
-      .filter(item => !(item.type === 'content' && item.assistantTextScopeSuppressed))
+      .filter(
+        item =>
+          !(
+            item.type === 'content' &&
+            (item.assistantTextScopeSuppressed || item.assistantTextSourcePending)
+          ),
+      )
       .map(projectItem);
     turns[index] = { ...historical, items: reconcileItems(historical.items, live).items };
     return { ...this.history, turns };
@@ -244,7 +253,13 @@ export class BrowserExtensionStream {
         this.history.turns[this.anchor ?? Math.max(0, this.history.turns.length - 1)]?.items ?? [];
       const live = this.state.activeTurn.items
         .filter(item => item.type !== 'terminal' && item.type !== 'compaction')
-        .filter(item => !(item.type === 'content' && item.assistantTextScopeSuppressed))
+        .filter(
+          item =>
+            !(
+              item.type === 'content' &&
+              (item.assistantTextScopeSuppressed || item.assistantTextSourcePending)
+            ),
+        )
         .map(projectItem);
       const { matches } = reconcileItems(historical, live);
       const covered = live.every((item, index) => {
