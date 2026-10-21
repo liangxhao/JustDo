@@ -90,6 +90,15 @@ unknown dispatches are never replayed. Recovery grants no original MCP tools.
 There is no new document database or user-facing version history. See
 [current canvas contracts](../../docs/features/chat/drawio-current-canvas.md).
 
+Confirmed updates also emit a bounded `drawio.diagram-reference.v1` text record
+so native history can retain the title, original content source and exact call
+association when custom details are filtered. Full XML remains in the existing
+receipt/storage path. The host maps this reviewed integration to generic App
+references; pinning keeps the original frame and permissions. See
+[MCP App reference integration](../../docs/features/plugins/mcp-app-references.md).
+`node tests/drawio/offline-smoke.cjs --editing --reference` checks real editor
+text, document and undo continuity across pin/unpin.
+
 The host owns generic MCP App discovery/rendering, file downloads and native Save
 dialogs. Default enablement, runtime fingerprinting and packaging retain thin
 integration calls/declarations in the host. End-to-end host/runtime/package probes

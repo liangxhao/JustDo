@@ -184,6 +184,45 @@ app
       assert.equal(before.childMarker, false);
       assert.equal(before.hasAllTabs, true);
       assert.ok(before.litStyles > 0);
+      // A reference stays in Main while the normal native workspace remains mounted.
+      await owner.webContents.executeJavaScript('probe.reference(true)');
+      await waitFor(() =>
+        owner.webContents.executeJavaScript('!!document.querySelector("#reference-draft")'),
+      );
+      await owner.webContents.executeJavaScript(
+        'probe.referenceDocument=probe.referenceFrame.contentDocument;probe.referenceDocument.querySelector("input").value="unsaved reference";probe.referenceDocument.querySelector("input").setSelectionRange(2,8)',
+      );
+      const referenceGeneration = manager.prepare().generation;
+      for (let index = 0; index < 3; index++) {
+        await owner.webContents.executeJavaScript('probe.reference(false)');
+        await waitFor(() =>
+          owner.webContents.executeJavaScript('!document.querySelector("#reference-draft")'),
+        );
+        await owner.webContents.executeJavaScript('probe.reference(true)');
+        await waitFor(() =>
+          owner.webContents.executeJavaScript('!!document.querySelector("#reference-draft")'),
+        );
+      }
+      assert.equal(
+        await owner.webContents.executeJavaScript(
+          'probe.referenceDocument===probe.referenceFrame.contentDocument && probe.referenceDocument.querySelector("input").value==="unsaved reference" && probe.referenceDocument.querySelector("input").selectionStart===2 && probe.referenceDocument.querySelector("input").selectionEnd===8',
+        ),
+        true,
+      );
+      assert.equal(manager.prepare().generation, referenceGeneration);
+      const retainedWorkspace = await owner.webContents.executeJavaScript('probe.snapshot()');
+      assert.equal(retainedWorkspace.mounts, before.mounts);
+      assert.equal(retainedWorkspace.unmounts, before.unmounts);
+      assert.equal(retainedWorkspace.draft, before.draft);
+      assert.equal(
+        await guest.executeJavaScript('document.querySelector("#form").value'),
+        'unsaved browser form',
+      );
+      await owner.webContents.executeJavaScript('probe.reference(false)');
+      await waitFor(() =>
+        owner.webContents.executeJavaScript('!document.querySelector("#reference-draft")'),
+      );
+      console.log(`${mode}: main-document reference and native workspace retention passed`);
       // Main's pet retains its node and viewport coordinates. The docked native
       // layer only paints the covered portion at the same on-screen position.
       await owner.webContents.executeJavaScript('probe.mainPet=document.querySelector(".cowork-pet--floating");probe.petPosition=[probe.mainPet.style.left,probe.mainPet.style.top]');

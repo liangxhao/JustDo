@@ -21,6 +21,17 @@ const { buildSync } = require('esbuild');
   const output = path.join(root, '.agent-tasks/drawio');
   fs.mkdirSync(output, { recursive: true });
   const state = fs.mkdtempSync(path.join(output, 'editing-native-'));
+  buildSync({
+    entryPoints: [
+      path.join(root, 'src/renderer/libs/openclaw-chat/model/timeline/project-history-timeline.ts'),
+    ],
+    outfile: path.join(state, 'projection.cjs'),
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    alias: { '@shared': path.join(root, 'src/shared'), '@': path.join(root, 'src/renderer') },
+  });
+  const { projectPersistedTimeline } = require(path.join(state, 'projection.cjs'));
   const workspace = path.join(state, 'workspace');
   fs.mkdirSync(workspace);
   const agentWorkspace = path.join(state, 'agent-home');
@@ -512,6 +523,14 @@ const { buildSync } = require('esbuild');
       assert.deepEqual(failures, []);
       assert.deepEqual(modelErrors, []);
       const history = await client.request('chat.history', { sessionKey, limit: 100 });
+      const references = projectPersistedTimeline(history.messages).filter(
+        item => item.kind === 'app-reference',
+      );
+      assert.ok(
+        references.some(item => item.reference.content.contentId === diagramId),
+        'Compact update reference survives actual native history projection',
+      );
+      assert.equal(JSON.stringify(references).includes(expected.xml), false);
       fs.writeFileSync(
         path.join(state, 'synthetic-history.json'),
         JSON.stringify(history, null, 2),

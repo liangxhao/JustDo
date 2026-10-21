@@ -1,4 +1,6 @@
 import { McpAppView } from '../../src/renderer/libs/openclaw-chat/components/mcp-app/view';
+import { McpAppAnchor } from '../../src/renderer/libs/openclaw-chat/components/mcp-app/anchor';
+import { getMcpAppPresentations } from '../../src/renderer/libs/openclaw-chat/components/mcp-app/presentations';
 import { McpAppSession } from '../../src/renderer/libs/openclaw-chat/gateway/mcp-app/mcp-app-session';
 import { decodeMcpAppLaunch } from '../../src/renderer/libs/openclaw-chat/pipeline/native-mcp-app';
 import { McpAppMethod } from '../../src/shared/plugins/mcpApps';
@@ -17,9 +19,12 @@ const fixture = window as unknown as {
   fixtureSnapshot: Record<string, unknown>;
   fixturePrepareDiagram: () => Promise<unknown>;
   fixtureApplyDiagram: (xml: string) => Promise<unknown>;
+  fixtureReference: (pinned: boolean) => void;
+  fixtureViewReads: number;
 };
 fixture.downloads = [];
 fixture.fixtureModelContext = null;
+fixture.fixtureViewReads = 0;
 window.electron = {
   mcpApps: {
     downloadFile: async (input: unknown) => {
@@ -69,12 +74,14 @@ const client = {
       }
       return {};
     }
-    if (method === McpAppMethod.View)
+    if (method === McpAppMethod.View) {
+      fixture.fixtureViewReads++;
       return {
         ...fixture.fixturePayload,
         messageSupported: true,
         updateModelContextSupported: true,
       };
+    }
     if (method === McpAppMethod.UpdateModelContext) {
       fixture.fixtureModelContext = { updateId: crypto.randomUUID(), content: params.content };
       return {};
@@ -101,6 +108,7 @@ const apps = new McpAppSession(() =>
         generation: 1,
         sessionKey: 'agent:main:offline',
         sessionId: 'offline',
+        agentId: 'main',
         isCurrent: () => active,
       }
     : undefined,
@@ -109,6 +117,7 @@ const view = new McpAppView();
 fixture.fixturePrepareDiagram = () =>
   apps.prepareChatSend({
     sessionKey: 'agent:main:offline',
+    presentationScope: 'conversation',
     sessionId: 'offline',
     idempotencyKey: crypto.randomUUID(),
     message: 'Edit diagram',
@@ -155,8 +164,32 @@ fixture.fixtureSwitchSession = value => {
   apps.invalidate(true);
   active = value;
   apps.refreshBinding();
-  if (active) view.resume();
+  if (active) fixture.fixtureView?.resume();
 };
 if (new URLSearchParams(location.search).has('list')) mountMcpList();
-else document.body.append(view);
-fixture.fixtureView = view;
+else if (new URLSearchParams(location.search).has('reference')) {
+  const anchor = new McpAppAnchor();
+  anchor.preview = view.preview;
+  anchor.context = context();
+  document.body.append(anchor);
+  const manager = getMcpAppPresentations();
+  const target = document.createElement('div');
+  target.style.cssText =
+    'position:fixed;top:60px;right:20px;bottom:40px;width:85vw;display:none;background:white';
+  document.body.append(target);
+  Object.defineProperty(fixture, 'fixtureView', { get: () => manager.entries[0]?.view });
+  fixture.fixtureReference = pinned => {
+    const entry = manager.entries[0];
+    if (pinned) {
+      target.style.display = 'block';
+      manager.pin(entry);
+      manager.setSidebar(entry, target);
+    } else {
+      manager.unpin(entry);
+      target.style.display = 'none';
+    }
+  };
+} else {
+  document.body.append(view);
+  fixture.fixtureView = view;
+}

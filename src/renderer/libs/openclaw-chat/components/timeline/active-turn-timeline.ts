@@ -736,68 +736,65 @@ function renderProcessItem(
   return html`
     <li
       class=${`process-summary__item process-summary__item--${process.type}${
-                            process.type === 'tool' &&
-                            parseEditToolDiff(process.name, process.input) !== null
-                              ? ' process-summary__item--edit'
-                              : ''
-                          }`}
+        process.type === 'tool' && parseEditToolDiff(process.name, process.input) !== null
+          ? ' process-summary__item--edit'
+          : ''
+      }`}
       style=${process.type === 'tool' ? `margin-inline-start: ${Math.min(depths.get(process) ?? 0, 6) * 16}px` : ''}
       data-inline-process-id=${process.id}
       tabindex="-1"
     >
       ${
-                            process.type === 'thinking'
-                              ? html`
-                                  <div class="process-summary__item-heading">
-                                    <span
-                                      class="process-summary__thinking-marker process-summary__thinking-marker--${process.status}"
-                                      aria-hidden="true"
-                                    ></span>
-                                    <strong>${i18nService.t('coworkThinkingLabel')}</strong>
-                                  </div>
-                                `
-                              : nothing
-                          }
+        process.type === 'thinking'
+          ? html`
+              <div class="process-summary__item-heading">
+                <span
+                  class="process-summary__thinking-marker process-summary__thinking-marker--${process.status}"
+                  aria-hidden="true"
+                ></span>
+                <strong>${i18nService.t('coworkThinkingLabel')}</strong>
+              </div>
+            `
+          : nothing
+      }
       ${
-                            process.type === 'thinking'
-                              ? html`
-                                  <div class="process-summary__thinking markdown-content">
-                                    ${unsafeHTML(toSanitizedMarkdownHtml(process.text))}
-                                  </div>
-                                `
-                              : html`
-                                  <details
-                                    data-tool-identity=${JSON.stringify([process.runId, process.toolCallId])}
-                                    class=${`process-summary__tool${
-                                      parseEditToolDiff(process.name, process.input) !== null
-                                        ? ' process-summary__tool--edit'
-                                        : ''
-                                    }`}
-                                  >
-                                    <summary class="process-summary__tool-title">
-                                      <span
-                                        class="process-summary__tool-status process-summary__tool-status--${toolOutcome(process)}"
-                                        role="img"
-                                        aria-label=${toolStateLabel(process)}
-                                      ></span>
-                                      <strong title=${resolveToolDisplay(process.name).title}
-                                        >${resolveToolDisplay(process.name).title}</strong
-                                      >
-                                      ${renderSpawnedAgentLink(process)}
-                                      <span
-                                        class="process-summary__tool-input"
-                                        title=${toolSummary(process)}
-                                        >${toolSummary(process)}</span
-                                      >
-                                    </summary>
-                                    ${renderToolDetail(
-                                      process,
-                                      editDiffModes.get(process.id) ?? 'unified',
-                                      onEditDiffModeChange,
-                                    )}
-                                  </details>
-                                `
-                          }
+        process.type === 'thinking'
+          ? html`
+              <div class="process-summary__thinking markdown-content">
+                ${unsafeHTML(toSanitizedMarkdownHtml(process.text))}
+              </div>
+            `
+          : html`
+              <details
+                data-tool-identity=${JSON.stringify([process.runId, process.toolCallId])}
+                class=${`process-summary__tool${
+                  parseEditToolDiff(process.name, process.input) !== null
+                    ? ' process-summary__tool--edit'
+                    : ''
+                }`}
+              >
+                <summary class="process-summary__tool-title">
+                  <span
+                    class="process-summary__tool-status process-summary__tool-status--${toolOutcome(process)}"
+                    role="img"
+                    aria-label=${toolStateLabel(process)}
+                  ></span>
+                  <strong title=${resolveToolDisplay(process.name).title}
+                    >${resolveToolDisplay(process.name).title}</strong
+                  >
+                  ${renderSpawnedAgentLink(process)}
+                  <span class="process-summary__tool-input" title=${toolSummary(process)}
+                    >${toolSummary(process)}</span
+                  >
+                </summary>
+                ${renderToolDetail(
+                  process,
+                  editDiffModes.get(process.id) ?? 'unified',
+                  onEditDiffModeChange,
+                )}
+              </details>
+            `
+      }
     </li>
   `;
 }
@@ -814,16 +811,16 @@ export function renderTimelineItem(
 ): TemplateResult {
   if (item.kind === 'mcp-app') {
     return renderAssistantTimelineRow(
-      html`<mcp-app-view .preview=${item.preview}></mcp-app-view>`,
+      html`<mcp-app-anchor .preview=${item.preview}></mcp-app-anchor>`,
       showAvatar,
       '',
       'assistant',
       assistantAvatar,
     );
   }
-  if (item.kind === 'diagram-reference') {
+  if (item.kind === 'app-reference') {
     return renderAssistantTimelineRow(
-      html`<mcp-app-view .diagramReference=${item.reference}></mcp-app-view>`,
+      html`<mcp-app-anchor .reference=${item.reference}></mcp-app-anchor>`,
       showAvatar,
       '',
       'assistant',

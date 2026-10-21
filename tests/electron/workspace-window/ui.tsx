@@ -97,9 +97,7 @@ function Tools() {
     probe.menu = () => ownerDocument.querySelector<HTMLButtonElement>('#menu')!.click();
     probe.move = () =>
       ownerDocument
-        .querySelector<HTMLButtonElement>(
-          '[aria-label="在独立窗口中打开侧边栏"]',
-        )!
+        .querySelector<HTMLButtonElement>('[aria-label="在独立窗口中打开侧边栏"]')!
         .click();
     probe.snapshot = () => ({
       count: ownerDocument.querySelector('#increment')!.textContent,
@@ -235,11 +233,27 @@ function Harness() {
   const [epoch, setEpoch] = useState(0);
   const [open, setOpen] = useState(true);
   const [activeTabId, setActiveTabId] = useState('Browser');
+  const [reference, setReference] = useState(false);
+  probe.reference = (value: boolean) => setReference(value);
+  useEffect(() => {
+    const frame = document.createElement('iframe');
+    frame.srcdoc = '<input id="local-draft"><script>window.documentInstance=Math.random()</script>';
+    frame.style.cssText =
+      'position:fixed;right:20px;top:220px;width:340px;height:180px;z-index:51;display:none';
+    document.body.append(frame);
+    probe.referenceFrame = frame;
+    return () => frame.remove();
+  }, []);
+  useEffect(() => {
+    probe.referenceFrame.style.display = reference ? 'block' : 'none';
+  }, [reference]);
   probe.remount = () => setEpoch(value => value + 1);
   probe.toggleOpen = () => setOpen(value => !value);
   return (
     <>
-      <div className="bg-background"><WindowHeader /></div>
+      <div className="bg-background">
+        <WindowHeader />
+      </div>
       <CoworkPet running={false} waiting={false} />
       <WorkspaceNotifications>
         <div id="notice">Notice</div>
@@ -253,6 +267,9 @@ function Harness() {
           activeTabId={activeTabId}
           isOpen={open}
           onClose={() => {}}
+          referenceContent={
+            reference ? <input id="reference-draft" defaultValue="reference" /> : undefined
+          }
           tabs={[
             'Browser',
             'Terminal',

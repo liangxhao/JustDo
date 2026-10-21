@@ -117,6 +117,7 @@ import { resolveFullToolOutput } from '../model/tools/tool-presentation';
 import { chatStyles } from './justdo-chat.styles';
 import { renderMessageDiagram } from './markdown/mermaidRenderer';
 import { RichMessageControls } from './markdown/rich-message-controls';
+import { McpAppAnchor } from './mcp-app/anchor';
 import { McpAppView, type McpAppViewContext } from './mcp-app/view';
 import { renderChatAvatar } from './message/chat-avatar';
 import {
@@ -262,6 +263,7 @@ export class JustDoChatElement extends LitElement {
 
   @property({ attribute: false })
   declare openMcpAppFile: McpAppViewContext['openFile'];
+  captureMcpAppContext?: () => McpAppViewContext | undefined;
 
   @property({ attribute: false })
   declare onAssistantMessageFork: ((entryId: string) => boolean | Promise<boolean>) | undefined;
@@ -1422,12 +1424,15 @@ export class JustDoChatElement extends LitElement {
     this.renderRoot?.querySelectorAll<NativeWidgetView>('justdo-native-widget').forEach(widget => {
       widget.context = context;
     });
-    this.renderRoot?.querySelectorAll<McpAppView>('mcp-app-view').forEach(view => {
-      view.context = this.mcpAppContext();
-    });
+    this.renderRoot
+      ?.querySelectorAll<McpAppView | McpAppAnchor>('mcp-app-view, mcp-app-anchor')
+      .forEach(view => {
+        view.context = this.mcpAppContext();
+      });
   }
 
   private mcpAppContext(): McpAppViewContext | undefined {
+    if (this.captureMcpAppContext) return this.captureMcpAppContext();
     const native = this.widgetContext();
     const controller = this._controller;
     if (!native || !controller) return;
@@ -1446,7 +1451,11 @@ export class JustDoChatElement extends LitElement {
 
   private readonly handleMcpAppContext = (event: Event): void => {
     const view = event.composedPath()[0];
-    if (!(view instanceof McpAppView) || !this.renderRoot.contains(view)) return;
+    if (
+      !(view instanceof McpAppView || view instanceof McpAppAnchor) ||
+      !this.renderRoot.contains(view)
+    )
+      return;
     event.stopPropagation();
     view.context = this.mcpAppContext();
   };

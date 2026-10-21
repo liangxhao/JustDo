@@ -16,6 +16,7 @@ import {
 } from './contracts';
 // Bundled by the plugin build; no application imports or filesystem XML reads.
 import { validateDiagram } from './editor-resource.mjs';
+import { diagramUpdateReference } from './update-result';
 
 const object = (v: unknown): Record<string, unknown> =>
   v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -393,7 +394,7 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
                 content: [
                   {
                     type: 'text',
-                    text: `Updated current diagram: ${receipt.title}. Open the existing canvas to view or undo this change.`,
+                    text: JSON.stringify(diagramUpdateReference(receipt)),
                   },
                 ],
                 details: { diagramUpdate: receipt },

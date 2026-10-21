@@ -13,7 +13,7 @@ import {
 } from '@/libs/openclaw-chat/pipeline/native-canvas';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
-import { decodeNativeDiagramReference } from '../../pipeline/native-diagram';
+import { decodeNativeAppReference } from '../../pipeline/native-app-reference';
 import {
   decodeNativeMcpAppHistoryResult,
   decodeNativeMcpAppResult,
@@ -49,7 +49,7 @@ import {
   readUncoveredFailureDetail,
 } from '../turn/failed-run-message';
 import type {
-  DiagramReferenceTimelineItem,
+  AppReferenceTimelineItem,
   LiveProcessTimelineItem,
   NativeMcpAppTimelineItem,
   NativeWidgetTimelineItem,
@@ -59,7 +59,7 @@ import type {
 } from './project-turn-items';
 
 export type PersistedTimelineItem =
-  | DiagramReferenceTimelineItem
+  | AppReferenceTimelineItem
   | {
       kind: 'history-message';
       key: string;
@@ -576,20 +576,21 @@ export function projectPersistedTimeline(
         readToolCallId(source) ?? undefined,
       );
       if (failedApp) failedApps.set(failedApp.viewId, failedApp);
-      const diagram =
+      const reference =
         tool.status === 'completed'
-          ? decodeNativeDiagramReference(
+          ? decodeNativeAppReference(
               source,
               readToolName(source),
               readToolCallId(source) ?? undefined,
+              syntheticRunIds.has(runId) ? undefined : runId,
             )
           : undefined;
-      if (diagram) {
+      if (reference) {
         flushSummary();
         projected.push({
-          kind: 'diagram-reference',
-          key: `history-diagram:${tool.id}`,
-          reference: diagram,
+          kind: 'app-reference',
+          key: `history-app-reference:${tool.id}`,
+          reference,
         });
       }
       const app =

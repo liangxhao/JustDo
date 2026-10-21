@@ -28,6 +28,7 @@ export const McpAppEvent = {
   OpenWorkspace: 'mcp-app-open-workspace',
   Draft: 'mcp-app-draft',
   DisplayMode: 'mcp-app-display-mode',
+  PresentationChanged: 'mcp-app-presentation-changed',
 } as const;
 
 export const McpAppIpc = {

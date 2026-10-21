@@ -812,6 +812,31 @@ Markdown-it 处理列表、代码、表格、公式和链接，DOMPurify 统一�
 卡片保留截图的 20px 圆角和独立标题栏；窄块让辅助操作换行，避免挤出语言和复制按钮。
 这些是有来源的展示映射，不声称所有平台或版本的 ChatGPT 客户端使用同一套原生组件。
 
+### MCP Apps 的消息锚点与侧栏引用
+
+消息时间线只挂载 `mcp-app-anchor`，原生 descriptor 仍经过既有不可变准入。
+主 Document 的 `presentations.ts` 管理稳定 App 容器、消息／侧栏位置、会话内序号及必要保活；
+iframe 在该容器中首次创建，历史行接管不重新创建已有实例。
+普通未固定实例随最后锚点释放；固定及等待原消息返回的实例才保留。
+产品会话删除和展示区域销毁清理所属实例，不引入转录或内容缓存。
+
+正常停靠的 workspace 本身是另一个 WebContents。选中引用 Tab 时隐藏原生表面，
+保留其整棵组件树，在主文档侧栏复用 `CoworkDisplayPanel` 与同一份标签状态。
+原 App 始终留在原文档；分离 workspace 的引用页只定位主窗口。
+关闭引用页取消固定，标准 App 关闭仍真正关闭；普通应用和文件页签不走引用关闭分支。
+主文档固定表面与原生 workspace 共用遮挡判断，Modal／菜单阻塞期间同时拒绝交互 RPC。
+
+`McpAppSessionView.sameNativeIdentity` 比较原 client、generation、agent、sessionKey 与物理 sessionId。
+展示作用域、标题、序号、viewId 显示定位不授予新权限；保留实例的恢复不得换连接代次。
+`JustDoChatWrapper` 提供同步当前上下文捕获，历史元素替换不能改变被保留 App 的身份。
+标准 host context 与 AppBridge 继续负责尺寸、模式、工具及资源交互。
+
+可选插件适配将可信业务身份／回执映射到纯 `McpAppContentReference`，时间线使用通用
+`app-reference` 条目。投影核对真实工具和调用，已知原生 run 还须精确匹配；
+正文不构成 descriptor 或授权。适配与恢复集中在 `native-app-reference.ts`／`plugin-content.ts`，
+通用锚点、Tab、布局不解析插件正文。现行流程见 [MCP Apps](../features/chat/mcp-apps.md)，
+插件增强契约见[引用接入](../features/plugins/mcp-app-references.md)。
+
 ## 10. 滚动、搜索与调度
 
 stream-render-scheduler 合并 frame 更新，每帧直接展示已接收的最新正文并保留原生段边界。用户向上阅读后暂停自动跟随；新内容记录 unseen revision，不强拉到底部。恢复跟随是明确用户动作或仍处底部的规则。

@@ -5,6 +5,7 @@
 ## 对话与助手
 
 [MCP Apps](chat/mcp-apps.md) 维护标准应用界面、手动入口、原生提问、文件和上下文交互的桌面宿主契约。
+[MCP App 引用接入](plugins/mcp-app-references.md) 维护通用侧栏引用、可选内容关联及历史回执的插件边界。
 [draw.io 离线绘图](chat/drawio-offline.md) 维护默认内置的编辑器、资源打包和本地导出流程。
 [draw.io 当前画布](chat/drawio-current-canvas.md) 维护稳定图表身份、侧栏复用、连续修改、撤销和确认结果恢复。
 

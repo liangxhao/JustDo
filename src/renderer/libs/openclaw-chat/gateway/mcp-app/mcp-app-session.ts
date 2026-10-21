@@ -369,6 +369,23 @@ export class McpAppSessionView {
     return this.binding.sessionId;
   }
 
+  get agentId() {
+    return this.binding.agentId;
+  }
+
+  /** Compare authority, excluding the local pause epoch. Does not authorize a call. */
+  sameNativeIdentity(other: McpAppSessionView): boolean {
+    const a = this.binding;
+    const b = other.binding;
+    return (
+      a.client === b.client &&
+      a.generation === b.generation &&
+      a.sessionKey === b.sessionKey &&
+      a.sessionId === b.sessionId &&
+      a.agentId === b.agentId
+    );
+  }
+
   onSuspend(listener: () => void) {
     this.suspensionListeners.add(listener);
     return () => {

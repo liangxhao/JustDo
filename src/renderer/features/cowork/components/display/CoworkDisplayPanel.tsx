@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState
 import { createPortal } from 'react-dom';
 
 import WindowHeader from '@/app/shell/window/WindowHeader';
+import { getMcpAppPresentations } from '@/libs/openclaw-chat/components/mcp-app/presentations';
 import { McpAppView } from '@/libs/openclaw-chat/components/mcp-app/view';
 import { i18nService } from '@/services/i18n';
 import FileTreeIcon from '@/shared/components/icons/FileTreeIcon';
@@ -17,6 +18,12 @@ import FilePathBreadcrumbBar from '../preview/FilePathBreadcrumbBar';
 import { FilePreviewToolbarContext } from '../shared/FilePreviewToolbarContext';
 import { WorkspaceFileIconContext } from '../shared/WorkspaceFileIconContext';
 import DisplayTabContextMenu, { type DisplayTabContextMenuItem } from './DisplayTabContextMenu';
+import {
+  consumeDisplayTabFocus,
+  readDisplayTabFocus,
+  requestDisplayTabFocus,
+  subscribeDisplayTabFocus,
+} from './displayTabFocus';
 import { FILE_DISPLAY_TAB_PREFIX, WORKSPACE_FILES_DISPLAY_TAB_ID } from './displayTabIds';
 import DisplayTabListMenu from './DisplayTabListMenu';
 import useDisplayTabLayout from './useDisplayTabLayout';
@@ -26,6 +33,7 @@ export interface CoworkDisplayTab {
   id: string;
   label: string;
   icon: React.ReactNode;
+  reference?: boolean;
   contextMenuItems?: DisplayTabContextMenuItem[];
   onClose?: () => void | boolean | Promise<void | boolean>;
   onContextMenu?: (
@@ -48,6 +56,10 @@ interface CoworkDisplayPanelProps {
   activeTabId: string;
   actions?: React.ReactNode;
   children: React.ReactNode;
+  /** Same-document presentation; the native workspace tree remains mounted. */
+  referenceContent?: React.ReactNode;
+  nativeWorkspace?: boolean;
+  referenceSurface?: boolean;
   emptyState?: React.ReactNode;
   fileContextPath?: string;
   fileAppCatalog?: McpAppDiscovery;
@@ -80,6 +92,9 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   activeTabId,
   actions,
   children,
+  referenceContent,
+  nativeWorkspace = true,
+  referenceSurface = false,
   emptyState,
   fileContextPath,
   fileAppCatalog,
@@ -96,10 +111,11 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   width: controlledWidth,
 }) => {
   const slotRef = useRef<HTMLElement>(null);
-  const portal = useWorkspacePortal(slotRef, isOpen);
+  const normalOpen = isOpen && !referenceContent;
+  const portal = useWorkspacePortal(slotRef, normalOpen, nativeWorkspace);
   const ownerDocument = portal.target?.ownerDocument ?? document;
   const ownerWindow = (ownerDocument.defaultView ?? window) as Window & typeof globalThis;
-  const visible = isOpen || portal.detached;
+  const visible = normalOpen || portal.detached;
   const activeFilePath =
     fileContextPath ||
     (activeTabId.startsWith(FILE_DISPLAY_TAB_PREFIX)
@@ -128,11 +144,18 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
     const panel = panelRef.current;
     const changeMode = (event: Event) => {
       const view = event.composedPath()[0];
+      const reference =
+        referenceSurface && view instanceof McpAppView
+          ? getMcpAppPresentations(ownerDocument).find(view)
+          : undefined;
+      const belongs =
+        panel?.contains(view as Node) ||
+        (reference?.pinned && reference.sidebar && panel?.contains(reference.sidebar));
       const detail = (event as CustomEvent<{ mode: string; respond: (accepted: boolean) => void }>)
         .detail;
       if (
         !(view instanceof McpAppView) ||
-        !panel?.contains(view) ||
+        !belongs ||
         !visible ||
         (detail?.mode !== 'inline' && detail.mode !== 'fullscreen')
       )
@@ -141,9 +164,10 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       detail.respond(true);
       event.stopPropagation();
     };
-    panel?.addEventListener(McpAppEvent.DisplayMode, changeMode);
-    return () => panel?.removeEventListener(McpAppEvent.DisplayMode, changeMode);
-  }, [visible, portal.target]);
+    const source = referenceSurface ? ownerDocument : panel;
+    source?.addEventListener(McpAppEvent.DisplayMode, changeMode);
+    return () => source?.removeEventListener(McpAppEvent.DisplayMode, changeMode);
+  }, [visible, portal.target, referenceSurface, ownerDocument]);
   const sidePanelRef = useRef<HTMLDivElement>(null);
   const sidePanelToggleRef = useRef<HTMLButtonElement>(null);
   const [fileToolbarTarget, setFileToolbarTarget] = useState<HTMLDivElement | null>(null);
@@ -281,12 +305,12 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       const nextTab = tabs[nextIndex];
       if (!nextTab) return;
       nextTab.onSelect();
-      ownerWindow.requestAnimationFrame(() => {
-        revealTab(nextTab.id);
+      if (!portal.native && !referenceSurface) {
         tabButtonRefs.current.get(nextTab.id)?.focus({ preventScroll: true });
-      });
+      }
+      requestDisplayTabFocus(nextTab.id, portal.detached ? ownerDocument : undefined);
     },
-    [revealTab, tabs, ownerWindow],
+    [tabs, portal.native, portal.detached, referenceSurface, ownerDocument],
   );
 
   useEffect(
@@ -394,13 +418,47 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   const focusTab = useCallback(
     (tabId: string | undefined) => {
       if (!tabId) return;
-      ownerWindow.requestAnimationFrame(() => {
-        revealTab(tabId);
-        tabButtonRefs.current.get(tabId)?.focus({ preventScroll: true });
-      });
+      requestDisplayTabFocus(tabId, portal.detached ? ownerDocument : undefined);
     },
-    [revealTab, ownerWindow],
+    [portal.detached, ownerDocument],
   );
+
+  useLayoutEffect(() => {
+    let frame: number | undefined;
+    const focus = () => {
+      if (frame !== undefined) ownerWindow.cancelAnimationFrame(frame);
+      frame = ownerWindow.requestAnimationFrame(() => {
+        const request = readDisplayTabFocus();
+        if (
+          !request ||
+          request.id !== activeTabId ||
+          !visible ||
+          (request.document && request.document !== ownerDocument) ||
+          (referenceContent && request.document !== ownerDocument)
+        )
+          return;
+        const button = tabButtonRefs.current.get(request.id);
+        if (!button?.isConnected) return;
+        revealTab(request.id);
+        button.focus({ preventScroll: true });
+        consumeDisplayTabFocus(request.sequence);
+      });
+    };
+    const stop = subscribeDisplayTabFocus(focus);
+    focus();
+    return () => {
+      stop();
+      if (frame !== undefined) ownerWindow.cancelAnimationFrame(frame);
+    };
+  }, [
+    activeTabId,
+    visible,
+    ownerDocument,
+    ownerWindow,
+    referenceContent,
+    portal.detached,
+    revealTab,
+  ]);
 
   const getCloseActions = useCallback(
     (tab: CoworkDisplayTab, tabIndex: number): CoworkDisplayTabCloseActions => {
@@ -412,7 +470,8 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
         canCloseRight: rightTabs.length > 0,
         close: async () => {
           const closed = (await tab.onClose?.()) !== false;
-          focusTab(closed ? adjacentTab?.id : tab.id);
+          if (closed && tab.id === activeTabId) adjacentTab?.onSelect();
+          focusTab(closed ? (tab.id === activeTabId ? adjacentTab?.id : activeTabId) : tab.id);
         },
         closeOthers: async () => {
           tab.onSelect();
@@ -426,7 +485,7 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
         restoreFocus: () => focusTab(tab.id),
       };
     },
-    [closeTabs, focusTab, tabs],
+    [activeTabId, closeTabs, focusTab, tabs],
   );
 
   const menuTabIndex = tabMenu ? tabs.findIndex(tab => tab.id === tabMenu.tabId) : -1;
@@ -460,14 +519,20 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       className={
         portal.native
           ? `${visible ? 'flex' : 'hidden'} relative h-full w-full min-w-0 flex-col ${portal.detached ? '' : 'border-l border-border'} bg-background`
-          : `${isOpen ? 'flex' : 'hidden'} cowork-display-panel absolute inset-y-0 right-0 z-50 max-w-[calc(100%-2rem)] flex-col border-l border-border bg-background shadow-xl`
+          : `${normalOpen ? 'flex' : 'hidden'} cowork-display-panel absolute inset-y-0 right-0 z-50 max-w-[calc(100%-2rem)] flex-col border-l border-border bg-background shadow-xl`
       }
       style={
         portal.native
           ? undefined
           : isWorkspaceFullscreen
             ? { width: '100%', maxWidth: 'none', position: 'absolute', inset: 0, zIndex: 50 }
-            : ({ width, '--display-panel-width': `${width}px` } as React.CSSProperties)
+            : ({
+                width,
+                '--display-panel-width': `${width}px`,
+                ...(referenceSurface
+                  ? { transition: 'none', transform: 'none', marginRight: 0 }
+                  : {}),
+              } as React.CSSProperties)
       }
       aria-label={i18nService.t('coworkCanvasTitle')}
       aria-hidden={!visible}
@@ -557,17 +622,26 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
                       {tab.icon}
                     </span>
                     <span className="min-w-0 truncate">{tab.label}</span>
+                    {tab.reference && (
+                      <span
+                        className="shrink-0 text-[10px] font-normal text-muted"
+                        title={i18nService.t('mcpAppsReferenceHint')}
+                      >
+                        {i18nService.t('mcpAppsReference')}
+                      </span>
+                    )}
                   </button>
                   {tab.onClose && (
                     <button
                       type="button"
                       onClick={event => {
                         event.stopPropagation();
-                        tab.onClose?.();
+                        if (tab.reference) void getCloseActions(tab, tabIndex).close();
+                        else tab.onClose?.();
                       }}
                       className="cowork-display-tab-close ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted opacity-70 hover:bg-surface-overlay hover:text-foreground group-hover:opacity-100"
-                      aria-label={`${i18nService.t('close')}: ${tab.label}`}
-                      title={i18nService.t('close')}
+                      aria-label={`${i18nService.t(tab.reference ? 'mcpAppsUnpin' : 'close')}: ${tab.label}`}
+                      title={i18nService.t(tab.reference ? 'mcpAppsUnpin' : 'close')}
                     >
                       <XMarkIcon className="h-3.5 w-3.5" />
                     </button>
@@ -698,6 +772,17 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
         <div className="flex min-h-0 flex-1 overflow-hidden">
           <div className="relative min-w-0 flex-1 overflow-hidden">
             {children}
+            {referenceContent && portal.detached && (
+              <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-background p-6 text-sm text-secondary">
+                <span>{i18nService.t('mcpAppsReferenceMainWindow')}</span>
+                <button
+                  className="rounded-lg border border-border px-3 py-2 text-foreground"
+                  onClick={portal.focusMain}
+                >
+                  {i18nService.t('mcpAppsViewMainWindow')}
+                </button>
+              </div>
+            )}
             {showEmptyState && emptyState && (
               <div className="absolute inset-0 z-10">{emptyState}</div>
             )}
@@ -795,13 +880,34 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       {content}
     </WorkspaceFileIconContext.Provider>
   );
-  if (!portal.native) return fileIconContent;
+  const localReference = referenceContent ? (
+    <CoworkDisplayPanel
+      nativeWorkspace={false}
+      referenceSurface
+      activeTabId={activeTabId}
+      tabs={tabs}
+      actions={actions}
+      isOpen={isOpen}
+      onClose={onClose}
+      width={width}
+      onWidthChange={onWidthChange ?? setUncontrolledWidth}
+    >
+      {referenceContent}
+    </CoworkDisplayPanel>
+  ) : null;
+  if (!portal.native)
+    return (
+      <>
+        {fileIconContent}
+        {localReference}
+      </>
+    );
   return (
     <>
       <aside
         ref={slotRef}
-        aria-hidden={!isOpen || portal.detached}
-        className={`${isOpen && !portal.detached ? 'flex' : 'hidden'} cowork-display-panel absolute inset-y-0 right-0 z-50 max-w-[calc(100%-2rem)]`}
+        aria-hidden={!normalOpen || portal.detached}
+        className={`${normalOpen && !portal.detached ? 'flex' : 'hidden'} cowork-display-panel absolute inset-y-0 right-0 z-50 max-w-[calc(100%-2rem)]`}
         data-workspace-fullscreen={isWorkspaceFullscreen}
         style={
           isWorkspaceFullscreen
@@ -824,7 +930,7 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
               setWidth(current => clampWidth(current + (event.key === 'ArrowLeft' ? 24 : -24)));
             }}
             role="separator"
-            tabIndex={isOpen && !portal.detached ? 0 : -1}
+            tabIndex={normalOpen && !portal.detached ? 0 : -1}
             aria-orientation="vertical"
             aria-label={i18nService.t('resizePanels')}
             aria-valuemin={DISPLAY_PANEL_MIN_WIDTH}
@@ -833,6 +939,7 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
           />
         )}
       </aside>
+      {localReference}
       {portal.target &&
         createPortal(
           <OwnerDocumentContext.Provider value={ownerDocument}>

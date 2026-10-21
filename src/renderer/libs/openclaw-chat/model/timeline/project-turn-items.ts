@@ -1,13 +1,13 @@
 import { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
+import type { McpAppContentReference } from '@shared/plugins/mcpAppReferences';
 import type { McpAppPreview } from '@shared/plugins/mcpApps';
 
-import type { DiagramReference } from '../../../../../../openclaw-extensions/drawio/contracts';
+import { decodeNativeAppReference } from '../../pipeline/native-app-reference';
 import {
   decodeNativeCanvasResult,
   type NativeCanvasPreview,
   stripNativeWidgetFallbacks,
 } from '../../pipeline/native-canvas';
-import { decodeNativeDiagramReference } from '../../pipeline/native-diagram';
 import { decodeNativeMcpAppResult } from '../../pipeline/native-mcp-app';
 import type {
   AssistantTurn,
@@ -92,14 +92,14 @@ export interface NativeMcpAppTimelineItem {
   preview: McpAppPreview;
 }
 
-export interface DiagramReferenceTimelineItem {
-  kind: 'diagram-reference';
+export interface AppReferenceTimelineItem {
+  kind: 'app-reference';
   key: string;
-  reference: DiagramReference;
+  reference: McpAppContentReference;
 }
 
 export type ActiveTurnTimelineItem =
-  | DiagramReferenceTimelineItem
+  | AppReferenceTimelineItem
   | NativeWidgetTimelineItem
   | NativeMcpAppTimelineItem
   | ProcessSummaryTimelineItem
@@ -180,15 +180,15 @@ export function projectTurnItems(
   let summarySegment = 0;
   const widgets = new Map<ToolItem, NativeCanvasPreview>();
   const apps = new Map<ToolItem, McpAppPreview>();
-  const diagrams = new Map<ToolItem, DiagramReference>();
+  const references = new Map<ToolItem, McpAppContentReference>();
   const appViews = new Set<string>();
   const nativeDocIds = new Set<string>();
   for (const item of turn.items) {
     if (item.type !== 'tool' || item.status !== 'completed') continue;
     const preview = decodeNativeCanvasResult(item.output, item.name, item.toolCallId);
     const app = decodeNativeMcpAppResult(item.output, item.name, item.toolCallId);
-    const diagram = decodeNativeDiagramReference(item.output, item.name, item.toolCallId);
-    if (diagram) diagrams.set(item, diagram);
+    const reference = decodeNativeAppReference(item.output, item.name, item.toolCallId, item.runId);
+    if (reference) references.set(item, reference);
     if (app && !appViews.has(app.viewId)) {
       apps.set(item, app);
       appViews.add(app.viewId);
@@ -236,14 +236,14 @@ export function projectTurnItems(
         const normalizedName = item.name.trim().toLowerCase();
         const widget = widgets.get(item);
         const app = apps.get(item);
-        const diagram = diagrams.get(item);
-        if (diagram) {
+        const reference = references.get(item);
+        if (reference) {
           archived.push(item);
           flushSummary();
           projected.push({
-            kind: 'diagram-reference',
-            key: `diagram:${item.id}`,
-            reference: diagram,
+            kind: 'app-reference',
+            key: `app-reference:${item.id}`,
+            reference,
           });
           summarySegment += 1;
           continue;

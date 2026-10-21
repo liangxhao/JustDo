@@ -283,6 +283,45 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         openMcpAppFileCallback.current?.(file) ?? Promise.resolve(false),
       [],
     );
+    const prepareAppRef = useRef<() => Promise<McpAppViewContext>>();
+    const captureMcpAppContext = useCallback((): McpAppViewContext | undefined => {
+      const controller = controllerRef.current;
+      const sessionKey = canonicalSessionKeyRef.current;
+      if (!controller || !currentSessionId || !sessionKey || !controller.mcpApps.ready) return;
+      const nativeSessionId = controller.state.currentSessionId;
+      const build = (resuming: boolean): McpAppViewContext | undefined => {
+        if (
+          activeProductSessionId.current !== currentSessionId ||
+          controllerRef.current !== controller ||
+          canonicalSessionKeyRef.current !== sessionKey ||
+          controller.state.sessionKey !== sessionKey ||
+          !nativeSessionId ||
+          controller.state.currentSessionId !== nativeSessionId ||
+          (resuming && !canDraftWidget()) ||
+          !controller.mcpApps.ready
+        )
+          return;
+        const binding = controller.mcpApps.bind();
+        return {
+          apps: controller.mcpApps,
+          sessionKey,
+          presentationScope: currentSessionId,
+          isCurrent: () =>
+            activeProductSessionId.current === currentSessionId &&
+            controllerRef.current === controller &&
+            canonicalSessionKeyRef.current === sessionKey &&
+            binding.isCurrent(),
+          canDraft: canDraftWidget,
+          addDraft: addMcpAppDraft,
+          openFile: openMcpAppFile,
+          refresh: () => prepareAppRef.current!(),
+          resume: () => build(true),
+          addNewDraft: (text, content) =>
+            newMcpAppDraftCallback.current?.(text, content) ?? Promise.resolve(false),
+        };
+      };
+      return build(false);
+    }, [currentSessionId, canDraftWidget, addMcpAppDraft, openMcpAppFile]);
     const prepareMcpApp = useCallback(async (): Promise<McpAppViewContext> => {
       assertSessionMutationAllowed();
       const controller = controllerRef.current;
@@ -313,47 +352,11 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           throw new Error('Native session changed');
       }
       assertSessionMutationAllowed();
-      const nativeSessionId = controller.state.currentSessionId;
-      const resume = (): McpAppViewContext | undefined => {
-        if (
-          activeProductSessionId.current !== currentSessionId ||
-          controllerRef.current !== controller ||
-          canonicalSessionKeyRef.current !== sessionKey ||
-          controller.state.sessionKey !== sessionKey ||
-          !nativeSessionId ||
-          controller.state.currentSessionId !== nativeSessionId ||
-          !canDraftWidget() ||
-          !controller.mcpApps.ready
-        )
-          return;
-        const binding = controller.mcpApps.bind();
-        return {
-          apps: controller.mcpApps,
-          sessionKey,
-          isCurrent: () =>
-            activeProductSessionId.current === currentSessionId &&
-            controllerRef.current === controller &&
-            canonicalSessionKeyRef.current === sessionKey &&
-            binding.isCurrent(),
-          canDraft: canDraftWidget,
-          addDraft: addMcpAppDraft,
-          openFile: openMcpAppFile,
-          refresh: prepareMcpApp,
-          resume,
-          addNewDraft: (text, content) =>
-            newMcpAppDraftCallback.current?.(text, content) ?? Promise.resolve(false),
-        };
-      };
-      const context = resume();
+      const context = captureMcpAppContext();
       if (!context) throw new Error('Native App session changed');
       return context;
-    }, [
-      currentSessionId,
-      canDraftWidget,
-      addMcpAppDraft,
-      openMcpAppFile,
-      assertSessionMutationAllowed,
-    ]);
+    }, [currentSessionId, canDraftWidget, assertSessionMutationAllowed, captureMcpAppContext]);
+    prepareAppRef.current = prepareMcpApp;
     const onboardMcpApp = useCallback(
       async (pluginId: string, signal: AbortSignal) => {
         assertSessionMutationAllowed();
@@ -405,6 +408,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         const previous = chatElementRef.current;
         previous?.removeEventListener(NATIVE_WIDGET_DRAFT_EVENT, handleWidgetDraft);
         if (previous && previous !== element) {
+          previous.captureMcpAppContext = undefined;
           previous.canDraftWidget = undefined;
           previous.addMcpAppDraft = undefined;
           previous.openMcpAppFile = undefined;
@@ -412,6 +416,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         }
         chatElementRef.current = element;
         if (element) {
+          element.captureMcpAppContext = captureMcpAppContext;
           element.canDraftWidget = canDraftWidget;
           element.addMcpAppDraft = addMcpAppDraft;
           element.openMcpAppFile = openMcpAppFile;
@@ -420,7 +425,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         }
         element?.addEventListener(NATIVE_WIDGET_DRAFT_EVENT, handleWidgetDraft);
       },
-      [canDraftWidget, handleWidgetDraft, addMcpAppDraft, openMcpAppFile],
+      [captureMcpAppContext, canDraftWidget, handleWidgetDraft, addMcpAppDraft, openMcpAppFile],
     );
     useLayoutEffect(() => {
       // The live callback fences input immediately; refresh policy/UI without

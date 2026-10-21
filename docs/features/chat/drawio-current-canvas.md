@@ -47,7 +47,7 @@ OpenAI 的[官方 MCP UI 文档](https://developers.openai.com/plugins/build/cha
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | 侧栏打开空白 draw.io 后要求画图 | 在这张空白画布生成内容，不再开第二个编辑器                                                                    |
 | 侧栏已有图，要求加节点或改颜色  | 原地更新；回复仅显示“已更新”及定位画布入口                                                                    |
-| 已有内嵌图，没有侧栏目标        | 在原文档中的编辑器继续编辑，不强制搬到侧栏；后续消息引用当前图                                                |
+| 已有内嵌图，没有侧栏目标        | 在原文档中的编辑器继续编辑；用户可经通用引用固定到侧栏，后续消息定位同一图                                    |
 | 明确另画一张图                  | 新图身份独立，原图仍保留                                                                                      |
 | 只问图的含义                    | 只读取，不改变内容                                                                                            |
 | 同一聊天内切换标签后原请求完成  | 原绑定仍有效时更新发送时目标，不改到新标签，也不抢回焦点                                                      |
@@ -117,6 +117,10 @@ OpenAI 的[官方 MCP UI 文档](https://developers.openai.com/plugins/build/cha
 
 侧栏空白和文件入口的 app-only 启动不保证出现在聊天工具历史中。首次成功修改的真实插件结果必须附上已认证的来源收据（图表、精确会话、原视图及入口类型），允许恢复从这份结果开始；不能强制依赖此前存在 `create_diagram` 记录。宿主传入的 descriptor 或 XML 中的 ID 不是来源证明，绑定必须另核真实原生来源。
 
+成功修改的可见工具结果同时包含有界 `drawio.diagram-reference.v1` 记录（最多 4096 字符），只有标题、来源与调用关联；完整 XML 和原收据继续保留在 `details.diagramUpdate` 及原生记录中。实际 `chat.history` 会过滤自定义 details，因此历史定位不再依赖 details 存活。宿主沿通用 [MCP App 引用接入](../plugins/mcp-app-references.md) 校验真实工具、精确调用与已有 run 身份，再投影紧凑入口。失败、未知及模型示例不产生成功回执，也不扩大正常预览抑制范围。
+
+用户固定消息图只改变位置，保持同一个 iframe、AppBridge、未提交节点文字和撤销栈。已有侧栏空白／文件图仍定位原 Tab；引用 Tab 关闭只移回消息，原应用自身关闭保持真正关闭。只读恢复保留原内容来源，同内容历史回执不重复创建恢复视图，不注册旧编辑授权。
+
 来源声明沿用现有桌面宿主信任边界：只有持有 operator.admin 的宿主内部适配能声明已原生准入的来源，App 沙箱与模型不能访问该入口。适配仅接受 `isNativeMcpAppPreview` 准入对象，立即捕获不可变的服务、工具、资源和原生绑定，防止 WeakSet 对象后续变更。RPC 的 `mcp.app.view` 只证明真实视图和会话，不独立证明 serverName；另沿该 view 的原连接读取 `diagram://origin/<id>` 核对服务器曾签发此图表。不能换用可能属于另一 harness 连接的静态 MCP manager。恢复来源锚点明确标为经认证宿主声明及真实插件结果，不冒充原生 MCP descriptor。
 
 原生宿主文件订阅不等同 MCP server 的 `resources/subscribe`，不可据此设计 server 推送。使用公开插件 Gateway 事件和认证查询；若事件漏失，只允许重新查询状态，已经派发的修改不得重新应用。
@@ -137,7 +141,7 @@ OpenAI 的[官方 MCP UI 文档](https://developers.openai.com/plugins/build/cha
 
 对应验证：插件 `canvas-state`、`editing`、`current-canvas`、`update-result` 测试覆盖授权、幂等、冲突与恢复选择；`tests/drawio/current-canvas-navigation.test.ts` 联合真实会话适配与插件 RPC，覆盖本地请求已取消但后台继续准备的顺序；普通/首发 controller 测试覆盖取消与旧绑定失效。
 
-`node tests/drawio/editing-native-smoke.cjs` 在隔离状态、合成模型和编辑器回执下运行桌面实际使用的锁定 Gateway bundle。角色 home 与会话项目目录明确不同，桌面认证连接与 Main 准备连接分开；在已有会话执行期间手动打开空白/文件图，按实际顺序重复准备会话、发布 App 上下文、编辑并继续发送，验证原视图来源证明和离线资源仍可用、暂停后重新绑定及旧 token 失效。还验证创建入口的精确 run 绑定、结果入历史、重启恢复最新 XML，以及恢复视图无法调用旧工具。真实编辑器另由 `node tests/drawio/offline-smoke.cjs --editing`、`--blank --editing`、`--file --compressed --editing` 验证同 iframe、连续修改、单步与多页撤销、未提交文字冲突及零公网请求。这些分层探针不冒充真实企业模型或安装包人工验收。
+`node tests/drawio/editing-native-smoke.cjs` 在隔离状态、合成模型和编辑器回执下运行桌面实际使用的锁定 Gateway bundle。角色 home 与会话项目目录明确不同，桌面认证连接与 Main 准备连接分开；在已有会话执行期间手动打开空白/文件图，按实际顺序重复准备会话、发布 App 上下文、编辑并继续发送，验证原视图来源证明和离线资源仍可用、暂停后重新绑定及旧 token 失效。还验证创建入口的精确 run 绑定、结果入历史、重启恢复最新 XML，以及恢复视图无法调用旧工具。真实编辑器另由 `node tests/drawio/offline-smoke.cjs --editing --reference`、`--blank --editing`、`--file --compressed --editing` 验证同 iframe、连续修改、单步与多页撤销、未提交文字冲突及零公网请求。这些分层探针不冒充真实企业模型或安装包人工验收。
 
 2026-10-21 回归验证：旧运行时在不同目录的控制组中重现来源不可用及 runtime disposed；031 经完整 Windows x64 pristine 构建、31 项补丁验证与 source/bundle 字节不变的幂等复核后，上述三入口连续两轮修改、暂停恢复、原资源存活及重启恢复全部通过。主工作区复查另外抓到短暂的原生访问刷新，插件补齐有界只读等待后再次通过。通用 MCP App 的工具、审批、提问、设置、资源与原生本地取消语义探针也通过；相关 246 项自动测试、lint 和应用构建通过。独立 Agent review 未发现 P1/P2 问题。探针另可加 `--installed-plugin` 直接核验运行时中实际打包的插件。
 

@@ -13,10 +13,7 @@ export const WORKSPACE_PRESENTATION_EVENT = 'cowork:workspace-presentation-chang
 
 export const workspaceKeyboardDocument = new WeakMap<Event, Document>();
 
-const copyAppearance = (
-  target: Document,
-  controls: Window['electron']['window'],
-): (() => void) => {
+const copyAppearance = (target: Document, controls: Window['electron']['window']): (() => void) => {
   const copies = new Map<Element, Element>();
   const widthObserver = observeChatContentWidth(target.documentElement, controls);
   const sync = () => {
@@ -80,8 +77,8 @@ const copyAppearance = (
 };
 
 /** The portal target never changes during presentation moves. Only its native view moves. */
-export function useWorkspacePortal(slot: RefObject<HTMLElement>, open: boolean) {
-  const api = window.electron?.workspaceWindow;
+export function useWorkspacePortal(slot: RefObject<HTMLElement>, open: boolean, enabled = true) {
+  const api = enabled ? window.electron?.workspaceWindow : undefined;
   const [target, setTarget] = useState<HTMLElement | null>(null);
   const [detached, setDetached] = useState(false);
   const [blocked, setBlocked] = useState(false);

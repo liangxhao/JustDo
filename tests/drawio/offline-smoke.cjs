@@ -270,14 +270,10 @@ if (!process.versions.electron) {
       win.webContents.on('did-fail-load', (_event, code, description, url, mainFrame) => {
         evidence.failedLoads.push({ code, description, url, mainFrame });
       });
-      await win.loadURL(
-        running.url +
-          (process.argv.includes('--file')
-            ? '/?file=1'
-            : process.argv.includes('--blank')
-              ? '/?blank=1'
-              : ''),
-      );
+      const hostUrl = new URL(running.url);
+      for (const flag of ['file', 'blank', 'reference'])
+        if (process.argv.includes(`--${flag}`)) hostUrl.searchParams.set(flag, '1');
+      await win.loadURL(hostUrl.href);
       const until = async (fn, label) => {
         for (let i = 0; i < 300; i++) {
           const value = await fn();
@@ -456,6 +452,35 @@ if (!process.versions.electron) {
         await editor.executeJavaScript(
           `(() => { const input = document.querySelector('.mxCellEditor[contenteditable=true]'); input.textContent='尚未按回车的手工修改'; input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'})); })()`,
         );
+        if (process.argv.includes('--reference')) {
+          const reads = await win.webContents.executeJavaScript('window.fixtureViewReads');
+          await editor.executeJavaScript('window.referenceDocumentInstance=Math.random()');
+          const instance = await editor.executeJavaScript('window.referenceDocumentInstance');
+          for (const pinned of [true, false, true, false]) {
+            await win.webContents.executeJavaScript(`window.fixtureReference(${pinned})`);
+            await until(
+              () =>
+                editor.executeJavaScript(
+                  'document.querySelector(".mxCellEditor[contenteditable=true]")?.textContent==="尚未按回车的手工修改"',
+                ),
+              'Uncommitted text survives reference move',
+            );
+          }
+          assert.equal(
+            await editor.executeJavaScript('window.referenceDocumentInstance'),
+            instance,
+          );
+          assert.equal(await win.webContents.executeJavaScript('window.fixtureViewReads'), reads);
+          assert.equal(
+            await win.webContents.executeJavaScript(
+              'window.fixtureView.shadowRoot.querySelector("iframe")===window.fixtureOriginalFrame',
+            ),
+            true,
+          );
+          console.log(
+            'Actual draw.io reference pin/unpin retains document, uncommitted node text and native view reads.',
+          );
+        }
         const conflict = await win.webContents.executeJavaScript(
           `window.fixtureApplyDiagram(${JSON.stringify(stale.xml.replaceAll('AI 修改后的申请', '不应覆盖手改'))})`,
         );

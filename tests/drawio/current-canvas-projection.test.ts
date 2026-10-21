@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import { DRAWIO_EDIT_TOOL, DRAWIO_UPDATE_KIND } from '../../openclaw-extensions/drawio/contracts';
+import { diagramUpdateReference } from '../../openclaw-extensions/drawio/update-result';
 import type { AssistantTurn } from '../../src/renderer/libs/openclaw-chat/model/chat-transcript-state';
 import { projectPersistedTimeline } from '../../src/renderer/libs/openclaw-chat/model/timeline/project-history-timeline';
 import { projectTurnItems } from '../../src/renderer/libs/openclaw-chat/model/timeline/project-turn-items';
 import {
-  decodeNativeDiagramReference,
-  isNativeDiagramReference,
-} from '../../src/renderer/libs/openclaw-chat/pipeline/native-diagram';
+  decodeNativeAppReference,
+  isNativeAppReference,
+} from '../../src/renderer/libs/openclaw-chat/pipeline/native-app-reference';
 
 const result = () => ({
   role: 'toolResult',
@@ -43,23 +44,19 @@ const result = () => ({
 
 describe('confirmed current diagram projection', () => {
   it('admits a frozen reference without XML, and refuses copied or mismatched references', () => {
-    const reference = decodeNativeDiagramReference(
-      JSON.stringify(result()),
-      DRAWIO_EDIT_TOOL,
-      'call',
-    )!;
-    expect(isNativeDiagramReference(reference)).toBe(true);
+    const reference = decodeNativeAppReference(JSON.stringify(result()), DRAWIO_EDIT_TOOL, 'call')!;
+    expect(isNativeAppReference(reference)).toBe(true);
     expect(Object.isFrozen(reference)).toBe(true);
     expect(reference).not.toHaveProperty('xml');
-    expect(isNativeDiagramReference({ ...reference })).toBe(false);
-    expect(decodeNativeDiagramReference(result(), 'other', 'call')).toBeUndefined();
-    expect(decodeNativeDiagramReference(result(), DRAWIO_EDIT_TOOL, 'other')).toBeUndefined();
+    expect(isNativeAppReference({ ...reference })).toBe(false);
+    expect(decodeNativeAppReference(result(), 'other', 'call')).toBeUndefined();
+    expect(decodeNativeAppReference(result(), DRAWIO_EDIT_TOOL, 'other')).toBeUndefined();
   });
 
   it('projects a real tool result as one compact reference in both live and persisted timelines', () => {
     const source = result();
     const persisted = projectPersistedTimeline([source]);
-    expect(persisted.filter(item => item.kind === 'diagram-reference')).toHaveLength(1);
+    expect(persisted.filter(item => item.kind === 'app-reference')).toHaveLength(1);
     expect(persisted.some(item => item.kind === 'mcp-app')).toBe(false);
     const turn = {
       runId: 'run',
@@ -80,7 +77,7 @@ describe('confirmed current diagram projection', () => {
       ],
     } as AssistantTurn;
     const live = projectTurnItems(turn);
-    expect(live.filter(item => item.kind === 'diagram-reference')).toHaveLength(1);
+    expect(live.filter(item => item.kind === 'app-reference')).toHaveLength(1);
     expect(live.some(item => item.kind === 'mcp-app')).toBe(false);
   });
 
@@ -94,9 +91,43 @@ describe('confirmed current diagram projection', () => {
         details: { diagramUpdate: { ...source.details.diagramUpdate, status: 'pending' } },
       },
     ]) {
-      expect(projectPersistedTimeline([bad]).some(item => item.kind === 'diagram-reference')).toBe(
+      expect(projectPersistedTimeline([bad]).some(item => item.kind === 'app-reference')).toBe(
         false,
       );
     }
+  });
+
+  it('keeps the same compact reference after the native history drops custom details', () => {
+    const source = result();
+    const compact = diagramUpdateReference(source.details.diagramUpdate as never);
+    const history = {
+      ...source,
+      details: undefined,
+      content: [{ type: 'text', text: JSON.stringify(compact) }],
+    };
+    const reference = decodeNativeAppReference(history, DRAWIO_EDIT_TOOL, 'call')!;
+    expect(reference.content.contentId).toBe('diagram-one');
+    expect(JSON.stringify(reference)).not.toContain('<mxGraphModel');
+    expect(
+      projectPersistedTimeline([history]).filter(item => item.kind === 'app-reference'),
+    ).toHaveLength(1);
+    for (const bad of [
+      { ...history, role: 'assistant' },
+      { ...history, toolName: 'another_plugin_tool' },
+      { ...history, toolCallId: 'different' },
+      { ...history, isError: true },
+      { ...history, runId: 'another-run' },
+      { ...history, run_id: 'another-run' },
+      { ...history, metadata: { runId: 'another-run' } },
+      { ...history, __openclaw: { runId: 'another-run' } },
+      { runId: 'another-run', message: history },
+      { ...history, content: [{ type: 'text', text: `Example: ${JSON.stringify(compact)}` }] },
+    ])
+      expect(projectPersistedTimeline([bad]).some(item => item.kind === 'app-reference')).toBe(
+        false,
+      );
+    expect(
+      decodeNativeAppReference(history, DRAWIO_EDIT_TOOL, 'call', 'other-run'),
+    ).toBeUndefined();
   });
 });
