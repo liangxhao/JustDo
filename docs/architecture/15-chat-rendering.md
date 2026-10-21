@@ -98,6 +98,11 @@ guest 内沿用 source/origin/renderId、私有 prompt port 和真实激活检�
 Electron guest 失败显示现有恢复入口，不回退主 session iframe。普通浏览器继续原 iframe
 路径。代理只影响原生策略已允许的请求，不放宽 CSP 或添加 OpenClaw patch。
 
+`webview.send()` 返回 Promise；发送统一处理同步异常和异步拒绝。当前挂载的发送失败
+进入既有失败恢复，不自动重发；已销毁挂载的迟到拒绝不改变新卡片。销毁 guest 直接
+撤销桥和监听，不在移除 `guestInstanceId` 前追加一条异步策略发送，避免卸载时产生
+无效 guest 调用。测试同时覆盖异步初始化/状态失败、迟到拒绝和真实 Electron 快速换卡。
+
 发给沙箱的资源、主题、宿主状态和草稿策略必须从实际父窗口的 JavaScript realm
 发起：跨文档调用 `postMessage` 会携带调用者的源窗口，不能仅替换监听目标。
 工作区静态启动模块在自己的文档中安装只读、受限发送函数，完成后才发布 portal root；

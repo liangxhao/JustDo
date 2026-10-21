@@ -75,6 +75,82 @@ function sandbox(view: NativeWidgetView) {
 }
 
 describe('native widget viewer lifecycle', () => {
+  it('does not send a final state message into a guest being destroyed', async () => {
+    vi.stubGlobal('electron', {});
+    const { view } = mount();
+    await settle(view);
+    const guest = view.shadowRoot!.querySelector('webview')! as HTMLElement & {
+      send: ReturnType<typeof vi.fn>;
+    };
+    guest.send = vi.fn().mockResolvedValue(undefined);
+    guest.dispatchEvent(new Event('dom-ready'));
+    expect(guest.send).toHaveBeenCalledOnce();
+    view.remove();
+    await settle(view);
+    expect(guest.send).toHaveBeenCalledOnce();
+  });
+
+  it('handles an old asynchronous send rejection after a replacement guest is mounted', async () => {
+    vi.stubGlobal('electron', {});
+    const { view, request } = mount();
+    await settle(view);
+    const first = view.shadowRoot!.querySelector('webview')! as HTMLElement & {
+      send: ReturnType<typeof vi.fn>;
+    };
+    let reject!: (error: Error) => void;
+    first.send = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((_resolve, rejectSend) => {
+          reject = rejectSend;
+        }),
+    );
+    first.dispatchEvent(new Event('dom-ready'));
+    view.preview = preview('replacement');
+    await settle(view);
+    const replacement = view.shadowRoot!.querySelector('webview')! as HTMLElement & {
+      send: ReturnType<typeof vi.fn>;
+    };
+    expect(replacement).not.toBe(first);
+    replacement.send = vi.fn().mockResolvedValue(undefined);
+    replacement.dispatchEvent(new Event('dom-ready'));
+    const init = replacement.send.mock.calls[0][1];
+    replacement.dispatchEvent(
+      Object.assign(new Event('ipc-message'), {
+        channel: WidgetViewerIpc.Event,
+        args: [{ mountId: init.mountId, type: 'ready' }],
+      }),
+    );
+    reject(new Error('Invalid guestInstanceId: 4'));
+    await settle(view);
+    expect(view.shadowRoot!.querySelector('webview')).toBe(replacement);
+    expect(view.shadowRoot!.querySelector('[role="alert"]')).toBeNull();
+    expect(first.send).toHaveBeenCalledOnce();
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+  it.each(['initialize', 'state'])(
+    'recovers when the desktop guest %s send rejects asynchronously',
+    async stage => {
+      vi.stubGlobal('electron', {});
+      const { view, context } = mount();
+      await settle(view);
+      const guest = view.shadowRoot!.querySelector('webview')! as HTMLElement & {
+        send: ReturnType<typeof vi.fn>;
+      };
+      guest.send = vi.fn().mockResolvedValue(undefined);
+      if (stage === 'initialize')
+        guest.send.mockRejectedValueOnce(new Error('Invalid guestInstanceId: 4'));
+      guest.dispatchEvent(new Event('dom-ready'));
+      if (stage === 'state') {
+        guest.send.mockRejectedValueOnce(new Error('Invalid guestInstanceId: 5'));
+        context.canDraft = () => false;
+        view.requestUpdate();
+      }
+      await settle(view);
+      expect(view.shadowRoot!.querySelector('[role="alert"]')).not.toBeNull();
+      expect(view.shadowRoot!.querySelector('webview')).toBeNull();
+      expect(view.shadowRoot!.querySelector('iframe')).toBeNull();
+    },
+  );
   it.each(['crash', 'send'])(
     'recovers from a desktop guest %s without recursive IPC failures',
     async kind => {

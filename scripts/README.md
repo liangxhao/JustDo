@@ -166,7 +166,8 @@ and loading indicator; that extra check uses the document's own dependencies.
 desktop widget session with the locked native sandbox and canonical HTML wrapper.
 It uses a temporary profile and a local fake proxy, checking allowed script routing,
 unchanged CSP blocking, storage isolation, trusted-click draft suggestions, capability
-revocation, preserved input across expansion, guest crash/retry recovery, and an
+revocation, preserved input across expansion, guest crash/retry recovery, rapid
+replacement without unhandled asynchronous IPC rejections, and an
 unaffected default-session WebSocket during proxy changes. Add `--workspace` to run the same checks in a real
 workspace WebContentsView without the application preload. No personal Gateway
 is started and temporary fixture files are removed on completion.

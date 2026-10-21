@@ -324,6 +324,10 @@ export class NativeWidgetView extends LitElement {
     this.slowTimer = undefined;
     this.slow = false;
     this.scrollNonce = '';
+    // Destroying the guest revokes its bridge. Do not enqueue another async
+    // state send immediately before its guestInstanceId is removed by Electron.
+    this.guest?.dispose();
+    this.guest = undefined;
     this.postDraftPolicy(false);
     this.promptPort?.close();
     this.promptPort = undefined;
@@ -332,8 +336,6 @@ export class NativeWidgetView extends LitElement {
     this.binding = undefined;
     this.host?.dispose();
     this.host = undefined;
-    this.guest?.dispose();
-    this.guest = undefined;
     this.themeObserver?.disconnect();
     this.themeObserver = undefined;
     this.view = undefined;
@@ -472,6 +474,10 @@ export class NativeWidgetView extends LitElement {
     clearTimeout(this.slowTimer);
     this.slowTimer = undefined;
     this.slow = false;
+    if (kind === WidgetFailure.LOAD) {
+      this.guest?.dispose();
+      this.guest = undefined;
+    }
     this.postDraftPolicy(false);
     this.promptPort?.close();
     this.promptPort = undefined;
@@ -479,8 +485,6 @@ export class NativeWidgetView extends LitElement {
     if (kind === WidgetFailure.LOAD) {
       this.host?.dispose();
       this.host = undefined;
-      this.guest?.dispose();
-      this.guest = undefined;
       this.themeObserver?.disconnect();
       this.themeObserver = undefined;
       this.view = undefined;

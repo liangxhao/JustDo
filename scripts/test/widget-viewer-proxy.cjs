@@ -45,14 +45,17 @@ if (!process.versions.electron) {
       build(
         `import {NativeWidgetView} from './src/renderer/libs/openclaw-chat/components/native-widget/view';
 import {decodeNativeCanvasResult} from './src/renderer/libs/openclaw-chat/pipeline/native-canvas';
-const data=window.fixtureData;let reads=0;
+const data=window.fixtureData;let reads=0;const errors=[];
+const recordRejection=event=>errors.push(String(event.reason));addEventListener('unhandledrejection',recordRejection);
 const client={generation:1,gatewayUrl:data.gatewayUrl,request:async()=>{reads++;return data.view}};
-const view=new NativeWidgetView();view.preview=decodeNativeCanvasResult(JSON.stringify({kind:'canvas',presentation:{target:'assistant_message',sandbox:'scripts',title:'Proxy fixture'},view:{id:'fixture-doc'}}),'show_widget','fixture-call');
+const preview=id=>decodeNativeCanvasResult(JSON.stringify({kind:'canvas',presentation:{target:'assistant_message',sandbox:'scripts',title:'Proxy fixture'},view:{id}}),'show_widget','fixture-call');
+const view=new NativeWidgetView();view.preview=preview('fixture-doc');
 let current=true,canDraft=true;
 view.context={client,generation:1,sessionKey:'fixture-session',isCurrent:()=>current,canDraft:()=>canDraft};
 let destination=document;
 if(data.workspace){const child=window.open('/workspace.html?generation=2e4ec192-521e-4b76-b132-e34598e41bb2','widget-proxy-workspace');for(let n=0;n<200;n++){try{if(child.document.body?.dataset.ready==='true'){destination=child.document;break}}catch{}await new Promise(resolve=>setTimeout(resolve,25))}if(destination===document)throw new Error('Workspace did not load')}
-destination.body.append(view);window.fixture={view,reads:()=>reads,setCurrent:value=>{current=value;view.requestUpdate()},setDraft:value=>{canDraft=value;view.requestUpdate()}};
+if(destination!==document)destination.defaultView.addEventListener('unhandledrejection',recordRejection);
+destination.body.append(view);window.fixture={view,errors,replace:id=>{view.preview=preview(id)},reads:()=>reads,setCurrent:value=>{current=value;view.requestUpdate()},setDraft:value=>{canDraft=value;view.requestUpdate()}};
 window.fixture.socket=new WebSocket(data.socketUrl);window.fixture.socket.onclose=()=>window.fixture.socketClosed=true;`,
         'dist/assets/parent.js',
         'browser',
@@ -400,10 +403,33 @@ window.fixture.socket=new WebSocket(data.socketUrl);window.fixture.socket.onclos
       assert.ok(replacement);
       assert.notEqual(replacement.id, guest.id);
       assert.equal(await read('window.fixture.reads()'), 2);
+      // Churn live state and mounts while guest-manager calls may still be in
+      // flight. A stale asynchronous rejection must never escape into Renderer.
+      for (let index = 0; index < 8; index++) {
+        await read(
+          `(async()=>{window.fixture.setDraft(${index % 2 === 0});await window.fixture.view.updateComplete;window.fixture.replace('churn-${index}');await window.fixture.view.updateComplete})()`,
+        );
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      await until(
+        () => read('window.fixture.view.ready && !window.fixture.view.failure'),
+        'last rapid replacement loaded',
+      );
+      const latest = webContents
+        .getAllWebContents()
+        .find(contents => contents.getURL().includes('/widget-viewer.html?'));
+      assert.ok(latest);
+      assert.equal(await read('window.fixture.reads()'), 10);
       await read('window.fixture.setCurrent(false)');
-      await until(() => replacement.isDestroyed(), 'disposed guest revoked');
+      await until(() => latest.isDestroyed(), 'disposed guest revoked');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      assert.deepEqual(
+        await read('window.fixture.errors'),
+        [],
+        'No unhandled guest-manager rejection during crash, replacement or disposal',
+      );
       console.log(
-        'Widget proxy integration passed: native sandbox, isolated storage, proxied script, CSP, preserved input, default-session socket, crash/retry and disposal.',
+        'Widget proxy integration passed: native sandbox, isolated storage, proxied script, CSP, preserved input, default-session socket, crash/retry, rapid replacements and disposal without unhandled rejections.',
       );
     })
     .catch(error => {

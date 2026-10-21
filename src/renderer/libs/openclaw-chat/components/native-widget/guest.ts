@@ -10,7 +10,7 @@ import { WIDGET_TIMEOUT_MS } from './host';
 
 export type WidgetWebview = HTMLElement & {
   src: string;
-  send: (channel: string, ...args: unknown[]) => void;
+  send: (channel: string, ...args: unknown[]) => Promise<void>;
 };
 
 /** Only this webview can deliver semantic events; no page/window message relay. */
@@ -40,18 +40,29 @@ export class NativeWidgetGuestHost {
   private readonly initialize = () => {
     if (!this.active || this.failed || this.initialized) return;
     this.initialized = true;
+    this.send(WidgetViewerIpc.Initialize, {
+      ...this.state,
+      mountId: this.mountId,
+      url: this.url,
+      html: this.html,
+    });
+    this.html = '';
+  };
+  private send(channel: string, value: unknown): void {
+    if (!this.active || this.failed || !this.initialized) return;
+    if (!this.frame.isConnected) {
+      this.fail();
+      return;
+    }
     try {
-      this.frame.send(WidgetViewerIpc.Initialize, {
-        ...this.state,
-        mountId: this.mountId,
-        url: this.url,
-        html: this.html,
-      });
-      this.html = '';
+      // Electron webview methods use asynchronous guest-manager IPC. A guest
+      // can disappear after dispatch; synchronous try/catch alone cannot catch
+      // that rejection. The failure latch also ignores results after disposal.
+      void Promise.resolve(this.frame.send(channel, value)).catch(this.fail);
     } catch {
       this.fail();
     }
-  };
+  }
   private readonly onMessage = (raw: Event) => {
     const event = raw as Event & { channel: string; args: unknown[] };
     if (
@@ -81,12 +92,7 @@ export class NativeWidgetGuestHost {
   };
   update(state: WidgetViewerState): void {
     this.state = state;
-    if (!this.active || this.failed || !this.initialized) return;
-    try {
-      this.frame.send(WidgetViewerIpc.State, state);
-    } catch {
-      this.fail();
-    }
+    this.send(WidgetViewerIpc.State, state);
   }
   setDraftAllowed(draftAllowed: boolean): void {
     this.update({ ...this.state, draftAllowed });
