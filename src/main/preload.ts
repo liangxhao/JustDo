@@ -23,6 +23,7 @@ import { DialogIpc, type SaveTextFileOptions } from '../shared/app/dialogIpc';
 import {
   AppInitializationIpc,
   type AppInitializationState,
+  FIRST_LAUNCH_WINDOW_ARGUMENT,
   INITIALIZATION_WINDOW_ARGUMENT,
 } from '../shared/app/initialization';
 import { LogIpc } from '../shared/app/logIpc';
@@ -38,6 +39,7 @@ import {
   type TerminalStatusEvent,
   type TerminalWriteRequest,
 } from '../shared/app/terminal';
+import { readWindowAppearance, WindowAppearanceIpc } from '../shared/app/windowAppearance';
 import {
   type BrowserActionResult,
   type BrowserAgentInteractionReady,
@@ -1237,6 +1239,11 @@ contextBridge.exposeInMainWorld('electron', {
   },
   initialization: {
     isTransientWindow: process.argv.includes(INITIALIZATION_WINDOW_ARGUMENT),
+    firstLaunch: process.argv.includes(FIRST_LAUNCH_WINDOW_ARGUMENT),
+    appearance: readWindowAppearance(
+      () => ipcRenderer.sendSync(WindowAppearanceIpc.Get),
+      process.argv.includes(INITIALIZATION_WINDOW_ARGUMENT),
+    ),
     getState: (): Promise<AppInitializationState> =>
       ipcRenderer.invoke(AppInitializationIpc.GetState),
     relaunch: () => ipcRenderer.invoke(AppInitializationIpc.Relaunch),

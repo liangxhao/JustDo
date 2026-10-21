@@ -2,9 +2,12 @@ import { EventEmitter } from 'node:events';
 
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import { INITIALIZATION_WINDOW_ARGUMENT } from '../../../shared/app/initialization';
+import {
+  FIRST_LAUNCH_WINDOW_ARGUMENT,
+  INITIALIZATION_WINDOW_ARGUMENT,
+} from '../../../shared/app/initialization';
 
-const electronMocks = vi.hoisted(() => ({ app: {}, createWindow: vi.fn() }));
+const electronMocks = vi.hoisted(() => ({ app: {}, createWindow: vi.fn(), reportFailure: vi.fn() }));
 vi.mock('electron', () => ({
   app: electronMocks.app,
   BrowserWindow: class {
@@ -14,7 +17,7 @@ vi.mock('electron', () => ({
   },
 }));
 vi.mock('./contentSecurityPolicy', () => ({ registerContentSecurityPolicy: vi.fn() }));
-vi.mock('./windowDiagnostics', () => ({ registerWindowDiagnostics: vi.fn() }));
+vi.mock('./appWindowFailure', () => ({ registerAppWindowDiagnostics: () => electronMocks.reportFailure }));
 vi.mock('./renderer/packagedRendererLoader', () => ({ loadPackagedRenderer: vi.fn() }));
 
 import { registerContentSecurityPolicy } from './contentSecurityPolicy';
@@ -23,6 +26,7 @@ import { loadPackagedRenderer } from './renderer/packagedRendererLoader';
 
 const options = {
   appName: 'SampleProduct',
+  firstLaunch: true,
   preloadPath: '/packaged/preload.js',
   isWindows: true,
   isDev: false,
@@ -71,7 +75,7 @@ test('loads the packaged HTTP renderer in memory and waits for its real load com
   expect(window.loadFile).not.toHaveBeenCalled();
   expect(electronMocks.createWindow.mock.calls[0][0].webPreferences).toMatchObject({
     partition: 'justdo-initialization',
-    additionalArguments: [INITIALIZATION_WINDOW_ARGUMENT],
+    additionalArguments: [INITIALIZATION_WINDOW_ARGUMENT, FIRST_LAUNCH_WINDOW_ARGUMENT],
     nodeIntegration: false,
     nodeIntegrationInSubFrames: false,
     contextIsolation: true,
@@ -92,6 +96,15 @@ test('logs the actual host failure without blocking user-data preparation', asyn
   await expect(createInitializationWindow(options).loaded).resolves.toBeUndefined();
 
   expect(log).toHaveBeenCalledWith('[AppInitialization] Window load failed:', error);
+  expect(electronMocks.reportFailure).toHaveBeenCalledWith(error);
+});
+
+test('keeps an ordinary startup failure in ordinary mode even in a transient window', async () => {
+  await createInitializationWindow({ ...options, firstLaunch: false }).loaded;
+
+  expect(electronMocks.createWindow.mock.calls[0][0].webPreferences.additionalArguments).toEqual([
+    INITIALIZATION_WINDOW_ARGUMENT,
+  ]);
 });
 
 test('admits only its own packaged page and revokes admission when the host closes', async () => {

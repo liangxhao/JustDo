@@ -20,6 +20,7 @@ import { sessionReviewTranslations } from './sessionReviewTranslations';
 import { sessionStorageTranslations } from './sessionStorageTranslations';
 import { settingsTranslations } from './settingsTranslations';
 import { skillWorkshopTranslations } from './skillWorkshopTranslations';
+import { startupTranslations } from './startupTranslations';
 import { swarmTranslations } from './swarmTranslations';
 import { swarmWorkflowTranslations } from './swarmWorkflowTranslations';
 import { teamDiscussionTranslations } from './teamDiscussionTranslations';
@@ -40,6 +41,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...filePreviewTranslations.zh,
     ...getHomeGreetingTranslations('zh'),
     ...initializationTranslations.zh,
+    ...startupTranslations.zh,
     ...memoryTranslations.zh,
     ...mcpAppsTranslations.zh,
     ...pluginsTranslations.zh,
@@ -68,6 +70,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...filePreviewTranslations.en,
     ...getHomeGreetingTranslations('en'),
     ...initializationTranslations.en,
+    ...startupTranslations.en,
     ...memoryTranslations.en,
     ...mcpAppsTranslations.en,
     ...pluginsTranslations.en,

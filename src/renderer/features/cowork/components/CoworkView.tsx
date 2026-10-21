@@ -55,7 +55,8 @@ import {
 import { useDispatch, useSelector } from 'react-redux';
 
 import { observeChatContentWidth } from '@/app/chatContentWidth';
-import StartupLoading from '@/app/shell/StartupLoading';
+import ApplicationLoading, { useInitialWorkspaceReadiness } from '@/app/shell/initialization/ApplicationLoading';
+import { RendererStartupActivity } from '@/app/shell/initialization/startupPresentation';
 import {
   BROWSER_ANNOTATION_MAX_COUNT,
   BROWSER_ANNOTATION_MAX_IMAGE_BYTES,
@@ -412,6 +413,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     if (!swarmWorkflowEnabled) setSwarmWorkflowSessionId(null);
   }, [swarmWorkflowEnabled]);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [startupActivity, setStartupActivity] = useState<RendererStartupActivity>(
+    RendererStartupActivity.Conversations,
+  );
+  const [startupError, setStartupError] = useState<string | null>(null);
+  useInitialWorkspaceReadiness(isInitialized, startupError);
   const [greetingPeriod, setGreetingPeriod] = useState(() =>
     getGreetingPeriod(new Date().getHours()),
   );
@@ -1139,13 +1145,20 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   };
 
   useEffect(() => {
+    let active = true;
     const init = async () => {
-      await coworkService.init();
-      const initialEngineStatus = await coworkService.getOpenClawEngineStatus();
-      if (initialEngineStatus) {
-        openClawStatusRef.current = initialEngineStatus;
+      try {
+        await coworkService.init();
+        if (!active) return;
+        setStartupActivity(RendererStartupActivity.EngineStatus);
+        const initialEngineStatus = await coworkService.getOpenClawEngineStatus();
+        if (!active) return;
+        if (initialEngineStatus) openClawStatusRef.current = initialEngineStatus;
+        setIsInitialized(true);
+      } catch (error) {
+        console.error('[CoworkView] Workspace initialization failed:', error);
+        if (active) setStartupError(i18nService.t('initializationError'));
       }
-      setIsInitialized(true);
     };
     init();
 
@@ -1154,6 +1167,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     });
 
     return () => {
+      active = false;
       unsubscribeOpenClawStatus();
     };
   }, [dispatch]);
@@ -2097,9 +2111,27 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   });
 
   if (!isInitialized) {
+    if (startupError) {
+      return (
+        <div className="flex h-full flex-1 items-center justify-center bg-background p-6">
+          <div className="max-w-md space-y-4 text-center">
+            <p className="text-sm text-red-600 dark:text-red-300" role="alert">
+              {startupError}
+            </p>
+            <button
+              className="rounded-lg bg-primary px-4 py-2 text-sm text-white"
+              type="button"
+              onClick={() => window.location.reload()}
+            >
+              {i18nService.t('startupReload')}
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex-1 h-full flex flex-col bg-background">
-        <StartupLoading />
+        <ApplicationLoading activity={startupActivity} />
       </div>
     );
   }

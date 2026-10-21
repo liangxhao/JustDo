@@ -1,16 +1,18 @@
 import { CheckIcon, ClockIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import {
+  AppInitializationActivity,
   AppInitializationPhase,
   type AppInitializationState,
   AppInitializationStep,
 } from '@shared/app/initialization';
 import { PRODUCT_NAME } from '@shared/productMetadata';
-import { useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 
 import WindowHeader from '@/app/shell/window/WindowHeader';
 import { i18nService } from '@/services/i18n';
 
-import appLogoUrl from '../../../../resources/logo.png';
+import appLogoUrl from '../../../../../resources/logo.png';
+import type { RendererStartupActivity } from '../initialization/startupPresentation';
 
 const steps = [
   AppInitializationStep.UserData,
@@ -33,9 +35,38 @@ function duration(seconds: number): string {
     .padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
 }
 
-export default function InitializationScreen({ state }: { state: AppInitializationState }) {
-  const failed = state.phase === AppInitializationPhase.Failed;
-  const preparing = state.phase === AppInitializationPhase.Preparing;
+export default function FirstLaunchGuide({
+  state: snapshot,
+  rendererActivity,
+  rendererActivityStartedAt,
+  error,
+  onRetry,
+  diagnostics,
+}: {
+  state: AppInitializationState | null;
+  rendererActivity?: RendererStartupActivity;
+  rendererActivityStartedAt?: number;
+  error?: string;
+  onRetry?: () => void | Promise<void>;
+  diagnostics?: ReactNode;
+}) {
+  const [openedAt] = useState(Date.now);
+  const state: AppInitializationState = snapshot ?? {
+    firstLaunch: true,
+    phase: AppInitializationPhase.Preparing,
+    step: AppInitializationStep.UserData,
+    activity: AppInitializationActivity.UserDirectory,
+    completedSteps: 0,
+    totalSteps: 4,
+    userDataPath: '',
+    startedAt: openedAt,
+    activityStartedAt: openedAt,
+    updatedAt: openedAt,
+  };
+  const failed = state.phase === AppInitializationPhase.Failed || Boolean(error);
+  const preparing =
+    !failed && (state.phase === AppInitializationPhase.Preparing || Boolean(rendererActivity));
+  const loadingInterface = preparing && Boolean(rendererActivity);
   const [now, setNow] = useState(Date.now);
   const [logPath, setLogPath] = useState('');
   useEffect(() => {
@@ -58,12 +89,28 @@ export default function InitializationScreen({ state }: { state: AppInitializati
   }, [failed]);
   const clock = preparing ? Math.max(now, state.updatedAt) : state.updatedAt;
   const elapsed = Math.max(0, Math.floor((clock - state.startedAt) / 1000));
-  const activityElapsed = Math.max(0, Math.floor((clock - state.activityStartedAt) / 1000));
+  const activityElapsed = Math.max(
+    0,
+    Math.floor(
+      (clock -
+        (rendererActivity
+          ? (rendererActivityStartedAt ?? state.updatedAt)
+          : state.activityStartedAt)) /
+        1000,
+    ),
+  );
   const waitingLong = preparing && activityElapsed >= LONG_ACTIVITY_SECONDS;
-  const activityKey = `initializationActivity_${state.activity}`;
+  const activityKey = rendererActivity
+    ? `initializationRenderer_${rendererActivity}`
+    : snapshot
+      ? `initializationActivity_${state.activity}`
+      : 'initializationConnecting';
 
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground">
+    <div
+      data-startup-view="first-launch"
+      className="flex h-screen flex-col bg-background text-foreground"
+    >
       <WindowHeader />
       <main className="relative flex min-h-0 flex-1 flex-col overflow-auto px-6 py-5 md:px-8 lg:px-10 lg:py-8">
         <div
@@ -87,7 +134,13 @@ export default function InitializationScreen({ state }: { state: AppInitializati
                 {PRODUCT_NAME} / {i18nService.t('initializationWelcome')}
               </p>
               <h1 className="text-2xl font-semibold tracking-tight">
-                {i18nService.t(failed ? 'initializationFailed' : 'firstLaunchTitle')}
+                {i18nService.t(
+                  failed
+                    ? 'initializationFailed'
+                    : rendererActivity
+                      ? 'firstLaunchFinishing'
+                      : 'firstLaunchTitle',
+                )}
               </h1>
             </div>
           </header>
@@ -183,10 +236,16 @@ export default function InitializationScreen({ state }: { state: AppInitializati
                 <div className="mt-5 lg:mt-6">
                   <div className="mb-2.5 flex justify-between gap-3 text-xs text-secondary">
                     <span>
-                      {i18nService.t('initializationSteps')}{' '}
-                      <span className="font-medium tabular-nums text-foreground">
-                        {state.completedSteps}/{state.totalSteps}
-                      </span>
+                      {loadingInterface ? (
+                        i18nService.t('initializationInterfaceLoading')
+                      ) : (
+                        <>
+                          {i18nService.t('initializationSteps')}{' '}
+                          <span className="font-medium tabular-nums text-foreground">
+                            {state.completedSteps}/{state.totalSteps}
+                          </span>
+                        </>
+                      )}
                     </span>
                     <span>
                       {i18nService.t('initializationActivityElapsed')}{' '}
@@ -196,15 +255,17 @@ export default function InitializationScreen({ state }: { state: AppInitializati
                   <div
                     role="progressbar"
                     aria-label={i18nService.t('initializationSteps')}
-                    aria-valuenow={state.completedSteps}
+                    aria-valuenow={snapshot && !loadingInterface ? state.completedSteps : undefined}
                     aria-valuemin={0}
                     aria-valuemax={state.totalSteps}
-                    className="h-1.5 overflow-hidden rounded-full bg-surface-raised"
+                    className={`h-1.5 overflow-hidden rounded-full bg-surface-raised${loadingInterface ? ' first-launch-progress--indeterminate' : ''}`}
                   >
                     <div
                       className="h-full rounded-full bg-primary transition-[width] duration-500"
                       style={{
-                        width: `${state.totalSteps > 0 ? (state.completedSteps / state.totalSteps) * 100 : 0}%`,
+                        width: loadingInterface
+                          ? undefined
+                          : `${state.totalSteps > 0 ? (state.completedSteps / state.totalSteps) * 100 : 0}%`,
                       }}
                     />
                   </div>
@@ -227,23 +288,24 @@ export default function InitializationScreen({ state }: { state: AppInitializati
                 {failed && (
                   <div className="mt-5 space-y-4">
                     <p role="alert" className="break-words text-sm text-red-600 dark:text-red-300">
-                      {state.error}
+                      {error ?? state.error}
                     </p>
                     <button
                       type="button"
                       onClick={() =>
-                        void window.electron.initialization
-                          .relaunch()
-                          .catch(error =>
-                            console.error('[AppInitialization] Failed to restart:', error),
-                          )
+                        void Promise.resolve(
+                          onRetry ? onRetry() : window.electron.initialization.relaunch(),
+                        ).catch(error =>
+                          console.error('[AppInitialization] Failed to restart:', error),
+                        )
                       }
                       className="rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white hover:bg-primary-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                     >
-                      {i18nService.t('initializationRetry')}
+                      {i18nService.t(onRetry ? 'initializationReload' : 'initializationRetry')}
                     </button>
                   </div>
                 )}
+                {diagnostics}
               </section>
             </div>
             <details

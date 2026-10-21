@@ -32,12 +32,41 @@ const state = {
 };
 
 test('shows real completed milestones and the active initialization step', () => {
-  render(<InitializationScreen state={state} />);
+  const view = render(<InitializationScreen state={state} />);
+  expect(view.container.querySelector('[data-startup-view="first-launch"]')).toBeTruthy();
+  expect(view.container.querySelector('[data-startup-view="launch"]')).toBeNull();
   const progress = screen.getByRole('progressbar');
   expect(progress.getAttribute('aria-valuenow')).toBe('2');
   expect(progress.getAttribute('aria-valuemax')).toBe('4');
   expect(screen.getByText('initializationConfiguration')).toBeTruthy();
   expect(screen.queryByRole('button')).toBeNull();
+});
+
+test('routes subsequent launches to their own screen and runtime checklist', () => {
+  const view = render(<InitializationScreen state={{ ...state, firstLaunch: false }} />);
+  expect(view.container.querySelector('[data-startup-view="launch"]')).toBeTruthy();
+  expect(view.container.querySelector('[data-startup-view="first-launch"]')).toBeNull();
+  expect(screen.getByText('startupStep_userData')).toBeTruthy();
+  expect(screen.getByText('startupActivity_defaultFiles')).toBeTruthy();
+  expect(screen.queryByText('initializationUserData')).toBeNull();
+  expect(screen.queryByText('firstLaunchTitle')).toBeNull();
+  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('2');
+});
+
+test('keeps a subsequent-launch failure out of the first-launch guide', () => {
+  const view = render(
+    <InitializationScreen
+      state={{
+        ...state,
+        firstLaunch: false,
+        phase: AppInitializationPhase.Failed,
+        error: 'startup failed',
+      }}
+    />,
+  );
+  expect(view.container.querySelector('[data-startup-view="launch"]')).toBeTruthy();
+  expect(view.container.querySelector('[data-startup-view="first-launch"]')).toBeNull();
+  expect(screen.getByRole('alert').textContent).toBe('startup failed');
 });
 
 test('updates elapsed time without inventing progress, and resets the wait hint on a real activity', () => {

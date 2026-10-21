@@ -147,6 +147,11 @@ Manager 对外 phase 为 ready、starting、running、error；canRetry 与 messa
 
 “启动 AI 引擎”通过 `EngineIpc.StartGateway` → Main 的 `ensureOpenClawRunningForCowork`，保留执行策略验证、共享在途启动、复用已运行进程。不能复用 restart IPC，否则过时的 ready 展示可能重启刚刚启动成功的引擎。
 
+首次引导与普通启动页也复用此弹窗和采集接口，按真实引擎状态及 `diagnosticId` 打开；不将 Main 的
+Engine 步骤或任意初始化错误视作引擎失败。启动 Gate 仅订阅轻量状态 bridge，点击后加载弹窗并采集。
+应用就绪不会强制关闭正在查看的报告；关闭后继续原来的首次/普通启动流程。独立的数据库、配置或
+界面错误保留各自异常详情，不能用引擎日志覆盖。普通启动的后台引擎启动仍是非致命流程。
+
 Main 为完整重启的停止/准备阶段及崩溃恢复退避阶段连续发布 restarting；原生同进程重启依据当前受管进程的重启/ready 标记发布状态。Renderer 重挂载后读取同一事实，不根据页面访问历史、错误正文或消息推测。热更新、连接重连和延后重启请求本身不等于已开始重启。失败、正常运行和显式停止清除重启展示。
 
 其它类似提示属于局部功能反馈，不使用此全局状态机：

@@ -11,11 +11,13 @@
  */
 
 import { PRODUCT_NAME } from '../../shared/productMetadata';
+import { startupWindowTranslations } from './window/startupWindowTranslations';
 
 export type LanguageType = 'zh' | 'en';
 
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    ...startupWindowTranslations.zh,
     localSpeechModelServerNotConfigured: '尚未配置内网语音模型服务，请联系管理员配置后再安装模型。',
     localSpeechModelRangeIgnored: '模型服务未按请求返回文件分段，请联系管理员检查分段下载支持。',
     localSpeechModelRangeInvalid: '模型服务返回的文件分段与请求不符，请联系管理员检查模型服务。',
@@ -162,6 +164,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     browserContextSaveImage: '图片另存为…',
   },
   en: {
+    ...startupWindowTranslations.en,
     localSpeechModelRangeIgnored:
       'The model server ignored the requested download range. Contact your administrator to check range support.',
     localSpeechModelRangeInvalid:

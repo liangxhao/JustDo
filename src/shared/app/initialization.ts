@@ -1,3 +1,6 @@
+import type { StartupFailure } from './startupFailure';
+import type { WindowAppearance } from './windowAppearance';
+
 export const AppInitializationIpc = {
   GetState: 'app:initialization:getState',
   Changed: 'app:initialization:changed',
@@ -5,9 +8,20 @@ export const AppInitializationIpc = {
 } as const;
 
 export const INITIALIZATION_WINDOW_ARGUMENT = '--initialization-window';
+export const FIRST_LAUNCH_WINDOW_ARGUMENT = '--startup-first-launch';
+
+export function initializationWindowArguments(firstLaunch: boolean, transient = false): string[] {
+  return [
+    ...(transient ? [INITIALIZATION_WINDOW_ARGUMENT] : []),
+    ...(firstLaunch ? [FIRST_LAUNCH_WINDOW_ARGUMENT] : []),
+  ];
+}
 
 export type AppInitializationWindowContext = {
   readonly isTransientWindow: boolean;
+  /** Frozen by Main for this app process, including after the marker is written. */
+  readonly firstLaunch: boolean;
+  readonly appearance: WindowAppearance;
 };
 
 export const AppInitializationPhase = {
@@ -29,6 +43,10 @@ export const AppInitializationActivity = {
   Database: 'database',
   Python: 'python',
   StartupSettings: 'startupSettings',
+  LocalServices: 'localServices',
+  Network: 'network',
+  ModelAccess: 'modelAccess',
+  Integrations: 'integrations',
   Workspace: 'workspace',
   DefaultFiles: 'defaultFiles',
   EngineStart: 'engineStart',
@@ -50,4 +68,5 @@ export type AppInitializationState = {
   activityStartedAt: number;
   updatedAt: number;
   error?: string;
+  failure?: StartupFailure;
 };

@@ -7,6 +7,7 @@ import {
   type AppInitializationState,
   AppInitializationStep,
 } from '../../../shared/app/initialization';
+import { captureStartupFailure, StartupFailureSource } from '../../../shared/app/startupFailure';
 
 const INITIALIZED_MARKER = '.justdo-initialized';
 
@@ -18,6 +19,7 @@ export class AppInitialization {
     userDataPath: string,
     packagedWindows: boolean,
     private readonly onChanged: (state: AppInitializationState) => void,
+    private readonly getFailureContext: () => Record<string, string> = () => ({}),
   ) {
     const startedAt = Date.now();
     this.state = {
@@ -112,11 +114,19 @@ export class AppInitialization {
 
   fail(error: unknown): void {
     console.error('[AppInitialization] Startup failed:', this.getState(), error);
+    const failure = captureStartupFailure(StartupFailureSource.Main, error, {
+      ...this.getFailureContext(),
+      step: this.state.step,
+      activity: this.state.activity,
+      userDataPath: this.state.userDataPath,
+      startedAt: new Date(this.state.startedAt).toISOString(),
+    });
     this.state = {
       ...this.state,
       phase: AppInitializationPhase.Failed,
-      error: error instanceof Error ? error.message : String(error),
-      updatedAt: Date.now(),
+      error: failure.error.message,
+      failure,
+      updatedAt: failure.occurredAt,
     };
     this.onChanged(this.getState());
   }

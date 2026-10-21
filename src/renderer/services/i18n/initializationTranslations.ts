@@ -1,5 +1,35 @@
 export const initializationTranslations = {
   zh: {
+    initializationConnecting: '正在获取首次准备进度',
+    initializationInterfaceLoading: '本机准备已完成，正在进入首页',
+    initializationConnectingDescription: '正在读取本次首次启动的准备状态。',
+    firstLaunchFinishing: '正在打开首次使用界面',
+    initializationReload: '重新加载引导界面',
+    initializationInterfaceFailed: '首次使用界面加载失败，请重新加载引导界面。',
+    initializationModeMismatch: '启动状态不一致，请重新加载窗口。',
+    initializationRenderer_interface: '加载首次使用界面',
+    initializationRenderer_interfaceDescription:
+      '正在加载工作界面和内置编辑器，完成后将结束首次引导。',
+    initializationRenderer_preferences: '读取首次使用设置',
+    initializationRenderer_preferencesDescription: '正在载入刚准备好的应用设置和界面偏好。',
+    initializationRenderer_appearance: '应用首次使用外观',
+    initializationRenderer_appearanceDescription: '正在应用主题、字体和界面显示设置。',
+    initializationRenderer_language: '载入界面语言',
+    initializationRenderer_languageDescription: '正在应用语言设置并载入界面文案。',
+    initializationRenderer_conversations: '打开首次工作区',
+    initializationRenderer_conversationsDescription:
+      '正在读取工作区设置和已有对话索引，准备进入首页。',
+    initializationRenderer_engineStatus: '读取首次引擎状态',
+    initializationRenderer_engineStatusDescription:
+      '正在读取 AI 引擎的当前状态，即将结束首次引导。',
+    initializationActivity_localServices: '连接本机服务',
+    initializationActivity_localServicesDescription: '准备浏览器扩展与应用之间的本机连接。',
+    initializationActivity_network: '应用网络设置',
+    initializationActivity_networkDescription: '恢复已保存的代理设置和本机请求策略。',
+    initializationActivity_modelAccess: '准备模型访问',
+    initializationActivity_modelAccessDescription: '检查已配置的模型访问凭据，同步可用模型设置。',
+    initializationActivity_integrations: '连接集成功能',
+    initializationActivity_integrationsDescription: '连接本机集成服务，完成首次准备。',
     firstLaunchTitle: '正在完成首次准备',
     firstLaunchDescription: '正在准备本机目录、默认文件和启动环境。完成后将自动进入首页。',
     initializationWelcome: '首次启动',
@@ -48,6 +78,44 @@ export const initializationTranslations = {
     initializationError: '应用准备未完成，请重新启动后重试。',
   },
   en: {
+    initializationConnecting: 'Reading first-launch progress',
+    initializationInterfaceLoading: 'Local setup complete; opening the home page',
+    initializationConnectingDescription: 'Reading preparation status for this first launch.',
+    firstLaunchFinishing: 'Opening your first workspace',
+    initializationReload: 'Reload setup screen',
+    initializationInterfaceFailed:
+      'The first-use interface could not load. Reload this setup screen.',
+    initializationModeMismatch: 'Startup state does not match this window. Reload the window.',
+    initializationRenderer_interface: 'Loading the first-use interface',
+    initializationRenderer_interfaceDescription:
+      'Loading the workspace and bundled editor before completing first-launch setup.',
+    initializationRenderer_preferences: 'Reading first-use settings',
+    initializationRenderer_preferencesDescription:
+      'Loading the application settings and interface preferences prepared for this launch.',
+    initializationRenderer_appearance: 'Applying first-use appearance',
+    initializationRenderer_appearanceDescription:
+      'Applying the theme, fonts, and display settings.',
+    initializationRenderer_language: 'Loading the interface language',
+    initializationRenderer_languageDescription:
+      'Applying language preferences and loading interface text.',
+    initializationRenderer_conversations: 'Opening your first workspace',
+    initializationRenderer_conversationsDescription:
+      'Reading workspace settings and existing conversation indexes before opening the home page.',
+    initializationRenderer_engineStatus: 'Reading initial engine status',
+    initializationRenderer_engineStatusDescription:
+      'Reading the current AI engine status before completing first-launch setup.',
+    initializationActivity_localServices: 'Connecting local services',
+    initializationActivity_localServicesDescription:
+      'Preparing the local connection between browser extensions and the app.',
+    initializationActivity_network: 'Applying network settings',
+    initializationActivity_networkDescription:
+      'Restoring saved proxy settings and local request policies.',
+    initializationActivity_modelAccess: 'Preparing model access',
+    initializationActivity_modelAccessDescription:
+      'Checking configured model credentials and synchronizing available models.',
+    initializationActivity_integrations: 'Connecting integrations',
+    initializationActivity_integrationsDescription:
+      'Connecting local integration services and completing first-launch preparation.',
     firstLaunchTitle: 'Preparing your first launch',
     firstLaunchDescription:
       'Preparing local folders, default files, and the startup environment. The home page will open automatically when ready.',

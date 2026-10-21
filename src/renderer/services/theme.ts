@@ -2,6 +2,7 @@ import { configService } from '@/services/config';
 import { rendererPreferences } from '@/services/rendererPreferences';
 import type { ThemeDefinition } from '@/theme';
 import { allThemes, ThemeManager } from '@/theme';
+import { resolveTheme } from '@/theme/resolveTheme';
 
 type ThemeType = 'light' | 'dark' | 'system';
 
@@ -114,20 +115,8 @@ class ThemeService {
 
   // 根据 appearance 选择第一个匹配的主题，或恢复已保存的主题
   private applyByAppearance(appearance: 'light' | 'dark'): void {
-    // Check if there's a saved theme ID with the right appearance
-    const savedId = rendererPreferences.getItem('justdo-theme-id');
-    if (savedId) {
-      const saved = allThemes.find(t => t.meta.id === savedId);
-      if (saved && saved.meta.appearance === appearance) {
-        void this.manager.setTheme(savedId);
-        return;
-      }
-    }
-    // Fallback: pick first theme matching the appearance
-    const match = allThemes.find(t => t.meta.appearance === appearance);
-    if (match) {
-      void this.manager.setTheme(match.meta.id);
-    }
+    const theme = resolveTheme(appearance, rendererPreferences.getItem('justdo-theme-id'), false);
+    void this.manager.setTheme(theme.meta.id);
   }
 }
 

@@ -4,41 +4,83 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>%PRODUCT_NAME%</title>
+    <style>
+      html, body, #root { width: 100%; height: 100%; margin: 0; }
+      %STARTUP_THEME_STYLES%
+      html { background-color: var(--justdo-background); }
+      %STARTUP_STYLES%
+    </style>
     <script>
-      // 在页面加载前预设主题，避免闪烁
-      (function() {
-        try {
-          const savedConfig = localStorage.getItem('app_config');
-          if (savedConfig) {
-            const config = JSON.parse(savedConfig);
-            const theme = config.theme || 'system';
-            
-            if (theme === 'dark') {
-              document.documentElement.classList.add('dark');
-              document.documentElement.style.backgroundColor = '#0F1117';
-            } else if (theme === 'light') {
-              document.documentElement.classList.add('light');
-              document.documentElement.style.backgroundColor = '#F8F9FB';
-            } else {
-              // 跟随系统
-              const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-              if (prefersDark) {
-                document.documentElement.classList.add('dark');
-                document.documentElement.style.backgroundColor = '#0F1117';
-              } else {
-                document.documentElement.classList.add('light');
-                document.documentElement.style.backgroundColor = '#F8F9FB';
-              }
-            }
-          }
-        } catch (e) {
-          console.error('Error applying theme early:', e);
-        }
-      })();
+      %STARTUP_THEME_SCRIPT%
     </script>
   </head>
   <body>
     <div id="root"></div>
+    <template id="first-launch-document-template">%FIRST_LAUNCH_DOCUMENT%</template>
+    <template id="startup-document-template">%STARTUP_DOCUMENT%</template>
+    <script>
+      // Select the process's fixed mode synchronously, before application modules load.
+      (function () {
+        const dictionaries = %STARTUP_TRANSLATIONS%;
+        const firstLaunch = window.electron?.initialization?.firstLaunch === true;
+        const template = document.getElementById(firstLaunch ? 'first-launch-document-template' : 'startup-document-template');
+        document.getElementById('root').appendChild(template.content.cloneNode(true));
+        let language = navigator.language.startsWith('zh') ? 'zh' : 'en';
+        try {
+          const config = JSON.parse(localStorage.getItem('app_config') || '{}');
+          if (config.language === 'zh' || config.language === 'en') language = config.language;
+        } catch { /* Main preferences are hydrated by main.tsx. */ }
+        document.documentElement.lang = language;
+        const copy = dictionaries[language];
+        const startup = document.getElementById('startup-document');
+        %STARTUP_MOTION_SCRIPT%
+        startup.querySelectorAll('[data-startup-copy]').forEach(element => {
+          element.textContent = copy[element.dataset.startupCopy];
+        });
+        startup.querySelectorAll('[data-startup-label]').forEach(element => {
+          element.setAttribute('aria-label', copy[element.dataset.startupLabel]);
+        });
+        startup.querySelectorAll('[data-startup-control]').forEach(button => {
+          button.hidden = window.electron?.platform !== 'win32';
+          button.addEventListener('click', () => window.electron?.window?.[button.dataset.startupControl]?.());
+        });
+        document.getElementById('startup-reload').addEventListener('click', () => window.location.reload());
+        %STARTUP_FAILURE_SCRIPT%
+        const startedAt = Date.now();
+        let activityStartedAt = startedAt;
+        let activity;
+        let failedAt;
+        const timer = window.setInterval(() => {
+          if (!startup.isConnected) {
+            window.clearInterval(timer);
+            return;
+          }
+          const failed = startup.dataset.failed === 'true';
+          if (failed && !failedAt) failedAt = Date.now();
+          const clock = failedAt || Date.now();
+          const seconds = Math.floor((clock - startedAt) / 1000);
+          document.getElementById('startup-clock').textContent =
+            String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0');
+          if (startup.dataset.activity) {
+            if (activity !== startup.dataset.activity) {
+              activity = startup.dataset.activity;
+              activityStartedAt = clock;
+            }
+            const key = (firstLaunch ? 'initializationRenderer_' : 'startupRenderer_') + activity;
+            document.getElementById('startup-operation').textContent = copy[key];
+            document.getElementById('startup-operation-detail').textContent = copy[key + 'Description'];
+          }
+          document.getElementById('startup-document-error').hidden = !failed;
+          startup.querySelector('[data-bootstrap-progress]').hidden = failed;
+          const waiting = Math.floor((clock - activityStartedAt) / 1000);
+          const hint = document.getElementById('startup-document-hint');
+          hint.dataset.waiting = String(!failed && waiting >= 30);
+          hint.textContent = copy[waiting >= 30 && !failed
+            ? (firstLaunch ? 'initialization' : 'startup') + (waiting >= 90 ? 'ExtendedWait' : 'LongWait')
+            : firstLaunch ? 'firstLaunchDescription' : 'startupContinue'];
+        }, 1000);
+      })();
+    </script>
     <script type="module" src="/main.tsx"></script>
   </body>
-</html> 
+</html>

@@ -77,7 +77,7 @@ import { getDevServerUrlFromCommandLine } from './core/development/devServerHand
 import { bindDevelopmentParentShutdown, createDevSessionLifecycle } from './core/development/devSessionLifecycle';
 import { ManagedDirectoryOperationCoordinator } from './core/filesystem/managedDirectoryOperations';
 import { setLanguage, t } from './core/i18n';
-import { getRecentMainLogEntries, initLogger } from './core/logger';
+import { getLogFilePath, getRecentMainLogEntries, initLogger } from './core/logger';
 import { mainProcessFetch, mainProcessTitleFetch } from './core/network/mainProcessFetch';
 import {
   resolveOutboundHeaderUserInfoPath,
@@ -1884,6 +1884,7 @@ if (multicaBridgeArgv) {
 
     mainWindow = createMainWindow({
       appName: APP_NAME,
+      firstLaunch: initialization.getState().firstLaunch,
       readWorkspaceWindowBounds: () =>
         getStore().get<WorkspaceWindowBounds>(WORKSPACE_WINDOW_BOUNDS_KEY),
       saveWorkspaceWindowBounds: bounds => getStore().set(WORKSPACE_WINDOW_BOUNDS_KEY, bounds),
@@ -2110,12 +2111,14 @@ if (multicaBridgeArgv) {
         }
       }
     },
+    () => ({ logPath: getLogFilePath() }),
   );
   registerAppInitializationHandlers(initialization);
 
   const createStartupWindow = (): InitializationWindow => {
     const startup = createInitializationWindow({
       appName: APP_NAME,
+      firstLaunch: initialization.getState().firstLaunch,
       preloadPath: PRELOAD_PATH,
       isWindows,
       isDev,
@@ -2175,6 +2178,7 @@ if (multicaBridgeArgv) {
     });
     if (appShutdown.isQuitting()) return;
     initialization.advance(AppInitializationStep.Configuration, 2);
+    initialization.reportActivity(AppInitializationActivity.LocalServices);
     const browserExtensionChatToken = randomBytes(32).toString('hex');
     const extensionChatServer = new BrowserExtensionChatServer(
       new BrowserExtensionChatController({
@@ -2230,6 +2234,7 @@ if (multicaBridgeArgv) {
       console.error('[BrowserExtensionChat] Failed to start loopback service:', error);
     }
     if (appShutdown.isQuitting()) return;
+    initialization.reportActivity(AppInitializationActivity.Network);
     const initialOutboundHeaderPolicy = getOutboundHeaderPolicyService().reconcile();
     await getOutboundHeaderProxy().start();
     if (appShutdown.isQuitting()) {
@@ -2278,12 +2283,13 @@ if (multicaBridgeArgv) {
     // endpoint may require the saved system/custom proxy to be reachable.
     bindOpenClawGatewayPortProxyBypass();
     const appConfig = getStore().get<AppConfigSettings>('app_config');
-    initialization.reportActivity(AppInitializationActivity.StartupSettings);
+    initialization.reportActivity(AppInitializationActivity.Network);
     await applySystemProxyPreference(appConfig);
     if (appShutdown.isQuitting()) return;
     await applyBrowserProxyPreference(appConfig);
     if (appShutdown.isQuitting()) return;
 
+    initialization.reportActivity(AppInitializationActivity.ModelAccess);
     let builtinModelCredential: BuiltinModelCredential | null = null;
     try {
       builtinModelCredential = await getBuiltinModelTokenExchange().refresh();
@@ -2365,7 +2371,7 @@ if (multicaBridgeArgv) {
     }
     if (appShutdown.isQuitting()) return;
 
-    initialization.reportActivity(AppInitializationActivity.StartupSettings);
+    initialization.reportActivity(AppInitializationActivity.Integrations);
     await ensureMulticaBridgeRunning().catch(error => {
       console.error('[MulticaBridge] Failed to start:', error);
       multicaBridgeServer = null;

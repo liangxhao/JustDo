@@ -7,6 +7,7 @@ import renderer from 'vite-plugin-electron-renderer';
 
 import packageJson from './package.json';
 import { reactHooksRefreshPlugin } from './scripts/build/vite-react-hooks-refresh.mjs';
+import { startupPresentationPlugin } from './scripts/build/startupPresentationPlugin.mjs';
 
 // https://vitejs.dev/config/
 const devPort = Number(process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port);
@@ -31,6 +32,7 @@ export default defineConfig({
         return html.replaceAll('%PRODUCT_NAME%', escapedProductName);
       },
     },
+    startupPresentationPlugin(rendererRoot),
     reactHooksRefreshPlugin(projectRoot),
     react(),
     electron([

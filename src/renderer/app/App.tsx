@@ -15,9 +15,10 @@ import { applyAppearanceConfig } from '@/app/appearance';
 import { observeChatContentWidth } from '@/app/chatContentWidth';
 import { defaultConfig, getProviderDisplayName } from '@/app/config';
 import BottomRightStatusStack from '@/app/shell/BottomRightStatusStack';
+import ApplicationLoading, { useInitializationFailure } from '@/app/shell/initialization/ApplicationLoading';
+import { RendererStartupActivity } from '@/app/shell/initialization/startupPresentation';
 import Sidebar from '@/app/shell/Sidebar';
 import { SidebarView } from '@/app/shell/sidebarNavigation';
-import StartupLoading from '@/app/shell/StartupLoading';
 import Toast, { type ToastContent } from '@/app/shell/Toast';
 import WindowHeader from '@/app/shell/window/WindowHeader';
 import { WorkspaceNotifications } from '@/app/shell/WorkspaceNotifications';
@@ -87,8 +88,6 @@ import { matchesShortcut } from '@/services/shortcuts';
 import { themeService } from '@/services/theme';
 import { isDomHTMLElement, OwnerDocumentContext } from '@/shared/dom/ownerDocument';
 import { type RootState, store } from '@/store';
-
-import AppInitializationGate from './shell/AppInitializationGate';
 
 const InitializedApp: React.FC = () => {
   useEffect(() => {
@@ -161,7 +160,11 @@ const InitializedApp: React.FC = () => {
     return () => ownerWindow.removeEventListener('pagehide', close);
   }, [teamHistoryDocument]);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [startupActivity, setStartupActivity] = useState<RendererStartupActivity>(
+    RendererStartupActivity.Preferences,
+  );
   const [initError, setInitError] = useState<string | null>(null);
+  useInitializationFailure(initError);
   const [toast, setToast] = useState<ToastContent | null>(null);
   const [updateToast, setUpdateToast] = useState<AppUpdateToastState>(null);
   const [, forceLanguageRefresh] = useState(0);
@@ -245,10 +248,12 @@ const InitializedApp: React.FC = () => {
         applyAppearanceConfig(configService.getConfig().appearance);
 
         // 初始化主题
+        setStartupActivity(RendererStartupActivity.Appearance);
         console.info('[App] initializeApp: themeService.initialize');
         themeService.initialize();
 
         // 初始化语言
+        setStartupActivity(RendererStartupActivity.Language);
         console.info('[App] initializeApp: i18nService.initialize');
         await waitWithTimeout(i18nService.initialize(), 5000, 'i18nService.initialize');
 
@@ -922,7 +927,7 @@ const InitializedApp: React.FC = () => {
     return (
       <div className="h-screen overflow-hidden flex flex-col">
         {windowsStandaloneTitleBar}
-        <StartupLoading />
+        <ApplicationLoading activity={startupActivity} />
       </div>
     );
   }
@@ -1160,10 +1165,4 @@ const InitializedApp: React.FC = () => {
   );
 };
 
-const App: React.FC = () => (
-  <AppInitializationGate>
-    <InitializedApp />
-  </AppInitializationGate>
-);
-
-export default App;
+export default InitializedApp;

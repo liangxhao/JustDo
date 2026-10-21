@@ -1,11 +1,13 @@
 import type { WebContents } from 'electron';
 
+import { captureStartupFailure, type StartupFailure, StartupFailureSource } from '../../../shared/app/startupFailure';
 import { redactLogText } from '../logRedaction';
 
 /** Observe real window failures in both the normal and in-memory startup shell. */
-export function registerWindowDiagnostics(webContents: WebContents, label: string): void {
+export function registerWindowDiagnostics(webContents: WebContents, label: string, onFailure?: (failure: StartupFailure) => void): void {
   webContents.on('preload-error', (_event, preloadPath, error) => {
     console.error(`[${label}] Preload failed:`, preloadPath, error);
+    onFailure?.(captureStartupFailure(StartupFailureSource.Preload, error, { preloadPath }));
   });
   webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
     if (code === -3) return; // Electron reports cancelled navigation as ERR_ABORTED.
@@ -15,6 +17,15 @@ export function registerWindowDiagnostics(webContents: WebContents, label: strin
       url: redactLogText(url),
       isMainFrame,
     });
+    if (isMainFrame) onFailure?.(captureStartupFailure(StartupFailureSource.Page,
+      { message: description, code }, { url }));
+  });
+  webContents.on('render-process-gone', (_event, details) => {
+    if (details.reason === 'clean-exit') return;
+    const failure = captureStartupFailure(StartupFailureSource.Page,
+      { message: details.reason, code: details.exitCode });
+    console.error(`[${label}] Renderer process gone:`, failure);
+    onFailure?.(failure);
   });
   webContents.on('console-message', details => {
     // External browser/preview frames are not application diagnostic sources.

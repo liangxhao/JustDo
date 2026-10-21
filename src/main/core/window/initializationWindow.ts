@@ -1,18 +1,19 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'path';
 
-import { INITIALIZATION_WINDOW_ARGUMENT } from '../../../shared/app/initialization';
+import { initializationWindowArguments } from '../../../shared/app/initialization';
 import { DEFAULT_MAIN_WINDOW_SIZE } from '../../../shared/app/windowGeometry';
+import { registerAppWindowDiagnostics } from './appWindowFailure';
 import { isAllowedMainWindowNavigation } from './browserPanelSecurity';
 import { registerContentSecurityPolicy } from './contentSecurityPolicy';
 import { loadPackagedRenderer } from './renderer/packagedRendererLoader';
-import { registerWindowDiagnostics } from './windowDiagnostics';
 
 export type InitializationWindow = { window: BrowserWindow; loaded: Promise<void> };
 
 /** An in-memory shell can report a bad userData directory before opening profiles. */
 export function createInitializationWindow(options: {
   appName: string;
+  firstLaunch: boolean;
   preloadPath: string;
   isWindows: boolean;
   isDev: boolean;
@@ -31,7 +32,7 @@ export function createInitializationWindow(options: {
     backgroundColor: '#F8F9FB',
     webPreferences: {
       partition: 'justdo-initialization',
-      additionalArguments: [INITIALIZATION_WINDOW_ARGUMENT],
+      additionalArguments: initializationWindowArguments(options.firstLaunch, true),
       preload: options.preloadPath,
       nodeIntegration: false,
       nodeIntegrationInSubFrames: false,
@@ -45,7 +46,7 @@ export function createInitializationWindow(options: {
     { isDev: options.isDev, devServerPort: options.devServerPort },
     window.webContents.session,
   );
-  registerWindowDiagnostics(window.webContents, 'AppInitialization');
+  const reportWindowFailure = registerAppWindowDiagnostics(window.webContents, 'AppInitialization');
   window.once('ready-to-show', () => options.onReady(window));
   const navigation = {
     isDev: options.isDev,
@@ -70,6 +71,9 @@ export function createInitializationWindow(options: {
       });
   return {
     window,
-    loaded: loading.catch(error => console.error('[AppInitialization] Window load failed:', error)),
+    loaded: loading.catch(error => {
+      console.error('[AppInitialization] Window load failed:', error);
+      reportWindowFailure(error);
+    }),
   };
 }

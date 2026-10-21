@@ -1,0 +1,38 @@
+.startup-failure-details,
+.startup-engine-error {
+  margin: 16px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--justdo-border, #e1e5ed);
+  border-radius: 6px;
+  color: var(--justdo-text-primary, #1b2333);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  -webkit-app-region: no-drag;
+}
+.startup-failure-details summary {
+  cursor: pointer;
+}
+.startup-failure-details pre {
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.startup-failure-details .startup-action,
+.startup-engine-error .startup-action,
+.startup-diagnostic-loading .startup-action {
+  margin: 4px 8px 4px 0;
+  background: var(--justdo-primary, #4969df);
+}
+.startup-diagnostic-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  color: var(--justdo-text-primary, #1b2333);
+  background: var(--justdo-background, #f8f9fb);
+}

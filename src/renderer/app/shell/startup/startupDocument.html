@@ -1,0 +1,137 @@
+<!-- This first paint does not depend on React, editor bundles, or the database. -->
+<div id="startup-document" class="startup-screen" data-startup-view="launch">
+  <div class="startup-topbar">
+    <button
+      type="button"
+      data-startup-control="minimize"
+      data-startup-label="windowMinimize"
+      aria-label="%STARTUP_COPY_windowMinimize%"
+    >
+      −
+    </button>
+    <button
+      type="button"
+      data-startup-control="toggleMaximize"
+      data-startup-label="windowMaximize"
+      aria-label="%STARTUP_COPY_windowMaximize%"
+    >
+      □
+    </button>
+    <button
+      type="button"
+      data-startup-control="close"
+      data-startup-label="windowClose"
+      aria-label="%STARTUP_COPY_windowClose%"
+    >
+      ×
+    </button>
+  </div>
+  <main class="startup-main startup-main--launch" data-entry="seed">
+    <div class="startup-content">
+      <div class="startup-brand">
+        <div class="startup-emblem" aria-hidden="true">
+          <img src="../../resources/logo.png" alt="" width="58" height="58" draggable="false" />
+        </div>
+        <div class="startup-brand-copy">
+          <p class="startup-brand-name">%PRODUCT_NAME%</p>
+          <h1 class="startup-title" data-startup-copy="startupHeading">
+            %STARTUP_COPY_startupHeading%
+          </h1>
+        </div>
+      </div>
+      <div class="startup-details">
+        <section class="startup-activity" role="status" aria-live="polite" aria-atomic="true">
+          <p class="startup-label" data-startup-copy="startupCurrentActivity">
+            %STARTUP_COPY_startupCurrentActivity%
+          </p>
+          <h2 id="startup-operation" class="startup-operation" data-startup-copy="startupOpening">
+            %STARTUP_COPY_startupOpening%
+          </h2>
+          <p
+            id="startup-operation-detail"
+            class="startup-operation-detail"
+            data-startup-copy="startupDocumentDescription"
+          >
+            %STARTUP_COPY_startupDocumentDescription%
+          </p>
+        </section>
+        <div class="startup-metrics">
+          <span data-startup-copy="startupLoadingLabel">%STARTUP_COPY_startupLoadingLabel%</span>
+          <span
+            ><span data-startup-copy="startupElapsed">%STARTUP_COPY_startupElapsed%</span>
+            <strong id="startup-clock">00:00</strong></span
+          >
+        </div>
+        <div
+          class="startup-progress startup-progress--indeterminate"
+          data-bootstrap-progress="true"
+          role="progressbar"
+          aria-labelledby="startup-operation"
+        >
+          <div class="startup-progress-fill"></div>
+        </div>
+        <ol
+          class="startup-steps"
+          aria-label="%STARTUP_COPY_startupSteps%"
+          data-startup-label="startupSteps"
+        >
+          <li class="startup-step">
+            <span class="startup-step-marker" aria-hidden="true">·</span
+            ><span class="startup-step-name" data-startup-copy="startupStep_userData"
+              >%STARTUP_COPY_startupStep_userData%</span
+            ><span class="startup-step-status" data-startup-copy="startupStepWaiting"
+              >%STARTUP_COPY_startupStepWaiting%</span
+            >
+          </li>
+          <li class="startup-step">
+            <span class="startup-step-marker" aria-hidden="true">·</span
+            ><span class="startup-step-name" data-startup-copy="startupStep_runtime"
+              >%STARTUP_COPY_startupStep_runtime%</span
+            ><span class="startup-step-status" data-startup-copy="startupStepWaiting"
+              >%STARTUP_COPY_startupStepWaiting%</span
+            >
+          </li>
+          <li class="startup-step">
+            <span class="startup-step-marker" aria-hidden="true">·</span
+            ><span class="startup-step-name" data-startup-copy="startupStep_configuration"
+              >%STARTUP_COPY_startupStep_configuration%</span
+            ><span class="startup-step-status" data-startup-copy="startupStepWaiting"
+              >%STARTUP_COPY_startupStepWaiting%</span
+            >
+          </li>
+          <li class="startup-step">
+            <span class="startup-step-marker" aria-hidden="true">·</span
+            ><span class="startup-step-name" data-startup-copy="startupStep_engine"
+              >%STARTUP_COPY_startupStep_engine%</span
+            ><span class="startup-step-status" data-startup-copy="startupStepWaiting"
+              >%STARTUP_COPY_startupStepWaiting%</span
+            >
+          </li>
+        </ol>
+        <p class="startup-hint" id="startup-document-hint" data-startup-copy="startupContinue">
+          %STARTUP_COPY_startupContinue%
+        </p>
+        <div id="startup-document-error" hidden>
+<details class="startup-failure-details">
+  <summary data-startup-copy="startupDiagnosticsDetails">%STARTUP_COPY_startupDiagnosticsDetails%</summary>
+  <p data-startup-copy="startupDiagnosticsEvidence">%STARTUP_COPY_startupDiagnosticsEvidence%</p>
+  <pre id="startup-failure-detail"></pre>
+  <button id="startup-copy-diagnostics" class="startup-action" type="button" data-startup-copy="startupDiagnosticsCopy">%STARTUP_COPY_startupDiagnosticsCopy%</button>
+</details>
+
+          <p class="startup-error" role="alert" data-startup-copy="startupModuleFailed">
+            %STARTUP_COPY_startupModuleFailed%
+          </p>
+          <button
+            class="startup-action"
+            id="startup-reload"
+            type="button"
+            data-startup-copy="startupReload"
+          >
+            %STARTUP_COPY_startupReload%
+          </button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>

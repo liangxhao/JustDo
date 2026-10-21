@@ -3,9 +3,9 @@ import type {
   EngineDiagnosticResult,
   EngineDiagnosticsQuery,
 } from '@shared/openclaw/engineDiagnostics';
+import type { OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
 import { useEffect, useId, useRef, useState } from 'react';
 
-import type { OpenClawEngineStatus } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
 

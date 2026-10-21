@@ -90,6 +90,9 @@ Windows 安装阶段不创建用户数据库、运行配置、Python 用户环�
 定时任务结果过滤，以及尚未提交的 Goal 完成反馈状态。启动先恢复这份快照，再导入 App
 和 Redux slice，确保初始过滤值和主题读取正确。只接受三个固定键与 Goal 草稿命名空间，
 最多 128 项、单值 64 KiB、总值 512 KiB；超额先淘汰最旧 Goal 草稿，固定偏好保留。
+窗口首屏的只读外观快照由 Main 从既有 `app_config.theme` 和这里的 `justdo-theme-id` 提取，
+通过受限同步 preload 读取提供，每次新文档及 reload 都取最新值；不另存主题副本、不依赖随机
+HTTP origin、不在首次临时窗口提前打开数据库。
 首次采用 HTTP 宿主且 Main 尚无该记录时，在相同 Chromium session 的隔离空白 file 页面
 只读取上述有界 UI 键，再切换 HTTP 主页面；不加载旧 App 或旧 preload，不覆盖已有记录。
 开发 origin 首次采用时也只导入同一白名单。初始 Main 读取失败时，后续保存先恢复已知

@@ -153,21 +153,46 @@ Windows shortcuts and uninstall registry entries retain their normal OS location
 The first application launch creates the actual user-data directory and opens the
 product database. The first-launch in-memory initialization window can report errors before
 persistent browser profiles open. Later successful launches use one normal window;
-a data-directory failure can still open the same error screen. The home screen shows four completed milestones:
-user data, local runtime, application configuration, and Gateway startup. These are
+a data-directory failure can still open its owning flow's error screen. Presentation
+is split into independent `app/shell/first-launch/` and `app/shell/startup/` directories;
+`app/shell/initialization/` owns only their coordination and error boundary. Main freezes
+`firstLaunch` for the process and supplies it to every window through a synchronous
+preload flag, including after the completion marker is written. A transient window is
+not evidence of first launch: it can also display an ordinary-launch data failure.
+The first-launch guide retains its original layout and preparation copy.
+Subsequent launches show their own checklist: open existing application data, check
+the runtime, load startup configuration, and start background services. These are
 step counts, not an invented byte/time percentage. After SQLite opens, it hands off
 to the normal application window while preserving the initialization state.
-The Renderer subscribes before reading its snapshot and mounts the normal app only
-when Main reports readiness. Failures retain the failed step, directory and actual
-error, with a restart action; reinstalling is unnecessary for a profile problem.
+The Renderer subscribes before reading its snapshot and mounts the normal app behind
+the same startup overlay when Main reports readiness. Only successful App initialization
+and the first Cowork workspace load dismiss it and reveal the home page. First launch
+never transitions through the subsequent-launch screen; subsequent launches never
+display setup. Later workspace remounts do not reopen startup. Failures retain the
+owning presentation, failed step, directory and actual error. Main failures offer
+restart; Renderer or snapshot failures offer reload, without invoking Main's
+failure-only relaunch API. Reinstalling is unnecessary for a profile problem.
 
-The setup presentation uses a four-step checklist alongside the current operation
-and its explanation. Main publishes closed activity identifiers at the actual
+The subsequent-launch screen starts with a centered application mark, unfolds a flat
+brand band horizontally, then unfolds real progress and its four-step checklist downward.
+Its local browser-only motion module is embedded at build time. One 1.4-second document
+clock continues across static HTML, React, and snapshot handoffs without replaying the entry.
+Only after actual App/workspace readiness and the entry finish do two flat panels reveal
+the mounted home page over 640 milliseconds. During that reveal the home page remains
+inert and aria-hidden; failures cancel dismissal and expose their recovery controls immediately.
+First launch runs neither ordinary-launch animation and opens the home page directly.
+Its copy is maintained separately in
+`startupTranslations.ts`; guide copy remains in `initializationTranslations.ts`.
+Opening an existing database and synchronizing AI runtime settings are not labeled
+as creating user data or preparing default files on subsequent launches.
+Both modules show the current operation and its explanation.
+Main publishes closed activity identifiers at the actual
 directory/database, bundled runtime, startup settings, workspace, default files,
 engine startup and finalization boundaries. Setup copy focuses on local folders,
 data files, default assistant files, runtime resources and startup checks.
-Authentication, model access, proxy application and integration setup remain part
-of their existing startup flow, without separate first-launch presentation steps.
+Model access, proxy application, local services and integration setup have their
+own activity descriptions within the existing configuration milestone. Their
+ownership and execution order are unchanged.
 There is no assertion that large runtime bundles are copied into Roaming; their
 installation-resource ownership remains as described below.
 The shared snapshot carries startup, activity-start and last-update
@@ -179,8 +204,30 @@ change it explicitly reports the lack of further progress. A new real activity
 resets that hint. Failures freeze elapsed time and expand the data/log locations;
 normal setup keeps those details collapsed. These presentation updates do not add
 startup gates, public downloads, or retry execution.
-Setup entrance, loading-spinner and progress-width animations remain enabled
-regardless of the operating system's reduced-motion preference.
+First-launch and subsequent-launch animations, indeterminate tracks and progress-width
+transitions remain enabled when Windows animations are disabled or reduced motion is
+requested. Actual startup failures still stop the ordinary screen's activity pulse and track.
+
+The HTML entry includes separate first-launch and ordinary-launch templates, their
+own CSS and build-injected bilingual copy. It selects the fixed mode synchronously,
+so first paint does not wait for React, editor resources or asynchronous preference hydration.
+Each ordinary document's preload synchronously reads only the saved appearance mode
+and named palette from Main before first paint, after the existing preference import.
+The window-local channel admits only its main frame and is removed on destruction;
+reload reads current settings instead of reusing construction-time values. The entry embeds the existing
+theme CSS and uses the same palette resolver as ThemeService; it does not infer the
+app theme from the OS or origin-local configuration. Before the product Store opens,
+the transient first-launch window skips that IPC and uses the product's default light theme. Loading
+the full stylesheet, preferences or App therefore does not switch startup colors.
+It shows elapsed time and an explicit reload action for module-load failures.
+The lightweight initialization Gate loads after preference hydration; it defers
+Monaco, App and Redux imports until Main reports shell readiness. Renderer work
+then names its actual settings, theme, language and conversation-loading operation
+inside the same presentation. The current-operation clock starts anew on entering
+Renderer loading; total elapsed time retains Main's start time.
+Unmeasured interface work uses an indeterminate track instead of fabricated percentages.
+Ordinary Gateway startup remains asynchronous and the title-bar status reports its
+actual lifecycle; completing the startup handoff does not claim engine readiness.
 
 Both the in-memory initialization window and the normal packaged window use the
 application-owned loopback HTTP renderer loader and its immutable-asset/CSP guards.

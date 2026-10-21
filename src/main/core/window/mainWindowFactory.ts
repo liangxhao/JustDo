@@ -14,6 +14,7 @@ import {
 import fs from 'fs';
 import path from 'path';
 
+import { initializationWindowArguments } from '../../../shared/app/initialization';
 import { MediaCaptureIpc, MediaCaptureSurface } from '../../../shared/app/mediaCapture';
 import { DEFAULT_MAIN_WINDOW_SIZE } from '../../../shared/app/windowGeometry';
 import {
@@ -51,6 +52,7 @@ import {
 } from '../app/rendererPreferencesImporter';
 import { t } from '../i18n';
 import { registerBrowserProxySession } from '../network/systemProxyPreference';
+import { registerAppWindowDiagnostics } from './appWindowFailure';
 import { BrowserHttpAuthRequests, BrowserPermissionState } from './browserPanelRequestState';
 import {
   browserPermissionKeys,
@@ -69,12 +71,13 @@ import {
   shouldAllowSystemAudioCapture,
 } from './mediaPermission';
 import { loadPackagedRenderer } from './renderer/packagedRendererLoader';
+import { registerWindowAppearance } from './windowAppearance';
 import { getWindowChromeOptions } from './windowChrome';
-import { registerWindowDiagnostics } from './windowDiagnostics';
 import { WorkspaceWindowManager } from './workspaceWindowManager';
 
 type MainWindowFactoryOptions = {
   appName: string;
+  firstLaunch: boolean;
   browserGuestPreloadPath: string;
   devServerUrl: string;
   getBackgroundColor: () => string;
@@ -131,6 +134,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     icon: options.getIconPath(),
     ...getWindowChromeOptions(options.isMac, options.isWindows, options.getTitleBarOverlay()),
     webPreferences: {
+      additionalArguments: initializationWindowArguments(options.firstLaunch),
       nodeIntegration: false,
       nodeIntegrationInSubFrames: false,
       contextIsolation: true,
@@ -152,7 +156,8 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     enableLargerThanScreen: false,
   });
 
-  registerWindowDiagnostics(mainWindow.webContents, 'MainWindow');
+  registerWindowAppearance(mainWindow.webContents, options.getRendererPreferenceStore);
+  const reportWindowFailure = registerAppWindowDiagnostics(mainWindow.webContents, 'MainWindow');
   if (options.isMac && options.isDev) {
     const iconPath = path.join(__dirname, '../resources/icons/png/512x512.png');
     if (fs.existsSync(iconPath)) {
@@ -1042,6 +1047,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         }),
     ).catch(error => {
       console.error('[MainWindow] Failed to load packaged renderer:', error);
+      reportWindowFailure(error);
     });
   }
 

@@ -1,7 +1,7 @@
 export const appTranslations = {
   zh: {
     engineDiagnosticsTitle: 'AI 引擎失败诊断',
-    engineDiagnosticsCollecting: '正在收集 Main 和 Gateway 日志…',
+    engineDiagnosticsCollecting: '正在收集应用和 AI 引擎日志…',
     engineDiagnosticsCollectFailed: '诊断采集未完成，可重新采集；当前错误摘要仍保留。',
     engineDiagnosticsChanged: '引擎状态已变化，这份诊断仅对应采集时的故障，请重新采集确认。',
     engineDiagnosticsCorrelation: '以下日志按本次失败的时间范围关联，仅时间接近不能证明因果。常见凭据已遮盖；复制分享前请检查路径和错误内容。',
@@ -24,7 +24,7 @@ export const appTranslations = {
     engineDiagnosticsIssue_timeout: '日志读取超时',
     engineDiagnosticsIssue_invalid_record: '部分记录无法解析或缺少时间',
     engineDiagnosticsIssue_oversized: '超长记录已省略',
-    engineDiagnosticsIssue_offline: 'Gateway 未连接，原生日志来源不可确认；仍采集本地 Gateway 输出',
+    engineDiagnosticsIssue_offline: 'AI 引擎未连接，完整日志来源暂时无法确认；仍采集本机引擎输出',
     engineDiagnosticsCause_port: '日志记录了端口占用',
     engineDiagnosticsCause_runtime: '运行时资源或原生模块加载失败',
     engineDiagnosticsCause_config: '配置读取或校验失败',
@@ -76,7 +76,7 @@ export const appTranslations = {
   },
   en: {
     engineDiagnosticsTitle: 'AI engine failure diagnostics',
-    engineDiagnosticsCollecting: 'Collecting Main and Gateway logs…',
+    engineDiagnosticsCollecting: 'Collecting application and AI engine logs…',
     engineDiagnosticsCollectFailed: 'Collection could not finish. Retry collection; the error summary is still available.',
     engineDiagnosticsChanged: 'The engine has changed. This snapshot describes the captured failure; collect again to confirm.',
     engineDiagnosticsCorrelation: 'Logs are correlated by the failure time window. Timing alone does not prove causation. Common credentials are masked; review paths and error content before sharing.',
@@ -99,7 +99,7 @@ export const appTranslations = {
     engineDiagnosticsIssue_timeout: 'Log read timed out',
     engineDiagnosticsIssue_invalid_record: 'Some records could not be parsed or have no timestamp',
     engineDiagnosticsIssue_oversized: 'Oversized records were omitted',
-    engineDiagnosticsIssue_offline: 'Gateway offline: native log source could not be verified; local Gateway output is still collected',
+    engineDiagnosticsIssue_offline: 'AI engine disconnected: the complete log source could not be verified; local engine output is still collected',
     engineDiagnosticsCause_port: 'Port conflict recorded',
     engineDiagnosticsCause_runtime: 'Runtime resources or native module loading failed',
     engineDiagnosticsCause_config: 'Configuration reading or validation failed',

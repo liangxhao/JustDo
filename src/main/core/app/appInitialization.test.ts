@@ -11,6 +11,16 @@ import {
 import { AppInitialization } from './appInitialization';
 
 const roots: string[] = [];
+test('publishes structured Main failures with their actual activity and log location', () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const initialization = new AppInitialization(temporaryRoot(), false, vi.fn(), () => ({ logPath: '/logs/main.log' }));
+  initialization.reportActivity(AppInitializationActivity.Database);
+  initialization.fail(Object.assign(new Error('database locked'), { code: 'SQLITE_BUSY' }));
+  expect(initialization.getState().failure).toMatchObject({
+    source: 'main', error: { message: 'database locked', code: 'SQLITE_BUSY' },
+    context: { activity: 'database', logPath: '/logs/main.log' },
+  });
+});
 function temporaryRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-initialization-'));
   roots.push(root);
@@ -31,6 +41,9 @@ test('initializes a Chinese path containing spaces and remembers successful comp
   expect(onChanged.mock.lastCall?.[0].completedSteps).toBe(3);
   await initialization.complete();
   expect(initialization.getState().phase).toBe(AppInitializationPhase.Ready);
+  // The same process and its replacement windows retain their launch presentation.
+  expect(initialization.getState().firstLaunch).toBe(true);
+  expect(onChanged.mock.calls.every(([state]) => state.firstLaunch)).toBe(true);
   expect(new AppInitialization(userData, true, vi.fn()).getState().firstLaunch).toBe(false);
 });
 
