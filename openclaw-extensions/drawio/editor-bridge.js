@@ -26,12 +26,77 @@
     );
     this.editorUi.actions.get('print')?.setEnabled(false);
     const ui = this.editorUi;
+    let generation = 0;
+    ui.editor.graph.model.addListener(mxEvent.CHANGE, () => generation++);
+    const snapshot = () => {
+      const node = ui.getXmlFileData(true, false, true);
+      for (const model of node.getElementsByTagName('mxGraphModel')) {
+        model.removeAttribute('dx');
+        model.removeAttribute('dy');
+      }
+      return { xml: mxUtils.getXml(node), generation };
+    };
     window.addEventListener('message', event => {
       if (event.source !== parent || typeof event.data !== 'string') return;
       try {
         const data = JSON.parse(event.data);
         if (data.action === 'diagram-theme' && typeof data.dark === 'boolean')
           ui.setDarkMode(data.dark);
+        if (data.action === 'diagram-snapshot' && typeof data.requestId === 'string') {
+          ui.editor.graph.stopEditing(false);
+          parent.postMessage(
+            JSON.stringify({ event: 'diagram-snapshot', requestId: data.requestId, ...snapshot() }),
+            '*',
+          );
+        }
+        if (data.action === 'diagram-apply' && typeof data.requestId === 'string') {
+          ui.editor.graph.stopEditing(false);
+          const current = snapshot();
+          if (data.generation !== current.generation || data.expectedXml !== current.xml) {
+            parent.postMessage(
+              JSON.stringify({
+                event: 'diagram-applied',
+                requestId: data.requestId,
+                status: 'conflict',
+              }),
+              '*',
+            );
+            return;
+          }
+          let started = false;
+          try {
+            if (
+              typeof data.xml !== 'string' ||
+              new TextEncoder().encode(data.xml).length > 1024 * 1024 ||
+              /<!DOCTYPE|<!ENTITY/i.test(data.xml) ||
+              !ui.isFileDataLoadable(data.xml)
+            )
+              throw new Error('Invalid XML');
+            // Pinned draw.io replacement is one undoable transaction, including
+            // page removal/insertion. It preserves the existing undo manager.
+            started = true;
+            ui.replaceFileData(data.xml);
+            ui.editor.setModified(true);
+            parent.postMessage(
+              JSON.stringify({
+                event: 'diagram-applied',
+                requestId: data.requestId,
+                status: 'applied',
+                ...snapshot(),
+              }),
+              '*',
+            );
+          } catch {
+            parent.postMessage(
+              JSON.stringify({
+                event: 'diagram-applied',
+                requestId: data.requestId,
+                status: started ? 'unknown' : 'failed',
+              }),
+              '*',
+            );
+          }
+        }
         if (
           data.action === 'diagram-commit' &&
           typeof data.requestId === 'string' &&

@@ -2,6 +2,10 @@ import { McpAppView } from '../../src/renderer/libs/openclaw-chat/components/mcp
 import { McpAppSession } from '../../src/renderer/libs/openclaw-chat/gateway/mcp-app-session';
 import { decodeMcpAppLaunch } from '../../src/renderer/libs/openclaw-chat/pipeline/native-mcp-app';
 import { McpAppMethod } from '../../src/shared/plugins/mcpApps';
+import {
+  DRAWIO_CANVAS_METHOD,
+  DRAWIO_CURRENT_METHOD,
+} from '../../openclaw-extensions/drawio/contracts';
 import { mountMcpList } from './list-host';
 const fixture = window as unknown as {
   fixturePayload: Record<string, unknown>;
@@ -10,6 +14,9 @@ const fixture = window as unknown as {
   downloads: unknown[];
   fixtureModelContext: { updateId: string; content?: unknown } | null;
   fixtureSwitchSession: (active: boolean) => void;
+  fixtureSnapshot: Record<string, unknown>;
+  fixturePrepareDiagram: () => Promise<unknown>;
+  fixtureApplyDiagram: (xml: string) => Promise<unknown>;
 };
 fixture.downloads = [];
 fixture.fixtureModelContext = null;
@@ -22,7 +29,7 @@ window.electron = {
   },
 } as never;
 const identity = {
-  viewId: 'drawio-offline',
+  viewId: 'mcp-app-drawio-offline',
   serverName: 'drawio',
   toolName: new URLSearchParams(location.search).has('file')
     ? 'open_file'
@@ -31,12 +38,37 @@ const identity = {
       : 'create_diagram',
   uiResourceUri: 'ui://drawio/editor',
   toolCallId: 'offline-test',
+  originSessionKey: 'agent:main:offline',
 };
+const listeners = new Set<(event: { event: string; payload: unknown }) => void>();
+let operation: Record<string, unknown> | undefined;
+let acknowledge: ((value: unknown) => void) | undefined;
 const client = {
   generation: 1,
   gatewayUrl: 'ws://127.0.0.1:18789',
-  subscribeEvents: () => () => undefined,
+  subscribeEvents: (listener: (event: { event: string; payload: unknown }) => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  },
   request: async (method: string, params: Record<string, unknown>) => {
+    if (method === DRAWIO_CURRENT_METHOD) return { diagram: null };
+    if (method === DRAWIO_CANVAS_METHOD) {
+      if (params.action === 'prepare') {
+        fixture.fixtureSnapshot = params.snapshot as Record<string, unknown>;
+        return { token: 'fixture-canvas-token' };
+      }
+      if (params.action === 'next') {
+        const pending = operation;
+        operation = undefined;
+        return { operation: pending ?? null };
+      }
+      if (params.action === 'ack') {
+        acknowledge?.(params.result);
+        acknowledge = undefined;
+        return {};
+      }
+      return {};
+    }
     if (method === McpAppMethod.View)
       return {
         ...fixture.fixturePayload,
@@ -74,6 +106,30 @@ const apps = new McpAppSession(() =>
     : undefined,
 );
 const view = new McpAppView();
+fixture.fixturePrepareDiagram = () =>
+  apps.prepareChatSend({
+    sessionKey: 'agent:main:offline',
+    sessionId: 'offline',
+    idempotencyKey: crypto.randomUUID(),
+    message: 'Edit diagram',
+  });
+fixture.fixtureApplyDiagram = xml =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Editor ACK timed out')), 30_000);
+    acknowledge = result => {
+      clearTimeout(timer);
+      resolve(result);
+    };
+    operation = {
+      operationId: crypto.randomUUID(),
+      diagramId: fixture.fixtureSnapshot.diagramId,
+      baseContentStamp: fixture.fixtureSnapshot.contentStamp,
+      xml,
+      title: 'Updated current diagram',
+    };
+    for (const listener of listeners)
+      listener({ event: 'plugin.drawio.canvas-changed', payload: { viewId: identity.viewId } });
+  });
 view.preview = decodeMcpAppLaunch({
   viewId: identity.viewId,
   preview: {

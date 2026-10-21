@@ -308,7 +308,41 @@ if (!process.versions.electron) {
             /* Wait for the isolated App document. */
           }
       }, 'App ready');
-      if (process.argv.includes('--blank')) {
+      if (process.argv.includes('--blank') && process.argv.includes('--editing')) {
+        await until(async () => {
+          for (const frame of win.webContents.mainFrame.framesInSubtree)
+            try {
+              if (
+                await frame.executeJavaScript(
+                  'Boolean(document.querySelector(".geDiagramContainer"))',
+                )
+              )
+                return frame;
+            } catch {
+              /* wait */
+            }
+        }, 'Blank editor ready');
+        await win.webContents.executeJavaScript(
+          'window.fixtureBlankFrame=window.fixtureView.shadowRoot.querySelector("iframe");window.fixturePrepareDiagram()',
+        );
+        const blank = await win.webContents.executeJavaScript('window.fixtureSnapshot');
+        assert.doesNotMatch(blank.xml, /vertex="1"/);
+        const initial = fs.readFileSync(
+          path.join(root, 'openclaw-extensions/drawio/tests/fixture.xml'),
+          'utf8',
+        );
+        const applied = await win.webContents.executeJavaScript(
+          `window.fixtureApplyDiagram(${JSON.stringify(initial)})`,
+        );
+        assert.equal(applied.status, 'applied');
+        assert.equal(
+          await win.webContents.executeJavaScript(
+            'window.fixtureBlankFrame===window.fixtureView.shadowRoot.querySelector("iframe")',
+          ),
+          true,
+        );
+      }
+      if (process.argv.includes('--blank') && !process.argv.includes('--editing')) {
         const blankEditor = await until(async () => {
           for (const frame of win.webContents.mainFrame.framesInSubtree) {
             try {
@@ -366,6 +400,151 @@ if (!process.versions.electron) {
       }, 'Diagram rendered');
       assert.ok(editor);
       evidence.editorReady = true;
+      if (process.argv.includes('--editing')) {
+        await win.webContents.executeJavaScript(
+          'window.fixtureOriginalFrame=window.fixtureView.shadowRoot.querySelector("iframe");window.fixturePrepareDiagram()',
+        );
+        const prepared = await win.webContents.executeJavaScript('window.fixtureSnapshot');
+        assert.match(prepared.xml, /提交申请/);
+        const candidate = prepared.xml.replaceAll('提交申请', 'AI 修改后的申请');
+        const applied = await win.webContents.executeJavaScript(
+          `window.fixtureApplyDiagram(${JSON.stringify(candidate)})`,
+        );
+        assert.equal(applied.status, 'applied');
+        await until(
+          () => editor.executeJavaScript('document.body.innerText.includes("AI 修改后的申请")'),
+          'AI update visible',
+        );
+        assert.equal(
+          await win.webContents.executeJavaScript(
+            'window.fixtureView.shadowRoot.querySelector("iframe")===window.fixtureOriginalFrame',
+          ),
+          true,
+        );
+        const shortcut = async (key, keyCode) => {
+          await editor.executeJavaScript(
+            `document.body.dispatchEvent(new KeyboardEvent('keydown', { bubbles:true, key:${JSON.stringify(key)}, code:'Key${key.toUpperCase()}', keyCode:${keyCode}, ctrlKey:true }))`,
+          );
+        };
+        await shortcut('z', 90);
+        await until(
+          () =>
+            editor.executeJavaScript(
+              'document.body.innerText.includes("提交申请") && !document.body.innerText.includes("AI 修改后的申请")',
+            ),
+          'Single-step AI undo',
+        );
+        await shortcut('y', 89);
+        await until(
+          () => editor.executeJavaScript('document.body.innerText.includes("AI 修改后的申请")'),
+          'AI redo',
+        );
+        await win.webContents.executeJavaScript('window.fixturePrepareDiagram()');
+        const stale = await win.webContents.executeJavaScript('window.fixtureSnapshot');
+        await editor.executeJavaScript(`(() => {
+          const label = [...document.querySelectorAll('foreignObject div')].find(element => element.textContent === 'AI 修改后的申请' && !element.childElementCount);
+          const bounds = label.getBoundingClientRect();
+          label.dispatchEvent(new MouseEvent('dblclick', { bubbles:true, button:0, clientX:bounds.x+bounds.width/2, clientY:bounds.y+bounds.height/2 }));
+        })()`);
+        await until(
+          () =>
+            editor.executeJavaScript(
+              'Boolean(document.querySelector(".mxCellEditor[contenteditable=true]"))',
+            ),
+          'Uncommitted manual editing',
+        );
+        await editor.executeJavaScript(
+          `(() => { const input = document.querySelector('.mxCellEditor[contenteditable=true]'); input.textContent='尚未按回车的手工修改'; input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'})); })()`,
+        );
+        const conflict = await win.webContents.executeJavaScript(
+          `window.fixtureApplyDiagram(${JSON.stringify(stale.xml.replaceAll('AI 修改后的申请', '不应覆盖手改'))})`,
+        );
+        assert.equal(conflict.status, 'conflict');
+        await until(
+          () =>
+            editor.executeJavaScript('document.body.innerText.includes("尚未按回车的手工修改")'),
+          'Manual edit preserved',
+        );
+        await win.webContents.executeJavaScript('window.fixturePrepareDiagram()');
+        const current = await win.webContents.executeJavaScript('window.fixtureSnapshot');
+        assert.match(current.xml, /尚未按回车的手工修改/);
+        await shortcut('z', 90);
+        await until(
+          () => editor.executeJavaScript('document.body.innerText.includes("AI 修改后的申请")'),
+          'Existing manual undo stack retained',
+        );
+        await shortcut('z', 90);
+        await until(
+          () =>
+            editor.executeJavaScript(
+              'document.body.innerText.includes("提交申请") && !document.body.innerText.includes("AI 修改后的申请")',
+            ),
+          'Earlier AI undo remains available',
+        );
+        await win.webContents.executeJavaScript('window.fixturePrepareDiagram()');
+        const originalPage = await win.webContents.executeJavaScript('window.fixtureSnapshot');
+        const extraPage =
+          '<diagram id="second-page" name="第二页"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram>';
+        const pages = originalPage.xml.replace('</mxfile>', extraPage + '</mxfile>');
+        const paged = await win.webContents.executeJavaScript(
+          `window.fixtureApplyDiagram(${JSON.stringify(pages)})`,
+        );
+        assert.equal(paged.status, 'applied');
+        await until(
+          () => editor.executeJavaScript('document.body.innerText.includes("第二页")'),
+          'AI multipage update',
+        );
+        await shortcut('z', 90);
+        await until(
+          () =>
+            editor.executeJavaScript(
+              '!document.body.innerText.includes("第二页") && document.body.innerText.includes("提交申请")',
+            ),
+          'Single-step multipage undo',
+        );
+        await until(
+          () =>
+            win.webContents.executeJavaScript(
+              '!window.fixtureView.loading && !window.fixtureView.error && !window.fixtureView.shadowRoot.querySelector(".status")',
+            ),
+          'Product host finished loading',
+        );
+        await editor.executeJavaScript(
+          'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+        );
+        await win.webContents.executeJavaScript(
+          'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+        );
+        await win.webContents.capturePage();
+        assert.deepEqual(blocked, []);
+        fs.writeFileSync(
+          path.join(
+            output,
+            `editing${process.argv.includes('--blank') ? '-blank' : process.argv.includes('--file') ? '-file' : ''}-result.json`,
+          ),
+          JSON.stringify(
+            {
+              passed: true,
+              sameIframe: true,
+              singleUndo: true,
+              retainedUndo: true,
+              multipageUndo: true,
+              uncommittedConflict: true,
+              noPublicRequests: true,
+            },
+            null,
+            2,
+          ),
+        );
+        fs.writeFileSync(
+          path.join(output, 'editing.png'),
+          (await win.webContents.capturePage()).toPNG(),
+        );
+        console.log(
+          'Real offline editor continuous update, undo/redo and uncommitted-edit conflict passed.',
+        );
+        return;
+      }
       let currentLabel = '提交申请';
       for (const format of ['save', 'png', 'svg']) {
         const editedLabel = `${format} 前即时修改`;

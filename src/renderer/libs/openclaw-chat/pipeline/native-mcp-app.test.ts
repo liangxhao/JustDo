@@ -7,6 +7,7 @@ import {
   decodeNativeMcpAppResult,
   isNativeMcpAppPreview,
   readFailedNativeMcpAppHistoryDescriptor,
+  readNativeMcpAppIdentity,
 } from './native-mcp-app';
 
 const descriptor = {
@@ -25,6 +26,15 @@ const preview = {
 const result = { details: { mcpServer: 'demo', mcpTool: 'show', mcpAppPreview: preview } };
 
 describe('native MCP App admission', () => {
+  it('captures native identity and refuses mutation or deserialized copies for editing admission', () => {
+    const app = decodeNativeMcpAppResult(JSON.stringify(result), 'demo__show', 'call-1')!;
+    expect(readNativeMcpAppIdentity(app)).toEqual(descriptor);
+    expect(Object.isFrozen(readNativeMcpAppIdentity(app))).toBe(true);
+    expect(readNativeMcpAppIdentity({ ...app })).toBeUndefined();
+    app.descriptor!.serverName = 'drawio';
+    expect(readNativeMcpAppIdentity(app)).toBeUndefined();
+  });
+
   it('admits authenticated question view references without fabricating tool descriptors', () => {
     const app = decodeMcpAppQuestionPreview({
       preview: { viewId: 'question-preview' },

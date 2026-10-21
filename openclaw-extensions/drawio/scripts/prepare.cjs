@@ -16,6 +16,7 @@ const sourceHash = () =>
         'server.mjs',
         'editor-resource.mjs',
         'app.ts',
+        'contracts.ts',
         'app.css',
         'editor-bridge.js',
         'upstream.json',
@@ -23,7 +24,7 @@ const sourceHash = () =>
       ].map(file => fs.readFileSync(path.join(extension, file))),
       fs.readFileSync(__filename),
       Buffer.from(
-        ['esbuild', '@modelcontextprotocol/sdk', '@modelcontextprotocol/ext-apps', 'saxes']
+        ['esbuild', '@modelcontextprotocol/sdk', '@modelcontextprotocol/ext-apps', 'saxes', 'zod']
           .map(name => fs.readFileSync(path.join(root, 'node_modules', name, 'package.json')))
           .join('\n'),
       ),
@@ -92,7 +93,8 @@ async function prepare(archive) {
   fs.mkdirSync(path.join(output, 'public'), { recursive: true });
   fs.cpSync(path.join(staging, sourceName, 'src/main/webapp'), path.join(output, 'public/editor'), {
     recursive: true,
-    filter: file => includeEditorAsset(path.relative(path.join(staging, sourceName, 'src/main/webapp'), file)),
+    filter: file =>
+      includeEditorAsset(path.relative(path.join(staging, sourceName, 'src/main/webapp'), file)),
   });
   fs.copyFileSync(path.join(staging, sourceName, 'LICENSE'), path.join(output, 'LICENSE'));
   fs.copyFileSync(path.join(extension, 'app.css'), path.join(output, 'app.css'));

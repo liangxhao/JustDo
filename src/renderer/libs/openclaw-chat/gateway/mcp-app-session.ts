@@ -10,10 +10,15 @@ import {
 } from '@shared/plugins/mcpApps';
 
 import {
+  type DiagramReference,
+  DRAWIO_CANVAS_METHOD,
+  DRAWIO_CURRENT_METHOD,
+  DRAWIO_ENTRY_TOOLS,
   DRAWIO_RESOURCE,
   DRAWIO_RESTORE_METHOD,
+  DRAWIO_SEND_METHOD,
   DRAWIO_SERVER,
-  DRAWIO_TOOL,
+  type PreparedDiagramCanvas,
 } from '../../../../../openclaw-extensions/drawio/contracts';
 import {
   MCP_APP_HISTORY_TOOL_METHOD,
@@ -33,9 +38,52 @@ export interface McpAppSessionBinding {
 type Method = (typeof McpAppMethod)[keyof typeof McpAppMethod];
 const methods = new Set<string>(Object.values(McpAppMethod));
 const scopedFields = ['sessionKey', 'sessionId', 'agentId', 'viewId', 'requesterId', 'requestId'];
+const canvasSessions = new Set<McpAppSession>();
+type CanvasPreparation = PreparedDiagramCanvas & { priority: number };
+type SendTarget = Pick<
+  McpAppSessionBinding,
+  'client' | 'generation' | 'sessionKey' | 'sessionId' | 'agentId' | 'isCurrent'
+>;
+type CanvasRegistration = {
+  identity: Omit<SendTarget, 'isCurrent'>;
+  available: () => boolean;
+  prepare: () => Promise<CanvasPreparation>;
+};
+
+export const hasMcpAppCanvasPreparations = (target: SendTarget) =>
+  [...canvasSessions].some(apps => apps.matchesCanvasTarget(target));
+
+/** Also covers homepage Apps adopted by a chat through another authenticated socket. */
+export async function prepareMcpAppChatSend(target: SendTarget, send: Record<string, unknown>) {
+  const canvases: CanvasPreparation[] = [];
+  for (const apps of canvasSessions) canvases.push(...(await apps.prepareCanvases(target)));
+  if (!canvases.length) return { method: 'chat.send', params: send };
+  if (
+    !target.isCurrent() ||
+    target.client.generation !== target.generation ||
+    send.sessionKey !== target.sessionKey ||
+    send.sessionId !== target.sessionId
+  )
+    throw new Error('Diagram send context changed');
+  const priority = Math.max(...canvases.map(item => item.priority));
+  return {
+    method: DRAWIO_SEND_METHOD,
+    params: {
+      sessionKey: target.sessionKey,
+      sessionId: target.sessionId,
+      agentId: target.agentId,
+      send,
+      canvases: canvases.map(({ priority: value, ...item }) => ({
+        ...item,
+        selected: priority > 0 && value === priority,
+      })),
+    },
+  };
+}
 
 /** The chat connection owns this adapter. Features never receive its credentials. */
 export class McpAppSession {
+  private readonly canvasPreparations = new Map<string, CanvasRegistration>();
   private epoch = 0;
   private readonly views = new Set<McpAppSessionView>();
   private readonly presentations = new Map<string, McpAppSessionView>();
@@ -54,6 +102,67 @@ export class McpAppSession {
   private observedBinding?: McpAppSessionBinding;
   private bindingRevision = 0;
   constructor(private readonly getBinding: () => McpAppSessionBinding | undefined) {}
+
+  registerCanvasPreparation(
+    viewId: string,
+    prepare: () => Promise<CanvasPreparation>,
+    available: () => boolean,
+  ) {
+    const { client, generation, sessionKey, sessionId, agentId } = this.capture();
+    const registration = {
+      identity: { client, generation, sessionKey, sessionId, agentId },
+      prepare,
+      available,
+    };
+    this.canvasPreparations.set(viewId, registration);
+    canvasSessions.add(this);
+    return () => {
+      if (this.canvasPreparations.get(viewId) === registration)
+        this.canvasPreparations.delete(viewId);
+      if (!this.canvasPreparations.size) canvasSessions.delete(this);
+    };
+  }
+
+  matchesCanvasTarget(target: SendTarget) {
+    return [...this.canvasPreparations.values()].some(item => this.matchesCanvas(item, target));
+  }
+
+  private matchesCanvas(item: CanvasRegistration, target: SendTarget) {
+    const binding = item.identity;
+    return Boolean(
+      target.isCurrent() &&
+      item.available() &&
+      binding.client.generation === binding.generation &&
+      binding.sessionKey === target.sessionKey &&
+      binding.sessionId === target.sessionId &&
+      binding.agentId === target.agentId &&
+      binding.client.gatewayUrl === target.client.gatewayUrl,
+    );
+  }
+
+  get hasCanvasPreparations() {
+    const binding = this.getBinding();
+    return Boolean(binding?.isCurrent() && hasMcpAppCanvasPreparations(binding));
+  }
+
+  async prepareCanvases(target: SendTarget): Promise<CanvasPreparation[]> {
+    const callbacks = [...this.canvasPreparations.values()].filter(item =>
+      this.matchesCanvas(item, target),
+    );
+    const prepared: CanvasPreparation[] = [];
+    for (const item of callbacks) {
+      prepared.push(await item.prepare());
+      if (!this.matchesCanvas(item, target))
+        throw new Error('Diagram binding changed during preparation');
+    }
+    return prepared;
+  }
+
+  async prepareChatSend(send: Record<string, unknown>) {
+    const binding = this.getBinding();
+    if (!binding?.isCurrent()) return { method: 'chat.send', params: send };
+    return prepareMcpAppChatSend(binding, send);
+  }
 
   get discoveryRevision(): number {
     return this.bindingRevision;
@@ -223,6 +332,7 @@ export class McpAppSession {
 
 export class McpAppSessionView {
   private readonly operations = new Set<AbortController>();
+  private readonly suspensionListeners = new Set<() => void>();
   private disposed = false;
   private loaded = false;
   private closing?: Promise<void>;
@@ -234,6 +344,48 @@ export class McpAppSessionView {
   preservePresentation = false;
   suspended = false;
   private revision = 0;
+
+  diagramRequest<T = unknown>(input: Record<string, unknown>) {
+    return this.dispatch<T>(DRAWIO_CANVAS_METHOD, input, undefined, true);
+  }
+  releaseDiagram(token: string): Promise<unknown> {
+    const binding = this.binding;
+    if (binding.client.generation !== binding.generation || !binding.sessionId)
+      return Promise.resolve();
+    return binding.client.request(
+      DRAWIO_CANVAS_METHOD,
+      {
+        action: 'detach',
+        token,
+        sessionKey: binding.sessionKey,
+        sessionId: binding.sessionId,
+        agentId: binding.agentId,
+        viewId: this.nativeViewId,
+      },
+      { timeoutMs: 5000 },
+    );
+  }
+  get sessionId() {
+    return this.binding.sessionId;
+  }
+
+  onSuspend(listener: () => void) {
+    this.suspensionListeners.add(listener);
+    return () => {
+      this.suspensionListeners.delete(listener);
+    };
+  }
+
+  restoreDiagramReference(reference: DiagramReference) {
+    if (this.binding.sessionId !== reference.sessionId)
+      throw new Error('Diagram belongs to another native session');
+    return this.dispatch(
+      DRAWIO_RESTORE_METHOD,
+      { diagramId: reference.diagramId, operationId: reference.operationId },
+      undefined,
+      true,
+    );
+  }
 
   fileResource(action: 'read' | 'write', input: Record<string, unknown>, signal?: AbortSignal) {
     if (
@@ -313,6 +465,7 @@ export class McpAppSessionView {
     if (this.disposed || !this.loaded || !this.preservePresentation) return false;
     this.suspended = true;
     this.revision++;
+    for (const listener of this.suspensionListeners) listener();
     for (const operation of this.operations) operation.abort();
     return true;
   }
@@ -467,7 +620,7 @@ export class McpAppSessionView {
           payload: McpAppViewPayload;
         }>(
           descriptor.serverName === DRAWIO_SERVER &&
-            descriptor.toolName === DRAWIO_TOOL &&
+            DRAWIO_ENTRY_TOOLS.includes(descriptor.toolName as never) &&
             descriptor.uiResourceUri === DRAWIO_RESOURCE
             ? DRAWIO_RESTORE_METHOD
             : MCP_APP_HISTORY_VIEW_METHOD,
@@ -490,7 +643,7 @@ export class McpAppSessionView {
         this.restoredViewId = restored.viewId;
         if (!(
           descriptor.serverName === DRAWIO_SERVER &&
-          descriptor.toolName === DRAWIO_TOOL &&
+          DRAWIO_ENTRY_TOOLS.includes(descriptor.toolName as never) &&
           descriptor.uiResourceUri === DRAWIO_RESOURCE
         ))
           this.historicalSourceViewId = this.viewId;
@@ -510,6 +663,29 @@ export class McpAppSessionView {
     this.loaded = true;
     this.retain(this);
     this.present(this);
+    if (
+      descriptor?.serverName === DRAWIO_SERVER &&
+      descriptor.uiResourceUri === DRAWIO_RESOURCE &&
+      DRAWIO_ENTRY_TOOLS.includes(descriptor.toolName as never) &&
+      typeof (result.toolResult?.structuredContent as Record<string, unknown> | undefined)
+        ?.diagramId === 'string'
+    ) {
+      const current = await this.dispatch<{
+        diagram: Record<string, unknown> | null;
+        readOnly?: boolean;
+      }>(DRAWIO_CURRENT_METHOD, {}, signal, true);
+      if (current?.diagram)
+        result = { ...result, toolResult: { content: [], structuredContent: current.diagram } };
+      if (current?.readOnly)
+        result = {
+          ...result,
+          messageSupported: false,
+          updateModelContextSupported: false,
+          richModelContextSupported: false,
+          fileResourcesSupported: false,
+          openFilesSupported: false,
+        };
+    }
     if (this.historicalSourceViewId)
       return {
         ...result,
@@ -570,6 +746,7 @@ export class McpAppSessionView {
     this.disposed = true;
     this.suspended = false;
     this.revision++;
+    for (const listener of this.suspensionListeners) listener();
     for (const operation of this.operations) operation.abort();
     this.forget(this);
     // Native WS has no per-request cancellation or view release. Aborting only
@@ -584,6 +761,7 @@ export class McpAppSessionView {
     this.disposed = true;
     this.suspended = false;
     this.revision++;
+    for (const listener of this.suspensionListeners) listener();
     this.forget(this);
   }
 }

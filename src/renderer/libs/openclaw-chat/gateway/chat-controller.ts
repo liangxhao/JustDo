@@ -2297,6 +2297,48 @@ export class ChatController {
       this.retainedGoalStartOperations.set(goalStartSignature, goalStartOperation);
     }
     const runId = goalStartOperation?.operationId ?? proposedRunId;
+    const gatewayAttachments = attachments
+      .filter(attachment => attachment.base64Data)
+      .map(toGatewayAttachment);
+    const nativeSend = {
+      sessionKey,
+      ...(goalStartSessionId || this.state.currentSessionId
+        ? { sessionId: goalStartSessionId || this.state.currentSessionId }
+        : {}),
+      message: gatewayOutboundMessage,
+      ...(goalStartOperation
+        ? {
+            intent: {
+              kind: 'session-goal-start',
+              version: 1,
+              issuedAtMs: goalStartOperation.issuedAtMs,
+            },
+          }
+        : {}),
+      deliver: false,
+      justdoUserInitiated: true,
+      idempotencyKey: runId,
+      ...(gatewayAttachments.length > 0 ? { attachments: gatewayAttachments } : {}),
+    };
+    const generation = client.generation;
+    const nativeSessionId = this.state.currentSessionId;
+    // Preparation precedes optimistic insertion and the actual send. A failed
+    // editor read therefore leaves the composer's draft available to retry.
+    const preparedSend =
+      (commandMessage.startsWith('/') && goalStartObjective === null) ||
+      !this.mcpApps.hasCanvasPreparations
+        ? { method: 'chat.send', params: nativeSend }
+        : await this.mcpApps.prepareChatSend(nativeSend);
+    if (
+      this.state.client !== client ||
+      !this.state.connected ||
+      client.generation !== generation ||
+      this.state.sessionKey !== sessionKey ||
+      this.state.currentSessionId !== nativeSessionId ||
+      this.state.chatSending ||
+      options.isCancelled?.()
+    )
+      throw new Error('The message submission context changed');
     debugLog('[ChatCtrl] sendMessage:', displayMessage.slice(0, 60), {
       sessionKey,
       runId,
@@ -2347,32 +2389,10 @@ export class ChatController {
 
     let sendAcknowledged = false;
     try {
-      const gatewayAttachments = attachments
-        .filter(attachment => attachment.base64Data)
-        .map(toGatewayAttachment);
       options.onRequestIssued?.();
       const ack = await client.request<
         SessionGoalMutationResult | { runId?: string; status?: string }
-      >('chat.send', {
-        sessionKey,
-        ...(goalStartSessionId || this.state.currentSessionId
-          ? { sessionId: goalStartSessionId || this.state.currentSessionId }
-          : {}),
-        message: gatewayOutboundMessage,
-        ...(goalStartOperation
-          ? {
-              intent: {
-                kind: 'session-goal-start',
-                version: 1,
-                issuedAtMs: goalStartOperation.issuedAtMs,
-              },
-            }
-          : {}),
-        deliver: false,
-        justdoUserInitiated: true,
-        idempotencyKey: runId,
-        ...(gatewayAttachments.length > 0 ? { attachments: gatewayAttachments } : {}),
-      });
+      >(preparedSend.method, preparedSend.params);
       sendAcknowledged = true;
       if (goalStartOperation) {
         const receipt = asRecord(ack);

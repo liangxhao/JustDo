@@ -8,6 +8,7 @@ const fixture = vi.hoisted(() => ({
   read: vi.fn(),
   update: vi.fn().mockResolvedValue({}),
   prepare: undefined as undefined | (() => Promise<unknown>),
+  tools: new Map<string, (input?: unknown) => Promise<any>>(),
   app: {} as {
     ontoolresult: (result: { structuredContent: Record<string, unknown> }) => Promise<void>;
     onteardown: () => Promise<unknown>;
@@ -20,8 +21,9 @@ vi.mock('@modelcontextprotocol/ext-apps', () => ({
     }
     readServerResource = fixture.read;
     updateModelContext = fixture.update;
-    registerTool = (_name: string, _config: unknown, callback: () => Promise<unknown>) => {
-      fixture.prepare = callback;
+    registerTool = (name: string, _config: unknown, callback: () => Promise<unknown>) => {
+      if (name === 'prepare_context') fixture.prepare = callback;
+      fixture.tools.set(name, callback);
     };
     connect = async () => {};
     getHostContext = () => ({ locale: 'en', theme: 'light' });
@@ -44,10 +46,53 @@ const loaded = () =>
     .map(data => JSON.parse(data) as { action: string; xml?: string; title?: string })
     .filter(data => data.action === 'load');
 
+test('prepared browser snapshots commit all pages and apply by exact generation without reloading the iframe', async () => {
+  await fixture.app.ontoolresult({
+    structuredContent: { xml: original, title: 'Prepared', diagramId: 'diagram-current' },
+  });
+  const frame = document.querySelector<HTMLIFrameElement>('#editor')!.contentWindow!;
+  const emit = (data: unknown) =>
+    message(
+      new MessageEvent('message', { source: frame, origin: 'null', data: JSON.stringify(data) }),
+    );
+  const reading = fixture.tools.get('diagram_snapshot')!();
+  const request = JSON.parse(posted.at(-1)!);
+  expect(request.action).toBe('diagram-snapshot');
+  emit({ event: 'diagram-snapshot', requestId: request.requestId, xml: original, generation: 5 });
+  const current = (await reading).structuredContent;
+  expect(current.diagramId).toBe('diagram-current');
+  const operation = {
+    operationId: 'operation',
+    diagramId: current.diagramId,
+    baseContentStamp: current.contentStamp,
+    xml: original.replace('提交申请', 'AI 修改'),
+    title: 'Updated',
+  };
+  const before = loaded().length;
+  const applying = fixture.tools.get('diagram_apply')!(operation);
+  const apply = JSON.parse(posted.at(-1)!);
+  expect(apply).toMatchObject({ action: 'diagram-apply', expectedXml: original, generation: 5 });
+  emit({
+    event: 'diagram-applied',
+    requestId: apply.requestId,
+    status: 'applied',
+    xml: operation.xml,
+    generation: 6,
+  });
+  expect((await applying).structuredContent).toMatchObject({
+    operationId: 'operation',
+    status: 'applied',
+    snapshot: { xml: operation.xml },
+  });
+  expect(loaded()).toHaveLength(before);
+  expect((await fixture.tools.get('diagram_apply')!(operation)).isError).toBe(true);
+});
+
 beforeEach(async () => {
   vi.resetModules();
   fixture.read.mockReset();
   fixture.update.mockReset().mockResolvedValue({});
+  fixture.tools.clear();
   document.body.innerHTML =
     '<span id="title"></span><span id="status"></span><button id="save"></button>' +
     '<button id="png"></button><button id="svg"></button><iframe id="editor"></iframe>';

@@ -1,0 +1,225 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const sdk = vi.hoisted(() => ({ dispatch: vi.fn(), entry: vi.fn() }));
+vi.mock('openclaw/plugin-sdk/gateway-method-runtime', () => ({
+  dispatchGatewayMethod: sdk.dispatch,
+}));
+vi.mock('openclaw/plugin-sdk/session-store-runtime', () => ({ getSessionEntry: sdk.entry }));
+
+import { DRAWIO_CANVAS_METHOD, DRAWIO_EDIT_TOOL, DRAWIO_SEND_METHOD } from '../contracts';
+import { getDiagramEditingState, registerDiagramEditing } from '../editing';
+
+const scope = { sessionKey: 'agent:main:canvas', sessionId: 'physical', agentId: 'main' };
+const xml = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>';
+const snapshot = { diagramId: 'diagram-one', xml, title: 'Current', contentStamp: 'base' };
+const admitted = {
+  serverName: 'drawio',
+  toolName: 'open_editor',
+  uiResourceUri: 'ui://drawio/editor',
+  originSessionKey: scope.sessionKey,
+};
+type Handler = (request: Record<string, unknown>) => Promise<void>;
+let handlers: Map<string, Handler>;
+let factory: { create: (context: Record<string, unknown>) => any };
+let service: { start: (ctx: unknown) => void; stop: () => void };
+let live: boolean;
+let emitted: ReturnType<typeof vi.fn>;
+async function request(
+  method: string,
+  params: Record<string, unknown>,
+  connectionId = 'connection',
+) {
+  const respond = vi.fn();
+  await handlers.get(method)!({
+    params,
+    respond,
+    client: { connId: connectionId },
+    hasCurrentClientAuthority: () => live,
+  });
+  const call = respond.mock.calls[0];
+  if (call[0] !== true) throw new Error(call[2]?.message ?? 'RPC failed');
+  return call[1];
+}
+const prepare = (override: Record<string, unknown> = {}) =>
+  request(DRAWIO_CANVAS_METHOD, {
+    ...scope,
+    viewId: 'mcp-app-original',
+    action: 'prepare',
+    source: admitted,
+    snapshot,
+    ...override,
+  });
+beforeEach(() => {
+  live = true;
+  handlers = new Map();
+  emitted = vi.fn();
+  sdk.entry.mockReturnValue({ sessionId: scope.sessionId, lifecycleRevision: 'generation' });
+  sdk.dispatch.mockImplementation(async (method, params) => {
+    if (method === 'chat.history') return { ok: true, payload: { ...scope } };
+    if (method === 'mcp.app.view')
+      return { ok: true, payload: { toolResult: { structuredContent: snapshot } } };
+    if (method === 'mcp.app.readResource')
+      return {
+        ok: true,
+        payload: {
+          contents: [
+            {
+              uri: params.uri,
+              text: JSON.stringify({ diagramId: snapshot.diagramId, toolName: 'open_editor' }),
+            },
+          ],
+        },
+      };
+    if (method === 'chat.send') return { ok: true, payload: { runId: params.idempotencyKey } };
+    throw new Error('Unexpected SDK method');
+  });
+  registerDiagramEditing({
+    source: '/plugin/index.cjs',
+    runtime: { config: { current: () => ({ mcp: { apps: { enabled: true } } }) } },
+    registerService: (value: typeof service) => {
+      service = value;
+    },
+    registerGatewayMethod: (name: string, handler: Handler) => handlers.set(name, handler),
+    registerTool: (value: typeof factory) => {
+      factory = value;
+    },
+  } as never);
+  service.start({ gatewayEvents: { emit: emitted } });
+});
+afterEach(() => {
+  service.stop();
+  vi.clearAllMocks();
+});
+
+describe('authenticated draw.io editing adapter', () => {
+  it('rechecks native view, same-runtime mint, incarnation and fixed desktop admission', async () => {
+    expect((await prepare()).token).toBeTypeOf('string');
+    expect(sdk.dispatch).toHaveBeenCalledWith(
+      'mcp.app.readResource',
+      expect.objectContaining({ viewId: 'mcp-app-original', uri: 'diagram://origin/diagram-one' }),
+    );
+    await expect(prepare({ source: { ...admitted, serverName: 'other' } })).rejects.toThrow();
+    await expect(prepare({ sessionId: 'rotated' })).rejects.toThrow();
+    sdk.dispatch.mockImplementation(async method =>
+      method === 'chat.history'
+        ? { ok: true, payload: { ...scope } }
+        : {
+            ok: true,
+            payload: { toolResult: { structuredContent: { diagramId: 'diagram-foreign' } } },
+          },
+    );
+    await expect(prepare()).rejects.toThrow();
+  });
+
+  it('freezes one exact native send and admits read/update only through trusted tool preparation', async () => {
+    const { token } = await prepare();
+    const send = { ...scope, idempotencyKey: 'run', message: 'Edit current diagram' };
+    await request(DRAWIO_SEND_METHOD, {
+      ...scope,
+      send,
+      canvases: [{ token, viewId: 'mcp-app-original', selected: true }],
+    });
+    expect(sdk.dispatch).toHaveBeenCalledWith('chat.send', send);
+    const guard = vi.fn();
+    const tool = factory.create({ ...scope, assertInvocationCurrent: guard });
+    await expect(tool.execute('unprepared', { action: 'read', runId: 'run' })).rejects.toThrow(
+      'identity unavailable',
+    );
+    const metadata = (call: string, runId = 'run') => ({
+      toolCallId: call,
+      hookContext: { ...scope, runId },
+    });
+    tool.prepareBeforeToolCallParams({}, metadata('read'));
+    const current = await tool.execute('read', { action: 'read' });
+    expect(JSON.parse(current.content[0].text)).toEqual(snapshot);
+    tool.prepareBeforeToolCallParams({}, metadata('update'));
+    const updating = tool.execute('update', {
+      action: 'update',
+      diagramId: 'diagram-one',
+      baseContentStamp: 'base',
+      xml,
+      title: 'Updated',
+    });
+    expect(emitted).toHaveBeenCalledWith(
+      'canvas-changed',
+      { viewId: 'mcp-app-original' },
+      { scope: 'operator.admin' },
+    );
+    const { operation } = await request(DRAWIO_CANVAS_METHOD, {
+      ...scope,
+      viewId: 'mcp-app-original',
+      token,
+      action: 'next',
+    });
+    await expect(
+      request(
+        DRAWIO_CANVAS_METHOD,
+        {
+          ...scope,
+          viewId: 'mcp-app-original',
+          token,
+          action: 'ack',
+          operationId: operation.operationId,
+          result: { status: 'applied', snapshot: { ...snapshot, contentStamp: 'applied' } },
+        },
+        'foreign-connection',
+      ),
+    ).rejects.toThrow();
+    await request(DRAWIO_CANVAS_METHOD, {
+      ...scope,
+      viewId: 'mcp-app-original',
+      token,
+      action: 'ack',
+      operationId: operation.operationId,
+      result: { status: 'applied', snapshot: { ...snapshot, contentStamp: 'applied' } },
+    });
+    expect((await updating).details.diagramUpdate).toMatchObject({
+      status: 'applied',
+      runId: 'run',
+      toolCallId: 'update',
+    });
+    expect(
+      (
+        await request(DRAWIO_CANVAS_METHOD, {
+          ...scope,
+          viewId: 'mcp-app-original',
+          token,
+          action: 'next',
+        })
+      ).operation,
+    ).toBeNull();
+    await expect(
+      request(DRAWIO_SEND_METHOD, {
+        ...scope,
+        send,
+        canvases: [{ token, viewId: 'mcp-app-original', selected: true }],
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('does not authorize a guessed run or retained invocation after source invalidation', async () => {
+    const tool = factory.create({
+      ...scope,
+      assertInvocationCurrent: () => {
+        if (!live) throw new Error('expired');
+      },
+    });
+    expect(() =>
+      tool.prepareBeforeToolCallParams({}, { toolCallId: 'call', hookContext: { ...scope } }),
+    ).toThrow();
+    tool.prepareBeforeToolCallParams(
+      {},
+      { toolCallId: 'call', hookContext: { ...scope, runId: 'guessed' } },
+    );
+    await expect(tool.execute('call', { action: 'read' })).rejects.toThrow('No prepared diagram');
+    live = false;
+    expect(() =>
+      tool.prepareBeforeToolCallParams(
+        {},
+        { toolCallId: 'later', hookContext: { ...scope, runId: 'guessed' } },
+      ),
+    ).toThrow('expired');
+    expect(getDiagramEditingState().canvases).toBeDefined();
+    expect(tool.name).toBe(DRAWIO_EDIT_TOOL);
+  });
+});

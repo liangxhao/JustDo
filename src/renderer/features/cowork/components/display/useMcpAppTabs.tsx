@@ -46,13 +46,17 @@ function AppPanel({
   entry,
   active,
   register,
+  reveal,
 }: {
   entry: McpAppWorkspaceEntry;
   active: boolean;
   register: (view: McpAppView | null) => void;
+  reveal: () => void;
 }) {
   const mount = useRef<HTMLDivElement>(null);
   const currentView = useRef<McpAppView>();
+  const revealRef = useRef(reveal);
+  revealRef.current = reveal;
   useLayoutEffect(() => {
     const host = mount.current;
     if (!host) return;
@@ -62,6 +66,7 @@ function AppPanel({
     view.preview = entry.preview;
     view.context = entry.context;
     view.fillContainer = true;
+    view.revealCanvas = () => revealRef.current();
     host.append(view);
     currentView.current = view;
     register(view);
@@ -353,6 +358,10 @@ export function useMcpAppTabs(sessionId: string, select: (id: string) => void, o
             entry={entry}
             active={entry.sessionId === sessionId && entry.id === activeId}
             register={register}
+            reveal={() => {
+              select(entry.id);
+              open();
+            }}
           />
         );
       }),

@@ -1,5 +1,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { randomUUID } from 'node:crypto';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -23,6 +24,13 @@ const ICONS = [
 ];
 
 export function createDiagramServer(resource) {
+  const origins = new Map();
+  const identify = (diagram, toolName) => {
+    const diagramId = `diagram-${randomUUID()}`;
+    if (origins.size >= 128) origins.delete(origins.keys().next().value);
+    origins.set(diagramId, { diagramId, toolName });
+    return { ...diagram, diagramId };
+  };
   const server = new Server(
     { name: 'drawio', title: 'draw.io', version: '1.0.0', icons: ICONS },
     {
@@ -110,16 +118,22 @@ export function createDiagramServer(resource) {
       // The native file entrypoint owns this resource. The MCP process never reads a local path.
       return {
         content: [],
-        structuredContent: { file: { name: file.name, resourceUri: file.resourceUri } },
+        structuredContent: identify(
+          { file: { name: file.name, resourceUri: file.resourceUri } },
+          'open_file',
+        ),
       };
     }
     if (params.name === 'open_editor') {
       return {
         content: [],
-        structuredContent: {
-          title: 'draw.io',
-          xml: '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>',
-        },
+        structuredContent: identify(
+          {
+            title: 'draw.io',
+            xml: '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>',
+          },
+          'open_editor',
+        ),
       };
     }
     if (params.name !== 'create_diagram') throw new Error('Unknown tool');
@@ -127,7 +141,7 @@ export function createDiagramServer(resource) {
       const diagram = validateDiagram(params.arguments);
       return {
         content: [{ type: 'text', text: `Created diagram: ${diagram.title}` }],
-        structuredContent: diagram,
+        structuredContent: identify(diagram, 'create_diagram'),
       };
     } catch (error) {
       return { isError: true, content: [{ type: 'text', text: error.message }] };
@@ -137,6 +151,13 @@ export function createDiagramServer(resource) {
     resources: [{ uri: URI, name: 'draw.io', mimeType: MIME }],
   }));
   server.setRequestHandler(ReadResourceRequestSchema, async ({ params }) => {
+    if (params.uri.startsWith('diagram://origin/')) {
+      const origin = origins.get(params.uri.slice('diagram://origin/'.length));
+      if (!origin) throw new Error('Diagram origin unavailable on this connection');
+      return {
+        contents: [{ uri: params.uri, mimeType: 'application/json', text: JSON.stringify(origin) }],
+      };
+    }
     if (params.uri !== URI) throw new Error('Unknown resource');
     return resource.read();
   });

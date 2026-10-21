@@ -1,5 +1,8 @@
 export const mcpAppsTranslations = {
   zh: {
+    mcpAppsDiagramUpdated: '已更新当前图表',
+    mcpAppsOpenCurrentDiagram: '打开当前画布',
+    mcpAppsDiagramLocal: '本地图表 · 可继续修改',
     mcpAppsContextPrepareFailed: '图表内容暂时无法同步，请等待应用就绪后重新发送。画布修改已保留。',
     mcpAppsWorkspaceStartUnavailable: '当前画布属于已选文件夹，请关闭工作树选项后发送。',
     mcpAppsTitle: '应用',
@@ -53,6 +56,9 @@ export const mcpAppsTranslations = {
     mcpAppsNativeRequired: '运行时尚未提供完整的应用生命周期接口。',
   },
   en: {
+    mcpAppsDiagramUpdated: 'Current diagram updated',
+    mcpAppsOpenCurrentDiagram: 'Open current canvas',
+    mcpAppsDiagramLocal: 'Local diagram · continue editing',
     mcpAppsContextPrepareFailed:
       'Could not sync the diagram. Wait for the app to be ready and send again. Your edits are preserved.',
     mcpAppsWorkspaceStartUnavailable:

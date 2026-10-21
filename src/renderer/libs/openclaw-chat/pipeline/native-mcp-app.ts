@@ -6,6 +6,7 @@ import {
 } from '@shared/plugins/mcpApps';
 
 const admitted = new WeakSet<object>();
+const admittedIdentities = new WeakMap<object, Readonly<McpAppDescriptor>>();
 const nativeToolRoles = new Set(['tool', 'toolresult', 'tool_result', 'function']);
 const nativeNestedToolActivityType = 'openclaw.nested-tool.v1';
 const failed = (value: Record<string, unknown> | undefined) =>
@@ -16,6 +17,22 @@ const failed = (value: Record<string, unknown> | undefined) =>
 
 export function isNativeMcpAppPreview(value: unknown): value is McpAppPreview {
   return Boolean(value && typeof value === 'object' && admitted.has(value));
+}
+
+/** Captured at native admission; a mutable descriptor cannot swap plugin identity later. */
+export function readNativeMcpAppIdentity(value: unknown): Readonly<McpAppDescriptor> | undefined {
+  if (!isNativeMcpAppPreview(value)) return;
+  const identity = admittedIdentities.get(value);
+  if (
+    !identity ||
+    value.viewId !== identity.viewId ||
+    !value.descriptor ||
+    (Object.keys(identity) as Array<keyof McpAppDescriptor>).some(
+      key => value.descriptor?.[key] !== identity[key],
+    )
+  )
+    return;
+  return identity;
 }
 
 /** Hide exact native placeholders for admitted Apps or confirmed failed calls. */
@@ -84,6 +101,7 @@ function preview(
     title: title === `${descriptor.toolName} UI` ? descriptor.serverName : title,
   };
   admitted.add(result);
+  admittedIdentities.set(result, Object.freeze({ ...descriptor }));
   return result;
 }
 

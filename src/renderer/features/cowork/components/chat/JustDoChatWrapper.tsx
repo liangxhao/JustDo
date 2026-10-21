@@ -118,7 +118,10 @@ export interface JustDoChatWrapperRef {
     title: string,
     expectedSessionKey: string,
   ) => SummaryResource | null;
-  dispatchInitialTurn: (params: Record<string, unknown>) => Promise<unknown>;
+  dispatchInitialTurn: (
+    params: Record<string, unknown>,
+    isCancelled?: () => boolean,
+  ) => Promise<unknown>;
   isInitialDispatchReady: (sessionKey: string) => boolean;
   getQueuedInputDetail: (inputId: string, expectedSessionKey: string) => QueuedInputDetail | null;
   withdrawQueuedInput: (inputId: string, expectedSessionKey: string) => Promise<void>;
@@ -493,7 +496,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         isInitialDispatchReady: sessionKey =>
           !branchCreationPendingRef.current &&
           (controllerRef.current?.isInitialDispatchReady(sessionKey) ?? false),
-        dispatchInitialTurn: async params => {
+        dispatchInitialTurn: async (params, isCancelled) => {
           assertSessionMutationAllowed();
           const controller = controllerRef.current;
           if (!controller)
@@ -503,8 +506,11 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           const sessionKey = controller.state.sessionKey;
           const dispatchRunId =
             typeof params.idempotencyKey === 'string' ? params.idempotencyKey : '';
-          const receipt = await dispatchInitialTurn(controller.state, params, () =>
-            controller.beginInitialDispatch(sessionKey, dispatchRunId),
+          const receipt = await dispatchInitialTurn(
+            controller.state,
+            params,
+            () => controller.beginInitialDispatch(sessionKey, dispatchRunId),
+            isCancelled,
           );
           if (isChatSendStopReceipt(receipt)) {
             // A native control ACK never starts this initial execution. Its

@@ -3,10 +3,10 @@
   "name": "draw.io",
   "description": "Offline diagram editor with an interactive MCP App.",
   "enabledByDefault": true,
-  "contracts": { "gatewayMethodDispatch": ["authenticated-request"] },
+  "contracts": { "tools": ["drawio_diagram"], "gatewayMethodDispatch": ["authenticated-request"] },
   "categories": ["productivity"],
   "skills": ["./skills"],
-  "activation": { "onStartup": true },
+  "activation": { "onStartup": true, "onCapabilities": ["tool"] },
   "mcpServers": {
     "drawio": { "command": "node", "args": ["./assets/server.cjs"] }
   },

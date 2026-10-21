@@ -737,6 +737,15 @@ export function renderTimelineItem(
       assistantAvatar,
     );
   }
+  if (item.kind === 'diagram-reference') {
+    return renderAssistantTimelineRow(
+      html`<mcp-app-view .diagramReference=${item.reference}></mcp-app-view>`,
+      showAvatar,
+      '',
+      'assistant',
+      assistantAvatar,
+    );
+  }
   if (item.kind === 'native-widget') {
     return renderAssistantTimelineRow(
       html`<justdo-native-widget .preview=${item.preview}></justdo-native-widget>`,

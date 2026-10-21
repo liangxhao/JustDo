@@ -13,6 +13,7 @@ import {
 } from '@/libs/openclaw-chat/pipeline/native-canvas';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
+import { decodeNativeDiagramReference } from '../pipeline/native-diagram';
 import {
   decodeNativeMcpAppHistoryResult,
   decodeNativeMcpAppResult,
@@ -30,6 +31,7 @@ import {
 } from './failed-run-message';
 import { deterministicHistoryKey } from './history-reconciler';
 import type {
+  DiagramReferenceTimelineItem,
   LiveProcessTimelineItem,
   NativeMcpAppTimelineItem,
   NativeWidgetTimelineItem,
@@ -57,6 +59,7 @@ import {
 import { readToolPresentation } from './tool-presentation';
 
 export type PersistedTimelineItem =
+  | DiagramReferenceTimelineItem
   | {
       kind: 'history-message';
       key: string;
@@ -571,6 +574,23 @@ export function projectPersistedTimeline(
         readToolCallId(source) ?? undefined,
       );
       if (failedApp) failedApps.set(failedApp.viewId, failedApp);
+      const diagram =
+        tool.status === 'completed'
+          ? decodeNativeDiagramReference(
+              source,
+              readToolName(source),
+              readToolCallId(source) ?? undefined,
+            )
+          : undefined;
+      if (diagram) {
+        flushSummary();
+        projected.push({
+          kind: 'diagram-reference',
+          key: `history-diagram:${tool.id}`,
+          reference: diagram,
+        });
+        segment += 1;
+      }
       const app =
         tool.status === 'completed'
           ? (decodeNativeMcpAppHistoryResult(

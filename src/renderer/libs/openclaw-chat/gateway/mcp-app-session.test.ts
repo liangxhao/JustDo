@@ -7,7 +7,11 @@ import {
   MCP_APP_HISTORY_VIEW_METHOD,
 } from '../../../../../openclaw-extensions/runtime-services/contracts/mcp-apps';
 import type { GatewayClient, GatewayRequestOptions } from './client';
-import { McpAppSession } from './mcp-app-session';
+import {
+  hasMcpAppCanvasPreparations,
+  McpAppSession,
+  prepareMcpAppChatSend,
+} from './mcp-app-session';
 
 function fixture() {
   let current = true;
@@ -43,6 +47,57 @@ function fixture() {
 }
 
 describe('MCP App native session authority', () => {
+  it('keeps retained canvas registration on its original session and prepares again after resume', async () => {
+    const { client } = fixture();
+    let sessionKey = 'agent:a:one';
+    let sessionId = 'physical-one';
+    const binding = () => ({
+      client: client as unknown as GatewayClient,
+      generation: 3,
+      sessionKey,
+      sessionId,
+      agentId: 'a',
+      isCurrent: () => true,
+    });
+    const apps = new McpAppSession(binding);
+    const view = apps.bind('mcp-app-original');
+    await view.view();
+    view.preservePresentation = true;
+    const prepare = vi.fn(async () => ({
+      token: 'private',
+      viewId: view.nativeViewId!,
+      selected: false,
+      priority: 2,
+    }));
+    const unregister = apps.registerCanvasPreparation(view.viewId!, prepare, () =>
+      view.isCurrent(),
+    );
+    try {
+      expect(hasMcpAppCanvasPreparations(binding())).toBe(true);
+      apps.invalidate(true);
+      sessionKey = 'agent:a:two';
+      sessionId = 'physical-two';
+      const send = { sessionKey, sessionId };
+      expect(hasMcpAppCanvasPreparations(binding())).toBe(false);
+      expect(await prepareMcpAppChatSend(binding(), send)).toEqual({
+        method: 'chat.send',
+        params: send,
+      });
+      expect(prepare).not.toHaveBeenCalled();
+      sessionKey = 'agent:a:one';
+      sessionId = 'physical-one';
+      expect(apps.resume(view)).toBe(true);
+      expect(hasMcpAppCanvasPreparations(binding())).toBe(true);
+      expect((await prepareMcpAppChatSend(binding(), { sessionKey, sessionId })).method).toBe(
+        'drawio.chat.send',
+      );
+      expect(prepare).toHaveBeenCalledOnce();
+    } finally {
+      unregister();
+      await view.close();
+    }
+  });
+
   it('suspends a retained presentation without rereading it and rejects responses from before navigation', async () => {
     const { apps, request } = fixture();
     const view = apps.bind('mcp-app-retained');

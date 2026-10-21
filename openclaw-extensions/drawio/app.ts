@@ -1,4 +1,7 @@
 import { App, applyDocumentTheme, applyHostStyleVariables } from '@modelcontextprotocol/ext-apps';
+import { z } from 'zod';
+
+import { DRAWIO_APPLY_TOOL, DRAWIO_SNAPSHOT_TOOL } from './contracts';
 
 declare global {
   interface Window {
@@ -18,6 +21,67 @@ let ready = false;
 let busy = false;
 let resultRevision = 0;
 let disposed = false;
+let diagramId = '';
+const snapshots = new Map<string, { xml: string; generation: number }>();
+const appliedOperations = new Set<string>();
+let canvasRequest:
+  | {
+      id: string;
+      resolve: (value: Record<string, unknown>) => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  | undefined;
+const validXml = (value: unknown): value is string => {
+  if (
+    typeof value !== 'string' ||
+    new TextEncoder().encode(value).length > 1024 * 1024 ||
+    /<!DOCTYPE|<!ENTITY/i.test(value)
+  )
+    return false;
+  const document = new DOMParser().parseFromString(value, 'application/xml');
+  return (
+    !document.querySelector('parsererror') &&
+    ['mxfile', 'mxGraphModel'].includes(document.documentElement.localName)
+  );
+};
+const requestCanvas = (action: string, data: Record<string, unknown> = {}) => {
+  if (!ready || !xml || busy || pending || canvasRequest || disposed || !diagramId)
+    throw new Error('Diagram is not ready');
+  const revision = resultRevision;
+  busy = true;
+  updateButtons();
+  return new Promise<Record<string, unknown>>((resolve, reject) => {
+    const id = crypto.randomUUID();
+    canvasRequest = {
+      id,
+      resolve,
+      reject,
+      timer: setTimeout(() => {
+        canvasRequest = undefined;
+        reject(new Error('Diagram response unknown; do not replay'));
+      }, 10_000),
+    };
+    post({ ...data, action, requestId: id });
+  })
+    .then(value => {
+      if (disposed || revision !== resultRevision) throw new Error('Diagram editor changed');
+      return value;
+    })
+    .finally(() => {
+      busy = false;
+      updateButtons();
+    });
+};
+const rememberSnapshot = (value: Record<string, unknown>) => {
+  if (!validXml(value.xml) || !Number.isSafeInteger(value.generation))
+    throw new Error('Invalid current diagram');
+  const contentStamp = crypto.randomUUID();
+  if (snapshots.size >= 8) snapshots.delete(snapshots.keys().next().value!);
+  snapshots.set(contentStamp, { xml: value.xml, generation: value.generation as number });
+  xml = value.xml;
+  return { diagramId, xml, title: name, contentStamp };
+};
 let pending:
   | {
       format: 'drawio' | 'png' | 'svg';
@@ -106,6 +170,16 @@ window.addEventListener('message', event => {
   try {
     data = JSON.parse(event.data);
   } catch {
+    return;
+  }
+  if (
+    (data.event === 'diagram-snapshot' || data.event === 'diagram-applied') &&
+    canvasRequest?.id === data.requestId
+  ) {
+    const request = canvasRequest;
+    canvasRequest = undefined;
+    clearTimeout(request.timer);
+    request.resolve(data);
     return;
   }
   if (data.event === 'init') {
@@ -223,9 +297,82 @@ app.registerTool(
     return { content: [] };
   },
 );
+app.registerTool(
+  DRAWIO_SNAPSHOT_TOOL,
+  {
+    description: 'Read the current complete diagram after committing node editing.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async () => ({
+    content: [],
+    structuredContent: rememberSnapshot(await requestCanvas('diagram-snapshot')),
+  }),
+);
+
+app.registerTool(
+  DRAWIO_APPLY_TOOL,
+  {
+    description: 'Apply one prepared diagram operation in the current editor, preserving undo.',
+    inputSchema: z
+      .object({
+        operationId: z.string().min(1).max(128),
+        diagramId: z.string().max(128),
+        baseContentStamp: z.string().max(128),
+        xml: z.string().max(1024 * 1024),
+        title: z.string().max(200),
+      })
+      .strict(),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  },
+  async input => {
+    const base = snapshots.get(input.baseContentStamp);
+    if (
+      input.diagramId !== diagramId ||
+      !base ||
+      appliedOperations.has(input.operationId) ||
+      !validXml(input.xml)
+    )
+      return {
+        isError: true,
+        content: [{ type: 'text', text: 'Stale or repeated diagram operation' }],
+      };
+    // Reserve before dispatch. A lost nested-frame response never permits replay.
+    if (appliedOperations.size >= 128) throw new Error('Reopen the diagram before further changes');
+    appliedOperations.add(input.operationId);
+    const result = await requestCanvas('diagram-apply', {
+      generation: base.generation,
+      expectedXml: base.xml,
+      xml: input.xml,
+    });
+    if (result.status !== 'applied') {
+      status.textContent =
+        result.status === 'conflict'
+          ? text(
+              '画布已手动修改，本次修改未应用',
+              'The canvas changed. This update was not applied.',
+            )
+          : text('修改结果待核实，请勿重复应用', 'Update result unknown. Do not apply again.');
+      return {
+        content: [],
+        structuredContent: { operationId: input.operationId, status: result.status },
+      };
+    }
+    name = input.title;
+    title.textContent = name;
+    const current = rememberSnapshot(result);
+    status.textContent = text('已更新，可撤销', 'Updated. Undo is available.');
+    updateContext();
+    return {
+      content: [],
+      structuredContent: { operationId: input.operationId, status: 'applied', snapshot: current },
+    };
+  },
+);
 app.ontoolresult = async result => {
   const revision = ++resultRevision;
   const diagram = result.structuredContent as Record<string, unknown> | undefined;
+  diagramId = typeof diagram?.diagramId === 'string' ? diagram.diagramId : '';
+  snapshots.clear();
   if (diagram?.file) {
     xml = '';
     busy = true;
@@ -296,6 +443,11 @@ app.onteardown = async () => {
   disposed = true;
   resultRevision++;
   clearTimeout(contextTimer);
+  if (canvasRequest) {
+    clearTimeout(canvasRequest.timer);
+    canvasRequest.reject(new Error('Diagram closed; update result unknown'));
+    canvasRequest = undefined;
+  }
   if (pending) clearTimeout(pending.timer);
   pending?.context?.reject(new Error('Diagram closed during context preparation'));
   return {};

@@ -1,11 +1,13 @@
 import { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
 import type { McpAppPreview } from '@shared/plugins/mcpApps';
 
+import type { DiagramReference } from '../../../../../openclaw-extensions/drawio/contracts';
 import {
   decodeNativeCanvasResult,
   type NativeCanvasPreview,
   stripNativeWidgetFallbacks,
 } from '../pipeline/native-canvas';
+import { decodeNativeDiagramReference } from '../pipeline/native-diagram';
 import { decodeNativeMcpAppResult } from '../pipeline/native-mcp-app';
 import type {
   AssistantTurn,
@@ -90,7 +92,14 @@ export interface NativeMcpAppTimelineItem {
   preview: McpAppPreview;
 }
 
+export interface DiagramReferenceTimelineItem {
+  kind: 'diagram-reference';
+  key: string;
+  reference: DiagramReference;
+}
+
 export type ActiveTurnTimelineItem =
+  | DiagramReferenceTimelineItem
   | NativeWidgetTimelineItem
   | NativeMcpAppTimelineItem
   | ProcessSummaryTimelineItem
@@ -171,12 +180,15 @@ export function projectTurnItems(
   let summarySegment = 0;
   const widgets = new Map<ToolItem, NativeCanvasPreview>();
   const apps = new Map<ToolItem, McpAppPreview>();
+  const diagrams = new Map<ToolItem, DiagramReference>();
   const appViews = new Set<string>();
   const nativeDocIds = new Set<string>();
   for (const item of turn.items) {
     if (item.type !== 'tool' || item.status !== 'completed') continue;
     const preview = decodeNativeCanvasResult(item.output, item.name, item.toolCallId);
     const app = decodeNativeMcpAppResult(item.output, item.name, item.toolCallId);
+    const diagram = decodeNativeDiagramReference(item.output, item.name, item.toolCallId);
+    if (diagram) diagrams.set(item, diagram);
     if (app && !appViews.has(app.viewId)) {
       apps.set(item, app);
       appViews.add(app.viewId);
@@ -219,6 +231,18 @@ export function projectTurnItems(
         const normalizedName = item.name.trim().toLowerCase();
         const widget = widgets.get(item);
         const app = apps.get(item);
+        const diagram = diagrams.get(item);
+        if (diagram) {
+          archived.push(item);
+          flushSummary();
+          projected.push({
+            kind: 'diagram-reference',
+            key: `diagram:${item.id}`,
+            reference: diagram,
+          });
+          summarySegment += 1;
+          continue;
+        }
         if (app) {
           archived.push(item);
           flushSummary();

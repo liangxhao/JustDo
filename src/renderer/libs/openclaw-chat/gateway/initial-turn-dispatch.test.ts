@@ -1,8 +1,69 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { GatewayClient } from './client';
 import { dispatchInitialTurn } from './initial-turn-dispatch';
+import { McpAppSession } from './mcp-app-session';
 
 describe('prepared initial turn dispatch', () => {
+  it.each(['cancel', 'client', 'session', 'generation', 'incarnation'])(
+    'does not send after %s during delayed canvas preparation',
+    async change => {
+      const request = vi.fn();
+      const client = { generation: 1, gatewayUrl: 'ws://127.0.0.1:1', request };
+      const state = {
+        connected: true,
+        sessionKey: 'agent:main:one',
+        currentSessionId: 'physical',
+        client,
+      };
+      const params = {
+        sessionKey: state.sessionKey,
+        sessionId: state.currentSessionId,
+        idempotencyKey: 'turn',
+      };
+      let cancelled = false;
+      const apps = new McpAppSession(() => ({
+        client: client as unknown as GatewayClient,
+        generation: 1,
+        sessionKey: params.sessionKey,
+        sessionId: params.sessionId,
+        agentId: 'main',
+        isCurrent: () => true,
+      }));
+      let resolve!: (value: {
+        token: string;
+        viewId: string;
+        selected: boolean;
+        priority: number;
+      }) => void;
+      const unregister = apps.registerCanvasPreparation(
+        'mcp-app-editor',
+        () =>
+          new Promise(done => {
+            resolve = done;
+          }),
+        () => true,
+      );
+      const beforeRequest = vi.fn();
+      try {
+        const pending = dispatchInitialTurn(state, params, beforeRequest, () => cancelled);
+        const rejected = expect(pending).rejects.toMatchObject({ requestSent: false });
+        if (change === 'cancel') cancelled = true;
+        if (change === 'client') state.client = { ...client, request: vi.fn() };
+        if (change === 'session') state.sessionKey = 'agent:main:other';
+        if (change === 'generation') client.generation++;
+        if (change === 'incarnation') state.currentSessionId = 'replacement';
+        resolve({ token: 'private', viewId: 'mcp-app-editor', selected: true, priority: 2 });
+        await rejected;
+        expect(beforeRequest).not.toHaveBeenCalled();
+        expect(request).not.toHaveBeenCalled();
+        expect(state.client.request).not.toHaveBeenCalled();
+      } finally {
+        unregister();
+      }
+    },
+  );
+
   it('uses only chat.send on the current rendering client and does not retry an uncertain failure', async () => {
     const request = vi.fn().mockRejectedValue(new Error('lost response'));
     const state = {

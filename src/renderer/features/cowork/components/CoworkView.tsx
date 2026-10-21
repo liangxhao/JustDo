@@ -55,7 +55,9 @@ import {
 import { useDispatch, useSelector } from 'react-redux';
 
 import { observeChatContentWidth } from '@/app/chatContentWidth';
-import ApplicationLoading, { useInitialWorkspaceReadiness } from '@/app/shell/initialization/ApplicationLoading';
+import ApplicationLoading, {
+  useInitialWorkspaceReadiness,
+} from '@/app/shell/initialization/ApplicationLoading';
 import { RendererStartupActivity } from '@/app/shell/initialization/startupPresentation';
 import {
   BROWSER_ANNOTATION_MAX_COUNT,
@@ -1378,7 +1380,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                       },
                     );
                 }
-                return chatWrapperRef.current!.dispatchInitialTurn(request.params);
+                return chatWrapperRef.current!.dispatchInitialTurn(
+                  request.params,
+                  () => isPendingStartCancelled() || isTransportCancelled(),
+                );
               }
               await new Promise(resolve => setTimeout(resolve, 30));
             }

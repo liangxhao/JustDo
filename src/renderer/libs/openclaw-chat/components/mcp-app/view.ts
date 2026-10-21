@@ -15,8 +15,20 @@ import { keyed } from 'lit/directives/keyed.js';
 import { i18nService } from '@/services/i18n';
 import { TOKEN_CONTRACT } from '@/theme/tokens/contract';
 
+import { connectCurrentDiagram } from '../../../../../../openclaw-extensions/drawio/browser/current-canvas';
+import {
+  type DiagramReference,
+  DRAWIO_ENTRY_TOOLS,
+  DRAWIO_RESOURCE,
+  DRAWIO_SERVER,
+} from '../../../../../../openclaw-extensions/drawio/contracts';
 import type { McpAppSession, McpAppSessionView } from '../../gateway/mcp-app-session';
-import { isNativeMcpAppPreview } from '../../pipeline/native-mcp-app';
+import { isNativeDiagramReference } from '../../pipeline/native-diagram';
+import {
+  decodeMcpAppLaunch,
+  isNativeMcpAppPreview,
+  readNativeMcpAppIdentity,
+} from '../../pipeline/native-mcp-app';
 import { resolveNativeSandboxUrl } from '../native-widget/host';
 import { createMcpAppBridge } from './bridge';
 import { prepareMcpAppDownload } from './download';
@@ -38,6 +50,7 @@ export interface McpAppViewContext {
 }
 
 const activeViews = new WeakMap<McpAppSession, Map<string, McpAppView>>();
+const diagramViews = new Set<McpAppView>();
 type Confirmation = {
   text: string;
   purpose: 'draft' | 'new' | 'file';
@@ -55,6 +68,7 @@ type Resources = {
   refreshContext?: () => Promise<void>;
   prepareContext?: () => Promise<void>;
   preparingContext?: boolean;
+  diagramId?: string;
 };
 
 const STYLE = `
@@ -73,6 +87,7 @@ const icon = (path: string) =>
 export class McpAppView extends LitElement {
   static properties = {
     preview: { attribute: false },
+    diagramReference: { attribute: false },
     context: { attribute: false },
     loading: { state: true },
     error: { state: true },
@@ -84,6 +99,8 @@ export class McpAppView extends LitElement {
     closed: { state: true },
   };
   declare preview?: McpAppPreview;
+  declare diagramReference?: DiagramReference;
+  revealCanvas?: () => void;
   declare context?: McpAppViewContext;
   declare loading: boolean;
   declare error: string;
@@ -539,6 +556,46 @@ export class McpAppView extends LitElement {
       await bridge.sendToolInput({ arguments: payload.toolInput ?? {} });
       if (payload.toolResult) await bridge.sendToolResult(payload.toolResult as never);
       if (!current()) return;
+      const identity = readNativeMcpAppIdentity(preview);
+      const diagramId = mcpAppRecord(payload.toolResult?.structuredContent)?.diagramId;
+      const stopDiagram =
+        identity?.serverName === DRAWIO_SERVER &&
+        identity.uiResourceUri === DRAWIO_RESOURCE &&
+        DRAWIO_ENTRY_TOOLS.includes(identity.toolName as never) &&
+        identity.originSessionKey === context.sessionKey &&
+        typeof diagramId === 'string'
+          ? connectCurrentDiagram({
+              source: Object.freeze({
+                serverName: identity.serverName,
+                toolName: identity.toolName,
+                uiResourceUri: identity.uiResourceUri,
+                originSessionKey: identity.originSessionKey,
+              }),
+              diagramId,
+              bridge,
+              viewId: () => resources.session.nativeViewId!,
+              current: () => current() && !this.closed && this.context?.canDraft() === true,
+              priority: () => (this.visible() ? (this.fillContainer ? 2 : 1) : 0),
+              request: input => resources.session.diagramRequest(input),
+              release: token => resources.session.releaseDiagram(token),
+              subscribe: listener => resources.session.subscribe(listener),
+              onSuspend: listener => resources.session.onSuspend(listener),
+              register: prepare =>
+                context.apps.registerCanvasPreparation(
+                  preview.viewId,
+                  prepare,
+                  () =>
+                    resources.session.isCurrent() &&
+                    current() &&
+                    !this.closed &&
+                    this.context?.canDraft() === true,
+                ),
+            })
+          : undefined;
+      if (stopDiagram && typeof diagramId === 'string') {
+        resources.diagramId = diagramId;
+        diagramViews.add(this);
+      }
       resources.update = () => bridge.setHostContext(buildContext());
       const observer = new (owner as Window & typeof globalThis).MutationObserver(() =>
         resources.update?.(),
@@ -552,6 +609,8 @@ export class McpAppView extends LitElement {
       resize.observe(this);
       resources.dispose = () => {
         stopContext();
+        stopDiagram?.();
+        diagramViews.delete(this);
         observer.disconnect();
         resize.disconnect();
         host.dispose();
@@ -697,7 +756,69 @@ export class McpAppView extends LitElement {
     }
   }
 
+  private async openReferencedDiagram() {
+    const reference = this.diagramReference;
+    const context = this.context;
+    if (
+      !isNativeDiagramReference(reference) ||
+      !context?.isCurrent() ||
+      !context.apps.ready ||
+      this.loading
+    )
+      return;
+    for (const view of diagramViews) {
+      if (
+        !view.closed &&
+        view.context?.isCurrent() &&
+        view.resources?.session.isCurrent() &&
+        view.resources.diagramId === reference.diagramId &&
+        view.resources.session.sessionId === reference.sessionId
+      ) {
+        if (view.revealCanvas) view.revealCanvas();
+        else {
+          view.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+          view.expanded = true;
+        }
+        return;
+      }
+    }
+    const version = ++this.version;
+    const current = () =>
+      this.isConnected &&
+      this.version === version &&
+      this.context?.apps === context.apps &&
+      context.isCurrent() &&
+      !this.closed;
+    this.loading = true;
+    this.error = '';
+    try {
+      const restored = await context.apps
+        .bind(reference.originViewId)
+        .restoreDiagramReference(reference);
+      const preview = decodeMcpAppLaunch(restored);
+      if (!current()) return;
+      if (!preview) throw new Error('Diagram reference unavailable');
+      this.preview = preview;
+    } catch {
+      if (current()) this.error = i18nService.t('mcpAppsUnavailable');
+    } finally {
+      if (current()) {
+        this.loading = false;
+        this.requestUpdate();
+      }
+    }
+  }
+
   protected render() {
+    if (!this.preview && isNativeDiagramReference(this.diagramReference)) {
+      return html`<div class="status">
+          <span>${i18nService.t('mcpAppsDiagramUpdated')} · ${this.diagramReference.title}</span>
+          <button ?disabled=${this.loading} @click=${() => void this.openReferencedDiagram()}>
+            ${i18nService.t('mcpAppsOpenCurrentDiagram')}
+          </button>
+        </div>
+        ${this.error ? html`<div class="notice">${this.error}</div>` : nothing}`;
+    }
     const t = (key: string) => i18nService.t(key);
     return html`
       <header
@@ -715,7 +836,7 @@ export class McpAppView extends LitElement {
         <span class="title" title=${this.preview?.title ?? t('mcpAppsTitle')}
           >${this.preview?.title ?? t('mcpAppsTitle')}</span
         >
-        ${this.inactive && !this.closed ? html`<span class="notice">${t('mcpAppsReadOnly')}</span>` : nothing}
+        ${this.inactive && !this.closed ? html`<span class="notice">${t(this.resources?.diagramId ? 'mcpAppsDiagramLocal' : 'mcpAppsReadOnly')}</span>` : nothing}
         ${
           !this.closed
             ? html`${!this.expanded && this.modes.includes('inline') && this.modes.includes('fullscreen') ? html`<button class="icon-button" data-action="display-mode" aria-label=${t(this.mode === 'fullscreen' ? 'mcpAppsReturn' : 'mcpAppsExpand')} title=${t(this.mode === 'fullscreen' ? 'mcpAppsReturn' : 'mcpAppsExpand')} @click=${() => void this.setMode(this.mode === 'fullscreen' ? 'inline' : 'fullscreen')}>${icon(this.mode === 'fullscreen' ? 'M4 9h5V4 M20 9h-5V4 M4 15h5v5 M20 15h-5v5' : 'M9 4H4v5 M15 4h5v5 M4 15v5h5 M20 15v5h-5')}</button>` : nothing}
@@ -759,7 +880,7 @@ export class McpAppView extends LitElement {
             </div>`
           : nothing
       }
-      ${this.inactive && !this.closed && this.fillContainer ? html`<div class="notice">${t('mcpAppsReadOnly')}</div>` : nothing}
+      ${this.inactive && !this.closed && this.fillContainer ? html`<div class="notice">${t(this.resources?.diagramId ? 'mcpAppsDiagramLocal' : 'mcpAppsReadOnly')}</div>` : nothing}
       ${this.loading ? html`<div class="status" role="status"><span class="spinner" aria-hidden="true"></span>${t('mcpAppsLoading')}</div>` : nothing}
       ${
         this.error

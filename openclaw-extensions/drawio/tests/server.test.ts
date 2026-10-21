@@ -35,7 +35,16 @@ describe('offline diagram MCP service', () => {
       };
       const opened = await client.callTool({ name: 'open_file', arguments: { file } });
       expect(opened.isError).not.toBe(true);
-      expect(opened.structuredContent).toEqual({ file });
+      expect(opened.structuredContent).toEqual({
+        file,
+        diagramId: expect.stringMatching(/^diagram-/),
+      });
+      const diagramId = (opened.structuredContent as { diagramId: string }).diagramId;
+      const origin = await client.readResource({ uri: `diagram://origin/${diagramId}` });
+      expect(JSON.parse((origin.contents[0] as { text: string }).text)).toEqual({
+        diagramId,
+        toolName: 'open_file',
+      });
       for (const invalid of [
         { ...file, resourceUri: 'file:///private/diagram.drawio' },
         { ...file, name: '../diagram.drawio' },

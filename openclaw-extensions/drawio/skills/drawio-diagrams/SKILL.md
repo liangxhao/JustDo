@@ -9,7 +9,15 @@ For diagram requests, prefer the actual draw.io MCP tool so the user receives an
 editable diagram in the message. This is separate from HTML widgets and data
 charts. Respect an explicit request for a different format or plain source.
 
-1. Discover the available drawing tool with the native tool search: search for
+1. First use `drawio_diagram` with `action: "read"` when this chat has an opened
+   canvas or the user asks to continue a diagram. A blank sidebar canvas is an
+   existing target too. Read returns its stable ID, current XML and content stamp.
+   Use `action: "update"` with that ID, `baseContentStamp`, complete XML and title
+   to edit the same canvas. Preserve unrelated pages and existing cell IDs.
+   The successful result is already applied and undoable; do not create another
+   editor. Resolve ambiguity with the user, and preserve manual edits on conflict.
+   Never replay a result reported unknown. For an explicitly new diagram, or
+   when no canvas is prepared, discover the available drawing tool with native search:
    `drawio create_diagram` (or `draw.io diagram`). MCP tools may be searchable
    without appearing in the compact tool directory. Read the returned schema
    and invoke its exact tool ID through the advertised tool calling interface.
