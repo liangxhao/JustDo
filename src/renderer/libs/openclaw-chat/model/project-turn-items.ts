@@ -220,6 +220,7 @@ export function projectTurnItems(
   };
 
   for (const item of turn.items) {
+    if (item.type === 'content' && item.assistantTextScopeSuppressed) continue;
     const content =
       item.type === 'content'
         ? { ...item, text: stripNativeWidgetFallbacks(item.text, fallbackIds) }

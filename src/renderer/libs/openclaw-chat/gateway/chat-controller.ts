@@ -1879,6 +1879,7 @@ export class ChatController {
     }
 
     const replayEvents = Array.isArray(snapshot.events) ? [...snapshot.events] : [];
+    let hasOwnedAssistantSnapshot = false;
     replayEvents.sort((left, right) => left.seq - right.seq);
     for (const replayEvent of replayEvents) {
       if (!replayEvent || replayEvent.runId !== runId) continue;
@@ -1907,17 +1908,26 @@ export class ChatController {
       });
       if (normalized.event) {
         this.applyNormalizedAgentEvent(normalized.event, { replaySnapshot: true });
+        if (
+          normalized.event.stream === 'assistant' &&
+          normalized.event.data.assistantTextSnapshot === true &&
+          typeof normalized.event.data.itemId === 'string'
+        )
+          hasOwnedAssistantSnapshot = true;
       }
     }
 
-    // Native snapshots retain Tool/Preamble events; the Chat buffer owns reply
-    // text. Restore that buffer without inventing an Agent event or consuming
-    // its live sequence watermark. A suppression is not undone by an unversioned
-    // buffer from a delayed read.
+    // Owned Agent snapshots already restore individual messages. The legacy
+    // Chat buffer is run-cumulative and cannot identify which preview became
+    // commentary. Only use it when no owned projection is available.
     const restoredTurn = this.state.transcript.activeTurn;
     const text = typeof snapshot.text === 'string' ? snapshot.text : '';
     if (
       restoredTurn &&
+      !hasOwnedAssistantSnapshot &&
+      !restoredTurn.items.some(
+        item => item.type === 'content' && item.assistantTextScopeId !== undefined,
+      ) &&
       restoredTurn.assistantSuppressionSeq === undefined &&
       (this.suspendedRunId === runId ||
         !restoredTurn.items.some(

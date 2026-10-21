@@ -25,6 +25,87 @@ Agent 正文时仍使用 Chat 兜底。不能按相同字符串或最长重叠�
 可能有意重复表达。原生空替换撤回、终态和历史接管继续生效。故障机器的具体归因
 仍需其版本与同轮事件顺序；摘要日志省略的增量不能作为未发布的证据。
 
+另一条路径是 029 提前释放的正文预览转为工具前说明：带独立 reasoning 的 Completions 可以先发布
+`assistant` 预览，在工具参数开始流入后将同一段归类为 commentary，并发布
+`item(kind=preamble, phase=update)`。如果只在 `message_end` 撤回预览，两份内容会在
+工具参数生成期间并存，结束时突然恢复一份。参数较长时，这个窗口可能持续数十秒。
+029 为这两条通路补充同源 `assistantTextScope.id`，Renderer 在收到非空 commentary
+时原子隐藏同 scope 的预览；保留底层正文以承接 Gateway 的 delta-only 续写。
+真实 message_end 的空 assistant 替换继续清理原生 Chat buffer。
+身份从实际 source message 捕获，不能从当前消息指针、run 序号或相同文字猜测。
+无网络语义回归覆盖真实 transport → subscriber → Renderer 每一步，并在工具参数
+尚未结束时检查只保留一份。日志中的 `item` 类别本身不证明它是 preamble，需要结合
+原生控制流或带 kind、itemId、replace 的事件记录核对。
+
+还需检查临时工具回滚：模型可能先流出工具参数，最终却以 `stop` 结束，原生会
+移除临时工具及 commentary signature，正文恢复为普通回答。已发布的 preamble
+必须按同一原生消息的完整完成事实协调；只清正文预览或只查最终 `final_answer` ID 都
+不充分。029 只在真正 message_end 附上仍保留的 commentary IDs，Renderer 隐藏该 scope
+已失效的 preamble，并恢复实际收到的最终正文；只含 metadata 的超限快照不能把旧预览
+提升为最终答案。重连优先回放原生 keyed snapshots，避免再追加 run 累计的 text。
+不同消息中的同文说明和合法 commentary／final 混合消息继续保留。
+
+## 029 逐项审查：原生缺陷、能力扩展与应用适配
+
+本节对应锁定的 OpenClaw 2026.10.4。保留前提是：独立 reasoning 后的公开正文仍需
+及时展示，真实消息阶段和持久回复由原生决定，并支持切换／重连及历史接管。
+“保留”表示满足这些产品要求时有必要，不表示原生所有调用方式都必须打补丁。
+
+### 已独立复现的原生问题
+
+真实 pristine transport 和 pristine subscriber 的内存 SSE 对照：先收到独立 reasoning、
+正文 `Checking.`、未完成的 `tool_calls`，最后收到 `finish_reason: stop`。原生主动
+回滚工具及临时 text signature；最终消息已无工具和 commentary signature，但事件流先发布带独立 owner
+的同文 preamble，再发布 assistant 正文，没有撤回或共同消息归属事实。只使用原生
+事件的当前消费者仍显示两份。这是**临时 commentary 回滚的事件一致性缺口**，
+并非 SSE 重复生成，也不是整个 reasoning parser 都有缺陷。
+
+对应正式用例为 `reasoning-completions-semantic.test.ts` 的
+`audits unpatched subscriber behavior when stop rolls back a provisional tool`。
+该对照对 transport/subscriber 均不应用 transform；使用已打补丁产物时明确跳过，
+不能把跳过或 patched-only 结果当作原版证据。
+
+本次源事实只对 `structuredTextStreaming: true` 的已准入消息生效，配合 Renderer
+覆盖该路径；不宣称通用修复所有无 reasoning 或显式 strict Completions 调用。
+原版延后公开正文、缺少新的 scope 字段、恢复接口仅提供累计文字，分别是保守策略
+或接口能力限制，不能因与产品需求不同就一概称为上游 bug。
+
+### 保留项及删除后果
+
+| 改动 | 分类 | 当前保留理由与反例 |
+| --- | --- | --- |
+| `beginReasoning` 不自动进入 strict；同包公开内容走 `pushVisible` | 流式能力扩展 | 原生 `push` 自带 strict，subscriber 又依据 `textPhaseRequiresTerminal` 拒绝提前正文；只改 Renderer 不能释放尚未发布的内容。独立和同包 reasoning/content 用例证明需同时打通。 |
+| `structuredRecoveryMode`、孤立关闭标签处理、未闭合标签 EOF 保护 | 扩展的安全配套 | 取消整段缓冲后必须继续隐藏私有标签，不能在 EOF 恢复未闭合 reasoning，也不能追溯隐藏已发布正文。Markdown 代码中的字面标签及显式 strict 保持原规则。 |
+| 非终态 flush 暂存 pending syntax，实际终态才完整 flush | 扩展的安全配套 | reasoning／tool 事件会触发中间 flush；把拆成两包的 `<think>` 当 EOF 处理会破坏标签归属。真实 native 拆包及同包 stop/tool 用例覆盖。 |
+| subscriber 只准入带标记的预览，同时维持 durable partial/block 门禁 | 流式能力扩展 | 可以先显示，但尚未确定 commentary/final 的正文不能提前变成持久回复；删除任一半会失去流式或提前交付不确定正文。 |
+| commentary-only `message_end` 的空 assistant replacement | 扩展引入的缓冲适配 | 预览已经进入原生 Chat buffer；只在 Renderer 隐藏仍会让 Chat 终态兜底包含旧预览。只清对应 assistant，不清独立 Thinking/Tool/preamble。 |
+| transport 消息 UUID；具体 source message 透传；assistant/preamble 同源 scope | 应用展示协议扩展 | 两类原生 owner 使用不同身份，回滚还会删除 signature，不能靠同文、run 顺序或回调后的当前消息猜归属。共用 commentary 分支不能仅按局部 Responses 变量假定其他路径不可达。 |
+| 真正 `message_end` 的 retained commentary IDs，正文未变也投递 | 原生回滚缺口的应用侧适配 | Renderer 按同一 scope 隐藏失效旁白；缺失集合为未知，`[]` 才证明没有保留项。`text_end` 和内部 `finalMessage` flush 都不等于消息完成，合法 mixed commentary/final 必须保留。 |
+| 真正完成投递使用完整 `replace:true` 正文 | 我们的历史／live 适配 | 历史可能已补入 prefix 或 suffix；再追加终态 delta 会丢后缀或重复后缀。Gateway 的 delta 压缩本身没有失效，只是当前应用无法从被历史改写的基线安全追加。 |
+| 原生现有有界快照保留 keyed assistant 和 preamble scope | 重连能力扩展 | run 累计 `text` 无法分离已转旁白的预览；只恢复 scope 消息又会丢掉后续普通模型的正文。用原生 itemId 恢复各 owner，未知／无正文来源保持原有规则。 |
+| 同 owner 修订继承 scope；超限仅保留身份／完成事实；整 scope 淘汰 | 新快照协议的安全配套 | 避免空修订丢归属、预算截断后旧旁白复活，或只淘汰关联记录的一半。维持原有条数、字节、冻结和顺序限制，不另建 transcript 权威。 |
+| Renderer scope 归约、完成事实 Map、隐藏标记与真实正文恢复 | 我们的展示适配 | 即时交接和回滚在软件侧完成；隐藏时保留正文前缀以承接 delta，metadata-only 完成不能把旧预览提升成最终答案。Map 只存活动 turn 的身份／序号，不存第二份正文。 |
+| 展示层、浏览器 project/finish、side-chat 内容收集与截断补全都过滤隐藏项；clone 复制 Map | 我们的展示适配 | 这些读者不全部经过桌面 `projectTurnItems`；漏一处就会重新暴露旧预览。侧聊快照也不能与活动 turn 共用可变归属集合。 |
+| controller 回放 owned 快照后跳过累计 `text` | 我们的恢复适配 | 否则已恢复的旁白／正文会再被累计 buffer 追加一次。只有序号的旧 assistant marker 仍使用原有 text 兜底，不把无正文当成已恢复。 |
+| 精确 AST 形态、当前形态幂等、拒绝历史／部分形态及源码／bundle 原子校验 | 构建保护 | 属于仓库补丁契约，不是业务 bug 修复；防止锁定版本或构建绑定变化后静默误改。公共工具不是 029 专有实现。 |
+
+### 删除项及依据
+
+- 删除 `beginReasoning` 条件中的 `streamStructuredText ||`，保留原生
+  `!hasFollowingVisibleText || !hasPendingSyntax()` 条件及精确校验。消融后真实 native
+  语义用例仍通过；`Interim. <thi` 后同包出现 reasoning 与剩余标签时，旧 override
+  会额外强制封段并改变 phase。新增回归确保不再强制这个分类，同时仍不暴露私有文字。
+- 删除 `assistantTextSnapshotTruncated`。它没有生产读者；已有 snapshot marker、
+  itemId/scope 和缺失的 text 足够表达预算退化，不能恢复旧正文的规则继续生效。
+- 原生发布回执扩展、FIFO／批量发布方法及逐条 preamble 撤回队列已删除。
+  最终方案只传递源事实，软件侧负责显示决策，不恢复这些中间实现。
+
+安全边界、普通流式、合法同文、mixed phase、回滚、历史补载、metadata-only 超限、
+独立 owner 恢复及取消／失败的用例共同构成保留依据，不能仅凭测试总数判断必要性。
+取消提前展示需求可以整体撤掉扩展和配套，但单独删其身份或安全保护会留下不完整协议。
+上游补齐公开增量、共同消息归属、真实完成依据和 keyed recovery 后，重新验证并移除
+对应原生部分；应用展示职责继续留在 Renderer。
+
 ## 正文在结束时集中出现
 
 先对照完整原生 JSON 日志中的 Agent `thinking`、`assistant` 和 `usage` 事件，

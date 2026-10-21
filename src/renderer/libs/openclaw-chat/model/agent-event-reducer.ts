@@ -1,6 +1,7 @@
 import {
   type NormalizedAgentEvent,
   type NormalizedChatEvent,
+  readAssistantTextScope,
   readTerminalGuardObservation,
   type TerminalGuardObservation,
 } from '@shared/openclaw/agentEvent';
@@ -10,6 +11,7 @@ import {
   normalizeToolEvent,
 } from '@shared/openclaw/messageDomain';
 
+import { projectAssistantTextScope, recordAssistantTextScope } from './assistant-text-scope';
 import {
   type AssistantTurn,
   beginAssistantTurn,
@@ -882,9 +884,9 @@ function reducePreamble(
   turn: AssistantTurn,
   event: NormalizedAgentEvent,
   dependencies: TranscriptReducerDependencies,
-): void {
+): ContentItem | null {
   const text = readPreambleText(event.data);
-  if (text === null) return;
+  if (text === null) return null;
   const itemId = eventItemId(event.data);
   const nativeFirstSeq = snapshotSegmentFirstSeq(event);
   const existing = turn.items.find(
@@ -915,10 +917,11 @@ function reducePreamble(
     dependencies,
     true,
   );
-  if (!content) return;
+  if (!content) return null;
   content.preambleItemId = itemId ?? '';
   if (event.data.phase === 'end') content.status = 'completed';
   finishTextBeforeKnownBoundaries(turn);
+  return content;
 }
 
 function reduceContent(
@@ -1339,6 +1342,13 @@ export function reduceAgentEvent(
     options.replaySnapshot === true ||
     isSequenceBackfill ||
     event.agentSeq <= (turn.lastSnapshotAgentSeq ?? -1);
+  const textScope =
+    event.stream === 'assistant' ||
+    (event.stream === 'item' && readPreambleText(event.data) !== null)
+      ? readAssistantTextScope(event.data)
+      : null;
+  const acceptsTextScope = !textScope || recordAssistantTextScope(turn, event, textScope);
+  let projectionScopeId = textScope?.id;
   if (event.stream === 'thinking') {
     reduceThinking(turn, event, dependencies, insertBySequence);
   } else if (event.stream === 'assistant') {
@@ -1346,10 +1356,14 @@ export function reduceAgentEvent(
     if (observation?.action === 'commit' || observation?.action === 'rollback') {
       applyTerminalGuardObservationDecision(turn, observation);
     } else {
-      const content = reduceContent(turn, event, dependencies, insertBySequence);
+      const content = acceptsTextScope
+        ? reduceContent(turn, event, dependencies, insertBySequence)
+        : null;
       if (content) content.lastTextSeq = Math.max(content.lastTextSeq ?? -1, event.agentSeq);
       const assistantItemId = eventItemId(event.data);
       if (content && assistantItemId !== null) content.assistantItemId = assistantItemId;
+      if (content && textScope) content.assistantTextScopeId = textScope.id;
+      projectionScopeId ??= content?.assistantTextScopeId;
       if (content && observation?.action === 'update') {
         content.terminalGuardObservationToken = observation.token;
       }
@@ -1357,7 +1371,9 @@ export function reduceAgentEvent(
   } else if (event.stream === 'tool') {
     reduceTool(turn, event, dependencies, insertBySequence);
   } else if (event.stream === 'item' && readPreambleText(event.data) !== null) {
-    reducePreamble(turn, event, dependencies);
+    const content = acceptsTextScope ? reducePreamble(turn, event, dependencies) : null;
+    if (content && textScope) content.assistantTextScopeId = textScope.id;
+    projectionScopeId ??= content?.assistantTextScopeId;
   } else if (event.stream === 'compaction') {
     const phase = event.data.phase;
     if (
@@ -1416,6 +1432,10 @@ export function reduceAgentEvent(
         recoveredTool.lastSeq = Math.max(recoveredTool.lastSeq, event.agentSeq);
       }
     }
+  }
+
+  if (projectionScopeId && acceptsTextScope) {
+    projectAssistantTextScope(turn, event, projectionScopeId, insertAgentItemBySequence);
   }
 
   // New Gateway releases can add non-display streams (for example plan and
@@ -1564,8 +1584,7 @@ export function reduceChatEvent(
       lifecycleGeneration: event.lifecycleGeneration,
       agentId: null,
       spawnedBy: null,
-      agentSeq: event.replace
-        ? (event.sourceSeq ?? turn.lastAgentSeq + 1) : turn.lastAgentSeq + 1,
+      agentSeq: event.replace ? (event.sourceSeq ?? turn.lastAgentSeq + 1) : turn.lastAgentSeq + 1,
       frameSeq: event.frameSeq,
       deliveryEvent: 'agent',
       stream: 'assistant',

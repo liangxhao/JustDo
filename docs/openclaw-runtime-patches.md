@@ -139,6 +139,13 @@ patch 只接入显式原生依赖。支持模块通过事务工具复制并校�
 不能扩大为对任意 `node_modules` 文件进行无界搜索或写入。旧 manifest 缺少这些
 字节证明时，须从 pristine 包重建，不能给旧运行时补写证明。
 
+029 的原生部分保留公开正文增量、消息归属及真实 message_end 的 commentary 保留集合，
+并将这些事实带入现有有界 in-flight 快照。预览交接、工具回滚后的显示协调以及
+重连时避免累计文字重复追加均在 Renderer 完成。原生 assistant itemId 与 preamble
+signature 没有可推导的共同消息身份，公开 provider wrapper 又拿不到尚未解析的 SSE，
+因此这两处事实缺口仍需精确补丁。不得重新引入原生发布回执表、私有批量发布方法或 FIFO；
+撤除条件和具体契约见 [029 能力说明](../scripts/patches/v2026.10.4/README.md)。
+
 任何 patch 重排、helper 改动、bundle 重建、cache 污染或打包遗漏都会使 manifest 失效。Electron Builder 在打包前和 staged product 上再次验证；Windows 还会流式解码并验证 `win-resources.tar.zst`。分发包按设计省略重复的 `gateway.asar` 和独立 Worker 部署归档 `dist/worker-artifacts/`，保留全部本机 Worker；原始 runtime、inventory 和来源证明保持完整，不改写哈希隐藏打包裁剪。
 
 ## 10. 常用命令

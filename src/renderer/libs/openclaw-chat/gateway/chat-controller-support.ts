@@ -265,6 +265,16 @@ export function cloneAssistantTurn(turn: AssistantTurn): AssistantTurn {
     ...(turn.activityEventSeqById
       ? { activityEventSeqById: new Map(turn.activityEventSeqById) }
       : {}),
+    ...(turn.assistantTextScopes
+      ? {
+          assistantTextScopes: new Map(
+            [...turn.assistantTextScopes].map(([id, scope]) => [
+              id,
+              { ...scope, commentaryItemIds: [...scope.commentaryItemIds] },
+            ]),
+          ),
+        }
+      : {}),
   };
 }
 
@@ -763,6 +773,7 @@ export function collectActiveThinkingText(turn: AssistantTurn | null): string | 
 export function collectActiveContentText(turn: AssistantTurn | null): string | null {
   const text = (turn?.items ?? [])
     .filter(item => item.type === 'content')
+    .filter(item => !item.assistantTextScopeSuppressed)
     .map(item => item.text)
     .filter(Boolean)
     .join('')
@@ -800,6 +811,7 @@ export function completeTruncatedTerminalFromActiveTurn(
   }
   const contentCandidates = (turn?.items ?? [])
     .filter(item => item.type === 'content')
+    .filter(item => !item.assistantTextScopeSuppressed)
     .map(item => item.text);
   const thinkingCandidates = (turn?.items ?? [])
     .filter(item => item.type === 'thinking')

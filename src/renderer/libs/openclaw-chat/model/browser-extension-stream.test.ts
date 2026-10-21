@@ -48,6 +48,41 @@ const chat = (
 const items = (view: BrowserExtensionStream) => view.project().turns.flatMap(turn => turn.items);
 
 describe('extension live projection', () => {
+  it('hides a scoped preview and restores its complete prefix after a delta-only final', () => {
+    const view = new BrowserExtensionStream('one');
+    view.setHistory(history());
+    view.start('Question');
+    view.accept(
+      agent(1, 'assistant', {
+        text: 'Checking.',
+        itemId: 'body-1',
+        assistantTextScope: { id: 'source-1' },
+      }),
+    );
+    view.accept(
+      agent(2, 'item', {
+        kind: 'preamble',
+        phase: 'update',
+        itemId: 'commentary-1',
+        progressText: 'Checking.',
+        assistantTextScope: { id: 'source-1' },
+      }),
+    );
+    expect(items(view).filter(item => item.type === 'agentMessage')).toMatchObject([
+      { text: 'Checking.' },
+    ]);
+    view.accept(
+      agent(3, 'assistant', {
+        delta: ' More.',
+        itemId: 'body-1',
+        assistantTextScope: { id: 'source-1', commentaryItemIds: [] },
+      }),
+    );
+    expect(items(view).filter(item => item.type === 'agentMessage' && item.text)).toMatchObject([
+      { text: 'Checking. More.' },
+    ]);
+  });
+
   it('accepts a compacted authoritative final snapshot and rebases the optimistic turn', () => {
     const view = new BrowserExtensionStream('one');
     view.setHistory({

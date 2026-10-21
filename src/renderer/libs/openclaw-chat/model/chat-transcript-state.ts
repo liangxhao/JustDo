@@ -57,6 +57,9 @@ export interface ContentItem extends BaseTurnItem {
   lastTextSeq?: number;
   /** Native item/preamble commentary owner, separate from assistant reply segments. */
   preambleItemId?: string;
+  /** Explicit native model-message association across assistant/preamble lanes. */
+  assistantTextScopeId?: string;
+  assistantTextScopeSuppressed?: boolean;
   followingToolCallId?: string;
   /** Authoritative history text awaiting a matching delayed Agent snapshot. */
   recoveredSnapshotText?: string;
@@ -99,6 +102,15 @@ export interface AssistantTurn {
    * high-water mark alone cannot decide whether that snapshot fills a gap.
    */
   activityEventSeqById?: Map<string, number>;
+  /** Identity-only presentation facts, scoped to this active turn. */
+  assistantTextScopes?: Map<
+    string,
+    {
+      completedSeq: number;
+      commentaryItemIds: string[];
+      assistantItemId: string | null;
+    }
+  >;
   startedAt: number;
   endedAt?: number;
   modelRef?: string;

@@ -393,6 +393,26 @@ Thinking 或 Tool 交错，也更新原 Content；不同原生消息不能因为
 没有该身份时继续使用已有段序号和尾部规则，不根据相同文本猜测归属。
 同一正文续写会结束相邻 Thinking；历史回填或跨工具修订不能据此结束当前 Thinking。
 
+结构化 reasoning 的可替换正文预览可能在工具参数开始流入时被原生归类为 commentary。
+Renderer 在同一条 preamble update 的归约中隐藏同源 assistant 预览，不能等到整段
+模型响应结束才处理，否则两种 owner 会在参数生成期间重复显示。029 只补充
+`assistantTextScope.id`：来自 transport 的单条原生消息身份，随 normalized partial
+保留，并从具体 source message 捕获，不读取回调之后的当前消息状态。assistant
+itemId 与 commentary signature 本来属于两套身份，不能从 runId、相邻顺序或文字猜出关联。
+原生 message_end 的空 assistant 替换继续清理 Chat buffer；即时显示交接属于 Renderer。
+
+模型也可能在最终 `stop` 时回滚临时工具调用，并移除临时 commentary signature。
+029 在实际 message_end 的 delivery 中附上 `assistantTextScope.commentaryItemIds`，
+表示该消息最终仍保留的原生 commentary IDs。只有真实消息完成且 content 数组完整
+才附带集合；缺失表示未知，空数组表示确实没有保留项。text_end 或通用
+`finalMessage` flush 不构成该依据。即使正文未变化，也发布这份完成事实。
+这条真实完成投递使用完整 `replace:true` 正文，避免 Gateway 压缩为 delta 后，
+与历史已补载的前缀产生重复追加或丢失后缀；普通流式更新仍走原生 delta 通路。
+Renderer 仅隐藏同 scope 中未保留的 preamble，并恢复最终正文；合法混合说明、
+其他消息及同文内容均保留。活动 turn 只记录身份／序号，最终展示层持续过滤已隐藏
+owner，历史补载不能令其复活。消息完成不代表 whole-run 执行结算。
+原生 publisher、回调、代次准入和订阅生命周期保持原契约，不增加发布回执表或队列。
+
 收到 Agent 正文后，同轮非撤回 Chat 增量不再接管正文。原生 Chat 和 Agent 是独立的
 节流／合并通路；Agent 合并增量只携带最后一个事件序号，可能包含已由 Chat 快照
 展示的较早文字，因此“Chat 序号紧接 Agent”不能证明后续增量没有重叠。
@@ -410,10 +430,18 @@ run、toolCallId、entry id、preamble owner 和 sequence 共同决定时间线�
 
 `replace: true` 优先于 delta 追加语义，包括空字符串撤回。累计 chat 空替换按原生源序号撤回覆盖范围内的 assistant 文本，并阻止尚未到达的旧 owner 复活；Thinking、Tool 和独立 preamble 不受此水位影响。文本更新序号独立于 Tool 关闭段时的边界序号。普通空快照仍不构成段边界。
 
-运行恢复使用原生 `chat.history`：持久消息来自 `messages`，进行中的正文来自
-`inFlightRun.text`，工具、preamble 和 usage 来自 `inFlightRun.events`。原生 assistant
-进度事件可仅有序号而无正文，不得据此忽略独立的 text 字段。已移除 017 分段恢复补丁；
-恢复不要求自定义段标识，也不承诺重现未持久化 thinking 的所有分段及交错顺序。
+运行恢复使用原生 `chat.history`：持久消息来自 `messages`；进行中的有身份正文、
+工具、preamble 和 usage 来自 `inFlightRun.events`。
+029 在现有有界／冻结快照中保留各 assistant owner 的最新正文和 scope 事实，
+包括随后切换到普通模型的正文；preamble 也保留 scope。Renderer 回放这些 owner，
+不再追加 run 累计的 `inFlightRun.text`，以免把已交给旁白的预览再次显示。
+同一 scope 超出事件／字节预算时一起淘汰；单条正文超限时只保留身份和完成事实，
+正文等待后续 live 或正式历史接管，不以无归属的累计文字补造。没有 owned snapshot
+且没有已知 scope 的旧路径，仍使用原生 text 兜底：只有序号的 assistant 事件不代表
+已有正文。已移除 017 分段恢复补丁，不承诺重现未持久化 thinking 的所有交错顺序。
+
+029 的逐项分类、原版回滚事件缺口、保留与删除依据见
+[会话诊断中的专项审查](../features/chat/session-diagnostics.md#029-逐项审查原生缺陷能力扩展与应用适配)。
 
 工具的 `item(kind=tool, phase=update).progressText` 是独立的临时进度，并不保证同时有 `tool.partialResult`；直接更新运行中工具卡。临时进度序号阻止迟到 partial 令显示倒退，同时允许工具终态和缺失 input 补回。最终 Tool result 接管后清除进度，不为每个进度帧轮询历史。
 

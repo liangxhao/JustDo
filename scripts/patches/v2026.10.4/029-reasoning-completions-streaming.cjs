@@ -1,10 +1,10 @@
 'use strict';
 
-// Capability: stream normalized public text independently of private reasoning.
+// Capability: admit public previews and expose source/completion/replay facts.
 // Target: pristine openclaw@2026.10.4 AI completions transport and Agent subscriber.
-// Scope: native Chat Completions text/thinking channels; replaceable Agent previews only.
+// Scope: Completions streaming extension; display ownership stays in the Renderer.
 // Safety: retain terminal phase/error ownership, tag fallback and durable delivery gates.
-// Remove when: native separate reasoning/content streams reach Agent listeners before terminal.
+// Remove when: native public previews and ownership/replay facts satisfy the audited contract.
 const fs = require('node:fs');
 const path = require('node:path');
 const ts = require('typescript');
@@ -12,7 +12,9 @@ const { canonicalHelper } = require('../../openclaw/native-support-contract.cjs'
 const { PROVIDER_TRANSPORT_PATH, PROVIDER_PARTITIONER_PATH } =
   require('../../openclaw/openclaw-patch-dependencies.cjs');
 const { transformReasoningTagPartitioner } = require('./structured-reasoning-stream.js');
-const { transformReasoningPreviewTerminal } = require('./reasoning-preview-terminal-shapes.js');
+const { transformReasoningPreviewTerminal } =
+  require('./reasoning-preview-terminal-shapes.js');
+const { transformReasoningTextScope, transformReasoningScopeSnapshot } = require('./reasoning-text-scope-shapes.js');
 const {
   assertCurrentPatchContract, findFilesContaining, isGatewayBundlePath, writeIfChanged,
 } = require('./_patch-utils.js');
@@ -75,7 +77,8 @@ function transformFunction(body, kind, file) {
     const admission = `if (${streamName}) {
       reasoningTagTextPartitioner.markStructured();
       ${output}.openclawDelivery = {
-        ...${output}.openclawDelivery, structuredTextStreaming: true
+        ...${output}.openclawDelivery, structuredTextStreaming: true,
+        messageScopeId: ${output}.openclawDelivery?.messageScopeId ?? globalThis.crypto.randomUUID()
       };
     }`;
     const admissionGuards = collect(begin, ts.isIfStatement)
@@ -102,10 +105,9 @@ function transformFunction(body, kind, file) {
       collect(node.thenStatement, n => ts.isCallExpression(n) &&
         text(n.expression) === 'sealTextBeforeReasoning').length === 1), file);
     const following = text(begin.parameters[0].name);
-    rewrite(sealGuard.expression,
-      `!${following} || !reasoningTagTextPartitioner.hasPendingSyntax()`,
-      `${streamName} || !${following} || !reasoningTagTextPartitioner.hasPendingSyntax()`,
-      'reasoning phase boundary');
+    if (!same(text(sealGuard.expression),
+      `!${following} || !reasoningTagTextPartitioner.hasPendingSyntax()`))
+      throw new Error(`${file}: historical or partial native reasoning phase boundary`);
     const flush = variable('flushReasoningTagTextPartitioner').initializer;
     if (!ts.isArrowFunction(flush) || !ts.isBlock(flush.body) || flush.parameters.length > 1)
       throw new Error(`${file}: reasoning flush boundary changed`);
@@ -175,7 +177,8 @@ function transform(source, file = '<runtime>') {
   const kinds = [TRANSPORT, SUBSCRIBER].filter(name => source.includes(`function ${name}(`));
   const hasParser = (kinds.includes(TRANSPORT) || !kinds.length) &&
     source.includes('function createReasoningTagTextPartitioner');
-  if (!kinds.length && !hasParser) throw new Error(`${file}: structured reasoning boundaries missing`);
+  const hasSnapshot = source.includes('function updateChatRunProgressSnapshot(');
+  if (!kinds.length && !hasParser && !hasSnapshot) throw new Error(`${file}: structured reasoning boundaries missing`);
   let next = source;
   const states = [];
   for (const kind of kinds) {
@@ -185,7 +188,14 @@ function transform(source, file = '<runtime>') {
     next = next.slice(0, range.start) + result.next + next.slice(range.end);
   }
   if (kinds.includes(SUBSCRIBER)) {
-    const updated = transformReasoningPreviewTerminal(next, file);
+    for (const retract of [transformReasoningPreviewTerminal, transformReasoningTextScope]) {
+      const updated = retract(next, file);
+      states.push(updated === next);
+      next = updated;
+    }
+  }
+  if (hasSnapshot) {
+    const updated = transformReasoningScopeSnapshot(next, file);
     states.push(updated === next);
     next = updated;
   }
@@ -206,9 +216,10 @@ function transform(source, file = '<runtime>') {
 
 function processTargets(root, verify) {
   const bundle = fs.existsSync(path.join(root, 'gateway-bundle.mjs')) ? ['gateway-bundle.mjs'] : [];
-  const names = [TRANSPORT, SUBSCRIBER, TERMINAL];
+  const names = [TRANSPORT, SUBSCRIBER, TERMINAL, 'createReplyDelivery', 'updateChatRunProgressSnapshot'];
   const groups = names.map(name => findFilesContaining(root, `function ${name}(`));
-  const paths = [PROVIDER_TRANSPORT_PATH, SUBSCRIBER_PATH, SUBSCRIBER_PATH];
+  const paths = [PROVIDER_TRANSPORT_PATH, SUBSCRIBER_PATH, SUBSCRIBER_PATH, SUBSCRIBER_PATH,
+    'dist/server-chat-state-BP63MB41.mjs'];
   for (const [index, files] of groups.entries())
     assertTargetPaths(root, files, [paths[index], ...bundle], names[index]);
   const plans = [...new Set([...groups.flat(), path.join(root, PROVIDER_PARTITIONER_PATH)])].map(file => {

@@ -25,6 +25,23 @@ export interface NormalizedAgentEvent {
   data: Record<string, unknown>;
 }
 
+/** Native model-message identity; a present ID set proves message completion. */
+export interface AssistantTextScope {
+  id: string;
+  commentaryItemIds?: string[];
+}
+
+export function readAssistantTextScope(data: Record<string, unknown>): AssistantTextScope | null {
+  const scope = asRecord(data.assistantTextScope);
+  const id = nonEmptyString(scope?.id);
+  if (!scope || !id) return null;
+  if (scope.commentaryItemIds === undefined) return { id };
+  if (!Array.isArray(scope.commentaryItemIds)) return null;
+  const ids = scope.commentaryItemIds.map(nonEmptyString);
+  if (ids.some(value => value === null)) return null;
+  return { id, commentaryItemIds: ids as string[] };
+}
+
 export interface NormalizedChatEvent {
   runId: string | null;
   sessionKey: string;

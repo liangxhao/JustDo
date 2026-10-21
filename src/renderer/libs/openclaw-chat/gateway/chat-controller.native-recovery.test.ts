@@ -1,5 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest';
 
+import { projectTurnItems } from '../model/project-turn-items';
 import { ChatController } from './chat-controller';
 
 const sessionKey = 'agent:main:justdo:native-recovery';
@@ -65,6 +66,111 @@ test('uses the native buffer when the retained assistant event is only a sequenc
   const { snapshot, contents } = setup();
   snapshot('Complete buffer', [{ runId, seq: 8, stream: 'assistant', data: {} }]);
   expect(contents()).toEqual(['Complete buffer']);
+});
+
+test.each(['Before tool.', 'Same.'])(
+  'restores exact scoped and ordinary owners without the cumulative buffer: %s',
+  commentary => {
+    const { controller, snapshot } = setup();
+    const final = commentary === 'Same.' ? 'Same.' : 'After tool.';
+    snapshot(commentary + final, [
+      {
+        runId,
+        seq: 1,
+        stream: 'assistant',
+        data: {
+          itemId: 'preview-1',
+          text: commentary,
+          assistantTextSnapshot: true,
+          assistantTextScope: { id: 'source-1' },
+        },
+      },
+      {
+        runId,
+        seq: 2,
+        stream: 'item',
+        data: {
+          kind: 'preamble',
+          phase: 'update',
+          itemId: 'commentary-1',
+          progressText: commentary,
+          assistantTextScope: { id: 'source-1' },
+        },
+      },
+      {
+        runId,
+        seq: 3,
+        stream: 'assistant',
+        data: {
+          itemId: 'answer-2',
+          text: final,
+          assistantTextSnapshot: true,
+        },
+      },
+    ]);
+    expect(
+      projectTurnItems(controller.state.transcript.activeTurn).flatMap(item =>
+        item.kind === 'content' ? [item.item.text] : [],
+      ),
+    ).toEqual([commentary, final]);
+  },
+);
+
+test('does not re-add a scoped live preview from an unowned reconnect buffer', () => {
+  const { controller, internal, emit, snapshot } = setup();
+  emit(1, 'assistant', {
+    itemId: 'preview-1',
+    text: 'Checking.',
+    assistantTextScope: { id: 'source-1' },
+  });
+  emit(2, 'item', {
+    kind: 'preamble',
+    phase: 'update',
+    itemId: 'commentary-1',
+    progressText: 'Checking.',
+    assistantTextScope: { id: 'source-1' },
+  });
+  internal.suspendedRunId = runId;
+  snapshot('Checking.');
+  expect(
+    projectTurnItems(controller.state.transcript.activeTurn).flatMap(item =>
+      item.kind === 'content' ? [item.item.text] : [],
+    ),
+  ).toEqual(['Checking.']);
+});
+
+test('preserves final rollback facts when replay text exceeds the native budget', () => {
+  const { controller, snapshot } = setup();
+  snapshot('Unsafe unowned cumulative text', [
+    {
+      runId,
+      seq: 2,
+      stream: 'item',
+      data: {
+        kind: 'preamble',
+        phase: 'end',
+        itemId: 'commentary-1',
+        progressText: 'Rolled back.',
+        assistantTextScope: { id: 'source-1' },
+      },
+    },
+    {
+      runId,
+      seq: 3,
+      stream: 'assistant',
+      data: {
+        itemId: 'answer-1',
+        assistantTextSnapshot: true,
+        assistantTextScope: { id: 'source-1', commentaryItemIds: [] },
+      },
+    },
+  ]);
+  expect(
+    projectTurnItems(controller.state.transcript.activeTurn).filter(
+      item => item.kind === 'content',
+    ),
+  ).toEqual([]);
+  expect(controller.state.transcript.activeTurn?.status).toBe('running');
 });
 
 test('does not regress newer live content or clear it for a budget-omitted native buffer', () => {
