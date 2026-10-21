@@ -11,7 +11,7 @@ import {
   type McpAppComposerMenu,
   McpAppsControls,
 } from '../../src/renderer/features/cowork/components/mcpApps/McpAppsControls';
-import { McpAppSession } from '../../src/renderer/libs/openclaw-chat/gateway/mcp-app-session';
+import { McpAppSession } from '../../src/renderer/libs/openclaw-chat/gateway/mcp-app/mcp-app-session';
 import { i18nService } from '../../src/renderer/services/i18n';
 import { McpAppMethod, type NativeAppQuestion } from '../../src/shared/plugins/mcpApps';
 

@@ -9,7 +9,7 @@ import {
   BROWSER_PAGE_SOURCE_KIND,
   BROWSER_PAGE_SOURCE_PREFIX,
 } from '../../openclaw-extensions/embedded-browser/browserPageSource';
-import { projectSessionSummaryResources } from '../../src/renderer/libs/openclaw-chat/model/session-summary-resources';
+import { projectSessionSummaryResources } from '../../src/renderer/libs/openclaw-chat/model/timeline/session-summary-resources';
 
 const dist = path.resolve('vendor/openclaw-runtime/current/dist');
 const projectionFile = fs.existsSync(dist)

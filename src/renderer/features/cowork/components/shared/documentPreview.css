@@ -1,4 +1,4 @@
-@import '../../../../libs/openclaw-chat/components/code-block.css';
+@import '../../../../libs/openclaw-chat/components/markdown/code-block.css';
 
 .file-preview-shell {
   isolation: isolate;

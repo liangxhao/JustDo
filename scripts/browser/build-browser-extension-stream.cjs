@@ -6,7 +6,7 @@ const repoRoot = path.resolve(__dirname, '../..');
 
 esbuild.buildSync({
   entryPoints: [
-    path.join(repoRoot, 'src/renderer/libs/openclaw-chat/model/browser-extension-stream.ts'),
+    path.join(repoRoot, 'src/renderer/libs/openclaw-chat/model/browser-extension/browser-extension-stream.ts'),
   ],
   outfile: path.join(
     repoRoot,

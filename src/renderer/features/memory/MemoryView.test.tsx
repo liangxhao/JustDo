@@ -6,7 +6,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import MemoryView from './MemoryView';
 
 vi.mock('@/app/shell/window/WindowHeader', () => ({ default: () => null }));
-vi.mock('@/libs/openclaw-chat/components/markdown', () => ({ toSanitizedMarkdownHtml: () => '' }));
+vi.mock('@/libs/openclaw-chat/components/markdown/markdown', () => ({ toSanitizedMarkdownHtml: () => '' }));
 vi.mock('@/services/i18n', () => ({
   i18nService: { t: (key: string) => key, getLanguage: () => 'en' },
 }));

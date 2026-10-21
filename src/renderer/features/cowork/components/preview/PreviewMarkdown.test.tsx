@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('mermaid', () => ({ default: { initialize: mocks.initialize } }));
-vi.mock('@/libs/openclaw-chat/components/mermaidRenderer', () => ({
+vi.mock('@/libs/openclaw-chat/components/markdown/mermaidRenderer', () => ({
   renderMermaidSvg: mocks.renderMermaidSvg,
 }));
 vi.mock('@/services/i18n', () => ({

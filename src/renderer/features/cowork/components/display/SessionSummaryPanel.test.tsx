@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { createRef } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 
-import { projectSessionSummaryResources } from '@/libs/openclaw-chat/model/session-summary-resources';
+import { projectSessionSummaryResources } from '@/libs/openclaw-chat/model/timeline/session-summary-resources';
 import { i18nService } from '@/services/i18n';
 
 import type { Subtask } from '../subagents/subtaskPresentation';

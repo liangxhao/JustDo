@@ -4,7 +4,7 @@ import { McpAppMethod } from '@shared/plugins/mcpApps';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
-import type { McpAppSessionView } from '../../gateway/mcp-app-session';
+import type { McpAppSessionView } from '../../gateway/mcp-app/mcp-app-session';
 import { createMcpAppBridge } from './bridge';
 
 function pair(): [Transport, Transport] {

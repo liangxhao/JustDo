@@ -193,12 +193,12 @@ import type {
   RewindEditorDraft,
 } from '@/libs/openclaw-chat/gateway/chat-controller';
 import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
-import type { QueuedInputSnapshot } from '@/libs/openclaw-chat/gateway/chat-pending-inputs';
+import type { QueuedInputSnapshot } from '@/libs/openclaw-chat/gateway/input/chat-pending-inputs';
 import type {
   SessionSummaryResources,
   SummaryResource,
-} from '@/libs/openclaw-chat/model/session-summary-resources';
-import { OPEN_SPAWNED_AGENT_EVENT } from '@/libs/openclaw-chat/model/spawn-tool-target';
+} from '@/libs/openclaw-chat/model/timeline/session-summary-resources';
+import { OPEN_SPAWNED_AGENT_EVENT } from '@/libs/openclaw-chat/model/tools/spawn-tool-target';
 import { i18nService } from '@/services/i18n';
 import { getGreetingPeriod, pickHomeGreeting } from '@/services/i18n/homeGreetings';
 import BrainIcon from '@/shared/components/icons/BrainIcon';

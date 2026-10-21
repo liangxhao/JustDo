@@ -1,0 +1,94 @@
+import { isFailedRunMessage } from '../turn/failed-run-message';
+import type { PersistedTimelineItem } from './project-history-timeline';
+import type { ActiveTurnTimelineItem } from './project-turn-items';
+
+export type SourceTimelineItem = PersistedTimelineItem | ActiveTurnTimelineItem;
+
+export interface CompletedProcessTimelineItem {
+  kind: 'completed-process';
+  key: string;
+  items: readonly SourceTimelineItem[];
+}
+
+export type VisibleTimelineItem = SourceTimelineItem | CompletedProcessTimelineItem;
+
+export interface VisibleTimelineRow {
+  item: VisibleTimelineItem;
+  showAvatar: boolean;
+  showFooter: boolean;
+}
+
+export interface TimelineRowProjectionOptions {
+  initialAssistantTurnOpen?: boolean;
+  suppressTrailingAssistantFooter?: boolean;
+}
+
+function historyMessageRole(item: Extract<PersistedTimelineItem, { kind: 'history-message' }>) {
+  const outer = item.message as Record<string, unknown>;
+  const nested =
+    outer.message && typeof outer.message === 'object' && !Array.isArray(outer.message)
+      ? (outer.message as Record<string, unknown>)
+      : outer;
+  return String(nested.role ?? outer.role ?? '').toLowerCase();
+}
+
+/**
+ * A user message starts a new conversational turn. All assistant timeline rows
+ * after it share one avatar slot until the next user message.
+ */
+export function prepareVisibleTimelineRows(
+  items: readonly VisibleTimelineItem[],
+  options?: TimelineRowProjectionOptions,
+) {
+  let assistantTurnOpen = options?.initialAssistantTurnOpen ?? false;
+  const rows = items.map<VisibleTimelineRow>(item => {
+    if (item.kind === 'compaction') return { item, showAvatar: false, showFooter: false };
+    if (item.kind === 'phase-boundary') {
+      assistantTurnOpen = false;
+      return { item, showAvatar: false, showFooter: false };
+    }
+    if (item.kind !== 'history-message') {
+      const showAvatar = !assistantTurnOpen;
+      assistantTurnOpen = true;
+      return { item, showAvatar, showFooter: false };
+    }
+
+    const role = historyMessageRole(item);
+    if (role === 'user') {
+      assistantTurnOpen = false;
+      return { item, showAvatar: true, showFooter: true };
+    }
+    if (role === 'assistant') {
+      const showAvatar = !assistantTurnOpen;
+      assistantTurnOpen = true;
+      return { item, showAvatar, showFooter: true };
+    }
+    return { item, showAvatar: true, showFooter: true };
+  });
+
+  let laterAssistantMessageInTurn = false;
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    if (row.item.kind !== 'history-message') continue;
+    const role = historyMessageRole(row.item);
+    if (role === 'user') {
+      laterAssistantMessageInTurn = false;
+      continue;
+    }
+    if (role !== 'assistant') continue;
+    row.showFooter = !laterAssistantMessageInTurn;
+    laterAssistantMessageInTurn = true;
+  }
+
+  if (options?.suppressTrailingAssistantFooter) {
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index];
+      if (row.item.kind !== 'history-message') continue;
+      const role = historyMessageRole(row.item);
+      if (role === 'user') break;
+      if (role === 'assistant' || isFailedRunMessage(row.item.message)) row.showFooter = false;
+    }
+  }
+
+  return rows;
+}

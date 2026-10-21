@@ -8,9 +8,9 @@ import { build } from 'esbuild';
 import ts from 'typescript';
 import { beforeAll, describe, expect, it, type Mock, vi } from 'vitest';
 
-import { reduceAgentEvent } from '../../../../src/renderer/libs/openclaw-chat/model/agent-event-reducer';
+import { reduceAgentEvent } from '../../../../src/renderer/libs/openclaw-chat/model/turn/agent-event-reducer';
 import { createChatTranscriptState } from '../../../../src/renderer/libs/openclaw-chat/model/chat-transcript-state';
-import { projectTurnItems } from '../../../../src/renderer/libs/openclaw-chat/model/project-turn-items';
+import { projectTurnItems } from '../../../../src/renderer/libs/openclaw-chat/model/timeline/project-turn-items';
 
 type Message = {
   content: Array<{ type: string; text?: string; thinking?: string; textSignature?: string; arguments?: unknown }>;

@@ -19,7 +19,7 @@ import { traceTimelineWire } from '../model/chat-timeline-trace';
 import {
   buildGatewayDeviceAuthPayload,
   loadOrCreateGatewayDeviceIdentity,
-} from './device-identity';
+} from './connection/device-identity';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

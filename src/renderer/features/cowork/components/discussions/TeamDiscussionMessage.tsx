@@ -2,7 +2,7 @@ import './TeamDiscussionMessage.css';
 
 import type { TeamDiscussionMessage as DiscussionMessage } from '@shared/cowork/agent-team/teamDiscussion';
 
-import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
+import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown/markdown';
 import { i18nService } from '@/services/i18n';
 
 import ChatAvatar from '../chat/ChatAvatar';

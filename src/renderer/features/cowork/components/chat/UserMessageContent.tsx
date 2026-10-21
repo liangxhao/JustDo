@@ -2,15 +2,15 @@ import { nothing, render } from 'lit';
 import { useLayoutEffect, useRef } from 'react';
 
 import { chatStyles } from '@/libs/openclaw-chat/components/justdo-chat.styles';
-import { renderMessageDiagram } from '@/libs/openclaw-chat/components/mermaidRenderer';
+import { renderMessageDiagram } from '@/libs/openclaw-chat/components/markdown/mermaidRenderer';
+import { RichMessageControls } from '@/libs/openclaw-chat/components/markdown/rich-message-controls';
 import {
   handleMessageDiagramToggle,
   handleMessageImageClick,
   handleMessageImageContextMenu,
   handleMessageLinkClick,
-} from '@/libs/openclaw-chat/components/message-content-interactions';
-import { renderMessageBlock } from '@/libs/openclaw-chat/components/message-render';
-import { RichMessageControls } from '@/libs/openclaw-chat/components/rich-message-controls';
+} from '@/libs/openclaw-chat/components/message/message-content-interactions';
+import { renderMessageBlock } from '@/libs/openclaw-chat/components/message/message-render';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
 /** Reuse canonical chat rendering, including native rich cards and their interactions. */

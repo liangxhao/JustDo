@@ -5,7 +5,7 @@ import { render } from 'lit';
 import type { BrowserRecordingDraft } from '../../src/shared/browser/browserRecording';
 import { BrowserRecordingReview } from '../../src/renderer/features/browser/recording/BrowserRecordingReview';
 import recordingStyles from '../../src/renderer/features/browser/recording/browserRecording.css?inline';
-import { renderBrowserRecording } from '../../src/renderer/libs/openclaw-chat/components/browser-recording-message';
+import { renderBrowserRecording } from '../../src/renderer/libs/openclaw-chat/components/message/browser-recording-message';
 import { i18nService } from '../../src/renderer/services/i18n';
 import './browser-recording-preview.css';
 

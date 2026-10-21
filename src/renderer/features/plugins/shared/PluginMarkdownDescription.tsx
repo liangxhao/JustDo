@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 
-import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
+import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown/markdown';
 
 interface PluginMarkdownDescriptionProps {
   content: string;

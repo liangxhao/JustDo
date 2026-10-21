@@ -3,14 +3,14 @@ import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 import { buildGoalFollowUpPrompt } from '@shared/prompts/goalFollowUpPrompt';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import { readTranscriptIdentity } from '@/libs/openclaw-chat/model/history/transcript-identity';
+import { mergePendingUserMessageForDisplay } from '@/libs/openclaw-chat/model/input/optimistic-user-message';
+import { projectPersistedTimeline } from '@/libs/openclaw-chat/model/timeline/project-history-timeline';
+import { prepareVisibleTimelineRows } from '@/libs/openclaw-chat/model/timeline/timeline-avatar-state';
 import {
   FAILED_RUN_MESSAGE_FLAG,
   FAILED_RUN_MESSAGE_ID,
-} from '@/libs/openclaw-chat/model/failed-run-message';
-import { mergePendingUserMessageForDisplay } from '@/libs/openclaw-chat/model/optimistic-user-message';
-import { projectPersistedTimeline } from '@/libs/openclaw-chat/model/project-history-timeline';
-import { prepareVisibleTimelineRows } from '@/libs/openclaw-chat/model/timeline-avatar-state';
-import { readTranscriptIdentity } from '@/libs/openclaw-chat/model/transcript-identity';
+} from '@/libs/openclaw-chat/model/turn/failed-run-message';
 import {
   collapseRepeatedFailures,
   normalizeGatewayHistoryForDisplay,

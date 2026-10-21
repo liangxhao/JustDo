@@ -22,7 +22,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import type { McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
-import type { McpAppSession } from '@/libs/openclaw-chat/gateway/mcp-app-session';
+import type { McpAppSession } from '@/libs/openclaw-chat/gateway/mcp-app/mcp-app-session';
 import { decodeMcpAppLaunch } from '@/libs/openclaw-chat/pipeline/native-mcp-app';
 import { i18nService } from '@/services/i18n';
 

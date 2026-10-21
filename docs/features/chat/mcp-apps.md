@@ -103,7 +103,7 @@ Gateway 保持 MCP transport、catalog、会话、工具许可、原生历史、
 
 原生分支创建结果待确认时，保留历史只读查看，MCP Apps 的准备、启动、工具交互、安装引导及问题操作沿用现有会话门禁；Main 和 Renderer 均校验当前状态，旧回调不能绕过后来生效的限制。
 
-共享契约在 `src/shared/plugins/mcpApps.ts`。数据面在 `libs/openclaw-chat/gateway/mcp-app-session.ts`，标准 SDK 桥和视图在 `components/mcp-app/`，产品入口在 Cowork 的 `mcpApps/` 与 `display/useMcpAppTabs.tsx`。Main 提问处理在 `ipc/plugins/mcpApps.ts`，preload 仅公开对应方法。
+共享契约在 `src/shared/plugins/mcpApps.ts`。数据面在 `libs/openclaw-chat/gateway/mcp-app/mcp-app-session.ts`，标准 SDK 桥和视图在 `components/mcp-app/`，产品入口在 Cowork 的 `mcpApps/` 与 `display/useMcpAppTabs.tsx`。Main 提问处理在 `ipc/plugins/mcpApps.ts`，preload 仅公开对应方法。
 
 模型 App 只从完成的原生 MCP 工具事件、原生工具角色历史或 ToolSearch 的实际 MCP 结果准入；不递归搜索文本、代码围栏、HTML 属性或 assistant JSON。手动启动和问题预览分别来自认证 RPC 与专用 Main 桥。模型与手动入口在准入时核对服务、工具、资源与工具调用身份。问题预览只接收 Main 从原生 `formResource` 得到的 view 引用及原生选项标题，不伪造工具 descriptor。Renderer 随后以捕获的会话和 viewId 重读 `mcp.app.view`，由 Gateway 核验当前会话、请求者及运行时归属；HTML 只来自该认证响应，不依赖本地补丁扩展字段。
 

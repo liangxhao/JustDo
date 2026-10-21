@@ -13,7 +13,7 @@ import type {
   GatewayClient,
   GatewayRequestOptions,
 } from '../../src/renderer/libs/openclaw-chat/gateway/client';
-import { McpAppSession } from '../../src/renderer/libs/openclaw-chat/gateway/mcp-app-session';
+import { McpAppSession } from '../../src/renderer/libs/openclaw-chat/gateway/mcp-app/mcp-app-session';
 
 const scope = { sessionKey: 'agent:main:canvas', sessionId: 'physical', agentId: 'main' };
 const snapshot = {

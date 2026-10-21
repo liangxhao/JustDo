@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type {
   SessionSummaryResources,
   SummaryResource,
-} from '@/libs/openclaw-chat/model/session-summary-resources';
+} from '@/libs/openclaw-chat/model/timeline/session-summary-resources';
 import { i18nService } from '@/services/i18n';
 
 import SessionSummaryResourceList from './SessionSummaryResourceList';

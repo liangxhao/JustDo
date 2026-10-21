@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { reduceAgentEvent } from '../model/agent-event-reducer';
 import type { AssistantTurn } from '../model/chat-transcript-state';
 import { createChatTranscriptState } from '../model/chat-transcript-state';
-import { projectPersistedTimeline } from '../model/project-history-timeline';
-import { projectTurnItems } from '../model/project-turn-items';
+import { projectPersistedTimeline } from '../model/timeline/project-history-timeline';
+import { projectTurnItems } from '../model/timeline/project-turn-items';
+import { reduceAgentEvent } from '../model/turn/agent-event-reducer';
 import { normalizeMessage } from './message-normalizer';
 import {
   decodeNativeCanvasResult,

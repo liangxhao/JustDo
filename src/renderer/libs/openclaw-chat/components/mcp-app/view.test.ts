@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { McpAppSession } from '../../gateway/mcp-app-session';
+import { McpAppSession } from '../../gateway/mcp-app/mcp-app-session';
 import { decodeMcpAppLaunch } from '../../pipeline/native-mcp-app';
 import { McpAppView } from './view';
 

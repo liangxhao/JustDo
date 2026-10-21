@@ -23,7 +23,7 @@ vi.mock('@/services/i18n', () => ({
   },
 }));
 
-vi.mock('@/libs/openclaw-chat/components/markdown', () => ({
+vi.mock('@/libs/openclaw-chat/components/markdown/markdown', () => ({
   toSanitizedMarkdownHtml: (value: string) => value,
 }));
 

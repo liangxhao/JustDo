@@ -19,7 +19,7 @@ import {
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
-import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
+import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown/markdown';
 import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';

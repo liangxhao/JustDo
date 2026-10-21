@@ -9,8 +9,8 @@ import { MessageBrowserEvent, openMessageWebLink } from '@/features/browser/mess
 import { configService } from '@/services/config';
 
 import type { JustDoChatElement } from './justdo-chat';
-import { toSanitizedMarkdownHtml } from './markdown';
-import { handleMessageLinkClick } from './message-content-interactions';
+import { toSanitizedMarkdownHtml } from './markdown/markdown';
+import { handleMessageLinkClick } from './message/message-content-interactions';
 
 afterEach(() => {
   document.body.replaceChildren();

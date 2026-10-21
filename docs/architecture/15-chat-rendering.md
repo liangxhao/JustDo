@@ -636,7 +636,7 @@ Markdown-it 处理列表、代码、表格、公式和链接，DOMPurify 统一�
 
 普通代码块采用一体化圆角卡片，标题栏与正文共用中性底色，左侧显示代码图标和规范语言名，
 右侧常驻复制图标。未声明语言的围栏和缩进代码显示本地化「代码」，不把高亮猜测当成语言声明。
-消息区与 Markdown 文件预览共用 `components/code-block.css`，深浅色主题分别提供语法配色，
+消息区与 Markdown 文件预览共用 `components/markdown/code-block.css`，深浅色主题分别提供语法配色，
 仅改变展示，不改写代码原文或复制内容。消息阅读器将复制放在最右侧，换行、展开、JSON 树和下载
 在悬停或键盘聚焦时显示；触屏保留全部操作。代码默认最多展示 640px 高度并在块内滚动，展开后
 显示完整高度；标题栏位于滚动正文之外。Mermaid 图表和命令终端沿用各自阅读器。
@@ -711,15 +711,51 @@ HTML（`.html`、`.htm`、`.xhtml`）与 Markdown 默认进入渲染预览，并
 
 ## 12. 实现入口与回归矩阵
 
-聊天 Markdown 的路径识别辅助与测试放在 `libs/openclaw-chat/components/`。Cowork 的工作区组合由 `components/display/` 负责，文件展示由 `preview/` 负责，终端与差异审核分别由同层 `terminal/` 和 `review/` 负责；计划审核界面位于 `approvals/`。共享文档样式和工具栏上下文只承担展示协作，不改变 Gateway 消息、终端或审核状态的所有权。
+`libs/openclaw-chat/model/` 按职责分组，测试与对应实现相邻。根层保留跨领域的
+`chat-transcript-state.ts` 状态契约及 `chat-timeline-trace.ts` 诊断入口；各分组继续由
+现有 ChatController 持有生命周期，不新增状态所有者或消息缓存。
+
+| 分组 | 职责与主要入口 |
+| ---- | -------------- |
+| `turn/` | 原生事件归约、正文作用域、压缩与运行状态：agent-event-reducer、assistant-text-scope、compaction-item、run-activity、failed-run-message |
+| `history/` | 历史身份、分块与窗口、乐观尾部和消息同步：transcript-identity、chunked-message-history、history-window、history-reconciler、optimistic-history-tail、session-message-apply |
+| `timeline/` | 实时与历史时间线投影、过程折叠、展示缓存、页脚、minimap 及摘要资源 |
+| `tools/` | 工具消息适配、生命周期与展示、文件差异及子任务跳转 |
+| `input/` | 草稿恢复、待发送用户消息匹配及提示标记的显示投影 |
+| `browser-extension/` | 浏览器扩展流的归约与显示适配，构建入口直接指向该分组 |
+
+`libs/openclaw-chat/gateway/` 根层保留 `chat-controller.ts`、`client.ts` 及对应入口测试，
+`chat-controller-support.ts` 继续提供控制器共享类型和辅助。领域模块按下表组织，
+仍通过显式实时上下文访问同一个 ChatController，不复制连接、会话或执行状态。
+
+| 分组 | 职责与主要入口 |
+| ---- | -------------- |
+| `connection/` | 会话连接、切换、订阅与设备身份：chat-controller-session、device-identity |
+| `history/` | 原生历史协议、加载、翻页、图片补取和摘要资源观察 |
+| `execution/` | 实时事件、运行恢复、终态与 progress card：chat-controller-recovery、chat-controller-progress |
+| `compaction/` | 手动与自动压缩、操作回执和断线后核验 |
+| `input/` | 首轮委托发送、原生待发输入与队列发送 |
+| `mcp-app/` | MCP App 会话准备、原生视图与工作区目录连接 |
+
+`libs/openclaw-chat/components/` 根层保留聊天主组件 `justdo-chat.ts`、配套样式和入口测试，
+其余展示模块与测试按职责相邻存放；已有 `native-widget/`、`mcp-app/` 和 `fixtures/` 保留。
+
+| 分组 | 职责与主要入口 |
+| ---- | -------------- |
+| `message/` | 消息正文、媒体、头像、浏览器标注与录制、复制和内容交互 |
+| `timeline/` | 活动轮次、已完成过程与压缩分隔的界面组合 |
+| `markdown/` | Markdown 解析、路径识别、Mermaid、代码样式及代码／表格阅读控件 |
+| `tools/` | 工具展示、输出分页、终端文本与 Monaco 差异展示 |
+
+Cowork 的工作区组合由 `components/display/` 负责，文件展示由 `preview/` 负责，终端与差异审核分别由同层 `terminal/` 和 `review/` 负责；计划审核界面位于 `approvals/`。共享文档样式和工具栏上下文只承担展示协作，不改变 Gateway 消息、终端或审核状态的所有权。
 
 | 范围              | 代码 / 测试入口                                                         |
 | ----------------- | ----------------------------------------------------------------------- |
 | 连接和生命周期    | gateway/client、chat-controller 及 session-lifecycle/terminal tests     |
-| 分页及大消息      | chat-history-protocol、chat-controller-history、chunked-message-history |
-| 去重和段顺序      | agent-event-reducer、history-reconciler、session-message-apply          |
-| timeline 与工具卡 | pipeline/build-chat-items、history-display-normalizer                   |
-| 安全与视觉更新    | components/markdown、justdo-chat、controllers                           |
+| 分页及大消息      | gateway/history、model/history/chunked-message-history                 |
+| 去重和段顺序      | model/turn/agent-event-reducer、model/history、gateway/execution         |
+| timeline 与工具卡 | components/timeline、components/tools、pipeline/build-chat-items        |
+| 安全与视觉更新    | components/markdown、components/justdo-chat、controllers                |
 
 至少验证：同文重复提交、重连时 live/history 交错、工具前后多段正文、终态后迟到 delta、取消早于 admission、超大工具结果、Plan reset 后 rewind 门禁、Goal 操作 fence、后台会话停止、历史窗口移位与滚动锚点。领域测试与真实模型交互检查分别记录，不以一次截图替代协议验证。
 

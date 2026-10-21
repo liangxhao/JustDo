@@ -19,7 +19,7 @@ import {
   BrowserToolSchema,
 } from '../../../../openclaw-extensions/embedded-browser/browserToolContract';
 import embeddedBrowserPlugin from '../../../../openclaw-extensions/embedded-browser/index';
-import { projectSessionSummaryResources } from '../../../renderer/libs/openclaw-chat/model/session-summary-resources';
+import { projectSessionSummaryResources } from '../../../renderer/libs/openclaw-chat/model/timeline/session-summary-resources';
 import { EmbeddedBrowserGateway } from '../../../shared/browser/embeddedBrowser';
 
 type ToolResult = {

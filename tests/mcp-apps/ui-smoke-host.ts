@@ -1,6 +1,6 @@
 import { McpAppMethod } from '../../src/shared/plugins/mcpApps';
 import { McpAppView } from '../../src/renderer/libs/openclaw-chat/components/mcp-app/view';
-import { McpAppSession } from '../../src/renderer/libs/openclaw-chat/gateway/mcp-app-session';
+import { McpAppSession } from '../../src/renderer/libs/openclaw-chat/gateway/mcp-app/mcp-app-session';
 import { decodeMcpAppLaunch } from '../../src/renderer/libs/openclaw-chat/pipeline/native-mcp-app';
 
 const fixture = window as unknown as {

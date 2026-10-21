@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 
-import { BrowserExtensionStream } from '../../../renderer/libs/openclaw-chat/model/browser-extension-stream';
+import { BrowserExtensionStream } from '../../../renderer/libs/openclaw-chat/model/browser-extension/browser-extension-stream';
 import type { BrowserExtensionStreamEvent } from '../../../shared/browser/browserExtensionStream';
 import {
   BROWSER_EXTENSION_ID,

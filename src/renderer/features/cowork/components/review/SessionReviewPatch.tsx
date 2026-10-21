@@ -1,7 +1,7 @@
 import hljs from 'highlight.js/lib/common';
 import { useMemo, useState } from 'react';
 
-import { resolveEditDiffLanguage } from '@/libs/openclaw-chat/components/edit-diff-monaco';
+import { resolveEditDiffLanguage } from '@/libs/openclaw-chat/components/tools/edit-diff-monaco';
 import { i18nService } from '@/services/i18n';
 
 import { parseReviewPatch, type ReviewLine, splitReviewLines } from './parseReviewPatch';

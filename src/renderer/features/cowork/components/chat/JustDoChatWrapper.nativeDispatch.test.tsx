@@ -5,7 +5,7 @@ import { createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
-import { McpAppSession } from '@/libs/openclaw-chat/gateway/mcp-app-session';
+import { McpAppSession } from '@/libs/openclaw-chat/gateway/mcp-app/mcp-app-session';
 
 import JustDoChatWrapper, { type JustDoChatWrapperRef } from './JustDoChatWrapper';
 

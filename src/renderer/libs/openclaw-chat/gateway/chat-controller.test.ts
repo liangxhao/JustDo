@@ -4,7 +4,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { beginAssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
-import { projectWaitingStatus } from '@/libs/openclaw-chat/model/run-activity';
+import { projectWaitingStatus } from '@/libs/openclaw-chat/model/turn/run-activity';
 
 afterEach(() => {
   vi.unstubAllGlobals();

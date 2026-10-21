@@ -12,7 +12,7 @@ import type { AppReleaseHistory, AppUpdateState } from '@shared/app/appUpdate';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { selectNewerAppUpdateState } from '@/features/settings/updates/appUpdateState';
-import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
+import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown/markdown';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
 

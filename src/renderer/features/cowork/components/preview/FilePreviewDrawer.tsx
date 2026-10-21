@@ -39,7 +39,7 @@ import {
   runFilePreviewSingleFlight,
 } from '@/features/cowork/components/preview/filePreviewEditor';
 import PreviewMarkdown from '@/features/cowork/components/preview/PreviewMarkdown';
-import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
+import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown/markdown';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
 import { observeEditorLayout } from '@/shared/dom/observeEditorLayout';

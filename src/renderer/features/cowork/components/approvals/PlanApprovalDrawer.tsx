@@ -9,7 +9,7 @@ import type {
   CoworkInteractionRequest,
   CoworkInteractionResult,
 } from '@/features/cowork/coworkTypes';
-import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
+import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown/markdown';
 import { i18nService } from '@/services/i18n';
 import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 

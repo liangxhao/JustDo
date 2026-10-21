@@ -15,7 +15,7 @@ import {
 } from '@shared/plugins/mcpApps';
 import { z } from 'zod';
 
-import type { McpAppSessionView } from '../../gateway/mcp-app-session';
+import type { McpAppSessionView } from '../../gateway/mcp-app/mcp-app-session';
 
 const recordSchema = z.record(z.string(), z.unknown());
 type AppRequestContext = Parameters<NonNullable<AppBridge['oncalltool']>>[1];

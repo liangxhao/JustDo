@@ -41,21 +41,21 @@ import {
   type SideChatResult,
   type SideChatStreamUpdate,
 } from '@/libs/openclaw-chat/gateway/chat-controller';
+import { ChatSummaryResourceObserver } from '@/libs/openclaw-chat/gateway/history/chat-summary-resources';
 import {
   type QueuedInputDetail,
   queuedInputDetail,
   type QueuedInputSnapshot,
   queuedInputSnapshot,
-} from '@/libs/openclaw-chat/gateway/chat-pending-inputs';
-import { ChatSummaryResourceObserver } from '@/libs/openclaw-chat/gateway/chat-summary-resources';
-import { dispatchInitialTurn } from '@/libs/openclaw-chat/gateway/initial-turn-dispatch';
+} from '@/libs/openclaw-chat/gateway/input/chat-pending-inputs';
+import { dispatchInitialTurn } from '@/libs/openclaw-chat/gateway/input/initial-turn-dispatch';
 import {
   resolveSummaryArtifactResource,
   resolveSummaryAttachment,
   type SessionSummaryResources,
   type SummaryResource,
   type SummaryResourceTarget,
-} from '@/libs/openclaw-chat/model/session-summary-resources';
+} from '@/libs/openclaw-chat/model/timeline/session-summary-resources';
 import type { GatewayMessage, UserMessageHistoryAction } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 

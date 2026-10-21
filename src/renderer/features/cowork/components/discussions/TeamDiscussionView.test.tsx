@@ -88,7 +88,7 @@ vi.mock('react-redux', () => ({
 vi.mock('../preview/PreviewMarkdown', () => ({
   default: ({ html }: { html: string }) => <div>{html}</div>,
 }));
-vi.mock('@/libs/openclaw-chat/components/markdown', () => ({
+vi.mock('@/libs/openclaw-chat/components/markdown/markdown', () => ({
   toSanitizedMarkdownHtml: (text: string) => text,
 }));
 const room = {

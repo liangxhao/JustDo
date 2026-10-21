@@ -55,7 +55,7 @@ import type {
   SessionGroup,
   UpdateGroupInput,
 } from '@/features/cowork/coworkTypes';
-import { parseEditorDraftPayload } from '@/libs/openclaw-chat/model/editor-draft';
+import { parseEditorDraftPayload } from '@/libs/openclaw-chat/model/input/editor-draft';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { store } from '@/store';

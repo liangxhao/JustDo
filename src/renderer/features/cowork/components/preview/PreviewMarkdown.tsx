@@ -1,7 +1,7 @@
 import mermaid from 'mermaid';
 import { type MouseEvent, useCallback, useEffect, useRef, useState } from 'react';
 
-import { renderMermaidSvg } from '@/libs/openclaw-chat/components/mermaidRenderer';
+import { renderMermaidSvg } from '@/libs/openclaw-chat/components/markdown/mermaidRenderer';
 import { i18nService } from '@/services/i18n';
 import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 

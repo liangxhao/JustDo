@@ -5,7 +5,7 @@ import {
 } from '@shared/cowork/swarm-workflow';
 import { expect, test } from 'vitest';
 
-import { parseEditorDraftPayload } from '../model/editor-draft';
+import { parseEditorDraftPayload } from '../model/input/editor-draft';
 import { normalizeMessage } from './message-normalizer';
 
 test('keeps native instructions out of user message display and editor drafts', () => {

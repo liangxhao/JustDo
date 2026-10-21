@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { DRAWIO_EDIT_TOOL, DRAWIO_UPDATE_KIND } from '../../openclaw-extensions/drawio/contracts';
 import type { AssistantTurn } from '../../src/renderer/libs/openclaw-chat/model/chat-transcript-state';
-import { projectPersistedTimeline } from '../../src/renderer/libs/openclaw-chat/model/project-history-timeline';
-import { projectTurnItems } from '../../src/renderer/libs/openclaw-chat/model/project-turn-items';
+import { projectPersistedTimeline } from '../../src/renderer/libs/openclaw-chat/model/timeline/project-history-timeline';
+import { projectTurnItems } from '../../src/renderer/libs/openclaw-chat/model/timeline/project-turn-items';
 import {
   decodeNativeDiagramReference,
   isNativeDiagramReference,

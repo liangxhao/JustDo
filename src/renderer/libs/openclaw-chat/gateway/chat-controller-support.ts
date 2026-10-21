@@ -16,20 +16,16 @@
 import { type NormalizedAgentEvent, type NormalizedChatEvent } from '@shared/openclaw/agentEvent';
 import { type ProgressCard } from '@shared/openclaw/progressCard';
 
-import { isTruncatedHistoryMessage } from '@/libs/openclaw-chat/gateway/chat-history-protocol';
 import type { GatewayClient, GatewayHelloOk } from '@/libs/openclaw-chat/gateway/client';
-import {
-  readPreambleText,
-  readToolProgressText,
-} from '@/libs/openclaw-chat/model/agent-event-reducer';
+import { isTruncatedHistoryMessage } from '@/libs/openclaw-chat/gateway/history/chat-history-protocol';
 import {
   type AssistantTurn,
   type ChatTranscriptState,
   type ToolItem,
 } from '@/libs/openclaw-chat/model/chat-transcript-state';
-import { type EditorDraftPayload } from '@/libs/openclaw-chat/model/editor-draft';
-import { isLocallyOptimisticHistoryTail } from '@/libs/openclaw-chat/model/optimistic-history-tail';
-import { type RunActivity } from '@/libs/openclaw-chat/model/run-activity';
+import { isLocallyOptimisticHistoryTail } from '@/libs/openclaw-chat/model/history/optimistic-history-tail';
+import { readTranscriptIdentity } from '@/libs/openclaw-chat/model/history/transcript-identity';
+import { type EditorDraftPayload } from '@/libs/openclaw-chat/model/input/editor-draft';
 import {
   asToolRecord,
   attachedToolMessages,
@@ -37,8 +33,12 @@ import {
   isToolResultType,
   readToolCallId,
   unwrapToolMessage,
-} from '@/libs/openclaw-chat/model/tool-message-adapter';
-import { readTranscriptIdentity } from '@/libs/openclaw-chat/model/transcript-identity';
+} from '@/libs/openclaw-chat/model/tools/tool-message-adapter';
+import {
+  readPreambleText,
+  readToolProgressText,
+} from '@/libs/openclaw-chat/model/turn/agent-event-reducer';
+import { type RunActivity } from '@/libs/openclaw-chat/model/turn/run-activity';
 import { stripHeartbeatTokenForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
 import { shouldHideMessage } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
 import { i18nService } from '@/services/i18n';

@@ -11,7 +11,7 @@ import {
   FAILED_RUN_MESSAGE_FLAG,
   FAILED_RUN_MESSAGE_ID,
   readNativeFailureDetails,
-} from '@/libs/openclaw-chat/model/failed-run-message';
+} from '@/libs/openclaw-chat/model/turn/failed-run-message';
 import { isAssistantHeartbeatAckForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
 import {
   splitMediaFromOutput,

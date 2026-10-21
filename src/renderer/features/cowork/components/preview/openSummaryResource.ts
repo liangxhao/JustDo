@@ -2,7 +2,7 @@ import {
   type SummaryResource,
   type SummaryResourceTarget,
   summaryWebUrl,
-} from '@/libs/openclaw-chat/model/session-summary-resources';
+} from '@/libs/openclaw-chat/model/timeline/session-summary-resources';
 
 interface ResourceNavigation {
   isCurrent: () => boolean;

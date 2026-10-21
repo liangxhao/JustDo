@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'vitest';
 
 import {
-  reduceAgentEvent,
-  type TranscriptReduceResult,
-} from '../../renderer/libs/openclaw-chat/model/agent-event-reducer';
-import {
   beginAssistantTurn,
   createChatTranscriptState,
 } from '../../renderer/libs/openclaw-chat/model/chat-transcript-state';
+import {
+  reduceAgentEvent,
+  type TranscriptReduceResult,
+} from '../../renderer/libs/openclaw-chat/model/turn/agent-event-reducer';
 import { normalizeAgentEvent, type NormalizedAgentEvent } from './agentEvent';
 import {
   classifyAgentEvent,

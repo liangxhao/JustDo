@@ -20,7 +20,7 @@ vi.mock('@monaco-editor/react', () => ({
     />
   ),
 }));
-vi.mock('@/libs/openclaw-chat/components/markdown', () => ({
+vi.mock('@/libs/openclaw-chat/components/markdown/markdown', () => ({
   toSanitizedMarkdownHtml: (content: string) => content,
 }));
 vi.mock('./PreviewMarkdown', () => ({

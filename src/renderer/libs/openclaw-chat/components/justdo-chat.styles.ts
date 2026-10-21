@@ -4,8 +4,8 @@ import monacoEditorStyles from 'monaco-editor/min/vs/editor/editor.main.css?inli
 
 import browserRecordingStyles from '@/features/browser/recording/browserRecording.css?inline';
 
-import chatAvatarStyles from './chat-avatar.css?inline';
-import codeBlockStyles from './code-block.css?inline';
+import codeBlockStyles from './markdown/code-block.css?inline';
+import chatAvatarStyles from './message/chat-avatar.css?inline';
 
 export const chatStyles = [
   unsafeCSS(chatAvatarStyles),

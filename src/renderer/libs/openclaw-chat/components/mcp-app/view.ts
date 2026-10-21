@@ -22,7 +22,7 @@ import {
   DRAWIO_RESOURCE,
   DRAWIO_SERVER,
 } from '../../../../../../openclaw-extensions/drawio/contracts';
-import type { McpAppSession, McpAppSessionView } from '../../gateway/mcp-app-session';
+import type { McpAppSession, McpAppSessionView } from '../../gateway/mcp-app/mcp-app-session';
 import { isNativeDiagramReference } from '../../pipeline/native-diagram';
 import {
   decodeMcpAppLaunch,

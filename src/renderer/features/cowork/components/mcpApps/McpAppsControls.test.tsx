@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import type { McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
 import type { GatewayClient } from '@/libs/openclaw-chat/gateway/client';
-import { McpAppSession } from '@/libs/openclaw-chat/gateway/mcp-app-session';
+import { McpAppSession } from '@/libs/openclaw-chat/gateway/mcp-app/mcp-app-session';
 import { i18nService } from '@/services/i18n';
 
 import DisplayPanelLauncher from '../display/DisplayPanelLauncher';

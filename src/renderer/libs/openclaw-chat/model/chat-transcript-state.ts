@@ -2,7 +2,7 @@ import type { NormalizedAgentEvent } from '@shared/openclaw/agentEvent';
 import { messageSessionMatches, normalizeMessageSessionKey } from '@shared/openclaw/messageDomain';
 
 import type { GatewayMessage } from '../types';
-import type { ToolPresentation } from './tool-presentation';
+import type { ToolPresentation } from './tools/tool-presentation';
 
 export type TurnStatus = 'running' | 'final' | 'aborted' | 'error';
 export type ProcessStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';

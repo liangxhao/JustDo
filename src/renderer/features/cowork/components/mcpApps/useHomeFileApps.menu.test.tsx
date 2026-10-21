@@ -37,7 +37,7 @@ const f = vi.hoisted(() => ({
   connectionListeners: new Set<() => void>(),
 }));
 
-vi.mock('@/libs/openclaw-chat/gateway/mcp-workspace-session', () => ({
+vi.mock('@/libs/openclaw-chat/gateway/mcp-app/mcp-workspace-session', () => ({
   McpWorkspaceSession: class {
     constructor(
       _scope: unknown,

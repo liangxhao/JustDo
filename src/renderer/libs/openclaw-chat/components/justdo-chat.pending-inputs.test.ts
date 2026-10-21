@@ -4,7 +4,7 @@ import './justdo-chat';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from '../gateway/chat-controller';
-import { queuedInputSnapshot, refreshNativePendingInputs } from '../gateway/chat-pending-inputs';
+import { queuedInputSnapshot, refreshNativePendingInputs } from '../gateway/input/chat-pending-inputs';
 import type { JustDoChatElement } from './justdo-chat';
 
 afterEach(() => document.body.replaceChildren());

@@ -18,7 +18,7 @@ import {
 } from '@shared/openclaw/progressCard';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
+import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown/markdown';
 import { i18nService } from '@/services/i18n';
 
 const PROGRESS_NOTE_PREVIEW_HEIGHT_PX = 279;

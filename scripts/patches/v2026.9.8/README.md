@@ -126,7 +126,7 @@ model-call trace 的 parentSpanId 必须与 before_tool_call 的原生 spanId �
 [附件投影](../../../src/renderer/libs/openclaw-chat/pipeline/history-display-normalizer.ts)、
 [Workflow 预算](../../../openclaw-extensions/swarm-workflow/contracts/batch.ts)、
 [受管运行要求](../../../openclaw-extensions/runtime-services/execution/managed-subagent.ts)、
-[手动压缩](../../../src/renderer/libs/openclaw-chat/gateway/chat-controller-compaction.ts) 和
+[手动压缩](../../../src/renderer/libs/openclaw-chat/gateway/compaction/chat-controller-compaction.ts) 和
 [电脑提示消费者](../../../src/main/core/window/computer/bindComputerOverlay.ts)。
 
 033/035 退休后的相关回归为 31 个文件、453 项通过，覆盖未扩展的原生终态、

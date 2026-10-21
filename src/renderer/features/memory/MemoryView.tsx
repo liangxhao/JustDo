@@ -30,7 +30,7 @@ import type {
 import { MemoryIndexHealth } from '@shared/openclaw/memory';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
+import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown/markdown';
 import { i18nService } from '@/services/i18n';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import SidebarToggleIcon from '@/shared/components/icons/SidebarToggleIcon';

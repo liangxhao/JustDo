@@ -1,18 +1,5 @@
 import { createPropertyContext } from '@shared/app/propertyContext';
 
-import * as chatControllerCompaction from './chat-controller-compaction';
-import {
-  type ChatControllerCompactionContext,
-  type ManualCompactionOperation,
-} from './chat-controller-compaction';
-import * as chatControllerHistory from './chat-controller-history';
-import { type ChatControllerHistoryContext } from './chat-controller-history';
-import * as chatControllerProgress from './chat-controller-progress';
-import { type ChatControllerProgressContext } from './chat-controller-progress';
-import * as chatControllerRecovery from './chat-controller-recovery';
-import { type ChatControllerRecoveryContext } from './chat-controller-recovery';
-import * as chatControllerSession from './chat-controller-session';
-import { type ChatControllerSessionContext } from './chat-controller-session';
 import {
   appendTerminalMessage,
   asRecord,
@@ -51,7 +38,20 @@ import {
   SwitchSessionOptions,
   withThinkingContent,
 } from './chat-controller-support';
-import { McpAppSession } from './mcp-app-session';
+import * as chatControllerCompaction from './compaction/chat-controller-compaction';
+import {
+  type ChatControllerCompactionContext,
+  type ManualCompactionOperation,
+} from './compaction/chat-controller-compaction';
+import * as chatControllerSession from './connection/chat-controller-session';
+import { type ChatControllerSessionContext } from './connection/chat-controller-session';
+import * as chatControllerProgress from './execution/chat-controller-progress';
+import { type ChatControllerProgressContext } from './execution/chat-controller-progress';
+import * as chatControllerRecovery from './execution/chat-controller-recovery';
+import { type ChatControllerRecoveryContext } from './execution/chat-controller-recovery';
+import * as chatControllerHistory from './history/chat-controller-history';
+import { type ChatControllerHistoryContext } from './history/chat-controller-history';
+import { McpAppSession } from './mcp-app/mcp-app-session';
 export type {
   ChatContextUsageSnapshot,
   ChatControllerOptions,
@@ -107,19 +107,12 @@ import { modelRefFromIdentity } from '@shared/providers/modelRef';
 import type { LocalTtsSpeakResult } from '@shared/speech/localTts';
 
 import { toAttachmentContentBlocks } from '@/libs/openclaw-chat/attachments';
-import { type ChatHistoryPage } from '@/libs/openclaw-chat/gateway/chat-history-protocol';
 import type {
   GatewayClient,
   GatewayEventFrame,
   GatewayHelloOk,
 } from '@/libs/openclaw-chat/gateway/client';
-import {
-  readPreambleText,
-  readToolProgressText,
-  reduceAgentEvent,
-  reduceChatEvent,
-  restoreInFlightContent,
-} from '@/libs/openclaw-chat/model/agent-event-reducer';
+import { type ChatHistoryPage } from '@/libs/openclaw-chat/gateway/history/chat-history-protocol';
 import { traceTimelineController } from '@/libs/openclaw-chat/model/chat-timeline-trace';
 import {
   type AssistantTurn,
@@ -135,15 +128,22 @@ import {
   RECENT_RUN_RETENTION_MS,
   type TranscriptReducerDependencies,
 } from '@/libs/openclaw-chat/model/chat-transcript-state';
-import { ChunkedMessageHistory } from '@/libs/openclaw-chat/model/chunked-message-history';
-import { markOptimisticHistoryTail } from '@/libs/openclaw-chat/model/optimistic-history-tail';
+import { ChunkedMessageHistory } from '@/libs/openclaw-chat/model/history/chunked-message-history';
+import { markOptimisticHistoryTail } from '@/libs/openclaw-chat/model/history/optimistic-history-tail';
+import {
+  readPreambleText,
+  readToolProgressText,
+  reduceAgentEvent,
+  reduceChatEvent,
+  restoreInFlightContent,
+} from '@/libs/openclaw-chat/model/turn/agent-event-reducer';
 import {
   normalizeRunRetryProgress,
   normalizeRunRetryReason,
   RUN_PROBE_INTERVAL_MS,
   RUN_STALL_NOTICE_MS,
   type RunProgressStage,
-} from '@/libs/openclaw-chat/model/run-activity';
+} from '@/libs/openclaw-chat/model/turn/run-activity';
 import {
   persistFailedRun,
   projectGatewayHistoryForDisplay,
@@ -152,8 +152,8 @@ import {
 } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
 import { i18nService } from '@/services/i18n';
 
-import { nativeQueuedInputRunId } from './chat-pending-inputs';
-import { hasUnconfirmedQueuedInput, sendQueuedInput } from './chat-queued-input';
+import { nativeQueuedInputRunId } from './input/chat-pending-inputs';
+import { hasUnconfirmedQueuedInput, sendQueuedInput } from './input/chat-queued-input';
 
 // ─── ChatController ─────────────────────────────────────────────────────────
 

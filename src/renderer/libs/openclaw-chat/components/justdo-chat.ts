@@ -16,20 +16,20 @@ import { repeat } from 'lit/directives/repeat.js';
 
 import type { MessageQuoteHandler } from '@/features/cowork/components/composer/messageQuote';
 import {
-  type EditDiffMode,
-  renderTerminalTimelineMessage,
-  renderTimelineItem,
-} from '@/libs/openclaw-chat/components/active-turn-timeline';
-import { renderCompactionDivider } from '@/libs/openclaw-chat/components/compaction-divider';
-import { renderCompletedProcess } from '@/libs/openclaw-chat/components/completed-process';
-import {
   renderMessageBlock,
   renderMessageBlockWithTrailingStream,
   renderStreamingGroup,
   renderStreamingThinkingGroup,
   shouldRenderGroupAvatarByPrevItem,
   shouldRenderGroupFooterByNextItem,
-} from '@/libs/openclaw-chat/components/message-render';
+} from '@/libs/openclaw-chat/components/message/message-render';
+import {
+  type EditDiffMode,
+  renderTerminalTimelineMessage,
+  renderTimelineItem,
+} from '@/libs/openclaw-chat/components/timeline/active-turn-timeline';
+import { renderCompactionDivider } from '@/libs/openclaw-chat/components/timeline/compaction-divider';
+import { renderCompletedProcess } from '@/libs/openclaw-chat/components/timeline/completed-process';
 import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
 import { StreamRenderScheduler } from '@/libs/openclaw-chat/controllers/stream-render-scheduler';
 import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
@@ -37,20 +37,7 @@ import {
   nativePendingInputReadFailed,
   nativePendingInputState,
   projectNativePendingInputs,
-} from '@/libs/openclaw-chat/gateway/chat-pending-inputs';
-import {
-  type ActiveTurnFooter,
-  formatActiveTurnDuration,
-  formatActiveTurnTimestamp,
-  projectActiveTurnFooter,
-  resolveActiveTurnModel,
-  selectActiveTurnTiming,
-  shouldRenderInterruptedTerminalFallback,
-} from '@/libs/openclaw-chat/model/active-turn-footer';
-import {
-  type ChatMinimapEntry,
-  projectChatMinimapEntries,
-} from '@/libs/openclaw-chat/model/chat-minimap';
+} from '@/libs/openclaw-chat/gateway/input/chat-pending-inputs';
 import {
   traceTimelineDom,
   traceTimelineProjection,
@@ -59,37 +46,50 @@ import {
   type AssistantTurn,
   type AssistantTurnTiming,
 } from '@/libs/openclaw-chat/model/chat-transcript-state';
-import { unfoldProcessItems } from '@/libs/openclaw-chat/model/completed-process';
+import { projectPersistedMessagesForActiveTurn } from '@/libs/openclaw-chat/model/history/optimistic-history-tail';
+import { isEntryAfterLatestPlanImplementationReset } from '@/libs/openclaw-chat/model/history/transcript-identity';
+import { mergePendingUserMessageForDisplay } from '@/libs/openclaw-chat/model/input/optimistic-user-message';
+import {
+  type ActiveTurnFooter,
+  formatActiveTurnDuration,
+  formatActiveTurnTimestamp,
+  projectActiveTurnFooter,
+  resolveActiveTurnModel,
+  selectActiveTurnTiming,
+  shouldRenderInterruptedTerminalFallback,
+} from '@/libs/openclaw-chat/model/timeline/active-turn-footer';
+import {
+  type ChatMinimapEntry,
+  projectChatMinimapEntries,
+} from '@/libs/openclaw-chat/model/timeline/chat-minimap';
+import { unfoldProcessItems } from '@/libs/openclaw-chat/model/timeline/completed-process';
+import { PersistedTimelineCache } from '@/libs/openclaw-chat/model/timeline/persisted-timeline-cache';
+import {
+  createProcessSummarySessionIdentity,
+  ProcessSummaryTakeoverSetTracker,
+  ProcessSummaryTakeoverTracker,
+} from '@/libs/openclaw-chat/model/timeline/process-summary-takeover';
+import {
+  type PersistedTimelineItem,
+  projectPersistedTimeline,
+} from '@/libs/openclaw-chat/model/timeline/project-history-timeline';
+import {
+  type ActiveTurnTimelineItem,
+  projectTurnItems,
+} from '@/libs/openclaw-chat/model/timeline/project-turn-items';
+import type { VisibleTimelineItem } from '@/libs/openclaw-chat/model/timeline/timeline-avatar-state';
+import {
+  PersistedTimelineRenderCache,
+  projectIncrementalTimelineView,
+} from '@/libs/openclaw-chat/model/timeline/timeline-render-cache';
 import {
   isFailedRunMessage,
   readFailedRunMessageModelRef,
   readFailedRunMessageText,
   readFailedRunMessageTimestamp,
   withFailureDetailsForDisplay,
-} from '@/libs/openclaw-chat/model/failed-run-message';
-import { projectPersistedMessagesForActiveTurn } from '@/libs/openclaw-chat/model/optimistic-history-tail';
-import { mergePendingUserMessageForDisplay } from '@/libs/openclaw-chat/model/optimistic-user-message';
-import { PersistedTimelineCache } from '@/libs/openclaw-chat/model/persisted-timeline-cache';
-import {
-  createProcessSummarySessionIdentity,
-  ProcessSummaryTakeoverSetTracker,
-  ProcessSummaryTakeoverTracker,
-} from '@/libs/openclaw-chat/model/process-summary-takeover';
-import {
-  type PersistedTimelineItem,
-  projectPersistedTimeline,
-} from '@/libs/openclaw-chat/model/project-history-timeline';
-import {
-  type ActiveTurnTimelineItem,
-  projectTurnItems,
-} from '@/libs/openclaw-chat/model/project-turn-items';
-import { projectWaitingStatus } from '@/libs/openclaw-chat/model/run-activity';
-import type { VisibleTimelineItem } from '@/libs/openclaw-chat/model/timeline-avatar-state';
-import {
-  PersistedTimelineRenderCache,
-  projectIncrementalTimelineView,
-} from '@/libs/openclaw-chat/model/timeline-render-cache';
-import { isEntryAfterLatestPlanImplementationReset } from '@/libs/openclaw-chat/model/transcript-identity';
+} from '@/libs/openclaw-chat/model/turn/failed-run-message';
+import { projectWaitingStatus } from '@/libs/openclaw-chat/model/turn/run-activity';
 import { buildChatItems } from '@/libs/openclaw-chat/pipeline/build-chat-items';
 import { extractTextCached } from '@/libs/openclaw-chat/pipeline/message-extract';
 import {
@@ -106,23 +106,23 @@ import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { isDomHTMLElement } from '@/shared/dom/ownerDocument';
 
-import { readCompleteHistoryMessage } from '../gateway/chat-history-protocol';
-import { resolveFullToolOutput } from '../model/tool-presentation';
-import { renderChatAvatar } from './chat-avatar';
-import { EditDiffMonacoController } from './edit-diff-monaco';
+import { readCompleteHistoryMessage } from '../gateway/history/chat-history-protocol';
+import { resolveFullToolOutput } from '../model/tools/tool-presentation';
 import { chatStyles } from './justdo-chat.styles';
+import { renderMessageDiagram } from './markdown/mermaidRenderer';
+import { RichMessageControls } from './markdown/rich-message-controls';
 import { McpAppView, type McpAppViewContext } from './mcp-app/view';
-import { renderMessageDiagram } from './mermaidRenderer';
+import { renderChatAvatar } from './message/chat-avatar';
 import {
   handleMessageDiagramToggle,
   handleMessageImageClick,
   handleMessageImageContextMenu,
   handleMessageLinkClick,
-} from './message-content-interactions';
+} from './message/message-content-interactions';
 import { NATIVE_WIDGET_CONTEXT_REQUEST, type NativeWidgetContext } from './native-widget/host';
 import { NativeWidgetView } from './native-widget/view';
-import { RichMessageControls } from './rich-message-controls';
-import { TOOL_OUTPUT_REQUEST, type ToolOutput } from './tool-output';
+import { EditDiffMonacoController } from './tools/edit-diff-monaco';
+import { TOOL_OUTPUT_REQUEST, type ToolOutput } from './tools/tool-output';
 
 const MERMAID_BUBBLE_MIN_WIDTH = 500;
 const MERMAID_BUBBLE_MAX_WIDTH = 820;

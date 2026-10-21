@@ -1,7 +1,7 @@
 import { Bars3BottomLeftIcon, ChevronUpIcon, EyeIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { useId, useState } from 'react';
 
-import type { QueuedInputCard, QueuedInputDetail } from '@/libs/openclaw-chat/gateway/chat-pending-inputs';
+import type { QueuedInputCard, QueuedInputDetail } from '@/libs/openclaw-chat/gateway/input/chat-pending-inputs';
 import { i18nService } from '@/services/i18n';
 
 import { QueuedInputMessage } from './QueuedInputMessage';

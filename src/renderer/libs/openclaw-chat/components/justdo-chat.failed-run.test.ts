@@ -4,7 +4,7 @@ import './justdo-chat';
 
 import { afterEach, describe, expect, test } from 'vitest';
 
-import { FAILED_RUN_MESSAGE_FLAG } from '@/libs/openclaw-chat/model/failed-run-message';
+import { FAILED_RUN_MESSAGE_FLAG } from '@/libs/openclaw-chat/model/turn/failed-run-message';
 import { i18nService } from '@/services/i18n';
 
 import type { JustDoChatElement } from './justdo-chat';

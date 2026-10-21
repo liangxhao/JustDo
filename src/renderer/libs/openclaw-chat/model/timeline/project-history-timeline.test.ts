@@ -1,0 +1,1710 @@
+import { describe, expect, test } from 'vitest';
+
+import type { GatewayMessage } from '@/libs/openclaw-chat/types';
+
+import { createChatTranscriptState } from '../chat-transcript-state';
+import { reduceAgentEvent } from '../turn/agent-event-reducer';
+import { FAILED_RUN_MESSAGE_FLAG } from '../turn/failed-run-message';
+import { projectPersistedTimeline } from './project-history-timeline';
+import { projectTurnItems } from './project-turn-items';
+
+describe('projectPersistedTimeline', () => {
+  test('retains native identity and emits a split message diagnostic once after its content', () => {
+    const marker = { id: 'native-failure', runId: 'run-1' };
+    const message = {
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'Before tool' },
+        { type: 'toolCall', id: 'call-1', name: 'read', arguments: {} },
+        { type: 'text', text: 'After tool' },
+      ],
+      stopReason: 'error',
+      errorMessage: 'Deployment is paused',
+      __openclaw: marker,
+    };
+    const before = structuredClone(message);
+    const timeline = projectPersistedTimeline([message]);
+    expect(timeline.filter(item => item.kind === 'history-message')).toHaveLength(3);
+    expect(timeline[timeline.length - 1]).toMatchObject({
+      kind: 'history-message',
+      message: {
+        role: 'system',
+        content: message.errorMessage,
+        [FAILED_RUN_MESSAGE_FLAG]: true,
+        __openclaw: marker,
+      },
+    });
+    expect(message).toEqual(before);
+  });
+
+  test('reuses an existing same-run error row that already includes the diagnostic', () => {
+    const detail = 'Deployment is paused';
+    const timeline = projectPersistedTimeline([
+      {
+        message: {
+          role: 'assistant',
+          content: [{ type: 'thinking', thinking: 'Partial reasoning' }],
+          stopReason: 'error',
+          errorMessage: detail,
+        },
+        __openclaw: { id: 'native-failure', runId: 'run-1' },
+      },
+      {
+        role: 'system',
+        content: `Provider request failed. ${detail}`,
+        runId: 'run-1',
+        [FAILED_RUN_MESSAGE_FLAG]: true,
+      },
+    ] as GatewayMessage[]);
+    expect(timeline.filter(item => item.kind === 'history-message')).toHaveLength(1);
+    expect(timeline[timeline.length - 1]).toMatchObject({
+      kind: 'history-message',
+      message: { content: `Provider request failed. ${detail}` },
+    });
+  });
+
+  test('keeps one diagnostic after the last native commentary sibling', () => {
+    const failure = {
+      role: 'assistant',
+      stopReason: 'error',
+      errorMessage: 'Deployment is paused',
+      __openclaw: { id: 'native-failure', runId: 'run-1', seq: 1 },
+    };
+    const timeline = projectPersistedTimeline([
+      {
+        ...failure,
+        content: 'Commentary before tool',
+        openclawStreamFallback: { source: 'segment', itemId: 'progress-1' },
+      },
+      { ...failure, content: 'Partial answer' },
+    ]);
+    const rows = timeline.filter(item => item.kind === 'history-message');
+    expect(rows.map(item => item.message.content)).toEqual([
+      'Commentary before tool',
+      'Partial answer',
+      'Deployment is paused',
+    ]);
+  });
+
+  test('preserves native commentary fallback order even when live block order differs', () => {
+    const thinking = 'Check the returned subagent results.';
+    const commentary = 'All five agents have returned; inspect their messages.';
+    const runId = 'mixed-commentary-run';
+    const state = createChatTranscriptState('mixed-commentary-session', 'session-id');
+    let nextId = 0;
+    const emit = (seq: number, stream: string, data: Record<string, unknown>) => {
+      reduceAgentEvent(
+        state,
+        {
+          runId,
+          sessionKey: 'mixed-commentary-session',
+          sessionId: 'session-id',
+          lifecycleGeneration: null,
+          agentId: 'main',
+          spawnedBy: null,
+          agentSeq: seq,
+          frameSeq: seq,
+          deliveryEvent: 'agent',
+          timestamp: 1_000 + seq,
+          stream,
+          data,
+        },
+        { now: () => 1_000, createId: prefix => `${prefix}-${++nextId}` },
+      );
+    };
+    emit(1, 'thinking', { text: thinking });
+    emit(2, 'item', {
+      kind: 'preamble',
+      phase: 'end',
+      itemId: 'commentary-1',
+      progressText: commentary,
+    });
+    emit(3, 'tool', {
+      phase: 'start',
+      name: 'sessions_history',
+      toolCallId: 'history-1',
+      args: {},
+    });
+    emit(4, 'tool', {
+      phase: 'result',
+      name: 'sessions_history',
+      toolCallId: 'history-1',
+      result: 'Five messages.',
+    });
+    const live = projectTurnItems(state.activeTurn);
+
+    // Native history emits commentary fallbacks before the remaining mixed message.
+    const persisted = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        timestamp: 1_000,
+        openclawStreamFallback: { itemId: 'commentary-1' },
+        content: [{ type: 'text', text: commentary }],
+      },
+      {
+        role: 'assistant',
+        timestamp: 1_000,
+        __openclaw: { runId, id: 'mixed-assistant' },
+        content: [
+          { type: 'thinking', thinking },
+          { type: 'toolCall', id: 'history-1', name: 'sessions_history', arguments: {} },
+        ],
+      },
+      {
+        role: 'toolResult',
+        timestamp: 1_004,
+        toolCallId: 'history-1',
+        toolName: 'sessions_history',
+        content: [{ type: 'text', text: 'Five messages.' }],
+      },
+    ]);
+
+    expect(persisted).toMatchObject([
+      {
+        kind: 'history-message',
+        message: { role: 'assistant', content: [{ type: 'text', text: commentary }] },
+      },
+      {
+        kind: 'process-summary',
+        thinkingCount: 1,
+        toolCount: 1,
+        items: [
+          { type: 'thinking', text: thinking },
+          { type: 'tool', toolCallId: 'history-1', status: 'completed', output: 'Five messages.' },
+        ],
+      },
+    ]);
+    expect(live).toMatchObject([
+      { kind: 'process-summary', items: [{ type: 'thinking', text: thinking }] },
+      { kind: 'content', item: { text: commentary } },
+      {
+        kind: 'process-summary',
+        items: [{ type: 'tool', toolCallId: 'history-1', status: 'completed' }],
+      },
+    ]);
+  });
+
+  test('interrupts an unresolved old tool when a subsequent explicit run has resumed', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        runId: 'old-run',
+        content: [
+          { type: 'toolcall', id: 'bash-1', name: 'exec', arguments: { command: 'node -e' } },
+        ],
+      },
+      { role: 'user', content: 'continue' },
+      {
+        role: 'assistant',
+        runId: 'new-run',
+        content: [{ type: 'toolcall', id: 'write-1', name: 'write' }],
+      },
+    ]);
+    expect(
+      result.flatMap(item => (item.kind === 'process-summary' ? item.items : [])),
+    ).toContainEqual(expect.objectContaining({ toolCallId: 'bash-1', status: 'interrupted' }));
+    expect(result).toContainEqual(
+      expect.objectContaining({
+        kind: 'live-process',
+        item: expect.objectContaining({ toolCallId: 'write-1', status: 'running' }),
+      }),
+    );
+  });
+
+  test('projects an OpenClaw reset marker as the implementation phase boundary', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        runId: 'planning-run',
+        content: [{ type: 'toolcall', toolCallId: 'shared-call', name: 'PresentPlan' }],
+      },
+      {
+        role: 'system',
+        content: 'Reset',
+        __openclaw: { kind: 'reset', id: 'implementation-start' },
+      },
+      {
+        role: 'tool',
+        runId: 'implementation-run',
+        toolCallId: 'shared-call',
+        name: 'write',
+        content: 'done',
+      },
+    ]);
+
+    expect(result.map(item => item.kind)).toEqual([
+      'plan-presentation',
+      'phase-boundary',
+      'process-summary',
+    ]);
+    expect(result[1]).toMatchObject({ kind: 'phase-boundary', label: '' });
+    expect(result[0]).toMatchObject({ item: { name: 'PresentPlan', status: 'running' } });
+    expect(result[2]).toMatchObject({ items: [{ name: 'write', status: 'completed' }] });
+  });
+
+  test('keeps native visible-history clearing for resets unrelated to Plan approval', () => {
+    const result = projectPersistedTimeline([
+      { role: 'user', content: 'old request' },
+      { role: 'assistant', content: 'old response' },
+      {
+        role: 'system',
+        content: 'Reset',
+        __openclaw: { kind: 'reset', id: 'ordinary-reset' },
+      },
+      { role: 'user', content: 'new request' },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      kind: 'history-message',
+      message: { role: 'user', content: 'new request' },
+    });
+  });
+
+  test('flattens mixed persisted assistant content around hard Content boundaries', () => {
+    const result = projectPersistedTimeline([
+      { role: 'user', content: 'go', id: 'user-1' },
+      {
+        role: 'assistant',
+        id: 'assistant-1',
+        content: [
+          { type: 'thinking', thinking: 'plan' },
+          { type: 'toolcall', toolCallId: 'call-1', name: 'read' },
+          { type: 'toolresult', toolCallId: 'call-1', text: 'ok' },
+          { type: 'text', text: 'first content' },
+          { type: 'thinking', thinking: 'more' },
+          { type: 'text', text: 'second content' },
+        ],
+      },
+    ]);
+
+    expect(result.map(item => item.kind)).toEqual([
+      'history-message',
+      'process-summary',
+      'history-message',
+      'process-summary',
+      'history-message',
+    ]);
+    expect(result[1]).toMatchObject({ thinkingCount: 1, toolCount: 1 });
+  });
+
+  test('ignores empty Thinking and text control blocks without creating fold boundaries', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        runId: 'run-1',
+        content: [
+          { type: 'thinking', thinking: 'plan' },
+          { type: 'text', text: '' },
+          { type: 'thinking', thinking: '   ' },
+          { type: 'toolcall', toolCallId: 'call-1', name: 'read' },
+          { type: 'toolresult', toolCallId: 'call-1', text: 'ok' },
+        ],
+      },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      kind: 'process-summary',
+      thinkingCount: 1,
+      toolCount: 1,
+      items: [
+        { type: 'thinking', text: 'plan' },
+        { type: 'tool', toolCallId: 'call-1', output: 'ok' },
+      ],
+    });
+  });
+
+  test('folds punctuation-only Thinking across a blank assistant control message without loss', () => {
+    const thinking = 'I should describe what the screenshot shows clearly';
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        runId: 'run-1',
+        content: [{ type: 'thinking', thinking }],
+      },
+      { role: 'assistant', runId: 'run-1', content: '' },
+      {
+        role: 'assistant',
+        runId: 'run-1',
+        content: [{ type: 'thinking', thinking: '.' }],
+      },
+    ]);
+
+    expect(result).toMatchObject([
+      {
+        kind: 'process-summary',
+        thinkingCount: 2,
+        items: [
+          { type: 'thinking', text: thinking },
+          { type: 'thinking', text: '.' },
+        ],
+      },
+    ]);
+  });
+
+  test('folds two distinct Thinking blocks across a blank control message as Thinking x 2', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        runId: 'run-1',
+        content: [{ type: 'thinking', thinking: 'First distinct thought.' }],
+      },
+      { role: 'assistant', runId: 'run-1', content: '   ' },
+      {
+        role: 'assistant',
+        runId: 'run-1',
+        content: [{ type: 'thinking', thinking: 'Second distinct thought.' }],
+      },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      kind: 'process-summary',
+      thinkingCount: 2,
+      items: [
+        { type: 'thinking', text: 'First distinct thought.' },
+        { type: 'thinking', text: 'Second distinct thought.' },
+      ],
+    });
+  });
+
+  test('preserves blank system messages whose metadata renders a compaction divider', () => {
+    const message = {
+      role: 'system',
+      content: '',
+      __openclaw: {
+        kind: 'compaction',
+        id: 'compact-1',
+        tokensBefore: 12_000,
+        tokensAfter: 4_000,
+      },
+    };
+
+    expect(projectPersistedTimeline([message])).toMatchObject([
+      { kind: 'history-message', message },
+    ]);
+  });
+
+  test('preserves a blank assistant message that carries transcript media', () => {
+    const message = {
+      role: 'assistant',
+      content: '',
+      MediaPaths: ['C:\\openclaw\\media\\result.png'],
+      MediaTypes: ['image/png'],
+    };
+
+    expect(projectPersistedTimeline([message])).toMatchObject([
+      { kind: 'history-message', message },
+    ]);
+  });
+
+  test('keeps reused Tool call ids isolated by run', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        runId: 'run-1',
+        content: [
+          { type: 'toolcall', toolCallId: 'call-1', name: 'read', input: { path: 'one' } },
+          { type: 'toolresult', toolCallId: 'call-1', text: 'first' },
+          { type: 'text', text: 'first answer' },
+        ],
+      },
+      {
+        role: 'assistant',
+        runId: 'run-2',
+        content: [
+          { type: 'toolcall', toolCallId: 'call-1', name: 'read', input: { path: 'two' } },
+          { type: 'toolresult', toolCallId: 'call-1', text: 'second' },
+          { type: 'text', text: 'second answer' },
+        ],
+      },
+    ]);
+    const tools = result.flatMap(item =>
+      item.kind === 'process-summary' ? item.items.filter(entry => entry.type === 'tool') : [],
+    );
+
+    expect(tools).toMatchObject([
+      { runId: 'run-1', toolCallId: 'call-1', input: { path: 'one' }, output: 'first' },
+      { runId: 'run-2', toolCallId: 'call-1', input: { path: 'two' }, output: 'second' },
+    ]);
+  });
+
+  test('keeps result-only Tool records with reused ids isolated by run', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'toolResult',
+        runId: 'run-1',
+        toolCallId: 'call-1',
+        toolName: 'inspect',
+        content: [{ type: 'text', text: 'first' }],
+      },
+      {
+        role: 'toolResult',
+        runId: 'run-2',
+        toolCallId: 'call-1',
+        toolName: 'inspect',
+        content: [{ type: 'text', text: 'second' }],
+      },
+    ]);
+    const tools = result.flatMap(item =>
+      item.kind === 'process-summary' ? item.items.filter(entry => entry.type === 'tool') : [],
+    );
+
+    expect(tools).toMatchObject([
+      { runId: 'run-1', toolCallId: 'call-1', output: 'first' },
+      { runId: 'run-2', toolCallId: 'call-1', output: 'second' },
+    ]);
+  });
+
+  test('keeps result-only Tool records with reused ids isolated when run ids are omitted', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'toolResult',
+        toolCallId: 'call-1',
+        toolName: 'inspect',
+        content: [{ type: 'text', text: 'first' }],
+      },
+      { role: 'user', content: 'continue' },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-1',
+        toolName: 'inspect',
+        content: [{ type: 'text', text: 'second' }],
+      },
+    ]);
+    const tools = result.flatMap(item =>
+      item.kind === 'process-summary' ? item.items.filter(entry => entry.type === 'tool') : [],
+    );
+
+    expect(tools).toMatchObject([
+      { toolCallId: 'call-1', output: 'first' },
+      { toolCallId: 'call-1', output: 'second' },
+    ]);
+  });
+
+  test('keeps reused Tool call ids paired when call and result messages omit run ids', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [{ type: 'toolcall', toolCallId: 'call-1', name: 'read', input: { path: 'one' } }],
+      },
+      { role: 'toolResult', toolCallId: 'call-1', toolName: 'read', content: 'first' },
+      { role: 'user', content: 'continue' },
+      {
+        role: 'assistant',
+        content: [{ type: 'toolcall', toolCallId: 'call-1', name: 'read', input: { path: 'two' } }],
+      },
+      { role: 'toolResult', toolCallId: 'call-1', toolName: 'read', content: 'second' },
+    ]);
+    const tools = result.flatMap(item =>
+      item.kind === 'process-summary' ? item.items.filter(entry => entry.type === 'tool') : [],
+    );
+
+    expect(tools).toMatchObject([
+      { toolCallId: 'call-1', input: { path: 'one' }, output: 'first' },
+      { toolCallId: 'call-1', input: { path: 'two' }, output: 'second' },
+    ]);
+  });
+
+  test('does not overwrite an outputless terminal Tool when its id is reused without run ids', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'toolResult',
+        toolCallId: 'call-1',
+        toolName: 'inspect',
+        status: 'cancelled',
+        content: [],
+      },
+      { role: 'user', content: 'continue' },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-1',
+        toolName: 'inspect',
+        status: 'completed',
+        content: [],
+      },
+    ]);
+    const tools = result.flatMap(item =>
+      item.kind === 'process-summary' ? item.items.filter(entry => entry.type === 'tool') : [],
+    );
+
+    expect(tools).toMatchObject([
+      { toolCallId: 'call-1', status: 'cancelled' },
+      { toolCallId: 'call-1', status: 'completed' },
+    ]);
+  });
+
+  test('does not reuse a still-running Tool call id across a user turn boundary', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [{ type: 'toolcall', toolCallId: 'call-1', name: 'sessions_yield' }],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-1',
+        toolName: 'sessions_yield',
+        status: 'completed',
+        content: [],
+      },
+      { role: 'user', content: 'start another task' },
+      {
+        role: 'assistant',
+        content: [{ type: 'toolcall', toolCallId: 'call-1', name: 'read', input: { path: 'new' } }],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-1',
+        toolName: 'read',
+        content: 'new output',
+      },
+    ]);
+    const tools = result.flatMap(item => {
+      if (item.kind === 'process-summary') return item.items.filter(entry => entry.type === 'tool');
+      return item.kind === 'live-process' && item.item.type === 'tool' ? [item.item] : [];
+    });
+
+    expect(tools).toMatchObject([
+      { toolCallId: 'call-1', name: 'sessions_yield', status: 'running' },
+      {
+        toolCallId: 'call-1',
+        name: 'read',
+        input: { path: 'new' },
+        output: 'new output',
+        status: 'completed',
+      },
+    ]);
+  });
+
+  test('uses deterministic keys for cold history', () => {
+    const messages = [{ role: 'assistant', content: 'answer', id: 'message-1' }];
+    expect(projectPersistedTimeline(messages)[0].key).toBe(
+      projectPersistedTimeline(messages)[0].key,
+    );
+  });
+
+  test('does not infer run duration from message timestamps', () => {
+    const result = projectPersistedTimeline([
+      { role: 'user', content: 'first prompt', timestamp: 1_000 },
+      { role: 'assistant', content: 'first answer', timestamp: 4_500 },
+      { role: 'user', content: 'second prompt', timestamp: 10_000 },
+      { role: 'assistant', content: 'second answer', timestamp: 12_000 },
+    ]);
+
+    expect(
+      result.filter(item => item.kind === 'history-message').map(item => item.durationMs ?? null),
+    ).toEqual([null, null, null, null]);
+  });
+
+  test('uses the transcript record timestamp for a provider message without a timestamp', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'call-yield-1', name: 'sessions_yield' }],
+        __openclaw: { id: 'message-1', seq: 1, recordTimestampMs: 12_345 },
+      },
+    ]);
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        kind: 'live-process',
+        item: expect.objectContaining({
+          toolCallId: 'call-yield-1',
+          startedAt: 12_345,
+        }),
+      }),
+    ]);
+  });
+
+  test('uses a persisted run receipt and attaches it to the last visible announce', () => {
+    const result = projectPersistedTimeline(
+      [
+        {
+          role: 'user',
+          content: 'prompt',
+          runId: 'run-root',
+        },
+        {
+          role: 'assistant',
+          content: 'answer',
+          runId: 'run-root',
+        },
+        {
+          role: 'assistant',
+          content: 'subagent result',
+          runId: 'announce:v1:child',
+          provider: 'openclaw',
+          model: 'gateway-injected',
+        },
+      ],
+      [
+        {
+          id: 'timing-1',
+          sessionId: 'session-1',
+          clientTurnId: 'run-root',
+          rootRunId: 'run-root',
+          startedAt: 1_000,
+          endedAt: 6_000,
+          state: 'completed',
+        },
+      ],
+    );
+
+    expect(result[1]).toEqual(expect.not.objectContaining({ durationMs: expect.any(Number) }));
+    expect(result[2]).toMatchObject({
+      kind: 'history-message',
+      durationMs: 5_000,
+      completedAt: 6_000,
+    });
+  });
+
+  test.each(['completed', 'failed', 'aborted'] as const)(
+    'settles a dangling Tool when its persisted run is %s',
+    state => {
+      const clientTurnStartedAt = 1_787_885_461_166;
+      const restartedAt = 1_787_886_368_411;
+      const terminalAt = 1_787_886_386_462;
+      const result = projectPersistedTimeline(
+        [
+          {
+            role: 'user',
+            content: 'prompt',
+            timestamp: clientTurnStartedAt + 20,
+          },
+          {
+            role: 'assistant',
+            timestamp: clientTurnStartedAt + 589,
+            content: [
+              {
+                type: 'toolCall',
+                id: 'call-question-1',
+                name: 'ask_user',
+              },
+            ],
+          },
+        ],
+        [
+          {
+            id: 'timing-1',
+            sessionId: 'session-1',
+            clientTurnId: `justdo-${clientTurnStartedAt}-turn-id`,
+            rootRunId: `justdo-${clientTurnStartedAt}-turn-id`,
+            startedAt: restartedAt,
+            endedAt: terminalAt,
+            state,
+          },
+        ],
+      );
+
+      expect(result).toEqual([
+        expect.objectContaining({ kind: 'history-message' }),
+        expect.objectContaining({
+          kind: 'process-summary',
+          interruptedCount: 1,
+          items: [
+            expect.objectContaining({
+              toolCallId: 'call-question-1',
+              status: 'interrupted',
+              updatedAt: terminalAt,
+            }),
+          ],
+        }),
+      ]);
+      expect(result.some(item => item.kind === 'live-process')).toBe(false);
+    },
+  );
+
+  test('attaches failed-run timing and model metadata to its persisted error row', () => {
+    const result = projectPersistedTimeline(
+      [
+        { role: 'user', content: 'continue', timestamp: 1_000 },
+        {
+          role: 'system',
+          content: 'Provider request failed.',
+          timestamp: 6_000,
+          __justdoFailedRunMessage: true,
+          runId: 'run-root',
+        },
+      ],
+      [
+        {
+          id: 'timing-1',
+          sessionId: 'session-1',
+          clientTurnId: 'run-root',
+          rootRunId: 'run-root',
+          modelRef: 'zcode/glm-5.3-flash',
+          startedAt: 1_000,
+          endedAt: 6_000,
+          state: 'failed',
+        },
+      ],
+    );
+
+    expect(result[1]).toMatchObject({
+      kind: 'history-message',
+      durationMs: 5_000,
+      completedAt: 6_000,
+      modelRef: 'zcode/glm-5.3-flash',
+    });
+  });
+
+  test('does not associate a restarted receipt with a newer user turn', () => {
+    const originalTurnStartedAt = 1_787_885_461_166;
+    const restartedAt = 1_787_886_368_411;
+    const result = projectPersistedTimeline(
+      [
+        {
+          role: 'user',
+          content: 'new prompt',
+          timestamp: restartedAt + 20,
+        },
+        {
+          role: 'assistant',
+          timestamp: restartedAt + 589,
+          content: [{ type: 'toolCall', id: 'call-new-1', name: 'read' }],
+        },
+      ],
+      [
+        {
+          id: 'timing-old',
+          sessionId: 'session-1',
+          clientTurnId: `justdo-${originalTurnStartedAt}-turn-id`,
+          rootRunId: `justdo-${originalTurnStartedAt}-turn-id`,
+          startedAt: restartedAt,
+          endedAt: restartedAt,
+          state: 'aborted',
+        },
+      ],
+    );
+
+    expect(result).toEqual([
+      expect.objectContaining({ kind: 'history-message' }),
+      expect.objectContaining({
+        kind: 'live-process',
+        item: expect.objectContaining({ toolCallId: 'call-new-1', status: 'running' }),
+      }),
+    ]);
+  });
+
+  test('lets a nearby running receipt prevent an older turn from claiming its Tool', () => {
+    const oldTurnStartedAt = 1_787_885_461_166;
+    const activeTurnStartedAt = oldTurnStartedAt + 10_000;
+    const result = projectPersistedTimeline(
+      [
+        {
+          role: 'user',
+          content: 'active prompt',
+          timestamp: activeTurnStartedAt + 20,
+        },
+        {
+          role: 'assistant',
+          timestamp: activeTurnStartedAt + 589,
+          content: [{ type: 'toolCall', id: 'call-active-1', name: 'read' }],
+        },
+      ],
+      [
+        {
+          id: 'timing-old',
+          sessionId: 'session-1',
+          clientTurnId: `justdo-${oldTurnStartedAt}-old-id`,
+          rootRunId: `justdo-${oldTurnStartedAt}-old-id`,
+          startedAt: oldTurnStartedAt,
+          endedAt: oldTurnStartedAt + 5_000,
+          state: 'completed',
+        },
+        {
+          id: 'timing-active',
+          sessionId: 'session-1',
+          clientTurnId: `justdo-${activeTurnStartedAt}-active-id`,
+          rootRunId: `justdo-${activeTurnStartedAt}-active-id`,
+          startedAt: activeTurnStartedAt,
+          state: 'running',
+        },
+      ],
+    );
+
+    expect(result).toEqual([
+      expect.objectContaining({ kind: 'history-message' }),
+      expect.objectContaining({
+        kind: 'live-process',
+        item: expect.objectContaining({ toolCallId: 'call-active-1', status: 'running' }),
+      }),
+    ]);
+  });
+
+  test('does not let an older terminal receipt override a running receipt for the same root', () => {
+    const result = projectPersistedTimeline(
+      [
+        {
+          role: 'assistant',
+          runId: 'shared-root',
+          content: [{ type: 'toolCall', id: 'call-recovered-1', name: 'sessions_yield' }],
+        },
+      ],
+      [
+        {
+          id: 'timing-checkpoint',
+          sessionId: 'session-1',
+          clientTurnId: 'shared-root',
+          rootRunId: 'shared-root',
+          startedAt: 1_000,
+          endedAt: 1_000,
+          state: 'aborted',
+        },
+        {
+          id: 'timing-recovered',
+          sessionId: 'session-1',
+          clientTurnId: 'runtime-recovery-1',
+          rootRunId: 'shared-root',
+          startedAt: 2_000,
+          state: 'running',
+        },
+      ],
+    );
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        kind: 'live-process',
+        item: expect.objectContaining({
+          toolCallId: 'call-recovered-1',
+          status: 'running',
+        }),
+      }),
+    ]);
+  });
+
+  test('clears a fallback terminal association when the same Tool joins an active run', () => {
+    const result = projectPersistedTimeline(
+      [
+        { role: 'user', content: 'old prompt', timestamp: 1_010 },
+        {
+          role: 'assistant',
+          content: [{ type: 'toolCall', id: 'call-recovered-1', name: 'sessions_yield' }],
+        },
+        {
+          role: 'assistant',
+          runId: 'active-root',
+          content: [{ type: 'toolCall', id: 'call-recovered-1', name: 'sessions_yield' }],
+        },
+      ],
+      [
+        {
+          id: 'timing-old',
+          sessionId: 'session-1',
+          clientTurnId: 'justdo-1000-old',
+          rootRunId: 'old-root',
+          startedAt: 1_000,
+          endedAt: 1_500,
+          state: 'aborted',
+        },
+        {
+          id: 'timing-active',
+          sessionId: 'session-1',
+          clientTurnId: 'runtime-recovery-1',
+          rootRunId: 'active-root',
+          startedAt: 2_000,
+          state: 'running',
+        },
+      ],
+    );
+
+    expect(result).toEqual([
+      expect.objectContaining({ kind: 'history-message' }),
+      expect.objectContaining({
+        kind: 'live-process',
+        item: expect.objectContaining({
+          toolCallId: 'call-recovered-1',
+          status: 'running',
+        }),
+      }),
+    ]);
+  });
+
+  test('matches a persisted receipt by user timestamp when history omits run ids', () => {
+    const result = projectPersistedTimeline(
+      [
+        { role: 'user', content: 'prompt', timestamp: 1_010 },
+        { role: 'assistant', content: 'answer', timestamp: 4_000 },
+        {
+          role: 'assistant',
+          content: 'subagent result',
+          timestamp: 5_000,
+          runId: 'announce:v1:child',
+          provider: 'openclaw',
+          model: 'gateway-injected',
+        },
+      ],
+      [
+        {
+          id: 'timing-1',
+          sessionId: 'session-1',
+          clientTurnId: 'client-turn-1',
+          rootRunId: 'gateway-run-1',
+          startedAt: 1_000,
+          endedAt: 6_000,
+          state: 'completed',
+        },
+      ],
+    );
+
+    expect(result[1]).toEqual(expect.not.objectContaining({ durationMs: expect.any(Number) }));
+    expect(result[2]).toMatchObject({ durationMs: 5_000, completedAt: 6_000 });
+  });
+
+  test('does not reuse an older prompt when a newer user timestamp is invalid', () => {
+    const result = projectPersistedTimeline([
+      { role: 'user', content: 'old prompt', timestamp: 1_000 },
+      { role: 'assistant', content: 'old answer', timestamp: 2_000 },
+      { role: 'user', content: 'new prompt' },
+      { role: 'assistant', content: 'new answer', timestamp: 5_000 },
+    ]);
+
+    expect(result[3]).toEqual(
+      expect.not.objectContaining({
+        durationMs: expect.any(Number),
+      }),
+    );
+  });
+
+  test('does not attach a turn duration to gateway-injected assistant messages', () => {
+    const result = projectPersistedTimeline([
+      { role: 'user', content: 'prompt', timestamp: 1_000 },
+      {
+        role: 'assistant',
+        content: 'internal status',
+        timestamp: 2_000,
+        provider: 'openclaw',
+        model: 'gateway-injected',
+      },
+    ]);
+
+    expect(result[1]).toEqual(
+      expect.not.objectContaining({
+        durationMs: expect.any(Number),
+      }),
+    );
+  });
+
+  test('restores progress card calls as compact standalone receipts', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        id: 'assistant-1',
+        content: [
+          { type: 'thinking', thinking: 'planning' },
+          {
+            type: 'tool_use',
+            id: 'progress-1',
+            name: 'progress_card',
+            input: { plan: [{ step: 'Inspect', status: 'completed' }] },
+          },
+          { type: 'tool_use', id: 'read-1', name: 'read', input: { path: 'README.md' } },
+          {
+            type: 'tool_use',
+            id: 'progress-2',
+            name: 'progress_card',
+            input: {
+              plan: [
+                { step: 'Inspect', status: 'completed' },
+                { step: 'Implement', status: 'in_progress' },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(result.map(item => item.kind)).toEqual([
+      'process-summary',
+      'progress-receipt',
+      'live-process',
+      'progress-receipt',
+    ]);
+    expect(result.filter(item => item.kind === 'progress-receipt')).toHaveLength(2);
+  });
+
+  test('restores PresentPlan as a standalone plan card', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        id: 'assistant-1',
+        content: [
+          { type: 'thinking', thinking: 'planning' },
+          {
+            type: 'tool_use',
+            id: 'plan-1',
+            name: 'PresentPlan',
+            input: { title: 'Ship it', plan: '# Plan\n\n1. Implement' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'plan-1',
+        name: 'PresentPlan',
+        content: 'Plan approved.',
+      },
+    ]);
+
+    expect(result.map(item => item.kind)).toContain('plan-presentation');
+    expect(result.find(item => item.kind === 'plan-presentation')).toMatchObject({
+      item: { name: 'PresentPlan', input: { title: 'Ship it' } },
+    });
+  });
+
+  test('keeps a failed persisted Tool only inside its process summary', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        id: 'assistant-1',
+        content: [
+          { type: 'toolcall', toolCallId: 'call-1', name: 'run_tests' },
+          {
+            type: 'toolresult',
+            toolCallId: 'call-1',
+            isError: true,
+            text: 'Process exited with code 1',
+          },
+        ],
+      },
+    ]);
+
+    expect(result.map(item => item.kind)).toEqual(['process-summary']);
+    expect(result[0]).toMatchObject({ toolCount: 1, errorCount: 1 });
+    expect(result[0]).toMatchObject({
+      items: [{ status: 'failed', output: 'Process exited with code 1' }],
+    });
+  });
+
+  test('keeps result-before-start and object Tool output inspectable', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        id: 'assistant-1',
+        content: [
+          {
+            type: 'toolresult',
+            toolCallId: 'call-1',
+            name: 'inspect',
+            output: { ok: true, count: 2 },
+          },
+        ],
+      },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      kind: 'process-summary',
+      toolCount: 1,
+      items: [
+        {
+          name: 'inspect',
+          output: '{\n  "ok": true,\n  "count": 2\n}',
+          status: 'completed',
+        },
+      ],
+    });
+  });
+
+  test('joins an OpenClaw toolResult message with array content to its Tool call', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        id: 'assistant-1',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'call-1',
+            name: 'exec',
+            arguments: { command: 'npm test' },
+          },
+        ],
+      },
+      {
+        role: 'toolResult',
+        id: 'result-1',
+        toolCallId: 'call-1',
+        toolName: 'exec',
+        content: [{ type: 'text', text: '761 tests passed' }],
+        isError: false,
+      },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      kind: 'process-summary',
+      toolCount: 1,
+      items: [
+        {
+          toolCallId: 'call-1',
+          name: 'exec',
+          input: { command: 'npm test' },
+          output: '761 tests passed',
+          status: 'completed',
+        },
+      ],
+    });
+  });
+
+  test('keeps a persisted sessions_yield running until a non-empty result is available', () => {
+    const dangling = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'call-yield-1',
+            name: 'sessions_yield',
+            arguments: { message: 'wait' },
+          },
+        ],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-yield-1',
+        toolName: 'sessions_yield',
+        content: [],
+      },
+    ]);
+    const waitingItem = dangling.find(item => item.kind === 'live-process');
+    const waitingTool =
+      waitingItem?.kind === 'live-process' && waitingItem.item.type === 'tool'
+        ? waitingItem.item
+        : undefined;
+
+    expect(dangling.map(item => item.kind)).toEqual(['live-process']);
+    expect(waitingTool).toMatchObject({
+      type: 'tool',
+      toolCallId: 'call-yield-1',
+      status: 'running',
+    });
+    expect(waitingTool?.output).toBeUndefined();
+
+    const completed = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'call-yield-1', name: 'sessions_yield' }],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-yield-1',
+        toolName: 'sessions_yield',
+        content: [{ type: 'text', text: '{"status":"partial","pending":4}' }],
+      },
+    ]);
+    const completedTools = completed.flatMap(item =>
+      item.kind === 'process-summary' ? item.items.filter(entry => entry.type === 'tool') : [],
+    );
+
+    expect(completedTools).toHaveLength(1);
+    expect(completedTools[0]).toMatchObject({
+      toolCallId: 'call-yield-1',
+      status: 'completed',
+      output: '{"status":"partial","pending":4}',
+    });
+
+    const cancelled = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'call-yield-1', name: 'sessions_yield' }],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-yield-1',
+        toolName: 'sessions_yield',
+        status: 'cancelled',
+        content: [],
+      },
+    ]);
+    const cancelledTool = cancelled
+      .flatMap(item => (item.kind === 'process-summary' ? item.items : []))
+      .find(item => item.type === 'tool');
+
+    expect(cancelledTool).toMatchObject({
+      toolCallId: 'call-yield-1',
+      status: 'cancelled',
+    });
+  });
+
+  test('does not fold a waiting sessions_yield when an announce message arrives behind it', () => {
+    const waitingMessages = [
+      {
+        role: 'assistant',
+        runId: 'parent-run',
+        content: [
+          { type: 'thinking', thinking: 'Waiting for the worker.' },
+          {
+            type: 'toolCall',
+            id: 'call-yield-1',
+            name: 'sessions_yield',
+            arguments: { message: '等待 subagent' },
+          },
+        ],
+      },
+      {
+        role: 'toolResult',
+        runId: 'parent-run',
+        toolCallId: 'call-yield-1',
+        toolName: 'sessions_yield',
+        content: [],
+      },
+      {
+        role: 'assistant',
+        runId: 'announce:v1:agent:main:subagent:child-run',
+        content: [{ type: 'text', text: 'Subagent progress arrived.' }],
+      },
+    ];
+    const result = projectPersistedTimeline(waitingMessages);
+
+    expect(result.map(item => item.kind)).toEqual([
+      'process-summary',
+      'live-process',
+      'history-message',
+    ]);
+    expect(result[0]).toMatchObject({
+      kind: 'process-summary',
+      thinkingCount: 1,
+      toolCount: 0,
+    });
+    expect(result[1]).toMatchObject({
+      kind: 'live-process',
+      item: {
+        type: 'tool',
+        name: 'sessions_yield',
+        status: 'running',
+      },
+    });
+
+    const continued = projectPersistedTimeline([
+      ...waitingMessages,
+      {
+        role: 'assistant',
+        runId: 'parent-run',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'call-read-1',
+            name: 'read',
+            arguments: { path: 'result.txt' },
+          },
+        ],
+      },
+    ]);
+    const runningToolIds = continued.flatMap(item =>
+      item.kind === 'live-process' && item.item.type === 'tool' ? [item.item.toolCallId] : [],
+    );
+
+    expect(runningToolIds).toEqual(['call-yield-1', 'call-read-1']);
+
+    const completedResult = JSON.stringify({
+      status: 'completed',
+      pending: 0,
+      results: [{ status: 'ok' }],
+    });
+    const refreshed = projectPersistedTimeline([
+      waitingMessages[0],
+      {
+        role: 'toolResult',
+        runId: 'parent-run',
+        toolCallId: 'call-yield-1',
+        toolName: 'sessions_yield',
+        content: [{ type: 'text', text: completedResult }],
+      },
+      waitingMessages[2],
+      {
+        role: 'assistant',
+        runId: 'parent-run',
+        content: [
+          { type: 'thinking', thinking: 'Continue after the worker finished.' },
+          {
+            type: 'toolCall',
+            id: 'call-read-1',
+            name: 'read',
+            arguments: { path: 'result.txt' },
+          },
+        ],
+      },
+      {
+        role: 'toolResult',
+        runId: 'parent-run',
+        toolCallId: 'call-read-1',
+        toolName: 'read',
+        content: [{ type: 'text', text: 'worker result' }],
+      },
+    ]);
+    const refreshedTools = refreshed.flatMap(item =>
+      item.kind === 'process-summary' ? item.items.filter(process => process.type === 'tool') : [],
+    );
+
+    expect(refreshed.some(item => item.kind === 'live-process')).toBe(false);
+    expect(refreshedTools).toMatchObject([
+      {
+        toolCallId: 'call-yield-1',
+        name: 'sessions_yield',
+        status: 'completed',
+        output: completedResult,
+      },
+      {
+        toolCallId: 'call-read-1',
+        name: 'read',
+        status: 'completed',
+        output: 'worker result',
+      },
+    ]);
+  });
+
+  test('recovers sessions_yield arguments from a standalone result before history patching', () => {
+    const output = JSON.stringify({
+      status: 'completed',
+      message: '等待 subagent 2（news_finance）完成调研后继续。',
+      pending: 0,
+      results: [{ status: 'ok' }],
+    });
+    const result = projectPersistedTimeline([
+      {
+        role: 'toolResult',
+        toolCallId: 'call-yield-1',
+        toolName: 'sessions_yield',
+        content: [{ type: 'text', text: output }],
+      },
+    ]);
+    const tools = result.flatMap(item =>
+      item.kind === 'process-summary' ? item.items.filter(entry => entry.type === 'tool') : [],
+    );
+
+    expect(tools).toHaveLength(1);
+    expect(tools[0]).toMatchObject({
+      toolCallId: 'call-yield-1',
+      status: 'completed',
+      input: { message: '等待 subagent 2（news_finance）完成调研后继续。' },
+      output,
+    });
+  });
+
+  test('does not replace persisted sessions_yield arguments with a result status message', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'call-yield-1',
+            name: 'sessions_yield',
+            arguments: { message: '等待 subagent 2 完成。' },
+          },
+        ],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-yield-1',
+        toolName: 'sessions_yield',
+        content: [
+          {
+            type: 'text',
+            text: '{"status":"already_waiting","message":"A sessions_yield call is already waiting."}',
+          },
+        ],
+      },
+    ]);
+    const tool = result
+      .flatMap(item => (item.kind === 'process-summary' ? item.items : []))
+      .find(entry => entry.type === 'tool');
+
+    expect(tool).toMatchObject({
+      toolCallId: 'call-yield-1',
+      input: { message: '等待 subagent 2 完成。' },
+    });
+  });
+
+  test('keeps an array-content OpenClaw Tool failure visible with updated summary state', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'call-1', name: 'exec', arguments: {} }],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-1',
+        toolName: 'exec',
+        content: [{ type: 'text', text: 'Process exited with code 1' }],
+        isError: true,
+      },
+    ]);
+
+    expect(result.map(item => item.kind)).toEqual(['process-summary']);
+    expect(result[0]).toMatchObject({
+      errorCount: 1,
+      items: [{ status: 'failed', output: 'Process exited with code 1' }],
+    });
+  });
+
+  test('hydrates an enveloped Tool call with partialArgs before a standalone result', () => {
+    const result = projectPersistedTimeline([
+      {
+        type: 'message',
+        id: 'assistant-envelope',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'cleaning up' },
+            {
+              type: 'toolCall',
+              id: 'call-1',
+              name: 'exec',
+              arguments: {},
+              partialArgs: '{"command":"Remove-Item tmp.js","timeout":5}',
+            },
+          ],
+        },
+      } as unknown as never,
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'nearby text' }],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'call-1',
+        toolName: 'exec',
+        content: [{ type: 'text', text: '(no output)' }],
+      },
+    ]);
+
+    const summary = result.find(item => item.kind === 'process-summary');
+    expect(summary).toMatchObject({
+      items: [
+        {
+          toolCallId: 'call-1',
+          input: { command: 'Remove-Item tmp.js', timeout: 5 },
+          output: '(no output)',
+        },
+      ],
+    });
+  });
+
+  test('hydrates standalone tool_use metadata and its result', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'tool_use',
+        toolCallId: 'call-1',
+        metadata: {
+          toolUseId: 'call-1',
+          toolName: 'Read',
+          toolInput: { file_path: 'README.md' },
+        },
+        content: 'Read',
+      },
+      {
+        role: 'tool_result',
+        tool_call_id: 'call-1',
+        metadata: { toolUseId: 'call-1', toolName: 'Read' },
+        content: 'ok',
+      },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      kind: 'process-summary',
+      items: [
+        {
+          name: 'Read',
+          input: { file_path: 'README.md' },
+          output: 'ok',
+        },
+      ],
+    });
+  });
+
+  test('preserves an authoritative run ID for live-to-history summary correlation', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        runId: 'run-shared',
+        content: [
+          { type: 'thinking', thinking: 'working' },
+          { type: 'toolCall', id: 'call-1', name: 'Read', arguments: {} },
+        ],
+      },
+    ]);
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        kind: 'process-summary',
+        runId: 'run-shared',
+        items: [expect.objectContaining({ type: 'thinking', runId: 'run-shared' })],
+      }),
+      expect.objectContaining({
+        kind: 'live-process',
+        item: expect.objectContaining({
+          type: 'tool',
+          runId: 'run-shared',
+          toolCallId: 'call-1',
+        }),
+      }),
+    ]);
+  });
+
+  test('merges attached Tool call and empty result compatibility messages', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'working' }],
+        __justdoAttachedToolMessages: [
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'toolcall',
+                toolCallId: 'call-1',
+                name: 'exec',
+                arguments: { command: 'npm test' },
+              },
+              {
+                type: 'toolresult',
+                toolCallId: 'call-1',
+                name: 'exec',
+                text: '',
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      kind: 'process-summary',
+      thinkingCount: 1,
+      toolCount: 1,
+      items: [
+        { type: 'thinking' },
+        {
+          type: 'tool',
+          input: { command: 'npm test' },
+          output: '',
+          status: 'completed',
+        },
+      ],
+    });
+  });
+
+  test('matches a result without an id to the first unmatched Tool with the same name', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'call-1',
+            name: 'Read',
+            arguments: { file_path: 'README.md' },
+          },
+          {
+            type: 'toolResult',
+            name: 'Read',
+            text: 'contents',
+          },
+        ],
+      },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      kind: 'process-summary',
+      toolCount: 1,
+      items: [
+        {
+          toolCallId: 'call-1',
+          input: { file_path: 'README.md' },
+          output: 'contents',
+        },
+      ],
+    });
+  });
+
+  test('matches id-less same-name results to unresolved Tools in FIFO order', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'toolCall',
+            id: 'call-1',
+            name: 'Read',
+            arguments: { file_path: 'a.md' },
+          },
+          {
+            type: 'toolCall',
+            id: 'call-2',
+            name: 'Read',
+            arguments: { file_path: 'b.md' },
+          },
+          { type: 'toolResult', name: 'Read', text: 'contents-a' },
+          { type: 'toolResult', name: 'Read', text: 'contents-b' },
+        ],
+      },
+    ]);
+
+    expect(result).toMatchObject([
+      {
+        kind: 'process-summary',
+        toolCount: 2,
+        items: [
+          { toolCallId: 'call-1', input: { file_path: 'a.md' }, output: 'contents-a' },
+          { toolCallId: 'call-2', input: { file_path: 'b.md' }, output: 'contents-b' },
+        ],
+      },
+    ]);
+  });
+
+  test('does not leave a hidden boundary for an empty assistant message without content', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        runId: 'run-1',
+        content: [{ type: 'thinking', thinking: 'first' }],
+      },
+      { role: 'assistant', runId: 'run-1' },
+      {
+        role: 'assistant',
+        runId: 'run-1',
+        content: [{ type: 'thinking', thinking: 'second' }],
+      },
+    ]);
+
+    expect(result).toMatchObject([
+      {
+        kind: 'process-summary',
+        thinkingCount: 2,
+        items: [
+          { type: 'thinking', text: 'first' },
+          { type: 'thinking', text: 'second' },
+        ],
+      },
+    ]);
+  });
+
+  test('preserves assistant fallback text when content is missing or null', () => {
+    const nullContentMessage = {
+      role: 'assistant',
+      content: null,
+      text: 'visible null-content fallback',
+    } as unknown as GatewayMessage;
+
+    expect(
+      projectPersistedTimeline([
+        { role: 'assistant', text: 'visible missing-content fallback' },
+        nullContentMessage,
+      ]),
+    ).toMatchObject([
+      {
+        kind: 'history-message',
+        message: { text: 'visible missing-content fallback' },
+      },
+      {
+        kind: 'history-message',
+        message: { text: 'visible null-content fallback' },
+      },
+    ]);
+  });
+});

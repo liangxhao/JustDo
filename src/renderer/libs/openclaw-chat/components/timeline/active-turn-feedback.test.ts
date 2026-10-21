@@ -1,0 +1,132 @@
+/** @vitest-environment jsdom */
+import { nothing, render } from 'lit';
+import { afterEach, expect, test, vi } from 'vitest';
+
+import { i18nService } from '@/services/i18n';
+
+import { chatStyles } from '../justdo-chat.styles';
+import { renderTerminalTimelineMessage, renderTimelineItem } from './active-turn-timeline';
+
+let style: HTMLStyleElement | undefined;
+
+afterEach(() => {
+  render(nothing, document.body);
+  style?.remove();
+  style = undefined;
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+test.each([
+  '⚠ Provider request failed.',
+  'Provider request failed.\nThe connection closed before the response completed.',
+  'Provider request failed. '.repeat(12),
+  `${'Provider request failed. '.repeat(12)}\nThe connection closed.`,
+])('keeps the error copy button hidden until interaction: %s', message => {
+  style = document.createElement('style');
+  style.textContent = chatStyles.map(styles => styles.cssText).join('\n');
+  document.head.append(style);
+  render(renderTerminalTimelineMessage(message, 'error'), document.body);
+  expect(document.querySelector('.process-terminal--error')?.textContent).not.toContain('⚠');
+
+  const copy = document.querySelector<HTMLButtonElement>('.message-copy')!;
+  expect(getComputedStyle(copy).opacity).toBe('0');
+  expect(getComputedStyle(copy).pointerEvents).toBe('none');
+  const details = document.querySelector('details');
+  if (details) {
+    details.open = true;
+    expect(getComputedStyle(copy).opacity).toBe('0');
+    expect(getComputedStyle(copy).pointerEvents).toBe('none');
+    const summaryPreview = details.querySelector<HTMLElement>('.process-terminal__summary-preview');
+    if (summaryPreview) {
+      expect(getComputedStyle(summaryPreview).display).toBe('none');
+      expect(details.querySelector('pre')?.textContent).toBe(message.trim());
+      details.open = false;
+      expect(getComputedStyle(summaryPreview).display).not.toBe('none');
+    }
+  }
+});
+
+test.each(['\n', '\r\n'])(
+  'expands only the error detail and copies the complete diagnostic with %j line endings',
+  async lineEnding => {
+    vi.useFakeTimers();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const summary = 'Provider request failed.';
+    const detail = 'The connection closed before the response completed.';
+    const message = `⚠️ ${summary}${lineEnding}${detail}`;
+    render(renderTerminalTimelineMessage(message, 'error'), document.body);
+    const details = document.querySelector('details')!;
+    expect(details.open).toBe(false);
+    expect(details.querySelector('summary')?.textContent).toContain(summary);
+    details.querySelector('summary')?.click();
+    expect(details.open).toBe(true);
+    expect(details.querySelector('pre')?.textContent).toBe(detail);
+    expect(details.textContent?.split(summary)).toHaveLength(2);
+    expect(details.textContent).not.toContain('⚠');
+    expect(document.querySelectorAll('.chat-avatar.error')).toHaveLength(1);
+    expect(document.querySelector('.chat-avatar.assistant')).toBeNull();
+    const copy = document.querySelector<HTMLButtonElement>('.message-copy')!;
+    copy.click();
+    await Promise.resolve();
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(message);
+    expect(copy.getAttribute('aria-label')).toBe(i18nService.t('copied'));
+    vi.advanceTimersByTime(1500);
+    expect(copy.getAttribute('aria-label')).toBe(i18nService.t('coworkCopyError'));
+  },
+);
+
+test('updates the working stage and timer without announcing every elapsed tick', () => {
+  render(
+    renderTimelineItem({
+      kind: 'waiting',
+      key: 'waiting:run-1',
+      stage: 'responding',
+      notice: { kind: 'reconnecting', tone: 'warning', quietMs: 30000 },
+    }),
+    document.body,
+  );
+  const label = document.querySelector('[role="status"]');
+  expect(label?.textContent).toBe(i18nService.t('coworkWaitingReconnecting'));
+  render(
+    renderTimelineItem(
+      {
+        kind: 'waiting',
+        key: 'waiting:run-1',
+        startedAt: 1000,
+        stage: 'thinking',
+      },
+      65000,
+    ),
+    document.body,
+  );
+  expect(document.querySelector('[role="status"]')?.textContent).toBe(
+    i18nService.t('coworkWorkingThinking'),
+  );
+  expect(document.querySelector('[role="status"]')).toBe(label);
+  expect(document.querySelector('.chat-working-indicator--warning')).toBeNull();
+  expect(document.querySelector('.chat-working-indicator__elapsed')?.textContent).toBe('1m 4s');
+  expect(
+    document.querySelector('.chat-working-indicator__elapsed')?.getAttribute('aria-live'),
+  ).toBe('off');
+  render(
+    renderTimelineItem(
+      {
+        kind: 'waiting',
+        key: 'waiting:run-1',
+        startedAt: 1000,
+        stage: 'responding',
+      },
+      66000,
+    ),
+    document.body,
+  );
+  expect(document.querySelectorAll('.chat-working-indicator')).toHaveLength(1);
+  expect(
+    document.querySelector('.chat-group__avatar > .chat-working-indicator__spark'),
+  ).not.toBeNull();
+  expect(document.querySelector('[role="status"]')?.textContent).toBe(
+    i18nService.t('coworkWorkingResponding'),
+  );
+});

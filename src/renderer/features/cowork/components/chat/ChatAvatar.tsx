@@ -1,9 +1,9 @@
-import '@/libs/openclaw-chat/components/chat-avatar.css';
+import '@/libs/openclaw-chat/components/message/chat-avatar.css';
 
 import { nothing, render } from 'lit';
 import { useEffect, useRef } from 'react';
 
-import { renderChatAvatar } from '@/libs/openclaw-chat/components/chat-avatar';
+import { renderChatAvatar } from '@/libs/openclaw-chat/components/message/chat-avatar';
 
 /** React adapter for the same avatars used by native chat and graph receipt messages. */
 export default function ChatAvatar({

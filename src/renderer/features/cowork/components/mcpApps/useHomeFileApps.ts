@@ -4,7 +4,7 @@ import type { McpAppDiscovery, McpAppLaunchInput } from '@shared/plugins/mcpApps
 import { createElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import type { McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
-import { McpWorkspaceSession } from '@/libs/openclaw-chat/gateway/mcp-workspace-session';
+import { McpWorkspaceSession } from '@/libs/openclaw-chat/gateway/mcp-app/mcp-workspace-session';
 import { decodeMcpAppLaunch } from '@/libs/openclaw-chat/pipeline/native-mcp-app';
 import { i18nService } from '@/services/i18n';
 

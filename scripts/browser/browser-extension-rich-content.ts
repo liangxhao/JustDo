@@ -4,8 +4,8 @@ import {
   getTranscriptMedia,
   isTranscriptImage,
 } from '../../src/renderer/libs/openclaw-chat/attachments';
-import { renderBrowserAnnotation } from '../../src/renderer/libs/openclaw-chat/components/browser-annotation-message';
-import { renderBrowserRecording } from '../../src/renderer/libs/openclaw-chat/components/browser-recording-message';
+import { renderBrowserAnnotation } from '../../src/renderer/libs/openclaw-chat/components/message/browser-annotation-message';
+import { renderBrowserRecording } from '../../src/renderer/libs/openclaw-chat/components/message/browser-recording-message';
 import { i18nService } from './browser-extension-i18n';
 import { renderMarkdownHtml } from './browser-extension-markdown-entry.mjs';
 

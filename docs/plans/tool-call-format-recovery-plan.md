@@ -215,7 +215,7 @@ commentary 恢复复用现有失败正文详情投影：此前过程说明保留
 | 原生预算与终态准备 | `run/retry-budget.ts`、`run/assistant-failure.ts`、terminal retry/finalization 消费者 | 服从既有总预算并计为 recovery；保留真实原生结算，复用 modelFallbackStopReason 阻止已接管链回退，同步 SDK 原因类型 |
 | 原生续跑上下文 | `run/session-prompt-state.ts` 及其投影/提交测试 | 复用内部控制 prompt、writer fence、取消与当前历史续跑 |
 | 构建与补丁 | `scripts/patches/v2026.10.4/`、既有 nativeSupportModule、BUILD_RECIPE_FILES、pristine 与 bundle 验证 | 一个独立能力补丁；扩展纯源复制/静态绑定并纳入指纹，不维护手写副本 |
-| 聊天展示 | `src/renderer/libs/openclaw-chat/gateway/chat-controller-recovery.ts`、`model/run-activity.ts`、timeline 与 i18n | 增加有界原因/次数投影，核对中间错误和真实终态的呈现 |
+| 聊天展示 | `src/renderer/libs/openclaw-chat/gateway/execution/chat-controller-recovery.ts`、`model/turn/run-activity.ts`、timeline 与 i18n | 增加有界原因/次数投影，核对中间错误和真实终态的呈现 |
 | 会话诊断 | `src/main/cowork/diagnostics/`、`src/shared/cowork/diagnostics/` | 对现有证据增加格式纠正解释与有界安全字段 |
 
 表中的原生源码路径指相邻 OpenClaw checkout 的审计位置。正式补丁必须针对锁定 pristine npm 包中的真实产物定位，不能假定源码路径、编译后文件数和 SDK 副本数量完全相同。

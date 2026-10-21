@@ -8,7 +8,7 @@ import {
   isEmptyFailureSourceContent,
   projectFailurePartialContent,
 } from '../../openclaw-extensions/runtime-services/history-failure';
-import { hydrateTruncatedHistoryMessages } from '../../src/renderer/libs/openclaw-chat/gateway/chat-history-protocol';
+import { hydrateTruncatedHistoryMessages } from '../../src/renderer/libs/openclaw-chat/gateway/history/chat-history-protocol';
 import type { GatewayClient } from '../../src/renderer/libs/openclaw-chat/gateway/client';
 import { normalizeGatewayHistoryForDisplay } from '../../src/renderer/libs/openclaw-chat/pipeline/history-display-normalizer';
 

@@ -12,7 +12,7 @@ import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from 're
 import type {
   SessionSummaryResources,
   SummaryResource,
-} from '@/libs/openclaw-chat/model/session-summary-resources';
+} from '@/libs/openclaw-chat/model/timeline/session-summary-resources';
 import { i18nService } from '@/services/i18n';
 import { isDomNode, useOwnerDocument } from '@/shared/dom/ownerDocument';
 
