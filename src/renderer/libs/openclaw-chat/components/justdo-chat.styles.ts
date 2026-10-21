@@ -6,6 +6,7 @@ import browserRecordingStyles from '@/features/browser/recording/browserRecordin
 
 import codeBlockStyles from './markdown/code-block.css?inline';
 import chatAvatarStyles from './message/chat-avatar.css?inline';
+import processMotionStyles from './timeline/process-motion.css?inline';
 
 export const chatStyles = [
   unsafeCSS(chatAvatarStyles),
@@ -3605,4 +3606,5 @@ export const chatStyles = [
     }
   `,
   unsafeCSS(codeBlockStyles),
+  unsafeCSS(processMotionStyles),
 ];

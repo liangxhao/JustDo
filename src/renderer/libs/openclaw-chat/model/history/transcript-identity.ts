@@ -65,23 +65,28 @@ export function isEntryAfterLatestPlanImplementationReset(
 ): boolean {
   const normalizedEntryId = entryId.trim();
   if (!normalizedEntryId) return false;
-  let latestResetIndex = -1;
-  let targetIndex = -1;
+  return planImplementationEntryIds(messages).has(normalizedEntryId);
+}
+
+/** Build once for a history view instead of rescanning the branch per footer. */
+export function planImplementationEntryIds(messages: readonly unknown[]): ReadonlySet<string> {
+  const entries = new Set<string>();
   let planPresentedSinceLastReset = false;
-  messages.forEach((message, index) => {
+  for (const message of messages) {
     const record = asRecord(message);
     const marker = asRecord(record?.__openclaw);
+    let implementationReset = false;
     if (marker?.kind === 'reset') {
-      if (marker.planImplementation === true || planPresentedSinceLastReset) {
-        latestResetIndex = index;
-      }
+      implementationReset = marker.planImplementation === true || planPresentedSinceLastReset;
+      if (implementationReset) entries.clear();
       planPresentedSinceLastReset = false;
     } else if (containsPresentPlanTool(message)) {
       planPresentedSinceLastReset = true;
     }
-    if (readScalar(marker?.id) === normalizedEntryId) targetIndex = index;
-  });
-  return targetIndex >= 0 && (latestResetIndex < 0 || targetIndex > latestResetIndex);
+    const entryId = readScalar(marker?.id);
+    if (entryId && !implementationReset) entries.add(entryId);
+  }
+  return entries;
 }
 
 function containsPresentPlanTool(value: unknown): boolean {

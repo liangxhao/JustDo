@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" />
+  <title>Chat flow performance fixture</title>
+  <style>
+    body {
+      margin: 0;
+      background: #f8fafc;
+      color: #334155;
+      font: 14px system-ui;
+    }
+    header {
+      padding: 16px 24px;
+      background: white;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    button {
+      margin: 0 8px 8px 0;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    #metrics {
+      max-height: 180px;
+      overflow: auto;
+      margin: 0;
+      white-space: pre-wrap;
+      font: 12px/1.5 monospace;
+    }
+    justdo-chat {
+      display: block;
+      height: 620px;
+      max-width: 960px;
+      margin: auto;
+      overflow: auto;
+    }
+  </style>
+  <body>
+    <header>
+      <h2>Chat flow · synthetic 2,000-message history</h2>
+      <button id="open">Open history</button><button id="older">Load all older pages</button>
+      <button id="stream">Stream 120 frames</button
+      ><button id="running-page">Load during stream</button>
+      <button id="animation">Check process animation</button>
+      <pre id="metrics">Ready. Uses a local mock Gateway; no real sessions or models.</pre>
+    </header>
+    <justdo-chat></justdo-chat>
+    <script type="module">
+      import '../justdo-chat';
+      import { ChatController } from '../../gateway/chat-controller';
+      const sessionKey = 'agent:main:chat-flow-fixture';
+      const sessionId = 'physical-chat-flow-fixture';
+      const lifecycleGeneration = 'fixture-generation';
+      const messages = Array.from({ length: 500 }, (_, turn) => {
+        const runId = `fixture-run-${turn}`;
+        const marker = index => ({
+          id: `entry-${turn * 4 + index}`,
+          seq: turn * 4 + index + 1,
+          runId,
+        });
+        const timestamp = 1_000_000 + turn * 4_000;
+        return [
+          {
+            role: 'user',
+            content: `Inspect configuration ${turn + 1}`,
+            timestamp,
+            __openclaw: marker(0),
+          },
+          {
+            role: 'assistant',
+            timestamp: timestamp + 1_000,
+            __openclaw: marker(1),
+            content: [
+              {
+                type: 'thinking',
+                thinking:
+                  `Checking configuration ${turn + 1}.\n\n` +
+                  'Check the dependencies and preserve existing values. '.repeat(12),
+              },
+              { type: 'text', text: `Reading configuration ${turn + 1}.` },
+              {
+                type: 'toolCall',
+                id: `read-${turn}`,
+                name: 'read',
+                arguments: { path: `config-${turn}.json` },
+              },
+            ],
+          },
+          {
+            role: 'toolResult',
+            timestamp: timestamp + 2_000,
+            toolCallId: `read-${turn}`,
+            toolName: 'read',
+            content: [{ type: 'text', text: `Configuration ${turn}: read successfully.` }],
+            __openclaw: marker(2),
+          },
+          {
+            role: 'assistant',
+            timestamp: timestamp + 3_000,
+            content: `Configuration **${turn + 1}** is valid.\n\n- Dependencies checked\n- Existing values preserved\n\n\`\`\`json\n{"configuration": ${turn + 1}, "valid": true}\n\`\`\``,
+            __openclaw: marker(3),
+          },
+        ];
+      }).flat();
+      let controller;
+      let seq = 0;
+      let streamRun = null;
+      let requests = 0;
+      const chat = document.querySelector('justdo-chat');
+      const metrics = {};
+      const work = { render: 0, updated: 0, performUpdate: 0 };
+      for (const method of ['render', 'updated', 'performUpdate']) {
+        const original = chat[method].bind(chat);
+        chat[method] = (...args) => {
+          const started = performance.now();
+          try {
+            return original(...args);
+          } finally {
+            work[method] += performance.now() - started;
+          }
+        };
+      }
+      const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+      const settle = async () => {
+        await chat.updateComplete;
+        await frame();
+      };
+      const publish = () => {
+        Object.assign(metrics, {
+          loadedMessages: controller?.state.loadedMessageCount ?? 0,
+          windowMessages: controller?.state.visibleChatMessages.length ?? 0,
+          requests,
+          domNodes: chat.shadowRoot?.querySelectorAll('*').length ?? 0,
+          processGroups: chat.shadowRoot?.querySelectorAll('.completed-process').length ?? 0,
+          hiddenProcessNodes: [
+            ...(chat.shadowRoot?.querySelectorAll('.completed-process:not([open])') ?? []),
+          ].reduce(
+            (sum, element) => sum + element.querySelectorAll('.completed-process__items *').length,
+            0,
+          ),
+          persistedProjectionBuilds: chat.persistedTimelineCache.revision,
+          nativeDisclosureAnimation:
+            CSS.supports('interpolate-size', 'allow-keywords') &&
+            CSS.supports('selector(details::details-content)'),
+        });
+        document.querySelector('#metrics').textContent = JSON.stringify(metrics, null, 2);
+      };
+      chat.shadowRoot.addEventListener('toggle', event => {
+        const details = event.target;
+        if (details.tagName !== 'DETAILS') return;
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (!details.isConnected) return;
+          metrics.disclosure = {
+            open: details.open,
+            contentTransition: getComputedStyle(details, '::details-content').transition,
+            contentSize: getComputedStyle(details, '::details-content').blockSize,
+            transitions: details.getAnimations({subtree: true})
+              .filter(animation => typeof animation.transitionProperty === 'string')
+              .map(animation => ({ property: animation.transitionProperty,
+                durationMs: animation.effect.getTiming().duration })),
+          };
+          publish();
+        }));
+      }, true);
+      async function open() {
+        controller?.disconnect();
+        seq = 0;
+        streamRun = null;
+        requests = 0;
+        controller = new ChatController();
+        controller.state.sessionKey = sessionKey;
+        controller.state.connected = true;
+        controller.state.client = {
+          generation: 1,
+          stop() {},
+          async request(method, params) {
+            if (method !== 'chat.history') throw new Error(`Unexpected fixture method: ${method}`);
+            requests += 1;
+            const offset = params.offset ?? 0;
+            const end = messages.length - offset;
+            const start = Math.max(0, end - params.limit);
+            return {
+              messages: messages.slice(start, end),
+              hasMore: start > 0,
+              nextOffset: messages.length - start,
+              sessionId,
+              sessionInfo: {
+                key: sessionKey,
+                sessionId,
+                activeLeafEntryId: messages.at(-1).__openclaw.id,
+                hasActiveRun: streamRun !== null,
+                activeRunIds: streamRun ? [streamRun] : [],
+              },
+              ...(streamRun ? { inFlightRun: { runId: streamRun, events: [] } } : {}),
+            };
+          },
+        };
+        chat.controller = controller;
+        const started = performance.now();
+        await controller.loadHistory();
+        await settle();
+        metrics.openMs = +(performance.now() - started).toFixed(1);
+        publish();
+      }
+      async function older() {
+        if (!controller) await open();
+        const samples = [];
+        const phaseSamples = [];
+        while (controller.state.historyHasMore) {
+          const started = performance.now();
+          const before = { ...work };
+          await controller.loadOlderHistory();
+          await settle();
+          samples.push(+(performance.now() - started).toFixed(1));
+          phaseSamples.push({
+            render: +(work.render - before.render).toFixed(1),
+            updated: +(work.updated - before.updated).toFixed(1),
+            totalDomUpdate: +(work.performUpdate - before.performUpdate).toFixed(1),
+          });
+        }
+        metrics.olderPageMs = samples;
+        metrics.pageWorkMs = phaseSamples;
+        publish();
+      }
+      function emit(stream, data) {
+        streamRun ??= 'fixture-running';
+        controller.handleEvent({
+          event: 'agent',
+          payload: {
+            sessionKey,
+            sessionId,
+            lifecycleGeneration,
+            runId: streamRun,
+            seq: ++seq,
+            ts: Date.now(),
+            stream,
+            data,
+          },
+        });
+      }
+      async function stream(loadPages = false) {
+        if (!controller) await open();
+        emit('thinking', { text: 'Checking the next configuration.' });
+        const revision = chat.persistedTimelineCache.revision;
+        const intervals = [];
+        let previous = performance.now();
+        let pendingPage = null;
+        for (let index = 0; index < 120; index += 1) {
+          await frame();
+          const now = performance.now();
+          intervals.push(now - previous);
+          previous = now;
+          emit('assistant', {
+            itemId: 'fixture-body',
+            text: 'Configuration check complete. ' + 'Verified. '.repeat(index + 1),
+          });
+          if (loadPages && index === 10) pendingPage = older();
+        }
+        await pendingPage;
+        await settle();
+        intervals.sort((a, b) => a - b);
+        metrics.stream = {
+          p50FrameMs: +intervals[60].toFixed(1),
+          p95FrameMs: +intervals[114].toFixed(1),
+          maxFrameMs: +intervals.at(-1).toFixed(1),
+          over50ms: intervals.filter(value => value > 50).length,
+          historyBuilds: chat.persistedTimelineCache.revision - revision,
+        };
+        publish();
+      }
+      const action = handler => async event => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+          await handler();
+        } catch (error) {
+          document.querySelector('#metrics').textContent = String(error.stack ?? error);
+        } finally {
+          button.disabled = false;
+        }
+      };
+      document.querySelector('#open').onclick = action(open);
+      document.querySelector('#older').onclick = action(older);
+      document.querySelector('#stream').onclick = action(() => stream());
+      document.querySelector('#running-page').onclick = action(() => stream(true));
+      document.querySelector('#animation').onclick = action(async () => {
+        if (!controller) await open();
+        const summary = [...chat.shadowRoot.querySelectorAll('.completed-process > summary')].at(-1);
+        chat.chatScrollController.preserveAnchorForInteraction(summary);
+        summary.scrollIntoView({block: 'center', behavior: 'instant'});
+        summary.click();
+      });
+    </script>
+  </body>
+</html>

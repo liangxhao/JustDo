@@ -7,6 +7,7 @@ import { i18nService } from '@/services/i18n';
 
 import { ChatController } from '../gateway/chat-controller';
 import type { JustDoChatElement } from './justdo-chat';
+import { materializeDisclosureContents } from './timeline/disclosure-content';
 
 afterEach(() => document.body.replaceChildren());
 
@@ -107,6 +108,7 @@ test.each([false, true])(
     chat.controller = controller;
     document.body.append(chat);
     await chat.updateComplete;
+    materializeDisclosureContents(chat.shadowRoot!);
     const groups = [
       ...chat.shadowRoot!.querySelectorAll('.chat-group--assistant.chat-group--content'),
     ];

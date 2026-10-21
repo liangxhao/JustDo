@@ -5,13 +5,17 @@ import './justdo-chat';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { ChatController } from '../gateway/chat-controller';
+import { beginAssistantTurn, createChatTranscriptState } from '../model/chat-transcript-state';
 import type { GatewayMessage } from '../types';
 import type { JustDoChatElement } from './justdo-chat';
 
 const controllers: ChatController[] = [];
 
 beforeEach(() => {
-  vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+  vi.stubGlobal(
+    'requestAnimationFrame',
+    vi.fn(() => 1),
+  );
   vi.stubGlobal('cancelAnimationFrame', vi.fn());
 });
 
@@ -41,6 +45,53 @@ function processMessages(entryId: string): GatewayMessage[] {
 }
 
 describe('chat update cycle', () => {
+  test('invalidates cached history when live compaction ownership arrives after its persisted marker', async () => {
+    const state = createChatTranscriptState('compaction-cache', 'physical-compaction');
+    const turn = beginAssistantTurn(
+      state,
+      { runId: 'live-compaction' },
+      {
+        now: () => 1,
+        createId: prefix => prefix,
+      },
+    );
+    const marker: GatewayMessage = {
+      role: 'system',
+      __openclaw: {
+        kind: 'compaction',
+        id: 'native-compact',
+        operationId: 'operation-1',
+        tokensBefore: 12_000,
+        tokensAfter: 4_000,
+      },
+    };
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.messages = [marker];
+    chat.activeTurn = turn;
+    document.body.append(chat);
+    await chat.updateComplete;
+    expect(chat.shadowRoot!.querySelectorAll('.chat-divider')).toHaveLength(1);
+    chat.activeTurn = {
+      ...turn,
+      items: [
+        {
+          id: 'live-compact',
+          runId: turn.runId,
+          type: 'compaction',
+          status: 'completed',
+          eventId: 'operation:operation-1',
+          message: marker,
+          firstSeq: 1,
+          lastSeq: 1,
+          startedAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    };
+    await chat.updateComplete;
+    expect(chat.shadowRoot!.querySelectorAll('.chat-divider')).toHaveLength(1);
+  });
+
   test('finishes the initial render without scheduling a second update', async () => {
     const chat = document.createElement('justdo-chat') as JustDoChatElement;
     document.body.append(chat);
@@ -54,7 +105,8 @@ describe('chat update cycle', () => {
     document.body.append(chat);
     await chat.updateComplete;
     await chat.updateComplete;
-    const summary = () => chat.shadowRoot!.querySelector<HTMLElement>('[data-process-summary-key]')!;
+    const summary = () =>
+      chat.shadowRoot!.querySelector<HTMLElement>('[data-process-summary-key]')!;
     summary().click();
     await chat.updateComplete;
 
@@ -87,7 +139,9 @@ describe('chat update cycle', () => {
 
       chat.messages = processMessages('persisted-tool-entry');
       expect(await chat.updateComplete).toBe(true);
-      const replacement = chat.shadowRoot!.querySelector<HTMLElement>('[data-process-summary-key]')!;
+      const replacement = chat.shadowRoot!.querySelector<HTMLElement>(
+        '[data-process-summary-key]',
+      )!;
       expect(replacement.dataset.processSummaryKey).not.toBe(original.dataset.processSummaryKey);
       expect(replacement.getAttribute('aria-expanded')).toBe(String(!bulkExpanded));
       if (!bulkExpanded) expect(chat.shadowRoot!.activeElement).toBe(replacement);

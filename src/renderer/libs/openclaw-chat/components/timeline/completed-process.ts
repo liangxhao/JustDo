@@ -9,6 +9,7 @@ import type {
   SourceTimelineItem,
 } from '../../model/timeline/timeline-avatar-state';
 import { renderChatAvatar } from '../message/chat-avatar';
+import { disclosureContent } from './disclosure-content';
 
 export function renderCompletedProcess(
   item: CompletedProcessTimelineItem,
@@ -54,10 +55,12 @@ export function renderCompletedProcess(
             </span>
           </summary>
           <div class="completed-process__items">
-            ${repeat(
-              item.items,
-              child => child.key,
-              (child, index) => options.renderItem(child, index === 0 && options.showAvatar),
+            ${disclosureContent(() =>
+              repeat(
+                item.items,
+                child => child.key,
+                (child, index) => options.renderItem(child, index === 0 && options.showAvatar),
+              ),
             )}
           </div>
         </details>

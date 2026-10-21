@@ -12,6 +12,7 @@ import {
 import { i18nService } from '@/services/i18n';
 
 import type { JustDoChatElement } from './justdo-chat';
+import { materializeDisclosureContents } from './timeline/disclosure-content';
 
 type TestGatewayEvent = { event: string; payload: unknown };
 
@@ -747,10 +748,12 @@ describe('justdo-chat assistant stream rendering', () => {
       'Waiting for three agents.',
       'Two agents returned the same blessing.',
     ];
-    const bubbles = () =>
-      Array.from(chat.shadowRoot?.querySelectorAll('.chat-bubble__text') ?? [])
+    const bubbles = () => {
+      materializeDisclosureContents(chat.shadowRoot!);
+      return Array.from(chat.shadowRoot?.querySelectorAll('.chat-bubble__text') ?? [])
         .map(element => element.textContent?.trim())
         .filter(text => replies.includes(text ?? ''));
+    };
     emit(76, 'assistant', { text: replies[0] });
     await chat.updateComplete;
     await frames.drain(chat);

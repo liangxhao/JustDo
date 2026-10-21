@@ -9,6 +9,7 @@ import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
 import type { JustDoChatElement } from './justdo-chat';
+import { materializeDisclosureContents } from './timeline/disclosure-content';
 
 const controllers: ChatController[] = [];
 const initialLanguage = i18nService.getLanguage();
@@ -216,6 +217,7 @@ test('fills native compaction details while the same run continues without repla
   await vi.advanceTimersByTimeAsync(1200);
   await chat.updateComplete;
   expect(controller.state.transcript.activeTurn).toBeNull();
+  materializeDisclosureContents(root);
   expect(root.querySelectorAll('.chat-divider')).toHaveLength(1);
   expect(root.querySelector('.chat-divider')!.closest('.completed-process')).not.toBeNull();
 });

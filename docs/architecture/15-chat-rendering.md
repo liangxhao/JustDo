@@ -484,6 +484,80 @@ in-flight recovery snapshot 是稀疏数据，不提升 live event fence。活�
 
 ## 4. 历史加载与有界展示
 
+### 流程边界与维护审查
+
+Thinking、Tool、Content 的共同入口是认证事件，而不是可见文本。数据流如下：
+
+```mermaid
+flowchart LR
+  Agent[agent / session.tool] --> Normalize[原生身份与事件归一化]
+  Chat[chat 累计兜底] --> Normalize
+  Normalize --> Admission[会话 / run / incarnation / owner 序号准入]
+  Admission --> Turn[活动 turn reducer]
+  Turn --> Source[assistant-text-source<br/>正文双通路交接]
+  History[chat.startup / chat.history<br/>session.message] --> Reconcile[历史分支核对与分块分页]
+  Reconcile --> Persisted[持久时间线与窗口投影缓存]
+  Source --> Live[活动时间线投影]
+  Persisted --> View[边界拼接 / 过程折叠 / keyed Lit 渲染]
+  Live --> View
+  View --> Disclosure[本地展开 / 搜索 / 阅读锚点]
+```
+
+Thinking 按原生 item/段序号更新；Tool 按 toolCallId 接收 start、partial/progress、
+result，并可补齐先到结果缺失的 input；Content 按消息 owner 与 scope 处理正文、
+commentary、替换和撤回。历史补缺使用 owner 自己的水位，不能抬高整条实时流的
+水位。整个流程不从显示文字推断执行完成，执行结论仍只来自精确 whole-run 证据。
+
+本次只删除已证明不可达的独立流式渲染分支：局部 Thinking/Tool/分段数组始终为
+空、thinkingStream 始终为 null，其条件分支与唯一的 extractThinkingText 调用因而
+不可执行。独立属性流式入口继续支持正文和等待状态。Chat 兜底、旧版无身份流、
+稀疏 keyed snapshot、工具补缺和终态 fence 均有实际协议职责，不能因日常不触发
+而删除。正文来源协调移入 `model/turn/assistant-text-source.ts`，事件准入仍在原
+reducer；披露内容生命周期和动画分别归 `disclosure-content.ts` 与
+`process-motion.css`。保持 controller 的连接、运行和历史所有权，不另建状态机。
+
+### 千条历史的渲染开销
+
+显示侧对可见窗口和全部已加载消息都要做 peer 过滤。两者必须按各自不可变输入
+数组记忆结果；单个 last-source 缓存会在每帧两个来源之间失效，使持久时间线
+重建。历史模板也按行和显示选项复用，流式 tick、活动时钟仅更新 live lane；搜索、
+语音、编辑、头像、工作目录和操作准入变化使相应模板失效。Plan 实施边界按当前
+历史建立一次 entry-id 集合，避免每个页脚重新扫描整个分支。工具和 compaction
+的 owner 变化仍使历史投影失效，正文普通 delta 不使旧历史失效。
+
+关闭的已完成处理过程不解析其正文或创建工具 DOM；首次展开才挂载。关闭后保留
+已挂载节点，供退出动画和阅读/编辑状态复用，后续隐藏更新延后到再展开。搜索与
+原生 entry 定位会显式补齐嵌套披露内容，不额外读取历史、不修改 open 状态，随后
+按原有定位路径展开。挂载后补做 Markdown、工具阅读器和图表增强；卸载撤销监听。
+
+`components/fixtures/chat-flow-audit.html` 使用 2,000 条合成消息、250 条原生分页、
+750 条窗口和 120 帧正文更新，通过真实 Chromium DOM 验证；不连接真实 Gateway，
+不调用模型或使用真实会话。2026-10-21 本机开发样本如下，数值不作为跨设备门槛：
+
+开发服务器下打开 `/libs/openclaw-chat/components/fixtures/chat-flow-audit.html`，可分别
+执行首次读取、加载旧页、稳态输出、运行中分页与过程动画检查。测量时避免并行构建
+和测试争抢 CPU；计时包含浏览器 DOM 提交与下一绘制帧，不包含真实 Gateway I/O。
+
+| 指标 | 修复前 | 修复后样本 |
+| --- | --- | --- |
+| 稳态输出帧间隔中位数 / P95 | 83.4 / 154.4 ms | 16.6 / 19.6 ms |
+| 120 帧中旧历史重建次数 | 130 | 1（进入运行时） |
+| 关闭的过程中的隐藏节点 | 6,183 | 0（尚未展开） |
+| 初次 250 条加载至显示 | 185 ms | 约 100 ms |
+
+两千条历史在空闲与运行中均能逐页加载，窗口不超过 750 条，实时正文继续独立更新。
+本机运行中分页样本为 149–254ms/页，输出 P95 帧间隔 167.5ms、最大 255.6ms；
+120 帧中有 8 帧超过 50ms，尖峰与窗口重建同步。
+**分页仍可能出现数百毫秒的 DOM 提交尖峰，不能据稳态帧率宣称整个长历史加载全程
+60fps。** 后续若继续优化，应优先处理按视口分配历史 DOM 提交预算及阅读锚点，
+同时验证媒体/App 节点状态，不能为降低节点数丢失窗口之外的原生历史。冷归档、
+大条目补取和真实 Gateway 磁盘/网络时延也不在此合成基准内。
+
+已完成处理过程、Thinking/Tool 过程摘要和工具详情使用原生 details 的高度与透明度
+过渡，关闭时不立即移除内容；chevron、工具状态和新工具/等待提示有轻量反馈。
+普通正文仍立即显示准入文本，不播放积压文字、不对每个 token 重播动画。新增效果
+遵循 reduced-motion，且调度与滚动仍使用实际 ownerDocument 所属窗口。
+
 混合工具消息使用 OpenClaw 原生 commentary fallback 投影；commentary 可先于剩余
 Thinking/Tool 块返回。Renderer 保留原生历史顺序，不要求重新加载后的块顺序与实时
 事件完全一致，也不额外重排。当前运行时不再应用 018 顺序增强补丁。

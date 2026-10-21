@@ -14,7 +14,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { i18nService } from '@/services/i18n';
 
 import { isTranscriptImage } from '../../attachments';
-import type { ToolItem } from '../../model/chat-transcript-state';
+import type { ThinkingItem, ToolItem } from '../../model/chat-transcript-state';
 import { formatActiveTurnDuration } from '../../model/timeline/active-turn-footer';
 import {
   type ActiveTurnTimelineItem,
@@ -30,8 +30,16 @@ import {
   parseEditToolDiff,
 } from '../../model/tools/edit-tool-diff';
 import { fileToolCode, fileToolPatch } from '../../model/tools/file-tool-presentation';
-import { OPEN_SPAWNED_AGENT_EVENT, spawnedAgentSessionKey } from '../../model/tools/spawn-tool-target';
-import { toolNesting, toolOperation, toolOutcome, toolTarget } from '../../model/tools/tool-presentation';
+import {
+  OPEN_SPAWNED_AGENT_EVENT,
+  spawnedAgentSessionKey,
+} from '../../model/tools/spawn-tool-target';
+import {
+  toolNesting,
+  toolOperation,
+  toolOutcome,
+  toolTarget,
+} from '../../model/tools/tool-presentation';
 import type { WaitingStatusKind, WaitingStatusProjection } from '../../model/turn/run-activity';
 import { stripOpenClawLogHintText } from '../../pipeline/system-message-display';
 import { toSanitizedMarkdownHtml } from '../markdown/markdown';
@@ -48,6 +56,7 @@ import { getCodeModeSource, getCodeModeTitle } from '../tools/code-mode-presenta
 import { type EditDiffMonacoData, resolveEditDiffLanguage } from '../tools/edit-diff-monaco';
 import { resolveToolDisplay } from '../tools/tool-display';
 import { renderCompactionMessage } from './compaction-divider';
+import { disclosureContent } from './disclosure-content';
 
 function summaryLabel(item: ProcessSummaryTimelineItem): string {
   if (item.thinkingCount > 0 && item.toolCount > 0) {
@@ -718,6 +727,81 @@ function waitingStatusLabel(status: WaitingStatusProjection): string {
   return i18nService.t(waitingStatusKeys[status.kind]);
 }
 
+function renderProcessItem(
+  process: ThinkingItem | ToolItem,
+  depths: ReadonlyMap<ToolItem, number>,
+  editDiffModes: ReadonlyMap<string, EditDiffMode>,
+  onEditDiffModeChange?: EditDiffModeChangeHandler,
+): TemplateResult {
+  return html`
+    <li
+      class=${`process-summary__item process-summary__item--${process.type}${
+                            process.type === 'tool' &&
+                            parseEditToolDiff(process.name, process.input) !== null
+                              ? ' process-summary__item--edit'
+                              : ''
+                          }`}
+      style=${process.type === 'tool' ? `margin-inline-start: ${Math.min(depths.get(process) ?? 0, 6) * 16}px` : ''}
+      data-inline-process-id=${process.id}
+      tabindex="-1"
+    >
+      ${
+                            process.type === 'thinking'
+                              ? html`
+                                  <div class="process-summary__item-heading">
+                                    <span
+                                      class="process-summary__thinking-marker process-summary__thinking-marker--${process.status}"
+                                      aria-hidden="true"
+                                    ></span>
+                                    <strong>${i18nService.t('coworkThinkingLabel')}</strong>
+                                  </div>
+                                `
+                              : nothing
+                          }
+      ${
+                            process.type === 'thinking'
+                              ? html`
+                                  <div class="process-summary__thinking markdown-content">
+                                    ${unsafeHTML(toSanitizedMarkdownHtml(process.text))}
+                                  </div>
+                                `
+                              : html`
+                                  <details
+                                    data-tool-identity=${JSON.stringify([process.runId, process.toolCallId])}
+                                    class=${`process-summary__tool${
+                                      parseEditToolDiff(process.name, process.input) !== null
+                                        ? ' process-summary__tool--edit'
+                                        : ''
+                                    }`}
+                                  >
+                                    <summary class="process-summary__tool-title">
+                                      <span
+                                        class="process-summary__tool-status process-summary__tool-status--${toolOutcome(process)}"
+                                        role="img"
+                                        aria-label=${toolStateLabel(process)}
+                                      ></span>
+                                      <strong title=${resolveToolDisplay(process.name).title}
+                                        >${resolveToolDisplay(process.name).title}</strong
+                                      >
+                                      ${renderSpawnedAgentLink(process)}
+                                      <span
+                                        class="process-summary__tool-input"
+                                        title=${toolSummary(process)}
+                                        >${toolSummary(process)}</span
+                                      >
+                                    </summary>
+                                    ${renderToolDetail(
+                                      process,
+                                      editDiffModes.get(process.id) ?? 'unified',
+                                      onEditDiffModeChange,
+                                    )}
+                                  </details>
+                                `
+                          }
+    </li>
+  `;
+}
+
 export function renderTimelineItem(
   item: ActiveTurnTimelineItem,
   now = Date.now(),
@@ -846,11 +930,20 @@ export function renderTimelineItem(
     const depths = toolNesting(
       item.items.filter((entry): entry is ToolItem => entry.type === 'tool'),
     );
+    const renderContents = () =>
+      html` <ol class="process-summary__items">
+        ${repeat(
+          item.items,
+          process => process.id,
+          process => renderProcessItem(process, depths, editDiffModes, onEditDiffModeChange),
+        )}
+      </ol>`;
     return renderAssistantTimelineRow(
       html`
-        <section class="process-summary-group">
-          <button
-            type="button"
+        <details class="process-summary-group" ?open=${expanded}>
+          <summary
+            role="button"
+            @click=${(event: Event) => event.preventDefault()}
             class="process-summary"
             data-process-summary-key=${item.key}
             aria-expanded=${expanded}
@@ -861,87 +954,9 @@ export function renderTimelineItem(
             <span class="process-summary__icon" aria-hidden="true">⌁</span>
             <span>${summaryLabel(item)}</span>
             <span class="process-summary__chevron" aria-hidden="true">›</span>
-          </button>
-          ${
-            expanded
-              ? html`
-                  <ol class="process-summary__items">
-                    ${repeat(
-                      item.items,
-                      process => process.id,
-                      process => html`
-                        <li
-                          class=${`process-summary__item process-summary__item--${process.type}${
-                            process.type === 'tool' &&
-                            parseEditToolDiff(process.name, process.input) !== null
-                              ? ' process-summary__item--edit'
-                              : ''
-                          }`}
-                          style=${process.type === 'tool' ? `margin-inline-start: ${Math.min(depths.get(process) ?? 0, 6) * 16}px` : ''}
-                          data-inline-process-id=${process.id}
-                          tabindex="-1"
-                        >
-                          ${
-                            process.type === 'thinking'
-                              ? html`
-                                  <div class="process-summary__item-heading">
-                                    <span
-                                      class="process-summary__thinking-marker process-summary__thinking-marker--${process.status}"
-                                      aria-hidden="true"
-                                    ></span>
-                                    <strong>${i18nService.t('coworkThinkingLabel')}</strong>
-                                  </div>
-                                `
-                              : nothing
-                          }
-                          ${
-                            process.type === 'thinking'
-                              ? html`
-                                  <div class="process-summary__thinking markdown-content">
-                                    ${unsafeHTML(toSanitizedMarkdownHtml(process.text))}
-                                  </div>
-                                `
-                              : html`
-                                  <details
-                                    data-tool-identity=${JSON.stringify([process.runId, process.toolCallId])}
-                                    class=${`process-summary__tool${
-                                      parseEditToolDiff(process.name, process.input) !== null
-                                        ? ' process-summary__tool--edit'
-                                        : ''
-                                    }`}
-                                  >
-                                    <summary class="process-summary__tool-title">
-                                      <span
-                                        class="process-summary__tool-status process-summary__tool-status--${toolOutcome(process)}"
-                                        role="img"
-                                        aria-label=${toolStateLabel(process)}
-                                      ></span>
-                                      <strong title=${resolveToolDisplay(process.name).title}
-                                        >${resolveToolDisplay(process.name).title}</strong
-                                      >
-                                      ${renderSpawnedAgentLink(process)}
-                                      <span
-                                        class="process-summary__tool-input"
-                                        title=${toolSummary(process)}
-                                        >${toolSummary(process)}</span
-                                      >
-                                    </summary>
-                                    ${renderToolDetail(
-                                      process,
-                                      editDiffModes.get(process.id) ?? 'unified',
-                                      onEditDiffModeChange,
-                                    )}
-                                  </details>
-                                `
-                          }
-                        </li>
-                      `,
-                    )}
-                  </ol>
-                `
-              : nothing
-          }
-        </section>
+          </summary>
+          ${expanded ? renderContents() : disclosureContent(renderContents)}
+        </details>
       `,
       showAvatar,
       '',

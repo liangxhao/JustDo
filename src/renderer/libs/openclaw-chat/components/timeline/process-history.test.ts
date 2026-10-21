@@ -9,11 +9,19 @@ import type { AssistantTurn } from '../../model/chat-transcript-state';
 import type { GatewayMessage } from '../../types';
 import type { JustDoChatElement } from '../justdo-chat';
 import { renderCompletedProcess } from './completed-process';
+import { materializeDisclosureContents } from './disclosure-content';
 
 afterEach(() => {
   document.body.replaceChildren();
   vi.unstubAllGlobals();
 });
+
+// These structural tests also inspect closed rows. Request their contents through
+// the same explicit materialization path used by search; laziness has separate tests.
+async function inspectProcessHistory(chat: JustDoChatElement): Promise<void> {
+  await chat.updateComplete;
+  materializeDisclosureContents(chat.shadowRoot!);
+}
 
 function createChat(state: 'running' | 'completed' | 'failed' | 'aborted' = 'completed') {
   const chat = document.createElement('justdo-chat') as JustDoChatElement;
@@ -128,7 +136,7 @@ describe('completed chat process history', () => {
           ...(phase === 'receipt' ? {} : { endedAt: 5_000 }),
         },
       ];
-      await chat.updateComplete;
+      await inspectProcessHistory(chat);
 
       const disclosures = chat.shadowRoot!.querySelectorAll('.completed-process');
       expect(disclosures).toHaveLength(phase === 'settled' ? 2 : 1);
@@ -137,7 +145,7 @@ describe('completed chat process history', () => {
         expect(disclosures[1].textContent).not.toContain('Second final answer');
         expect((disclosures[1] as HTMLDetailsElement).open).toBe(false);
         chat.processSummariesExpanded = true;
-        await chat.updateComplete;
+        await inspectProcessHistory(chat);
         expect(chat.shadowRoot!.textContent).toContain('Second reasoning');
       }
       expect(chat.shadowRoot!.textContent).toContain('Second final answer');
@@ -158,7 +166,7 @@ describe('completed chat process history', () => {
           },
         ];
         chat.activeTurn = null;
-        await chat.updateComplete;
+        await inspectProcessHistory(chat);
         expect(chat.shadowRoot!.querySelectorAll('.completed-process')).toHaveLength(2);
         expect(chat.shadowRoot!.textContent!.match(/Second final answer/g)).toHaveLength(1);
       }
@@ -198,7 +206,7 @@ describe('completed chat process history', () => {
         ...chat.messages.slice(2),
       ];
       if (!withReceipts) chat.runTimings = [];
-      await chat.updateComplete;
+      await inspectProcessHistory(chat);
 
       const root = chat.shadowRoot!;
       const disclosures = root.querySelectorAll<HTMLDetailsElement>('.completed-process');
@@ -219,7 +227,7 @@ describe('completed chat process history', () => {
       expect(disclosure.open).toBe(true);
       expect(disclosure.textContent).toContain(leadingText);
       chat.processSummariesExpanded = true;
-      await chat.updateComplete;
+      await inspectProcessHistory(chat);
       const expandedText = disclosure.querySelector('.completed-process__items')!.textContent!;
       expect(expandedText).toContain('Inspecting the configuration');
       expect(expandedText.indexOf(leadingText)).toBeLessThan(
@@ -260,7 +268,7 @@ describe('completed chat process history', () => {
         },
       ];
       const receipts = structuredClone(chat.runTimings);
-      await chat.updateComplete;
+      await inspectProcessHistory(chat);
 
       const root = chat.shadowRoot!;
       const disclosures = root.querySelectorAll<HTMLDetailsElement>('.completed-process');
@@ -329,7 +337,7 @@ describe('completed chat process history', () => {
       chat.messages[chat.messages.length - 1],
     ];
     chat.messages = messages;
-    await chat.updateComplete;
+    await inspectProcessHistory(chat);
 
     const root = chat.shadowRoot!;
     const disclosures = root.querySelectorAll<HTMLDetailsElement>('.completed-process');
@@ -346,7 +354,7 @@ describe('completed chat process history', () => {
 
     disclosure.open = true;
     chat.requestUpdate();
-    await chat.updateComplete;
+    await inspectProcessHistory(chat);
     expect(root.querySelector('.progress-card-receipt')).toBe(receipt);
     expect(receipt.textContent).toContain('Verify results');
     expect(chat.messages).toBe(messages);
@@ -377,7 +385,7 @@ describe('completed chat process history', () => {
       chat.messages[chat.messages.length - 1],
     ];
     chat.messages = messages;
-    await chat.updateComplete;
+    await inspectProcessHistory(chat);
 
     const root = chat.shadowRoot!;
     const disclosures = root.querySelectorAll<HTMLDetailsElement>('.completed-process');
@@ -398,7 +406,7 @@ describe('completed chat process history', () => {
     expect(compaction.querySelector('.chat-divider__content')!.textContent).toBe(summary);
     expect(compaction.querySelector('untrusted')).toBeNull();
     chat.requestUpdate();
-    await chat.updateComplete;
+    await inspectProcessHistory(chat);
     expect(root.querySelector('.chat-divider__details')).toBe(compaction);
     expect(compaction.open).toBe(true);
     expect(chat.messages).toBe(messages);
@@ -406,7 +414,7 @@ describe('completed chat process history', () => {
 
   test('defaults to collapsed, keeps the final answer outside, and retains expansion on rerender', async () => {
     const chat = createChat();
-    await chat.updateComplete;
+    await inspectProcessHistory(chat);
     const details = chat.shadowRoot!.querySelector<HTMLDetailsElement>('.completed-process')!;
     expect(details).not.toBeNull();
     expect(details.open).toBe(false);
@@ -424,7 +432,7 @@ describe('completed chat process history', () => {
 
     details.open = true;
     chat.requestUpdate();
-    await chat.updateComplete;
+    await inspectProcessHistory(chat);
     expect(chat.shadowRoot!.querySelector('.completed-process')).toBe(details);
     expect(details.open).toBe(true);
     details.open = false;
@@ -433,26 +441,26 @@ describe('completed chat process history', () => {
 
   test('does not collapse the current run while Main still reports it running', async () => {
     const chat = createChat('running');
-    await chat.updateComplete;
+    await inspectProcessHistory(chat);
     expect(chat.shadowRoot!.querySelector('.completed-process')).toBeNull();
     expect(chat.shadowRoot!.textContent).toContain('Intermediate explanation');
   });
 
   test('bulk process controls expand and collapse the outer disclosure and nested summaries', async () => {
     const chat = createChat();
-    await chat.updateComplete;
+    await inspectProcessHistory(chat);
     const root = chat.shadowRoot!;
     const details = root.querySelector<HTMLDetailsElement>('.completed-process')!;
     expect(details.open).toBe(false);
 
     chat.processSummariesExpanded = true;
-    await chat.updateComplete;
+    await inspectProcessHistory(chat);
 
     expect(details.open).toBe(true);
     expect(root.querySelectorAll('.process-summary[aria-expanded="true"]')).toHaveLength(2);
 
     chat.processSummariesExpanded = false;
-    await chat.updateComplete;
+    await inspectProcessHistory(chat);
 
     expect(details.open).toBe(false);
     expect(root.querySelectorAll('.process-summary[aria-expanded="true"]')).toHaveLength(0);
@@ -480,7 +488,7 @@ describe('completed chat process history', () => {
         { role: 'assistant', content: 'Final answer', __openclaw: { id: 'final' } },
       ];
       chat.getBoundingClientRect = () => new DOMRect(0, hostTop, 800, 600);
-      await chat.updateComplete;
+      await inspectProcessHistory(chat);
       const block = chat.shadowRoot!.querySelector<HTMLElement>('.mermaid-block')!;
       const details = block.closest('details')!;
       block.getBoundingClientRect = () =>
@@ -490,7 +498,7 @@ describe('completed chat process history', () => {
           const [id, callback] = frames.entries().next().value!;
           frames.delete(id);
           callback(performance.now());
-          await chat.updateComplete;
+          await inspectProcessHistory(chat);
         }
         expect(frames.size).toBe(0);
       };
@@ -512,7 +520,7 @@ describe('completed chat process history', () => {
       ...message,
       __openclaw: { id: message.__openclaw?.id },
     }));
-    await chat.updateComplete;
+    await inspectProcessHistory(chat);
 
     const details = chat.shadowRoot!.querySelector<HTMLDetailsElement>('.completed-process')!;
     expect(details).not.toBeNull();
@@ -575,7 +583,7 @@ describe('completed chat process history', () => {
       },
     ];
     document.body.append(chat);
-    await chat.updateComplete;
+    await inspectProcessHistory(chat);
 
     const disclosures = chat.shadowRoot!.querySelectorAll<HTMLDetailsElement>('.completed-process');
     expect(disclosures).toHaveLength(2);
@@ -597,11 +605,11 @@ describe('completed chat process history', () => {
     const chat = createChat();
     chat.runTimings = [];
     chat.isStreaming = true;
-    await chat.updateComplete;
+    await inspectProcessHistory(chat);
     expect(chat.shadowRoot!.querySelector('.completed-process')).toBeNull();
 
     chat.isStreaming = false;
-    await chat.updateComplete;
+    await inspectProcessHistory(chat);
     expect(chat.shadowRoot!.querySelector('.completed-process')).not.toBeNull();
   });
 
@@ -650,7 +658,7 @@ describe('completed chat process history', () => {
     }
     chat.messages = messages;
     document.body.append(chat);
-    await chat.updateComplete;
+    await inspectProcessHistory(chat);
 
     const root = chat.shadowRoot!;
     const disclosures = root.querySelectorAll<HTMLDetailsElement>('.completed-process');
@@ -672,7 +680,7 @@ describe('completed chat process history', () => {
 
     disclosure.open = true;
     chat.processSummariesExpanded = true;
-    await chat.updateComplete;
+    await inspectProcessHistory(chat);
     expect(root.querySelectorAll('.process-summary__tool-status--failed')).toHaveLength(2);
     expect(disclosure.textContent).toContain('Invalid parameters 0');
     expect(root.querySelector('[data-entry-id="final"]')!.closest('.completed-process')).toBeNull();
@@ -682,7 +690,7 @@ describe('completed chat process history', () => {
 
   test('message navigation opens the process disclosure before scrolling', async () => {
     const chat = createChat();
-    await chat.updateComplete;
+    await inspectProcessHistory(chat);
     const target = chat.shadowRoot!.querySelector<HTMLElement>('[data-entry-id="intermediate"]')!;
     target.scrollIntoView = vi.fn();
     const details = target.closest('details')!;

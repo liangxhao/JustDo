@@ -798,8 +798,8 @@ describe('active turn timeline', () => {
 
     expect(collapsed).toContain('class="process-summary"');
     expect(collapsed).toContain('aria-expanded=');
-    expect(collapsed).not.toContain('<details');
-    expect(collapsed).not.toContain('<summary');
+    expect(collapsed).toContain('<details class="process-summary-group"');
+    expect(collapsed).not.toContain('process-summary__items');
     expect(expanded).toContain('class=process-summary__tool');
     expect(expanded).toContain('<summary class="process-summary__tool-title">');
     expect(expanded).toContain('Request');
