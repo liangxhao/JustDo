@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const net = require('node:net');
-const { randomUUID, randomBytes } = require('node:crypto');
+const { randomUUID, randomBytes, generateKeyPairSync, createHash } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { buildSync } = require('esbuild');
@@ -23,27 +23,38 @@ const { buildSync } = require('esbuild');
   const state = fs.mkdtempSync(path.join(output, 'editing-native-'));
   const workspace = path.join(state, 'workspace');
   fs.mkdirSync(workspace);
-  const plugin = path.join(state, 'plugin');
-  fs.mkdirSync(plugin);
-  buildSync({
-    entryPoints: [path.join(root, 'openclaw-extensions/drawio/index.ts')],
-    outfile: path.join(plugin, 'index.cjs'),
-    bundle: true,
-    platform: 'node',
-    format: 'cjs',
-    external: ['openclaw/*'],
-  });
-  const manifest = require('../../openclaw-extensions/drawio/openclaw.plugin.json');
-  fs.writeFileSync(path.join(plugin, 'openclaw.plugin.json'), JSON.stringify(manifest));
-  fs.writeFileSync(
-    path.join(plugin, 'package.json'),
-    JSON.stringify({ name: 'drawio', version: '1.0.0', openclaw: { extensions: ['./index.cjs'] } }),
-  );
-  fs.symlinkSync(
-    path.join(root, 'openclaw-extensions/drawio/assets'),
-    path.join(plugin, 'assets'),
-    'junction',
-  );
+  const agentWorkspace = path.join(state, 'agent-home');
+  fs.mkdirSync(agentWorkspace);
+  const installedPlugin = process.argv.includes('--installed-plugin');
+  const plugin = installedPlugin
+    ? path.join(runtime, 'dist/extensions/drawio')
+    : path.join(state, 'plugin');
+  if (!installedPlugin) {
+    fs.mkdirSync(plugin);
+    buildSync({
+      entryPoints: [path.join(root, 'openclaw-extensions/drawio/index.ts')],
+      outfile: path.join(plugin, 'index.cjs'),
+      bundle: true,
+      platform: 'node',
+      format: 'cjs',
+      external: ['openclaw/*'],
+    });
+    const manifest = require('../../openclaw-extensions/drawio/openclaw.plugin.json');
+    fs.writeFileSync(path.join(plugin, 'openclaw.plugin.json'), JSON.stringify(manifest));
+    fs.writeFileSync(
+      path.join(plugin, 'package.json'),
+      JSON.stringify({
+        name: 'drawio',
+        version: '1.0.0',
+        openclaw: { extensions: ['./index.cjs'] },
+      }),
+    );
+    fs.symlinkSync(
+      path.join(root, 'openclaw-extensions/drawio/assets'),
+      path.join(plugin, 'assets'),
+      'junction',
+    );
+  }
   const reservePort = async () => {
     const server = net.createServer();
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -54,8 +65,17 @@ const { buildSync } = require('esbuild');
   const port = await reservePort(),
     sandboxPort = await reservePort();
   const token = randomBytes(24).toString('hex');
+  const deviceKeys = generateKeyPairSync('ed25519');
+  const deviceIdentity = {
+    deviceId: createHash('sha256')
+      .update(deviceKeys.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32))
+      .digest('hex'),
+    publicKeyPem: deviceKeys.publicKey.export({ type: 'spki', format: 'pem' }),
+    privateKeyPem: deviceKeys.privateKey.export({ type: 'pkcs8', format: 'pem' }),
+  };
   let modelCalls = 0;
   let expected;
+  let releaseWarmup;
   const modelErrors = [];
   const model = http.createServer(async (request, response) => {
     try {
@@ -67,10 +87,20 @@ const { buildSync } = require('esbuild');
         path.join(state, 'model-tools.json'),
         JSON.stringify(input.tools?.map(tool => tool.function?.name)),
       );
-      const lastUser = input.messages.findLastIndex(message => message.role === 'user');
+      const lastUser = input.messages.findLastIndex(
+        message =>
+          message.role === 'user' &&
+          JSON.stringify(message.content).includes(
+            expected.creating ? 'Create a diagram.' : 'Edit the currently prepared diagram.',
+          ),
+      );
       const tools = input.messages.slice(lastUser + 1).filter(message => message.role === 'tool');
       let call;
-      if (expected.creating && tools.length === 0) {
+      if (expected.warming) {
+        await new Promise(resolve => {
+          releaseWarmup = resolve;
+        });
+      } else if (expected.creating && tools.length === 0) {
         const nativeTool = input.tools.find(tool => tool.function?.name.includes('create_diagram'));
         assert.ok(nativeTool, 'Actual MCP creator is in the synthetic provider catalog');
         call = {
@@ -92,14 +122,15 @@ const { buildSync } = require('esbuild');
         assert.match(text, new RegExp(expected.diagramId));
         // Native formatting may wrap text blocks; the stable stamp is supplied
         // by the prepared synthetic editor, never inferred from a prompt marker.
-        assert.match(text, /prepared-stamp/);
+        const baseContentStamp = expected.baseContentStamp || 'prepared-stamp';
+        assert.ok(text.includes(baseContentStamp));
         call = {
           id: 'update-' + expected.runId,
           name: 'drawio_diagram',
           arguments: {
             action: 'update',
             diagramId: expected.diagramId,
-            baseContentStamp: 'prepared-stamp',
+            baseContentStamp,
             xml: expected.xml,
             title: 'Confirmed update',
           },
@@ -150,12 +181,18 @@ const { buildSync } = require('esbuild');
   await new Promise(resolve => model.listen(0, '127.0.0.1', resolve));
   const config = {
     logging: { file: path.join(state, 'native.jsonl') },
-    gateway: { mode: 'local', bind: 'loopback', port, auth: { mode: 'token', token } },
+    gateway: {
+      mode: 'local',
+      bind: 'loopback',
+      port,
+      auth: { mode: 'token', token },
+      controlUi: { allowedOrigins: [`http://127.0.0.1:${port}`] },
+    },
     update: { checkOnStart: false, auto: { enabled: false } },
     agents: {
       entries: { main: {} },
       defaults: {
-        workspace,
+        workspace: agentWorkspace,
         skipBootstrap: true,
         heartbeat: { every: '0m' },
         model: { primary: 'fixture/fixture' },
@@ -214,7 +251,7 @@ const { buildSync } = require('esbuild');
   const { t: GatewayClient } = await import(
     pathToFileURL(path.join(runtime, 'dist', clientFile)).href
   );
-  let child, client;
+  let child, client, preparationClient;
   const events = [],
     failures = [],
     restored = [];
@@ -234,7 +271,7 @@ const { buildSync } = require('esbuild');
     child = spawn(
       process.execPath,
       [
-        path.join(runtime, 'openclaw.mjs'),
+        path.join(runtime, 'gateway-bundle.mjs'),
         'gateway',
         'run',
         '--allow-unconfigured',
@@ -264,10 +301,12 @@ const { buildSync } = require('esbuild');
     await new Promise((resolve, reject) => {
       client = new GatewayClient({
         url: `ws://127.0.0.1:${port}`,
+        origin: `http://127.0.0.1:${port}`,
         token,
-        clientName: 'gateway-client',
-        mode: 'backend',
-        deviceIdentity: null,
+        clientName: 'openclaw-control-ui',
+        clientBuildId: require(path.join(runtime, 'build-info.json')).buildId,
+        mode: 'webchat',
+        deviceIdentity,
         caps: ['exec-approvals', 'plugin-approvals'],
         requestTimeoutMs: 120_000,
         scopes: ['operator.admin', 'operator.read', 'operator.write', 'operator.approvals'],
@@ -305,15 +344,30 @@ const { buildSync } = require('esbuild');
       });
       client.start();
     });
+    await new Promise((resolve, reject) => {
+      preparationClient = new GatewayClient({
+        url: `ws://127.0.0.1:${port}`,
+        token,
+        clientName: 'gateway-client',
+        mode: 'backend',
+        deviceIdentity: null,
+        scopes: ['operator.admin', 'operator.read', 'operator.write'],
+        onHelloOk: resolve,
+        onConnectError: reject,
+      });
+      preparationClient.start();
+    });
   }
   async function stop() {
     client?.stop();
+    preparationClient?.stop();
     if (child && child.exitCode === null) {
       child.kill();
       await new Promise(resolve => child.once('exit', resolve));
     }
     child = undefined;
     client = undefined;
+    preparationClient = undefined;
   }
   try {
     await connect();
@@ -324,7 +378,11 @@ const { buildSync } = require('esbuild');
     );
     for (const entry of ['open_editor', 'open_file', 'create_diagram']) {
       const sessionKey = `agent:main:editing-${entry}`;
-      await client.request('sessions.create', { key: sessionKey, cwd: workspace });
+      await preparationClient.request('sessions.create', {
+        key: sessionKey,
+        cwd: workspace,
+        permissionMode: 'full',
+      });
       const { session } = await client.request('sessions.describe', { key: sessionKey });
       const scope = { sessionKey, sessionId: session.sessionId, agentId: 'main' };
       const filePath = path.join(workspace, 'input.drawio');
@@ -355,19 +413,65 @@ const { buildSync } = require('esbuild');
         );
         assert.ok(original, 'Actual model-created MCP preview is in native history');
         launch = { viewId: original.details.mcpAppPreview.mcpApp.viewId };
-      } else
-        launch = await client.request('mcp.app.launch', {
-          sessionKey,
-          agentId: 'main',
-          serverName: 'drawio',
-          toolName: entry,
-          ...(entry === 'open_file'
-            ? { entrypointType: 'file', filePath }
-            : { entrypointType: 'global' }),
+      } else {
+        const warmupRunId = randomUUID();
+        expected = { warming: true, runId: warmupRunId };
+        await client.request('chat.send', {
+          ...scope,
+          message: 'Warm up this existing conversation.',
+          idempotencyKey: warmupRunId,
+          deliver: false,
         });
+        await until(() => releaseWarmup);
+        try {
+          launch = await client.request('mcp.app.launch', {
+            sessionKey,
+            agentId: 'main',
+            serverName: 'drawio',
+            toolName: entry,
+            ...(entry === 'open_file'
+              ? { entrypointType: 'file', filePath }
+              : { entrypointType: 'global' }),
+          });
+        } finally {
+          releaseWarmup();
+          releaseWarmup = undefined;
+        }
+        const warmed = await until(() =>
+          events.find(
+            event =>
+              event.event === 'agent' &&
+              event.payload?.runId === warmupRunId &&
+              event.payload?.stream === 'lifecycle' &&
+              event.payload?.data?.executionSettled === true,
+          ),
+        );
+        assert.equal(warmed.payload.data.phase, 'end');
+      }
       const viewId = launch.viewId;
       const view = await client.request('mcp.app.view', { sessionKey, agentId: 'main', viewId });
       const diagramId = view.toolResult.structuredContent.diagramId;
+      const assetsBase = view.html.match(/window\.DIAGRAM_ASSET_BASE=("[^"\r\n]+")/)?.[1];
+      assert.ok(assetsBase, 'The real view exposes its immutable local assets');
+      const assetsUrl = JSON.parse(assetsBase) + 'editor/js/app.min.js';
+      const assertAssetsAlive = async () =>
+        assert.equal(
+          (await fetch(assetsUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) })).status,
+          200,
+          'The original editor assets remain alive across session runs',
+        );
+      await assertAssetsAlive();
+      await client.request('mcp.app.updateModelContext', {
+        sessionKey,
+        agentId: 'main',
+        viewId,
+        content: [{ type: 'text', text: `Current draw.io diagram:\n${xml}` }],
+      });
+      await preparationClient.request('sessions.create', {
+        key: sessionKey,
+        cwd: workspace,
+        permissionMode: 'full',
+      });
       const prepared = await client.request('drawio.canvas', {
         ...scope,
         viewId,
@@ -416,6 +520,68 @@ const { buildSync } = require('esbuild');
       assert.ok(current.diagram, 'Confirmed update missing; inspect the synthetic native history');
       assert.equal(current.diagram.xml, expected.xml);
       assert.equal(current.diagram.diagramId, diagramId);
+      const origin = await client.request('mcp.app.readResource', {
+        sessionKey,
+        agentId: 'main',
+        viewId,
+        uri: `diagram://origin/${diagramId}`,
+      });
+      assert.equal(
+        JSON.parse(origin.contents[0].text).diagramId,
+        diagramId,
+        'Original same-view source proof survives the next model run',
+      );
+      await assertAssetsAlive();
+      await preparationClient.request('sessions.create', {
+        key: sessionKey,
+        cwd: workspace,
+        permissionMode: 'full',
+      });
+      const nextPreparation = await client.request('drawio.canvas', {
+        ...canvas,
+        action: 'prepare',
+        source: {
+          serverName: 'drawio',
+          toolName: entry,
+          uiResourceUri: 'ui://drawio/editor',
+          originSessionKey: sessionKey,
+        },
+        snapshot: {
+          diagramId,
+          xml: current.diagram.xml,
+          title: current.diagram.title,
+          contentStamp: 'next-stamp',
+        },
+      });
+      assert.equal(
+        nextPreparation.token,
+        prepared.token,
+        'Continuous sends reuse the current canvas',
+      );
+      await client.request('drawio.canvas', { ...scope, viewId, action: 'detach', token: '' });
+      const resumed = await client.request('drawio.canvas', {
+        ...canvas,
+        action: 'prepare',
+        retire: true,
+        source: {
+          serverName: 'drawio',
+          toolName: entry,
+          uiResourceUri: 'ui://drawio/editor',
+          originSessionKey: sessionKey,
+        },
+        snapshot: {
+          diagramId,
+          xml: current.diagram.xml,
+          title: current.diagram.title,
+          contentStamp: 'resumed-stamp',
+        },
+      });
+      assert.notEqual(
+        resumed.token,
+        prepared.token,
+        'Returning to the editor establishes a fresh write binding',
+      );
+      await assert.rejects(client.request('drawio.canvas', { ...canvas, action: 'next' }));
       await assert.rejects(
         client.request('drawio.chat.send', {
           ...scope,
@@ -423,6 +589,40 @@ const { buildSync } = require('esbuild');
           send: { ...scope, message: 'No replay', idempotencyKey: runId },
         }),
       );
+      canvas = { ...scope, viewId, token: resumed.token };
+      const continuedRunId = randomUUID();
+      expected = {
+        runId: continuedRunId,
+        diagramId,
+        baseContentStamp: 'resumed-stamp',
+        xml: current.diagram.xml.replaceAll('已确认修改', '再次确认修改'),
+      };
+      await client.request('drawio.chat.send', {
+        ...scope,
+        canvases: [{ token: resumed.token, viewId, selected: true }],
+        send: {
+          ...scope,
+          message: 'Edit the currently prepared diagram.',
+          deliver: false,
+          justdoUserInitiated: true,
+          idempotencyKey: continuedRunId,
+        },
+      });
+      const continued = await until(() =>
+        events.find(
+          event =>
+            event.event === 'agent' &&
+            event.payload?.runId === continuedRunId &&
+            event.payload?.stream === 'lifecycle' &&
+            event.payload?.data?.executionSettled === true,
+        ),
+      );
+      assert.equal(continued.payload.data.phase, 'end');
+      assert.deepEqual(modelErrors, []);
+      assert.deepEqual(failures, []);
+      const latest = await client.request('drawio.app.current', { ...scope, viewId });
+      assert.equal(latest.diagram.xml, expected.xml);
+      await assertAssetsAlive();
       restored.push({ ...scope, viewId, diagramId, xml: expected.xml, entry });
       console.log(`Native ${entry} -> exact run -> applied tool result persisted`);
       canvas = undefined;

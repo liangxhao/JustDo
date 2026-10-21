@@ -2,7 +2,7 @@
 
 状态：已实施。2026-10-21。解决已打开画布的继续修改、侧栏复用和重复展示；完整历史版本功能不在本期范围。
 
-设计取舍：原地更新同一张图，保留撤销和必要的防覆盖检查。轻量内容代次用于判断修改是否过期，不建设面向用户的版本库。实现只使用锁定运行时的公开插件 SDK 与标准 AppBridge，不增加 MCP Apps 运行时补丁。
+设计取舍：原地更新同一张图，保留撤销和必要的防覆盖检查。轻量内容代次用于判断修改是否过期，不建设面向用户的版本库。编辑通道使用锁定运行时的公开插件 SDK 与标准 AppBridge；手动 App 与模型执行的工作目录一致性由下述原生缺口修复保证，不改变 MCP Apps 生命周期。
 
 ## 1 同类产品的公开做法
 
@@ -123,7 +123,13 @@ OpenAI 的[官方 MCP UI 文档](https://developers.openai.com/plugins/build/cha
 
 宿主按注册时不可变的会话、连接代次和 agent 筛选画布，实时可用状态由保留视图提供；不能用切换后的当前聊天身份重新标记旧注册。暂停会话使本地操作代次失效并发出精确 owner 清理，即使准备响应未知也可清理。RPC 在首次 await 前建立有界准备闸门；后来的准备或 owner 清理使旧准备失效，不能在清理之后重新建立孤立绑定。下一次明确发送可以退休同一连接与视图的未知准备，不允许跨视图或连接接管。首次发送在异步准备结束后复核取消、client、连接代次、key 和物理会话，再发真实请求。
 
-实际锁定运行时和标准 AppBridge 分别验证可信绑定、当前内容、同编辑器写入、应用回执和原生恢复。插件工具不能冒充 MCP 结果来绕过准入，不新增 MCP Apps 运行时补丁。
+实际锁定运行时和标准 AppBridge 分别验证可信绑定、当前内容、同编辑器写入、应用回执和原生恢复。插件工具不能冒充 MCP 结果来绕过准入。
+
+2026-10-21 回归发现：`sessions.create` 将项目目录保存在 `spawnedCwd`，模型执行使用原生 ingress workspace resolver；手动 App 准备却只检查 `spawnedWorkspaceDir` 或角色 home。两者不同时，后续模型运行替换同会话的 MCP runtime，导致原视图交互来源与离线资源服务失效，但已经加载的 iframe 和插件画布 token 仍在。现象是第一次准备可成功，下一次继续发送报 `Diagram operation unavailable`。原探针将角色目录与项目目录设为相同，遗漏了这个条件。
+
+运行时补丁 `031-mcp-app-session-workspace.cjs` 让手动 App 复用模型执行已有的 `resolveIngressWorkspaceOverrideForSessionRun`，按原生规则选择有 lineage 的 inherited workspace、持久 cwd 或角色 home；将这些持久事实加入当前准备的 fingerprint，异步过程中变更则拒绝旧准备。公开 App API 没有 workspace 覆盖参数，插件无法替代原生 owner 的目录选择。修复不跳过同视图来源证明，不复活旧工具授权，不延长租约，不实现新的取消或释放协议。上游手动 App 与会话执行采用同一规则后可移除此补丁。
+
+准备读取还有独立的原生暂态：membership/session facts 刷新时，原生明确返回 `UNAVAILABLE`、`SESSION_ACCESS_REFRESHING` 并标记可重试；当前公开 SDK 只保留 code/message。插件仅对准备阶段的 `mcp.app.view` 与原连接来源读取、且 code 和固定刷新消息完全匹配时等待，每项查询最多读取五次、等待合计最多 1.5 秒；每次读取前后及等待结束均核对原 owner 与准备闸门。其他错误直接失败，清理或断线不允许旧准备复活，发送、启动和应用操作不重放。此处完全由插件实现，不增加原生补丁。
 
 首期验收覆盖：侧栏空白图直接生成、连续两次修改不新建编辑器、单步撤销、未按 Enter 的文字、用户并行手改的冲突、两个同名图、显式引用优先、切换聊天后的迟到结果、重复/过期 ACK、断线未知状态、已确认内容重启恢复，以及原生历史和外部预览不被误改。
 
@@ -131,7 +137,9 @@ OpenAI 的[官方 MCP UI 文档](https://developers.openai.com/plugins/build/cha
 
 对应验证：插件 `canvas-state`、`editing`、`current-canvas`、`update-result` 测试覆盖授权、幂等、冲突与恢复选择；`tests/drawio/current-canvas-navigation.test.ts` 联合真实会话适配与插件 RPC，覆盖本地请求已取消但后台继续准备的顺序；普通/首发 controller 测试覆盖取消与旧绑定失效。
 
-`node tests/drawio/editing-native-smoke.cjs` 在隔离状态、合成模型和编辑器回执下运行真实锁定 Gateway，验证创建、空白、文件三入口的精确 run 绑定、结果入历史、重启恢复最新 XML，以及恢复视图无法调用旧工具。真实编辑器另由 `node tests/drawio/offline-smoke.cjs --editing`、`--blank --editing`、`--file --compressed --editing` 验证同 iframe、连续修改、单步与多页撤销、未提交文字冲突及零公网请求。这些分层探针不冒充真实企业模型或安装包人工验收。
+`node tests/drawio/editing-native-smoke.cjs` 在隔离状态、合成模型和编辑器回执下运行桌面实际使用的锁定 Gateway bundle。角色 home 与会话项目目录明确不同，桌面认证连接与 Main 准备连接分开；在已有会话执行期间手动打开空白/文件图，按实际顺序重复准备会话、发布 App 上下文、编辑并继续发送，验证原视图来源证明和离线资源仍可用、暂停后重新绑定及旧 token 失效。还验证创建入口的精确 run 绑定、结果入历史、重启恢复最新 XML，以及恢复视图无法调用旧工具。真实编辑器另由 `node tests/drawio/offline-smoke.cjs --editing`、`--blank --editing`、`--file --compressed --editing` 验证同 iframe、连续修改、单步与多页撤销、未提交文字冲突及零公网请求。这些分层探针不冒充真实企业模型或安装包人工验收。
+
+2026-10-21 回归验证：旧运行时在不同目录的控制组中重现来源不可用及 runtime disposed；031 经完整 Windows x64 pristine 构建、31 项补丁验证与 source/bundle 字节不变的幂等复核后，上述三入口连续两轮修改、暂停恢复、原资源存活及重启恢复全部通过。主工作区复查另外抓到短暂的原生访问刷新，插件补齐有界只读等待后再次通过。通用 MCP App 的工具、审批、提问、设置、资源与原生本地取消语义探针也通过；相关 246 项自动测试、lint 和应用构建通过。独立 Agent review 未发现 P1/P2 问题。探针另可加 `--installed-plugin` 直接核验运行时中实际打包的插件。
 
 ## 8 后续增强的触发条件
 

@@ -88,6 +88,7 @@ const EXPECTED_PATCH_FILES = [
   '028-prepared-history-response-publication.cjs',
   '029-reasoning-completions-streaming.cjs',
   '030-tool-call-format-recovery.cjs',
+  '031-mcp-app-session-workspace.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

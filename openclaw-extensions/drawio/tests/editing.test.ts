@@ -89,9 +89,90 @@ beforeEach(() => {
 afterEach(() => {
   service.stop();
   vi.clearAllMocks();
+  vi.useRealTimers();
 });
 
 describe('authenticated draw.io editing adapter', () => {
+  const refreshing = {
+    ok: false,
+    error: {
+      code: 'UNAVAILABLE',
+      message: 'Session access is refreshing; retry the operation shortly.',
+    },
+  };
+  it.each(['mcp.app.view', 'mcp.app.readResource'])(
+    'waits only for explicit native access refresh during read-only %s preparation',
+    async method => {
+      vi.useFakeTimers();
+      const normal = sdk.dispatch.getMockImplementation()!;
+      let attempts = 0;
+      sdk.dispatch.mockImplementation((name, params) =>
+        name === method && ++attempts <= 2 ? Promise.resolve(refreshing) : normal(name, params),
+      );
+      const preparation = prepare();
+      await vi.runAllTimersAsync();
+      await expect(preparation).resolves.toHaveProperty('token');
+      expect(attempts).toBe(3);
+      expect(sdk.dispatch.mock.calls.some(([name]) => name === 'chat.send')).toBe(false);
+      vi.useRealTimers();
+    },
+  );
+  it('bounds native refresh reads and rejects permanent errors immediately', async () => {
+    vi.useFakeTimers();
+    const normal = sdk.dispatch.getMockImplementation()!;
+    sdk.dispatch.mockImplementation((name, params) =>
+      name === 'mcp.app.readResource' ? Promise.resolve(refreshing) : normal(name, params),
+    );
+    const pending = expect(prepare()).rejects.toThrow();
+    await vi.runAllTimersAsync();
+    await pending;
+    expect(
+      sdk.dispatch.mock.calls.filter(([name]) => name === 'mcp.app.readResource'),
+    ).toHaveLength(5);
+    for (const error of [
+      { code: 'UNAVAILABLE', message: 'Runtime disposed' },
+      { code: 'FORBIDDEN', message: refreshing.error.message },
+    ]) {
+      sdk.dispatch.mockClear();
+      sdk.dispatch.mockImplementation((name, params) =>
+        name === 'mcp.app.readResource'
+          ? Promise.resolve({ ok: false, error })
+          : normal(name, params),
+      );
+      await expect(prepare()).rejects.toThrow();
+      expect(
+        sdk.dispatch.mock.calls.filter(([name]) => name === 'mcp.app.readResource'),
+      ).toHaveLength(1);
+    }
+    vi.useRealTimers();
+  });
+  it.each(['cleanup', 'disconnect'])(
+    'does not re-read or bind after %s during a waiting preparation',
+    async mode => {
+      vi.useFakeTimers();
+      const normal = sdk.dispatch.getMockImplementation()!;
+      sdk.dispatch.mockImplementation((name, params) =>
+        name === 'mcp.app.readResource' ? Promise.resolve(refreshing) : normal(name, params),
+      );
+      const pending = expect(prepare()).rejects.toThrow();
+      await vi.advanceTimersByTimeAsync(0);
+      if (mode === 'disconnect') live = false;
+      else
+        await request(DRAWIO_CANVAS_METHOD, {
+          ...scope,
+          viewId: 'mcp-app-original',
+          action: 'detach',
+          token: '',
+        });
+      await vi.runAllTimersAsync();
+      await pending;
+      expect(
+        sdk.dispatch.mock.calls.filter(([name]) => name === 'mcp.app.readResource'),
+      ).toHaveLength(1);
+      vi.useRealTimers();
+    },
+  );
+
   it('rechecks native view, same-runtime mint, incarnation and fixed desktop admission', async () => {
     expect((await prepare()).token).toBeTypeOf('string');
     expect(sdk.dispatch).toHaveBeenCalledWith(

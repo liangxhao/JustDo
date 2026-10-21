@@ -33,6 +33,28 @@ function snapshot(value: unknown): DiagramSnapshot {
     contentStamp: input.contentStamp as string,
   };
 }
+
+// The public SDK projects this native retryable admission error to code/message.
+// Only these two read-only preparation methods may wait for the same authority.
+async function readPreparedView(
+  method: 'mcp.app.view' | 'mcp.app.readResource',
+  params: Record<string, unknown>,
+  assertCurrent: () => void,
+) {
+  for (let attempt = 0; ; attempt++) {
+    assertCurrent();
+    const result = await dispatchGatewayMethod(method, params);
+    assertCurrent();
+    if (
+      attempt >= 4 ||
+      result.ok ||
+      result.error?.code !== 'UNAVAILABLE' ||
+      result.error.message !== 'Session access is refreshing; retry the operation shortly.'
+    )
+      return result;
+    await new Promise(resolve => setTimeout(resolve, 100 * 2 ** attempt));
+  }
+}
 export type DiagramEditingState = {
   canvases: DiagramCanvasState;
   recovered: Map<string, { source: DiagramSource; diagramId: string }>;
@@ -144,11 +166,15 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
             admitted.originSessionKey !== owner.sessionKey
           )
             throw new Error('Not an admitted draw.io view');
-          const result = await dispatchGatewayMethod('mcp.app.view', {
-            sessionKey: owner.sessionKey,
-            agentId: owner.agentId,
-            viewId,
-          });
+          const result = await readPreparedView(
+            'mcp.app.view',
+            {
+              sessionKey: owner.sessionKey,
+              agentId: owner.agentId,
+              viewId,
+            },
+            assertPreparation,
+          );
           assertPreparation();
           const initial = object(object(object(result.payload).toolResult).structuredContent);
           if (!result.ok || initial.diagramId !== current.diagramId)
@@ -169,19 +195,23 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
             // view read verifies existence/ownership, not the serverName by itself.
             // Read the mint on this exact view's runtime, never a static MCP manager.
             const uri = `diagram://origin/${current.diagramId}`;
-            const origin = await dispatchGatewayMethod('mcp.app.readResource', {
-              sessionKey: owner.sessionKey,
-              agentId: owner.agentId,
-              viewId,
-              uri,
-            });
+            const origin = await readPreparedView(
+              'mcp.app.readResource',
+              {
+                sessionKey: owner.sessionKey,
+                agentId: owner.agentId,
+                viewId,
+                uri,
+              },
+              assertPreparation,
+            );
             assertPreparation();
+            if (!origin.ok) throw new Error('Diagram mint unavailable');
             const contents = object(origin.payload).contents;
             const resource =
               Array.isArray(contents) && contents.length === 1 ? object(contents[0]) : {};
             const mint = object(JSON.parse(text(resource.text, 2048)));
             if (
-              !origin.ok ||
               resource.uri !== uri ||
               mint.diagramId !== current.diagramId ||
               mint.toolName !== admitted.toolName
