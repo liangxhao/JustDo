@@ -316,6 +316,41 @@ describe('ChatScrollController', () => {
     expect(onStateChange).toHaveBeenCalled();
   });
 
+  test('does not accumulate fractional scroll rounding across progressive history commits', () => {
+    const target = host() as ReturnType<typeof host> & {
+      shadowRoot: { querySelector: () => object; querySelectorAll: () => object[] };
+      getBoundingClientRect: () => { top: number };
+    };
+    target.scrollHeight = 10_000;
+    let scrollTop = 100;
+    let contentTop = 140;
+    Object.defineProperty(target, 'scrollTop', {
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = Math.round(value);
+      },
+    });
+    const anchor = {
+      isConnected: true,
+      getBoundingClientRect: () => ({
+        top: contentTop - scrollTop,
+        bottom: contentTop - scrollTop + 40,
+      }),
+    };
+    target.shadowRoot = { querySelector: () => ({}), querySelectorAll: () => [anchor] };
+    target.getBoundingClientRect = () => ({ top: 0 });
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target as unknown as HTMLElement);
+    controller.preserveAnchorForInteraction(anchor as unknown as HTMLElement);
+    for (let batch = 0; batch < 40; batch += 1) {
+      controller.beforeRender();
+      contentTop += 100.25;
+      controller.afterRender(batch);
+      expect(Math.abs(anchor.getBoundingClientRect().top - 40)).toBeLessThanOrEqual(0.5);
+    }
+    controller.disconnect();
+  });
+
   test('falls back to a nearby anchor when the clicked disclosure is replaced', () => {
     const target = host() as ReturnType<typeof host> & {
       shadowRoot: { querySelector: () => object; querySelectorAll: () => object[] };

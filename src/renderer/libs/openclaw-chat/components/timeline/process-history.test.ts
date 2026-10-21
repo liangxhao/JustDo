@@ -73,6 +73,17 @@ function createChat(state: 'running' | 'completed' | 'failed' | 'aborted' = 'com
 }
 
 describe('completed chat process history', () => {
+  test('retains a native tool toggle when a render happens before the toggle event is dispatched', async () => {
+    const chat = createChat();
+    chat.processSummariesExpanded = true;
+    await inspectProcessHistory(chat);
+    const tool = chat.shadowRoot!.querySelector<HTMLDetailsElement>('details[data-tool-identity]')!;
+    tool.open = true;
+    chat.requestUpdate();
+    await chat.updateComplete;
+    expect(tool.open).toBe(true);
+  });
+
   test.each(['running', 'sending', 'receipt', 'settled'] as const)(
     'folds a retained second live turn only after display activity ends: %s',
     async phase => {

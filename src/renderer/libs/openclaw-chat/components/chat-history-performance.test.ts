@@ -5,6 +5,7 @@ import './justdo-chat';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from '../gateway/chat-controller';
+import { HISTORY_RENDER_WINDOW_SIZE } from '../model/history/history-window';
 import type { PersistedTimelineCache } from '../model/timeline/persisted-timeline-cache';
 import type { JustDoChatElement } from './justdo-chat';
 
@@ -108,12 +109,15 @@ test.each([false, true])(
     if (running) emit('Live output');
     for (let page = 0; controller.state.historyHasMore && page < 10; page += 1) {
       expect(await controller.loadOlderHistory()).toBe(true);
-      expect(controller.state.visibleChatMessages.length).toBeLessThanOrEqual(750);
+      expect(controller.state.visibleChatMessages.length).toBeLessThanOrEqual(
+        HISTORY_RENDER_WINDOW_SIZE,
+      );
     }
     expect(controller.getLoadedMessages()).toEqual(messages);
     expect(controller.state.loadedMessageCount).toBe(2_000);
+    while (controller.state.historyWindowStart > 0) await controller.showOlderHistory();
     expect(controller.state.historyWindowStart).toBe(0);
-    expect(controller.state.visibleChatMessages).toHaveLength(750);
+    expect(controller.state.visibleChatMessages).toHaveLength(HISTORY_RENDER_WINDOW_SIZE);
     if (running)
       expect(controller.state.transcript.activeTurn?.items).toEqual([
         expect.objectContaining({ text: 'Live output' }),
@@ -153,7 +157,11 @@ test('does not reproject or rerender old messages on repeated live text updates'
     await chat.updateComplete;
   }
   expect(internal.persistedTimelineCache.revision).toBe(revision);
-  expect(render.mock.calls.filter(([item]) => item.kind === 'history-message')).toHaveLength(0);
+  expect(
+    render.mock.calls.filter(
+      ([item]) => item.kind === 'history-message' || item.kind === 'completed-process',
+    ),
+  ).toHaveLength(0);
   expect(chat.shadowRoot!.querySelector('[data-entry-id="user-0"]')).toBe(historicalNode);
   expect(chat.shadowRoot!.textContent).toContain('Live output 11');
   render.mockRestore();
@@ -176,4 +184,92 @@ test('search and message navigation can materialize a collapsed history without 
   expect(root.querySelector('[data-entry-id="answer-499"]')!.closest('details')!.open).toBe(true);
   expect(controller.state.loadedMessageCount).toBe(250);
   vi.restoreAllMocks();
+});
+
+test('keeps retained DOM and live output available while an older page is progressively committed', async () => {
+  const { controller, chat, emit } = setup();
+  await controller.loadHistory();
+  document.body.append(chat);
+  await chat.updateComplete;
+  const retained = chat.shadowRoot!.querySelector('[data-entry-id="user-450"]');
+  const boundary = chat.shadowRoot!.querySelector<HTMLDetailsElement>('.completed-process')!;
+  boundary.querySelector<HTMLElement>('summary')!.click();
+  const process = chat.shadowRoot!.querySelectorAll<HTMLDetailsElement>('.completed-process')[10];
+  process.open = true;
+  const key = process.dataset.completedProcessKey!;
+  emit('Before loading history');
+  chat.requestUpdate();
+  await chat.updateComplete;
+  await controller.loadOlderHistory();
+  await chat.updateComplete;
+  const internal = chat as unknown as {
+    historyRenderScheduler: { isPending: boolean };
+    flushHistoryRender(): void;
+  };
+  expect(internal.historyRenderScheduler.isPending).toBe(true);
+  expect(chat.shadowRoot!.querySelector('[data-entry-id="user-450"]')).toBe(retained);
+  expect(chat.shadowRoot!.querySelector(`[data-completed-process-key="${key}"]`)).toBe(process);
+  expect(process.open).toBe(true);
+  const restoredBoundary = chat
+    .shadowRoot!.querySelector<HTMLElement>('[data-entry-id="answer-437"]')
+    ?.closest<HTMLDetailsElement>('.completed-process');
+  expect(restoredBoundary?.open).toBe(true);
+  emit('Live output while the old page is still rendering');
+  chat.requestUpdate();
+  await chat.updateComplete;
+  expect(internal.historyRenderScheduler.isPending).toBe(true);
+  expect(chat.shadowRoot!.textContent).toContain(
+    'Live output while the old page is still rendering',
+  );
+  internal.flushHistoryRender();
+  await chat.historyRenderComplete;
+  expect(chat.shadowRoot!.querySelector('[data-entry-id="user-450"]')).toBe(retained);
+  expect(controller.state.loadedMessageCount).toBe(500);
+});
+
+test('restores outer and inner process disclosures after leaving and returning to a history window', async () => {
+  const { controller, chat } = setup();
+  await controller.loadHistory();
+  for (let page = 0; controller.state.historyHasMore && page < 10; page += 1)
+    await controller.loadOlderHistory();
+  const applyWindow = (start: number) =>
+    (
+      controller as unknown as { applyHistoryWindow(window: { start: number; end: number }): void }
+    ).applyHistoryWindow({ start, end: start + 40 });
+  applyWindow(0);
+  document.body.append(chat);
+  await chat.updateComplete;
+  const process = chat.shadowRoot!.querySelector<HTMLDetailsElement>('.completed-process')!;
+  process.querySelector<HTMLElement>('summary')!.click();
+  const inner = process.querySelector<HTMLElement>('[data-process-summary-key]')!;
+  inner.click();
+  await chat.updateComplete;
+  expect(process.open).toBe(true);
+  expect(inner.closest<HTMLDetailsElement>('details')!.open).toBe(true);
+  const key = process.dataset.completedProcessKey!;
+  const summaryKey = inner.dataset.processSummaryKey!;
+  applyWindow(400);
+  await chat.updateComplete;
+  expect(process.isConnected).toBe(false);
+  applyWindow(0);
+  await chat.updateComplete;
+  const restored = chat.shadowRoot!.querySelector<HTMLDetailsElement>(
+    `[data-completed-process-key="${key}"]`,
+  )!;
+  expect(restored.open).toBe(true);
+  expect(
+    (
+      chat as unknown as {
+        historyDisclosureState: { expanded(key: string, fallback: boolean): boolean };
+      }
+    ).historyDisclosureState.expanded(summaryKey, false),
+  ).toBe(true);
+  expect(
+    (chat as unknown as { renderedOpenProcessSummaryKey: string }).renderedOpenProcessSummaryKey,
+  ).toBe(summaryKey);
+  expect(
+    restored
+      .querySelector(`[data-process-summary-key="${summaryKey}"]`)!
+      .closest<HTMLDetailsElement>('details')!.open,
+  ).toBe(true);
 });

@@ -1,29 +1,107 @@
+/* Execution feedback remains animated even when Windows requests reduced motion. */
+.completed-process__trigger,
+.process-summary {
+  border: 1px solid color-mix(in srgb, var(--justdo-chat-border, #94a3b8) 35%, transparent);
+  border-radius: 10px;
+  padding: 7px 11px;
+  background: color-mix(in srgb, var(--justdo-chat-muted, #64748b) 4%, transparent);
+  transition:
+    color 200ms ease,
+    border-color 200ms ease,
+    background-color 200ms ease,
+    box-shadow 200ms ease;
+}
+.completed-process__trigger {
+  min-height: 38px;
+  font-weight: 550;
+}
+.completed-process__icon {
+  box-sizing: content-box;
+  padding: 4px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--justdo-chat-muted, #64748b) 9%, transparent);
+  transition:
+    background-color 200ms ease,
+    color 200ms ease;
+}
+.completed-process > summary:hover .completed-process__trigger,
+.completed-process[open] > summary .completed-process__trigger,
+.process-summary:hover,
+.process-summary[aria-expanded='true'] {
+  border-color: color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 28%, transparent);
+  background: color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 7%, transparent);
+  color: var(--justdo-chat-accent, #2563eb);
+}
+.completed-process[open] > summary .completed-process__icon {
+  background: color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 12%, transparent);
+}
+.completed-process__items {
+  position: relative;
+  padding-block: 6px;
+}
+.completed-process__items::before {
+  content: '';
+  position: absolute;
+  inset-block: 10px;
+  inset-inline-start: 38px;
+  width: 2px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 20%, transparent);
+}
 .process-summary-group > summary {
   list-style: none;
 }
 .process-summary-group > summary::-webkit-details-marker {
   display: none;
 }
+.completed-process__chevron,
+.process-summary__chevron,
 .process-summary__tool-title::after {
-  transition: transform 180ms ease;
+  transition: transform 300ms cubic-bezier(0.22, 0.8, 0.25, 1);
+}
+.process-summary__items {
+  margin-top: 10px;
+  padding-inline-start: 16px;
+  border-left-width: 2px;
+  border-left-color: color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 20%, transparent);
+}
+.process-summary__item-heading,
+.process-summary__tool-title {
+  min-height: 28px;
+  align-items: center;
+}
+.process-summary__tool-title {
+  border-radius: 6px;
+  transition: background-color 180ms ease;
+}
+.process-summary__tool-title:hover {
+  background: color-mix(in srgb, var(--justdo-chat-muted, #64748b) 7%, transparent);
 }
 .process-summary__tool-status {
   transition:
-    background-color 180ms ease,
-    box-shadow 180ms ease;
+    background-color 220ms ease,
+    box-shadow 220ms ease;
+}
+.process-summary__tool-status--running {
+  animation: process-status-pulse 1.6s ease-in-out infinite;
 }
 .process-live,
 .waiting-status {
-  animation: process-enter 180ms ease-out both;
+  animation: process-enter 260ms ease-out both;
 }
 @keyframes process-enter {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(7px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+@keyframes process-status-pulse {
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 12%, transparent);
   }
 }
 @supports (interpolate-size: allow-keywords) and selector(details::details-content) {
@@ -34,26 +112,16 @@
     block-size: 0;
     opacity: 0;
     overflow: clip;
+    transform: translateY(-6px);
     transition:
-      block-size 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
-      opacity 160ms ease,
-      content-visibility 220ms allow-discrete;
+      block-size 320ms cubic-bezier(0.22, 0.8, 0.25, 1),
+      opacity 220ms ease,
+      transform 320ms cubic-bezier(0.22, 0.8, 0.25, 1),
+      content-visibility 320ms allow-discrete;
   }
   :is(.completed-process, .process-summary-group, .process-summary__tool)[open]::details-content {
     block-size: auto;
     opacity: 1;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .process-live,
-  .waiting-status {
-    animation: none;
-  }
-  :is(.completed-process, .process-summary-group, .process-summary__tool)::details-content,
-  .completed-process__chevron,
-  .process-summary__chevron,
-  .process-summary__tool-title::after,
-  .process-summary__tool-status {
-    transition: none;
+    transform: translateY(0);
   }
 }

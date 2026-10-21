@@ -589,20 +589,20 @@ test('preserves a newer window selected while an older page is loading', async (
 
   await controller.loadHistory();
   await expect(controller.showOlderHistory()).resolves.toBe(true);
-  expect(controller.state.historyWindowStart).toBe(0);
-  expect(controller.state.historyWindowEnd).toBe(750);
+  expect(controller.state.historyWindowStart).toBe(686);
+  expect(controller.state.historyWindowEnd).toBe(936);
 
   const olderLoad = controller.loadOlderHistory();
   expect(controller.showNewerHistory()).toBe(true);
-  expect(controller.state.historyWindowStart).toBe(250);
+  expect(controller.state.historyWindowStart).toBe(750);
   expect(controller.state.historyWindowEnd).toBe(1_000);
 
   resolveOlderPage?.({ messages: older, hasMore: false });
   await expect(olderLoad).resolves.toBe(true);
 
-  expect(controller.state.historyWindowStart).toBe(500);
+  expect(controller.state.historyWindowStart).toBe(1_000);
   expect(controller.state.historyWindowEnd).toBe(1_250);
-  expect(controller.state.visibleChatMessages[0]).toMatchObject({ content: 'recent-250' });
+  expect(controller.state.visibleChatMessages[0]).toMatchObject({ content: 'recent-750' });
   expect(
     controller.state.visibleChatMessages[controller.state.visibleChatMessages.length - 1],
   ).toMatchObject({ content: 'recent-999' });
@@ -649,9 +649,9 @@ test.each(['newer', 'latest'] as const)(
     resolveOlderPage?.({ messages: older, hasMore: false });
     await expect(olderLoad).resolves.toBe(true);
 
-    expect(controller.state.historyWindowStart).toBe(250);
+    expect(controller.state.historyWindowStart).toBe(750);
     expect(controller.state.historyWindowEnd).toBe(1_000);
-    expect(controller.state.visibleChatMessages[0]).toMatchObject({ content: 'recent-0' });
+    expect(controller.state.visibleChatMessages[0]).toMatchObject({ content: 'recent-500' });
     expect(
       controller.state.visibleChatMessages[controller.state.visibleChatMessages.length - 1],
     ).toMatchObject({ content: 'recent-749' });

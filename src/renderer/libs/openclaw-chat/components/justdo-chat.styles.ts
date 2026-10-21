@@ -382,6 +382,8 @@ export const chatStyles = [
       color: var(--justdo-chat-text, #1a1a1a);
       background: var(--justdo-chat-bg, transparent);
       overflow-y: auto;
+      /* The chat scroll controller restores the reading anchor after each commit. */
+      overflow-anchor: none;
       height: 100%;
       scrollbar-width: thin;
       scrollbar-color: var(--justdo-scroll-thumb, rgba(148, 163, 184, 0.55)) transparent;
@@ -3509,27 +3511,6 @@ export const chatStyles = [
       50% {
         opacity: 0.35;
         transform: scale(0.82);
-      }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .chat-minimap,
-      .chat-minimap__line,
-      .message-attachment,
-      .message-attachment__open {
-        transition: none;
-      }
-
-      /* Keep the active-run spark and label animated as execution feedback. */
-      .chat-thinking--streaming .chat-thinking__label,
-      .chat-reading-indicator span,
-      .chat-thinking__indicator,
-      .waiting-status__indicator,
-      .process-summary__tool-status {
-        animation: none;
-      }
-      .chat-thinking--streaming .chat-thinking__label {
-        background: none;
-        color: var(--justdo-chat-text-secondary, #6b7280);
       }
     }
     @media (max-width: 760px) {

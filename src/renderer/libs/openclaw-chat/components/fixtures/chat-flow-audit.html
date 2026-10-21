@@ -41,6 +41,9 @@
       <button id="stream">Stream 120 frames</button
       ><button id="running-page">Load during stream</button>
       <button id="animation">Check process animation</button>
+      <button id="snapshot">Snapshot renderer</button>
+      <button id="read-page">Page while reading</button>
+      <button id="restore-state">Check expanded state</button>
       <pre id="metrics">Ready. Uses a local mock Gateway; no real sessions or models.</pre>
     </header>
     <justdo-chat></justdo-chat>
@@ -96,7 +99,12 @@
           {
             role: 'assistant',
             timestamp: timestamp + 3_000,
-            content: `Configuration **${turn + 1}** is valid.\n\n- Dependencies checked\n- Existing values preserved\n\n\`\`\`json\n{"configuration": ${turn + 1}, "valid": true}\n\`\`\``,
+            content: [
+              {
+                type: 'text',
+                text: `Configuration **${turn + 1}** is valid.\n\n- Dependencies checked\n- Existing values preserved\n\n\`\`\`json\n{"configuration": ${turn + 1}, "valid": true}\n\`\`\``,
+              },
+            ],
             __openclaw: marker(3),
           },
         ];
@@ -106,8 +114,20 @@
       let streamRun = null;
       let requests = 0;
       const chat = document.querySelector('justdo-chat');
+      chat.runTimings = Array.from({ length: 500 }, (_, turn) => ({
+        id: `receipt-${turn}`,
+        rootRunId: `fixture-run-${turn}`,
+        clientTurnId: `fixture-turn-${turn}`,
+        sessionId,
+        startedAt: 1_000_000 + turn * 4_000,
+        endedAt: 1_003_000 + turn * 4_000,
+        state: 'completed',
+      }));
+      chat.onAssistantMessageFork = async () => {};
+      chat.onLastUserMessageAction = async () => false;
       const metrics = {};
       const work = { render: 0, updated: 0, performUpdate: 0 };
+      let commitTimes = [];
       for (const method of ['render', 'updated', 'performUpdate']) {
         const original = chat[method].bind(chat);
         chat[method] = (...args) => {
@@ -115,13 +135,30 @@
           try {
             return original(...args);
           } finally {
-            work[method] += performance.now() - started;
+            const duration = performance.now() - started;
+            work[method] += duration;
+            if (method === 'performUpdate') commitTimes.push(duration);
           }
         };
       }
+      function measure(owner, method, label) {
+        const original = owner[method].bind(owner);
+        work[label] = 0;
+        owner[method] = (...args) => {
+          const started = performance.now();
+          try {
+            return original(...args);
+          } finally {
+            work[label] += performance.now() - started;
+          }
+        };
+      }
+      measure(chat.chatScrollController, 'afterRender', 'scroll');
+      measure(chat.historyDisclosureState, 'capture', 'disclosureCapture');
+      measure(chat, 'syncWidgetContexts', 'widgets');
       const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
       const settle = async () => {
-        await chat.updateComplete;
+        await chat.historyRenderComplete;
         await frame();
       };
       const publish = () => {
@@ -141,26 +178,45 @@
           nativeDisclosureAnimation:
             CSS.supports('interpolate-size', 'allow-keywords') &&
             CSS.supports('selector(details::details-content)'),
+          reducedMotionRequested: matchMedia('(prefers-reduced-motion: reduce)').matches,
+          maxCommitMs: +Math.max(0, ...commitTimes).toFixed(1),
+          renderQueue: {
+            pending: chat.historyRenderScheduler.isPending,
+            cursor: chat.historyRenderScheduler.cursor,
+            count: chat.historyRenderScheduler.pending.length,
+            batch: chat.historyRenderScheduler.batchSize,
+            committed: chat.historyRenderScheduler.committedBatch,
+            waiters: chat.historyRenderScheduler.waiters.length,
+          },
         });
         document.querySelector('#metrics').textContent = JSON.stringify(metrics, null, 2);
       };
-      chat.shadowRoot.addEventListener('toggle', event => {
-        const details = event.target;
-        if (details.tagName !== 'DETAILS') return;
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          if (!details.isConnected) return;
-          metrics.disclosure = {
-            open: details.open,
-            contentTransition: getComputedStyle(details, '::details-content').transition,
-            contentSize: getComputedStyle(details, '::details-content').blockSize,
-            transitions: details.getAnimations({subtree: true})
-              .filter(animation => typeof animation.transitionProperty === 'string')
-              .map(animation => ({ property: animation.transitionProperty,
-                durationMs: animation.effect.getTiming().duration })),
-          };
-          publish();
-        }));
-      }, true);
+      chat.shadowRoot.addEventListener(
+        'toggle',
+        event => {
+          const details = event.target;
+          if (details.tagName !== 'DETAILS') return;
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => {
+              if (!details.isConnected) return;
+              metrics.disclosure = {
+                open: details.open,
+                contentTransition: getComputedStyle(details, '::details-content').transition,
+                contentSize: getComputedStyle(details, '::details-content').blockSize,
+                transitions: details
+                  .getAnimations({ subtree: true })
+                  .filter(animation => typeof animation.transitionProperty === 'string')
+                  .map(animation => ({
+                    property: animation.transitionProperty,
+                    durationMs: animation.effect.getTiming().duration,
+                  })),
+              };
+              publish();
+            }),
+          );
+        },
+        true,
+      );
       async function open() {
         controller?.disconnect();
         seq = 0;
@@ -169,6 +225,7 @@
         controller = new ChatController();
         controller.state.sessionKey = sessionKey;
         controller.state.connected = true;
+        controller.state.transportStatus = 'connected';
         controller.state.client = {
           generation: 1,
           stop() {},
@@ -199,26 +256,65 @@
         await controller.loadHistory();
         await settle();
         metrics.openMs = +(performance.now() - started).toFixed(1);
+        if (!chat.richMessageControls.fixtureMeasured) {
+          measure(chat.richMessageControls, 'sync', 'richControls');
+          chat.richMessageControls.fixtureMeasured = true;
+        }
         publish();
       }
-      async function older() {
+      async function older(checkAnchors = false) {
         if (!controller) await open();
         const samples = [];
         const phaseSamples = [];
-        while (controller.state.historyHasMore) {
+        commitTimes = [];
+        while (controller.state.historyHasMore || controller.state.historyWindowStart > 0) {
+          const anchor = checkAnchors
+            ? chat.shadowRoot.querySelectorAll('.chat-container > .chat-history-row')[5]
+            : null;
+          let anchorTop = 0;
+          if (anchor) {
+            chat.chatScrollController.navigateTo(
+              chat.scrollTop +
+                anchor.getBoundingClientRect().top -
+                chat.getBoundingClientRect().top -
+                40,
+              'instant',
+            );
+            chat.chatScrollController.preserveAnchorForInteraction(anchor);
+            anchorTop = anchor.getBoundingClientRect().top;
+          }
           const started = performance.now();
           const before = { ...work };
-          await controller.loadOlderHistory();
+          await controller.showOlderHistory();
           await settle();
+          if (anchor) {
+            metrics.anchorChecks ??= [];
+            metrics.anchorChecks.push({
+              retained: anchor.isConnected,
+              driftPx: anchor.isConnected
+                ? +(anchor.getBoundingClientRect().top - anchorTop).toFixed(2)
+                : null,
+            });
+          }
           samples.push(+(performance.now() - started).toFixed(1));
           phaseSamples.push({
             render: +(work.render - before.render).toFixed(1),
             updated: +(work.updated - before.updated).toFixed(1),
             totalDomUpdate: +(work.performUpdate - before.performUpdate).toFixed(1),
+            scroll: +(work.scroll - before.scroll).toFixed(1),
+            richControls: +(work.richControls - before.richControls).toFixed(1),
+            disclosureCapture: +(work.disclosureCapture - before.disclosureCapture).toFixed(1),
+            widgets: +(work.widgets - before.widgets).toFixed(1),
           });
+          metrics.pagingProgress = samples.length;
+          publish();
         }
         metrics.olderPageMs = samples;
         metrics.pageWorkMs = phaseSamples;
+        metrics.maxAnchorDriftPx = Math.max(
+          0,
+          ...(metrics.anchorChecks ?? []).map(value => Math.abs(value.driftPx ?? 0)),
+        );
         publish();
       }
       function emit(stream, data) {
@@ -244,7 +340,8 @@
         const intervals = [];
         let previous = performance.now();
         let pendingPage = null;
-        for (let index = 0; index < 120; index += 1) {
+        let pageComplete = true;
+        for (let index = 0; index < 120 || !pageComplete; index += 1) {
           await frame();
           const now = performance.now();
           intervals.push(now - previous);
@@ -253,14 +350,24 @@
             itemId: 'fixture-body',
             text: 'Configuration check complete. ' + 'Verified. '.repeat(index + 1),
           });
-          if (loadPages && index === 10) pendingPage = older();
+          if (index % 30 === 0) {
+            metrics.streamFrame = index;
+            publish();
+          }
+          if (loadPages && index === 10) {
+            pageComplete = false;
+            pendingPage = older(true).finally(() => {
+              pageComplete = true;
+            });
+          }
         }
         await pendingPage;
         await settle();
         intervals.sort((a, b) => a - b);
         metrics.stream = {
-          p50FrameMs: +intervals[60].toFixed(1),
-          p95FrameMs: +intervals[114].toFixed(1),
+          frames: intervals.length,
+          p50FrameMs: +intervals[Math.floor(intervals.length * 0.5)].toFixed(1),
+          p95FrameMs: +intervals[Math.floor(intervals.length * 0.95)].toFixed(1),
           maxFrameMs: +intervals.at(-1).toFixed(1),
           over50ms: intervals.filter(value => value > 50).length,
           historyBuilds: chat.persistedTimelineCache.revision - revision,
@@ -279,15 +386,64 @@
         }
       };
       document.querySelector('#open').onclick = action(open);
+      document.querySelector('#snapshot').onclick = publish;
       document.querySelector('#older').onclick = action(older);
+      document.querySelector('#read-page').onclick = action(() => older(true));
       document.querySelector('#stream').onclick = action(() => stream());
       document.querySelector('#running-page').onclick = action(() => stream(true));
       document.querySelector('#animation').onclick = action(async () => {
         if (!controller) await open();
-        const summary = [...chat.shadowRoot.querySelectorAll('.completed-process > summary')].at(-1);
+        const summary = [...chat.shadowRoot.querySelectorAll('.completed-process > summary')].at(
+          -1,
+        );
         chat.chatScrollController.preserveAnchorForInteraction(summary);
-        summary.scrollIntoView({block: 'center', behavior: 'instant'});
+        summary.scrollIntoView({ block: 'center', behavior: 'instant' });
         summary.click();
+      });
+      document.querySelector('#restore-state').onclick = action(async () => {
+        await open();
+        const original = chat.shadowRoot.querySelectorAll('.completed-process')[8];
+        const key = original.dataset.completedProcessKey;
+        original.querySelector('summary').click();
+        await settle();
+        const summary = original.querySelector('[data-process-summary-key]');
+        const summaryKey = summary.dataset.processSummaryKey;
+        summary.click();
+        await settle();
+        await older(true);
+        const leftWindow = !original.isConnected;
+        controller.showLatestHistory();
+        await settle();
+        const restored = [...chat.shadowRoot.querySelectorAll('[data-completed-process-key]')].find(
+          element => element.dataset.completedProcessKey === key,
+        );
+        const inner = restored?.querySelector('[data-process-summary-key]');
+        metrics.restoredState = {
+          leftWindow,
+          outerOpen: restored?.open === true,
+          thinkingOpen:
+            inner?.dataset.processSummaryKey === summaryKey && inner.closest('details').open,
+        };
+        const toolSummary = [...restored.querySelectorAll('[data-process-summary-key]')].at(-1);
+        const toolSummaryKey = toolSummary.dataset.processSummaryKey;
+        toolSummary.click();
+        await settle();
+        const tool = restored.querySelector('details[data-tool-identity]');
+        const toolKey = tool.dataset.toolIdentity;
+        tool.querySelector('summary').click();
+        await settle();
+        while (restored.isConnected && (await controller.showOlderHistory())) await settle();
+        controller.showLatestHistory();
+        await settle();
+        const returnedTool = [
+          ...chat.shadowRoot.querySelectorAll('details[data-tool-identity]'),
+        ].find(element => element.dataset.toolIdentity === toolKey);
+        metrics.restoredState.toolSummaryOpen =
+          [...chat.shadowRoot.querySelectorAll('[data-process-summary-key]')]
+            .find(element => element.dataset.processSummaryKey === toolSummaryKey)
+            ?.closest('details').open === true;
+        metrics.restoredState.toolOpen = returnedTool?.open === true;
+        publish();
       });
     </script>
   </body>

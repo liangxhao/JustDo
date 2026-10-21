@@ -9,6 +9,81 @@ import { projectPersistedTimeline } from './project-history-timeline';
 import { projectTurnItems } from './project-turn-items';
 
 describe('projectPersistedTimeline', () => {
+  test('reuses an unchanged native block message instead of cloning it on every page shift', () => {
+    const message: GatewayMessage = {
+      role: 'assistant',
+      __openclaw: { id: 'native-body' },
+      content: [{ type: 'text', text: 'Unchanged body' }],
+    };
+    expect(projectPersistedTimeline([message])[0]).toMatchObject({
+      kind: 'history-message',
+      message,
+    });
+    expect((projectPersistedTimeline([message])[0] as { message: GatewayMessage }).message).toBe(
+      message,
+    );
+  });
+
+  test('keeps process, plan, progress and split content keys stable across history windows', () => {
+    const turn = (prefix: string): GatewayMessage[] => [
+      { role: 'user', content: 'Inspect', __openclaw: { id: `${prefix}-user` } },
+      {
+        role: 'assistant',
+        __openclaw: { id: `${prefix}-body` },
+        content: [
+          { type: 'thinking', thinking: 'Check the configuration.' },
+          { type: 'text', text: 'Before reading' },
+          { type: 'toolCall', id: `${prefix}-read`, name: 'read', arguments: {} },
+          { type: 'text', text: 'After reading' },
+          { type: 'toolCall', id: `${prefix}-plan`, name: 'PresentPlan', arguments: {} },
+          { type: 'toolCall', id: `${prefix}-progress`, name: 'progress_card', arguments: {} },
+        ],
+      },
+      { role: 'assistant', content: 'Done', __openclaw: { id: `${prefix}-final` } },
+    ];
+    const older = turn('older');
+    const retained = turn('retained');
+    const newer = turn('newer');
+    const expected = projectPersistedTimeline(retained).map(item => item.key);
+    expect(expected.some(key => key.startsWith('history-process:'))).toBe(true);
+    expect(expected.some(key => key.startsWith('history-plan:'))).toBe(true);
+    expect(expected.some(key => key.startsWith('history-progress:'))).toBe(true);
+    for (const window of [
+      [older, retained],
+      [older, retained, newer],
+      [retained, newer],
+    ]) {
+      const keys = projectPersistedTimeline(window.flat()).map(item => item.key);
+      expect(keys.filter(key => expected.includes(key))).toEqual(expected);
+      expect(new Set(keys).size).toBe(keys.length);
+    }
+  });
+
+  test('gives sibling projections of one native owner distinct, prefix-independent keys', () => {
+    const siblings: GatewayMessage[] = [
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Commentary' }],
+        __openclaw: { id: 'owner' },
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Answer' }],
+        __openclaw: { id: 'owner' },
+      },
+    ];
+    const keys = projectPersistedTimeline(siblings).map(item => item.key);
+    expect(new Set(keys).size).toBe(2);
+    expect(
+      projectPersistedTimeline([
+        { role: 'user', content: 'Earlier', __openclaw: { id: 'earlier' } },
+        ...siblings,
+      ])
+        .slice(1)
+        .map(item => item.key),
+    ).toEqual(keys);
+  });
+
   test('retains native identity and emits a split message diagnostic once after its content', () => {
     const marker = { id: 'native-failure', runId: 'run-1' };
     const message = {

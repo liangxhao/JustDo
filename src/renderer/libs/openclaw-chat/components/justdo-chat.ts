@@ -32,6 +32,8 @@ import { renderCompactionDivider } from '@/libs/openclaw-chat/components/timelin
 import { renderCompletedProcess } from '@/libs/openclaw-chat/components/timeline/completed-process';
 import { materializeDisclosureContents } from '@/libs/openclaw-chat/components/timeline/disclosure-content';
 import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
+import { HistoryDisclosureState } from '@/libs/openclaw-chat/controllers/history-disclosure-state';
+import { HistoryRenderScheduler } from '@/libs/openclaw-chat/controllers/history-render-scheduler';
 import { StreamRenderScheduler } from '@/libs/openclaw-chat/controllers/stream-render-scheduler';
 import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import {
@@ -293,7 +295,11 @@ export class JustDoChatElement extends LitElement {
 
   private readonly chatScrollController = new ChatScrollController(
     () => this.syncScrollIndicator(),
-    () => this._controller?.showOlderHistory() ?? false,
+    async () => {
+      const shifted = await (this._controller?.showOlderHistory() ?? false);
+      await this.historyRenderComplete;
+      return shifted;
+    },
     () => this._controller?.showNewerHistory() ?? false,
   );
   private readonly streamRenderScheduler = new StreamRenderScheduler(
@@ -309,6 +315,11 @@ export class JustDoChatElement extends LitElement {
   private peerPerspectiveHistory = new WeakMap<GatewayMessage[], GatewayMessage[]>();
   private persistedRenderRevision = 0;
   private readonly persistedTimelineRenderCache = new PersistedTimelineRenderCache();
+  private readonly historyRenderScheduler = new HistoryRenderScheduler<VisibleTimelineRow>(() =>
+    this.streamRenderScheduler.schedule(),
+  );
+  private readonly historyDisclosureState = new HistoryDisclosureState();
+  private renderStartedAt = 0;
   private readonly processSummaryTakeoverTracker = new ProcessSummaryTakeoverTracker();
   private readonly collapsedProcessSummaryTakeoverTracker = new ProcessSummaryTakeoverSetTracker();
   private readonly editDiffMonacoController = new EditDiffMonacoController();
@@ -382,11 +393,18 @@ export class JustDoChatElement extends LitElement {
     if (this._controller === ctrl) return;
     this.stopSpeech();
     this.unsubscribeController();
+    this.historyRenderScheduler.clear();
+    this.historyDisclosureState.reset(null);
     this._controller = ctrl;
     this.editDiffModes = new Map();
     if (ctrl) this.subscribeController(ctrl);
     void this.refreshLocalTtsStatus();
     this.requestUpdate();
+  }
+
+  /** Resolves after progressive history commits, without delaying the live lane. */
+  public get historyRenderComplete(): Promise<void> {
+    return this.updateComplete.then(() => this.historyRenderScheduler.complete);
   }
 
   private speechAudio: HTMLAudioElement | null = null;
@@ -903,6 +921,8 @@ export class JustDoChatElement extends LitElement {
     this.streamRenderScheduler.dispose();
     this.persistedTimelineCache.clear();
     this.persistedTimelineRenderCache.clear();
+    this.historyRenderScheduler.clear();
+    this.historyDisclosureState.reset(null);
     this.processSummaryTakeoverTracker.clear();
     this.collapsedProcessSummaryTakeoverTracker.clear();
     this.stopSpeech();
@@ -938,11 +958,29 @@ export class JustDoChatElement extends LitElement {
   }
 
   protected willUpdate(changedProperties: Map<string | number | symbol, unknown>): void {
+    this.renderStartedAt = performance.now();
+    this.historyDisclosureState.capture(this.renderRoot);
+    // Native details changes open synchronously; its toggle event is queued.
+    // Capture before a stream/page commit can restore an older preference.
+    this.renderRoot
+      .querySelectorAll<HTMLDetailsElement>('details[data-tool-identity]')
+      .forEach(details => this.richMessageControls?.rememberTool(details));
     // Stream/clock ticks only change the live lane. Any presentation property
     // change invalidates the retained history templates, including search/TTS.
     if (
       [...changedProperties.keys()].some(
-        key => !['activeTurn', 'stream', 'streamStartedAt', 'isStreaming'].includes(String(key)),
+        key =>
+          ![
+            'activeTurn',
+            'stream',
+            'streamStartedAt',
+            'isStreaming',
+            'currentMinimapKey',
+            'hoveredMinimapKey',
+            'openProcessSummaryKey',
+            'collapsedProcessSummaryKeys',
+            'processSummariesExpanded',
+          ].includes(String(key)),
       )
     ) {
       this.persistedRenderRevision += 1;
@@ -953,6 +991,7 @@ export class JustDoChatElement extends LitElement {
     this.focusedProcessSummaryKeyBeforeRender =
       focusedKey === this.openProcessSummaryKey ? focusedKey : null;
     if (changedProperties.has('processSummariesExpanded')) {
+      this.historyDisclosureState.clear();
       this.openProcessSummaryKey = null;
       this.renderedOpenProcessSummaryKey = null;
       this.collapsedProcessSummaryKeys = new Set();
@@ -987,6 +1026,12 @@ export class JustDoChatElement extends LitElement {
           .map(item => `${item.id}:${item.text.length}`)
           .join('|') ?? '')
       : '';
+    this.richMessageControls ??= new RichMessageControls(this.renderRoot as ShadowRoot, element =>
+      this.chatScrollController.preserveAnchorForInteraction(element),
+    );
+    this.richMessageControls.reset(this.processSummarySessionIdentity ?? '');
+    this.richMessageControls.onQuote = this.onMessageQuote;
+    this.richMessageControls.sync();
     this.chatScrollController.afterRender(transcriptRevision);
     this.syncScrollIndicator();
     this.scrollStreamingThinkingToBottom();
@@ -1020,12 +1065,6 @@ export class JustDoChatElement extends LitElement {
         .forEach(output => output.cancelLoad());
       this.outputReadContext = outputReadContext;
     }
-    this.richMessageControls ??= new RichMessageControls(this.renderRoot as ShadowRoot, element =>
-      this.chatScrollController.preserveAnchorForInteraction(element),
-    );
-    this.richMessageControls.reset(this._controller?.state.sessionKey ?? '');
-    this.richMessageControls.onQuote = this.onMessageQuote;
-    this.richMessageControls.sync();
     const mermaidEnhancementKey = `${this.persistedTimelineCache.revision}:${completedContentKey}`;
     if (mermaidEnhancementKey !== this.lastMermaidEnhancementKey) {
       this.lastMermaidEnhancementKey = mermaidEnhancementKey;
@@ -1036,6 +1075,7 @@ export class JustDoChatElement extends LitElement {
       this.lastMinimapSyncKey = minimapSyncKey;
       this.scheduleMinimapSync();
     }
+    this.historyRenderScheduler.afterCommit(performance.now() - this.renderStartedAt);
   }
 
   private syncScrollIndicator(): void {
@@ -1085,6 +1125,7 @@ export class JustDoChatElement extends LitElement {
     sessionIdentity: string,
   ): void {
     if (this.processSummarySessionIdentity !== sessionIdentity) {
+      this.historyDisclosureState.reset(sessionIdentity);
       this.processSummaryTakeoverTracker.clear();
       this.collapsedProcessSummaryTakeoverTracker.clear();
       this.processSummarySessionIdentity = sessionIdentity;
@@ -1092,16 +1133,29 @@ export class JustDoChatElement extends LitElement {
       this.renderedCollapsedProcessSummaryKeys = new Set();
     } else {
       const sourceItems = unfoldProcessItems(items);
+      const returning = this.historyDisclosureState.returningSummaries(
+        sourceItems.filter(item => item.kind === 'process-summary').map(item => item.key),
+      );
       this.renderedOpenProcessSummaryKey = this.processSummaryTakeoverTracker.resolve(
         this.openProcessSummaryKey,
         sourceItems,
       );
-      this.renderedCollapsedProcessSummaryKeys = this.processSummariesExpanded
+      this.renderedOpenProcessSummaryKey ??= returning.open;
+      let collapsed: ReadonlySet<string> = this.processSummariesExpanded
         ? this.collapsedProcessSummaryTakeoverTracker.resolve(
             this.collapsedProcessSummaryKeys,
             sourceItems,
           )
         : new Set();
+      if (this.processSummariesExpanded && returning.collapsed.length > 0) {
+        collapsed = new Set([...collapsed, ...returning.collapsed]);
+      }
+      if (
+        collapsed.size !== this.renderedCollapsedProcessSummaryKeys.size ||
+        [...collapsed].some(key => !this.renderedCollapsedProcessSummaryKeys.has(key))
+      ) {
+        this.renderedCollapsedProcessSummaryKeys = collapsed;
+      }
     }
     // Reconcile while rendering so Lit consumes the derived state in this update.
     this.openProcessSummaryKey = this.renderedOpenProcessSummaryKey;
@@ -1407,6 +1461,7 @@ export class JustDoChatElement extends LitElement {
   }
 
   private publishStreamFrame(): void {
+    this.historyRenderScheduler.beginFrame();
     this.requestUpdate();
   }
 
@@ -1438,6 +1493,7 @@ export class JustDoChatElement extends LitElement {
   public revealMessage(entryId: string): boolean {
     const normalizedEntryId = entryId.trim();
     if (!normalizedEntryId) return false;
+    this.flushHistoryRender();
     materializeDisclosureContents(this.renderRoot);
     const rows = this.renderRoot.querySelectorAll<HTMLElement>('.chat-history-row[data-entry-id]');
     const target = [...rows].find(row => row.dataset.entryId === normalizedEntryId);
@@ -1741,17 +1797,25 @@ export class JustDoChatElement extends LitElement {
   }
 
   private renderPersistedRows(rows: readonly VisibleTimelineRow[]) {
+    const renderedRows = this.historyRenderScheduler.select(
+      rows,
+      this.processSummarySessionIdentity ?? 'direct',
+      Boolean(this.searchQuery.trim()),
+    );
     return guard(
       [
-        rows,
+        renderedRows,
         this.persistedRenderRevision,
         this.userMessageHistoryActionsAvailable,
         this.actionableUserEntryId,
         this.forkEligibilityMessages,
+        this.renderedOpenProcessSummaryKey,
+        this.renderedCollapsedProcessSummaryKeys,
+        this.processSummariesExpanded,
       ],
       () =>
         repeat(
-          rows,
+          renderedRows,
           row => row.item.key,
           row => {
             const item = row.item;
@@ -1766,9 +1830,7 @@ export class JustDoChatElement extends LitElement {
                     row.showAvatar,
                     row.showFooter,
                     this.persistedRenderRevision,
-                    this.userMessageHistoryActionsAvailable,
-                    this.actionableUserEntryId,
-                    this.actionEligibilityIds.has(openClawEntryId(item.message) ?? ''),
+                    this.historyMessageActionsKey(item, row.showFooter),
                   ],
                   () => this.renderVisibleTimelineItem(item, row.showAvatar, row.showFooter),
                 )
@@ -1776,6 +1838,22 @@ export class JustDoChatElement extends LitElement {
           },
         ),
     );
+  }
+
+  private historyMessageActionsKey(
+    item: Extract<VisibleTimelineItem, { kind: 'history-message' }>,
+    showFooter: boolean,
+  ): boolean {
+    if (!this.userMessageHistoryActionsAvailable) return false;
+    const entryId = openClawEntryId(item.message);
+    if (!entryId || !this.actionEligibilityIds.has(entryId)) return false;
+    return item.message.role?.toLowerCase() === 'user'
+      ? entryId === this.actionableUserEntryId && Boolean(this.onLastUserMessageAction)
+      : item.message.role?.toLowerCase() === 'assistant' &&
+          showFooter &&
+          item.durationMs !== undefined &&
+          item.runState === 'completed' &&
+          Boolean(this.onAssistantMessageFork);
   }
 
   private renderVisibleTimelineItem(
@@ -1796,7 +1874,16 @@ export class JustDoChatElement extends LitElement {
       return renderCompletedProcess(item, {
         sessionIdentity: this.processSummarySessionIdentity,
         showAvatar,
-        expanded: this.processSummariesExpanded,
+        expanded: this.historyDisclosureState.expanded(
+          item.key,
+          this.processSummariesExpanded,
+          item.items.flatMap(child => [
+            child.key,
+            ...(child.kind === 'process-summary'
+              ? child.items.map(process => `process:${process.id}`)
+              : []),
+          ]),
+        ),
         assistantAvatar: this.assistantAvatar,
         renderItem: (child, childShowsAvatar) =>
           this.renderVisibleTimelineItem(child, childShowsAvatar, false),
@@ -2062,6 +2149,7 @@ export class JustDoChatElement extends LitElement {
   }
 
   private scrollToMinimapEntry(entry: ChatMinimapEntry): void {
+    this.flushHistoryRender();
     let entryIndex = this.latestMinimapPrefix.findIndex(candidate => candidate.key === entry.key);
     if (entryIndex < 0 && this.latestMinimapTail?.key === entry.key) {
       entryIndex = this.latestMinimapPrefix.length;
@@ -2074,6 +2162,13 @@ export class JustDoChatElement extends LitElement {
     const nextScrollTop = Math.max(0, this.scrollTop + targetTop - hostTop - 16);
     this.currentMinimapKey = entry.key;
     this.chatScrollController.navigateTo(nextScrollTop, 'smooth');
+  }
+
+  private flushHistoryRender(): void {
+    if (!this.historyRenderScheduler.isPending) return;
+    this.historyRenderScheduler.flush();
+    this.requestUpdate();
+    this.performUpdate();
   }
 
   private readonly handleMinimapScroll = (): void => {

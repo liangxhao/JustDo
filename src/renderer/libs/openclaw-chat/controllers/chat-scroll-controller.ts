@@ -22,6 +22,7 @@ export class ChatScrollController {
   private interactionAnchor: { element: HTMLElement; offset: number } | null = null;
   private navigationTargetTop: number | null = null;
   private historyTouchY: number | null = null;
+  private anchorScrollRemainder = 0;
 
   constructor(
     private readonly onStateChange: () => void,
@@ -51,6 +52,7 @@ export class ChatScrollController {
     this.disconnect();
     this.host = host;
     this.mode = 'follow';
+    this.anchorScrollRemainder = 0;
     this.lastScrollTop = host.scrollTop;
     this.clearPendingHistoryShifts();
     host.addEventListener('scroll', this.handleScroll, { passive: true });
@@ -98,6 +100,7 @@ export class ChatScrollController {
         const nextOffset = survivingAnchor.element.getBoundingClientRect().top;
         this.setScrollTop(
           Math.max(0, this.previousScrollTop + (nextOffset - survivingAnchor.offset)),
+          true,
         );
       }
     }
@@ -125,6 +128,7 @@ export class ChatScrollController {
   navigateTo(top: number, behavior: ScrollBehavior): void {
     const host = this.host;
     if (!host) return;
+    this.anchorScrollRemainder = 0;
     const modeChanged = this.mode !== 'paused';
     this.mode = 'paused';
     this.interactionAnchor = null;
@@ -140,6 +144,7 @@ export class ChatScrollController {
 
   preserveAnchorForInteraction(element: HTMLElement): void {
     if (!this.host || !element.isConnected) return;
+    this.anchorScrollRemainder = 0;
     this.finishNavigation();
     const modeChanged = this.mode !== 'paused';
     this.mode = 'paused';
@@ -152,6 +157,7 @@ export class ChatScrollController {
   }
 
   reset(): void {
+    this.anchorScrollRemainder = 0;
     this.mode = 'follow';
     this.unseenRevisions = 0;
     this.previousRevision = -1;
@@ -163,6 +169,7 @@ export class ChatScrollController {
   }
 
   disconnect(): void {
+    this.anchorScrollRemainder = 0;
     this.host?.removeEventListener('scroll', this.handleScroll);
     this.host?.removeEventListener('scrollend', this.handleScrollEnd);
     this.host?.removeEventListener('wheel', this.handleHistoryIntent);
@@ -234,6 +241,7 @@ export class ChatScrollController {
       this.finishNavigation();
     }
     if (upward) {
+      this.anchorScrollRemainder = 0;
       const modeChanged = this.mode !== 'paused';
       this.mode = 'paused';
       this.interactionAnchor = null;
@@ -284,6 +292,7 @@ export class ChatScrollController {
     }
     const scrollTop = host.scrollTop;
     const scrollDelta = scrollTop - this.lastScrollTop;
+    if (scrollDelta !== 0) this.anchorScrollRemainder = 0;
     this.lastScrollTop = scrollTop;
     const distance = host.scrollHeight - host.scrollTop - host.clientHeight;
     const historyShiftThreshold = Math.max(
@@ -335,7 +344,7 @@ export class ChatScrollController {
     const survivingAnchor = this.pausedAnchors.find(anchor => anchor.element.isConnected);
     if (survivingAnchor) {
       const delta = survivingAnchor.element.getBoundingClientRect().top - survivingAnchor.offset;
-      if (Math.abs(delta) > 0.5) this.setScrollTop(Math.max(0, host.scrollTop + delta));
+      if (Math.abs(delta) > 0.5) this.setScrollTop(Math.max(0, host.scrollTop + delta), true);
     }
     this.pausedAnchors = this.captureVisibleAnchorsNow(host);
     this.updateScrollAvailability();
@@ -367,11 +376,17 @@ export class ChatScrollController {
     this.setScrollTop(host.scrollHeight);
   }
 
-  private setScrollTop(value: number): void {
+  private setScrollTop(value: number, preserveFraction = false): void {
     const host = this.host;
     if (!host) return;
     this.programmatic = true;
-    host.scrollTop = value;
+    const target = value + (preserveFraction ? this.anchorScrollRemainder : 0);
+    host.scrollTop = target;
+    // Chromium can round scroll offsets while message heights remain fractional.
+    // Carry that rounding across batches instead of drifting a little every frame.
+    this.anchorScrollRemainder = preserveFraction
+      ? Math.max(0, Math.min(host.scrollHeight - host.clientHeight, target)) - host.scrollTop
+      : 0;
     this.lastScrollTop = host.scrollTop;
     this.updateScrollAvailability();
     queueMicrotask(() => {

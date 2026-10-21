@@ -206,6 +206,12 @@ function visibleMessageWithContent(
   message: Record<string, unknown>,
   content: unknown[],
 ): GatewayMessage {
+  if (
+    Array.isArray(message.content) &&
+    message.content.length === content.length &&
+    message.content.every((block, index) => block === content[index])
+  )
+    return outer;
   const outerRecord = outer as Record<string, unknown>;
   return message === outerRecord
     ? ({ ...outer, content } as GatewayMessage)
@@ -233,7 +239,7 @@ export function projectPersistedTimeline(
 ): PersistedTimelineItem[] {
   const projected: PersistedTimelineItem[] = [];
   let archived: Array<ThinkingItem | ToolItem> = [];
-  let segment = 0;
+  const messageOccurrences = new Map<string, number>();
   const toolsByCallId = new Map<string, ToolItem[]>();
   const allTools: ToolItem[] = [];
   const presentedWidgets = new WeakSet<ToolItem>();
@@ -363,7 +369,7 @@ export function projectPersistedTimeline(
       const first = summaryItems[0];
       projected.push({
         kind: 'process-summary',
-        key: `history-process:${segment}:${first.id}`,
+        key: `history-process:${first.id}`,
         runId: first.runId,
         items: summaryItems,
         thinkingCount: summaryItems.filter(item => item.type === 'thinking').length,
@@ -374,25 +380,22 @@ export function projectPersistedTimeline(
         ).length,
       });
       summaryItems = [];
-      segment += 1;
     };
     for (const item of archived) {
       if (item.type === 'tool' && isPresentPlanToolName(item.name)) {
         flushSummaryItems();
         projected.push({
           kind: 'plan-presentation',
-          key: `history-plan:${segment}:${item.id}`,
+          key: `history-plan:${item.id}`,
           item,
         });
-        segment += 1;
       } else if (item.type === 'tool' && item.name.trim().toLowerCase() === 'progress_card') {
         flushSummaryItems();
         projected.push({
           kind: 'progress-receipt',
-          key: `history-progress:${segment}:${item.id}`,
+          key: `history-progress:${item.id}`,
           item,
         });
-        segment += 1;
       } else {
         summaryItems.push(item);
       }
@@ -426,7 +429,6 @@ export function projectPersistedTimeline(
     };
     projected.push(item);
     if (durationMs !== undefined) lastTimedMessage = item;
-    segment += 1;
   };
 
   const claimTiming = (runId: string, timestamp: number): SessionRunTiming | null => {
@@ -589,7 +591,6 @@ export function projectPersistedTimeline(
           key: `history-diagram:${tool.id}`,
           reference: diagram,
         });
-        segment += 1;
       }
       const app =
         tool.status === 'completed'
@@ -604,7 +605,6 @@ export function projectPersistedTimeline(
         presentedAppViewIds.add(app.viewId);
         flushSummary();
         projected.push({ kind: 'mcp-app', key: `history-mcp-app:${tool.id}`, preview: app });
-        segment += 1;
       }
       // Only native tool-role records grant document-view authority. An
       // assistant-authored nested result is still just ordinary transcript data.
@@ -621,7 +621,6 @@ export function projectPersistedTimeline(
           key: `history-widget:${tool.id}`,
           preview: widget,
         });
-        segment += 1;
       }
       return true;
     }
@@ -664,7 +663,12 @@ export function projectPersistedTimeline(
     const outer = outerMessage as Record<string, unknown>;
     const message = unwrapToolMessage(outerMessage);
     if (!message) return;
-    const messageKey = deterministicHistoryKey(outerMessage, messageIndex);
+    const nativeKey = deterministicHistoryKey(outerMessage, messageIndex);
+    // Native history can expose multiple projections of one source entry.
+    // Disambiguate within that entry, never with a window-relative ordinal.
+    const occurrence = messageOccurrences.get(nativeKey) ?? 0;
+    messageOccurrences.set(nativeKey, occurrence + 1);
+    const messageKey = occurrence === 0 ? nativeKey : `${nativeKey}:projection:${occurrence}`;
     const runId = runIdOf(outer, message, messageKey);
     if (runId === messageKey) syntheticRunIds.add(runId);
     const timestamp = timestampOf(outer, message);
@@ -705,7 +709,6 @@ export function projectPersistedTimeline(
       toolEpoch += 1;
       activeTiming = null;
       lastTimedMessage = null;
-      segment += 1;
       return;
     }
     // A subsequent explicit assistant run cannot still be executing tools
@@ -816,11 +819,12 @@ export function projectPersistedTimeline(
     }
 
     let visibleBlocks: unknown[] = [];
+    let visibleBlockStart = 0;
     const flushVisibleBlocks = () => {
       if (visibleBlocks.length === 0) return;
       emitMessage(
         visibleMessageWithContent(outerMessage, message, visibleBlocks),
-        `${messageKey}:content:${segment}`,
+        `${messageKey}:content:${visibleBlockStart}`,
         durationMs,
         completedAt,
         modelRef,
@@ -830,6 +834,7 @@ export function projectPersistedTimeline(
     };
 
     content.forEach((rawBlock, blockIndex) => {
+      if (visibleBlocks.length === 0) visibleBlockStart = blockIndex;
       const block = asToolRecord(rawBlock);
       if (!block) {
         visibleBlocks.push(rawBlock);
@@ -873,7 +878,6 @@ export function projectPersistedTimeline(
           presentedAppViewIds.add(app.viewId);
           flushSummary();
           projected.push({ kind: 'mcp-app', key: `history-mcp-app:${tool.id}`, preview: app });
-          segment += 1;
         }
         return;
       }

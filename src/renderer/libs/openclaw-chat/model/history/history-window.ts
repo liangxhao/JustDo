@@ -1,7 +1,9 @@
 import { readTranscriptIdentity } from './transcript-identity';
 
-export const HISTORY_RENDER_WINDOW_SIZE = 750;
-export const HISTORY_RENDER_WINDOW_STEP = 250;
+// Transport pages remain 250 entries. A smaller, overlapping DOM window bounds
+// layout work while most navigation reuses rows already loaded from Gateway.
+export const HISTORY_RENDER_WINDOW_SIZE = 250;
+export const HISTORY_RENDER_WINDOW_STEP = 64;
 
 export interface HistoryRenderWindow {
   start: number;

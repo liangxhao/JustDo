@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   HISTORY_RENDER_WINDOW_SIZE,
+  HISTORY_RENDER_WINDOW_STEP,
   latestHistoryWindow,
   preserveHistoryWindow,
   shiftHistoryWindowNewer,
@@ -34,10 +35,21 @@ describe('history window', () => {
   it('preserves visible identities when an older page is prepended', () => {
     const current = messages(250, 1_000);
     const next = [...messages(0, 250), ...current];
-    const preserved = preserveHistoryWindow(current, next, { start: 0, end: 750 });
+    const preserved = preserveHistoryWindow(current, next, {
+      start: 0,
+      end: HISTORY_RENDER_WINDOW_SIZE,
+    });
 
-    expect(preserved).toEqual({ start: 250, end: 1000 });
+    expect(preserved).toEqual({ start: 250, end: 250 + HISTORY_RENDER_WINDOW_SIZE });
     expect(next[preserved.start]).toBe(current[0]);
+  });
+
+  it('retains most of the window across both navigation directions', () => {
+    const current = latestHistoryWindow(2_000);
+    const older = shiftHistoryWindowOlder(current, 2_000);
+    expect(current.start - older.start).toBe(HISTORY_RENDER_WINDOW_STEP);
+    expect(older.end - current.start).toBeGreaterThan(HISTORY_RENDER_WINDOW_SIZE * 0.7);
+    expect(shiftHistoryWindowNewer(older, 2_000)).toEqual(current);
   });
 
   it('keeps following the latest tail when messages are appended', () => {
