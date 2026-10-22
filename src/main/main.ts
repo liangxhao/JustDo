@@ -264,6 +264,7 @@ import {
   type BuiltinModelCredential,
   clearActiveBuiltinModelCredential,
   getActiveBuiltinModelCredential,
+  getActiveBuiltinModelCredentialSessionId,
 } from './providers/builtinModelCredential';
 import { BuiltinModelCredentialMonitor } from './providers/builtinModelCredentialMonitor';
 import { BuiltinModelLifecycle } from './providers/builtinModelLifecycle';
@@ -800,6 +801,7 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
       requestGateway: <T>(method: string, params?: unknown) =>
         getCoworkEngineService().requestGateway<T>(method, params),
       getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
+      getModelAuthSessionId: getActiveBuiltinModelCredentialSessionId,
       getBrowserMode: () =>
         normalizeBrowserMode(getStore().get<{ browserMode?: unknown }>('app_config')?.browserMode),
       getDecisionModelCategory: () =>
@@ -903,7 +905,9 @@ const getBuiltinModelAuthCoordinator = (): BuiltinModelAuthCoordinator => {
   builtinModelAuthCoordinator ??= new BuiltinModelAuthCoordinator({
     exchange: () => getBuiltinModelTokenExchange().refresh(),
     getActive: getActiveBuiltinModelCredential,
+    getAuthSessionId: getActiveBuiltinModelCredentialSessionId,
     login: () => getBuiltinModelLifecycle().refreshAfterLogin(),
+    rotate: () => getBuiltinModelLifecycle().refreshAfterCredentialRotation(),
     invalidate: () => {
       try {
         builtinModelTokenExchange?.suspend();

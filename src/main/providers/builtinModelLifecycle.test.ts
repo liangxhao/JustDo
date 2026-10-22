@@ -55,6 +55,76 @@ describe('BuiltinModelLifecycle', () => {
     expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
   });
 
+  test('publishes rotated credentials without requesting the model catalog', async () => {
+    syncBuiltinModelProviderMock.mockImplementation(() => new Promise(() => {}));
+    const harness = createHarness();
+
+    await harness.lifecycle.refreshAfterCredentialRotation();
+
+    expect(syncBuiltinModelProviderMock).not.toHaveBeenCalled();
+    expect(harness.syncOpenClawConfig).toHaveBeenCalledWith({ reason: 'auth-login' });
+    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+  });
+
+  test('publishes credentials during discovery and then projects the refreshed catalog', async () => {
+    let catalog = 'old';
+    let releaseDiscovery!: () => void;
+    const discovery = new Promise<void>(resolve => { releaseDiscovery = resolve; });
+    syncBuiltinModelProviderMock.mockImplementationOnce(async () => {
+      await discovery;
+      catalog = 'new';
+    });
+    const harness = createHarness();
+    const projectedCatalogs: string[] = [];
+    harness.syncOpenClawConfig.mockImplementation(async () => {
+      projectedCatalogs.push(catalog);
+      return { success: true };
+    });
+
+    const catalogRefresh = harness.lifecycle.refreshAfterLogin();
+    await harness.lifecycle.refreshAfterCredentialRotation();
+
+    expect(projectedCatalogs).toEqual(['old']);
+    releaseDiscovery();
+    await catalogRefresh;
+
+    expect(projectedCatalogs).toEqual(['old', 'new']);
+    expect(harness.notifyModelsChanged).toHaveBeenCalledTimes(2);
+  });
+
+  test.each([true, false])('rejects an unconfirmed rotation even if configSynced is %s', async configSynced => {
+    const harness = createHarness();
+    harness.syncOpenClawConfig.mockResolvedValue({
+      success: false,
+      configSynced,
+      error: 'credential reload pending',
+    });
+
+    await expect(harness.lifecycle.refreshAfterCredentialRotation()).rejects.toThrow('credential reload pending');
+
+    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+  });
+
+  test('serializes logout after an in-flight rotation and discards its obsolete notification', async () => {
+    const harness = createHarness();
+    let releaseRotation!: () => void;
+    harness.syncOpenClawConfig.mockImplementationOnce(() => new Promise(resolve => {
+      releaseRotation = () => resolve({ success: true });
+    }));
+    const rotation = harness.lifecycle.refreshAfterCredentialRotation();
+    await vi.waitFor(() => expect(harness.syncOpenClawConfig).toHaveBeenCalledOnce());
+    const logout = harness.lifecycle.refreshAfterLogout();
+    releaseRotation();
+
+    await Promise.all([rotation, logout]);
+
+    expect(harness.syncOpenClawConfig.mock.calls).toEqual([
+      [{ reason: 'auth-login' }],
+      [{ reason: 'auth-logout' }],
+    ]);
+    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+  });
+
   test('does not sync or notify from an enabled refresh superseded by logout', async () => {
     let releaseLogin: (() => void) | undefined;
     syncBuiltinModelProviderMock

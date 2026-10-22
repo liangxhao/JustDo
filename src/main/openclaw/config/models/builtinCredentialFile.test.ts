@@ -10,6 +10,10 @@ import {
   BUILTIN_SECRET_ID, BUILTIN_SECRET_SOURCE, openBuiltinCredential,
   sealBuiltinCredential, syncBuiltinCredentialFile as syncCredentialFile,
 } from './builtinCredentialFile';
+import {
+  resolveBuiltinCredentialResolverTimeoutMs,
+  resolveManagedCredentialReloadTimeoutMs,
+} from './credentialTimeouts';
 
 const directories: string[] = [];
 const directory = () => {
@@ -31,6 +35,12 @@ const syncBuiltinCredentialFile = (config: Record<string, unknown>, state: strin
   syncCredentialFile(config, state, value, process.execPath, session);
 
 describe('encrypted binary builtin credentials', () => {
+  it.each(['win32', 'darwin', 'linux'] as const)('allows resolver completion before the reload RPC deadline on %s', platform => {
+    const resolverTimeoutMs = resolveBuiltinCredentialResolverTimeoutMs(platform);
+    expect(resolverTimeoutMs).toBe(platform === 'win32' ? 60_000 : 5_000);
+    expect(resolveManagedCredentialReloadTimeoutMs(platform) - resolverTimeoutMs).toBe(30_000);
+  });
+
   it('uses authenticated randomized ciphertext and rejects modification', () => {
     const first = sealBuiltinCredential(secret);
     expect(first.includes(Buffer.from(secret))).toBe(false);
@@ -43,6 +53,9 @@ describe('encrypted binary builtin credentials', () => {
   it('keeps config as references and reloads only when the credential changes', () => {
     const state = directory();
     const first = syncBuiltinCredentialFile(source(), state, credential);
+    expect(first.config.secrets).toMatchObject({
+      providers: { [BUILTIN_SECRET_SOURCE]: { timeoutMs: resolveBuiltinCredentialResolverTimeoutMs() } },
+    });
     const json = JSON.stringify(first.config);
     expect(json).not.toContain(secret);
     expect(json).not.toContain('ciphertext');
@@ -84,11 +97,11 @@ describe('encrypted binary builtin credentials', () => {
     const state = directory();
     const result = syncBuiltinCredentialFile(source(), state, credential);
     const provider = (result.config.secrets as { providers: Record<string, {
-      command: string; args: string[]; env: Record<string, string>;
+      command: string; args: string[]; env: Record<string, string>; timeoutMs: number;
     }> }).providers[BUILTIN_SECRET_SOURCE];
     const run = (ids: string[]) => spawnSync(provider.command, provider.args, {
       env: provider.env,
-      windowsHide: true, encoding: 'utf8', timeout: 5000,
+      windowsHide: true, encoding: 'utf8', timeout: provider.timeoutMs,
       input: JSON.stringify({ protocolVersion: 1, provider: BUILTIN_SECRET_SOURCE, ids }),
     });
     const resolved = run([BUILTIN_SECRET_ID]);
@@ -122,13 +135,13 @@ describe('encrypted binary builtin credentials', () => {
     expect((result.config.models as { providers: Record<string, unknown> }).providers.builtin_models)
       .not.toHaveProperty('headers');
     const provider = (result.config.secrets as { providers: Record<string, {
-      command: string; args: string[]; env: Record<string, string>;
+      command: string; args: string[]; env: Record<string, string>; timeoutMs: number;
     }> }).providers[BUILTIN_SECRET_SOURCE];
     const resolved = spawnSync(provider.command, provider.args, {
       env: provider.env,
       windowsHide: true,
       encoding: 'utf8',
-      timeout: 5000,
+      timeout: provider.timeoutMs,
       input: JSON.stringify({
         protocolVersion: 1,
         provider: BUILTIN_SECRET_SOURCE,
@@ -151,10 +164,10 @@ describe('encrypted binary builtin credentials', () => {
     const state = directory();
     const first = syncBuiltinCredentialFile(source(), state, credential);
     const provider = (first.config.secrets as { providers: Record<string, {
-      command: string; args: string[]; env: Record<string, string>;
+      command: string; args: string[]; env: Record<string, string>; timeoutMs: number;
     }> }).providers[BUILTIN_SECRET_SOURCE];
     const run = () => spawnSync(provider.command, provider.args, {
-      env: provider.env, windowsHide: true, encoding: 'utf8', timeout: 5000,
+      env: provider.env, windowsHide: true, encoding: 'utf8', timeout: provider.timeoutMs,
       input: JSON.stringify({ protocolVersion: 1, provider: BUILTIN_SECRET_SOURCE, ids: [BUILTIN_SECRET_ID] }),
     });
     syncBuiltinCredentialFile(first.config, state, { ...credential, accessToken: 'rotated' });

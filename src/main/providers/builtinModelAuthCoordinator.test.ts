@@ -14,7 +14,9 @@ const setup = () => {
   const dependencies = {
     exchange: vi.fn(async (): Promise<BuiltinModelCredential | null> => credential),
     getActive: vi.fn((): BuiltinModelCredential | null => credential),
+    getAuthSessionId: vi.fn((): string | null => 'session-1'),
     login: vi.fn(async () => undefined),
+    rotate: vi.fn(async () => undefined),
     invalidate: vi.fn(),
     logout: vi.fn(async () => undefined),
   };
@@ -76,6 +78,126 @@ test('cached token skips catalog refresh unless explicitly requested', async () 
   expect(dependencies.login).not.toHaveBeenCalled();
   await coordinator.refresh(true);
   expect(dependencies.login).toHaveBeenCalledTimes(1);
+});
+
+test('renews an established login without waiting for model discovery', async () => {
+  const { dependencies, coordinator } = setup();
+  coordinator.initialize(credential);
+  const renewed = { ...credential, accessToken: 'renewed-fixture' };
+  dependencies.exchange.mockResolvedValue(renewed);
+  dependencies.getActive.mockReturnValue(renewed);
+
+  await expect(coordinator.refresh()).resolves.toEqual(renewed);
+  await coordinator.refresh();
+
+  expect(dependencies.rotate).toHaveBeenCalledOnce();
+  expect(dependencies.login).not.toHaveBeenCalled();
+});
+
+test('first login and explicit catalog refresh still discover models', async () => {
+  const { dependencies, coordinator } = setup();
+  coordinator.initialize(null);
+  await coordinator.refresh();
+  dependencies.exchange.mockResolvedValue({ ...credential, accessToken: 'renewed-fixture' });
+  await coordinator.refresh(true);
+
+  expect(dependencies.login).toHaveBeenCalledTimes(2);
+  expect(dependencies.rotate).not.toHaveBeenCalled();
+});
+
+test('retries an unconfirmed rotation without rediscovering models or treating the token as applied', async () => {
+  const { dependencies, coordinator } = setup();
+  coordinator.initialize(credential);
+  const renewed = { ...credential, accessToken: 'renewed-fixture' };
+  dependencies.exchange.mockResolvedValue(renewed);
+  dependencies.getActive.mockReturnValue(renewed);
+  dependencies.rotate.mockRejectedValueOnce(new Error('credential reload pending'));
+
+  await expect(coordinator.refresh()).rejects.toThrow('credential reload pending');
+  await coordinator.refresh();
+  await coordinator.refresh();
+
+  expect(dependencies.rotate).toHaveBeenCalledTimes(2);
+  expect(dependencies.login).not.toHaveBeenCalled();
+});
+
+test('failed initial login retries model discovery before establishing the rotation path', async () => {
+  const { dependencies, coordinator } = setup();
+  dependencies.login.mockRejectedValueOnce(new Error('initial application failed'));
+
+  await expect(coordinator.refresh()).rejects.toThrow('initial application failed');
+  await coordinator.refresh();
+
+  expect(dependencies.login).toHaveBeenCalledTimes(2);
+  expect(dependencies.rotate).not.toHaveBeenCalled();
+});
+
+test.each([null, 'session-2'])('same token with auth session %s cannot reuse the previous confirmation', async authSessionId => {
+  const { dependencies, coordinator } = setup();
+  coordinator.initialize(credential);
+  dependencies.getAuthSessionId.mockReturnValue(authSessionId);
+
+  await coordinator.refresh();
+
+  expect(dependencies.login).toHaveBeenCalledOnce();
+  expect(dependencies.rotate).not.toHaveBeenCalled();
+});
+
+test('late rotation acknowledgement cannot confirm a replacement login session', async () => {
+  const { dependencies, coordinator } = setup();
+  coordinator.initialize(credential);
+  const renewed = { ...credential, accessToken: 'renewed-fixture' };
+  dependencies.exchange.mockResolvedValue(renewed);
+  dependencies.getActive.mockReturnValue(renewed);
+  const pending = deferred<undefined>();
+  dependencies.rotate.mockImplementationOnce(() => pending.promise);
+  const rotation = coordinator.refresh();
+  await Promise.resolve();
+
+  dependencies.getAuthSessionId.mockReturnValue('session-2');
+  pending.resolve(undefined);
+  await rotation;
+  await coordinator.refresh();
+
+  expect(dependencies.rotate).toHaveBeenCalledOnce();
+  expect(dependencies.login).toHaveBeenCalledOnce();
+});
+
+test('logout revokes a pending rotation before a same-account login is confirmed', async () => {
+  const { dependencies, coordinator } = setup();
+  coordinator.initialize(credential);
+  const renewed = { ...credential, accessToken: 'renewed-fixture' };
+  dependencies.exchange.mockResolvedValue(renewed);
+  dependencies.getActive.mockReturnValue(renewed);
+  const pending = deferred<undefined>();
+  dependencies.rotate.mockImplementationOnce(() => pending.promise);
+  const rotation = coordinator.refresh();
+  await Promise.resolve();
+
+  await coordinator.logout();
+  dependencies.getAuthSessionId.mockReturnValue('session-2');
+  await coordinator.refresh();
+  pending.resolve(undefined);
+  await rotation;
+  await coordinator.refresh();
+
+  expect(dependencies.logout).toHaveBeenCalledOnce();
+  expect(dependencies.rotate).toHaveBeenCalledOnce();
+  expect(dependencies.login).toHaveBeenCalledOnce();
+});
+
+test('provider removal after temporary expiry requires a full login even when the auth session resumes', async () => {
+  const { dependencies, coordinator } = setup();
+  coordinator.initialize(credential);
+  dependencies.getActive.mockReturnValueOnce(null);
+  dependencies.exchange.mockRejectedValueOnce(new Error('exchange unavailable'));
+
+  await expect(coordinator.refresh()).rejects.toThrow('exchange unavailable');
+  await coordinator.refresh();
+
+  expect(dependencies.logout).toHaveBeenCalledOnce();
+  expect(dependencies.login).toHaveBeenCalledOnce();
+  expect(dependencies.rotate).not.toHaveBeenCalled();
 });
 
 test('retries credential removal after a failed logout synchronization', async () => {
@@ -140,12 +262,12 @@ test('previous token is reapplied when a different token synchronization is pend
   const { dependencies, coordinator } = setup();
   coordinator.initialize(credential);
   const pending = deferred<undefined>();
-  dependencies.login.mockImplementationOnce(() => pending.promise);
+  dependencies.rotate.mockImplementationOnce(() => pending.promise);
   dependencies.exchange.mockResolvedValueOnce({ ...credential, accessToken: 'new-fixture' });
   const login = coordinator.refresh();
   await Promise.resolve();
   await coordinator.refresh();
-  expect(dependencies.login).toHaveBeenCalledTimes(2);
+  expect(dependencies.rotate).toHaveBeenCalledTimes(2);
   pending.resolve(undefined);
   await login;
 });

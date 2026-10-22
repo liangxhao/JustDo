@@ -272,6 +272,10 @@ Windows 沙盒准入先验证锁定的 MXC 二进制，再运行执行器 `--pro
 
 自定义 provider 的敏感值投影到受限权限文件，原生配置用 file SecretRef。内置模型从 user_info 中的 mtoken 换取短期 JWT，校验账号与有效期，原生只看到 exec SecretRef；SQLite builtin apiKey 保持为空。轮换触发 secrets.reload，logout/到期停止相关访问并清理派生快照。
 
+同认证会话续期直接同步凭据，不先等待目录发现。配置协调器持有未确认重载回执，文件未变化不能结清；
+同实例临时失败先限次重试 `secrets.reload`，明确拒绝仍失败关闭。后台只可对该凭据失败停止的确切实例进行一次启动恢复，
+并重新初始化权限；用户停止、认证会话或进程/生命周期替换会阻断旧操作。具体超时、退避和确认规则见认证专题。
+
 凭据解析成功与服务端 Team 授权成功也不同。模型发现、连接测试和真正请求的错误需分别报告。二进制包装不等于抵御同用户逆向的密钥保险库，详细链路见[认证专题](../features/integrations/authentication-builtin-model-lifecycle.md)。
 
 ## 6. 发送、原生事件与产品回执

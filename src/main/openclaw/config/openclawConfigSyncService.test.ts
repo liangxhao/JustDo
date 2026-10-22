@@ -11,6 +11,7 @@ import { t } from '../../core/i18n';
 import { SessionRpc } from '../../engine/gateway/sessionRpc';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 import { ensureExecutionReady } from '../runtime/executionReadiness';
+import { resolveManagedCredentialReloadTimeoutMs } from './models/credentialTimeouts';
 import {
   OpenClawConfigSyncService,
   resolveDeferredGatewayRestartAction,
@@ -303,23 +304,28 @@ describe('OpenClawConfigSyncService', () => {
     executionMode?: 'local' | 'sandbox';
     sandboxReady?: boolean;
     getGatewayClient?: () => GatewayClientLike | null;
+    getModelAuthSessionId?: () => string | null;
     computerEnabled?: boolean;
     computerStatus?: () => Promise<{ available: boolean }>;
   } = {}) => {
     let phase = options.phase ?? 'running';
     let processGeneration = 1;
+    let statusMessage: string | undefined;
     let activeWorkloads = options.activeWorkloads ?? false;
     const getStatus = vi.fn(() => ({
       ...runningStatus,
       phase,
+      ...(statusMessage ? { message: statusMessage } : {}),
     }));
     const startGateway = vi.fn(async () => {
       phase = 'running';
+      statusMessage = undefined;
       processGeneration += 1;
       return runningStatus;
     });
     const stopGateway = vi.fn(async () => {
       phase = 'ready';
+      statusMessage = undefined;
     });
     const restartGateway = vi.fn(async () => {
       await stopGateway();
@@ -344,6 +350,7 @@ describe('OpenClawConfigSyncService', () => {
       restartGateway,
       setExternalError: vi.fn((message: string) => {
         phase = 'error';
+        statusMessage = message;
         return { ...runningStatus, phase, message };
       }),
     };
@@ -418,6 +425,8 @@ describe('OpenClawConfigSyncService', () => {
         const executionMode = options.executionMode ?? 'local';
         const execHost = executionMode === 'sandbox' ? 'sandbox' : 'gateway';
         return {
+          configRevisionHash: 'applied-config-revision',
+          appliedConfigHash: 'applied-config-revision',
           config: {
             ...(options.computerEnabled === undefined ? {} : {
               plugins: { entries: { 'cua-computer': { enabled: options.computerEnabled } } },
@@ -450,6 +459,7 @@ describe('OpenClawConfigSyncService', () => {
       connectGatewayClient,
       requestGateway,
       getGatewayClient: options.getGatewayClient ?? (() => connectedClient),
+      getModelAuthSessionId: options.getModelAuthSessionId,
       getWindowsSandboxStatus: vi.fn(async () => ({
         code: options.sandboxReady === false ? 'check_failed' : 'ready',
         supported: true,
@@ -499,6 +509,34 @@ describe('OpenClawConfigSyncService', () => {
       },
       advanceProcessGeneration: () => {
         processGeneration += 1;
+      },
+    };
+  };
+
+  const createPendingCredentialHarness = async (options: Parameters<typeof createHarness>[0] = {}) => {
+    let sessionId = 'original-session';
+    const harness = createHarness({
+      ...options, configChanged: false, secretsChanged: true,
+      getModelAuthSessionId: () => sessionId,
+    });
+    const request = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'secrets.reload') harness.advanceProcessGeneration();
+      return request(method, params);
+    });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+    harness.requestGateway.mockImplementation(request);
+    harness.requestGateway.mockClear();
+    const published = harness.configSync.sync.getMockImplementation()!();
+    harness.configSync.sync.mockReturnValue({ ...published, configChanged: true, secretsChanged: false });
+    return {
+      ...harness,
+      request,
+      published,
+      replaceOwner: (owner: 'process' | 'lifecycle' | 'authentication') => {
+        if (owner === 'process') harness.advanceProcessGeneration();
+        if (owner === 'lifecycle') harness.engineManager.getGatewayLifecycleGeneration.mockReturnValue(2);
+        if (owner === 'authentication') sessionId = 'replacement-session';
       },
     };
   };
@@ -950,7 +988,9 @@ describe('OpenClawConfigSyncService', () => {
   it('refreshes rotated file credentials without restarting or waiting for a config file event', async () => {
     const harness = createHarness({ configChanged: false, secretsChanged: true });
     await expect(harness.service.syncConfig({ reason: 'provider-key-change' })).resolves.toMatchObject({ success: true, changed: true });
-    expect(harness.requestGateway).toHaveBeenCalledWith('secrets.reload');
+    expect(harness.requestGateway).toHaveBeenCalledWith('secrets.reload', undefined, {
+      timeoutMs: resolveManagedCredentialReloadTimeoutMs(),
+    });
     expect(harness.engineManager.waitForGatewayConfigReload).not.toHaveBeenCalled();
     expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
   });
@@ -965,12 +1005,12 @@ describe('OpenClawConfigSyncService', () => {
     });
     expect(errorLog).toHaveBeenCalledWith(
       '[OpenClaw] Failed to refresh managed model provider credentials (secrets.reload):',
-      {
+      expect.objectContaining({
         reason: 'provider-key-change',
         gatewayPhase: 'running',
         elapsedMs: expect.any(Number),
         error: expect.stringContaining('credential reload timed out; Authorization: [REDACTED]'),
-      },
+      }),
     );
     expect(errorLog.mock.calls[0][1].error).toContain('openclawConfigSyncService.test.ts:');
     expect(JSON.stringify(errorLog.mock.calls)).not.toContain('reload-jwt-fixture');
@@ -990,11 +1030,738 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.stopGateway).toHaveBeenCalledOnce();
   });
 
+  it('retries a temporary credential reload without stopping active work', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const harness = createHarness({ configChanged: false, secretsChanged: true, activeWorkloads: true });
+    const request = harness.requestGateway.getMockImplementation()!;
+    let attempts = 0;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'secrets.reload' && ++attempts === 1) {
+        throw Object.assign(new Error('secrets.reload failed'), { gatewayCode: 'UNAVAILABLE', retryable: false });
+      }
+      return request(method, params);
+    });
+    const sync = harness.service.syncConfig({ reason: 'auth-login' });
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(sync).resolves.toMatchObject({ success: true });
+    expect(attempts).toBe(2);
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.startGateway).not.toHaveBeenCalled();
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+  });
+
+  it('recovers its own stopped runtime even when the published credential file is unchanged', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const harness = createHarness({ configChanged: false, secretsChanged: true });
+    const request = harness.requestGateway.getMockImplementation()!;
+    let unavailable = true;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'secrets.reload' && unavailable) {
+        throw Object.assign(new Error('secrets.reload failed'), { gatewayCode: 'UNAVAILABLE' });
+      }
+      return request(method, params);
+    });
+    const failed = harness.service.syncConfig({ reason: 'auth-login' });
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(failed).resolves.toMatchObject({ success: false });
+    expect(harness.getStatus().phase).toBe('error');
+    const published = harness.configSync.sync.getMockImplementation()!();
+    harness.configSync.sync.mockReturnValue({ ...published, changed: false, secretsChanged: false });
+    unavailable = false;
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: true });
+    expect(harness.getStatus().phase).toBe('running');
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'secrets.reload')).toHaveLength(4);
+    expect(harness.requestGateway).toHaveBeenCalledWith('exec.approvals.set', expect.anything());
+  });
+
+  it('finishes provider cleanup when a config change recovers a credential reload failure', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const harness = createHarness({ configChanged: false, secretsChanged: true });
+    const request = harness.requestGateway.getMockImplementation()!;
+    let unavailable = true;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'secrets.reload' && unavailable) {
+        throw Object.assign(new Error('secrets.reload failed'), { gatewayCode: 'UNAVAILABLE' });
+      }
+      return request(method, params);
+    });
+    const failed = harness.service.syncConfig({ reason: 'auth-login' });
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(failed).resolves.toMatchObject({ success: false });
+    expect(harness.getStatus().phase).toBe('error');
+    const published = harness.configSync.sync.getMockImplementation()!();
+    harness.configSync.sync.mockReturnValue({
+      ...published, changed: true, configChanged: true, secretsChanged: false,
+    });
+    unavailable = false;
+
+    await expect(harness.service.syncConfig({
+      reason: 'provider-remove', retiredProviderIds: ['OldProxy'],
+    })).resolves.toMatchObject({ success: true });
+
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+    expect(harness.requestGateway).toHaveBeenCalledWith('models.authLogout', {
+      provider: 'oldproxy', agentId: 'main',
+    });
+  });
+
+  it('bounds stopped-runtime recovery and never reports a still-stopped runtime as applied', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const reloadError = Object.assign(new Error('secrets.reload failed'), { gatewayCode: 'UNAVAILABLE' });
+    const harness = createHarness({ configChanged: false, secretsChanged: true, secretsReloadError: reloadError });
+    const first = harness.service.syncConfig({ reason: 'auth-login' });
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(first).resolves.toMatchObject({ success: false });
+    const published = harness.configSync.sync.getMockImplementation()!();
+    harness.configSync.sync.mockReturnValue({ ...published, changed: false, secretsChanged: false });
+    const retry = harness.service.syncConfig({ reason: 'auth-login' });
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(retry).resolves.toMatchObject({ success: false });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+    expect(harness.stopGateway).toHaveBeenCalledTimes(2);
+    expect(harness.getStatus().phase).toBe('error');
+  });
+
+  it('does not restart after an authoritative credential reload refusal', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const reloadError = Object.assign(new Error('Gateway requester authority changed'), { gatewayCode: 'FORBIDDEN' });
+    const harness = createHarness({ configChanged: false, secretsChanged: true, secretsReloadError: reloadError });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+    const published = harness.configSync.sync.getMockImplementation()!();
+    harness.configSync.sync.mockReturnValue({ ...published, changed: false, secretsChanged: false });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+    expect(harness.startGateway).not.toHaveBeenCalled();
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'secrets.reload')).toHaveLength(1);
+  });
+
+  it('does not accept a credential ACK or stop a replacement authentication session', async () => {
+    let sessionId = 'original-session';
+    const harness = createHarness({
+      configChanged: false, secretsChanged: true, getModelAuthSessionId: () => sessionId,
+    });
+    const request = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'secrets.reload') {
+        sessionId = 'replacement-session';
+        return { ok: true };
+      }
+      return request(method, params);
+    });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.startGateway).not.toHaveBeenCalled();
+  });
+
+  it('does not stop a replacement Gateway after a late credential reload error', async () => {
+    const harness = createHarness({ configChanged: false, secretsChanged: true });
+    const request = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'secrets.reload') {
+        harness.advanceProcessGeneration();
+        throw Object.assign(new Error('secrets.reload failed'), { gatewayCode: 'UNAVAILABLE' });
+      }
+      return request(method, params);
+    });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.disconnectGatewayClient).not.toHaveBeenCalled();
+  });
+
+  it('does not overwrite a replacement process status while the old failure is stopping', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const harness = createHarness({ configChanged: false, secretsChanged: true, secretsReloadError: new Error('invalid credential') });
+    harness.stopGateway.mockImplementation(async () => { harness.advanceProcessGeneration(); });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+    expect(harness.engineManager.setExternalError).not.toHaveBeenCalled();
+    expect(harness.getStatus().phase).toBe('running');
+  });
+
+  it('does not accept an ACK from an earlier native lifecycle in the same process', async () => {
+    const harness = createHarness({ configChanged: false, secretsChanged: true });
+    const request = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'secrets.reload') {
+        harness.engineManager.getGatewayLifecycleGeneration.mockReturnValue(2);
+        return { ok: true };
+      }
+      return request(method, params);
+    });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it.each(['process', 'lifecycle', 'authentication'])('does not confirm a credential refresh after its %s changes during permission verification', async owner => {
+    let sessionId = 'original-session';
+    const harness = createHarness({ configChanged: false, secretsChanged: true, getModelAuthSessionId: () => sessionId });
+    const request = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'config.get') {
+        if (owner === 'process') harness.advanceProcessGeneration();
+        if (owner === 'lifecycle') harness.engineManager.getGatewayLifecycleGeneration.mockReturnValue(2);
+        if (owner === 'authentication') sessionId = 'replacement-session';
+      }
+      return request(method, params);
+    });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it.each(['process', 'lifecycle', 'authentication'])('does not stop a replacement %s when credential permission verification fails late', async owner => {
+    let sessionId = 'original-session';
+    const harness = createHarness({ configChanged: false, secretsChanged: true, getModelAuthSessionId: () => sessionId });
+    const request = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'config.get') {
+        if (owner === 'process') harness.advanceProcessGeneration();
+        if (owner === 'lifecycle') harness.engineManager.getGatewayLifecycleGeneration.mockReturnValue(2);
+        if (owner === 'authentication') sessionId = 'replacement-session';
+        throw new Error('previous process disconnected');
+      }
+      return request(method, params);
+    });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.engineManager.setExternalError).not.toHaveBeenCalled();
+  });
+
+  it.each(
+    (['process', 'lifecycle', 'authentication'] as const).flatMap(owner =>
+      [false, undefined].flatMap(restartGatewayIfRunning =>
+        [false, true].map(reloaded => ({ owner, restartGatewayIfRunning, reloaded })),
+      ),
+    ),
+  )('abandons pending credentials when $owner changes during config reload ($reloaded, restart: $restartGatewayIfRunning)', async ({ owner, restartGatewayIfRunning, reloaded }) => {
+    const harness = await createPendingCredentialHarness();
+    harness.engineManager.waitForGatewayConfigReload.mockImplementation(async () => {
+      harness.replaceOwner(owner);
+      return reloaded;
+    });
+
+    await expect(harness.service.syncConfig({ reason: 'settings', restartGatewayIfRunning })).resolves.toMatchObject({
+      success: false, configSynced: false, error: t('engineConfigApplicationUnconfirmed'),
+    });
+
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.startGateway).not.toHaveBeenCalled();
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.disconnectGatewayClient).not.toHaveBeenCalled();
+    expect(harness.requestGateway.mock.calls.some(([method]) =>
+      ['config.get', 'gateway.restart.request', 'gateway.suspend.prepare'].includes(method),
+    )).toBe(false);
+  });
+
+  it.each(['process', 'lifecycle', 'authentication'] as const)('does not hard-restart a replacement %s after a late native restart refusal', async owner => {
+    const harness = await createPendingCredentialHarness({ waitForReload: false });
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'gateway.restart.request') {
+        harness.replaceOwner(owner);
+        return { ok: false };
+      }
+      return harness.request(method, params);
+    });
+
+    await expect(harness.service.syncConfig({ reason: 'settings' })).resolves.toMatchObject({ success: false, configSynced: false });
+
+    expect(harness.requestGateway).toHaveBeenCalledWith('gateway.restart.request', expect.anything());
+    expect(harness.requestGateway.mock.calls.some(([method]) => method === 'gateway.suspend.prepare')).toBe(false);
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it.each(['process', 'lifecycle', 'authentication'] as const)('does not use a pending credential suspension after its %s changes', async owner => {
+    vi.useFakeTimers();
+    const harness = await createPendingCredentialHarness({ waitForReload: false });
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'gateway.suspend.prepare') {
+        harness.replaceOwner(owner);
+        return { status: 'ready', suspensionId: 'stale-suspension' };
+      }
+      return harness.request(method, params);
+    });
+
+    await expect(harness.service.syncConfig({ reason: 'settings' })).resolves.toMatchObject({ success: false, configSynced: false });
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.disconnectGatewayClient).not.toHaveBeenCalled();
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'gateway.suspend.prepare')).toHaveLength(1);
+  });
+
+  it.each(
+    (['process', 'lifecycle', 'authentication'] as const).flatMap(owner =>
+      [false, true].map(failed => ({ owner, failed })),
+    ),
+  )('does not stop a replacement $owner when credential bridge restore finishes (failed: $failed)', async ({ owner, failed }) => {
+    const harness = await createPendingCredentialHarness();
+    let current = true;
+    harness.connectGatewayClient.mockImplementation(async () => {
+      harness.replaceOwner(owner);
+      current = false;
+      if (failed) throw new Error('old approval bridge disconnected');
+    });
+    const restore = (harness.service as unknown as {
+      restoreGatewayBridgeOrFailClosed: (
+        result: { success: boolean; changed: boolean; configSynced: boolean },
+        ownership: { isCurrent: () => boolean; ownsProcess: () => boolean },
+      ) => Promise<unknown>;
+    }).restoreGatewayBridgeOrFailClosed.bind(harness.service);
+
+    await expect(restore({ success: true, changed: true, configSynced: true }, {
+      isCurrent: () => current, ownsProcess: () => current,
+    })).resolves.toMatchObject({ success: false, configSynced: false });
+
+    expect(harness.connectGatewayClient).toHaveBeenCalledOnce();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.engineManager.setExternalError).not.toHaveBeenCalled();
+    expect(harness.requestGateway.mock.calls.some(([method]) => method === 'config.get')).toBe(false);
+  });
+
+  it.each(['deferred', 'coalesced', 'scheduled'])('retains pending credential confirmation while its native restart is %s', async nativeRestartStatus => {
+    const harness = await createPendingCredentialHarness({ waitForReload: false, nativeRestartStatus });
+    harness.engineManager.waitForGatewayReadyAfter.mockResolvedValue(false);
+
+    await expect(harness.service.syncConfig({ reason: 'settings' })).resolves.toMatchObject({ success: false, configSynced: false });
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    harness.configSync.sync.mockReturnValue({ ...harness.published, changed: false, configChanged: false, secretsChanged: false });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false, configSynced: false });
+    harness.engineManager.getGatewayLifecycleGeneration.mockReturnValue(2);
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: true });
+
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'secrets.reload')).toHaveLength(1);
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'gateway.restart.request')).toHaveLength(1);
+  });
+
+  it('performs a required hard restart and confirms its new runtime before retired auth cleanup', async () => {
+    const harness = await createPendingCredentialHarness({ waitForReload: false });
+
+    await expect(harness.service.syncConfig({ reason: 'settings', retiredProviderIds: ['retired-provider'] })).resolves.toMatchObject({
+      success: false, configSynced: false,
+    });
+    expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+    expect(harness.requestGateway.mock.calls.some(([method]) => method === 'models.authLogout')).toBe(false);
+    harness.configSync.sync.mockReturnValue({ ...harness.published, changed: false, configChanged: false, secretsChanged: false });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: true });
+
+    expect(harness.requestGateway).toHaveBeenCalledWith('models.authLogout', { provider: 'retired-provider', agentId: 'main' });
+    expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();
+  });
+
+  it.each(['process', 'lifecycle', 'authentication'] as const)('discards a credential deferred restart when its %s changes before idle', async owner => {
+    vi.useFakeTimers();
+    const harness = await createPendingCredentialHarness({ waitForReload: false, activeWorkloads: true });
+
+    await expect(harness.service.syncConfig({ reason: 'settings' })).resolves.toMatchObject({ success: false, configSynced: false });
+    harness.replaceOwner(owner);
+    harness.setActiveWorkloads(false);
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'gateway.suspend.prepare')).toHaveLength(1);
+  });
+
+  it('performs a pending credential restart when its own deferred suspension becomes idle', async () => {
+    vi.useFakeTimers();
+    const harness = await createPendingCredentialHarness({ waitForReload: false, activeWorkloads: true });
+
+    await expect(harness.service.syncConfig({ reason: 'settings' })).resolves.toMatchObject({ success: false, configSynced: false });
+    harness.setActiveWorkloads(false);
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+    harness.configSync.sync.mockReturnValue({ ...harness.published, changed: false, configChanged: false, secretsChanged: false });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: true });
+  });
+
+  it('preserves a required deferred restart across a later unchanged credential sync', async () => {
+    vi.useFakeTimers();
+    const harness = await createPendingCredentialHarness({ waitForReload: false, activeWorkloads: true });
+
+    await expect(harness.service.syncConfig({ reason: 'settings' })).resolves.toMatchObject({ success: false, configSynced: false });
+    harness.configSync.sync.mockReturnValue({ ...harness.published, changed: false, configChanged: false, secretsChanged: false });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false, configSynced: false });
+    harness.setActiveWorkloads(false);
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])('retains hard restart debt after an in-process lifecycle change (new config: %s)', async configChanged => {
+    vi.useFakeTimers();
+    const harness = await createPendingCredentialHarness({ waitForReload: false, activeWorkloads: true });
+
+    await expect(harness.service.syncConfig({ reason: 'settings' })).resolves.toMatchObject({ success: false, configSynced: false });
+    harness.configSync.sync.mockReturnValue({ ...harness.published, changed: configChanged, configChanged, secretsChanged: false });
+    harness.engineManager.getGatewayLifecycleGeneration.mockReturnValue(2);
+    harness.setActiveWorkloads(false);
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false, configSynced: false });
+
+    expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();
+    expect(harness.requestGateway.mock.calls.some(([method]) => method === 'secrets.reload')).toBe(false);
+    harness.configSync.sync.mockReturnValue({ ...harness.published, changed: false, configChanged: false, secretsChanged: false });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: true });
+  });
+
+  it('does not clean retired auth after a credential owner changes during auth discovery', async () => {
+    const harness = createHarness({ configChanged: false, secretsChanged: true });
+    const request = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'models.authStatus') harness.advanceProcessGeneration();
+      return request(method, params);
+    });
+    await expect(harness.service.syncConfig({
+      reason: 'provider-key-change', retiredProviderIds: ['retired-provider'],
+    })).resolves.toMatchObject({ success: false });
+    expect(harness.requestGateway.mock.calls.some(([method]) => method === 'models.authLogout')).toBe(false);
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('abandons reconnection when another process takes over its pending handshake', async () => {
+    const harness = createHarness({ configChanged: false, secretsChanged: true, getGatewayClient: () => null });
+    let connected!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>(resolve => { connected = resolve; });
+    const handshake = new Promise<void>(resolve => { release = resolve; });
+    harness.connectGatewayClient.mockImplementation(async () => { connected(); await handshake; });
+    const sync = harness.service.syncConfig({ reason: 'auth-login' });
+    await started;
+    harness.advanceProcessGeneration();
+    release();
+    await expect(sync).resolves.toMatchObject({ success: false });
+    expect(harness.requestGateway.mock.calls.some(([method]) => method === 'secrets.reload')).toBe(false);
+    expect(harness.startGateway).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('reconnects the same process after a temporary credential transport failure', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    let client: GatewayClientLike | null = null;
+    const harness = createHarness({ configChanged: false, secretsChanged: true, getGatewayClient: () => client });
+    const connectedClient = { request: harness.requestGateway } as unknown as GatewayClientLike;
+    client = connectedClient;
+    harness.connectGatewayClient.mockImplementation(async () => { client = connectedClient; });
+    const request = harness.requestGateway.getMockImplementation()!;
+    let attempts = 0;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'secrets.reload' && ++attempts === 1) {
+        client = null;
+        throw new Error('gateway client stopped');
+      }
+      return request(method, params);
+    });
+    const sync = harness.service.syncConfig({ reason: 'auth-login' });
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(sync).resolves.toMatchObject({ success: true });
+    expect(harness.connectGatewayClient).toHaveBeenCalledOnce();
+    expect(harness.startGateway).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('does not retry or restart a Gateway stopped during credential reload backoff', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const harness = createHarness({
+      configChanged: false, secretsChanged: true,
+      secretsReloadError: Object.assign(new Error('secrets.reload failed'), { gatewayCode: 'UNAVAILABLE' }),
+    });
+    const sync = harness.service.syncConfig({ reason: 'auth-login' });
+    await vi.advanceTimersByTimeAsync(0);
+    harness.setPhase('ready');
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(sync).resolves.toMatchObject({ success: false });
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'secrets.reload')).toHaveLength(1);
+    expect(harness.startGateway).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('keeps the reload unconfirmed if permission initialization after recovery fails', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const harness = createHarness({ configChanged: false, secretsChanged: true });
+    const request = harness.requestGateway.getMockImplementation()!;
+    let recovering = false;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (!recovering && method === 'secrets.reload') {
+        throw Object.assign(new Error('secrets.reload failed'), { gatewayCode: 'UNAVAILABLE' });
+      }
+      if (recovering && method === 'config.get') return {
+        config: {
+          agents: { entries: { main: {} } },
+          tools: { exec: { host: 'local', mode: 'full' }, fs: { workspaceOnly: true } },
+        },
+      };
+      return request(method, params);
+    });
+    const failed = harness.service.syncConfig({ reason: 'auth-login' });
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(failed).resolves.toMatchObject({ success: false });
+    const published = harness.configSync.sync.getMockImplementation()!();
+    harness.configSync.sync.mockReturnValue({ ...published, changed: false, secretsChanged: false });
+    recovering = true;
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+    expect(harness.getStatus().phase).toBe('error');
+  });
+
+  it('does not turn a failed recovery startup into success on a subsequent unchanged sync', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const harness = createHarness({
+      configChanged: false, secretsChanged: true,
+      secretsReloadError: Object.assign(new Error('secrets.reload failed'), { gatewayCode: 'UNAVAILABLE' }),
+    });
+    const failed = harness.service.syncConfig({ reason: 'auth-login' });
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(failed).resolves.toMatchObject({ success: false });
+    const published = harness.configSync.sync.getMockImplementation()!();
+    harness.configSync.sync.mockReturnValue({ ...published, changed: false, secretsChanged: false });
+    harness.startGateway.mockRejectedValueOnce(new Error('startup unavailable'));
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+    expect(harness.startGateway).toHaveBeenCalledOnce();
+  });
+
+  it('does not create an automatic recovery ticket when the Gateway stop was unconfirmed', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const harness = createHarness({
+      configChanged: false, secretsChanged: true,
+      secretsReloadError: Object.assign(new Error('secrets.reload failed'), { gatewayCode: 'UNAVAILABLE' }),
+    });
+    harness.stopGateway.mockRejectedValueOnce(new Error('stop unavailable'));
+    const failed = harness.service.syncConfig({ reason: 'auth-login' });
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(failed).resolves.toMatchObject({ success: false });
+    const published = harness.configSync.sync.getMockImplementation()!();
+    harness.configSync.sync.mockReturnValue({ ...published, changed: false, secretsChanged: false });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+    expect(harness.startGateway).not.toHaveBeenCalled();
+  });
+
+  it('does not revive a user-stopped runtime from an earlier credential failure ticket', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const harness = createHarness({
+      configChanged: false, secretsChanged: true,
+      secretsReloadError: Object.assign(new Error('secrets.reload failed'), { gatewayCode: 'UNAVAILABLE' }),
+    });
+    const failed = harness.service.syncConfig({ reason: 'auth-login' });
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(failed).resolves.toMatchObject({ success: false });
+    const published = harness.configSync.sync.getMockImplementation()!();
+    harness.configSync.sync.mockReturnValue({ ...published, changed: false, secretsChanged: false });
+    harness.setPhase('ready');
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+    expect(harness.startGateway).not.toHaveBeenCalled();
+  });
+
   it('uses the config watcher for a newly added provider and its credential', async () => {
     const harness = createHarness({ configChanged: true, secretsChanged: true });
     await expect(harness.service.syncConfig({ reason: 'provider-add' })).resolves.toMatchObject({ success: true });
     expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledOnce();
+    expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledWith(7, resolveManagedCredentialReloadTimeoutMs());
     expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+  });
+
+  it('waits for the applied source revision before reloading mixed config and credential changes', async () => {
+    const events: string[] = [];
+    const harness = createHarness({ configChanged: true, secretsChanged: true });
+    const request = harness.requestGateway.getMockImplementation()!;
+    harness.engineManager.waitForGatewayConfigReload.mockImplementation(async () => {
+      events.push('watcher-applied');
+      return true;
+    });
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'config.get' || method === 'secrets.reload') events.push(method);
+      return request(method, params);
+    });
+
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: true });
+
+    expect(events.slice(0, 3)).toEqual(['watcher-applied', 'config.get', 'secrets.reload']);
+    expect(events[3]).toBe('config.get');
+  });
+
+  it.each(['process', 'lifecycle', 'authentication'] as const)('abandons config publication when its %s changes during the permission preflight', async owner => {
+    let sessionId = 'original-session';
+    let supersede = true;
+    const harness = createHarness({ configChanged: true, secretsChanged: true, getModelAuthSessionId: () => sessionId });
+    const request = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'exec.approvals.get' && supersede) {
+        supersede = false;
+        if (owner === 'process') harness.advanceProcessGeneration();
+        if (owner === 'lifecycle') harness.engineManager.getGatewayLifecycleGeneration.mockReturnValue(2);
+        if (owner === 'authentication') sessionId = 'replacement-session';
+      }
+      return request(method, params);
+    });
+
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false, configSynced: false });
+    expect(harness.configSync.sync).not.toHaveBeenCalled();
+    expect(harness.requestGateway.mock.calls.some(([method]) => ['exec.approvals.set', 'config.get', 'secrets.reload'].includes(method))).toBe(false);
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: true });
+
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'exec.approvals.set')).toHaveLength(1);
+  });
+
+  it.each([
+    { configRevisionHash: undefined, appliedConfigHash: undefined },
+    { configRevisionHash: '', appliedConfigHash: '' },
+    { configRevisionHash: 'desired-source', appliedConfigHash: null },
+    { configRevisionHash: 'desired-source', appliedConfigHash: 'previous-source' },
+  ])('retains mixed credential debt until runtime revisions match: %j', async revisions => {
+    const harness = createHarness({ configChanged: true, secretsChanged: true });
+    const request = harness.requestGateway.getMockImplementation()!;
+    let applied = false;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      const response = await request(method, params);
+      return method === 'config.get' && !applied ? { ...response, ...revisions } : response;
+    });
+
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false, configSynced: false });
+    const published = harness.configSync.sync.getMockImplementation()!();
+    harness.configSync.sync.mockReturnValue({ ...published, changed: false, configChanged: false, secretsChanged: false });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false, configSynced: false });
+    expect(harness.requestGateway.mock.calls.some(([method]) => method === 'secrets.reload')).toBe(false);
+    applied = true;
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: true });
+
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'secrets.reload')).toHaveLength(1);
+    expect(harness.engineManager.waitForGatewayConfigReload.mock.calls).toEqual(
+      Array.from({ length: 3 }, () => [7, resolveManagedCredentialReloadTimeoutMs()]),
+    );
+  });
+
+  it.each(['deferred', 'coalesced', 'scheduled'])('does not reload an old source while a mixed credential restart is %s', async nativeRestartStatus => {
+    const harness = createHarness({ configChanged: true, secretsChanged: true, waitForReload: false, nativeRestartStatus });
+    harness.engineManager.waitForGatewayReadyAfter.mockResolvedValue(false);
+
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false, configSynced: false });
+    const published = harness.configSync.sync.getMockImplementation()!();
+    harness.configSync.sync.mockReturnValue({ ...published, changed: false, configChanged: false, secretsChanged: false });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false, configSynced: false });
+    expect(harness.requestGateway.mock.calls.some(([method]) => ['config.get', 'secrets.reload'].includes(method))).toBe(false);
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'gateway.restart.request')).toHaveLength(1);
+    harness.engineManager.getGatewayLifecycleGeneration.mockReturnValue(2);
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: true });
+
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'secrets.reload')).toHaveLength(1);
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+  });
+
+  it('does not repeat an uncertain native restart or borrow a disk snapshot for mixed credentials', async () => {
+    const harness = createHarness({
+      configChanged: true, secretsChanged: true, waitForReload: false,
+      nativeRestartError: new Error('request timed out'),
+    });
+    harness.engineManager.waitForGatewayReadyAfter.mockResolvedValue(false);
+
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false, configSynced: false });
+    const published = harness.configSync.sync.getMockImplementation()!();
+    harness.configSync.sync.mockReturnValue({ ...published, changed: false, configChanged: false, secretsChanged: false });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false, configSynced: false });
+
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'gateway.restart.request')).toHaveLength(1);
+    expect(harness.requestGateway.mock.calls.some(([method]) => ['config.get', 'secrets.reload'].includes(method))).toBe(false);
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+  });
+
+  it('keeps a mixed source application debt when another credential rotates before readiness', async () => {
+    const harness = createHarness({ configChanged: true, secretsChanged: true, waitForReload: false, nativeRestartStatus: 'deferred' });
+    harness.engineManager.waitForGatewayReadyAfter.mockResolvedValue(false);
+
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false, configSynced: false });
+    const published = harness.configSync.sync.getMockImplementation()!();
+    harness.configSync.sync.mockReturnValue({ ...published, configChanged: false, secretsChanged: true });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false, configSynced: false });
+
+    expect(harness.requestGateway.mock.calls.some(([method]) => ['config.get', 'secrets.reload'].includes(method))).toBe(false);
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'gateway.restart.request')).toHaveLength(1);
+  });
+
+  it('retains an accepted native restart owner when mixed config is published again', async () => {
+    const harness = createHarness({ configChanged: true, secretsChanged: true, waitForReload: false, nativeRestartStatus: 'deferred' });
+    harness.engineManager.waitForGatewayReadyAfter.mockResolvedValue(false);
+
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false, configSynced: false });
+    const published = harness.configSync.sync.getMockImplementation()!();
+    harness.configSync.sync.mockReturnValue({ ...published, configChanged: true, secretsChanged: false });
+    await expect(harness.service.syncConfig({ reason: 'settings' })).resolves.toMatchObject({ success: false, configSynced: false });
+
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'gateway.restart.request')).toHaveLength(1);
+    expect(harness.requestGateway.mock.calls.some(([method]) => ['config.get', 'secrets.reload'].includes(method))).toBe(false);
+  });
+
+  it.each(['deferred', 'unconfirmed'] as const)('waits for a %s native restart before applying a later launch environment', async nativeOutcome => {
+    const harness = createHarness({
+      configChanged: true, secretsChanged: true, waitForReload: false,
+      ...(nativeOutcome === 'deferred'
+        ? { nativeRestartStatus: 'deferred' }
+        : { nativeRestartError: new Error('request timed out') }),
+    });
+    harness.engineManager.waitForGatewayReadyAfter.mockResolvedValue(false);
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+
+    const published = harness.configSync.sync.getMockImplementation()!();
+    harness.configSync.sync.mockReturnValue({ ...published, configChanged: true, secretsChanged: false });
+    const nextEnvironment = { MODEL_RUNTIME_SETTING: 'next-value' };
+    harness.configSync.collectGatewayLaunchEnvVars.mockReturnValue(nextEnvironment);
+    harness.engineManager.hasPendingGatewayLaunchEnvironmentChanges.mockReturnValue(true);
+
+    await expect(harness.service.syncConfig({ reason: 'settings' })).resolves.toMatchObject({ success: false, configSynced: false });
+
+    expect(harness.engineManager.waitForGatewayReadyAfter).toHaveBeenCalledWith(1, resolveManagedCredentialReloadTimeoutMs());
+    expect(harness.requestGateway.mock.calls.some(([method]) => ['gateway.suspend.prepare', 'secrets.reload'].includes(method))).toBe(false);
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+
+    harness.engineManager.getGatewayLifecycleGeneration.mockReturnValue(2);
+    harness.engineManager.getGatewayLaunchEnvVars.mockReturnValue(nextEnvironment);
+    harness.configSync.sync.mockReturnValue({ ...published, changed: false, configChanged: false, secretsChanged: false });
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false });
+    expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();
+
+    harness.engineManager.hasPendingGatewayLaunchEnvironmentChanges.mockReturnValue(false);
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: true });
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'gateway.restart.request')).toHaveLength(1);
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'secrets.reload')).toHaveLength(1);
+    expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();
+  });
+
+  it.each(['process', 'lifecycle', 'authentication'] as const)('does not accept mixed source revisions after their %s changes', async owner => {
+    let sessionId = 'original-session';
+    const harness = createHarness({ configChanged: true, secretsChanged: true, getModelAuthSessionId: () => sessionId });
+    const request = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'config.get') {
+        if (owner === 'process') harness.advanceProcessGeneration();
+        if (owner === 'lifecycle') harness.engineManager.getGatewayLifecycleGeneration.mockReturnValue(2);
+        if (owner === 'authentication') sessionId = 'replacement-session';
+      }
+      return request(method, params);
+    });
+
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: false, configSynced: false });
+
+    expect(harness.requestGateway.mock.calls.some(([method]) => method === 'secrets.reload')).toBe(false);
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.startGateway).not.toHaveBeenCalled();
   });
 
   it('cleans retired provider auth profiles through the Gateway without failing the config sync', async () => {
@@ -1839,6 +2606,63 @@ describe('OpenClawConfigSyncService', () => {
       expect(harness.engineManager.setGatewayLaunchEnvVars).not.toHaveBeenCalled();
       expect(harness.stopGateway).toHaveBeenCalledOnce();
       expect(harness.startGateway).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([null, 'original-session'])('discards a credential recovery ticket on logout for auth session %s', async authSessionId => {
+    vi.useFakeTimers();
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'credential-logout-recovery-'));
+    const configPath = path.join(directory, 'openclaw.json');
+    fs.writeFileSync(configPath, JSON.stringify({ models: {}, memory: { search: { enabled: false } } }), 'utf8');
+    const harness = createHarness({
+      configPath, configChanged: false, secretsChanged: true,
+      getModelAuthSessionId: () => authSessionId,
+      secretsReloadError: Object.assign(new Error('secret resolver unavailable'), { gatewayCode: 'UNAVAILABLE' }),
+    });
+
+    try {
+      const failure = harness.service.syncConfig({ reason: 'auth-login' });
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(failure).resolves.toMatchObject({ success: false });
+      const published = harness.configSync.sync.getMockImplementation()!();
+      harness.configSync.sync.mockReturnValue({ ...published, changed: false, configChanged: false, secretsChanged: false });
+
+      await expect(harness.service.syncConfig({ reason: 'auth-logout' })).resolves.toMatchObject({ success: true });
+
+      expect(harness.startGateway).not.toHaveBeenCalled();
+      expect(harness.stopGateway).toHaveBeenCalledOnce();
+      expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([false, true])('reloads secret-only logout cleanup without a recovery ticket (failed: %s)', async failed => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'credential-logout-secrets-'));
+    const configPath = path.join(directory, 'openclaw.json');
+    fs.writeFileSync(configPath, JSON.stringify({ models: {}, memory: { search: { enabled: false } } }), 'utf8');
+    const harness = createHarness({
+      configPath, configChanged: false, secretsChanged: true,
+      getModelAuthSessionId: () => null,
+      secretsReloadError: failed ? Object.assign(new Error('native refusal'), { gatewayCode: 'FORBIDDEN' }) : undefined,
+    });
+
+    try {
+      await expect(harness.service.syncConfig({ reason: 'auth-logout' })).resolves.toMatchObject({
+        success: !failed, configSynced: !failed,
+      });
+      const published = harness.configSync.sync.getMockImplementation()!();
+      harness.configSync.sync.mockReturnValue({ ...published, changed: false, configChanged: false, secretsChanged: false });
+      if (failed) {
+        await expect(harness.service.syncConfig({ reason: 'settings' })).resolves.toMatchObject({ success: false });
+      }
+      await expect(harness.service.syncConfig({ reason: 'auth-logout' })).resolves.toMatchObject({ success: true });
+
+      expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'secrets.reload')).toHaveLength(1);
+      expect(harness.startGateway).not.toHaveBeenCalled();
+      expect(harness.stopGateway).toHaveBeenCalledTimes(failed ? 1 : 0);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }

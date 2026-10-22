@@ -115,7 +115,9 @@ productName 来自 package.json；隔离开发会话使用其独立数据目录�
 
 受管模型凭据更新后的 `secrets.reload` 失败时，Main 在停止 Gateway 前记录
 `[OpenClaw] Failed to refresh managed model provider credentials (secrets.reload):`，
-包含同步原因 `reason`、当前 `gatewayPhase`、请求耗时 `elapsedMs` 和脱敏异常堆栈 `error`。
+包含同步原因 `reason`、当前 `gatewayPhase`、累计耗时 `elapsedMs`、`attempt/maxAttempts`、
+单次请求预算 `timeoutMs`、是否继续重试 `willRetry`、可识别的受控 `errorCode` 和脱敏异常堆栈 `error`。
+短暂失败后恢复会另记 `Managed model provider credentials refreshed after retry`；重试不代表已经收到成功确认。
 若 RPC 只返回笼统的 `secrets.reload failed`，仍需按同一时间段检查 Gateway 日志中的具体失败原因。
 
 需要完整顺序时再查原生 JSON。分享前检查正文和上下文中的凭据及用户内容，不提交原始日志、数据库、WAL/SHM 或完整配置。

@@ -13,6 +13,7 @@ import {
   type BuiltinModelCredential,
   getActiveBuiltinModelCredentialSessionId,
 } from '../../../providers/builtinModelCredential';
+import { resolveBuiltinCredentialResolverTimeoutMs } from './credentialTimeouts';
 import { restrictCredentialFile } from './providerSecretFile';
 
 export { BUILTIN_SECRET_ID, BUILTIN_SECRET_SOURCE };
@@ -178,7 +179,7 @@ export function syncBuiltinCredentialFile(
           } : {}),
         },
         passEnv: [],
-        timeoutMs: 5000, maxOutputBytes: 65_536, jsonOnly: true,
+        timeoutMs: resolveBuiltinCredentialResolverTimeoutMs(), maxOutputBytes: 65_536, jsonOnly: true,
       },
     },
   };

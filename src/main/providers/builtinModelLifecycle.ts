@@ -31,6 +31,12 @@ export class BuiltinModelLifecycle {
     return this.refresh(BuiltinModelAccess.Disabled, BuiltinModelSyncReason.AuthLogout);
   }
 
+  refreshAfterCredentialRotation(): Promise<void> {
+    // Credential publication must not supersede a catalog refresh that still
+    // owes its final provider projection after model discovery completes.
+    return this.applyConfig(this.generation, BuiltinModelSyncReason.AuthLogin, true);
+  }
+
   private async refresh(
     access: BuiltinModelAccess,
     reason: string,
@@ -40,7 +46,14 @@ export class BuiltinModelLifecycle {
     if (generation !== this.generation) {
       return;
     }
+    await this.applyConfig(generation, reason);
+  }
 
+  private async applyConfig(
+    generation: number,
+    reason: string,
+    requireApplication = false,
+  ): Promise<void> {
     let syncResult: OpenClawConfigSyncResult;
     try {
       syncResult = await this.enqueueOpenClawConfigSync(reason);
@@ -56,7 +69,7 @@ export class BuiltinModelLifecycle {
 
     this.dependencies.notifyModelsChanged();
     if (!syncResult.success) {
-      if (syncResult.configSynced) {
+      if (syncResult.configSynced && !requireApplication) {
         const gatewayError = syncResult.error || 'Gateway did not apply the updated model config';
         console.warn(
           `[BuiltinModelLifecycle] Model config was synced after ${reason}, but Gateway application failed: ${gatewayError}`,
