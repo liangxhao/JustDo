@@ -1647,7 +1647,6 @@ describe('OpenClaw auth logout config sync', () => {
       'browser',
       'openai',
       'code-mode-quickjs',
-      'stt-local-cli',
       'acpx',
       'automation-permission',
       'runtime-services',
@@ -1747,7 +1746,6 @@ describe('OpenClaw auth logout config sync', () => {
       'browser',
       'openai',
       'code-mode-quickjs',
-      'stt-local-cli',
       'acpx',
       'ask-user-question',
       'automation-permission',
@@ -1972,6 +1970,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).tools.deny).toEqual([
       'custom-denied-tool',
       'portal',
+      'computer',
     ]);
   });
 
@@ -2002,7 +2001,6 @@ describe('OpenClaw auth logout config sync', () => {
       'browser',
       'openai',
       'code-mode-quickjs',
-      'stt-local-cli',
       'acpx',
       'ask-user-question',
       'automation-permission',
@@ -2010,6 +2008,8 @@ describe('OpenClaw auth logout config sync', () => {
       'plan-mode',
       'embedded-browser',
       'mxc',
+      'stt-local-cli',
+      'tts-local-cli',
     ]);
     expect(config.plugins.entries.browser).toEqual({ enabled: true });
     expect(config.plugins.bundledDiscovery).toBeUndefined();
@@ -2107,6 +2107,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).tools.deny).toEqual([
       'custom-denied-tool',
       'portal',
+      'computer',
     ]);
   });
 

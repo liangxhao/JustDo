@@ -93,7 +93,7 @@ it('renders native widget history in a workspace chat through its own sandbox ha
   const resource = post.mock.calls[0][0] as { params: { renderId: string } };
   expect(resource).toMatchObject({
     method: 'ui/notifications/sandbox-resource-ready',
-    params: { html: '<!doctype html><p>Native workspace content</p>' },
+    params: { html: expect.stringContaining('<p>Native workspace content</p>') },
   });
   await act(async () => {
     send(owner, {

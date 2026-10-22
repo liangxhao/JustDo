@@ -116,6 +116,7 @@ function registerPlugin() {
       state: { resolveStateDir: () => stateDir },
     },
     registerTrustedToolPolicy: vi.fn(),
+    registerProvider: vi.fn(),
     registerAgentHarness: vi.fn(),
     registerService: vi.fn(),
     registerGatewayMethod,

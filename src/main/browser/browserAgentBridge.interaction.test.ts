@@ -1,12 +1,21 @@
 import fs from 'fs';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-const electron = vi.hoisted(() => ({
-  handlers: new Map<string, (event: unknown, value: unknown) => void>(),
-  guests: new Map<number, Record<string, unknown>>(),
-  partition: { id: 'browser-partition', storagePath: 'C:\\profiles\\embedded' },
-  partitions: new Map<string, { id: string; storagePath: string }>(),
-}));
+const electron = vi.hoisted(() => {
+  const createPartition = (id: string, storagePath: string) => ({
+    id,
+    storagePath,
+    setProxy: vi.fn().mockResolvedValue(undefined),
+    closeAllConnections: vi.fn().mockResolvedValue(undefined),
+  });
+  return {
+    handlers: new Map<string, (event: unknown, value: unknown) => void>(),
+    guests: new Map<number, Record<string, unknown>>(),
+    createPartition,
+    partition: createPartition('browser-partition', 'C:\\profiles\\embedded'),
+    partitions: new Map<string, ReturnType<typeof createPartition>>(),
+  };
+});
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -100,10 +109,10 @@ beforeEach(() => {
   electron.guests.clear();
   electron.partitions.clear();
   electron.partitions.set('persist:justdo-browser', electron.partition);
-  electron.partitions.set('persist:justdo-browser-imported', {
-    id: 'browser-imported-partition',
-    storagePath: 'C:\\profiles\\imported',
-  });
+  electron.partitions.set(
+    'persist:justdo-browser-imported',
+    electron.createPartition('browser-imported-partition', 'C:\\profiles\\imported'),
+  );
 });
 
 afterEach(async () => {

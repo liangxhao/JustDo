@@ -5,6 +5,11 @@ const projectRoot = path.resolve(__dirname, '../..');
 const npmCli = process.env.npm_execpath;
 const vitestCli = path.join(path.dirname(require.resolve('vitest/package.json')), 'vitest.mjs');
 const electronRebuildScript = path.join(__dirname, '../electron/rebuild-electron-native.cjs');
+const nativeVerificationScript = [
+  `const Database = require(${JSON.stringify(path.join(projectRoot, 'node_modules/better-sqlite3'))});`,
+  "const database = new Database(':memory:');",
+  'database.close();',
+].join('');
 
 function runNodeScript(script, args = []) {
   return spawnSync(process.execPath, [script, ...args], {
@@ -35,8 +40,15 @@ let exitCode = 1;
 
 try {
   console.log('Preparing better-sqlite3 for the host Node.js runtime...');
-  const nodeRebuild = runNodeScript(npmCli, ['rebuild', 'better-sqlite3']);
+  const nodeRebuild = runNodeScript(npmCli, ['rebuild', 'better-sqlite3', '--foreground-scripts']);
   exitCode = resultExitCode(nodeRebuild, 'Node.js native module rebuild');
+
+  if (exitCode === 0) {
+    // A successful rebuild command does not prove that the binding matches Node.
+    // Verify in a child so Windows can replace the binding when restoring Electron.
+    const nativeVerification = runNodeScript('-e', [nativeVerificationScript]);
+    exitCode = resultExitCode(nativeVerification, 'Node.js native module verification');
+  }
 
   if (exitCode === 0) {
     const testResult = runNodeScript(vitestCli, ['run', ...process.argv.slice(2)]);

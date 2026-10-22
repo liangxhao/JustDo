@@ -1,7 +1,9 @@
 import { EventEmitter } from 'node:events';
 
+import fs from 'fs';
+import os from 'os';
 import path from 'path';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { appendAgentTeamInstruction } from '../../../../openclaw-extensions/agent-team/prompt/agentTeamPrompt';
 import { SessionStartIpc } from '../../../shared/cowork/sessionStart';
@@ -10,6 +12,17 @@ import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 
 const handlers = new Map<string, (...args: unknown[]) => unknown>();
+let temporaryDirectory: string;
+let workspaceRoot: string;
+
+beforeEach(() => {
+  temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'session-execution-'));
+  workspaceRoot = path.join(temporaryDirectory, 'workspace');
+});
+
+afterEach(() => {
+  fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+});
 
 vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] },
@@ -59,7 +72,7 @@ test('keeps Team launch hooks when the first message is delegated to its current
     ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
     getCoworkStore: () =>
       ({
-        getConfig: () => ({ workingDirectory: 'C:/project', permissionMode: 'ask' }),
+        getConfig: () => ({ workingDirectory: workspaceRoot, permissionMode: 'ask' }),
         getAgent: () => ({ enabled: true, model: '' }),
         getSessionRunByClientTurnId: () => undefined,
         createSession: () => created,
@@ -102,7 +115,7 @@ const session = (permissionMode: 'ask' | 'auto' | 'full'): CoworkSession => ({
   title: 'Session',
   status: 'idle',
   pinned: false,
-  cwd: 'C:\\workspace',
+  cwd: workspaceRoot,
   executionMode: 'local',
   permissionMode,
   activeSkillIds: [],
@@ -114,7 +127,7 @@ const session = (permissionMode: 'ask' | 'auto' | 'full'): CoworkSession => ({
 describe('worktree first-message admission', () => {
   const setup = () => {
     const created = session('ask');
-    const root = path.resolve('native-worktrees', 'task-1');
+    const root = path.join(temporaryDirectory, 'native-worktrees', 'task-1');
     let resolveCreation!: (value: unknown) => void;
     const nativeCreation = new Promise(resolve => {
       resolveCreation = resolve;
@@ -209,7 +222,7 @@ describe('initial admission cancellation', () => {
     const stopSession = vi.fn().mockResolvedValue(undefined);
     const cancelLaunch = vi.fn().mockResolvedValue(undefined);
     const store = {
-      getConfig: () => ({ workingDirectory: 'C:/project', permissionMode: 'ask' }),
+      getConfig: () => ({ workingDirectory: workspaceRoot, permissionMode: 'ask' }),
       getAgent: () => ({ enabled: true, model: '' }),
       createSession,
       updateSession: vi.fn(),
@@ -353,7 +366,7 @@ describe('cowork session execution permissions', () => {
     const createSession = vi.fn().mockReturnValue(session('ask'));
     const store = {
       getConfig: () => ({
-        workingDirectory: 'C:\\workspace',
+        workingDirectory: workspaceRoot,
         executionMode: 'local',
         agentEngine: 'openclaw',
         permissionMode: 'full',
@@ -395,7 +408,7 @@ describe('cowork session execution permissions', () => {
     expect(startSession).toHaveBeenCalledWith(
       'session-1',
       '<<<EXTERNAL_UNTRUSTED_CONTENT id="0123456789abcdef">>>context<<<END_EXTERNAL_UNTRUSTED_CONTENT id="0123456789abcdef">>>\n\nhello',
-      expect.objectContaining({ workspaceRoot: 'C:\\workspace' }),
+      expect.objectContaining({ workspaceRoot }),
     );
   });
 
@@ -403,7 +416,7 @@ describe('cowork session execution permissions', () => {
     const createSession = vi.fn().mockReturnValue(session('ask'));
     const store = {
       getConfig: () => ({
-        workingDirectory: 'C:\\workspace',
+        workingDirectory: workspaceRoot,
         executionMode: 'local',
         agentEngine: 'openclaw',
         permissionMode: 'full',
@@ -462,7 +475,7 @@ describe('cowork session execution permissions', () => {
     const createSession = vi.fn().mockReturnValue(session('ask'));
     const store = {
       getConfig: () => ({
-        workingDirectory: 'C:\\workspace',
+        workingDirectory: workspaceRoot,
         executionMode: 'local',
         agentEngine: 'openclaw',
         permissionMode: 'ask',
@@ -485,7 +498,7 @@ describe('cowork session execution permissions', () => {
 
     const pending = handlers.get('cowork:session:start')?.(
       {},
-      { prompt: 'hello', cwd: 'C:\\workspace', permissionMode: 'full' },
+      { prompt: 'hello', cwd: workspaceRoot, permissionMode: 'full' },
     ) as Promise<unknown>;
     await Promise.resolve();
     expect(ensureEngineRunning).not.toHaveBeenCalled();
@@ -584,7 +597,7 @@ describe('cowork session execution permissions', () => {
     );
     const store = {
       getConfig: () => ({
-        workingDirectory: 'C:\\workspace',
+        workingDirectory: workspaceRoot,
         executionMode: 'local',
         permissionMode: 'ask',
       }),
@@ -623,7 +636,7 @@ test.each([undefined, { enabled: false, model: '' }])(
       ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
       getCoworkStore: () =>
         ({
-          getConfig: () => ({ workingDirectory: 'C:/project' }),
+          getConfig: () => ({ workingDirectory: workspaceRoot }),
           getAgent: () => agent,
           createSession,
         }) as unknown as CoworkStore,
@@ -646,7 +659,7 @@ test('uses main even when a specialist was previously configured as the default'
     ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
     getCoworkStore: () =>
       ({
-        getConfig: () => ({ workingDirectory: 'C:/project' }),
+        getConfig: () => ({ workingDirectory: workspaceRoot }),
         listAgents: () => [{ id: 'research', enabled: true, isDefault: true }],
         getAgent: () => ({ enabled: true, model: '' }),
         createSession,
@@ -701,7 +714,7 @@ test.each([
       ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
       getCoworkStore: () =>
         ({
-          getConfig: () => ({ workingDirectory: 'C:/project', allowMainAgentSwitch: true }),
+          getConfig: () => ({ workingDirectory: workspaceRoot, allowMainAgentSwitch: true }),
           getAgent: () => ({ enabled, deletedAt, model: 'provider/research-model' }),
           createSession,
           getSession: () => created,
@@ -743,7 +756,7 @@ describe('homepage App adoption at first-message admission', () => {
     appWorkspaceRequestId: '12345678-1234-1234-1234-123456789abc',
   };
   const setup = async (fails = false, launch?: Partial<AgentTeamLaunchCoordinator>) => {
-    const cwd = path.resolve('first-send-fixture');
+    const cwd = path.join(temporaryDirectory, 'first-send-fixture');
     const frame = { url: 'http://127.0.0.1:43127/' };
     const owner = Object.assign(new EventEmitter(), {
       mainFrame: frame,

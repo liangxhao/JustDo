@@ -216,7 +216,7 @@ test('restores Electron native modules after tests even when Vitest fails', () =
 
   expect(packageJson.scripts.test).toBe('node scripts/test/run-tests.cjs');
   expect(packageJson.scripts).not.toHaveProperty('pretest');
-  expect(testRunner).toContain("['rebuild', 'better-sqlite3']");
+  expect(testRunner).toContain("['rebuild', 'better-sqlite3', '--foreground-scripts']");
   expect(testRunner).toContain("path.join(__dirname, '../electron/rebuild-electron-native.cjs')");
   expect(testRunner).toContain('finally');
 });

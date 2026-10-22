@@ -87,7 +87,7 @@ npm run compile:electron
 npm test
 ```
 
-`npm test` 的包装脚本切换 better-sqlite3 到 Node ABI，结束后恢复 Electron ABI；不要与 Electron 原生重建或依赖该模块的开发会话并行执行。运行时变更还需按[补丁指南](openclaw-runtime-patches.md)验证锁定产物。
+`npm test` 的包装脚本切换 better-sqlite3 到 Node ABI，并在独立子进程中创建内存数据库验证原生绑定；重建命令成功但绑定仍不兼容时立即停止，不启动测试集。结束后恢复 Electron ABI；不要与 Electron 原生重建或依赖该模块的开发会话并行执行。运行时变更还需按[补丁指南](openclaw-runtime-patches.md)验证锁定产物。
 
 全量测试默认使用两个 worker，避免原生模块冷启动及 Windows 进程快照在高并发下争抢资源而超时；可通过 `npm test -- --maxWorkers=N` 显式覆盖。会话存储诊断测试包含独立 CLI 启动，每例使用 30 秒预算，子进程仍保留各自的 10 秒上限。桌面控制开关、原生 provider 环境凭据、portal 策略及 migration receipts 的生命周期矩阵每例连续执行 4–6 次真实配置投影，分别使用 15 秒预算；不放宽全局测试时限或生产进程清理期限。
 
