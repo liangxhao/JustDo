@@ -18,6 +18,7 @@ import {
   WifiIcon,
   WrenchScrewdriverIcon,
 } from '@heroicons/react/24/outline';
+import { diagnosticSourceHasGaps } from '@shared/cowork/diagnostics/diagnosticEvidenceCoverage';
 import { type DiagnosticFinding } from '@shared/cowork/diagnostics/diagnosticFindings';
 import { diagnoseHistoryFailure } from '@shared/cowork/diagnostics/diagnosticHistoryFindings';
 import type {
@@ -30,6 +31,7 @@ import { useState } from 'react';
 import { i18nService } from '@/services/i18n';
 
 import {
+  presentDiagnosticCoverage,
   presentDiagnosticFinding,
   presentDiagnosticStop,
   visibleDiagnosticFindings,
@@ -73,6 +75,12 @@ export function DiagnosticOverview({ report }: { report: DiagnosticReport }) {
   const stop = presentDiagnosticStop(report);
   const reason = stop.reason;
   const { certainty, incomplete } = stop;
+  const generic =
+    ['completed', 'unknown', 'failed'].includes(reason) &&
+    !stop.timeoutPhase &&
+    !stop.outputIssue &&
+    !stop.recoveryExhausted &&
+    !stop.modelReplyEnded;
   const tone = [
     'failed',
     'timeout',
@@ -119,10 +127,26 @@ export function DiagnosticOverview({ report }: { report: DiagnosticReport }) {
       hint: 'diagnosticsSourcesHint',
     },
   ];
+  const explanation = (
+    <>
+      <div className="diagnostics-answer-evidence">
+        <h4>{t('diagnosticsAnswerEvidence')}</h4>
+        <ul>
+          {stop.details.map((detail, index) => (
+            <li key={index}>{detail}</li>
+          ))}
+        </ul>
+      </div>
+      <div className="diagnostics-answer-action">
+        <h4>{t('diagnosticsAnswerAction')}</h4>
+        <p>{stop.advice}</p>
+      </div>
+    </>
+  );
   return (
     <>
       <section
-        className={`diagnostics-answer diagnostics-tone-${tone}`}
+        className={`diagnostics-answer diagnostics-tone-${tone}${generic ? ' diagnostics-answer-generic' : ''}`}
         aria-label={t('diagnosticsStopTitle')}
       >
         <div className="diagnostics-answer-heading">
@@ -136,20 +160,17 @@ export function DiagnosticOverview({ report }: { report: DiagnosticReport }) {
             {t('diagnosticsAnswerIncomplete')}
           </p>
         )}
-        <div className="diagnostics-answer-evidence">
-          <h4>{t('diagnosticsAnswerEvidence')}</h4>
-          <ul>
-            {stop.details.map((detail, index) => (
-              <li key={index}>{detail}</li>
-            ))}
-          </ul>
-        </div>
-        <div className="diagnostics-answer-action">
-          <h4>{t('diagnosticsAnswerAction')}</h4>
-          <p>{stop.advice}</p>
-        </div>
+        {generic ? (
+          <details className="diagnostics-answer-details">
+            <summary>{t('diagnosticsAnswerExpand')}</summary>
+            {explanation}
+          </details>
+        ) : (
+          explanation
+        )}
       </section>
       <DiagnosticFindings report={report} />
+      <DiagnosticCollectionSummary report={report} />
       <details className="diagnostics-technical diagnostics-run-details">
         <summary>
           <span>{t('diagnosticsOverview')}</span>
@@ -191,24 +212,10 @@ export function DiagnosticOverview({ report }: { report: DiagnosticReport }) {
             </div>
           ))}
         </div>
-        {(report.coverage.dropped > 0 ||
-          !!report.coverage.collectorDropped ||
-          report.coverage.storageFailed ||
-          report.conclusion.toolFailures > 0) && (
+        {report.conclusion.toolFailures > 0 && (
           <div className="diagnostics-coverage-notice">
             <InformationCircleIcon aria-hidden="true" />
             <div>
-              {report.coverage.dropped > 0 && (
-                <p>
-                  {t('diagnosticsDropped')}: {report.coverage.dropped}
-                </p>
-              )}
-              {!!report.coverage.collectorDropped && (
-                <p>
-                  {t('diagnosticsCollectorDropped')}: {report.coverage.collectorDropped}
-                </p>
-              )}
-              {report.coverage.storageFailed && <p role="alert">{t('diagnosticsStorageFailed')}</p>}
               {report.conclusion.toolFailures > 0 && (
                 <p>
                   {t('diagnosticsToolFailures')}: {report.conclusion.toolFailures}
@@ -219,6 +226,30 @@ export function DiagnosticOverview({ report }: { report: DiagnosticReport }) {
         )}
       </details>
     </>
+  );
+}
+
+function DiagnosticCollectionSummary({ report }: { report: DiagnosticReport }) {
+  const coverage = presentDiagnosticCoverage(report);
+  return (
+    <section
+      className="diagnostics-collection-summary"
+      aria-label={t('diagnosticsCollectionTitle')}
+    >
+      <SectionHeading icon={CircleStackIcon} title={t('diagnosticsCollectionTitle')} />
+      <p className="diagnostics-collection-status">{coverage.title}</p>
+      <p>{coverage.counts}</p>
+      {coverage.logsCollected && <p className="diagnostics-muted">{coverage.association}</p>}
+      {coverage.window && <p className="diagnostics-muted">{coverage.window}</p>}
+      {(coverage.sourceLines.length > 0 || coverage.notes.length > 0) && (
+        <ul>
+          {[...coverage.sourceLines, ...coverage.notes].map((line, index) => (
+            <li key={index}>{line}</li>
+          ))}
+        </ul>
+      )}
+      <p className="diagnostics-muted">{t('diagnosticsCollectionScope')}</p>
+    </section>
   );
 }
 
@@ -298,17 +329,6 @@ function DiagnosticFindings({ report }: { report: DiagnosticReport }) {
         title={t('diagnosticsReportTitle')}
         count={related.length + failures.length || undefined}
       />
-      {history && (
-        <p className="diagnostics-muted">
-          {t(`diagnosticsHistory_${history.status}`).replace(
-            '{count}',
-            number(history.messagesScanned),
-          )}
-        </p>
-      )}
-      {history?.reason && (
-        <p className="diagnostics-muted">{t(`diagnosticsHistoryReason_${history.reason}`)}</p>
-      )}
       {failures.length > 0 && <p className="diagnostics-muted">{t('diagnosticsHistoryScope')}</p>}
       {failures.length > 0 && (
         <ul className="diagnostics-finding-list">
@@ -346,11 +366,6 @@ function DiagnosticFindings({ report }: { report: DiagnosticReport }) {
             </li>
           ))}
         </ul>
-      )}
-      {!!history?.omitted && (
-        <p className="diagnostics-muted">
-          {t('diagnosticsHistoryOmitted').replace('{count}', number(history.omitted))}
-        </p>
       )}
       {related.length ? (
         cards(related)
@@ -425,6 +440,7 @@ function FindingEvidence({
 
 function SourceCard({ source }: { source: DiagnosticLogCoverage }) {
   const { icon: Icon, tone } = sources[source.source];
+  const complete = source.scanComplete === true && !diagnosticSourceHasGaps(source);
   return (
     <li className={`diagnostics-source-card diagnostics-tone-${tone}`}>
       <div className="diagnostics-source-heading">
@@ -436,11 +452,9 @@ function SourceCard({ source }: { source: DiagnosticLogCoverage }) {
             {t(`diagnosticsSource_${source.source}`)} ·{' '}
             {t(`diagnosticsSourceStatus_${source.status}`)}
           </h4>
-          <span
-            className={`diagnostics-source-state is-${source.scanComplete ? 'complete' : 'partial'}`}
-          >
+          <span className={`diagnostics-source-state is-${complete ? 'complete' : 'partial'}`}>
             <span />
-            {t(source.scanComplete ? 'diagnosticsScanDoneShort' : 'diagnosticsScanGapShort')}
+            {t(complete ? 'diagnosticsScanDoneShort' : 'diagnosticsScanGapShort')}
           </span>
         </div>
       </div>

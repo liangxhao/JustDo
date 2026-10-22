@@ -12,8 +12,8 @@ import {
   StopIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import { diagnoseHistoryFailure } from '@shared/cowork/diagnostics/diagnosticHistoryFindings';
 import type {
+  DiagnosticExportResult,
   DiagnosticFailure,
   DiagnosticReadResult,
   DiagnosticReport,
@@ -32,9 +32,8 @@ import {
   DiagnosticTimeline,
 } from './SessionDiagnosticsEvidence';
 import {
-  summarizeDiagnosticFinding,
-  summarizeDiagnosticStop,
-  visibleDiagnosticFindings,
+  presentDiagnosticExport,
+  summarizeDiagnosticReport,
 } from './sessionDiagnosticsPresentation';
 
 interface Props {
@@ -68,6 +67,7 @@ export default function CoworkSessionDiagnosticsModal({
     sessionRunId?: string;
     snapshotId: string;
   }>();
+  const exportingQuery = useRef<typeof collectingQuery.current>();
   const [loading, setLoading] = useState(true);
   const [listing, setListing] = useState(false);
   const [working, setWorking] = useState<false | 'refresh' | 'collect' | 'export' | 'copy'>(false);
@@ -82,6 +82,7 @@ export default function CoworkSessionDiagnosticsModal({
   const close = useRef(onClose);
   close.current = onClose;
   const scanTask = useRef<Promise<DiagnosticReadResult>>();
+  const exportTask = useRef<Promise<DiagnosticExportResult>>();
   const collect = useCallback(
     async (
       query: { sessionId: string; sessionRunId?: string; snapshotId: string },
@@ -89,7 +90,10 @@ export default function CoworkSessionDiagnosticsModal({
     ) => {
       if (collectingQuery.current)
         await window.electron.cowork.diagnostics.cancel?.(collectingQuery.current);
+      if (exportingQuery.current)
+        await window.electron.cowork.diagnostics.cancel?.(exportingQuery.current);
       await scanTask.current?.catch(() => {});
+      await exportTask.current?.catch(() => {});
       if (!mounted.current || request.current !== token) return;
       collectingQuery.current = query;
       setScanning(true);
@@ -111,7 +115,11 @@ export default function CoworkSessionDiagnosticsModal({
   const titleId = useId();
   useEffect(() => {
     const unsubscribe = window.electron.cowork.diagnostics.onProgress?.(value => {
-      if (value.snapshotId === collectingQuery.current?.snapshotId) setProgress(value);
+      if (
+        value.snapshotId === collectingQuery.current?.snapshotId ||
+        value.snapshotId === exportingQuery.current?.snapshotId
+      )
+        setProgress(value);
     });
     const unsubscribeHistory = window.electron.cowork.diagnostics.onHistory?.(value => {
       if (!mounted.current || value.snapshotId !== collectingQuery.current?.snapshotId) return;
@@ -126,6 +134,8 @@ export default function CoworkSessionDiagnosticsModal({
       unsubscribeHistory?.();
       if (collectingQuery.current)
         void window.electron.cowork.diagnostics.cancel?.(collectingQuery.current);
+      if (exportingQuery.current)
+        void window.electron.cowork.diagnostics.cancel?.(exportingQuery.current);
     };
   }, []);
 
@@ -262,6 +272,8 @@ export default function CoworkSessionDiagnosticsModal({
       });
     return () => {
       request.current += 1;
+      if (exportingQuery.current)
+        void window.electron.cowork.diagnostics.cancel?.(exportingQuery.current);
     };
   }, [sessionId, selected, revision, fail, collect]);
 
@@ -298,41 +310,10 @@ export default function CoworkSessionDiagnosticsModal({
     setWorking(action);
     setError(undefined);
     setNotice(undefined);
+    let pendingExport: Promise<DiagnosticExportResult> | undefined;
     try {
       if (action === 'copy') {
-        await navigator.clipboard.writeText(
-          [
-            t('diagnosticsTitle'),
-            `${t('diagnosticsCollected')}: ${date(snapshot.collectedAt)}`,
-            summarizeDiagnosticStop(snapshot),
-            ...(snapshot.history
-              ? [
-                  t(`diagnosticsHistory_${snapshot.history.status}`).replace(
-                    '{count}',
-                    String(snapshot.history.messagesScanned),
-                  ),
-                  ...(snapshot.history.reason
-                    ? [t(`diagnosticsHistoryReason_${snapshot.history.reason}`)]
-                    : []),
-                  t('diagnosticsHistoryScope'),
-                ]
-              : []),
-            ...(snapshot.history?.failures ?? []).map(
-              failure =>
-                `${date(failure.timestamp)} · ${failure.tool ?? t(failure.kind === 'tool' ? 'diagnosticsKind_tool' : failure.kind === 'runtime' ? 'diagnosticsHistoryRuntime' : 'diagnosticsHistoryModel')} · ${t(`diagnosticsHistoryOutcome_${failure.outcome ?? 'failed'}`)}\n${t(`diagnosticsHistoryAssociation_${failure.association}`)}\n${failure.excerpt || t('diagnosticsHistoryNoText')}\n${t(diagnoseHistoryFailure(failure).adviceKey)}${diagnoseHistoryFailure(failure).inferred ? `\n${t('diagnosticsHistoryInferred')}` : ''}`,
-            ),
-            ...visibleDiagnosticFindings(snapshot).map(finding =>
-              summarizeDiagnosticFinding(finding, snapshot),
-            ),
-            t('diagnosticsPartial'),
-            `${t('diagnosticsDropped')}: ${snapshot.coverage.dropped}`,
-            ...(snapshot.coverage.collectorDropped
-              ? [`${t('diagnosticsCollectorDropped')}: ${snapshot.coverage.collectorDropped}`]
-              : []),
-            ...(snapshot.coverage.storageFailed ? [t('diagnosticsStorageFailed')] : []),
-            t(`diagnosticsConnection_${snapshot.connection}`),
-          ].join('\n'),
-        );
+        await navigator.clipboard.writeText(summarizeDiagnosticReport(snapshot));
         if (mounted.current && token === request.current) setNotice(t('diagnosticsCopied'));
       } else if (action === 'refresh' || action === 'collect') {
         const result =
@@ -343,10 +324,18 @@ export default function CoworkSessionDiagnosticsModal({
         if (result.success) setReport(result.report);
         else fail(result);
       } else {
-        const result = await window.electron.cowork.diagnostics.export(query);
+        exportingQuery.current = query;
+        setProgress(undefined);
+        pendingExport = window.electron.cowork.diagnostics.export(query);
+        exportTask.current = pendingExport;
+        const result = await pendingExport;
         if (!mounted.current || token !== request.current) return;
         if (!result.success) fail(result);
-        else if (!result.canceled) setNotice(t('diagnosticsExported'));
+        else if (result.canceled) setNotice(t('diagnosticsExportCanceled'));
+        else
+          setNotice(
+            result.summary ? presentDiagnosticExport(result.summary) : t('diagnosticsExported'),
+          );
       }
     } catch {
       if (mounted.current && token === request.current)
@@ -360,11 +349,15 @@ export default function CoworkSessionDiagnosticsModal({
           ),
         );
     } finally {
+      if (action === 'export' && exportingQuery.current === query)
+        exportingQuery.current = undefined;
+      if (pendingExport && exportTask.current === pendingExport) exportTask.current = undefined;
       if (mounted.current && token === request.current) setWorking(false);
     }
   };
 
   const busy = loading || Boolean(working);
+  const activeQuery = working === 'export' ? exportingQuery.current : collectingQuery.current;
   const filePercent =
     progress && progress.fileBytesTotal > 0
       ? Math.min(
@@ -422,7 +415,7 @@ export default function CoworkSessionDiagnosticsModal({
               <select
                 aria-label={t('diagnosticsRun')}
                 value={selected}
-                disabled={missing}
+                disabled={missing || working === 'export'}
                 onChange={event => {
                   request.current += 1;
                   setReport(undefined);
@@ -440,7 +433,7 @@ export default function CoworkSessionDiagnosticsModal({
             {cursor && (
               <button
                 className={buttonClass}
-                disabled={listing || missing}
+                disabled={listing || missing || working === 'export'}
                 onClick={() => void loadMore()}
               >
                 {t('diagnosticsMore')}
@@ -452,14 +445,22 @@ export default function CoworkSessionDiagnosticsModal({
             </span>
           </div>
 
-          {(loading || scanning) && (
+          {(loading || scanning || working === 'export') && (
             <section className="diagnostics-scan" aria-label={t('diagnosticsScanTitle')}>
               <div className="diagnostics-scan-heading">
                 <span className="diagnostics-scan-icon">
                   <ArrowPathIcon aria-hidden="true" />
                 </span>
                 <div className="diagnostics-scan-copy">
-                  <p role="status">{t(report ? 'diagnosticsCollecting' : 'diagnosticsLoading')}</p>
+                  <p role="status">
+                    {t(
+                      working === 'export'
+                        ? 'diagnosticsExportCollecting'
+                        : report
+                          ? 'diagnosticsCollecting'
+                          : 'diagnosticsLoading',
+                    )}
+                  </p>
                   {progress && (
                     <p className="diagnostics-muted">
                       {t(`diagnosticsSource_${progress.source}`)} · {t('diagnosticsScanProgress')}:{' '}
@@ -467,12 +468,11 @@ export default function CoworkSessionDiagnosticsModal({
                     </p>
                   )}
                 </div>
-                {scanning && collectingQuery.current && (
+                {(scanning || working === 'export') && activeQuery && (
                   <button
                     className="diagnostics-button diagnostics-button-quiet"
                     onClick={() => {
-                      if (collectingQuery.current)
-                        void window.electron.cowork.diagnostics.cancel(collectingQuery.current);
+                      if (activeQuery) void window.electron.cowork.diagnostics.cancel(activeQuery);
                     }}
                   >
                     <StopIcon aria-hidden="true" />

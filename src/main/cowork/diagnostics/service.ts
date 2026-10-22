@@ -323,11 +323,26 @@ export class SessionDiagnosticsService {
     query: DiagnosticQuery & { snapshotId: string },
     owner: number,
     signal?: AbortSignal,
+    options: { onProgress?: (progress: DiagnosticScanProgress) => void } = {},
   ) {
+    const selected = this.snapshot(query, owner);
+    // A save dialog can stay open while this run gains new terminal evidence.
+    // Refresh the selected run explicitly; never follow a later session run.
+    const current =
+      selected.run && (selected.run.state === 'running' || selected.run.endedAt !== undefined)
+        ? this.read({ sessionId: selected.sessionId, sessionRunId: selected.run.id }, owner)
+        : selected;
+    const collectionQuery = {
+      ...query,
+      snapshotId: current.snapshotId,
+      ...(selected.run ? { sessionRunId: selected.run.id } : {}),
+    };
     const capture = new DiagnosticExportLogs();
-    const report = await this.collect(query, owner, {
+    const report = await this.collect(collectionQuery, owner, {
       signal,
-      onExportRecord: (source, text, association) => capture.append(source, text, association),
+      onProgress: progress => options.onProgress?.({ ...progress, snapshotId: query.snapshotId }),
+      onExportRecord: (source, text, association, metadata) =>
+        capture.append(source, text, association, metadata),
     });
     return { report, logs: capture.finish() };
   }
@@ -349,6 +364,9 @@ export class SessionDiagnosticsService {
     this.pinnedSnapshots.add(query.snapshotId);
     try {
       const sessionKey = this.deps.getNativeSessionKey(previous.sessionId);
+      const nativeRunIds = previous.run
+        ? this.deps.store.getNativeRunIds(previous.sessionId, previous.run.id)
+        : [];
       const runtime = this.deps.getRuntime();
       const client = runtime?.getGatewayClient();
       const runtimeInfo: DiagnosticRuntimeInfo = {
@@ -362,8 +380,15 @@ export class SessionDiagnosticsService {
       };
       const connectionCurrent = () =>
         runtime === this.deps.getRuntime() && client === runtime?.getGatewayClient();
-      const isCurrent = () =>
-        connectionCurrent() && sessionKey === this.deps.getNativeSessionKey(previous.sessionId);
+      const bindingCurrent = () =>
+        sessionKey === this.deps.getNativeSessionKey(previous.sessionId) &&
+        JSON.stringify(nativeRunIds) ===
+          JSON.stringify(
+            previous.run
+              ? this.deps.store.getNativeRunIds(previous.sessionId, previous.run.id)
+              : [],
+          );
+      const isCurrent = () => connectionCurrent() && bindingCurrent();
       const checkHistory = (history: NonNullable<DiagnosticReport['history']>) => {
         this.snapshot(query, owner);
         if (!isCurrent()) {
@@ -465,6 +490,8 @@ export class SessionDiagnosticsService {
         }
         const logs = await collectDiagnosticLogs(previous, sources, native, {
           fullScan: true,
+          nativeRunIds,
+          nativeSessionKey: sessionKey,
           onExportRecord: options.onExportRecord,
           signal: options.signal,
           onProgress: progress =>
@@ -485,6 +512,7 @@ export class SessionDiagnosticsService {
         client,
         sessionKey === this.deps.getNativeSessionKey(previous.sessionId) ? sessionKey : null,
         options.signal,
+        nativeRunIds,
       ).then(history => {
         checkHistory(history);
         publishHistory(history);
@@ -505,6 +533,20 @@ export class SessionDiagnosticsService {
       const history = checkHistory(historyResult.value);
       if (!isCurrent()) {
         publishHistory(history);
+        // Export-only raw text must not escape after its owner/connection changes.
+        if (options.onExportRecord) throw new DiagnosticServiceError('expired');
+      }
+      if (!bindingCurrent()) {
+        logs.records = [];
+        for (const source of logs.sources) {
+          source.scanComplete = false;
+          if (source.status !== 'unavailable') source.status = 'partial';
+          if (!source.reasons.includes('source_changed')) source.reasons.push('source_changed');
+          source.emitted = 0;
+          source.matched = 0;
+          source.signalCounts = {};
+          source.outputOmitted = 0;
+        }
       }
       if (!connectionCurrent()) runtimeInfo.gateway = { status: 'changed' };
       if (artifactResult.status === 'fulfilled')

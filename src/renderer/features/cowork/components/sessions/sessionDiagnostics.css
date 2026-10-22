@@ -1345,11 +1345,54 @@
   margin: 0;
   line-height: 1.8;
 }
+.diagnostics-answer-generic {
+  padding: 16px 20px;
+}
+.diagnostics-answer-generic .diagnostics-answer-title {
+  margin: 10px 0;
+}
+.diagnostics-answer-generic .diagnostics-answer-limit {
+  margin-bottom: 0;
+}
+.diagnostics-answer-details > summary {
+  margin-top: 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--justdo-text-secondary);
+}
+.diagnostics-answer-details[open] > summary {
+  margin-bottom: 14px;
+}
 .diagnostics-run-details .diagnostics-overview-meta {
   margin-top: 18px;
 }
 .diagnostics-run-details .diagnostics-metrics {
   margin-top: 14px;
+}
+.diagnostics-collection-summary {
+  padding: 15px 18px;
+  border: 1px solid var(--justdo-border);
+  border-radius: 12px;
+  background: var(--justdo-surface-raised);
+  overflow-wrap: anywhere;
+}
+.diagnostics-collection-summary p {
+  margin: 7px 0 0;
+}
+.diagnostics-collection-status {
+  font-weight: 600;
+}
+.diagnostics-collection-summary ul {
+  margin: 10px 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.diagnostics-collection-summary li + li {
+  margin-top: 5px;
+}
+.diagnostics-message {
+  white-space: pre-line;
 }
 @media (max-width: 640px) {
   .diagnostics-answer {

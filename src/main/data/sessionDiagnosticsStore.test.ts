@@ -47,6 +47,24 @@ describe('SessionDiagnosticsStore', () => {
     expect(store.getRun('other', 'r')).toBeUndefined();
   });
 
+  it('reads exact native receipt identities without requiring retained diagnostic events', () => {
+    expect(store.read('s', 'r').events).toEqual([]);
+    // Copied timing/root receipts do not grant either session new diagnostic evidence.
+    expect(store.getNativeRunIds('s', 'r')).toEqual(['client']);
+    expect(store.getNativeRunIds('other', 'r')).toEqual([]);
+    expect(store.getNativeRunIds('other', 'copy')).toEqual(['copy-client']);
+    db.prepare('UPDATE cowork_session_runs SET root_run_id = ? WHERE id = ?').run(
+      'copy-native',
+      'copy',
+    );
+    expect(store.getNativeRunIds('s', 'r')).toEqual(['native', 'client']);
+    db.prepare(
+      `INSERT INTO cowork_session_runs VALUES
+       ('ambiguous', 's', 'native', 'another-client', 200, 201, 'completed')`,
+    ).run();
+    expect(store.getNativeRunIds('s', 'r')).toEqual(['client']);
+  });
+
   it('deduplicates native sequence replays while separating connection epochs', () => {
     store.append('s', event({ sequence: 1 }));
     store.append('s', event({ id: 'replay', sequence: 1, observedAt: now + 1 }));

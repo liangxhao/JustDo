@@ -394,6 +394,36 @@ describe('payload-free bounded diagnostic log collection', () => {
     expect(historical.events).toEqual([]);
   });
 
+  it('advances an open run window at collection time while keeping historical windows fixed', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const collectedAt = time + 180_001;
+    vi.setSystemTime(collectedAt);
+    const running = report();
+    const native = {
+      lines: [line({ runId: undefined, time: new Date(collectedAt).toISOString() })],
+    };
+    const current = await collectDiagnosticLogs(running, empty(), native);
+    expect(current.window.to).toBe(collectedAt + 120_000);
+    expect(current.records).toMatchObject([{ timestamp: collectedAt, association: 'time_window' }]);
+    const historical = await collectDiagnosticLogs(
+      { ...running, run: { ...running.run!, endedAt: time, state: 'failed' } },
+      empty(),
+      native,
+    );
+    expect(historical.window.to).toBe(time + 120_000);
+    expect(historical.records).toEqual([]);
+    const missingEnd = await collectDiagnosticLogs(
+      { ...running, run: { ...running.run!, state: 'failed' } },
+      empty(),
+      native,
+    );
+    expect(missingEnd.window.to).toBe(time + 120_000);
+    expect(missingEnd.records).toEqual([]);
+    const noRun = await collectDiagnosticLogs({ ...running, run: undefined }, empty(), native);
+    expect(noRun.window.to).toBe(time + 120_000);
+    expect(noRun.records).toEqual([]);
+  });
+
   it('preserves native run evidence with native transcript identities and never calls them product sessions', async () => {
     const result = await collectDiagnosticLogs(report(), empty(), {
       lines: [
@@ -578,6 +608,98 @@ describe('payload-free bounded diagnostic log collection', () => {
     const result = await collectDiagnosticLogs(report(), { ...empty(), main: [target] });
     expect(result.records).toHaveLength(1);
     expect(result.sources[0].suppressed).toBe(3);
+  });
+
+  it('uses trusted receipt identities after diagnostic events expire and preserves export references', async () => {
+    const historical = { ...report(), events: [] };
+    const exported = vi.fn();
+    const result = await collectDiagnosticLogs(
+      historical,
+      empty(),
+      {
+        lines: [
+          line({ runId: 'native-run' }),
+          line({ runId: 'client-turn' }),
+          line({ runId: 'other-native' }),
+        ],
+      },
+      {
+        nativeRunIds: ['native-run', 'client-turn'],
+        onExportRecord: exported,
+      },
+    );
+    expect(result.records).toHaveLength(2);
+    expect(result.records.every(record => record.association === 'run')).toBe(true);
+    expect(exported.mock.calls.map(call => call[3].id).sort()).toEqual(
+      result.records.map(record => record.id).sort(),
+    );
+    expect(exported.mock.calls[0][3]).toMatchObject({ timestamp: time, level: 'error' });
+  });
+
+  it('rejects foreign structured session keys and uses matching keys only as session evidence', async () => {
+    const result = await collectDiagnosticLogs(
+      report(),
+      empty(),
+      {
+        lines: [
+          line({ sessionKey: 'other-key' }),
+          line({ runId: undefined, sessionKey: 'native-key', sessionId: 'native-uuid' }),
+          line({ runId: 'other-run', sessionKey: 'native-key' }),
+          line({
+            runId: undefined,
+            sessionKey: 'native-key',
+            time: '2020-01-01T00:00:00Z',
+          }),
+          line({ runId: undefined, prompt: { sessionKey: 'native-key' } }),
+        ],
+      },
+      { nativeSessionKey: 'native-key' },
+    );
+    expect(result.records.map(record => record.association)).toEqual(['session', 'time_window']);
+    expect(result.sources[3].suppressed).toBe(3);
+    expect(JSON.stringify(result)).not.toContain('native-key');
+  });
+
+  it('exports unclassified context before applying preview classification', async () => {
+    const exported = vi.fn();
+    const result = await collectDiagnosticLogs(
+      report(),
+      empty(),
+      { lines: [line({ level: 'info', errorCategory: undefined, message: 'ordinary context' })] },
+      { onExportRecord: exported },
+    );
+    expect(result.records).toEqual([]);
+    expect(exported).toHaveBeenCalledWith(
+      'native',
+      expect.stringContaining('ordinary context'),
+      'run',
+      { id: 'log-native-1', timestamp: time, level: 'info' },
+    );
+  });
+
+  it('keeps a complete source available when filtering and preview limits omit expected records', async () => {
+    const target = await file(
+      [
+        line({ runId: 'other-native' }),
+        line({ level: 'info', errorCategory: undefined, message: 'ordinary context' }),
+        ...Array.from({ length: 101 }, () => line()),
+      ].join('\n'),
+    );
+    const result = await collectDiagnosticLogs(
+      report(),
+      { ...empty(), main: [target] },
+      undefined,
+      { fullScan: true },
+    );
+    expect(result.sources[0]).toMatchObject({
+      status: 'available',
+      scanComplete: true,
+      outputOmitted: 1,
+      emitted: 100,
+    });
+    expect(result.sources[0].reasons).toEqual(
+      expect.arrayContaining(['outside_window', 'no_safe_fields', 'output_limit']),
+    );
   });
 
   it('includes exact run evidence without timestamps but rejects uncorrelated old records', async () => {

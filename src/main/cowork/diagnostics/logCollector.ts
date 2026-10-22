@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { diagnosticSourceHasGaps } from '../../../shared/cowork/diagnostics/diagnosticEvidenceCoverage';
 import {
   diagnosticErrorCodes,
   isDiagnosticMetricValue,
@@ -118,6 +119,13 @@ const object = (value: unknown): Record<string, unknown> | undefined =>
     : undefined;
 const own = (value: Record<string, unknown>, key: string): unknown =>
   Object.hasOwn(value, key) ? value[key] : undefined;
+
+export interface DiagnosticLogExportMetadata {
+  id: string;
+  timestamp?: number;
+  level: DiagnosticLogRecord['level'];
+}
+
 const reason = (
   coverage: DiagnosticLogCoverage,
   value: DiagnosticLogCoverage['reasons'][number],
@@ -260,10 +268,14 @@ export async function collectDiagnosticLogs(
   },
   options: {
     fullScan?: boolean;
+    /** Exact product receipt identities and binding, supplied only by Main. */
+    nativeRunIds?: readonly string[];
+    nativeSessionKey?: string | null;
     onExportRecord?: (
       source: DiagnosticLogSource,
       text: string,
       association: DiagnosticLogRecord['association'],
+      metadata: DiagnosticLogExportMetadata,
     ) => void;
     signal?: AbortSignal;
     onProgress?: (progress: Omit<DiagnosticScanProgress, 'snapshotId'>) => void;
@@ -277,7 +289,7 @@ export async function collectDiagnosticLogs(
   const fileBudget = historical ? 4 * 1024 * 1024 : FILE_BYTES;
   const sourceBudget = historical ? 4 * 1024 * 1024 : SOURCE_BYTES;
   const totalBudget = historical ? 13 * 1024 * 1024 : TOTAL_BYTES;
-  const end = report.run?.endedAt ?? report.collectedAt;
+  const end = report.run?.endedAt ?? (report.run?.state === 'running' ? now : report.collectedAt);
   const window = {
     from: Math.max(0, (report.run?.startedAt ?? end) - WINDOW_MARGIN_MS),
     to: end + WINDOW_MARGIN_MS,
@@ -292,9 +304,11 @@ export async function collectDiagnosticLogs(
     records: [],
   };
   const runIds = new Set(
-    [report.run?.id, ...report.events.map(event => event.nativeRunId)].filter(
-      (id): id is string => typeof id === 'string' && id.length > 0,
-    ),
+    [
+      report.run?.id,
+      ...report.events.map(event => event.nativeRunId),
+      ...(options.nativeRunIds ?? []),
+    ].filter((id): id is string => typeof id === 'string' && id.length > 0),
   );
   let totalBytes = 0;
   let fileCount = 0;
@@ -350,10 +364,12 @@ export async function collectDiagnosticLogs(
         );
       const runs = ids(['runId', 'nativeRunId', 'sessionRunId']);
       const sessions = ids(['sessionId']);
+      const sessionKeys = ids(['sessionKey']);
       // Known different identities must not be relabelled as this run by timestamp proximity.
       if (
         runs.some(id => !runIds.has(id)) ||
-        (coverage.source !== 'native' && sessions.some(id => id !== report.sessionId))
+        (coverage.source !== 'native' && sessions.some(id => id !== report.sessionId)) ||
+        (options.nativeSessionKey && sessionKeys.some(key => key !== options.nativeSessionKey))
       ) {
         coverage.suppressed++;
         reason(coverage, 'outside_window');
@@ -362,9 +378,12 @@ export async function collectDiagnosticLogs(
       let association: DiagnosticLogRecord['association'];
       if (runs.length && runs.every(id => runIds.has(id))) association = 'run';
       else if (
-        coverage.source !== 'native' &&
-        sessions.length &&
-        sessions.every(id => id === report.sessionId)
+        (coverage.source !== 'native' &&
+          sessions.length &&
+          sessions.every(id => id === report.sessionId)) ||
+        (options.nativeSessionKey &&
+          sessionKeys.length &&
+          sessionKeys.every(key => key === options.nativeSessionKey))
       )
         association = 'session';
       else if (
@@ -390,7 +409,12 @@ export async function collectDiagnosticLogs(
         continue;
       }
       // Explicit local export only: before category filtering and preview sampling.
-      options.onExportRecord?.(coverage.source, textRecord, association);
+      const id = `log-${coverage.source}-${coverage.recordsRead}`;
+      options.onExportRecord?.(coverage.source, textRecord, association, {
+        id,
+        timestamp: parsed.timestamp,
+        level: parsed.level,
+      });
       const metrics: DiagnosticLogRecord['metrics'] = {};
       let signal: DiagnosticLogSignal = 'unknown';
       let basis: DiagnosticLogRecord['basis'];
@@ -590,7 +614,7 @@ export async function collectDiagnosticLogs(
         }
       }
       collection.records.push({
-        id: `log-${coverage.source}-${coverage.recordsRead}`,
+        id,
         source: coverage.source,
         timestamp: parsed.timestamp,
         level: parsed.level,
@@ -751,8 +775,10 @@ export async function collectDiagnosticLogs(
         }
       }
     }
-    if (coverage.filesRead || coverage.bytesRead)
-      coverage.status = coverage.reasons.length ? 'partial' : 'available';
+    if (coverage.filesRead || coverage.bytesRead) {
+      coverage.status = 'available';
+      if (diagnosticSourceHasGaps(coverage)) coverage.status = 'partial';
+    }
   }
   collection.records.sort(
     (left, right) =>

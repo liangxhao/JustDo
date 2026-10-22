@@ -190,6 +190,21 @@ describe('diagnostics IPC', () => {
     expect(await invoke(SessionDiagnosticsIpc.Export)).toEqual({ success: true, canceled: true });
   });
 
+  it('honors cancellation while the save dialog is open without collecting old log text', async () => {
+    let select!: (value: unknown) => void;
+    mocks.save.mockReturnValue(
+      new Promise(resolve => {
+        select = resolve;
+      }),
+    );
+    const pending = invoke(SessionDiagnosticsIpc.Export);
+    await invoke(SessionDiagnosticsIpc.Cancel);
+    select({ canceled: false, filePath: 'C:/downloads/test.zip' });
+    expect(await pending).toEqual({ success: true, canceled: true });
+    expect(service.exportLogs).not.toHaveBeenCalled();
+    expect(mocks.write).not.toHaveBeenCalled();
+  });
+
   it('exports freshly collected log text only after the user selects a destination', async () => {
     await invoke(SessionDiagnosticsIpc.Export);
     expect(service.exportLogs).not.toHaveBeenCalled();
@@ -198,7 +213,9 @@ describe('diagnostics IPC', () => {
       success: true,
       canceled: false,
     });
-    expect(service.exportLogs).toHaveBeenCalledWith(query, 42, expect.any(AbortSignal));
+    expect(service.exportLogs).toHaveBeenCalledWith(query, 42, expect.any(AbortSignal), {
+      onProgress: expect.any(Function),
+    });
     expect(mocks.archive).toHaveBeenCalledWith(
       { snapshotId: 'export-snapshot' },
       '2026.8.27',
@@ -215,6 +232,101 @@ describe('diagnostics IPC', () => {
       success: false,
       reason: 'export_failed',
     });
+    mocks.save.mockResolvedValue({ canceled: true });
+    expect(await invoke(SessionDiagnosticsIpc.Export)).toEqual({ success: true, canceled: true });
+  });
+
+  it('reports actual exported counts and read gaps without returning log text', async () => {
+    mocks.save.mockResolvedValue({ canceled: false, filePath: 'C:/downloads/test.zip' });
+    service.exportLogs.mockResolvedValue({
+      report: {
+        snapshotId: 'export-snapshot',
+        collectedAt: 10,
+        logs: {
+          collectedAt: 20,
+          sources: [
+            { source: 'native', status: 'unavailable', reasons: ['native_unavailable'] },
+            {
+              source: 'main',
+              status: 'partial',
+              scanComplete: true,
+              parseFailures: 2,
+              reasons: ['malformed'],
+            },
+            {
+              source: 'gateway',
+              status: 'partial',
+              scanComplete: true,
+              parseFailures: 0,
+              reasons: ['output_limit'],
+            },
+          ],
+        },
+      },
+      logs: {
+        entries: { 'logs/main.log': 'private task text' },
+        coverage: [
+          { source: 'main', records: 12, omitted: 3 },
+          { source: 'gateway', records: 8, omitted: 0 },
+        ],
+      },
+    });
+    const result = await invoke(SessionDiagnosticsIpc.Export);
+    expect(result).toMatchObject({
+      success: true,
+      canceled: false,
+      summary: {
+        collectedAt: 20,
+        logRecords: 20,
+        omittedLogRecords: 3,
+        unavailableSources: ['native'],
+        partialSources: ['main'],
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('private task text');
+  });
+
+  it('allows only the matching owner and query to cancel export collection', async () => {
+    mocks.save.mockResolvedValue({ canceled: false, filePath: 'C:/downloads/test.zip' });
+    let finish!: (value: unknown) => void;
+    let signal!: AbortSignal;
+    let publish!: () => void;
+    service.exportLogs.mockImplementation((_query, _owner, currentSignal, options) => {
+      signal = currentSignal;
+      publish = () =>
+        options.onProgress({ snapshotId: 'snapshot', source: 'main', bytesRead: 1024 });
+      publish();
+      return new Promise(resolve => {
+        finish = resolve;
+      });
+    });
+    const pending = invoke(SessionDiagnosticsIpc.Export);
+    await vi.waitFor(() => expect(service.exportLogs).toHaveBeenCalled());
+    expect(event.sender.send).toHaveBeenCalledWith(
+      SessionDiagnosticsIpc.Progress,
+      expect.objectContaining({ snapshotId: 'snapshot' }),
+    );
+    expect(await invoke(SessionDiagnosticsIpc.Collect)).toMatchObject({
+      success: false,
+      reason: 'busy',
+    });
+    await invoke(SessionDiagnosticsIpc.Cancel, { ...query, sessionId: 'other' });
+    expect(signal.aborted).toBe(false);
+    await invoke(SessionDiagnosticsIpc.Cancel, { ...query, snapshotId: 'other' });
+    expect(signal.aborted).toBe(false);
+    const original = event;
+    event = { ...event, sender: { ...event.sender, id: 99 } } as IpcMainInvokeEvent;
+    await invoke(SessionDiagnosticsIpc.Cancel);
+    expect(signal.aborted).toBe(false);
+    event = original;
+    await invoke(SessionDiagnosticsIpc.Cancel);
+    expect(signal.aborted).toBe(true);
+    vi.mocked(event.sender.send).mockClear();
+    publish();
+    expect(event.sender.send).not.toHaveBeenCalled();
+    finish({ report: {}, logs: {} });
+    expect(await pending).toEqual({ success: true, canceled: true });
+    expect(mocks.write).not.toHaveBeenCalled();
     mocks.save.mockResolvedValue({ canceled: true });
     expect(await invoke(SessionDiagnosticsIpc.Export)).toEqual({ success: true, canceled: true });
   });

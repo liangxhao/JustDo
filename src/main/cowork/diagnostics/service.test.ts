@@ -185,10 +185,47 @@ describe('SessionDiagnosticsService', () => {
       window: { from: 0, to: currentTime },
       localTimezoneOffsetMinutes: 0,
       partial: true,
-      sources: [],
-      records: [],
+      sources: [
+        {
+          source: 'native',
+          status: 'available',
+          filesRead: 1,
+          bytesRead: 100,
+          recordsRead: 1,
+          emitted: 1,
+          suppressed: 0,
+          parseFailures: 0,
+          truncated: false,
+          reasons: [],
+          scanComplete: true,
+          matched: 1,
+          signalCounts: { network: 1 },
+        },
+      ],
+      records: [
+        {
+          id: 'stale-log',
+          source: 'native',
+          timestamp: currentTime,
+          level: 'error',
+          association: 'run',
+          signal: 'network',
+          inferred: true,
+          metrics: {},
+        },
+      ],
     });
-    expect((await pending).history).toMatchObject({ status: 'changed', failures: [] });
+    const result = await pending;
+    expect(result.history).toMatchObject({ status: 'changed', failures: [] });
+    expect(result.logs?.records).toEqual([]);
+    expect(result.logs?.sources[0]).toMatchObject({
+      status: 'partial',
+      scanComplete: false,
+      reasons: ['source_changed'],
+      emitted: 0,
+      matched: 0,
+      signalCounts: {},
+    });
     expect(onHistory).toHaveBeenLastCalledWith(
       expect.objectContaining({
         history: expect.objectContaining({ status: 'changed', failures: [] }),
@@ -229,6 +266,99 @@ describe('SessionDiagnosticsService', () => {
     );
   });
 
+  it('uses existing native run receipts when historical diagnostic events are absent', async () => {
+    connected = true;
+    request.mockImplementation(async method =>
+      method === 'chat.history'
+        ? {
+            messages: [
+              {
+                role: 'toolResult',
+                timestamp: 200,
+                runId: 'native',
+                isError: true,
+                content: 'failure',
+              },
+              {
+                role: 'toolResult',
+                timestamp: 200,
+                runId: 'other-native',
+                isError: true,
+                content: 'foreign',
+              },
+            ],
+          }
+        : {
+            truncated: false,
+            lines: [
+              JSON.stringify({
+                time: new Date(currentTime).toISOString(),
+                runId: 'native',
+                level: 'error',
+                errorCategory: 'network',
+              }),
+            ],
+          },
+    );
+    const previous = service.read({ sessionId: 's' }, 1);
+    expect(previous.events).toEqual([]);
+    const result = await service.collect({ sessionId: 's', snapshotId: previous.snapshotId }, 1);
+    expect(result.logs?.records).toMatchObject([{ association: 'run', signal: 'network' }]);
+    expect(result.history?.failures).toMatchObject([{ association: 'run', excerpt: 'failure' }]);
+    expect(result.history?.failures).toHaveLength(1);
+    expect(result.conclusion.confidence).toBe('unknown');
+  });
+
+  it('revokes verified history if the product run receipt changes while logs finish', async () => {
+    connected = true;
+    request.mockImplementation(async method =>
+      method === 'chat.history'
+        ? {
+            messages: [
+              {
+                role: 'toolResult',
+                timestamp: 200,
+                runId: 'native',
+                isError: true,
+                content: 'stale',
+              },
+            ],
+          }
+        : { lines: [] },
+    );
+    let release!: (value: Awaited<ReturnType<typeof logCollector.collectDiagnosticLogs>>) => void;
+    vi.spyOn(logCollector, 'collectDiagnosticLogs').mockImplementation(
+      () =>
+        new Promise(resolve => {
+          release = resolve;
+        }),
+    );
+    const previous = service.read({ sessionId: 's' }, 1);
+    const onHistory = vi.fn();
+    const pending = service.collect({ sessionId: 's', snapshotId: previous.snapshotId }, 1, {
+      onHistory,
+    });
+    await vi.waitFor(() => expect(onHistory).toHaveBeenCalled());
+    db.prepare('UPDATE cowork_session_runs SET root_run_id = ? WHERE id = ?').run(
+      'replacement',
+      'r',
+    );
+    release({
+      collectedAt: currentTime,
+      window: { from: 0, to: currentTime },
+      localTimezoneOffsetMinutes: 0,
+      partial: true,
+      sources: [],
+      records: [],
+    });
+    expect((await pending).history).toMatchObject({ status: 'changed', failures: [] });
+    expect(onHistory).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        history: expect.objectContaining({ status: 'changed', failures: [] }),
+      }),
+    );
+  });
+
   it('discards history evidence if the native session binding changes during collection', async () => {
     connected = true;
     request.mockImplementation(async method => {
@@ -261,7 +391,7 @@ describe('SessionDiagnosticsService', () => {
       lines: [
         JSON.stringify({
           time: new Date(currentTime).toISOString(),
-          runId: 'r',
+          runId: 'native',
           level: 'info',
           message: 'export-only-context',
           apiKey: 'SECRET',
@@ -285,6 +415,179 @@ describe('SessionDiagnosticsService', () => {
       JSON.stringify(service.snapshot({ sessionId: 's', snapshotId: result.report.snapshotId }, 1)),
     ).not.toContain('export-only-context');
   });
+
+  it('exports fresh local evidence for the selected run and keeps progress bound to the page query', async () => {
+    const previous = service.read({ sessionId: 's' }, 1);
+    currentTime += 180_001;
+    vi.setSystemTime(currentTime);
+    store.append('s', {
+      id: 'late-terminal',
+      runId: 'r',
+      nativeRunId: 'native',
+      epoch: 'epoch',
+      observedAt: currentTime,
+      kind: 'lifecycle',
+      phase: 'error',
+      executionSettled: true,
+      stopReason: 'error',
+    });
+    db.prepare('UPDATE cowork_session_runs SET state = ?, ended_at = ? WHERE id = ?').run(
+      'failed',
+      currentTime,
+      'r',
+    );
+    db.prepare(
+      `INSERT INTO cowork_session_runs VALUES ('new-run', 's', 'new-native', 'new-client', ?, NULL, 'running')`,
+    ).run(currentTime + 1);
+    connected = true;
+    request.mockImplementation(async method =>
+      method === 'chat.history'
+        ? { messages: [] }
+        : {
+            truncated: false,
+            lines: [
+              JSON.stringify({
+                time: new Date(currentTime).toISOString(),
+                level: 'error',
+                message: 'late failure context',
+              }),
+            ],
+          },
+    );
+    const collect = logCollector.collectDiagnosticLogs;
+    vi.spyOn(logCollector, 'collectDiagnosticLogs').mockImplementation(
+      (report, sources, native, options) => {
+        options?.onProgress?.({
+          source: 'native',
+          filesCompleted: 0,
+          bytesRead: 10,
+          fileBytesRead: 10,
+          fileBytesTotal: 20,
+        });
+        return collect(report, sources, native, options);
+      },
+    );
+    const onProgress = vi.fn();
+    const result = await service.exportLogs(
+      { sessionId: 's', snapshotId: previous.snapshotId },
+      1,
+      undefined,
+      { onProgress },
+    );
+    expect(result.report.run).toMatchObject({ id: 'r', state: 'failed', endedAt: currentTime });
+    expect(result.report.collectedAt).toBe(currentTime);
+    expect(result.report.conclusion.reason).toBe('failed');
+    expect(result.report.events).toMatchObject([{ id: 'late-terminal', executionSettled: true }]);
+    expect(result.logs.entries['logs/native.log']).toContain('late failure context');
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ snapshotId: previous.snapshotId }),
+    );
+    expect(result.report.snapshotId).not.toBe(previous.snapshotId);
+  });
+
+  it('does not select a later run when exporting a snapshot that had no run', async () => {
+    db.prepare('DELETE FROM cowork_session_runs WHERE id = ?').run('r');
+    const previous = service.read({ sessionId: 's' }, 1);
+    expect(previous.run).toBeUndefined();
+    currentTime += 180_001;
+    vi.setSystemTime(currentTime);
+    db.prepare(
+      `INSERT INTO cowork_session_runs VALUES ('new-run', 's', 'new-native', 'new-client', ?, NULL, 'running')`,
+    ).run(currentTime);
+    connected = true;
+    request.mockResolvedValue({
+      truncated: false,
+      lines: [
+        JSON.stringify({
+          time: new Date(currentTime).toISOString(),
+          runId: 'new-native',
+          level: 'error',
+          message: 'later run context',
+        }),
+      ],
+    });
+    const read = vi.spyOn(service, 'read');
+    const result = await service.exportLogs({ sessionId: 's', snapshotId: previous.snapshotId }, 1);
+    expect(read).not.toHaveBeenCalled();
+    expect(result.report.run).toBeUndefined();
+    expect(result.report.events).toEqual([]);
+    expect(result.report.history?.reason).toBe('no_run');
+    expect(result.logs.entries['logs/native.log']).not.toContain('later run context');
+  });
+
+  it('preserves an incomplete terminal snapshot time anchor rather than expanding its historical window', async () => {
+    db.prepare('UPDATE cowork_session_runs SET state = ? WHERE id = ?').run('failed', 'r');
+    const previous = service.read({ sessionId: 's' }, 1);
+    currentTime += 180_001;
+    vi.setSystemTime(currentTime);
+    db.prepare(
+      `INSERT INTO cowork_session_runs VALUES ('new-run', 's', 'new-native', 'new-client', ?, NULL, 'running')`,
+    ).run(currentTime);
+    connected = true;
+    request.mockImplementation(async method =>
+      method === 'chat.history'
+        ? { messages: [] }
+        : {
+            truncated: false,
+            lines: [
+              JSON.stringify({
+                time: new Date(currentTime).toISOString(),
+                level: 'error',
+                message: 'later temporal context',
+              }),
+            ],
+          },
+    );
+    const read = vi.spyOn(service, 'read');
+    const result = await service.exportLogs({ sessionId: 's', snapshotId: previous.snapshotId }, 1);
+    expect(read).not.toHaveBeenCalled();
+    expect(result.report.run).toMatchObject({ id: 'r', state: 'failed' });
+    expect(result.report.run?.endedAt).toBeUndefined();
+    expect(result.report.collectedAt).toBe(previous.collectedAt);
+    expect(result.report.logs?.window.to).toBe(previous.collectedAt + 120_000);
+    expect(result.logs.entries['logs/native.log']).not.toContain('later temporal context');
+  });
+
+  it.each(['binding', 'receipt', 'connection'] as const)(
+    'discards captured export text if the %s changes during collection',
+    async change => {
+      connected = true;
+      request.mockImplementation(async method =>
+        method === 'chat.history' ? { messages: [] } : { lines: [] },
+      );
+      vi.spyOn(logCollector, 'collectDiagnosticLogs').mockImplementation(
+        async (_report, _sources, _native, options) => {
+          options?.onExportRecord?.('native', 'stale export-only text', 'run', {
+            id: 'log-native-1',
+            timestamp: currentTime,
+            level: 'error',
+          });
+          if (change === 'binding') nativeSessionKey = 'replacement';
+          else if (change === 'receipt')
+            db.prepare('UPDATE cowork_session_runs SET root_run_id = ? WHERE id = ?').run(
+              'replacement',
+              'r',
+            );
+          else connected = false;
+          return {
+            collectedAt: currentTime,
+            window: { from: 0, to: currentTime },
+            localTimezoneOffsetMinutes: 0,
+            partial: true,
+            sources: [],
+            records: [],
+          };
+        },
+      );
+      const previous = service.read({ sessionId: 's' }, 1);
+      await expect(
+        service.exportLogs({ sessionId: 's', snapshotId: previous.snapshotId }, 1),
+      ).rejects.toMatchObject({ reason: 'expired' });
+      expect(
+        JSON.stringify(service.snapshot({ sessionId: 's', snapshotId: previous.snapshotId }, 1)),
+      ).not.toContain('stale export-only text');
+    },
+  );
 
   it('retains pre-binding metadata until exact run and session binding is available', () => {
     resolved = false;

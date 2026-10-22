@@ -22,6 +22,66 @@ const clientWith = (request: ReturnType<typeof vi.fn>) =>
   ({ request }) as unknown as GatewayClientLike;
 
 describe('native conversation diagnostic scan', () => {
+  it('uses trusted receipt run identities without retaining live diagnostic events', async () => {
+    const request = vi.fn().mockResolvedValue({
+      messages: [
+        { ...failedTool, runId: 'native-receipt' },
+        { ...failedTool, runId: 'other-run', toolCallId: 'foreign' },
+      ],
+    });
+    const result = await collectDiagnosticHistory(
+      { ...report, events: [] },
+      clientWith(request),
+      'native',
+      undefined,
+      ['native-receipt'],
+    );
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0].association).toBe('run');
+  });
+
+  it('retains recent run failures and terminal model/runtime details after early tools fill capacity', async () => {
+    const request = vi.fn().mockResolvedValue({
+      messages: [
+        ...Array.from({ length: 43 }, (_, index) => ({
+          ...failedTool,
+          timestamp: 1100 + index,
+          runId: 'run-1',
+          toolCallId: `failure-${index}`,
+          content: `tool failure ${index}`,
+        })),
+        {
+          role: 'assistant',
+          timestamp: 1800,
+          runId: 'run-1',
+          stopReason: 'error',
+          errorMessage: 'final model failure',
+        },
+        {
+          role: 'custom',
+          customType: 'run-failed-before-reply',
+          timestamp: 1900,
+          runId: 'run-1',
+          content: 'final runtime failure',
+        },
+        ...Array.from({ length: 2 }, (_, index) => ({
+          ...failedTool,
+          timestamp: 1950 + index,
+          toolCallId: `window-only-${index}`,
+          content: 'weaker window failure',
+        })),
+      ],
+    });
+    const result = await collectDiagnosticHistory(report, clientWith(request), 'native');
+    expect(result).toMatchObject({ status: 'scanned', omitted: 7 });
+    expect(result.failures).toHaveLength(40);
+    expect(result.failures.map(failure => failure.excerpt)).toEqual(
+      expect.arrayContaining(['final model failure', 'final runtime failure', 'tool failure 42']),
+    );
+    expect(result.failures[0].excerpt).toBe('tool failure 5');
+    expect(result.failures.every(failure => failure.association === 'run')).toBe(true);
+  });
+
   it('keeps only the latest response shape and treats timestamp ties as uncertain', async () => {
     const messages = [
       {

@@ -26,6 +26,7 @@ export async function collectDiagnosticHistory(
   client: GatewayClientLike | null | undefined,
   sessionKey: string | null,
   signal?: AbortSignal,
+  nativeRunIds: readonly string[] = [],
 ): Promise<DiagnosticHistoryEvidence> {
   const evidence: DiagnosticHistoryEvidence = {
     status: 'unavailable',
@@ -43,7 +44,10 @@ export async function collectDiagnosticHistory(
           : 'offline';
     return evidence;
   }
-  const runIds = new Set(report.events.map(event => event.nativeRunId).filter(Boolean));
+  const runIds = new Set([
+    ...report.events.map(event => event.nativeRunId).filter(Boolean),
+    ...nativeRunIds,
+  ]);
   const seen = new Set<string>();
   const latestResponses = new Map<string, NonNullable<DiagnosticHistoryEvidence['lastResponse']>>();
   let anonymousResponse = 0;
@@ -161,11 +165,7 @@ export async function collectDiagnosticHistory(
       const identity = JSON.stringify([text(metadata.id), callId, timestamp, name, excerpt]);
       if (seen.has(identity)) continue;
       seen.add(identity);
-      if (evidence.failures.length >= 40) {
-        evidence.omitted++;
-        continue;
-      }
-      evidence.failures.push({
+      const failure: DiagnosticHistoryEvidence['failures'][number] = {
         timestamp,
         kind: tool ? 'tool' : runtime ? 'runtime' : 'model',
         ...(name ? { tool: name } : {}),
@@ -188,7 +188,31 @@ export async function collectDiagnosticHistory(
             : native?.status === 'blocked' || details.status === 'blocked'
               ? 'blocked'
               : 'failed',
-      });
+      };
+      if (evidence.failures.length >= 40) {
+        evidence.omitted++;
+        const rank = (item: DiagnosticHistoryEvidence['failures'][number]) =>
+          (item.association === 'run' ? 4 : 0) + (item.kind === 'tool' ? 0 : 2);
+        // Preserve exact-run evidence first, then model/runtime failures.
+        // Within the same class, retain recent failures rather than only early noise.
+        const weakest = evidence.failures.reduce(
+          (index, item, candidate) =>
+            rank(item) < rank(evidence.failures[index]) ||
+            (rank(item) === rank(evidence.failures[index]) &&
+              item.timestamp < evidence.failures[index].timestamp)
+              ? candidate
+              : index,
+          0,
+        );
+        const previous = evidence.failures[weakest];
+        if (
+          rank(failure) < rank(previous) ||
+          (rank(failure) === rank(previous) && failure.timestamp < previous.timestamp)
+        )
+          continue;
+        evidence.failures.splice(weakest, 1);
+      }
+      evidence.failures.push(failure);
     }
   };
   const inspectPage = (page: { messages: unknown[]; activity?: unknown[] }, delta = false) => {

@@ -71,6 +71,28 @@ export class SessionDiagnosticsStore {
     return rows.length === 1 ? rows[0].id : undefined;
   }
 
+  /** Receipts can outlive events, but copied roots never establish exclusive ownership. */
+  getNativeRunIds(sessionId: string, runId: string): string[] {
+    const row = this.db
+      .prepare(
+        `SELECT root_run_id, client_turn_id FROM cowork_session_runs
+         WHERE session_id = ? AND id = ?`,
+      )
+      .get(sessionId, runId) as
+      { root_run_id: string | null; client_turn_id: string | null } | undefined;
+    if (!row) return [];
+    return [...new Set([row.root_run_id, row.client_turn_id])].filter((id): id is string => {
+      if (typeof id !== 'string' || !id.length || id.length > 256) return false;
+      const owners = this.db
+        .prepare(
+          `SELECT id, session_id FROM cowork_session_runs
+           WHERE root_run_id = ? OR client_turn_id = ? LIMIT 2`,
+        )
+        .all(id, id) as { id: string; session_id: string }[];
+      return owners.length === 1 && owners[0].id === runId && owners[0].session_id === sessionId;
+    });
+  }
+
   listRuns(sessionId: string, cursor?: string): { runs: DiagnosticRun[]; nextCursor?: string } {
     const anchor = cursor ? this.getRun(sessionId, cursor) : undefined;
     if (cursor && !anchor) throw new Error('Invalid diagnostic run cursor');

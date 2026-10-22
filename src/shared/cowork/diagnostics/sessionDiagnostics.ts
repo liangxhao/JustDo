@@ -339,5 +339,14 @@ export type DiagnosticFailure = {
 export type DiagnosticReadResult = { success: true; report: DiagnosticReport } | DiagnosticFailure;
 export type DiagnosticListResult =
   { success: true; runs: DiagnosticRun[]; nextCursor?: string } | DiagnosticFailure;
+/** Export receipts contain counts only; raw log text never crosses IPC. */
+export interface DiagnosticExportSummary {
+  collectedAt: number;
+  logRecords: number;
+  omittedLogRecords: number;
+  unavailableSources: DiagnosticLogSource[];
+  partialSources: DiagnosticLogSource[];
+}
 export type DiagnosticExportResult =
-  { success: true; canceled: boolean; path?: string } | DiagnosticFailure;
+  | { success: true; canceled: boolean; path?: string; summary?: DiagnosticExportSummary }
+  | DiagnosticFailure;

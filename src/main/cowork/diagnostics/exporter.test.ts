@@ -7,6 +7,7 @@ import yauzl from 'yauzl';
 
 import type { DiagnosticReport } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { buildDiagnosticArchive, writeDiagnosticArchive } from './exporter';
+import { DiagnosticExportLogs } from './exportLogs';
 
 const report = (): DiagnosticReport => ({
   version: 1,
@@ -189,6 +190,112 @@ async function readZip(file: string): Promise<Record<string, string>> {
 }
 
 describe('diagnostic archive', () => {
+  it('maps structured evidence aliases to exact retained log markers and lines', () => {
+    const input = report();
+    input.logs = {
+      collectedAt: 10,
+      window: { from: 0, to: 10 },
+      localTimezoneOffsetMinutes: 0,
+      partial: true,
+      sources: [],
+      records: [
+        {
+          id: 'log-main-1',
+          source: 'main',
+          timestamp: 5,
+          level: 'error',
+          association: 'run',
+          signal: 'network',
+          inferred: true,
+          metrics: {},
+        },
+      ],
+    };
+    const capture = new DiagnosticExportLogs();
+    capture.append('main', 'Error: ECONNRESET\n  at worker.js:12', 'run', {
+      id: 'log-main-1',
+      timestamp: 5,
+      level: 'error',
+    });
+    const archive = buildDiagnosticArchive(input, '1.0.0', 'en', capture.finish());
+    const log = JSON.parse(archive['logs.json']).records[0];
+    const record = JSON.parse(archive['logs/index.json']).sources[0].records[0];
+    expect(record).toMatchObject({ id: log.id, marker: 'log-main-1', line: 1, endLine: 3 });
+    expect(archive['evidence-timeline.md']).toContain(log.id.replace('-', '\\-'));
+    expect(archive['logs/main.log'].split('\n')[record.line - 1]).toContain(record.marker);
+    expect(JSON.parse(archive['manifest.json']).files).toEqual(
+      expect.arrayContaining(['logs/index.json', 'evidence-timeline.md']),
+    );
+  });
+
+  it('keeps four full source budgets and their maximum record indexes inside the archive budget', () => {
+    const input = report();
+    input.events = Array.from({ length: 232 }, (_, index) => ({
+      ...input.events[0],
+      id: `event-${index}`,
+      nativeRunId: `native-${index}`,
+      observedAt: index,
+      phase: 'error' as const,
+      errorCategory: 'network' as const,
+      errorCode: 'ECONNRESET' as const,
+    }));
+    input.logs = {
+      collectedAt: 10,
+      window: { from: 0, to: 10 },
+      localTimezoneOffsetMinutes: 0,
+      partial: true,
+      sources: [],
+      records: Array.from({ length: 400 }, (_, index) => ({
+        id: `log-main-${index + 1}`,
+        source: 'main' as const,
+        timestamp: index,
+        level: 'error' as const,
+        association: 'run' as const,
+        signal: 'network' as const,
+        inferred: true,
+        metrics: {
+          statusCode: 503,
+          attempt: 999,
+          durationMs: 999999999999,
+          requestPayloadBytes: 999999999999,
+          responseStreamBytes: 999999999999,
+        },
+      })),
+    };
+    input.history = {
+      status: 'scanned',
+      messagesScanned: 10000,
+      omitted: 100,
+      failures: Array.from({ length: 40 }, (_, index) => ({
+        timestamp: index,
+        kind: 'tool' as const,
+        tool: 'x'.repeat(100),
+        excerpt: 'x'.repeat(1600),
+        clipped: true,
+        association: 'run' as const,
+      })),
+    };
+    const capture = new DiagnosticExportLogs();
+    for (const source of ['main', 'cowork', 'gateway', 'native'] as const) {
+      for (let index = 1; index <= 2048; index++) {
+        const id = `log-${source}-${10000000 + index}`;
+        const header = `[record=${id} association=run]\n`;
+        capture.append(source, 'x'.repeat(1024 - Buffer.byteLength(header) - 2), 'run', {
+          id,
+          timestamp: Date.parse('2026-10-22T04:00:00Z') + index,
+          level: 'error',
+        });
+      }
+    }
+    const bundle = capture.finish();
+    expect(
+      bundle.coverage.every(source => source.bytes === 2 * 1024 * 1024 && source.records === 2048),
+    ).toBe(true);
+    const archive = buildDiagnosticArchive(input, '2026.10.22', 'en', bundle);
+    const bytes = Object.values(archive).reduce((sum, value) => sum + Buffer.byteLength(value), 0);
+    expect(bytes).toBeLessThan(10 * 1024 * 1024);
+  });
+
   it('exports problem findings with references to the same aliased evidence', () => {
     const input = report();
     input.events[0].phase = 'error';

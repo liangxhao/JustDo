@@ -1,11 +1,34 @@
 export const sessionDiagnosticsTranslations = {
   en: {
+    diagnosticsCollectionTitle: 'Evidence available for investigation',
+    diagnosticsCollectionReady: 'Collection finished for the discovered sources',
+    diagnosticsCollectionGaps: 'Collection has gaps; review the sources below',
+    diagnosticsCollectionPending: 'Log collection has not finished',
+    diagnosticsCollectionCounts:
+      '{events} execution events · {failures} failure excerpts · {logs} log previews',
+    diagnosticsCollectionAssociations:
+      'Log previews: {run} matching run · {session} matching conversation · {window} time window only',
+    diagnosticsCollectionMatched: '{count} matching records',
+    diagnosticsCollectionParseFailures: '{count} records could not be parsed',
+    diagnosticsCollectionPreviewOmitted:
+      '{count} previews omitted; export collects log text separately',
+    diagnosticsCollectionScope:
+      'Only recorded and retained evidence is available. A completed scan does not recover deleted records or prove that the task succeeded.',
+    diagnosticsExportedCounts: 'Diagnostic bundle exported with {count} log records.',
+    diagnosticsExportNoLogs:
+      'No log text was available. The bundle still contains diagnostic metadata and any collected conversation failure excerpts.',
+    diagnosticsExportMissing: 'Log sources unavailable: {sources}.',
+    diagnosticsExportPartial: 'Log sources with collection gaps: {sources}.',
+    diagnosticsExportOmitted: '{count} log records omitted from the bundle by export limits.',
+    diagnosticsExportCanceled: 'Export canceled.',
+    diagnosticsExportCollecting: 'Collecting log text for the diagnostic bundle…',
     diagnosticsStopTitle: 'Why this turn ended',
     diagnosticsAnswer_confirmed: 'Confirmed by records',
     diagnosticsAnswer_observed: 'Based on available evidence',
     diagnosticsAnswer_unknown: 'More evidence needed',
     diagnosticsAnswerEvidence: 'What the records show',
     diagnosticsAnswerAction: 'What to do next',
+    diagnosticsAnswerExpand: 'View the end assessment and advice',
     diagnosticsAnswerIncomplete:
       'Some records are missing. This result uses only the available evidence.',
     diagnosticsRunDetailsHint: 'Run times, saved status and scan statistics',
@@ -436,9 +459,9 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsRead: 'Refresh local evidence',
     diagnosticsRefresh: 'Collect online context',
     diagnosticsCopy: 'Copy summary',
-    diagnosticsExport: 'Export diagnostic report',
+    diagnosticsExport: 'Export diagnostic bundle',
     diagnosticsExportScope:
-      'Exports the report, matching logs and stored conversation failure excerpts. Common credentials are masked; task content may remain. Review before sharing. No automatic upload.',
+      'Includes the summary, timeline, collection gaps, matching log text and stored failure excerpts. Logs are collected again when exporting. Common credentials are masked; task content may remain. Review before sharing. No automatic upload.',
     diagnosticsLoading: 'Loading diagnostics…',
     diagnosticsCollected: 'Collected at',
     diagnosticsPartial:
@@ -522,12 +545,32 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsPhase_failed: 'Failed',
   },
   zh: {
+    diagnosticsCollectionTitle: '可用于排查的证据',
+    diagnosticsCollectionReady: '已完成本次发现来源的采集',
+    diagnosticsCollectionGaps: '采集存在缺口，请查看下方来源说明',
+    diagnosticsCollectionPending: '日志采集尚未完成',
+    diagnosticsCollectionCounts: '{events} 条运行事件 · {failures} 条失败节选 · {logs} 条日志预览',
+    diagnosticsCollectionAssociations:
+      '日志预览关联：精确运行 {run} 条 · 同一会话 {session} 条 · 仅时间接近 {window} 条',
+    diagnosticsCollectionMatched: '匹配 {count} 条记录',
+    diagnosticsCollectionParseFailures: '{count} 条记录无法解析',
+    diagnosticsCollectionPreviewOmitted: '省略 {count} 条预览；导出时另行采集日志正文',
+    diagnosticsCollectionScope:
+      '只能分析已记录且仍保留的证据。扫描完成不能恢复已删除记录，也不代表任务成功。',
+    diagnosticsExportedCounts: '诊断包已导出，包含 {count} 条日志正文。',
+    diagnosticsExportNoLogs: '未获得日志正文，包内仍包含诊断元数据及已采集的会话失败节选。',
+    diagnosticsExportMissing: '日志来源不可用：{sources}。',
+    diagnosticsExportPartial: '日志采集存在缺口：{sources}。',
+    diagnosticsExportOmitted: '受导出容量限制，包内省略了 {count} 条日志。',
+    diagnosticsExportCanceled: '已取消导出。',
+    diagnosticsExportCollecting: '正在为诊断包采集日志正文…',
     diagnosticsStopTitle: '本轮结束原因',
     diagnosticsAnswer_confirmed: '记录已确认',
     diagnosticsAnswer_observed: '根据现有记录判断',
     diagnosticsAnswer_unknown: '还需补充记录',
     diagnosticsAnswerEvidence: '判断依据',
     diagnosticsAnswerAction: '建议下一步',
+    diagnosticsAnswerExpand: '查看结束判断和建议',
     diagnosticsAnswerIncomplete: '部分记录缺失，当前结论仅依据已收集的信息。',
     diagnosticsRunDetailsHint: '运行时间、保存的状态和扫描统计',
     diagnosticsNoOtherErrors: '没有查到其他步骤错误',
@@ -795,7 +838,8 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsCoverageDetails: '查看覆盖详情',
     diagnosticsTechnicalHint: '查看结构化证据',
     diagnosticsScanTitle: '证据采集',
-    diagnosticsHistoryReadyLogsPending: '会话历史检查已完成，日志仍在采集中；完成后可导出完整结果。',
+    diagnosticsHistoryReadyLogsPending:
+      '会话历史检查已完成，日志仍在采集中；完成后可导出完整结果。',
     diagnosticsCurrentFile: '当前文件进度',
     diagnosticsFilterLabel: '筛选日志记录',
     diagnosticsFilterAll: '全部记录',
@@ -896,9 +940,9 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsRead: '刷新本地证据',
     diagnosticsRefresh: '采集在线环境',
     diagnosticsCopy: '复制摘要',
-    diagnosticsExport: '导出诊断报告',
+    diagnosticsExport: '导出诊断包',
     diagnosticsExportScope:
-      '导出报告、相关日志及会话中失败步骤的错误节选。常见凭据会脱敏，可能含任务内容，分享前请检查；不会自动上传。',
+      '包含摘要、时间线、采集缺口、相关日志正文和会话失败节选。导出时会重新采集日志；常见凭据会脱敏，可能含任务内容，分享前请检查，不会自动上传。',
     diagnosticsLoading: '正在加载诊断…',
     diagnosticsCollected: '采集时间',
     diagnosticsPartial: '证据不完整：仅记录部分关键事件。缺少记录不代表事件未发生。',

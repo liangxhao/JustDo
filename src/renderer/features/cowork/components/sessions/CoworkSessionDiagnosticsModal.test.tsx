@@ -58,6 +58,202 @@ const open = () =>
   );
 
 describe('session diagnostics', () => {
+  it.each(['completed', 'unknown', 'failed'] as const)(
+    'keeps generic %s explanations collapsed while retaining concrete failure excerpts',
+    async reason => {
+      bridge.read.mockResolvedValue({
+        success: true,
+        report: report({
+          conclusion: { reason, confidence: 'unknown', evidenceIds: [], toolFailures: 0 },
+          history: {
+            status: 'scanned',
+            messagesScanned: 1,
+            omitted: 0,
+            failures: [
+              {
+                timestamp: 10,
+                kind: 'model',
+                excerpt: 'ECONNREFUSED synthetic service',
+                clipped: false,
+                association: 'run',
+              },
+            ],
+          },
+        }),
+      });
+      open();
+      const disclosure = await screen.findByText(i18nService.t('diagnosticsAnswerExpand'));
+      expect(disclosure.closest('details')?.open).toBe(false);
+      expect(
+        screen
+          .getByRole('heading', { name: i18nService.t('diagnosticsAnswerEvidence') })
+          .closest('details'),
+      ).toBe(disclosure.closest('details'));
+      expect(screen.getByText('ECONNREFUSED synthetic service')).toBeTruthy();
+      fireEvent.click(disclosure);
+      expect(disclosure.closest('details')?.open).toBe(true);
+      expect(
+        screen.getByRole('heading', { name: i18nService.t('diagnosticsAnswerEvidence') }),
+      ).toBeTruthy();
+    },
+  );
+
+  it('keeps a specific timeout explanation expanded', async () => {
+    bridge.read.mockResolvedValue({
+      success: true,
+      report: report({
+        conclusion: {
+          reason: 'timeout',
+          confidence: 'confirmed',
+          evidenceIds: ['end'],
+          toolFailures: 0,
+        },
+        events: [
+          {
+            id: 'end',
+            runId: 'run-1',
+            epoch: 'epoch',
+            observedAt: 10,
+            kind: 'lifecycle',
+            phase: 'error',
+            executionSettled: true,
+            stopReason: 'timeout',
+            timeoutPhase: 'provider',
+          },
+        ],
+      }),
+    });
+    open();
+    await screen.findByText(i18nService.t('diagnosticsTimeout_provider'));
+    expect(screen.queryByText(i18nService.t('diagnosticsAnswerExpand'))).toBeNull();
+    expect(
+      screen.getByRole('heading', { name: i18nService.t('diagnosticsAnswerEvidence') }),
+    ).toBeTruthy();
+  });
+
+  it('reports actual export gaps and explains a bundle without log text', async () => {
+    bridge.export.mockResolvedValue({
+      success: true,
+      canceled: false,
+      summary: {
+        collectedAt: 200,
+        logRecords: 0,
+        omittedLogRecords: 4,
+        unavailableSources: ['native'],
+        partialSources: ['main'],
+      },
+    });
+    open();
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: 'Export diagnostic bundle' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Export diagnostic bundle' }));
+    await screen.findByText(/No log text was available/);
+    expect(screen.getByText(/Log sources unavailable: Native runtime logs/)).toBeTruthy();
+    expect(screen.getByText(/4 log records omitted from the bundle/)).toBeTruthy();
+  });
+
+  it('shows export progress for the selected snapshot and allows cancellation', async () => {
+    let publish!: (value: unknown) => void;
+    bridge.onProgress.mockImplementation(callback => {
+      publish = callback;
+      return vi.fn();
+    });
+    let finish!: (value: unknown) => void;
+    bridge.export.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+    );
+    open();
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: 'Export diagnostic bundle' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Export diagnostic bundle' }));
+    await screen.findByText('Collecting log text for the diagnostic bundle…');
+    expect((screen.getByRole('combobox') as HTMLSelectElement).disabled).toBe(true);
+    publish({
+      snapshotId: 'another-snapshot',
+      source: 'main',
+      filesCompleted: 0,
+      bytesRead: 1048576,
+      fileBytesRead: 20,
+      fileBytesTotal: 100,
+    });
+    expect(screen.queryByText('20%')).toBeNull();
+    publish({
+      snapshotId: 'snapshot-1',
+      source: 'main',
+      filesCompleted: 1,
+      bytesRead: 1048576,
+      fileBytesRead: 50,
+      fileBytesTotal: 100,
+    });
+    await screen.findByText('50%');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel scan' }));
+    expect(bridge.cancel).toHaveBeenCalledWith({
+      sessionId: 'target',
+      sessionRunId: 'run-1',
+      snapshotId: 'snapshot-1',
+    });
+    finish({ success: true, canceled: true });
+    await screen.findByText('Export canceled.');
+    expect(screen.queryByText('Diagnostic report exported.')).toBeNull();
+  });
+
+  it('cancels an export and waits for it before collecting a newly selected conversation', async () => {
+    let finish!: (value: unknown) => void;
+    bridge.export.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+    );
+    const view = open();
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: 'Export diagnostic bundle' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Export diagnostic bundle' }));
+    await screen.findByText('Collecting log text for the diagnostic bundle…');
+    bridge.read.mockResolvedValue({
+      success: true,
+      report: report({ sessionId: 'next', snapshotId: 'next-snapshot' }),
+    });
+    view.rerender(
+      <CoworkSessionDiagnosticsModal
+        sessionId="next"
+        sessionTitle="Next conversation"
+        onClose={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(bridge.cancel).toHaveBeenCalledWith({
+        sessionId: 'target',
+        sessionRunId: 'run-1',
+        snapshotId: 'snapshot-1',
+      }),
+    );
+    expect(bridge.collect).toHaveBeenCalledTimes(1);
+    finish({ success: true, canceled: true });
+    await waitFor(() => expect(bridge.collect).toHaveBeenCalledTimes(2));
+    expect(bridge.collect).toHaveBeenLastCalledWith({
+      sessionId: 'next',
+      sessionRunId: 'run-1',
+      snapshotId: 'next-snapshot',
+    });
+    expect(screen.queryByText('Export canceled.')).toBeNull();
+  });
+
   it('shows early history for the current snapshot while keeping export disabled', async () => {
     let publish!: (value: unknown) => void;
     const unsubscribe = vi.fn();
@@ -399,7 +595,7 @@ describe('session diagnostics', () => {
     await screen.findByText('Collecting application and runtime log evidence…');
     expect(screen.getByText('Application run record (does not establish the cause)')).toBeTruthy();
     expect(screen.getByText('Failed')).toBeTruthy();
-    const exportButton = screen.getByRole('button', { name: 'Export diagnostic report' });
+    const exportButton = screen.getByRole('button', { name: 'Export diagnostic bundle' });
     expect((exportButton as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(exportButton);
     expect(bridge.export).not.toHaveBeenCalled();
@@ -558,11 +754,11 @@ describe('session diagnostics', () => {
     expect(screen.getByText('Attempt: 2')).toBeTruthy();
     await waitFor(() =>
       expect(
-        (screen.getByRole('button', { name: 'Export diagnostic report' }) as HTMLButtonElement)
+        (screen.getByRole('button', { name: 'Export diagnostic bundle' }) as HTMLButtonElement)
           .disabled,
       ).toBe(false),
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Export diagnostic report' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export diagnostic bundle' }));
     await waitFor(() =>
       expect(bridge.export).toHaveBeenCalledWith({
         sessionId: 'target',
@@ -583,11 +779,11 @@ describe('session diagnostics', () => {
     expect(screen.queryByText('sensitive log path')).toBeNull();
     await waitFor(() =>
       expect(
-        (screen.getByRole('button', { name: 'Export diagnostic report' }) as HTMLButtonElement)
+        (screen.getByRole('button', { name: 'Export diagnostic bundle' }) as HTMLButtonElement)
           .disabled,
       ).toBe(false),
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Export diagnostic report' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export diagnostic bundle' }));
     await waitFor(() =>
       expect(bridge.export).toHaveBeenCalledWith(
         expect.objectContaining({ snapshotId: 'snapshot-1' }),
@@ -689,11 +885,11 @@ describe('session diagnostics', () => {
     ).toBe(true);
     await waitFor(() =>
       expect(
-        (screen.getByRole('button', { name: 'Export diagnostic report' }) as HTMLButtonElement)
+        (screen.getByRole('button', { name: 'Export diagnostic bundle' }) as HTMLButtonElement)
           .disabled,
       ).toBe(false),
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Export diagnostic report' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export diagnostic bundle' }));
     await waitFor(() =>
       expect(bridge.export).toHaveBeenCalledWith({
         sessionId: 'target',
@@ -740,7 +936,7 @@ describe('session diagnostics', () => {
       await screen.findByText('This turn ended, but the specific reason is not recorded.');
       await waitFor(() =>
         expect(
-          (screen.getByRole('button', { name: 'Export diagnostic report' }) as HTMLButtonElement)
+          (screen.getByRole('button', { name: 'Export diagnostic bundle' }) as HTMLButtonElement)
             .disabled,
         ).toBe(false),
       );
@@ -764,11 +960,11 @@ describe('session diagnostics', () => {
       );
       await waitFor(() =>
         expect(
-          (screen.getByRole('button', { name: 'Export diagnostic report' }) as HTMLButtonElement)
+          (screen.getByRole('button', { name: 'Export diagnostic bundle' }) as HTMLButtonElement)
             .disabled,
         ).toBe(false),
       );
-      fireEvent.click(screen.getByRole('button', { name: 'Export diagnostic report' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Export diagnostic bundle' }));
       await waitFor(() =>
         expect(bridge.export).toHaveBeenCalledWith({
           sessionId: 'target',
@@ -785,17 +981,17 @@ describe('session diagnostics', () => {
     await screen.findByText('This turn ended, but the specific reason is not recorded.');
     await waitFor(() =>
       expect(
-        (screen.getByRole('button', { name: 'Export diagnostic report' }) as HTMLButtonElement)
+        (screen.getByRole('button', { name: 'Export diagnostic bundle' }) as HTMLButtonElement)
           .disabled,
       ).toBe(false),
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Export diagnostic report' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export diagnostic bundle' }));
     await screen.findByRole('alert');
     expect(
       screen.queryByText('This turn ended, but the specific reason is not recorded.'),
     ).toBeNull();
     expect(
-      (screen.getByRole('button', { name: 'Export diagnostic report' }) as HTMLButtonElement)
+      (screen.getByRole('button', { name: 'Export diagnostic bundle' }) as HTMLButtonElement)
         .disabled,
     ).toBe(true);
   });
@@ -859,7 +1055,7 @@ describe('session diagnostics', () => {
     screen.getByRole('button', { name: 'Close' }).focus();
     fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
     expect(document.activeElement).toBe(
-      screen.getByRole('button', { name: 'Export diagnostic report' }),
+      screen.getByRole('button', { name: 'Export diagnostic bundle' }),
     );
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledOnce();

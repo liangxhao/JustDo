@@ -1,9 +1,12 @@
+import { assessDiagnosticCoverage } from '@shared/cowork/diagnostics/diagnosticEvidenceCoverage';
 import {
   buildDiagnosticFindings,
   type DiagnosticFinding,
 } from '@shared/cowork/diagnostics/diagnosticFindings';
+import { diagnoseHistoryFailure } from '@shared/cowork/diagnostics/diagnosticHistoryFindings';
 import { assessDiagnosticStop } from '@shared/cowork/diagnostics/diagnosticStop';
 import type {
+  DiagnosticExportSummary,
   DiagnosticLogRecord,
   DiagnosticReport,
 } from '@shared/cowork/diagnostics/sessionDiagnostics';
@@ -21,13 +24,7 @@ export function presentDiagnosticStop(report: DiagnosticReport) {
       : assessment.basis === 'terminal'
         ? 'confirmed'
         : 'observed';
-  const incomplete = Boolean(
-    report.coverage.dropped ||
-    report.coverage.collectorDropped ||
-    report.coverage.storageFailed ||
-    report.logs?.partial ||
-    (report.history && report.history.status !== 'scanned'),
-  );
+  const incomplete = assessDiagnosticCoverage(report).hasGaps;
   const title = assessment.modelReplyEnded
     ? t('diagnosticsModelReplyEnded')
     : ['reasoning_only', 'empty_response', 'incomplete_response'].includes(assessment.reason)
@@ -325,5 +322,144 @@ export function summarizeDiagnosticFinding(
         ]
       : []),
     presentation.advice,
+  ].join('\n');
+}
+
+/** Describe collection gaps separately from intentional preview sampling. */
+export function presentDiagnosticCoverage(report: DiagnosticReport) {
+  const coverage = assessDiagnosticCoverage(report);
+  const replaceCount = (key: string, count: number) =>
+    t(key).replace(
+      '{count}',
+      count.toLocaleString(i18nService.getLanguage() === 'zh' ? 'zh-CN' : 'en-US'),
+    );
+  const associations = report.logs?.records.reduce(
+    (counts, record) => ({ ...counts, [record.association]: counts[record.association] + 1 }),
+    { run: 0, session: 0, time_window: 0 },
+  ) ?? { run: 0, session: 0, time_window: 0 };
+  const counts = t('diagnosticsCollectionCounts')
+    .replace('{events}', String(report.events.length))
+    .replace('{failures}', String(report.history?.failures.length ?? 0))
+    .replace('{logs}', String(report.logs?.records.length ?? 0));
+  const association = t('diagnosticsCollectionAssociations')
+    .replace('{run}', String(associations.run))
+    .replace('{session}', String(associations.session))
+    .replace('{window}', String(associations.time_window));
+  const sourceLines = coverage.sources.map(source => {
+    const details = [
+      `${t(`diagnosticsSource_${source.source}`)}: ${t(`diagnosticsSourceStatus_${source.status}`)}`,
+      replaceCount('diagnosticsCollectionMatched', source.matched),
+      ...source.reasons
+        .filter(reason => !['outside_window', 'no_safe_fields', 'output_limit'].includes(reason))
+        .map(reason => t(`diagnosticsLogReason_${reason}`)),
+      ...(source.parseFailures
+        ? [replaceCount('diagnosticsCollectionParseFailures', source.parseFailures)]
+        : []),
+      ...(source.truncated && !source.reasons.includes('limit') ? [t('diagnosticsLogsTail')] : []),
+      ...(source.previewOmitted
+        ? [replaceCount('diagnosticsCollectionPreviewOmitted', source.previewOmitted)]
+        : []),
+    ];
+    return details.join(' · ');
+  });
+  const notes = [
+    ...(coverage.eventLosses ? [`${t('diagnosticsDropped')}: ${coverage.eventLosses}`] : []),
+    ...(coverage.storageFailed ? [t('diagnosticsStorageFailed')] : []),
+    ...(coverage.history.status
+      ? [
+          t(`diagnosticsHistory_${coverage.history.status}`).replace(
+            '{count}',
+            String(report.history?.messagesScanned ?? 0),
+          ),
+        ]
+      : []),
+    ...(coverage.history.reason ? [t(`diagnosticsHistoryReason_${coverage.history.reason}`)] : []),
+    ...(coverage.history.omitted
+      ? [replaceCount('diagnosticsHistoryOmitted', coverage.history.omitted)]
+      : []),
+    ...(coverage.collectorLosses
+      ? [`${t('diagnosticsCollectorDropped')}: ${coverage.collectorLosses}`]
+      : []),
+  ];
+  return {
+    ...coverage,
+    title: t(
+      coverage.hasGaps
+        ? 'diagnosticsCollectionGaps'
+        : coverage.logsCollected
+          ? 'diagnosticsCollectionReady'
+          : 'diagnosticsCollectionPending',
+    ),
+    counts,
+    association,
+    window: report.logs
+      ? `${t('diagnosticsLogsWindow')}: ${formatDiagnosticTime(report.logs.window.from)} – ${formatDiagnosticTime(report.logs.window.to)}`
+      : undefined,
+    sourceLines,
+    notes,
+  };
+}
+
+/** Clipboard and the page use the same conclusion, evidence and collection limits. */
+export function summarizeDiagnosticReport(report: DiagnosticReport): string {
+  const coverage = presentDiagnosticCoverage(report);
+  return [
+    t('diagnosticsTitle'),
+    `${t('diagnosticsCollected')}: ${formatDiagnosticTime(report.collectedAt)}`,
+    ...(report.run
+      ? [
+          `${t('diagnosticsRun')}: ${formatDiagnosticTime(report.run.startedAt)}${report.run.endedAt === undefined ? '' : ` – ${formatDiagnosticTime(report.run.endedAt)}`}`,
+        ]
+      : []),
+    summarizeDiagnosticStop(report),
+    ...(report.history?.failures ?? []).map(failure => {
+      const diagnosis = diagnoseHistoryFailure(failure);
+      return [
+        `${formatDiagnosticTime(failure.timestamp)} · ${failure.tool ?? t(failure.kind === 'tool' ? 'diagnosticsKind_tool' : failure.kind === 'runtime' ? 'diagnosticsHistoryRuntime' : 'diagnosticsHistoryModel')} · ${t(`diagnosticsHistoryOutcome_${failure.outcome ?? 'failed'}`)}`,
+        t(`diagnosticsHistoryAssociation_${failure.association}`),
+        failure.excerpt || t('diagnosticsHistoryNoText'),
+        t(diagnosis.adviceKey),
+        ...(diagnosis.inferred ? [t('diagnosticsHistoryInferred')] : []),
+      ].join('\n');
+    }),
+    ...(report.history?.failures.length ? [t('diagnosticsHistoryScope')] : []),
+    ...visibleDiagnosticFindings(report).map(finding =>
+      summarizeDiagnosticFinding(finding, report),
+    ),
+    coverage.title,
+    coverage.counts,
+    coverage.association,
+    ...(coverage.window ? [coverage.window] : []),
+    ...coverage.sourceLines,
+    ...coverage.notes,
+    t('diagnosticsCollectionScope'),
+    t(`diagnosticsConnection_${report.connection}`),
+  ].join('\n');
+}
+
+export function presentDiagnosticExport(summary: DiagnosticExportSummary): string {
+  return [
+    t('diagnosticsExportedCounts').replace('{count}', String(summary.logRecords)),
+    `${t('diagnosticsCollected')}: ${formatDiagnosticTime(summary.collectedAt)}`,
+    ...(summary.logRecords === 0 ? [t('diagnosticsExportNoLogs')] : []),
+    ...(summary.unavailableSources.length
+      ? [
+          t('diagnosticsExportMissing').replace(
+            '{sources}',
+            summary.unavailableSources.map(source => t(`diagnosticsSource_${source}`)).join(' / '),
+          ),
+        ]
+      : []),
+    ...(summary.partialSources.length
+      ? [
+          t('diagnosticsExportPartial').replace(
+            '{sources}',
+            summary.partialSources.map(source => t(`diagnosticsSource_${source}`)).join(' / '),
+          ),
+        ]
+      : []),
+    ...(summary.omittedLogRecords
+      ? [t('diagnosticsExportOmitted').replace('{count}', String(summary.omittedLogRecords))]
+      : []),
   ].join('\n');
 }
