@@ -22,6 +22,9 @@ npm run compile:electron
 npm test
 ```
 
+- For complex tasks, use multiple agents to develop and cross-review the design
+  before implementation. After implementation, conduct an independent multi-agent
+  code review and resolve findings before delivery.
 - Before non-trivial pushes, prefer `npm run lint && npm run build && npm test`.
 - For docs-only changes, run `git diff --check`.
 - `npm test` uses Node better-sqlite3, then restores the Electron ABI;
@@ -94,6 +97,9 @@ npm test
   `src/renderer/theme/`.
 - Use i18n for user-visible strings and add matching `zh`/`en` entries.
   Dictionaries are grouped by domain; `translations.ts` only composes them.
+- UI animation features must remain active when Windows disables animations,
+  including through `prefers-reduced-motion: reduce`. Explicitly configure styles
+  and animation libraries so the system setting does not suppress these effects.
 - Use constants for discriminants, statuses and IPC names. Avoid mutation
   outside intentional Redux Toolkit Immer reducers.
 - Main logs use module prefixes, e.g. `[CronJobService]`. Avoid production
@@ -158,6 +164,11 @@ npm test
   [upgrade checklist](docs/openclaw-upgrade-checklist.md). Validate patches, SDK
   contracts, complete source replacement and the freshly rebuilt artifact.
 
+- Avoid new OpenClaw runtime patches; prefer application-side or `runtime-services`
+  changes through supported native APIs. A new patch requires documented evidence
+  that these alternatives cannot meet the requirement and independent cross-review
+  by multiple agents before implementation. Keep it limited to the smallest
+  necessary native change to preserve future OpenClaw upgrades.
 - Apply current patches to the locked pristine OpenClaw package.
   Historical/partial patch shapes must fail clearly; do not add compatibility,
   migration or in-place upgrades for older application patch revisions.
