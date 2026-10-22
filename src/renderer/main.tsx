@@ -4,7 +4,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 
 import { registerRendererDiagnostics } from '@/app/rendererDiagnostics';
-import { RendererStartupActivity } from '@/app/shell/initialization/startupPresentation';
+import { RendererStartupActivity } from '@/app/shell/startup/routing/startupPresentation';
 import { rendererPreferences } from '@/services/rendererPreferences';
 
 registerRendererDiagnostics();
@@ -22,7 +22,7 @@ async function startRenderer(): Promise<void> {
   await rendererPreferences.initialize();
   // Keep the original HTML failure visible if bootstrapping already failed.
   if (window.startupDiagnostics?.failure) return;
-  const { default: Gate } = await import('@/app/shell/initialization/AppInitializationGate');
+  const { default: Gate } = await import('@/app/shell/startup/routing/AppInitializationGate');
   if (window.startupDiagnostics?.failure) return;
   const Application = React.lazy(async () => {
     // Configure the offline editor before importing any of its consumers.

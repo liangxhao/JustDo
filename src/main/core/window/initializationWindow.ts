@@ -14,6 +14,7 @@ export type InitializationWindow = { window: BrowserWindow; loaded: Promise<void
 export function createInitializationWindow(options: {
   appName: string;
   firstLaunch: boolean;
+  startupPresentation?: { route?: import('../../../shared/app/startup/routing').StartupRoute; entryStartedAt?: number };
   preloadPath: string;
   isWindows: boolean;
   isDev: boolean;
@@ -32,7 +33,7 @@ export function createInitializationWindow(options: {
     backgroundColor: '#F8F9FB',
     webPreferences: {
       partition: 'justdo-initialization',
-      additionalArguments: initializationWindowArguments(options.firstLaunch, true),
+      additionalArguments: initializationWindowArguments(options.firstLaunch, true, options.startupPresentation),
       preload: options.preloadPath,
       nodeIntegration: false,
       nodeIntegrationInSubFrames: false,

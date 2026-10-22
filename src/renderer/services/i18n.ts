@@ -1,3 +1,4 @@
+import { resolveStartupLanguage } from '@/app/shell/startup/initialization/startupLanguage';
 import { configService } from '@/services/config';
 import { translations } from '@/services/i18n/translations';
 
@@ -8,44 +9,24 @@ class I18nService {
   private listeners = new Set<() => void>();
 
   async initialize(): Promise<void> {
-    try {
-      const config = configService.getConfig();
-      if (config.language_initialized === true) {
-        if (config.language === 'zh' || config.language === 'en') {
-          this.currentLanguage = config.language;
-        } else {
-          this.currentLanguage = 'en';
-          await configService.updateConfig({ language: 'en' });
-        }
-        return;
-      }
-
-      if (config.language && config.language !== 'zh') {
-        this.currentLanguage = config.language;
-        await configService.updateConfig({ language_initialized: true });
-        return;
-      }
-
-      try {
-        const systemLocale = await window.electron.appInfo.getSystemLocale();
-        const language = systemLocale === 'zh-CN' ? 'zh' : 'en';
-        this.currentLanguage = language;
-        await configService.updateConfig({
-          language,
-          language_initialized: true,
-        });
-      } catch (error) {
-        console.error('Failed to get system locale:', error);
-        this.currentLanguage = 'en';
-        await configService.updateConfig({
-          language: 'en',
-          language_initialized: true,
-        });
-      }
-    } catch (error) {
-      console.error('Failed to initialize language:', error);
-      this.currentLanguage = 'en';
+    // ConfigService.init must have established its real baseline first. Language
+    // preference persistence can queue behind a runtime apply; it is not UI readiness.
+    const config = configService.getConfig();
+    if (
+      config.language_initialized === true &&
+      (config.language === 'zh' || config.language === 'en')
+    ) {
+      this.currentLanguage = config.language;
+      return;
     }
+    const language =
+      config.language_initialized === true || config.language === 'en'
+        ? 'en'
+        : await resolveStartupLanguage(() => window.electron.appInfo.getSystemLocale());
+    this.setLanguage(language, { persist: false });
+    void configService
+      .updateConfig({ language, language_initialized: true })
+      .catch(error => console.warn('[StartupLanguage] Failed to save language preference:', error));
   }
 
   setLanguage(language: LanguageType, options: { persist?: boolean } = {}): void {

@@ -69,6 +69,8 @@ flowchart TB
 
 Main 的 `core/` 分为 app、window、network、runtime、filesystem、development。浏览器、语音、外部集成和 Windows 沙盒有自己的领域，不塞入通用工具文件。`providers/` 管理产品模型配置与认证；`openclaw/config/` 管理它们向原生配置的投影。
 
+应用启动在 Main 的 `startup/` 与 Renderer 的 `app/shell/startup/` 下按 `routing`、`history`、`initialization` 三个子模块组织；窗口与 preload 保留安全创建和窄桥接职责。流程见[启动与历史升级](../features/app/startup-and-history-upgrade.md)。
+
 `openclaw/config/` 内按 agents、models、speech、plugins、policies 组织原生配置投影；配置结构整理、校验与同步协调器留在根目录。`openclawConfigBuilders.ts` 保留现有聚合入口，各投影直接依赖所属能力和必要的纯配置辅助，不反向引用聚合入口。模型 SecretRef 投影仍归原生配置，产品凭据获取和轮换仍归 `main/providers/`。`openclaw/runtime/launch/` 管理运行包定位、启动参数、端口和进程辅助；EngineManager 继续持有 Gateway 的实例状态、启动和关闭生命周期，原生支持源码仍保留在 `runtime/native-support/`。
 
 Renderer 的 feature 负责页面行为，settings 内按 models/browser/speech/integrations/runtime 等领域组织。插件按 skills/mcp/hooks/extensions/marketplace 组织。Cowork 组件按领域组织：chat/composer/sessions/goals/subagents/swarm-workflow/approvals/questions/display/preview/terminal/review/status；跨领域组合仍由 CoworkView 承担。较大的领域内部按实际能力划分子模块，测试与实现同行，文件数量只作为审查提示，不作为强制拆并配额。

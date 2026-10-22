@@ -119,6 +119,7 @@ interface OpenClawEngineManagerEvents {
 }
 
 export type OpenClawEngineManagerOptions = {
+  canStartGateway?: () => boolean;
   beginNetworkGeneration?: () => void;
   prepareNetworkGeneration?: () => Promise<void>;
   buildNetworkEnvironment?: (baseEnv: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
@@ -295,6 +296,7 @@ const fetchWithTimeout = async (url: string, timeoutMs: number): Promise<Respons
 };
 
 export class OpenClawEngineManager extends EventEmitter {
+  private readonly canStartGateway?: () => boolean;
   private readonly baseDir: string;
   private readonly logsDir: string;
   private readonly stateDir: string;
@@ -337,6 +339,7 @@ export class OpenClawEngineManager extends EventEmitter {
 
   constructor(options: OpenClawEngineManagerOptions = {}) {
     super();
+    this.canStartGateway = options.canStartGateway;
 
     this.buildNetworkEnvironment =
       options.buildNetworkEnvironment ?? (baseEnv => ({ ...baseEnv }));
@@ -663,6 +666,8 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   async startGateway(): Promise<OpenClawEngineStatus> {
+    if (!this.applicationShuttingDown && this.canStartGateway && !this.canStartGateway())
+      throw new Error('Startup history preparation has not completed.');
     // Consumers need the final lifecycle result, including configuration restarts
     // queued while a cold start is preparing its environment.
     let status: OpenClawEngineStatus;
@@ -680,6 +685,8 @@ export class OpenClawEngineManager extends EventEmitter {
 
   private startGatewayOnce(): Promise<OpenClawEngineStatus> {
     if (this.applicationShuttingDown) return Promise.resolve(this.getStatus());
+    if (this.canStartGateway && !this.canStartGateway())
+      return Promise.reject(new Error('Startup history preparation has not completed.'));
     if (this.startGatewayPromise) {
       console.log('[OpenClaw] startGateway: already in progress, reusing existing promise');
       return this.startGatewayPromise;

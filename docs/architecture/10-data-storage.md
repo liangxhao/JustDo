@@ -72,19 +72,21 @@ Cookie 更新合并当前文件而保留长期 mtoken；账号替换先删除旧
 退出删除整个登录文件。SDK 派生 JWT 不回写，继续由原有私有凭据快照与 SecretRef 管理。
 账号显示与服务同步状态只在 Main 内存中，重启从文件/SDK 恢复，不持久化原始 SDK 错误或凭据到产品库。
 
-消息唯一持久权威是 OpenClaw 的原生 SQLite transcript。初始化删除旧 cowork_messages 缓存，不迁移其消息；Renderer 按原生历史恢复，不从 Main 或 Redux 寻找持久正文。
+消息唯一持久权威是 OpenClaw 的原生 SQLite transcript。已发布 JSONL 用户先备份并建立全新产品库；旧缓存中的独有历史转换后交由原生导入，目标不建立 cowork_messages。Renderer 按原生历史恢复，不从 Main 或 Redux 寻找持久正文。见[启动与历史升级](../features/app/startup-and-history-upgrade.md)。
 
 ### 未发布 9.6 数据兼容已撤回
 
 9.6 版本未发布。按用户要求，本次 9.8 升级新增的 9.6→9.8 原生 SQLite 兼容迁移已移除，包括应用维护桥接、启动门禁、专项测试和构建资产。当前应用不承诺自动升级该未发布版本的 shared18／agent23 数据。
 
-原生 transcript 与数据库格式仍由 OpenClaw 管理，应用不读取或复制正文到产品表，也不为此次升级添加迁移 SQL、Doctor 修复或自动删库重建逻辑。
+原生 transcript 与数据库格式仍由 OpenClaw 管理，应用不读取或复制正文到产品表。该撤回仅指未发布的 SQLite→SQLite 兼容，不包含另行授权的已发布 JSONL 历史导入；后者使用当前原生 Doctor 和公开读取器，不添加原生 SQLite 迁移 SQL 或自动删库重建逻辑。
 
 此前合成旧数据迁移演练仅保留为已撤回方案的历史证据，不属于现行能力或可复跑验收项。下文现有产品数据库初始化规则不在本次删除范围内；运行包仍须从 pristine 重建。
 
 ## 2. 初始化与兼容规则
 
-Windows 安装阶段不创建用户数据库、运行配置、Python 用户环境或更新缓存；仅向 Roaming 产品目录追加安装日志，日志不可写时可在最终安装目录保留备用日志。首次运行创建真实用户目录并打开 SQLite，失败通过初始化首页显示原因。`.justdo-initialized` 是本地应用壳首次初始化的展示标记，写入失败只记日志，不改变 schema 或原生会话所有权。Python、配置同步和 Gateway 的可恢复故障允许用户进入设置处理，不成为额外的数据目录门槛。已有目录没有该标记时只展示一次初始化进度，不清空用户数据。
+Windows 安装阶段不创建用户数据库、运行配置、Python 用户环境或更新缓存。首次运行由 Main 在打开 Store 前只读区分无环境、已发布 JSONL 历史和当前数据代际。旧用户先得到包含已提交 WAL 的选择性备份，再隔离旧环境、建立当前空产品库并恢复历史；普通升级直接保留当前库和设置。
+
+`startup-state.json` 记录稳定数据代际和事务阶段；缺少新记录的当前用户先识别并采用当前环境，旧展示标记缺失或写入失败不再触发初始化。未知、混合、损坏或不可读格式保留文件并显示原因。常规 Python、配置和 Gateway 可恢复问题继续允许进入设置；历史导入的身份/完整性错误则保留恢复阶段。完整顺序与恢复边界见[启动与历史升级](../features/app/startup-and-history-upgrade.md)。
 
 左侧功能栏的固定偏好保存在 `kv.app_config.sidebarPinnedItems`，为可选功能 ID 的有序数组，缺省为空。Renderer 读取时过滤非法及重复项；固定和取消固定通过既有配置补丁 IPC 串行保存，保存失败保留已确认的偏好。扩展暂时关闭只隐藏对应入口，不删除其固定偏好。该设置不增加数据表，不修改原生插件配置或会话存储。
 
@@ -114,7 +116,7 @@ Code Mode 的显式 `store/load` JSON 值由原生会话 transcript 的
 旧值仍可能存在原生历史和导出中；与产品偏好、普通 VM 变量及当轮 `results.save`
 引用的生命周期分别管理。原生行为与隔离验证入口见[引擎](05-agent-engine.md)。
 
-SqliteStore.create 先检查已知 legacy schema，再打开连接，设置 PRAGMA，初始化表及增量列/索引，调用协作 schema 初始化器，最后处理 app_config 中遗留凭据引用。
+SqliteStore.create 打开当前目标库、设置 PRAGMA、初始化表及增量列/索引、调用领域 schema 初始化器，最后处理 app_config 中遗留凭据引用。发现仍有旧消息缓存时拒绝打开，不在此删除唯一历史；启动升级模块先处理旧代际。
 
 | PRAGMA             | 值     | 影响                    |
 | ------------------ | ------ | ----------------------- |
@@ -124,7 +126,13 @@ SqliteStore.create 先检查已知 legacy schema，再打开连接，设置 PRAG
 | cache_size         | -8000  | 以 KiB 表示页面缓存目标 |
 | wal_autocheckpoint | 1000   | 自动 checkpoint 阈值    |
 
-已知 cowork_sessions 缺少必需列时，现有 legacy 检测会删除数据库及 WAL/SHM 后重建；检查本身失败则记录并保留文件。这是有损兼容分支，不能泛化为任何 schema 问题都可自动删库。新增正常字段使用 ensureColumn 等增量逻辑。
+不再根据缺列自动删除数据库及 WAL/SHM。未知结构由启动判定拒绝并保留；正常当前结构仍使用 ensureColumn 等增量逻辑。历史升级直接建立新表并插入选定元数据，不修改旧产品库。
+历史标题/映射的导入事务临时使用 `synchronous=FULL`，提交并确认完整 checkpoint 后才允许阶段记录落盘，
+零会话也必须确认前序 schema 和默认值已落盘，
+然后恢复原 PRAGMA。检查阶段恢复只读取不可变绑定，不重写已确认的用户元数据。
+`history_session_bindings.defaults_applied` 记录历史会话是否已采用当前新会话默认配置。
+新导入行显式置 0，首次打开/运行准备时在同一产品事务内采用当前默认权限、清空旧模型覆盖并置 1；
+此后保留用户主动选择。为已有绑定补列默认置 1，避免重置既有用户选择。工作目录为空或不存在不阻断迁移，结果页统计并在会话内提供选择目录入口。
 
 旧双会话 Plan 的 segments 与不符合当前约束的 handoff schema 有专门清理分支；该处理不适用于普通用户数据。产品数据库迁移与 OpenClaw 运行时补丁升级是两回事，后者必须从 pristine 包重建。
 
@@ -132,41 +140,42 @@ SqliteStore.create 先检查已知 legacy schema，再打开连接，设置 PRAG
 
 产品表由 SqliteStore、会话诊断初始化器及 Agent Team 的协作/验收/群聊/待发初始化器共同建立。下表列出现行产品表；插件扩展复用 Main 提供的连接，schema 实现在各自 owning domain，不从旧版固定表数推断完整性。独立 Swarm 流程库、浏览器数据库和原生 transcript 不属于此表。
 
-| 表                                   | 责任与关键身份                          |
-| ------------------------------------ | --------------------------------------- |
-| `kv`                                 | JSON 设置与内部元数据，key 主键         |
-| `cowork_sessions`                    | 产品会话索引，id 主键                   |
-| `cowork_session_runs`                | clientTurnId 唯一，映射原生 rootRunId   |
-| `cowork_external_sessions`           | source + externalSessionKey 唯一映射    |
-| `cowork_external_session_tombstones` | 外部会话删除防复活                      |
-| `cowork_plan_handoffs`               | planId、文件身份、实施接收状态          |
-| `cowork_config`                      | Cowork 设置和产品执行快照               |
-| `agents`                             | 助手档案、启用/默认状态及 deleted_at    |
-| `mcp_servers`                        | 用户 MCP 配置，name 唯一                |
-| `openclaw_hooks`                     | Hook 开关及配置                         |
-| `session_groups`                     | 分组名称、颜色和排序                    |
-| `scheduled_task_run_receipts`        | 原生 run 对应的结果索引与 readAt        |
-| `scheduled_task_result_cleanup`      | 原生结果 artifact 清理进度              |
-| `scheduled_task_result_tombstones`   | 删除完成的 run 防同步复活               |
-| `collaboration_rooms`                | 唯一 anchorSessionId                    |
-| `collaboration_members`              | room 内唯一 agent；session/key 全局唯一 |
-| `collaboration_rounds`               | 用户轮次及 stopped_at                   |
-| `collaboration_deliveries`           | 路由、摘要哈希、原生接收和状态          |
-| `collaboration_execution_receipts`   | 精确 sessionKey/runId 的 whole-run 终态 |
-| `collaboration_reviews`              | 原生验收执行、封闭结论及对应批次        |
-| `collaboration_review_deliveries`    | 验收报告到具体工作回执的关联            |
-| `collaboration_deletions`            | 删除冻结记录                            |
-| `collaboration_deleted_members`      | 已确认原生删除的成员                    |
-| `cowork_run_diagnostic_coverage`     | 诊断采集起点、覆盖及裁剪计数            |
-| `cowork_run_diagnostic_events`       | 有界、闭合值的运行诊断元数据            |
-| `team_discussion_rooms`              | 固定成员、来源身份及房间状态            |
-| `team_discussion_runs`               | 请求指纹、批次身份与汇总抑制            |
-| `team_discussion_executions`         | 成员精确原生执行、结算和清理证据        |
-| `team_discussion_summaries`          | 来源汇总的 outbox 与执行回执            |
-| `team_discussion_task_links`         | 获准读取群历史的关联产品任务            |
-| `team_discussion_deleted_rooms`      | 已删除房间的持久墓碑                    |
-| `team_discussion_queue_control`      | 每群待发控制 generation                 |
-| `team_discussion_pending_inputs`     | holding 引用、请求指纹与 FIFO 状态      |
+| 表                                   | 责任与关键身份                                           |
+| ------------------------------------ | -------------------------------------------------------- |
+| `kv`                                 | JSON 设置与内部元数据，key 主键                          |
+| `cowork_sessions`                    | 产品会话索引，id 主键                                    |
+| `history_session_bindings`           | 历史产品会话、原生身份、原始外部映射及恢复事务；不存正文 |
+| `cowork_session_runs`                | clientTurnId 唯一，映射原生 rootRunId                    |
+| `cowork_external_sessions`           | source + externalSessionKey 唯一映射                     |
+| `cowork_external_session_tombstones` | 外部会话删除防复活                                       |
+| `cowork_plan_handoffs`               | planId、文件身份、实施接收状态                           |
+| `cowork_config`                      | Cowork 设置和产品执行快照                                |
+| `agents`                             | 助手档案、启用/默认状态及 deleted_at                     |
+| `mcp_servers`                        | 用户 MCP 配置，name 唯一                                 |
+| `openclaw_hooks`                     | Hook 开关及配置                                          |
+| `session_groups`                     | 分组名称、颜色和排序                                     |
+| `scheduled_task_run_receipts`        | 原生 run 对应的结果索引与 readAt                         |
+| `scheduled_task_result_cleanup`      | 原生结果 artifact 清理进度                               |
+| `scheduled_task_result_tombstones`   | 删除完成的 run 防同步复活                                |
+| `collaboration_rooms`                | 唯一 anchorSessionId                                     |
+| `collaboration_members`              | room 内唯一 agent；session/key 全局唯一                  |
+| `collaboration_rounds`               | 用户轮次及 stopped_at                                    |
+| `collaboration_deliveries`           | 路由、摘要哈希、原生接收和状态                           |
+| `collaboration_execution_receipts`   | 精确 sessionKey/runId 的 whole-run 终态                  |
+| `collaboration_reviews`              | 原生验收执行、封闭结论及对应批次                         |
+| `collaboration_review_deliveries`    | 验收报告到具体工作回执的关联                             |
+| `collaboration_deletions`            | 删除冻结记录                                             |
+| `collaboration_deleted_members`      | 已确认原生删除的成员                                     |
+| `cowork_run_diagnostic_coverage`     | 诊断采集起点、覆盖及裁剪计数                             |
+| `cowork_run_diagnostic_events`       | 有界、闭合值的运行诊断元数据                             |
+| `team_discussion_rooms`              | 固定成员、来源身份及房间状态                             |
+| `team_discussion_runs`               | 请求指纹、批次身份与汇总抑制                             |
+| `team_discussion_executions`         | 成员精确原生执行、结算和清理证据                         |
+| `team_discussion_summaries`          | 来源汇总的 outbox 与执行回执                             |
+| `team_discussion_task_links`         | 获准读取群历史的关联产品任务                             |
+| `team_discussion_deleted_rooms`      | 已删除房间的持久墓碑                                     |
+| `team_discussion_queue_control`      | 每群待发控制 generation                                  |
+| `team_discussion_pending_inputs`     | holding 引用、请求指纹与 FIFO 状态                       |
 
 ## 4. 会话与运行回执
 

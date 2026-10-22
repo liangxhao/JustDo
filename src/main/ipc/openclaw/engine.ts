@@ -648,17 +648,24 @@ export const registerOpenClawEngineHandlers = ({
     }
   });
 
-  getManager().onSessionMigrationProgress(progress => {
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
-        window.webContents.send(OpenClawSessionMigrationIpc.Progress, progress);
-      }
+  let migrationProgressBound = false;
+  const migrationManager = () => {
+    const manager = getManager();
+    if (!migrationProgressBound) {
+      migrationProgressBound = true;
+      manager.onSessionMigrationProgress(progress => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed() && !window.webContents.isDestroyed())
+            window.webContents.send(OpenClawSessionMigrationIpc.Progress, progress);
+        }
+      });
     }
-  });
+    return manager;
+  };
 
   ipcMain.handle(OpenClawSessionMigrationIpc.Plan, async () => {
     try {
-      return { success: true, plan: await getManager().getSessionMigrationPlan() };
+      return { success: true, plan: await migrationManager().getSessionMigrationPlan() };
     } catch (error) {
       console.warn(
         '[OpenClawEngine] Failed to prepare session migration plan:',
@@ -682,7 +689,7 @@ export const registerOpenClawEngineHandlers = ({
         return { success: false, error: 'Invalid session migration confirmation.' };
       }
       try {
-        const result = await getManager().confirmSessionMigration(
+        const result = await migrationManager().confirmSessionMigration(
           request.planId,
           request.approved,
         );

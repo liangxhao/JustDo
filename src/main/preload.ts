@@ -29,6 +29,14 @@ import {
 import { LogIpc } from '../shared/app/logIpc';
 import { MediaCaptureIpc, MediaCaptureSurface } from '../shared/app/mediaCapture';
 import {
+  HistoryRecoveryIpc,
+  type HistoryWorkspaceResult,
+  type StartupSupportAction,
+  StartupSupportIpc,
+  type StartupSupportResult,
+} from '../shared/app/startup/history';
+import { STARTUP_CLOCK_ARGUMENT, STARTUP_ROUTE_ARGUMENT, StartupRoute } from '../shared/app/startup/routing';
+import {
   type TerminalActionResult,
   type TerminalCreateRequest,
   type TerminalCreateResult,
@@ -1238,8 +1246,14 @@ contextBridge.exposeInMainWorld('electron', {
     set: (enabled: boolean) => ipcRenderer.invoke('app:setPreventSleep', enabled),
   },
   initialization: {
+    openSupport: (action: StartupSupportAction): Promise<StartupSupportResult> =>
+      ipcRenderer.invoke(StartupSupportIpc.Open, { action }),
+    selectHistoryWorkspace: (input: { sessionId: string }): Promise<HistoryWorkspaceResult> =>
+      ipcRenderer.invoke(HistoryRecoveryIpc.SelectWorkspace, input),
     isTransientWindow: process.argv.includes(INITIALIZATION_WINDOW_ARGUMENT),
     firstLaunch: process.argv.includes(FIRST_LAUNCH_WINDOW_ARGUMENT),
+    route: Object.values(StartupRoute).find(route => process.argv.includes(`${STARTUP_ROUTE_ARGUMENT}${route}`)),
+    entryStartedAt: Number(process.argv.find(argument => argument.startsWith(STARTUP_CLOCK_ARGUMENT))?.slice(STARTUP_CLOCK_ARGUMENT.length)) || undefined,
     appearance: readWindowAppearance(
       () => ipcRenderer.sendSync(WindowAppearanceIpc.Get),
       process.argv.includes(INITIALIZATION_WINDOW_ARGUMENT),

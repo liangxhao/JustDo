@@ -11,7 +11,7 @@ import { buildStartupAppearance } from '../theme/startupAppearance.mjs';
 export function startupPresentationPlugin(rendererRoot) {
   const appearance = buildStartupAppearance(rendererRoot);
   const motion = buildSync({
-    entryPoints: [path.join(rendererRoot, 'app/shell/startup/startupMotionBootstrap.ts')],
+    entryPoints: [path.join(rendererRoot, 'app/shell/startup/initialization/startupMotionBootstrap.ts')],
     bundle: true,
     write: false,
     format: 'iife',
@@ -29,7 +29,7 @@ export function startupPresentationPlugin(rendererRoot) {
     ]),
   );
   const failureBootstrap = buildSync({
-    entryPoints: [path.join(rendererRoot, 'app/shell/initialization/startupFailureBootstrap.ts')],
+    entryPoints: [path.join(rendererRoot, 'app/shell/startup/initialization/startupFailureBootstrap.ts')],
     bundle: true,
     write: false,
     format: 'iife',
@@ -49,9 +49,9 @@ export function startupPresentationPlugin(rendererRoot) {
           .replaceAll('%STARTUP_THEME_STYLES%', appearance.styles)
           .replaceAll('%STARTUP_MOTION_SCRIPT%', motion)
           .replaceAll('%STARTUP_FAILURE_SCRIPT%', failureBootstrap + '\nstartupFailureBootstrap.install(copy);')
-          .replaceAll('%STARTUP_STYLES%', ['app/shell/startup/StartupScreen.css', 'app/shell/first-launch/FirstLaunchGuide.css', 'app/shell/initialization/StartupDiagnostics.css'].map(file => fs.readFileSync(path.join(rendererRoot, file), 'utf8')).join('\n'))
-          .replaceAll('%FIRST_LAUNCH_DOCUMENT%', fs.readFileSync(path.join(rendererRoot, 'app/shell/first-launch/firstLaunchDocument.html'), 'utf8'))
-          .replaceAll('%STARTUP_DOCUMENT%', fs.readFileSync(path.join(rendererRoot, 'app/shell/startup/startupDocument.html'), 'utf8'))
+          .replaceAll('%STARTUP_STYLES%', ['app/shell/startup/initialization/StartupScreen.css', 'app/shell/startup/initialization/FirstLaunchGuide.css', 'app/shell/startup/initialization/StartupDiagnostics.css'].map(file => fs.readFileSync(path.join(rendererRoot, file), 'utf8')).join('\n'))
+          .replaceAll('%FIRST_LAUNCH_DOCUMENT%', fs.readFileSync(path.join(rendererRoot, 'app/shell/startup/initialization/firstLaunchDocument.html'), 'utf8'))
+          .replaceAll('%STARTUP_DOCUMENT%', fs.readFileSync(path.join(rendererRoot, 'app/shell/startup/initialization/startupDocument.html'), 'utf8'))
           .replaceAll('%STARTUP_TRANSLATIONS%', JSON.stringify(dictionaries).replaceAll('<', '\\u003c'))
           .replace(/%STARTUP_COPY_(\w+)%/gu, (_, key) => dictionaries.en[key] ?? key);
       },

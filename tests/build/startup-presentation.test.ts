@@ -4,7 +4,7 @@ import { expect, test } from 'vitest';
 
 import { startupPresentationPlugin } from '../../scripts/build/startupPresentationPlugin.mjs';
 import { AppInitializationActivity } from '../../src/shared/app/initialization';
-import { RendererStartupActivity } from '../../src/renderer/app/shell/initialization/startupPresentation';
+import { RendererStartupActivity } from '../../src/renderer/app/shell/startup/routing/startupPresentation';
 import { initializationTranslations } from '../../src/renderer/services/i18n/initializationTranslations';
 import { startupTranslations } from '../../src/renderer/services/i18n/startupTranslations';
 

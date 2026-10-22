@@ -454,8 +454,8 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
               label: i18nService.t('coworkCopySession'),
               onClick: handleCopyClick,
               tone: 'neutral' as const,
-              disabled: isRuntimeRunning || !!session.nativeSessionKey,
-              title: session.nativeSessionKey
+              disabled: isRuntimeRunning || (!!session.nativeSessionKey && !session.historyBinding),
+              title: session.nativeSessionKey && !session.historyBinding
                 ? i18nService.t('worktreeCopyUnavailable')
                 : isRuntimeRunning
                   ? i18nService.t('coworkCopyWaitForCompletion')
@@ -493,6 +493,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   }, [
     session.collaboration,
     session.nativeSessionKey,
+    session.historyBinding,
     batchLabel,
     copyMainSessionIdLabel,
     deleteLabel,

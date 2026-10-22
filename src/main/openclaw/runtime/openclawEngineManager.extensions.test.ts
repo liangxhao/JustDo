@@ -60,6 +60,16 @@ function createManager() {
 afterEach(() => vi.restoreAllMocks());
 
 describe('Gateway source extension preparation', () => {
+  it('keeps both public and internal Gateway starts closed during history preparation', async () => {
+    const { manager } = createManager();
+    Object.assign(manager, { canStartGateway: () => false });
+    const sync = vi.mocked(syncLocalOpenClawExtensionsIntoRuntime);
+    sync.mockClear();
+    await expect(manager.startGateway()).rejects.toThrow(/history preparation/);
+    await expect((manager as unknown as { startGatewayOnce: () => Promise<unknown> }).startGatewayOnce())
+      .rejects.toThrow(/history preparation/);
+    expect(sync).not.toHaveBeenCalled();
+  });
   it('waits for an in-process restart even when the old listener still answers health checks', async () => {
     const { manager, harness } = createManager();
     const ready = Promise.withResolvers<boolean>();

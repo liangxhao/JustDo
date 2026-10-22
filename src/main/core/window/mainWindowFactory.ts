@@ -79,6 +79,7 @@ import { WorkspaceWindowManager } from './workspaceWindowManager';
 type MainWindowFactoryOptions = {
   appName: string;
   firstLaunch: boolean;
+  startupPresentation?: { route?: import('../../../shared/app/startup/routing').StartupRoute; entryStartedAt?: number };
   browserGuestPreloadPath: string;
   widgetViewerPreloadPath: string;
   devServerUrl: string;
@@ -136,7 +137,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     icon: options.getIconPath(),
     ...getWindowChromeOptions(options.isMac, options.isWindows, options.getTitleBarOverlay()),
     webPreferences: {
-      additionalArguments: initializationWindowArguments(options.firstLaunch),
+      additionalArguments: initializationWindowArguments(options.firstLaunch, false, options.startupPresentation),
       nodeIntegration: false,
       nodeIntegrationInSubFrames: false,
       contextIsolation: true,

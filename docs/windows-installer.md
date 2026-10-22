@@ -150,37 +150,33 @@ The upstream copy of the setup EXE into the Local AppData updater cache is also
 removed. Subsequent updater downloads remain owned by the running application.
 Windows shortcuts and uninstall registry entries retain their normal OS locations.
 
-The first application launch creates the actual user-data directory and opens the
-product database. The first-launch in-memory initialization window can report errors before
-persistent browser profiles open. Later successful launches use one normal window;
-a data-directory failure can still open its owning flow's error screen. Presentation
-is split into independent `app/shell/first-launch/` and `app/shell/startup/` directories;
-`app/shell/initialization/` owns only their coordination and error boundary. Main freezes
-`firstLaunch` for the process and supplies it to every window through a synchronous
-preload flag, including after the completion marker is written. A transient window is
-not evidence of first launch: it can also display an ordinary-launch data failure.
-The first-launch guide retains its original layout and preparation copy.
-Subsequent launches show their own checklist: open existing application data, check
-the runtime, load startup configuration, and start background services. These are
-step counts, not an invented byte/time percentage. After SQLite opens, it hands off
-to the normal application window while preserving the initialization state.
-The Renderer subscribes before reading its snapshot and mounts the normal app behind
-the same startup overlay when Main reports readiness. Only successful App initialization
-and the first Cowork workspace load dismiss it and reveal the home page. First launch
-never transitions through the subsequent-launch screen; subsequent launches never
-display setup. Later workspace remounts do not reopen startup. Failures retain the
-owning presentation, failed step, directory and actual error. Main failures offer
-restart; Renderer or snapshot failures offer reload, without invoking Main's
-failure-only relaunch API. Reinstalling is unnecessary for a profile problem.
+Main classifies the active data generation before opening the product Store or Gateway.
+A fresh profile uses the four-step setup. A published JSONL profile first receives a
+verified selective history backup, then a fresh environment, native history import,
+metadata restoration and startup checks. Current SQLite users retain their settings
+and take ordinary startup, including overwrite/reinstall without the old presentation
+marker. Unknown/mixed formats preserve the profile and expose a recovery error.
+Unfinished transactions resume at their confirmed stage. An uncommitted backup
+candidate is retained and refreshed; a prepared target environment is not replaced.
+See [startup and history upgrade](features/app/startup-and-history-upgrade.md).
 
-The subsequent-launch screen starts with a centered application mark, unfolds a flat
-brand band horizontally, then unfolds real progress and its four-step checklist downward.
-Its local browser-only motion module is embedded at build time. One 1.4-second document
-clock continues across static HTML, React, and snapshot handoffs without replaying the entry.
-Only after actual App/workspace readiness and the entry finish do two flat panels reveal
-the mounted home page over 640 milliseconds. During that reveal the home page remains
-inert and aria-hidden; failures cancel dismissal and expose their recovery controls immediately.
-First launch runs neither ordinary-launch animation and opens the home page directly.
+The owning startup module is `app/shell/startup/`, with `routing`, `history` and
+`initialization` submodules, mirrored by Main's startup domain. First setup and history
+upgrade share one guide; ordinary startup shows the current operation without setup
+steps. Main freezes route, first-launch mode and one animation clock for every window.
+The in-memory transient guide hands off after the new product Store opens; no old
+persistent profile is opened before migration admission. The Renderer subscribes before
+reading its snapshot and keeps the destination inert until App and its first workspace
+are actually ready. Main failures offer restart; Renderer failures offer reload, with
+actual errors and diagnostics retained.
+
+All routes use the bundled soft-light gathering entry: a visible centered mark settles
+into the brand position while content appears, over 1280ms. The shared Main clock
+continues across transient/normal windows, static HTML, React and snapshot handoffs.
+After real readiness, two panels reveal the mounted home page over 640ms. Failure
+cancels entry/reveal immediately; late completion cannot open the destination. Motion
+never advances data milestones. Locale preference persistence no longer blocks UI
+readiness; critical unread configuration stays an error, retaining the original exception.
 Its copy is maintained separately in
 `startupTranslations.ts`; guide copy remains in `initializationTranslations.ts`.
 Opening an existing database and synchronizing AI runtime settings are not labeled
@@ -238,16 +234,14 @@ host preparation, before opening SQLite. A load failure is logged and does not
 add a fatal startup gate. The normal Renderer retains preference hydration before
 App/Redux imports.
 
-Main writes `.justdo-initialized` after preparing the usable local application
-shell. Dependency environment setup, Python preparation, default-project creation, configuration synchronization,
-Gateway readiness and writing this presentation marker do not add fatal startup
-gates. Their failures are logged, with Settings and the existing runtime status
-still available for recovery. Actual user-directory/database failures retain the
-failure screen. Interrupted local preparation retries next launch. Existing
-Windows profiles without this marker show the setup progress once
-without deleting their data. Development and other platforms do not write the
-Windows marker. Legacy Python cleanup now occurs only in the running application's
-existing runtime readiness flow; legacy dependency config copies remain untouched.
+Main retains `.justdo-initialized` as an optional presentation receipt after
+first setup or history upgrade; data-generation admission and `startup-state.json`
+own routing. A current profile without that receipt still takes ordinary startup.
+Normal dependency/default-resource readiness tasks retain their existing optional
+failure handling. History backup, native import, exact identity verification and
+historical-owner projection must succeed before history admission. Directory/database
+failures preserve a recovery screen. Interrupted preparation resumes on the next launch.
+Legacy Python cleanup occurs only in the application's existing runtime readiness flow.
 
 ### Startup resource ownership
 

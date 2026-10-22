@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -9,6 +10,7 @@ import {
   validateAgentRuntimeSettings,
 } from '../../shared/agents/agentRuntimeSettings';
 import type { AgentProfileInput } from '../../shared/agents/agents';
+import type { HistorySessionBinding } from '../../shared/app/startup/history';
 import {
   DEFAULT_MAX_RETAINED_DISPLAY_TABS,
   normalizeMaxRetainedDisplayTabs,
@@ -124,6 +126,7 @@ function normalizeCoworkAgentEngineValue(value?: string | null): CoworkAgentEngi
 }
 
 export interface CoworkSession {
+  historyBinding?: HistorySessionBinding;
   id: string;
   title: string;
   status: CoworkSessionStatus;
@@ -152,6 +155,7 @@ export interface CoworkSessionForkSource {
 }
 
 export interface CoworkSessionSummary {
+  historyBinding?: HistorySessionBinding;
   branchCreationPending?: boolean;
   nativeSessionKey?: string;
   id: string;
@@ -761,6 +765,7 @@ export class CoworkStore {
       agentId: row.agent_id || 'main',
       ...(row.model_ref?.trim() ? { modelRef: row.model_ref.trim() } : {}),
       ...(this.isSessionBranchPending(id) ? { branchCreationPending: true } : {}),
+      ...this.getHistorySessionPresentation(row.id, row.cwd),
       ...(row.native_session_key ? { nativeSessionKey: row.native_session_key } : {}),
       ...(row.native_parent_session_id
         ? { nativeParentSessionId: row.native_parent_session_id }
@@ -796,7 +801,16 @@ export class CoworkStore {
       'SELECT id FROM cowork_sessions WHERE native_session_key = ?',
       [sessionKey],
     );
-    return row ? this.getSession(row.id) : null;
+    if (row) return this.getSession(row.id);
+    try {
+      const imported = this.getOne<{ session_id: string }>(
+        'SELECT session_id FROM history_session_bindings WHERE session_key = ?', [sessionKey],
+      );
+      return imported ? this.getSession(imported.session_id) : null;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('no such table')) return null;
+      throw error;
+    }
   }
 
   hasNativeChildSessions(parentSessionId: string): boolean {
@@ -975,6 +989,7 @@ export class CoworkStore {
           ),
       )
       .map(row => ({
+        ...this.getHistorySessionPresentation(row.id),
         ...(row.native_session_key ? { nativeSessionKey: row.native_session_key } : {}),
         id: row.id,
         ...(pendingBranches.has(row.id) ? { branchCreationPending: true } : {}),
@@ -988,6 +1003,58 @@ export class CoworkStore {
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       }));
+  }
+
+  /** Adopt the same current defaults as a new conversation once, before first use. */
+  applyHistorySessionDefaults(sessionId: string): boolean {
+    return this.db.transaction(() => {
+      const pending = this.db
+        .prepare(
+          'SELECT session_id FROM history_session_bindings WHERE session_id=? AND defaults_applied=0',
+        )
+        .get(sessionId);
+      if (!pending) return false;
+      this.db
+        .prepare('UPDATE cowork_sessions SET permission_mode=?,model_ref=NULL WHERE id=?')
+        .run(this.getConfig().permissionMode, sessionId);
+      this.db
+        .prepare('UPDATE history_session_bindings SET defaults_applied=1 WHERE session_id=?')
+        .run(sessionId);
+      return true;
+    })();
+  }
+
+  private getHistorySessionPresentation(sessionId: string, cwd?: string): {
+    nativeSessionKey?: string;
+    historyBinding?: HistorySessionBinding;
+  } {
+    let row: {
+      session_key: string;
+      native_session_id: string;
+      availability: HistorySessionBinding['availability'];
+    } | undefined;
+    try {
+      row = this.db.prepare(`SELECT session_key,native_session_id,availability
+        FROM history_session_bindings WHERE session_id=?`)
+        .get(sessionId) as typeof row;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('no such table')) return {};
+      throw error;
+    }
+    if (!row) return {};
+    const historyBinding: HistorySessionBinding = {
+      sessionKey: row.session_key,
+      nativeSessionId: row.native_session_id,
+      availability: row.availability,
+    };
+    if (cwd !== undefined) {
+      try {
+        historyBinding.workspaceUnavailable = !fs.statSync(cwd).isDirectory();
+      } catch {
+        historyBinding.workspaceUnavailable = true;
+      }
+    }
+    return { nativeSessionKey: row.session_key, historyBinding };
   }
 
   resetRunningSessions(): number {

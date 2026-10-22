@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { BrowserWindow } from 'electron';
 import { EventEmitter } from 'events';
+import fs from 'fs';
 import path from 'path';
 
 import { createPropertyContext } from '../../../shared/app/propertyContext';
@@ -406,7 +407,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     sessionKey: string,
     options: CoworkPrepareSessionOptions = {},
   ): Promise<CoworkPreparedSession> {
-    const session = this.store.getSession(sessionId);
+    let session = this.store.getSession(sessionId);
+    const adoptedDefaults = !!session?.historyBinding && this.store.applyHistorySessionDefaults?.(sessionId);
+    if (adoptedDefaults)
+      session = this.store.getSession(sessionId);
     if (!session) throw new Error(`Session ${sessionId} not found`);
     if (session.branchCreationPending && !options.pendingBranchPreparation) {
       throw new Error(t('coworkBranchCreationPending'));
@@ -416,10 +420,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!workspaceRoot || !path.isAbsolute(workspaceRoot)) {
       throw new Error('The session workspace must be an absolute path.');
     }
-    const permissionMode: PermissionMode = options.permissionMode ?? session.permissionMode;
+    if (session.historyBinding && !fs.existsSync(workspaceRoot)) {
+      throw new Error('The historical workspace is unavailable. Select an existing folder before continuing.');
+    }
+    const permissionMode: PermissionMode = adoptedDefaults ? session.permissionMode : options.permissionMode ?? session.permissionMode;
     const nativePermissionMode = toOpenClawSessionPermissionMode(permissionMode);
 
     await this.ensureGatewayClientReady();
+    if (session.historyBinding && options.expectedSessionId &&
+      options.expectedSessionId !== session.historyBinding.nativeSessionId)
+      throw new Error('The prepared historical conversation identity does not match its binding.');
     if (options.expectedSessionId) {
       const client = this.requireGatewayClient();
       const generation = this.gatewayClientGeneration;
@@ -448,7 +458,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.rememberSessionKey(sessionId, sessionKey);
       return { sessionKey, gatewaySessionId: options.expectedSessionId };
     }
-    if (session.nativeSessionKey) {
+    if (session.nativeSessionKey && !session.historyBinding) {
       if (sessionKey !== session.nativeSessionKey) {
         throw new Error('The native session key does not match its persisted binding.');
       }
@@ -512,6 +522,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     const client = this.requireGatewayClient();
     const generation = this.gatewayClientGeneration;
+    if (session.historyBinding) {
+      const described = await client.request<{ session?: { sessionId?: string } }>(
+        'sessions.describe', { key: sessionKey, agentId: session.agentId },
+      );
+      if (this.gatewayClient !== client || this.gatewayClientGeneration !== generation ||
+        session.historyBinding.sessionKey !== sessionKey ||
+        described.session?.sessionId !== session.historyBinding.nativeSessionId)
+        throw new Error('The imported conversation identity changed. No replacement conversation was created.');
+    }
     const result = await client.request<{
       key?: unknown;
       sessionId?: unknown;
@@ -535,6 +554,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!gatewaySessionId) {
       throw new Error('OpenClaw sessions.create returned no sessionId.');
     }
+    if (session.historyBinding && (gatewaySessionId !== session.historyBinding.nativeSessionId ||
+      this.gatewayClient !== client || this.gatewayClientGeneration !== generation))
+      throw new Error('The imported conversation changed during preparation.');
     this.assertPreparedSessionEntry(result.entry, nativePermissionMode, workspaceRoot);
     if (typeof result.entry?.modelOverride === 'string' && result.entry.modelOverride.trim()) {
       if (result.key !== sessionKey || result.entry.sessionId !== gatewaySessionId) {

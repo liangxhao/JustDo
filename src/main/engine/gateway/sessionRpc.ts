@@ -154,7 +154,9 @@ export class SessionRpc {
         const client = this.callbacks.getGatewayClient();
         if (!client) return { ok: false, error: 'OpenClaw gateway client not connected' };
 
-        const session = this.callbacks.store.getSession(sessionId);
+        let session = this.callbacks.store.getSession(sessionId);
+        if (session?.historyBinding && this.callbacks.store.applyHistorySessionDefaults?.(sessionId))
+          session = this.callbacks.store.getSession(sessionId);
         if (!session) return { ok: false, error: 'Session not found' };
         const sessionKey = this.sessionKey(sessionId, agentId);
 

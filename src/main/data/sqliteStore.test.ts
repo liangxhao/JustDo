@@ -104,93 +104,21 @@ afterEach(() => {
   }
 });
 
-test('deletes legacy schema database and creates a fresh database', () => {
-  const dir = createTempDir();
-  const dbPath = path.join(dir, DB_FILENAME);
-  const db = new BetterSqlite3(dbPath);
-  const now = Date.now();
-
-  db.exec(`
-    CREATE TABLE cowork_sessions (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'idle',
-      cwd TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE cowork_messages (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      type TEXT NOT NULL,
-      content TEXT NOT NULL,
-      metadata TEXT,
-      created_at INTEGER NOT NULL,
-      FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
-    );
-  `);
-  db.prepare(
-    `INSERT INTO cowork_sessions (id, title, status, cwd, created_at, updated_at)
-     VALUES ('legacy-session', 'legacy', 'idle', '/tmp', ?, ?)`,
-  ).run(now, now);
-  db.close();
-
-  const store = SqliteStore.create(dir);
-  const migratedDb = store.getDatabase();
-  const columns = migratedDb.pragma('table_info(cowork_sessions)') as Array<{ name: string }>;
-  const indexes = migratedDb.pragma('index_list(cowork_sessions)') as Array<{ name: string }>;
-  const legacyRow = migratedDb
-    .prepare("SELECT id FROM cowork_sessions WHERE id = 'legacy-session'")
-    .get();
-  const resultTable = migratedDb
-    .prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_task_run_receipts'",
-    )
-    .get();
-  const resultColumns = migratedDb.pragma('table_info(scheduled_task_run_receipts)') as Array<{
-    name: string;
-  }>;
-  const cleanupTable = migratedDb
-    .prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_task_result_cleanup'",
-    )
-    .get();
-  const tombstoneTable = migratedDb
-    .prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_task_result_tombstones'",
-    )
-    .get();
-  const sessionRunsTable = migratedDb
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_session_runs'")
-    .get();
-  const removedSessionSegmentsTable = migratedDb
-    .prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_session_segments'",
-    )
-    .get();
-  const messageCacheTable = migratedDb
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_messages'")
-    .get();
-
-  expect(columns.map(column => column.name)).toEqual(
-    expect.arrayContaining(['agent_id', 'group_id', 'pinned', 'active_skill_ids', 'model_ref']),
-  );
-  expect(columns.map(column => column.name)).not.toContain('claude_session_id');
-  expect(indexes.map(index => index.name)).toContain('idx_cowork_sessions_agent_order');
-  expect(legacyRow).toBeUndefined();
-  expect(resultTable).toEqual({ name: 'scheduled_task_run_receipts' });
-  expect(resultColumns.map(column => column.name)).toContain('system_managed');
-  expect(cleanupTable).toEqual({ name: 'scheduled_task_result_cleanup' });
-  expect(tombstoneTable).toEqual({ name: 'scheduled_task_result_tombstones' });
-  expect(sessionRunsTable).toEqual({ name: 'cowork_session_runs' });
-  expect(removedSessionSegmentsTable).toBeUndefined();
-  expect(messageCacheTable).toBeUndefined();
-
-  store.close();
+test('refuses to open an unbacked legacy cache and preserves its schema and contents', () => {
+  const directory = createTempDir();
+  const file = path.join(directory, DB_FILENAME);
+  const old = new BetterSqlite3(file);
+  old.exec("CREATE TABLE cowork_messages(id TEXT,content TEXT); INSERT INTO cowork_messages VALUES('old','history');");
+  old.close();
+  const before = fs.readFileSync(file);
+  expect(() => SqliteStore.create(directory)).toThrow(/backed up/);
+  expect(fs.readFileSync(file)).toEqual(before);
+  const preserved = new BetterSqlite3(file, { readonly: true });
+  expect(preserved.prepare('SELECT content FROM cowork_messages').get()).toEqual({ content: 'history' });
+  preserved.close();
 });
 
-test('adds compatible session metadata, keeps product sessions, and removes the redundant message cache', () => {
+test('adds current metadata and retains existing product sessions and receipts', () => {
   const dir = createTempDir();
   const dbPath = path.join(dir, DB_FILENAME);
   const db = new BetterSqlite3(dbPath);
@@ -209,18 +137,6 @@ test('adds compatible session metadata, keeps product sessions, and removes the 
       group_id TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
-    );
-    CREATE TABLE cowork_messages (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      type TEXT NOT NULL,
-      content TEXT NOT NULL,
-      metadata TEXT,
-      created_at INTEGER NOT NULL,
-      sequence INTEGER,
-      thinking_content TEXT,
-      model_name TEXT,
-      usage TEXT
     );
     CREATE TABLE scheduled_task_run_receipts (
       run_id TEXT PRIMARY KEY,
@@ -246,11 +162,6 @@ test('adds compatible session metadata, keeps product sessions, and removes the 
       (id, title, status, cwd, agent_id, created_at, updated_at)
      VALUES ('kept-session', 'kept', 'idle', '/tmp', 'main', ?, ?)`,
   ).run(now, now);
-  db.prepare(
-    `INSERT INTO cowork_messages
-      (id, session_id, type, content, created_at, sequence)
-     VALUES ('cached-message', 'kept-session', 'assistant', 'duplicate', ?, 1)`,
-  ).run(now);
   db.prepare(
     `INSERT INTO scheduled_task_run_receipts
       (run_id, task_id, task_name, status, started_at, observed_at, updated_at)
@@ -533,6 +444,43 @@ test('keeps legacy handoff provenance readable after upgrading existing sessions
   } finally { reopened.close(); }
 });
 
+
+test('adding historical defaults adoption preserves choices in already restored sessions', () => {
+  const directory = createTempDir();
+  const initial = SqliteStore.create(directory);
+  const store = new CoworkStore(initial.getDatabase());
+  const session = store.createSession(
+    'restored previously',
+    '/tmp',
+    'local',
+    [],
+    'main',
+    'ask',
+    'current/selected',
+  );
+  initial
+    .getDatabase()
+    .prepare(
+      `INSERT INTO history_session_bindings
+    (session_id,session_key,native_session_id,availability,source_agent_id,source_session_key,transaction_id)
+    VALUES (?,?,?,'native','main',?,'previous')`,
+    )
+    .run(session.id, 'agent:main:legacy', 'native', 'agent:main:legacy');
+  initial.getDatabase().exec('ALTER TABLE history_session_bindings DROP COLUMN defaults_applied');
+  initial.close();
+  const reopened = SqliteStore.create(directory);
+  try {
+    const current = new CoworkStore(reopened.getDatabase());
+    current.setConfig({ permissionMode: 'full' });
+    expect(current.applyHistorySessionDefaults(session.id)).toBe(false);
+    expect(current.getSession(session.id)).toMatchObject({
+      permissionMode: 'ask',
+      modelRef: 'current/selected',
+    });
+  } finally {
+    reopened.close();
+  }
+});
 
 test('upgrades assistant deletion metadata and keeps tombstones across restart', () => {
   const directory = createTempDir();

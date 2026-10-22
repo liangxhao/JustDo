@@ -23,6 +23,9 @@
       (function () {
         const dictionaries = %STARTUP_TRANSLATIONS%;
         const firstLaunch = window.electron?.initialization?.firstLaunch === true;
+        const migration = window.electron?.initialization?.route === 'migration';
+        const entryAt = window.electron?.initialization?.entryStartedAt;
+        if (Number.isFinite(entryAt)) document.documentElement.setAttribute('data-startup-entry-started-at', String(entryAt));
         const template = document.getElementById(firstLaunch ? 'first-launch-document-template' : 'startup-document-template');
         document.getElementById('root').appendChild(template.content.cloneNode(true));
         let language = navigator.language.startsWith('zh') ? 'zh' : 'en';
@@ -33,6 +36,16 @@
         document.documentElement.lang = language;
         const copy = dictionaries[language];
         const startup = document.getElementById('startup-document');
+        if (migration) {
+          startup.dataset.startupView = 'migration';
+          for (const element of startup.querySelectorAll('[data-migration-only],[data-migration-history]')) element.hidden = false;
+          const list = startup.querySelector('nav ol');
+          [...list.children].filter(item => !item.hidden).forEach((item, index) => item.firstElementChild.textContent = String(index + 1).padStart(2, '0'));
+          const caption = startup.querySelector('[data-startup-copy="initializationWelcome"]');
+          caption.dataset.startupCopy = 'initializationUpgradeWelcome';
+          startup.querySelector('h1').dataset.startupCopy = 'initializationUpgradeTitle';
+          document.getElementById('startup-document-hint').dataset.startupCopy = 'initializationUpgradeDescription';
+        }
         %STARTUP_MOTION_SCRIPT%
         startup.querySelectorAll('[data-startup-copy]').forEach(element => {
           element.textContent = copy[element.dataset.startupCopy];
@@ -46,7 +59,7 @@
         });
         document.getElementById('startup-reload').addEventListener('click', () => window.location.reload());
         %STARTUP_FAILURE_SCRIPT%
-        const startedAt = Date.now();
+        const startedAt = Number.isFinite(entryAt) ? entryAt : Date.now();
         let activityStartedAt = startedAt;
         let activity;
         let failedAt;
@@ -77,7 +90,7 @@
           hint.dataset.waiting = String(!failed && waiting >= 30);
           hint.textContent = copy[waiting >= 30 && !failed
             ? (firstLaunch ? 'initialization' : 'startup') + (waiting >= 90 ? 'ExtendedWait' : 'LongWait')
-            : firstLaunch ? 'firstLaunchDescription' : 'startupContinue'];
+            : migration ? 'initializationUpgradeDescription' : firstLaunch ? 'firstLaunchDescription' : 'startupContinue'];
         }, 1000);
       })();
     </script>

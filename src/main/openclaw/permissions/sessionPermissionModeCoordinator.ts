@@ -31,7 +31,9 @@ export class SessionPermissionModeCoordinator {
   ): Promise<PermissionModeOperationResult> {
     return this.enqueue(sessionId, async () => {
       const store = this.deps.getCoworkStore();
-      const session = store.getSession(sessionId);
+      let session = store.getSession(sessionId);
+      if (session?.historyBinding && store.applyHistorySessionDefaults?.(sessionId))
+        session = store.getSession(sessionId);
       if (!session) return { success: false, error: 'Session not found.' };
 
       try {
@@ -80,7 +82,10 @@ export class SessionPermissionModeCoordinator {
     sessionId: string,
     deferOnFailure: boolean,
   ): Promise<PermissionModeOperationResult> {
-    const session = this.deps.getCoworkStore().getSession(sessionId);
+    const store = this.deps.getCoworkStore();
+    let session = store.getSession(sessionId);
+    if (session?.historyBinding && store.applyHistorySessionDefaults?.(sessionId))
+      session = store.getSession(sessionId);
     if (!session) {
       this.pendingSessionIds.delete(sessionId);
       this.clearRetry(sessionId);

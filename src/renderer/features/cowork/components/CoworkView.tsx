@@ -55,10 +55,11 @@ import {
 import { useDispatch, useSelector } from 'react-redux';
 
 import { observeChatContentWidth } from '@/app/chatContentWidth';
+import RestoredHistoryNotice from '@/app/shell/startup/history/RestoredHistoryNotice';
 import ApplicationLoading, {
   useInitialWorkspaceReadiness,
-} from '@/app/shell/initialization/ApplicationLoading';
-import { RendererStartupActivity } from '@/app/shell/initialization/startupPresentation';
+} from '@/app/shell/startup/routing/ApplicationLoading';
+import { RendererStartupActivity } from '@/app/shell/startup/routing/startupPresentation';
 import {
   BROWSER_ANNOTATION_MAX_COUNT,
   BROWSER_ANNOTATION_MAX_IMAGE_BYTES,
@@ -3482,6 +3483,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               )}
             </div>
             {/* Messages */}
+            <RestoredHistoryNotice key={currentSession.id} sessionId={currentSession.id}
+              binding={currentSession.historyBinding}
+              onWorkspaceChanged={() => coworkService.loadSession(currentSession.id, {
+                canSelect: () => currentSessionIdRef.current === currentSession.id,
+              })} />
             <JustDoChatWrapper
               key="chat-controller"
               onMcpAppMenuChange={setMcpAppMenu}
@@ -3591,7 +3597,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               }
               onAssistantMessageFork={
                 sessionTranscriptMutation === null &&
-                !currentSession.nativeSessionKey &&
+                (!currentSession.nativeSessionKey || !!currentSession.historyBinding) &&
                 !collaborationRooms.some(room =>
                   room.members.some(member => member.sessionId === currentSession.id),
                 ) &&

@@ -16,9 +16,10 @@ function fixture(override?: string) {
     id: 'session-1', agentId: 'main', cwd: process.cwd(), permissionMode: 'full', modelRef: 'p/old',
   };
   const updateSession = vi.fn();
+  const applyHistorySessionDefaults = vi.fn(() => false);
   let configGeneration = 1;
   const adapter = new OpenClawRuntimeAdapter({
-    getSession: () => session, updateSession,
+    getSession: () => session, updateSession, applyHistorySessionDefaults,
   } as never, {
     getGatewayConfigReloadGeneration: () => configGeneration,
   } as never);
@@ -45,7 +46,7 @@ function fixture(override?: string) {
   internals.gatewayClient = { request } as unknown as GatewayClientLike;
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
   return {
-    adapter, internals, session, request, updateSession,
+    adapter, internals, session, request, updateSession, applyHistorySessionDefaults,
     reloadConfig: () => { configGeneration += 1; },
   };
 }
@@ -96,6 +97,43 @@ test('keeps explicitly bound worktree sessions outside ordinary managed-model re
   });
   expect(h.request.mock.calls).toEqual([['sessions.describe', { key: nativeKey }]]);
   expect(h.updateSession).not.toHaveBeenCalled();
+});
+
+test('prepares imported history with its exact native identity and current workspace permissions', async () => {
+  const h = fixture();
+  const key = 'agent:main:justdo:session-1';
+  Object.assign(h.session, { nativeSessionKey: key, historyBinding: {
+    sessionKey: key, nativeSessionId: 'native-1', availability: 'native',
+  } });
+  await expect(h.adapter.prepareSession('session-1')).resolves.toEqual({ sessionKey: key, gatewaySessionId: 'native-1' });
+  expect(h.request.mock.calls.map(([method]) => method)).toEqual(['sessions.describe', 'sessions.create']);
+});
+
+test('an imported binding cannot silently open a new empty session after identity or connection changes', async () => {
+  const h = fixture();
+  const key = 'agent:main:justdo:session-1';
+  Object.assign(h.session, { nativeSessionKey: key, historyBinding: {
+    sessionKey: key, nativeSessionId: 'original-missing-identity', availability: 'native',
+  } });
+  await expect(h.adapter.prepareSession('session-1')).rejects.toThrow(/identity changed/);
+  expect(h.request.mock.calls.map(([method]) => method)).toEqual(['sessions.describe']);
+});
+
+test('preparing unopened history adopts current new-conversation permissions before native admission', async () => {
+  const h = fixture();
+  const key = 'agent:main:justdo:session-1';
+  Object.assign(h.session, { nativeSessionKey: key, historyBinding: { sessionKey: key, nativeSessionId: 'native-1', availability: 'native' } });
+  h.applyHistorySessionDefaults.mockImplementation(() => {
+    h.session.permissionMode = 'ask'; h.session.modelRef = ''; return true;
+  });
+  const original = h.request.getMockImplementation()!;
+  h.request.mockImplementation(async method => {
+    if (method === 'sessions.create') return { key, sessionId: 'native-1', entry: { sessionId: 'native-1', sessionRoot: process.cwd(), permissionMode: 'guarded' } };
+    return original(method);
+  });
+  await h.adapter.prepareSession('session-1', { permissionMode: 'full' });
+  expect(h.applyHistorySessionDefaults).toHaveBeenCalledWith('session-1');
+  expect(h.request).toHaveBeenCalledWith('sessions.create', { key, cwd: process.cwd(), permissionMode: 'guarded' });
 });
 
 test('does not query configuration when the create receipt came from a replaced client generation', async () => {

@@ -1,5 +1,19 @@
+import { initializationTranslations } from './initializationTranslations';
+
 export const startupTranslations = {
   zh: {
+    startupActivity_historyBackup: initializationTranslations.zh.initializationActivity_historyBackup,
+    startupActivity_historyBackupDescription: initializationTranslations.zh.initializationActivity_historyBackupDescription,
+    startupActivity_historyImport: initializationTranslations.zh.initializationActivity_historyImport,
+    startupActivity_historyImportDescription: initializationTranslations.zh.initializationActivity_historyImportDescription,
+    startupActivity_historyMetadata: initializationTranslations.zh.initializationActivity_historyMetadata,
+    startupActivity_historyMetadataDescription: initializationTranslations.zh.initializationActivity_historyMetadataDescription,
+    startupRenderer_models: '载入可用模型',
+    startupRenderer_modelsDescription: '正在读取已保存的模型设置。',
+    startupHistoryUnavailable: '此会话的原始正文已缺失。标题已保留，可以继续发送新的消息。',
+    startupHistoryWorkspaceUnavailable: '原工作目录已不存在。选择一个本机目录后，即可在此会话继续对话。',
+    startupHistoryChooseWorkspace: '选择工作目录',
+    startupHistoryWorkspaceFailed: '工作目录选择失败，请重试。',
     startupDiagnosticsDetails: '查看诊断详情',
     startupDiagnosticsEvidence: '以下是实际捕获的错误与发生位置，原因尚未确认。复制分享前请检查路径等信息。',
     startupDiagnosticsCopy: '复制诊断',
@@ -79,6 +93,18 @@ export const startupTranslations = {
     startupRenderer_engineStatusDescription: '检查本机 AI 引擎的当前状态，随后打开工作区。',
   },
   en: {
+    startupActivity_historyBackup: initializationTranslations.en.initializationActivity_historyBackup,
+    startupActivity_historyBackupDescription: initializationTranslations.en.initializationActivity_historyBackupDescription,
+    startupActivity_historyImport: initializationTranslations.en.initializationActivity_historyImport,
+    startupActivity_historyImportDescription: initializationTranslations.en.initializationActivity_historyImportDescription,
+    startupActivity_historyMetadata: initializationTranslations.en.initializationActivity_historyMetadata,
+    startupActivity_historyMetadataDescription: initializationTranslations.en.initializationActivity_historyMetadataDescription,
+    startupRenderer_models: 'Loading available models',
+    startupRenderer_modelsDescription: 'Reading saved model settings.',
+    startupHistoryUnavailable: 'The original transcript is unavailable. Its title is retained and you can continue with new messages.',
+    startupHistoryWorkspaceUnavailable: 'The original workspace no longer exists. Select a local folder to continue this conversation.',
+    startupHistoryChooseWorkspace: 'Choose workspace',
+    startupHistoryWorkspaceFailed: 'Could not select a workspace. Please try again.',
     startupDiagnosticsDetails: 'View diagnostic details',
     startupDiagnosticsEvidence: 'These are the captured error and its location. The root cause is not yet confirmed. Check paths and other details before sharing.',
     startupDiagnosticsCopy: 'Copy diagnostics',

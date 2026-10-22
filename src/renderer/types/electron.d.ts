@@ -207,6 +207,7 @@ interface CoworkSession {
 
 interface CoworkSessionSummary {
   branchCreationPending?: boolean;
+  historyBinding?: import('../../shared/app/startup/history').HistorySessionBinding;
   nativeSessionKey?: string;
   id: string;
   title: string;
@@ -1490,6 +1491,12 @@ interface IElectronAPI {
     set: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
   };
   initialization: AppInitializationWindowContext & {
+    openSupport: (
+      action: import('../../shared/app/startup/history').StartupSupportAction,
+    ) => Promise<import('../../shared/app/startup/history').StartupSupportResult>;
+    selectHistoryWorkspace: (input: {
+      sessionId: string;
+    }) => Promise<import('../../shared/app/startup/history').HistoryWorkspaceResult>;
     getState: () => Promise<AppInitializationState>;
     relaunch: () => Promise<void>;
     onChanged: (callback: (state: AppInitializationState) => void) => () => void;

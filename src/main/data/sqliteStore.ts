@@ -16,22 +16,6 @@ type ChangePayload<T = unknown> = {
   oldValue: T | undefined;
 };
 
-const REQUIRED_TABLE_COLUMNS: Record<string, string[]> = {
-  cowork_sessions: [
-    'id',
-    'title',
-    'status',
-    'pinned',
-    'cwd',
-    'execution_mode',
-    'active_skill_ids',
-    'agent_id',
-    'group_id',
-    'created_at',
-    'updated_at',
-  ],
-};
-
 export class SqliteStore {
   private db: Database.Database;
   private dbPath: string;
@@ -46,12 +30,16 @@ export class SqliteStore {
     const basePath = userDataPath ?? app.getPath('userData');
     const dbPath = path.join(basePath, DB_FILENAME);
 
-    SqliteStore.deleteLegacyDatabase(dbPath);
-
     const db = new Database(dbPath);
+    if (
+      db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cowork_messages'").get()
+    ) {
+      db.close();
+      throw new Error('Legacy history must be backed up before opening the product database.');
+    }
 
-    // WAL mode: persists across connections, never reverts. NORMAL sync is safe under WAL
-    // (no data loss on OS crash; power-loss risk is the same as DELETE mode).
+    // WAL+NORMAL preserves consistency, but recent commits may be lost on OS/power
+    // failure. Critical migration receipts use a local FULL commit barrier.
     db.pragma('foreign_keys = ON');
     db.pragma('journal_mode = WAL');
     db.pragma('synchronous = NORMAL');
@@ -59,8 +47,8 @@ export class SqliteStore {
     db.pragma('wal_autocheckpoint = 1000'); // checkpoint every ~4 MB of WAL writes
 
     const store = new SqliteStore(db, dbPath);
-    store.initializeTables(basePath);
     try {
+      store.initializeTables(basePath);
       store.protectLegacyAppConfigCredentials();
     } catch (error) {
       db.close();
@@ -86,47 +74,6 @@ export class SqliteStore {
       .prepare('UPDATE kv SET value = ?, updated_at = ? WHERE key = ?')
       .run(JSON.stringify(protectedConfig), Date.now(), 'app_config');
     this.db.pragma('wal_checkpoint(TRUNCATE)');
-  }
-
-  private static deleteLegacyDatabase(dbPath: string): void {
-    if (!fs.existsSync(dbPath)) return;
-
-    let db: Database.Database | undefined;
-    try {
-      db = new Database(dbPath, { readonly: true, fileMustExist: true });
-      if (!SqliteStore.hasLegacySchema(db)) return;
-    } catch (error) {
-      console.warn('[SqliteStore] Failed to inspect existing database schema:', error);
-      return;
-    } finally {
-      db?.close();
-    }
-
-    for (const filePath of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
-      try {
-        fs.rmSync(filePath, { force: true });
-      } catch (error) {
-        console.warn(`[SqliteStore] Failed to delete legacy database file ${filePath}:`, error);
-      }
-    }
-    console.warn('[SqliteStore] Deleted legacy database schema. A fresh database will be created.');
-  }
-
-  private static hasLegacySchema(db: Database.Database): boolean {
-    for (const [tableName, requiredColumns] of Object.entries(REQUIRED_TABLE_COLUMNS)) {
-      const table = db
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-        .get(tableName);
-      if (!table) continue;
-
-      const columns = db.pragma(`table_info(${tableName})`) as Array<{ name: string }>;
-      const columnNames = new Set(columns.map(column => column.name));
-      if (requiredColumns.some(column => !columnNames.has(column))) {
-        return true;
-      }
-    }
-
-    return false;
   }
 
   private initializeTables(basePath: string) {
@@ -187,10 +134,26 @@ export class SqliteStore {
     this.ensureColumn('cowork_sessions', 'forked_from_session_title', 'TEXT');
     this.ensureColumn('cowork_sessions', 'forked_from_entry_id', 'TEXT');
 
-    // OpenClaw v2026.9.2 owns the durable transcript in its per-agent SQLite
-    // database. The former table duplicated that transcript and routinely
-    // drifted from chat.history after reconnects or dropped stream frames.
-    this.db.exec('DROP TABLE IF EXISTS cowork_messages;');
+    // Published JSONL profiles are backed up and isolated before this connection
+    // opens. Never delete the only surviving cache or upgrade it in place here.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS history_session_bindings (
+        session_id TEXT PRIMARY KEY REFERENCES cowork_sessions(id) ON DELETE CASCADE,
+        session_key TEXT NOT NULL UNIQUE,
+        native_session_id TEXT NOT NULL,
+        availability TEXT NOT NULL CHECK (availability IN ('native','cache','missing')),
+        source TEXT,
+        external_key TEXT,
+        source_agent_id TEXT NOT NULL,
+        source_session_key TEXT NOT NULL,
+        source_native_session_id TEXT,
+        transaction_id TEXT NOT NULL,
+        defaults_applied INTEGER NOT NULL DEFAULT 1
+      );
+    `);
+
+    // Existing restored sessions keep any choices made before this field existed.
+    this.ensureColumn('history_session_bindings', 'defaults_applied', 'INTEGER NOT NULL DEFAULT 1');
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS cowork_session_runs (

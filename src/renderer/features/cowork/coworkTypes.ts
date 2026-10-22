@@ -74,6 +74,7 @@ export interface CoworkSession {
   };
   external?: ExternalSessionMetadata;
   source?: CoworkSessionSource;
+  historyBinding?: import('@shared/app/startup/history').HistorySessionBinding;
   nativeSessionKey?: string;
   nativeParentSessionId?: string;
   createdAt: number;
@@ -155,6 +156,7 @@ export interface CoworkInteractionResponse {
 // Session summary for list display (without full messages)
 export interface CoworkSessionSummary {
   branchCreationPending?: boolean;
+  historyBinding?: import('@shared/app/startup/history').HistorySessionBinding;
   nativeSessionKey?: string;
   collaboration?: { memberCount: number; deleting: boolean };
   id: string;

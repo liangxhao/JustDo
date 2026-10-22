@@ -276,6 +276,78 @@ test.each([CoworkSessionCopyIpc.Copy, CoworkSessionForkIpc.Fork])(
   },
 );
 
+test.each([CoworkSessionCopyIpc.Copy, CoworkSessionForkIpc.Fork])(
+  'verifies an imported source identity before %s rather than treating its binding as a worktree',
+  async channel => {
+    const source = {
+      id: 'history',
+      nativeSessionKey: 'agent:main:justdo:old',
+      historyBinding: { sessionKey: 'agent:main:justdo:old', nativeSessionId: 'original' },
+    };
+    const store = { getSession: () => source, createSession: vi.fn() };
+    const router = {
+      getSessionRuntimeStatus: vi.fn().mockResolvedValue({ known: true, running: false }),
+      prepareSession: vi
+        .fn()
+        .mockResolvedValue({
+          sessionKey: source.nativeSessionKey,
+          gatewaySessionId: 'replacement',
+        }),
+    };
+    const requestGateway = vi.fn();
+    registerCoworkSessionHandlers({
+      getCoworkStore: () => store as unknown as CoworkStore,
+      getCoworkEngineRouter: () => router as unknown as CoworkEngineRouter,
+      setSessionPermissionMode: vi.fn(),
+      requestGateway,
+    });
+    const handler = mocks.handle.mock.calls.find(([name]) => name === channel)![1] as IpcHandler;
+    expect(
+      await handler(null, { sessionId: 'history', title: 'Copy', entryId: 'entry-1' }),
+    ).toMatchObject({
+      success: false,
+      error: expect.stringContaining('historical source identity changed'),
+    });
+    expect(router.prepareSession).toHaveBeenCalledWith('history');
+    expect(store.createSession).not.toHaveBeenCalled();
+    expect(requestGateway).not.toHaveBeenCalled();
+  },
+);
+
+test('deleting imported history fences the native identity without deleting a shared project', async () => {
+  const key = 'agent:main:justdo:old';
+  const store = {
+    hasNativeChildSessions: () => false,
+    getSession: (id: string) => ({
+      id,
+      cwd: 'E:\\repo',
+      nativeSessionKey: key,
+      historyBinding: { sessionKey: key, nativeSessionId: 'original' },
+    }),
+    listSessions: () => [{ id: 'history' }, { id: 'other' }],
+    listPlanHandoffs: () => [],
+    deleteSession: vi.fn(),
+  };
+  const requestGateway = vi.fn().mockResolvedValue({});
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store as unknown as CoworkStore,
+    getCoworkEngineRouter: () =>
+      ({ stopSession: vi.fn(), onSessionDeleted: vi.fn() }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+    requestGateway,
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([name]) => name === 'cowork:session:delete',
+  )![1] as IpcHandler;
+  expect(await handler(null, 'history')).toEqual({ success: true });
+  expect(requestGateway).toHaveBeenCalledWith('sessions.delete', {
+    key,
+    expectedSessionId: 'original',
+    deleteTranscript: true,
+  });
+  expect(store.deleteSession).toHaveBeenCalledWith('history');
+});
+
 test('keeps a native session visible when Gateway preserves its worktree on deletion', async () => {
   const nativeSessionKey = 'agent:main:subagent:child';
   const store = {
@@ -302,6 +374,132 @@ test('keeps a native session visible when Gateway preserves its worktree on dele
   });
   expect(store.deleteSession).not.toHaveBeenCalled();
 });
+
+test('batch deletion removes only confirmed imported histories and retains a replaced native binding', async () => {
+  const session = (id: string) => ({
+    id,
+    agentId: 'main',
+    cwd: 'E:\\shared-project',
+    ...(id !== 'ordinary'
+      ? {
+          nativeSessionKey: `agent:main:justdo:${id}`,
+          historyBinding: {
+            sessionKey: `agent:main:justdo:${id}`,
+            nativeSessionId: `native-${id}`,
+          },
+        }
+      : {}),
+  });
+  const store = {
+    getSession: session,
+    hasNativeChildSessions: () => false,
+    listPlanHandoffs: () => [],
+    deleteSessions: vi.fn(),
+  };
+  const router = { stopSession: vi.fn(), onSessionDeleted: vi.fn() };
+  const requestGateway = vi.fn(async (method: string, input: unknown) => {
+    const params = input as { key: string };
+    if (method === 'sessions.delete') {
+      if (params.key.endsWith(':changed')) throw new Error('historical identity changed');
+      return {};
+    }
+    return { session: { sessionId: 'replacement' } };
+  });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store as unknown as CoworkStore,
+    getCoworkEngineRouter: () => router as unknown as CoworkEngineRouter,
+    requestGateway: requestGateway as never,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([name]) => name === 'cowork:session:deleteBatch',
+  )![1] as IpcHandler;
+  expect(await handler(null, ['history', 'ordinary', 'changed'])).toEqual({
+    success: false,
+    deletedSessionIds: ['history', 'ordinary'],
+    error: 'historical identity changed',
+  });
+  expect(requestGateway).toHaveBeenCalledWith('sessions.delete', {
+    key: 'agent:main:justdo:history',
+    expectedSessionId: 'native-history',
+    deleteTranscript: true,
+  });
+  expect(store.deleteSessions).toHaveBeenCalledExactlyOnceWith(['history', 'ordinary']);
+  expect(router.onSessionDeleted).toHaveBeenCalledWith(
+    'history',
+    'main',
+    ['agent:main:justdo:history'],
+    ['E:\\shared-project'],
+  );
+  expect(router.onSessionDeleted).not.toHaveBeenCalledWith(
+    'changed',
+    expect.anything(),
+    expect.anything(),
+    expect.anything(),
+  );
+});
+
+test('batch deletion still blocks an actual worktree before any stop or native deletion', async () => {
+  const router = { stopSession: vi.fn() };
+  const requestGateway = vi.fn();
+  const store = {
+    getSession: () => ({ nativeSessionKey: 'agent:main:subagent:child' }),
+    deleteSessions: vi.fn(),
+  };
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store as unknown as CoworkStore,
+    getCoworkEngineRouter: () => router as unknown as CoworkEngineRouter,
+    requestGateway,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([name]) => name === 'cowork:session:deleteBatch',
+  )![1] as IpcHandler;
+  expect(await handler(null, ['child'])).toMatchObject({ success: false, deletedSessionIds: [] });
+  expect(router.stopSession).not.toHaveBeenCalled();
+  expect(requestGateway).not.toHaveBeenCalled();
+  expect(store.deleteSessions).not.toHaveBeenCalled();
+});
+
+test.each(['cowork:session:delete', 'cowork:session:deleteBatch'])(
+  '%s requires an explicit absence receipt after a lost native deletion ACK',
+  async channel => {
+    for (const receipt of [{}, { session: { sessionId: 'replacement' } }, { session: null }]) {
+      mocks.handle.mockReset();
+      const key = 'agent:main:justdo:history';
+      const store = {
+        getSession: () => ({
+          id: 'history',
+          agentId: 'main',
+          cwd: '/project',
+          nativeSessionKey: key,
+          historyBinding: { sessionKey: key, nativeSessionId: 'original' },
+        }),
+        hasNativeChildSessions: () => false,
+        listPlanHandoffs: () => [],
+        deleteSession: vi.fn(),
+        deleteSessions: vi.fn(),
+      };
+      const router = { stopSession: vi.fn(), onSessionDeleted: vi.fn() };
+      const requestGateway = vi.fn(async (method: string) => {
+        if (method === 'sessions.delete') throw new Error('lost native acknowledgement');
+        return receipt;
+      });
+      registerCoworkSessionHandlers({
+        getCoworkStore: () => store as unknown as CoworkStore,
+        getCoworkEngineRouter: () => router as unknown as CoworkEngineRouter,
+        requestGateway: requestGateway as never,
+        setSessionPermissionMode: vi.fn(),
+      });
+      const handler = mocks.handle.mock.calls.find(([name]) => name === channel)![1] as IpcHandler;
+      const result = await handler(null, channel.endsWith('deleteBatch') ? ['history'] : 'history');
+      const absent = 'session' in receipt && receipt.session === null;
+      expect(result).toMatchObject({ success: absent });
+      const remove = channel.endsWith('deleteBatch') ? store.deleteSessions : store.deleteSession;
+      expect(remove).toHaveBeenCalledTimes(absent ? 1 : 0);
+    }
+  },
+);
 
 test.each(['', '\\packages\\api'])(
   'does not delete an owned worktree while another conversation uses its workspace (%s)',

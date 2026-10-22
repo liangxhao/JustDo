@@ -362,6 +362,7 @@ const coworkSlice = createSlice({
       const { session, select } = action.payload;
       const summary: CoworkSessionSummary = {
         nativeSessionKey: session.nativeSessionKey,
+        historyBinding: session.historyBinding,
         id: session.id,
         title: session.title,
         status: session.status,

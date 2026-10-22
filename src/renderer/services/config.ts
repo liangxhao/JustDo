@@ -105,7 +105,7 @@ export class ConfigService {
 
   async init() {
     try {
-      const storedConfig = await localStore.getItem<AppConfig>(CONFIG_KEYS.APP_CONFIG);
+      const storedConfig = await localStore.getItem<AppConfig>(CONFIG_KEYS.APP_CONFIG, { requireReadable: true });
       if (storedConfig) {
         const mergedProviders = storedConfig.providers
           ? Object.fromEntries(
@@ -194,6 +194,7 @@ export class ConfigService {
       }
     } catch (error) {
       console.error('Failed to load config:', error);
+      throw error;
     }
   }
 

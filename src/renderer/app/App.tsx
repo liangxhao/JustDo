@@ -15,10 +15,10 @@ import { applyAppearanceConfig } from '@/app/appearance';
 import { observeChatContentWidth } from '@/app/chatContentWidth';
 import { defaultConfig, getProviderDisplayName } from '@/app/config';
 import BottomRightStatusStack from '@/app/shell/BottomRightStatusStack';
-import ApplicationLoading, { useInitializationFailure } from '@/app/shell/initialization/ApplicationLoading';
-import { RendererStartupActivity } from '@/app/shell/initialization/startupPresentation';
 import Sidebar from '@/app/shell/Sidebar';
 import { SidebarView } from '@/app/shell/sidebarNavigation';
+import ApplicationLoading, { useInitializationFailure, useStartupActivity } from '@/app/shell/startup/routing/ApplicationLoading';
+import { RendererStartupActivity } from '@/app/shell/startup/routing/startupPresentation';
 import Toast, { type ToastContent } from '@/app/shell/Toast';
 import WindowHeader from '@/app/shell/window/WindowHeader';
 import { WorkspaceNotifications } from '@/app/shell/WorkspaceNotifications';
@@ -160,10 +160,10 @@ const InitializedApp: React.FC = () => {
     return () => ownerWindow.removeEventListener('pagehide', close);
   }, [teamHistoryDocument]);
   const [isInitialized, setIsInitialized] = useState(false);
-  const [startupActivity, setStartupActivity] = useState<RendererStartupActivity>(
+  const [startupActivity, setStartupActivity] = useStartupActivity(
     RendererStartupActivity.Preferences,
   );
-  const [initError, setInitError] = useState<string | null>(null);
+  const [initError, setInitError] = useState<Error | null>(null);
   useInitializationFailure(initError);
   const [toast, setToast] = useState<ToastContent | null>(null);
   const [updateToast, setUpdateToast] = useState<AppUpdateToastState>(null);
@@ -244,7 +244,8 @@ const InitializedApp: React.FC = () => {
 
         // 初始化配置
         console.info('[App] initializeApp: configService.init');
-        await waitWithTimeout(configService.init(), 5000, 'configService.init');
+        setStartupActivity(RendererStartupActivity.Preferences);
+        await waitWithTimeout(configService.init(), 30000, 'configService.init');
         applyAppearanceConfig(configService.getConfig().appearance);
 
         // 初始化主题
@@ -255,8 +256,9 @@ const InitializedApp: React.FC = () => {
         // 初始化语言
         setStartupActivity(RendererStartupActivity.Language);
         console.info('[App] initializeApp: i18nService.initialize');
-        await waitWithTimeout(i18nService.initialize(), 5000, 'i18nService.initialize');
+        await i18nService.initialize();
 
+        setStartupActivity(RendererStartupActivity.Models);
         console.info('[App] initializeApp: configService.getConfig');
         const config = await configService.getConfig();
 
@@ -324,13 +326,13 @@ const InitializedApp: React.FC = () => {
         void agentService.loadAgents();
       } catch (error) {
         console.error('Failed to initialize app:', error);
-        setInitError(i18nService.t('initializationError'));
+        setInitError(error instanceof Error ? error : Object.assign(new Error('Application initialization failed'), { cause: error }));
         setIsInitialized(true);
       }
     };
 
     void initializeApp();
-  }, [dispatch, waitWithTimeout]);
+  }, [dispatch, setStartupActivity, waitWithTimeout]);
 
   useEffect(
     () =>
@@ -950,7 +952,7 @@ const InitializedApp: React.FC = () => {
               <div className="w-16 h-16 rounded-full bg-red-500 flex items-center justify-center shadow-lg">
                 <ChatBubbleLeftRightIcon className="h-8 w-8 text-white" />
               </div>
-              <div className="text-foreground text-xl font-medium text-center">{initError}</div>
+              <div className="text-foreground text-xl font-medium text-center">{i18nService.t('initializationError')}</div>
               <button
                 onClick={() => handleShowSettings()}
                 className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-xl shadow-md transition-colors text-sm font-medium"

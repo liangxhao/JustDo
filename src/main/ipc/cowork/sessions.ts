@@ -53,6 +53,7 @@ import {
   readSessionBranchRunIds,
   recoverFailedSessionBranch,
 } from './sessionBranching';
+import { deleteBoundNativeSession } from './sessionDeletion';
 
 interface SessionHandlerDependencies {
   workspaceAppSessions?: WorkspaceAppSessions;
@@ -843,6 +844,7 @@ export const registerCoworkSessionHandlers = ({
       const agentId = persistedSession?.agentId || 'main';
       if (persistedSession?.nativeSessionKey) {
         if (
+          !persistedSession.historyBinding &&
           store.listSessions().some(summary => {
             if (summary.id === sessionId) return false;
             const other = store.getSession(summary.id);
@@ -851,25 +853,7 @@ export const registerCoworkSessionHandlers = ({
         ) {
           throw new Error(t('worktreeSharedWorkspaceDeleteBlocked'));
         }
-        if (!requestGateway) throw new Error('Gateway is unavailable for native session deletion.');
-        let worktreePreserved = false;
-        try {
-          const deleted = await requestGateway<{ worktreePreserved?: unknown }>('sessions.delete', {
-            key: persistedSession.nativeSessionKey,
-            deleteTranscript: true,
-          });
-          worktreePreserved = !!deleted.worktreePreserved;
-        } catch (error) {
-          const described = await requestGateway<{ session?: unknown }>('sessions.describe', {
-            key: persistedSession.nativeSessionKey,
-          });
-          if (described.session) throw error;
-        }
-        if (worktreePreserved) {
-          throw new Error(
-            'The session was removed but its worktree was preserved. Inspect it in Settings → Worktrees.',
-          );
-        }
+        await deleteBoundNativeSession(persistedSession, requestGateway);
       }
       unknownAdmissions.delete(sessionId);
       const planWorkspaceRoots = store
@@ -912,7 +896,8 @@ export const registerCoworkSessionHandlers = ({
     if (!source) return { success: false, error: 'Source session not found.' };
     if (source.branchCreationPending)
       return { success: false, error: t('coworkBranchCreationPending') };
-    if (source.nativeSessionKey) return { success: false, error: t('worktreeCopyUnavailable') };
+    if (source.nativeSessionKey && !source.historyBinding)
+      return { success: false, error: t('worktreeCopyUnavailable') };
     if (getCollaboration?.().read(sourceSessionId).room)
       return { success: false, error: 'collaborationCopyUnavailable' };
     if (!requestGateway) {
@@ -937,6 +922,14 @@ export const registerCoworkSessionHandlers = ({
       }
       if (runtime.running) {
         return { success: false, error: 'Wait for the current session to finish before copying.' };
+      }
+      if (source.historyBinding) {
+        const prepared = await router.prepareSession(sourceSessionId);
+        if (
+          prepared.sessionKey !== source.historyBinding.sessionKey ||
+          prepared.gatewaySessionId !== source.historyBinding.nativeSessionId
+        )
+          throw new Error('The historical source identity changed before copying.');
       }
 
       const parentSessionKey =
@@ -1074,7 +1067,8 @@ export const registerCoworkSessionHandlers = ({
     if (!source) return { success: false, error: 'Source session not found.' };
     if (source.branchCreationPending)
       return { success: false, error: t('coworkBranchCreationPending') };
-    if (source.nativeSessionKey) return { success: false, error: t('worktreeCopyUnavailable') };
+    if (source.nativeSessionKey && !source.historyBinding)
+      return { success: false, error: t('worktreeCopyUnavailable') };
     if (!requestGateway) {
       return { success: false, error: 'OpenClaw Gateway session fork is unavailable.' };
     }
@@ -1103,6 +1097,14 @@ export const registerCoworkSessionHandlers = ({
       }
       if (runtime.running) {
         return { success: false, error: 'Wait for the current session to finish before forking.' };
+      }
+      if (source.historyBinding) {
+        const prepared = await router.prepareSession(sourceSessionId);
+        if (
+          prepared.sessionKey !== source.historyBinding.sessionKey ||
+          prepared.gatewaySessionId !== source.historyBinding.nativeSessionId
+        )
+          throw new Error('The historical source identity changed before forking.');
       }
 
       forkedSession = store.createSession(
@@ -1195,7 +1197,12 @@ export const registerCoworkSessionHandlers = ({
     let release: (() => void) | undefined;
     try {
       release = getCollaboration?.().acquireSourceDeletion(sessionIds);
-      if (sessionIds.some(id => getCoworkStore().getSession?.(id)?.nativeSessionKey)) {
+      if (
+        sessionIds.some(id => {
+          const session = getCoworkStore().getSession?.(id);
+          return session?.nativeSessionKey && !session.historyBinding;
+        })
+      ) {
         return {
           success: false,
           deletedSessionIds,
@@ -1246,6 +1253,9 @@ export const registerCoworkSessionHandlers = ({
       const agentIds = new Map(
         sessionIds.map(sessionId => [sessionId, store.getSession(sessionId)?.agentId || 'main']),
       );
+      const nativeKeys = new Map(
+        sessionIds.map(id => [id, store.getSession(id)?.nativeSessionKey]),
+      );
       const planWorkspaceRoots = new Map(
         sessionIds.map(sessionId => [
           sessionId,
@@ -1261,7 +1271,18 @@ export const registerCoworkSessionHandlers = ({
       await Promise.all(
         sessionIds.map(sessionId => router.stopSession(sessionId, { bestEffort: true })),
       );
-      store.deleteSessions(sessionIds);
+      const confirmed: string[] = [];
+      for (const id of sessionIds) {
+        try {
+          const session = store.getSession(id);
+          if (session?.nativeSessionKey) await deleteBoundNativeSession(session, requestGateway);
+          confirmed.push(id);
+        } catch (error) {
+          errors.push(error instanceof Error ? error.message : 'Failed to delete native history.');
+        }
+      }
+      sessionIds = confirmed;
+      if (sessionIds.length) store.deleteSessions(sessionIds);
       deletedSessionIds.push(...sessionIds);
       sessionIds.forEach(sessionId => {
         unknownAdmissions.delete(sessionId);
@@ -1269,7 +1290,7 @@ export const registerCoworkSessionHandlers = ({
           router.onSessionDeleted(
             sessionId,
             agentIds.get(sessionId) || 'main',
-            [],
+            nativeKeys.get(sessionId) ? [nativeKeys.get(sessionId)!] : [],
             planWorkspaceRoots.get(sessionId),
           );
         } catch {
@@ -1355,7 +1376,11 @@ export const registerCoworkSessionHandlers = ({
 
   ipcMain.handle('cowork:session:get', async (_event, sessionId: string) => {
     try {
-      return { success: true, session: getCoworkStore().getSession(sessionId) };
+      const store = getCoworkStore();
+      let session = store.getSession(sessionId);
+      if (session?.historyBinding && store.applyHistorySessionDefaults?.(sessionId))
+        session = store.getSession(sessionId);
+      return { success: true, session };
     } catch (error) {
       return {
         success: false,
