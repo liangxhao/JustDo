@@ -3,6 +3,17 @@
 Scripts are grouped by responsibility. Use the npm commands in `package.json` as
 stable entry points; direct script invocations use the paths below.
 
+Application resource ownership is documented in [`resources/README.md`](../resources/README.md).
+Icon tooling uses `resources/icons/`; Python preparation reads its tracked inputs
+from `resources/python/`. Offline downloads are cached under
+the repository-root `cache/<capability>/`, while prepared runtime payloads keep their
+existing packaging directories.
+
+Generated build artifacts share the repository-root `build/`: Windows runtime
+archives use `build/tar/`, local speech model artifacts use
+`build/speech-models/v1/`, and the browser package uses `build/browser-extension/`.
+The build and cache directories are ignored by Git.
+
 | Directory    | Responsibility                                                      |
 | ------------ | ------------------------------------------------------------------- |
 | `assets/`    | Application and tray icon generation, macOS icon repair             |

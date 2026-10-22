@@ -10,7 +10,7 @@
   "files": [
     "package.json",
     "LICENSE",
-    "resources/renderer-preferences.html",
+    "resources/pages/renderer-preferences.html",
     {
       "from": "dist",
       "to": "dist",
@@ -51,7 +51,7 @@
   ],
   "extraResources": [
     {
-      "from": "resources/tray",
+      "from": "resources/icons/tray",
       "to": "tray",
       "filter": ["**/*"]
     },
@@ -129,11 +129,11 @@
         "filter": ["justdo-browser-extension-native-host-v2.exe"]
       },
       {
-        "from": "build-tar/win-resources.tar.zst",
+        "from": "build/tar/win-resources.tar.zst",
         "to": "win-resources.tar.zst"
       },
       {
-        "from": "build-tar/win-resources-metadata.json",
+        "from": "build/tar/win-resources-metadata.json",
         "to": "win-resources-metadata.json"
       },
       {

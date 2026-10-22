@@ -1,4 +1,5 @@
 /build/
+/cache/
 release/
 node_modules
 dist
@@ -14,20 +15,13 @@ vendor/openclaw-runtime/
 vendor/openclaw-plugins/
 .agent-tasks/
 
-# Tar archives generated during Windows packaging
-build-tar/
-build-speech-models/
-
-# Bundled MinGit for Windows builds (downloaded via scripts/runtime/setup-mingit.js)
+# Prepared runtime payloads and offline download caches.
 resources/mingit/
-resources/MinGit-*.zip
-# Ignore stale archives left by builds before the MinGit migration.
-resources/PortableGit-*.7z.exe
 resources/python-win/
-resources/python-*.zip
 resources/local-tts/
-resources/local-tts-cache/
-resources/drawio-cache/
+resources/icons/_tmp/
+resources/icons/mac/icon.iconset/
+resources/icons/mac/icon.icns.backup
 plugins/extensions/drawio/assets/
 resources/package-manager-config/.npmrc
 resources/package-manager-config/pip.ini

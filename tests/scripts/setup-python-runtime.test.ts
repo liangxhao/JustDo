@@ -10,7 +10,7 @@ const { buildManagedPipInstallArgs, enableSitePackages } =
     enableSitePackages: (rootDir: string) => void;
   };
 
-const requirementsPath = path.resolve(__dirname, '../../resources/python-requirements.txt');
+const requirementsPath = path.resolve(__dirname, '../../resources/python/requirements.txt');
 
 test('locks the supported Python packages and transitive dependencies with hashes', () => {
   const requirements = fs
@@ -85,7 +85,7 @@ test('setup replaces the managed package directory instead of retaining stale fi
 
 test('bundles sitecustomize support for skill PYTHONPATH and persistent user packages', () => {
   const siteCustomize = fs.readFileSync(
-    path.resolve(__dirname, '../../resources/python-sitecustomize.py'),
+    path.resolve(__dirname, '../../resources/python/sitecustomize.py'),
     'utf8',
   );
   const setupScript = fs.readFileSync(
@@ -104,6 +104,6 @@ test('bundles sitecustomize support for skill PYTHONPATH and persistent user pac
   expect(siteCustomize).toContain('if "install" in pip_args and not has_conflicting_option');
   expect(siteCustomize).toContain('os.environ.setdefault("PIP_USER", "true")');
   expect(siteCustomize).toContain('bundled-site-packages');
-  expect(setupScript).toContain('python-sitecustomize.py');
+  expect(setupScript).toContain("'sitecustomize.py'");
   expect(setupScript).toContain('fs.copyFileSync(DEFAULT_SITE_CUSTOMIZE_PATH, siteCustomizePath)');
 });

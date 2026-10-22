@@ -11,7 +11,7 @@ const { constants: zlibConstants, createZstdCompress } = require('zlib');
 
 const projectRoot = path.resolve(__dirname, '../..');
 const sourceRoot = path.join(projectRoot, 'resources', 'local-tts', 'win-x64');
-const outputRoot = path.join(projectRoot, 'build-speech-models', 'speech-models', 'v1');
+const outputRoot = path.join(projectRoot, 'build', 'speech-models', 'v1');
 const models = [
   {
     id: 'kokoro-int8-multi-lang-v1_1',

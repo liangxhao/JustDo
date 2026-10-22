@@ -246,7 +246,7 @@ if (require.main === module) {
     const archive =
       archiveIndex >= 0
         ? process.argv[archiveIndex + 1]
-        : path.join(root, 'resources/drawio-cache', `drawio-${upstream.commit}.tar.gz`);
+        : path.join(root, 'cache/drawio', `drawio-${upstream.commit}.tar.gz`);
     if (process.argv.includes('--download') && (!ensure || !fs.existsSync(archive))) {
       fs.mkdirSync(path.dirname(archive), { recursive: true });
       const response = await fetch(

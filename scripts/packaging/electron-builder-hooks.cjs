@@ -886,7 +886,7 @@ async function beforePack(context) {
     // NSIS only writes that single file; the installer then streams it through
     // Windows' native tar implementation instead of creating thousands of files
     // through NSIS or JavaScript.
-    const buildTarDir = path.join(__dirname, '../..', 'build-tar');
+    const buildTarDir = path.join(__dirname, '../..', 'build', 'tar');
     mkdirSync(buildTarDir, { recursive: true });
 
     const outputTar = path.join(buildTarDir, 'win-resources.tar');

@@ -1024,7 +1024,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         console.error('[MainWindow] Failed to load development URL after maximum retries.');
         if (!mainWindow.isDestroyed()) {
           void mainWindow
-            .loadFile(path.join(__dirname, '../resources/error.html'))
+            .loadFile(path.join(__dirname, '../resources/pages/development-error.html'))
             .catch(error => console.error('[MainWindow] Failed to load the error page:', error));
         }
       });
@@ -1051,7 +1051,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       },
       () =>
         importFileOriginRendererPreferences({
-          resourcePath: path.join(__dirname, '../resources/renderer-preferences.html'),
+          resourcePath: path.join(__dirname, '../resources/pages/renderer-preferences.html'),
           session: mainWindow.webContents.session,
           store: options.getRendererPreferenceStore(),
           isCurrent: () => !mainWindow.isDestroyed() && !options.isQuitting(),

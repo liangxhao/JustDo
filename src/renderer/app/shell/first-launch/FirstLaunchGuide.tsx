@@ -11,7 +11,7 @@ import { type ReactNode, useEffect, useState } from 'react';
 import WindowHeader from '@/app/shell/window/WindowHeader';
 import { i18nService } from '@/services/i18n';
 
-import appLogoUrl from '../../../../../resources/logo.png';
+import appLogoUrl from '../../../../../resources/icons/logo.png';
 import type { RendererStartupActivity } from '../initialization/startupPresentation';
 
 const steps = [

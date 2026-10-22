@@ -33,7 +33,7 @@ function setup() {
   });
   return {
     window,
-    resourcePath: path.resolve('resources/renderer-preferences.html'),
+    resourcePath: path.resolve('resources/pages/renderer-preferences.html'),
     session: {} as Electron.Session,
     store: { get: vi.fn(() => undefined as unknown), set: vi.fn() },
     isCurrent: vi.fn(() => true),
@@ -169,11 +169,11 @@ describe('first-adoption file-origin UI preferences', () => {
   });
 
   it('keeps the packaged reader inert and includes it in the package asset list', () => {
-    const source = readFileSync(path.resolve('resources/renderer-preferences.html'), 'utf8');
+    const source = readFileSync(path.resolve('resources/pages/renderer-preferences.html'), 'utf8');
     expect(source).toContain("default-src 'none'");
     expect(source).not.toMatch(/<(?:script|iframe|img|audio|video|link)\b/u);
     const packaging = JSON.parse(readFileSync(path.resolve('electron-builder.json'), 'utf8'));
-    expect(packaging.files).toContain('resources/renderer-preferences.html');
+    expect(packaging.files).toContain('resources/pages/renderer-preferences.html');
   });
 });
 

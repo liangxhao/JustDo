@@ -10,7 +10,7 @@ import {
   LocalSpeechModelService,
 } from '../src/main/speech/localSpeechModelService';
 
-const artifactRoot = path.resolve('build-speech-models/speech-models/v1');
+const artifactRoot = path.resolve('build/speech-models/v1');
 const manifestPath = path.join(artifactRoot, 'manifest.json');
 
 // Release verification uses real generated archives; ordinary source-only runs skip it.

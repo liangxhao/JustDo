@@ -29,7 +29,7 @@ const EXPECTED_GIT_VERSION_OUTPUT = `git version ${GIT_VERSION}.windows.${GIT_FO
 
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const OUTPUT_DIR = path.join(PROJECT_ROOT, 'resources', 'mingit');
-const DEFAULT_ARCHIVE_PATH = path.join(PROJECT_ROOT, 'resources', MINGIT_FILE);
+const DEFAULT_ARCHIVE_PATH = path.join(PROJECT_ROOT, 'cache', 'mingit', MINGIT_FILE);
 const VERSION_MARKER_PATH = path.join(OUTPUT_DIR, '.justdo-mingit-version');
 
 function parseArgs(argv) {

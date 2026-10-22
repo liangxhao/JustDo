@@ -1151,7 +1151,7 @@ const getAppIconPath = (): string | undefined => {
   if (process.platform !== 'win32' && process.platform !== 'linux') return undefined;
   const basePath = app.isPackaged
     ? path.join(process.resourcesPath, 'tray')
-    : path.join(__dirname, '..', 'resources', 'tray');
+    : path.join(__dirname, '..', 'resources', 'icons', 'tray');
   return process.platform === 'win32'
     ? path.join(basePath, 'tray-icon.ico')
     : path.join(basePath, 'tray-icon.png');

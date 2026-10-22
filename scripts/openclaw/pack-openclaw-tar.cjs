@@ -423,7 +423,7 @@ function main() {
   const isWinCombined = process.argv.includes('--win-combined');
 
   if (isWinCombined) {
-    const outputTar = path.join(projectRoot, 'build-tar', 'win-resources.tar');
+    const outputTar = path.join(projectRoot, 'build', 'tar', 'win-resources.tar');
     fs.mkdirSync(path.dirname(outputTar), { recursive: true });
 
     // Remove old tar if exists

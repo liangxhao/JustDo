@@ -40,6 +40,8 @@ test('normalized Windows configuration preserves the application file whitelist'
     '.agent-tasks/audit/package/docs/README.md',
     'vendor/openclaw-runtime/current/gateway-bundle.mjs',
     'src/main/main.ts',
+    'cache/python/python-3.12.10-embed-amd64.zip',
+    'build/tar/win-resources.tar.zst',
   ]) {
     expect(filter(path.join(root, name), file), name).toBe(false);
   }

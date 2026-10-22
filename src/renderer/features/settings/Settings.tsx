@@ -120,7 +120,7 @@ import { i18nService, LanguageType } from '@/services/i18n';
 import { themeService } from '@/services/theme';
 import ErrorMessage from '@/shared/components/ui/ErrorMessage';
 
-import appLogoUrl from '../../../../resources/logo.png';
+import appLogoUrl from '../../../../resources/icons/logo.png';
 import { createModelConnectionTestActions } from './models/modelConnectionTestActions';
 import {
   getConnectivityErrorMessage,

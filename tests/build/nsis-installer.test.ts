@@ -466,9 +466,9 @@ describe('Windows installer process handling', () => {
   it('stores a pre-compressed zstd runtime archive with progress metadata', () => {
     expect(builderConfig.win?.extraResources).toEqual(
       expect.arrayContaining([
-        { from: 'build-tar/win-resources.tar.zst', to: 'win-resources.tar.zst' },
+        { from: 'build/tar/win-resources.tar.zst', to: 'win-resources.tar.zst' },
         {
-          from: 'build-tar/win-resources-metadata.json',
+          from: 'build/tar/win-resources-metadata.json',
           to: 'win-resources-metadata.json',
         },
       ]),

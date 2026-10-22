@@ -3,7 +3,7 @@ import { type ReactNode, useLayoutEffect, useRef } from 'react';
 
 import { i18nService } from '@/services/i18n';
 
-import appLogoUrl from '../../../../../resources/logo.png';
+import appLogoUrl from '../../../../../resources/icons/logo.png';
 import { prepareStartupEntry, StartupEntryPhase } from './startupMotion';
 
 export function startupDuration(seconds: number): string {

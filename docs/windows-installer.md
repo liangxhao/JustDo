@@ -256,6 +256,14 @@ bundled packages, MinGit, npm, dependency-manager configuration and local speech
 runtime are read directly from the installation resources. Startup does not
 duplicate these bundles into userData.
 
+Tracked Python preparation inputs live in `resources/python/`, and download
+caches are grouped under the repository-root `cache/`. Windows runtime archives
+are generated in `build/tar/`. Prepared Python, Git and speech
+payloads retain their existing source and installation directory names. Tray
+assets come from `resources/icons/tray/` and are installed as `resources/tray/`.
+The inert preference reader is packaged at
+`resources/pages/renderer-preferences.html` inside the application package.
+
 Optional npm and pip configuration comes from `resources/package-manager-config/`
 and is packaged as `resources/package-manager-config/` below the installation
 root. Main reads `.npmrc` and `pip.ini` directly from that directory. Each file is

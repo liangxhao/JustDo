@@ -21,7 +21,7 @@ import type { CoworkAttachmentPayload, CoworkConfig } from '@/features/cowork/co
 import { i18nService } from '@/services/i18n';
 import FolderIcon from '@/shared/components/icons/FolderIcon';
 
-import logoUrl from '../../../../../../resources/logo.png';
+import logoUrl from '../../../../../../resources/icons/logo.png';
 import {
   fileDisplayTabId,
   MAX_TERMINAL_TABS,

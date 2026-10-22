@@ -2,12 +2,12 @@
 'use strict';
 
 /**
- * Generate all app icons from resources/logo.png.
+ * Generate all app icons from resources/icons/logo.png.
  *
  * Modes:
  *   node scripts/assets/generate-icons.cjs png          — PNG sizes (resources/icons/png/)
  *   node scripts/assets/generate-icons.cjs app-icon     — Windows .ico (resources/icons/win/)
- *   node scripts/assets/generate-icons.cjs tray-icons   — tray icons for all platforms (resources/tray/)
+ *   node scripts/assets/generate-icons.cjs tray-icons   — tray icons for all platforms (resources/icons/tray/)
  *   node scripts/assets/generate-icons.cjs all          — run all three in order
  *   node scripts/assets/generate-icons.cjs              — same as "all"
  *
@@ -22,7 +22,7 @@ const path = require('path');
 const { execSync, spawnSync } = require('child_process');
 
 const projectRoot = path.resolve(__dirname, '../..');
-const sourcePng = path.join(projectRoot, 'resources', 'logo.png');
+const sourcePng = path.join(projectRoot, 'resources', 'icons', 'logo.png');
 const mode = (process.argv[2] || 'all').toLowerCase();
 
 // ── shared helpers ──────────────────────────────────────────────────────────
@@ -186,7 +186,7 @@ function generateTrayIcons(inputOverride) {
   const inputPath = inputOverride
     ? path.resolve(projectRoot, inputOverride)
     : sourcePng;
-  const outputDir = path.resolve(projectRoot, 'resources', 'tray');
+  const outputDir = path.resolve(projectRoot, 'resources', 'icons', 'tray');
 
   if (!fs.existsSync(inputPath)) {
     throw new Error(`Input logo not found: ${inputPath}`);

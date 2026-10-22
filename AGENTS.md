@@ -74,6 +74,8 @@ npm test
 
 ## Coding and Structure
 
+- Keep packaging intermediates under the repository-root `build/` and offline
+  download caches under the repository-root `cache/`; both are ignored by Git.
 - Strict TypeScript, functional React, 2-space indent, single quotes, semicolons.
   Renderer aliases: `@/` → `src/renderer/`, `@shared/` → `src/shared/`.
 - Organize by feature/domain and preserve existing entry points. Co-locate

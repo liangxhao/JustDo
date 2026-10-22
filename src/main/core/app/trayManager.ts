@@ -15,7 +15,7 @@ function getTrayIconPath(): string {
 
   const basePath = app.isPackaged
     ? path.join(process.resourcesPath, 'tray')
-    : path.join(__dirname, '..', 'resources', 'tray');
+    : path.join(__dirname, '..', 'resources', 'icons', 'tray');
 
   if (isMac) {
     return path.join(basePath, 'tray-icon-mac.png');
