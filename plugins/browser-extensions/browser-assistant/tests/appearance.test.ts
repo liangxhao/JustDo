@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   APPEARANCE_KEY,
   initializeAppearance,
-} from '../../resources/browser-extension/conversation-overlay/modules/appearance.js';
+} from '../conversation-overlay/modules/appearance.js';
 
 function environment(value = 'dark') {
   let changed: (changes: unknown, area: string) => void = () => {};
@@ -119,7 +119,7 @@ describe('extension appearance preferences', () => {
     const env = environment('warm');
     vi.stubGlobal('chrome', { storage: env.storage });
     vi.stubGlobal('matchMedia', () => env.media);
-    await import('../../resources/browser-extension/conversation-overlay/modules/appearance-settings.js');
+    await import('../conversation-overlay/modules/appearance-settings.js');
     const select = document.getElementById('chatTheme') as HTMLSelectElement;
     expect(document.getElementById('appearanceTitle')?.textContent).toBe('Background color');
     expect(select.options[0].textContent).toBe('Dark');

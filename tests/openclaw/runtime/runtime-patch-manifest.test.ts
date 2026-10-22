@@ -194,8 +194,8 @@ function createFixture(version = 'v2026.6.11') {
     path.join(repoRoot, 'scripts', 'runtime', 'sync-bundled-skills.cjs'),
     '// fixture\n',
   );
-  fs.mkdirSync(path.join(repoRoot, 'resources'), { recursive: true });
-  fs.writeFileSync(path.join(repoRoot, 'resources', 'openclaw-extension-prune.json'), '{}\n');
+  fs.mkdirSync(path.join(repoRoot, 'plugins', 'extensions'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, 'plugins', 'extensions', 'prune-policy.json'), '{}\n');
   fs.mkdirSync(path.join(repoRoot, 'plugins', 'skills'), { recursive: true });
   fs.writeFileSync(path.join(repoRoot, 'plugins', 'skills', 'builtin-skills.json'), '{}\n');
   for (const file of listBuildRecipeFiles(repoRoot)) {

@@ -57,11 +57,16 @@ npm test
   not depend on optional plugins. Native registration must not import
   `host/` or `browser/`; shared facades import only pure contracts/prompts,
   and browser modules never import Main.
-- Built-in plugins live under `plugins/`: `extensions/`, `skills/`, `mcp-servers/`
-  and `hooks/`. Keep each plugin's sources and assets in its owning category.
-- Keep plugin-owned tools, UI, assets, build/verification scripts and unit tests
+- Built-in plugins live under `plugins/`: `extensions/`, `skills/`, `mcp-servers/`,
+  `hooks/` and `browser-extensions/`. Keep sources and assets in their owning category.
+- Keep OpenClaw extension-owned tools, UI, assets, scripts and unit tests
   under `plugins/extensions/<plugin-id>/`. The host retains generic capabilities,
   integration adapters and tests that exercise host/plugin boundaries.
+- Browser extension sources, assembly scripts and unit tests live under
+  `plugins/browser-extensions/<plugin-id>/`. Main owns Native Messaging and
+  app-server integration; host build adapters may reuse application chat code.
+- OpenClaw runtime documentation and role templates belong under
+  `resources/openclaw/docs/`; repository design documentation stays in `docs/`.
 - Keep `main.ts`, `preload.ts` and plugin registration entries thin.
   Controllers retain lifecycle/state ownership and delegate through explicit
   typed contexts. Use live `shared/app/propertyContext.ts` accessors rather

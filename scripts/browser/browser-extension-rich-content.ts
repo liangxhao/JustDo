@@ -7,7 +7,7 @@ import {
 import { renderBrowserAnnotation } from '../../src/renderer/libs/openclaw-chat/components/message/browser-annotation-message';
 import { renderBrowserRecording } from '../../src/renderer/libs/openclaw-chat/components/message/browser-recording-message';
 import { i18nService } from './browser-extension-i18n';
-import { renderMarkdownHtml } from './browser-extension-markdown-entry.mjs';
+import { renderMarkdownHtml } from '../../plugins/browser-extensions/browser-assistant/scripts/browser-extension-markdown-entry.mjs';
 
 const imageRetries = new WeakMap<HTMLImageElement, () => void>();
 export function pendingInputLabel(state: string, incomplete = false): string {

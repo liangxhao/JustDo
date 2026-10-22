@@ -56,8 +56,8 @@
       "filter": ["**/*"]
     },
     {
-      "from": "resources/dependency-config",
-      "to": "dependency-config",
+      "from": "resources/package-manager-config",
+      "to": "package-manager-config",
       "filter": ["**/*"]
     },
     {

@@ -6,7 +6,7 @@ import vm from 'node:vm';
 import { describe, expect, test, vi } from 'vitest';
 
 const { prepareBrowserExtension, verifyBrowserExtension } =
-  require('../../scripts/browser/prepare-browser-extension.cjs') as {
+  require('../../plugins/browser-extensions/browser-assistant/scripts/prepare.cjs') as {
     prepareBrowserExtension: (options: {
       outputDir?: string;
       productName?: string;
@@ -31,8 +31,8 @@ const projectProductName = JSON.parse(
 const createFixture = () => {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-browser-extension-'));
   fs.cpSync(
-    path.join(projectRoot, 'resources', 'browser-extension'),
-    path.join(repoRoot, 'resources', 'browser-extension'),
+    path.join(projectRoot, 'plugins', 'browser-extensions', 'browser-assistant'),
+    path.join(repoRoot, 'plugins', 'browser-extensions', 'browser-assistant'),
     { recursive: true },
   );
   fs.copyFileSync(path.join(projectRoot, 'package.json'), path.join(repoRoot, 'package.json'));
@@ -147,7 +147,7 @@ describe('browser extension preparation', () => {
   );
   test('keeps the native strict authentication JSON parser and exact-key helper in the shipped baseline', () => {
     const source = fs.readFileSync(
-      path.join(projectRoot, 'resources/browser-extension/openclaw/modules/strict-json.js'),
+      path.join(projectRoot, 'plugins/browser-extensions/browser-assistant/openclaw/modules/strict-json.js'),
       'utf8',
     );
     const parse = vm.runInNewContext(
@@ -391,7 +391,7 @@ describe('browser extension preparation', () => {
 
     try {
       fs.appendFileSync(
-        path.join(repoRoot, 'resources', 'browser-extension', 'openclaw', 'options.js'),
+        path.join(repoRoot, 'plugins', 'browser-extensions', 'browser-assistant', 'openclaw', 'options.js'),
         '\n// unexpected mutation\n',
         'utf8',
       );
@@ -412,8 +412,9 @@ describe('browser extension preparation', () => {
       fs.appendFileSync(
         path.join(
           repoRoot,
-          'resources',
-          'browser-extension',
+          'plugins',
+          'browser-extensions',
+          'browser-assistant',
           'conversation-overlay',
           'sidepanel.js',
         ),

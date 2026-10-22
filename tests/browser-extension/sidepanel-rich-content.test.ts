@@ -5,7 +5,7 @@ import {
   pendingInputLabel,
   renderRichContent,
   retryRichImages,
-} from '../../resources/browser-extension/conversation-overlay/modules/sidepanel-rich-content.js';
+} from '../../plugins/browser-extensions/browser-assistant/conversation-overlay/modules/sidepanel-rich-content.js';
 
 const recording = {
   id: 'r',

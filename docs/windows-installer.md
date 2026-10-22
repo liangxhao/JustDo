@@ -256,6 +256,12 @@ bundled packages, MinGit, npm, dependency-manager configuration and local speech
 runtime are read directly from the installation resources. Startup does not
 duplicate these bundles into userData.
 
+Optional npm and pip configuration comes from `resources/package-manager-config/`
+and is packaged as `resources/package-manager-config/` below the installation
+root. Main reads `.npmrc` and `pip.ini` directly from that directory. Each file is
+optional and ignored by Git; supply the environment-specific files before
+packaging.
+
 Packaged Windows startup consumes the prepared Gateway launcher and runtime
 preload as regular, non-empty files. Main loads the actual preload rather than
 serializing its own bundled function text: minification changes `toString()`

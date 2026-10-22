@@ -8,15 +8,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   APP_NOT_RUNNING_CODE,
   ensureAppServer,
-} from '../../resources/browser-extension/conversation-overlay/modules/app-server-background.js';
-import { requestLocalBootstrap } from '../../resources/browser-extension/conversation-overlay/modules/relay-bootstrap.js';
-import { parsePairingString } from '../../resources/browser-extension/openclaw/modules/relay-core.js';
-import { hasExactKeys } from '../../resources/browser-extension/openclaw/modules/strict-json.js';
+} from '../../plugins/browser-extensions/browser-assistant/conversation-overlay/modules/app-server-background.js';
+import { requestLocalBootstrap } from '../../plugins/browser-extensions/browser-assistant/conversation-overlay/modules/relay-bootstrap.js';
+import { parsePairingString } from '../../plugins/browser-extensions/browser-assistant/openclaw/modules/relay-core.js';
+import { hasExactKeys } from '../../plugins/browser-extensions/browser-assistant/openclaw/modules/strict-json.js';
 
-const { prepareBrowserExtension } = require('../../scripts/browser/prepare-browser-extension.cjs');
+const { prepareBrowserExtension } = require('../../plugins/browser-extensions/browser-assistant/scripts/prepare.cjs');
 
 vi.mock(
-  '../../resources/browser-extension/conversation-overlay/modules/app-server-background.js',
+  '../../plugins/browser-extensions/browser-assistant/conversation-overlay/modules/app-server-background.js',
   () => ({
     APP_NOT_RUNNING_CODE: 'APP_NOT_RUNNING',
     ensureAppServer: vi.fn(),
@@ -129,8 +129,8 @@ describe('product relay bootstrap transport', () => {
     try {
       const projectRoot = path.resolve(__dirname, '../..');
       fs.cpSync(
-        path.join(projectRoot, 'resources/browser-extension'),
-        path.join(directory, 'resources/browser-extension'),
+        path.join(projectRoot, 'plugins/browser-extensions/browser-assistant'),
+        path.join(directory, 'plugins/browser-extensions/browser-assistant'),
         { recursive: true },
       );
       fs.cpSync(

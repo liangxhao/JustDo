@@ -59,7 +59,11 @@ flowchart TB
 
 ## 3. 源码按责任组织
 
-内置插件集中在仓库根目录 `plugins/`，按 `extensions/`、`skills/`、`mcp-servers/`、`hooks/` 分类；当前扩展和独立技能分别由前两类承载，后两类预留。扩展自带技能保留在扩展内部，宿主管理代码仍在 `src/main/plugins/`、`src/renderer/features/plugins/` 和 `src/shared/plugins/`，构建产物沿用 OpenClaw 原生目录。具体约定见[插件系统](07-plugin-system.md)。
+`resources/package-manager-config/` 保存应用级 npm、pip 可选配置，打包后位于安装资源目录下同名的 `package-manager-config/`。Main 从该位置读取并设置应用、Gateway 和 MCP 子进程的环境变量，配置文件直接随安装资源使用；环境专属的 `.npmrc`、`pip.ini` 不提交到 Git。
+
+`resources/openclaw/docs/` 保存随 OpenClaw 运行时组装的资源：`reference/templates/` 提供角色初始化模板，`channels/` 和 `gateway/config-channels.md` 提供当前产品支持范围的渠道说明。资源同步脚本将这些文件写入运行时原生的 `docs/` 对应位置，模板沿用复制覆盖、渠道目录完整替换、Gateway 说明单文件覆盖的既有行为。这里的文档和 `AGENTS.md` 模板是运行时资产；仓库架构、功能和维护说明继续位于根 `docs/`。
+
+内置插件集中在仓库根目录 `plugins/`，按 `extensions/`、`skills/`、`mcp-servers/`、`hooks/`、`browser-extensions/` 分类。OpenClaw 扩展和独立技能分别由前两类承载，`mcp-servers/` 与 `hooks/` 预留；Chrome 加载的 Browser Assistant 位于 `plugins/browser-extensions/browser-assistant/`，独立于 Gateway 插件加载流程。扩展自带技能保留在扩展内部，宿主管理代码仍在 `src/main/plugins/`、`src/renderer/features/plugins/` 和 `src/shared/plugins/`，OpenClaw 构建产物沿用原生目录。具体约定见[插件系统](07-plugin-system.md)。
 
 Main 的 `core/` 分为 app、window、network、runtime、filesystem、development。浏览器、语音、外部集成和 Windows 沙盒有自己的领域，不塞入通用工具文件。`providers/` 管理产品模型配置与认证；`openclaw/config/` 管理它们向原生配置的投影。
 

@@ -7,7 +7,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { WebSocketServer } = require('ws');
-const { prepareBrowserExtension } = require('../../scripts/browser/prepare-browser-extension.cjs');
+const { prepareBrowserExtension } = require('../../plugins/browser-extensions/browser-assistant/scripts/prepare.cjs');
 
 async function main() {
   const playwrightPath = process.argv[2];
@@ -18,8 +18,8 @@ async function main() {
   const repoRoot = path.resolve(__dirname, '../..');
   const extension = path.join(fixture, 'build/browser-extension/chrome-extension');
   fs.cpSync(
-    path.join(repoRoot, 'resources/browser-extension'),
-    path.join(fixture, 'resources/browser-extension'),
+    path.join(repoRoot, 'plugins/browser-extensions/browser-assistant'),
+    path.join(fixture, 'plugins/browser-extensions/browser-assistant'),
     { recursive: true },
   );
   fs.copyFileSync(path.join(repoRoot, 'package.json'), path.join(fixture, 'package.json'));

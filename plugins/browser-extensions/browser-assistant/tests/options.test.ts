@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const optionsHtml = fs.readFileSync(
-  path.resolve(__dirname, '../../resources/browser-extension/conversation-overlay/options.html'),
+  path.resolve(__dirname, '../conversation-overlay/options.html'),
   'utf8',
 );
 type Status = {
@@ -22,7 +22,7 @@ const textarea = () => document.getElementById('pairingString') as HTMLTextAreaE
 const accessMode = () => document.getElementById('accessMode') as HTMLSelectElement;
 
 async function load() {
-  await import('../../resources/browser-extension/conversation-overlay/options.js');
+  await import('../conversation-overlay/options.js');
   await vi.waitFor(() => expect(button('useLocal').disabled).toBe(false));
 }
 
@@ -197,7 +197,7 @@ describe('product browser settings', () => {
 
   it('keeps native custody protection and allows an explicit disconnect', async () => {
     status.retiredCopilotCustodyBlocked = true;
-    await import('../../resources/browser-extension/conversation-overlay/options.js');
+    await import('../conversation-overlay/options.js');
     await vi.waitFor(() =>
       expect(document.getElementById('retiredCustody')?.classList.contains('hidden')).toBe(false),
     );

@@ -114,7 +114,7 @@ const releaseHistoryLimits = APP_UPDATE_CONFIG.releaseHistory;
 const {
   prepareBrowserExtension,
   verifyBrowserExtension,
-} = require('../browser/prepare-browser-extension.cjs');
+} = require('../../plugins/browser-extensions/browser-assistant/scripts/prepare.cjs');
 const {
   compileBrowserExtensionNativeHost,
 } = require('../browser/prepare-browser-extension-dev-host.cjs');

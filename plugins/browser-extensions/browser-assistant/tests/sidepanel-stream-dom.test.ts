@@ -7,7 +7,7 @@ const mock = vi.hoisted(() => ({
   request: vi.fn(),
 }));
 vi.mock(
-  '../../resources/browser-extension/conversation-overlay/modules/conversation-client.js',
+  '../conversation-overlay/modules/conversation-client.js',
   () => ({
     AppServerClient: class {
       constructor(notify: typeof mock.notify) {
@@ -27,7 +27,7 @@ describe('extension streaming DOM', () => {
 
   async function mountThread() {
     document.documentElement.innerHTML = fs.readFileSync(
-      'resources/browser-extension/conversation-overlay/sidepanel.html',
+      'plugins/browser-extensions/browser-assistant/conversation-overlay/sidepanel.html',
       'utf8',
     );
     const thread = {
@@ -47,7 +47,7 @@ describe('extension streaming DOM', () => {
       return {};
     };
     mock.request.mockImplementation(respond);
-    await import('../../resources/browser-extension/conversation-overlay/sidepanel.js');
+    await import('../conversation-overlay/sidepanel.js');
     const select = document.getElementById('session') as HTMLSelectElement;
     await vi.waitFor(() => expect(select.options.length).toBe(2));
     select.value = 'one';
@@ -361,7 +361,7 @@ describe('extension streaming DOM', () => {
   });
   it('renders partial Markdown and preserves open process details across streaming updates and final history', async () => {
     document.documentElement.innerHTML = fs.readFileSync(
-      'resources/browser-extension/conversation-overlay/sidepanel.html',
+      'plugins/browser-extensions/browser-assistant/conversation-overlay/sidepanel.html',
       'utf8',
     );
     const thread = {
@@ -382,7 +382,7 @@ describe('extension streaming DOM', () => {
         return { models: [{ id: 'p/m', name: 'Model' }], modelRef: 'p/m', permissionMode: 'ask' };
       return {};
     });
-    await import('../../resources/browser-extension/conversation-overlay/sidepanel.js');
+    await import('../conversation-overlay/sidepanel.js');
     const select = document.getElementById('session') as HTMLSelectElement;
     await vi.waitFor(() => expect(select.options.length).toBe(2));
     select.value = 'one';

@@ -6,6 +6,7 @@ import path from 'path';
 import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
 
 const LOCAL_EXTENSIONS_DIR = path.join('plugins', 'extensions');
+const LOCAL_EXTENSION_METADATA_FILES = ['prune-policy.json'];
 const AGENT_PLUGIN_MANIFEST_SCHEMA = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
 const RETIRED_WIDGET_PLUGIN_ID = 'interactive-ui';
 const RETIRED_WIDGET_PACKAGE_NAME = 'openclaw-interactive-ui';
@@ -150,7 +151,10 @@ export const inspectOpenClawExtensionCandidate = (
 
 export const inspectOpenClawExtensionDirectory = (
   extensionsDir: string,
-  options: { excludeRuntimeBundledSources?: boolean } = {},
+  options: {
+    excludeRuntimeBundledSources?: boolean;
+    ignoredFileNames?: readonly string[];
+  } = {},
 ): OpenClawExtensionInventory => {
   let entries: fs.Dirent[];
   try {
@@ -163,6 +167,7 @@ export const inspectOpenClawExtensionDirectory = (
   let complete = true;
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue;
+    if (entry.isFile() && options.ignoredFileNames?.includes(entry.name)) continue;
     const extensionDir = path.join(extensionsDir, entry.name);
     let isDirectory = entry.isDirectory();
     if (entry.isSymbolicLink()) {
@@ -310,7 +315,10 @@ export const inspectBundledOpenClawExtensions = (): OpenClawExtensionInventory =
 export const inspectLocalOpenClawExtensions = (): OpenClawExtensionInventory => {
   const sourceDir = findLocalExtensionsSourceDir();
   return sourceDir
-    ? inspectOpenClawExtensionDirectory(sourceDir, { excludeRuntimeBundledSources: true })
+    ? inspectOpenClawExtensionDirectory(sourceDir, {
+        excludeRuntimeBundledSources: true,
+        ignoredFileNames: LOCAL_EXTENSION_METADATA_FILES,
+      })
     : { complete: true, ids: [] };
 };
 

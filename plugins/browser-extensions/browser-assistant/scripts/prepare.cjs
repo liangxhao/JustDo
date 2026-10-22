@@ -177,7 +177,7 @@ function applyManifestOverlay(value) {
 }
 
 function buildExpectedExtensionFiles(repoRoot, productName) {
-  const sourceRoot = path.join(repoRoot, 'resources', 'browser-extension');
+  const sourceRoot = path.join(repoRoot, 'plugins', 'browser-extensions', 'browser-assistant');
   const openClawDir = path.join(sourceRoot, 'openclaw');
   const overlayDir = path.join(sourceRoot, 'conversation-overlay');
   verifyLockedSource(openClawDir, LOCKED_OPENCLAW_FILES, 'OpenClaw baseline');
@@ -251,7 +251,7 @@ function writeExpectedExtensionFiles(outputDir, files) {
 }
 
 function verifyBrowserExtension(extensionDir, options = {}) {
-  const repoRoot = path.resolve(options.repoRoot || path.join(__dirname, '../..'));
+  const repoRoot = path.resolve(options.repoRoot || path.join(__dirname, '../../../..'));
   const productName = resolveProductName(repoRoot, options.productName);
   const expected = buildExpectedExtensionFiles(repoRoot, productName);
   const manifestPath = path.join(extensionDir, 'manifest.json');
@@ -356,7 +356,7 @@ function verifyBrowserExtension(extensionDir, options = {}) {
 }
 
 function prepareBrowserExtension(options = {}) {
-  const repoRoot = path.resolve(options.repoRoot || path.join(__dirname, '../..'));
+  const repoRoot = path.resolve(options.repoRoot || path.join(__dirname, '../../../..'));
   const outputDir = path.resolve(
     options.outputDir || path.join(repoRoot, 'build', 'browser-extension', 'chrome-extension'),
   );

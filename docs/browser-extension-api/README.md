@@ -63,8 +63,8 @@ flowchart LR
 - WebSocket server：`src/main/browser/extension/browserExtensionChatServer.ts`
 - 业务适配：`src/main/browser/extension/browserExtensionChatController.ts`
 - 实时事件外形：`src/shared/browser/browserExtensionStream.ts`
-- 扩展 bootstrap：`resources/browser-extension/conversation-overlay/modules/app-server-background.js`
-- WebSocket client：`resources/browser-extension/conversation-overlay/modules/conversation-client.js`
-- Side Panel：`resources/browser-extension/conversation-overlay/sidepanel.js`
+- 扩展 bootstrap：`plugins/browser-extensions/browser-assistant/conversation-overlay/modules/app-server-background.js`
+- WebSocket client：`plugins/browser-extensions/browser-assistant/conversation-overlay/modules/conversation-client.js`
+- Side Panel：`plugins/browser-extensions/browser-assistant/conversation-overlay/sidepanel.js`
 
 文档描述的是当前仓库实现，不承诺未在兼容性表中列出的 Codex app-server 方法。

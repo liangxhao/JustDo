@@ -10,7 +10,7 @@ esbuild.buildSync({
   ],
   outfile: path.join(
     repoRoot,
-    'resources/browser-extension/conversation-overlay/modules/sidepanel-stream.js',
+    'plugins/browser-extensions/browser-assistant/conversation-overlay/modules/sidepanel-stream.js',
   ),
   bundle: true,
   format: 'esm',

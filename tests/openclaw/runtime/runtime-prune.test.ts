@@ -22,7 +22,6 @@ function createFixture(remove: string[]) {
   temporaryRoots.push(repoRoot);
   const runtimeRoot = path.join(repoRoot, 'runtime');
   const extensionsRoot = path.join(runtimeRoot, 'dist', 'extensions');
-  fs.mkdirSync(path.join(repoRoot, 'resources'), { recursive: true });
   fs.mkdirSync(path.join(repoRoot, 'plugins/extensions', 'custom'), { recursive: true });
   fs.writeFileSync(
     path.join(repoRoot, 'package.json'),
@@ -32,7 +31,7 @@ function createFixture(remove: string[]) {
     fs.mkdirSync(path.join(extensionsRoot, extensionId), { recursive: true });
   }
   fs.writeFileSync(
-    path.join(repoRoot, 'resources', 'openclaw-extension-prune.json'),
+    path.join(repoRoot, 'plugins', 'extensions', 'prune-policy.json'),
     JSON.stringify({
       version: 1,
       openclawVersion: '2026.9.6',
@@ -106,7 +105,7 @@ describe('OpenClaw runtime extension pruning', () => {
 
   test('rejects a prune allowlist audited for another OpenClaw version', () => {
     const { extensionsRoot, repoRoot, runtimeRoot } = createFixture(['optional']);
-    const policyPath = path.join(repoRoot, 'resources', 'openclaw-extension-prune.json');
+    const policyPath = path.join(repoRoot, 'plugins', 'extensions', 'prune-policy.json');
     const policy = JSON.parse(fs.readFileSync(policyPath, 'utf8')) as Record<string, unknown>;
     policy.openclawVersion = '2026.8.2';
     fs.writeFileSync(policyPath, JSON.stringify(policy));

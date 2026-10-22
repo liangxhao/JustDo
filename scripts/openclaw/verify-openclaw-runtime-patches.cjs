@@ -63,7 +63,7 @@ const BUILD_RECIPE_FILES = [
   'plugins/extensions/runtime-services/tool-call-recovery/loop.mjs',
   'src/shared/openclaw/cliRuntimeFiles.json',
   'src/shared/security/mxcNativeBinaries.json',
-  'resources/openclaw-extension-prune.json',
+  'plugins/extensions/prune-policy.json',
   'plugins/skills/builtin-skills.json',
   'scripts/runtime/sync-bundled-skills.cjs',
   'plugins/extensions/drawio/scripts/prepare.cjs',

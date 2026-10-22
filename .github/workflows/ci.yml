@@ -31,6 +31,7 @@ jobs:
             renderer:
               - 'src/renderer/**'
               - 'plugins/extensions/**'
+              - 'plugins/browser-extensions/**'
               - 'vite.config.ts'
               - 'tsconfig.json'
               - 'tailwind.config.js'
@@ -38,6 +39,7 @@ jobs:
             main:
               - 'src/main/**'
               - 'plugins/extensions/**'
+              - 'plugins/browser-extensions/**'
               - 'src/common/**'
               - 'electron-tsconfig.json'
               - 'src/main/preload.ts'

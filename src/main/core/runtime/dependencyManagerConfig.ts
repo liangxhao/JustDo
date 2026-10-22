@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const DEPENDENCY_CONFIG_DIR_NAME = 'dependency-config';
+const PACKAGE_MANAGER_CONFIG_DIR_NAME = 'package-manager-config';
 const NPMRC_FILE_NAME = '.npmrc';
 const PIP_INI_FILE_NAME = 'pip.ini';
 
@@ -21,19 +21,19 @@ export const resolveDependencyManagerConfigPaths = (
 
 const resolveDefaultResourceDir = (): string | null => {
   const candidates = [
-    process.resourcesPath ? path.join(process.resourcesPath, DEPENDENCY_CONFIG_DIR_NAME) : null,
-    path.join(process.cwd(), 'resources', DEPENDENCY_CONFIG_DIR_NAME),
-    path.join(path.resolve(__dirname, '..', '..'), 'resources', DEPENDENCY_CONFIG_DIR_NAME),
-    path.join(path.resolve(__dirname, '..', '..', '..'), 'resources', DEPENDENCY_CONFIG_DIR_NAME),
+    process.resourcesPath ? path.join(process.resourcesPath, PACKAGE_MANAGER_CONFIG_DIR_NAME) : null,
+    path.join(process.cwd(), 'resources', PACKAGE_MANAGER_CONFIG_DIR_NAME),
+    path.join(path.resolve(__dirname, '..', '..'), 'resources', PACKAGE_MANAGER_CONFIG_DIR_NAME),
+    path.join(path.resolve(__dirname, '..', '..', '..'), 'resources', PACKAGE_MANAGER_CONFIG_DIR_NAME),
     path.join(
       path.resolve(__dirname, '..', '..', '..', '..'),
       'resources',
-      DEPENDENCY_CONFIG_DIR_NAME,
+      PACKAGE_MANAGER_CONFIG_DIR_NAME,
     ),
     path.join(
       path.resolve(__dirname, '..', '..', '..', '..', '..'),
       'resources',
-      DEPENDENCY_CONFIG_DIR_NAME,
+      PACKAGE_MANAGER_CONFIG_DIR_NAME,
     ),
   ].filter((value): value is string => Boolean(value));
 

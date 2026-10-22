@@ -81,7 +81,7 @@ describe('openclawLocalExtensions', () => {
     expect(hasBundledOpenClawExtension('legacy-directory-name')).toBe(false);
   });
 
-  it('keeps runtime source replacements out of source inventory and runtime source copying', async () => {
+  it('keeps runtime source replacements and build metadata out of source inventory and runtime copying', async () => {
     electronApp.isPackaged = false;
     electronApp.getAppPath.mockReturnValue(resourcesDir);
     const source = path.join(resourcesDir, 'plugins/extensions');
@@ -98,6 +98,7 @@ describe('openclawLocalExtensions', () => {
       path.join(plugin, 'openclaw.plugin.json'),
       JSON.stringify({ id: 'runtime-services' }),
     );
+    fs.writeFileSync(path.join(source, 'prune-policy.json'), '{}');
     expect(inspectLocalOpenClawExtensions()).toEqual({ complete: true, ids: ['runtime-services'] });
     expect(inspectOpenClawExtensionDirectory(source).complete).toBe(false);
     const runtime = path.join(resourcesDir, 'runtime');
@@ -106,7 +107,28 @@ describe('openclawLocalExtensions', () => {
       'runtime-services',
     ]);
     expect(fs.existsSync(path.join(runtime, 'dist/extensions/openai'))).toBe(false);
+    expect(fs.existsSync(path.join(runtime, 'dist/extensions/prune-policy.json'))).toBe(false);
   });
+
+  it.each([
+    { name: 'prune-policy.json', directory: false, complete: true },
+    { name: 'unknown.json', directory: false, complete: false },
+    { name: 'prune-policy.json', directory: true, complete: false },
+  ])(
+    'preserves source inventory checks for $name (directory=$directory)',
+    ({ name, directory, complete }) => {
+      electronApp.isPackaged = false;
+      electronApp.getAppPath.mockReturnValue(resourcesDir);
+      const source = path.join(resourcesDir, 'plugins/extensions');
+      const entry = path.join(source, name);
+      fs.mkdirSync(source, { recursive: true });
+      if (directory) fs.mkdirSync(entry);
+      else fs.writeFileSync(entry, '{}');
+
+      expect(inspectLocalOpenClawExtensions()).toEqual({ complete, ids: [] });
+      expect(inspectOpenClawExtensionDirectory(source)).toEqual({ complete: false, ids: [] });
+    },
+  );
 
   it('discovers compatible bundle manifests using OpenClaw id normalization', () => {
     const extensionsDir = path.join(resourcesDir, 'bundle-extensions');

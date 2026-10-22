@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AppServerClient } from '../../resources/browser-extension/conversation-overlay/modules/conversation-client.js';
+import { AppServerClient } from '../conversation-overlay/modules/conversation-client.js';
 
 const localAppServerUrl = `ws://127.0.0.1:41234/app-server?token=${'a'.repeat(64)}`;
 const unavailableMessage =
@@ -99,7 +99,7 @@ describe('browser extension discovers existing app instances', () => {
 
   it('only requests discovery even if an older panel asks for a restart', async () => {
     const { handleAppServerMessage } =
-      await import('../../resources/browser-extension/conversation-overlay/modules/app-server-background.js');
+      await import('../conversation-overlay/modules/app-server-background.js');
 
     const response = await new Promise(resolve => {
       handleAppServerMessage(
@@ -118,7 +118,7 @@ describe('browser extension discovers existing app instances', () => {
 
   it('reports a missing instance and discovers it after the user starts the app', async () => {
     const { ensureAppServer } =
-      await import('../../resources/browser-extension/conversation-overlay/modules/app-server-background.js');
+      await import('../conversation-overlay/modules/app-server-background.js');
     available = false;
 
     await expect(ensureAppServer('panel')).rejects.toMatchObject({

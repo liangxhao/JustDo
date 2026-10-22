@@ -447,18 +447,18 @@ describe('Windows installer process handling', () => {
     expect(unpackScript).not.toContain('migrateLegacyPythonRuntime');
   });
 
-  it('keeps packaged dependency config in the installation directory', () => {
-    expect(nsisScript).not.toContain('dependency-config\\.npmrc');
-    expect(nsisScript).not.toContain('dependency-config\\pip.ini');
+  it('keeps packaged package manager config in the installation directory', () => {
+    expect(nsisScript).not.toContain('package-manager-config\\.npmrc');
+    expect(nsisScript).not.toContain('package-manager-config\\pip.ini');
   });
 
-  it('packages dependency config once as a standalone installation resource', () => {
-    const dependencyConfigResources = (builderConfig.extraResources ?? []).filter(
-      resource => resource.from === 'resources/dependency-config',
+  it('packages package manager config once as a standalone installation resource', () => {
+    const packageManagerConfigResources = (builderConfig.extraResources ?? []).filter(
+      resource => resource.from === 'resources/package-manager-config',
     );
 
-    expect(dependencyConfigResources).toEqual([
-      { from: 'resources/dependency-config', to: 'dependency-config', filter: ['**/*'] },
+    expect(packageManagerConfigResources).toEqual([
+      { from: 'resources/package-manager-config', to: 'package-manager-config', filter: ['**/*'] },
     ]);
     expect(builderHook).not.toContain("label: 'Dependency manager config'");
   });

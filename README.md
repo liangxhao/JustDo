@@ -114,7 +114,7 @@ Python packages.
 | `src/renderer/features/`           | React feature modules for cowork, agents, models, plugins, scheduled tasks, settings       |
 | `src/renderer/libs/openclaw-chat/` | Lit chat element and message rendering pipeline                                            |
 | `src/shared/`                      | shared contracts for cowork, OpenClaw, providers, plugins, scheduled tasks, slash commands |
-| `plugins/`                         | built-in plugins grouped under `extensions/`, `skills/`, `mcp-servers/`, and `hooks/`                |
+| `plugins/`                         | built-in OpenClaw extensions, skills, MCP servers, hooks, and browser extensions             |
 | `vendor/openclaw-runtime/`         | downloaded/synced OpenClaw runtime artifacts                                               |
 
 ## State Model

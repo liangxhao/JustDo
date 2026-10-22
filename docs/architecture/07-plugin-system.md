@@ -2,7 +2,9 @@
 
 插件页组合多种能力，但它们不是同一种安装单元。本文以 Main 插件服务、原生 API、配置同步和 Extension 注册为依据，说明读取、启停、安装和恢复各由谁负责。
 
-内置插件源码统一位于仓库根目录的 `plugins/`，按 `extensions/`、`skills/`、`mcp-servers/`、`hooks/` 分类。现有扩展位于 `plugins/extensions/<plugin-id>/`，独立技能及筛选清单位于 `plugins/skills/`；扩展自带的技能保留在所属扩展内部。`mcp-servers/`、`hooks/` 当前仅预留目录，尚无内置加载逻辑。构建仍将扩展和选中技能组装到 OpenClaw 原生的 `dist/extensions/`、`skills/`、`custodian-skills/`，开发源码发现读取新的扩展目录。图标、浏览器扩展、文档模板和运行时准备缓存继续由 `resources/` 管理。目录约定见[内置插件说明](../../plugins/README.md)。
+内置插件源码统一位于仓库根目录的 `plugins/`，按 `extensions/`、`skills/`、`mcp-servers/`、`hooks/`、`browser-extensions/` 分类。OpenClaw 扩展位于 `plugins/extensions/<plugin-id>/`，独立技能及筛选清单位于 `plugins/skills/`；扩展自带的技能保留在所属扩展内部。`mcp-servers/`、`hooks/` 当前仅预留目录，尚无内置加载逻辑。构建仍将 OpenClaw 扩展和选中技能组装到原生的 `dist/extensions/`、`skills/`、`custodian-skills/`，开发源码发现读取对应扩展目录。图标、文档模板和运行时准备缓存继续由 `resources/` 管理。目录约定见[内置插件说明](../../plugins/README.md)。
+
+Browser Assistant 位于 `plugins/browser-extensions/browser-assistant/`，由 Chrome 安装和加载，不进入 Plugin Hub 的 OpenClaw 扩展管理。它保留上游基线及产品侧栏补充，自有组装脚本、Markdown 源码和单元测试随包维护；复用应用聊天代码的构建适配与 Native Messaging helper 留在宿主，Main 继续拥有连接、权限和会话。构建生成 `build/browser-extension/chrome-extension/`，安装路径沿用 `resources/browser-extension/chrome-extension/`，显示名称和固定扩展身份独立于源码包目录。详见[侧栏对话](../features/browser/browser-extension-side-chat.md)。
 
 插件专属的工具、界面、资源、构建/校验脚本和单元测试归 `plugins/extensions/<plugin-id>/` 所有。主工程保留通用 MCP Apps 宿主、权限与保存桥、配置/打包接入，以及验证宿主边界的集成测试；插件不能反向导入应用 `src`。根 npm 命令和打包流程只委托插件自己的脚本，draw.io 的目录约定见[插件说明](../../plugins/extensions/drawio/README.md)。
 
@@ -199,7 +201,7 @@ Renderer 的缺失依赖徽标和详情提示不重复列出该技能自身的�
 
 TypeSafe 扩展声明决策模型提供方；原生 `decision_evaluate` 工具按 Agent 的 `decisionModel` 自动提供。9.8 不再注册专用评估工具或 skill，Boolean、Choice、Score 输入由提供方翻译。具体接入见 [Jev evaluations](../features/models/jev-integration.md)。
 
-内网发行版通过 `resources/openclaw-extension-prune.json` 排除 Anthropic、ElevenLabs、
+内网发行版通过 `plugins/extensions/prune-policy.json` 声明当前 OpenClaw 版本内置扩展的保留和移除清单，排除 Anthropic、ElevenLabs、
 GitHub、Kie、Z.AI 和 Novita 插件；运行时资源准备与安装包构建共用该剪裁策略。
 同一策略裁剪 `admin-http-rpc` 和 `file-transfer`：应用管理通过 Gateway WebSocket RPC，
 没有接入额外的 HTTP 管理端点、已配对节点的文件传输或远程工作空间映射。

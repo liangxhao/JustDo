@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { renderMarkdownHtml } from '../../resources/browser-extension/conversation-overlay/modules/sidepanel-markdown.js';
+import { renderMarkdownHtml } from '../conversation-overlay/modules/sidepanel-markdown.js';
 
 describe('browser extension side panel markdown', () => {
   it('renders common message markdown', () => {

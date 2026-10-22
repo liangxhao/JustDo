@@ -1672,7 +1672,7 @@ describe('OpenClawExtensionImportService', () => {
         buildCliEnvironment: vi.fn().mockResolvedValue({
           env: {
             OPENCLAW_STATE_DIR: stateDir,
-            NPM_CONFIG_USERCONFIG: path.join(fixtureRoot, 'dependency-config', '.npmrc'),
+            NPM_CONFIG_USERCONFIG: path.join(fixtureRoot, 'package-manager-config', '.npmrc'),
           },
           runtimeRoot: path.join(fixtureRoot, 'runtime'),
           openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
@@ -1709,7 +1709,7 @@ describe('OpenClawExtensionImportService', () => {
           env: expect.objectContaining({
             OPENCLAW_HOME: path.join(fixtureRoot, 'openclaw-home'),
             OPENCLAW_STATE_DIR: path.join(fixtureRoot, 'state'),
-            NPM_CONFIG_USERCONFIG: path.join(fixtureRoot, 'dependency-config', '.npmrc'),
+            NPM_CONFIG_USERCONFIG: path.join(fixtureRoot, 'package-manager-config', '.npmrc'),
           }),
         }),
       );
@@ -3662,7 +3662,7 @@ describe('OpenClawExtensionImportService', () => {
       getBaseDir: vi.fn().mockReturnValue(path.join(fixtureRoot, 'openclaw-home')),
       buildCliEnvironment: vi.fn().mockResolvedValue({
         env: {
-          NPM_CONFIG_USERCONFIG: path.join(fixtureRoot, 'dependency-config', '.npmrc'),
+          NPM_CONFIG_USERCONFIG: path.join(fixtureRoot, 'package-manager-config', '.npmrc'),
           NPM_CONFIG_REGISTRY: 'https://injected.example.invalid',
           npm_config_registry: 'https://injected.example.invalid',
           NPM_CONFIG_OFFLINE: 'true',
@@ -3693,7 +3693,7 @@ describe('OpenClawExtensionImportService', () => {
     expect(runCommand).toHaveBeenCalledOnce();
     expect(runCommand.mock.calls[0][2].env).toEqual(
       expect.objectContaining({
-        NPM_CONFIG_USERCONFIG: path.join(fixtureRoot, 'dependency-config', '.npmrc'),
+        NPM_CONFIG_USERCONFIG: path.join(fixtureRoot, 'package-manager-config', '.npmrc'),
       }),
     );
     expect(runCommand.mock.calls[0][2].env).toEqual(

@@ -76,7 +76,7 @@
     "setup:local-speech-models": "node scripts/runtime/setup-local-tts.js --with-models",
     "build:local-speech-model-artifacts": "node scripts/runtime/build-local-speech-model-artifacts.cjs",
     "openclaw:plugins": "node scripts/openclaw/ensure-openclaw-plugins.cjs",
-    "browser-extension:prepare": "node scripts/browser/prepare-browser-extension.cjs",
+    "browser-extension:prepare": "node plugins/browser-extensions/browser-assistant/scripts/prepare.cjs",
     "browser-extension:build-markdown": "node scripts/browser/build-browser-extension-markdown.cjs",
     "browser-extension:build-stream": "node scripts/browser/build-browser-extension-stream.cjs",
     "browser-extension:prepare-dev-host": "node scripts/browser/prepare-browser-extension-dev-host.cjs",

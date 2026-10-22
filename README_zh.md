@@ -107,7 +107,7 @@ Windows 打包会通过 `scripts/` 下的脚本准备 MinGit 和 Python runtime�
 | `src/renderer/features/`           | cowork、agents、models、plugins、scheduled tasks、settings 等 React feature    |
 | `src/renderer/libs/openclaw-chat/` | Lit 聊天元素与消息渲染管线                                                     |
 | `src/shared/`                      | cowork、OpenClaw、providers、plugins、scheduled tasks、slash commands 共享契约 |
-| `plugins/`                         | 内置插件，按 `extensions/`、`skills/`、`mcp-servers/`、`hooks/` 分类                    |
+| `plugins/`                         | 内置 OpenClaw 扩展、技能、MCP 服务、Hooks 和浏览器扩展                       |
 | `vendor/openclaw-runtime/`         | 下载并同步的 OpenClaw runtime 产物                                             |
 
 ## 状态模型

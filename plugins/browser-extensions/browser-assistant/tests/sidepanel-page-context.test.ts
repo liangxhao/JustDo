@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const sidePanelSource = readFileSync(
-  path.resolve('resources/browser-extension/conversation-overlay/sidepanel.js'),
+  path.resolve('plugins/browser-extensions/browser-assistant/conversation-overlay/sidepanel.js'),
   'utf8',
 );
 

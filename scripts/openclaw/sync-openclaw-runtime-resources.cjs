@@ -14,7 +14,7 @@ function resolveRepoRoot() {
 }
 
 function syncDocTemplates(repoRoot, runtimeRoot, label) {
-  const sourceDir = path.join(repoRoot, 'resources', 'docs', 'reference', 'templates');
+  const sourceDir = path.join(repoRoot, 'resources', 'openclaw', 'docs', 'reference', 'templates');
   const targetDir = path.join(runtimeRoot, 'docs', 'reference', 'templates');
 
   if (!fs.existsSync(sourceDir)) {
@@ -38,7 +38,7 @@ function syncDocTemplates(repoRoot, runtimeRoot, label) {
 }
 
 function syncDocChannels(repoRoot, runtimeRoot, label) {
-  const sourceDir = path.join(repoRoot, 'resources', 'docs', 'channels');
+  const sourceDir = path.join(repoRoot, 'resources', 'openclaw', 'docs', 'channels');
   const targetDir = path.join(runtimeRoot, 'docs', 'channels');
 
   if (!fs.existsSync(sourceDir)) {
@@ -63,7 +63,7 @@ function syncDocChannels(repoRoot, runtimeRoot, label) {
 }
 
 function syncGatewayConfigChannels(repoRoot, runtimeRoot, label) {
-  const sourceFile = path.join(repoRoot, 'resources', 'docs', 'gateway', 'config-channels.md');
+  const sourceFile = path.join(repoRoot, 'resources', 'openclaw', 'docs', 'gateway', 'config-channels.md');
   const targetFile = path.join(runtimeRoot, 'docs', 'gateway', 'config-channels.md');
 
   if (!fs.existsSync(sourceFile)) {

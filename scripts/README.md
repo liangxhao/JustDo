@@ -6,7 +6,7 @@ stable entry points; direct script invocations use the paths below.
 | Directory    | Responsibility                                                      |
 | ------------ | ------------------------------------------------------------------- |
 | `assets/`    | Application and tray icon generation, macOS icon repair             |
-| `browser/`   | Browser extension preparation, content bundles and native host      |
+| `browser/`   | Host adapters for browser content bundles and Native Messaging      |
 | `build/`     | Vite build integration                                              |
 | `electron/`  | Electron development startup, ports and native module rebuilds      |
 | `multica/`   | Multica agent launcher generation and development registration      |
@@ -23,6 +23,16 @@ helpers explicitly. Resolve repository paths relative to the script location;
 do not rely on the caller's working directory when locating repository assets.
 Versioned patches remain under `patches/`; runtime orchestration belongs in
 `openclaw/`.
+
+`openclaw/sync-openclaw-runtime-resources.cjs` reads role templates and channel
+documentation from `resources/openclaw/docs/` and assembles them at the native
+runtime's `docs/` paths. These are runtime assets; repository design and feature
+documentation live in the root `docs/` directory.
+
+`openclaw/prune-openclaw-runtime.cjs` reads `plugins/extensions/prune-policy.json`
+to select the upstream OpenClaw extensions retained in the runtime. The policy is
+reviewed for the locked OpenClaw version and included in the build fingerprint;
+local extension directories are protected separately.
 
 Windows packaging uses `packaging/prepare-windows-build.cjs` to verify and reuse
 the prepared locked runtime, or rebuild it from pristine inputs when stale.
@@ -52,6 +62,12 @@ Plugin-specific preparation and verification scripts belong to
 `plugins/extensions/<plugin-id>/scripts/`. Root npm commands and packaging hooks
 delegate there; for example, draw.io owns its asset builder and packaged-asset
 verifier under `plugins/extensions/drawio/`.
+
+Browser Assistant owns its source snapshots, assembly script, Markdown renderer
+and UI unit tests in `plugins/browser-extensions/browser-assistant/`. The stable
+`browser-extension:prepare` command delegates to its `scripts/prepare.cjs`.
+`browser/` retains adapters that reuse application chat rendering, translations
+and streaming, together with the desktop Native Messaging helper and registration.
 
 ### Inspect one native session's stored content
 

@@ -17,6 +17,7 @@ export default defineConfig({
       'src/**/*.test.tsx',
       'tests/**/*.test.ts',
       'plugins/extensions/*/tests/**/*.test.ts',
+      'plugins/browser-extensions/*/tests/**/*.test.ts',
     ],
     environment: 'node',
   },

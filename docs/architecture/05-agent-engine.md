@@ -68,6 +68,8 @@ Adapter 入口保留生命周期及状态，runtimeGatewayConnection、runtimeGa
 
 平台构建从锁定 pristine npm 产物开始：安装及校验来源 → 当前精确补丁 → 同步 current → bundle → 官方插件 → 产品资源 → Extension 预编译 → prune。运行时与应用自身 node_modules 是两套依赖集合。
 
+产品提供的角色初始化模板、渠道说明和 Gateway 渠道配置说明集中在 `resources/openclaw/docs/`，由资源同步脚本写入原生 `docs/reference/templates/`、`docs/channels/` 和 `docs/gateway/config-channels.md`。这是构建时的运行时资源来源，不是产品开发文档，也不迁移或覆盖已有用户的角色工作区。
+
 开发路径和安装包资源路径不同，由 Manager 解析。Windows 命令通过 Electron-safe Node/npm runner 及 MinGit/Python 资源执行，不能把 Electron GUI 当通用 node。bundled Skills、Hooks、Plugins 使用显式运行时目录，不依赖 bundle 中的 import.meta.url 猜源码位置。
 
 Gateway bundle 位于运行时根目录，构建流程必须把原始 `dist/build-info.json` 同步到 bundle 旁，并作为必需 companion 验证。原生迁移检查从执行模块旁读取构建身份；缺失时会把检查点判为失效，每次启动重做迁移检查。这里保留原始构建身份和原生检查点规则，不伪造迁移完成状态；构建、配置或插件迁移指纹变化仍由 OpenClaw 判定是否需要重跑。

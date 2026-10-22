@@ -12,7 +12,7 @@ import {
 const tempDirs: string[] = [];
 
 function createTempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-dependency-config-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'package-manager-config-'));
   tempDirs.push(dir);
   return dir;
 }
@@ -107,10 +107,10 @@ test('skips missing resource files without setting their environment variables',
   expect(env.PIP_CONFIG_FILE).toBe(paths.pipConfigPath);
 });
 
-test('discovers dependency config under current working directory resources', () => {
+test('discovers package manager config under current working directory resources', () => {
   const originalCwd = process.cwd();
   const projectRoot = createTempDir();
-  const resourceDir = path.join(projectRoot, 'resources', 'dependency-config');
+  const resourceDir = path.join(projectRoot, 'resources', 'package-manager-config');
   fs.mkdirSync(resourceDir, { recursive: true });
   fs.writeFileSync(path.join(resourceDir, '.npmrc'), 'registry=https://example.invalid/npm\n');
   fs.writeFileSync(path.join(resourceDir, 'pip.ini'), '[global]\n');

@@ -280,7 +280,7 @@ function listLocalExtensionIds(repoRoot) {
 }
 
 function loadExtensionPrunePolicy(repoRoot) {
-  const policyPath = path.join(repoRoot, 'resources', 'openclaw-extension-prune.json');
+  const policyPath = path.join(repoRoot, 'plugins', 'extensions', 'prune-policy.json');
   if (!fs.existsSync(policyPath)) {
     return { policyPath, keep: [], protected: [] };
   }

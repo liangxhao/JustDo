@@ -30,16 +30,17 @@ function createFixture() {
   const sourceDir = path.join(repoRoot, 'plugins/extensions', 'runtime-services');
   const outputDir = path.join(runtimeRoot, 'dist', 'extensions', 'runtime-services');
   fs.mkdirSync(runtimeRoot, { recursive: true });
+  fs.mkdirSync(path.dirname(sourceDir), { recursive: true });
   fs.writeFileSync(
     path.join(repoRoot, 'package.json'),
     JSON.stringify({ openclaw: { version: 'v2026.9.6' } }),
   );
   for (const relative of ['reference/templates', 'channels', 'gateway']) {
-    fs.mkdirSync(path.join(repoRoot, 'resources', 'docs', relative), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'resources', 'openclaw', 'docs', relative), { recursive: true });
   }
-  fs.writeFileSync(path.join(repoRoot, 'resources/docs/gateway/config-channels.md'), 'fixture');
+  fs.writeFileSync(path.join(repoRoot, 'resources/openclaw/docs/gateway/config-channels.md'), 'fixture');
   fs.writeFileSync(
-    path.join(repoRoot, 'resources/openclaw-extension-prune.json'),
+    path.join(repoRoot, 'plugins/extensions/prune-policy.json'),
     JSON.stringify({
       version: 1,
       openclawVersion: '2026.9.6',

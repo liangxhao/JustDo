@@ -18,7 +18,7 @@ test('preinstalled plugin requirements remain present after runtime pruning on e
   const repoRoot = path.resolve(__dirname, '../..');
   const metadata = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
   const policy = JSON.parse(
-    fs.readFileSync(path.join(repoRoot, 'resources/openclaw-extension-prune.json'), 'utf8'),
+    fs.readFileSync(path.join(repoRoot, 'plugins/extensions/prune-policy.json'), 'utf8'),
   );
   const removed = policy.remove.flatMap((group: { extensions: string[] }) => group.extensions);
   for (const plugin of metadata.openclaw.plugins) {

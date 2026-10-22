@@ -7,7 +7,7 @@ import {
   shouldShowTurnError,
   toolDisplayTitle,
   toolInputSummary,
-} from '../../resources/browser-extension/conversation-overlay/modules/sidepanel-state.js';
+} from '../conversation-overlay/modules/sidepanel-state.js';
 
 describe('browser extension side panel state', () => {
   it('uses accepted run identity when same-text pending inputs change', () => {

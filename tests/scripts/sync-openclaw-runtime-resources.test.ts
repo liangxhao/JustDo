@@ -362,7 +362,7 @@ test('replaces OpenClaw doc channels and removes stale target files', () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-resources-'));
   const repoRoot = path.join(tempRoot, 'repo');
   const runtimeRoot = path.join(tempRoot, 'runtime');
-  const sourceDir = path.join(repoRoot, 'resources', 'docs', 'channels');
+  const sourceDir = path.join(repoRoot, 'resources', 'openclaw', 'docs', 'channels');
   const targetDir = path.join(runtimeRoot, 'docs', 'channels');
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
@@ -390,7 +390,7 @@ test('replaces the OpenClaw gateway channel config document', () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-resources-'));
   const repoRoot = path.join(tempRoot, 'repo');
   const runtimeRoot = path.join(tempRoot, 'runtime');
-  const sourceFile = path.join(repoRoot, 'resources', 'docs', 'gateway', 'config-channels.md');
+  const sourceFile = path.join(repoRoot, 'resources', 'openclaw', 'docs', 'gateway', 'config-channels.md');
   const targetFile = path.join(runtimeRoot, 'docs', 'gateway', 'config-channels.md');
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
