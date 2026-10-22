@@ -66,6 +66,7 @@ import Tooltip from '@/shared/components/ui/Tooltip';
 import { useOwnerDocument } from '@/shared/dom/ownerDocument';
 
 import AgentTeamSettingsDialog from './AgentTeamSettingsDialog';
+import LocalSpeechExtensionSettingsButton from './LocalSpeechExtensionSettingsButton';
 import LocalSpeechExtensionSettingsDialog from './LocalSpeechExtensionSettingsDialog';
 
 const getImportStageLabel = (stage: ExtensionImportStage): string => {
@@ -827,18 +828,16 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
               </>
             )}
             {(extension.id === OpenClawExtensionId.STT_LOCAL_CLI || extension.id === LOCAL_TTS_PROVIDER_ID) && (
-              <button type="button"
-                className="pointer-events-auto rounded-lg p-1.5 text-secondary hover:bg-surface-raised"
-                aria-label={`${extension.name} · ${i18nService.t('speechExtensionModelSettings')}`}
-                title={i18nService.t('speechExtensionModelSettings')}
+              <LocalSpeechExtensionSettingsButton
+                kind={extension.id === OpenClawExtensionId.STT_LOCAL_CLI
+                  ? LocalSpeechModelKind.Asr : LocalSpeechModelKind.Tts}
+                name={extension.name}
                 disabled={extensionActionBusy}
-                onClick={event => {
-                  event.stopPropagation();
+                onOpen={() => {
                   setSpeechSettingsKind(extension.id === OpenClawExtensionId.STT_LOCAL_CLI
                     ? LocalSpeechModelKind.Asr : LocalSpeechModelKind.Tts);
-                }}>
-                <Cog6ToothIcon className="h-4 w-4" />
-              </button>
+                }}
+              />
             )}
             {canToggle ? (
               <ExtensionToggle
