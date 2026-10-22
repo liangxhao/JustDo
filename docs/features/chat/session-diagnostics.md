@@ -25,7 +25,8 @@ Agent 正文时仍使用 Chat 兜底。不能按相同字符串或最长重叠�
 可能有意重复表达。原生空替换撤回、终态和历史接管继续生效。故障机器的具体归因
 仍需其版本与同轮事件顺序；摘要日志省略的增量不能作为未发布的证据。
 
-另一条路径是 029 提前释放的正文预览转为工具前说明：带独立 reasoning 的 Completions 可以先发布
+另一条路径是 Completions 正文预览转为工具前说明：独立 reasoning、content 内嵌
+`<think>…</think>` 的旧格式和普通正文都可以先发布
 `assistant` 预览，在工具参数开始流入后将同一段归类为 commentary，并发布
 `item(kind=preamble, phase=update)`。如果只在 `message_end` 撤回预览，两份内容会在
 工具参数生成期间并存，结束时突然恢复一份。参数较长时，这个窗口可能持续数十秒。
@@ -83,8 +84,11 @@ commentary 先行和撤回；不包含原始用户日志或工具参数。临时
 该对照对 transport/subscriber 均不应用 transform；使用已打补丁产物时明确跳过，
 不能把跳过或 patched-only 结果当作原版证据。
 
-本次源事实只对 `structuredTextStreaming: true` 的已准入消息生效，配合 Renderer
-覆盖该路径；不宣称通用修复所有无 reasoning 或显式 strict Completions 调用。
+仅对 `structuredTextStreaming: true` 发布源事实会漏掉旧格式：内嵌 `<think>` 已由原生
+parser 分离，但不会进入独立 reasoning 的准入分支；同源 assistant/preamble 仍会
+被当成两条独立正文。新增纯 inline 的 pristine 对照稳定复现两份同文。现在每条
+Completions 消息均携带原生消息身份及实际完成事实，Renderer 复用已有交接逻辑。
+身份与流式能力分开，不据此解除显式 strict、提前发送 durable 回复或暴露私有内容。
 原版延后公开正文、缺少新的 scope 字段、恢复接口仅提供累计文字，分别是保守策略
 或接口能力限制，不能因与产品需求不同就一概称为上游 bug。
 
@@ -96,7 +100,7 @@ commentary 先行和撤回；不包含原始用户日志或工具参数。临时
 | `structuredRecoveryMode`、孤立关闭标签处理、未闭合标签 EOF 保护 | 扩展的安全配套 | 取消整段缓冲后必须继续隐藏私有标签，不能在 EOF 恢复未闭合 reasoning，也不能追溯隐藏已发布正文。Markdown 代码中的字面标签及显式 strict 保持原规则。 |
 | 非终态 flush 暂存 pending syntax，实际终态才完整 flush | 扩展的安全配套 | reasoning／tool 事件会触发中间 flush；把拆成两包的 `<think>` 当 EOF 处理会破坏标签归属。真实 native 拆包及同包 stop/tool 用例覆盖。 |
 | subscriber 只准入带标记的预览，同时维持 durable partial/block 门禁 | 流式能力扩展 | 可以先显示，但尚未确定 commentary/final 的正文不能提前变成持久回复；删除任一半会失去流式或提前交付不确定正文。 |
-| commentary-only `message_end` 的空 assistant replacement | 扩展引入的缓冲适配 | 预览已经进入原生 Chat buffer；只在 Renderer 隐藏仍会让 Chat 终态兜底包含旧预览。只清对应 assistant，不清独立 Thinking/Tool/preamble。 |
+| commentary-only `message_end` 的空 assistant replacement | 原生预览的应用侧缓冲适配 | 结构化扩展或普通流式的预览都可能进入原生 Chat buffer；只在 Renderer 隐藏仍会让 Chat 终态兜底包含旧预览。只清对应 assistant，不清独立 Thinking/Tool/preamble。 |
 | transport 消息 UUID；具体 source message 透传；assistant/preamble 同源 scope | 应用展示协议扩展 | 两类原生 owner 使用不同身份，回滚还会删除 signature，不能靠同文、run 顺序或回调后的当前消息猜归属。共用 commentary 分支不能仅按局部 Responses 变量假定其他路径不可达。 |
 | 真正 `message_end` 的 retained commentary IDs，正文未变也投递 | 原生回滚缺口的应用侧适配 | Renderer 按同一 scope 隐藏失效旁白；缺失集合为未知，`[]` 才证明没有保留项。`text_end` 和内部 `finalMessage` flush 都不等于消息完成，合法 mixed commentary/final 必须保留。 |
 | 真正完成投递使用完整 `replace:true` 正文 | 我们的历史／live 适配 | 历史可能已补入 prefix 或 suffix；再追加终态 delta 会丢后缀或重复后缀。Gateway 的 delta 压缩本身没有失效，只是当前应用无法从被历史改写的基线安全追加。 |

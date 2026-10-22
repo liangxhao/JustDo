@@ -26,6 +26,7 @@ import { formatActiveTurnDuration } from '@/libs/openclaw-chat/model/timeline/ac
 import { extractTextCached } from '@/libs/openclaw-chat/pipeline/message-extract';
 import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import { normalizeRoleForGrouping } from '@/libs/openclaw-chat/pipeline/role-normalizer';
+import { partitionTaggedReasoning } from '@/libs/openclaw-chat/pipeline/tagged-reasoning';
 import { detectTextDirection } from '@/libs/openclaw-chat/pipeline/text-direction';
 import type {
   ChatItem,
@@ -879,6 +880,7 @@ export function renderMessageBlockWithTrailingStream(
   if (!group.messages || group.messages.length === 0) return nothing;
 
   const role = normalizeRoleForGrouping(group.role);
+  streamText = partitionTaggedReasoning(streamText).text;
   const hasStreamText = streamText.trim().length > 0;
   const isContinuation = opts?.showAvatar === false;
 
@@ -1228,6 +1230,7 @@ export function renderStreamingGroup(
   thinkingText: string | null = null,
   opts?: { showAvatar?: boolean; assistantAvatar?: TemplateResult },
 ): TemplateResult {
+  text = partitionTaggedReasoning(text).text;
   const hasText = text.trim().length > 0;
   const isContinuation = opts?.showAvatar === false;
   return html`

@@ -1,3 +1,5 @@
+import { partitionTaggedReasoning } from '@/libs/openclaw-chat/pipeline/tagged-reasoning';
+
 /**
  * Simplified shims for backend src/ functions used by the rendering pipeline.
  * These handle the 95% common case. Edge cases can be refined later.
@@ -266,9 +268,7 @@ export function stripEnvelope(text: string): string {
 
 export function stripAssistantInternalScaffolding(text: string): string {
   if (!text) return text;
-  let result = text;
-  result = result.replace(/<thinking>[\s\S]*?<\/thinking>/g, '');
-  result = result.replace(/<antml:thinking>[\s\S]*?<\/antml:thinking>/g, '');
+  let result = partitionTaggedReasoning(text).text;
   result = result.replace(/<memory>[\s\S]*?<\/memory>/g, '');
   result = stripInternalRuntimeContext(result);
   return result.trim();

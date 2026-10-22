@@ -4,17 +4,19 @@ import { stripInboundMetadata } from '@/libs/openclaw-chat/shims/backend-helpers
 import { stripEnvelope } from '@/libs/openclaw-chat/shims/backend-helpers';
 import { extractAssistantVisibleText as extractSharedAssistantVisibleText } from '@/libs/openclaw-chat/shims/backend-helpers';
 import { stripAssistantInternalScaffolding } from '@/libs/openclaw-chat/shims/backend-helpers';
-import { normalizeLowercaseStringOrEmpty, normalizeStringEntries } from '@/libs/openclaw-chat/shims/normalization-core';
+import { normalizeLowercaseStringOrEmpty } from '@/libs/openclaw-chat/shims/normalization-core';
+
+import { partitionTaggedReasoning } from './tagged-reasoning';
 
 const textCache = new WeakMap<object, string | null>();
 const thinkingCache = new WeakMap<object, string | null>();
 
 function processMessageText(text: string, role: string): string {
   const shouldStripInboundMetadata = normalizeLowercaseStringOrEmpty(role) === 'user';
-  const withoutInternalContext = stripInternalRuntimeContext(text);
   if (role === 'assistant') {
-    return stripAssistantInternalScaffolding(withoutInternalContext);
+    return stripAssistantInternalScaffolding(text);
   }
+  const withoutInternalContext = stripInternalRuntimeContext(text);
   return shouldStripInboundMetadata
     ? stripInboundMetadata(stripEnvelope(withoutInternalContext))
     : stripEnvelope(withoutInternalContext);
@@ -69,16 +71,12 @@ export function extractThinking(message: unknown): string | null {
     return parts.join('\n');
   }
 
-  // Back-compat: older logs may still have  tags inside text blocks.
+  // Back-compat: older logs may still have reasoning tags inside text blocks.
   const rawText = extractRawText(message);
   if (!rawText) {
     return null;
   }
-  const matches = [
-    ...rawText.matchAll(/<\s*think(?:ing)?\s*>([\s\S]*?)<\s*\/\s*think(?:ing)?\s*>/gi),
-  ];
-  const extracted = normalizeStringEntries(matches.map((mLocal) => mLocal[1] ?? ''));
-  return extracted.length > 0 ? extracted.join('\n') : null;
+  return partitionTaggedReasoning(rawText).thinking || null;
 }
 
 export function extractThinkingCached(message: unknown): string | null {

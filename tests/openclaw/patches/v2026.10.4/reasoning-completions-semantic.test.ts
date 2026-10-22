@@ -437,6 +437,100 @@ describe('actual completions transport structured reasoning semantics', () => {
     expect(text(await run.finish())).toBe('Alpha Beta');
   });
 
+  it.skipIf(sourceAlreadyPatched)('reproduces duplicate inline-only previews in the pristine subscriber', async () => {
+    const context = subscriberContext({}, pristineSubscriber);
+    const run = await fixture(pristine, {}, undefined, false, context, pristineSubscriber);
+    await run.send({ content: '<think>SECRET</think>Checking a file.' });
+    await run.send({ tool_calls: [{ index: 0, id: 'inline-pristine-tool', type: 'function',
+      function: { name: 'read_file', arguments: '{"path":"fixture"}' } }] });
+    await run.finish('tool_calls');
+    expect(visibleContent(context.params.onAgentEvent.mock.calls.map(([event]) => event)))
+      .toEqual(['Checking a file.', 'Checking a file.']);
+  });
+
+  it.each([
+    ['<think>SECRET</think>Checking a file.'],
+    ['<thi', 'nk>SECRET', '</thi', 'nk>Checking ', 'a file.'],
+    ['<thinking>SECRET</thinking>', 'Checking a file.'],
+    ['Checking a file.'],
+  ])('transfers an ordinary Completions preview to commentary once: %j', async (...chunks: string[]) => {
+    const context = subscriberContext();
+    const run = await fixture(patched, {}, undefined, false, context);
+    for (const chunk of chunks) await run.send({ content: chunk });
+    const preview = context.params.onAgentEvent.mock.calls.map(([event]) => event)
+      .find(event => event.stream === 'assistant')!;
+    expect(preview.data.assistantTextScope).toMatchObject({ id: expect.any(String) });
+    await run.send({ tool_calls: [{ index: 0, id: 'inline-tool', type: 'function',
+      function: { name: 'read_file', arguments: '{"path":' } }] });
+    const duringTool = context.params.onAgentEvent.mock.calls.map(([event]) => event);
+    expect(visibleContent(duringTool)).toEqual(['Checking a file.']);
+    await run.send({ tool_calls: [{ index: 0, function: { arguments: '"fixture"}' } }] });
+    const result = await run.finish('tool_calls');
+    const events = context.params.onAgentEvent.mock.calls.map(([event]) => event);
+    expect(visibleContent(events)).toEqual(['Checking a file.']);
+    expect(events.filter(event => event.stream === 'assistant' && event.data.text === ''))
+      .toHaveLength(1);
+    expect(result.openclawDelivery?.structuredTextStreaming).not.toBe(true);
+    expect(result.openclawDelivery?.textPhaseRequiresTerminal).not.toBe(true);
+    expect(result.content.filter(block => block.type === 'thinking')).toEqual([]);
+    expect(result.content.find(block => block.type === 'toolCall')?.arguments).toEqual({ path: 'fixture' });
+    expect(events.filter(event => event.stream === 'assistant').map(event => event.data.text).join(''))
+      .not.toContain('SECRET');
+    for (const mode of ['full', 'summary']) {
+      let snapshot: ProgressSnapshot | undefined;
+      for (const [index, event] of events.entries()) snapshot = updateProgress(snapshot, {
+        ...event, runId: 'reasoning-stream-fixture', seq: index + 1,
+      }, mode);
+      expect(visibleContent(snapshot!.events)).toEqual(['Checking a file.']);
+    }
+  });
+
+  it.each([false, true])('restores inline-only final text when provisional tool input is rolled back (deferred: %s)', async deferred => {
+    const context = subscriberContext(deferred ? { onBeforeTerminalDelivery: vi.fn() } : {});
+    const run = await fixture(patched, {}, undefined, false, context);
+    await run.send({ content: '<think>SECRET</think>Restored final.' });
+    await run.send({ tool_calls: [{ index: 0, id: 'inline-rollback', type: 'function',
+      function: { name: 'read_file', arguments: '{"path":' } }] });
+    const result = await run.finish('stop');
+    if (deferred) (context.releaseDeferredReplies as () => void)();
+    const events = context.params.onAgentEvent.mock.calls.map(([event]) => event);
+    expect(events.at(-1)).toMatchObject({ stream: 'assistant', data: {
+      text: 'Restored final.', replace: true, assistantTextScope: { commentaryItemIds: [] },
+    } });
+    expect(visibleContent(events)).toEqual(['Restored final.']);
+    expect(result.stopReason).toBe('stop');
+    expect(result.openclawDelivery?.structuredTextStreaming).not.toBe(true);
+  });
+
+  it('keeps identical text from different native messages and retry subscriptions', async () => {
+    const all: SubscriberEvent[] = [];
+    const scopes = new Set<string>();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const context = subscriberContext();
+      const run = await fixture(patched, {}, undefined, false, context);
+      await run.send({ content: '<think>SECRET</think>Same answer.' });
+      const result = await run.finish();
+      scopes.add(result.openclawDelivery!.messageScopeId!);
+      all.push(...context.params.onAgentEvent.mock.calls.map(([event]) => event));
+    }
+    expect(scopes.size).toBe(2);
+    expect(visibleContent(all)).toEqual(['Same answer.', 'Same answer.']);
+  });
+
+  it('does not use source identity to bypass explicit strict inline buffering', async () => {
+    const context = subscriberContext();
+    const run = await fixture(patched, {}, undefined, true, context);
+    await run.send({ content: '<think>SECRET</think>Public answer.' });
+    expect(deltas(run.events)).toEqual([]);
+    expect(context.params.onAgentEvent.mock.calls.filter(([event]) => event.stream === 'assistant'))
+      .toEqual([]);
+    const result = await run.finish();
+    expect(result.openclawDelivery?.messageScopeId).toEqual(expect.any(String));
+    expect(result.openclawDelivery?.structuredTextStreaming).not.toBe(true);
+    expect(visibleContent(context.params.onAgentEvent.mock.calls.map(([event]) => event)))
+      .toEqual(['Public answer.']);
+  });
+
   it.each([
     { baseUrl: 'http://127.0.0.1:9988/custom/api' },
     { id: 'previously-unknown-model', provider: 'different-provider' },
@@ -758,11 +852,56 @@ describe('actual completions transport structured reasoning semantics', () => {
   });
 
   it.each(['error', 'abort', 'EOF'])
-  ('retracts exactly the streamed assistant preview after native %s', async failure => {
+  ('keeps inline-only tool commentary single across native %s', async failure => {
     const context = subscriberContext();
     const cancellation = new AbortController();
     const run = await fixture(patched, {}, cancellation.signal, false, context);
-    await run.send({ reasoning_content: 'Dedicated thought.' });
+    await run.send({ content: '<think>Inline private thought.</think>Checking a file.' });
+    await run.send({ tool_calls: [{ index: 0, id: 'inline-failure-tool', type: 'function',
+      function: { name: 'read', arguments: '{"path":' } }] });
+    expect(visibleContent(context.params.onAgentEvent.mock.calls.map(([event]) => event)))
+      .toEqual(['Checking a file.']);
+    const result = failure === 'error'
+      ? await run.fail(new Error('Synthetic transport failure'))
+      : failure === 'EOF'
+        ? await run.eof()
+        : await (() => { cancellation.abort(new Error('Synthetic cancellation')); return run.done; })();
+    const events = context.params.onAgentEvent.mock.calls.map(([event]) => event);
+    expect(result.stopReason).toBe(failure === 'abort' ? 'aborted' : 'error');
+    expect(visibleContent(events)).toEqual(['Checking a file.']);
+    expect(result.openclawDelivery?.structuredTextStreaming).not.toBe(true);
+    expect(JSON.stringify(events)).not.toContain('Inline private thought');
+  });
+
+  it.skipIf(sourceAlreadyPatched).each(['error', 'abort', 'EOF'])
+  ('audits pristine inline-only partial text retention after %s', async failure => {
+    const context = subscriberContext({}, pristineSubscriber);
+    const cancellation = new AbortController();
+    const run = await fixture(pristine, {}, cancellation.signal, false, context, pristineSubscriber);
+    await run.send({ content: '<think>Inline private thought.</think>Unresolved answer.' });
+    const result = failure === 'error'
+      ? await run.fail(new Error('Synthetic transport failure'))
+      : failure === 'EOF'
+        ? await run.eof()
+        : await (() => { cancellation.abort(new Error('Synthetic cancellation')); return run.done; })();
+    const events = context.params.onAgentEvent.mock.calls.map(([event]) => event);
+    expect(result.stopReason).toBe(failure === 'abort' ? 'aborted' : 'error');
+    expect(visibleContent(events)).toEqual(['Unresolved answer.']);
+    expect(events.some(event => event.stream === 'item' && event.data.kind === 'preamble')).toBe(false);
+    expect(events.filter(event => event.stream === 'assistant' && event.data.replace && event.data.text === ''))
+      .toEqual([]);
+    expect(JSON.stringify(events)).not.toContain('Inline private thought');
+  });
+
+  it.each(['error', 'abort', 'EOF'].flatMap(failure =>
+    ['dedicated', 'inline-only'].map(reasoning => ({ failure, reasoning }))))
+  ('preserves native $reasoning preview handling after $failure', async ({ failure, reasoning }) => {
+    const context = subscriberContext();
+    const cancellation = new AbortController();
+    const run = await fixture(patched, {}, cancellation.signal, false, context);
+    await run.send(reasoning === 'dedicated'
+      ? { reasoning_content: 'Dedicated thought.' }
+      : { content: '<think>Inline private thought.</think>' });
     await run.send({ content: 'Unresolved answer.' });
     const before = context.params.onAgentEvent.mock.calls.map(([event]) => event)
       .filter(event => event.stream === 'assistant');
@@ -777,6 +916,21 @@ describe('actual completions transport structured reasoning semantics', () => {
     const events = context.params.onAgentEvent.mock.calls.map(([event]) => event);
     const replacements = events.filter(event => event.stream === 'assistant' &&
       event.data.text === '' && event.data.replace === true);
+    if (reasoning === 'inline-only') {
+      // Ordinary inline previews predate the extension: native failures retain
+      // their partial text, rather than promoting it to provisional commentary.
+      expect(replacements).toEqual([]);
+      expect(visibleContent(events)).toEqual(['Unresolved answer.']);
+      expect(events.some(event => event.stream === 'item' && event.data.kind === 'preamble')).toBe(false);
+      expect(events.filter(event => event.stream === 'assistant').at(-1)?.data).toMatchObject({
+        text: 'Unresolved answer.', replace: true,
+        assistantTextScope: { id: result.openclawDelivery?.messageScopeId, commentaryItemIds: [] },
+      });
+      expect(result.openclawDelivery?.structuredTextStreaming).not.toBe(true);
+      expect(result.openclawDelivery?.textPhaseRequiresTerminal).not.toBe(true);
+      expect(JSON.stringify(events)).not.toContain('Inline private thought');
+      return;
+    }
     expect(replacements).toHaveLength(1);
     expect(replacements[0].data.itemId).toBe(before.at(-1)?.data.itemId);
     expect(events.filter(event => event.stream === 'assistant').at(-1)).toBe(replacements[0]);

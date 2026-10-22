@@ -414,13 +414,21 @@ Thinking 或 Tool 交错，也更新原 Content；不同原生消息不能因为
 没有该身份时继续使用已有段序号和尾部规则，不根据相同文本猜测归属。
 同一正文续写会结束相邻 Thinking；历史回填或跨工具修订不能据此结束当前 Thinking。
 
-结构化 reasoning 的可替换正文预览可能在工具参数开始流入时被原生归类为 commentary。
+Completions 的正文预览可能在工具参数开始流入时被原生归类为 commentary，包括独立
+reasoning、仅在 content 中包含 `<think>` 的旧格式和普通无 reasoning 正文。
 Renderer 在同一条 preamble update 的归约中隐藏同源 assistant 预览，不能等到整段
 模型响应结束才处理，否则两种 owner 会在参数生成期间重复显示。029 只补充
 `assistantTextScope.id`：来自 transport 的单条原生消息身份，随 normalized partial
-保留，并从具体 source message 捕获，不读取回调之后的当前消息状态。assistant
+保留，并从具体 source message 捕获，不读取回调之后的当前消息状态。该身份在每条
+Completions 消息创建时分配，与 `structuredTextStreaming` 能力标记分开；身份本身
+不开放 strict 缓冲、durable partial/block 或私有 thinking 通道。assistant
 itemId 与 commentary signature 本来属于两套身份，不能从 runId、相邻顺序或文字猜出关联。
 原生 message_end 的空 assistant 替换继续清理 Chat buffer；即时显示交接属于 Renderer。
+旧格式的累计正文在软件显示侧分离思考标签：提取、历史正文、流式正文与复制使用同一
+规则，未闭合标签保持隐藏。复用已有 Markdown 词法器保护代码、转义和 HTML 属性；
+不改写原生历史，不从标签或同文推断消息身份、工具执行或运行完成。
+普通／inline-only 流在 error、abort 或不完整 EOF 后仍按原生规则保留已发布的部分正文；
+消息身份不会把它提升为结构化预览，也不套用结构化预览的失败撤回规则。
 
 模型也可能在最终 `stop` 时回滚临时工具调用，并移除临时 commentary signature。
 029 在实际 message_end 的 delivery 中附上 `assistantTextScope.commentaryItemIds`，

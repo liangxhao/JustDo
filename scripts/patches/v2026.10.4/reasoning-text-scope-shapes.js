@@ -98,8 +98,8 @@ function transformReasoningTextScope(source, file = '<runtime>') {
   const parser = one(collect(parserAst, node => ts.isCallExpression(node) &&
     /^parseAssistantTextSignature\d*$/.test(node.expression.getText(parserAst))), file).expression.getText(parserAst);
   const capture = `const streamSourceMessage = ${options}?.sourceMessage;
-    if (streamSourceMessage?.openclawDelivery?.structuredTextStreaming === true &&
-        typeof streamSourceMessage.openclawDelivery.messageScopeId === 'string' &&
+    if (typeof streamSourceMessage?.openclawDelivery?.messageScopeId === 'string' &&
+        streamSourceMessage.openclawDelivery.messageScopeId.length > 0 &&
         (${eventData} || ${options}?.messageComplete === true)) {
       ${eventData} = { ...(${eventData} ?? { ...${data}, text: ${text(edit.variable('streamedText').name)},
         delta: '', itemId: ${text(edit.variable('assistantItemId').name)} }),

@@ -28,6 +28,7 @@ import type { MessageContentItem, NormalizedMessage } from '@/libs/openclaw-chat
 import { i18nService } from '@/services/i18n';
 
 import { isNativeCanvasPreview } from './native-canvas';
+import { partitionTaggedReasoning } from './tagged-reasoning';
 export {
   isToolResultMessage,
   normalizeRoleForGrouping,
@@ -511,7 +512,7 @@ function expandTextContent(text: string): {
   audioAsVoice: boolean;
   replyTarget: NormalizedMessage['replyTarget'];
 } {
-  const extracted = extractCanvasShortcodes(text);
+  const extracted = extractCanvasShortcodes(partitionTaggedReasoning(text).text);
   const parsed = splitMediaFromOutput(extracted.text);
   const parts: MessageContentItem[] = [];
   let audioAsVoice = parsed.audioAsVoice === true;
@@ -713,7 +714,18 @@ export function normalizeMessage(
       content = expandUserDisplayContent(m.content);
     }
   } else if (Array.isArray(m.content)) {
-    content = m.content.flatMap((item: Record<string, unknown>) => {
+    const displayItems: Record<string, unknown>[] = [];
+    for (const item of m.content as Record<string, unknown>[]) {
+      const previous = displayItems[displayItems.length - 1];
+      if (isAssistantMessage && item.type === 'text' && typeof item.text === 'string' &&
+        previous?.type === 'text' && typeof previous.text === 'string' &&
+        /<\s*\/?\s*(?:think|thought|antthinking|antml:think|mm:think)/i.test(previous.text + item.text)) {
+        // Legacy text arrays represent the same cumulative body as extractRawText.
+        // Keep normal native blocks separate; only join adjacent tagged text.
+        displayItems[displayItems.length - 1] = { ...previous, text: `${previous.text}\n${item.text}` };
+      } else displayItems.push(item);
+    }
+    content = displayItems.flatMap((item: Record<string, unknown>) => {
       if (item.type === 'browser_recording') {
         try {
           const recording = parseRecordingContext(

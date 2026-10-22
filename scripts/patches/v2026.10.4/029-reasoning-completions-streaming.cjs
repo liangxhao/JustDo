@@ -71,14 +71,31 @@ function transformFunction(body, kind, file) {
       pristine++;
       insert(partitioner.parent.parent.end, policy);
     }
+    // Source identity is a message fact, independent of reasoning fields or
+    // the policy that admits structured public-text previews.
+    const identity = `${output}.openclawDelivery = {
+      ...${output}.openclawDelivery,
+      messageScopeId: ${output}.openclawDelivery?.messageScopeId ?? globalThis.crypto.randomUUID()
+    };`;
+    const identities = fn.body.statements.filter(node => ts.isExpressionStatement(node) &&
+      ts.isBinaryExpression(node.expression) &&
+      text(node.expression.left) === `${output}.openclawDelivery`);
+    if (identities.length) {
+      if (canonicalHelper(`function seam(){${text(one(identities, file))}}`) !==
+          canonicalHelper(`function seam(){${identity}}`))
+        throw new Error(`${file}: historical or partial source message identity`);
+      current++;
+    } else {
+      pristine++;
+      insert(partitioner.parent.parent.end, identity);
+    }
     const begin = variable('beginReasoning').initializer;
     if (!ts.isArrowFunction(begin) || !ts.isBlock(begin.body))
       throw new Error(`${file}: reasoning lane boundary changed`);
     const admission = `if (${streamName}) {
       reasoningTagTextPartitioner.markStructured();
       ${output}.openclawDelivery = {
-        ...${output}.openclawDelivery, structuredTextStreaming: true,
-        messageScopeId: ${output}.openclawDelivery?.messageScopeId ?? globalThis.crypto.randomUUID()
+        ...${output}.openclawDelivery, structuredTextStreaming: true
       };
     }`;
     const admissionGuards = collect(begin, ts.isIfStatement)

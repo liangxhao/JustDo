@@ -14,6 +14,20 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+test.each([false, true])('copies only visible legacy assistant text (streaming: %s)', async streaming => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal('navigator', { clipboard: { writeText } });
+  const visible = 'Answer with `<think>literal</think>`.';
+  const source = `<think>PRIVATE_THOUGHT</think>${visible}`;
+  render(streaming ? renderStreamingGroup(source, 1) : renderMessageBlock({
+    kind: 'group', key: 'legacy-copy', role: 'assistant', timestamp: 1, isStreaming: false,
+    messages: [{ key: 'native-legacy', message: { role: 'assistant', content: source } }],
+  }), document.body);
+  document.querySelector<HTMLButtonElement>('.message-copy')!.click();
+  await Promise.resolve();
+  expect(writeText).toHaveBeenCalledExactlyOnceWith(visible);
+});
+
 test.each(['user', 'assistant', 'streaming'])(
   'copies the original Markdown from a %s bubble',
   async role => {

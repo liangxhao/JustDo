@@ -189,6 +189,23 @@ describe('protocol-based native reasoning text stream patch', () => {
     expect(transform(next, 'gateway-bundle.mjs')).toBe(next);
   });
 
+  it('allocates message identity independently of structured-reasoning admission', () => {
+    const current = transform(transport);
+    const ast = parse(functionRange(current, 'processCompletionsStream').text);
+    const fn = ast.statements[0] as ts.FunctionDeclaration;
+    const identity = one(fn.body!.statements.filter(node => ts.isExpressionStatement(node) &&
+      ts.isBinaryExpression(node.expression) && node.expression.left.getText(ast) === 'output.openclawDelivery'), 'source identity');
+    expect(identity.getText(ast)).toContain('messageScopeId');
+    const begin = one(collect(ast, (node: ts.Node) => ts.isVariableDeclaration(node) &&
+      node.name.getText(ast) === 'beginReasoning'), 'structured admission');
+    expect(begin.getText(ast)).not.toContain('messageScopeId');
+    const oldAdmission = current.replace(identity.getText(ast), '').replace(
+      '...output.openclawDelivery, structuredTextStreaming: true',
+      '...output.openclawDelivery, structuredTextStreaming: true, messageScopeId: globalThis.crypto.randomUUID()',
+    );
+    expect(() => transform(oldAdmission)).toThrow(/partial|historical/);
+  });
+
   it('rejects a missing or duplicated native target', () => {
     const { root, files } = fixture(false);
     fs.writeFileSync(path.join(root, 'dist/unexpected-copy.mjs'), subscriber);

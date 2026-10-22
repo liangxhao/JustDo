@@ -12,18 +12,22 @@ function transformReasoningPreviewTerminal(source, file = '<runtime>') {
   const call = one(collect(fn, node => ts.isCallExpression(node) &&
     text(node.expression) === 'emitAssistantCommentaryStreamData'), file);
   const [ctx, message] = call.arguments.map(text);
-  const guard = `if (${message}.openclawDelivery?.structuredTextStreaming === true) {
+  const condition = `typeof ${message}.openclawDelivery?.messageScopeId === 'string' &&
+    ${message}.openclawDelivery.messageScopeId.length > 0`;
+  const guard = `if (${condition}) {
     ${ctx}.emitAssistantStreamData({ text: '', delta: '', replace: true },
       { finalMessage: true, emitPartialReply: false, sourceMessage: ${message}, messageComplete: true });
   }`;
   const current = collect(fn, node => ts.isIfStatement(node) &&
-    text(node.expression) === `${message}.openclawDelivery?.structuredTextStreaming === true`);
+    canonicalHelper(`function seam(){if (${text(node.expression)}) {}}`) ===
+      canonicalHelper(`function seam(){if (${condition}) {}}`));
   if (current.length) {
     if (canonicalHelper(`function seam(){${text(one(current, file))}}`) !==
         canonicalHelper(`function seam(){${guard}}`)) throw new Error(`${file}: partial terminal buffer reconciliation`);
     return source;
   }
-  if (range.text.includes('withAssistantPublicationBatch') || range.text.includes('structuredTextStreaming'))
+  if (range.text.includes('withAssistantPublicationBatch') || range.text.includes('structuredTextStreaming') ||
+      range.text.includes('messageScopeId'))
     throw new Error(`${file}: historical reasoning preview transfer; rebuild pristine runtime`);
   const at = call.parent.getStart(ast);
   return source.slice(0, range.start) + range.text.slice(0, at) + guard + '\n' +

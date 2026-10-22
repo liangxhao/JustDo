@@ -21,6 +21,26 @@ function messageBubble(role: 'user' | 'assistant', text: string): TemplateResult
 }
 
 describe('shared Markdown rendering in chat bubbles', () => {
+  test.each([false, true])('hides inline reasoning in assistant bodies (streaming: %s)', streaming => {
+    const host = document.createElement('div');
+    const source = '<think>PRIVATE_THOUGHT</think>Public answer with `<think>literal</think>`.';
+    const template = (text: string) => streaming
+      ? renderAssistantTimelineContent(text, { key: 'legacy-body', timestamp: 1, streaming: true })
+      : messageBubble('assistant', text);
+    if (streaming) {
+      for (let index = 1; index <= '<think>PRIVATE_THOUGHT'.length; index++) {
+        render(template(source.slice(0, index)), host);
+        expect(host.textContent).not.toContain('PRIVATE_THOUGHT');
+      }
+    }
+    render(template(source), host);
+    expect(host.querySelector('.chat-bubble__text')?.textContent)
+      .toContain(streaming
+        ? 'Public answer with `<think>literal</think>`.'
+        : 'Public answer with <think>literal</think>.');
+    expect(host.textContent).not.toContain('PRIVATE_THOUGHT');
+  });
+
   test.each([
     ['user', '.chat-bubble--user .markdown-content', (text: string) => messageBubble('user', text)],
     [
