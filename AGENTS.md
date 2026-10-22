@@ -57,8 +57,10 @@ npm test
   not depend on optional plugins. Native registration must not import
   `host/` or `browser/`; shared facades import only pure contracts/prompts,
   and browser modules never import Main.
+- Built-in plugins live under `plugins/`: `extensions/`, `skills/`, `mcp-servers/`
+  and `hooks/`. Keep each plugin's sources and assets in its owning category.
 - Keep plugin-owned tools, UI, assets, build/verification scripts and unit tests
-  under `openclaw-extensions/<plugin-id>/`. The host retains generic capabilities,
+  under `plugins/extensions/<plugin-id>/`. The host retains generic capabilities,
   integration adapters and tests that exercise host/plugin boundaries.
 - Keep `main.ts`, `preload.ts` and plugin registration entries thin.
   Controllers retain lifecycle/state ownership and delegate through explicit
@@ -126,8 +128,8 @@ npm test
 - **SQLite:** schema, CRUD/indexes, existing-user compatibility and focused
   tests; update [data storage](docs/architecture/10-data-storage.md).
   This does not authorize the withdrawn runtime migration described below.
-- **Bundled skills:** update `resources/skills/<skill-id>/` and
-  `resources/builtin-skills.json`. Gateway skill APIs own metadata;
+- **Bundled skills:** update `plugins/skills/<skill-id>/` and
+  `plugins/skills/builtin-skills.json`. Gateway skill APIs own metadata;
   local skill-file helpers only import/remove files.
 - **Scheduled tasks:** keep `main/scheduler/`, `main/ipc/scheduledTask/` and
   `shared/scheduledTask/` consistent. Test parsing, persistence, manual runs,

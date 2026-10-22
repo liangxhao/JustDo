@@ -2,7 +2,7 @@
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 import { appendSessionTranscriptMessageByIdentityStrict } from 'openclaw/plugin-sdk/session-transcript-runtime';
-import { registerMcpAppHistory } from '../../openclaw-extensions/runtime-services/mcp-app-history';
+import { registerMcpAppHistory } from '../../plugins/extensions/runtime-services/mcp-app-history';
 
 export default {
   id: 'runtime-services',

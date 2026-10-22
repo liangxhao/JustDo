@@ -5,7 +5,7 @@ import {
   flowActions,
   type FlowNode,
   viewFlow,
-} from '../../../openclaw-extensions/swarm-workflow/contracts/flow';
+} from '../../../plugins/extensions/swarm-workflow/contracts/flow';
 
 const node: FlowNode = {
   id: 'work',

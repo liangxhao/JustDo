@@ -24,7 +24,7 @@ authenticated plugin RPCs provide current-canvas editing and native history reco
 | `assets/`                                           | Generated, ignored runtime bundles, editor resources and licenses                     |
 
 Preparation inputs and commands are maintained in
-[offline downloads](../../docs/offline-downloads.md#5-drawio-离线编辑器).
+[offline downloads](../../../docs/offline-downloads.md#5-drawio-离线编辑器).
 Root `drawio:prepare` / `drawio:verify` commands delegate to this plugin's scripts;
 the plugin package also exposes `assets:prepare` / `assets:verify`. Build tooling
 uses the repository's installed development dependencies; generated bundles need
@@ -96,14 +96,14 @@ and only an exact editor ACK yields a successful native tool result. Switching
 chats retires pending authority, including preparations whose response was lost;
 unknown dispatches are never replayed. Recovery grants no original MCP tools.
 There is no new document database or user-facing version history. See
-[current canvas contracts](../../docs/features/chat/drawio-current-canvas.md).
+[current canvas contracts](../../../docs/features/chat/drawio-current-canvas.md).
 
 Confirmed updates also emit a bounded `drawio.diagram-reference.v1` text record
 so native history can retain the title, original content source and exact call
 association when custom details are filtered. Full XML remains in the existing
 receipt/storage path. The host maps this reviewed integration to generic App
 references; pinning keeps the original frame and permissions. See
-[MCP App reference integration](../../docs/features/plugins/mcp-app-references.md).
+[MCP App reference integration](../../../docs/features/plugins/mcp-app-references.md).
 `node tests/drawio/offline-smoke.cjs --editing --reference` checks real editor
 text, document and undo continuity across pin/unpin.
 
@@ -115,4 +115,4 @@ remain in `tests/drawio/`; they are not plugin runtime dependencies.
 Follow the same ownership for future plugins: keep each tool, UI, resources and
 build logic together, and reuse the standard host capabilities. Product-facing
 behavior and offline constraints are documented in
-[offline diagrams](../../docs/features/chat/drawio-offline.md).
+[offline diagrams](../../../docs/features/chat/drawio-offline.md).

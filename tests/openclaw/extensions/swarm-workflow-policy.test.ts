@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { assertCrossAgentPolicy, parentPolicy } from '../../../openclaw-extensions/swarm-workflow/execution/policy';
+import { assertCrossAgentPolicy, parentPolicy } from '../../../plugins/extensions/swarm-workflow/execution/policy';
 
 it('captures selected model and exact tool restrictions without weakening them', () => {
   const toolOverrides = { webSearch: false, skills: { coding: false }, mcpToolsDeny: { test: ['write'] } };

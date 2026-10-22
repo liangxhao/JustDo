@@ -13,7 +13,7 @@ import {
   default as askUserQuestionPlugin,
   MAX_ASK_USER_QUESTIONS,
   parseQuestions,
-} from '../../../../openclaw-extensions/ask-user-question/index';
+} from '../../../../plugins/extensions/ask-user-question/index';
 
 const question = {
   id: 'deploy_target',
@@ -157,7 +157,7 @@ describe('AskUserQuestion extension', () => {
   });
 
   test('declares only timeout configuration and no callback transport', () => {
-    const extensionDir = path.join(process.cwd(), 'openclaw-extensions', 'ask-user-question');
+    const extensionDir = path.join(process.cwd(), 'plugins/extensions', 'ask-user-question');
     const manifest = JSON.parse(
       fs.readFileSync(path.join(extensionDir, 'openclaw.plugin.json'), 'utf8'),
     ) as { configSchema: { properties: Record<string, unknown> } };

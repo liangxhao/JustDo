@@ -6,7 +6,7 @@ import { Script } from 'node:vm';
 
 import { expect, test, vi } from 'vitest';
 
-import { uiContentKind } from '../../../openclaw-extensions/widget-kit/ui/content-kind';
+import { uiContentKind } from '../../../plugins/extensions/widget-kit/ui/content-kind';
 
 const { syncLocalExtensions } =
   require('../../../scripts/openclaw/sync-openclaw-runtime-resources.cjs') as {
@@ -34,12 +34,12 @@ test.each([
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'widget-kit-packaging-'));
     const repoRoot = path.join(fixture, 'repo');
     const runtimeRoot = path.join(fixture, 'runtime');
-    const source = path.join(repoRoot, 'openclaw-extensions', 'widget-kit');
+    const source = path.join(repoRoot, 'plugins/extensions', 'widget-kit');
     const target = path.join(runtimeRoot, 'dist', 'extensions', 'widget-kit');
     const previous = path.join(runtimeRoot, 'dist', 'extensions', 'interactive-ui');
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     try {
-      fs.cpSync(path.resolve('openclaw-extensions/widget-kit'), source, { recursive: true });
+      fs.cpSync(path.resolve('plugins/extensions/widget-kit'), source, { recursive: true });
       fs.mkdirSync(previous, { recursive: true });
       fs.writeFileSync(path.join(previous, 'package.json'), JSON.stringify({ name: packageName }));
       fs.writeFileSync(

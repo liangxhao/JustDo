@@ -560,7 +560,7 @@
 
 ## 13. 本地 OpenAI 完整源码替换
 
-`openclaw-extensions/openai` 以原生 OpenAI 的 v2026.10.4 源码为起点，包含
+`plugins/extensions/openai` 以原生 OpenAI 的 v2026.10.4 源码为起点，包含
 MIT LICENSE。`upstream-source.json` 记录原始 tag、commit 和源文件 SHA-256；
 它描述上游基线，不要求已修改的本地文件等于原始 hash。测试辅助源码不发布。
 本地依赖使用独立 `package-lock.json`，不引用上游 `workspace:*` 开发依赖。

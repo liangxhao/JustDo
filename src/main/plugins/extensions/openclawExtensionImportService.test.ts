@@ -2685,7 +2685,7 @@ describe('OpenClawExtensionImportService', () => {
     fs.mkdirSync(bundledDir, { recursive: true });
     fs.mkdirSync(stateDir, { recursive: true });
     fs.copyFileSync(
-      'openclaw-extensions/typesafe/openclaw.plugin.json',
+      'plugins/extensions/typesafe/openclaw.plugin.json',
       path.join(bundledDir, 'openclaw.plugin.json'),
     );
     fs.writeFileSync(
@@ -2784,7 +2784,7 @@ describe('OpenClawExtensionImportService', () => {
       fs.mkdirSync(bundledDir, { recursive: true });
       fs.mkdirSync(stateDir, { recursive: true });
       fs.copyFileSync(
-        'openclaw-extensions/typesafe/openclaw.plugin.json',
+        'plugins/extensions/typesafe/openclaw.plugin.json',
         path.join(bundledDir, 'openclaw.plugin.json'),
       );
       fs.writeFileSync(

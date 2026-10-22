@@ -5,7 +5,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { appendAgentTeamInstruction } from '../../../../openclaw-extensions/agent-team/prompt/agentTeamPrompt';
+import { appendAgentTeamInstruction } from '../../../../plugins/extensions/agent-team/prompt/agentTeamPrompt';
 import { SessionStartIpc } from '../../../shared/cowork/sessionStart';
 import type { AgentTeamLaunchCoordinator } from '../../cowork/agent-team/agentTeamLaunchCoordinator';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';

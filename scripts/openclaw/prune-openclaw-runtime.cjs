@@ -268,7 +268,7 @@ function readJson(filePath) {
 }
 
 function listLocalExtensionIds(repoRoot) {
-  const sourceDir = path.join(repoRoot, 'openclaw-extensions');
+  const sourceDir = path.join(repoRoot, 'plugins/extensions');
   if (!fs.existsSync(sourceDir)) {
     return [];
   }
@@ -356,7 +356,7 @@ function pruneRuntimeExtensions(runtimeRoot, stats, options = {}) {
   // A local replacement must actually have been assembled. Merely having the
   // same directory name must never protect the public upstream implementation.
   for (const id of policy.protected) {
-    const sourcePackage = path.join(repoRoot, 'openclaw-extensions', id, 'package.json');
+    const sourcePackage = path.join(repoRoot, 'plugins/extensions', id, 'package.json');
     if (!fs.existsSync(sourcePackage)) continue;
     const source = JSON.parse(fs.readFileSync(sourcePackage, 'utf8'));
     if (source.openclaw?.runtimeBundled !== true) continue;

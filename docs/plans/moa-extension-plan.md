@@ -45,7 +45,7 @@ flowchart LR
 
 v2026.9.8 源码 `src/plugins/provider-plugin.types.ts` 提供 `createStreamFn` / `wrapStreamFn`，公开插件支持注册 Provider。`src/plugins/provider-transport.types.ts` 描述 transport 创建与封装；原生 DeepSeek 扩展演示了 `defineSingleProviderPluginEntry` 与 `wrapStreamFn`。打包 SDK 中也存在这些声明。
 
-推荐候选是独立 `openclaw-extensions/moa/`，注册虚拟 Provider，预设作为虚拟模型映射。优先使用公开 SDK 完成模型解析、鉴权与聚合模型 transport；把聚合模型正常的协议、重放策略和工具兼容保留下来。不要仅复制其 modelId 并假设不同提供方协议等价。
+推荐候选是独立 `plugins/extensions/moa/`，注册虚拟 Provider，预设作为虚拟模型映射。优先使用公开 SDK 完成模型解析、鉴权与聚合模型 transport；把聚合模型正常的协议、重放策略和工具兼容保留下来。不要仅复制其 modelId 并假设不同提供方协议等价。
 
 公开签名存在只证明可尝试，不证明下列链路成立。实施第一阶段必须用真实打包 Gateway、本地 fixture Provider 验证：
 

@@ -77,7 +77,7 @@ const { pathToFileURL } = require('node:url');
         ? {
             drawio: {
               command: process.execPath,
-              args: [path.join(root, 'openclaw-extensions/drawio/assets/server.cjs')],
+              args: [path.join(root, 'plugins/extensions/drawio/assets/server.cjs')],
             },
           }
         : {
@@ -430,7 +430,7 @@ const { pathToFileURL } = require('node:url');
       );
       assert.deepEqual(fileEntry?.entrypoint.extensions, ['.drawio']);
       const xml = fs.readFileSync(
-        path.join(root, 'openclaw-extensions/drawio/tests/fixture.xml'),
+        path.join(root, 'plugins/extensions/drawio/tests/fixture.xml'),
         'utf8',
       );
       const filePath = path.join(workspace, '采购 图 #%.drawio');

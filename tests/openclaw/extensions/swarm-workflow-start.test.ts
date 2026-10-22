@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { lastStartError, startInstructions } from '../../../openclaw-extensions/swarm-workflow/prompt/start';
+import { lastStartError, startInstructions } from '../../../plugins/extensions/swarm-workflow/prompt/start';
 
 it('prefers prompt launch for clear requests and prepares only to resolve uncertainty under native permissions', () => {
   const instruction = startInstructions('review', 'request:user');

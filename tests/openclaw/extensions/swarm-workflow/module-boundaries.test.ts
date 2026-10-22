@@ -18,33 +18,33 @@ async function bundle(entry: string, platform: 'node' | 'browser' = 'node') {
 }
 
 it('bundles workflow execution without application or Agent Team implementation', async () => {
-  const result = await bundle('openclaw-extensions/swarm-workflow/index.ts');
+  const result = await bundle('plugins/extensions/swarm-workflow/index.ts');
   const inputs = Object.keys(result.metafile!.inputs).map(file => file.replaceAll('\\', '/'));
   expect(inputs.some(file => file.startsWith('src/'))).toBe(false);
-  expect(inputs.some(file => file.startsWith('openclaw-extensions/swarm-workflow/host/'))).toBe(
+  expect(inputs.some(file => file.startsWith('plugins/extensions/swarm-workflow/host/'))).toBe(
     false,
   );
-  expect(inputs.some(file => file.startsWith('openclaw-extensions/swarm-workflow/browser/'))).toBe(
+  expect(inputs.some(file => file.startsWith('plugins/extensions/swarm-workflow/browser/'))).toBe(
     false,
   );
-  expect(inputs.some(file => file.startsWith('openclaw-extensions/agent-team/'))).toBe(false);
-  expect(inputs).toContain('openclaw-extensions/swarm-workflow/execution/launch-admission.ts');
-  expect(inputs).toContain('openclaw-extensions/runtime-services/execution/managed-subagent.ts');
-  expect(inputs).toContain('openclaw-extensions/runtime-services/filesystem/admission.ts');
+  expect(inputs.some(file => file.startsWith('plugins/extensions/agent-team/'))).toBe(false);
+  expect(inputs).toContain('plugins/extensions/swarm-workflow/execution/launch-admission.ts');
+  expect(inputs).toContain('plugins/extensions/runtime-services/execution/managed-subagent.ts');
+  expect(inputs).toContain('plugins/extensions/runtime-services/filesystem/admission.ts');
 });
 
 it('keeps required Runtime Services independent of the optional workflow implementation', async () => {
-  const result = await bundle('openclaw-extensions/runtime-services/index.ts');
+  const result = await bundle('plugins/extensions/runtime-services/index.ts');
   const inputs = Object.keys(result.metafile!.inputs).map(file => file.replaceAll('\\', '/'));
   expect(inputs.some(file => file.startsWith('src/'))).toBe(false);
-  expect(inputs.some(file => file.startsWith('openclaw-extensions/swarm-workflow/'))).toBe(false);
+  expect(inputs.some(file => file.startsWith('plugins/extensions/swarm-workflow/'))).toBe(false);
 });
 
 it('exposes browser-safe application contracts through plugin contracts and prompts only', async () => {
   const result = await bundle('src/shared/cowork/swarm-workflow/index.ts', 'browser');
   const inputs = Object.keys(result.metafile!.inputs).map(file => file.replaceAll('\\', '/'));
   expect(inputs.some(file => file.startsWith('src/main/'))).toBe(false);
-  const pluginInputs = inputs.filter(file => file.startsWith('openclaw-extensions/'));
+  const pluginInputs = inputs.filter(file => file.startsWith('plugins/extensions/'));
   expect(pluginInputs.length).toBeGreaterThan(0);
   expect(pluginInputs.every(file => /\/(contracts|prompt)\//.test(file))).toBe(true);
 });
@@ -72,7 +72,7 @@ it('stages a self-contained workflow entry before runtime source pruning', () =>
   const target = fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-workflow-bundle-'));
   try {
     fs.writeFileSync(path.join(target, 'index.ts'), '// staged source');
-    bundleProductExtension(path.resolve('openclaw-extensions/swarm-workflow'), target);
+    bundleProductExtension(path.resolve('plugins/extensions/swarm-workflow'), target);
     const pkg = JSON.parse(fs.readFileSync(path.join(target, 'package.json'), 'utf8'));
     expect(pkg.openclaw.extensions).toEqual(['./index.js']);
     expect(fs.existsSync(path.join(target, 'index.ts'))).toBe(false);
@@ -87,11 +87,11 @@ it('stages a self-contained workflow entry before runtime source pruning', () =>
 it.each(['coordinator', 'config'])(
   'host %s bundles independently of the application and native SDK',
   async module => {
-    const result = await bundle('openclaw-extensions/swarm-workflow/host/' + module + '.ts');
+    const result = await bundle('plugins/extensions/swarm-workflow/host/' + module + '.ts');
     const inputs = Object.keys(result.metafile!.inputs).map(file => file.replaceAll('\\', '/'));
     expect(inputs.some(file => file.startsWith('src/'))).toBe(false);
     expect(
-      inputs.some(file => file.startsWith('openclaw-extensions/swarm-workflow/browser/')),
+      inputs.some(file => file.startsWith('plugins/extensions/swarm-workflow/browser/')),
     ).toBe(false);
     const imports = Object.values(result.metafile!.inputs).flatMap(input => input.imports);
     expect(
@@ -115,14 +115,14 @@ it.each([
   'browser %s bundles independently of application, host and native registration',
   async module => {
     const result = await bundle(
-      'openclaw-extensions/swarm-workflow/browser/' + module + '.ts',
+      'plugins/extensions/swarm-workflow/browser/' + module + '.ts',
       'browser',
     );
     const inputs = Object.keys(result.metafile!.inputs).map(file => file.replaceAll('\\', '/'));
     expect(inputs.some(file => file.startsWith('src/'))).toBe(false);
     expect(
       inputs.some(file =>
-        /openclaw-extensions\/swarm-workflow\/(host|service|execution|data|batch)\//.test(file),
+        /plugins\/extensions\/swarm-workflow\/(host|service|execution|data|batch)\//.test(file),
       ),
     ).toBe(false);
     const imports = Object.values(result.metafile!.inputs).flatMap(input => input.imports);

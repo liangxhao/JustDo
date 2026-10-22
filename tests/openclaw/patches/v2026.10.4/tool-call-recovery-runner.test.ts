@@ -29,15 +29,15 @@ let policy: any;
 let facts: any;
 let loop: any;
 beforeAll(async () => {
-  loop = await import(pathToFileURL(path.join(root, 'openclaw-extensions/runtime-services/tool-call-recovery/loop.mjs')).href);
+  loop = await import(pathToFileURL(path.join(root, 'plugins/extensions/runtime-services/tool-call-recovery/loop.mjs')).href);
   policy = await import(
     pathToFileURL(
-      path.join(root, 'openclaw-extensions/runtime-services/tool-call-recovery/policy.mjs'),
+      path.join(root, 'plugins/extensions/runtime-services/tool-call-recovery/policy.mjs'),
     ).href
   );
   facts = await import(
     pathToFileURL(
-      path.join(root, 'openclaw-extensions/runtime-services/tool-call-recovery/facts.mjs'),
+      path.join(root, 'plugins/extensions/runtime-services/tool-call-recovery/facts.mjs'),
     ).href
   );
 });

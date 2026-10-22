@@ -1,6 +1,6 @@
 import { SessionGoalStatus } from '@shared/cowork/sessionGoal';
 
-import { blocksWorkflowGoalSubmission } from '../../../../../../openclaw-extensions/swarm-workflow/browser/composer';
+import { blocksWorkflowGoalSubmission } from '../../../../../../plugins/extensions/swarm-workflow/browser/composer';
 
 /** Goal resume/feedback routes do not send a normal chat request. */
 export function blocksSwarmWorkflowGoalSubmission({

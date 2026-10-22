@@ -49,9 +49,9 @@ checks against that probe's private state. Evidence keeps the earlier failure
 and resumed checks separate; this is not a fresh full pass.
 
 Plugin-specific preparation and verification scripts belong to
-`openclaw-extensions/<plugin-id>/scripts/`. Root npm commands and packaging hooks
+`plugins/extensions/<plugin-id>/scripts/`. Root npm commands and packaging hooks
 delegate there; for example, draw.io owns its asset builder and packaged-asset
-verifier under `openclaw-extensions/drawio/`.
+verifier under `plugins/extensions/drawio/`.
 
 ### Inspect one native session's stored content
 

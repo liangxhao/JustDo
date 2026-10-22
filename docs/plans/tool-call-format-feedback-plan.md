@@ -144,7 +144,7 @@ current assistant、transcript 和 errorMessage 不能作为备用反馈来源�
 | 主工程通用构建证明 | 复用现有两文件 build recipe 和六文件 SDK artifact 合同，生产脚本不增加新枚举或扫描器 |
 
 首期只复用现有 facts.mjs / policy.mjs，不另增反馈模块。facts 承担 producer 投影和 completed 反馈校验，
-policy 将白名单数据映射为固定说明，不拼接任意原始字段。插件纯模块单测放在 `openclaw-extensions/runtime-services/tests/`，
+policy 将白名单数据映射为固定说明，不拼接任意原始字段。插件纯模块单测放在 `plugins/extensions/runtime-services/tests/`，
 原生 producer/runner、bundle、归档及主/子入口的边界测试留在 `tests/openclaw/`。
 不修改邻接 openclaw 源码、dev 工作树、Main、Renderer、Swarm 的生产行为。
 

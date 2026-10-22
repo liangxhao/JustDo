@@ -37,7 +37,7 @@ test.skipIf(!fs.existsSync(path.join(runtime, 'package.json'))).each(modes)(
         'provider-contract-api',
       ])
         buildSync({
-          entryPoints: [path.resolve('openclaw-extensions/openai', name + '.ts')],
+          entryPoints: [path.resolve('plugins/extensions/openai', name + '.ts')],
           outfile: path.join(compiled, name + '.js'),
           bundle: true,
           packages: 'external',

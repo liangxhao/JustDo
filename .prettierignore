@@ -37,4 +37,4 @@ openclaw/
 resources/python-win/
 
 # Vendored upstream TypeSafe sources retain upstream formatting.
-openclaw-extensions/typesafe/
+plugins/extensions/typesafe/

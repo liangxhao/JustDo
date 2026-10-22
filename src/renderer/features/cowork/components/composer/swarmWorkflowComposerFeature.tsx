@@ -3,7 +3,7 @@ import type { SwarmWorkflowOptions } from '@shared/cowork/swarm-workflow';
 
 import { i18nService } from '@/services/i18n';
 
-import { buildWorkflowComposerFeature } from '../../../../../../openclaw-extensions/swarm-workflow/browser/composer';
+import { buildWorkflowComposerFeature } from '../../../../../../plugins/extensions/swarm-workflow/browser/composer';
 import type { ComposerFeatureRegistration } from './composerFeatures';
 
 /** Swarm Workflow defaults and actions stay out of the shared registry and menu. */

@@ -7,7 +7,7 @@ import { expect, test } from 'vitest';
 // Point at a prepared extension's acpx/package.json to exercise its real dependency.
 // ACPX_RUNTIME_BASELINE_PACKAGE optionally adds a genuine 0.19.1 storage round trip.
 const packageFile = process.env.ACPX_RUNTIME_TEST_PACKAGE
-  ?? path.resolve('openclaw-extensions/acpx/node_modules/acpx/package.json');
+  ?? path.resolve('plugins/extensions/acpx/node_modules/acpx/package.json');
 
 test.skipIf(!process.env.ACPX_RUNTIME_TEST_PACKAGE && !fs.existsSync(packageFile))(
   'the locked acpx runtime preserves session identity, permissions and turn controls',

@@ -7,7 +7,7 @@ import { expect, it, vi } from 'vitest';
 
 const nativeRequire = createRequire(import.meta.url);
 const code = buildSync({
-  entryPoints: [path.resolve('openclaw-extensions/swarm-workflow/service/hooks.ts')],
+  entryPoints: [path.resolve('plugins/extensions/swarm-workflow/service/hooks.ts')],
   bundle: true,
   platform: 'node',
   format: 'cjs',

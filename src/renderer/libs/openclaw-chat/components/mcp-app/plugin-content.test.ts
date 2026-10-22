@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import { DRAWIO_RESTORE_METHOD } from '../../../../../../openclaw-extensions/drawio/contracts';
-import { DRAWIO_REFERENCE_KIND } from '../../../../../../openclaw-extensions/drawio/update-result';
+import { DRAWIO_RESTORE_METHOD } from '../../../../../../plugins/extensions/drawio/contracts';
+import { DRAWIO_REFERENCE_KIND } from '../../../../../../plugins/extensions/drawio/update-result';
 import { McpAppSession } from '../../gateway/mcp-app/mcp-app-session';
 import {
   decodeNativeAppReference,

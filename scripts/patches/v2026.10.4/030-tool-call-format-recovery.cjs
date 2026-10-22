@@ -611,7 +611,7 @@ const SUPPORT = [
   { source: 'loop.mjs', target: 'tool-call-recovery-loop.mjs', names: ['createToolCallValidationRecovery', 'installToolCallValidationRecovery', 'readToolCallValidationRecovery', 'prepareToolCallValidationHandoff', 'assertToolCallValidationModel'] },
   { source: 'facts.mjs', target: 'tool-call-recovery-facts.mjs', names: ['observeToolCallRecoveryResponse', 'projectToolCallRecoveryRejectionFeedback'] },
 ];
-const supportSource = (root, entry) => path.join(root, 'openclaw-extensions/runtime-services/tool-call-recovery', entry.source);
+const supportSource = (root, entry) => path.join(root, 'plugins/extensions/runtime-services/tool-call-recovery', entry.source);
 function transformResultTypes(source, verifyOnly = false) {
   const before =
     'modelFallbackStopReason?: "agent_run_terminal_timeout" | "idle_timeout_circuit_breaker" | "provider_review_continuation";';

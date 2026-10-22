@@ -137,7 +137,7 @@ OpenAI 的[官方 MCP UI 文档](https://developers.openai.com/plugins/build/cha
 
 首期验收覆盖：侧栏空白图直接生成、连续两次修改不新建编辑器、单步撤销、未按 Enter 的文字、用户并行手改的冲突、两个同名图、显式引用优先、切换聊天后的迟到结果、重复/过期 ACK、断线未知状态、已确认内容重启恢复，以及原生历史和外部预览不被误改。
 
-编辑器和模型工具实现归 openclaw-extensions/drawio；宿主只接入必要的标准桥、目标准备、标签与历史投影。插件不导入应用 src，必需 Runtime Services 不依赖可选 draw.io。继续满足离线资源、CSP、导航和中英文文案要求。
+编辑器和模型工具实现归 plugins/extensions/drawio；宿主只接入必要的标准桥、目标准备、标签与历史投影。插件不导入应用 src，必需 Runtime Services 不依赖可选 draw.io。继续满足离线资源、CSP、导航和中英文文案要求。
 
 对应验证：插件 `canvas-state`、`editing`、`current-canvas`、`update-result` 测试覆盖授权、幂等、冲突与恢复选择；`tests/drawio/current-canvas-navigation.test.ts` 联合真实会话适配与插件 RPC，覆盖本地请求已取消但后台继续准备的顺序；普通/首发 controller 测试覆盖取消与旧绑定失效。
 

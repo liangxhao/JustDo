@@ -7,7 +7,7 @@ import { McpAppMethod } from '../../src/shared/plugins/mcpApps';
 import {
   DRAWIO_CANVAS_METHOD,
   DRAWIO_CURRENT_METHOD,
-} from '../../openclaw-extensions/drawio/contracts';
+} from '../../plugins/extensions/drawio/contracts';
 import { mountMcpList } from './list-host';
 const fixture = window as unknown as {
   fixturePayload: Record<string, unknown>;

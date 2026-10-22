@@ -5,7 +5,7 @@ import { afterEach, expect, it } from 'vitest';
 import {
   captureFilesystemAdmission,
   permissionFingerprint,
-} from '../../../../openclaw-extensions/runtime-services/filesystem/admission';
+} from '../../../../plugins/extensions/runtime-services/filesystem/admission';
 
 const directories: string[] = [];
 afterEach(() =>

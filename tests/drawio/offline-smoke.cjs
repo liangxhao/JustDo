@@ -52,9 +52,9 @@ async function fixture() {
     root,
     process.argv.includes('--runtime')
       ? 'vendor/openclaw-runtime/current/dist/extensions/drawio/assets'
-      : 'openclaw-extensions/drawio/assets',
+      : 'plugins/extensions/drawio/assets',
   );
-  require('../../openclaw-extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(sourceAssets);
+  require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(sourceAssets);
   // No ancestor node_modules: this proves the service/SDK dependencies are bundled.
   const isolated = fs.mkdtempSync(path.join(os.tmpdir(), 'diagram-offline-'));
   for (const file of fs.readdirSync(sourceAssets).filter(file => /\.(cjs|js|css|pack)$/.test(file)))
@@ -78,7 +78,7 @@ async function fixture() {
   const tools = await client.listTools();
   assert.equal(tools.tools[0]._meta.ui.resourceUri, 'ui://drawio/editor');
   const sourceXml = fs.readFileSync(
-    path.join(root, 'openclaw-extensions/drawio/tests/fixture.xml'),
+    path.join(root, 'plugins/extensions/drawio/tests/fixture.xml'),
     'utf8',
   );
   const xml = process.argv.includes('--compressed')
@@ -171,7 +171,7 @@ async function fixture() {
 }
 
 if (!process.versions.electron) {
-  require('../../openclaw-extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets();
+  require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets();
   const css = fs
     .readdirSync(path.join(root, 'dist/assets'))
     .find(file => /^main-.*\.css$/.test(file));
@@ -324,7 +324,7 @@ if (!process.versions.electron) {
         const blank = await win.webContents.executeJavaScript('window.fixtureSnapshot');
         assert.doesNotMatch(blank.xml, /vertex="1"/);
         const initial = fs.readFileSync(
-          path.join(root, 'openclaw-extensions/drawio/tests/fixture.xml'),
+          path.join(root, 'plugins/extensions/drawio/tests/fixture.xml'),
           'utf8',
         );
         const applied = await win.webContents.executeJavaScript(

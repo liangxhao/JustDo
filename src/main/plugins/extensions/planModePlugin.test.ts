@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import planModePlugin from '../../../../openclaw-extensions/plan-mode/index';
+import planModePlugin from '../../../../plugins/extensions/plan-mode/index';
 
 const sdk = vi.hoisted(() => ({ getSessionEntry: vi.fn() }));
 

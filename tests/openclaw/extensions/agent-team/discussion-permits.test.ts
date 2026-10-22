@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { DiscussionPermits } from '../../../../openclaw-extensions/agent-team/discussion/discussion-permits';
+import { DiscussionPermits } from '../../../../plugins/extensions/agent-team/discussion/discussion-permits';
 
 it('admits in FIFO order and does not release until the holder explicitly settles', async () => {
   const pool = new DiscussionPermits(1, new AbortController().signal);

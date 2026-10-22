@@ -13,7 +13,7 @@ fs.mkdirSync(path.join(base,'project'),{recursive:true});
 fs.symlinkSync(original,path.join(base,'node_modules/openclaw'),'junction');
 const plugin=path.join(base,'extensions/swarm-workflow');
 const formatProbe=process.env.SWARM_WORKFLOW_TEST_FORMAT_FEEDBACK==='1';
-const fixtureEntry=`import workflow from ${JSON.stringify(path.resolve('openclaw-extensions/swarm-workflow/index.ts').replaceAll('\\','/'))};
+const fixtureEntry=`import workflow from ${JSON.stringify(path.resolve('plugins/extensions/swarm-workflow/index.ts').replaceAll('\\','/'))};
 export default {...workflow,register(api){
  workflow.register(api);
  const terminals=new Map();
@@ -33,8 +33,8 @@ export default {...workflow,register(api){
   }catch(error){respond(false,undefined,{code:'UNAVAILABLE',message:String(error)});}
  },{scope:'operator.admin'});
 }};`;
-buildSync({...(formatProbe?{stdin:{contents:fixtureEntry,resolveDir:process.cwd(),sourcefile:'swarm-native-fixture.mjs'}}:{entryPoints:['openclaw-extensions/swarm-workflow/index.ts']}),outfile:path.join(plugin,'index.js'),bundle:true,platform:'node',format:'esm',external:['openclaw/plugin-sdk/*']});
-fs.copyFileSync('openclaw-extensions/swarm-workflow/openclaw.plugin.json',path.join(plugin,'openclaw.plugin.json'));
+buildSync({...(formatProbe?{stdin:{contents:fixtureEntry,resolveDir:process.cwd(),sourcefile:'swarm-native-fixture.mjs'}}:{entryPoints:['plugins/extensions/swarm-workflow/index.ts']}),outfile:path.join(plugin,'index.js'),bundle:true,platform:'node',format:'esm',external:['openclaw/plugin-sdk/*']});
+fs.copyFileSync('plugins/extensions/swarm-workflow/openclaw.plugin.json',path.join(plugin,'openclaw.plugin.json'));
 fs.writeFileSync(path.join(plugin,'package.json'),JSON.stringify({name:'openclaw-swarm-workflow',type:'module',openclaw:{extensions:['./index.js']}}));
 let calls=0, verificationAttempts=0;
 const managementScenario=process.env.SWARM_WORKFLOW_TEST_MANAGEMENT==='1';

@@ -1,4 +1,4 @@
-export * from '../../../../openclaw-extensions/agent-team/contracts/teamDiscussion';
+export * from '../../../../plugins/extensions/agent-team/contracts/teamDiscussion';
 
 export const TeamDiscussionIpc = {
   Participation: 'teamDiscussion:participation',

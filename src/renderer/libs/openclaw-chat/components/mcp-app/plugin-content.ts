@@ -11,12 +11,12 @@ import {
   type McpAppViewPayload,
 } from '@shared/plugins/mcpApps';
 
-import { connectCurrentDiagram } from '../../../../../../openclaw-extensions/drawio/browser/current-canvas';
+import { connectCurrentDiagram } from '../../../../../../plugins/extensions/drawio/browser/current-canvas';
 import {
   DRAWIO_ENTRY_TOOLS,
   DRAWIO_RESOURCE,
   DRAWIO_SERVER,
-} from '../../../../../../openclaw-extensions/drawio/contracts';
+} from '../../../../../../plugins/extensions/drawio/contracts';
 import type { McpAppSession, McpAppSessionView } from '../../gateway/mcp-app/mcp-app-session';
 import { isNativeAppReference } from '../../pipeline/native-app-reference';
 import { decodeMcpAppLaunch, readNativeMcpAppIdentity } from '../../pipeline/native-mcp-app';

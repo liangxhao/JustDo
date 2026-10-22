@@ -46,7 +46,7 @@ flowchart LR
 
 | 范围                    | 名称                                                     |
 | ----------------------- | -------------------------------------------------------- |
-| 插件 ID / 源码目录      | `swarm-workflow` / `openclaw-extensions/swarm-workflow/` |
+| 插件 ID / 源码目录      | `swarm-workflow` / `plugins/extensions/swarm-workflow/` |
 | 插件包                  | `openclaw-swarm-workflow`                                |
 | 模型工具                | `swarm_workflow_*`                                       |
 | Gateway 方法 / 应用 IPC | `swarmWorkflow.*` / `cowork:swarm-workflow:*`            |

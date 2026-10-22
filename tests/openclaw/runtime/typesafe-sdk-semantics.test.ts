@@ -35,7 +35,7 @@ it.skipIf(!requestedRuntime && !available)(
       baseUrl: repository,
       paths: { 'openclaw/plugin-sdk/*': [path.join(declarations, '*')] },
     };
-    const sources = [path.join(repository, 'openclaw-extensions/typesafe/index.ts')];
+    const sources = [path.join(repository, 'plugins/extensions/typesafe/index.ts')];
     const program = ts.createProgram(sources, options);
     const errors = ts
       .getPreEmitDiagnostics(program)

@@ -1,1 +1,1 @@
-export * from '../../../../openclaw-extensions/agent-team/prompt/collaborationContinuationPrompt';
+export * from '../../../../plugins/extensions/agent-team/prompt/collaborationContinuationPrompt';

@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, test } from 'vitest';
 
-import { copySourceCodexAuth } from '../../../openclaw-extensions/acpx/src/codex-auth-file.js';
+import { copySourceCodexAuth } from '../../../plugins/extensions/acpx/src/codex-auth-file.js';
 
 const temporaryDirectories: string[] = [];
 

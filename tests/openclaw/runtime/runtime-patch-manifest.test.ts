@@ -196,7 +196,8 @@ function createFixture(version = 'v2026.6.11') {
   );
   fs.mkdirSync(path.join(repoRoot, 'resources'), { recursive: true });
   fs.writeFileSync(path.join(repoRoot, 'resources', 'openclaw-extension-prune.json'), '{}\n');
-  fs.writeFileSync(path.join(repoRoot, 'resources', 'builtin-skills.json'), '{}\n');
+  fs.mkdirSync(path.join(repoRoot, 'plugins', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, 'plugins', 'skills', 'builtin-skills.json'), '{}\n');
   for (const file of listBuildRecipeFiles(repoRoot)) {
     if (!fs.existsSync(file)) {
       fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -885,7 +886,7 @@ module.exports = { applyPatch, verifyPatch };
 
   test('rejects a native tool-validation loop support change after the runtime was built', () => {
     const { repoRoot, runtimeRoot } = createFixture();
-    const loopSource = path.join(repoRoot, 'openclaw-extensions/runtime-services/tool-call-recovery/loop.mjs');
+    const loopSource = path.join(repoRoot, 'plugins/extensions/runtime-services/tool-call-recovery/loop.mjs');
     expect(listBuildRecipeFiles(repoRoot)).toContain(loopSource);
     writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
     fs.appendFileSync(loopSource, '// changed native loop\n');

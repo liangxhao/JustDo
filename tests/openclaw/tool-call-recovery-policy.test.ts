@@ -4,7 +4,7 @@ import {
   resolveToolCallRecovery,
   TOOL_CALL_RECOVERY_LIMIT,
   TOOL_CALL_RECOVERY_REASON,
-} from '../../openclaw-extensions/runtime-services/tool-call-recovery/policy.mjs';
+} from '../../plugins/extensions/runtime-services/tool-call-recovery/policy.mjs';
 
 const eligibleFacts = () => ({
   rejected: true,

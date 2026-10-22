@@ -3,11 +3,11 @@ import { expect, test } from 'vitest';
 import {
   HISTORY_FAILURE_PARTIAL_MAX_CHARS,
   HISTORY_FAILURE_PARTIAL_TRUNCATION_SUFFIX,
-} from '../../openclaw-extensions/runtime-services/contracts/history-failure';
+} from '../../plugins/extensions/runtime-services/contracts/history-failure';
 import {
   isEmptyFailureSourceContent,
   projectFailurePartialContent,
-} from '../../openclaw-extensions/runtime-services/history-failure';
+} from '../../plugins/extensions/runtime-services/history-failure';
 
 const failedMessage = (body: string) => ({
   role: 'assistant',

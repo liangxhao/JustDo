@@ -23,7 +23,7 @@ export default defineConfig({
     ],
   },
   test: {
-    include: ['openclaw-extensions/typesafe/**/*.test.ts'],
+    include: ['plugins/extensions/typesafe/**/*.test.ts'],
     environment: 'node',
     maxWorkers: 1,
   },

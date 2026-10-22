@@ -30,16 +30,26 @@ function fixture() {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'SKILL.md'), content);
   };
-  writeSkill('resources/skills/custom-skill', 'custom');
+  writeSkill('plugins/skills/custom-skill', 'custom');
   writeSkill('runtime/skills/coding-agent', 'upstream coding');
   writeSkill('runtime/skills/unwanted', 'unwanted');
   writeSkill('runtime/custodian-skills/diagnose-gateway', 'upstream diagnosis');
   writeSkill('runtime/custodian-skills/configure-channel', 'unwanted custodian');
   const save = () =>
-    fs.writeFileSync(path.join(root, 'resources/builtin-skills.json'), JSON.stringify(manifest));
+    fs.writeFileSync(path.join(root, 'plugins/skills/builtin-skills.json'), JSON.stringify(manifest));
   save();
   return { root, runtimeRoot, manifest, save };
 }
+
+test('selects existing local skill sources from the repository manifest', () => {
+  const repoRoot = path.resolve(import.meta.dirname, '../..');
+  const { enabledSkillIds } = readBundledSkillConfig(repoRoot);
+  for (const id of enabledSkillIds) {
+    expect(fs.statSync(path.join(repoRoot, 'plugins', 'skills', id, 'SKILL.md')).isFile()).toBe(
+      true,
+    );
+  }
+});
 
 test('keeps selected upstream skills in their native scopes across repeated packaging syncs', () => {
   const { root, runtimeRoot } = fixture();

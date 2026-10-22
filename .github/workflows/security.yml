@@ -68,7 +68,7 @@ jobs:
         run: |
           set +e  # Don't exit on error
 
-          for skill in resources/skills/*/; do
+          for skill in plugins/skills/*/; do
             if [ -f "$skill/package.json" ]; then
               echo ""
               echo "=== Auditing $skill ==="

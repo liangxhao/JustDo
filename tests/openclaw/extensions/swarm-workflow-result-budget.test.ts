@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createResultBudgetTracker,
   resultBudgetAttempt,
-} from '../../../openclaw-extensions/swarm-workflow/service/result-budget';
+} from '../../../plugins/extensions/swarm-workflow/service/result-budget';
 
 const sessionKey = 'agent:main:subagent:swarm-workflow-work';
 const traceId = 'a'.repeat(32);

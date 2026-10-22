@@ -4,8 +4,8 @@ import path from 'node:path';
 
 import { afterEach, expect, it, vi } from 'vitest';
 
-import { registerDiscussionOfflineControl } from '../../../../openclaw-extensions/runtime-services/agent-team/discussion/discussion-offline-control';
-import { DiscussionLedger } from '../../../../openclaw-extensions/runtime-services/agent-team/discussion/discussion-ledger';
+import { registerDiscussionOfflineControl } from '../../../../plugins/extensions/runtime-services/agent-team/discussion/discussion-offline-control';
+import { DiscussionLedger } from '../../../../plugins/extensions/runtime-services/agent-team/discussion/discussion-ledger';
 import { TeamDiscussionGateway } from '../../../../src/shared/cowork/agent-team/teamDiscussion';
 
 const roots: string[] = [];

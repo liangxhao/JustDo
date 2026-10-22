@@ -1,1 +1,1 @@
-export * from '../../../../openclaw-extensions/agent-team/prompt/agentTeamLaunchText';
+export * from '../../../../plugins/extensions/agent-team/prompt/agentTeamLaunchText';

@@ -4,11 +4,11 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { FlowEngine, type FlowHost } from '../../../openclaw-extensions/swarm-workflow/execution/engine';
-import { parseJson, PlanFormatError, validatePlan, validateStageAssignments, verdict } from '../../../openclaw-extensions/swarm-workflow/execution/plan';
-import { FlowStore } from '../../../openclaw-extensions/swarm-workflow/data/store';
-import { continuationInstructions, interventionAvailability } from '../../../openclaw-extensions/swarm-workflow/execution/intervention';
-import { swarmWorkflowSettings } from '../../../openclaw-extensions/swarm-workflow/settings';
+import { FlowEngine, type FlowHost } from '../../../plugins/extensions/swarm-workflow/execution/engine';
+import { parseJson, PlanFormatError, validatePlan, validateStageAssignments, verdict } from '../../../plugins/extensions/swarm-workflow/execution/plan';
+import { FlowStore } from '../../../plugins/extensions/swarm-workflow/data/store';
+import { continuationInstructions, interventionAvailability } from '../../../plugins/extensions/swarm-workflow/execution/intervention';
+import { swarmWorkflowSettings } from '../../../plugins/extensions/swarm-workflow/settings';
 const cleanups: Array<() => void> = [];
 afterEach(() => {
   for (const clean of cleanups.splice(0)) clean();

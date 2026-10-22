@@ -23,7 +23,7 @@ afterAll(() => {
   }
 });
 const code = buildSync({
-  entryPoints: [path.resolve('openclaw-extensions/agent-team/index.ts')],
+  entryPoints: [path.resolve('plugins/extensions/agent-team/index.ts')],
   bundle: true,
   platform: 'node',
   format: 'cjs',
@@ -33,7 +33,7 @@ const code = buildSync({
 const guardCode = buildSync({
   entryPoints: [
     path.resolve(
-      'openclaw-extensions/runtime-services/agent-team/collaboration/managed-peer-send-guard.ts',
+      'plugins/extensions/runtime-services/agent-team/collaboration/managed-peer-send-guard.ts',
     ),
   ],
   bundle: true,
@@ -622,11 +622,11 @@ describe('native peer tool authority', () => {
   });
   it('packages a discoverable skill without automatic prompt hooks', () => {
     const manifest = JSON.parse(
-      readFileSync('openclaw-extensions/agent-team/openclaw.plugin.json', 'utf8'),
+      readFileSync('plugins/extensions/agent-team/openclaw.plugin.json', 'utf8'),
     );
     expect(manifest.id).toBe('agent-team');
     expect(manifest.skills).toEqual(['./skills']);
-    const skill = readFileSync('openclaw-extensions/agent-team/skills/agent-team/SKILL.md', 'utf8');
+    const skill = readFileSync('plugins/extensions/agent-team/skills/agent-team/SKILL.md', 'utf8');
     expect(skill).toContain('name: agent-team');
     expect(skill).toContain('task_assistants');
     expect(skill).toContain('sessions_send');
@@ -811,7 +811,7 @@ describe('native peer tool authority', () => {
   it('declares every model tool in the packaged plugin manifest', () => {
     const h = fixture();
     const manifest = JSON.parse(
-      readFileSync('openclaw-extensions/agent-team/openclaw.plugin.json', 'utf8'),
+      readFileSync('plugins/extensions/agent-team/openclaw.plugin.json', 'utf8'),
     );
     expect([...h.factories.keys()].sort()).toEqual([...manifest.contracts.tools].sort());
     h.stop();

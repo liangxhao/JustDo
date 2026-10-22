@@ -48,7 +48,7 @@
 | 下载地址 | 放置位置 |
 | --- | --- |
 | [draw.io 锁定源码归档](https://codeload.github.com/jgraph/drawio/tar.gz/9034053fba80a435e27d68d374bc564b83917ae9) | `resources/drawio-cache/drawio-9034053fba80a435e27d68d374bc564b83917ae9.tar.gz` |
-| [saxes 6.0.0 许可证](https://raw.githubusercontent.com/lddubeau/saxes/v6.0.0/LICENSE) | `openclaw-extensions/drawio/licenses/saxes-6.0.0.txt`（仓库已包含，无需下载） |
+| [saxes 6.0.0 许可证](https://raw.githubusercontent.com/lddubeau/saxes/v6.0.0/LICENSE) | `plugins/extensions/drawio/licenses/saxes-6.0.0.txt`（仓库已包含，无需下载） |
 
 准备：`npm run drawio:prepare`；校验：`npm run drawio:verify`。
 

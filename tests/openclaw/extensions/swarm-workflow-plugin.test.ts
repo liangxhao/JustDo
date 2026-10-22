@@ -12,11 +12,11 @@ import {
   SwarmWorkflowGateway,
 } from '../../../src/shared/cowork/swarm-workflow';
 import { OpenClawExtensionId } from '../../../src/shared/plugins/nativeIds';
-import { FlowStore } from '../../../openclaw-extensions/swarm-workflow/data/store';
-import { AgentTeamLaunchLedger } from '../../../openclaw-extensions/runtime-services/agent-team/launch/agent-team-launch-ledger';
+import { FlowStore } from '../../../plugins/extensions/swarm-workflow/data/store';
+import { AgentTeamLaunchLedger } from '../../../plugins/extensions/runtime-services/agent-team/launch/agent-team-launch-ledger';
 const requireNative = createRequire(import.meta.url);
 const code = buildSync({
-  entryPoints: [path.resolve('openclaw-extensions/swarm-workflow/index.ts')],
+  entryPoints: [path.resolve('plugins/extensions/swarm-workflow/index.ts')],
   bundle: true,
   platform: 'node',
   format: 'cjs',
@@ -149,7 +149,7 @@ async function fixture() {
   return { emit, root, parent, parentKey, request, run, messages, nodeMessages, getSessionMessages, agents, config, tool, toolFactories, hooks, hookOptions, nativeListeners, wait, hook: hooks.get('before_prompt_build'), service, registerAgent, api, methods, registeredToolNames, plugin: moduleBox.exports.default };
 }
 it('loads the manifest, tools, application RPCs and durable store under one Swarm Workflow namespace', async () => {
-  const manifest = JSON.parse(readFileSync('openclaw-extensions/swarm-workflow/openclaw.plugin.json', 'utf8'));
+  const manifest = JSON.parse(readFileSync('plugins/extensions/swarm-workflow/openclaw.plugin.json', 'utf8'));
   const f = await fixture();
   expect(f.plugin.id).toBe(OpenClawExtensionId.SWARM_WORKFLOW);
   expect(manifest.id).toBe(f.plugin.id);

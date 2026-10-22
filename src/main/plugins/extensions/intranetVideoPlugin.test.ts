@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildIntranetVideoProvider,
   PROVIDER_ID,
-} from '../../../../openclaw-extensions/openai/video-provider';
+} from '../../../../plugins/extensions/openai/video-provider';
 
 const sdk = vi.hoisted(() => ({
   requests: [] as Array<{ url: string; init: RequestInit; timeout: number; options?: unknown }>,

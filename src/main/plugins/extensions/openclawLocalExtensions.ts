@@ -5,7 +5,7 @@ import path from 'path';
 
 import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
 
-const LOCAL_EXTENSIONS_DIR = 'openclaw-extensions';
+const LOCAL_EXTENSIONS_DIR = path.join('plugins', 'extensions');
 const AGENT_PLUGIN_MANIFEST_SCHEMA = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
 const RETIRED_WIDGET_PLUGIN_ID = 'interactive-ui';
 const RETIRED_WIDGET_PACKAGE_NAME = 'openclaw-interactive-ui';

@@ -1,1 +1,1 @@
-export * from '../../../../openclaw-extensions/agent-team/host/discussion/teamDiscussionCoordinator';
+export * from '../../../../plugins/extensions/agent-team/host/discussion/teamDiscussionCoordinator';

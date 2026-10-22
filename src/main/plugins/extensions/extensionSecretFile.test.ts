@@ -24,7 +24,7 @@ describe('extension SecretRef credentials', () => {
 
   it('recognizes the upstream TypeSafe secret contract without changing legacy string fields', () => {
     const manifest = JSON.parse(
-      fs.readFileSync('openclaw-extensions/typesafe/openclaw.plugin.json', 'utf8'),
+      fs.readFileSync('plugins/extensions/typesafe/openclaw.plugin.json', 'utf8'),
     );
     expect(isExtensionSecretReferenceField(manifest, 'apiKey')).toBe(true);
     expect(isExtensionSecretReferenceField(manifest, 'model')).toBe(false);

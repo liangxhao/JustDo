@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { buildManagedSwarmWorkflowPluginEntries as buildWorkflowEntries } from '../../../../openclaw-extensions/swarm-workflow/host/config';
+import { buildManagedSwarmWorkflowPluginEntries as buildWorkflowEntries } from '../../../../plugins/extensions/swarm-workflow/host/config';
 import { normalizeOpenClawAgentId } from '../../../shared/agents/agentId';
 import {
   AgentRuntimeCodeMode,

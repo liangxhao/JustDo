@@ -279,7 +279,7 @@ function verifyAcpxTargetDependencies(extensionDir, installTarget) {
       entries.push(...fs.readdirSync(scopeDir).map(name => scope + '/' + name));
     }
   }
-  require('../../openclaw-extensions/acpx/scripts/runtime-dependencies.cjs')
+  require('../../plugins/extensions/acpx/scripts/runtime-dependencies.cjs')
     .verifyExternalAgentPackages(entries);
 
   const requiredEntries = [
@@ -382,10 +382,10 @@ function bundleProductExtension(sourceDir, targetDir) {
 }
 
 function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
-  if (fs.existsSync(path.join(repoRoot, 'openclaw-extensions/drawio'))) {
-    require('../../openclaw-extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(path.join(repoRoot, 'openclaw-extensions/drawio/assets'));
+  if (fs.existsSync(path.join(repoRoot, 'plugins/extensions/drawio'))) {
+    require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(path.join(repoRoot, 'plugins/extensions/drawio/assets'));
   }
-  const sourceDir = path.join(repoRoot, 'openclaw-extensions');
+  const sourceDir = path.join(repoRoot, 'plugins/extensions');
   const targetDir = path.join(runtimeRoot, 'dist', 'extensions');
   const copied = [];
   const installDependencies =
@@ -465,7 +465,7 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
     if (canReuseDependencies) {
       try {
         if (sourcePackage?.name === 'acpx-runtime') {
-          require('../../openclaw-extensions/acpx/scripts/runtime-dependencies.cjs')
+          require('../../plugins/extensions/acpx/scripts/runtime-dependencies.cjs')
             .removeExternalAgentPackages(extensionTargetDir);
         }
         verifyDeclaredDependencies(extensionTargetDir);
@@ -502,7 +502,7 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
         console.log(`[${label}] Installing production dependencies: ${entry.name}`);
         installDependencies(stagingDir, installTarget);
         if (sourcePackage?.name === 'acpx-runtime') {
-          require('../../openclaw-extensions/acpx/scripts/runtime-dependencies.cjs')
+          require('../../plugins/extensions/acpx/scripts/runtime-dependencies.cjs')
             .removeExternalAgentPackages(stagingDir);
         }
         verifyDeclaredDependencies(stagingDir);

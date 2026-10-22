@@ -1,7 +1,7 @@
 export {
   parsePlanModeState,
   type PlanModeState,
-} from '../../../../openclaw-extensions/plan-mode/contracts/state';
+} from '../../../../plugins/extensions/plan-mode/contracts/state';
 
 import { OpenClawToolName } from '../../plugins/nativeIds';
 

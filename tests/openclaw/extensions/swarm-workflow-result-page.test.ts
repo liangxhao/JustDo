@@ -1,12 +1,12 @@
 import { expect, it } from 'vitest';
 
-import { resultPage } from '../../../openclaw-extensions/swarm-workflow/batch/result-page';
+import { resultPage } from '../../../plugins/extensions/swarm-workflow/batch/result-page';
 import {
   RESULT_PAGE_TRANSPORT_BUDGET,
   RESULT_TRANSPORT_BYTES,
   resultTransportCost,
-} from '../../../openclaw-extensions/swarm-workflow/contracts/batch';
-import type { Flow, FlowNode } from '../../../openclaw-extensions/swarm-workflow/contracts/flow';
+} from '../../../plugins/extensions/swarm-workflow/contracts/batch';
+import type { Flow, FlowNode } from '../../../plugins/extensions/swarm-workflow/contracts/flow';
 const result = JSON.stringify({
   summary: 'Detailed findings',
   evidence: Array(16).fill('真实产物😀'.repeat(400)),

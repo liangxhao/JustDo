@@ -13,7 +13,7 @@ assert.equal(runtimePackage.version, '2026.10.4');
 const output = await mkdtemp(path.join(os.tmpdir(), 'widget-kit-contract-'));
 try {
   await build({
-    entryPoints: [path.join(root, 'openclaw-extensions/widget-kit/index.ts')],
+    entryPoints: [path.join(root, 'plugins/extensions/widget-kit/index.ts')],
     outfile: path.join(output, 'plugin.mjs'),
     bundle: true,
     platform: 'node',

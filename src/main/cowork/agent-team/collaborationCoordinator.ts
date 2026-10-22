@@ -1,6 +1,6 @@
-export * from '../../../../openclaw-extensions/agent-team/host/collaboration/collaborationCoordinator';
+export * from '../../../../plugins/extensions/agent-team/host/collaboration/collaborationCoordinator';
 
-import type { CollaborationDependencies as PluginDependencies } from '../../../../openclaw-extensions/agent-team/host/collaboration/collaborationCoordinator';
+import type { CollaborationDependencies as PluginDependencies } from '../../../../plugins/extensions/agent-team/host/collaboration/collaborationCoordinator';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter, OpenClawRuntimeAdapter } from '../../engine';
 

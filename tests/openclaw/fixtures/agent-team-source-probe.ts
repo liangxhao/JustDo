@@ -8,7 +8,7 @@ import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import { dispatchReplyWithBufferedBlockDispatcher } from 'openclaw/plugin-sdk/reply-runtime';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 
-import { discussionChannel } from '../../../openclaw-extensions/agent-team/discussion/discussion-channel';
+import { discussionChannel } from '../../../plugins/extensions/agent-team/discussion/discussion-channel';
 
 const channel = 'justdo-team';
 const sourceKey = 'agent:alice:justdo:source-probe';

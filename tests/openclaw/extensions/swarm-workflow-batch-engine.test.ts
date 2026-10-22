@@ -2,12 +2,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { FlowEngine, type FlowHost } from '../../../openclaw-extensions/swarm-workflow/execution/engine';
-import { FlowStore } from '../../../openclaw-extensions/swarm-workflow/data/store';
-import type { Flow, FlowNode } from '../../../openclaw-extensions/swarm-workflow/contracts/flow';
-import { swarmWorkflowSettings, swarmWorkflowCapacity } from '../../../openclaw-extensions/swarm-workflow/settings';
-import { managementStatus } from '../../../openclaw-extensions/swarm-workflow/management/tools';
-import { NativeLaunchNotInvokedError } from '../../../openclaw-extensions/swarm-workflow/execution/launch-admission';
+import { FlowEngine, type FlowHost } from '../../../plugins/extensions/swarm-workflow/execution/engine';
+import { FlowStore } from '../../../plugins/extensions/swarm-workflow/data/store';
+import type { Flow, FlowNode } from '../../../plugins/extensions/swarm-workflow/contracts/flow';
+import { swarmWorkflowSettings, swarmWorkflowCapacity } from '../../../plugins/extensions/swarm-workflow/settings';
+import { managementStatus } from '../../../plugins/extensions/swarm-workflow/management/tools';
+import { NativeLaunchNotInvokedError } from '../../../plugins/extensions/swarm-workflow/execution/launch-admission';
 
 const cleanup: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const fn of cleanup.splice(0)) await fn(); vi.useRealTimers(); });

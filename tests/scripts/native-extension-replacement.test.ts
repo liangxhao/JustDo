@@ -17,7 +17,7 @@ const {
 test('replaces the entire native directory and compiles main, setup, policy, catalog and workers', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'provider-replacement-'));
   onTestFinished(() => fs.rmSync(root, { recursive: true, force: true }));
-  const source = path.join(root, 'openclaw-extensions/openai');
+  const source = path.join(root, 'plugins/extensions/openai');
   const runtime = path.join(root, 'runtime');
   const target = path.join(runtime, 'dist/extensions/openai');
   fs.mkdirSync(source, { recursive: true });
@@ -105,7 +105,7 @@ test('binds every local OpenAI production source, contract and worker to the run
     'upstream-source.json',
     'realtime-quicksilver-audio.worker.ts',
   ])
-    expect(files).toContain('openclaw-extensions/openai/' + name);
+    expect(files).toContain('plugins/extensions/openai/' + name);
   expect(files.some((file: string) => file.endsWith('sync-native-extension-overlay.cjs'))).toBe(
     false,
   );

@@ -1,1 +1,1 @@
-export * from '../../../../openclaw-extensions/swarm-workflow/browser/translations';
+export * from '../../../../plugins/extensions/swarm-workflow/browser/translations';

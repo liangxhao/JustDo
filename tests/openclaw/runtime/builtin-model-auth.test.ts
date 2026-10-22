@@ -8,7 +8,7 @@ import { build } from 'esbuild';
 import ts from 'typescript';
 import { expect, test } from 'vitest';
 
-import { MODEL_AUTH_SESSION_ENV } from '../../../openclaw-extensions/runtime-services/contracts/model-auth';
+import { MODEL_AUTH_SESSION_ENV } from '../../../plugins/extensions/runtime-services/contracts/model-auth';
 import { sealBuiltinCredential, syncBuiltinCredentialFile } from '../../../src/main/openclaw/config/builtinCredentialFile';
 import { buildWindowsChildProcessPreload } from '../../../src/main/openclaw/runtime/electronNodeRuntime';
 
@@ -24,7 +24,7 @@ test.skipIf(!available)('the managed model provider uses the published native SD
     typeRoots: [path.resolve('node_modules/@types')], baseUrl: path.resolve('.'),
     paths: { 'openclaw/plugin-sdk/*': [path.join(sdk, '*')] },
   };
-  const program = ts.createProgram([path.resolve('openclaw-extensions/runtime-services/model-auth.ts')], options);
+  const program = ts.createProgram([path.resolve('plugins/extensions/runtime-services/model-auth.ts')], options);
   const errors = ts.getPreEmitDiagnostics(program)
     .filter(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error)
     .map(diagnostic => ts.flattenDiagnosticMessageText(diagnostic.messageText, ' '));
@@ -36,7 +36,7 @@ test.skipIf(!available)('a native task crosses a 30-minute JWT expiry and cannot
   try {
     const providerFile = path.join(directory, 'provider.mjs');
     await build({
-      entryPoints: [path.resolve('openclaw-extensions/runtime-services/model-auth.ts')],
+      entryPoints: [path.resolve('plugins/extensions/runtime-services/model-auth.ts')],
       outfile: providerFile, bundle: true, format: 'esm', platform: 'node', target: 'node24',
       plugins: [{ name: 'actual-native-sdk', setup(builder) {
         builder.onResolve({ filter: /^openclaw\/plugin-sdk\// }, args => ({

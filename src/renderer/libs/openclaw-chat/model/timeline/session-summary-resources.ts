@@ -2,7 +2,7 @@ import type { ArtifactSummary } from '@shared/openclaw/artifacts';
 import { OPENCLAW_NESTED_TOOL_CUSTOM_TYPE } from '@shared/openclaw/constants';
 import MarkdownIt from 'markdown-it';
 
-import { readBrowserPageSourceText } from '../../../../../../openclaw-extensions/embedded-browser/browserPageSource';
+import { readBrowserPageSourceText } from '../../../../../../plugins/extensions/embedded-browser/browserPageSource';
 import { getTranscriptMedia, type RenderableAttachment } from '../../attachments';
 import { readCollapsedDeliveryArtifacts } from '../../pipeline/history-display-normalizer';
 import { normalizeMessage } from '../../pipeline/message-normalizer';

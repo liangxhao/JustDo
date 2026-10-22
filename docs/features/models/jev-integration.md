@@ -107,7 +107,7 @@ permission to perform actions.
 
 ## Packaging and verification
 
-`openclaw-extensions/typesafe/UPSTREAM.md` records the reviewed upstream revision.
+`plugins/extensions/typesafe/UPSTREAM.md` records the reviewed upstream revision.
 The local-extension pipeline installs its locked production dependency,
 precompiles it against the host SDK, and preserves license files when pruning.
 It does not depend on a future npm publication of `@openclaw/typesafe`.

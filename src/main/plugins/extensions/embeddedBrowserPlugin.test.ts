@@ -12,13 +12,13 @@ import {
   BROWSER_CONTENT_NOTICE,
   BROWSER_PAGE_SOURCE_MAX_CHARS,
   readBrowserPageSourceText,
-} from '../../../../openclaw-extensions/embedded-browser/browserPageSource';
+} from '../../../../plugins/extensions/embedded-browser/browserPageSource';
 import {
   BROWSER_ACT_KINDS,
   BROWSER_TOOL_ACTIONS,
   BrowserToolSchema,
-} from '../../../../openclaw-extensions/embedded-browser/browserToolContract';
-import embeddedBrowserPlugin from '../../../../openclaw-extensions/embedded-browser/index';
+} from '../../../../plugins/extensions/embedded-browser/browserToolContract';
+import embeddedBrowserPlugin from '../../../../plugins/extensions/embedded-browser/index';
 import { projectSessionSummaryResources } from '../../../renderer/libs/openclaw-chat/model/timeline/session-summary-resources';
 import { EmbeddedBrowserGateway } from '../../../shared/browser/embeddedBrowser';
 

@@ -41,6 +41,7 @@
 "area: openclaw":
   - changed-files:
       - any-glob-to-any-file:
+          - "plugins/extensions/**"
           - "src/main/libs/*openclaw*"
           - "scripts/openclaw/**"
           - "scripts/patches/**"
@@ -48,7 +49,7 @@
 "area: skills":
   - changed-files:
       - any-glob-to-any-file:
-          - "resources/skills/**"
+          - "plugins/skills/**"
           - "src/main/libs/openclaw/openclawSkillFiles.ts"
 
 "area: cowork":

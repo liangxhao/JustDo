@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { createWorkflowObserver } from '../../../../../../openclaw-extensions/swarm-workflow/browser/observe';
+import { createWorkflowObserver } from '../../../../../../plugins/extensions/swarm-workflow/browser/observe';
 import type {
   WorkflowAvailability,
   WorkflowBrowserPorts,
-} from '../../../../../../openclaw-extensions/swarm-workflow/browser/ports';
+} from '../../../../../../plugins/extensions/swarm-workflow/browser/ports';
 import { workflowBrowserPorts } from './workflowBrowserPorts';
 
-export { isSwarmWorkflowActive } from '../../../../../../openclaw-extensions/swarm-workflow/contracts/workflow';
+export { isSwarmWorkflowActive } from '../../../../../../plugins/extensions/swarm-workflow/contracts/workflow';
 
 type ActivityPorts = Pick<
   WorkflowBrowserPorts,

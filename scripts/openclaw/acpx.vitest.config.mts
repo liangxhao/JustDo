@@ -24,7 +24,7 @@ export default defineConfig({
   },
   test: {
     include: [
-      'openclaw-extensions/acpx/**/*.test.ts',
+      'plugins/extensions/acpx/**/*.test.ts',
       'tests/openclaw/acpx/**/*.test.ts',
       'tests/openclaw/runtime/acpx-*.test.ts',
     ],

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { build } from 'esbuild';
 const built = await build({
-  entryPoints: ['openclaw-extensions/runtime-services/mcp-app-history-result.ts'],
+  entryPoints: ['plugins/extensions/runtime-services/mcp-app-history-result.ts'],
   bundle: true,
   write: false,
   format: 'esm',
@@ -12,7 +12,7 @@ const { selectMcpAppHistoryResult: select } = await import(
   `data:text/javascript;base64,${Buffer.from(built.outputFiles[0].text).toString('base64')}`
 );
 const inputModule = await build({
-  entryPoints: ['openclaw-extensions/runtime-services/mcp-app-history-input.ts'],
+  entryPoints: ['plugins/extensions/runtime-services/mcp-app-history-input.ts'],
   bundle: true,
   write: false,
   format: 'esm',

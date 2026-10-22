@@ -7,9 +7,9 @@ import vm from 'node:vm';
 import { build } from 'esbuild';
 import { describe, expect, it, vi } from 'vitest';
 
-import * as facts from '../../../../openclaw-extensions/runtime-services/tool-call-recovery/facts.mjs';
-import * as loop from '../../../../openclaw-extensions/runtime-services/tool-call-recovery/loop.mjs';
-import { resolveToolCallRecovery } from '../../../../openclaw-extensions/runtime-services/tool-call-recovery/policy.mjs';
+import * as facts from '../../../../plugins/extensions/runtime-services/tool-call-recovery/facts.mjs';
+import * as loop from '../../../../plugins/extensions/runtime-services/tool-call-recovery/loop.mjs';
+import { resolveToolCallRecovery } from '../../../../plugins/extensions/runtime-services/tool-call-recovery/policy.mjs';
 
 const { __testing: patch } = require('../../../../scripts/patches/v2026.10.4/030-tool-call-format-recovery.cjs');
 const root = path.resolve(__dirname, '../../../..');

@@ -30,17 +30,19 @@ jobs:
           filters: |
             renderer:
               - 'src/renderer/**'
+              - 'plugins/extensions/**'
               - 'vite.config.ts'
               - 'tsconfig.json'
               - 'tailwind.config.js'
               - 'postcss.config.js'
             main:
               - 'src/main/**'
+              - 'plugins/extensions/**'
               - 'src/common/**'
               - 'electron-tsconfig.json'
               - 'src/main/preload.ts'
             skills:
-              - 'resources/skills/**'
+              - 'plugins/skills/**'
             scripts:
               - 'scripts/**'
               - 'electron-builder.json'
@@ -64,26 +66,7 @@ jobs:
           key: npm-${{ runner.os }}-${{ hashFiles('package.json') }}
           restore-keys: npm-${{ runner.os }}-
       - run: npm install
-      - name: Lint changed files only
-        env:
-          BEFORE_SHA: ${{ github.event.before }}
-          BASE_REF: ${{ github.base_ref }}
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            FILES=$(git diff --name-only --diff-filter=ACMR origin/${BASE_REF}...HEAD -- '*.ts' '*.tsx')
-          elif [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
-            FILES=$(git diff --name-only --diff-filter=ACMR ${BEFORE_SHA}...HEAD -- '*.ts' '*.tsx')
-          else
-            echo "BEFORE_SHA unavailable, falling back to HEAD~1"
-            FILES=$(git diff --name-only --diff-filter=ACMR HEAD~1 -- '*.ts' '*.tsx')
-          fi
-          if [ -n "$FILES" ]; then
-            echo "Linting changed files:"
-            echo "$FILES"
-            echo "$FILES" | xargs -d '\n' npx eslint --ext ts,tsx --report-unused-disable-directives --max-warnings 0
-          else
-            echo "No TypeScript files changed, skipping lint"
-          fi
+      - run: npm run lint
 
   # ========== Stage 3: Renderer 构建 ==========
   build-renderer:
@@ -131,7 +114,7 @@ jobs:
           path: dist-electron/
           retention-days: 1
 
-  # ========== Stage 5: Skill 构建 ==========
+  # ========== Stage 5: Skill 校验 ==========
   build-skills:
     needs: changed-files
     if: ${{ needs.changed-files.outputs.skills == 'true' || github.event_name == 'push' }}
@@ -147,7 +130,8 @@ jobs:
           key: npm-${{ runner.os }}-${{ hashFiles('package.json') }}
           restore-keys: npm-${{ runner.os }}-
       - run: npm install
-      - run: npm run build:skills
+      - name: Verify bundled skill sources and synchronization
+        run: node node_modules/vitest/vitest.mjs run tests/scripts/sync-bundled-skills.test.ts
 
   # ========== Stage 6: 测试 (Node.js 内置) ==========
   test:

@@ -128,7 +128,7 @@ import Modal from '@/shared/components/ui/Modal';
 import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 import { type RootState, store } from '@/store';
 
-import { prepareWorkflowComposerSubmission } from '../../../../../../openclaw-extensions/swarm-workflow/browser/composer';
+import { prepareWorkflowComposerSubmission } from '../../../../../../plugins/extensions/swarm-workflow/browser/composer';
 import { buildAgentTeamFeature } from './AgentTeamSelector';
 import {
   type AgentTeamMode,

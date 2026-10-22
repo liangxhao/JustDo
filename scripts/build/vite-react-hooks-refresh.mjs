@@ -5,7 +5,7 @@ import { normalizePath, transformWithOxc } from 'vite';
 /** @returns {import('vite').Plugin} */
 export function reactHooksRefreshPlugin(projectRoot) {
   const rendererRoot = normalizePath(path.join(projectRoot, 'src/renderer')) + '/';
-  const extensionsRoot = normalizePath(path.join(projectRoot, 'openclaw-extensions')) + '/';
+  const extensionsRoot = normalizePath(path.join(projectRoot, 'plugins/extensions')) + '/';
   let runtimeUrl = '/@react-refresh';
   return {
     name: 'react-hooks-refresh',

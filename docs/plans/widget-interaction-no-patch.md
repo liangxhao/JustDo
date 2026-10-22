@@ -97,7 +97,7 @@ node scripts/test/widget-kit/verify-gateway.mjs <runtime-dir> --interaction-cont
 ## 剩余验收
 
 模型指导、固定 renderer 的视觉和可读草稿、行内确认已落实，按需原生 HTML 示例位于
-`openclaw-extensions/widget-kit/skills/visualize/references/native-html.md`。
+`plugins/extensions/widget-kit/skills/visualize/references/native-html.md`。
 不再保留已完成的实施步骤；当前产品契约以功能和架构文档为准。
 
 2026-10-17 的实际配置模型与 Windows 完整开发应用历史验收覆盖主聊天固定表单、

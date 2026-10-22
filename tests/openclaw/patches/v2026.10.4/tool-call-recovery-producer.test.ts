@@ -6,7 +6,7 @@ import { transformSync } from 'esbuild';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 
-import { projectToolCallRecoveryRejectionFeedback } from '../../../../openclaw-extensions/runtime-services/tool-call-recovery/facts.mjs';
+import { projectToolCallRecoveryRejectionFeedback } from '../../../../plugins/extensions/runtime-services/tool-call-recovery/facts.mjs';
 
 const { __testing: { transformProducer, transformCandidate, extractFunction, transformResultTypes } } =
   require('../../../../scripts/patches/v2026.10.4/030-tool-call-format-recovery.cjs');

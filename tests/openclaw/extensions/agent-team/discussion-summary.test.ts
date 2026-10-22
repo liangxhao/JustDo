@@ -8,8 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DiscussionLedger,
   type DiscussionReceipt,
-} from '../../../../openclaw-extensions/runtime-services/agent-team/discussion/discussion-ledger';
-import { registerDiscussionSummary } from '../../../../openclaw-extensions/agent-team/discussion/discussion-summary';
+} from '../../../../plugins/extensions/runtime-services/agent-team/discussion/discussion-ledger';
+import { registerDiscussionSummary } from '../../../../plugins/extensions/agent-team/discussion/discussion-summary';
 import {
   TeamDiscussionGateway,
   type TeamDiscussionRoom,

@@ -295,7 +295,7 @@ function verifyPreinstalledPlugins(runtimeRoot, buildHint) {
 }
 
 function verifyBundledLocalExtensions(runtimeRoot, buildHint) {
-  const repoExtensionsRoot = path.join(__dirname, '../..', 'openclaw-extensions');
+  const repoExtensionsRoot = path.join(__dirname, '../..', 'plugins/extensions');
   if (!existsSync(repoExtensionsRoot)) return;
 
   const runtimeExtensionsRoot = path.join(runtimeRoot, 'dist', 'extensions');
@@ -334,7 +334,7 @@ function verifyAcpxArtifactEntryPaths(entryPaths, prefix, installTarget, buildHi
   const acpxPrefix = `${prefix}dist/extensions/acpx/`;
   const sourceManifest = JSON.parse(
     readFileSync(
-      path.join(__dirname, '../..', 'openclaw-extensions', 'acpx', 'package.json'),
+      path.join(__dirname, '../..', 'plugins/extensions', 'acpx', 'package.json'),
       'utf8',
     ),
   );
@@ -354,7 +354,7 @@ function verifyAcpxArtifactEntryPaths(entryPaths, prefix, installTarget, buildHi
     ...(includesCodexAdapter ? ['node_modules/@agentclientprotocol/codex-acp/dist/index.js'] : []),
   ].map(entry => `${acpxPrefix}${entry}`);
   const missing = requiredEntries.filter(entry => !entryPaths.has(entry));
-  require('../../openclaw-extensions/acpx/scripts/runtime-dependencies.cjs').verifyExternalAgentPackages(
+  require('../../plugins/extensions/acpx/scripts/runtime-dependencies.cjs').verifyExternalAgentPackages(
     Array.from(entryPaths)
       .filter(entry => entry.startsWith(acpxPrefix + 'node_modules/'))
       .map(entry => entry.slice((acpxPrefix + 'node_modules/').length)),
@@ -429,7 +429,7 @@ function verifyRuntimeCompanionFilesFromBundle(runtimeRoot, gatewayBundlePath, b
 }
 
 function verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint) {
-  require('../../openclaw-extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(
+  require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(
     path.join(runtimeRoot, 'dist/extensions/drawio/assets'),
   );
   verifyRequiredPathSet(
@@ -475,17 +475,17 @@ function verifyBareOpenClawCliRuntime(runtimeRoot, buildHint, label) {
 
 function verifyBundledSkillResources(buildHint) {
   const repoRoot = path.join(__dirname, '../..');
-  const configPath = path.join(repoRoot, 'resources', 'builtin-skills.json');
-  const skillsRoot = path.join(repoRoot, 'resources', 'skills');
+  const configPath = path.join(repoRoot, 'plugins', 'skills', 'builtin-skills.json');
+  const skillsRoot = path.join(repoRoot, 'plugins', 'skills');
   if (!existsSync(configPath)) {
     throw new Error(
-      '[electron-builder-hooks] Missing bundled skill manifest: resources/builtin-skills.json. ' +
+      '[electron-builder-hooks] Missing bundled skill manifest: plugins/skills/builtin-skills.json. ' +
         `Run \`${buildHint}\` before packaging.`,
     );
   }
   if (!existsSync(skillsRoot)) {
     throw new Error(
-      '[electron-builder-hooks] Missing bundled skills directory: resources/skills. ' +
+      '[electron-builder-hooks] Missing bundled skills directory: plugins/skills. ' +
         `. Run \`${buildHint}\` before packaging.`,
     );
   }
@@ -768,7 +768,7 @@ function hasCommand(command) {
 }
 
 /**
- * Install dependencies for all skills in the resources/skills directory.
+ * Install dependencies for all skills in the plugins/skills directory.
  * This ensures bundled skills include node_modules for users without npm.
  */
 function installSkillDependencies() {
@@ -783,10 +783,10 @@ function installSkillDependencies() {
     return;
   }
 
-  const skillsDir = path.join(__dirname, '../..', 'resources', 'skills');
+  const skillsDir = path.join(__dirname, '../..', 'plugins', 'skills');
   if (!existsSync(skillsDir)) {
     console.log(
-      '[electron-builder-hooks] resources/skills directory not found, skipping skill dependency installation',
+      '[electron-builder-hooks] plugins/skills directory not found, skipping skill dependency installation',
     );
     return;
   }
@@ -854,7 +854,7 @@ function installSkillDependencies() {
 }
 
 async function beforePack(context) {
-  require('../../openclaw-extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets();
+  require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets();
   verifyPackagedBuiltinModelAuthConfig(context.appDir || path.join(__dirname, '../..'));
   prepareBrowserExtension();
   if (isWindowsTarget(context)) compileBrowserExtensionNativeHost();
@@ -1121,7 +1121,7 @@ async function afterPack(context) {
       )
     : path.join(context.appOutDir, 'resources');
   await verifyPackagedApplicationLegalMetadata(path.join(diagramResourcesRoot, 'app.asar'));
-  await require('../../openclaw-extensions/drawio/scripts/verify-packaged.cjs').verifyPackagedDrawioAssets(
+  await require('../../plugins/extensions/drawio/scripts/verify-packaged.cjs').verifyPackagedDrawioAssets(
     diagramResourcesRoot,
     isWindowsTarget(context),
   );

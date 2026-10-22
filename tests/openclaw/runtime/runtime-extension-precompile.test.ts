@@ -27,7 +27,7 @@ function createFixture() {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-extension-precompile-'));
   roots.push(repoRoot);
   const runtimeRoot = path.join(repoRoot, 'runtime');
-  const sourceDir = path.join(repoRoot, 'openclaw-extensions', 'runtime-services');
+  const sourceDir = path.join(repoRoot, 'plugins/extensions', 'runtime-services');
   const outputDir = path.join(runtimeRoot, 'dist', 'extensions', 'runtime-services');
   fs.mkdirSync(runtimeRoot, { recursive: true });
   fs.writeFileSync(
@@ -47,12 +47,12 @@ function createFixture() {
       remove: [],
     }),
   );
-  fs.cpSync(path.join(process.cwd(), 'openclaw-extensions/runtime-services'), sourceDir, {
+  fs.cpSync(path.join(process.cwd(), 'plugins/extensions/runtime-services'), sourceDir, {
     recursive: true,
   });
   fs.cpSync(
-    path.join(process.cwd(), 'openclaw-extensions/agent-team'),
-    path.join(repoRoot, 'openclaw-extensions/agent-team'),
+    path.join(process.cwd(), 'plugins/extensions/agent-team'),
+    path.join(repoRoot, 'plugins/extensions/agent-team'),
     { recursive: true },
   );
   fs.cpSync(path.join(process.cwd(), 'src/shared'), path.join(repoRoot, 'src/shared'), {

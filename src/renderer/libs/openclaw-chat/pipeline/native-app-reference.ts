@@ -1,6 +1,6 @@
 import type { McpAppContentReference } from '@shared/plugins/mcpAppReferences';
 
-import { readDiagramReference } from '../../../../../openclaw-extensions/drawio/update-result';
+import { readDiagramReference } from '../../../../../plugins/extensions/drawio/update-result';
 
 const admitted = new WeakSet<object>();
 export const isNativeAppReference = (value: unknown): value is McpAppContentReference =>

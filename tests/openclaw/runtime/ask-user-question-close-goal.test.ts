@@ -33,7 +33,7 @@ vi.mock('../../../src/main/cowork/coworkLogger', () => ({ coworkLog: vi.fn() }))
 
 import questionPlugin, {
   type AskUserRequest,
-} from '../../../openclaw-extensions/ask-user-question/index';
+} from '../../../plugins/extensions/ask-user-question/index';
 import type { GatewayClientLike, SessionTurn } from '../../../src/main/engine/gateway/types';
 import { OpenClawRuntimeAdapter } from '../../../src/main/engine/openclaw/openclawRuntimeAdapter';
 import { registerCoworkInteractionHandlers } from '../../../src/main/ipc/cowork/interactions';

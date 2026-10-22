@@ -25,7 +25,7 @@ Completions 仍会整批拒绝非法参数，但没有生成恢复所需的执�
 
 建议在原生恢复协调器中增加有界的格式纠正续跑：当本次模型响应中的工具调用在执行前被整体拒绝，而且先前工作已经可靠结算时，从当前原生历史继续生成。每轮用户运行最多追加两次格式纠正请求，保留已完成的工具结果和原有执行权限。
 
-跨供应商的安全续跑仍需要一个独立、可移除的原生能力补丁。原因码、纯策略和提示构造由 `openclaw-extensions/runtime-services/tool-call-recovery/` 承接；补丁只连接当前响应事实、既有 runner 状态、续跑与结算。只修改产品界面或收到错误后再次发送用户消息，无法实现等价恢复。
+跨供应商的安全续跑仍需要一个独立、可移除的原生能力补丁。原因码、纯策略和提示构造由 `plugins/extensions/runtime-services/tool-call-recovery/` 承接；补丁只连接当前响应事实、既有 runner 状态、续跑与结算。只修改产品界面或收到错误后再次发送用户消息，无法实现等价恢复。
 
 ## 1 问题与现有行为
 
@@ -208,7 +208,7 @@ commentary 恢复复用现有失败正文详情投影：此前过程说明保留
 | --- | --- | --- |
 | 原生参数生产者 | `packages/ai/src/providers/openai-completions-tool-calls.ts`、`packages/ai/src/transports/transport-stream-shared.ts` 及实际流终止接缝 | 保留结构化错误，携带当前整批未派发事实；正常和取消路径不改变 |
 | 原生工具派发与 attempt 结果 | `packages/agent-core/src/agent-stream-response.ts`、`run/attempt-result.ts`、原生相关 types | 优先复用现有派发计数与结算事实；只有测试证明缺少跨层字段时才增加窄传播，不新建账本 |
-| Runtime Services 纯实现 | `openclaw-extensions/runtime-services/tool-call-recovery/` 的 `policy.mjs`、`facts.mjs` 与同域测试 | 闭合原因、固定上限、普通事实的纯判断、内部提示构造；静态构建输入，无注册或运行状态 |
+| Runtime Services 纯实现 | `plugins/extensions/runtime-services/tool-call-recovery/` 的 `policy.mjs`、`facts.mjs` 与同域测试 | 闭合原因、固定上限、普通事实的纯判断、内部提示构造；静态构建输入，无注册或运行状态 |
 | Runtime Services 运行中功能 | 现有 history-failure、historyDetails 与按需诊断投影 | 保留失败正文和有界解释；不增加执行 RPC、不接管安全预算、不用观测事件授予恢复 |
 | 原生恢复协调 | `run/attempt-recovery.ts`、现有 runner 恢复状态 | 传入事实、保存两次计数/单调摘要、调用既有续跑或已处理结算；不复制纯策略 |
 | 原生循环与候选边界 | `run-loop.ts`、现有 result fallback classifier 与必要的 candidate 内部透传 | 确认初始候选；接管后阻止跨 runner 补救；已处理结果跳过通用重试和模型补全，保留真实结算 |

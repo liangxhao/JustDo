@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import type { Flow, FlowNode } from '../../../openclaw-extensions/swarm-workflow/contracts/flow';
-import { FlowStore } from '../../../openclaw-extensions/swarm-workflow/data/store';
+import type { Flow, FlowNode } from '../../../plugins/extensions/swarm-workflow/contracts/flow';
+import { FlowStore } from '../../../plugins/extensions/swarm-workflow/data/store';
 
 const cleanups: Array<() => void> = [];
 afterEach(() => cleanups.splice(0).forEach(clean => clean()));

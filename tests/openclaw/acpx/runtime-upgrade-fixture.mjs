@@ -116,7 +116,7 @@ async function loadRuntime(packageFile, expectedVersion) {
 
 async function regress() {
   const packageFile = path.resolve(process.env.ACPX_RUNTIME_TEST_PACKAGE
-    ?? 'openclaw-extensions/acpx/node_modules/acpx/package.json');
+    ?? 'plugins/extensions/acpx/node_modules/acpx/package.json');
   const api = await loadRuntime(packageFile, process.env.ACPX_RUNTIME_EXPECTED_VERSION ?? '0.19.5');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'acpx-runtime-'));
   const workspace = path.join(root, '工作 区');

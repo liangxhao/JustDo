@@ -9,7 +9,7 @@ vi.mock('openclaw/plugin-sdk/string-coerce-runtime', () => ({
 }));
 vi.mock('openclaw/plugin-sdk/state-paths', () => ({ resolveStateDir: () => '/native-state' }));
 
-import { resolveAcpxPluginConfig } from '../../../openclaw-extensions/acpx/src/config';
+import { resolveAcpxPluginConfig } from '../../../plugins/extensions/acpx/src/config';
 
 test('uses native state independently from the selected workspace and preserves explicit overrides', () => {
   const options = { rawConfig: {}, workspaceDir: '/project', stateDir: '/application-state' };
@@ -29,7 +29,7 @@ test('uses native state independently from the selected workspace and preserves 
 });
 
 test('the service passes its native state owner into config resolution', () => {
-  const source = fs.readFileSync(path.resolve('openclaw-extensions/acpx/src/service.ts'), 'utf8');
+  const source = fs.readFileSync(path.resolve('plugins/extensions/acpx/src/service.ts'), 'utf8');
   expect(source).toMatch(
     /resolveAcpxPluginConfig\(\{\s*rawConfig: params\.pluginConfig,\s*workspaceDir: ctx\.workspaceDir,\s*stateDir: ctx\.stateDir,/,
   );

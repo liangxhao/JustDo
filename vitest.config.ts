@@ -16,7 +16,7 @@ export default defineConfig({
       'src/**/*.test.ts',
       'src/**/*.test.tsx',
       'tests/**/*.test.ts',
-      'openclaw-extensions/*/tests/**/*.test.ts',
+      'plugins/extensions/*/tests/**/*.test.ts',
     ],
     environment: 'node',
   },

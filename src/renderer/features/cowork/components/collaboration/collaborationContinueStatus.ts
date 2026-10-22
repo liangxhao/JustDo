@@ -1,1 +1,1 @@
-export * from '../../../../../../openclaw-extensions/agent-team/browser/collaboration/collaborationContinueStatus';
+export * from '../../../../../../plugins/extensions/agent-team/browser/collaboration/collaborationContinueStatus';

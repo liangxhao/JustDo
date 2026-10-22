@@ -19,11 +19,11 @@ import {
   DRAWIO_SEND_METHOD,
   DRAWIO_SERVER,
   type PreparedDiagramCanvas,
-} from '../../../../../../openclaw-extensions/drawio/contracts';
+} from '../../../../../../plugins/extensions/drawio/contracts';
 import {
   MCP_APP_HISTORY_TOOL_METHOD,
   MCP_APP_HISTORY_VIEW_METHOD,
-} from '../../../../../../openclaw-extensions/runtime-services/contracts/mcp-apps';
+} from '../../../../../../plugins/extensions/runtime-services/contracts/mcp-apps';
 import type { GatewayClient, GatewayEventFrame } from '../client';
 
 export interface McpAppSessionBinding {

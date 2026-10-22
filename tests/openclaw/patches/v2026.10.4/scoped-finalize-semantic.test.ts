@@ -65,8 +65,8 @@ it.skipIf(!sdkRoot)(
       }
     }
     for (const [index, relative] of [
-      'openclaw-extensions/runtime-services/agent-team/launch/agent-team-launch-guard.ts',
-      'openclaw-extensions/swarm-workflow/service/hooks.ts',
+      'plugins/extensions/runtime-services/agent-team/launch/agent-team-launch-guard.ts',
+      'plugins/extensions/swarm-workflow/service/hooks.ts',
     ].entries()) {
       const text = fs.readFileSync(path.join(repo, relative), 'utf8');
       const ast = ts.createSourceFile(relative, text, ts.ScriptTarget.Latest, true);
@@ -225,7 +225,7 @@ it('does not capture a free identifier as a generated parameter name', () => {
 
 it('rejects the real recovery policy with a free local0 substituted for input', () => {
   const expected = fs.readFileSync(path.resolve(
-    'openclaw-extensions/runtime-services/tool-call-recovery/policy.mjs',
+    'plugins/extensions/runtime-services/tool-call-recovery/policy.mjs',
   ), 'utf8');
   const actual = expected.replaceAll('export ', '').replace('input === null', 'local0 === null');
   expect(actual).toContain('local0 === null');

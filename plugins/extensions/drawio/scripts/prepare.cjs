@@ -6,7 +6,7 @@ const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const { build } = require('esbuild');
 const extension = path.resolve(__dirname, '..');
-const root = path.resolve(extension, '../..');
+const root = path.resolve(extension, '../../..');
 const upstream = require('../upstream.json');
 const hash = data => crypto.createHash('sha256').update(data).digest('hex');
 const sourceHash = () =>

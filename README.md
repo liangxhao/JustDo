@@ -17,7 +17,7 @@ desktop app available in the background.
 | AI work sessions    | OpenClaw Gateway is the execution engine. JustDo manages the desktop shell, UI state, permissions, and product metadata.  |
 | Chat UI             | React owns the application shell; `<justdo-chat>` is a Lit custom element backed by the local OpenClaw Gateway WebSocket. |
 | Local storage       | `better-sqlite3` stores app settings, agents, MCP servers, hooks, session groups, cowork metadata, and run receipts.      |
-| Skills              | 8 bundled skills are listed in `resources/builtin-skills.json`; all 8 are enabled by default.                             |
+| Skills              | 8 bundled skills are listed in `plugins/skills/builtin-skills.json`; all 8 are enabled by default.                             |
 | MCP and hooks       | Managed from the Plugins screen, persisted locally, then synced into OpenClaw configuration.                              |
 | Scheduled tasks     | UI CRUD and polling are handled by JustDo; execution is delegated to the OpenClaw cron runtime.                           |
 | Desktop integration | Tray, auto launch, prevent sleep, local file preview, logs, proxy handling, and packaged platform resources.              |
@@ -114,7 +114,7 @@ Python packages.
 | `src/renderer/features/`           | React feature modules for cowork, agents, models, plugins, scheduled tasks, settings       |
 | `src/renderer/libs/openclaw-chat/` | Lit chat element and message rendering pipeline                                            |
 | `src/shared/`                      | shared contracts for cowork, OpenClaw, providers, plugins, scheduled tasks, slash commands |
-| `resources/skills/`                | bundled skill source folders                                                               |
+| `plugins/`                         | built-in plugins grouped under `extensions/`, `skills/`, `mcp-servers/`, and `hooks/`                |
 | `vendor/openclaw-runtime/`         | downloaded/synced OpenClaw runtime artifacts                                               |
 
 ## State Model

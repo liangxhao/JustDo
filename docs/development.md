@@ -91,7 +91,7 @@ npm test
 
 全量测试默认使用两个 worker，避免原生模块冷启动及 Windows 进程快照在高并发下争抢资源而超时；可通过 `npm test -- --maxWorkers=N` 显式覆盖。会话存储诊断测试包含独立 CLI 启动，每例使用 30 秒预算，子进程仍保留各自的 10 秒上限。桌面控制开关、原生 provider 环境凭据、portal 策略及 migration receipts 的生命周期矩阵每例连续执行 4–6 次真实配置投影，分别使用 15 秒预算；不放宽全局测试时限或生产进程清理期限。
 
-本地 ACPX 扩展的依赖需在 `openclaw-extensions/acpx` 下执行 `npm ci --omit=dev --ignore-scripts --no-audit --no-fund`，根目录安装不会更新该目录。OpenClaw 2026.10.4 上游使用 acpx 0.19.1，本项目经独立验证锁定 0.19.5，依据为扩展的 `package.json`、锁文件及 [ACPX 来源记录](../openclaw-extensions/acpx/UPSTREAM.md)。遇到版本断言失败应按锁文件恢复依赖，不降低测试期望版本。
+本地 ACPX 扩展的依赖需在 `plugins/extensions/acpx` 下执行 `npm ci --omit=dev --ignore-scripts --no-audit --no-fund`，根目录安装不会更新该目录。OpenClaw 2026.10.4 上游使用 acpx 0.19.1，本项目经独立验证锁定 0.19.5，依据为扩展的 `package.json`、锁文件及 [ACPX 来源记录](../plugins/extensions/acpx/UPSTREAM.md)。遇到版本断言失败应按锁文件恢复依赖，不降低测试期望版本。
 
 文档修改运行 `git diff --check`，并只对改动文件执行格式检查。不要用全库格式化夹带无关变更。
 

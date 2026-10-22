@@ -10,7 +10,7 @@ import {
   commandContainsPathUnderRoot,
   isOpenClawBridgeCommand,
   splitCommandParts,
-} from '../../../openclaw-extensions/acpx/src/command-line';
+} from '../../../plugins/extensions/acpx/src/command-line';
 
 afterEach(() => vi.restoreAllMocks());
 

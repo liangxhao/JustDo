@@ -2,7 +2,9 @@
 
 插件页组合多种能力，但它们不是同一种安装单元。本文以 Main 插件服务、原生 API、配置同步和 Extension 注册为依据，说明读取、启停、安装和恢复各由谁负责。
 
-插件专属的工具、界面、资源、构建/校验脚本和单元测试归 `openclaw-extensions/<plugin-id>/` 所有。主工程保留通用 MCP Apps 宿主、权限与保存桥、配置/打包接入，以及验证宿主边界的集成测试；插件不能反向导入应用 `src`。根 npm 命令和打包流程只委托插件自己的脚本，draw.io 的目录约定见[插件说明](../../openclaw-extensions/drawio/README.md)。
+内置插件源码统一位于仓库根目录的 `plugins/`，按 `extensions/`、`skills/`、`mcp-servers/`、`hooks/` 分类。现有扩展位于 `plugins/extensions/<plugin-id>/`，独立技能及筛选清单位于 `plugins/skills/`；扩展自带的技能保留在所属扩展内部。`mcp-servers/`、`hooks/` 当前仅预留目录，尚无内置加载逻辑。构建仍将扩展和选中技能组装到 OpenClaw 原生的 `dist/extensions/`、`skills/`、`custodian-skills/`，开发源码发现读取新的扩展目录。图标、浏览器扩展、文档模板和运行时准备缓存继续由 `resources/` 管理。目录约定见[内置插件说明](../../plugins/README.md)。
+
+插件专属的工具、界面、资源、构建/校验脚本和单元测试归 `plugins/extensions/<plugin-id>/` 所有。主工程保留通用 MCP Apps 宿主、权限与保存桥、配置/打包接入，以及验证宿主边界的集成测试；插件不能反向导入应用 `src`。根 npm 命令和打包流程只委托插件自己的脚本，draw.io 的目录约定见[插件说明](../../plugins/extensions/drawio/README.md)。
 
 独立分发的 MCP Apps 由各自的插件仓库维护源码、依赖、构建和交付物，不进入主工程
 依赖或 Electron 安装包。插件清单静态声明 MCP，经现有扩展导入和能力审查安装，
@@ -20,7 +22,7 @@ Runtime Services 提供嵌套 MCP App 历史的受限恢复 RPC：只读原生�
 按原工具和原参数读取已记录结果，缺省值按当前 schema 核对，不执行原业务工具或恢复旧工具授权。
 会话 incarnation、生命周期和配置权限变化立即使恢复视图失效，详见[MCP Apps](../features/chat/mcp-apps.md)。
 
-`openclaw-extensions/widget-kit` 在 `ui/` 聚合通用固定组件的 schema、组合器、
+`plugins/extensions/widget-kit` 在 `ui/` 聚合通用固定组件的 schema、组合器、
 渲染逻辑、文案与样式；`document/` 提供 HTML/JSON 安全序列化和资源初始化。
 组件单元测试归插件 `tests/`，宿主边界及打包集成测试保留在主工程。
 插件 ID、目录及公共资源已改为 Widget Kit 命名；构建核对旧包名和 manifest ID 后
@@ -78,7 +80,7 @@ Plugin Hub 有四类插件概念；市场当前只开放 extension、skill、mcp
 
 日常 Chrome 沿用原生 existing-session driver 和随包 Chrome MCP，设置页通过 Gateway 请求原生 Tab 查询来触发浏览器授权。Windows 的应用配置选择 `chrome-mcp.cmd`，Main 生成的 UTF-8 启动器用 Electron Node 模式启动锁定服务器；`npm.cmd`、`npx.cmd` 和 `node.cmd` 同样位于应用 PATH 前端。启动器内的 Node／可信预加载文件引用使用绝对路径，避免真实 npm 包的 `.cmd` 嵌套调用裸 `node` 时将 `%~dp0` 解析到调用方工作目录。受管 MCP 的裸 `npm/npx` 命令由 Main 配置投影为 Electron Node 的直接启动参数，显式加载可信窗口隐藏模块；用户保存的命令、参数、环境和其它原生字段不被改写，绝对路径自定义命令保留原样。配置投影与启动器共享 npm 路径解析，打包后继续使用逻辑 `app.asar` 路径。原生 MCP 仍过滤不安全环境变量，负责连接授权、进程身份核验与清理。普通插件来源仍可使用应用 PATH 中的自包含启动器。002/003 补丁已移除；真实 npm/npx 与原生配置解析器对照测试验证连接、工具发现、调用和清理，受管配置不产生批处理空帧诊断。真实本地包二进制启动另验证嵌套批处理和中文／空格启动器路径。批处理对照虽有空帧诊断仍能完成普通 Client 连接，不能把该诊断直接等同于功能不可用。
 
-OpenAI 媒体适配由 `openclaw-extensions/openai` 的完整本地源码实现，基线为原生
+OpenAI 媒体适配由 `plugins/extensions/openai` 的完整本地源码实现，基线为原生
 v2026.10.4。资源同步完整替换原包目录；裁剪策略明确移除上游插件，本地保护只保留
 替换后的唯一 `openai`。不合并源码、不备份 native-* 入口、不注册第二个同名插件。
 本地 manifest 和 setup 删除官网登录/API Key 引导、公网 catalog 和 usage；内网服务
@@ -208,7 +210,7 @@ GitHub、Kie、Z.AI 和 Novita 插件；运行时资源准备与安装包构建�
 Transcription（PCMU 8 kHz），朗读需要兼容 Audio Speech。模型目录仍由用户配置，
 不会以插件内置模型元数据填充语音设置。ElevenLabs 不再列入受管语音提供方。
 
-视频服务由本地 `openclaw-extensions/openai` 注册 `video-openai` provider，
+视频服务由本地 `plugins/extensions/openai` 注册 `video-openai` provider，
 由同一插件的完整替换、预编译和裁剪保护流程打包。设置页保存后由 Main
 配置同步器投影 `agents.defaults.mediaModels.video`；模型 ID 和基础地址由用户填写。
 `models.providers.video-openai` 独立于聊天和图像配置；非空 API Key 写入受限的
@@ -532,7 +534,7 @@ Main 从鉴权后的来源会话生成组织者身份，通过 Gateway-only 字�
 ## Jev typed evaluations
 
 The optional `typesafe` extension is vendored from a pinned upstream revision in
-`openclaw-extensions/typesafe/` and assembled by the existing local-extension
+`plugins/extensions/typesafe/` and assembled by the existing local-extension
 pipeline. Without decision-model settings it defaults off and remains user-toggleable.
 Settings → Models → Decision models requires URL/API Key and supports provider/model
 CRUD, discovery and import/export. It selects `agents.defaults.decisionModel` and
@@ -564,7 +566,7 @@ artifact when it changes; never edit their source or proof manifests in place.
 
 ## Swarm Workflow：独立持久化任务流
 
-`openclaw-extensions/swarm-workflow` 使用插件 service 生命周期及原生 Gateway / subagent API。
+`plugins/extensions/swarm-workflow` 使用插件 service 生命周期及原生 Gateway / subagent API。
 协议、视图校验和请求标记由插件的 `contracts/`、`prompt/` 统一维护，应用 shared 只提供浏览器安全的桥接入口和 Electron IPC 契约。插件内部将 DAG 执行、批次、持久化、聊天管理与原生注册分别交给 `execution/`、`batch/`、`data/`、`management/`、`service/`；注册实例通过同一实时 context 使用进程共享服务状态，生命周期仍由启动实例持有。通用原生运行契约和文件系统准入归 Runtime Services，Workflow 单向复用，两个插件均不引用应用实现，必需的 Runtime Services 不依赖可选 Workflow。资源同步从仓库源码打包 Workflow，避免发布时依赖相邻插件的未编译源码。产品会话归属、响应校验及助手名单投影的实现归插件 `host/`，Main `cowork/swarm-workflow/` 只提供薄门面和 live typed ports；API 归插件 contracts，Electron 通道名及 handler 留应用。图形/视口、选择、发现轮询、批次/详情/介入状态、输入框准入和翻译归插件 `browser/`，通过注入的 preload ports 访问产品能力；Renderer 保留 React 呈现和共享聊天、i18n/菜单、Tab 接线。原生入口不导入 host/browser，Main/shared 不导入 browser，插件不导入 src。Workflow 专属未调用 launch 证明归 execution，通用 describe/cancel SDK 和文件系统底座仍在 Runtime Services。禁用后隐藏入口、退休 Tab、停止轮询并清空浏览器投影，disable revision 也拒绝快速关开间旧响应；重新启用读取保留的 DAG，不据服务停止推断原生取消。原生子任务入口独立。
 `swarm_workflow_start` 提供明确请求的工具入口；输入框的精确标记明确所选执行方式，主会话在目标与必要上下文明确时优先尽快启动，仅对实质歧义或缺少的上下文按原生有效工具策略准备，随后利用历史和附件整理完整说明并建立流程。启动、提示重建和轮末纠错按公开分页读取最新用户条目，不因准备工具挤出尾页而丢失发起请求，也不越过新用户匹配旧请求。工具从当前原生用户条目派生幂等键，并单独保留原始指派依据，后台不缓存聊天历史。
 发起指令优先要求在目标和必要上下文明确时尽快调用启动工具，仅在存在实质歧义或缺少上下文时按原生有效工具策略准备，补齐缺口后回到启动，不停留在分析或计划阶段；不设置额外发起 `toolsAllow` 或普通工具调用白名单，不扩大原生权限。服务持有正式 DAG、执行、验收和进度，主助手不能自行完成委派任务或替换所选模式。提供直接调用与 Code Mode 参数示例。尚未接受时，原生 `before_agent_finalize` 可反馈本轮有界工具错误并请求最多三轮安全纠正；每轮仍绑定原始用户请求，复用准备结论而不重做副作用。父身份、项目、权限或当前请求变化后不继续纠正，接受后按原始请求去重。短期准入元数据不包含聊天内容；原生取消、超时、潜在副作用或未知结果仍禁止回放，工作节点提交纠错限制保持独立，无需增加运行时补丁。

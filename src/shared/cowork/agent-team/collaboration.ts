@@ -1,5 +1,5 @@
-export * from '../../../../openclaw-extensions/agent-team/contracts/collaboration';
-export * from '../../../../openclaw-extensions/agent-team/contracts/collaborationGraph';
+export * from '../../../../plugins/extensions/agent-team/contracts/collaboration';
+export * from '../../../../plugins/extensions/agent-team/contracts/collaborationGraph';
 
 export const CollaborationIpc = {
   Read: 'collaboration:read',

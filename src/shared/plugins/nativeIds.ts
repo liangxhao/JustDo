@@ -1,1 +1,1 @@
-export * from '../../../openclaw-extensions/runtime-services/contracts/native-ids';
+export * from '../../../plugins/extensions/runtime-services/contracts/native-ids';

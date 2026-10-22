@@ -41,10 +41,10 @@ const BUILD_RECIPE_FILES = [
   'scripts/openclaw/ensure-openclaw-plugins.cjs',
   'scripts/openclaw/patch-mxc-sandbox-plugin.cjs',
   'scripts/openclaw/sync-openclaw-runtime-resources.cjs',
-  'openclaw-extensions/acpx/package.json',
-  'openclaw-extensions/acpx/package-lock.json',
-  'openclaw-extensions/acpx/scripts/runtime-dependencies.cjs',
-  'openclaw-extensions/acpx/src/codex-auth-bridge.ts',
+  'plugins/extensions/acpx/package.json',
+  'plugins/extensions/acpx/package-lock.json',
+  'plugins/extensions/acpx/scripts/runtime-dependencies.cjs',
+  'plugins/extensions/acpx/src/codex-auth-bridge.ts',
   'src/shared/providers/mediaGenerationModels.ts',
   'scripts/openclaw/precompile-openclaw-extensions.cjs',
   'scripts/openclaw/prune-openclaw-runtime.cjs',
@@ -58,25 +58,25 @@ const BUILD_RECIPE_FILES = [
   'src/main/openclaw/runtime/native-support/plugin-owned-execution.mjs',
   'src/main/openclaw/runtime/native-support/compaction-lifecycle.mjs',
   'src/main/openclaw/runtime/native-support/goal-continuation.mjs',
-  'openclaw-extensions/runtime-services/tool-call-recovery/policy.mjs',
-  'openclaw-extensions/runtime-services/tool-call-recovery/facts.mjs',
-  'openclaw-extensions/runtime-services/tool-call-recovery/loop.mjs',
+  'plugins/extensions/runtime-services/tool-call-recovery/policy.mjs',
+  'plugins/extensions/runtime-services/tool-call-recovery/facts.mjs',
+  'plugins/extensions/runtime-services/tool-call-recovery/loop.mjs',
   'src/shared/openclaw/cliRuntimeFiles.json',
   'src/shared/security/mxcNativeBinaries.json',
   'resources/openclaw-extension-prune.json',
-  'resources/builtin-skills.json',
+  'plugins/skills/builtin-skills.json',
   'scripts/runtime/sync-bundled-skills.cjs',
-  'openclaw-extensions/drawio/scripts/prepare.cjs',
-  'openclaw-extensions/drawio/scripts/verify-packaged.cjs',
-  'openclaw-extensions/drawio/package.json',
-  'openclaw-extensions/drawio/openclaw.plugin.json',
-  'openclaw-extensions/drawio/index.ts',
-  'openclaw-extensions/drawio/upstream.json',
-  'openclaw-extensions/drawio/licenses/saxes-6.0.0.txt',
-  'openclaw-extensions/drawio/server.mjs',
-  'openclaw-extensions/drawio/app.ts',
-  'openclaw-extensions/drawio/app.css',
-  'openclaw-extensions/drawio/editor-bridge.js',
+  'plugins/extensions/drawio/scripts/prepare.cjs',
+  'plugins/extensions/drawio/scripts/verify-packaged.cjs',
+  'plugins/extensions/drawio/package.json',
+  'plugins/extensions/drawio/openclaw.plugin.json',
+  'plugins/extensions/drawio/index.ts',
+  'plugins/extensions/drawio/upstream.json',
+  'plugins/extensions/drawio/licenses/saxes-6.0.0.txt',
+  'plugins/extensions/drawio/server.mjs',
+  'plugins/extensions/drawio/app.ts',
+  'plugins/extensions/drawio/app.css',
+  'plugins/extensions/drawio/editor-bridge.js',
 ];
 
 function normalizeOpenClawVersion(version) {
@@ -343,7 +343,7 @@ function buildOpenClawPatchSetFingerprint(repoRoot, version) {
 }
 
 function listBuildRecipeFiles(repoRoot) {
-  const replacementRoot = path.join(repoRoot, 'openclaw-extensions', 'openai');
+  const replacementRoot = path.join(repoRoot, 'plugins/extensions', 'openai');
   const replacementFiles = fs.existsSync(replacementRoot)
     ? fs
         .readdirSync(replacementRoot, { recursive: true, withFileTypes: true })

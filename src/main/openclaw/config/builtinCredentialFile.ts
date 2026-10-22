@@ -8,7 +8,7 @@ import {
   MODEL_AUTH_SESSION_ENV,
   MODEL_AUTH_SESSION_PATTERN,
   MODEL_AUTH_TYPE_ENV,
-} from '../../../../openclaw-extensions/runtime-services/contracts/model-auth';
+} from '../../../../plugins/extensions/runtime-services/contracts/model-auth';
 import {
   type BuiltinModelCredential,
   getActiveBuiltinModelCredentialSessionId,

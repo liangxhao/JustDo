@@ -1,1 +1,1 @@
-export * from '../../../../../../openclaw-extensions/agent-team/browser/discussion/discussionMentions';
+export * from '../../../../../../plugins/extensions/agent-team/browser/discussion/discussionMentions';

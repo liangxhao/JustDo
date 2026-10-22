@@ -40,7 +40,7 @@ HTML 按需参考提供主题字体、间距、控件、焦点与响应式布局
 固定组件类型才使用经过校验的 JSON 字符串。技能要求生成内容使用内联资源、系统字体
 和本地绘制，在无公网环境中工作，不依赖 CDN 或远程 API；这不是对原生全部 HTML 的
 网络策略改写。完整 schema 和实际工具 payload 在
-[插件说明](../../../openclaw-extensions/widget-kit/README.md)及技能参考中维护。
+[插件说明](../../../plugins/extensions/widget-kit/README.md)及技能参考中维护。
 
 ## 当前交互
 

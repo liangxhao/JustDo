@@ -4,13 +4,13 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import plugin from '../../../../openclaw-extensions/stt-local-cli/index';
+import plugin from '../../../../plugins/extensions/stt-local-cli/index';
 import {
   parseTranscript,
   readConfig,
   type RunCommand,
   transcribeFile,
-} from '../../../../openclaw-extensions/stt-local-cli/transcribe';
+} from '../../../../plugins/extensions/stt-local-cli/transcribe';
 
 const roots: string[] = [];
 const config = {

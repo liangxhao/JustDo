@@ -1,7 +1,7 @@
 import type { SwarmWorkflowChangedEvent, SwarmWorkflowResult } from '@shared/cowork/swarm-workflow';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { observeWorkflows } from '../../../../../../openclaw-extensions/swarm-workflow/browser/observe';
+import { observeWorkflows } from '../../../../../../plugins/extensions/swarm-workflow/browser/observe';
 
 const idle: SwarmWorkflowResult = { success: true, flows: [], running: false };
 const active: SwarmWorkflowResult = { success: true, flows: [], running: true };

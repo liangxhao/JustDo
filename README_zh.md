@@ -14,7 +14,7 @@ JustDo 是一个基于 Electron、React、SQLite 和 OpenClaw Gateway 的桌面 
 | AI 工作会话  | OpenClaw Gateway 是执行引擎。JustDo 负责桌面壳、UI 状态、权限和产品元数据。                  |
 | 聊天 UI      | React 负责应用外壳；`<justdo-chat>` 是 Lit 自定义元素，直连本地 OpenClaw Gateway WebSocket。 |
 | 本地存储     | `better-sqlite3` 保存应用设置、Agent、MCP、hooks、会话分组、cowork 元数据和 run receipt。    |
-| Skills       | `resources/builtin-skills.json` 声明 8 个内置技能，全部默认启用。                            |
+| Skills       | `plugins/skills/builtin-skills.json` 声明 8 个内置技能，全部默认启用。                            |
 | MCP 与 hooks | 在 Plugins 页面管理，本地持久化后同步到 OpenClaw 配置。                                      |
 | 定时任务     | JustDo 负责 UI CRUD 和轮询；任务执行交给 OpenClaw cron runtime。                             |
 | 助手与协作   | 设置中管理长期助手；用户会话归属 main，可选 agent-team 扩展默认关闭，启用后使用原生协作。    |
@@ -107,7 +107,7 @@ Windows 打包会通过 `scripts/` 下的脚本准备 MinGit 和 Python runtime�
 | `src/renderer/features/`           | cowork、agents、models、plugins、scheduled tasks、settings 等 React feature    |
 | `src/renderer/libs/openclaw-chat/` | Lit 聊天元素与消息渲染管线                                                     |
 | `src/shared/`                      | cowork、OpenClaw、providers、plugins、scheduled tasks、slash commands 共享契约 |
-| `resources/skills/`                | 内置技能源目录                                                                 |
+| `plugins/`                         | 内置插件，按 `extensions/`、`skills/`、`mcp-servers/`、`hooks/` 分类                    |
 | `vendor/openclaw-runtime/`         | 下载并同步的 OpenClaw runtime 产物                                             |
 
 ## 状态模型

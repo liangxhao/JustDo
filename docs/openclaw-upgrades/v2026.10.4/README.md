@@ -387,13 +387,13 @@ ACPX 原包名虽为 `2026.9.8-local.1`，实际源码祖先仍为 9.2，不能�
 probe、process-cleanup、稳定 lazy facade、Pi catalog 和 Windows argv 接线，
 保留受管目录、隔离认证、结构化命令、构建时目录、逐 Agent 诊断和默认不启动探针。
 未开放运行时下载、原生第二套模型选择器或工作区状态目录接管。完整对应关系和
-上游来源见 [ACPX 来源记录](../../../openclaw-extensions/acpx/UPSTREAM.md)。
+上游来源见 [ACPX 来源记录](../../../plugins/extensions/acpx/UPSTREAM.md)。
 
 TypeSafe 同步 10.4 的 `isAdmissible`，从注册入口经 client 传入 transport，
 在首次准备及真实 DNS 等待后的 `beforeRequest` 再检查；保留显式内网服务、认证、
 取消和资源释放。内网和 loopback 请求禁止重定向/环境代理，hosted 保留上游代理策略。
 来源及定制见
-[TypeSafe 来源记录](../../../openclaw-extensions/typesafe/UPSTREAM.md)。
+[TypeSafe 来源记录](../../../plugins/extensions/typesafe/UPSTREAM.md)。
 
 OpenClaw 10.4 上游仍使用 acpx 0.19.1；本轮额外评估并精确锁定 0.19.5。
 其公开运行时接口和持久会话格式兼容，采用首次持久会话加载、并发 ensure/import、

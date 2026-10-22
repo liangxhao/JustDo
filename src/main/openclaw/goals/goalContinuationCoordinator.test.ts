@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AskUserQuestionManager,
   buildWaitPolicy,
-} from '../../../../openclaw-extensions/ask-user-question/index';
+} from '../../../../plugins/extensions/ask-user-question/index';
 import {
   GoalExecutionPhase,
   type SessionGoal,

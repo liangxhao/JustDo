@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 
-import { prepareWorkflowComposerSubmission } from '../../../../openclaw-extensions/swarm-workflow/browser/composer';
+import { prepareWorkflowComposerSubmission } from '../../../../plugins/extensions/swarm-workflow/browser/composer';
 
 function fixture() {
   return {

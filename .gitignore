@@ -28,15 +28,16 @@ resources/python-*.zip
 resources/local-tts/
 resources/local-tts-cache/
 resources/drawio-cache/
-openclaw-extensions/drawio/assets/
+plugins/extensions/drawio/assets/
 resources/dependency-config/.npmrc
 resources/dependency-config/pip.ini
 !resources/dependency-config/README.md
 
 package-lock.json
-!openclaw-extensions/acpx/package-lock.json
-!openclaw-extensions/openai/package-lock.json
-!openclaw-extensions/typesafe/package-lock.json
+!plugins/extensions/acpx/package-lock.json
+!plugins/extensions/openai/package-lock.json
+!plugins/extensions/stt-local-cli/package-lock.json
+!plugins/extensions/typesafe/package-lock.json
 
 nul
 .work.env

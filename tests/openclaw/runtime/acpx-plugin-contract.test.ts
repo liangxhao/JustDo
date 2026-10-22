@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, expect, test } from 'vitest';
 
 const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
-const extensionRoot = path.join(repositoryRoot, 'openclaw-extensions', 'acpx');
+const extensionRoot = path.join(repositoryRoot, 'plugins/extensions', 'acpx');
 
 const readJson = (filePath: string): Record<string, unknown> =>
   JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, unknown>;

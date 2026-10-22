@@ -43,14 +43,14 @@ const { buildSync } = require('esbuild');
   if (!installedPlugin) {
     fs.mkdirSync(plugin);
     buildSync({
-      entryPoints: [path.join(root, 'openclaw-extensions/drawio/index.ts')],
+      entryPoints: [path.join(root, 'plugins/extensions/drawio/index.ts')],
       outfile: path.join(plugin, 'index.cjs'),
       bundle: true,
       platform: 'node',
       format: 'cjs',
       external: ['openclaw/*'],
     });
-    const manifest = require('../../openclaw-extensions/drawio/openclaw.plugin.json');
+    const manifest = require('../../plugins/extensions/drawio/openclaw.plugin.json');
     fs.writeFileSync(path.join(plugin, 'openclaw.plugin.json'), JSON.stringify(manifest));
     fs.writeFileSync(
       path.join(plugin, 'package.json'),
@@ -61,7 +61,7 @@ const { buildSync } = require('esbuild');
       }),
     );
     fs.symlinkSync(
-      path.join(root, 'openclaw-extensions/drawio/assets'),
+      path.join(root, 'plugins/extensions/drawio/assets'),
       path.join(plugin, 'assets'),
       'junction',
     );
@@ -384,7 +384,7 @@ const { buildSync } = require('esbuild');
     await connect();
     console.log('Locked Gateway and edited plugin ready');
     const xml = fs.readFileSync(
-      path.join(root, 'openclaw-extensions/drawio/tests/fixture.xml'),
+      path.join(root, 'plugins/extensions/drawio/tests/fixture.xml'),
       'utf8',
     );
     for (const entry of ['open_editor', 'open_file', 'create_diagram']) {

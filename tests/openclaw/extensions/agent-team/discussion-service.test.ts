@@ -5,17 +5,17 @@ import path from 'node:path';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 import { afterEach, expect, it, vi } from 'vitest';
 
-import { registerDiscussionService } from '../../../../openclaw-extensions/agent-team/discussion/discussion-service';
+import { registerDiscussionService } from '../../../../plugins/extensions/agent-team/discussion/discussion-service';
 import { TeamDiscussionGateway } from '../../../../src/shared/cowork/agent-team/teamDiscussion';
 
 const sdk = vi.hoisted(() => ({ execute: vi.fn() }));
-vi.mock('../../../../openclaw-extensions/agent-team/discussion/discussion-execution', () => ({
+vi.mock('../../../../plugins/extensions/agent-team/discussion/discussion-execution', () => ({
   executeGroupDiscussion: sdk.execute,
 }));
-vi.mock('../../../../openclaw-extensions/agent-team/discussion/discussion-summary', () => ({
+vi.mock('../../../../plugins/extensions/agent-team/discussion/discussion-summary', () => ({
   registerDiscussionSummary: vi.fn(),
 }));
-vi.mock('../../../../openclaw-extensions/agent-team/discussion/discussion-channel', () => ({
+vi.mock('../../../../plugins/extensions/agent-team/discussion/discussion-channel', () => ({
   discussionChannel: {},
   bindDiscussionTransport: () => () => {},
 }));

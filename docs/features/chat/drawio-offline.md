@@ -91,13 +91,13 @@ HTML 资源保持在原生 2 MiB 上限内，绘图脚本不塞入工具结果�
 
 ## 构建和验证
 
-下载源、固定提交、归档 SHA-256、缓存/输出路径和准备命令统一见[离线资源准备](../../offline-downloads.md#5-drawio-离线编辑器)。适配器源码位于 `openclaw-extensions/drawio/`，生成资源不提交 Git；安装包携带完整生成目录和许可证，首次运行不下载、不安装包、不检查公网版本。
+下载源、固定提交、归档 SHA-256、缓存/输出路径和准备命令统一见[离线资源准备](../../offline-downloads.md#5-drawio-离线编辑器)。适配器源码位于 `plugins/extensions/drawio/`，生成资源不提交 Git；安装包携带完整生成目录和许可证，首次运行不下载、不安装包、不检查公网版本。
 
-插件专属资源准备、打包校验脚本位于该目录的 `scripts/`，单元测试与 XML 样例位于 `tests/`。目录职责见[插件说明](../../../openclaw-extensions/drawio/README.md)。主工程仅保留通用宿主能力和必要接入；`tests/drawio/` 验证与真实宿主、运行时及打包器的集成，不属于插件运行依赖。
+插件专属资源准备、打包校验脚本位于该目录的 `scripts/`，单元测试与 XML 样例位于 `tests/`。目录职责见[插件说明](../../../plugins/extensions/drawio/README.md)。主工程仅保留通用宿主能力和必要接入；`tests/drawio/` 验证与真实宿主、运行时及打包器的集成，不属于插件运行依赖。
 
 准备脚本先验证归档哈希，再构建 MCP 服务和标准 App SDK bundle，生成每个文件的 SHA-256 清单并保留第三方许可证。组装和打包同时检查源码指纹、缺失文件、多余文件和逐文件内容。未准备、陈旧或不完整的资源使构建失败，不能退回在线版本。适配器、来源锁定与构建脚本进入 OpenClaw build recipe。
 
-- `openclaw-extensions/drawio/tests/server.test.ts` 覆盖 XML、DTD、体积限制、HTTP 路径和 CSP；同目录的 `ports.test.ts` 覆盖禁用端口、关闭后重选、重试上限与失败清理，`assets.test.ts` 覆盖资源损坏与缺失。
+- `plugins/extensions/drawio/tests/server.test.ts` 覆盖 XML、DTD、体积限制、HTTP 路径和 CSP；同目录的 `ports.test.ts` 覆盖禁用端口、关闭后重选、重试上限与失败清理，`assets.test.ts` 覆盖资源损坏与缺失。
 - 连续编辑的插件状态、真实会话取消、锁定 Gateway 与实际编辑器分层验证见[当前画布验证](drawio-current-canvas.md#7-必须通过的验证)。
 - `node tests/drawio/native-smoke.mjs` 使用隔离状态及实际组装的原生运行时，验证插件发现、标准工具元数据、正常工具物化和原生 App 准入，不请求模型。
 - `node tests/mcp-apps/gateway-smoke.cjs --drawio` 使用隔离 Gateway 验证实际绘图服务的手动与文件入口发现、原生启动和文件资源读取，拒绝跨视图和工作区外文件，确认对话仍为空，不发起模型请求。

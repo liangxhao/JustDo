@@ -4,7 +4,7 @@ import {
   imageConfig,
   requireServiceBaseUrl,
   resolveTranscriptionUrl,
-} from '../../../openclaw-extensions/openai/intranet-config';
+} from '../../../plugins/extensions/openai/intranet-config';
 
 vi.mock('openclaw/plugin-sdk/secret-input', () => ({
   normalizeResolvedSecretInputString: vi.fn(),

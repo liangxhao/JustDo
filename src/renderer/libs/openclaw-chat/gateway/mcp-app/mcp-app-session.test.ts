@@ -1,11 +1,11 @@
 import { type McpAppDiscovery, McpAppMethod } from '@shared/plugins/mcpApps';
 import { describe, expect, it, vi } from 'vitest';
 
-import { DRAWIO_RESTORE_METHOD } from '../../../../../../openclaw-extensions/drawio/contracts';
+import { DRAWIO_RESTORE_METHOD } from '../../../../../../plugins/extensions/drawio/contracts';
 import {
   MCP_APP_HISTORY_TOOL_METHOD,
   MCP_APP_HISTORY_VIEW_METHOD,
-} from '../../../../../../openclaw-extensions/runtime-services/contracts/mcp-apps';
+} from '../../../../../../plugins/extensions/runtime-services/contracts/mcp-apps';
 import type { GatewayClient, GatewayRequestOptions } from '../client';
 import {
   hasMcpAppCanvasPreparations,

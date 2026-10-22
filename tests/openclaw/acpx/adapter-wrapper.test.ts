@@ -11,7 +11,7 @@ import { afterEach, expect, test } from 'vitest';
 const roots: string[] = [];
 afterEach(() => roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true })));
 
-const sourcePath = path.resolve('openclaw-extensions/acpx/src/codex-auth-bridge.ts');
+const sourcePath = path.resolve('plugins/extensions/acpx/src/codex-auth-bridge.ts');
 const source = ts.createSourceFile(sourcePath, fs.readFileSync(sourcePath, 'utf8'), ts.ScriptTarget.Latest, true);
 const builders = source.statements.filter(statement =>
   ts.isFunctionDeclaration(statement) &&

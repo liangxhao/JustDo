@@ -6,9 +6,9 @@ vi.mock('openclaw/plugin-sdk/gateway-method-runtime', () => ({
 }));
 vi.mock('openclaw/plugin-sdk/session-store-runtime', () => ({ getSessionEntry: sdk.entry }));
 
-import { connectCurrentDiagram } from '../../openclaw-extensions/drawio/browser/current-canvas';
-import { DRAWIO_CANVAS_METHOD } from '../../openclaw-extensions/drawio/contracts';
-import { registerDiagramEditing } from '../../openclaw-extensions/drawio/editing';
+import { connectCurrentDiagram } from '../../plugins/extensions/drawio/browser/current-canvas';
+import { DRAWIO_CANVAS_METHOD } from '../../plugins/extensions/drawio/contracts';
+import { registerDiagramEditing } from '../../plugins/extensions/drawio/editing';
 import type {
   GatewayClient,
   GatewayRequestOptions,

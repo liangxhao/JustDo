@@ -1,1 +1,1 @@
-export * from '../../../../openclaw-extensions/agent-team/host/launch/agentTeamLaunchCoordinator';
+export * from '../../../../plugins/extensions/agent-team/host/launch/agentTeamLaunchCoordinator';

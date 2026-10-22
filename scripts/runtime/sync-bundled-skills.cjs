@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 function readBundledSkillConfig(repoRoot) {
-  const configPath = path.join(repoRoot, 'resources', 'builtin-skills.json');
+  const configPath = path.join(repoRoot, 'plugins', 'skills', 'builtin-skills.json');
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   const invalid = message => {
     throw new Error(`Invalid bundled skill manifest (${configPath}): ${message}`);
@@ -51,7 +51,7 @@ function readBundledSkillConfig(repoRoot) {
 
 function syncBundledSkills(repoRoot, runtimeRoot, label = 'sync-bundled-skills') {
   const { enabledSkillIds, openclawSkillIds, custodianSkillIds } = readBundledSkillConfig(repoRoot);
-  const sourceRoot = path.join(repoRoot, 'resources', 'skills');
+  const sourceRoot = path.join(repoRoot, 'plugins', 'skills');
   // Validate every source before pruning anything. Previously pruned upstream
   // skills must be restored by rebuilding from the locked pristine package.
   const requiredRoots = [

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import { DiscussionLedger } from '../../../../openclaw-extensions/runtime-services/agent-team/discussion/discussion-ledger';
+import { DiscussionLedger } from '../../../../plugins/extensions/runtime-services/agent-team/discussion/discussion-ledger';
 
 const roots: string[] = [];
 afterEach(() => {

@@ -9,9 +9,9 @@ import {
   RESULT_PAGE_TRANSPORT_BUDGET,
   RESULT_TRANSPORT_BYTES,
   resultTransportCost,
-} from '../../../openclaw-extensions/swarm-workflow/contracts/batch';
-import type { Flow, FlowNode } from '../../../openclaw-extensions/swarm-workflow/contracts/flow';
-import { FlowStore } from '../../../openclaw-extensions/swarm-workflow/data/store';
+} from '../../../plugins/extensions/swarm-workflow/contracts/batch';
+import type { Flow, FlowNode } from '../../../plugins/extensions/swarm-workflow/contracts/flow';
+import { FlowStore } from '../../../plugins/extensions/swarm-workflow/data/store';
 
 const cleanups: Array<() => void> = [];
 afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()));

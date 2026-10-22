@@ -217,15 +217,15 @@ OpenClaw 保存长期 transcript、公开群消息、成员执行、汇总及待
 
 | 模块                                                                           | 职责                                                                                |
 | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| `openclaw-extensions/agent-team/contracts/`、`prompt/`                         | 协作规则、群聊业务合约、资源设置校验和本次发起／补充提示；纯代码供应用复用          |
+| `plugins/extensions/agent-team/contracts/`、`prompt/`                         | 协作规则、群聊业务合约、资源设置校验和本次发起／补充提示；纯代码供应用复用          |
 | `src/shared/cowork/agent-team/`                                                | 应用跨进程入口，转出插件纯合约和 Graph 投影；仅保留 Electron IPC 名称               |
 | `src/main/cowork/agent-team/`                                                  | 主进程稳定入口的薄桥接；唯一 coordinator 的创建和事件接线由 Main 保持               |
 | `src/main/ipc/cowork/agent-team/`                                              | Electron handler 注册、请求／结果桥接和原生事件接线，不承载业务协调器               |
 | `src/main/data/agent-team/`                                                    | 元数据模块的稳定薄桥接；实际实现由插件 host/data 持有，SQLite 连接由 Main 提供      |
-| `openclaw-extensions/agent-team/host/`                                         | 主进程团队协调、队列、用户附件及元数据/settings 事务；通过 typed ports 现读宿主资源 |
-| `openclaw-extensions/agent-team/browser/`                                      | Renderer 内的草稿、继续协作证据、待发规则、提及解析与导出；不依赖应用实现           |
-| `openclaw-extensions/agent-team/collaboration/`、`discussion/`                 | 可选插件的协作、群聊执行及各自历史读取；根入口组合注册并保留原生插件身份            |
-| `openclaw-extensions/runtime-services/agent-team/`                             | 禁用后的成员发送保护、离线控制、holding 托管、无正文回执与发起守卫；不依赖可选插件  |
+| `plugins/extensions/agent-team/host/`                                         | 主进程团队协调、队列、用户附件及元数据/settings 事务；通过 typed ports 现读宿主资源 |
+| `plugins/extensions/agent-team/browser/`                                      | Renderer 内的草稿、继续协作证据、待发规则、提及解析与导出；不依赖应用实现           |
+| `plugins/extensions/agent-team/collaboration/`、`discussion/`                 | 可选插件的协作、群聊执行及各自历史读取；根入口组合注册并保留原生插件身份            |
+| `plugins/extensions/runtime-services/agent-team/`                             | 禁用后的成员发送保护、离线控制、holding 托管、无正文回执与发起守卫；不依赖可选插件  |
 | Runtime Services `agent-team/contracts/`、`contracts/`、`concurrency/`         | 托管和执行共用的身份／输入协议、权限映射与通用 FIFO 许可；无应用或可选执行依赖      |
 | Renderer `components/collaboration/`、`discussions/`                           | 分别承担 Graph/成员详情/补充请求与群消息/提及/群输入；共享配色放在 `shared/`        |
 | Renderer `components/display/`、`chat/`、`composer/`                           | 分别承担真实团队 Tab 组合、主标题栏入口和本次发送模式选择                           |

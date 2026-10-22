@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import automationPermissionPlugin from '../../../../openclaw-extensions/automation-permission/index';
+import automationPermissionPlugin from '../../../../plugins/extensions/automation-permission/index';
 
 type PolicyEvaluator = (
   event: { toolName: string; params?: unknown },

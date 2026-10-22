@@ -23,7 +23,7 @@ function createFixture(remove: string[]) {
   const runtimeRoot = path.join(repoRoot, 'runtime');
   const extensionsRoot = path.join(runtimeRoot, 'dist', 'extensions');
   fs.mkdirSync(path.join(repoRoot, 'resources'), { recursive: true });
-  fs.mkdirSync(path.join(repoRoot, 'openclaw-extensions', 'custom'), { recursive: true });
+  fs.mkdirSync(path.join(repoRoot, 'plugins/extensions', 'custom'), { recursive: true });
   fs.writeFileSync(
     path.join(repoRoot, 'package.json'),
     JSON.stringify({ openclaw: { version: 'v2026.9.6' } }),

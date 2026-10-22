@@ -7,8 +7,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   MCP_APP_HISTORY_TOOL_METHOD,
   MCP_APP_HISTORY_VIEW_METHOD,
-} from '../../../../openclaw-extensions/runtime-services/contracts/mcp-apps';
-import runtimeServicesPlugin from '../../../../openclaw-extensions/runtime-services/index';
+} from '../../../../plugins/extensions/runtime-services/contracts/mcp-apps';
+import runtimeServicesPlugin from '../../../../plugins/extensions/runtime-services/index';
 
 const sdk = vi.hoisted(() => ({
   getSessionEntry: vi.fn(),
@@ -147,7 +147,7 @@ describe('runtime services startup and progress', () => {
   test('declares unconditional startup and registers history with memory search disabled', () => {
     const manifest = JSON.parse(
       fs.readFileSync(
-        path.join(process.cwd(), 'openclaw-extensions/runtime-services/openclaw.plugin.json'),
+        path.join(process.cwd(), 'plugins/extensions/runtime-services/openclaw.plugin.json'),
         'utf8',
       ),
     );

@@ -1,19 +1,19 @@
 import {
   useWorkflowBatch,
   type WorkflowBatchOptions,
-} from '../../../../../../openclaw-extensions/swarm-workflow/browser/batch';
+} from '../../../../../../plugins/extensions/swarm-workflow/browser/batch';
 import {
   useWorkflowDetail,
   type WorkflowDetailOptions,
-} from '../../../../../../openclaw-extensions/swarm-workflow/browser/detail';
+} from '../../../../../../plugins/extensions/swarm-workflow/browser/detail';
 import {
   useWorkflowIntervention,
   type WorkflowInterventionOptions,
-} from '../../../../../../openclaw-extensions/swarm-workflow/browser/intervention';
+} from '../../../../../../plugins/extensions/swarm-workflow/browser/intervention';
 import {
   useWorkflowPanel,
   type WorkflowPanelOptions,
-} from '../../../../../../openclaw-extensions/swarm-workflow/browser/panel';
+} from '../../../../../../plugins/extensions/swarm-workflow/browser/panel';
 import { workflowBrowserPorts } from './workflowBrowserPorts';
 
 export const useSwarmWorkflowPanelState = (options: WorkflowPanelOptions) =>

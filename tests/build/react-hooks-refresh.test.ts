@@ -28,8 +28,8 @@ beforeAll(async () => {
     'src/renderer/useSettings.ts',
     'src/main/useSettings.ts',
     'src/shared/useSettings.ts',
-    'openclaw-extensions/sample/browser/useSettings.ts',
-    'openclaw-extensions/sample/host/useSettings.ts',
+    'plugins/extensions/sample/browser/useSettings.ts',
+    'plugins/extensions/sample/host/useSettings.ts',
   ];
   for (const file of files) {
     const filename = path.join(projectRoot, file);
@@ -59,7 +59,7 @@ afterAll(async () => {
 
 test.each([
   '/src/renderer/useSettings.ts',
-  '/openclaw-extensions/sample/browser/useSettings.ts',
+  '/plugins/extensions/sample/browser/useSettings.ts',
 ])('connects non-JSX Hook signatures to the real refresh runtime in %s', async url => {
   const result = await server.transformRequest(url);
   expect(result?.code).toContain('__createHookSignature()');
@@ -72,7 +72,7 @@ test.each([
 test.each([
   '/src/main/useSettings.ts',
   '/src/shared/useSettings.ts',
-  '/openclaw-extensions/sample/host/useSettings.ts',
+  '/plugins/extensions/sample/host/useSettings.ts',
 ])('leaves non-browser modules outside refresh instrumentation: %s', async url => {
   const result = await server.transformRequest(url);
   expect(result?.code).not.toContain('createSignatureFunctionForTransform');

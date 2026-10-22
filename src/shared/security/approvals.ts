@@ -1,9 +1,9 @@
 import {
   DEFAULT_PERMISSION_MODE,
   PermissionMode,
-} from '../../../openclaw-extensions/runtime-services/contracts/permissions';
+} from '../../../plugins/extensions/runtime-services/contracts/permissions';
 
-export * from '../../../openclaw-extensions/runtime-services/contracts/permissions';
+export * from '../../../plugins/extensions/runtime-services/contracts/permissions';
 
 /** The desktop renders these native approval kinds through Main. */
 export const ApprovalGatewayCapability = {

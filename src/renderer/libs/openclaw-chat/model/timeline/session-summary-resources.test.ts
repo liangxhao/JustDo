@@ -5,7 +5,7 @@ import {
   BROWSER_CONTENT_NOTICE,
   BROWSER_PAGE_SOURCE_KIND,
   BROWSER_PAGE_SOURCE_PREFIX,
-} from '../../../../../../openclaw-extensions/embedded-browser/browserPageSource';
+} from '../../../../../../plugins/extensions/embedded-browser/browserPageSource';
 import type { GatewayClient } from '../../gateway/client';
 import { hydrateTruncatedHistoryMessages } from '../../gateway/history/chat-history-protocol';
 import {

@@ -4,8 +4,8 @@ import { pathToFileURL } from 'node:url';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { observeToolCallRecoveryResponse } from '../../../../openclaw-extensions/runtime-services/tool-call-recovery/facts.mjs';
-import { resolveToolCallRecovery } from '../../../../openclaw-extensions/runtime-services/tool-call-recovery/policy.mjs';
+import { observeToolCallRecoveryResponse } from '../../../../plugins/extensions/runtime-services/tool-call-recovery/facts.mjs';
+import { resolveToolCallRecovery } from '../../../../plugins/extensions/runtime-services/tool-call-recovery/policy.mjs';
 
 type Content = { type: string; text?: string; textSignature?: string; name?: string };
 type Assistant = {

@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { projectToolCallRecoveryFailureSummary } from '../../../../openclaw-extensions/runtime-services/tool-call-recovery/policy.mjs';
+import { projectToolCallRecoveryFailureSummary } from '../../../../plugins/extensions/runtime-services/tool-call-recovery/policy.mjs';
 
 const { __testing: patch } = require('../../../../scripts/patches/v2026.10.4/030-tool-call-format-recovery.cjs');
 const runtime = process.env.OPENCLAW_PRISTINE_DIR ?? path.resolve('vendor/openclaw-runtime/current');

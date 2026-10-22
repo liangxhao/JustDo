@@ -19,14 +19,14 @@ async function dependencies(entry: string, platform: 'node' | 'browser' = 'node'
 it.each(['agent-team', 'runtime-services'])(
   '%s bundles without application implementation',
   async id => {
-    const inputs = await dependencies(`openclaw-extensions/${id}/index.ts`);
+    const inputs = await dependencies(`plugins/extensions/${id}/index.ts`);
     expect(inputs.some(file => file.startsWith('src/'))).toBe(false);
-    expect(inputs.some(file => file.startsWith('openclaw-extensions/agent-team/host/'))).toBe(
+    expect(inputs.some(file => file.startsWith('plugins/extensions/agent-team/host/'))).toBe(
       false,
     );
     if (id === 'runtime-services')
-      expect(inputs.some(file => file.startsWith('openclaw-extensions/agent-team/'))).toBe(false);
-    expect(inputs.some(file => file.startsWith('openclaw-extensions/agent-team/browser/'))).toBe(
+      expect(inputs.some(file => file.startsWith('plugins/extensions/agent-team/'))).toBe(false);
+    expect(inputs.some(file => file.startsWith('plugins/extensions/agent-team/browser/'))).toBe(
       false,
     );
     const historyModules = [
@@ -34,15 +34,15 @@ it.each(['agent-team', 'runtime-services'])(
       'discussion/discussion-history.ts',
     ];
     for (const module of historyModules)
-      expect(inputs.includes(`openclaw-extensions/agent-team/${module}`)).toBe(id === 'agent-team');
+      expect(inputs.includes(`plugins/extensions/agent-team/${module}`)).toBe(id === 'agent-team');
     expect(
       inputs.includes(
-        'openclaw-extensions/runtime-services/agent-team/collaboration/managed-peer-send-guard.ts',
+        'plugins/extensions/runtime-services/agent-team/collaboration/managed-peer-send-guard.ts',
       ),
     ).toBe(id === 'runtime-services');
     expect(
       inputs.includes(
-        'openclaw-extensions/runtime-services/agent-team/discussion/discussion-offline-control.ts',
+        'plugins/extensions/runtime-services/agent-team/discussion/discussion-offline-control.ts',
       ),
     ).toBe(id === 'runtime-services');
   },
@@ -60,7 +60,7 @@ it.each([
   expect(inputs.some(file => file.startsWith('src/main/'))).toBe(false);
   expect(
     inputs
-      .filter(file => file.startsWith('openclaw-extensions/'))
+      .filter(file => file.startsWith('plugins/extensions/'))
       .every(file => /\/(contracts|prompt)\//.test(file)),
   ).toBe(true);
 });
@@ -99,9 +99,9 @@ it.each([
   'discussion/teamDiscussionAttachments',
   'launch/agentTeamLaunchCoordinator',
 ])('host implementation %s bundles independently of the application', async module => {
-  const inputs = await dependencies(`openclaw-extensions/agent-team/host/${module}.ts`);
+  const inputs = await dependencies(`plugins/extensions/agent-team/host/${module}.ts`);
   expect(inputs.some(file => file.startsWith('src/'))).toBe(false);
-  expect(inputs.includes(`openclaw-extensions/agent-team/host/${module}.ts`)).toBe(true);
+  expect(inputs.includes(`plugins/extensions/agent-team/host/${module}.ts`)).toBe(true);
 });
 
 it.each([
@@ -113,9 +113,9 @@ it.each([
   'collaboration/collaborationContinueStatus',
 ])('browser implementation %s bundles independently of the application', async module => {
   const inputs = await dependencies(
-    `openclaw-extensions/agent-team/browser/${module}.ts`,
+    `plugins/extensions/agent-team/browser/${module}.ts`,
     'browser',
   );
   expect(inputs.some(file => file.startsWith('src/'))).toBe(false);
-  expect(inputs.some(file => file.startsWith('openclaw-extensions/agent-team/host/'))).toBe(false);
+  expect(inputs.some(file => file.startsWith('plugins/extensions/agent-team/host/'))).toBe(false);
 });

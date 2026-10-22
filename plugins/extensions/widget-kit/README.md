@@ -108,7 +108,7 @@ skills, framework dependencies or runtime services are installed by this skill.
 ## Checks
 
 ```powershell
-node node_modules/vitest/vitest.mjs run openclaw-extensions/widget-kit/tests tests/scripts/widget-kit
+node node_modules/vitest/vitest.mjs run plugins/extensions/widget-kit/tests tests/scripts/widget-kit
 node scripts/test/widget-kit/verify-runtime.mjs
 node scripts/test/widget-kit/verify-gateway.mjs
 ```
@@ -132,5 +132,5 @@ configuration, credentials or model endpoint.
 Component navigation preserves inputs. Secondary data/details start collapsed;
 follow-up validates inputs in place and uses the host's existing confirmation.
 Actual model quality and packaged/platform coverage remain in the
-[feature contract](../../docs/features/chat/interactive-answers.md) and
-[pending acceptance checks](../../docs/plans/interactive-answers-acceptance.md).
+[feature contract](../../../docs/features/chat/interactive-answers.md) and
+[pending acceptance checks](../../../docs/plans/interactive-answers-acceptance.md).

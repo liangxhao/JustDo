@@ -1,10 +1,10 @@
-import { discussionChannel } from '../../../openclaw-extensions/agent-team/discussion/discussion-channel';
-import agentTeamPlugin from '../../../openclaw-extensions/agent-team';
+import { discussionChannel } from '../../../plugins/extensions/agent-team/discussion/discussion-channel';
+import agentTeamPlugin from '../../../plugins/extensions/agent-team';
 // Loaded only by the isolated Gateway probe, never by the application manifest.
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 
-import { executeGroupDiscussion } from '../../../openclaw-extensions/agent-team/discussion/discussion-execution';
+import { executeGroupDiscussion } from '../../../plugins/extensions/agent-team/discussion/discussion-execution';
 import {
   teamDiscussionSessionKey,
   TeamDiscussionState,

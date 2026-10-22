@@ -368,7 +368,7 @@ describe('interactive answer source contract', () => {
 
   it('validates every documented native authoring example', () => {
     const skill = fs.readFileSync(
-      'openclaw-extensions/widget-kit/skills/visualize/references/fixed-components.md',
+      'plugins/extensions/widget-kit/skills/visualize/references/fixed-components.md',
       'utf8',
     );
     const calls = [...skill.matchAll(/```json\s*([\s\S]*?)```/g)].map(

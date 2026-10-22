@@ -1,4 +1,4 @@
-export * from '../../../../openclaw-extensions/agent-team/contracts/agentTeamSettings';
+export * from '../../../../plugins/extensions/agent-team/contracts/agentTeamSettings';
 
 /** Product preferences and bounded resource metadata; never execution permissions. */
 export const AgentTeamSettingsIpc = {

@@ -1,6 +1,6 @@
-import { handoffContent } from '../../../../../../openclaw-extensions/swarm-workflow/browser/handoff';
+import { handoffContent } from '../../../../../../plugins/extensions/swarm-workflow/browser/handoff';
 import { useSwarmWorkflowDetailState } from './workflowBrowserState';
-export { handoffContent } from '../../../../../../openclaw-extensions/swarm-workflow/browser/handoff';
+export { handoffContent } from '../../../../../../plugins/extensions/swarm-workflow/browser/handoff';
 import { ArrowLeftIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import type { SwarmWorkflowNode } from '@shared/cowork/swarm-workflow';
 

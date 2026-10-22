@@ -13,7 +13,7 @@ const {
 } = require('../../../../scripts/patches/v2026.10.4/030-tool-call-format-recovery.cjs');
 const { extractFunction } = support;
 const root = path.resolve(__dirname, '../../../..');
-const supportDirectory = path.join(root, 'openclaw-extensions/runtime-services/tool-call-recovery');
+const supportDirectory = path.join(root, 'plugins/extensions/runtime-services/tool-call-recovery');
 const bundle = buildSync({
   stdin: {
     contents: `export * from ${JSON.stringify(path.join(supportDirectory, 'policy.mjs'))};

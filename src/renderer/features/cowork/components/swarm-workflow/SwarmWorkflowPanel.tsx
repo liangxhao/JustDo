@@ -2,13 +2,13 @@ import {
   edgePath,
   layoutFlow,
   routeFlowEdge,
-} from '../../../../../../openclaw-extensions/swarm-workflow/browser/graph/layout';
-import { useWorkflowVisibility } from '../../../../../../openclaw-extensions/swarm-workflow/browser/visibility';
+} from '../../../../../../plugins/extensions/swarm-workflow/browser/graph/layout';
+import { useWorkflowVisibility } from '../../../../../../plugins/extensions/swarm-workflow/browser/visibility';
 import { useSwarmWorkflowPanelState } from './workflowBrowserState';
 export {
   layoutFlow,
   routeFlowEdge,
-} from '../../../../../../openclaw-extensions/swarm-workflow/browser/graph/layout';
+} from '../../../../../../plugins/extensions/swarm-workflow/browser/graph/layout';
 import '../shared/swarmGraph.css';
 import './swarmWorkflow.css';
 

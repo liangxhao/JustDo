@@ -146,7 +146,7 @@ async function runSmoke() {
   const pluginDir = path.join(root, providerId);
   fs.mkdirSync(pluginDir);
   fs.copyFileSync(
-    path.join(repo, 'openclaw-extensions', providerId, 'openclaw.plugin.json'),
+    path.join(repo, 'plugins/extensions', providerId, 'openclaw.plugin.json'),
     path.join(pluginDir, 'openclaw.plugin.json'),
   );
   fs.writeFileSync(
@@ -159,7 +159,7 @@ async function runSmoke() {
     }),
   );
   await require('esbuild').build({
-    entryPoints: [path.join(repo, 'openclaw-extensions', providerId, 'index.ts')],
+    entryPoints: [path.join(repo, 'plugins/extensions', providerId, 'index.ts')],
     bundle: true,
     platform: 'node',
     format: 'esm',

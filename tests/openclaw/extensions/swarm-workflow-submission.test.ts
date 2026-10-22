@@ -4,7 +4,7 @@ import {
   SUBMISSION_LIMITS,
   lastSubmissionError,
   validateSubmission,
-} from '../../../openclaw-extensions/swarm-workflow/execution/submission';
+} from '../../../plugins/extensions/swarm-workflow/execution/submission';
 
 it.each(['complete', 'blocked', 'verified'] as const)(
   'normalizes evidence text and derives an omitted %s summary only from submitted evidence',

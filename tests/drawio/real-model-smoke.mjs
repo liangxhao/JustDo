@@ -117,9 +117,9 @@ async function adjacentPort() {
   }
 }
 try {
-  require('../../openclaw-extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets();
+  require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets();
   const assetProof = JSON.parse(
-    fs.readFileSync(path.join(root, 'openclaw-extensions/drawio/assets/integrity.json'), 'utf8'),
+    fs.readFileSync(path.join(root, 'plugins/extensions/drawio/assets/integrity.json'), 'utf8'),
   );
   // Published runtime files are immutable. A separate hardlinked tree isolates
   // this live test from later atomic runtime replacements; no file is patched.
@@ -175,12 +175,12 @@ try {
     cloneTree(target, path.join(plugins, name));
   }
   const diagramPlugin = path.join(plugins, 'drawio');
-  fs.cpSync(path.join(root, 'openclaw-extensions/drawio'), diagramPlugin, {
+  fs.cpSync(path.join(root, 'plugins/extensions/drawio'), diagramPlugin, {
     recursive: true,
     filter: file => !['assets', 'node_modules', 'tests'].includes(path.basename(file)),
   });
   cloneTree(
-    path.join(root, 'openclaw-extensions/drawio/assets'),
+    path.join(root, 'plugins/extensions/drawio/assets'),
     path.join(diagramPlugin, 'assets'),
   );
   const availablePlugins = new Set(

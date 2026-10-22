@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import { appendAgentTeamInstruction } from '../../../../openclaw-extensions/agent-team/prompt/agentTeamPrompt';
+import { appendAgentTeamInstruction } from '../../../../plugins/extensions/agent-team/prompt/agentTeamPrompt';
 import { CoworkSessionCopyIpc } from '../../../shared/cowork/sessionCopy';
 import { CoworkSessionForkIpc } from '../../../shared/cowork/sessionFork';
 import { SessionRunBeginErrorCode } from '../../../shared/cowork/sessionRun';

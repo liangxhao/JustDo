@@ -1,9 +1,9 @@
 // Application bridge only; workflow protocol and prompt behavior belong to the plugin.
-export * from '../../../../openclaw-extensions/swarm-workflow/contracts/api';
-export * from '../../../../openclaw-extensions/swarm-workflow/contracts/events';
-export * from '../../../../openclaw-extensions/swarm-workflow/contracts/options';
-export * from '../../../../openclaw-extensions/swarm-workflow/contracts/workflow';
-export * from '../../../../openclaw-extensions/swarm-workflow/prompt/request';
+export * from '../../../../plugins/extensions/swarm-workflow/contracts/api';
+export * from '../../../../plugins/extensions/swarm-workflow/contracts/events';
+export * from '../../../../plugins/extensions/swarm-workflow/contracts/options';
+export * from '../../../../plugins/extensions/swarm-workflow/contracts/workflow';
+export * from '../../../../plugins/extensions/swarm-workflow/prompt/request';
 
 export const SwarmWorkflowIpc = {
   Prepare: 'cowork:swarm-workflow:prepare',

@@ -8,14 +8,14 @@ const {
   packMultipleSources,
   compressTarArchive,
 } = require('../../scripts/openclaw/pack-openclaw-tar.cjs');
-const { verifyPackagedDrawioAssets } = require('../../openclaw-extensions/drawio/scripts/verify-packaged.cjs');
+const { verifyPackagedDrawioAssets } = require('../../plugins/extensions/drawio/scripts/verify-packaged.cjs');
 fs.mkdirSync(output, { recursive: true });
 (async () => {
   const archive = path.join(output, 'runtime.tar');
   const stage = fs.mkdtempSync(path.join(output, 'runtime-'));
   const assets = path.join(stage, 'dist/extensions/drawio/assets');
   fs.mkdirSync(path.dirname(assets), { recursive: true });
-  fs.cpSync(path.join(root, 'openclaw-extensions/drawio/assets'), assets, { recursive: true });
+  fs.cpSync(path.join(root, 'plugins/extensions/drawio/assets'), assets, { recursive: true });
   packMultipleSources([{ dir: stage, prefix: 'cfmind' }], archive);
   await compressTarArchive(archive, path.join(output, 'win-resources.tar.zst'));
   await verifyPackagedDrawioAssets(output, true);

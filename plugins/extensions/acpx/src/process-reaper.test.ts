@@ -65,14 +65,14 @@ const PLUGIN_DEPS_CODEX_APP_SERVER_COMMAND =
 const PLUGIN_DEPS_CODEX_PLATFORM_COMMAND =
   '/tmp/openclaw/plugin-runtime-deps/node_modules/@openai/codex-linux-x64/vendor/codex app-server';
 const LOCAL_NODE_MODULES_CODEX_COMMAND = `node ${path.resolve(
-  'openclaw-extensions/acpx/node_modules/@agentclientprotocol/codex-acp/dist/index.js',
+  'plugins/extensions/acpx/node_modules/@agentclientprotocol/codex-acp/dist/index.js',
 )}`;
 const LOCAL_CODEX_APP_SERVER_COMMAND = `node ${path.resolve(
-  'openclaw-extensions/acpx/node_modules/@openai/codex/bin/codex.js',
+  'plugins/extensions/acpx/node_modules/@openai/codex/bin/codex.js',
 )} app-server`;
 // Legacy adapter subprocesses remain cleanup-owned during upgrades.
 const LOCAL_NODE_MODULES_CODEX_PLATFORM_COMMAND = path.resolve(
-  'openclaw-extensions/acpx/node_modules/@zed-industries/codex-acp-linux-x64/bin/codex-acp',
+  'plugins/extensions/acpx/node_modules/@zed-industries/codex-acp-linux-x64/bin/codex-acp',
 );
 
 type AcpxProcessInfo = Awaited<

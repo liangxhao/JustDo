@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 
-import { buildManagedSwarmWorkflowPluginEntries } from '../../../../openclaw-extensions/swarm-workflow/host/config';
+import { buildManagedSwarmWorkflowPluginEntries } from '../../../../plugins/extensions/swarm-workflow/host/config';
 
 it('projects only enabled, retained product assistants, deduplicating main', () => {
   const result = buildManagedSwarmWorkflowPluginEntries(

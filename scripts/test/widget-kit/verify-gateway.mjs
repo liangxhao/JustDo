@@ -527,7 +527,7 @@ function assertDispatcherHistory(history, docId) {
 try {
   await mkdir(state);
   await mkdir(workspace);
-  await cp(path.join(root, 'openclaw-extensions/widget-kit'), pluginRoot, { recursive: true });
+  await cp(path.join(root, 'plugins/extensions/widget-kit'), pluginRoot, { recursive: true });
   const print = console.log;
   try {
     console.log = () => {};

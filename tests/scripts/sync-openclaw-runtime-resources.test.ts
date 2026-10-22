@@ -156,7 +156,7 @@ test('stages all local extensions and installs only declared production dependen
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-resources-'));
   const repoRoot = path.join(tempRoot, 'repo');
   const runtimeRoot = path.join(tempRoot, 'runtime');
-  const extensionsRoot = path.join(repoRoot, 'openclaw-extensions');
+  const extensionsRoot = path.join(repoRoot, 'plugins/extensions');
   const targetRoot = path.join(runtimeRoot, 'dist', 'extensions');
   const installProductionDependencies = vi.fn(
     (extensionDir: string, _installTarget: { targetId: string; os: string; cpu: string }) => {
@@ -226,7 +226,7 @@ test('reuses locked target dependencies without reinstalling them', () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-resources-'));
   const repoRoot = path.join(tempRoot, 'repo');
   const runtimeRoot = path.join(tempRoot, 'runtime');
-  const extensionRoot = path.join(repoRoot, 'openclaw-extensions', 'with-dependency');
+  const extensionRoot = path.join(repoRoot, 'plugins/extensions', 'with-dependency');
   const targetRoot = path.join(runtimeRoot, 'dist', 'extensions', 'with-dependency');
   const installProductionDependencies = vi.fn(
     (extensionDir: string, _installTarget: { targetId: string; os: string; cpu: string }) => {
@@ -276,7 +276,7 @@ test('rebuilds an assembly when its installed dependency is incomplete', () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-resources-'));
   const repoRoot = path.join(tempRoot, 'repo');
   const runtimeRoot = path.join(tempRoot, 'runtime');
-  const extensionRoot = path.join(repoRoot, 'openclaw-extensions', 'with-dependency');
+  const extensionRoot = path.join(repoRoot, 'plugins/extensions', 'with-dependency');
   const targetDependencyRoot = path.join(
     runtimeRoot,
     'dist',
@@ -329,7 +329,7 @@ test('cleans an interrupted owned staging directory before synchronization', () 
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-resources-'));
   const repoRoot = path.join(tempRoot, 'repo');
   const runtimeRoot = path.join(tempRoot, 'runtime');
-  const sourceRoot = path.join(repoRoot, 'openclaw-extensions', 'dependency-free');
+  const sourceRoot = path.join(repoRoot, 'plugins/extensions', 'dependency-free');
   const residueRoot = path.join(
     runtimeRoot,
     'dist',
@@ -416,7 +416,7 @@ test.each(['openclaw-collaboration', 'third-party'])('retires only the former ap
   try {
     const repoRoot = path.join(tempRoot, 'repo');
     const runtimeRoot = path.join(tempRoot, 'runtime');
-    fs.mkdirSync(path.join(repoRoot, 'openclaw-extensions'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'plugins/extensions'), { recursive: true });
     const retired = path.join(runtimeRoot, 'dist', 'extensions', 'collaboration');
     fs.mkdirSync(retired, { recursive: true });
     fs.writeFileSync(path.join(retired, 'package.json'), JSON.stringify({ name: packageName }));

@@ -37,7 +37,7 @@ const AGENT_ID_PATTERN = /^[a-z][a-z0-9-]{0,63}$/u;
  * To ship another ACP agent, add one entry below. For an adapter implemented
  * as a bundled Node module, use NodeExecutable as the command and an
  * AcpxPluginRoot-relative entry file as the first argument. Then add the
- * package to openclaw-extensions/acpx/package.json and its display strings to
+ * package to plugins/extensions/acpx/package.json and its display strings to
  * both translation tables. See docs/developer-integration/external-agent-integration-guide.md.
  */
 export const defineExternalAgentCatalog = <const T extends readonly ExternalAgentDefinition[]>(

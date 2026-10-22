@@ -6,7 +6,7 @@ import { transformSync } from 'esbuild';
 import { expect, test } from 'vitest';
 
 test('scopes resolved dynamic MCP servers to the admitted session', () => {
-  const source = fs.readFileSync(path.resolve('openclaw-extensions/acpx/src/runtime.ts'), 'utf8');
+  const source = fs.readFileSync(path.resolve('plugins/extensions/acpx/src/runtime.ts'), 'utf8');
   const fn = source.match(/function withManagedToolsMcpSessionEnv\([^]*?\n\}\r?\n/)?.[0];
   expect(fn).toBeDefined();
   const code = transformSync(fn!, { loader: 'ts', target: 'node24' }).code;

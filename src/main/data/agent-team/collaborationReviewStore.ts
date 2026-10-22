@@ -1,1 +1,1 @@
-export * from '../../../../openclaw-extensions/agent-team/host/data/collaborationReviewStore';
+export * from '../../../../plugins/extensions/agent-team/host/data/collaborationReviewStore';

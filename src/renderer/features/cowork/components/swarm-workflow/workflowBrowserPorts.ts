@@ -1,4 +1,4 @@
-import type { WorkflowBrowserPorts } from '../../../../../../openclaw-extensions/swarm-workflow/browser/ports';
+import type { WorkflowBrowserPorts } from '../../../../../../plugins/extensions/swarm-workflow/browser/ports';
 
 // Resolve the live preload bridge on each call rather than retaining a controller or connection.
 export const workflowBrowserPorts: WorkflowBrowserPorts = {

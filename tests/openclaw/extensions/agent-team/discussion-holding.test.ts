@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { registerDiscussionHolding } from '../../../../openclaw-extensions/runtime-services/agent-team/discussion/discussion-holding';
+import { registerDiscussionHolding } from '../../../../plugins/extensions/runtime-services/agent-team/discussion/discussion-holding';
 import {
   serializeTeamDiscussionSend,
   TeamDiscussionGateway as Gateway,

@@ -1,6 +1,6 @@
-import { useSwarmWorkflowDiscovery as usePluginDiscovery } from '../../../../../../openclaw-extensions/swarm-workflow/browser/discovery';
-import type { WorkflowAvailability } from '../../../../../../openclaw-extensions/swarm-workflow/browser/ports';
-import { useWorkflowVisibility } from '../../../../../../openclaw-extensions/swarm-workflow/browser/visibility';
+import { useSwarmWorkflowDiscovery as usePluginDiscovery } from '../../../../../../plugins/extensions/swarm-workflow/browser/discovery';
+import type { WorkflowAvailability } from '../../../../../../plugins/extensions/swarm-workflow/browser/ports';
+import { useWorkflowVisibility } from '../../../../../../plugins/extensions/swarm-workflow/browser/visibility';
 import { workflowBrowserPorts } from './workflowBrowserPorts';
 
 export function useSwarmWorkflowDiscovery(

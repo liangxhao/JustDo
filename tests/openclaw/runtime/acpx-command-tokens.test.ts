@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import { describe, expect, test } from 'vitest';
 
-import { expandBundledAgentCommandValue } from '../../../openclaw-extensions/acpx/src/command-tokens';
+import { expandBundledAgentCommandValue } from '../../../plugins/extensions/acpx/src/command-tokens';
 
 describe('ACPX bundled Agent command tokens', () => {
   test('expands managed runtime paths without tokenizing spaces', () => {

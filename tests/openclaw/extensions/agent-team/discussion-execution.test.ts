@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import { executeGroupDiscussion } from '../../../../openclaw-extensions/agent-team/discussion/discussion-execution';
+import { executeGroupDiscussion } from '../../../../plugins/extensions/agent-team/discussion/discussion-execution';
 
 const sdk = vi.hoisted(() => ({
   dispatch: vi.fn(),

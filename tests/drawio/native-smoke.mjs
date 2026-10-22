@@ -71,7 +71,7 @@ try {
   const tool = materialized.tools.find(tool => tool.name.includes('create_diagram'));
   assert.ok(tool, 'Bundled tool is available to the model');
   const result = await tool.execute('diagram-offline-call', {
-    xml: fs.readFileSync(path.join(root, 'openclaw-extensions/drawio/tests/fixture.xml'), 'utf8'),
+    xml: fs.readFileSync(path.join(root, 'plugins/extensions/drawio/tests/fixture.xml'), 'utf8'),
     title: '采购审批流程',
   });
   const preview = result.details.mcpAppPreview;

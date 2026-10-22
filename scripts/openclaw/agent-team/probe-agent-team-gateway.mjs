@@ -248,7 +248,7 @@ buildSync({
 });
 mkdirSync(path.join(pluginPath, 'skills/agent-team'), { recursive: true });
 copyFileSync(
-  path.join(repoRoot, 'openclaw-extensions/agent-team/skills/agent-team/SKILL.md'),
+  path.join(repoRoot, 'plugins/extensions/agent-team/skills/agent-team/SKILL.md'),
   path.join(pluginPath, 'skills/agent-team/SKILL.md'),
 );
 writeFileSync(
@@ -260,7 +260,7 @@ writeFileSync(
   JSON.stringify({
     ...JSON.parse(
       readFileSync(
-        path.join(repoRoot, 'openclaw-extensions/agent-team/openclaw.plugin.json'),
+        path.join(repoRoot, 'plugins/extensions/agent-team/openclaw.plugin.json'),
         'utf8',
       ),
     ),
@@ -302,7 +302,7 @@ const planPath = path.join(bundledPath, 'plan-mode');
 mkdirSync(planPath);
 buildSync({
   absWorkingDir: repoRoot,
-  entryPoints: ['openclaw-extensions/plan-mode/index.ts'],
+  entryPoints: ['plugins/extensions/plan-mode/index.ts'],
   outfile: path.join(planPath, 'index.mjs'),
   bundle: true,
   platform: 'node',
@@ -314,7 +314,7 @@ writeFileSync(
   JSON.stringify({ name: 'plan-mode', type: 'module', openclaw: { extensions: ['./index.mjs'] } }),
 );
 copyFileSync(
-  'openclaw-extensions/plan-mode/openclaw.plugin.json',
+  'plugins/extensions/plan-mode/openclaw.plugin.json',
   path.join(planPath, 'openclaw.plugin.json'),
 );
 const cfg = {

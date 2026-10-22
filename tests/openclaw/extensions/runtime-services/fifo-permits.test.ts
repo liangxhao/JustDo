@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 
-import { FifoPermits } from '../../../../openclaw-extensions/runtime-services/concurrency/fifo-permits';
+import { FifoPermits } from '../../../../plugins/extensions/runtime-services/concurrency/fifo-permits';
 
 it('shares bounded capacity with FIFO waiters and idempotent releases', async () => {
   const permits = new FifoPermits(2, new AbortController().signal, () => new Error('cancelled'));

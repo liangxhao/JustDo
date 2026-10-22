@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { itemWorkspace } from '../../../openclaw-extensions/swarm-workflow/batch/snapshot';
-import type { Flow, FlowNode } from '../../../openclaw-extensions/swarm-workflow/contracts/flow';
+import { itemWorkspace } from '../../../plugins/extensions/swarm-workflow/batch/snapshot';
+import type { Flow, FlowNode } from '../../../plugins/extensions/swarm-workflow/contracts/flow';
 import { TASK_WORKSPACE_DIRECTORY } from '../../../src/shared/cowork/taskWorkspace';
 
 function fixture() {

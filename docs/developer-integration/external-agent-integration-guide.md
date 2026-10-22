@@ -28,7 +28,7 @@
 | 产品目录       | [externalAgentCatalog.ts](../../src/shared/integrations/externalAgentCatalog.ts)                                                                                                                                                     | 增加一项；类型、设置默认值和页面列表随目录派生                       |
 | 中英文说明     | [settingsTranslations.ts](../../src/renderer/services/i18n/settingsTranslations.ts)                                                                                                                                                  | 两种语言补齐同一个 `descriptionKey`                                  |
 | 图标与样式     | [ExternalAgentBrandIcon.tsx](../../src/renderer/features/settings/integrations/ExternalAgentBrandIcon.tsx)、[ExternalAgentsSettingsSection.tsx](../../src/renderer/features/settings/integrations/ExternalAgentsSettingsSection.tsx) | 增加图标分支和 `AGENT_ICON_STYLES` 项                                |
-| adapter 与依赖 | [ACPX 扩展](../../openclaw-extensions/acpx/README.md)                                                                                                                                                                                | 原生 CLI 可依赖部署方安装；内置 adapter 进入扩展源码或锁定的生产依赖 |
+| adapter 与依赖 | [ACPX 扩展](../../plugins/extensions/acpx/README.md)                                                                                                                                                                                | 原生 CLI 可依赖部署方安装；内置 adapter 进入扩展源码或锁定的生产依赖 |
 | 构建与归档检查 | [runtime 资源同步](../../scripts/openclaw/sync-openclaw-runtime-resources.cjs)、[打包校验](../../scripts/packaging/electron-builder-hooks.cjs)                                                                                       | 内置方案增加入口和目标平台必需文件校验；预安装方案记录环境前提       |
 
 仅增加目录项通常不需要新增 IPC、Redux slice、数据库表或手工追加 Agent 白名单。
@@ -129,7 +129,7 @@ Node.js 启动。依赖必须在构建阶段安装并进入最终安装包，运
 ### 方式 C：开发专用 adapter
 
 如果 Agent 不支持 ACP，也没有可用 adapter，在
-`openclaw-extensions/acpx/adapters/<agent-id>/` 下实现专用适配器。协议转换、认证衔接、
+`plugins/extensions/acpx/adapters/<agent-id>/` 下实现专用适配器。协议转换、认证衔接、
 Agent 特有的参数和兼容逻辑都应留在该目录，不要把 Agent 特例散落到设置页面或通用运行
 代码中。
 
@@ -400,11 +400,11 @@ Skill，需要单独设计显式的、安全的适配流程，不能把“已打
 
 ### 8.1 npm adapter
 
-1. 在 `openclaw-extensions/acpx/package.json` 中加入**精确版本**，不要使用 `^`、`~`、
+1. 在 `plugins/extensions/acpx/package.json` 中加入**精确版本**，不要使用 `^`、`~`、
    `latest` 或 git 浮动分支；
-2. 使用仓库要求的 Node.js/npm 版本，在 `openclaw-extensions/acpx/` 下重新生成
+2. 使用仓库要求的 Node.js/npm 版本，在 `plugins/extensions/acpx/` 下重新生成
    `package-lock.json`；
-3. 在 `openclaw-extensions/acpx/THIRD_PARTY_NOTICES.md` 中补充许可证和声明；
+3. 在 `plugins/extensions/acpx/THIRD_PARTY_NOTICES.md` 中补充许可证和声明；
 4. 如果包包含原生文件或平台可选依赖，更新
    `scripts/openclaw/sync-openclaw-runtime-resources.cjs` 的目标依赖/必需文件检查；
 5. 更新 `scripts/packaging/electron-builder-hooks.cjs` 的目录与安装包归档校验，使缺少 adapter 时构建
@@ -420,7 +420,7 @@ Skill，需要单独设计显式的、安全的适配流程，不能把“已打
 
 ### 8.2 仓库自带 adapter
 
-将源码放在 `openclaw-extensions/acpx/adapters/<agent-id>/`，确保扩展构建后生成稳定入口文件，
+将源码放在 `plugins/extensions/acpx/adapters/<agent-id>/`，确保扩展构建后生成稳定入口文件，
 并把该入口加入 runtime 同步检查和安装包检查。这样缺失文件会在发布阶段暴露，而不是等用户点击
 “测试”后才发现。
 
@@ -451,7 +451,7 @@ Skill，需要单独设计显式的、安全的适配流程，不能把“已打
 不使用上游 registry 的默认下载命令。准备诊断命令不会把该 Agent 加入任务准入集合。
 ACPX 封装基线为 OpenClaw v2026.10.4，独立运行库版本及离线依赖见
 [离线下载文档](../offline-downloads.md)，本地定制与上游来源见
-[ACPX 扩展](../../openclaw-extensions/acpx/README.md)。
+[ACPX 扩展](../../plugins/extensions/acpx/README.md)。
 
 测试具备以下特性：
 

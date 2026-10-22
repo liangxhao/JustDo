@@ -1,6 +1,6 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 
-import { registerScheduledTaskHistory } from '../../../../openclaw-extensions/runtime-services/scheduled-task-history';
+import { registerScheduledTaskHistory } from '../../../../plugins/extensions/runtime-services/scheduled-task-history';
 
 const sdk = vi.hoisted(() => ({ resolve: vi.fn(), read: vi.fn(), storePath: vi.fn() }));
 vi.mock('openclaw/plugin-sdk/session-store-paths', () => ({
