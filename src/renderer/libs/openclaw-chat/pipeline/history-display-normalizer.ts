@@ -10,6 +10,7 @@ import { normalizeTranscriptSessionKey } from '@/libs/openclaw-chat/model/chat-t
 import {
   FAILED_RUN_MESSAGE_FLAG,
   FAILED_RUN_MESSAGE_ID,
+  isFailedRunMessage,
   readNativeFailureDetails,
 } from '@/libs/openclaw-chat/model/turn/failed-run-message';
 import { isAssistantHeartbeatAckForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
@@ -637,10 +638,12 @@ function mergeMissingFailedRunMessages(
       const raw = asRecord(outer?.message) ?? outer;
       if (!outer || !raw) return false;
       if (outer[FAILED_RUN_MESSAGE_ID] === id || raw[FAILED_RUN_MESSAGE_ID] === id) return true;
+      if (record.runId) {
+        return isFailedRunMessage(message) && messageRunId(outer, raw) === record.runId;
+      }
       if (outer[FAILED_RUN_MESSAGE_FLAG] !== true && raw[FAILED_RUN_MESSAGE_FLAG] !== true) {
         return false;
       }
-      if (record.runId) return messageRunId(outer, raw) === record.runId;
       const timestamp = messageTimestamp(message);
       return timestamp !== null && Math.abs(timestamp - record.timestamp) < 60_000;
     });

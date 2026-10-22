@@ -612,6 +612,51 @@ describe('normalizeGatewayHistoryForDisplay', () => {
     });
   });
 
+  test.each([false, true])(
+    'keeps the native receipt instead of adding a local failure overlay (enveloped=%s)',
+    async enveloped => {
+      const storage = new Map<string, string>();
+      vi.stubGlobal('localStorage', {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => storage.set(key, value),
+      });
+      const timestamp = Date.now();
+      const sessionKey = 'agent:main:receipt-session';
+      const error = 'Persisted user turn changed before replay admission';
+      persistFailedRun({ sessionKey, runId: 'run-1', error, timestamp });
+      const receipt = {
+        role: 'custom',
+        customType: 'run-failed-before-reply',
+        content: `Your request couldn't be completed: ${error}`,
+        display: true,
+        timestamp,
+        __openclaw: { id: 'failure-receipt', runId: 'run-1' },
+      };
+      const history = [
+        { role: 'user', content: 'Continue', timestamp: timestamp - 100 },
+        enveloped ? { message: receipt } : receipt,
+      ];
+      const before = structuredClone(history);
+      const result = await normalizeGatewayHistoryForDisplay(history, { sessionKey });
+      expect(result).toEqual(before);
+      expect(history).toEqual(before);
+
+      const otherRun = { ...receipt, __openclaw: { id: 'other-receipt', runId: 'run-other' } };
+      const otherResult = await normalizeGatewayHistoryForDisplay([history[0], otherRun], {
+        sessionKey,
+      });
+      expect(otherResult).toHaveLength(3);
+      expect(otherResult).toContainEqual(otherRun);
+
+      persistFailedRun({ sessionKey, runId: null, error: 'Unscoped failure', timestamp });
+      const unscopedResult = await normalizeGatewayHistoryForDisplay(history, { sessionKey });
+      expect(unscopedResult).toHaveLength(3);
+      expect(unscopedResult).toContainEqual(
+        expect.objectContaining({ content: 'Unscoped failure', [FAILED_RUN_MESSAGE_FLAG]: true }),
+      );
+    },
+  );
+
   test('keeps a persisted failure independent of the session last error', async () => {
     const messages = await normalizeGatewayHistoryForDisplay(
       [

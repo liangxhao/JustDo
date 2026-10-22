@@ -257,6 +257,46 @@ transcriptPosition 来源去重、替换边界观察，不将同一条回复的�
 日志结束时再次核对绑定，发生变化就撤销提前历史结果。并行任务全部收尾前
 继续占用扫描并发额度并固定快照，不能在其中一项结束后提前释放。
 
+### 已保存用户轮次的准入错误
+
+`Persisted user turn changed before replay admission` 来自原生已持久化用户轮次的准入，
+不是 Renderer 或模型生成的错误文案。每次普通 durable attempt 准备时，只要具备原生
+target、带 idempotencyKey 的 prepared user 和 recorder，便会探测同一轮是否已经保存；
+并非只有用户点击重试或 Gateway 重启后才调用。第一次取得 witness 后，核心执行前
+还会重新读取并核对；没有初始 witness 时通常继续普通追加，但探测期间的版本竞争仍可报错。
+
+当前锁定 2026.10.4 的源码及 Windows x64 产物保留三个同文案抛错点：
+
+| 位置 | 精确拒绝条件 |
+| --- | --- |
+| `session-accessor.sqlite-current-turn.ts` 的 current-turn reader | 当前 generation、rawSeq 或 updatedAt 与准备快照不一致。rawSeq 来自 transcript 事件最大序号，updatedAt 是 transcript 更新时间。 |
+| `pre-persisted-user-turn.ts` 的第二次 readCurrentTurn | 无法重新找到匹配 user 的 witness，或 entryId / generation 不再匹配初始 anchor。 |
+| 同文件的 assertPreparedCurrentTurn | 已有 witness 后又回到 row 缺失、initialWriter 尚未提交且 transcript header 不存在的狭窄防御状态。普通 session/lifecycle/writer 失配通常先抛另一句 writer claim 错误。 |
+
+有源码和原生测试支撑的候选包括：异步快照与 entry 读取之间发生 transcript 追加；
+准备后有新输入实际占据当前轮次（包括不进模型上下文的隐藏 user）；已出现 final、
+reset、分支替换或历史重写；或导航碰到不能安全越过的未知 custom / 其它 run 活动。
+比较的是完整持久消息及身份，不只是屏幕上的文字。上述条件是可能路径，不证明
+某次故障发生了哪一种，也不能直接说明数据库损坏。
+
+正常的同轮中断尾部、已知 runtime/system update、metadata 和 compaction 有各自的
+受限导航规则。原生测试覆盖正常重复重启、pre-core compaction、成功 admit 后的内部
+重试及压缩；通常的 transient retry / overflow 会转为 internal prompt，并跳过原始
+prepared user。当前 030 工具格式纠正在同一个 native Agent loop 内进行，已删除旧的
+outer-attempt retry。不能仅凭故障前有压缩、模型重试或格式纠正就把它们定为根因。
+网络错误、模型 HTTP 错误、电脑慢和系统时钟变化也不是上述三个拒绝条件；它们可能
+影响准备流程或扩大时间窗口，仍需证实对应的历史或身份变化。
+
+排查应取得故障机器的应用版本、当时已加载 Gateway 身份、精确 run/session 与失败时间，
+并核对前后输入消费、attempt、retry、compaction、reset/分支及重启事件。现有 lane 和
+Embedded agent 错误日志通常只写消息摘要，不保证记录栈或 expected/current 版本值；
+因此诊断包也未必能区分三个位置，更不能从缺少记录推导没有写入。
+证据不足时需要可控复现，或在锁定运行时的准确边界增加不含正文的受限诊断。
+保留原生身份与恢复保护，不能通过自动重发或放宽检查来消除提示，避免再次执行已消费的旧请求。
+
+公开 `run-failed-before-reply` 回执在聊天中使用现有红色错误头像及错误行，
+不再进入未知 `custom` 角色的问号头像兜底。回执不替代整轮 lifecycle 的终态依据。
+
 ### 既有活动结果与失败回执契约
 
 本次按本地 `../openclaw` 的 `2026.9.8` 源码核对，确认两类漏诊来源：

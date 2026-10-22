@@ -808,39 +808,102 @@ describe('projectPersistedTimeline', () => {
     },
   );
 
-  test('attaches failed-run timing and model metadata to its persisted error row', () => {
-    const result = projectPersistedTimeline(
-      [
-        { role: 'user', content: 'continue', timestamp: 1_000 },
-        {
-          role: 'system',
-          content: 'Provider request failed.',
-          timestamp: 6_000,
-          __justdoFailedRunMessage: true,
-          runId: 'run-root',
-        },
-      ],
-      [
-        {
-          id: 'timing-1',
-          sessionId: 'session-1',
-          clientTurnId: 'run-root',
-          rootRunId: 'run-root',
-          modelRef: 'zcode/glm-5.3-flash',
-          startedAt: 1_000,
-          endedAt: 6_000,
-          state: 'failed',
-        },
-      ],
-    );
+  test.each(['system', 'custom'])(
+    'attaches exact failed-run timing to its persisted %s error row',
+    role => {
+      const result = projectPersistedTimeline(
+        [
+          { role: 'user', content: 'continue', timestamp: 1_000 },
+          {
+            role,
+            ...(role === 'custom'
+              ? { customType: 'run-failed-before-reply', display: true }
+              : { [FAILED_RUN_MESSAGE_FLAG]: true }),
+            content: 'Provider request failed.',
+            timestamp: 6_000,
+            runId: 'run-root',
+          },
+        ],
+        [
+          {
+            id: 'timing-1',
+            sessionId: 'session-1',
+            clientTurnId: 'run-root',
+            rootRunId: 'run-root',
+            modelRef: 'zcode/glm-5.3-flash',
+            startedAt: 1_000,
+            endedAt: 6_000,
+            state: 'failed',
+          },
+        ],
+      );
 
-    expect(result[1]).toMatchObject({
-      kind: 'history-message',
-      durationMs: 5_000,
-      completedAt: 6_000,
-      modelRef: 'zcode/glm-5.3-flash',
-    });
-  });
+      expect(result[1]).toMatchObject({
+        kind: 'history-message',
+        durationMs: 5_000,
+        completedAt: 6_000,
+        modelRef: 'zcode/glm-5.3-flash',
+      });
+    },
+  );
+
+  test.each(
+    ['run-previous', undefined].flatMap(previousRunId =>
+      ['run-background', undefined].map(receiptRunId => ({ previousRunId, receiptRunId })),
+    ),
+  )(
+    'does not borrow another timing for native failure $receiptRunId after $previousRunId',
+    ({ previousRunId, receiptRunId }) => {
+      const timing = {
+        id: 'timing-previous',
+        sessionId: 'session-1',
+        clientTurnId: 'run-previous',
+        rootRunId: 'run-previous',
+        modelRef: 'provider/previous-model',
+        startedAt: 1_000,
+        endedAt: 6_000,
+        state: 'completed' as const,
+      };
+      const receipt = {
+        role: 'custom',
+        customType: 'run-failed-before-reply',
+        content: 'Your request could not be completed.',
+        display: true,
+        timestamp: 7_000,
+        __openclaw: { id: 'failure-receipt', ...(receiptRunId ? { runId: receiptRunId } : {}) },
+      };
+      const result = projectPersistedTimeline(
+        [
+          {
+            role: 'user',
+            content: 'Previous request',
+            timestamp: 1_000,
+            ...(previousRunId ? { runId: previousRunId } : {}),
+          },
+          {
+            role: 'assistant',
+            content: 'Previous reply',
+            timestamp: 6_000,
+            ...(previousRunId ? { runId: previousRunId } : {}),
+          },
+          receipt,
+        ],
+        [timing],
+      );
+      expect(result[1]).toMatchObject({
+        kind: 'history-message',
+        durationMs: 5_000,
+        completedAt: 6_000,
+        modelRef: timing.modelRef,
+        runState: 'completed',
+      });
+      expect(result[2]).toMatchObject({ kind: 'history-message', message: receipt });
+      expect(result[2]).not.toHaveProperty('durationMs');
+      expect(result[2]).not.toHaveProperty('completedAt');
+      expect(result[2]).not.toHaveProperty('modelRef');
+      expect(result[2]).not.toHaveProperty('runState');
+    },
+  );
 
   test('does not associate a restarted receipt with a newer user turn', () => {
     const originalTurnStartedAt = 1_787_885_461_166;

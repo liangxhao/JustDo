@@ -48,10 +48,76 @@ describe('optimistic history tail ownership', () => {
     expect(state.activeTurn).toBeNull();
   });
 
-  test('keeps the whole-run error while displaying a differing native attempt diagnostic', () => {
+  test.each(['system', 'custom'])(
+    'keeps the whole-run error while displaying a differing native %s failure',
+    role => {
+      const state = createChatTranscriptState('session-1', 'sid-1');
+      const turn = beginAssistantTurn(state, { runId: 'run-current' }, dependencies);
+      const error = 'LLM request failed: provider rejected the request schema or tool payload.';
+      turn.status = 'error';
+      turn.items.push({
+        id: 'terminal',
+        runId: turn.runId,
+        firstSeq: 2,
+        lastSeq: 2,
+        startedAt: 1,
+        updatedAt: 2,
+        type: 'terminal',
+        status: 'error',
+        message: error,
+      });
+      const failure = {
+        role,
+        ...(role === 'custom' ? { customType: 'run-failed-before-reply', display: true } : {}),
+        content: '400 provider schema detail.',
+        errorMessage: '400 provider schema detail.',
+        isError: true,
+        stopReason: 'error',
+        __openclaw: { id: 'native-failure', seq: 4, runId: turn.runId },
+      };
+      expect(retireSettledActiveTurn(state, [failure])).toBe(false);
+      expect(projectPersistedMessagesForActiveTurn([failure], turn)).toEqual([failure]);
+      expect(
+        projectPersistedMessagesForActiveTurn([failure], { ...turn, status: 'running' }),
+      ).toEqual([]);
+      expect(
+        projectPersistedMessagesForActiveTurn([markOptimisticHistoryTail(failure)], turn),
+      ).toEqual([]);
+      expect(
+        projectPersistedMessagesForActiveTurn(
+          [{ ...failure, __openclaw: { runId: turn.runId } }],
+          turn,
+        ),
+      ).toEqual([]);
+      const partialAssistant = {
+        ...failure,
+        role: 'assistant',
+        content: 'partial reply already projected live',
+      };
+      expect(projectPersistedMessagesForActiveTurn([partialAssistant], turn)).toEqual([]);
+      expect(
+        projectPersistedMessagesForActiveTurn(
+          [
+            {
+              ...partialAssistant,
+              content: [
+                { type: 'thinking', thinking: 'Recovered reasoning' },
+                { type: 'text', text: 'Partial reply already projected live' },
+              ],
+            },
+          ],
+          turn,
+        ),
+      ).toEqual([]);
+      expect(state.activeTurn).toBe(turn);
+      expect(turn.items).toMatchObject([{ type: 'terminal', message: error }]);
+    },
+  );
+
+  test('hands a matching live error over to its native custom failure receipt', () => {
     const state = createChatTranscriptState('session-1', 'sid-1');
     const turn = beginAssistantTurn(state, { runId: 'run-current' }, dependencies);
-    const error = 'LLM request failed: provider rejected the request schema or tool payload.';
+    const error = 'Persisted user turn changed before replay admission';
     turn.status = 'error';
     turn.items.push({
       id: 'terminal',
@@ -64,47 +130,24 @@ describe('optimistic history tail ownership', () => {
       status: 'error',
       message: error,
     });
-    const failure = {
-      role: 'system',
-      content: '400 provider schema detail.',
-      errorMessage: '400 provider schema detail.',
-      isError: true,
-      stopReason: 'error',
-      __openclaw: { id: 'native-failure', seq: 4, runId: turn.runId },
+    const receipt = {
+      role: 'custom',
+      customType: 'run-failed-before-reply',
+      content: `Your request couldn't be completed: ${error}`,
+      display: true,
+      __openclaw: { id: 'failure-receipt', runId: turn.runId },
     };
-    expect(retireSettledActiveTurn(state, [failure])).toBe(false);
-    expect(projectPersistedMessagesForActiveTurn([failure], turn)).toEqual([failure]);
+    expect(retireSettledActiveTurn(state, [{ ...receipt, __openclaw: { id: 'unbound' } }])).toBe(
+      false,
+    );
     expect(
-      projectPersistedMessagesForActiveTurn([markOptimisticHistoryTail(failure)], turn),
-    ).toEqual([]);
-    expect(
-      projectPersistedMessagesForActiveTurn(
-        [{ ...failure, __openclaw: { runId: turn.runId } }],
-        turn,
-      ),
-    ).toEqual([]);
-    const partialAssistant = {
-      ...failure,
-      role: 'assistant',
-      content: 'partial reply already projected live',
-    };
-    expect(projectPersistedMessagesForActiveTurn([partialAssistant], turn)).toEqual([]);
-    expect(
-      projectPersistedMessagesForActiveTurn(
-        [
-          {
-            ...partialAssistant,
-            content: [
-              { type: 'thinking', thinking: 'Recovered reasoning' },
-              { type: 'text', text: 'Partial reply already projected live' },
-            ],
-          },
-        ],
-        turn,
-      ),
-    ).toEqual([]);
-    expect(state.activeTurn).toBe(turn);
-    expect(turn.items).toMatchObject([{ type: 'terminal', message: error }]);
+      retireSettledActiveTurn(state, [
+        { ...receipt, __openclaw: { id: 'other', runId: 'run-other' } },
+      ]),
+    ).toBe(false);
+    expect(retireSettledActiveTurn(state, [receipt])).toBe(true);
+    expect(state.activeTurn).toBeNull();
+    expect(projectPersistedMessagesForActiveTurn([receipt], state.activeTurn)).toEqual([receipt]);
   });
 
   test('hides authoritative messages already represented by a running tool turn', () => {

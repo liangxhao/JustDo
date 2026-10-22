@@ -121,7 +121,8 @@ export function projectPersistedMessagesForActiveTurn<T>(
   // but leave the active turn as the sole visible owner until that projection
   // retires so Content/Tool output is never rendered twice.
   let projected = messages.filter(message => {
-    if (messageRole(message) === 'user') return true;
+    const role = messageRole(message);
+    if (role === 'user') return true;
     // Followup inputs can be persisted while this run still owns its output.
     // Exact run ownership must survive a later user row in the same transcript.
     if (isTurnCompactionMessage(activeTurn, message)) return false;
@@ -129,14 +130,14 @@ export function projectPersistedMessagesForActiveTurn<T>(
     // Persisted diagnostics can describe a model attempt rather than the
     // whole-run failure. Show the native diagnostic alongside the retained
     // terminal explanation without allowing it to replace that explanation.
-    // Only normalized error rows are admitted here; assistant partial text
-    // remains owned by the live turn and must not be rendered twice.
+    // Only normalized error rows and native failure receipts are admitted here;
+    // assistant partial text remains owned by the live turn.
     const identity = readTranscriptIdentity(message);
     return (
       activeTurn.status === 'error' &&
       identity?.kind.startsWith('openclaw-') === true &&
       !isLocallyOptimisticHistoryTail(message) &&
-      messageRole(message) === 'system' &&
+      (role === 'system' || role === 'custom') &&
       isRunFailureMessage(message)
     );
   });

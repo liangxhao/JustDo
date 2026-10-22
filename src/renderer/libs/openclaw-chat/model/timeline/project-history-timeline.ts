@@ -746,16 +746,19 @@ export function projectPersistedTimeline(
       lastTimedMessage = null;
     }
     const failedRunMessage = isFailedRunMessage(outerMessage);
+    // Failure receipts can belong to background runs between user turns.
+    // Only their exact run timing may supply an outcome/model footer.
+    const displayTiming = failedRunMessage ? matchingTiming : activeTiming;
     const durationMs =
       (failedRunMessage ||
         (role === 'assistant' &&
           (!isGatewayInjectedAssistant(outer, message) || runId.startsWith('announce:v1:')))) &&
-      activeTiming?.endedAt !== undefined
-        ? Math.max(0, activeTiming.endedAt - activeTiming.startedAt)
+      displayTiming?.endedAt !== undefined
+        ? Math.max(0, displayTiming.endedAt - displayTiming.startedAt)
         : undefined;
-    const completedAt = durationMs === undefined ? undefined : activeTiming?.endedAt;
-    const modelRef = durationMs === undefined ? undefined : activeTiming?.modelRef;
-    const runState = durationMs === undefined ? undefined : activeTiming?.state;
+    const completedAt = durationMs === undefined ? undefined : displayTiming?.endedAt;
+    const modelRef = durationMs === undefined ? undefined : displayTiming?.modelRef;
+    const runState = durationMs === undefined ? undefined : displayTiming?.state;
     const attachments = [
       ...attachedToolMessages(message),
       ...(message === outer ? [] : attachedToolMessages(outer)),

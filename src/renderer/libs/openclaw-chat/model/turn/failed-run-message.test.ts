@@ -3,6 +3,8 @@ import { expect, test } from 'vitest';
 import type { AssistantTurn } from '../chat-transcript-state';
 import {
   FAILED_RUN_MESSAGE_FLAG,
+  isFailedRunMessage,
+  readFailedRunMessageText,
   readNativeFailureDetails,
   readUncoveredFailureDetail,
   withFailureDetailsForDisplay,
@@ -16,6 +18,66 @@ const nativeFailure = {
   errorMessage: detail,
   __openclaw: { id: 'message-1', runId: 'run-1' },
 };
+
+test.each([false, true])(
+  'recognizes native pre-reply failure receipts (enveloped=%s)',
+  enveloped => {
+    const receipt = {
+      role: 'custom',
+      customType: 'run-failed-before-reply',
+      content:
+        "Your request couldn't be completed: Persisted user turn changed before replay admission",
+      display: true,
+      __openclaw: { id: 'failure-receipt', runId: 'run-1' },
+    };
+    expect(isFailedRunMessage(enveloped ? { message: receipt } : receipt)).toBe(true);
+    for (const message of [
+      { ...receipt, role: 'assistant' },
+      { ...receipt, role: 'user' },
+      { ...receipt, customType: 'another-notice', isError: true },
+      { ...receipt, customType: undefined },
+    ]) {
+      expect(isFailedRunMessage(enveloped ? { message } : message)).toBe(false);
+    }
+  },
+);
+
+test.each([false, true])(
+  'keeps only the public native contention diagnostic (enveloped=%s)',
+  enveloped => {
+    const summary =
+      'Your request was interrupted while the server was busy. Check its status before trying again.';
+    const diagnostic =
+      'SQLite transaction admission remained busy. Execution may have occurred; check the recorded outcome before resending.';
+    const receipt = {
+      role: 'custom',
+      customType: 'run-failed-before-reply',
+      content: summary,
+      details: { errorKind: 'state_contention', diagnostic, error: 'Private report detail' },
+    };
+    const wrap = (message: unknown) => (enveloped ? { message } : message);
+    expect(readFailedRunMessageText(wrap(receipt))).toBe(`${summary}\n${diagnostic}`);
+    expect(
+      readFailedRunMessageText(wrap({ ...receipt, content: [{ type: 'text', text: summary }] })),
+    ).toBe(`${summary}\n${diagnostic}`);
+    expect(
+      readFailedRunMessageText(wrap({ ...receipt, content: `${summary}\n${diagnostic}` })),
+    ).toBe(`${summary}\n${diagnostic}`);
+    expect(readFailedRunMessageText(wrap({ ...receipt, customType: 'another-notice' }))).toBe(
+      summary,
+    );
+    expect(
+      readFailedRunMessageText(
+        wrap({ ...receipt, details: { ...receipt.details, errorKind: 'unknown' } }),
+      ),
+    ).toBe(summary);
+    expect(
+      readFailedRunMessageText(
+        wrap({ ...receipt, details: { ...receipt.details, diagnostic: 'x'.repeat(5000) } }),
+      ),
+    ).toBe(`${summary}\n${'x'.repeat(2000)}`);
+  },
+);
 
 test('collects only exact native run diagnostics and preserves partial reply identity', () => {
   const messages = [
