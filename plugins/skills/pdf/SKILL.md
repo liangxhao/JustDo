@@ -8,9 +8,9 @@ license: Proprietary. LICENSE.txt has complete terms
 
 ## Overview
 
-This guide covers essential PDF processing operations using Python libraries. For advanced features and detailed examples, see REFERENCE.md. If you need to fill out a PDF form, read FORMS.md and follow its instructions.
+This guide covers essential PDF processing operations using Python libraries. For advanced features and detailed examples, see reference.md. If you need to fill out a PDF form, read forms.md and follow its instructions.
 
-The bundled Python runtime provides `pypdf`. Install additional Python packages with `python -m pip install <package>` only when the current task needs them. Do not rely on system programs or services that cannot be installed as Python packages.
+The bundled Python runtime provides `pypdf`. Install additional Python packages with `python -m pip install <package>` only when the task needs them, using the configured internal index or local wheels; do not add public indexes or download system applications. Do not rely on system programs or services that cannot be installed as Python packages.
 
 ## Quick Start
 
@@ -197,7 +197,7 @@ import numpy as np
 import pypdfium2 as pdfium
 from rapidocr_onnxruntime import RapidOCR
 
-engine = RapidOCR()
+engine = RapidOCR()  # Use only model assets already shipped with the installed package.
 pdf = pdfium.PdfDocument("scanned.pdf")
 pages = []
 for i, page in enumerate(pdf):
@@ -268,10 +268,10 @@ with open("encrypted.pdf", "wb") as output:
 | Extract tables | pdfplumber | `page.extract_tables()` |
 | Create PDFs | reportlab | Canvas or Platypus |
 | OCR scanned PDFs | pypdfium2 + rapidocr-onnxruntime | Render each page, then OCR |
-| Fill PDF forms | pypdf (see FORMS.md) | See FORMS.md |
+| Fill PDF forms | pypdf (see forms.md) | See forms.md |
 
 ## Next Steps
 
-- For advanced pypdfium2 usage, see REFERENCE.md
-- If you need to fill out a PDF form, follow the instructions in FORMS.md
-- For troubleshooting guides, see REFERENCE.md
+- For advanced pypdfium2 usage, see reference.md
+- If you need to fill out a PDF form, follow the instructions in forms.md
+- For troubleshooting guides, see reference.md

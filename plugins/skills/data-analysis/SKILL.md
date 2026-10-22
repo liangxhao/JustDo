@@ -1,8 +1,14 @@
 ---
 name: data-analysis
 description: "Data analysis and visualization. Query databases, generate reports, automate spreadsheets, and turn raw data into clear, actionable insights. Use when (1) you need to analyze, visualize, or explain data; (2) the user wants reports, dashboards, or metrics turned into a decision; (3) the work involves SQL, Python, spreadsheets, BI tools, or notebooks; (4) you need to compare segments, cohorts, funnels, experiments, or time periods; (5) the user explicitly installs or references the skill for the current task."
-metadata: {"clawdbot":{"emoji":"D","requires":{"bins":[]},"os":["linux","darwin","win32"]}}
+license: MIT-0
+metadata: {"openclaw":{"emoji":"D","requires":{"bins":[]}}}
 ---
+
+## Runtime
+
+Use the bundled Python runtime, standard library, and `openpyxl` when sufficient. Install missing Python packages only from the configured internal index or local wheels; do not add public services or require system application installation.
+
 
 ## When to Use
 
@@ -146,3 +152,11 @@ This skill does NOT:
 - Create or depend on local folder systems for persistence.
 - Create automations or background jobs without explicit user confirmation.
 - Rewrite its own instruction source files.
+
+## Related Skills
+Use these related skills when they are already available in the current runtime:
+- `sql` - query design and review for reliable data extraction.
+- `csv` - cleanup and normalization for tabular inputs before analysis.
+- `dashboard` - implementation patterns for KPI visualization layers.
+- `report` - structured stakeholder-facing deliverables after analysis.
+- `business-intelligence` - KPI systems and operating cadence beyond one-off analysis.

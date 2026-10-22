@@ -4,6 +4,7 @@ Regression tests for skill packaging security behavior.
 """
 
 import sys
+import subprocess
 import tempfile
 import types
 import zipfile
@@ -47,6 +48,21 @@ class TestPackageSkillSecurity(TestCase):
         (skill_dir / "SKILL.md").write_text("---\nname: test-skill\ndescription: test\n---\n")
         (skill_dir / "script.py").write_text("print('ok')\n")
         return skill_dir
+
+    def test_cli_resolves_sibling_validator_in_embedded_python(self):
+        skill_dir = self.create_skill("cli-skill")
+        out_dir = self.temp_dir / "中文 输出"
+
+        result = subprocess.run(
+            [sys.executable, "-X", "utf8", str(SCRIPT_DIR / "package_skill.py"),
+             str(skill_dir), str(out_dir)],
+            cwd=self.temp_dir, capture_output=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+        with zipfile.ZipFile(out_dir / "cli-skill.skill") as archive:
+            self.assertEqual(archive.read("cli-skill/script.py"), (skill_dir / "script.py").read_bytes())
+            self.assertIn("cli-skill/SKILL.md", archive.namelist())
 
     def test_packages_normal_files(self):
         skill_dir = self.create_skill("normal-skill")

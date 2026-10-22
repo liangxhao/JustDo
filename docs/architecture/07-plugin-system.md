@@ -198,6 +198,8 @@ shutdown 和进程清理；清理失败必须向宿主报告，不能当作成�
 
 内置 manifest 有 8 个默认启用项：data-analysis、diagram-design、frontend-design、docx、pdf、pptx、skill-creator、xlsx。v2 manifest 通过 `openclaw.skills` 和 `openclaw.custodianSkills` 显式选择上游技能：分别保留 `coding-agent` 和 `diagnose-gateway`，其余上游技能不打包。系统维护技能留在原生 `custodian-skills/`，仅由系统 Agent（应用配置为 `main`）发现。安装和打包共用同一筛选逻辑，所有选中源校验通过后才清理目录；缺失上游技能时必须从锁定的原始包重建运行时，不能静默跳过。打包资源必须与 manifest 一致；数量不应散落在 UI 常量中。
 
+独立技能保留上游正文及配套资源，仅调整实际宿主与内网约束。manifest 的 `upstream` 字段记录维护基线，不参与原生状态判断；具体来源和适配见[内置 Skill](../features/plugins/bundled-skills.md)。Python 可选依赖只使用已配置的内网源或离线 wheel，不要求安装外部系统应用。绘图 HTML/SVG 默认使用本地字体，PNG 通过已安装的 Edge 离线导出；未执行的渲染、重算和视觉检查不得报告为已通过。
+
 技能列表和详情使用 Gateway 状态，详情提供有权限的启用／关闭入口，并在更新后显示最新状态与缺失依赖。若原生技能要求显式开启自身的 `skills.entries.<skillKey>.enabled`（如 `coding-agent`），Main 在该条件缺失时显示未启用，即使原生 `disabled` 为 false；其他缺失依赖只影响可用性，不改变启用状态。用户启用仍通过原生 `skills.update` 保存，应用不默认开启或绕过原生技能要求。
 该开关同样适用于 `plugin-skills` 中由扩展提供的技能：只更新原生 `skills.entries.<skillKey>.enabled` 并回读确认，不写产品 Store，也不修改扩展文件；其删除和文件配置权限仍由父扩展保留。扩展 Hook 则受原生策略限制，仍以父扩展为启停 owner。
 

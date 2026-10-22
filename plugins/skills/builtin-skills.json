@@ -4,35 +4,74 @@
   "skills": [
     {
       "id": "data-analysis",
-      "enabled": true
+      "enabled": true,
+      "upstream": {
+        "url": "https://clawhub.ai/ivangdavila/skills/data-analysis",
+        "version": "1.0.2",
+        "archiveSha256": "3e42a70ca22162106b503d11c6033d693d1567ed59b9ca76cb640cba332fe50f"
+      }
     },
     {
       "id": "diagram-design",
-      "enabled": true
+      "enabled": true,
+      "upstream": {
+        "url": "https://github.com/cathrynlavery/diagram-design",
+        "revision": "7a12007b5a4246894f342a2e52e78facbc62eca3",
+        "version": "2.6"
+      }
     },
     {
       "id": "frontend-design",
-      "enabled": true
+      "enabled": true,
+      "upstream": {
+        "url": "https://github.com/anthropics/skills/tree/main/skills/frontend-design",
+        "revision": "dbd4588f9e1033efb41dad4bef2f7947c8993d44"
+      }
     },
     {
       "id": "docx",
-      "enabled": true
+      "enabled": true,
+      "upstream": {
+        "url": "https://clawhub.ai/ivangdavila/skills/word-docx",
+        "version": "1.0.2",
+        "archiveSha256": "433c586060f4e30d7c16e3a81b51eea994dfc12a0c131c05723d2414327499c7"
+      }
     },
     {
       "id": "pdf",
-      "enabled": true
+      "enabled": true,
+      "upstream": {
+        "url": "https://github.com/anthropics/skills/tree/main/skills/pdf",
+        "reviewedRevision": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+        "strategy": "preserve-python-adaptation"
+      }
     },
     {
       "id": "pptx",
-      "enabled": true
+      "enabled": true,
+      "upstream": {
+        "url": "https://clawhub.ai/ivangdavila/skills/powerpoint-pptx",
+        "version": "1.0.1",
+        "archiveSha256": "f487c4962fb1e9d3b9553a9ad7b9ab2f8dead97afb7ec569c7253fe9dc477d1c"
+      }
     },
     {
       "id": "skill-creator",
-      "enabled": true
+      "enabled": true,
+      "upstream": {
+        "url": "https://github.com/anthropics/skills/tree/main/skills/skill-creator",
+        "reviewedRevision": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+        "strategy": "preserve-native-workshop-adaptation"
+      }
     },
     {
       "id": "xlsx",
-      "enabled": true
+      "enabled": true,
+      "upstream": {
+        "url": "https://clawhub.ai/ivangdavila/skills/excel-xlsx",
+        "version": "1.0.2",
+        "archiveSha256": "c3f33f6559f899573ae8a12c206ce5f3c4647a6c1fefd5ce569292fe5f4344ec"
+      }
     }
   ],
   "openclaw": {

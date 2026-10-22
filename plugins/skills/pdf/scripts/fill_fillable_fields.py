@@ -1,15 +1,18 @@
 import json
 import sys
+from pathlib import Path
 
 from pypdf import PdfReader, PdfWriter
 
+# Embedded Python does not automatically add the script directory to sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from extract_form_field_info import get_field_info
 
 
 
 
 def fill_pdf_fields(input_pdf_path: str, fields_json_path: str, output_pdf_path: str):
-    with open(fields_json_path) as f:
+    with open(fields_json_path, "r", encoding="utf-8") as f:
         fields = json.load(f)
     fields_by_page = {}
     for field in fields:
@@ -19,7 +22,7 @@ def fill_pdf_fields(input_pdf_path: str, fields_json_path: str, output_pdf_path:
             if page not in fields_by_page:
                 fields_by_page[page] = {}
             fields_by_page[page][field_id] = field["value"]
-    
+
     reader = PdfReader(input_pdf_path)
 
     has_error = False
@@ -47,7 +50,7 @@ def fill_pdf_fields(input_pdf_path: str, fields_json_path: str, output_pdf_path:
         writer.update_page_form_field_values(writer.pages[page - 1], field_values, auto_regenerate=False)
 
     writer.set_need_appearances_writer(True)
-    
+
     with open(output_pdf_path, "wb") as f:
         writer.write(f)
 
@@ -63,7 +66,7 @@ def validation_error_for_field_value(field_info, field_value):
     elif field_type == "radio_group":
         option_values = [opt["value"] for opt in field_info["radio_options"]]
         if field_value not in option_values:
-            return f'ERROR: Invalid value "{field_value}" for radio group field "{field_id}". Valid values are: {option_values}' 
+            return f'ERROR: Invalid value "{field_value}" for radio group field "{field_id}". Valid values are: {option_values}'
     elif field_type == "choice":
         choice_values = [opt["value"] for opt in field_info["choice_options"]]
         if field_value not in choice_values:
