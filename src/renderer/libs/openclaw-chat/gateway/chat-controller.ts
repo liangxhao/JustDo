@@ -142,12 +142,18 @@ import {
   restoreInFlightContent,
 } from '@/libs/openclaw-chat/model/turn/agent-event-reducer';
 import {
-  normalizeRunRetryProgress,
-  normalizeRunRetryReason,
+  advanceRunActivity,
+  createRunActivity,
   RUN_PROBE_INTERVAL_MS,
   RUN_STALL_NOTICE_MS,
+  type RunActivityOptions,
   type RunProgressStage,
 } from '@/libs/openclaw-chat/model/turn/run-activity';
+import {
+  readCommandOutputActivity,
+  readRunningToolActivity,
+  readRunProgress,
+} from '@/libs/openclaw-chat/model/turn/run-progress';
 import {
   persistFailedRun,
   projectGatewayHistoryForDisplay,
@@ -615,32 +621,14 @@ export class ChatController {
   private beginRunActivity(runId: string, startedAt = Date.now()): void {
     this.clearRunActivityTimer();
     this.runProbeToken = null;
-    this.state.runActivity = {
-      runId,
-      stage: 'starting',
-      startedAt,
-      stageChangedAt: startedAt,
-      lastAgentEventAt: startedAt,
-      lastModelActivityAt: null,
-      hasRunningTool: false,
-      activeRunConfirmedAt: null,
-      probeState: 'idle',
-    };
+    this.state.runActivity = createRunActivity(runId, startedAt);
     this.scheduleRunActivityCheck();
   }
 
   private updateRunActivity(
     runId: string,
     stage: RunProgressStage,
-    options: {
-      modelActivity?: boolean;
-      provider?: string;
-      model?: string;
-      retryReason?: unknown;
-      retryAttempt?: unknown;
-      maxRetries?: unknown;
-      at?: number;
-    } = {},
+    options: RunActivityOptions = {},
   ): void {
     const at = options.at ?? Date.now();
     let activity = this.state.runActivity;
@@ -654,16 +642,15 @@ export class ChatController {
       activity.runId = runId;
     }
     const stageChanged = activity.stage !== stage;
-    if (stageChanged) {
-      activity.stage = stage;
-      activity.stageChangedAt = at;
-    }
-    activity.lastAgentEventAt = at;
-    activity.hasRunningTool = [...(this.state.transcript.activeTurn?.toolById.values() ?? [])].some(
-      tool => tool.status === 'running',
+    activity = advanceRunActivity(
+      activity,
+      stage,
+      { ...options, at },
+      [...(this.state.transcript.activeTurn?.toolById.values() ?? [])].some(
+        tool => tool.status === 'running',
+      ),
     );
-    if (options.provider) activity.provider = options.provider;
-    if (options.model) activity.model = options.model;
+    this.state.runActivity = activity;
     const modelRef = modelRefFromIdentity(activity.model, activity.provider);
     const activeTurn = this.state.transcript.activeTurn;
     if (
@@ -673,28 +660,7 @@ export class ChatController {
     ) {
       activeTurn.modelRef = modelRef;
     }
-    if (stage === 'retrying' && options.retryReason !== undefined) {
-      activity.retryReason = normalizeRunRetryReason(options.retryReason);
-    } else if (stage !== 'retrying') {
-      delete activity.retryReason;
-    }
-    const retryProgress =
-      stage === 'retrying'
-        ? normalizeRunRetryProgress(activity.retryReason, options.retryAttempt, options.maxRetries)
-        : undefined;
-    if (retryProgress) {
-      activity.retryAttempt = retryProgress.retryAttempt;
-      activity.maxRetries = retryProgress.maxRetries;
-    } else {
-      delete activity.retryAttempt;
-      delete activity.maxRetries;
-    }
-    if (options.modelActivity) {
-      activity.lastModelActivityAt = at;
-    }
     if (options.modelActivity || stageChanged) {
-      activity.probeState = 'idle';
-      activity.activeRunConfirmedAt = null;
       this.scheduleRunActivityCheck();
     }
   }
@@ -1617,6 +1583,10 @@ export class ChatController {
     ) {
       return;
     }
+    const previousHighWater = Math.max(
+      cached.transcript.activeTurn?.lastAgentSeq ?? -1,
+      cached.transcript.activeTurn?.lastSnapshotAgentSeq ?? -1,
+    );
     const reduceResult = reduceAgentEvent(cached.transcript, event, this.transcriptDependencies, {
       allowSequenceBackfill:
         event.deliveryEvent === 'session.tool' || hasStableProgressOwner(event),
@@ -1630,7 +1600,8 @@ export class ChatController {
         transcript,
         client,
         dependencies: this.transcriptDependencies,
-        isCurrent: () => this.state.client === client &&
+        isCurrent: () =>
+          this.state.client === client &&
           this.findLiveSessionState(sessionKey, event.sessionId)?.[1] === cached &&
           cached.transcript === transcript,
         notify: () => {
@@ -1644,6 +1615,43 @@ export class ChatController {
     }
     if (reduceResult !== 'applied') return;
 
+    const tools = cached.transcript.activeTurn?.toolById;
+    const phase = event.data.phase;
+    let progress = readRunProgress(event.stream, event.data);
+    if (event.stream === 'thinking' || (event.stream === 'assistant' && backgroundAssistantText)) {
+      progress = {
+        stage: event.stream === 'thinking' ? 'thinking' : 'responding',
+        modelActivity: true,
+      };
+    } else if (event.stream === 'tool' && phase !== 'input_delta') {
+      progress = readRunningToolActivity(tools);
+    } else if (event.stream === 'item' && readToolProgressText(event.data) !== null) {
+      const tool =
+        typeof event.data.toolCallId === 'string' ? tools?.get(event.data.toolCallId) : undefined;
+      if (tool?.status === 'running') progress = readRunningToolActivity(tools, tool.toolCallId);
+    } else if (event.stream === 'command_output') {
+      progress = readCommandOutputActivity(tools, event.data);
+    } else if (
+      event.stream === 'compaction' &&
+      ['start', 'update', 'end', 'error', 'failed'].includes(String(phase))
+    ) {
+      progress = {
+        stage: phase === 'start' || phase === 'update' ? 'compacting' : 'waiting-model',
+      };
+    }
+    if (progress && event.agentSeq > previousHighWater) {
+      const { stage, ...options } = progress;
+      cached.chatSending = true;
+      cached.chatRunId = event.runId;
+      cached.runActivity = advanceRunActivity(
+        cached.runActivity?.runId === event.runId
+          ? cached.runActivity
+          : createRunActivity(event.runId, event.timestamp),
+        stage,
+        { ...options, at: options.at ?? event.timestamp },
+        [...(tools?.values() ?? [])].some(tool => tool.status === 'running'),
+      );
+    }
     if (event.stream === 'compaction') {
       const phase = typeof event.data.phase === 'string' ? event.data.phase : '';
       this.handleCompactionPhase(phase, sessionKey, event.data);
@@ -1668,15 +1676,19 @@ export class ChatController {
       cached.chatSending = true;
       cached.chatRunId = event.runId;
     }
-    if (event.stream === 'assistant' && hasSelectedAssistantTextSource(
-      cached.transcript.activeTurn, event.data, backgroundAssistantText,
-    )) {
+    if (
+      event.stream === 'assistant' &&
+      hasSelectedAssistantTextSource(
+        cached.transcript.activeTurn,
+        event.data,
+        backgroundAssistantText,
+      )
+    ) {
       cached.assistantSnapshotRunId = event.runId;
       cached.ignoredDeltaAfterAssistantSnapshotCount = 0;
     }
     if (event.stream !== 'lifecycle') return;
 
-    const phase = typeof event.data.phase === 'string' ? event.data.phase : '';
     if (phase === 'start') cached.terminalLifecycleSeen = false;
     if (phase === 'end' && event.data.aborted === true) {
       this.applyBackgroundChatEvent({
@@ -1780,7 +1792,10 @@ export class ChatController {
     options: { replaySnapshot?: boolean } = {},
   ): void {
     const previousTurn = this.state.transcript.activeTurn;
-    const previousHighWater = previousTurn?.runId === event.runId ? previousTurn.lastAgentSeq : -1;
+    const previousHighWater =
+      previousTurn?.runId === event.runId
+        ? Math.max(previousTurn.lastAgentSeq, previousTurn.lastSnapshotAgentSeq ?? -1)
+        : -1;
     const reduceResult = reduceAgentEvent(
       this.state.transcript,
       event,
@@ -1942,6 +1957,7 @@ export class ChatController {
         replayEvent.stream !== 'thinking' &&
         replayEvent.stream !== 'assistant' &&
         replayEvent.stream !== 'tool' &&
+        !readRunProgress(replayEvent.stream, replayEvent.data ?? {}) &&
         !(
           replayEvent.stream === 'item' &&
           (readPreambleText(replayEvent.data ?? {}) !== null ||

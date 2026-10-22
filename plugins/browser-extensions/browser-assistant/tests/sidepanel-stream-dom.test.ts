@@ -77,6 +77,41 @@ describe('extension streaming DOM', () => {
     return { thread, respond, emit };
   }
 
+  it('waits for native tool start before displaying streamed argument previews as a tool', async () => {
+    const { emit } = await mountThread();
+    emit(1, 'thinking', { text: 'Preparing the tool input' });
+    await vi.waitFor(() =>
+      expect(document.querySelector('.message-detail')?.textContent).toBe('Preparing the tool input'),
+    );
+    emit(2, 'item', {
+      itemId: 'run-stream-progress', kind: 'status', phase: 'update', status: 'running',
+      progress: { kind: 'tool-input', toolCallId: 'write-1', name: 'write', receivedChars: 64_000 },
+    });
+    emit(3, 'tool', {
+      phase: 'input_delta', toolCallId: 'write-1', name: 'write', diff: { added: 12, removed: 0 },
+    });
+    emit(4, 'thinking', { text: 'Arguments are still arriving' });
+    await vi.waitFor(() =>
+      expect(document.querySelector('.message-detail')?.textContent).toBe('Arguments are still arriving'),
+    );
+    expect(document.querySelector('.process-tool')).toBeNull();
+
+    emit(5, 'tool', {
+      phase: 'start', toolCallId: 'write-1', name: 'write', args: { path: 'notes.txt' },
+    });
+    await vi.waitFor(() => expect(document.querySelectorAll('.process-tool')).toHaveLength(1));
+    expect(document.querySelector('.process-tool-status.running')).not.toBeNull();
+    expect(document.querySelector('.process-tool-input')?.textContent).toContain('notes.txt');
+    emit(6, 'tool', {
+      phase: 'result', toolCallId: 'write-1', name: 'write', result: 'File saved',
+    });
+    await vi.waitFor(() =>
+      expect(document.querySelector('.process-tool-status.completed')).not.toBeNull(),
+    );
+    expect(document.querySelectorAll('.process-tool')).toHaveLength(1);
+    expect(document.querySelector('.process-tool')?.textContent).toContain('File saved');
+  });
+
   it('opens live thinking, respects manual collapse, and collapses completed thinking', async () => {
     const { emit } = await mountThread();
     emit(1, 'thinking', { text: 'Considering' });

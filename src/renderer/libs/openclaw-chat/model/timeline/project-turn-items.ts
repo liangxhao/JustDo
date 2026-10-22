@@ -72,6 +72,7 @@ export interface WaitingTimelineItem {
   startedAt?: number;
   stage?: RunProgressStage;
   notice?: WaitingStatusProjection;
+  activity?: Readonly<RunActivity>;
 }
 
 export interface WaitingStatusTimelineItem {
@@ -143,6 +144,7 @@ export function projectTurnItems(
       ? {
           startedAt: activity.startedAt,
           stage: activity.stage,
+          activity,
           ...(waitingStatus ? { notice: waitingStatus } : {}),
         }
       : {};

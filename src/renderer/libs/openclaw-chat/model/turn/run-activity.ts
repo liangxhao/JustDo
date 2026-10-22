@@ -8,6 +8,13 @@ export type RunProgressStage =
   | 'starting'
   | 'queued'
   | 'preparing'
+  | 'preparing-workspace'
+  | 'starting-model'
+  | 'memory-flushing'
+  | 'receiving-model'
+  | 'generating-tool-input'
+  | 'preparing-tool'
+  | 'compacting'
   | 'waiting-model'
   | 'thinking'
   | 'responding'
@@ -15,7 +22,37 @@ export type RunProgressStage =
   | 'retrying';
 
 export type RunRetryReason =
-  'rate_limit' | 'timeout' | 'overloaded' | 'auth' | 'tool_call_format' | 'unknown';
+  | 'rate_limit'
+  | 'timeout'
+  | 'overloaded'
+  | 'server_error'
+  | 'output_limit'
+  | 'auth'
+  | 'tool_call_format'
+  | 'unknown';
+
+export type RunProgressDetail =
+  | {
+      kind: 'tool-input';
+      toolCallId: string;
+      name: string;
+      receivedChars: number;
+      complete: boolean;
+    }
+  | { kind: 'model-stream'; receivedChars: number }
+  | { kind: 'tool'; toolCallId: string; name: string; outputChars?: number; summary?: string };
+
+export interface RunActivityOptions {
+  modelActivity?: boolean;
+  provider?: string;
+  model?: string;
+  retryReason?: unknown;
+  retryAttempt?: unknown;
+  maxRetries?: unknown;
+  retryDelayMs?: number;
+  progress?: RunProgressDetail;
+  at?: number;
+}
 
 export interface RunActivity {
   runId: string;
@@ -30,8 +67,24 @@ export interface RunActivity {
   retryReason?: RunRetryReason;
   retryAttempt?: number;
   maxRetries?: number;
+  retryAt?: number;
+  progress?: RunProgressDetail;
   activeRunConfirmedAt: number | null;
   probeState: 'idle' | 'checking' | 'active' | 'failed';
+}
+
+export function createRunActivity(runId: string, startedAt: number): RunActivity {
+  return {
+    runId,
+    stage: 'starting',
+    startedAt,
+    stageChangedAt: startedAt,
+    lastAgentEventAt: startedAt,
+    lastModelActivityAt: null,
+    hasRunningTool: false,
+    activeRunConfirmedAt: null,
+    probeState: 'idle',
+  };
 }
 
 export type WaitingStatusKind =
@@ -62,6 +115,8 @@ export function normalizeRunRetryReason(value: unknown): RunRetryReason {
     value === 'rate_limit' ||
     value === 'timeout' ||
     value === 'overloaded' ||
+    value === 'server_error' ||
+    value === 'output_limit' ||
     value === 'auth' ||
     value === 'tool_call_format'
   ) {
@@ -82,7 +137,66 @@ export function normalizeRunRetryProgress(
   ) {
     return { retryAttempt, maxRetries };
   }
+  if (
+    reason !== 'tool_call_format' &&
+    Number.isSafeInteger(retryAttempt) &&
+    Number.isSafeInteger(maxRetries) &&
+    typeof retryAttempt === 'number' &&
+    typeof maxRetries === 'number' &&
+    retryAttempt >= 1 &&
+    retryAttempt <= maxRetries &&
+    maxRetries <= 100
+  )
+    return { retryAttempt, maxRetries };
   return undefined;
+}
+
+/** Shared display projection for the selected run and its in-memory background view. */
+export function advanceRunActivity(
+  activity: RunActivity,
+  stage: RunProgressStage,
+  options: RunActivityOptions,
+  hasRunningTool: boolean,
+): RunActivity {
+  const next = { ...activity };
+  const at = options.at ?? Date.now();
+  // A content-free heartbeat must not replace a more specific visible model stage.
+  if (
+    stage === 'receiving-model' &&
+    (activity.stage === 'thinking' || activity.stage === 'responding')
+  ) {
+    stage = activity.stage;
+  }
+  const stageChanged = activity.stage !== stage;
+  if (stageChanged) {
+    next.stage = stage;
+    next.stageChangedAt = at;
+    delete next.progress;
+  }
+  if (options.progress) next.progress = options.progress;
+  next.lastAgentEventAt = at;
+  next.hasRunningTool = hasRunningTool;
+  if (options.provider) next.provider = options.provider;
+  if (options.model) next.model = options.model;
+  delete next.retryAttempt;
+  delete next.maxRetries;
+  delete next.retryAt;
+  if (stage === 'retrying') {
+    next.retryReason = normalizeRunRetryReason(options.retryReason);
+    const retry = normalizeRunRetryProgress(
+      next.retryReason,
+      options.retryAttempt,
+      options.maxRetries,
+    );
+    if (retry) Object.assign(next, retry);
+    if (options.retryDelayMs !== undefined) next.retryAt = at + options.retryDelayMs;
+  } else delete next.retryReason;
+  if (options.modelActivity) next.lastModelActivityAt = at;
+  if (options.modelActivity || stageChanged) {
+    next.probeState = 'idle';
+    next.activeRunConfirmedAt = null;
+  }
+  return next;
 }
 
 export function projectWaitingStatus(params: {
@@ -109,7 +223,12 @@ export function projectWaitingStatus(params: {
   // Resume model-wait notices only after the last running tool settles.
   if (activity.hasRunningTool) return null;
   // Explicit queue/context preparation is not a stalled model request.
-  if (activity.stage === 'queued' || activity.stage === 'preparing') return null;
+  if (
+    ['queued', 'preparing', 'preparing-workspace', 'memory-flushing', 'compacting'].includes(
+      activity.stage,
+    )
+  )
+    return null;
   const confirmationFresh =
     activity.activeRunConfirmedAt !== null &&
     now - activity.activeRunConfirmedAt <= RUN_CONFIRMATION_FRESH_MS;
@@ -118,6 +237,8 @@ export function projectWaitingStatus(params: {
       rate_limit: 'rate-limited',
       timeout: 'retry-timeout',
       overloaded: 'retry-overloaded',
+      server_error: 'retry-overloaded',
+      output_limit: 'retrying',
       auth: 'retry-auth',
       tool_call_format: 'retry-tool-call-format',
       unknown: 'retrying',
@@ -126,11 +247,13 @@ export function projectWaitingStatus(params: {
       kind: retryKinds[activity.retryReason ?? 'unknown'],
       tone: 'neutral',
       quietMs,
-      ...normalizeRunRetryProgress(
-        activity.retryReason,
-        activity.retryAttempt,
-        activity.maxRetries,
-      ),
+      ...(activity.retryReason === 'tool_call_format'
+        ? normalizeRunRetryProgress(
+            activity.retryReason,
+            activity.retryAttempt,
+            activity.maxRetries,
+          )
+        : {}),
     };
   }
   if (quietMs < RUN_STALL_NOTICE_MS) return null;

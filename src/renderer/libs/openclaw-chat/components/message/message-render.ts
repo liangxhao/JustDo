@@ -1289,6 +1289,7 @@ export function renderReadingIndicatorGroup(opts?: {
   label?: string;
   elapsed?: string;
   warning?: boolean;
+  detail?: string;
 }): TemplateResult {
   const isContinuation = opts?.showAvatar === false;
   return html`
@@ -1313,6 +1314,7 @@ export function renderReadingIndicatorGroup(opts?: {
             >${opts?.label ?? i18nService.t('coworkWorkingStarting')}</span
           >
           ${opts?.elapsed ? html`<span class="chat-working-indicator__elapsed" aria-live="off">${opts.elapsed}</span>` : nothing}
+          ${opts?.detail ? html`<span class="chat-working-indicator__detail" aria-live="off">${opts.detail}</span>` : nothing}
         </div>
       </div>
     </div>

@@ -2467,6 +2467,7 @@ export const chatStyles = [
 
     .chat-working-indicator {
       display: flex;
+      flex-wrap: wrap;
       align-items: baseline;
       gap: 8px;
       min-height: 32px;
@@ -2504,6 +2505,11 @@ export const chatStyles = [
       flex-shrink: 0;
       white-space: nowrap;
       font-variant-numeric: tabular-nums;
+      color: var(--justdo-chat-muted, #737373);
+    }
+    .chat-working-indicator__detail {
+      min-width: 0;
+      overflow-wrap: anywhere;
       color: var(--justdo-chat-muted, #737373);
     }
     .chat-working-indicator__label {

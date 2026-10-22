@@ -70,6 +70,7 @@ const BUILD_RECIPE_FILES = [
   'src/main/openclaw/runtime/native-support/plugin-owned-execution.mjs',
   'src/main/openclaw/runtime/native-support/compaction-lifecycle.mjs',
   'src/main/openclaw/runtime/native-support/goal-continuation.mjs',
+  'src/main/openclaw/runtime/native-support/run-progress.mjs',
   'plugins/extensions/runtime-services/tool-call-recovery/policy.mjs',
   'plugins/extensions/runtime-services/tool-call-recovery/facts.mjs',
   'plugins/extensions/runtime-services/tool-call-recovery/loop.mjs',

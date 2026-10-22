@@ -75,6 +75,8 @@ composer/options 读取真实配置模型目录，已保存会话/助手模型�
 
 Markdown 使用扩展离线 bundle，关闭原始 HTML，安全链接在外部 Tab 打开，不从 CDN 动态载入脚本。Thinking/Tool 分组，历史默认折叠，用户手动展开选择在后续同组更新保留；完整工具内容按需展开。
 
+工具参数的流式预览和无正文进度状态不创建执行中的 Tool 卡片；收到真实工具 start 后才显示执行卡，随后由原生结果更新完成状态。
+
 发送时只保留一份乐观用户气泡：会话创建和页面上下文采集期间使用临时占位，会话准备好后立即交给流投影并移除占位。后续运行确认、流事件和正式历史更新不会再次追加它；历史读取失败仍保留流中的用户输入与回复。连续发送相同文字仍分别显示。
 
 停止绑定当前 turn 与原生运行，不因面板切换取消另一会话。断线需重新发现、初始化和读取原生历史，不能自动重发未确认用户消息。
@@ -90,5 +92,7 @@ Native manifest 只允许固定公钥派生的扩展 ID。app-server 校验 capa
 源码包位于 `plugins/browser-extensions/browser-assistant/`，其中 `openclaw/` 保留锁定的上游 relay 基线，`conversation-overlay/` 保存产品侧栏及浏览器模块，`scripts/` 与 `tests/` 保存自身组装脚本、Markdown 源码和独立单元测试。它由 Chrome 加载，与 Gateway 的 OpenClaw Extension 安装、发现和启停流程独立。桌面聊天渲染及流的构建适配、Native Messaging helper 和注册继续归 `scripts/browser/`；跨宿主边界的测试保留在根 `tests/`。`browser-extension:prepare` 从该包生成 `build/browser-extension/chrome-extension/`，安装包继续交付到 `resources/browser-extension/chrome-extension/`，显示名称从产品元数据注入，扩展 ID 与配对身份保持既有值。详见[源码包说明](../../../plugins/browser-extensions/browser-assistant/README.md)。
 
 日常 UI 修改在 conversation-overlay，relay 基线由锁定 OpenClaw 版本更新，构建接缝单独审查。回归包括 Native host 未安装、实例未运行、禁止启动与重启、旧 rendezvous、非法 Origin/token、初始化前调用、流与历史重合、停止、超限附件和页面上下文分离。
+
+共享聊天解析或 stream reducer 变化时，先运行 `browser-extension:build-markdown` 与 `browser-extension:build-stream`，提交对应生成物，再执行 `browser-extension:prepare`。后者只组装已有模块，不替代前两项生成；侧栏 DOM 回归直接加载提交的模块，必须验证参数流不会提前显示 Tool 卡片。
 
 当前不能将手动 Chrome 加载验证扩展为所有 Chromium 浏览器/商店发布承诺。右键提问、YouTube transcript、tab mention 等未接通能力不列作现有功能；新增时需同步[兼容规范](../../browser-extension-api/compatibility.md)。

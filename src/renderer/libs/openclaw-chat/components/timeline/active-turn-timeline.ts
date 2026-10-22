@@ -57,6 +57,7 @@ import { type EditDiffMonacoData, resolveEditDiffLanguage } from '../tools/edit-
 import { resolveToolDisplay } from '../tools/tool-display';
 import { renderCompactionMessage } from './compaction-divider';
 import { disclosureContent } from './disclosure-content';
+import { runProgressDetail,runProgressLabelKeys } from './run-progress-label';
 
 function summaryLabel(item: ProcessSummaryTimelineItem): string {
   if (item.thinkingCount > 0 && item.toolCount > 0) {
@@ -837,22 +838,13 @@ export function renderTimelineItem(
     );
   }
   if (item.kind === 'waiting') {
-    const labels = {
-      starting: 'coworkWorkingStarting',
-      queued: 'coworkWorkingQueued',
-      preparing: 'coworkWorkingPreparing',
-      'waiting-model': 'coworkWorkingWaiting',
-      thinking: 'coworkWorkingThinking',
-      responding: 'coworkWorkingResponding',
-      'running-tool': 'coworkWorkingTool',
-      retrying: 'coworkWorkingRetrying',
-    } as const;
     return renderReadingIndicatorGroup({
       showAvatar,
       assistantAvatar,
       label: item.notice
         ? waitingStatusLabel(item.notice)
-        : i18nService.t(labels[item.stage ?? 'starting']),
+        : i18nService.t(runProgressLabelKeys[item.stage ?? 'starting']),
+      detail: runProgressDetail(item.activity, now),
       warning: item.notice?.tone === 'warning',
       elapsed:
         item.startedAt === undefined

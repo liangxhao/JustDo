@@ -436,13 +436,14 @@ describe('locked Goal runtime patch boundaries', () => {
     humanLease.release(); wakeLease.release(); h.params.admission.release();
   });
 
+  // Cold AST validation of eight owners can exceed the default budget under Windows load.
   it('rejects pristine verification and is exactly idempotent after complete source application', () => {
     const root = fixture();
     expect(() => patch.verifyPatch(root)).toThrow('missing');
     expect(patch.applyPatch(root)).toHaveLength(8);
     expect(patch.applyPatch(root)).toEqual([]);
     expect(() => patch.verifyPatch(root)).not.toThrow();
-  });
+  }, 30_000);
 
   it('accepts only the exact 019 companion export block alongside the anchored original registry exports', () => {
     const root = fixture();

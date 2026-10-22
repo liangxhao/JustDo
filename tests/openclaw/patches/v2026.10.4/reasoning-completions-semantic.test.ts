@@ -763,7 +763,7 @@ describe('actual completions transport structured reasoning semantics', () => {
     const result = await run.finish('tool_calls');
 
     expect(preview.data.text).toBe('Checking a file.');
-    const commentaryIndex = live.findIndex(event => event.stream === 'item');
+    const commentaryIndex = live.findIndex(event => event.stream === 'item' && event.data.kind === 'preamble');
     expect(commentaryIndex).toBeGreaterThan(-1);
     expect(live.slice(0, commentaryIndex).filter(event => event.stream === 'assistant').at(-1))
       .toMatchObject({ data: { text: 'Checking a file.', itemId: preview.data.itemId } });
@@ -936,7 +936,7 @@ describe('actual completions transport structured reasoning semantics', () => {
     expect(events.filter(event => event.stream === 'assistant').at(-1)).toBe(replacements[0]);
     expect(context.params.onPartialReply).not.toHaveBeenCalled();
     expect(context.params.onBlockReply).not.toHaveBeenCalled();
-    expect(events.some(event => event.stream === 'item')).toBe(true);
+    expect(events.some(event => event.stream === 'item' && event.data.kind === 'preamble')).toBe(true);
   });
 
 });
@@ -962,7 +962,11 @@ describe('real native subscriber and Renderer ownership', () => {
       assistantMessageEvent: { type: 'toolcall_delta' } });
     return partial;
   }
-  const events = (context: SubscriberContext) => context.params.onAgentEvent.mock.calls.map(([event]) => event);
+  // Content-free progress is independent of protected text publication and source ownership.
+  const events = (context: SubscriberContext) => context.params.onAgentEvent.mock.calls
+    .map(([event]) => event)
+    .filter(event => !(event.stream === 'item' && event.data.kind === 'status' &&
+      event.data.itemId === 'run-stream-progress'));
 
   it('publishes normalized previews with stable native scope before terminal without durable delivery', () => {
     const context = subscriberContext();
@@ -982,7 +986,8 @@ describe('real native subscriber and Renderer ownership', () => {
     const partial = message('Buffered answer.', 'strict-message', false);
     subscriber.handleMessageUpdate(context, { type: 'message_update', message: partial,
       assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'Buffered answer.', partial } });
-    expect(context.params.onAgentEvent).not.toHaveBeenCalled();
+    expect(events(context)).toEqual([]);
+    expect(JSON.stringify(context.params.onAgentEvent.mock.calls)).not.toContain('Buffered answer.');
   });
 
   it('does not mistake text_end for complete message evidence and publishes an unchanged message_end', async () => {
@@ -1085,7 +1090,8 @@ describe('real native subscriber and Renderer ownership', () => {
   it('preserves explicit finalization admission deferral', () => {
     const context = subscriberContext({ onBeforeTerminalDelivery: vi.fn() });
     update(context, 'Protected final answer.', 'Protected final answer.');
-    expect(context.params.onAgentEvent).not.toHaveBeenCalled();
+    expect(events(context)).toEqual([]);
+    expect(JSON.stringify(context.params.onAgentEvent.mock.calls)).not.toContain('Protected final answer.');
     expect(context.params.onPartialReply).not.toHaveBeenCalled();
     expect(context.params.onBlockReply).not.toHaveBeenCalled();
   });

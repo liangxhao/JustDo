@@ -4,7 +4,7 @@ The source is the pristine `openclaw@2026.10.4` npm archive locked by `source-lo
 
 ## Disposition
 
-The target contains 32 independently removable patches. Native in-process dispatch now separates both transcript and CLI-history writer scopes after caller-context restoration and authority capture; former 039 is removed. Pristine contracts and cross-bundle SDK tests retain this boundary. Former 043 remains necessary: the target native stop/close lifecycle still reproduces foreground SQLITE_BUSY. Its new 025 transformer preserves scheduled-maintenance joining and checks six native copies plus the final bundle. Real UI acceptance additionally exposed global finalization-hook buffering; 026 scopes that hold to the admitted native attempt without weakening owned revisions. Fresh-session acceptance exposed Windows canonical-readiness aliases and response publication during deferred reads; 027/028 address those separate native boundaries. Structured reasoning exposed an independent provider-parser and Agent delivery hold; 029 streams native normalized public text independently of the private thinking lane. Manual Apps exposed a persisted-workspace mismatch that retires their MCP runtime on the next model run; 031 aligns native workspace selection.
+The target contains 33 independently removable patches. Native in-process dispatch now separates both transcript and CLI-history writer scopes after caller-context restoration and authority capture; former 039 is removed. Pristine contracts and cross-bundle SDK tests retain this boundary. Former 043 remains necessary: the target native stop/close lifecycle still reproduces foreground SQLITE_BUSY. Its new 025 transformer preserves scheduled-maintenance joining and checks six native copies plus the final bundle. Real UI acceptance additionally exposed global finalization-hook buffering; 026 scopes that hold to the admitted native attempt without weakening owned revisions. Fresh-session acceptance exposed Windows canonical-readiness aliases and response publication during deferred reads; 027/028 address those separate native boundaries. Structured reasoning exposed an independent provider-parser and Agent delivery hold; 029 streams native normalized public text independently of the private thinking lane. Manual Apps exposed a persisted-workspace mismatch that retires their MCP runtime on the next model run; 031 aligns native workspace selection.
 
 Most former worker/recovery duplicates are now shared imports. Target counts are audited from this archive; old 9.8 counts are not target evidence. Source application, current-shape idempotence and final bundle verification are separate requirements.
 
@@ -42,8 +42,44 @@ Most former worker/recovery duplicates are now shared imports. Target counts are
 | [030-tool-call-format-recovery.cjs](030-tool-call-format-recovery.cjs) | New | continue from existing results after a completed, atomic pre-dispatch rejection of malformed tool calls, within the initial native candidate and a two-request limit. | native producers and the same runner provide equivalent rejection evidence, exclusive bounded continuation and native terminal settlement. |
 | [031-mcp-app-session-workspace.cjs](031-mcp-app-session-workspace.cjs) | New | prepare manual Apps in the same persisted session workspace as model runs, retaining their native runtime and local resources across turns. | upstream manual App preparation uses the native session ingress workspace resolver and fences changes during preparation. |
 | [032-goal-continuation-admission.cjs](032-goal-continuation-admission.cjs) | New | admit a conditional backend Goal successor after exact settlement and native handoff arbitration, atomically recording acceptance and cumulative automatic count. | upstream agent ingress supplies equivalent final admission, durable acceptance/count and exact settled predecessor observation. |
+| [033-run-progress-observations.cjs](033-run-progress-observations.cjs) | New | expose content-free tool argument/model stream activity through existing native status items. | native Gateway publishes equivalent provider-independent stream progress before tool execution, including bounded replay. |
 
 ## Native bindings and ordinary implementations
+
+033 retains one insertion in `handleMessageUpdate` in the locked `dist/builtin-openclaw-qVsnLx0N.mjs`.
+Pristine subscription handles text/thinking but drops generic `toolcall_start/delta/end`; its
+`tool:input_delta` only supplies specialized edit diffs. Long generic arguments therefore produce
+no public progress until real tool execution. Main and Renderer cannot recover an event that was
+never published. Public `runtime.events.onAgentEvent` sees that same filtered bus; `model_call_started`
+and `model_call_ended` expose call boundaries. A provider's `wrapStreamFn` can observe its own stream,
+but cannot observe every configured provider without replacing/wrapping each provider registration.
+Replacing the agent harness would also take over execution to solve a display-only gap.
+
+The ordinary `native-support/run-progress.mjs` observer counts delta UTF-16 code units without
+parsing or copying arguments, text or private thinking. It emits at most once per 250 ms plus block
+boundaries, with bounded tool IDs/names and at most 64 tracked calls per subscription. Its single
+binding emits the standard `item` envelope (`kind:status`, `itemId:run-stream-progress`, `phase:update`,
+`status:running`, fixed title) to both native bus and best-effort callback. Only its nested `progress`
+metadata is new. Native generic-item snapshots already retain/dedupe that envelope in full and summary
+mode, so there is no snapshot, queue, schema, RPC, provider or tool-execution patch. Startup, retries,
+compaction, public tool progress, command output, labels, timeouts and animation remain app consumers
+of existing native contracts. Progress does not establish whole-run settlement or permit retries.
+Replay retains the last available observation and its original timestamp. The native snapshot omits
+later startup statuses after any item and exposes no omitted-event watermark to clients; a reconnect
+during fallback preparation can therefore briefly restore an earlier stage until the next live event.
+This existing snapshot policy is retained without adding another native seam.
+
+Remove 033 and its sole support module when pristine Gateway exposes the same generic argument/model
+activity to authenticated clients across providers. Tests:
+`tests/openclaw/patches/v2026.10.4/run-progress-observations.test.ts` checks content exclusion,
+throttling, independent calls, callback failure isolation, pristine failure, exact source/bundle bindings,
+idempotence and no writes on mixed/invalid targets; Renderer controller/streaming tests cover long
+arguments, sparse replay, ownership rejection, session switches, silent announcements, parallel tools
+and stable animated elements. `tests/openclaw/runtime/chat-stream-smoke.cjs --run-progress` uses a
+real isolated Gateway with a loopback model to verify incremental 64 KiB arguments cross the wire
+before tool execution, preserve content exclusion and complete the native read and settled run.
+The [033 validation record](../../../docs/openclaw-upgrades/v2026.10.4/run-progress-observations.md)
+records fresh archive/bundle identity, native snapshot evidence and the application checks.
 
 MCP Apps use the native authenticated WebSocket APIs without a lifecycle patch. Former MCP Apps patch `030-mcp-app-operation-lifecycle.cjs` is removed (distinct from the later `030-tool-call-format-recovery.cjs` already on dev) by an explicit host contract decision: closing stops local interaction and attempts exact known-context cleanup, while dispatched operations may complete and view grants/resources retire under the native lease (currently up to ten minutes from creation). This is not a missing MCP Apps protocol capability. Recheck native cancellation and public final-view release during each upgrade; see [the host contract](../../../docs/features/chat/mcp-apps.md#原生接口与插件替代审计).
 

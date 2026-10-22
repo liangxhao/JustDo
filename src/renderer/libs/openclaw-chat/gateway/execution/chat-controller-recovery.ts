@@ -34,7 +34,15 @@ import {
   reduceAgentEvent,
   reduceChatEvent,
 } from '@/libs/openclaw-chat/model/turn/agent-event-reducer';
-import { type RunProgressStage } from '@/libs/openclaw-chat/model/turn/run-activity';
+import {
+  type RunActivityOptions,
+  type RunProgressStage,
+} from '@/libs/openclaw-chat/model/turn/run-activity';
+import {
+  readCommandOutputActivity,
+  readRunningToolActivity,
+  readRunProgress,
+} from '@/libs/openclaw-chat/model/turn/run-progress';
 import {
   persistInterruptedMessage,
   projectGatewayHistoryForDisplay,
@@ -234,15 +242,7 @@ export interface ChatControllerRecoveryContext {
   readonly updateRunActivity: (
     runId: string,
     stage: RunProgressStage,
-    options?: {
-      modelActivity?: boolean;
-      provider?: string;
-      model?: string;
-      retryReason?: unknown;
-      retryAttempt?: unknown;
-      maxRetries?: unknown;
-      at?: number;
-    },
+    options?: RunActivityOptions,
   ) => void;
   readonly notifyStream: (kind?: ChatStreamUpdateKind) => void;
   readonly clearLifecycleEndFallback: () => void;
@@ -1146,7 +1146,8 @@ export function handleTimelineEvent(
             transcript,
             client,
             dependencies: this.transcriptDependencies,
-            isCurrent: () => this.state.client === client &&
+            isCurrent: () =>
+              this.state.client === client &&
               this.sideChatTranscripts.get(sideRunId) === transcript &&
               this.pendingSideChats.get(sideRunId) === pending,
             notify: () => {
@@ -1164,10 +1165,13 @@ export function handleTimelineEvent(
             const observation = readTerminalGuardObservation(normalized.event.data);
             if (observation?.action === 'rollback') {
               this.sideChatAssistantSnapshotRunIds.delete(normalized.event.runId);
-            } else if (hasSelectedAssistantTextSource(
-              transcript.activeTurn, normalized.event.data,
-              assistantEventText(normalized.event.data),
-            )) {
+            } else if (
+              hasSelectedAssistantTextSource(
+                transcript.activeTurn,
+                normalized.event.data,
+                assistantEventText(normalized.event.data),
+              )
+            ) {
               this.sideChatAssistantSnapshotRunIds.add(normalized.event.runId);
             }
           }
@@ -1197,6 +1201,16 @@ export function handleTimelineEvent(
       : cachedEventSession !== null &&
         normalizeTranscriptSessionKey(cachedEventSession[0]) !==
           normalizeTranscriptSessionKey(this.state.sessionKey);
+    const eventActiveTurn = eventTargetsBackgroundSession
+      ? (cachedEventSession?.[1].transcript.activeTurn ?? null)
+      : this.state.transcript.activeTurn;
+    if (
+      isDormantAnnounceRun(normalized.event.runId, eventActiveTurn) &&
+      readRunProgress(normalized.event.stream, normalized.event.data)
+    ) {
+      // Content-free observations cannot activate a possibly silent announcement.
+      return;
+    }
     if (eventTargetsBackgroundSession) {
       this.applyBackgroundAgentEvent(normalized.event);
       return;
@@ -1825,6 +1839,15 @@ export function handleAgentEvent(
     return;
   }
 
+  const progress = readRunProgress(stream, data);
+  if (progress) {
+    this.state.chatSending = true;
+    this.state.chatRunId = runId;
+    const { stage, ...options } = progress;
+    this.updateRunActivity(runId, stage, { ...options, at: options.at ?? payload.timestamp });
+    this.notifyStream();
+    return;
+  }
   if (stream === 'thinking') {
     const wasSending = this.state.chatSending;
     if (!this.state.chatSending) {
@@ -1900,6 +1923,19 @@ export function handleAgentEvent(
       typeof data.toolCallId === 'string' &&
       this.state.transcript.activeTurn?.toolById.has(data.toolCallId)
     ) {
+      const tool = this.state.transcript.activeTurn?.toolById.get(String(data.toolCallId));
+      if (tool?.status === 'running') {
+        this.updateRunActivity(runId, 'running-tool', {
+          modelActivity: true,
+          progress: {
+            kind: 'tool',
+            toolCallId: tool.toolCallId,
+            name: tool.name,
+            summary: tool.progressText,
+          },
+          at: payload.timestamp,
+        });
+      }
       this.notifyStream('tool-partial');
       return;
     }
@@ -1946,37 +1982,6 @@ export function handleAgentEvent(
         this.scheduleDeferredHistoryReload(this.state.sessionKey, 'initial-history-missing');
       }
       this.updateRunActivity(runId, 'starting', { at: payload.timestamp });
-      this.notifyStream();
-    }
-    if (phase === 'progress') {
-      const progressStage = typeof data.stage === 'string' ? data.stage : '';
-      const mappedStage: RunProgressStage | null =
-        progressStage === 'queued'
-          ? 'queued'
-          : progressStage === 'preparing'
-            ? 'preparing'
-            : progressStage === 'waiting_model'
-              ? 'waiting-model'
-              : progressStage === 'retrying'
-                ? 'retrying'
-                : null;
-      if (mappedStage) {
-        this.updateRunActivity(runId, mappedStage, {
-          provider: typeof data.provider === 'string' ? data.provider : undefined,
-          model: typeof data.model === 'string' ? data.model : undefined,
-          retryReason: mappedStage === 'retrying' ? data.reason : undefined,
-          retryAttempt: mappedStage === 'retrying' ? data.retryAttempt : undefined,
-          maxRetries: mappedStage === 'retrying' ? data.maxRetries : undefined,
-          at: typeof data.at === 'number' ? data.at : payload.timestamp,
-        });
-        this.notifyStream();
-      }
-    }
-    if (phase === 'fallback_step' && data.fallbackStepFinalOutcome === 'next_fallback') {
-      this.updateRunActivity(runId, 'retrying', {
-        retryReason: data.fallbackStepFromFailureReason,
-        at: payload.timestamp,
-      });
       this.notifyStream();
     }
     if (phase === 'finishing') {
@@ -2070,12 +2075,35 @@ export function handleAgentEvent(
   if (stream === 'compaction') {
     const phase = typeof data.phase === 'string' ? data.phase : '';
     this.handleCompactionPhase(phase, this.state.sessionKey, data);
+    if (['start', 'update', 'end', 'error', 'failed'].includes(phase)) {
+      this.updateRunActivity(
+        runId,
+        phase === 'start' || phase === 'update' ? 'compacting' : 'waiting-model',
+        { at: payload.timestamp },
+      );
+    }
+    this.notifyStream();
+    return;
+  }
+
+  if (stream === 'command_output') {
+    const output = readCommandOutputActivity(this.state.transcript.activeTurn?.toolById, data);
+    if (output) {
+      const { stage, ...options } = output;
+      this.updateRunActivity(runId, stage, { ...options, at: payload.timestamp });
+      this.notifyStream('tool-partial');
+    }
     return;
   }
 
   if (stream !== 'tool') return;
 
   const phase = typeof data.phase === 'string' ? data.phase : '';
+  if (phase === 'input_delta') {
+    // Native file-diff previews describe arguments still being generated.
+    this.notifyStream('tool-partial');
+    return;
+  }
   debugLog('[ChatCtrl] ▶ tool', {
     sourceEvent,
     runId,
@@ -2085,11 +2113,7 @@ export function handleAgentEvent(
   const hasPartialResult = data.partialResult !== undefined;
   const isNonTerminalToolEvent = isNonTerminalToolPhase(phase);
   const isTerminalToolEvent = !isNonTerminalToolEvent && isTerminalToolPhase(phase);
-  const hasRunningTool = [...(this.state.transcript.activeTurn?.toolById.values() ?? [])].some(
-    tool => tool.status === 'running',
-  );
-  this.updateRunActivity(runId, hasRunningTool ? 'running-tool' : 'waiting-model', {
-    modelActivity: true,
-  });
+  const { stage, ...options } = readRunningToolActivity(this.state.transcript.activeTurn?.toolById);
+  this.updateRunActivity(runId, stage, { ...options, at: payload.timestamp });
   this.notifyStream(hasPartialResult && !isTerminalToolEvent ? 'tool-partial' : 'terminal');
 }

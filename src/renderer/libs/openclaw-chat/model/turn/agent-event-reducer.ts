@@ -1148,6 +1148,7 @@ function reduceTool(
   const toolCallId = normalized.toolCallId;
   if (!toolCallId) return false;
   const existing = turn.toolById.get(toolCallId);
+  if (event.data.phase === 'input_delta') return false;
   const resolved = normalizeToolEvent(event.data, existing?.name ?? 'tool');
   const resolvedInput =
     resolved.input ??

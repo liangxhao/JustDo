@@ -90,6 +90,36 @@ afterEach(() => {
 });
 
 describe('justdo-chat direct-property streaming', () => {
+  test('retains the animated indicator elements while argument counters update', async () => {
+    const frames = createAnimationFrameHarness();
+    const controller = prepareController();
+    controller.state.connected = true;
+    controller.state.transportStatus = 'connected';
+    const handle = gatewayEventHandler(controller);
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.controller = controller;
+    document.body.append(chat);
+    await chat.updateComplete;
+    await frames.drain(chat);
+    const send = (seq: number, receivedChars: number) => handle({ event: 'agent', payload: {
+      sessionKey: controller.state.sessionKey, runId: 'argument-progress', seq, stream: 'item',
+      data: { itemId: 'run-stream-progress', kind: 'status', phase: 'update', status: 'running',
+        progress: { kind: 'tool-input', name: 'write', toolCallId: 'call-1', receivedChars } },
+    } });
+    send(1, 120);
+    await frames.drain(chat);
+    const spark = chat.shadowRoot?.querySelector('.chat-working-indicator__spark');
+    const label = chat.shadowRoot?.querySelector('.chat-working-indicator__label');
+    expect(spark).toBeTruthy();
+    expect(label?.textContent).toContain(i18nService.t('coworkWorkingToolInput'));
+    send(2, 240);
+    await frames.drain(chat);
+    expect(chat.shadowRoot?.querySelector('.chat-working-indicator__spark')).toBe(spark);
+    expect(chat.shadowRoot?.querySelector('.chat-working-indicator__label')).toBe(label);
+    expect(chat.shadowRoot?.querySelector('.chat-working-indicator__detail')?.textContent).toContain('240');
+    expect(chat.shadowRoot?.querySelector('.chat-working-indicator__detail')?.getAttribute('aria-live')).toBe('off');
+  });
+
   test('announces responding when the same native Content resumes after Thinking', async () => {
     const frames = createAnimationFrameHarness();
     const controller = prepareController();
