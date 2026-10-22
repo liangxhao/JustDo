@@ -17,8 +17,8 @@ const pluginId = OpenClawExtensionId.WIDGET_KIT;
 const defaults = () => buildDefaultOpenClawPluginEntries(id => id === pluginId);
 
 describe('optional Widget Kit plugin configuration', () => {
-  it('discovers the bundled plugin as disabled until the user opts in', () => {
-    expect(defaults()).toEqual({ [pluginId]: { enabled: false } });
+  it('enables the bundled plugin by default and keeps it user-toggleable', () => {
+    expect(defaults()).toEqual({ [pluginId]: { enabled: true } });
     expect(buildDefaultOpenClawPluginEntries(() => false)).toEqual({});
     expect(isUserToggleableBundledPlugin(pluginId)).toBe(true);
     expect(listManagedOpenClawPluginIds()).not.toContain(pluginId);

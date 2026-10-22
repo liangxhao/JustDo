@@ -18,15 +18,14 @@ No tools, RPC handlers, database or runtime patches are added.
   packaging tests remain in the application's test tree.
 
 The generic local-extension pipeline copies and precompiles this plugin and
-its single skill. The plugin is disabled by default; configuration preserves
+its single skill. The plugin is enabled by default; configuration preserves
 explicit enable and disable choices. It adds no per-turn prompt hook.
 The plugin ID is now `widget-kit`; the directory and package name follow it.
 Runtime assembly removes the former `interactive-ui` bundle only after matching
 its package and manifest identities. Development startup applies the same
 retirement after the replacement is present, without following directory links.
-Enable Widget Kit explicitly under the new
-ID; the previous ID's toggle is not transferred. Native cards referencing the
-former resources need regeneration through `show_widget`.
+The new ID defaults to enabled; the previous ID's toggle is not transferred.
+Native cards referencing the former resources need regeneration through `show_widget`.
 The team calculator, its registration and its resource are removed. Existing
 native history is not deleted or rewritten; retired calculator cards need to be
 regenerated using a supported widget.

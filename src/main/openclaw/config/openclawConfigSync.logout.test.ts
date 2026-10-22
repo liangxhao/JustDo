@@ -2627,7 +2627,7 @@ test.each([true, false])(
     const configPath = path.join(directory, 'openclaw.json');
     expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.plugins.entries['widget-kit']).toEqual({ enabled: false });
+    expect(config.plugins.entries['widget-kit']).toEqual({ enabled: true });
     config.plugins.entries['widget-kit'] = { enabled };
     fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
     for (const reason of [

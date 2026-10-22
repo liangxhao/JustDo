@@ -62,7 +62,7 @@ test.each([
       expect(manifest).toMatchObject({
         id: 'widget-kit',
         name: 'Widget Kit',
-        enabledByDefault: false,
+        enabledByDefault: true,
         skills: ['./skills'],
       });
       expect(fs.readdirSync(path.join(target, 'skills'))).toEqual(['visualize']);

@@ -1,16 +1,16 @@
 # 交互式回答
 
 聊天可通过 OpenClaw 原生 `show_widget` 展示交互卡片。模型可使用原生 HTML；需要统一
-表格、比较、图表、表单和分步解释时，可启用 Widget Kit 扩展。该功能借鉴
+表格、比较、图表、表单和分步解释时，可使用默认开启的 Widget Kit 扩展。该功能借鉴
 Intelligent UI 的呈现方式，使用本地 OpenClaw 合约，不接入 ChatGPT 私有界面服务。
 真实模型效果与安装包的平台验收仍见 [待办清单](../../plans/interactive-answers-acceptance.md)。
 
 ## 入口与使用
 
-在扩展设置中显式启用 **Widget Kit**。扩展默认关闭，配置同步保留用户明确的
+**Widget Kit** 默认开启，可在扩展设置中启用或禁用。配置同步保留用户明确的
 开关；关闭不删除原生历史文档，也不自动重建其中的组件。模型只在实际工具 schema
 公布对应类型时使用它，不靠提示词猜测工具是否可用。
-插件目录、ID 和资源已统一为 Widget Kit 命名；新 ID `widget-kit` 需显式启用，
+插件目录、ID 和资源已统一为 Widget Kit 命名；新 ID `widget-kit` 默认开启，
 不沿用旧 ID `interactive-ui` 的开关。构建只清理包名和 manifest ID 均匹配的旧随包产物，
 避免新旧组件重复注册；历史文档不改写，引用旧资源的卡片需重新生成。
 

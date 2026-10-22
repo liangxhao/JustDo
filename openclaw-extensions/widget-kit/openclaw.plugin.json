@@ -2,7 +2,7 @@
   "id": "widget-kit",
   "name": "Widget Kit",
   "description": "Visualization guidance and reusable components through native show_widget.",
-  "enabledByDefault": false,
+  "enabledByDefault": true,
   "categories": ["productivity"],
   "skills": ["./skills"],
   "activation": { "onStartup": true },
