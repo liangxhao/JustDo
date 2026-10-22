@@ -71,6 +71,7 @@ export interface RuntimeGatewayEventsContext {
   readonly reconcileDisconnectedTurn: (sessionId: string) => Promise<void>;
   readonly confirmUnknownSessionRunAdmission: (sessionId: string, turn: SessionTurn) => void;
   readonly rememberTerminalTurn: (turn: SessionTurn) => void;
+  readonly observeRunTerminal: (event: NormalizedAgentEvent, admitted?: boolean) => void;
   readonly cleanupSessionTurn: (sessionId: string) => void;
   readonly store: CoworkStore;
   readonly terminalLifecycleSessionIds: Set<string>;
@@ -330,6 +331,10 @@ export function handleAgentEvent(
   const event = normalized.event;
   if (!event) return;
 
+  // A chat final can retire the local turn before its whole-run terminal.
+  // Only an exact retained native binding can admit that trailing receipt.
+  if (nativeAgentSeq !== undefined) this.observeRunTerminal(event);
+
   const { runId, stream } = event;
   const sessionKey = event.sessionKey ?? '';
   const data = event.data;
@@ -435,6 +440,9 @@ export function handleAgentEvent(
   // Only the outer execution owner can establish completion. Attempt-level
   // terminals may be followed by retry/fallback work under the same run.
   if ((phase === 'end' || phase === 'error') && data.executionSettled !== true) return;
+  if (nativeAgentSeq !== undefined && (phase === 'end' || phase === 'error')) {
+    this.observeRunTerminal(event, true);
+  }
   const internalManagedHandoffError =
     phase === 'error' && isInternalManagedSubagentHandoffError(data.error);
   if (phase === 'end' || phase === 'error') {

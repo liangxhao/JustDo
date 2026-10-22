@@ -5,16 +5,18 @@ import {
   mergePendingUserMessage,
   messagesFromThread,
   shouldShowTurnError,
-  toolInputSummary,
 } from './modules/sidepanel-state.js';
-import {
-  pendingInputLabel,
-  renderRichContent,
-  retryRichImages,
-} from './modules/sidepanel-rich-content.js';
 import { BrowserExtensionStream } from './modules/sidepanel-stream.js';
+import { createMessageRenderer } from './modules/sidepanel-messages.js';
+import { createRunActivityView } from './modules/sidepanel-activity.js';
+import {
+  localizeSidePanel,
+  sidePanelConnectionError,
+  sidePanelText as t,
+} from './modules/sidepanel-i18n.js';
 
 void initializeAppearance();
+localizeSidePanel(document);
 
 const sessionSelect = document.getElementById('session');
 const messages = document.getElementById('messages');
@@ -29,7 +31,20 @@ const attachmentList = document.getElementById('attachments');
 const permissionSelect = document.getElementById('permission');
 const modelSelect = document.getElementById('model');
 const errorLine = document.getElementById('error');
+const activityView = createRunActivityView(document.getElementById('runActivity'));
+const messageRenderer = createMessageRenderer(messages, {
+  latestButton: document.getElementById('latest'),
+  processDetailsButton: document.getElementById('processDetails'),
+  readImage: async (threadId, source) =>
+    (await client.request('thread/image', { threadId, source })).dataUrl,
+});
 let sending = false;
+let transportReady = false;
+let sendingStartedAt = 0;
+let stoppingThreadId = '';
+const pendingSubmissions = new Map();
+const knownTurns = new Map();
+const settledTurns = new Set();
 let activeThreadId = '';
 let activeTurnId = '';
 let pendingAttachments = [];
@@ -58,10 +73,24 @@ function streamView(threadId) {
   return streamViews.get(threadId);
 }
 
+function projectThreadMessages(thread, threadId = thread.id) {
+  return messagesFromThread(thread, {
+    protectTrailingTurn: Boolean(
+      pendingSubmissions.has(threadId) ||
+      knownTurns.has(threadId) ||
+      (threadId && activeThreadId === threadId) ||
+      (threadId && stoppingThreadId === threadId) ||
+      (sending && sessionSelect.value === threadId) ||
+      thread.status?.type === 'active',
+    ),
+  });
+}
+
 function renderHistory(thread) {
   const view = streamView(thread.id);
   view.setHistory(thread);
-  renderThreadMessages(messagesFromThread(view.project()), thread.id);
+  renderThreadMessages(projectThreadMessages(view.project()), thread.id);
+  updateActivity();
 }
 
 const MAX_ATTACHMENT_COUNT = 5;
@@ -76,60 +105,140 @@ const client = new AppServerClient((method, params) => {
         streamRenderTimer = null;
         const threadId = sessionSelect.value;
         if (threadId)
-          renderThreadMessages(messagesFromThread(streamView(threadId).project()), threadId);
+          renderThreadMessages(projectThreadMessages(streamView(threadId).project()), threadId);
       }, 40);
     }
   }
   if (method === 'connection/closed') {
     refreshGeneration += 1;
-    setRunningTurn('', '');
+    transportReady = false;
     setComposerReady(false);
-    errorLine.textContent = 'Disconnected from __PRODUCT_NAME__. Reconnecting…';
+    errorLine.textContent = t('reconnecting');
+    errorLine.classList.remove('hidden');
+    updateActivity();
+  }
+  if (method === 'connection/failed') {
+    transportReady = false;
+    setComposerReady(false);
+    errorLine.textContent = sidePanelConnectionError(params?.code);
     errorLine.classList.remove('hidden');
   }
   if (method === 'connection/reconnected') {
     // Completion may have happened while disconnected. Rehydrate from Gateway
     // rather than carrying an old running turn into the next run.
-    streamViews.clear();
-    pendingCompletions.clear();
     void refreshAll(sessionSelect.value);
   }
   if (method === 'turn/started' && params?.threadId === sessionSelect.value) {
-    setRunningTurn(params.threadId, params?.turn?.id);
+    if (settledTurns.has(`${params.threadId}/${params?.turn?.id}`)) return;
+    const pending = pendingSubmissions.get(params.threadId);
+    if (pending && pending.clientTurnId !== params?.turn?.id) return;
+    if (pending?.uncertain || knownTurns.get(params.threadId)?.uncertain) clearError();
+    if (pending) {
+      pendingSubmissions.delete(params.threadId);
+      clearAttachments();
+    }
+    setRunningTurn(params.threadId, params?.turn?.id, params?.turn?.nativeRunId, true);
   }
   if (method === 'thread/updated' && params?.threadId === sessionSelect.value) {
     renderHistory(params.thread);
   }
   if (method === 'turn/completed' && params?.threadId !== sessionSelect.value) {
-    streamViews.get(params?.threadId)?.finish();
+    if (params?.turn?.executionSettled !== true || !params.turn.id) return;
+    const expectedId =
+      knownTurns.get(params.threadId)?.id ||
+      pendingSubmissions.get(params.threadId)?.clientTurnId ||
+      streamViews.get(params.threadId)?.project().activity?.runId;
+    if (!expectedId || expectedId !== params.turn.id) return;
+    pendingSubmissions.delete(params.threadId);
+    knownTurns.delete(params.threadId);
+    rememberSettledTurn(params.threadId, params.turn.id);
+    pendingCompletions.set(params.threadId, params.turn);
+    streamViews.get(params?.threadId)?.finish(true);
   }
   if (method === 'turn/completed' && params?.threadId === sessionSelect.value) {
+    if (params?.turn?.executionSettled !== true || !params.turn.id) return;
+    const pending = pendingSubmissions.get(params.threadId);
+    const expectedId =
+      knownTurns.get(params.threadId)?.id ||
+      pending?.clientTurnId ||
+      streamViews.get(params.threadId)?.project().activity?.runId;
+    if (!expectedId || params.turn.id !== expectedId) return;
     const completedThreadId = params.threadId;
+    pendingSubmissions.delete(completedThreadId);
+    knownTurns.delete(completedThreadId);
+    rememberSettledTurn(completedThreadId, params.turn.id);
+    if (stoppingThreadId === completedThreadId) stoppingThreadId = '';
     pendingCompletions.set(completedThreadId, params.turn);
     setRunningTurn('', '');
     void refreshAll(completedThreadId);
   }
 });
 
-function setRunningTurn(threadId, turnId) {
+function rememberSettledTurn(threadId, turnId) {
+  settledTurns.add(`${threadId}/${turnId}`);
+  if (settledTurns.size > 48) settledTurns.delete(settledTurns.values().next().value);
+}
+
+function setRunningTurn(threadId, turnId, nativeRunId, confirmed = false) {
   activeThreadId = typeof threadId === 'string' ? threadId : '';
   activeTurnId = typeof turnId === 'string' ? turnId : '';
   send.classList.toggle('stop', Boolean(activeThreadId));
-  send.title = activeThreadId ? 'Stop' : 'Send';
+  send.title = t(activeThreadId ? 'stop' : 'send');
   send.setAttribute('aria-label', send.title);
+  if (activeThreadId && activeTurnId) {
+    const previous = knownTurns.get(activeThreadId);
+    knownTurns.set(activeThreadId, {
+      id: activeTurnId,
+      nativeRunId:
+        nativeRunId || (previous?.id === activeTurnId ? previous.nativeRunId : undefined),
+      uncertain: !confirmed && previous?.id === activeTurnId && previous.uncertain === true,
+      startedAt: previous?.id === activeTurnId ? previous.startedAt : Date.now(),
+    });
+    const known = knownTurns.get(activeThreadId);
+    if (known.nativeRunId && !known.uncertain) {
+      const view = streamView(activeThreadId);
+      if (view.bindRun(known.nativeRunId) && activeThreadId === sessionSelect.value) {
+        renderThreadMessages(projectThreadMessages(view.project()), activeThreadId);
+      }
+    }
+  }
   updateComposerDisabledState();
+  updateActivity();
+}
+
+function updateActivity() {
+  const threadId = sessionSelect.value;
+  const activity = streamViews.get(threadId)?.project().activity ?? null;
+  let fallback = null;
+  if (pendingSubmissions.get(threadId)?.uncertain)
+    fallback = { stage: 'checking', startedAt: pendingSubmissions.get(threadId).startedAt };
+  else if (knownTurns.get(threadId)?.uncertain)
+    fallback = { stage: 'checking', startedAt: knownTurns.get(threadId).startedAt };
+  else if (stoppingThreadId === threadId && threadId) fallback = { stage: 'stopping' };
+  else if (sending && !activeThreadId) fallback = { stage: 'sending', startedAt: sendingStartedAt };
+  else if (isCurrentThreadRunning(activeThreadId, threadId) && !activity)
+    fallback = { stage: 'starting' };
+  if (!transportReady && (activity || fallback)) fallback = { ...fallback, stage: 'checking' };
+  activityView.render(activity, fallback);
 }
 
 function updateComposerDisabledState() {
   const currentThreadRunning = isCurrentThreadRunning(activeThreadId, sessionSelect.value);
+  const pending =
+    pendingSubmissions.get(sessionSelect.value)?.uncertain === true ||
+    knownTurns.get(sessionSelect.value)?.uncertain === true;
   sessionSelect.disabled = sending;
-  attachButton.disabled = sending || attachmentReadsInFlight > 0;
-  fileInput.disabled = sending || attachmentReadsInFlight > 0;
-  includePage.disabled = sending;
-  permissionSelect.disabled = !composerReady || sending;
-  modelSelect.disabled = !composerReady || sending;
+  attachButton.disabled = sending || pending || attachmentReadsInFlight > 0;
+  fileInput.disabled = sending || pending || attachmentReadsInFlight > 0;
+  includePage.disabled = sending || pending;
+  permissionSelect.disabled = !composerReady || sending || pending;
+  modelSelect.disabled = !composerReady || sending || pending;
   send.disabled =
     sending ||
+    !transportReady ||
+    pending ||
+    (currentThreadRunning && !activeTurnId) ||
+    (stoppingThreadId === sessionSelect.value && Boolean(stoppingThreadId)) ||
     attachmentReadsInFlight > 0 ||
     (!currentThreadRunning && (!composerReady || !prompt.value.trim()));
 }
@@ -150,147 +259,7 @@ function clearError() {
 }
 
 function renderMessages(entries) {
-  const wasEmpty = messages.childElementCount === 0;
-  const wasNearBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 48;
-  const previousScrollTop = messages.scrollTop;
-  const processPreferences = new Map(
-    [...messages.querySelectorAll('details.process-cluster')]
-      .filter(element => element.dataset.userOpen !== undefined)
-      .map(element => [element.dataset.processKey, element.dataset.userOpen]),
-  );
-  const openToolIds = new Set(
-    [...messages.querySelectorAll('details.process-tool[open]')]
-      .map(element => element.dataset.toolId)
-      .filter(Boolean),
-  );
-  const previousNodes = [...messages.children];
-  const nextNodes = [];
-  if (!entries.length) {
-    const empty = document.createElement('div');
-    empty.className = 'empty';
-    const logo = document.createElement('img');
-    logo.src = 'icons/icon128.png';
-    logo.alt = '';
-    const title = document.createElement('h1');
-    title.textContent = 'What can I help with?';
-    empty.append(logo, title);
-    messages.replaceChildren(empty);
-    return;
-  }
-  for (const entry of entries) {
-    const index = nextNodes.length;
-    const signature = JSON.stringify(entry);
-    if (previousNodes[index]?.renderSignature === signature) {
-      retryRichImages(previousNodes[index]);
-      nextNodes.push(previousNodes[index]);
-      continue;
-    }
-    if (entry.role === 'process') {
-      const details = document.createElement('details');
-      details.className = 'message process-cluster';
-      details.dataset.processKey = entry.key;
-      const preference = processPreferences.get(entry.key);
-      if (preference !== undefined) details.dataset.userOpen = preference;
-      details.open = preference === undefined ? entry.running === true : preference === 'true';
-      const summary = document.createElement('summary');
-      summary.className = 'process-cluster-title';
-      summary.addEventListener('click', event => {
-        event.preventDefault();
-        details.open = !details.open;
-        details.dataset.userOpen = String(details.open);
-      });
-      const icon = document.createElement('span');
-      icon.className = 'process-cluster-icon';
-      icon.textContent = '⌁';
-      const label = document.createElement('span');
-      label.textContent = entry.title;
-      summary.append(icon, label);
-      details.append(summary);
-      const list = document.createElement('ol');
-      list.className = 'process-items';
-      for (const process of entry.items) {
-        const row = document.createElement('li');
-        row.className = `process-item ${process.type}${process.isError ? ' error-state' : ''}`;
-        if (process.type === 'thinking') {
-          const heading = document.createElement('strong');
-          heading.textContent = process.title;
-          const content = document.createElement('div');
-          content.className = 'message-detail';
-          content.textContent = process.text;
-          row.append(heading, content);
-        } else {
-          const tool = document.createElement('details');
-          tool.className = 'process-tool';
-          if (process.id) {
-            tool.dataset.toolId = process.id;
-            tool.open = openToolIds.has(process.id);
-          }
-          const toolSummary = document.createElement('summary');
-          toolSummary.className = 'process-tool-title';
-          const status = document.createElement('span');
-          const normalizedStatus = process.isError
-            ? 'failed'
-            : process.status === 'inProgress'
-              ? 'running'
-              : process.status || 'completed';
-          status.className = `process-tool-status ${normalizedStatus}`;
-          status.setAttribute('aria-label', normalizedStatus);
-          const name = document.createElement('strong');
-          name.textContent = process.title;
-          const input = document.createElement('span');
-          input.className = 'process-tool-input';
-          input.textContent = toolInputSummary(process.input);
-          toolSummary.append(status, name);
-          if (input.textContent) toolSummary.append(input);
-          tool.append(toolSummary);
-          for (const [sectionLabel, value] of [
-            ['Input', process.input],
-            [process.isError ? 'Error' : 'Output', process.output],
-          ]) {
-            if (!value) continue;
-            const section = document.createElement('section');
-            const heading = document.createElement('strong');
-            heading.textContent = sectionLabel;
-            const content = document.createElement('pre');
-            content.textContent = value;
-            section.append(heading, content);
-            tool.append(section);
-          }
-          row.append(tool);
-        }
-        list.append(row);
-      }
-      details.append(list);
-      details.renderSignature = signature;
-      nextNodes.push(details);
-      continue;
-    }
-    const item = document.createElement('div');
-    item.className = `message ${entry.role} markdown-content`;
-    const threadId = sessionSelect.value;
-    renderRichContent(item, entry, async source => {
-      const result = await client.request('thread/image', { threadId, source });
-      return result.dataUrl;
-    });
-    if (entry.pendingInput) {
-      const label = document.createElement('small');
-      label.className = 'pending-input-status';
-      label.textContent = pendingInputLabel(
-        entry.pendingInput.state,
-        entry.pendingInput.incomplete,
-      );
-      item.append(label);
-    }
-    if (!item.childElementCount) continue;
-    item.renderSignature = signature;
-    nextNodes.push(item);
-  }
-  for (const [index, node] of nextNodes.entries()) {
-    if (messages.children[index] !== node)
-      messages.insertBefore(node, messages.children[index] ?? null);
-  }
-  while (messages.children.length > nextNodes.length) messages.lastElementChild.remove();
-  messages.scrollTop = wasEmpty || wasNearBottom ? messages.scrollHeight : previousScrollTop;
+  messageRenderer.render(entries, sessionSelect.value);
 }
 
 function renderThreadMessages(entries, threadId = sessionSelect.value) {
@@ -300,6 +269,7 @@ function renderThreadMessages(entries, threadId = sessionSelect.value) {
     pendingUserMessage = null;
   }
   renderMessages(projected);
+  updateActivity();
 }
 
 function showPendingUserMessage(threadId, text) {
@@ -324,20 +294,32 @@ async function refreshSessions(preferredSessionId, generation) {
   sessionSelect.replaceChildren();
   const createOption = document.createElement('option');
   createOption.value = '';
-  createOption.textContent = 'New chat';
+  createOption.textContent = t('newChat');
   sessionSelect.append(createOption);
   for (const entry of result.data ?? []) {
     const option = document.createElement('option');
     option.value = entry.id;
-    const title = entry.name ?? entry.preview ?? 'Untitled conversation';
-    option.textContent = entry.status?.type === 'active' ? `${title} · working` : title;
+    const title = entry.name ?? entry.preview ?? t('untitled');
+    option.textContent = entry.status?.type === 'active' ? `${title} · ${t('working')}` : title;
     sessionSelect.append(option);
   }
   if ([...sessionSelect.options].some(option => option.value === current)) {
     sessionSelect.value = current;
   }
   const selectedThread = (result.data ?? []).find(entry => entry.id === sessionSelect.value);
-  setRunningTurn(selectedThread?.status?.type === 'active' ? selectedThread.id : '', '');
+  if (selectedThread?.status?.type === 'active') {
+    setRunningTurn(
+      selectedThread.id,
+      knownTurns.get(selectedThread.id)?.id ||
+        (activeThreadId === selectedThread.id ? activeTurnId : ''),
+      knownTurns.get(selectedThread.id)?.nativeRunId,
+    );
+  } else if (knownTurns.has(sessionSelect.value)) {
+    const known = knownTurns.get(sessionSelect.value);
+    setRunningTurn(sessionSelect.value, known.id, known.nativeRunId);
+  } else if (activeThreadId !== sessionSelect.value || !activeTurnId) {
+    setRunningTurn('', '');
+  }
   return true;
 }
 
@@ -353,7 +335,7 @@ async function refreshComposerOptions(threadId, generation) {
   if (!result.modelRef) {
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = models.length ? 'Select model' : 'Default model';
+    placeholder.textContent = t(models.length ? 'selectModel' : 'defaultModel');
     placeholder.disabled = models.length > 0;
     modelSelect.append(placeholder);
   }
@@ -365,6 +347,7 @@ async function refreshComposerOptions(threadId, generation) {
     modelSelect.append(option);
   }
   modelSelect.value = result.modelRef ?? '';
+  modelSelect.title = modelSelect.selectedOptions[0]?.textContent || '';
 }
 
 async function refreshMessages(threadId, generation) {
@@ -379,7 +362,15 @@ async function refreshMessages(threadId, generation) {
     }
     return;
   }
-  const result = await client.request('thread/read', { includeTurns: true, threadId });
+  const expectedTurnId =
+    pendingSubmissions.get(threadId)?.clientTurnId ||
+    knownTurns.get(threadId)?.id ||
+    (activeThreadId === threadId ? activeTurnId : '');
+  const result = await client.request('thread/read', {
+    includeTurns: true,
+    threadId,
+    ...(expectedTurnId ? { turnId: expectedTurnId } : {}),
+  });
   if (generation !== refreshGeneration || sessionSelect.value !== threadId) {
     if (sessionSelect.value !== threadId && subscribedThreadId !== threadId) {
       void client.request('thread/unsubscribe', { threadId }).catch(() => {});
@@ -391,13 +382,38 @@ async function refreshMessages(threadId, generation) {
   if (previousThreadId && previousThreadId !== threadId) {
     void client.request('thread/unsubscribe', { threadId: previousThreadId }).catch(() => {});
   }
+  const observation = result.activeTurn ?? result.thread?.activeTurn;
+  if (observation?.id && (!expectedTurnId || observation.id === expectedTurnId)) {
+    if (observation.executionSettled === true) {
+      pendingSubmissions.delete(threadId);
+      knownTurns.delete(threadId);
+      rememberSettledTurn(threadId, observation.id);
+      if (stoppingThreadId === threadId) stoppingThreadId = '';
+      setRunningTurn('', '');
+      pendingCompletions.set(threadId, observation);
+    } else if (observation.status === 'inProgress') {
+      if (pendingSubmissions.has(threadId)) clearAttachments();
+      pendingSubmissions.delete(threadId);
+      setRunningTurn(threadId, observation.id, observation.nativeRunId, true);
+    } else if (observation.status === 'unknown') {
+      const previous = knownTurns.get(threadId);
+      knownTurns.set(threadId, {
+        id: observation.id,
+        nativeRunId: observation.nativeRunId,
+        uncertain: true,
+        startedAt: previous?.id === observation.id ? previous.startedAt : Date.now(),
+      });
+      updateComposerDisabledState();
+      updateActivity();
+    }
+  }
   const completed = pendingCompletions.get(threadId);
   if (completed) {
     const view = streamView(threadId);
     view.setHistory(result.thread, true);
     view.finish(completed.status === 'interrupted');
     pendingCompletions.delete(threadId);
-    renderThreadMessages(messagesFromThread(view.project()), threadId);
+    renderThreadMessages(projectThreadMessages(view.project()), threadId);
     if (completed.error?.message && shouldShowTurnError(threadId, sessionSelect.value, true)) {
       showError(completed.error.message);
     }
@@ -418,7 +434,11 @@ async function refreshAll(preferredSessionId) {
       refreshComposerOptions(threadId, generation),
     ]);
     if (generation === refreshGeneration && sessionSelect.value === threadId) {
+      transportReady = true;
       setComposerReady(true);
+      if (pendingSubmissions.get(threadId)?.uncertain) showError(t('unknownSend'));
+      else if (knownTurns.get(threadId)?.uncertain) showError(t('unknownExecution'));
+      updateActivity();
       return true;
     }
   } catch (error) {
@@ -447,7 +467,8 @@ function renderAttachments() {
     remove.className = 'attachment-remove';
     remove.type = 'button';
     remove.textContent = '×';
-    remove.title = `Remove ${attachment.name}`;
+    remove.title = t('removeAttachment', { name: attachment.name });
+    remove.setAttribute('aria-label', remove.title);
     remove.addEventListener('click', () => {
       pendingAttachments.splice(index, 1);
       renderAttachments();
@@ -471,13 +492,13 @@ async function addAttachments(files) {
   const draftGeneration = attachmentDraftGeneration;
   const selected = [...files];
   if (pendingAttachments.length + selected.length > MAX_ATTACHMENT_COUNT) {
-    showError(`Attach at most ${MAX_ATTACHMENT_COUNT} files.`);
+    showError(t('attachmentCount', { count: MAX_ATTACHMENT_COUNT }));
     return;
   }
   const existingBytes = pendingAttachments.reduce((total, item) => total + item.size, 0);
   const selectedBytes = selected.reduce((total, file) => total + file.size, 0);
   if (existingBytes + selectedBytes > MAX_ATTACHMENT_BYTES) {
-    showError('Attachments must be 4 MB or less in total.');
+    showError(t('attachmentSize'));
     return;
   }
   attachmentReadsInFlight += 1;
@@ -493,14 +514,14 @@ async function addAttachments(files) {
     );
     if (draftGeneration !== attachmentDraftGeneration) return;
     if (pendingAttachments.length + next.length > MAX_ATTACHMENT_COUNT) {
-      showError(`Attach at most ${MAX_ATTACHMENT_COUNT} files.`);
+      showError(t('attachmentCount', { count: MAX_ATTACHMENT_COUNT }));
       return;
     }
     if (
       pendingAttachments.reduce((total, item) => total + item.size, 0) + selectedBytes >
       MAX_ATTACHMENT_BYTES
     ) {
-      showError('Attachments must be 4 MB or less in total.');
+      showError(t('attachmentSize'));
       return;
     }
     pendingAttachments.push(...next);
@@ -546,7 +567,16 @@ async function collectPageContext() {
 
 async function submit() {
   const message = prompt.value.trim();
-  if (!message || sending || !composerReady || attachmentReadsInFlight > 0) return;
+  if (
+    !message ||
+    sending ||
+    !composerReady ||
+    !transportReady ||
+    pendingSubmissions.get(sessionSelect.value)?.uncertain ||
+    knownTurns.get(sessionSelect.value)?.uncertain ||
+    attachmentReadsInFlight > 0
+  )
+    return;
   const attachments = pendingAttachments.map(({ base64Data, mimeType, name }) => ({
     base64Data,
     mimeType,
@@ -556,7 +586,11 @@ async function submit() {
   const permissionMode = permissionSelect.value;
   const includePageContext = includePage.checked;
   let createdThreadId = '';
+  let preparedThreadId = '';
+  let turnRequestStarted = false;
+  const clientTurnId = crypto.randomUUID();
   sending = true;
+  sendingStartedAt = Date.now();
   updateComposerDisabledState();
   clearError();
   showPendingUserMessage(sessionSelect.value, message);
@@ -570,6 +604,7 @@ async function submit() {
       threadId = started.thread.id;
       createdThreadId = threadId;
     }
+    preparedThreadId = threadId;
     streamView(threadId).start(message, {
       role: 'user',
       content: [
@@ -587,61 +622,92 @@ async function submit() {
     // Once the thread exists, its stream owns the optimistic user bubble.
     // The pre-thread placeholder must not be merged into that projection again.
     pendingUserMessage = null;
-    renderThreadMessages(messagesFromThread(streamView(threadId).project()), threadId);
-    const startedTurn = await client.request('turn/start', {
+    renderThreadMessages(projectThreadMessages(streamView(threadId).project()), threadId);
+    const turnRequest = {
       threadId,
+      clientTurnId,
       input: [{ type: 'text', text: message }],
       ...(attachments.length ? { attachments } : {}),
       ...(modelRef ? { modelRef } : {}),
       permissionMode,
       ...(pageContext ? { pageContext } : {}),
+    };
+    pendingSubmissions.set(threadId, {
+      clientTurnId,
+      startedAt: sendingStartedAt,
+      request: turnRequest,
+      uncertain: false,
     });
-    setRunningTurn(threadId, startedTurn?.turn?.id);
+    turnRequestStarted = true;
+    const startedTurn = await client.request('turn/start', turnRequest);
+    pendingSubmissions.delete(threadId);
+    if (!settledTurns.has(`${threadId}/${startedTurn?.turn?.id}`)) {
+      setRunningTurn(threadId, startedTurn?.turn?.id, startedTurn?.turn?.nativeRunId, true);
+    }
     clearAttachments();
     await refreshAll(threadId);
   } catch (error) {
-    const threadId = createdThreadId || sessionSelect.value;
-    if (threadId) streamView(threadId).cancelStart();
-    clearPendingUserMessage();
-    if (threadId && threadId === sessionSelect.value) {
-      renderThreadMessages(messagesFromThread(streamView(threadId).project()), threadId);
+    const threadId = preparedThreadId || createdThreadId || sessionSelect.value;
+    if (turnRequestStarted && error?.requestSent !== false) {
+      const pending = pendingSubmissions.get(threadId);
+      // Native acceptance can race the transport failure. Keep that exact run
+      // available for Stop; otherwise freeze the original submission to read it.
+      if (pending) pending.uncertain = true;
+      if (createdThreadId) await refreshAll(createdThreadId);
+      showError(t('unknownSend'));
+    } else {
+      pendingSubmissions.delete(threadId);
+      if (threadId) streamView(threadId).cancelStart();
+      clearPendingUserMessage();
+      if (threadId && threadId === sessionSelect.value)
+        renderThreadMessages(projectThreadMessages(streamView(threadId).project()), threadId);
+      if (!prompt.value) {
+        prompt.value = message;
+        prompt.dispatchEvent(new Event('input'));
+      }
+      if (createdThreadId) await refreshAll(createdThreadId);
+      showError(error);
     }
-    if (!prompt.value) {
-      prompt.value = message;
-      prompt.dispatchEvent(new Event('input'));
-    }
-    if (createdThreadId) await refreshAll(createdThreadId);
-    showError(error);
   } finally {
     sending = false;
     updateComposerDisabledState();
+    updateActivity();
     prompt.focus();
   }
 }
 
 async function stopCurrentTurn() {
-  if (!activeThreadId || sending) return;
+  if (
+    !activeThreadId ||
+    !activeTurnId ||
+    knownTurns.get(activeThreadId)?.uncertain ||
+    sending ||
+    !transportReady
+  )
+    return;
+  const threadId = activeThreadId;
+  stoppingThreadId = threadId;
   sending = true;
   updateComposerDisabledState();
   clearError();
+  updateActivity();
   try {
     await client.request('turn/interrupt', {
       threadId: activeThreadId,
       ...(activeTurnId ? { turnId: activeTurnId } : {}),
     });
-    setRunningTurn('', '');
     await refreshAll(sessionSelect.value);
   } catch (error) {
-    showError(error);
+    if (error?.requestSent === false) stoppingThreadId = '';
+    showError(error?.requestSent === false ? error : t('unknownStop'));
   } finally {
     sending = false;
     updateComposerDisabledState();
+    updateActivity();
   }
 }
 
 sessionSelect.addEventListener('change', () => {
-  streamViews.delete(sessionSelect.value);
-  pendingCompletions.delete(sessionSelect.value);
   clearAttachments();
   void refreshAll(sessionSelect.value);
 });
@@ -649,14 +715,15 @@ permissionSelect.addEventListener('change', () => {
   if (
     permissionSelect.value === 'full' &&
     lastPermissionMode !== 'full' &&
-    !globalThis.confirm(
-      'This conversation can access files outside the task folder and run host commands without approval. Enable full access?',
-    )
+    !globalThis.confirm(t('fullConfirm'))
   ) {
     permissionSelect.value = lastPermissionMode;
     return;
   }
   lastPermissionMode = permissionSelect.value;
+});
+modelSelect.addEventListener('change', () => {
+  modelSelect.title = modelSelect.selectedOptions[0]?.textContent || '';
 });
 attachButton.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {
@@ -688,6 +755,11 @@ settingsButton.addEventListener('click', () => chrome.runtime.openOptionsPage())
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) void refreshAll();
 });
-window.addEventListener('unload', () => client.disconnect());
+window.addEventListener('unload', () => {
+  client.disconnect();
+  activityView.dispose();
+  messageRenderer.dispose();
+  if (streamRenderTimer !== null) clearTimeout(streamRenderTimer);
+});
 
 void refreshAll();

@@ -3,6 +3,7 @@ import WebSocket from 'ws';
 
 import { BrowserExtensionStream } from '../../../renderer/libs/openclaw-chat/model/browser-extension/browser-extension-stream';
 import type { BrowserExtensionStreamEvent } from '../../../shared/browser/browserExtensionStream';
+import { BrowserExtensionChatController } from './browserExtensionChatController';
 import {
   BROWSER_EXTENSION_ID,
   BROWSER_EXTENSION_PAIR_METHOD,
@@ -44,6 +45,9 @@ const createApi = (): BrowserExtensionChatApi => ({
   sendMessage: vi.fn(async () => ({ sessionId: 'one', runId: 'run-1' })),
   getThreadRuntimeStatus: vi.fn(async () => ({ known: true, running: false })),
   consumeTurnError: vi.fn(() => undefined),
+  getTurnState: vi.fn(async (_sessionId, turnId) =>
+    turnId ? { id: turnId, status: 'completed' as const, executionSettled: true } : null,
+  ),
   interruptThread: vi.fn(async () => undefined),
 });
 
@@ -78,6 +82,142 @@ afterEach(async () => {
 });
 
 describe('BrowserExtensionChatServer', () => {
+  it('keeps a native media tool result visible through the controller, wire and display projection', async () => {
+    const controller = new BrowserExtensionChatController({
+      ensureEngineRunning: vi.fn(),
+      getRouter: vi.fn(),
+      getRuntime: () =>
+        ({
+          ensureReady: vi.fn(async () => undefined),
+          getSessionKeysForSession: () => ['agent:main:justdo:one'],
+          fetchSessionHistoryByKey: vi.fn(async () => ({
+            messages: [
+              { role: 'user', content: 'Question' },
+              {
+                role: 'tool_use',
+                name: 'inspect',
+                input: { query: 'chart' },
+                toolCallId: 'inspect-1',
+              },
+              {
+                role: 'toolResult',
+                toolName: 'inspect',
+                toolCallId: 'inspect-1',
+                content: [
+                  { type: 'text', text: 'Chart delivered' },
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'YWJj' },
+                  },
+                ],
+              },
+              { role: 'assistant', content: 'Final reply' },
+            ],
+          })),
+        }) as never,
+      getStore: () => ({ getSession: () => ({ id: 'one' }) }) as never,
+    });
+    const api = createApi();
+    vi.mocked(api.getMessages).mockImplementation(id => controller.getMessages(id));
+    server = new BrowserExtensionChatServer(api, token, 'test');
+    await server.start();
+    const socket = await connect(server.getCapability().localAppServerUrl);
+    try {
+      await request(socket, 'init', 'initialize');
+      socket.send(JSON.stringify({ method: 'initialized' }));
+      const response = await request(socket, 'read', 'thread/read', {
+        threadId: 'one',
+        includeTurns: true,
+      });
+      const thread = (
+        response.result as { thread: { turns: Array<{ items: Array<Record<string, unknown>> }> } }
+      ).thread;
+      const tool = thread.turns[0].items.find(item => item.type === 'toolCall');
+      expect(tool).toMatchObject({
+        toolUseId: 'inspect-1',
+        status: 'completed',
+        display: { keepVisible: true },
+      });
+      expect(tool?.display).not.toHaveProperty('nativeFailure');
+      const { messagesFromThread } =
+        await import('../../../../plugins/browser-extensions/browser-assistant/conversation-overlay/modules/sidepanel-state.js');
+      const projected = messagesFromThread(thread);
+      expect(
+        projected.some(
+          (entry: { role: string; item?: { id: string } }) =>
+            entry.role === 'live-process' && entry.item?.id === 'inspect-1',
+        ),
+      ).toBe(true);
+      expect(projected.some((entry: { role: string }) => entry.role === 'completed-process')).toBe(
+        false,
+      );
+    } finally {
+      socket.close();
+    }
+  });
+
+  it('forwards empty compaction and reset boundaries with native reply display facts', async () => {
+    const api = createApi();
+    const rawMessage = {
+      role: 'system',
+      content: '',
+      __openclaw: { kind: 'compaction-status', phase: 'completed', summary: 'Retained summary' },
+    };
+    vi.mocked(api.getMessages).mockResolvedValue([
+      {
+        role: 'assistant',
+        text: 'Partial reply',
+        display: { stopReason: 'error', sourceId: 'native-reply', sourceIndex: 0 },
+      },
+      {
+        role: 'system',
+        text: '',
+        rawMessage,
+        display: { kind: 'compaction-status', phase: 'completed' },
+      },
+      { role: 'system', text: '', display: { kind: 'phase-boundary' } },
+    ]);
+    server = new BrowserExtensionChatServer(api, token, 'test');
+    await server.start();
+    const socket = await connect(server.getCapability().localAppServerUrl);
+    try {
+      await request(socket, 'init', 'initialize');
+      socket.send(JSON.stringify({ method: 'initialized' }));
+      const response = await request(socket, 'read', 'thread/read', {
+        threadId: 'one',
+        includeTurns: true,
+      });
+      expect(response).toMatchObject({
+        result: {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: 'agentMessage',
+                    text: 'Partial reply',
+                    display: { stopReason: 'error', sourceId: 'native-reply' },
+                  },
+                  {
+                    type: 'systemMessage',
+                    text: '',
+                    rawMessage,
+                    display: { kind: 'compaction-status' },
+                  },
+                  { type: 'phaseBoundary', display: { kind: 'phase-boundary' } },
+                ],
+              },
+            ],
+          },
+        },
+      });
+      expect(api.sendMessage).not.toHaveBeenCalled();
+      expect(api.interruptThread).not.toHaveBeenCalled();
+    } finally {
+      socket.close();
+    }
+  });
+
   it('provides relay pairing only after the authenticated initialization handshake', async () => {
     const createPairing = vi.fn(async () => ({ pairingString: 'fixture-pairing' }));
     const api = createApi();
@@ -242,7 +382,7 @@ describe('BrowserExtensionChatServer', () => {
           data: { text: 'First words' },
         },
       });
-      return { sessionId: 'one', runId: 'run-1' };
+      return { sessionId: 'one', runId: 'run-1', nativeRunId: 'run-1' };
     });
     server = new BrowserExtensionChatServer(api, token, '1.0.0');
     await server.start();
@@ -256,10 +396,12 @@ describe('BrowserExtensionChatServer', () => {
       const value = JSON.parse(data.toString());
       received.push(value.method ?? value.id);
       if (value.method === 'thread/stream') view.accept(value.params);
+      if (value.method === 'turn/started') view.bindRun(value.params.turn.nativeRunId);
       if (value.method === 'thread/updated') view.setHistory(value.params.thread);
     });
     await request(socket, 'send', 'turn/start', { threadId: 'one', message: 'Question' });
     expect(received.indexOf('thread/stream')).toBeLessThan(received.indexOf('send'));
+    expect(received.indexOf('turn/started')).toBeLessThan(received.indexOf('send'));
     expect(view.project().turns[0].items).toMatchObject([
       { type: 'userMessage' },
       { type: 'agentMessage', text: 'First words' },
@@ -577,6 +719,11 @@ describe('BrowserExtensionChatServer', () => {
       },
     ]);
     vi.mocked(api.consumeTurnError).mockReturnValue('Provider quota exceeded.');
+    vi.mocked(api.getTurnState).mockResolvedValue({
+      id: 'run-1',
+      status: 'failed',
+      executionSettled: true,
+    });
     server = new BrowserExtensionChatServer(api, token, '1.0.0');
     await server.start();
     const socket = await connect(server.getCapability().localAppServerUrl);
@@ -616,6 +763,11 @@ describe('BrowserExtensionChatServer', () => {
 
   it('does not use an old assistant reply to complete a newly interrupted pending input', async () => {
     const api = createApi();
+    vi.mocked(api.getTurnState).mockResolvedValue({
+      id: 'run-1',
+      status: 'failed',
+      executionSettled: true,
+    });
     vi.mocked(api.listSessions).mockReturnValue([
       {
         createdAt: 1_000,
@@ -692,6 +844,11 @@ describe('BrowserExtensionChatServer', () => {
       runtimeReads += 1;
       return { known: true, running: runtimeReads < 4 };
     });
+    vi.mocked(api.getTurnState).mockImplementation(async () => ({
+      id: 'run-1',
+      status: runtimeReads < 4 ? 'inProgress' : 'completed',
+      executionSettled: runtimeReads >= 4,
+    }));
     vi.mocked(api.getMessages).mockImplementation(async () =>
       runtimeReads < 4
         ? [{ role: 'user', text: 'Question' }]
@@ -830,6 +987,11 @@ describe('BrowserExtensionChatServer', () => {
 
   it('uses delta reads during a running turn instead of rebuilding every poll', async () => {
     const api = createApi();
+    vi.mocked(api.getTurnState).mockResolvedValue({
+      id: 'run-1',
+      status: 'inProgress',
+      executionSettled: false,
+    });
     vi.mocked(api.listSessions).mockReturnValue([
       {
         createdAt: 1_000,
@@ -860,6 +1022,81 @@ describe('BrowserExtensionChatServer', () => {
       .map(([, options]) => options);
     expect(pollOptions.filter(options => options?.forceFullSnapshot === true)).toHaveLength(1);
     expect(pollOptions.some(options => options?.forceFullSnapshot === false)).toBe(true);
+    socket.close();
+  });
+
+  it('retains an exact unconfirmed turn after idle, final content and a Stop ACK', async () => {
+    const api = createApi();
+    const clientTurnId = 'd28c0cb6-9ddc-4118-885b-4420a16f7a9a';
+    vi.mocked(api.sendMessage).mockResolvedValue({
+      sessionId: 'one',
+      runId: clientTurnId,
+      nativeRunId: 'native-run',
+    });
+    vi.mocked(api.getTurnState).mockResolvedValue({
+      id: clientTurnId,
+      nativeRunId: 'native-run',
+      status: 'unknown',
+      executionSettled: false,
+    });
+    server = new BrowserExtensionChatServer(api, token, 'test');
+    await server.start();
+    const socket = await connect(server.getCapability().localAppServerUrl);
+    await request(socket, 'init', 'initialize');
+    socket.send(JSON.stringify({ method: 'initialized' }));
+    const notifications: Array<{ method?: string }> = [];
+    socket.on('message', data => notifications.push(JSON.parse(data.toString())));
+    const started = await request(socket, 'start', 'turn/start', {
+      threadId: 'one',
+      clientTurnId,
+      message: 'Question',
+    });
+    expect(started).toMatchObject({
+      result: {
+        turn: {
+          id: clientTurnId,
+          nativeRunId: 'native-run',
+          executionSettled: false,
+        },
+      },
+    });
+    expect(api.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ clientTurnId }));
+    expect(
+      await request(socket, 'stale-stop', 'turn/interrupt', {
+        threadId: 'one',
+        turnId: 'old-turn',
+      }),
+    ).toHaveProperty('error');
+    expect(api.interruptThread).not.toHaveBeenCalled();
+    expect(
+      await request(socket, 'stop', 'turn/interrupt', { threadId: 'one', turnId: clientTurnId }),
+    ).toMatchObject({ result: { status: 'requested', executionSettled: false } });
+    expect(api.interruptThread).toHaveBeenCalledWith('one', clientTurnId);
+    await new Promise(resolve => setTimeout(resolve, 1_650));
+    expect(notifications.some(message => message.method === 'turn/completed')).toBe(false);
+    expect(
+      await request(socket, 'read', 'thread/read', { threadId: 'one', turnId: clientTurnId }),
+    ).toMatchObject({
+      result: { activeTurn: { id: clientTurnId, status: 'unknown', executionSettled: false } },
+    });
+    socket.close();
+  });
+
+  it('rejects invalid input as explicitly unsent and does not dispatch it', async () => {
+    const api = createApi();
+    server = new BrowserExtensionChatServer(api, token, 'test');
+    await server.start();
+    const socket = await connect(server.getCapability().localAppServerUrl);
+    await request(socket, 'init', 'initialize');
+    socket.send(JSON.stringify({ method: 'initialized' }));
+    expect(
+      await request(socket, 'invalid', 'turn/start', {
+        threadId: 'one',
+        clientTurnId: 'not-a-uuid',
+        message: 'Question',
+      }),
+    ).toMatchObject({ error: { data: { requestSent: false } } });
+    expect(api.sendMessage).not.toHaveBeenCalled();
     socket.close();
   });
 

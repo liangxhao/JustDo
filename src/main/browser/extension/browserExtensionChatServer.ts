@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http';
 
 import { WebSocket, WebSocketServer } from 'ws';
 
+import type { BrowserExtensionMessageDisplay } from '../../../shared/browser/browserExtensionDisplay';
 import {
   BROWSER_EXTENSION_STREAM_METHOD,
   type BrowserExtensionStreamEvent,
@@ -29,6 +30,7 @@ export interface BrowserExtensionPageContext {
 }
 
 export interface BrowserExtensionChatRequest {
+  clientTurnId?: string;
   attachments?: CoworkAttachmentPayload[];
   message: string;
   modelRef?: string;
@@ -51,6 +53,7 @@ export interface BrowserExtensionThread {
 export interface BrowserExtensionMessage {
   pendingInput?: { id: string; state: string; runId?: string; incomplete?: boolean };
   rawMessage?: Record<string, unknown>;
+  display?: BrowserExtensionMessageDisplay;
   role: string;
   text: string;
   thinking?: string;
@@ -64,6 +67,15 @@ export interface BrowserExtensionMessage {
 export interface BrowserExtensionTurnResult {
   sessionId: string;
   runId: string;
+  nativeRunId?: string;
+}
+
+export interface BrowserExtensionTurnState {
+  id: string;
+  nativeRunId?: string;
+  status: 'inProgress' | 'unknown' | 'completed' | 'failed' | 'interrupted';
+  executionSettled: boolean;
+  error?: { message: string };
 }
 
 export interface BrowserExtensionChatApi {
@@ -85,7 +97,8 @@ export interface BrowserExtensionChatApi {
     options?: { forceRefresh?: boolean },
   ) => Promise<{ known: boolean; running: boolean }>;
   consumeTurnError: (sessionId: string, runId: string) => string | undefined;
-  interruptThread: (sessionId: string) => Promise<void>;
+  getTurnState: (sessionId: string, turnId?: string) => Promise<BrowserExtensionTurnState | null>;
+  interruptThread: (sessionId: string, turnId: string) => Promise<void>;
 }
 
 export interface BrowserExtensionComposerOptions {
@@ -178,6 +191,10 @@ const toAppServerTurns = (
     items = [];
   };
   messages.forEach(message => {
+    if (message.display?.kind === 'phase-boundary') {
+      items.push({ id: nextItemId(), type: 'phaseBoundary', text: '', display: message.display });
+      return;
+    }
     if (message.role === 'user' && items.length) flush();
     if (message.role === 'user') {
       items.push({
@@ -196,6 +213,7 @@ const toAppServerTurns = (
           id: nextItemId(),
           summary: [],
           type: 'reasoning',
+          ...(message.display ? { display: message.display } : {}),
         });
       }
       if (message.text || message.rawMessage) {
@@ -205,6 +223,7 @@ const toAppServerTurns = (
           phase: 'final_answer',
           text: message.text,
           type: 'agentMessage',
+          ...(message.display ? { display: message.display } : {}),
         });
       }
       return;
@@ -219,6 +238,7 @@ const toAppServerTurns = (
         toolName: message.toolName ?? 'tool',
         toolUseId: message.toolUseId ?? null,
         type: 'toolCall',
+        ...(message.display?.keepVisible ? { display: { keepVisible: true } } : {}),
       });
       return;
     }
@@ -233,6 +253,7 @@ const toAppServerTurns = (
         matchingTool.output = message.text;
         matchingTool.isError = message.isError === true;
         matchingTool.status = message.isError === true ? 'failed' : 'completed';
+        if (message.display?.keepVisible) matchingTool.display = { keepVisible: true };
       } else {
         items.push({
           id: nextItemId(),
@@ -243,12 +264,19 @@ const toAppServerTurns = (
           toolName: message.toolName ?? 'tool',
           toolUseId: message.toolUseId ?? null,
           type: 'toolCall',
+          ...(message.display?.keepVisible ? { display: { keepVisible: true } } : {}),
         });
       }
       return;
     }
-    if (message.text) {
-      items.push({ id: nextItemId(), text: message.text, type: 'systemMessage' });
+    if (message.text || message.display?.kind || message.rawMessage) {
+      items.push({
+        id: nextItemId(),
+        text: message.text,
+        type: 'systemMessage',
+        ...(message.rawMessage ? { rawMessage: message.rawMessage } : {}),
+        ...(message.display ? { display: message.display } : {}),
+      });
     }
   });
   flush();
@@ -563,10 +591,17 @@ export class BrowserExtensionChatServer {
       this.send(connection, { id, result });
     } catch (error) {
       const methodNotFound = error instanceof Error && error.message === 'Method not found.';
+      const requestSent =
+        error instanceof Error
+          ? (error as Error & { requestSent?: boolean }).requestSent
+          : undefined;
       this.send(connection, {
         error: {
           code: methodNotFound ? -32601 : -32603,
           message: error instanceof Error ? error.message : 'Internal error.',
+          ...(request.method === 'turn/start'
+            ? { data: { requestSent: requestSent !== false } }
+            : {}),
         },
         id,
       });
@@ -641,7 +676,12 @@ export class BrowserExtensionChatServer {
           params.includeTurns === true
             ? await this.api.getMessages(threadId, { forceFullSnapshot: true })
             : undefined;
-        return { thread: toAppServerThread(thread, messages) };
+        const turnId = typeof params.turnId === 'string' ? params.turnId : undefined;
+        const activeTurn = await this.api.getTurnState(threadId, turnId);
+        if (activeTurn && !activeTurn.executionSettled && !this.pollStates.has(threadId)) {
+          this.startPollingTurn(threadId, activeTurn.id, messageFingerprint(messages ?? []));
+        }
+        return { thread: toAppServerThread(thread, messages), activeTurn };
       }
       case 'thread/start': {
         const title = typeof params.title === 'string' ? params.title : undefined;
@@ -663,13 +703,25 @@ export class BrowserExtensionChatServer {
         return { status: removed ? 'unsubscribed' : 'notSubscribed' };
       }
       case 'turn/start': {
+        const invalidInput = (message: string): never => {
+          throw Object.assign(new Error(message), { requestSent: false });
+        };
+        if (
+          params.clientTurnId !== undefined &&
+          (typeof params.clientTurnId !== 'string' ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+              params.clientTurnId,
+            ))
+        ) {
+          invalidInput('Invalid client turn identity.');
+        }
         let threadId = typeof params.threadId === 'string' ? params.threadId : undefined;
         const message = extractTurnText(params);
         const pageContext = isRecord(params.pageContext)
           ? (params.pageContext as BrowserExtensionPageContext)
           : undefined;
         if (params.attachments !== undefined && !Array.isArray(params.attachments)) {
-          throw new Error('Invalid attachment payload.');
+          invalidInput('Invalid attachment payload.');
         }
         const attachments = params.attachments as CoworkAttachmentPayload[] | undefined;
         if (
@@ -678,15 +730,23 @@ export class BrowserExtensionChatServer {
           params.permissionMode !== 'auto' &&
           params.permissionMode !== 'full'
         ) {
-          throw new Error('Invalid permission mode.');
+          invalidInput('Invalid permission mode.');
         }
         const permissionMode = params.permissionMode as PermissionMode | undefined;
         const modelRef = typeof params.modelRef === 'string' ? params.modelRef : undefined;
-        if (!message.trim()) throw new Error('Turn input is required.');
-        if (!threadId) threadId = (await this.api.startThread(message.slice(0, 50))).id;
-        await this.subscribeStream(connection, threadId);
-        const baselineMessages = threadId ? await this.api.getMessages(threadId) : [];
+        if (!message.trim()) invalidInput('Turn input is required.');
+        let baselineMessages: BrowserExtensionMessage[];
+        try {
+          if (!threadId) threadId = (await this.api.startThread(message.slice(0, 50))).id;
+          await this.subscribeStream(connection, threadId);
+          baselineMessages = await this.api.getMessages(threadId);
+        } catch (error) {
+          throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
+            requestSent: false,
+          });
+        }
         const turn = await this.api.sendMessage({
+          ...(typeof params.clientTurnId === 'string' ? { clientTurnId: params.clientTurnId } : {}),
           attachments,
           message,
           modelRef,
@@ -702,10 +762,12 @@ export class BrowserExtensionChatServer {
           durationMs: null,
           error: null,
           id: turn.runId,
+          ...(turn.nativeRunId ? { nativeRunId: turn.nativeRunId } : {}),
           items: [],
           itemsView: 'full',
           startedAt: Math.floor(Date.now() / 1000),
           status: 'inProgress',
+          executionSettled: false,
         };
         this.broadcast(
           'turn/started',
@@ -722,35 +784,13 @@ export class BrowserExtensionChatServer {
       case 'turn/interrupt': {
         const threadId = typeof params.threadId === 'string' ? params.threadId : '';
         if (!threadId) throw new Error('threadId is required.');
+        const turnId = typeof params.turnId === 'string' ? params.turnId : '';
+        if (!turnId) throw new Error('turnId is required.');
         const state = this.pollStates.get(threadId);
-        if (state?.timer) clearTimeout(state.timer);
-        this.pollStates.delete(threadId);
-        try {
-          await this.api.interruptThread(threadId);
-        } catch (error) {
-          if (state) {
-            this.startPollingTurn(threadId, state.turnId, state.baselineFingerprint);
-          }
-          throw error;
-        }
-        this.broadcast(
-          'turn/completed',
-          {
-            threadId,
-            turn: {
-              completedAt: Math.floor(Date.now() / 1000),
-              durationMs: null,
-              error: null,
-              id: typeof params.turnId === 'string' ? params.turnId : '',
-              items: [],
-              itemsView: 'full',
-              startedAt: null,
-              status: 'interrupted',
-            },
-          },
-          threadId,
-        );
-        return {};
+        if (state && state.turnId !== turnId) throw new Error('The active turn has changed.');
+        await this.api.interruptThread(threadId, turnId);
+        if (!state) this.startPollingTurn(threadId, turnId, '');
+        return { status: 'requested', executionSettled: false };
       }
       default:
         throw new Error('Method not found.');
@@ -783,23 +823,6 @@ export class BrowserExtensionChatServer {
         state.missing = thread ? 0 : state.missing + 1;
         if (state.missing >= 3) {
           this.pollStates.delete(threadId);
-          this.broadcast(
-            'turn/completed',
-            {
-              threadId,
-              turn: {
-                completedAt: Math.floor(Date.now() / 1000),
-                durationMs: null,
-                error: { message: 'Thread is no longer available.' },
-                id: turnId,
-                items: [],
-                itemsView: 'full',
-                startedAt: null,
-                status: 'failed',
-              },
-            },
-            threadId,
-          );
           return;
         }
         if (!thread) {
@@ -810,12 +833,18 @@ export class BrowserExtensionChatServer {
           forceRefresh: thread.status === 'error' && !state.runtimeConfirmedActive,
         });
         if (state.paused || this.pollStates.get(threadId) !== state) return;
+        const turnState = await this.api.getTurnState(threadId, turnId);
+        if (state.paused || this.pollStates.get(threadId) !== state) return;
+        const executionSettled =
+          turnState?.id === turnId &&
+          turnState.executionSettled === true &&
+          ['completed', 'failed', 'interrupted'].includes(turnState.status);
         const runtimeRunning = runtimeStatus.known
           ? runtimeStatus.running
           : thread.status === 'running';
         if (runtimeRunning) state.runtimeConfirmedActive = true;
         const forceFullSnapshot =
-          !runtimeRunning || state.polls % FULL_SNAPSHOT_POLL_INTERVAL === 0;
+          executionSettled || !runtimeRunning || state.polls % FULL_SNAPSHOT_POLL_INTERVAL === 0;
         state.polls += 1;
         const messages = await this.api.getMessages(threadId, { forceFullSnapshot });
         if (state.paused || this.pollStates.get(threadId) !== state) return;
@@ -831,10 +860,10 @@ export class BrowserExtensionChatServer {
             threadId,
           );
         }
-        if (runtimeRunning) {
-          state.terminal = 0;
-        } else {
+        if (executionSettled) {
           state.terminal += 1;
+        } else {
+          state.terminal = 0;
         }
         // OpenClaw can publish the terminal session status just before the final
         // assistant message becomes visible through sessions.history. Keep the
@@ -845,16 +874,21 @@ export class BrowserExtensionChatServer {
           state.baselineFingerprint;
         const hasFinalAssistant = hasNewHistory && hasFinalAssistantAfterLastUser(messages);
         const recordedError =
-          state.terminal >= TERMINAL_SETTLE_POLLS
+          turnState?.error?.message ??
+          (state.terminal >= TERMINAL_SETTLE_POLLS
             ? this.api.consumeTurnError(threadId, turnId)
-            : undefined;
-        const terminalHistoryReady = Boolean(recordedError) || hasFinalAssistant;
+            : undefined);
+        const terminalHistoryReady =
+          turnState?.status === 'failed' ||
+          turnState?.status === 'interrupted' ||
+          Boolean(recordedError) ||
+          hasFinalAssistant;
         if (
+          executionSettled &&
           state.terminal >= TERMINAL_SETTLE_POLLS &&
           (terminalHistoryReady || state.terminal >= TERMINAL_MAX_POLLS)
         ) {
-          const failed =
-            Boolean(recordedError) || (thread.status === 'error' && !hasFinalAssistant);
+          const failed = turnState.status === 'failed';
           this.pollStates.delete(threadId);
           this.broadcast(
             'turn/completed',
@@ -872,7 +906,8 @@ export class BrowserExtensionChatServer {
                 items: [],
                 itemsView: 'full',
                 startedAt: null,
-                status: failed ? 'failed' : 'completed',
+                status: turnState.status,
+                executionSettled: true,
               },
             },
             threadId,
@@ -881,30 +916,9 @@ export class BrowserExtensionChatServer {
         }
       } catch {
         state.errors += 1;
-        if (state.errors >= 120 && this.pollStates.get(threadId) === state) {
-          this.pollStates.delete(threadId);
-          this.broadcast(
-            'turn/completed',
-            {
-              threadId,
-              turn: {
-                completedAt: Math.floor(Date.now() / 1000),
-                durationMs: null,
-                error: { message: 'Unable to refresh the thread.' },
-                id: turnId,
-                items: [],
-                itemsView: 'full',
-                startedAt: null,
-                status: 'failed',
-              },
-            },
-            threadId,
-          );
-          return;
-        }
       }
       if (!state.paused && this.pollStates.get(threadId) === state) {
-        state.timer = setTimeout(() => void poll(), POLL_INTERVAL_MS);
+        state.timer = setTimeout(() => void poll(), state.errors >= 120 ? 5_000 : POLL_INTERVAL_MS);
       }
     };
     state.poll = () => void poll();

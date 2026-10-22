@@ -92,3 +92,17 @@ export type SessionTurn = {
   /** Set of known runIds for this turn (main + announce). */
   knownRunIds: Set<string>;
 };
+
+/** Verified whole-run lifecycle metadata, never a transcript or display-final cache. */
+export type NativeRunTerminalReceipt = {
+  runId: string;
+  sessionKey: string;
+  sessionId: string;
+  lifecycleGeneration: string;
+  clientGeneration: number;
+  agentSeq: number;
+  executionSettled: true;
+  status: 'completed' | 'failed' | 'interrupted';
+  endedAt: number;
+  error?: string;
+};

@@ -58,6 +58,8 @@ Gateway、本机合成模型和与产品相同的 `stateDir/skills` 导入位置
 
 Adapter 入口保留生命周期及状态，runtimeGatewayConnection、runtimeGatewayEvents、runtimeHistory、runtimePlanInteractions、runtimeGoalOperations、runtimeSessionStatus 处理各领域操作。它们通过显式实时上下文访问入口状态，不复制控制器状态，更不保存 transcript。
 
+Chrome 侧聊通过 Runtime 的窄 `getRunTerminalReceipt` 读取已准入 whole-run `executionSettled:true` 的有界原生身份与终态元数据；chat final 后仅保留精确退役绑定以接受迟到末端，普通 wait/idle/Stop ACK 不生成回执。Controller 复核发送准备的物理 session、原生 run 映射、连接代次和当前身份后才结束进度；冷重启或代次变化后证据缺失保持 unknown，不另建正文缓存或补发输入。
+
 电脑控制设置每次读取仍获取原生 `config.get`。同一配置 hash 和 runtime 路径的全局
 工具权限判断复用一个进程内结果（并发读取共享 Promise），避免反复启动独立的原生
 策略检查进程；配置版本或路径变化、设置写入及运行包不可用时失效，失败结果不缓存。
@@ -172,18 +174,18 @@ Main 为完整重启的停止/准备阶段及崩溃恢复退避阶段连续发�
 
 当前重启触发入口的处理如下；设置保存先判断实际变更，页面访问和会话切换本身不是重启理由。
 
-| 操作或触发条件 | 生效方式与重启边界 |
-| --- | --- |
-| Gateway 断线、心跳恢复、审批桥重连 | running 时直接重新进行认证握手，不调用启动健康检查；starting 时加入已有启动，真实退出由 Manager 恢复 |
-| 普通设置、模型、MCP、Hook、技能变更 | 原生配置热更新；仅凭据值变化使用 `secrets.reload`；热更新未完成才请求原生协调重启 |
-| Agent Team / Swarm 等扩展启停 | 原生插件运行时回执；Team 仍单独 `skills.update`，不再保留 9.8 技能发现的强制重启；仅原生要求或网络策略变化才重启 |
-| 扩展安装、卸载及离线 CLI 回退 | 优先使用原生运行时回执、`plugins.reload` / `plugins.refresh`；Windows 真实目录锁恢复仍保留暂停、停止、重试、恢复流程 |
-| 扩展普通配置或 SecretRef 凭据轮换 | 优先配置 reload ACK；无环境变量变更时可刷新 native secrets 后定向 `plugins.reload`，只有原生不能热应用才重启；凭据刷新失败保留待刷新并报告错误 |
-| 非浏览器代理偏好切换 | 核对当前真实子进程的代理 URL/capability、CA、NO_PROXY 环境与活动本地代理一致后，使用动态上游，无需重启；未使用该路由时仍需完整重启刷新继承环境 |
-| 浏览器网页代理、链接打开偏好 | 只更新网页 session 或 UI 偏好，不重启 Gateway |
-| 端口、Windows sandbox 等子进程环境或扩展出站 Header 策略变化 | 仍需完整重启刷新不可变的启动输入及代理 generation；保留 suspension 与进程 generation 校验 |
-| 用户显式重启 | starting 时加入已有工作；running 优先同进程重启；仅明确未发送、不支持或拒绝时可回退，不能对超时/断线的未知请求盲目重试 |
-| 真实进程异常退出 | Manager 有界恢复并递增退避；不因单次 WebSocket 握手失败替换健康进程 |
+| 操作或触发条件                                               | 生效方式与重启边界                                                                                                                             |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Gateway 断线、心跳恢复、审批桥重连                           | running 时直接重新进行认证握手，不调用启动健康检查；starting 时加入已有启动，真实退出由 Manager 恢复                                           |
+| 普通设置、模型、MCP、Hook、技能变更                          | 原生配置热更新；仅凭据值变化使用 `secrets.reload`；热更新未完成才请求原生协调重启                                                              |
+| Agent Team / Swarm 等扩展启停                                | 原生插件运行时回执；Team 仍单独 `skills.update`，不再保留 9.8 技能发现的强制重启；仅原生要求或网络策略变化才重启                               |
+| 扩展安装、卸载及离线 CLI 回退                                | 优先使用原生运行时回执、`plugins.reload` / `plugins.refresh`；Windows 真实目录锁恢复仍保留暂停、停止、重试、恢复流程                           |
+| 扩展普通配置或 SecretRef 凭据轮换                            | 优先配置 reload ACK；无环境变量变更时可刷新 native secrets 后定向 `plugins.reload`，只有原生不能热应用才重启；凭据刷新失败保留待刷新并报告错误 |
+| 非浏览器代理偏好切换                                         | 核对当前真实子进程的代理 URL/capability、CA、NO_PROXY 环境与活动本地代理一致后，使用动态上游，无需重启；未使用该路由时仍需完整重启刷新继承环境 |
+| 浏览器网页代理、链接打开偏好                                 | 只更新网页 session 或 UI 偏好，不重启 Gateway                                                                                                  |
+| 端口、Windows sandbox 等子进程环境或扩展出站 Header 策略变化 | 仍需完整重启刷新不可变的启动输入及代理 generation；保留 suspension 与进程 generation 校验                                                      |
+| 用户显式重启                                                 | starting 时加入已有工作；running 优先同进程重启；仅明确未发送、不支持或拒绝时可回退，不能对超时/断线的未知请求盲目重试                         |
+| 真实进程异常退出                                             | Manager 有界恢复并递增退避；不因单次 WebSocket 握手失败替换健康进程                                                                            |
 
 原生已接受的同进程重启由原生协调器合并与延后，冷却等待或 ready 观察超时不追加完整重启。请求已发出但没有权威回执时报告生效未确认，不宣称成功、不停止引擎、不盲目追加重启；配置同步保留已写入事实，执行准入仍独立核验权限。此策略减少冗余重启，不隐藏真实重启或放宽执行准入。
 

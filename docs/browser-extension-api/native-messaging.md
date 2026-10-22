@@ -36,6 +36,11 @@ manifest 路径定位它。开发态和安装版统一只记录 `allowAppLaunch:
 helper 中没有启动子进程或删除发现文件的路径，即使旧配置还带有启动目标或
 `allowAppLaunch: true`，也不能由扩展启动或重启应用。
 
+组装后的扩展明确声明仅 `http://127.0.0.1/*` 的必需本机 host 权限，用于独立于网页
+正文授权的 app-server／relay 连接；页面上下文的 HTTP(S) 权限仍为可选并需用户授权。
+不能依赖开发 Chrome 已经保存的广域网页权限，使新安装的扩展缺少本机访问声明。
+该权限不替代固定 Origin 和 capability 校验，也不开放任意 Gateway 方法。
+
 开发 helper 文件名包含其 C# 源码摘要。相同摘要的有效 PE 文件会直接复用，避免 Chrome 正在
 运行 helper 时 Windows 文件锁导致编译器无法覆盖；源码变化后会自然生成新的文件名。
 

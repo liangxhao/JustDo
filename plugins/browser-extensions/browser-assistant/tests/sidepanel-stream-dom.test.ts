@@ -1,29 +1,28 @@
 // @vitest-environment jsdom
 import fs from 'node:fs';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { sidePanelText as t } from '../conversation-overlay/modules/sidepanel-i18n.js';
 
 const mock = vi.hoisted(() => ({
   notify: (_method: string, _params: unknown) => {},
   request: vi.fn(),
 }));
-vi.mock(
-  '../conversation-overlay/modules/conversation-client.js',
-  () => ({
-    AppServerClient: class {
-      constructor(notify: typeof mock.notify) {
-        mock.notify = notify;
-      }
-      request = mock.request;
-      disconnect() {}
-    },
-  }),
-);
+vi.mock('../conversation-overlay/modules/conversation-client.js', () => ({
+  AppServerClient: class {
+    constructor(notify: typeof mock.notify) {
+      mock.notify = notify;
+    }
+    request = mock.request;
+    disconnect() {}
+  },
+}));
 
 describe('extension streaming DOM', () => {
   beforeEach(() => {
     vi.resetModules();
     mock.request.mockReset();
   });
+  afterEach(() => window.dispatchEvent(new Event('unload')));
 
   async function mountThread() {
     document.documentElement.innerHTML = fs.readFileSync(
@@ -55,13 +54,19 @@ describe('extension streaming DOM', () => {
     await vi.waitFor(() =>
       expect(document.querySelector('.message.user')?.textContent).toContain('Question'),
     );
-    const emit = (seq: number, stream: string, data: Record<string, unknown>, threadId = 'one') =>
+    const emit = (
+      seq: number,
+      stream: string,
+      data: Record<string, unknown>,
+      threadId = 'one',
+      runId = 'run-1',
+    ) =>
       mock.notify('thread/stream', {
         threadId,
         kind: 'agent',
         event: {
-          runId: 'run-1',
-          sessionKey: 'agent:main:justdo:one',
+          runId,
+          sessionKey: `agent:main:justdo:${threadId}`,
           sessionId: null,
           lifecycleGeneration: null,
           agentId: 'main',
@@ -81,30 +86,47 @@ describe('extension streaming DOM', () => {
     const { emit } = await mountThread();
     emit(1, 'thinking', { text: 'Preparing the tool input' });
     await vi.waitFor(() =>
-      expect(document.querySelector('.message-detail')?.textContent).toBe('Preparing the tool input'),
+      expect(document.querySelector('.message-detail')?.textContent?.trim()).toBe(
+        'Preparing the tool input',
+      ),
     );
     emit(2, 'item', {
-      itemId: 'run-stream-progress', kind: 'status', phase: 'update', status: 'running',
+      itemId: 'run-stream-progress',
+      kind: 'status',
+      phase: 'update',
+      status: 'running',
       progress: { kind: 'tool-input', toolCallId: 'write-1', name: 'write', receivedChars: 64_000 },
     });
     emit(3, 'tool', {
-      phase: 'input_delta', toolCallId: 'write-1', name: 'write', diff: { added: 12, removed: 0 },
+      phase: 'input_delta',
+      toolCallId: 'write-1',
+      name: 'write',
+      diff: { added: 12, removed: 0 },
     });
     emit(4, 'thinking', { text: 'Arguments are still arriving' });
     await vi.waitFor(() =>
-      expect(document.querySelector('.message-detail')?.textContent).toBe('Arguments are still arriving'),
+      expect(document.querySelector('.message-detail')?.textContent?.trim()).toBe(
+        'Arguments are still arriving',
+      ),
     );
     expect(document.querySelector('.process-tool')).toBeNull();
 
     emit(5, 'tool', {
-      phase: 'start', toolCallId: 'write-1', name: 'write', args: { path: 'notes.txt' },
+      phase: 'start',
+      toolCallId: 'write-1',
+      name: 'write',
+      args: { path: 'notes.txt' },
     });
     await vi.waitFor(() => expect(document.querySelectorAll('.process-tool')).toHaveLength(1));
     expect(document.querySelector('.process-tool-status.running')).not.toBeNull();
     expect(document.querySelector('.process-tool-input')?.textContent).toContain('notes.txt');
     emit(6, 'tool', {
-      phase: 'result', toolCallId: 'write-1', name: 'write', result: 'File saved',
+      phase: 'result',
+      toolCallId: 'write-1',
+      name: 'write',
+      result: 'File saved',
     });
+    document.getElementById('processDetails')!.click();
     await vi.waitFor(() =>
       expect(document.querySelector('.process-tool-status.completed')).not.toBeNull(),
     );
@@ -112,36 +134,433 @@ describe('extension streaming DOM', () => {
     expect(document.querySelector('.process-tool')?.textContent).toContain('File saved');
   });
 
-  it('opens live thinking, respects manual collapse, and collapses completed thinking', async () => {
+  it('shows content-free native progress and keeps activity after a chat final until exact settled evidence', async () => {
+    const { emit } = await mountThread();
+    mock.notify('turn/started', { threadId: 'one', turn: { id: 'run-1', nativeRunId: 'run-1' } });
+    emit(1, 'item', {
+      itemId: 'run-stream-progress',
+      kind: 'status',
+      phase: 'update',
+      status: 'running',
+      progress: { kind: 'tool-input', toolCallId: 'write-1', name: 'write', receivedChars: 64_000 },
+    });
+    await vi.waitFor(() =>
+      expect(document.querySelector('.run-activity-label')?.textContent).toBe(
+        t('generating-tool-input'),
+      ),
+    );
+    expect(document.querySelector('.run-activity-detail')?.textContent).toContain('64,000');
+    expect(document.querySelector('.process-tool')).toBeNull();
+    mock.notify('thread/stream', {
+      threadId: 'one',
+      kind: 'chat',
+      event: {
+        runId: 'run-1',
+        sessionKey: 'agent:main:justdo:one',
+        state: 'final',
+        message: { role: 'assistant', content: 'Reply' },
+        seq: 2,
+      },
+    });
+    expect(document.getElementById('runActivity')?.classList.contains('hidden')).toBe(false);
+    mock.notify('turn/completed', {
+      threadId: 'one',
+      turn: { id: 'run-1', executionSettled: false },
+    });
+    expect(document.getElementById('send')?.classList.contains('stop')).toBe(true);
+    mock.notify('turn/completed', {
+      threadId: 'one',
+      turn: { id: 'old-run', executionSettled: true },
+    });
+    expect(document.getElementById('send')?.classList.contains('stop')).toBe(true);
+    mock.notify('turn/completed', {
+      threadId: 'one',
+      turn: { id: 'run-1', executionSettled: true, status: 'completed' },
+    });
+    await vi.waitFor(() =>
+      expect(document.getElementById('runActivity')?.classList.contains('hidden')).toBe(true),
+    );
+  });
+
+  it('keeps Stop acknowledgement and disconnect separate from settled execution', async () => {
+    const { respond, emit } = await mountThread();
+    mock.notify('turn/started', { threadId: 'one', turn: { id: 'run-1', nativeRunId: 'run-1' } });
+    emit(1, 'thinking', { text: 'Working' });
+    await vi.waitFor(() =>
+      expect(document.querySelector('.message-detail')?.textContent?.trim()).toBe('Working'),
+    );
+    mock.request.mockImplementation((method: string) =>
+      method === 'turn/interrupt'
+        ? Promise.resolve({ status: 'requested', executionSettled: false })
+        : respond(method),
+    );
+    document.getElementById('send')!.click();
+    await vi.waitFor(() =>
+      expect(mock.request).toHaveBeenCalledWith('turn/interrupt', {
+        threadId: 'one',
+        turnId: 'run-1',
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(document.querySelector('.run-activity-label')?.textContent).toBe(t('stopping')),
+    );
+    expect(document.getElementById('send')?.classList.contains('stop')).toBe(true);
+    mock.notify('connection/closed', {});
+    expect(document.getElementById('send')?.classList.contains('stop')).toBe(true);
+    expect((document.getElementById('send') as HTMLButtonElement).disabled).toBe(true);
+    expect(document.querySelector('.message-detail')?.textContent?.trim()).toBe('Working');
+    mock.notify('turn/completed', {
+      threadId: 'one',
+      turn: { id: 'run-1', status: 'interrupted', executionSettled: true },
+    });
+    await vi.waitFor(() =>
+      expect(document.getElementById('send')?.classList.contains('stop')).toBe(false),
+    );
+  });
+
+  it('preserves an uncertain submission and reconciles its exact identity without resending', async () => {
+    const { respond } = await mountThread();
+    let submitted: Record<string, unknown> | undefined;
+    mock.request.mockImplementation((method: string, params: Record<string, unknown>) => {
+      if (method === 'turn/start') {
+        submitted = params;
+        return Promise.reject(Object.assign(new Error('Connection lost'), { requestSent: true }));
+      }
+      return respond(method);
+    });
+    (document.getElementById('includePage') as HTMLInputElement).checked = false;
+    const prompt = document.getElementById('prompt') as HTMLTextAreaElement;
+    prompt.value = 'Only once';
+    prompt.dispatchEvent(new Event('input'));
+    document.getElementById('send')!.click();
+    await vi.waitFor(() =>
+      expect(document.getElementById('error')?.textContent).toBe(t('unknownSend')),
+    );
+    expect(submitted?.clientTurnId).toEqual(expect.any(String));
+    expect(prompt.value).toBe('');
+    expect(document.querySelector('.message.user:last-of-type')?.textContent).toContain(
+      'Only once',
+    );
+    expect((document.getElementById('send') as HTMLButtonElement).disabled).toBe(true);
+    prompt.value = 'A later draft';
+    prompt.dispatchEvent(new Event('input'));
+    mock.request.mockImplementation((method: string) =>
+      method === 'thread/read'
+        ? Promise.resolve({
+            thread: {
+              id: 'one',
+              turns: [
+                {
+                  id: 'history-1',
+                  items: [{ type: 'userMessage', content: [{ type: 'text', text: 'Question' }] }],
+                },
+              ],
+            },
+            activeTurn: { id: submitted!.clientTurnId, status: 'unknown', executionSettled: false },
+          })
+        : respond(method),
+    );
+    mock.notify('connection/reconnected', {});
+    await vi.waitFor(() =>
+      expect(mock.request).toHaveBeenCalledWith('thread/read', {
+        includeTurns: true,
+        threadId: 'one',
+        turnId: submitted!.clientTurnId,
+      }),
+    );
+    expect((document.getElementById('send') as HTMLButtonElement).disabled).toBe(true);
+    expect(prompt.value).toBe('A later draft');
+    expect(mock.request.mock.calls.filter(([method]) => method === 'turn/start')).toHaveLength(1);
+    const select = document.getElementById('session') as HTMLSelectElement;
+    select.value = '';
+    select.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(document.querySelector('.message.user')).toBeNull());
+    select.value = 'one';
+    select.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(document.querySelectorAll('.message.user')).toHaveLength(2));
+    expect((document.getElementById('send') as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      [...document.querySelectorAll('.message.user')].some(node =>
+        node.textContent?.includes('Only once'),
+      ),
+    ).toBe(true);
+    expect(mock.request.mock.calls.filter(([method]) => method === 'turn/start')).toHaveLength(1);
+  });
+
+  it('keeps client submission identity separate from the native stream root during recovery and Stop', async () => {
+    const { thread, respond } = await mountThread();
+    mock.request.mockImplementation((method: string) =>
+      method === 'thread/read'
+        ? Promise.resolve({
+            thread,
+            activeTurn: {
+              id: 'client-turn',
+              nativeRunId: 'native-root',
+              status: 'inProgress',
+              executionSettled: false,
+            },
+          })
+        : respond(method),
+    );
+    mock.notify('connection/reconnected', {});
+    await vi.waitFor(() =>
+      expect(document.getElementById('send')?.classList.contains('stop')).toBe(true),
+    );
+    mock.notify('thread/stream', {
+      threadId: 'one',
+      kind: 'agent',
+      event: {
+        runId: 'native-root',
+        sessionKey: 'agent:main:justdo:one',
+        sessionId: null,
+        lifecycleGeneration: null,
+        agentId: 'main',
+        spawnedBy: null,
+        agentSeq: 1,
+        frameSeq: 1,
+        deliveryEvent: 'agent',
+        timestamp: Date.now(),
+        stream: 'thinking',
+        data: { text: 'Native stream' },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(document.querySelector('.message-detail')?.textContent?.trim()).toBe('Native stream'),
+    );
+    mock.notify('turn/completed', {
+      threadId: 'one',
+      turn: { id: 'native-root', executionSettled: true },
+    });
+    expect(document.getElementById('send')?.classList.contains('stop')).toBe(true);
+    document.getElementById('send')!.click();
+    await vi.waitFor(() =>
+      expect(mock.request).toHaveBeenCalledWith('turn/interrupt', {
+        threadId: 'one',
+        turnId: 'client-turn',
+      }),
+    );
+    mock.notify('turn/completed', {
+      threadId: 'one',
+      turn: {
+        id: 'client-turn',
+        nativeRunId: 'native-root',
+        status: 'interrupted',
+        executionSettled: true,
+      },
+    });
+    await vi.waitFor(() =>
+      expect(document.getElementById('send')?.classList.contains('stop')).toBe(false),
+    );
+  });
+
+  it('only adopts the explicitly bound new run when old frames arrive while its send acknowledgement is pending', async () => {
+    const { respond, emit } = await mountThread();
+    let resolveTurn!: (value: unknown) => void;
+    let clientTurnId: unknown;
+    mock.request.mockImplementation((method: string, params: Record<string, unknown>) => {
+      if (method === 'turn/start')
+        return new Promise(resolve => {
+          clientTurnId = params.clientTurnId;
+          resolveTurn = resolve;
+        });
+      return respond(method);
+    });
+    (document.getElementById('includePage') as HTMLInputElement).checked = false;
+    const prompt = document.getElementById('prompt') as HTMLTextAreaElement;
+    prompt.value = 'A new task';
+    prompt.dispatchEvent(new Event('input'));
+    document.getElementById('send')!.click();
+    await vi.waitFor(() => expect(resolveTurn).toBeDefined());
+    emit(100, 'assistant', { text: 'Delayed previous answer' }, 'one', 'previous-native-run');
+    emit(1, 'thinking', { text: 'Only the new task' }, 'one', 'current-native-run');
+    expect(document.querySelector('.message.assistant')).toBeNull();
+    expect(document.querySelector('.message-detail')).toBeNull();
+    // This exact native identity can be confirmed before the RPC response.
+    // Binding must immediately paint the eligible buffered frame, even if no
+    // additional stream event arrives to schedule another render.
+    mock.notify('turn/started', {
+      threadId: 'one',
+      turn: { id: clientTurnId, nativeRunId: 'current-native-run' },
+    });
+    await vi.waitFor(() =>
+      expect(document.querySelector('.message-detail')?.textContent?.trim()).toBe(
+        'Only the new task',
+      ),
+    );
+    expect(document.getElementById('messages')?.textContent).not.toContain(
+      'Delayed previous answer',
+    );
+    emit(101, 'thinking', { text: 'Still the previous task' }, 'one', 'previous-native-run');
+    expect(document.querySelector('.message-detail')?.textContent?.trim()).toBe(
+      'Only the new task',
+    );
+    resolveTurn({ turn: { id: clientTurnId, nativeRunId: 'current-native-run' } });
+    await vi.waitFor(() =>
+      expect((document.getElementById('session') as HTMLSelectElement).disabled).toBe(false),
+    );
+    expect(document.querySelectorAll('.message.user')).toHaveLength(2);
+    expect(document.querySelector('.message-detail')?.textContent?.trim()).toBe(
+      'Only the new task',
+    );
+    expect(document.getElementById('messages')?.textContent).not.toContain('previous');
+    expect(mock.request.mock.calls.filter(([method]) => method === 'turn/start')).toHaveLength(1);
+  });
+
+  it('restores an editable draft only when transport proves the turn was never sent', async () => {
+    const { respond } = await mountThread();
+    mock.request.mockImplementation((method: string) =>
+      method === 'turn/start'
+        ? Promise.reject(Object.assign(new Error('Not sent'), { requestSent: false }))
+        : respond(method),
+    );
+    (document.getElementById('includePage') as HTMLInputElement).checked = false;
+    const prompt = document.getElementById('prompt') as HTMLTextAreaElement;
+    prompt.value = 'Unsent draft';
+    prompt.dispatchEvent(new Event('input'));
+    document.getElementById('send')!.click();
+    await vi.waitFor(() => expect(document.getElementById('error')?.textContent).toBe('Not sent'));
+    expect(prompt.value).toBe('Unsent draft');
+    expect(
+      [...document.querySelectorAll('.message.user')].some(node =>
+        node.textContent?.includes('Unsent draft'),
+      ),
+    ).toBe(false);
+    expect((document.getElementById('send') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('freezes a cold unknown run without fabricating an input and only enables Stop after exact acceptance', async () => {
+    const { thread, respond } = await mountThread();
+    let status = 'unknown';
+    mock.request.mockImplementation((method: string) =>
+      method === 'thread/read'
+        ? Promise.resolve({
+            thread,
+            activeTurn: {
+              id: 'previous-client-turn',
+              nativeRunId: 'native-root',
+              status,
+              executionSettled: status === 'completed',
+            },
+          })
+        : respond(method),
+    );
+    const prompt = document.getElementById('prompt') as HTMLTextAreaElement;
+    prompt.value = 'A new draft';
+    prompt.dispatchEvent(new Event('input'));
+    mock.notify('connection/reconnected', {});
+    await vi.waitFor(() =>
+      expect(document.getElementById('error')?.textContent).toBe(t('unknownExecution')),
+    );
+    expect((document.getElementById('send') as HTMLButtonElement).disabled).toBe(true);
+    expect(document.querySelectorAll('.message.user')).toHaveLength(1);
+    expect(document.querySelector('.message.user')?.textContent).toContain('Question');
+    expect(mock.request.mock.calls.filter(([method]) => method === 'turn/start')).toHaveLength(0);
+    document.getElementById('refresh')!.click();
+    await vi.waitFor(() =>
+      expect(mock.request).toHaveBeenCalledWith('thread/read', {
+        includeTurns: true,
+        threadId: 'one',
+        turnId: 'previous-client-turn',
+      }),
+    );
+    expect((document.getElementById('send') as HTMLButtonElement).disabled).toBe(true);
+    status = 'inProgress';
+    document.getElementById('refresh')!.click();
+    await vi.waitFor(() =>
+      expect((document.getElementById('send') as HTMLButtonElement).disabled).toBe(false),
+    );
+    expect(document.getElementById('send')?.classList.contains('stop')).toBe(true);
+    status = 'completed';
+    document.getElementById('refresh')!.click();
+    await vi.waitFor(() =>
+      expect(document.getElementById('send')?.classList.contains('stop')).toBe(false),
+    );
+    expect(prompt.value).toBe('A new draft');
+    expect(mock.request.mock.calls.filter(([method]) => method === 'turn/start')).toHaveLength(0);
+  });
+
+  it('keeps live thinking visible and retains completed-summary choices during stream updates', async () => {
     const { emit } = await mountThread();
     emit(1, 'thinking', { text: 'Considering' });
     await vi.waitFor(() =>
-      expect(document.querySelector<HTMLDetailsElement>('.process-cluster')?.open).toBe(true),
+      expect(document.querySelector('.process-live')?.textContent).toContain('Considering'),
     );
-    document.querySelector<HTMLElement>('.process-cluster > summary')!.click();
     emit(2, 'thinking', { text: 'Considering more' });
     await vi.waitFor(() =>
-      expect(document.querySelector('.message-detail')?.textContent).toBe('Considering more'),
+      expect(document.querySelector('.message-detail')?.textContent?.trim()).toBe(
+        'Considering more',
+      ),
     );
-    expect(document.querySelector<HTMLDetailsElement>('.process-cluster')?.open).toBe(false);
-    document.querySelector<HTMLElement>('.process-cluster > summary')!.click();
+    expect(document.querySelector('.process-live details.process-thinking')).toBeNull();
     emit(3, 'assistant', { text: 'Answer' });
     await vi.waitFor(() =>
       expect(document.querySelector('.assistant')?.textContent?.trim()).toBe('Answer'),
     );
-    expect(document.querySelector<HTMLDetailsElement>('.process-cluster')?.open).toBe(true);
+    const group = document.querySelector<HTMLDetailsElement>('.process-summary-group')!;
+    expect(group.open).toBe(false);
+    group.querySelector<HTMLElement>('summary')!.click();
+    emit(4, 'assistant', { text: 'Answer continues' });
+    await vi.waitFor(() =>
+      expect(document.querySelector('.assistant')?.textContent).toContain('continues'),
+    );
+    expect(document.querySelector('.process-summary-group')).toBe(group);
+    expect(group.open).toBe(true);
+    expect(group.textContent).toContain('Considering more');
   });
 
   it('automatically collapses thinking when content starts without a manual preference', async () => {
     const { emit } = await mountThread();
     emit(1, 'thinking', { text: 'Considering' });
     await vi.waitFor(() =>
-      expect(document.querySelector<HTMLDetailsElement>('.process-cluster')?.open).toBe(true),
+      expect(document.querySelector('.process-live')?.textContent).toContain('Considering'),
     );
     emit(2, 'assistant', { text: 'Answer' });
     await vi.waitFor(() =>
-      expect(document.querySelector<HTMLDetailsElement>('.process-cluster')?.open).toBe(false),
+      expect(document.querySelector<HTMLDetailsElement>('.process-summary-group')?.open).toBe(
+        false,
+      ),
     );
+    expect(document.querySelector('.completed-process')).toBeNull();
+  });
+
+  it('keeps growing live text visible when lagging history includes a shorter rawMessage', async () => {
+    const { thread, emit } = await mountThread();
+    emit(1, 'assistant', { text: 'Hello' });
+    await vi.waitFor(() =>
+      expect(document.querySelector('.message.assistant')?.textContent?.trim()).toBe('Hello'),
+    );
+    const laggingHistory = {
+      ...thread,
+      turns: [
+        {
+          ...thread.turns[0],
+          items: [
+            ...thread.turns[0].items,
+            {
+              id: 'history-body',
+              type: 'agentMessage',
+              text: 'Hello',
+              rawMessage: { role: 'assistant', content: [{ type: 'text', text: 'Hello' }] },
+            },
+          ],
+        },
+      ],
+    };
+    mock.notify('thread/updated', { threadId: 'one', thread: laggingHistory });
+    emit(2, 'assistant', { text: 'Hello world' });
+    await vi.waitFor(() =>
+      expect(document.querySelector('.message.assistant')?.textContent?.trim()).toBe('Hello world'),
+    );
+    // The next poll can still carry the older native body. The rich renderer
+    // must continue displaying the longer, admitted live projection.
+    mock.notify('thread/updated', { threadId: 'one', thread: laggingHistory });
+    emit(3, 'assistant', { text: 'Hello world, still streaming' });
+    await vi.waitFor(() =>
+      expect(document.querySelector('.message.assistant')?.textContent?.trim()).toBe(
+        'Hello world, still streaming',
+      ),
+    );
+    expect(document.querySelectorAll('.message.assistant')).toHaveLength(1);
   });
 
   it('keeps historical thinking collapsed and uses matching header icon geometry', async () => {
@@ -153,8 +572,8 @@ describe('extension streaming DOM', () => {
         turns: [{ id: 'history-1', items: [{ type: 'reasoning', content: ['Past thought'] }] }],
       },
     });
-    expect(document.querySelector<HTMLDetailsElement>('.process-cluster')?.open).toBe(false);
-    for (const id of ['refresh', 'settings']) {
+    expect(document.querySelector<HTMLDetailsElement>('.process-summary-group')?.open).toBe(false);
+    for (const id of ['processDetails', 'refresh', 'settings']) {
       expect(document.getElementById(id)?.className).toBe('icon');
       expect(document.querySelector(`#${id} svg`)?.getAttribute('viewBox')).toBe('0 0 24 24');
     }
@@ -172,7 +591,7 @@ describe('extension streaming DOM', () => {
     );
     mock.notify('turn/completed', {
       threadId: 'one',
-      turn: { id: 'run-1', status: 'completed', error: null },
+      turn: { id: 'run-1', status: 'completed', executionSettled: true, error: null },
     });
     await vi.waitFor(() => expect(reads.length).toBe(1));
     document.getElementById('refresh')!.click();
@@ -215,7 +634,7 @@ describe('extension streaming DOM', () => {
       if (method === 'turn/interrupt') {
         mock.notify('turn/completed', {
           threadId: 'one',
-          turn: { id: 'run-1', status: 'interrupted', error: null },
+          turn: { id: 'run-1', status: 'interrupted', executionSettled: true, error: null },
         });
         return Promise.resolve({});
       }
@@ -225,6 +644,7 @@ describe('extension streaming DOM', () => {
     await vi.waitFor(() => expect(reads.length).toBeGreaterThanOrEqual(1));
     // The RPC response can supersede its preceding completion notification's refresh.
     for (const resolve of reads) resolve({ thread });
+    document.getElementById('processDetails')!.click();
     await vi.waitFor(() =>
       expect(
         document.querySelector('.process-tool-status')?.classList.contains('interrupted'),
@@ -245,7 +665,7 @@ describe('extension streaming DOM', () => {
     );
     mock.notify('turn/completed', {
       threadId: 'one',
-      turn: { id: 'run-1', status: 'completed', error: null },
+      turn: { id: 'run-1', status: 'completed', executionSettled: true, error: null },
     });
     await vi.waitFor(() =>
       expect(document.getElementById('error')?.textContent).toContain('History unavailable'),
@@ -283,8 +703,9 @@ describe('extension streaming DOM', () => {
     'preserves $count bubble(s) for "$text" through acceptance, failed refresh, and final history',
     async ({ text, count }) => {
       const { thread, respond, emit } = await mountThread();
-      mock.request.mockImplementation((method: string) => {
-        if (method === 'turn/start') return Promise.resolve({ turn: { id: 'run-1' } });
+      mock.request.mockImplementation((method: string, params: Record<string, unknown>) => {
+        if (method === 'turn/start')
+          return Promise.resolve({ turn: { id: params.clientTurnId, nativeRunId: 'run-1' } });
         if (method === 'thread/read') return Promise.reject(new Error('History unavailable'));
         return respond(method);
       });
@@ -297,7 +718,7 @@ describe('extension streaming DOM', () => {
         expect(document.getElementById('error')?.textContent).toContain('History unavailable'),
       );
       emit(1, 'thinking', { text: 'Considering' });
-      await vi.waitFor(() => expect(document.querySelector('.process-cluster')).not.toBeNull());
+      await vi.waitFor(() => expect(document.querySelector('.process-live')).not.toBeNull());
       const submitted = () =>
         [...document.querySelectorAll('.message.user')].filter(
           node => node.textContent?.trim() === text,
@@ -345,13 +766,15 @@ describe('extension streaming DOM', () => {
     await vi.waitFor(() => expect(send.disabled).toBe(false));
     let resolveThread!: (value: unknown) => void;
     let resolveTurn!: (value: unknown) => void;
-    mock.request.mockImplementation((method: string) => {
+    let submittedTurnId: unknown;
+    mock.request.mockImplementation((method: string, params: Record<string, unknown>) => {
       if (method === 'thread/start')
         return new Promise(resolve => {
           resolveThread = resolve;
         });
       if (method === 'turn/start')
         return new Promise(resolve => {
+          submittedTurnId = params.clientTurnId;
           resolveTurn = resolve;
         });
       if (method === 'thread/list')
@@ -372,10 +795,10 @@ describe('extension streaming DOM', () => {
     // A native stream can arrive before the turn/start acknowledgement.
     emit(1, 'thinking', { text: 'Considering' }, 'two');
     expect(document.querySelectorAll('.message.user')).toHaveLength(1);
-    resolveTurn({ turn: { id: 'run-1' } });
+    resolveTurn({ turn: { id: submittedTurnId, nativeRunId: 'run-1' } });
     await vi.waitFor(() => expect(select.disabled).toBe(false));
     expect(document.querySelectorAll('.message.user')).toHaveLength(1);
-    expect(document.querySelector('.process-cluster')).not.toBeNull();
+    expect(document.querySelector('.process-live')).not.toBeNull();
     mock.notify('thread/updated', {
       threadId: 'two',
       thread: {
@@ -445,28 +868,26 @@ describe('extension streaming DOM', () => {
         },
       });
     send(1, 'thinking', { thinking: 'Inspect' });
-    await vi.waitFor(() => expect(document.querySelector('.process-cluster')).not.toBeNull());
-    // Explicitly close and reopen to pin the live group's expansion.
-    document.querySelector<HTMLElement>('.process-cluster > summary')!.click();
-    document.querySelector<HTMLElement>('.process-cluster > summary')!.click();
+    await vi.waitFor(() => expect(document.querySelector('.process-live')).not.toBeNull());
     send(2, 'thinking', { thinking: 'Inspect the file' });
     send(3, 'tool', { phase: 'start', name: 'read', toolCallId: 't1', args: { path: 'a.txt' } });
     await vi.waitFor(() => expect(document.querySelector('.process-tool')).not.toBeNull());
-    expect((document.querySelector('.process-cluster') as HTMLDetailsElement).open).toBe(true);
+    document.getElementById('processDetails')!.click();
     (document.querySelector('.process-tool') as HTMLDetailsElement).open = true;
+    const toolNode = document.querySelector('.process-tool');
     send(4, 'tool', { phase: 'result', name: 'read', toolCallId: 't1', result: 'File content' });
     send(5, 'assistant', { text: '**Hello**' });
     await vi.waitFor(() =>
       expect(document.querySelector('.assistant strong')?.textContent).toBe('Hello'),
     );
     const userNode = document.querySelector('.message.user');
-    const processNode = document.querySelector('.process-cluster');
+    const processNode = document.querySelector('.process-summary-group');
     send(6, 'assistant', { text: '**Hello** world' });
     await vi.waitFor(() =>
       expect(document.querySelector('.assistant')?.textContent).toContain('world'),
     );
     expect(document.querySelector('.message.user')).toBe(userNode);
-    expect(document.querySelector('.process-cluster')).toBe(processNode);
+    expect(document.querySelector('.process-summary-group')).toBe(processNode);
     expect((document.querySelector('.process-tool') as HTMLDetailsElement).open).toBe(true);
     // A lagging history update must not remove live text or rebuild old bubbles.
     mock.notify('thread/updated', { threadId: 'one', thread });
@@ -488,11 +909,15 @@ describe('extension streaming DOM', () => {
         { id: 'history-text', type: 'agentMessage', text: '**Hello** world!' },
       ],
     });
-    mock.notify('turn/completed', { threadId: 'one', turn: { id: 'run-1', error: null } });
+    mock.notify('turn/completed', {
+      threadId: 'one',
+      turn: { id: 'run-1', executionSettled: true, error: null },
+    });
     await vi.waitFor(() =>
       expect(document.querySelector('.assistant')?.textContent).toContain('world!'),
     );
-    expect((document.querySelector('.process-cluster') as HTMLDetailsElement).open).toBe(true);
+    expect((document.querySelector('.completed-process') as HTMLDetailsElement).open).toBe(true);
+    expect(document.querySelector('.process-tool')).toBe(toolNode);
     expect((document.querySelector('.process-tool') as HTMLDetailsElement).open).toBe(true);
   });
 });

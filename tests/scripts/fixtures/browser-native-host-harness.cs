@@ -2,14 +2,45 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Web.Script.Serialization;
+using Microsoft.Win32;
 
 internal static class NativeHostHarness
 {
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
 
+    [DllImport("advapi32.dll")]
+    private static extern int RegOverridePredefKey(IntPtr key, IntPtr replacement);
+
+    private static int RunIsolatedStdio(string manifestPath, string origin)
+    {
+        // Override HKCU only inside this fixture process. Chrome and the user's
+        // application registration keep their original registry and discovery.
+        string sandboxPath = @"Software\BrowserExtensionTests\" + Guid.NewGuid().ToString("N");
+        IntPtr currentUser = new IntPtr(unchecked((int)0x80000001));
+        using (RegistryKey sandbox = Registry.CurrentUser.CreateSubKey(sandboxPath))
+        {
+            using (RegistryKey host = sandbox.CreateSubKey(
+                @"Software\Google\Chrome\NativeMessagingHosts\com.justdo.browserextension"))
+                host.SetValue(null, manifestPath);
+            if (RegOverridePredefKey(currentUser, sandbox.Handle.DangerousGetHandle()) != 0)
+                throw new InvalidOperationException("Could not isolate the fixture registry.");
+            try
+            {
+                return BrowserExtensionNativeHost.Main(new[] { origin });
+            }
+            finally
+            {
+                RegOverridePredefKey(currentUser, IntPtr.Zero);
+                Registry.CurrentUser.DeleteSubKeyTree(sandboxPath);
+            }
+        }
+    }
+
     public static int Main(string[] args)
     {
+        if (args[0] == "stdio") return RunIsolatedStdio(args[1], args[2]);
         if (args[0] == "publish")
         {
             File.WriteAllText(args[2], Json.Serialize(args));

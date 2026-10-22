@@ -67,6 +67,8 @@ function canFold(item: VisibleTimelineItem): item is SourceTimelineItem {
 export interface ProcessFoldOptions {
   /** The controller still owns the live tail; do not collapse its persisted prefix. */
   protectTrailingTurn?: boolean;
+  /** A host may retain unsupported rich content as a visible presentation boundary. */
+  keepVisibleKeys?: ReadonlySet<string>;
 }
 
 /** Presentation only: user/phase boundaries group rows without claiming a run outcome. */
@@ -112,7 +114,7 @@ export function foldCompletedProcessRows(
       prefix = [];
     };
     turn.forEach((row, index) => {
-      if (index < finalIndex && canFold(row.item)) {
+      if (index < finalIndex && !options.keepVisibleKeys?.has(row.item.key) && canFold(row.item)) {
         prefix.push(row);
       } else {
         flushPrefix();

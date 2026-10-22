@@ -23,13 +23,13 @@ wire conventions，以降低扩展客户端适配成本。
 | WebSocket request/response/notification 外形 | 支持        | payload 省略 `jsonrpc`                          |
 | initialize/initialized                       | 支持        | notification opt-out 支持精确方法名             |
 | thread/list                                  | 支持子集    | cursor/limit；不支持官方筛选参数                |
-| thread/read                                  | 支持        | `includeTurns`                                  |
+| thread/read                                  | 支持        | `includeTurns`、按 `turnId` 核对 `activeTurn`    |
 | thread/start                                 | 支持子集    | title；忽略模型、沙盒等高级覆盖项               |
 | thread/unsubscribe                           | 支持        | 每连接订阅                                      |
 | composer/options                             | JustDo 扩展 | 权限模式与已配置模型                            |
 | browser/extension/pair                       | JustDo 扩展 | 已鉴权的本地自动化配对，不创建聊天会话          |
-| turn/start                                   | 支持子集    | 文本、附件、权限、模型和 JustDo pageContext     |
-| turn/interrupt                               | 支持        | 实际按 thread 停止                              |
+| turn/start                                   | 支持子集    | 文本、附件、权限、模型、clientTurnId 与 pageContext |
+| turn/interrupt                               | 支持        | 必须携带 turnId，精确中止该原生运行；ACK 非终态  |
 | thread/started                               | 支持        | 订阅过滤                                        |
 | turn/started、turn/completed                 | 支持        | 订阅过滤                                        |
 | thread/updated                               | JustDo 扩展 | 传输完整聚合历史及可见待处理输入                |
@@ -37,6 +37,9 @@ wire conventions，以降低扩展客户端适配成本。
 | thread/image                                 | JustDo 扩展 | 读取原生授权媒体或历史明确引用的本地图片        |
 | Thinking (`reasoning`) 历史 item             | 支持        | 通过 `thread/updated` 完整快照同步              |
 | Tool / system 历史 item                      | JustDo 扩展 | 使用 `toolCall` / `systemMessage`               |
+| 本地阶段、耗时与工具进度                     | 支持        | 已准入原生事件投影，无虚构百分比                |
+| 历史过程收拢、持续动画与阅读位置保护        | 支持        | 复用桌面分组；中间正文、压缩与进度回执纳入过程，最终正文可见 |
+| 批量展开／折叠过程详情                       | 支持        | 外层与摘要同步；默认摘要单开，原始工具详情保持独立 |
 | 官方 item 增量事件                           | 未实现      | 当前实时增量经 thread/stream，非官方逐 item API |
 | 审批 server requests                         | 未实现      | 审批继续由桌面 UI 处理                          |
 | thread/resume                                | 未实现      | 现有线程直接 `turn/start` 可继续对话            |
@@ -48,6 +51,8 @@ wire conventions，以降低扩展客户端适配成本。
 
 - `turn/start.params.pageContext`
 - `turn/start.params.attachments|permissionMode|modelRef`
+- `turn/start.params.clientTurnId` 与响应 `nativeRunId|executionSettled`
+- `thread/read.params.turnId` 与响应 `activeTurn`
 - `composer/options`
 - `browser/extension/pair`
 - `thread/updated`
@@ -57,7 +62,7 @@ wire conventions，以降低扩展客户端适配成本。
 - 用户历史 item 的 `rawMessage|pendingInput` 展示字段
 - Native Host `codexRuntime/hello|ensure|restart`
 - Native Host 返回 `runtimeConfig.protocolVersion`
-- 扩展内部 `connection/closed|connection/reconnected`
+- 扩展内部 `connection/closed|connection/failed|connection/reconnected`
 
 这些字段和事件应位于兼容适配层，不能反向污染 OpenClaw Gateway 契约。
 
@@ -70,6 +75,7 @@ wire conventions，以降低扩展客户端适配成本。
 - 不持久化历史合成 turn/item ID。
 - 完成后用 `thread/read(includeTurns: true)` 获取最终消息。
 - 断线后重新初始化并恢复所需订阅。
+- 结果未知时保留 clientTurnId，只核对原提交；Stop ACK 和 idle 不解锁该次执行。
 
 服务端：
 
@@ -89,6 +95,9 @@ wire conventions，以降低扩展客户端适配成本。
 - `src/main/ipc/app/browser.test.ts`
 - `tests/scripts/prepare-browser-extension.test.ts`
 - `tests/scripts/prepare-browser-extension-dev-host.test.ts`
+- `tests/scripts/browser-extension-native-host.test.ts`（真实编译主入口及隔离注册表）
+- `plugins/browser-extensions/browser-assistant/tests/`（连接、消息、披露和活动条）
+- `tests/browser-extension/chromium-offline-smoke.cjs`（本机 HTTP/WS fixture 与隔离 Chrome）
 
 建议在变更协议或扩展资源后运行：
 
@@ -115,5 +124,7 @@ git diff --check
 10. 卸载或升级应用时检查 Native Host 注册和旧 rendezvous 的清理策略。
 11. 开发态运行 `npm run electron:dev`，确认注册表指向 build helper，工具栏点击直接打开对话侧栏。
 12. 点击侧栏右上角设置按钮，确认进入 relay 配对 options 页面。
+13. 在中文/空格安装路径及无额外网页授权的全新扩展资料中验证侧栏连接；保持公网阻断。
+14. 长思考与仅工具运行时验证活动条、独立折叠、手动阅读和返回最新消息；断线或 Stop ACK 不显示完成。
 
 当前自动化测试不替代真实 Chrome + 已打包 Electron 的端到端验收。

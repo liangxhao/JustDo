@@ -3,10 +3,210 @@ import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CoworkSessionSource } from '../../../shared/cowork/sessionSource';
+import type { NativeRunTerminalReceipt } from '../../engine/gateway/types';
 import {
   BrowserExtensionChatController,
   buildBrowserExtensionContext,
 } from './browserExtensionChatController';
+
+const turnStateFixture = () => {
+  const timing = {
+    id: 'timing-1',
+    sessionId: 'one',
+    clientTurnId: 'client-1',
+    rootRunId: 'native-run-1',
+    acceptedAt: 1,
+    startedAt: 1,
+    state: 'running',
+  };
+  const receipt: NativeRunTerminalReceipt = {
+    runId: 'native-run-1',
+    sessionKey: 'agent:main:justdo:one',
+    sessionId: 'physical-1',
+    lifecycleGeneration: 'epoch-1',
+    clientGeneration: 3,
+    agentSeq: 12,
+    status: 'completed',
+    executionSettled: true,
+    endedAt: 1234,
+  };
+  const finishSessionRun = vi.fn();
+  const request = vi.fn(async (_method: string, _params: unknown) => ({
+    session: { sessionId: 'physical-1' },
+  }));
+  const client = { request };
+  const runtime = {
+    getGatewayClient: vi.fn(() => client),
+    getGatewayClientGeneration: () => 3,
+    getSessionKeysForSession: () => ['agent:main:justdo:one'],
+    getRunTerminalReceipt: vi.fn(() => receipt as NativeRunTerminalReceipt | null),
+  };
+  const controller = new BrowserExtensionChatController({
+    ensureEngineRunning: vi.fn(),
+    getRuntime: () => runtime as never,
+    getRouter: () => ({ isSessionActive: () => false }) as never,
+    getStore: () =>
+      ({
+        getSession: () => ({ id: 'one' }),
+        getLatestSessionRun: () => timing,
+        getSessionRunByClientTurnId: (id: string) => (id === 'client-1' ? timing : undefined),
+        finishSessionRun,
+      }) as never,
+  });
+  return { controller, timing, receipt, runtime, request, finishSessionRun };
+};
+
+describe('browser turn execution receipts', () => {
+  it('keeps idle and completed product timing unknown without a whole-run receipt', async () => {
+    const f = turnStateFixture();
+    f.runtime.getRunTerminalReceipt.mockReturnValue(null);
+    await expect(f.controller.getTurnState('one', 'client-1')).resolves.toMatchObject({
+      id: 'client-1',
+      nativeRunId: 'native-run-1',
+      status: 'unknown',
+      executionSettled: false,
+    });
+    expect(f.request).not.toHaveBeenCalled();
+    expect(f.finishSessionRun).not.toHaveBeenCalled();
+  });
+
+  it('lets a replacement panel read retained exact completion without inventing old outcomes', async () => {
+    const f = turnStateFixture();
+    f.timing.state = 'completed';
+    await expect(f.controller.getTurnState('one')).resolves.toMatchObject({
+      id: 'client-1',
+      nativeRunId: 'native-run-1',
+      status: 'completed',
+      executionSettled: true,
+    });
+    f.runtime.getGatewayClientGeneration = () => 4;
+    await expect(f.controller.getTurnState('one')).resolves.toBeNull();
+    await expect(f.controller.getTurnState('one', 'client-1')).resolves.toMatchObject({
+      executionSettled: false,
+      status: 'unknown',
+    });
+    f.runtime.getRunTerminalReceipt.mockReturnValue(null);
+    await expect(f.controller.getTurnState('one')).resolves.toBeNull();
+  });
+
+  it.each(['completed', 'failed', 'interrupted'] as const)(
+    'projects only verified native %s receipts and the explicit native run identity',
+    async status => {
+      const f = turnStateFixture();
+      f.receipt.status = status;
+      if (status === 'failed') f.receipt.error = 'Provider rejected the run.';
+      await expect(f.controller.getTurnState('one', 'client-1')).resolves.toMatchObject({
+        id: 'client-1',
+        nativeRunId: 'native-run-1',
+        status,
+        executionSettled: true,
+      });
+      expect(f.finishSessionRun).toHaveBeenCalledWith(
+        'timing-1',
+        status === 'interrupted' ? 'aborted' : status,
+        1234,
+      );
+      expect(f.request.mock.calls.every(([method]) => method === 'sessions.describe')).toBe(true);
+    },
+  );
+
+  it.each([
+    { runId: 'other-run' },
+    { clientGeneration: 2 },
+    { sessionKey: 'agent:main:justdo:other' },
+    { sessionId: 'old-physical' },
+    { executionSettled: false },
+  ])('does not settle a stale or unverified receipt %j', async change => {
+    const f = turnStateFixture();
+    Object.assign(f.receipt, change);
+    await expect(f.controller.getTurnState('one', 'client-1')).resolves.toMatchObject({
+      executionSettled: false,
+      status: 'unknown',
+    });
+    expect(f.finishSessionRun).not.toHaveBeenCalled();
+  });
+
+  it('rejects a physical incarnation change during receipt validation', async () => {
+    const f = turnStateFixture();
+    f.request
+      .mockResolvedValueOnce({ session: { sessionId: 'physical-1' } })
+      .mockResolvedValueOnce({ session: { sessionId: 'replacement' } });
+    await expect(f.controller.getTurnState('one', 'client-1')).resolves.toMatchObject({
+      executionSettled: false,
+      status: 'unknown',
+    });
+    expect(f.finishSessionRun).not.toHaveBeenCalled();
+  });
+
+  it('keeps the result unknown when the client generation changes during validation', async () => {
+    const f = turnStateFixture();
+    let generation = 3;
+    f.runtime.getGatewayClientGeneration = () => generation;
+    f.request.mockImplementation(async () => {
+      generation += 1;
+      return { session: { sessionId: 'physical-1' } };
+    });
+    await expect(f.controller.getTurnState('one', 'client-1')).resolves.toMatchObject({
+      executionSettled: false,
+      status: 'unknown',
+    });
+    expect(f.finishSessionRun).not.toHaveBeenCalled();
+  });
+
+  it('returns the accepted native alias without replacing the client input identity', async () => {
+    const clientTurnId = 'd28c0cb6-9ddc-4118-885b-4420a16f7a9a';
+    const session = { id: 'one', cwd: process.cwd(), agentId: 'main', permissionMode: 'auto' };
+    let registered = false;
+    const timing = { id: 'timing', sessionId: 'one', clientTurnId, rootRunId: clientTurnId };
+    const prepareSession = vi.fn(async () => ({
+      sessionKey: 'key',
+      gatewaySessionId: 'physical-1',
+    }));
+    const startSession = vi.fn((_id, _prompt, options) => {
+      timing.rootRunId = 'native-run-1';
+      options.onAccepted();
+      return new Promise<void>(() => undefined);
+    });
+    const controller = new BrowserExtensionChatController({
+      ensureEngineRunning: async () => ({ phase: 'running' }) as never,
+      getRuntime: () => ({ getGatewayClientGeneration: () => 3 }) as never,
+      getRouter: () => ({ isSessionActive: () => false, prepareSession, startSession }) as never,
+      getStore: () =>
+        ({
+          getSession: () => session,
+          beginSessionRun: () => {
+            registered = true;
+            return timing;
+          },
+          getSessionRunByClientTurnId: () => (registered ? timing : undefined),
+        }) as never,
+    });
+    await expect(
+      controller.sendMessage({ sessionId: 'one', clientTurnId, message: 'Question' }),
+    ).resolves.toEqual({ sessionId: 'one', runId: clientTurnId, nativeRunId: 'native-run-1' });
+    expect(startSession).toHaveBeenCalledWith(
+      'one',
+      'Question',
+      expect.objectContaining({ clientTurnId }),
+    );
+    await expect(
+      controller.sendMessage({ sessionId: 'one', clientTurnId, message: 'Question' }),
+    ).rejects.toMatchObject({ requestSent: true });
+    expect(startSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops only the submitted native run and never completes it from its ACK', async () => {
+    const f = turnStateFixture();
+    await f.controller.interruptThread('one', 'client-1');
+    expect(f.request).toHaveBeenCalledWith('sessions.abort', {
+      key: 'agent:main:justdo:one',
+      runId: 'native-run-1',
+    });
+    expect(f.finishSessionRun).not.toHaveBeenCalled();
+    await expect(f.controller.interruptThread('one', 'other')).rejects.toThrow('identity');
+    expect(f.request).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('buildBrowserExtensionContext', () => {
   it('marks page-derived material as separate untrusted browser state', () => {
@@ -407,6 +607,91 @@ describe('BrowserExtensionChatController', () => {
     ]);
   });
 
+  it('preserves native display boundaries and compaction without exposing private reports', async () => {
+    const controller = new BrowserExtensionChatController({
+      ensureEngineRunning: vi.fn(),
+      getRouter: vi.fn(),
+      getRuntime: () =>
+        ({
+          ensureReady: vi.fn(async () => undefined),
+          getSessionKeysForSession: () => ['agent:main:justdo:session-1'],
+          fetchSessionHistoryByKey: vi.fn(async () => ({
+            messages: [
+              {
+                role: 'assistant',
+                content: [{ type: 'text', text: 'Partial' }],
+                stopReason: 'error',
+                __openclaw: { id: 'reply-1' },
+              },
+              {
+                role: 'assistant',
+                content: [
+                  { type: 'text', text: 'Before' },
+                  { type: 'text', text: 'After' },
+                ],
+                __openclaw: { id: 'reply-2' },
+              },
+              {
+                role: 'system',
+                content: '',
+                __openclaw: {
+                  kind: 'compaction-status',
+                  id: 'compact-1',
+                  phase: 'in-progress',
+                  summary: 'Summary',
+                  privateReport: 'private-compact-report',
+                },
+              },
+              {
+                role: 'system',
+                content: '',
+                __openclaw: { kind: 'reset', planImplementation: true },
+              },
+              {
+                role: 'custom',
+                customType: 'run-failed-before-reply',
+                content: 'Native failure',
+                details: { error: 'private-failure-report' },
+              },
+              { role: 'assistant', content: [{ type: 'canvas', code: 'private-widget-source' }] },
+            ],
+          })),
+        }) as never,
+      getStore: () => ({ getSession: () => ({ id: 'session-1' }) }) as never,
+    });
+    const messages = await controller.getMessages('session-1');
+    expect(messages[0]).toMatchObject({
+      text: 'Partial',
+      display: { stopReason: 'error', sourceId: 'reply-1', sourceIndex: 0 },
+    });
+    expect(messages.slice(1, 3).map(message => message.display)).toEqual([
+      { sourceId: 'reply-2', sourceIndex: 0 },
+      { sourceId: 'reply-2', sourceIndex: 1 },
+    ]);
+    expect(messages[3]).toMatchObject({
+      role: 'system',
+      text: '',
+      display: { kind: 'compaction-status', phase: 'in-progress' },
+      rawMessage: { __openclaw: { summary: 'Summary' } },
+    });
+    expect(messages[4]).toMatchObject({
+      role: 'system',
+      text: '',
+      display: { kind: 'phase-boundary' },
+    });
+    expect(messages[5]).toMatchObject({
+      role: 'assistant',
+      text: 'Native failure',
+      display: { nativeFailure: true },
+    });
+    expect(messages[6]).toMatchObject({
+      role: 'system',
+      text: '',
+      display: { kind: 'unsupported-content', keepVisible: true },
+    });
+    expect(JSON.stringify(messages)).not.toContain('private-');
+  });
+
   it('preserves image-only content and browser cards through the native history projection', async () => {
     const image = {
       type: 'image',
@@ -672,6 +957,97 @@ describe('BrowserExtensionChatController', () => {
     ]);
   });
 
+  it.each(['rejected', 'cancelled'] as const)(
+    'releases a definitely unsent %s submission after its native sender reports abandonment',
+    async outcome => {
+      const session = {
+        id: 'session-1',
+        agentId: 'main',
+        cwd: 'C:\\workspace',
+        permissionMode: 'auto',
+      };
+      const finishSessionRun = vi.fn();
+      let attempts = 0;
+      const startSession = vi.fn(async (_id, _prompt, options) => {
+        attempts += 1;
+        if (attempts === 1) {
+          await options.onNativeSendAbandoned();
+          if (outcome === 'rejected') throw new Error('Connection lost during model preparation');
+          return;
+        }
+        options.onAccepted();
+        await new Promise<void>(() => undefined);
+      });
+      const controller = new BrowserExtensionChatController({
+        ensureEngineRunning: async () => ({ phase: 'running' }) as never,
+        getRouter: () =>
+          ({
+            isSessionActive: () => false,
+            prepareSession: vi.fn(async () => ({
+              sessionKey: 'key',
+              gatewaySessionId: 'native-1',
+            })),
+            startSession,
+          }) as never,
+        getRuntime: () => null,
+        getStore: () =>
+          ({
+            getSession: () => session,
+            beginSessionRun: () => ({ id: 'timing-1' }),
+            finishSessionRun,
+          }) as never,
+      });
+      await expect(
+        controller.sendMessage({ sessionId: session.id, message: 'First draft' }),
+      ).rejects.toMatchObject({ requestSent: false });
+      expect(startSession).toHaveBeenCalledTimes(1);
+      expect(finishSessionRun).toHaveBeenCalledWith('timing-1', 'failed', expect.any(Number));
+      await expect(
+        controller.sendMessage({ sessionId: session.id, message: 'New user submission' }),
+      ).resolves.toMatchObject({ sessionId: session.id });
+      expect(startSession).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it('retains a possibly issued submission when no sender-abandoned proof exists', async () => {
+    const session = {
+      id: 'session-1',
+      agentId: 'main',
+      cwd: 'C:\\workspace',
+      permissionMode: 'auto',
+    };
+    const finishSessionRun = vi.fn();
+    const startSession = vi.fn(async () => {
+      throw Object.assign(new Error('Connection lost after native dispatch'), {
+        requestSent: true,
+      });
+    });
+    const controller = new BrowserExtensionChatController({
+      ensureEngineRunning: async () => ({ phase: 'running' }) as never,
+      getRouter: () =>
+        ({
+          isSessionActive: () => false,
+          prepareSession: vi.fn(async () => ({ sessionKey: 'key', gatewaySessionId: 'native-1' })),
+          startSession,
+        }) as never,
+      getRuntime: () => null,
+      getStore: () =>
+        ({
+          getSession: () => session,
+          beginSessionRun: () => ({ id: 'timing-1' }),
+          finishSessionRun,
+        }) as never,
+    });
+    await expect(
+      controller.sendMessage({ sessionId: session.id, message: 'Uncertain submission' }),
+    ).rejects.toMatchObject({ requestSent: true });
+    await expect(
+      controller.sendMessage({ sessionId: session.id, message: 'Later draft' }),
+    ).rejects.toThrow('already has a running response');
+    expect(startSession).toHaveBeenCalledTimes(1);
+    expect(finishSessionRun).not.toHaveBeenCalled();
+  });
+
   it('uses the runtime lifecycle and returns after Gateway accepts the turn', async () => {
     const finishSessionRun = vi.fn();
     const startSession = vi.fn((_sessionId, _prompt, options) => {
@@ -690,6 +1066,7 @@ describe('BrowserExtensionChatController', () => {
       getRouter: () =>
         ({
           isSessionActive: () => false,
+          prepareSession: vi.fn(async () => ({ sessionKey: 'key', gatewaySessionId: 'native-1' })),
           startSession,
         }) as never,
       getRuntime: () => null,
@@ -747,6 +1124,10 @@ describe('BrowserExtensionChatController', () => {
         getRouter: () =>
           ({
             isSessionActive: () => false,
+            prepareSession: vi.fn(async () => ({
+              sessionKey: 'key',
+              gatewaySessionId: 'native-1',
+            })),
             startSession: vi.fn((_id, _prompt, options) => {
               options.onAccepted();
               return new Promise<void>(() => undefined);
@@ -789,7 +1170,7 @@ describe('BrowserExtensionChatController', () => {
     },
   );
 
-  it('retains the real router error when the accepted execution resolves', async () => {
+  it('retains router diagnostics without making a resolved execution a terminal receipt', async () => {
     let resolveExecution!: () => void;
     let reportRouterError!: (sessionId: string, error: string) => void;
     const execution = new Promise<void>(resolve => {
@@ -808,6 +1189,7 @@ describe('BrowserExtensionChatController', () => {
       getRouter: () =>
         ({
           isSessionActive: () => false,
+          prepareSession: vi.fn(async () => ({ sessionKey: 'key', gatewaySessionId: 'native-1' })),
           startSession: vi.fn((_sessionId, _prompt, options) => {
             options.onAccepted?.();
             return execution;
@@ -829,9 +1211,8 @@ describe('BrowserExtensionChatController', () => {
     reportRouterError(session.id, 'Provider quota exceeded.');
     resolveExecution();
 
-    await vi.waitFor(() =>
-      expect(finishSessionRun).toHaveBeenCalledWith('timing-1', 'failed', expect.any(Number)),
-    );
+    await Promise.resolve();
+    expect(finishSessionRun).not.toHaveBeenCalled();
     reportRouterError(session.id, 'A later run failed.');
 
     expect(controller.consumeTurnError(session.id, result.runId)).toBe('Provider quota exceeded.');
@@ -885,6 +1266,7 @@ describe('BrowserExtensionChatController', () => {
         }) as never,
       getRuntime: () =>
         ({
+          getGatewayClientGeneration: () => 1,
           requestGateway: vi.fn(async () => ({
             models: [
               { id: 'old', name: 'Old', provider: 'provider' },

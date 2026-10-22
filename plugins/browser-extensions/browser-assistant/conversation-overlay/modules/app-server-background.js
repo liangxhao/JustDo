@@ -5,12 +5,27 @@ let nativePort = null;
 let nextRequestId = 0;
 const pending = new Map();
 
-function rejectPending(error) {
-  for (const request of pending.values()) {
+function nativeError(message, code = 'NATIVE_HOST_UNAVAILABLE') {
+  return Object.assign(new Error(message), { code });
+}
+
+function rejectPending(error, port) {
+  for (const [id, request] of pending) {
+    if (request.port !== port) continue;
     clearTimeout(request.timeout);
     request.reject(error);
+    pending.delete(id);
   }
-  pending.clear();
+}
+
+function retireNativePort(port, error) {
+  if (nativePort === port) nativePort = null;
+  rejectPending(error, port);
+  try {
+    port.disconnect();
+  } catch {
+    // A failed native pipe may already have disconnected.
+  }
 }
 
 function connectNativeHost() {
@@ -23,7 +38,7 @@ function connectNativeHost() {
     pending.delete(String(message.id));
     clearTimeout(request.timeout);
     if (message.error) {
-      const error = new Error(message.error.message ?? 'Native host failed.');
+      const error = nativeError(message.error.message ?? 'Native host failed.');
       if (message.error.data?.code === APP_NOT_RUNNING_CODE) error.code = APP_NOT_RUNNING_CODE;
       request.reject(error);
     } else request.resolve(message.result);
@@ -31,21 +46,38 @@ function connectNativeHost() {
   port.onDisconnect.addListener(() => {
     if (nativePort === port) nativePort = null;
     const message = chrome.runtime.lastError?.message ?? 'Native host disconnected.';
-    rejectPending(new Error(message));
+    rejectPending(nativeError(message), port);
   });
   return port;
 }
 
 function requestNativeHost(method, params = {}) {
   const id = `justdo-native:${++nextRequestId}`;
-  const port = connectNativeHost();
+  let port;
+  try {
+    port = connectNativeHost();
+  } catch (error) {
+    return Promise.reject(
+      nativeError(error instanceof Error ? error.message : 'Native host failed.'),
+    );
+  }
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       pending.delete(id);
-      reject(new Error(`Native host request ${method} timed out.`));
+      const error = nativeError(`Native host request ${method} timed out.`, 'NATIVE_HOST_TIMEOUT');
+      reject(error);
+      retireNativePort(port, error);
     }, REQUEST_TIMEOUT_MS);
-    pending.set(id, { reject, resolve, timeout });
-    port.postMessage({ jsonrpc: '2.0', id, method, params });
+    pending.set(id, { reject, resolve, timeout, port });
+    try {
+      port.postMessage({ jsonrpc: '2.0', id, method, params });
+    } catch {
+      pending.delete(id);
+      clearTimeout(timeout);
+      const error = nativeError('Unable to contact the native host.');
+      reject(error);
+      retireNativePort(port, error);
+    }
   });
 }
 
@@ -57,7 +89,13 @@ function validateAppServer(value) {
       url.protocol !== 'ws:' ||
       url.hostname !== '127.0.0.1' ||
       url.pathname !== '/app-server' ||
-      !/^[0-9a-f]{64}$/u.test(url.searchParams.get('token') ?? '')
+      !url.port ||
+      url.username ||
+      url.password ||
+      url.hash ||
+      [...url.searchParams.keys()].join(',') !== 'token' ||
+      !/^[0-9a-f]{64}$/u.test(url.searchParams.get('token') ?? '') ||
+      value.runtimeConfig?.protocolVersion !== 2
     ) {
       return null;
     }
@@ -78,16 +116,21 @@ export async function ensureAppServer(clientId) {
   if (
     hello?.manifestSchemaVersion !== 2 ||
     hello?.nativeHostProtocolVersion !== 2 ||
+    !Array.isArray(hello?.supportedProtocolVersions) ||
     !hello?.supportedProtocolVersions?.includes(2)
   ) {
-    throw new Error('The extension and JustDo versions are incompatible.');
+    throw nativeError(
+      'The extension and desktop app versions are incompatible.',
+      'INCOMPATIBLE_VERSION',
+    );
   }
   const result = await requestNativeHost('codexRuntime/ensure', {
     constraints,
     ...(typeof clientId === 'string' && clientId ? { clientId } : {}),
   });
   const validated = validateAppServer(result);
-  if (!validated) throw new Error('JustDo returned an invalid app-server URL.');
+  if (!validated)
+    throw nativeError('The desktop app returned an invalid app-server URL.', 'INVALID_APP_SERVER');
   return validated;
 }
 
@@ -96,7 +139,11 @@ export function handleAppServerMessage(message, reply) {
   void ensureAppServer(message.clientId)
     .then(result => reply({ ok: true, ...result }))
     .catch(error =>
-      reply({ ok: false, error: error instanceof Error ? error.message : String(error) }),
+      reply({
+        ok: false,
+        code: error?.code ?? 'NATIVE_HOST_UNAVAILABLE',
+        error: error instanceof Error ? error.message : 'Native host failed.',
+      }),
     );
   return true;
 }

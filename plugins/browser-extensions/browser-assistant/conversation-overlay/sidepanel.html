@@ -12,12 +12,43 @@
     <header>
       <div class="brand" title="__PRODUCT_NAME__"><img src="icons/icon32.png" alt="" /></div>
       <div class="conversation-picker">
-        <select id="session" aria-label="Conversation">
-          <option value="">New chat</option>
+        <select id="session" aria-label="Conversation" data-i18n-aria-label="conversation">
+          <option value="" data-i18n="newChat">New chat</option>
         </select>
       </div>
       <div class="header-actions">
-        <button id="refresh" class="icon" type="button" title="Refresh" aria-label="Refresh">
+        <button
+          id="processDetails"
+          class="icon"
+          type="button"
+          title="Expand all process details"
+          aria-label="Expand all process details"
+          aria-pressed="false"
+          aria-controls="messages"
+          data-i18n-title="expandAllProcessDetails"
+          data-i18n-aria-label="expandAllProcessDetails"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M9.5 4.5A2.5 2.5 0 0 0 5 6a3 3 0 0 0-1.25 5.55A3.5 3.5 0 0 0 6 17.5a3 3 0 0 0 5 1.8V6.5a2 2 0 0 0-1.5-2Z"
+            />
+            <path
+              d="M14.5 4.5A2.5 2.5 0 0 1 19 6a3 3 0 0 1 1.25 5.55A3.5 3.5 0 0 1 18 17.5a3 3 0 0 1-5 1.8V6.5a2 2 0 0 1 1.5-2Z"
+            />
+            <path
+              d="M7 8.5c1.1 0 2 .9 2 2M17 8.5c-1.1 0-2 .9-2 2M7 15c1.1 0 2-.9 2-2M17 15c-1.1 0-2-.9-2-2"
+            />
+          </svg>
+        </button>
+        <button
+          id="refresh"
+          class="icon"
+          type="button"
+          title="Refresh"
+          aria-label="Refresh"
+          data-i18n-title="refresh"
+          data-i18n-aria-label="refresh"
+        >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M20 7v5h-5M20 12a8 8 0 1 0-2.34 5.66M20 12a8 8 0 0 0-2.34-5.66" />
           </svg>
@@ -28,6 +59,8 @@
           type="button"
           title="Pairing settings"
           aria-label="Pairing settings"
+          data-i18n-title="settings"
+          data-i18n-aria-label="settings"
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path
@@ -38,17 +71,30 @@
         </button>
       </div>
     </header>
-    <main id="messages" aria-live="polite">
+    <main id="messages" tabindex="0" aria-label="Conversation" data-i18n-aria-label="conversation">
       <div class="empty">
         <img src="icons/icon128.png" alt="" />
-        <h1>What can I help with?</h1>
+        <h1 data-i18n="welcome">What can I help with?</h1>
       </div>
     </main>
-    <p id="error" class="error hidden"></p>
+    <div class="latest-anchor">
+      <button id="latest" type="button" class="latest-button hidden" data-i18n="latest">
+        Back to latest
+      </button>
+    </div>
+    <div id="runActivity" class="run-activity hidden"></div>
+    <p id="error" class="error hidden" role="alert"></p>
     <footer>
       <div class="composer">
         <div id="attachments" class="attachments hidden" aria-live="polite"></div>
-        <textarea id="prompt" rows="2" placeholder="Do anything"></textarea>
+        <textarea
+          id="prompt"
+          rows="2"
+          placeholder="Do anything"
+          aria-label="Do anything"
+          data-i18n-placeholder="prompt"
+          data-i18n-aria-label="prompt"
+        ></textarea>
         <div class="composer-toolbar">
           <button
             id="attach"
@@ -56,6 +102,8 @@
             type="button"
             title="Attach files"
             aria-label="Attach files"
+            data-i18n-title="attach"
+            data-i18n-aria-label="attach"
           >
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
           </button>
@@ -63,28 +111,40 @@
           <label
             class="context-toggle"
             title="Include page context (active page title, URL, visible text, and selected text)"
+            data-i18n-title="includePageHint"
           >
-            <input id="includePage" type="checkbox" aria-label="Include page context" checked />
+            <input
+              id="includePage"
+              type="checkbox"
+              aria-label="Include page context"
+              data-i18n-aria-label="includePage"
+              checked
+            />
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M7 3h7l4 4v14H7V3Z" />
               <path d="M14 3v5h5M10 12h5M10 16h5" />
             </svg>
-            <span class="visually-hidden">Page context</span>
+            <span class="visually-hidden" data-i18n="pageContext">Page context</span>
           </label>
           <label class="select-control permission-control">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 3 5 6v5c0 4.6 2.9 8.1 7 10 4.1-1.9 7-5.4 7-10V6l-7-3Z" />
             </svg>
-            <select id="permission" aria-label="Permission mode" disabled>
-              <option value="ask">Ask for approval</option>
-              <option value="auto">Smart approval</option>
-              <option value="full">Full access</option>
+            <select
+              id="permission"
+              aria-label="Permission mode"
+              data-i18n-aria-label="permission"
+              disabled
+            >
+              <option value="ask" data-i18n="ask">Ask for approval</option>
+              <option value="auto" data-i18n="auto">Smart approval</option>
+              <option value="full" data-i18n="full">Full access</option>
             </select>
           </label>
           <span class="toolbar-spacer"></span>
           <label class="select-control model-control">
-            <select id="model" aria-label="Model" disabled>
-              <option value="">Default model</option>
+            <select id="model" aria-label="Model" data-i18n-aria-label="model" disabled>
+              <option value="" data-i18n="defaultModel">Default model</option>
             </select>
           </label>
           <button
@@ -93,6 +153,8 @@
             type="button"
             title="Send"
             aria-label="Send"
+            data-i18n-title="send"
+            data-i18n-aria-label="send"
             disabled
           >
             <svg class="send-icon" viewBox="0 0 24 24" aria-hidden="true">

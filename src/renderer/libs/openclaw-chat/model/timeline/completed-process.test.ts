@@ -51,6 +51,29 @@ function progressReceipt(
 }
 
 describe('foldCompletedProcessRows', () => {
+  test('keeps host-marked rich rows visible without splitting a protected trailing turn', () => {
+    const source = [
+      summary('before'),
+      message('commentary'),
+      message('interactive fallback'),
+      summary('after'),
+      message('final'),
+    ];
+    const rows = prepareVisibleTimelineRows(source);
+    const keepVisibleKeys = new Set(['interactive fallback']);
+
+    expect(foldCompletedProcessRows(rows, { keepVisibleKeys, protectTrailingTurn: true })).toEqual(
+      rows,
+    );
+    const folded = foldCompletedProcessRows(rows, { keepVisibleKeys });
+    expect(folded.map(row => row.item.kind)).toEqual([
+      'completed-process',
+      'history-message',
+      'completed-process',
+      'history-message',
+    ]);
+    expect(folded[1].item).toBe(source[2]);
+  });
   test.each([
     { kind: 'compaction' },
     { kind: 'compaction-skipped' },

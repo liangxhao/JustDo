@@ -148,6 +148,11 @@ Main 还会校验编码后的附件总量。
 必填：`threadId`。不存在时返回错误，不会隐式创建会话；读取成功后当前 WebSocket 会订阅该线程，
 以便断线重连后恢复通知。
 
+可选 `turnId` 用于核对同一次提交；响应还带 `activeTurn`（无可核对运行时为 `null`）。
+该对象包含原 `id`、可选 `nativeRunId`、`status` 和 `executionSettled`。结果未知保持 `unknown`，
+原生接受已确认但尚未结算时为 `inProgress`；只有精确运行结算才返回完成/失败/中断。
+指定旧 `turnId` 只查询该次运行，不能把后来的运行当作旧请求已接收的证明。
+
 ## `thread/start`
 
 创建空的 JustDo 会话，并自动让当前 WebSocket 订阅该线程通知。
@@ -223,6 +228,7 @@ Main 还会校验编码后的附件总量。
   "method": "turn/start",
   "params": {
     "threadId": "thread-id",
+    "clientTurnId": "b63ff4bf-42a2-4ecf-83c4-f49c3114ecf0",
     "input": [{ "type": "text", "text": "Explain the selected code" }],
     "attachments": [{ "name": "notes.txt", "mimeType": "text/plain", "base64Data": "SGVsbG8=" }],
     "permissionMode": "full",
@@ -241,6 +247,8 @@ Main 还会校验编码后的附件总量。
 - 首选 `input` 数组；只拼接 `type: "text"` 或 `type: "input_text"` 的 `text`。
 - 为内部兼容也接受顶层 `message` 字符串。
 - 文本为空时拒绝请求。
+- `clientTurnId` 可选，存在时必须是合法 UUID；侧栏提交前生成并保留该值。
+  相同身份已存在时拒绝再次发送，结果未知只能查询原身份，不能换 ID 补发。
 - `attachments` 使用 `{ name, mimeType, base64Data }`；最多 5 个，编码后总长度最多 6 MiB。
 - `permissionMode` 可为 `ask`、`auto`、`full`，在本轮开始前保存并同步到 Gateway session。
 - `modelRef` 必须来自 `composer/options.models`；改变模型时先创建/准备 Gateway session，再调用
@@ -249,7 +257,9 @@ Main 还会校验编码后的附件总量。
 - `pageContext` 不会拼接或持久化为 user message；Main 通过受限的 Agent-only context 字段把它
   交给本轮模型，`thread/read` 返回的用户文本始终是原始输入。
 
-响应中的 `turn` 初始状态为 `inProgress`，`id` 是 JustDo `clientTurnId/runId`：
+响应中的 `turn` 初始状态为 `inProgress`，`id` 是本次提交的 `clientTurnId`。
+`nativeRunId` 来自实际 root run 绑定，用于匹配 `thread/stream`；它可能与提交 ID 不同，
+查询及停止始终携带 `id`，不能用显示历史分组 ID 或推测的原生 ID 代替：
 
 ```json
 {
@@ -257,7 +267,9 @@ Main 还会校验编码后的附件总量。
   "result": {
     "turn": {
       "id": "run-id",
+      "nativeRunId": "native-root-run-id",
       "status": "inProgress",
+      "executionSettled": false,
       "items": [],
       "itemsView": "full",
       "error": null,
@@ -270,6 +282,8 @@ Main 还会校验编码后的附件总量。
 ```
 
 收到 Gateway 接受确认后才返回成功。一个线程已有运行中响应时，新请求会失败。
+提交错误中的 `error.data.requestSent:false` 明确证明未发送；缺失或 `true` 表示不能据此判定未接收。
+客户端超时或断线同样保留原提交身份，不恢复成可重复发送的普通草稿。
 
 ## `turn/interrupt`
 
@@ -283,8 +297,9 @@ Main 还会校验编码后的附件总量。
 }
 ```
 
-成功响应为 `{}`，随后发送 `turn/completed`，状态为 `interrupted`。`threadId` 必填；
-`turnId` 建议提供，用于通知关联，但当前实际停止操作以 `threadId` 为准。
+`threadId` 与 `turnId` 均必填。成功响应为
+`{ "status": "requested", "executionSettled": false }`，只表示已请求停止同一次原生运行。
+旧 turn 的请求不能中断后继运行；服务端继续核对该次执行，只有原生结算后才发送 `turn/completed`。
 
 ## 通知
 
@@ -294,7 +309,7 @@ Main 还会校验编码后的附件总量。
 | `turn/started`   | `{ threadId, turn }`        | `turn/start` 已被 Gateway 接受           |
 | `thread/stream`  | `{ threadId, kind, event }` | 当前订阅会话的已归一化原生 Agent/Chat 流 |
 | `thread/updated` | `{ threadId, thread }`      | JustDo 扩展通知；轮询到权威消息历史变化  |
-| `turn/completed` | `{ threadId, turn }`        | 完成、失败、中断、线程消失或持续刷新失败 |
+| `turn/completed` | `{ threadId, turn }`        | 精确原生 whole-run 已结算，完成/失败/中断 |
 
 `thread/stream` 与 `thread/updated` 都是产品扩展，不是官方逐 item 协议。
 `thread/stream.kind` 为 `agent` 或 `chat`，`event` 为共享契约的已归一化事件；
@@ -305,16 +320,16 @@ Main 按实际会话 key 过滤，客户端仍按 run、owner、序号和连接�
 `turn/completed.turn.items` 当前为空；客户端应在完成后调用
 `thread/read(includeTurns: true)` 获取最终历史。运行期间优先复用按 session 隔离的 Gateway delta
 cursor，并以较低频率执行完整快照校准；进入终态后改用完整快照做最终 reconciliation。历史读取失败
-不会广播空 transcript，也不会推进完成判定。服务端要求终态历史包含本轮 assistant 内容并连续稳定，
-或到达有界的最大等待时间后，才发送 `turn/completed`。
+不会广播空 transcript，也不会推进完成判定。先取得精确 whole-run 结算证据，再等待历史校准；
+有界历史等待只影响何时通知已经确认的结局，不能据此制造执行终态。
 
 历史用户 item 可带 `pendingInput`，投影原生已接收但尚未进入 transcript 的输入。
 待处理分页与回执读取绑定同一物理 sessionId；正式历史为空、没有 cursor 不必然是
 错误，但必须再次确认身份、所有待处理页与可见性稳定。读取失败不伪装为空历史；
 pending 正文不加入 Main 持久快照，消费后按原生身份与正式用户消息去重。
 
-`turn/completed` 是该兼容层的显示/轮询结果，不能作为通用 whole-run 结算证明。
-Stop ACK、轮询耗尽或 idle 不授予新工具权限，也不证明后代和工具 cleanup 已完成。
+`turn/completed.turn.executionSettled` 必须为 `true`，客户端还须匹配确切 turn 身份。
+Stop ACK、轮询耗尽、线程消失、刷新失败或 idle 不产生完成通知，也不授予新工具权限。
 
 通知按连接订阅过滤。`thread/read`、`thread/start` 和 `turn/start` 会订阅；
 `thread/unsubscribe` 会退订。

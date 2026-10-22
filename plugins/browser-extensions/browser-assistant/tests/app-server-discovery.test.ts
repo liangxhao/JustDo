@@ -8,11 +8,21 @@ const unavailableMessage =
 
 class FixtureSocket {
   static OPEN = 1;
+  static behavior = 'open';
+  static instances: FixtureSocket[] = [];
+  static failSend = false;
   readyState = 0;
+  sent: Array<{ id?: string; method: string }> = [];
   listeners = new Map<string, Array<(event: { data?: string }) => void>>();
 
   constructor(_url: string) {
+    FixtureSocket.instances.push(this);
     queueMicrotask(() => {
+      if (FixtureSocket.behavior === 'stall') return;
+      if (FixtureSocket.behavior === 'close') {
+        this.close();
+        return;
+      }
       this.readyState = FixtureSocket.OPEN;
       this.emit('open');
     });
@@ -24,7 +34,9 @@ class FixtureSocket {
 
   send(raw: string) {
     const request = JSON.parse(raw);
-    if (request.method === 'initialize') {
+    if (FixtureSocket.failSend && request.method === 'turn/start') throw new Error('Closed');
+    this.sent.push(request);
+    if (request.method === 'initialize' && FixtureSocket.behavior !== 'no-initialize') {
       queueMicrotask(() => this.emit('message', { id: request.id, result: {} }));
     }
   }
@@ -43,6 +55,7 @@ class FixtureSocket {
 
 describe('browser extension discovers existing app instances', () => {
   let available: boolean;
+  let discoveryResult: Record<string, unknown>;
   let requests: Array<{ id: string; method: string; params: Record<string, unknown> }>;
   let client: AppServerClient | undefined;
   const sendMessage = vi.fn();
@@ -51,6 +64,10 @@ describe('browser extension discovers existing app instances', () => {
     vi.resetModules();
     vi.useFakeTimers();
     available = true;
+    discoveryResult = { localAppServerUrl, runtimeConfig: { protocolVersion: 2 } };
+    FixtureSocket.behavior = 'open';
+    FixtureSocket.failSend = false;
+    FixtureSocket.instances = [];
     requests = [];
     let onNativeMessage: (message: unknown) => void;
     const port = {
@@ -72,7 +89,7 @@ describe('browser extension discovers existing app instances', () => {
                 },
               }
             : available
-              ? { result: { localAppServerUrl, runtimeConfig: { protocolVersion: 2 } } }
+              ? { result: discoveryResult }
               : { error: { message: unavailableMessage, data: { code: 'APP_NOT_RUNNING' } } };
         onNativeMessage({ id: request.id, ...response });
       },
@@ -156,5 +173,267 @@ describe('browser extension discovers existing app instances', () => {
       });
       expect(request).not.toHaveProperty('restart');
     }
+  });
+
+  it('rejects a close before open and rediscovers instead of leaving connection pending', async () => {
+    FixtureSocket.behavior = 'close';
+    sendMessage.mockResolvedValue({ ok: true, localAppServerUrl });
+    client = new AppServerClient(vi.fn());
+
+    await expect(client.request('turn/start', { message: 'Hello' })).rejects.toMatchObject({
+      code: 'SOCKET_CLOSED',
+      requestSent: false,
+    });
+    FixtureSocket.behavior = 'open';
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(FixtureSocket.instances[1].sent.map(request => request.method)).toEqual([
+      'initialize',
+      'initialized',
+    ]);
+  });
+
+  it('bounds a stalled WebSocket handshake and retries discovery', async () => {
+    FixtureSocket.behavior = 'stall';
+    sendMessage.mockResolvedValue({ ok: true, localAppServerUrl });
+    client = new AppServerClient(vi.fn());
+    const result = client.request('turn/start', {}).catch((error: Error) => error);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await result).toMatchObject({ code: 'SOCKET_TIMEOUT', requestSent: false });
+    FixtureSocket.behavior = 'open';
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds discovery and ignores its late result', async () => {
+    let finishDiscovery!: (value: unknown) => void;
+    sendMessage.mockReturnValue(
+      new Promise(resolve => {
+        finishDiscovery = resolve;
+      }),
+    );
+    client = new AppServerClient(vi.fn());
+    const result = client.connect().catch((error: Error) => error);
+
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(await result).toMatchObject({ code: 'DISCOVERY_TIMEOUT', requestSent: false });
+    finishDiscovery({ ok: true, localAppServerUrl });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(FixtureSocket.instances).toHaveLength(0);
+  });
+
+  it('cancels discovery when the panel closes without creating a late connection', async () => {
+    let finishDiscovery!: (value: unknown) => void;
+    sendMessage.mockReturnValue(
+      new Promise(resolve => {
+        finishDiscovery = resolve;
+      }),
+    );
+    client = new AppServerClient(vi.fn());
+    const result = client.connect().catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(0);
+
+    client.disconnect();
+    expect(await result).toMatchObject({ code: 'CLIENT_CLOSED', requestSent: false });
+    finishDiscovery({ ok: true, localAppServerUrl });
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(FixtureSocket.instances).toHaveLength(0);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds initialization and clears the old socket before reconnecting', async () => {
+    FixtureSocket.behavior = 'no-initialize';
+    sendMessage.mockResolvedValue({ ok: true, localAppServerUrl });
+    client = new AppServerClient(vi.fn());
+    const result = client.connect().catch((error: Error) => error);
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await result).toMatchObject({ code: 'INITIALIZE_TIMEOUT', requestSent: false });
+    expect(FixtureSocket.instances[0].readyState).toBe(3);
+    FixtureSocket.behavior = 'open';
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(FixtureSocket.instances).toHaveLength(2);
+  });
+
+  it('preserves uncertain delivery after a sent request disconnects and never replays it', async () => {
+    sendMessage.mockResolvedValue({ ok: true, localAppServerUrl });
+    client = new AppServerClient(vi.fn());
+    await client.connect();
+    const socket = FixtureSocket.instances[0];
+    const result = client
+      .request('turn/start', { clientTurnId: 'input-1', message: 'Hello' })
+      .catch((error: Error) => error);
+    await vi.advanceTimersByTimeAsync(0);
+
+    socket.close();
+    expect(await result).toMatchObject({ requestSent: true });
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(
+      FixtureSocket.instances
+        .flatMap(value => value.sent)
+        .filter(request => request.method === 'turn/start'),
+    ).toHaveLength(1);
+  });
+
+  it('marks a synchronous send failure as unsent and clears its pending request', async () => {
+    sendMessage.mockResolvedValue({ ok: true, localAppServerUrl });
+    client = new AppServerClient(vi.fn());
+    await client.connect();
+    FixtureSocket.failSend = true;
+
+    await expect(client.request('turn/start', {})).rejects.toMatchObject({ requestSent: false });
+
+    expect(FixtureSocket.instances[0].sent.some(request => request.method === 'turn/start')).toBe(
+      false,
+    );
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('ignores notifications and repeated close events from a retired socket', async () => {
+    const onNotification = vi.fn();
+    sendMessage.mockResolvedValue({ ok: true, localAppServerUrl });
+    client = new AppServerClient(onNotification);
+    await client.connect();
+    const retired = FixtureSocket.instances[0];
+    retired.close();
+    await vi.advanceTimersByTimeAsync(1_000);
+    onNotification.mockClear();
+
+    retired.emit('message', { method: 'turn/completed', params: { threadId: 'older' } });
+    retired.close();
+
+    expect(onNotification).not.toHaveBeenCalled();
+    expect(FixtureSocket.instances[1].readyState).toBe(FixtureSocket.OPEN);
+  });
+
+  it.each([false, true, undefined])(
+    'preserves explicit RPC delivery evidence %s',
+    async requestSent => {
+      sendMessage.mockResolvedValue({ ok: true, localAppServerUrl });
+      client = new AppServerClient(vi.fn());
+      await client.connect();
+      const socket = FixtureSocket.instances[0];
+      const result = client.request('turn/start', {}).catch((error: Error) => error);
+      await vi.advanceTimersByTimeAsync(0);
+      const request = socket.sent.find(value => value.method === 'turn/start')!;
+
+      socket.emit('message', {
+        id: request.id,
+        error: { message: 'Unavailable', data: { requestSent } },
+      });
+
+      expect(await result).toMatchObject({ requestSent: requestSent !== false });
+    },
+  );
+
+  it('forwards a structured missing-app discovery code without exposing the URL', async () => {
+    const { handleAppServerMessage } =
+      await import('../conversation-overlay/modules/app-server-background.js');
+    available = false;
+
+    const response = await new Promise(resolve => {
+      handleAppServerMessage({ type: 'justdo:app-server:ensure' }, resolve);
+    });
+
+    expect(response).toEqual({ ok: false, code: 'APP_NOT_RUNNING', error: unavailableMessage });
+  });
+
+  it.each([
+    { localAppServerUrl: localAppServerUrl.replace('127.0.0.1', 'example.com') },
+    { localAppServerUrl: localAppServerUrl.replace('127.0.0.1', 'user:password@127.0.0.1') },
+    { localAppServerUrl: `${localAppServerUrl}&token=${'b'.repeat(64)}` },
+    { localAppServerUrl: `${localAppServerUrl}#fragment` },
+    { runtimeConfig: { protocolVersion: 1 } },
+  ])('rejects malformed discovery without returning its capability', async override => {
+    const { handleAppServerMessage } =
+      await import('../conversation-overlay/modules/app-server-background.js');
+    discoveryResult = { ...discoveryResult, ...override };
+
+    const response = await new Promise(resolve => {
+      handleAppServerMessage({ type: 'justdo:app-server:ensure' }, resolve);
+    });
+
+    expect(response).toMatchObject({ ok: false, code: 'INVALID_APP_SERVER' });
+    expect(response).not.toHaveProperty('localAppServerUrl');
+  });
+
+  it('rejects an unavailable native port immediately and clears its timeout', async () => {
+    vi.stubGlobal('chrome', {
+      runtime: {
+        connectNative: () => ({
+          onMessage: { addListener: vi.fn() },
+          onDisconnect: { addListener: vi.fn() },
+          postMessage: () => {
+            throw new Error('Port disconnected');
+          },
+        }),
+      },
+    });
+    const { ensureAppServer } =
+      await import('../conversation-overlay/modules/app-server-background.js');
+
+    await expect(ensureAppServer('panel')).rejects.toMatchObject({
+      code: 'NATIVE_HOST_UNAVAILABLE',
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('retires a stalled native pipe and ignores its late disconnect after recovery', async () => {
+    const ports: Array<{ disconnect: ReturnType<typeof vi.fn>; close: () => void }> = [];
+    const connectNative = vi.fn(() => {
+      const stalled = ports.length === 0;
+      let respond!: (value: unknown) => void;
+      let close!: () => void;
+      const port = {
+        onMessage: {
+          addListener: (listener: typeof respond) => {
+            respond = listener;
+          },
+        },
+        onDisconnect: {
+          addListener: (listener: typeof close) => {
+            close = listener;
+          },
+        },
+        disconnect: vi.fn(),
+        postMessage: (request: { id: string; method: string }) => {
+          if (stalled) return;
+          respond({
+            id: request.id,
+            result:
+              request.method === 'codexRuntime/hello'
+                ? {
+                    manifestSchemaVersion: 2,
+                    nativeHostProtocolVersion: 2,
+                    supportedProtocolVersions: [2],
+                  }
+                : discoveryResult,
+          });
+        },
+      };
+      ports.push({ disconnect: port.disconnect, close: () => close() });
+      return port;
+    });
+    vi.stubGlobal('chrome', { runtime: { connectNative } });
+    const { ensureAppServer } =
+      await import('../conversation-overlay/modules/app-server-background.js');
+    const failed = ensureAppServer('panel').catch((error: Error) => error);
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(await failed).toMatchObject({ code: 'NATIVE_HOST_TIMEOUT' });
+    expect(ports[0].disconnect).toHaveBeenCalledOnce();
+    await expect(ensureAppServer('panel')).resolves.toMatchObject({ localAppServerUrl });
+    ports[0].close();
+    await expect(ensureAppServer('panel')).resolves.toMatchObject({ localAppServerUrl });
+
+    expect(connectNative).toHaveBeenCalledTimes(2);
   });
 });

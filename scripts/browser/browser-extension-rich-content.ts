@@ -1,4 +1,7 @@
 import { render } from 'lit';
+import { renderCompactionMessage } from '../../src/renderer/libs/openclaw-chat/components/timeline/compaction-divider';
+import { projectProgressReceipt } from '../../src/renderer/libs/openclaw-chat/model/tools/progress-receipt';
+import type { GatewayMessage } from '../../src/renderer/libs/openclaw-chat/types';
 import { normalizeMessage } from '../../src/renderer/libs/openclaw-chat/pipeline/message-normalizer';
 import {
   getTranscriptMedia,
@@ -26,9 +29,48 @@ export function retryRichImages(host: HTMLElement) {
 
 export function renderRichContent(
   host: HTMLElement,
-  entry: { role: string; text: string; rawMessage?: Record<string, unknown> },
+  entry: {
+    role: string;
+    text?: string;
+    rawMessage?: Record<string, unknown>;
+    item?: { id?: string; input?: unknown; status?: string };
+  },
   loadImage: (source: string) => Promise<string>,
 ) {
+  if (entry.role === 'compaction') {
+    let content = host.querySelector<HTMLElement>(':scope > .compaction-content');
+    if (!content) {
+      content = document.createElement('div');
+      content.className = 'compaction-content';
+      host.append(content);
+    }
+    render(
+      renderCompactionMessage(entry.rawMessage as GatewayMessage | undefined, Date.now()),
+      content,
+    );
+    return;
+  }
+  if (entry.role === 'progress-receipt' && entry.item) {
+    const presentation = projectProgressReceipt(entry.item);
+    const section = document.createElement('section');
+    section.className = 'progress-card-receipt';
+    if (entry.item.id) section.dataset.progressReceiptId = entry.item.id;
+    if (entry.item.status === 'running' || entry.item.status === 'inProgress')
+      section.setAttribute('role', 'status');
+    const icon = document.createElement('span');
+    icon.className = 'progress-card-receipt__icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.innerHTML =
+      '<svg viewBox="0 0 16 16" fill="none"><path d="M4.25 4.25h7.5M4.25 8h7.5M4.25 11.75h4.5"/><path d="m2 4.25.55.55L3.6 3.7M2 8l.55.55L3.6 7.45M2 11.75l.55.55 1.05-1.1"/></svg>';
+    const label = document.createElement('span');
+    label.textContent = Object.entries(presentation.values).reduce(
+      (text, [key, value]) => text.replace(`{${key}}`, value),
+      i18nService.t(presentation.key),
+    );
+    section.append(icon, label);
+    host.append(section);
+    return;
+  }
   const raw = entry.rawMessage ?? { role: entry.role, content: entry.text };
   const content = normalizeMessage(raw).content.slice();
   for (const media of getTranscriptMedia(raw)) {

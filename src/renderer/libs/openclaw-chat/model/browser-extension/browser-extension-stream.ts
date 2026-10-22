@@ -1,25 +1,47 @@
+import type { BrowserExtensionMessageDisplay } from '@shared/browser/browserExtensionDisplay';
 import type { BrowserExtensionStreamEvent } from '@shared/browser/browserExtensionStream';
 import { readTerminalGuardObservation } from '@shared/openclaw/agentEvent';
 
 import { createChatTranscriptState, type TurnItem } from '../chat-transcript-state';
 import { reduceAgentEvent, reduceChatEvent } from '../turn/agent-event-reducer';
+import { createRunActivity, type RunActivity } from '../turn/run-activity';
+import { projectBrowserExtensionActivity } from './browser-extension-activity';
 import { prepareBrowserExtensionStreamEvent } from './browser-extension-display';
 
-type Item = Record<string, unknown> & { type: string; id?: string };
+export { foldBrowserExtensionEntries } from './browser-extension-timeline';
+export { isPresentPlanToolName } from '@shared/cowork/interactions/planPreview';
+
+type Item = Record<string, unknown> & {
+  type: string;
+  id?: string;
+  /** Local presentation identity; never a native ownership or authorization field. */
+  displayKey?: string;
+  display?: BrowserExtensionMessageDisplay;
+};
 type Thread = { id: string; turns: Array<{ id: string; items: Item[] }> };
+const MAX_PENDING_STREAM_EVENTS = 64;
+const MAX_PENDING_STREAM_CHARS = 1_000_000;
+const MAX_DISPLAY_ITEM_KEYS = 2048;
 
 function projectItem(item: Exclude<TurnItem, { type: 'compaction' }>): Item {
-  if (item.type === 'content') return { id: item.id, type: 'agentMessage', text: item.text };
-  if (item.type === 'thinking')
-    return { id: item.id, type: 'reasoning', content: [item.text], status: item.status };
-  if (item.type === 'terminal') return { id: item.id, type: 'systemMessage', text: item.message };
-  return {
+  const identity = {
     id: item.id,
+    displayKey: item.id,
+    startedAt: item.startedAt,
+    updatedAt: item.updatedAt,
+    status: item.status,
+  };
+  if (item.type === 'content') return { ...identity, type: 'agentMessage', text: item.text };
+  if (item.type === 'thinking') return { ...identity, type: 'reasoning', content: [item.text] };
+  if (item.type === 'terminal') return { ...identity, type: 'systemMessage', text: item.message };
+  return {
+    ...identity,
     type: 'toolCall',
     toolUseId: item.toolCallId,
     toolName: item.name,
     input: item.input,
     output: item.error ?? item.output,
+    progressText: item.progressText,
     status: item.status === 'running' ? 'inProgress' : item.status,
     isError: item.status === 'failed',
   };
@@ -48,7 +70,14 @@ function sameItem(history: Item, live: Item): boolean {
 function mergeItem(history: Item, live: Item): Item {
   if (live.type !== 'toolCall') {
     return itemText(history).startsWith(itemText(live))
-      ? { ...history, status: live.status }
+      ? {
+          ...history,
+          id: live.id,
+          displayKey: live.displayKey,
+          status: live.status,
+          startedAt: live.startedAt,
+          updatedAt: live.updatedAt,
+        }
       : live;
   }
   const merged = {
@@ -121,11 +150,17 @@ export class BrowserExtensionStream {
   private state = createChatTranscriptState();
   private nextId = 0;
   private agentTextRun: string | null = null;
+  private activity: RunActivity | null = null;
+  private boundRunId: string | null = null;
+  private pendingRunEvents: BrowserExtensionStreamEvent[] | null = null;
+  private pendingRunChars = 0;
+  private historyOnly = false;
   private anchor: number | null = null;
   private completedRuns = new Set<string>();
   private settled = false;
   private beforeStart: Thread | null = null;
   private readonly displayTurnIds = new Map<number, string>();
+  private readonly displayItemKeys = new Map<string, string>();
   private readonly dependencies = {
     now: () => Date.now(),
     createId: (prefix: string) => `live-${prefix}-${++this.nextId}`,
@@ -135,8 +170,67 @@ export class BrowserExtensionStream {
     this.history = { id: threadId, turns: [] };
   }
 
+  /** Retain only IDs for uniquely identified rows already joined by display reconciliation. */
+  private retainDisplayKeys(turn: Thread['turns'][number]): Thread['turns'][number] {
+    const sources = turn.items.map(item => {
+      const display = item.display;
+      if (!display?.sourceId || !Number.isSafeInteger(display.sourceIndex)) return null;
+      return JSON.stringify([
+        turn.id,
+        item.type,
+        display.sourceId,
+        display.sourceSegmentId ?? '',
+        display.sourceIndex,
+      ]);
+    });
+    const counts = new Map<string, number>();
+    for (const source of sources) if (source) counts.set(source, (counts.get(source) ?? 0) + 1);
+    return {
+      ...turn,
+      items: turn.items.map((item, index) => {
+        const source = sources[index];
+        if (!source) return item;
+        if (counts.get(source) !== 1) {
+          this.displayItemKeys.delete(source);
+          return item;
+        }
+        if (item.displayKey) {
+          this.displayItemKeys.set(source, item.displayKey);
+          if (this.displayItemKeys.size > MAX_DISPLAY_ITEM_KEYS) {
+            this.displayItemKeys.delete(this.displayItemKeys.keys().next().value!);
+          }
+          return item;
+        }
+        const displayKey = this.displayItemKeys.get(source);
+        return displayKey ? { ...item, displayKey } : item;
+      }),
+    };
+  }
+
+  /** Bind a server-confirmed run before its first native stream event. */
+  bindRun(runId: string, startedAt = Date.now()): boolean {
+    if (
+      !runId.trim() ||
+      this.completedRuns.has(runId) ||
+      (this.boundRunId !== null && this.boundRunId !== runId) ||
+      (this.state.activeTurn && this.state.activeTurn.runId !== runId)
+    )
+      return false;
+    this.boundRunId = runId;
+    if (!this.historyOnly) this.activity ??= createRunActivity(runId, startedAt);
+    const pending = this.pendingRunEvents;
+    this.pendingRunEvents = null;
+    this.pendingRunChars = 0;
+    for (const value of pending ?? []) {
+      if (value.event.runId === runId) this.accept(value);
+    }
+    return true;
+  }
+
   start(message: string, rawMessage?: Record<string, unknown>): void {
     this.finish();
+    this.pendingRunEvents = [];
+    this.pendingRunChars = 0;
     this.beforeStart = this.history;
     this.anchor = this.history.turns.length;
     const turnId = `pending-${this.nextId++}`;
@@ -173,10 +267,12 @@ export class BrowserExtensionStream {
     }
     this.history = {
       ...thread,
-      turns: thread.turns.map((turn, index) => ({
-        ...turn,
-        id: this.displayTurnIds.get(index) ?? turn.id,
-      })),
+      turns: thread.turns.map((turn, index) =>
+        this.retainDisplayKeys({
+          ...turn,
+          id: this.displayTurnIds.get(index) ?? turn.id,
+        }),
+      ),
     };
     this.beforeStart = null;
     if (this.settled) this.finish(true);
@@ -190,11 +286,36 @@ export class BrowserExtensionStream {
   }
 
   accept(value: BrowserExtensionStreamEvent): boolean {
+    if (this.pendingRunEvents !== null) {
+      // A new send can overlap delayed events from an earlier run on the same
+      // subscription. Only an explicit native binding can adopt these frames.
+      if (this.pendingRunChars >= 0) {
+        const size = JSON.stringify(value).length;
+        if (
+          this.pendingRunEvents.length >= MAX_PENDING_STREAM_EVENTS ||
+          this.pendingRunChars + size > MAX_PENDING_STREAM_CHARS
+        ) {
+          // Do not replay a truncated delta lane. The next authenticated history
+          // read calibrates the view without guessing the missing prefix.
+          this.pendingRunEvents = [];
+          this.pendingRunChars = -1;
+          this.historyOnly = true;
+        } else {
+          this.pendingRunEvents.push(value);
+          this.pendingRunChars += size;
+        }
+      }
+      return false;
+    }
+    // Missing deltas cannot be repaired by appending later fragments, even
+    // after one history page arrives. Keep this run on authoritative history.
+    if (this.historyOnly) return false;
     const prepared = prepareBrowserExtensionStreamEvent(value);
     if (!prepared) return false;
     value = prepared;
     const event = value.event;
     if (!event.sessionKey || (event.runId && this.completedRuns.has(event.runId))) return false;
+    if (this.boundRunId && event.runId !== this.boundRunId) return false;
     if (!this.state.sessionKey) this.state.sessionKey = event.sessionKey;
     // Native Agent snapshots own the live text once available. Chat deltas are
     // a second delivery path, not another segment to append to the same reply.
@@ -203,6 +324,8 @@ export class BrowserExtensionStream {
     // Error notifications can describe a retry attempt. The app-server's
     // authoritative turn/completed decides whether the product run failed.
     if (value.kind === 'chat' && value.event.state === 'error') return false;
+    const previousHighWater =
+      this.state.activeTurn?.runId === event.runId ? this.state.activeTurn.lastAgentSeq : -1;
     const result =
       value.kind === 'agent'
         ? reduceAgentEvent(this.state, value.event, this.dependencies, {
@@ -212,6 +335,12 @@ export class BrowserExtensionStream {
           })
         : reduceChatEvent(this.state, value.event, this.dependencies);
     if (result !== 'applied' && result !== 'needs-text-snapshot') return false;
+    this.activity = projectBrowserExtensionActivity(
+      this.activity,
+      value,
+      this.state.activeTurn,
+      previousHighWater,
+    );
     if (value.kind === 'agent' && value.event.stream === 'assistant') {
       if (readTerminalGuardObservation(value.event.data)?.action === 'rollback') {
         this.agentTextRun = null;
@@ -222,9 +351,13 @@ export class BrowserExtensionStream {
     return true;
   }
 
-  project(): Thread {
+  project(): Thread & { activity?: RunActivity } {
+    const history = {
+      ...this.history,
+      ...(this.activity ? { activity: this.activity } : {}),
+    };
     const turn = this.state.activeTurn;
-    if (!turn?.items.length) return this.history;
+    if (!turn?.items.length) return history;
     const turns = this.history.turns.slice();
     const index = this.anchor ?? Math.max(0, turns.length - 1);
     const historical = turns[index] ?? { id: turn.id, items: [] };
@@ -238,16 +371,25 @@ export class BrowserExtensionStream {
           ),
       )
       .map(projectItem);
-    turns[index] = { ...historical, items: reconcileItems(historical.items, live).items };
-    return { ...this.history, turns };
+    turns[index] = this.retainDisplayKeys({
+      ...historical,
+      items: reconcileItems(historical.items, live).items,
+    });
+    return { ...history, turns };
   }
 
   finish(preserveUnpersisted = false): void {
+    this.pendingRunEvents = null;
+    this.pendingRunChars = 0;
+    this.historyOnly = false;
+    if (this.boundRunId) this.completedRuns.add(this.boundRunId);
+    this.activity = null;
+    this.boundRunId = null;
     if (this.state.activeTurn) {
       this.completedRuns.add(this.state.activeTurn.runId);
-      if (this.completedRuns.size > 24)
-        this.completedRuns.delete(this.completedRuns.values().next().value!);
     }
+    if (this.completedRuns.size > 24)
+      this.completedRuns.delete(this.completedRuns.values().next().value!);
     if (preserveUnpersisted && this.state.activeTurn?.items.length) {
       const historical =
         this.history.turns[this.anchor ?? Math.max(0, this.history.turns.length - 1)]?.items ?? [];
@@ -278,6 +420,38 @@ export class BrowserExtensionStream {
           if (item.type === 'content' && item.status === 'streaming') item.status = 'interrupted';
         }
         return;
+      }
+    }
+    // Preserve display identities only for the overlap already reconciled in
+    // this turn. Native history remains the owner of its content and boundaries.
+    if (this.state.activeTurn?.items.length) {
+      const index = this.anchor ?? Math.max(0, this.history.turns.length - 1);
+      const historical = this.history.turns[index];
+      if (historical) {
+        const live = this.state.activeTurn.items
+          .filter(item => item.type !== 'compaction' && item.type !== 'terminal')
+          .map(projectItem);
+        const { matches } = reconcileItems(historical.items, live);
+        const ids = new Map(matches.map((match, position) => [match, live[position]]));
+        this.history = {
+          ...this.history,
+          turns: this.history.turns.map((turn, position) =>
+            position === index
+              ? this.retainDisplayKeys({
+                  ...turn,
+                  items: turn.items.map((item, itemIndex) =>
+                    ids.get(itemIndex)
+                      ? {
+                          ...item,
+                          id: ids.get(itemIndex)!.id,
+                          displayKey: ids.get(itemIndex)!.displayKey,
+                        }
+                      : item,
+                  ),
+                })
+              : turn,
+          ),
+        };
       }
     }
     this.state = createChatTranscriptState();

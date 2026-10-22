@@ -52,6 +52,9 @@ const CONVERSATION_OVERLAY_FILES = [
   'modules/sidepanel-rich-content.js',
   'modules/sidepanel-rich-content.css',
   'modules/sidepanel-state.js',
+  'modules/sidepanel-i18n.js',
+  'modules/sidepanel-messages.js',
+  'modules/sidepanel-activity.js',
   'modules/sidepanel-stream.js',
   'options.css',
   'options.html',
@@ -163,6 +166,8 @@ function applyManifestOverlay(value) {
   manifest.action.default_title = PRODUCT_NAME_TOKEN;
   manifest.description = manifest.description.replaceAll('OpenClaw', PRODUCT_NAME_TOKEN);
   manifest.key = BROWSER_EXTENSION_PUBLIC_KEY;
+  // Desktop discovery and relay use loopback independently of optional page access.
+  manifest.host_permissions = ['http://127.0.0.1/*'];
   manifest.optional_host_permissions = ['http://*/*', 'https://*/*'];
   manifest.permissions = [
     'activeTab',
@@ -298,6 +303,9 @@ function verifyBrowserExtension(extensionDir, options = {}) {
     if (!manifest.optional_host_permissions?.includes(origin)) {
       throw new Error(`Browser extension page context permission is missing: ${origin}`);
     }
+  }
+  if (JSON.stringify(manifest.host_permissions) !== JSON.stringify(['http://127.0.0.1/*'])) {
+    throw new Error('Browser extension loopback permission must be explicit and limited to 127.0.0.1.');
   }
   if (manifest.side_panel?.default_path !== 'sidepanel.html') {
     throw new Error('Browser extension side chat entry is missing.');

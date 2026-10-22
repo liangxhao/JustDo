@@ -78,6 +78,7 @@ import {
 import { type NormalizedAgentEvent } from '../../../shared/openclaw/agentEvent';
 import { isChatSendStopReceipt } from '../../../shared/openclaw/chatSendReceipt';
 import { isGatewayRequestOutcomeUnknown } from '../../../shared/openclaw/gatewayRequestOutcome';
+import { isInternalManagedSubagentHandoffError } from '../../../shared/openclaw/internalRunError';
 import {
   classifyAgentEvent,
   normalizeMessageSessionKey,
@@ -123,6 +124,7 @@ import type {
   GatewayClientCtor,
   GatewayClientLike,
   GatewayEventFrame,
+  NativeRunTerminalReceipt,
   SessionTurn,
 } from '../gateway/types';
 import type {
@@ -163,6 +165,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly terminalLifecycleSessionIds = new Set<string>();
   private readonly terminalLifecycleErrorSessionIds = new Set<string>();
   private readonly recentTerminalRunIds = new Map<string, number>();
+  private readonly retiredRunBindings = new Map<
+    string,
+    Pick<SessionTurn, 'runId' | 'sessionKey' | 'gatewaySessionId' | 'lifecycleGeneration' | 'lastAgentSeq'> & {
+      clientGeneration: number;
+    }
+  >();
+  private readonly runTerminalReceipts = new Map<string, NativeRunTerminalReceipt>();
   private readonly compactionInFlightSessionIds = new Set<string>();
   private readonly lifecycleEndFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -1011,13 +1020,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     },
   ): Promise<void> {
     if (!hasMessageInput({ prompt, attachments: options.attachments })) {
-      throw new Error('Prompt is required.');
+      throw Object.assign(new Error('Prompt is required.'), { requestSent: false });
     }
     if (this.stopSessionPromises.has(sessionId)) {
-      throw new Error('The session is still stopping. Retry after it has stopped.');
+      throw Object.assign(new Error('The session is still stopping. Retry after it has stopped.'), {
+        requestSent: false,
+      });
     }
     if (this.unknownSessionRuns.has(sessionId)) {
-      throw new Error('The previous submission is still awaiting confirmation.');
+      throw Object.assign(new Error('The previous submission is still awaiting confirmation.'), {
+        requestSent: false,
+      });
     }
     const browserPrompt = parseBrowserAnnotationPrompt(prompt);
     const commandPrompt = browserPrompt?.userText ?? prompt;
@@ -1114,7 +1127,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         sessionId,
         sessionKey,
         runId,
-        gatewaySessionId: goalStartObjective !== null ? preparedSession.gatewaySessionId : null,
+        gatewaySessionId: preparedSession.gatewaySessionId,
         lifecycleGeneration: null,
         lastAgentSeq: -1,
         status: 'running',
@@ -1964,8 +1977,78 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private rememberTerminalTurn(turn: SessionTurn): void {
+    this.retiredRunBindings.set(turn.runId, {
+      runId: turn.runId,
+      sessionKey: turn.sessionKey,
+      gatewaySessionId: turn.gatewaySessionId,
+      lifecycleGeneration: turn.lifecycleGeneration,
+      lastAgentSeq: turn.lastAgentSeq,
+      clientGeneration: this.gatewayClientGeneration,
+    });
+    while (this.retiredRunBindings.size > 100) {
+      this.retiredRunBindings.delete(this.retiredRunBindings.keys().next().value!);
+    }
     for (const runId of turn.knownRunIds) this.rememberTerminalRun(runId);
     this.rememberTerminalRun(turn.runId);
+  }
+
+  private observeRunTerminal(event: NormalizedAgentEvent, admitted = false): void {
+    if (
+      event.deliveryEvent !== 'agent' ||
+      event.spawnedBy ||
+      !event.sessionKey ||
+      !event.sessionId ||
+      !event.lifecycleGeneration
+    ) return;
+    const active = [...this.activeTurns.values()].find(turn => turn.runId === event.runId);
+    const binding = admitted && active
+      ? { ...active, clientGeneration: this.gatewayClientGeneration }
+      : this.retiredRunBindings.get(event.runId);
+    if (
+      !binding ||
+      binding.clientGeneration !== this.gatewayClientGeneration ||
+      binding.runId !== event.runId ||
+      binding.gatewaySessionId !== event.sessionId ||
+      binding.lifecycleGeneration !== event.lifecycleGeneration ||
+      normalizeMessageSessionKey(binding.sessionKey) !== normalizeMessageSessionKey(event.sessionKey) ||
+      (!admitted && event.agentSeq <= binding.lastAgentSeq)
+    ) return;
+    if (!admitted) {
+      this.retiredRunBindings.set(event.runId, { ...binding, lastAgentSeq: event.agentSeq });
+    }
+    if (
+      event.stream !== 'lifecycle' ||
+      event.data.executionSettled !== true ||
+      !['end', 'error'].includes(String(event.data.phase))
+    ) return;
+    const previous = this.runTerminalReceipts.get(event.runId);
+    if (previous && event.agentSeq <= previous.agentSeq) return;
+    const interrupted =
+      event.data.aborted === true ||
+      event.data.stopReason === 'aborted' ||
+      event.data.stopReason === 'rpc';
+    const failed =
+      event.data.phase === 'error' &&
+      !interrupted &&
+      !isInternalManagedSubagentHandoffError(event.data.error);
+    this.runTerminalReceipts.set(event.runId, {
+      runId: event.runId,
+      sessionKey: binding.sessionKey,
+      sessionId: event.sessionId,
+      lifecycleGeneration: event.lifecycleGeneration,
+      clientGeneration: this.gatewayClientGeneration,
+      agentSeq: event.agentSeq,
+      executionSettled: true,
+      status: interrupted ? 'interrupted' : failed ? 'failed' : 'completed',
+      endedAt:
+        typeof event.data.endedAt === 'number' && Number.isFinite(event.data.endedAt)
+          ? event.data.endedAt
+          : event.timestamp,
+      ...(failed && typeof event.data.error === 'string' ? { error: event.data.error.slice(0, 4096) } : {}),
+    });
+    while (this.runTerminalReceipts.size > 100) {
+      this.runTerminalReceipts.delete(this.runTerminalReceipts.keys().next().value!);
+    }
   }
 
   private isRecentTerminalRun(runId: string): boolean {
@@ -2463,6 +2546,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   getGatewayClient(): GatewayClientLike | null {
     return this.gatewayClient;
+  }
+
+  getGatewayClientGeneration(): number {
+    return this.gatewayClientGeneration;
+  }
+
+  getRunTerminalReceipt(runId: string): NativeRunTerminalReceipt | null {
+    const receipt = this.runTerminalReceipts.get(runId);
+    return receipt ? { ...receipt } : null;
   }
 
   getDiagnosticGatewayInfo(): DiagnosticGatewayInfo | null {
@@ -3178,6 +3270,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         get: () => this.confirmUnknownSessionRunAdmission.bind(this),
       },
       rememberTerminalTurn: { get: () => this.rememberTerminalTurn.bind(this) },
+      observeRunTerminal: { get: () => this.observeRunTerminal.bind(this) },
       cleanupSessionTurn: { get: () => this.cleanupSessionTurn.bind(this) },
       store: { get: () => this.store },
       terminalLifecycleSessionIds: { get: () => this.terminalLifecycleSessionIds },

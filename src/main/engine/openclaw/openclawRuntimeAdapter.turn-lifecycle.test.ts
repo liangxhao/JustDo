@@ -132,6 +132,164 @@ type StopTestAdapter = {
   approvalReconciliation: { events: unknown[] } | null;
 };
 
+test('records only a matching whole-run terminal after chat final retires its binding', () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as {
+    activeTurns: Map<string, SessionTurn>;
+    sessionIdBySessionKey: Map<string, string>;
+    gatewayClientGeneration: number;
+    handleGatewayEvent: (event: { event: string; payload: unknown }) => void;
+  };
+  internals.gatewayClientGeneration = 7;
+  const turn = createSessionTurn({ gatewaySessionId: 'native-1', lifecycleGeneration: 'epoch-1',
+    lastAgentSeq: 1, status: 'running' });
+  internals.activeTurns.set(turn.sessionId, turn);
+  internals.sessionIdBySessionKey.set(turn.sessionKey, turn.sessionId);
+  internals.handleGatewayEvent({ event: 'chat', payload: {
+    sessionKey: turn.sessionKey, sessionId: 'native-1', lifecycleGeneration: 'epoch-1',
+    runId: turn.runId, state: 'final',
+  } });
+  expect(internals.activeTurns.has(turn.sessionId)).toBe(false);
+  expect(adapter.getRunTerminalReceipt(turn.runId)).toBeNull();
+  const terminal = {
+    sessionKey: turn.sessionKey, sessionId: 'native-1', lifecycleGeneration: 'epoch-1',
+    runId: turn.runId, seq: 3, stream: 'lifecycle',
+    data: { phase: 'end', executionSettled: true, endedAt: 1234 },
+  };
+  for (const changed of [
+    { sessionId: 'replacement' }, { lifecycleGeneration: 'replacement' }, { runId: 'other' },
+    { sessionKey: `${turn.sessionKey}:child` }, { seq: 1 },
+    { seq: 2, data: { phase: 'end', executionSettled: false } },
+  ]) {
+    internals.handleGatewayEvent({ event: 'agent', payload: { ...terminal, ...changed } });
+    expect(adapter.getRunTerminalReceipt(turn.runId)).toBeNull();
+  }
+  internals.handleGatewayEvent({ event: 'agent', payload: terminal });
+  expect(adapter.getRunTerminalReceipt(turn.runId)).toEqual({
+    runId: turn.runId, sessionKey: turn.sessionKey, sessionId: 'native-1',
+    lifecycleGeneration: 'epoch-1', clientGeneration: 7, agentSeq: 3, executionSettled: true,
+    status: 'completed', endedAt: 1234,
+  });
+  const returned = adapter.getRunTerminalReceipt(turn.runId)!;
+  returned.status = 'failed';
+  expect(adapter.getRunTerminalReceipt(turn.runId)?.status).toBe('completed');
+  internals.handleGatewayEvent({ event: 'agent', payload: { ...terminal, seq: 4,
+    data: { phase: 'error', executionSettled: true, error: 'Settled failure' } } });
+  internals.handleGatewayEvent({ event: 'agent', payload: { ...terminal, seq: 3 } });
+  expect(adapter.getRunTerminalReceipt(turn.runId)?.status).toBe('failed');
+  expect(adapter.getRunTerminalReceipt(turn.runId)?.agentSeq).toBe(4);
+});
+
+test('does not grant a trailing terminal receipt to a replacement Gateway client generation', () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as {
+    gatewayClientGeneration: number;
+    rememberTerminalTurn: (turn: SessionTurn) => void;
+    handleGatewayEvent: (event: { event: string; payload: unknown }) => void;
+  };
+  internals.gatewayClientGeneration = 7;
+  const turn = createSessionTurn({ gatewaySessionId: 'native-1', lifecycleGeneration: 'epoch-1',
+    lastAgentSeq: 1, status: 'running' });
+  internals.rememberTerminalTurn(turn);
+  internals.gatewayClientGeneration = 8;
+  internals.handleGatewayEvent({ event: 'agent', payload: {
+    sessionKey: turn.sessionKey, sessionId: 'native-1', lifecycleGeneration: 'epoch-1',
+    runId: turn.runId, seq: 2, stream: 'lifecycle',
+    data: { phase: 'error', executionSettled: true, error: 'Late error' },
+  } });
+  expect(adapter.getRunTerminalReceipt(turn.runId)).toBeNull();
+});
+
+test.each(['tool', 'assistant', 'lifecycle'])(
+  'rejects a retired terminal older than an observed %s frame without settling on that frame',
+  stream => {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const internals = adapter as unknown as {
+      rememberTerminalTurn: (turn: SessionTurn) => void;
+      handleGatewayEvent: (event: { event: string; payload: unknown }) => void;
+    };
+    const turn = createSessionTurn({
+      gatewaySessionId: 'native-1', lifecycleGeneration: 'epoch-1', lastAgentSeq: 1,
+    });
+    internals.rememberTerminalTurn(turn);
+    const identity = {
+      sessionKey: turn.sessionKey, sessionId: 'native-1', lifecycleGeneration: 'epoch-1',
+      runId: turn.runId,
+    };
+    internals.handleGatewayEvent({ event: 'agent', payload: {
+      ...identity, seq: 4, stream, data: { phase: 'end', executionSettled: false },
+    } });
+    expect(adapter.getRunTerminalReceipt(turn.runId)).toBeNull();
+    const terminal = {
+      ...identity, seq: 3, stream: 'lifecycle', data: { phase: 'end', executionSettled: true },
+    };
+    internals.handleGatewayEvent({ event: 'agent', payload: terminal });
+    expect(adapter.getRunTerminalReceipt(turn.runId)).toBeNull();
+    internals.handleGatewayEvent({ event: 'agent', payload: { ...terminal, seq: 5 } });
+    expect(adapter.getRunTerminalReceipt(turn.runId)).toMatchObject({
+      status: 'completed', agentSeq: 5, executionSettled: true,
+    });
+  },
+);
+
+test.each([
+  { sessionId: 'replacement' }, { lifecycleGeneration: 'replacement' }, { runId: 'other' },
+  { sessionKey: 'other-key' }, { spawnedBy: 'child-run' },
+])('does not advance a retired run sequence for a foreign frame %j', changed => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as {
+    rememberTerminalTurn: (turn: SessionTurn) => void;
+    handleGatewayEvent: (event: { event: string; payload: unknown }) => void;
+  };
+  const turn = createSessionTurn({
+    gatewaySessionId: 'native-1', lifecycleGeneration: 'epoch-1', lastAgentSeq: 1,
+  });
+  internals.rememberTerminalTurn(turn);
+  const identity = {
+    sessionKey: turn.sessionKey, sessionId: 'native-1', lifecycleGeneration: 'epoch-1',
+    runId: turn.runId,
+  };
+  internals.handleGatewayEvent({ event: 'agent', payload: {
+    ...identity, ...changed, seq: 100, stream: 'tool', data: {},
+  } });
+  internals.handleGatewayEvent({ event: 'agent', payload: {
+    ...identity, seq: 2, stream: 'lifecycle', data: { phase: 'end', executionSettled: true },
+  } });
+  expect(adapter.getRunTerminalReceipt(turn.runId)).toMatchObject({
+    status: 'completed', agentSeq: 2, executionSettled: true,
+  });
+});
+
+test.each(['empty', 'stopping', 'unknown'] as const)(
+  'marks a locally rejected %s submission as unsent without releasing earlier execution guards',
+  async reason => {
+    const { store, session } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const internals = adapter as unknown as {
+      stopSessionPromises: Map<string, Promise<void>>;
+      unknownSessionRuns: Map<string, { runId: string; cancelled: boolean }>;
+      gatewayClient: GatewayClientLike;
+      runTurn: (sessionId: string, prompt: string, options: object) => Promise<void>;
+    };
+    const stopping = Promise.resolve();
+    const unknown = { runId: 'earlier-unknown-run', cancelled: false };
+    if (reason === 'stopping') internals.stopSessionPromises.set(session.id, stopping);
+    if (reason === 'unknown') internals.unknownSessionRuns.set(session.id, unknown);
+    const request = vi.fn();
+    internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+    await expect(
+      internals.runTurn(session.id, reason === 'empty' ? '' : 'new input', {}),
+    ).rejects.toMatchObject({ requestSent: false });
+    expect(request).not.toHaveBeenCalled();
+    if (reason === 'stopping') expect(internals.stopSessionPromises.get(session.id)).toBe(stopping);
+    if (reason === 'unknown') expect(internals.unknownSessionRuns.get(session.id)).toBe(unknown);
+  },
+);
+
 test('stops an acknowledged turn with the Gateway root run before lifecycle events arrive', async () => {
   const { store, session } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});

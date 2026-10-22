@@ -50,31 +50,33 @@ Server 每 500 ms 从 JustDo/OpenClaw 权威状态刷新活动 turn，并以 Gat
 ## 停止生成
 
 Side Panel 在当前所选线程收到 `turn/started` 后把 Send 按钮切换为 Stop。点击后调用
-`turn/interrupt`。Server 会先撤销该线程的本地轮询，再请求路由器停止会话：
-
-- 停止成功：发送状态为 `interrupted` 的 `turn/completed`。
-- 停止失败：恢复原 turn 的轮询，并把请求作为错误返回。
+`turn/interrupt`，携带精确的 `threadId` 和客户端 `turnId`。Main 从既有运行回执读取
+`rootRunId`，只请求原生 `sessions.abort({key,runId})`，不以旧请求停止后继运行。
+返回 `{status:"requested",executionSettled:false}` 只确认停止请求，不撤销终态核对，
+也不发送 `turn/completed`；面板保留当前运行和 Stop，直到该运行的精确 whole-run 证据到达。
 
 ## 完成判定
 
-以下是侧栏兼容层 `turn/completed` 的展示收敛规则，不是原生执行结果判定。
-Main 的运行 owner 仍只有精确 whole-run `executionSettled:true` 才能结算；
-会话 idle、停止请求成功和客户端刷新失败不能证明工具清理或整个任务完成。
+`turn/completed` 必须携带 `executionSettled:true`。Runtime 只在已准入的精确
+`lifecycle end/error` 且 `executionSettled:true` 时保留有界运行元数据：原生 key、物理
+sessionId、lifecycleGeneration、runId、客户端连接代次、序号、状态、结束时间与错误。
+聊天 final 可先退役本地显示 owner；其有界原生绑定只允许同一身份和更高序号的真正末端
+补齐回执。绑定退役后，同一身份的所有 canonical agent 帧仍推进序号高水位，
+因此已观察到较新工具或正文帧后，较旧终态不能再补齐回执；非终态帧本身不生成回执。
+chat final、普通 `agent.wait` 状态、单次尝试、idle 和 Stop ACK 均不生成回执。
 
-| 条件                                             | `turn/completed.status` | error                            |
-| ------------------------------------------------ | ----------------------- | -------------------------------- |
-| Gateway runtime 已停止且存在最终 assistant 回复  | `completed`             | `null`                           |
-| Gateway runtime 已停止且捕获到本轮错误           | `failed`                | 当前运行的真实 `Error.message`   |
-| runtime 已停止、无最终回复且 session 为 `error`  | `failed`                | 无真实错误时使用通用失败文案     |
-| 连续 3 次找不到 thread                           | `failed`                | `Thread is no longer available.` |
-| 连续 120 次刷新抛错                              | `failed`                | `Unable to refresh the thread.`  |
-| 用户停止                                         | `interrupted`           | `null`                           |
-| 已知不再运行、无本轮终态正文，等待到上限且无错误 | `completed`             | `null`；不保证存在最终回复       |
+Controller 再核对发送准备的物理身份、当前连接代次和 `sessions.describe` 前后身份，
+才投影 `completed`、`failed` 或 `interrupted`。后继运行、旧 incarnation、旧代次和迟到
+序号不能结算当前输入。已有内部 managed handoff 错误过滤保持一致。
 
-非活动状态至少连续稳定 3 次，并已取得本轮新助手内容或记录的错误后，才结束轮询；
-缺少终态历史时最多等待 20 次非活动轮询。读取失败不广播空历史，也不推进该计数。
-连续 120 次读取异常结束的是兼容层刷新；500 ms 是每次异步读取之后的等待，因此
-实际耗时可能超过 60 秒。单次刷新不重叠，历史合成 Turn 状态也不作为执行结论。
+精确终态后至少保留 3 次稳定历史校准；缺少最终历史最多再校准 20 次。
+这些次数只决定历史刷新何时收敛，不产生执行结果。读取失败保留已有消息；连续异常
+降低刷新频率，不伪造失败。找不到线程仅释放其轮询，不宣称该执行失败。
+
+`thread/read({turnId})` 返回顶层 `activeTurn`，其中 `id` 是客户端 `clientTurnId`，
+`nativeRunId` 来自原生接纳回执的显式绑定。尚未核实终态时 `executionSettled:false`，
+`status` 为 `inProgress` 或 `unknown`。客户端不重发未确认输入。进程重启、连接代次更换
+或元数据退役后若缺少可核验 whole-run 证据，状态保持 unknown；不读取 transcript 文件补造终态。
 
 ## WebSocket 错误码
 
@@ -95,9 +97,32 @@ Main 的运行 owner 仍只有精确 whole-run `executionSettled:true` 才能结
 | 通道                 |  超时 |
 | -------------------- | ----: |
 | Native Host 单次请求 | 20 秒 |
+| 完整实例发现         | 45 秒 |
+| WebSocket 握手       | 10 秒 |
+| initialize 握手      | 15 秒 |
 | app-server 单次请求  | 60 秒 |
 
 超时仅拒绝客户端 Promise，不保证服务端工作已经取消。业务 turn 必须使用 `turn/interrupt`。
+发现、WebSocket 和初始化分别有期限；握手只收到 close、没有 error 时也立即拒绝。
+面板关闭会取消当前握手，迟到的发现响应不能再创建连接；旧 socket 的消息不能更新新连接。
+
+连接失败通过扩展内部 `connection/failed` 事件提供 `{ code, stage }`，不包含发现 URL。
+`stage` 为 `discovery`、`socket` 或 `initialize`；界面按结构化代码显示本地化恢复提示：
+
+| code                                                | 含义                                                       |
+| --------------------------------------------------- | ---------------------------------------------------------- |
+| `APP_NOT_RUNNING`                                   | 尚无已运行的桌面实例，用户启动应用后继续发现               |
+| `NATIVE_HOST_UNAVAILABLE`                           | Native host 缺失、断开或不可用，重新启动已安装应用刷新注册 |
+| `NATIVE_HOST_TIMEOUT` / `DISCOVERY_TIMEOUT`         | 本机发现超过期限                                           |
+| `INCOMPATIBLE_VERSION` / `INVALID_APP_SERVER`       | 协议版本或发现响应不合法                                   |
+| `SOCKET_TIMEOUT` / `SOCKET_ERROR` / `SOCKET_CLOSED` | 本机 WebSocket 握手未完成或已断开                          |
+| `INITIALIZE_TIMEOUT`                                | app-server 初始化未在期限内完成                            |
+
+调用错误的 `requestSent:false` 只表示该次 RPC 明确未发出，或服务端明确证明原生准入前已拒绝。
+原生发送 owner 关闭而未调用 `chat.send` 时，通过 `onNativeSendAbandoned` 提供该证明；
+准备失败或取消释放本次输入，入口处停止等待／前序未知的本地拒绝也明确标记未发送，
+但不释放前序运行的停止或未知保护。
+消息发出后断线、超时，以及缺少准入证据的业务错误保持 `requestSent:true`，保留原输入身份并核对，不能自动补发。
 
 ## 断线重连
 
@@ -105,12 +130,12 @@ WebSocket 关闭时客户端：
 
 1. 只处理当前 socket 的 close，忽略已经被替换的旧 socket。
 2. 拒绝所有 pending 请求。
-3. 通知 UI `connection/closed` 并清除 Stop 状态。
+3. 通知 UI `connection/closed`，保留未确认发送及执行状态。
 4. 1 秒后重新执行 Native Host `hello + ensure`。
 5. 连续失败也只重新发现和连接，不发送 `codexRuntime/restart`。
 6. 重连成功后发送本地 UI 事件 `connection/reconnected`，重新加载线程与消息。
 
-`connection/closed` 和 `connection/reconnected` 是扩展内部事件，不从 WebSocket server 发出。
+`connection/closed`、`connection/failed` 和 `connection/reconnected` 是扩展内部事件，不从 WebSocket server 发出。
 每次新连接都必须重新执行 initialize/initialized，订阅也不会跨连接保留。
 
 ## 应用退出与重启

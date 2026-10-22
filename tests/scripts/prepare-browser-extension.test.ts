@@ -84,7 +84,10 @@ describe('browser extension preparation', () => {
           'utf8',
         );
         const background = fs.readFileSync(path.join(prepared.outputDir, 'background.js'), 'utf8');
-        const strictJson = fs.readFileSync(path.join(prepared.outputDir, 'modules/strict-json.js'), 'utf8');
+        const strictJson = fs.readFileSync(
+          path.join(prepared.outputDir, 'modules/strict-json.js'),
+          'utf8',
+        );
         const { hasExactKeys } = vm.runInNewContext(
           strictJson.replace(/\bexport /g, '') + ';({ hasExactKeys })',
         );
@@ -147,13 +150,13 @@ describe('browser extension preparation', () => {
   );
   test('keeps the native strict authentication JSON parser and exact-key helper in the shipped baseline', () => {
     const source = fs.readFileSync(
-      path.join(projectRoot, 'plugins/browser-extensions/browser-assistant/openclaw/modules/strict-json.js'),
+      path.join(
+        projectRoot,
+        'plugins/browser-extensions/browser-assistant/openclaw/modules/strict-json.js',
+      ),
       'utf8',
     );
-    const parse = vm.runInNewContext(
-      source.replace(/\bexport /g, '') +
-        ';parseStrictJsonObject',
-    );
+    const parse = vm.runInNewContext(source.replace(/\bexport /g, '') + ';parseStrictJsonObject');
     expect(parse('{"type":"challenge","nonce":"test"}')).toEqual({
       type: 'challenge',
       nonce: 'test',
@@ -196,6 +199,8 @@ describe('browser extension preparation', () => {
         action: { default_title: string };
         description: string;
         name: string;
+        host_permissions: string[];
+        optional_host_permissions: string[];
         permissions: string[];
         version: string;
       };
@@ -233,7 +238,7 @@ describe('browser extension preparation', () => {
         expect.arrayContaining(['activeTab', 'nativeMessaging', 'scripting', 'sidePanel']),
       );
       expect(manifest.action).not.toHaveProperty('default_popup');
-      expect(manifest.host_permissions).toBeUndefined();
+      expect(manifest.host_permissions).toEqual(['http://127.0.0.1/*']);
       expect(manifest.optional_host_permissions).toEqual(['http://*/*', 'https://*/*']);
       expect(fs.readFileSync(path.join(second.outputDir, 'background.js'), 'utf8')).toContain(
         'openPanelOnActionClick: true',
@@ -391,7 +396,14 @@ describe('browser extension preparation', () => {
 
     try {
       fs.appendFileSync(
-        path.join(repoRoot, 'plugins', 'browser-extensions', 'browser-assistant', 'openclaw', 'options.js'),
+        path.join(
+          repoRoot,
+          'plugins',
+          'browser-extensions',
+          'browser-assistant',
+          'openclaw',
+          'options.js',
+        ),
         '\n// unexpected mutation\n',
         'utf8',
       );

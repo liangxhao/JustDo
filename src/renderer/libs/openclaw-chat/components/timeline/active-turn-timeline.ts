@@ -30,6 +30,7 @@ import {
   parseEditToolDiff,
 } from '../../model/tools/edit-tool-diff';
 import { fileToolCode, fileToolPatch } from '../../model/tools/file-tool-presentation';
+import { projectProgressReceipt } from '../../model/tools/progress-receipt';
 import {
   OPEN_SPAWNED_AGENT_EVENT,
   spawnedAgentSessionKey,
@@ -57,7 +58,7 @@ import { type EditDiffMonacoData, resolveEditDiffLanguage } from '../tools/edit-
 import { resolveToolDisplay } from '../tools/tool-display';
 import { renderCompactionMessage } from './compaction-divider';
 import { disclosureContent } from './disclosure-content';
-import { runProgressDetail,runProgressLabelKeys } from './run-progress-label';
+import { runProgressDetail, runProgressLabelKeys } from './run-progress-label';
 
 function summaryLabel(item: ProcessSummaryTimelineItem): string {
   if (item.thinkingCount > 0 && item.toolCount > 0) {
@@ -497,58 +498,16 @@ function toolStateLabel(tool: ToolItem): string {
   return i18nService.t(stateKey);
 }
 
-function progressReceiptSteps(input: unknown): Array<{ step: string; status: string }> {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return [];
-  const plan = (input as Record<string, unknown>).plan;
-  if (!Array.isArray(plan)) return [];
-  return plan.flatMap(candidate => {
-    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return [];
-    const step = (candidate as Record<string, unknown>).step;
-    const status = (candidate as Record<string, unknown>).status;
-    if (
-      typeof step !== 'string' ||
-      (status !== 'pending' && status !== 'in_progress' && status !== 'completed')
-    ) {
-      return [];
-    }
-    return [{ step: step.trim(), status }];
-  });
-}
-
 function renderProgressReceipt(
   tool: ToolItem,
   showAvatar: boolean,
   assistantAvatar?: TemplateResult,
 ): TemplateResult {
-  const steps = progressReceiptSteps(tool.input);
-  const input =
-    tool.input && typeof tool.input === 'object' && !Array.isArray(tool.input)
-      ? (tool.input as Record<string, unknown>)
-      : null;
-  const markdown = typeof input?.markdown === 'string' ? input.markdown.trim() : '';
-  const completed = steps.filter(step => step.status === 'completed').length;
-  const current =
-    steps.find(step => step.status === 'in_progress') ??
-    steps.find(step => step.status === 'pending') ??
-    [...steps].reverse().find(step => step.status === 'completed');
-  const label =
-    tool.status === 'running'
-      ? i18nService.t('coworkProgressReceiptUpdating')
-      : tool.status === 'failed'
-        ? i18nService.t('coworkProgressReceiptFailed')
-        : tool.status === 'cancelled' || tool.status === 'interrupted'
-          ? i18nService.t('coworkProgressReceiptInterrupted')
-          : steps.length > 0
-            ? i18nService
-                .t('coworkProgressReceiptUpdated')
-                .replace('{completed}', String(completed))
-                .replace('{total}', String(steps.length))
-                .replace('{current}', current?.step ?? '')
-            : markdown
-              ? i18nService.t('coworkProgressReceiptNoteUpdated')
-              : input
-                ? i18nService.t('coworkProgressReceiptCleared')
-                : i18nService.t('coworkProgressReceiptChanged');
+  const presentation = projectProgressReceipt(tool);
+  const label = Object.entries(presentation.values).reduce(
+    (text, [key, value]) => text.replace(`{${key}}`, value),
+    i18nService.t(presentation.key),
+  );
   return renderAssistantTimelineRow(
     html`
       <section

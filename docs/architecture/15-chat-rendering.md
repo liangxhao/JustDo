@@ -262,6 +262,13 @@ Chrome 侧栏的 Main 历史投影按 9.8 的返回形态校验身份：完整�
 
 首条输入已接收、尚未创建 transcript 时，允许同一物理会话返回不带游标的空正式历史与非空 `pendingInputs`。待处理分页和 `inputRunIds` 回执独立读取，确认每个待处理页的身份／状态／可见性与空正式历史稳定后返回请求内投影；取消或撤回旧页输入不一定改变总数，不能只校验第一页，也不能依赖必有 runId。输入消费、状态变化或 transcript 出现则重试完整快照，不发布无游标正文缓存。扩展的发送占位在流投影创建用户气泡时立即移除，运行确认后不再叠加第二份乐观输入。
 
+Chrome 侧栏的浏览器构建适配器复用同一 transcript reducer 与 `run-progress` / `run-activity`
+纯函数，把已准入的阶段、工具进度与观察时间交给扩展本地活动条。稀疏旧事件不倒退活动，
+参数生成不创建运行工具，Chat final 不清除 whole-run 活动。扩展本地模块拥有 keyed 消息与
+过程 DOM、独立 Thinking/Tool 披露、阅读锚点和中英文案，不反向导入应用源码。
+未知提交保留原 clientTurnId，Stop 绑定确切运行；只有原生结算证据可退役活动，
+连接失败或停止 ACK 不触发显示完成。详见[扩展侧聊](../features/browser/browser-extension-side-chat.md)。
+
 已取消／中断输入继续使用原有历史状态提示。
 传输结果不明时保留草稿和本次会话的临时请求身份，
 原文重试复用 idempotencyKey；明确拒绝后允许修改重发。此临时重试信息不持久化，重启后应先检查原生待处理输入，
@@ -972,6 +979,15 @@ HTML（`.html`、`.htm`、`.xhtml`）与 Markdown 默认进入渲染预览，并
 | `tools/` | 工具消息适配、生命周期与展示、文件差异及子任务跳转 |
 | `input/` | 草稿恢复、待发送用户消息匹配及提示标记的显示投影 |
 | `browser-extension/` | 浏览器扩展流的归约与显示适配，构建入口直接指向该分组 |
+
+扩展的 `browser-extension-timeline` 将经过认证的历史和实时显示项适配为同类时间线行，
+复用 `foldCompletedProcessRows`，再保留原始侧栏条目及顺序返回插件。其可选
+`keepVisibleKeys` 只增加显示边界，不伪造原生停止原因、run state 或执行回执；
+它不切分受保护的末尾轮次。Main 透传的最小 `display` 白名单保留错误、压缩、
+阶段及原生显示来源，纯未支持交互只产生本地化可见占位。宿主构建适配复用桌面的
+压缩展示器、样式和进度回执文案；插件不 import 应用 `src`。桌面与 Main 共用
+`shared/openclaw/runFailureDisplay` 的原生失败识别及公共文本选择，私有错误报告不进入侧栏。
+批量／单项折叠、活动保护及仍存在的物理历史作用域差异见[扩展侧栏](../features/browser/browser-extension-side-chat.md)。
 
 `libs/openclaw-chat/gateway/` 根层保留 `chat-controller.ts`、`client.ts` 及对应入口测试，
 `chat-controller-support.ts` 继续提供控制器共享类型和辅助。领域模块按下表组织，

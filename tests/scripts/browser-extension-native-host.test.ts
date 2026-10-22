@@ -82,6 +82,82 @@ describe.skipIf(process.platform !== 'win32' || !compilerPath)(
       );
     };
 
+    const exchangeNativeMessages = (
+      methods: string[],
+      origin = 'chrome-extension://jboajogplelmaahjbomgflnfngpolgcb/',
+    ) => {
+      const configPath = path.join(caseDirectory, 'native-host.config.json');
+      const manifestPath = path.join(caseDirectory, 'manifest.json');
+      const stagedExecutable = path.join(caseDirectory, 'native host.exe');
+      fs.copyFileSync(executablePath, stagedExecutable);
+      fs.writeFileSync(configPath, JSON.stringify(devConfig()), 'utf8');
+      fs.writeFileSync(manifestPath, JSON.stringify({ path: stagedExecutable }), 'utf8');
+      const frames = methods.map((method, id) => {
+        const body = Buffer.from(JSON.stringify({ jsonrpc: '2.0', id, method, params: {} }));
+        const header = Buffer.alloc(4);
+        header.writeUInt32LE(body.length);
+        return Buffer.concat([header, body]);
+      });
+      const output = execFileSync(stagedExecutable, ['stdio', manifestPath, origin], {
+        input: Buffer.concat(frames),
+        timeout: 5_000,
+        windowsHide: true,
+      });
+      const responses: unknown[] = [];
+      let offset = 0;
+      while (offset < output.length) {
+        const size = output.readUInt32LE(offset);
+        offset += 4;
+        responses.push(JSON.parse(output.subarray(offset, offset + size).toString('utf8')));
+        offset += size;
+      }
+      expect(offset).toBe(output.length);
+      return responses;
+    };
+
+    test('runs the real stdio entry through isolated registration and Unicode discovery paths', () => {
+      const rendezvous = publish();
+
+      const responses = exchangeNativeMessages(['codexRuntime/hello', 'codexRuntime/ensure']);
+
+      expect(responses[0]).toMatchObject({
+        jsonrpc: '2.0',
+        id: 0,
+        result: { manifestSchemaVersion: 2, nativeHostProtocolVersion: 2 },
+      });
+      expect(responses[1]).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          localAppServerUrl: rendezvous.localAppServerUrl,
+          runtimeConfig: { protocolVersion: 2 },
+        },
+      });
+      expect(fs.existsSync(receiptPath)).toBe(false);
+    });
+
+    test('returns a retryable missing-app error through the real framing entry', () => {
+      const responses = exchangeNativeMessages(['codexRuntime/hello', 'codexRuntime/ensure']);
+
+      expect(responses[1]).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        error: { code: -32603, data: { code: 'APP_NOT_RUNNING' } },
+      });
+      expect(fs.existsSync(rendezvousPath)).toBe(false);
+      expect(fs.existsSync(receiptPath)).toBe(false);
+    });
+
+    test('rejects a foreign extension at the real process entry before discovery', () => {
+      try {
+        exchangeNativeMessages(['codexRuntime/hello'], 'chrome-extension://foreign/');
+        throw new Error('A foreign extension must not receive a native response.');
+      } catch (error) {
+        expect(error).toMatchObject({ status: 1, stdout: Buffer.alloc(0) });
+      }
+      expect(fs.existsSync(rendezvousPath)).toBe(false);
+    });
+
     test('refuses to launch the development app before the terminal has started it', () => {
       const response = ensure(devConfig());
 

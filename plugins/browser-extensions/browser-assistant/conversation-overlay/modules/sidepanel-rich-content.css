@@ -189,6 +189,96 @@
       white-space: normal;
     }
 
+    .chat-divider {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin: 10px 0;
+      color: var(--chat-muted, #6b7280);
+    }
+
+    .chat-divider::before,
+    .chat-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      margin-top: 9px;
+      background: var(--chat-border, rgba(0, 0, 0, 0.12));
+    }
+
+    .chat-divider__details,
+    .chat-divider__status {
+      min-width: 0;
+      max-width: min(720px, 80%);
+    }
+
+    .chat-divider__status {
+      text-align: center;
+    }
+
+    .chat-divider__summary {
+      cursor: pointer;
+      font-size: 12px;
+      text-align: center;
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    .chat-divider__status .chat-divider__summary {
+      cursor: default;
+      white-space: normal;
+    }
+
+    .chat-divider__description {
+      margin-top: 4px;
+      font-size: 12px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .chat-divider__content {
+      margin-top: 8px;
+      padding: 10px 12px;
+      border: 1px solid var(--chat-border, rgba(0, 0, 0, 0.08));
+      border-radius: 8px;
+      background: var(--chat-surface, rgba(0, 0, 0, 0.02));
+      font-size: 13px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+
+    .progress-card-receipt {
+      display: flex;
+      width: fit-content;
+      max-width: 100%;
+      min-width: 0;
+      align-items: center;
+      gap: 7px;
+      padding: 4px 7px;
+      color: var(--chat-muted, #64748b);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .progress-card-receipt__icon {
+      display: inline-flex;
+      width: 16px;
+      height: 16px;
+      flex: 0 0 16px;
+      align-items: center;
+      justify-content: center;
+      color: color-mix(in srgb, var(--chat-muted, #64748b) 86%, transparent);
+    }
+    .progress-card-receipt__icon svg {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 1.35;
+    }
 .recording-editor,
 .recording-draft {
   --rec-text: var(--justdo-foreground, #202631);
