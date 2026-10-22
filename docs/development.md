@@ -113,6 +113,11 @@ productName 来自 package.json；隔离开发会话使用其独立数据目录�
 
 `gatewayLogFilter.ts` 对 thinking、assistant、item 流保留每段首尾事件，文本预览限制 80 字符，并省略部分插件加载、schema 提示、可丢弃 delta 和周期心跳。成功的 sessions.list/cron.list 轮询仍保留用于分析频率和延迟。摘要日志没有某事件，不能证明原生事件未发生。
 
+受管模型凭据更新后的 `secrets.reload` 失败时，Main 在停止 Gateway 前记录
+`[OpenClaw] Failed to refresh managed model provider credentials (secrets.reload):`，
+包含同步原因 `reason`、当前 `gatewayPhase`、请求耗时 `elapsedMs` 和脱敏异常堆栈 `error`。
+若 RPC 只返回笼统的 `secrets.reload failed`，仍需按同一时间段检查 Gateway 日志中的具体失败原因。
+
 需要完整顺序时再查原生 JSON。分享前检查正文和上下文中的凭据及用户内容，不提交原始日志、数据库、WAL/SHM 或完整配置。
 
 ## 5. 常见定位顺序

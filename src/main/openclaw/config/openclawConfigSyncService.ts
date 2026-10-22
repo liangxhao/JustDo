@@ -4,6 +4,7 @@ import { readModelRef } from '../../../shared/providers/modelRef';
 import type { WindowsSandboxStatus } from '../../../shared/security/windowsSandbox';
 import { ManagedDirectoryRuntimeStopAbortedError } from '../../core/filesystem/managedDirectoryOperations';
 import { t } from '../../core/i18n';
+import { redactLogText } from '../../core/logRedaction';
 import type { CoworkStore } from '../../data/coworkStore';
 import { createManagedSessionModelPolicy } from '../../engine/gateway/managedSessionModels';
 import { enqueueSessionModelOperation } from '../../engine/gateway/sessionModelOperations';
@@ -564,10 +565,17 @@ export class OpenClawConfigSyncService {
     // so the config watcher has nothing to observe. Refresh the native secret
     // snapshot explicitly and fail closed if the new credential cannot load.
     if (syncResult.secretsChanged && !syncResult.configChanged && statusBeforeSync.phase === 'running') {
+      const secretsReloadStartedAt = Date.now();
       try {
         const reloaded = await this.deps.requestGateway<{ ok?: boolean }>('secrets.reload');
         if (reloaded.ok !== true) throw new Error('Secret snapshot was not refreshed.');
-      } catch {
+      } catch (error) {
+        console.error('[OpenClaw] Failed to refresh managed model provider credentials (secrets.reload):', {
+          reason: options.reason,
+          gatewayPhase: engineManager.getStatus().phase,
+          elapsedMs: Date.now() - secretsReloadStartedAt,
+          error: redactLogText(error instanceof Error ? error.stack || error.message : String(error)),
+        });
         return this.failClosedConfigApplication({
           success: false, changed: true, configSynced: true, status: engineManager.getStatus(),
         }, 'Failed to refresh managed model provider credentials.');

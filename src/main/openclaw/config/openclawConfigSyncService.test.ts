@@ -271,6 +271,7 @@ describe('managed session model synchronization', () => {
 describe('OpenClawConfigSyncService', () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   const runningStatus = {
@@ -297,7 +298,7 @@ describe('OpenClawConfigSyncService', () => {
     nativeRestartError?: Error;
     reusableNetworkEnvironment?: boolean;
     secretsChanged?: boolean;
-    secretsReloadFails?: boolean;
+    secretsReloadError?: Error | string;
     authLogoutFails?: boolean;
     executionMode?: 'local' | 'sandbox';
     sandboxReady?: boolean;
@@ -364,7 +365,7 @@ describe('OpenClawConfigSyncService', () => {
     const requestGateway = vi.fn(async (method: string, params?: unknown) => {
       if (method === 'computer.status') return options.computerStatus?.() ?? { available: true };
       if (method === 'secrets.reload') {
-        if (options.secretsReloadFails) throw new Error('credential reload failed');
+        if (options.secretsReloadError) throw options.secretsReloadError;
         return { ok: true };
       }
       if (method === 'models.authLogout') {
@@ -955,8 +956,37 @@ describe('OpenClawConfigSyncService', () => {
   });
 
   it('fails closed when the native credential snapshot cannot refresh', async () => {
-    const harness = createHarness({ configChanged: false, secretsChanged: true, secretsReloadFails: true });
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const reloadError = new Error('credential reload timed out; Authorization: Bearer reload-jwt-fixture');
+    const harness = createHarness({ configChanged: false, secretsChanged: true, secretsReloadError: reloadError });
+    await expect(harness.service.syncConfig({ reason: 'provider-key-change' })).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining('Failed to refresh managed model provider credentials.'),
+    });
+    expect(errorLog).toHaveBeenCalledWith(
+      '[OpenClaw] Failed to refresh managed model provider credentials (secrets.reload):',
+      {
+        reason: 'provider-key-change',
+        gatewayPhase: 'running',
+        elapsedMs: expect.any(Number),
+        error: expect.stringContaining('credential reload timed out; Authorization: [REDACTED]'),
+      },
+    );
+    expect(errorLog.mock.calls[0][1].error).toContain('openclawConfigSyncService.test.ts:');
+    expect(JSON.stringify(errorLog.mock.calls)).not.toContain('reload-jwt-fixture');
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+    expect(errorLog.mock.invocationCallOrder[0]).toBeLessThan(harness.stopGateway.mock.invocationCallOrder[0]);
+  });
+
+  it('records string rejections when the native credential snapshot cannot refresh', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const harness = createHarness({
+      configChanged: false,
+      secretsChanged: true,
+      secretsReloadError: 'gateway disconnected; apiKey=reload-key-fixture',
+    });
     await expect(harness.service.syncConfig({ reason: 'provider-key-change' })).resolves.toMatchObject({ success: false });
+    expect(errorLog.mock.calls[0][1].error).toBe('gateway disconnected; apiKey=[REDACTED]');
     expect(harness.stopGateway).toHaveBeenCalledOnce();
   });
 
