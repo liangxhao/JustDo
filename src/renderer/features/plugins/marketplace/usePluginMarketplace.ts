@@ -71,7 +71,7 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
   const owner = getMarketplaceOperationOwner(window.electron.marketplace, kind);
   const operations = useSyncExternalStore(owner.subscribe, owner.snapshot);
   const setOperations = owner.update;
-  // Keep newly installed cards in their original location until the query changes.
+  // Search results keep newly installed cards in place until the query changes.
   const [pinnedKeys, setPinnedKeys] = useState<Set<string>>(() => new Set());
   const [recentlyUpdated, setRecentlyUpdated] = useState<Set<string>>(() => new Set());
   const locks = owner.locks;
@@ -97,27 +97,30 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
   );
 
   useEffect(() => {
-    const timers: number[] = [];
-    for (const id of recentlyUpdated) {
+    if (!inventoryReady || !identityReady) return;
+    const expired = [...recentlyUpdated].filter(id => {
       const identity = identities.find(entry => entry.runtimeId === id);
-      if (!identity) continue;
-      const operation =
-        operations[marketplaceKey({ sourceId: identity.sourceId, id: identity.pluginId })];
-      // Start the success grace period only after inventory refresh settles.
-      // Actionable warnings must remain visible until the user resolves them.
-      if (!operation || operation.busy || operation.warning || operation.restartRequired) continue;
-      timers.push(
-        window.setTimeout(() => {
-          setRecentlyUpdated(current => {
-            const next = new Set(current);
-            next.delete(id);
-            return next;
-          });
-        }, 1800),
+      const operation = identity
+        ? operations[marketplaceKey({ sourceId: identity.sourceId, id: identity.pluginId })]
+        : undefined;
+      // Keep updated cards until the session owner retires their success feedback.
+      // Warnings and unconfirmed inventory must remain available across refreshes.
+      return (
+        !operation ||
+        (!operation.busy &&
+          !operation.message &&
+          !operation.error &&
+          !operation.warning &&
+          !operation.restartRequired)
       );
-    }
-    return () => timers.forEach(timer => window.clearTimeout(timer));
-  }, [recentlyUpdated, identities, operations]);
+    });
+    if (!expired.length) return;
+    setRecentlyUpdated(current => {
+      const next = new Set(current);
+      for (const id of expired) next.delete(id);
+      return next;
+    });
+  }, [recentlyUpdated, identities, operations, inventoryReady, identityReady]);
 
   useEffect(() => {
     let active = true;
@@ -328,7 +331,7 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
       operation?.committed && (operation.error || operation.warning || operation.restartRequired),
     );
     return (
-      !(filter === MarketplaceFilter.ALL && pinnedIds.has(id)) &&
+      !(query && filter === MarketplaceFilter.ALL && pinnedIds.has(id)) &&
       (filter !== MarketplaceFilter.UPDATES ||
         updateById.has(id) ||
         recentlyUpdated.has(id) ||
@@ -342,7 +345,7 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
     !localFor(item) && installed.some(local => local.id === (item.runtimeId || item.id));
   const visibleItems =
     filter === MarketplaceFilter.ALL
-      ? items.filter(item => !localFor(item) || pinnedKeys.has(marketplaceKey(item)))
+      ? items.filter(item => discovering || !localFor(item) || pinnedKeys.has(marketplaceKey(item)))
       : [];
   const refreshInventory = async (key: string) => {
     try {

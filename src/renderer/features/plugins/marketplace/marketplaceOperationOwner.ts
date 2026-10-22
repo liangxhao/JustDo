@@ -4,6 +4,8 @@ import { i18nService } from '@/services/i18n';
 
 import type { MarketplaceOperation } from './usePluginMarketplace';
 
+const SUCCESS_FEEDBACK_DURATION_MS = 3000;
+
 // Renderer-session ownership: navigation must not release an in-flight mutation.
 // No inventory, credentials or provider payloads are retained here.
 class MarketplaceOperationOwner {
@@ -13,6 +15,7 @@ class MarketplaceOperationOwner {
   private readonly refreshers = new Set<() => Promise<void>>();
   private readonly pendingRefresh = new Set<string>();
   private readonly observedInstalled = new Set<string>();
+  private readonly feedbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -32,6 +35,7 @@ class MarketplaceOperationOwner {
       this.pendingRefresh.delete(key);
       this.observedInstalled.delete(key);
     }
+    this.syncFeedbackTimers();
     for (const listener of this.listeners) listener();
   };
   reconcile = (installedKeys: Set<string>) => {
@@ -41,7 +45,10 @@ class MarketplaceOperationOwner {
       if (installedKeys.has(key)) this.observedInstalled.add(key);
       else if (!operation.busy && this.observedInstalled.has(key)) retired.push(key);
     }
-    if (!retired.length) return;
+    if (!retired.length) {
+      this.syncFeedbackTimers();
+      return;
+    }
     this.update(current => {
       const next = { ...current };
       for (const key of retired) {
@@ -61,7 +68,42 @@ class MarketplaceOperationOwner {
   };
   refresh = async (key: string) => {
     this.pendingRefresh.add(key);
+    this.syncFeedbackTimers();
     await this.refreshPending();
+  };
+  private syncFeedbackTimers = () => {
+    const canDismiss = (key: string) => {
+      const operation = this.operations[key];
+      return (
+        operation?.committed &&
+        operation.message &&
+        !operation.busy &&
+        !operation.error &&
+        !operation.warning &&
+        !operation.restartRequired &&
+        this.observedInstalled.has(key) &&
+        !this.pendingRefresh.has(key)
+      );
+    };
+    for (const [key, timer] of this.feedbackTimers) {
+      if (canDismiss(key)) continue;
+      clearTimeout(timer);
+      this.feedbackTimers.delete(key);
+    }
+    for (const key of Object.keys(this.operations)) {
+      if (!canDismiss(key) || this.feedbackTimers.has(key)) continue;
+      this.feedbackTimers.set(
+        key,
+        setTimeout(() => {
+          this.feedbackTimers.delete(key);
+          // Only retire presentation feedback; retain the committed-version guard.
+          this.update(current => ({
+            ...current,
+            [key]: { ...current[key], message: undefined },
+          }));
+        }, SUCCESS_FEEDBACK_DURATION_MS),
+      );
+    }
   };
   private refreshPending = async () => {
     const refreshers = [...this.refreshers];

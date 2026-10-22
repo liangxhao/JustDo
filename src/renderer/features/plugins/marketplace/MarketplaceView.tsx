@@ -115,7 +115,7 @@ export function MarketplaceResults({
       <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
         {c.visibleItems.map((item, index) => {
           const local = c.localFor(item);
-          if (local && renderInstalled)
+          if (c.query && local && renderInstalled)
             return (
               <React.Fragment key={marketplaceKey(item)}>
                 {renderInstalled(local.id, index)}
@@ -145,9 +145,9 @@ export function MarketplaceResults({
                   </span>
                   {item.version && <span className="text-xs text-secondary">{item.version}</span>}
                 </button>
-                <MarketplaceAction controller={c} item={item} />
+                <MarketplaceAction controller={c} item={item} installOnly />
               </div>
-              <MarketplaceFeedback controller={c} item={item} />
+              {(!local || !renderInstalled) && <MarketplaceFeedback controller={c} item={item} />}
             </article>
           );
         })}

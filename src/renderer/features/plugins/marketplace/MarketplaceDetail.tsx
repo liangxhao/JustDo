@@ -21,7 +21,7 @@ export default function MarketplaceDetail({
   controller: PluginMarketplaceController;
 }) {
   const setSelectedDetail = onClose;
-  const action = () => <MarketplaceAction item={selectedDetail} controller={controller} />;
+  const action = () => <MarketplaceAction item={selectedDetail} controller={controller} showText />;
   return (
     <>
       {' '}

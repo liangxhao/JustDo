@@ -1,9 +1,11 @@
 import { PluginKind } from '@shared/plugins/marketplace';
-import { expect, test, vi } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 
 import { getMarketplaceOperationOwner } from './marketplaceOperationOwner';
 
 vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
+
+afterEach(() => vi.useRealTimers());
 
 test('isolates operation locks by bridge and plugin kind', () => {
   const bridge = {};
@@ -55,4 +57,58 @@ test('keeps refresh failures actionable when completion happened while no view w
   await vi.waitFor(() =>
     expect(owner.snapshot().writer.warning).toBe('marketplaceRefreshAfterInstallFailed'),
   );
+});
+
+test('dismisses confirmed success after three seconds without clearing the committed version', () => {
+  vi.useFakeTimers();
+  const owner = getMarketplaceOperationOwner({}, PluginKind.SKILL);
+  owner.update(() => ({ writer: { committed: true, version: '2', message: 'Installed' } }));
+  vi.advanceTimersByTime(5000);
+  expect(owner.snapshot().writer.message).toBe('Installed');
+
+  owner.reconcile(new Set(['writer']));
+  vi.advanceTimersByTime(2999);
+  expect(owner.snapshot().writer.message).toBe('Installed');
+  vi.advanceTimersByTime(1);
+  expect(owner.snapshot().writer.message).toBeUndefined();
+  expect(owner.snapshot().writer).toMatchObject({ committed: true, version: '2' });
+});
+
+test('waits for inventory refresh to finish and keeps the dismissal timer across navigation', async () => {
+  vi.useFakeTimers();
+  const owner = getMarketplaceOperationOwner({}, PluginKind.SKILL);
+  let finish!: () => void;
+  const detach = owner.attachRefresh(
+    () =>
+      new Promise<void>(resolve => {
+        finish = resolve;
+      }),
+  );
+  owner.update(() => ({ writer: { committed: true, message: 'Installed' } }));
+  owner.reconcile(new Set(['writer']));
+  const refresh = owner.refresh('writer');
+  vi.advanceTimersByTime(5000);
+  expect(owner.snapshot().writer.message).toBe('Installed');
+
+  finish();
+  await refresh;
+  detach();
+  vi.advanceTimersByTime(3000);
+  expect(owner.snapshot().writer.message).toBeUndefined();
+  owner.attachRefresh(async () => undefined);
+  expect(owner.snapshot().writer.committed).toBe(true);
+});
+
+test.each([
+  { busy: true },
+  { warning: 'Inventory refresh failed' },
+  { error: 'Activation failed' },
+  { restartRequired: true },
+])('retains actionable feedback beyond the success timeout: %o', extra => {
+  vi.useFakeTimers();
+  const owner = getMarketplaceOperationOwner({}, PluginKind.SKILL);
+  owner.update(() => ({ writer: { committed: true, message: 'Installed', ...extra } }));
+  owner.reconcile(new Set(['writer']));
+  vi.advanceTimersByTime(5000);
+  expect(owner.snapshot().writer.message).toBe('Installed');
 });

@@ -76,6 +76,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 function Harness({
@@ -140,6 +141,32 @@ test('searches the market and includes installed matches found only in market me
   });
   expect(screen.getAllByRole('switch')).toHaveLength(1);
   expect(screen.queryByRole('combobox')).toBeNull();
+});
+
+test('retains installed recommendations with a disabled install action and separate local controls', async () => {
+  render(<Harness installed={INSTALLED} />);
+  const installed = await screen.findByRole('button', { name: 'marketplaceInstalled' });
+  expect(installed.hasAttribute('disabled')).toBe(true);
+  expect(screen.getByText('Market writer')).toBeTruthy();
+  expect(screen.getAllByTestId('local-writer')).toHaveLength(1);
+  expect(screen.getAllByRole('switch')).toHaveLength(1);
+  expect(screen.getByRole('button', { name: 'marketplaceUpdate' }).hasAttribute('disabled')).toBe(
+    false,
+  );
+  fireEvent.click(installed);
+  expect(api.install).not.toHaveBeenCalled();
+});
+
+test('restores installed recommendations after clearing a deduplicated search', async () => {
+  const view = render(<Harness installed={INSTALLED} query="notes" />);
+  await screen.findByTestId('local-writer');
+  expect(screen.queryByText('Market writer')).toBeNull();
+  view.rerender(<Harness installed={INSTALLED} />);
+  await screen.findByText('Market writer');
+  expect(screen.getAllByTestId('local-writer')).toHaveLength(1);
+  expect(
+    screen.getByRole('button', { name: 'marketplaceInstalled' }).hasAttribute('disabled'),
+  ).toBe(true);
 });
 
 test('updates directly from the installed card even when recommendations are empty', async () => {
@@ -216,16 +243,44 @@ test('serializes duplicate clicks and blocks enable changes during an update', a
   await waitFor(() => expect(screen.getByRole('switch').hasAttribute('disabled')).toBe(false));
 });
 
-test('keeps a new installation in the original result position and reuses local controls', async () => {
+test.each(['', 'notes'])(
+  'retains a newly installed recommendation and deduplicates a newly installed search result: %s',
+  async query => {
+    let view: ReturnType<typeof render>;
+    const refresh = vi.fn(async () => {
+      view.rerender(<Harness installed={INSTALLED} onInstalled={refresh} query={query} />);
+    });
+    view = render(<Harness onInstalled={refresh} query={query} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
+    await waitFor(() => expect(screen.getAllByTestId('local-writer')).toHaveLength(1));
+    if (query) expect(screen.queryByText('Market writer')).toBeNull();
+    else {
+      expect(screen.getByText('Market writer')).toBeTruthy();
+      expect(
+        screen.getByRole('button', { name: 'marketplaceInstalled' }).hasAttribute('disabled'),
+      ).toBe(true);
+    }
+    expect(screen.getAllByRole('switch')).toHaveLength(1);
+    expect(screen.getAllByText('marketplaceInstallSucceeded')).toHaveLength(1);
+  },
+);
+
+test('dismisses confirmed installation success while retaining the disabled recommendation', async () => {
   let view: ReturnType<typeof render>;
   const refresh = vi.fn(async () => {
     view.rerender(<Harness installed={INSTALLED} onInstalled={refresh} />);
   });
   view = render(<Harness onInstalled={refresh} />);
-  fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
-  await waitFor(() => expect(screen.getAllByTestId('local-writer')).toHaveLength(1));
-  expect(screen.queryByText('Market writer')).toBeNull();
-  expect(screen.getAllByRole('switch')).toHaveLength(1);
+  const install = await screen.findByRole('button', { name: 'marketplaceInstall' });
+  vi.useFakeTimers();
+  await act(async () => fireEvent.click(install));
+  expect(screen.getByText('marketplaceInstallSucceeded')).toBeTruthy();
+  await act(async () => vi.advanceTimersByTimeAsync(3000));
+  expect(screen.queryByText('marketplaceInstallSucceeded')).toBeNull();
+  const installed = screen.getByRole('button', { name: 'marketplaceInstalled' });
+  expect(installed.hasAttribute('disabled')).toBe(true);
+  fireEvent.click(installed);
+  expect(api.install).toHaveBeenCalledTimes(1);
 });
 
 test('offers state refresh rather than reinstall after a committed installation refresh failure', async () => {
@@ -536,6 +591,24 @@ test('keeps an updated card visible throughout a slow inventory refresh', async 
   expect(screen.getByTestId('local-writer')).toBeTruthy();
   await act(async () => finish());
   expect(await screen.findByText('marketplaceUpdateSucceeded')).toBeTruthy();
+});
+
+test('keeps an updated card until its success feedback expires in the updates filter', async () => {
+  render(<Harness installed={INSTALLED} />);
+  fireEvent.click(screen.getByRole('button', { name: /marketplaceFilter.updates/ }));
+  const update = await screen.findByRole('button', { name: 'marketplaceUpdate' });
+  vi.useFakeTimers();
+  await act(async () => fireEvent.click(update));
+  expect(screen.getByText('marketplaceUpdateSucceeded')).toBeTruthy();
+
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(screen.getByTestId('local-writer')).toBeTruthy();
+  expect(screen.getByText('marketplaceUpdateSucceeded')).toBeTruthy();
+  await act(async () => vi.advanceTimersByTimeAsync(1000));
+  expect(screen.queryByText('marketplaceUpdateSucceeded')).toBeNull();
+  expect(screen.queryByTestId('local-writer')).toBeNull();
+  expect(screen.getByText('marketplaceNoKnownUpdates')).toBeTruthy();
+  expect(api.install).toHaveBeenCalledTimes(1);
 });
 
 test.each(['refresh-failure', 'restart-required'])(
