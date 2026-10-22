@@ -894,6 +894,17 @@ module.exports = { applyPatch, verifyPatch };
     );
   });
 
+  test('rejects changed native Goal continuation admission support after the runtime was built', () => {
+    const { repoRoot, runtimeRoot } = createFixture();
+    const supportSource = path.join(repoRoot, 'src/main/openclaw/runtime/native-support/goal-continuation.mjs');
+    expect(listBuildRecipeFiles(repoRoot)).toContain(supportSource);
+    writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
+    fs.appendFileSync(supportSource, '// changed Goal admission\n');
+    expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(
+      /source proof is missing, incomplete, or stale/,
+    );
+  });
+
   test('rejects an MXC plugin patch recipe changed after the runtime was built', () => {
     const { repoRoot, runtimeRoot } = createFixture();
     writeOpenClawPatchManifest(runtimeRoot, { repoRoot });

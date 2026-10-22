@@ -331,10 +331,12 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
     matchedExecution?.phase === GoalExecutionPhase.Running ||
     matchedExecution?.phase === GoalExecutionPhase.Continuing;
   const retrying = matchedExecution?.phase === GoalExecutionPhase.Retrying;
+  const waiting = matchedExecution?.phase === GoalExecutionPhase.Waiting &&
+    matchedExecution.waitingReason !== undefined;
   const stopped = matchedExecution?.phase === GoalExecutionPhase.Stopped;
   const live =
     !stopped &&
-    (executionRunning || retrying || isRunning) &&
+    (executionRunning || retrying || (!waiting && isRunning)) &&
     effectiveStatus === SessionGoalStatus.Active;
   const canEdit =
     !!goal &&
@@ -350,6 +352,8 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
       ? i18nService.t('coworkGoalRetryingHint')
       : matchedExecution?.phase === GoalExecutionPhase.Stopped
         ? i18nService.t('coworkGoalStoppedHint')
+        : waiting
+          ? i18nService.t('coworkGoalWaitingHint')
         : goal?.lastStatusNote || i18nService.t(presentation.hintKey);
   const liveExecutionHint = retrying
     ? i18nService.t('coworkGoalRetryingHint')

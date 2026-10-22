@@ -8,7 +8,7 @@
 | ------------- | -------------------------------- | ------------------------ | ---------------------------------------------------------------- |
 | chat/history  | transcript、实时与历史协议       | 身份准入、分页、渲染     | delta/snapshot、entry identity、可见分支                         |
 | session/model | 原生身份和模型设置               | 产品 key、选择与准入     | create/describe/patch、provider/model                            |
-| Goal          | 内容、状态、预算与原生变更       | 自动续跑 phase、卡片     | 六状态、resume 预算、goalId fence                                |
+| Goal          | 内容、状态、预算、续跑准入/回执/累计次数 | 自动续跑 phase、卡片 | 六状态、resume 预算、goalId/前驱 fence、原生回交互斥 |
 | task/Subagent | admission、queue、join、会话状态 | 父子状态、详情与停止     | spawnedBy 身份、运行状态、后代取消                               |
 | approval      | pending、期限、终态与撤销        | modal、选择校验          | stop/restart 及迟到回复                                          |
 | compaction    | context budget、压缩和恢复       | 进度、取消与详情         | operation identity、准备阶段取消、断线核对、无标记成功与后继身份 |

@@ -32,6 +32,7 @@ import {
 } from './runtimeAdapterSupport';
 export interface RuntimeGoalOperationsContext {
   readonly gatewayClientGeneration: number;
+  readonly appStartedAtMs: number;
   readonly store: CoworkStore;
   readonly gatewayClient: GatewayClientLike | null;
   readonly getSessionKeysForSession: (sessionId: string) => string[];
@@ -68,6 +69,7 @@ export interface RuntimeGoalOperationsContext {
     preparedObjective?: string,
   ) => Promise<GoalFeedbackPreparationResult>;
   goalRecoveryGeneration: number | null;
+  goalRecoveryRequested: boolean;
   goalRecoveryTimer: NodeJS.Timeout | null;
   readonly getRuntimeSessionSnapshot: (
     forceRefresh?: boolean,
@@ -79,8 +81,8 @@ export interface RuntimeGoalOperationsContext {
   ) => void;
   readonly runtimeRowString: (value: unknown) => string;
   readonly activeTurns: Map<string, SessionTurn>;
+  readonly isSessionActive: (sessionId: string) => boolean;
   readonly goalSessionsActivatingThisApp: Set<string>;
-  readonly isRuntimeSessionRowActive: (row: Record<string, unknown>) => boolean;
   initialGatewayGoalRecoveryPending: boolean;
   readonly recoverActiveGoals: (
     generation: number,
@@ -360,7 +362,9 @@ export async function performSessionGoalMutation(
     this.ensureActiveTurn(sessionId, String(params.sessionKey), mutation.runId);
     const turn = this.activeTurns.get(sessionId);
     if (turn?.runId === mutation.runId) turn.gatewaySessionId = mutation.sessionId;
-    this.goalContinuationCoordinator.restoreRunning(sessionId, goal.id, mutation.runId);
+    this.goalContinuationCoordinator.restoreRunning(
+      sessionId, goal.id, mutation.runId, goal.continuationTurns,
+    );
     execution = this.goalContinuationCoordinator.getSnapshot(sessionId) ?? undefined;
   } else if (!goal) {
     this.stoppedSessions.delete(sessionId);
@@ -491,7 +495,14 @@ export async function recoverActiveGoals(
   generation: number,
   options: { stopGoalsCreatedBeforeMs?: number } = {},
 ): Promise<void> {
-  if (generation !== this.gatewayClientGeneration || this.goalRecoveryGeneration === generation) {
+  if (generation !== this.gatewayClientGeneration) return;
+  options = {
+    ...options,
+    stopGoalsCreatedBeforeMs: options.stopGoalsCreatedBeforeMs ??
+      (this.initialGatewayGoalRecoveryPending ? this.appStartedAtMs : undefined),
+  };
+  if (this.goalRecoveryGeneration === generation) {
+    this.goalRecoveryRequested = true;
     return;
   }
   if (this.goalRecoveryTimer) {
@@ -499,7 +510,12 @@ export async function recoverActiveGoals(
     this.goalRecoveryTimer = null;
   }
   this.goalRecoveryGeneration = generation;
+  this.goalRecoveryRequested = false;
   try {
+    const managedSessions = this.store.listSessions();
+    const decisionEpochs = new Map(managedSessions.map(session => [
+      session.id, this.goalContinuationCoordinator.getDecisionEpoch(session.id),
+    ]));
     const runtimeSnapshot = await this.getRuntimeSessionSnapshot(true);
     if (generation !== this.gatewayClientGeneration || !this.gatewayClient) return;
     if (!runtimeSnapshot.known) {
@@ -513,8 +529,10 @@ export async function recoverActiveGoals(
         .map(row => [this.runtimeRowString(row.key), row] as const)
         .filter(([key]) => Boolean(key)),
     );
-    for (const session of this.store.listSessions()) {
+    for (const session of managedSessions) {
       if (generation !== this.gatewayClientGeneration || !this.gatewayClient) return;
+      const decisionEpoch = decisionEpochs.get(session.id);
+      if (this.goalContinuationCoordinator.getDecisionEpoch(session.id) !== decisionEpoch) continue;
       const candidateKeys = [
         ...this.getSessionKeysForSession(session.id),
         buildManagedSessionKey(session.id, session.agentId || DEFAULT_MANAGED_AGENT_ID),
@@ -543,13 +561,18 @@ export async function recoverActiveGoals(
           }
         }
         if (generation !== this.gatewayClientGeneration || !this.gatewayClient) return;
+        if (this.goalContinuationCoordinator.getDecisionEpoch(session.id) !== decisionEpoch) break;
         if (!result.session || !isRecord(result.session.goal)) continue;
         if (result.session.goal.status !== SessionGoalStatus.Active) continue;
         const goalId =
           typeof result.session.goal.id === 'string' ? result.session.goal.id.trim() : '';
         if (!goalId) continue;
+        const continuationTurns = normalizeSessionGoal(result.session.goal)?.continuationTurns ?? 0;
         const sessionKey = result.session.key?.trim() || candidateKey;
         this.rememberSessionKey(session.id, sessionKey);
+        if (this.manuallyStoppedSessions.has(session.id) ||
+          this.activeTurns.get(session.id)?.stopRequested) break;
+        if (this.isSessionActive(session.id) && !this.activeTurns.has(session.id)) break;
         const persistedExecution = this.store.getGoalExecutionSnapshot?.(session.id) ?? null;
         if (
           persistedExecution &&
@@ -568,14 +591,24 @@ export async function recoverActiveGoals(
         const activeTurn = this.activeTurns.get(session.id);
         if (activeTurn) {
           this.goalIdsActivatedThisApp.add(`${session.id}:${goalId}`);
-          this.goalContinuationCoordinator.restoreRunning(session.id, goalId, activeTurn.runId);
+          const current = this.goalContinuationCoordinator.getSnapshot(session.id);
+          if (current?.phase !== GoalExecutionPhase.Running || current.runId !== activeTurn.runId) {
+            this.goalContinuationCoordinator.restoreRunning(
+              session.id, goalId, activeTurn.runId, continuationTurns,
+            );
+          }
           break;
         }
         const runtimeRow = runtimeRowsByKey.get(sessionKey);
         if (runtimeRow?.hasActiveRun === true) {
           const runId = this.runtimeRowString(runtimeRow.runId);
           this.goalIdsActivatedThisApp.add(`${session.id}:${goalId}`);
-          this.goalContinuationCoordinator.restoreRunning(session.id, goalId, runId || undefined);
+          const current = this.goalContinuationCoordinator.getSnapshot(session.id);
+          if (current?.phase !== GoalExecutionPhase.Running || current.runId !== runId) {
+            this.goalContinuationCoordinator.restoreRunning(
+              session.id, goalId, runId || undefined, continuationTurns,
+            );
+          }
           break;
         }
         // A user turn can pass readiness before chat.send has established
@@ -598,13 +631,23 @@ export async function recoverActiveGoals(
           });
           break;
         }
-        if (runtimeRow && this.isRuntimeSessionRowActive(runtimeRow)) {
-          const runId = this.runtimeRowString(runtimeRow.runId);
-          this.goalContinuationCoordinator.restoreRunning(session.id, goalId, runId || undefined);
-        } else {
-          await this.prepareSessionKey(session.id, sessionKey);
-          await this.goalContinuationCoordinator.continue(session.id, sessionKey);
+        // Child activity and idle rows cannot establish a settled main run or
+        // authorize a new one. Read the native continuation owner and receipt.
+        const described = await this.gatewayClient.request<{
+          session?: Record<string, unknown> | null;
+        }>('sessions.describe', { key: sessionKey });
+        if (generation !== this.gatewayClientGeneration || !this.gatewayClient) return;
+        if (this.goalContinuationCoordinator.getDecisionEpoch(session.id) !== decisionEpoch) break;
+        if (this.isSessionActive(session.id)) break;
+        const canonicalGoal = normalizeSessionGoal(described.session?.goal);
+        if (!canonicalGoal || canonicalGoal.id !== goalId) break;
+        if (canonicalGoal.status !== SessionGoalStatus.Active) {
+          this.goalContinuationCoordinator.synchronizeGoal(session.id, canonicalGoal);
+          break;
         }
+        await this.goalContinuationCoordinator.reconcileNativeObservation(
+          session.id, sessionKey, canonicalGoal, described.session,
+        );
         break;
       }
     }
@@ -624,6 +667,15 @@ export async function recoverActiveGoals(
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  } finally {
+    // Coalesce overlapping scans, while allowing later native changes to be
+    // inspected again within the same connection generation.
+    if (this.goalRecoveryGeneration === generation) {
+      this.goalRecoveryGeneration = null;
+      if (this.goalRecoveryRequested && generation === this.gatewayClientGeneration) {
+        this.scheduleGoalRecovery(generation, options);
+      }
+    }
   }
 }
 
@@ -632,7 +684,9 @@ export function scheduleGoalRecovery(
   generation: number,
   options: { stopGoalsCreatedBeforeMs?: number } = {},
 ): void {
-  if (this.goalRecoveryTimer || generation !== this.gatewayClientGeneration) return;
+  if (generation !== this.gatewayClientGeneration) return;
+  this.goalRecoveryRequested = true;
+  if (this.goalRecoveryTimer) return;
   this.goalRecoveryTimer = setTimeout(() => {
     this.goalRecoveryTimer = null;
     void this.recoverActiveGoals(generation, options);
@@ -643,4 +697,5 @@ export function cancelGoalRecovery(this: RuntimeGoalOperationsContext): void {
   if (this.goalRecoveryTimer) clearTimeout(this.goalRecoveryTimer);
   this.goalRecoveryTimer = null;
   this.goalRecoveryGeneration = null;
+  this.goalRecoveryRequested = false;
 }

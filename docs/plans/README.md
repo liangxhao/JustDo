@@ -4,6 +4,7 @@
 
 | 文档                                                      | 仍需处理的内容                                                         |
 | --------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [Goal 续跑协调验收](goal-continuation-coordination.md)      | 真实模型、UI、断连/重启组合及最终安装包验收 |
 | [产品体验候选](openclaw-control-ui-adoption-plan.md)      | 导航剩余增强、门户、成果联动、活动与管理；已接入 Widget/终端不重复排期 |
 | [MCP Apps 接入](mcp-apps-integration-plan.md)             | ChatGPT/Hermes 对照调研、消息与工作区展示、完整宿主及跨窗口生命周期    |
 | [MCP Apps 大表格](mcp-apps-large-spreadsheets.md)         | 待实施；50 MiB 目标、分片传输、后台解析和表格容量压测                  |

@@ -182,6 +182,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private gatewayReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private gatewayReconnectAttempt = 0;
   private goalRecoveryGeneration: number | null = null;
+  private goalRecoveryRequested = false;
   private goalRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly appStartedAtMs: number;
   private initialGatewayGoalRecoveryPending = true;
@@ -315,7 +316,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         } else if (
           snapshot.phase === GoalExecutionPhase.Running ||
           snapshot.phase === GoalExecutionPhase.Continuing ||
-          snapshot.phase === GoalExecutionPhase.Retrying
+          snapshot.phase === GoalExecutionPhase.Retrying ||
+          snapshot.phase === GoalExecutionPhase.Waiting
         ) {
           this.store.clearGoalExecutionSnapshot?.(snapshot.sessionId);
         }
@@ -1011,6 +1013,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       resolveSettled: () => resolveSettled(),
     };
     this.pendingTurnStarts.set(sessionId, pendingStart);
+    this.goalContinuationCoordinator.invalidateForUserTurn(sessionId);
     const isStartCancelled = () =>
       pendingStart.cancelled || this.pendingTurnStarts.get(sessionId) !== pendingStart;
     let completionPromise: Promise<void> | null = null;
@@ -2582,7 +2585,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }>('agent.wait', { runId: turn.runId, timeoutMs: 0 });
       if (this.gatewayClient !== client || this.activeTurns.get(sessionId) !== turn) return;
       if (result.runId !== turn.runId) return;
-      if (result.yielded) {
+      if (result.yielded === true && result.status === 'ok' && !result.error &&
+        result.stopReason !== 'aborted' && result.stopReason !== 'rpc') {
         this.confirmUnknownSessionRunAdmission(sessionId, turn);
         // Yield proves admission, but not whole-session completion. Release the
         // old request identity to normal parent/descendant activity aggregation.
@@ -2595,6 +2599,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         }
         this.cleanupSessionTurn(sessionId);
         this.resolveTurn(sessionId);
+        if (!unknownRun?.cancelled) {
+          // Native agent.wait reports yielded only from the exact whole-run
+          // terminal. Descendants retain native custody after this run settles.
+          await this.goalContinuationCoordinator.reconcileSettledRun({
+            sessionKey: turn.sessionKey,
+            sessionId: turn.gatewaySessionId,
+            lifecycleGeneration: turn.lifecycleGeneration,
+            runId: turn.runId,
+            phase: 'end', executionSettled: true, yielded: true,
+            livenessState: 'paused', stopReason: 'end_turn',
+          });
+        }
+        this.scheduleGoalRecovery(this.gatewayClientGeneration);
         return;
       }
       // A plain timeout means no terminal receipt was found, not a failed run.
@@ -2606,6 +2623,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         return;
       const aborted = result.stopReason === 'aborted' || result.stopReason === 'rpc';
       this.confirmUnknownSessionRunAdmission(sessionId, turn);
+      if (this.unknownSessionRuns.get(sessionId)?.runId === turn.runId) {
+        this.unknownSessionRuns.delete(sessionId);
+      }
       this.handleChatEvent({
         sessionKey: turn.sessionKey,
         runId: turn.runId,
@@ -2978,6 +2998,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       getSessionKeysForSession: { get: () => this.getSessionKeysForSession.bind(this) },
       goalContinuationCoordinator: { get: () => this.goalContinuationCoordinator },
       goalMutationOperations: { get: () => this.goalMutationOperations },
+      appStartedAtMs: { get: () => this.appStartedAtMs },
       mutateSessionGoal: { get: () => this.mutateSessionGoal.bind(this) },
       executeSessionGoalMutation: { get: () => this.executeSessionGoalMutation.bind(this) },
       requireGatewayClient: { get: () => this.requireGatewayClient.bind(this) },
@@ -3004,12 +3025,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           this.goalRecoveryTimer = value;
         },
       },
+      goalRecoveryRequested: {
+        get: () => this.goalRecoveryRequested,
+        set: value => {
+          this.goalRecoveryRequested = value;
+        },
+      },
       getRuntimeSessionSnapshot: { get: () => this.getRuntimeSessionSnapshot.bind(this) },
       scheduleGoalRecovery: { get: () => this.scheduleGoalRecovery.bind(this) },
       runtimeRowString: { get: () => this.runtimeRowString.bind(this) },
       activeTurns: { get: () => this.activeTurns },
+      isSessionActive: { get: () => this.isSessionActive.bind(this) },
       goalSessionsActivatingThisApp: { get: () => this.goalSessionsActivatingThisApp },
-      isRuntimeSessionRowActive: { get: () => this.isRuntimeSessionRowActive.bind(this) },
       initialGatewayGoalRecoveryPending: {
         get: () => this.initialGatewayGoalRecoveryPending,
         set: value => {
@@ -3152,5 +3179,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       invalidateRuntimeSessionSnapshot: {
         get: () => this.invalidateRuntimeSessionSnapshot.bind(this),
       },
+      scheduleGoalRecovery: { get: () => this.scheduleGoalRecovery.bind(this) },
     });
 }

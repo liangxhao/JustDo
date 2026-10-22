@@ -49,6 +49,20 @@ const findButtonByLabel = (
 };
 
 describe('GoalStatusCard', () => {
+  it('shows native waiting instead of main execution when only descendants are busy', () => {
+    const rendered = renderToStaticMarkup(React.createElement(GoalStatusCard, {
+      goal: activeGoal,
+      isRunning: true,
+      execution: { sessionId: 'session-1', goalId: activeGoal.id,
+        phase: GoalExecutionPhase.Waiting, waitingReason: 'native-wake',
+        continuationCount: 1, updatedAt: Date.now() },
+      onPause: vi.fn(),
+    }));
+    expect(rendered).toContain(i18nService.t('coworkGoalWaitingHint'));
+    expect(rendered).not.toContain(i18nService.t('coworkGoalPhaseRunning'));
+    expect(rendered).toContain(i18nService.t('coworkGoalPause'));
+  });
+
   it('renders an optimistic goal with live execution activity', () => {
     const rendered = renderToStaticMarkup(
       React.createElement(GoalStatusCard, {

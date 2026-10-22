@@ -1229,6 +1229,7 @@ test('does not clear active metadata based on a stale local completion latch', a
 test('falls back to sessions.describe when the recovery session list is truncated', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.initialGatewayGoalRecoveryPending = false;
   const request = vi.fn(async (method: string) => {
     if (method === 'automationPermission.info') {
       return { loaded: true, policyId: 'native-session-automation-permission' };
@@ -1238,7 +1239,7 @@ test('falls back to sessions.describe when the recovery session list is truncate
       return {
         session: {
           key: 'agent:main:justdo:session-1',
-          goal: { id: 'goal-1', status: 'active' },
+          goal: { schemaVersion: 1, id: 'goal-1', objective: 'Ship', status: 'active' },
         },
       };
     }
@@ -1250,11 +1251,11 @@ test('falls back to sessions.describe when the recovery session list is truncate
     gatewayClient: GatewayClientLike | null;
     gatewayClientGeneration: number;
     recoverActiveGoals: (generation: number) => Promise<void>;
-    goalContinuationCoordinator: { continue: typeof continueGoal };
+    goalContinuationCoordinator: { reconcileNativeObservation: typeof continueGoal };
   };
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.gatewayClientGeneration = 4;
-  internals.goalContinuationCoordinator.continue = continueGoal;
+  internals.goalContinuationCoordinator.reconcileNativeObservation = continueGoal;
 
   await internals.recoverActiveGoals(4);
 

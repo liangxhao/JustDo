@@ -4,7 +4,7 @@ The source is the pristine `openclaw@2026.10.4` npm archive locked by `source-lo
 
 ## Disposition
 
-The target contains 31 independently removable patches. Native in-process dispatch now separates both transcript and CLI-history writer scopes after caller-context restoration and authority capture; former 039 is removed. Pristine contracts and cross-bundle SDK tests retain this boundary. Former 043 remains necessary: the target native stop/close lifecycle still reproduces foreground SQLITE_BUSY. Its new 025 transformer preserves scheduled-maintenance joining and checks six native copies plus the final bundle. Real UI acceptance additionally exposed global finalization-hook buffering; 026 scopes that hold to the admitted native attempt without weakening owned revisions. Fresh-session acceptance exposed Windows canonical-readiness aliases and response publication during deferred reads; 027/028 address those separate native boundaries. Structured reasoning exposed an independent provider-parser and Agent delivery hold; 029 streams native normalized public text independently of the private thinking lane. Manual Apps exposed a persisted-workspace mismatch that retires their MCP runtime on the next model run; 031 aligns native workspace selection.
+The target contains 32 independently removable patches. Native in-process dispatch now separates both transcript and CLI-history writer scopes after caller-context restoration and authority capture; former 039 is removed. Pristine contracts and cross-bundle SDK tests retain this boundary. Former 043 remains necessary: the target native stop/close lifecycle still reproduces foreground SQLITE_BUSY. Its new 025 transformer preserves scheduled-maintenance joining and checks six native copies plus the final bundle. Real UI acceptance additionally exposed global finalization-hook buffering; 026 scopes that hold to the admitted native attempt without weakening owned revisions. Fresh-session acceptance exposed Windows canonical-readiness aliases and response publication during deferred reads; 027/028 address those separate native boundaries. Structured reasoning exposed an independent provider-parser and Agent delivery hold; 029 streams native normalized public text independently of the private thinking lane. Manual Apps exposed a persisted-workspace mismatch that retires their MCP runtime on the next model run; 031 aligns native workspace selection.
 
 Most former worker/recovery duplicates are now shared imports. Target counts are audited from this archive; old 9.8 counts are not target evidence. Source application, current-shape idempotence and final bundle verification are separate requirements.
 
@@ -41,7 +41,7 @@ Most former worker/recovery duplicates are now shared imports. Target counts are
 | [029-reasoning-completions-streaming.cjs](029-reasoning-completions-streaming.cjs)               | New           | stream normalized public text to replaceable Agent previews, keeping private tag recovery separate from terminal/durable reply gates.                          | native normalized text/thinking streams reach Agent listeners incrementally with strict-mode, unclosed-tag and terminal retraction protection. |
 | [030-tool-call-format-recovery.cjs](030-tool-call-format-recovery.cjs) | New | continue from existing results after a completed, atomic pre-dispatch rejection of malformed tool calls, within the initial native candidate and a two-request limit. | native producers and the same runner provide equivalent rejection evidence, exclusive bounded continuation and native terminal settlement. |
 | [031-mcp-app-session-workspace.cjs](031-mcp-app-session-workspace.cjs) | New | prepare manual Apps in the same persisted session workspace as model runs, retaining their native runtime and local resources across turns. | upstream manual App preparation uses the native session ingress workspace resolver and fences changes during preparation. |
-
+| [032-goal-continuation-admission.cjs](032-goal-continuation-admission.cjs) | New | admit a conditional backend Goal successor after exact settlement and native handoff arbitration, atomically recording acceptance and cumulative automatic count. | upstream agent ingress supplies equivalent final admission, durable acceptance/count and exact settled predecessor observation. |
 
 ## Native bindings and ordinary implementations
 
@@ -93,6 +93,19 @@ MXC is separately locked to 2026.10.4 with SDK 0.8.0. Executor readiness and lif
 The same 030 producer supplies bounded diagnostic feedback through Runtime Services facts/policy: call index, fixed error category, argument length and trustworthy UTF-16 offsets. The exact native validator receives disposable local dummies; accepted siblings are never blamed, and possible integer preprocessing suppresses misleading raw offsets. No names, raw arguments, exception messages or previews are copied. Only the current completed rejection supplies feedback; invalid feedback falls back to the generic instruction without changing recovery guards or budgets. The installed SDK imports the existing root support module at its exact relative path; source imports and the third producer lazy initializer are audited. No new patch or dependency target is added. See the [feedback plan and acceptance](../../../docs/plans/tool-call-format-feedback-plan.md).
 
 The terminal projection owner is the exact terminal dispatch in `agent-turn-service-CVZmpyt7.mjs`: native `summary: failed` otherwise overwrites the already-redacted terminal cause in subagent waits and Workflow nodes. Only a claimed format-recovery error publishes a Runtime Services projection of `readAgentRunTerminalError(result)`, bounded to 2 KiB including JSON escapes. The result reader and public result binding, native error branch, current abort signal and incognito guard are audited. The native symbol remains private; only its bounded user-facing string is admitted for this chain. Other errors, absent diagnostics, success, timeouts, cancellation and incognito keep their native summaries. Source/current-state/transaction and final-bundle lazy initialization include this owner; old or partial 030 shapes require a pristine rebuild.
+
+032 binds eight locked native owners: the closed agent schema, backend preflight, final agent acceptance,
+whole-run lifecycle persistence, existing session lifecycle lock, native subagent registry, describe projection
+and private metadata filtering. The ordinary implementation is `src/main/openclaw/runtime/native-support/goal-continuation.mjs`.
+Main cannot close the status-read/send race because native completion delivery, queued input and admission
+can change between its requests. The final guard uses existing native owners and writer ordering;
+`goalContinuationAccepted` and `goal.continuationTurns` commit together before the existing synchronous
+acceptance publication. The private terminal record is written only from an exact whole-run settled event.
+Yield is evidence about that run, while current native work owners determine whether its successor is allowed.
+Persisted settlement retains exact Goal/session/revision identity across Gateway restart. No RPC family,
+transcript cache, collector-consumption ledger, Code Mode VM transfer or tool waiting-policy change is added.
+The current contract and remaining acceptance are recorded in [Goal mode](../../../docs/features/chat/goal-mode.md)
+and [its acceptance matrix](../../../docs/plans/goal-continuation-coordination.md).
 
 ## Validation
 

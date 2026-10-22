@@ -348,10 +348,13 @@ subagent 共用这条接线，不增加 Swarm 节点重试。真实模型纠正�
 
 ## 7. Goal、Plan 与子任务不重造执行器
 
-Goal coordinator 在原生目标仍 active 时安排续跑，保存产品 phase、次数和等待状态。六种原生 Goal status 原样保留。用户操作使用 goalId fence，停止 latch 和等待交互阻止后台抢跑。
+Goal coordinator 在原生目标仍 active 时协调续跑，保存产品 phase 和等待投影。六种原生 Goal status 原样保留。用户操作使用 goalId fence，停止 latch 和等待交互阻止后台抢跑。用户输入开始准备时立即退休旧异步决策；同会话 lane 的迟到 finally 不能释放新决策。
 
 权限准备后重新核对 Goal 与原生会话实例，backend 续跑携带 sessionId/lifecycleRevision
 约束。发送结果不明确时保留原运行跟踪，只按精确 agent.wait 回执恢复；不得换新 ID 重发。
+自动后继的最终准入由原生现有生命周期锁和会话 writer 仲裁，检查精确结算前驱、Goal、
+排队输入与子任务回交 owner；接纳回执与累计次数在同一原生事务提交。Main 显示 Waiting
+不等于主 run 正在执行，原生变更触发同连接代次内重新核对。
 Goal 事件独立核对原生会话、run 与原生序列，连接回调核对当前 client 和 Main 连接代次，
 并保留 chat final 后的合法迟到事件；不要求原生刻意省略的内部 lifecycleGeneration。
 结构化操作的回执异常与过期不能当作未提交；完整契约及保留的暂停恢复补丁见

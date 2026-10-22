@@ -16,6 +16,22 @@ Main 准备权限并再次读取原生 Goal，核对 goalId、状态和会话 se
 expectedExistingSessionLifecycleRevision，在原生准入时继续限制会话身份。
 合成续跑提示不写入原生用户消息历史。ACK 必须包含原运行 ID 和 accepted/in_flight 状态。
 
+自动请求还携带闭合的 `goalContinuation` 条件：goalId、精确 predecessorRunId、
+automatic=true 和当前 maxAutomaticContinuations。补丁 032 在原生最后接纳位置重新核对
+相同前驱的整轮结算、Goal、原生实例、主运行、排队输入及原生子任务回交 owner。
+普通主回合直接 final 也可能仍有回交，因此不能仅检查 yielded 或 hasActiveSubagentRun。
+待提交的 requester settle wake 也占有回交责任；回交转为新主运行期间不能出现准入空窗。
+
+明确的 GOAL_CONTINUATION_DEFERRED 是提交前拒绝，释放候选运行。暂态拒绝显示 Waiting，
+原生变更或既有 2/5/10/30/60 秒封顶退避触发再次核对；清理 lease 释放可能没有额外通知。
+每次仍携带原前驱和实例条件走完整最终准入，定时器不能替代原生授权；
+额度耗尽停止自动推进，Goal 非 active 则按原生状态显示。它不属于未知发送，不能按网络超时
+处理。原生在同一会话写事务中记录最后接纳回执并增加 goal.continuationTurns；相同候选重放
+保留原生幂等响应，已完成运行可返回 status=ok 的终态结果，精确接纳回执可从
+sessions.describe 的 lastAccepted 核对，不重复执行或累计；相同前驱不能接纳另一候选。
+Main 使用已接纳的累计次数，权限准备、拒绝、重连
+或内存清理均不重置或增加额度。0 表示禁止自动追加，显式手动继续沿用原有用户操作语义。
+
 发送后超时、回执失配等结果不明确的情况保留同一 runId 和 Main 跟踪，标记
 identityPending，不清理运行、不生成新 ID 重发。现有恢复链通过精确 `agent.wait` 核对；
 缺失/失配 runId、无终态时间的 timeout 和读取失败都保留未知状态。确认整轮结算后才按
@@ -24,6 +40,38 @@ identityPending，不清理运行、不生成新 ID 重发。现有恢复链通�
 终态触发的重试始终携带该终态的原生 sessionId，以及该运行已知的 lifecycleRevision；
 查询失败、重复退避和停止失败后的恢复都保留这些约束。原生 reset 可沿用 sessionId，
 因此已知 revision 不能被重试时的新查询结果覆盖。
+
+## 等待子任务与恢复
+
+```mermaid
+flowchart TD
+  Event[精确终态 / 原生变更 / 重连] --> Main[Main 合并核对]
+  Main --> Evidence{当前意图与精确前驱有效}
+  Evidence -->|否或未知| Wait[等待或核对原运行]
+  Evidence -->|是| Prepare[准备权限并重读 Goal 和实例]
+  Prepare --> Guard{原生最终条件准入}
+  Guard -->|主运行 / 队列 / 回交 owner| Wait
+  Guard -->|额度耗尽或身份替换| Stop[停止自动推进]
+  Guard -->|通过| Accept[原子接纳回执与累计次数]
+  Accept --> Native[原生 agent 执行]
+  Native --> Event
+```
+
+精确 `end + executionSettled:true + yielded:true + livenessState:paused + stopReason:end_turn`
+且没有失败、取消或超时，表示当前主 run 结算并等待原生交接，Main 显示 Waiting。
+error/aborted/cancelled/timed_out/timeoutPhase 不能借由残留 yielded 标记变成正常等待。
+子任务仍活动时不伪造主 run 的 Running；原生完成通知和实际主 run 接纳继续由 OpenClaw 持有。
+
+`collect:true` 的子任务不自动通知主会话，结果由原生 agents_wait 重复可读。
+没有主 run、排队输入或其他原生回交 owner 时，允许经过相同准入的后继回合读取原任务；
+不重新创建子任务，也不新增“已消费结果”账本。Code Mode 的 awaitResults、同 run wait 和
+取消规则保持原生语义，本修复不增加跨回合 JavaScript VM 接管或重放。
+
+重连恢复和 sessions.changed 共用合并核对。同一连接代次可以再次检查后续变更，
+不会因为第一次只发现子任务而永远停住。sessions.describe 的 goalContinuation 观察只投影
+原生结算前驱和最后接纳回执；缺少精确前驱证据时保持 Waiting，idle/list 活动位不授权启动。
+用户输入在 pendingTurnStarts 登记时立即递增会话决策 epoch；每次异步返回、catch 和 finally
+都校验原 owner，旧退避不能覆盖新输入，也不能释放后继决策的 lane。
 
 ## 原生事件准入
 

@@ -121,6 +121,11 @@ function createEmptyStore() {
   };
 }
 
+const activeRecoveryGoal = {
+  schemaVersion: 1, id: 'goal-1', objective: 'Ship the release', status: 'active',
+  createdAt: 1, updatedAt: 1, tokenStart: 0, tokensUsed: 0, continuationTurns: 0,
+};
+
 const createSessionTurn = (overrides: Partial<SessionTurn> = {}): SessionTurn => ({
   sessionId: 'session-1',
   sessionKey: 'agent:main:justdo:session-1',
@@ -951,9 +956,10 @@ test('rejects completion feedback replacement when the completed goal changed', 
   expect(request.mock.calls.some(([method]) => method === 'chat.send')).toBe(false);
 });
 
-test('recovers an idle active goal after a Gateway reconnect', async () => {
+test('keeps an idle goal waiting without native settlement evidence and rechecks in the same generation', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.initialGatewayGoalRecoveryPending = false;
   const request = vi.fn(async (method: string) => {
     if (method === 'automationPermission.info') {
       return { loaded: true, policyId: 'native-session-automation-permission' };
@@ -963,11 +969,15 @@ test('recovers an idle active goal after a Gateway reconnect', async () => {
         sessions: [
           {
             key: 'agent:main:justdo:session-1',
-            goal: { id: 'goal-1', status: 'active' },
+            goal: { schemaVersion: 1, id: 'goal-1', objective: 'Ship', status: 'active' },
           },
         ],
       };
     }
+    if (method === 'sessions.describe') return {
+      session: { key: 'agent:main:justdo:session-1', sessionId: 'native-1', lifecycleRevision: 'rev-1',
+        goal: { schemaVersion: 1, id: 'goal-1', objective: 'Ship', status: 'active' } },
+    };
     if (method === 'sessions.create') return createPreparedSessionReceipt();
     throw new Error(`unexpected method ${method}`);
   });
@@ -985,9 +995,11 @@ test('recovers an idle active goal after a Gateway reconnect', async () => {
   await internals.recoverActiveGoals(3);
   await internals.recoverActiveGoals(3);
 
-  expect(continueGoal).toHaveBeenCalledWith('session-1', 'agent:main:justdo:session-1');
-  expect(continueGoal).toHaveBeenCalledTimes(1);
-  expect(request.mock.calls.some(([method]) => method === 'sessions.describe')).toBe(false);
+  expect(continueGoal).not.toHaveBeenCalled();
+  expect(adapter.goalContinuationCoordinator.getSnapshot('session-1')).toMatchObject({
+    phase: 'waiting', waitingReason: 'native-guard', continuationCount: 0,
+  });
+  expect(request.mock.calls.filter(([method]) => method === 'sessions.describe')).toHaveLength(2);
 });
 
 test('stops an active goal on the initial app connection instead of relaunching it', async () => {
@@ -1031,7 +1043,7 @@ test('stops an active goal on the initial app connection instead of relaunching 
   expect(internals.initialGatewayGoalRecoveryPending).toBe(false);
 });
 
-test('continues a goal created after the app-start boundary', async () => {
+test('inspects a new goal after the app-start boundary without treating idle as settlement', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const request = vi.fn(async (method: string) => {
@@ -1039,11 +1051,15 @@ test('continues a goal created after the app-start boundary', async () => {
     if (method === 'automationPermission.info') {
       return { loaded: true, policyId: 'native-session-automation-permission' };
     }
+    if (method === 'sessions.describe') return {
+      session: { key: 'agent:main:justdo:session-1', sessionId: 'native-1', lifecycleRevision: 'rev-1',
+        goal: { schemaVersion: 1, id: 'goal-1', objective: 'Ship', status: 'active', createdAt: 300 } },
+    };
     return {
       sessions: [
         {
           key: 'agent:main:justdo:session-1',
-          goal: { id: 'goal-1', status: 'active', createdAt: 300 },
+          goal: { schemaVersion: 1, id: 'goal-1', objective: 'Ship', status: 'active', createdAt: 300 },
         },
       ],
     };
@@ -1064,7 +1080,8 @@ test('continues a goal created after the app-start boundary', async () => {
 
   await internals.recoverActiveGoals(3, { stopGoalsCreatedBeforeMs: 200 });
 
-  expect(continueGoal).toHaveBeenCalledWith('session-1', 'agent:main:justdo:session-1');
+  expect(continueGoal).not.toHaveBeenCalled();
+  expect(adapter.goalContinuationCoordinator.getSnapshot('session-1')?.phase).toBe('waiting');
   expect(store.getGoalExecutionSnapshot('session-1')).toBeNull();
 });
 
@@ -1102,7 +1119,7 @@ test('preserves the active Gateway owner even when goal metadata predates app st
 
   await internals.recoverActiveGoals(3, { stopGoalsCreatedBeforeMs: 200 });
 
-  expect(restoreRunning).toHaveBeenCalledWith('session-1', 'goal-1', 'run-current');
+  expect(restoreRunning).toHaveBeenCalledWith('session-1', 'goal-1', 'run-current', 0);
   expect(continueGoal).not.toHaveBeenCalled();
   expect(store.getGoalExecutionSnapshot('session-1')).toBeNull();
 });
@@ -1229,7 +1246,7 @@ test('restores but does not duplicate a goal run already active after reconnect'
 
   await internals.recoverActiveGoals(4);
 
-  expect(restoreRunning).toHaveBeenCalledWith('session-1', 'goal-1', 'active-run');
+  expect(restoreRunning).toHaveBeenCalledWith('session-1', 'goal-1', 'active-run', 0);
   expect(continueGoal).not.toHaveBeenCalled();
 });
 
@@ -1431,10 +1448,11 @@ test('retains an unknown automatic Goal run in Main and queries only its exact r
     tokenStart: 0, tokensUsed: 0, continuationTurns: 0 };
   store.getConfig = () => ({ maxGoalContinuationTurns: 25 });
   adapter.prepareSession = vi.fn().mockResolvedValue({ sessionKey: key, gatewaySessionId: 'native-current' });
+  let waitSettled = false;
   const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
     if (method === 'sessions.describe') return { session: { key, sessionId: 'native-current', goal } };
     if (method === 'agent') throw Object.assign(new Error('ACK timed out'), { code: 'CLIENT_TIMEOUT', requestSent: true });
-    if (method === 'agent.wait') return { runId: params!.runId, status: 'timeout' };
+    if (method === 'agent.wait') return { runId: params!.runId, status: waitSettled ? 'ok' : 'timeout' };
     throw new Error(method);
   });
   adapter.gatewayClient = { request } as unknown as GatewayClientLike;
@@ -1442,7 +1460,26 @@ test('retains an unknown automatic Goal run in Main and queries only its exact r
   await vi.waitFor(() => expect(request).toHaveBeenCalledWith('agent.wait', { runId: snapshot.runId, timeoutMs: 0 }));
   expect(adapter.activeTurns.get('session-1')).toMatchObject({ runId: snapshot.runId, gatewaySessionId: 'native-current' });
   expect(adapter.unknownSessionRuns.get('session-1')).toMatchObject({ runId: snapshot.runId });
+  adapter.handleGatewayEvent({ event: 'sessions.changed', payload: {
+    reason: 'runtime', sessionKey: key,
+    session: { key, sessionId: 'native-current', lastRunId: snapshot.runId,
+      hasActiveRun: false, status: 'done' },
+  } });
+  expect(adapter.activeTurns.get('session-1')?.runId).toBe(snapshot.runId);
+  expect(adapter.unknownSessionRuns.get('session-1')?.runId).toBe(snapshot.runId);
+  adapter.handleChatEvent({ sessionKey: key, sessionId: 'native-current', runId: snapshot.runId,
+    state: 'final' });
+  expect(adapter.activeTurns.get('session-1')?.runId).toBe(snapshot.runId);
+  expect(adapter.unknownSessionRuns.get('session-1')?.runId).toBe(snapshot.runId);
+  await adapter.reconcileDisconnectedTurn('session-1');
+  goal.status = 'complete';
+  waitSettled = true;
+  await adapter.reconcileDisconnectedTurn('session-1');
+  expect(adapter.activeTurns.has('session-1')).toBe(false);
+  expect(adapter.unknownSessionRuns.has('session-1')).toBe(false);
+  expect(adapter.goalContinuationCoordinator.getSnapshot('session-1')?.phase).toBe('awaiting_confirmation');
   expect(request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1);
+  adapter.cancelGoalRecovery();
   adapter.goalContinuationCoordinator.clear();
 });
 
@@ -1481,6 +1518,241 @@ test('keeps cancellation pending while a continuation send is unconfirmed', asyn
   expect(adapter.unknownSessionRuns.has('session-1')).toBe(false);
   expect(adapter.activeTurns.has('session-1')).toBe(false);
   expect(request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1);
+  adapter.goalContinuationCoordinator.clear();
+});
+
+test('forwards the full native waiting and failure classification to Goal coordination', () => {
+  vi.useFakeTimers();
+  try {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const key = 'agent:main:justdo:session-1';
+    adapter.rememberSessionKey('session-1', key);
+    adapter.activeTurns.set('session-1', createSessionTurn({ gatewaySessionId: 'native-1' }));
+    const handleLifecycle = vi.spyOn(adapter.goalContinuationCoordinator, 'handleLifecycle')
+      .mockResolvedValue(undefined);
+    adapter.handleAgentEvent('agent', {
+      sessionKey: key, sessionId: 'native-1', runId: 'run-1', seq: 1, stream: 'lifecycle',
+      data: { phase: 'end', executionSettled: true, yielded: true, livenessState: 'paused',
+        stopReason: 'end_turn', status: 'timed_out', timeoutPhase: 'tool', aborted: false,
+        error: 'Timed out while waiting' },
+    });
+    expect(handleLifecycle).toHaveBeenCalledWith(expect.objectContaining({
+      yielded: true, livenessState: 'paused', stopReason: 'end_turn', status: 'timed_out',
+      timeoutPhase: 'tool', error: 'Timed out while waiting', executionSettled: true,
+    }));
+  } finally {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
+});
+
+test('invalidates automatic decisions synchronously when a user turn starts preparing', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.on('error', () => {});
+  let rejectPreparation!: (reason: Error) => void;
+  adapter.sessionRpc.waitForModelUpdate = vi.fn(() => new Promise<void>((_resolve, reject) => {
+    rejectPreparation = reject;
+  }));
+  const invalidate = vi.spyOn(adapter.goalContinuationCoordinator, 'invalidateForUserTurn');
+  const starting = adapter.runTurn('session-1', 'New user direction', {});
+  expect(invalidate).toHaveBeenCalledExactlyOnceWith('session-1');
+  expect(adapter.pendingTurnStarts.has('session-1')).toBe(true);
+  rejectPreparation(new Error('Preparation cancelled'));
+  await expect(starting).rejects.toThrow('Preparation cancelled');
+  adapter.goalContinuationCoordinator.clear();
+});
+
+test('coalesces child change notifications into Goal recovery without binding them as a main run', async () => {
+  vi.useFakeTimers();
+  try {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const recover = vi.spyOn(adapter, 'recoverActiveGoals').mockResolvedValue(undefined);
+    adapter.gatewayClientGeneration = 7;
+    for (let index = 0; index < 3; index++) {
+      adapter.handleGatewayEvent({ event: 'sessions.changed', payload: {
+        reason: 'runtime', sessionKey: 'agent:main:subagent:child-1',
+        session: { key: 'agent:main:subagent:child-1', spawnedBy: 'agent:main:justdo:session-1' },
+      } });
+    }
+    expect(adapter.activeTurns.size).toBe(0);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(recover).toHaveBeenCalledExactlyOnceWith(7, {});
+  } finally {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
+});
+
+test('recovers collector-only work from the exact native predecessor without fabricating a running parent', async () => {
+  const { store } = createEmptyStore();
+  store.getConfig = () => ({ maxGoalContinuationTurns: 25 });
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.initialGatewayGoalRecoveryPending = false;
+  const key = 'agent:main:justdo:session-1';
+  let currentGoal = { ...activeRecoveryGoal };
+  const described = () => ({ key, sessionId: 'native-1', lifecycleRevision: 'rev-1',
+    goal: currentGoal, goalContinuation: { continuationTurns: currentGoal.continuationTurns,
+      predecessor: { runId: 'settled-parent', goalId: currentGoal.id, sessionId: 'native-1',
+        lifecycleRevision: 'rev-1', executionSettled: true, phase: 'end', yielded: true } } });
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'sessions.list') return { sessions: [{ ...described(),
+      runId: 'settled-parent', hasActiveRun: false, hasActiveSubagentRun: true }] };
+    if (method === 'sessions.describe') return { session: described() };
+    if (method === 'agent') {
+      currentGoal = { ...currentGoal, continuationTurns: currentGoal.continuationTurns + 1 };
+      return { runId: params!.idempotencyKey, status: 'accepted', goalContinuation: {
+        goalId: currentGoal.id, predecessorRunId: 'settled-parent',
+        continuationTurns: currentGoal.continuationTurns, acceptedAt: Date.now() } };
+    }
+    throw new Error(method);
+  });
+  adapter.gatewayClient = { request } as unknown as GatewayClientLike;
+  adapter.gatewayClientGeneration = 4;
+  adapter.prepareSession = vi.fn().mockResolvedValue({ sessionKey: key, gatewaySessionId: 'native-1' });
+  const restoreRunning = vi.spyOn(adapter.goalContinuationCoordinator, 'restoreRunning');
+
+  await adapter.recoverActiveGoals(4);
+  await adapter.recoverActiveGoals(4);
+
+  expect(restoreRunning).not.toHaveBeenCalled();
+  expect(request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1);
+  expect(request).toHaveBeenCalledWith('agent', expect.objectContaining({
+    goalContinuation: { goalId: currentGoal.id, predecessorRunId: 'settled-parent',
+      maxAutomaticContinuations: 25, automatic: true },
+  }));
+  const activeRun = adapter.activeTurns.get('session-1')!.runId;
+  expect(activeRun).not.toBe('settled-parent');
+  expect(adapter.goalContinuationCoordinator.getSnapshot('session-1')).toMatchObject({
+    runId: activeRun, phase: 'running', continuationCount: 1,
+  });
+  adapter.goalContinuationCoordinator.clear();
+});
+
+test('drops an old recovery scan after a user decision even after user preparation has finished', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  let releaseList!: (value: unknown) => void;
+  const request = vi.fn(() => new Promise(resolve => { releaseList = resolve; }));
+  adapter.gatewayClient = { request } as unknown as GatewayClientLike;
+  adapter.gatewayClientGeneration = 4;
+  const recovering = adapter.recoverActiveGoals(4);
+  await vi.waitFor(() => expect(releaseList).toBeDefined());
+  adapter.goalContinuationCoordinator.invalidateForUserTurn('session-1');
+  releaseList({ sessions: [{ key: 'agent:main:justdo:session-1',
+    hasActiveRun: true, runId: 'old-root', goal: activeRecoveryGoal }] });
+  await recovering;
+  expect(adapter.goalContinuationCoordinator.getSnapshot('session-1')).toBeNull();
+  adapter.goalContinuationCoordinator.clear();
+});
+
+test('rechecks a native change whose timer expires while the previous recovery is still reading', async () => {
+  vi.useFakeTimers();
+  try {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    let releaseList!: (value: unknown) => void;
+    let reads = 0;
+    adapter.gatewayClient = { request: vi.fn(async method => {
+      if (method !== 'sessions.list') throw new Error(method);
+      reads += 1;
+      if (reads === 1) return await new Promise(resolve => { releaseList = resolve; });
+      return { sessions: [] };
+    }) } as unknown as GatewayClientLike;
+    adapter.gatewayClientGeneration = 4;
+    const first = adapter.recoverActiveGoals(4);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(releaseList).toBeDefined();
+    adapter.handleGatewayEvent({ event: 'sessions.changed', payload: {
+      sessionKey: 'agent:main:subagent:collector-1', reason: 'runtime',
+    } });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(reads).toBe(1);
+    releaseList({ sessions: [] });
+    await first;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(reads).toBe(2);
+    adapter.cancelGoalRecovery();
+  } finally {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
+});
+
+test('preserves the Stop latch while recovery still observes the parent running', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const key = 'agent:main:justdo:session-1';
+  adapter.gatewayClientGeneration = 4;
+  adapter.gatewayClient = { request: vi.fn(async method => method === 'sessions.list'
+    ? { sessions: [{ key, hasActiveRun: true, runId: 'run-1', goal: activeRecoveryGoal }] }
+    : { session: { key, sessionId: 'native-1', goal: activeRecoveryGoal } }) } as unknown as GatewayClientLike;
+  adapter.rememberSessionKey('session-1', key);
+  adapter.activeTurns.set('session-1', createSessionTurn({ gatewaySessionId: 'native-1' }));
+  adapter.goalContinuationCoordinator.restoreSnapshot({
+    sessionId: 'session-1', goalId: 'goal-1', phase: 'waiting', waitingReason: 'native-wake',
+    continuationCount: 0, updatedAt: 1,
+  });
+  let confirmAbort!: () => void;
+  adapter.abortSessionAndSubagents = vi.fn(() => new Promise<void>(resolve => { confirmAbort = resolve; }));
+  const restoreRunning = vi.spyOn(adapter.goalContinuationCoordinator, 'restoreRunning');
+  const stopping = adapter.stopSession('session-1');
+  await vi.waitFor(() => expect(confirmAbort).toBeDefined());
+  await adapter.recoverActiveGoals(4);
+  expect(restoreRunning).not.toHaveBeenCalled();
+  confirmAbort();
+  await stopping;
+  expect(adapter.goalContinuationCoordinator.getSnapshot('session-1')?.phase).toBe('stopped');
+  adapter.goalContinuationCoordinator.clear();
+});
+
+test('keeps the initial app cutoff when an event starts recovery without options', async () => {
+  vi.useFakeTimers();
+  try {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, { getAppStartedAtMs: () => 200 });
+    const key = 'agent:main:justdo:session-1';
+    const oldGoal = { ...activeRecoveryGoal, createdAt: 100 };
+    const nativeSession = { key, sessionId: 'native-1', lifecycleRevision: 'rev-1', goal: oldGoal,
+      goalContinuation: { continuationTurns: 0, predecessor: {
+        goalId: oldGoal.id, runId: 'settled-parent', sessionId: 'native-1',
+        lifecycleRevision: 'rev-1', executionSettled: true, phase: 'end', yielded: false,
+      } } };
+    const request = vi.fn(async method => method === 'sessions.list'
+      ? { sessions: [nativeSession] } : { session: nativeSession });
+    adapter.gatewayClient = { request } as unknown as GatewayClientLike;
+    adapter.gatewayClientGeneration = 4;
+    adapter.handleGatewayEvent({ event: 'sessions.changed', payload: { sessionKey: key, reason: 'runtime' } });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(adapter.goalContinuationCoordinator.getSnapshot('session-1')?.phase).toBe('stopped');
+    expect(request.mock.calls.some(([method]) => method === 'agent')).toBe(false);
+    expect(adapter.initialGatewayGoalRecoveryPending).toBe(false);
+    adapter.cancelGoalRecovery();
+    adapter.goalContinuationCoordinator.clear();
+  } finally {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
+});
+
+test('converges a yielded exact wait receipt from unknown Goal admission to Waiting', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn(async () => ({ runId: 'yielded-run', status: 'ok', yielded: true }));
+  adapter.gatewayClient = { request } as unknown as GatewayClientLike;
+  adapter.registerUnknownSessionRun('session-1', 'yielded-run');
+  adapter.goalContinuationCoordinator.restoreSnapshot({ sessionId: 'session-1', goalId: 'goal-1',
+    runId: 'yielded-run', phase: 'running', continuationCount: 4, identityPending: true, updatedAt: 1 });
+  await adapter.reconcileDisconnectedTurn('session-1');
+  expect(adapter.unknownSessionRuns.has('session-1')).toBe(false);
+  expect(adapter.activeTurns.has('session-1')).toBe(false);
+  expect(adapter.goalContinuationCoordinator.getSnapshot('session-1')).toMatchObject({
+    runId: 'yielded-run', phase: 'waiting', waitingReason: 'native-wake', continuationCount: 4,
+  });
+  expect(adapter.goalContinuationCoordinator.getSnapshot('session-1')?.identityPending).not.toBe(true);
+  adapter.cancelGoalRecovery();
   adapter.goalContinuationCoordinator.clear();
 });
 

@@ -94,6 +94,7 @@ export interface RuntimeGatewayEventsContext {
   readonly compactionInFlightSessionIds: Set<string>;
   readonly lifecycleEndFallbackTimers: Map<string, NodeJS.Timeout>;
   readonly invalidateRuntimeSessionSnapshot: () => void;
+  readonly scheduleGoalRecovery: (generation: number) => void;
 }
 
 export function handleGatewayEvent(
@@ -270,6 +271,12 @@ export function handleChatEvent(
   }
 
   if (event.state === 'delta') return;
+  if (this.unknownSessionRuns.has(sessionId)) {
+    // A display final confirms neither execution settlement nor cancellation.
+    // Keep the exact unknown run available for authoritative receipt recovery.
+    void this.reconcileDisconnectedTurn(sessionId);
+    return;
+  }
 
   const finish = (status: 'idle' | 'error'): void => {
     this.rememberTerminalTurn(turn);
@@ -357,6 +364,11 @@ export function handleAgentEvent(
           phase,
           executionSettled: data.executionSettled === true,
           ...(typeof data.aborted === 'boolean' ? { aborted: data.aborted } : {}),
+          ...(typeof data.yielded === 'boolean' ? { yielded: data.yielded } : {}),
+          ...(typeof data.livenessState === 'string' ? { livenessState: data.livenessState } : {}),
+          ...(typeof data.stopReason === 'string' ? { stopReason: data.stopReason } : {}),
+          ...(typeof data.status === 'string' ? { status: data.status } : {}),
+          ...(typeof data.timeoutPhase === 'string' ? { timeoutPhase: data.timeoutPhase } : {}),
           ...(typeof data.error === 'string' ? { error: data.error } : {}),
         });
       }
@@ -470,6 +482,7 @@ export function handleSessionOperationEvent(
     if (sessionId) {
       this.sessionActivityChecks.delete(sessionId);
       this.clearCompactionInFlight(sessionId);
+      this.goalContinuationCoordinator.invalidateForUserTurn(sessionId);
     }
     return;
   }
@@ -573,6 +586,9 @@ export function handleSessionsChangedEvent(
 ): void {
   if (!isRecord(payload)) return;
   this.invalidateRuntimeSessionSnapshot();
+  // Native registry changes can affect a parent absent from this event. Treat
+  // the event only as an invalidation; recovery verifies each managed identity.
+  this.scheduleGoalRecovery(this.gatewayClientGeneration);
   // Session lineage is the native delegated-work owner in 2026.9.8. Creation,
   // deletion and ancestor changes can affect parents not present in this event.
   for (const id of new Set([
@@ -596,6 +612,7 @@ export function handleSessionsChangedEvent(
     if (resetSessionId) {
       this.sessionActivityChecks.delete(resetSessionId);
       this.clearCompactionInFlight(resetSessionId);
+      this.goalContinuationCoordinator.clearSession(resetSessionId);
     }
   }
   const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
@@ -638,6 +655,12 @@ export function handleSessionsChangedEvent(
     eventMatchesTurn && matchesCurrentIdentity && !isCreationSnapshot && !hasActiveRun &&
     status && status !== 'running' && status !== 'queued';
   if (!shouldClearRun) return;
+  if (this.unknownSessionRuns.has(sessionId)) {
+    // Catalog status is not a terminal receipt. Retain uncertain admission so
+    // the exact agent.wait path can still reconcile or cancel the original run.
+    void this.reconcileDisconnectedTurn(sessionId);
+    return;
+  }
 
   const terminalStatus: CoworkSessionStatus = ERROR_TERMINAL_SESSION_STATUSES.has(status)
     ? 'error'

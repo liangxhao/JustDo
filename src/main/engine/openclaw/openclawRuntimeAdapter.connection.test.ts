@@ -485,11 +485,15 @@ test('keeps the initial cutoff pending when the Gateway generation changes mid-s
         sessions: [
           {
             key: 'agent:main:justdo:session-1',
-            goal: { id: 'goal-1', status: 'active', createdAt: goalCreatedAt },
+            goal: { schemaVersion: 1, id: 'goal-1', objective: 'Ship', status: 'active', createdAt: goalCreatedAt },
           },
         ],
       };
     }
+    if (method === 'sessions.describe') return { session: {
+      key: 'agent:main:justdo:session-1',
+      goal: { schemaVersion: 1, id: 'goal-1', objective: 'Ship', status: 'active', createdAt: goalCreatedAt },
+    } };
     if (method === 'sessions.create') return createPreparedSessionReceipt();
     throw new Error(`unexpected method ${method}`);
   });
@@ -508,11 +512,11 @@ test('keeps the initial cutoff pending when the Gateway generation changes mid-s
       generation: number,
       options?: { stopGoalsCreatedBeforeMs?: number },
     ) => Promise<void>;
-    goalContinuationCoordinator: { continue: typeof continueGoal };
+    goalContinuationCoordinator: { reconcileNativeObservation: typeof continueGoal };
   };
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
   internals.gatewayClientGeneration = 3;
-  internals.goalContinuationCoordinator.continue = continueGoal;
+  internals.goalContinuationCoordinator.reconcileNativeObservation = continueGoal;
 
   const staleRecovery = internals.recoverActiveGoals(3, { stopGoalsCreatedBeforeMs: 200 });
   await vi.waitFor(() => expect(continueGoal).toHaveBeenCalledOnce());

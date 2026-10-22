@@ -89,6 +89,7 @@ const EXPECTED_PATCH_FILES = [
   '029-reasoning-completions-streaming.cjs',
   '030-tool-call-format-recovery.cjs',
   '031-mcp-app-session-workspace.cjs',
+  '032-goal-continuation-admission.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

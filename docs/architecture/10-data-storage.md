@@ -222,7 +222,7 @@ Plan handoff 保存创建时 workspace root、相对路径、SHA-256、字节长
 
 计划文件发布、SQLite 写入和 Gateway 准入跨三个系统。批准前与实施注入前复核文件身份，不能根据后改 cwd 重定位文件；原生接收后记录 admitted，避免恢复时把已发送实施当成未发送。
 
-Goal 内容、预算和六种状态由原生 session 持有。`cowork_config` 的 `goalExecution:<sessionId>` 只保存 Main 自动续跑阶段、次数及时间等产品快照。读取校验 sessionId 和 phase，坏值不能触发自动运行。usage_limited/budget_limited 保留原生语义，不归一化为 blocked。
+Goal 内容、预算、六种状态和已接纳的自动续跑累计次数由原生 session 持有。原生私有 `goalContinuationTerminal` 只记录精确整轮结算证据，`goalContinuationAccepted` 只保留最后接纳回执；后者与 `goal.continuationTurns` 在同一事务提交，不保存提示或消息正文。`sessions.describe` 显式投影这些事实，缺失证据不推断结算；当前原生回交阻塞由最终准入返回结构化拒绝原因。`cowork_config` 的 `goalExecution:<sessionId>` 只保存 Main 阶段及原生次数投影等产品快照。读取校验 sessionId 和 phase，坏值不能触发自动运行；不从产品快照恢复一套计数或交接权威。usage_limited/budget_limited 保留原生语义，不归一化为 blocked。
 
 ## 6. 配置与凭据不等于全库加密
 

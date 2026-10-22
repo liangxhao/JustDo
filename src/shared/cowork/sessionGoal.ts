@@ -246,6 +246,7 @@ export interface GoalExecutionSnapshot {
   retryAttempt?: number;
   nextRetryAt?: number;
   identityPending?: boolean;
+  waitingReason?: 'native-wake' | 'native-guard';
 }
 
 export interface GoalFeedbackPreparationResult {
