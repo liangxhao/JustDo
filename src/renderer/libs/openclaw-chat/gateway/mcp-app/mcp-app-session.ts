@@ -101,7 +101,14 @@ export class McpAppSession {
   private readonly listeners = new Set<() => void>();
   private observedBinding?: McpAppSessionBinding;
   private bindingRevision = 0;
+  private iconRevision = 0;
+  private discoveredIcons?: { value: McpAppDiscovery; isCurrent: () => boolean };
   constructor(private readonly getBinding: () => McpAppSessionBinding | undefined) {}
+
+  /** The existing discovery read supplies presentation only, never App authority. */
+  get iconCatalog(): McpAppDiscovery | undefined {
+    return this.discoveredIcons?.isCurrent() ? this.discoveredIcons.value : undefined;
+  }
 
   registerCanvasPreparation(
     viewId: string,
@@ -185,12 +192,16 @@ export class McpAppSession {
     )
       return;
     this.observedBinding = next;
+    this.iconRevision++;
+    this.discoveredIcons = undefined;
     this.bindingRevision++;
     for (const listener of this.listeners) listener();
   }
 
   invalidate(preservePresentations = false): void {
     this.epoch++;
+    this.iconRevision++;
+    this.discoveredIcons = undefined;
     this.bindingRevision++;
     for (const view of [...this.views]) {
       if (preservePresentations && view.suspend()) continue;
@@ -322,7 +333,16 @@ export class McpAppSession {
   }
 
   async discover(signal?: AbortSignal): Promise<McpAppDiscovery> {
-    return this.bind().request(McpAppMethod.Discover, {}, signal);
+    const revision = ++this.iconRevision;
+    this.discoveredIcons = undefined;
+    for (const listener of this.listeners) listener();
+    const binding = this.bind();
+    const value = await binding.request<McpAppDiscovery>(McpAppMethod.Discover, {}, signal);
+    if (revision === this.iconRevision && binding.isCurrent() && !signal?.aborted) {
+      this.discoveredIcons = { value, isCurrent: () => binding.isCurrent() };
+      for (const listener of this.listeners) listener();
+    }
+    return value;
   }
 
   launch(input: McpAppLaunchInput, signal?: AbortSignal): Promise<unknown> {

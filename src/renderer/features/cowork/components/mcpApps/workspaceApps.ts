@@ -1,4 +1,4 @@
-import type { McpAppPreview } from '@shared/plugins/mcpApps';
+import type { McpAppIcon, McpAppPreview } from '@shared/plugins/mcpApps';
 
 import type { McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
 import { isNativeMcpAppPreview } from '@/libs/openclaw-chat/pipeline/native-mcp-app';
@@ -18,6 +18,8 @@ export interface McpAppWorkspaceLoadEntry {
   sessionId: string;
   filePath?: string;
   label: string;
+  /** Display-only icons from the chosen plugin entry, before a view exists. */
+  icons?: readonly McpAppIcon[];
   retryable?: boolean;
   load: (signal: AbortSignal) => Promise<{
     preview: McpAppPreview;
@@ -31,6 +33,7 @@ export interface McpAppWorkspaceControlsEntry {
   id: string;
   sessionId: string;
   label: string;
+  icons?: readonly McpAppIcon[];
   isCurrent: () => boolean;
   attach: (element: HTMLElement | null) => void;
   onClose: () => void;

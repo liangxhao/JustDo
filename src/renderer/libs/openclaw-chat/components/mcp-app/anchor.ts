@@ -1,13 +1,15 @@
 import type { McpAppContentReference } from '@shared/plugins/mcpAppReferences';
 import { McpAppEvent, type McpAppPreview } from '@shared/plugins/mcpApps';
-import { html, LitElement, nothing, type PropertyValues } from 'lit';
+import { html, LitElement, nothing, type PropertyValues, svg } from 'lit';
 
 import { i18nService } from '@/services/i18n';
 import { TOKEN_CONTRACT } from '@/theme/tokens/contract';
 
 import type { McpAppSession } from '../../gateway/mcp-app/mcp-app-session';
 import { isNativeAppReference } from '../../pipeline/native-app-reference';
-import { isNativeMcpAppPreview } from '../../pipeline/native-mcp-app';
+import { isNativeMcpAppPreview, readNativeMcpAppIdentity } from '../../pipeline/native-mcp-app';
+import { MCP_APP_ICON_STYLE, renderMcpAppIcon } from './icon';
+import { resolveMcpAppIcons } from './icons';
 import { restoreAppReference } from './plugin-content';
 import { getMcpAppPresentations, type McpAppPresentation } from './presentations';
 import { findMcpAppContentView, type McpAppViewContext } from './view';
@@ -33,6 +35,7 @@ export class McpAppAnchor extends LitElement {
   private observer?: ResizeObserver;
   private mutations?: MutationObserver;
   private pendingPin = false;
+  private failedIcons: string[] = [];
   private readonly layout = () => getMcpAppPresentations(this.ownerDocument).requestLayout();
   private scrollRoot?: Node;
 
@@ -47,9 +50,13 @@ export class McpAppAnchor extends LitElement {
     const style = this.ownerDocument.createElement('style');
     style.textContent = `
       :host{display:block;max-width:840px;margin:12px auto;color:var(${TOKEN_CONTRACT['text-primary']},inherit)}
-      .reference{display:flex;align-items:center;gap:12px;min-height:52px;padding:10px 14px;border:1px solid var(${TOKEN_CONTRACT.border},#ddd);border-radius:12px;background:var(${TOKEN_CONTRACT.background},transparent);font:13px inherit}
-      .description{flex:1;min-width:0}.title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.status{margin-top:3px;font-size:12px;color:var(${TOKEN_CONTRACT['text-secondary']},#666)}
-      button{flex-shrink:0;font:inherit;font-size:12px;color:inherit;background:transparent;border:1px solid var(${TOKEN_CONTRACT.border},#ddd);border-radius:7px;padding:6px 10px;cursor:pointer}button:hover{background:var(${TOKEN_CONTRACT.surface},#f4f4f5)}button:focus-visible{outline:2px solid var(${TOKEN_CONTRACT.primary},#666);outline-offset:2px}button:disabled{opacity:.5;cursor:default}.error{padding:8px 14px;font-size:12px}
+      .reference{box-sizing:border-box;display:flex;align-items:center;gap:10px;min-height:52px;padding:8px 12px;border:1px solid var(${TOKEN_CONTRACT.border},#ddd);border-radius:12px;background:var(${TOKEN_CONTRACT.background},transparent);font:inherit;font-size:13px}
+      .app-icon{--app-icon-size:18px;display:flex;align-items:center;justify-content:center;flex-shrink:0;width:28px;height:28px;border-radius:7px;background:var(${TOKEN_CONTRACT.surface},#f4f4f5)}
+      ${MCP_APP_ICON_STYLE}
+      .title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:500}
+      .status{display:flex;align-items:center;gap:4px;flex-shrink:0;padding:3px 7px;border-radius:6px;background:var(${TOKEN_CONTRACT.surface},#f4f4f5);font-size:11px;white-space:nowrap;color:var(${TOKEN_CONTRACT['text-secondary']},#666)}
+      .status svg,button svg{width:13px;height:13px;flex-shrink:0}
+      button{display:flex;align-items:center;gap:4px;flex-shrink:0;font:inherit;font-size:12px;white-space:nowrap;color:inherit;background:transparent;border:0;border-radius:6px;padding:6px 4px;cursor:pointer}button:hover{background:var(${TOKEN_CONTRACT.surface},#f4f4f5)}button:focus-visible{outline:2px solid var(${TOKEN_CONTRACT.primary},#666);outline-offset:2px}button:disabled{opacity:.5;cursor:default}.error{padding:8px 14px;font-size:12px}
     `;
     root.append(style);
     this.renderOptions.renderBefore = null;
@@ -175,12 +182,31 @@ export class McpAppAnchor extends LitElement {
       : (this.reference?.title ?? this.preview?.title ?? i18nService.t('mcpAppsTitle'));
     const pinned = entry?.pinned;
     const t = (key: string) => i18nService.t(key);
+    const reference = isNativeAppReference(this.reference) ? this.reference : undefined;
+    const identity = readNativeMcpAppIdentity(view?.preview ?? this.preview) ?? reference?.content;
+    const icons = identity
+      ? resolveMcpAppIcons((view?.context ?? this.context)?.apps.iconCatalog, identity)
+      : undefined;
+    const status = pinned
+      ? `${reference ? `${t('mcpAppsUpdated')} · ` : ''}${t('mcpAppsPinned')}`
+      : reference
+        ? t('mcpAppsUpdated')
+        : t('mcpAppsLoading');
     return html`<div class="reference">
-        <div class="description">
-          <div class="title" title=${title}>${title}</div>
-          <div class="status">
-            ${pinned ? `${isNativeAppReference(this.reference) ? `${t('mcpAppsUpdated')} · ` : ''}${t('mcpAppsPinned')}` : isNativeAppReference(this.reference) ? t('mcpAppsUpdated') : t('mcpAppsLoading')}
-          </div>
+        <span class="app-icon" aria-hidden="true">
+          ${renderMcpAppIcon(icons, this.failedIcons, src => {
+            this.failedIcons = [...this.failedIcons, src];
+            this.requestUpdate();
+          })}
+        </span>
+        <span class="title" title=${title}>${title}</span>
+        <div class="status">
+          ${
+            pinned
+              ? svg`<svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><path d="M12.5 3.5v13"/></svg>`
+              : nothing
+          }
+          <span>${status}</span>
         </div>
         <button
           ?disabled=${this.loading || !this.context?.isCurrent() || Boolean(entry && !entry.pinned && !view?.canReference)}
@@ -189,6 +215,7 @@ export class McpAppAnchor extends LitElement {
           @click=${() => void this.open()}
         >
           ${t(pinned || (view && !entry) ? 'mcpAppsViewReference' : 'mcpAppsPin')}
+          ${svg`<svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12 12 4M5 4h7v7"/></svg>`}
         </button>
       </div>
       ${this.error ? html`<div class="error" role="status">${this.error}</div>` : nothing}`;

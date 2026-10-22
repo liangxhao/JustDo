@@ -217,6 +217,34 @@ if (!process.versions.electron) {
           (await workspace.executeJavaScript('!!window.registerMcpAppFrameTransport')),
       );
       const normal = await until(() => findFrame(workspace, 'mcp-app-ordinary'));
+      const iconLight = await evaluate('iconLight');
+      await until(() =>
+        workspace.executeJavaScript(
+          'document.querySelector("[role=tab][aria-selected=true] img")?.complete',
+        ),
+      );
+      assert.equal(
+        await workspace.executeJavaScript(
+          'document.querySelector("[role=tab][aria-selected=true] img").getAttribute("src")',
+        ),
+        iconLight,
+        'manual App Tab uses the plugin catalog icon',
+      );
+      await evaluate('openFileTab()');
+      await until(() => findFrame(workspace, 'mcp-app-file'));
+      assert.equal(
+        await workspace.executeJavaScript(
+          'document.querySelector("[role=tab][aria-selected=true] img").getAttribute("src")',
+        ),
+        iconLight,
+        'file App Tab uses the actual plugin rather than its extension',
+      );
+      await evaluate('closeFileTab()');
+      await until(() =>
+        workspace.executeJavaScript(
+          '[...document.querySelectorAll("[role=tab]")].every(tab=>!tab.textContent.includes("Example.file"))',
+        ),
+      );
       const instance = await inline.executeJavaScript(
         'document.querySelector("input").value="unsaved main App";document.querySelector("input").setSelectionRange(2,7);window.documentInstance',
       );
@@ -230,6 +258,71 @@ if (!process.versions.electron) {
       await evaluate('addDuplicate()');
       await evaluate('new Promise(resolve=>setTimeout(resolve,100))');
       assert.equal(await evaluate('manager.entries.length'), 1);
+      await evaluate('pin()');
+      await until(() => evaluate('!!document.querySelector("[role=tab][aria-selected=true] img")'));
+      assert.equal(
+        await evaluate(
+          'document.querySelector("[role=tab][aria-selected=true] img").getAttribute("src")',
+        ),
+        iconLight,
+        'reference Tab uses the same declared plugin icon',
+      );
+      for (const language of ['en', 'zh']) {
+        for (const width of [400, 320]) {
+          for (const dark of [false, true]) {
+            await evaluate(`cardLayout(${width},${JSON.stringify(language)},true,${dark})`);
+            const row = await until(() =>
+              evaluate(`(() => {
+              const root=document.querySelector('mcp-app-anchor').shadowRoot;
+              const row=root.querySelector('.reference'); if(!row) return;
+              const title=root.querySelector('.title'),status=root.querySelector('.status'),button=root.querySelector('button');
+              const rect=row.getBoundingClientRect();
+              const parts=[root.querySelector('.app-icon'),title,status,button].map(e=>e.getBoundingClientRect());
+              const image=[...root.querySelectorAll('img')].find(e=>e.checkVisibility());
+              return {height:rect.height, singleRow:parts.every(r=>Math.abs((r.top+r.height/2)-(rect.top+rect.height/2))<1),
+                clipped:title.scrollWidth>title.clientWidth,titleWidth:title.clientWidth,
+                fits:parts.every(r=>r.left>=rect.left&&r.right<=rect.right),
+                src:image?.getAttribute('src'),loaded:image?.complete&&image.naturalWidth>0};
+            })()`),
+            );
+            assert.equal(row.height, 52, 'compact reference height');
+            assert.ok(
+              row.singleRow && row.fits && row.clipped && row.titleWidth > 10,
+              JSON.stringify(row),
+            );
+            assert.equal(row.src, await evaluate(dark ? 'iconDark' : 'iconLight'));
+            await until(() =>
+              evaluate(
+                `(() => {const images=[...document.querySelector('mcp-app-anchor').shadowRoot.querySelectorAll('img')];return images.some(e=>e.checkVisibility()&&e.complete&&e.naturalWidth>0)})()`,
+              ),
+            );
+          }
+        }
+      }
+      // A confirmed update has a longer status than the ordinary pin state.
+      await evaluate('cardLayout(320,"en",true)');
+      assert.ok(
+        await evaluate(`(() => {
+        const root=document.querySelector('mcp-app-anchor').shadowRoot;
+        const text=[...root.querySelector('.status span').childNodes].find(node=>node.nodeType===Node.TEXT_NODE);
+        const previous=text.data;
+        text.data='Updated · In sidebar';
+        const row=root.querySelector('.reference').getBoundingClientRect();
+        const title=root.querySelector('.title'),button=root.querySelector('button').getBoundingClientRect();
+        const fits=title.clientWidth>10&&button.right<=row.right&&row.height===52;
+        text.data=previous;
+        return fits;
+      })()`),
+        'long confirmed-update status keeps the title and action visible at 320px',
+      );
+      await evaluate('cardLayout()');
+      await evaluate(
+        'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+      );
+      fs.writeFileSync(
+        path.join(output, 'compact-reference.png'),
+        (await win.webContents.capturePage()).toPNG(),
+      );
       await evaluate('pin()');
       await until(() =>
         evaluate(
@@ -355,13 +448,23 @@ if (!process.versions.electron) {
       );
       assert.equal(await inline.executeJavaScript('window.documentInstance'), instance);
       assert.equal(await evaluate('calls.filter(c=>c.method==="mcp.app.view").length'), reads);
+      await evaluate('discoverIcons()');
+      await until(() =>
+        evaluate(`(() => {
+        const image=document.querySelector('mcp-app-anchor').shadowRoot.querySelector('.icon-light img');
+        return image?.complete&&image.naturalWidth>0;
+      })()`),
+      );
+      await evaluate(
+        'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+      );
       assert.equal(errors.length, 0, errors.join('\n'));
       fs.writeFileSync(
         path.join(output, 'reference.png'),
         (await win.webContents.capturePage()).toPNG(),
       );
       console.log(
-        'MCP_APP_REFERENCE_SMOKE_PASSED: same App/document/selection, real native workspace retention, multi-anchor contexts, SDK fullscreen, overlay RPC blocking, cross-document keyboard/close focus, history removal, idempotent pin, unpin, exact session pause/resume, no business replay',
+        'MCP_APP_REFERENCE_SMOKE_PASSED: single-row 52px cards at 320px in en/zh/light/dark, plugin icons in cards and all three Tab types, same App/document/selection, real native workspace retention, multi-anchor contexts, SDK fullscreen, overlay RPC blocking, cross-document keyboard/close focus, history removal, idempotent pin, unpin, exact session pause/resume, no business replay',
       );
       manager.dispose?.();
       win.destroy();

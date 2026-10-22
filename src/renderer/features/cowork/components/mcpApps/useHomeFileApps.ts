@@ -3,6 +3,7 @@ import { EnginePhase } from '@shared/openclaw/engineStatus';
 import type { McpAppDiscovery, McpAppLaunchInput } from '@shared/plugins/mcpApps';
 import { createElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { resolveMcpAppIcons } from '@/libs/openclaw-chat/components/mcp-app/icons';
 import type { McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
 import { McpWorkspaceSession } from '@/libs/openclaw-chat/gateway/mcp-app/mcp-workspace-session';
 import { decodeMcpAppLaunch } from '@/libs/openclaw-chat/pipeline/native-mcp-app';
@@ -298,6 +299,7 @@ export function useHomeFileApps(options: Options): {
       id: `mcp-app-entry:${HOME_DISPLAY_SESSION_KEY}:${scope.requestId}:${input.serverName}:${input.toolName}`,
       sessionId: HOME_DISPLAY_SESSION_KEY,
       label,
+      icons: resolveMcpAppIcons(catalogRef.current?.value, input),
       retryable: false,
       load: async signal => {
         const current = () =>
@@ -375,6 +377,7 @@ export function useHomeFileApps(options: Options): {
         sessionId: HOME_DISPLAY_SESSION_KEY,
         filePath: request.filePath,
         label: request.filePath.split(/[\\/]/).pop() || request.filePath,
+        icons: resolveMcpAppIcons(catalog, input),
         load: signal => load(signal, epoch),
       });
       return true;

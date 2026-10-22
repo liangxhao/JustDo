@@ -1,4 +1,4 @@
-import { ArrowPathIcon, Squares2X2Icon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 
 import { McpAppView } from '@/libs/openclaw-chat/components/mcp-app/view';
@@ -14,9 +14,8 @@ import {
   type McpAppWorkspaceEntry,
   type McpAppWorkspaceLoadEntry,
 } from '../mcpApps/workspaceApps';
-import { getLastPathSegment } from '../shared/path';
-import WorkspaceFileIcon from '../shared/WorkspaceFileIcon';
 import type { CoworkDisplayTab } from './CoworkDisplayPanel';
+import { McpAppTabIcon } from './McpAppTabIcon';
 
 type FileTab = McpAppWorkspaceLoadEntry & { failed?: boolean };
 type AppTab = McpAppWorkspaceEntry | FileTab | McpAppWorkspaceControlsEntry;
@@ -222,12 +221,14 @@ export function useMcpAppTabs(sessionId: string, select: (id: string) => void, o
     .map(entry => ({
       id: entry.id,
       label: entry.label ?? ('preview' in entry ? entry.preview.title : ''),
-      icon:
-        'filePath' in entry && entry.filePath ? (
-          <WorkspaceFileIcon fileName={getLastPathSegment(entry.filePath)} />
-        ) : (
-          <Squares2X2Icon className="h-4 w-4" />
-        ),
+      icon: (
+        <McpAppTabIcon
+          preview={'preview' in entry ? entry.preview : undefined}
+          context={'context' in entry ? entry.context : undefined}
+          icons={'icons' in entry ? entry.icons : undefined}
+          label={entry.label ?? ('preview' in entry ? entry.preview.title : '')}
+        />
+      ),
       onSelect: () => select(entry.id),
       onClose: async () => {
         const closingEntry = entriesRef.current.find(item => item.id === entry.id);

@@ -1,11 +1,30 @@
 // @vitest-environment jsdom
 import { afterEach, expect, test, vi } from 'vitest';
 
+import { i18nService } from '@/services/i18n';
+
 import { McpAppSession } from '../../gateway/mcp-app/mcp-app-session';
 import { decodeMcpAppLaunch } from '../../pipeline/native-mcp-app';
 import { McpAppView } from './view';
 
 afterEach(() => document.body.replaceChildren());
+
+test('retains real read-only and confirmation notices in the compact header layout', async () => {
+  const view = new McpAppView();
+  const respond = vi.fn();
+  view.inactive = true;
+  view.confirmation = { text: 'User confirmation is required', purpose: 'draft', respond };
+  document.body.append(view);
+  await view.updateComplete;
+  expect(view.shadowRoot!.querySelector('header .notice')?.textContent).toBe(
+    i18nService.t('mcpAppsReadOnly'),
+  );
+  expect(view.shadowRoot!.querySelector('.confirmation')?.textContent).toContain(
+    'User confirmation is required',
+  );
+  view.shadowRoot!.querySelector<HTMLButtonElement>('.confirmation button:last-child')!.click();
+  expect(respond).toHaveBeenCalledWith(false);
+});
 
 function waitingFixture() {
   let ready = false;

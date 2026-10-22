@@ -148,7 +148,7 @@ async function fixture() {
     if (req.url === '/product.css')
       return res.end(fs.readFileSync(path.join(output, 'product.css')));
     res.end(
-      `<html lang="zh" data-theme="classic-light"><head><link rel="stylesheet" href="/product.css"><style>html{background:var(--justdo-background);color:var(--justdo-text-primary)}body{max-width:1000px;margin:30px auto;font:14px system-ui}</style></head><body><script>window.fixturePayload=${JSON.stringify(payload).replaceAll('<', '\\u003c')};window.fixtureFile=${JSON.stringify(file ? { ...file, xml } : null).replaceAll('<', '\\u003c')};</script><script type="module" src="/host.js"></script></body></html>`,
+      `<html lang="zh" data-theme="classic-light"><head><link rel="stylesheet" href="/product.css"><style>html{background:var(--justdo-background);color:var(--justdo-text-primary)}body{max-width:1000px;margin:30px auto;font:14px system-ui}</style></head><body><script>window.fixturePayload=${JSON.stringify(payload).replaceAll('<', '\\u003c')};window.fixtureIcons=${JSON.stringify(tools.tools[0].icons ?? [])};window.fixtureFile=${JSON.stringify(file ? { ...file, xml } : null).replaceAll('<', '\\u003c')};</script><script type="module" src="/host.js"></script></body></html>`,
     );
   });
   await new Promise(resolve =>
@@ -396,6 +396,61 @@ if (!process.versions.electron) {
       }, 'Diagram rendered');
       assert.ok(editor);
       evidence.editorReady = true;
+      await until(
+        () =>
+          inner.executeJavaScript('document.documentElement.hasAttribute("data-shared-header")'),
+        'Shared toolbar layout',
+      );
+      const hostHeader = await win.webContents.executeJavaScript(`(() => {
+        const root=window.fixtureView.shadowRoot,frame=root.querySelector('iframe').getBoundingClientRect();
+        const header=root.querySelector('header').getBoundingClientRect();
+        const space=root.querySelector('.app-header-space').getBoundingClientRect();
+        return {frame:frame.toJSON(),header:header.toJSON(),space:space.toJSON(),
+          shared:root.querySelector('header').hasAttribute('shared'),
+          pluginIcon:root.querySelector('.app-icon img')?.getAttribute('src')};
+      })()`);
+      assert.ok(hostHeader.shared);
+      assert.equal(hostHeader.header.height, 44);
+      assert.ok(
+        Math.abs(hostHeader.header.top - hostHeader.frame.top) < 1,
+        'Host and App header occupy the same row',
+      );
+      assert.ok(
+        hostHeader.pluginIcon?.startsWith('data:image/'),
+        'Inline header uses the actual plugin catalog icon',
+      );
+      assert.equal(
+        await inner.executeJavaScript('getComputedStyle(document.querySelector("#title")).display'),
+        'none',
+      );
+      for (const id of ['save', 'png', 'svg']) {
+        const rect = await inner.executeJavaScript(
+          `document.querySelector('#${id}').getBoundingClientRect().toJSON()`,
+        );
+        const x = hostHeader.frame.left + rect.left + rect.width / 2,
+          y = hostHeader.frame.top + rect.top + rect.height / 2;
+        assert.ok(Math.abs(y - (hostHeader.header.top + 22)) < 2, id + ' shares the header row');
+        assert.ok(
+          hostHeader.frame.left + rect.left >= hostHeader.space.left - 1 &&
+            hostHeader.frame.left + rect.right <= hostHeader.space.right + 1,
+          id + ' avoids host controls',
+        );
+        assert.equal(
+          await win.webContents.executeJavaScript(
+            `window.fixtureView.shadowRoot.elementFromPoint(${x},${y})?.tagName`,
+          ),
+          'IFRAME',
+          id + ' remains directly clickable in the original App',
+        );
+      }
+      await win.webContents.capturePage();
+      await win.webContents.executeJavaScript(
+        'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+      );
+      fs.writeFileSync(
+        path.join(output, 'drawio-single-header.png'),
+        (await win.webContents.capturePage()).toPNG(),
+      );
       if (process.argv.includes('--editing')) {
         await win.webContents.executeJavaScript(
           'window.fixtureOriginalFrame=window.fixtureView.shadowRoot.querySelector("iframe");window.fixturePrepareDiagram()',
@@ -490,11 +545,36 @@ if (!process.versions.electron) {
                 (await win.webContents.capturePage()).toPNG(),
               );
             } else {
-              assert.ok(
+              assert.equal(
                 await win.webContents.executeJavaScript(
-                  'window.fixtureView.shadowRoot.querySelector("header .notice")?.textContent.trim()',
+                  'window.fixtureView.shadowRoot.querySelector("header .notice")?.textContent.trim() ?? ""',
                 ),
-                'Inline local editing hints stay in the title row',
+                '',
+                'Optional local editing hints do not occupy the inline title row',
+              );
+              await until(
+                () =>
+                  win.webContents.executeJavaScript(
+                    'window.fixtureView.shadowRoot.querySelector("header").hasAttribute("shared")',
+                  ),
+                'Inline shared header restored',
+              );
+              await win.webContents.executeJavaScript(
+                'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+              );
+              const bounds = await win.webContents.executeJavaScript(
+                'window.fixtureView.getBoundingClientRect().toJSON()',
+              );
+              fs.writeFileSync(
+                path.join(output, 'drawio-inline-single-header.png'),
+                (
+                  await win.webContents.capturePage({
+                    x: Math.ceil(bounds.x),
+                    y: Math.ceil(bounds.y),
+                    width: Math.floor(bounds.width),
+                    height: 105,
+                  })
+                ).toPNG(),
               );
             }
             await until(

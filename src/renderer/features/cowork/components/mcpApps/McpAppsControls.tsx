@@ -21,6 +21,7 @@ import {
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { resolveMcpAppIcons } from '@/libs/openclaw-chat/components/mcp-app/icons';
 import type { McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
 import type { McpAppSession } from '@/libs/openclaw-chat/gateway/mcp-app/mcp-app-session';
 import { decodeMcpAppLaunch } from '@/libs/openclaw-chat/pipeline/native-mcp-app';
@@ -205,6 +206,7 @@ export function McpAppsControls({
       label:
         catalog?.servers.find(server => server.serverName === input.serverName)?.label ??
         input.serverName,
+      icons: resolveMcpAppIcons(catalog, input),
       retryable: false,
       load: async signal => {
         const revision = apps.discoveryRevision;
@@ -244,6 +246,7 @@ export function McpAppsControls({
         sessionId,
         label:
           catalog?.servers.find(item => item.serverName === server)?.label ?? t('mcpAppsTitle'),
+        icons: server ? resolveMcpAppIcons(catalog, { serverName: server }) : undefined,
         isCurrent: () =>
           ownedControls.current === entry && revision === apps.discoveryRevision && canDraft(),
         attach: target => {
@@ -331,6 +334,7 @@ export function McpAppsControls({
           sessionId,
           filePath: request.filePath,
           label: request.filePath.split(/[\\/]/).pop() || request.filePath,
+          icons: resolveMcpAppIcons(fileActions.current.catalog, input),
           load,
         });
         return true;

@@ -1,12 +1,7 @@
 import type { McpAppIcon as AppIcon } from '@shared/plugins/mcpApps';
 import { type ReactNode, useState } from 'react';
 
-// Plugin icons must travel with the catalog; rendering a launcher must not
-// contact public image hosts or expose local file URLs.
-const isInlineIcon = (icon: AppIcon) =>
-  typeof icon.src === 'string' &&
-  icon.src.length <= 2048 &&
-  /^data:image\/(?:png|jpeg|gif|webp|svg\+xml)(?:;charset=utf-8)?(?:;base64)?,/i.test(icon.src);
+import { selectMcpAppIcon } from '@/libs/openclaw-chat/components/mcp-app/icons';
 
 export function McpAppIcon({
   icons,
@@ -20,7 +15,6 @@ export function McpAppIcon({
   fallback?: ReactNode;
 }) {
   const [failed, setFailed] = useState<readonly string[]>([]);
-  const candidates = icons?.filter(icon => isInlineIcon(icon) && !failed.includes(icon.src)) ?? [];
   const fallback =
     suppliedFallback ?? Array.from(label.trim()).slice(0, 2).join('').toLocaleUpperCase();
   return (
@@ -33,8 +27,7 @@ export function McpAppIcon({
       aria-hidden="true"
     >
       {(['light', 'dark'] as const).map(theme => {
-        const icon =
-          candidates.find(item => item.theme === theme) ?? candidates.find(item => !item.theme);
+        const icon = selectMcpAppIcon(icons, theme, failed);
         return (
           <span
             key={theme}

@@ -1,4 +1,4 @@
-import { McpAppMethod } from '@shared/plugins/mcpApps';
+import { type McpAppDiscovery, McpAppMethod } from '@shared/plugins/mcpApps';
 import { describe, expect, it, vi } from 'vitest';
 
 import { DRAWIO_RESTORE_METHOD } from '../../../../../../openclaw-extensions/drawio/contracts';
@@ -47,6 +47,57 @@ function fixture() {
 }
 
 describe('MCP App native session authority', () => {
+  it('projects only the latest existing discovery for icons without replaying any App operation', async () => {
+    const { apps, request } = fixture();
+    const notify = vi.fn();
+    apps.subscribe(notify);
+    const first = { servers: [] } as McpAppDiscovery;
+    const second = { servers: [], onboarding: [] } as McpAppDiscovery;
+    let finish!: (value: McpAppDiscovery) => void;
+    request.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+    );
+    const old = apps.discover();
+    request.mockResolvedValueOnce(second);
+    await apps.discover();
+    expect(apps.iconCatalog).toBe(second);
+    finish(first);
+    await old;
+    expect(apps.iconCatalog).toBe(second);
+    expect(request.mock.calls.map(([method]) => method)).toEqual([
+      McpAppMethod.Discover,
+      McpAppMethod.Discover,
+    ]);
+    expect(notify).toHaveBeenCalledTimes(3);
+    apps.invalidate(true);
+    expect(apps.iconCatalog).toBeUndefined();
+  });
+
+  it('drops icon metadata on failed refresh, binding loss and stale discovery completion', async () => {
+    const { apps, request, expire } = fixture();
+    request.mockResolvedValueOnce({ servers: [] });
+    await apps.discover();
+    request.mockRejectedValueOnce(new Error('Unavailable'));
+    await expect(apps.discover()).rejects.toThrow('Unavailable');
+    expect(apps.iconCatalog).toBeUndefined();
+    let finish!: (value: unknown) => void;
+    request.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        }),
+    );
+    const pending = apps.discover();
+    const rejected = expect(pending).rejects.toThrow('superseded');
+    expire();
+    finish({ servers: [] });
+    await rejected;
+    expect(apps.iconCatalog).toBeUndefined();
+  });
+
   it('keeps retained canvas registration on its original session and prepares again after resume', async () => {
     const { client } = fixture();
     let sessionKey = 'agent:a:one';

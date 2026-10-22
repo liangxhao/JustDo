@@ -11,6 +11,7 @@ import {
 import { mountMcpList } from './list-host';
 const fixture = window as unknown as {
   fixturePayload: Record<string, unknown>;
+  fixtureIcons: unknown[];
   fixtureFile: { name: string; resourceUri: string; xml: string } | null;
   fixtureView: McpAppView;
   downloads: unknown[];
@@ -56,6 +57,12 @@ const client = {
     return () => listeners.delete(listener);
   },
   request: async (method: string, params: Record<string, unknown>) => {
+    if (method === McpAppMethod.Discover)
+      return {
+        servers: [
+          { serverName: 'drawio', label: 'draw.io', icons: fixture.fixtureIcons, entrypoints: [] },
+        ],
+      };
     if (method === DRAWIO_CURRENT_METHOD) return { diagram: null };
     if (method === DRAWIO_CANVAS_METHOD) {
       if (params.action === 'prepare') {
@@ -114,6 +121,7 @@ const apps = new McpAppSession(() =>
     : undefined,
 );
 const view = new McpAppView();
+void apps.discover();
 fixture.fixturePrepareDiagram = () =>
   apps.prepareChatSend({
     sessionKey: 'agent:main:offline',

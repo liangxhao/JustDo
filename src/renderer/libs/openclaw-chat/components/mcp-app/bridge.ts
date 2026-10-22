@@ -7,6 +7,7 @@ import {
 import { AppBridge, type McpUiHostContext } from '@modelcontextprotocol/ext-apps/app-bridge';
 import {
   MCP_APP_PREPARE_CONTEXT_META,
+  MCP_APP_SHARED_HEADER,
   McpAppEvent,
   McpAppMethod,
   type McpAppModelContext,
@@ -148,6 +149,7 @@ export function createMcpAppBridge(host: McpAppBridgeHost): {
           }
         : {}),
       experimental: {
+        [MCP_APP_SHARED_HEADER]: { version: 1 },
         ...(payload.richModelContextSupported ? { 'openai/modelContext': {} } : {}),
         ...(interactive ? { 'openai/message': {} } : {}),
         ...(payload.fileResourcesSupported || payload.workspaceFile

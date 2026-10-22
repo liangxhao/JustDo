@@ -1,4 +1,3 @@
-import { Squares2X2Icon } from '@heroicons/react/24/outline';
 import type { McpAppDiscovery } from '@shared/plugins/mcpApps';
 import { useLayoutEffect, useRef, useState } from 'react';
 
@@ -6,11 +5,10 @@ import {
   getMcpAppPresentations,
   type McpAppPresentation,
 } from '@/libs/openclaw-chat/components/mcp-app/presentations';
-import { readNativeMcpAppIdentity } from '@/libs/openclaw-chat/pipeline/native-mcp-app';
 import { i18nService } from '@/services/i18n';
 
-import { McpAppIcon } from '../mcpApps/McpAppIcon';
 import type { CoworkDisplayTab } from './CoworkDisplayPanel';
+import { McpAppTabIcon } from './McpAppTabIcon';
 
 function ReferencePanel({ entry }: { entry: McpAppPresentation }) {
   const mount = useRef<HTMLDivElement>(null);
@@ -69,21 +67,16 @@ export function useMcpAppReferenceTabs(
   }, [manager, scope]);
   const entries = manager.entries.filter(entry => entry.pinned && entry.scope === scope);
   const tabs: CoworkDisplayTab[] = entries.map(entry => {
-    const identity = readNativeMcpAppIdentity(entry.preview);
-    const server = catalog?.servers.find(item => item.serverName === identity?.serverName);
-    const tool = server?.entrypoints.find(
-      item => item.toolName === identity?.toolName && item.resourceUri === identity.uiResourceUri,
-    );
     return {
       id: entry.id,
       label: manager.title(entry),
       reference: true,
       icon: (
-        <McpAppIcon
-          size="file"
-          label={server?.label ?? identity?.serverName ?? entry.preview.title}
-          icons={tool?.icons ?? server?.icons}
-          fallback={<Squares2X2Icon className="h-4 w-4" />}
+        <McpAppTabIcon
+          preview={entry.preview}
+          context={entry.view.context}
+          catalog={catalog}
+          label={entry.preview.title}
         />
       ),
       onSelect: () => select(entry.id),

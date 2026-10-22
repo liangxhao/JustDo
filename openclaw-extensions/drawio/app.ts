@@ -9,7 +9,13 @@ declare global {
   }
 }
 
-const app = new App({ name: 'draw.io', version: '1.0.0' });
+// Optional presentation only: a host can share this App's toolbar row without
+// taking ownership of its actions or exposing any host navigation to the App.
+const sharedHeaderKey = 'ui/shared-header';
+const app = new App(
+  { name: 'draw.io', version: '1.0.0' },
+  { experimental: { [sharedHeaderKey]: { version: 1 } } },
+);
 const editor = document.querySelector<HTMLIFrameElement>('#editor')!;
 const title = document.querySelector<HTMLElement>('#title')!;
 const status = document.querySelector<HTMLElement>('#status')!;
@@ -456,6 +462,25 @@ const syncHostStyle = () => {
   const context = app.getHostContext();
   applyDocumentTheme(context?.theme ?? 'light');
   if (context?.styles?.variables) applyHostStyleVariables(context.styles.variables);
+  const layout = context?.[sharedHeaderKey] as Record<string, unknown> | null | undefined;
+  const shared =
+    layout &&
+    Number.isFinite(layout.height) &&
+    (layout.height as number) >= 32 &&
+    (layout.height as number) <= 64 &&
+    ['left', 'right'].every(
+      key =>
+        Number.isFinite(layout[key]) &&
+        (layout[key] as number) >= 0 &&
+        (layout[key] as number) <= 4096,
+    );
+  document.documentElement.toggleAttribute('data-shared-header', Boolean(shared));
+  for (const [variable, value] of Object.entries({
+    '--app-header-height': shared ? `${layout.height}px` : '46px',
+    '--app-header-left': shared ? `${layout.left}px` : '12px',
+    '--app-header-right': shared ? `${layout.right}px` : '12px',
+  }))
+    document.documentElement.style.setProperty(variable, value);
   if (ready) post({ action: 'diagram-theme', dark: app.getHostContext()?.theme === 'dark' });
 };
 app.onhostcontextchanged = syncHostStyle;

@@ -190,6 +190,9 @@ export interface McpAppDiscovery {
   onboarding?: Array<{ pluginId: string; title: string }>;
 }
 
+/** Optional presentation extension, negotiated through App capabilities and host context. */
+export const MCP_APP_SHARED_HEADER = 'ui/shared-header';
+
 export interface McpAppResourceLink {
   type: 'resource_link';
   uri: string;

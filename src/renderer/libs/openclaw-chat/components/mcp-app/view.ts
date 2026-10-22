@@ -7,6 +7,7 @@ import type {
   McpAppContentReference,
 } from '@shared/plugins/mcpAppReferences';
 import {
+  MCP_APP_SHARED_HEADER,
   McpAppEvent,
   McpAppMethod,
   type McpAppModelContext,
@@ -25,6 +26,8 @@ import { isNativeMcpAppPreview, readNativeMcpAppIdentity } from '../../pipeline/
 import { resolveNativeSandboxUrl } from '../native-widget/host';
 import { createMcpAppBridge } from './bridge';
 import { prepareMcpAppDownload } from './download';
+import { MCP_APP_ICON_STYLE, renderMcpAppIcon } from './icon';
+import { resolveMcpAppIcons } from './icons';
 import { connectAppContent, restrictRecoveredAppPayload } from './plugin-content';
 import { McpAppFrameTransport } from './transport';
 
@@ -67,15 +70,23 @@ type Resources = {
   content?: Readonly<McpAppContentIdentity>;
   localNotice?: string;
   contentTitle?: string;
+  sharedHeader?: boolean;
 };
 
 const STYLE = `
-  :host{display:block;width:100%;max-width:840px;margin:12px auto;border:1px solid var(${TOKEN_CONTRACT.border},#ddd);border-radius:12px;overflow:hidden;color:var(${TOKEN_CONTRACT['text-primary']},inherit);background:var(${TOKEN_CONTRACT.background},transparent)}
+  :host{position:relative;display:block;width:100%;max-width:840px;margin:12px auto;border:1px solid var(${TOKEN_CONTRACT.border},#ddd);border-radius:12px;overflow:hidden;color:var(${TOKEN_CONTRACT['text-primary']},inherit);background:var(${TOKEN_CONTRACT.background},transparent)}
   *{box-sizing:border-box}header{display:flex;align-items:center;gap:8px;min-height:44px;padding:6px 10px;border-bottom:1px solid var(${TOKEN_CONTRACT['border-subtle']},#ddd);font-size:13px}header .title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}svg{display:block;width:16px;height:16px;flex-shrink:0}.app-icon{color:var(${TOKEN_CONTRACT['text-muted']},#888)}
   button{font:inherit;color:inherit;background:transparent;border:1px solid var(${TOKEN_CONTRACT.border},#ddd);border-radius:7px;padding:6px 10px;cursor:pointer;transition:background .15s}button:hover{background:var(${TOKEN_CONTRACT.surface},#f4f4f5)}button:focus-visible{outline:2px solid var(${TOKEN_CONTRACT.primary},#666);outline-offset:2px}button:disabled{opacity:.5;cursor:default}.icon-button{display:grid;place-items:center;width:30px;height:30px;padding:0;border:0;color:var(${TOKEN_CONTRACT['text-secondary']},#666)}.primary{background:var(${TOKEN_CONTRACT.primary},#333);color:var(${TOKEN_CONTRACT['primary-foreground']},#fff);border-color:transparent}.primary:hover{background:var(${TOKEN_CONTRACT['primary-hover']},#555)}
   iframe{display:block;width:100%;border:0;min-height:160px}.status,.notice,.confirmation{padding:12px 14px;font-size:13px;overflow-wrap:anywhere}.status{display:flex;align-items:center;gap:10px}.status span{flex:1}.notice{font-size:12px;color:var(${TOKEN_CONTRACT['text-secondary']},#666)}.confirmation{border-bottom:1px solid var(${TOKEN_CONTRACT.border},#ddd);background:var(${TOKEN_CONTRACT.surface},#fafafa)}.confirmation p{max-height:180px;overflow:auto;white-space:pre-wrap;margin:10px 0}.actions{display:flex;gap:8px}.spinner{width:14px;height:14px;border:2px solid var(${TOKEN_CONTRACT.border},#ddd);border-top-color:currentColor;border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.spinner{animation:none}button{transition:none}}
   .status .spinner{flex:0 0 14px}
   header[hidden]{display:none}header .notice{padding:0;flex-shrink:0;white-space:nowrap}
+  .branding{display:flex;align-items:center;gap:8px;flex:1;min-width:0}.app-icon{display:flex;flex-shrink:0;width:16px;height:16px}
+  .host-actions{display:flex;align-items:center;gap:4px;flex-shrink:0}.app-header-space{display:none}
+  header[shared]{position:absolute;inset:0 0 auto;z-index:2;height:44px;min-height:44px;gap:4px;padding:6px 8px;border:0;pointer-events:none}
+  header[shared] .app-header-space{display:block;flex:0 0 40%;height:100%}
+  header[shared] .host-actions,header[shared] .branding,header[shared] .notice{pointer-events:auto;background:var(${TOKEN_CONTRACT.background},#fff)}
+  header[shared] .icon-button{width:26px;height:30px}header[shared] .notice{min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis}
+  ${MCP_APP_ICON_STYLE}
   :host([expanded]){position:fixed;inset:36px 12px 130px;z-index:60;width:auto;max-width:none;margin:0;display:flex;flex-direction:column;background:var(${TOKEN_CONTRACT.background},#fff);box-shadow:0 16px 64px #0002}
   :host([expanded]) .mount{flex:1;min-height:0}:host([expanded]) iframe{height:100%!important}:host([fill-container]){height:100%;max-width:none;margin:0;border:0;border-radius:0;display:flex;flex-direction:column}:host([fill-container]) .mount{flex:1;min-height:0}:host([fill-container]) iframe{height:100%!important}
 `;
@@ -121,6 +132,7 @@ export class McpAppView extends LitElement {
   private waitingApps?: McpAppSession;
   private stopWaiting?: () => void;
   private waitingForBinding = false;
+  private failedIcons: string[] = [];
   contextCleanupUnconfirmed = false;
 
   constructor() {
@@ -181,6 +193,7 @@ export class McpAppView extends LitElement {
           this.loading = false;
           this.requestUpdate();
         }
+        this.requestUpdate();
       });
       if (this.waitingForBinding && this.waitingApps?.ready) {
         this.waitingForBinding = false;
@@ -208,6 +221,7 @@ export class McpAppView extends LitElement {
   }
 
   protected updated(): void {
+    this.resources?.update?.();
     this.dispatchEvent(
       new CustomEvent(McpAppEvent.PresentationChanged, { bubbles: true, composed: true }),
     );
@@ -334,6 +348,29 @@ export class McpAppView extends LitElement {
     });
   }
 
+  private get sharedHeader(): boolean {
+    return Boolean(
+      this.resources?.sharedHeader &&
+      !this.fillContainer &&
+      !this.closed &&
+      !this.loading &&
+      !this.error &&
+      !this.confirmation,
+    );
+  }
+
+  private headerLayout(frame: HTMLIFrameElement) {
+    if (!this.sharedHeader) return null;
+    const space = this.renderRoot.querySelector('.app-header-space')?.getBoundingClientRect();
+    const bounds = frame.getBoundingClientRect();
+    if (!space || bounds.width <= 0 || space.width <= 0) return null;
+    return {
+      height: 44,
+      left: Math.max(0, Math.ceil(space.left - bounds.left)),
+      right: Math.max(0, Math.ceil(bounds.right - space.right)),
+    };
+  }
+
   private async load(): Promise<void> {
     const context = this.context;
     const preview = this.preview;
@@ -412,6 +449,7 @@ export class McpAppView extends LitElement {
         ...nativeContext,
         ...this.hostContext(frame),
         'openai/modelContext': this.selection,
+        [MCP_APP_SHARED_HEADER]: this.headerLayout(frame),
       });
       this.selection =
         (mcpAppRecord(nativeContext?.['openai/modelContext']) as McpAppModelContext | null) ?? null;
@@ -506,7 +544,12 @@ export class McpAppView extends LitElement {
       const initialization = new Promise<void>(resolve => {
         initialized = resolve;
       });
-      bridge.oninitialized = () => initialized();
+      bridge.oninitialized = () => {
+        resources.sharedHeader =
+          mcpAppRecord(bridge.getAppCapabilities()?.experimental?.[MCP_APP_SHARED_HEADER])
+            ?.version === 1;
+        initialized();
+      };
       bridge.onsizechange = ({ height }) => {
         if (
           typeof height === 'number' &&
@@ -795,8 +838,13 @@ export class McpAppView extends LitElement {
 
   protected render() {
     const t = (key: string) => i18nService.t(key);
+    const identity = readNativeMcpAppIdentity(this.preview);
+    const icons = identity
+      ? resolveMcpAppIcons(this.context?.apps.iconCatalog, identity)
+      : undefined;
     return html`
       <header
+        ?shared=${this.sharedHeader}
         ?hidden=${this.fillContainer && !this.closed}
         @keydown=${(event: KeyboardEvent) => {
           if (event.key === 'Escape' && this.expanded && this.modes.includes('inline')) {
@@ -805,14 +853,21 @@ export class McpAppView extends LitElement {
           }
         }}
       >
-        <span class="app-icon"
-          >${icon('M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z')}</span
-        >
-        <span class="title" title=${this.contentTitle ?? this.preview?.title ?? t('mcpAppsTitle')}
-          >${this.contentTitle ?? this.preview?.title ?? t('mcpAppsTitle')}</span
-        >
-        ${this.inactive && !this.closed ? html`<span class="notice">${t(this.resources?.localNotice ?? 'mcpAppsReadOnly')}</span>` : nothing}
-        ${
+        <span class="branding">
+          <span class="app-icon" aria-hidden="true"
+            >${renderMcpAppIcon(icons, this.failedIcons, src => {
+          this.failedIcons = [...this.failedIcons, src];
+          this.requestUpdate();
+        })}</span
+          >
+          <span class="title" title=${this.contentTitle ?? this.preview?.title ?? t('mcpAppsTitle')}
+            >${this.contentTitle ?? this.preview?.title ?? t('mcpAppsTitle')}</span
+          >
+        </span>
+        ${this.inactive && !this.closed && !this.resources?.localNotice ? html`<span class="notice" title=${t('mcpAppsReadOnly')}>${t('mcpAppsReadOnly')}</span>` : nothing}
+        <span class="app-header-space" aria-hidden="true"></span>
+        <span class="host-actions">
+          ${
           !this.closed
             ? html`${this.pinPresentation ? html`<button class="icon-button" data-action="pin" ?disabled=${!this.canReference} aria-label=${t('mcpAppsPin')} title=${t('mcpAppsPin')} @click=${() => this.pinPresentation?.()}>${icon('M14 3h7v7 M21 3l-9 9 M21 14v6H4V3h6')}</button>` : nothing}${!this.expanded && this.modes.includes('inline') && this.modes.includes('fullscreen') ? html`<button class="icon-button" data-action="display-mode" aria-label=${t(this.mode === 'fullscreen' ? 'mcpAppsReturn' : 'mcpAppsExpand')} title=${t(this.mode === 'fullscreen' ? 'mcpAppsReturn' : 'mcpAppsExpand')} @click=${() => void this.setMode(this.mode === 'fullscreen' ? 'inline' : 'fullscreen')}>${icon(this.mode === 'fullscreen' ? 'M4 9h5V4 M20 9h-5V4 M4 15h5v5 M20 15h-5v5' : 'M9 4H4v5 M15 4h5v5 M4 15v5h5 M20 15v5h-5')}</button>` : nothing}
                 <button
@@ -838,6 +893,7 @@ export class McpAppView extends LitElement {
                 ${icon('M3 10a9 9 0 1 1 2.6 8.4 M3 4v6h6')}
               </button>`
         }
+        </span>
       </header>
       ${
         this.confirmation

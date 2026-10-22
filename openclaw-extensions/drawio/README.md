@@ -72,6 +72,14 @@ reinstates tool grants. Local unsaved edits are not a durable transcript.
 
 ## Host boundary
 
+The App optionally declares `experimental['ui/shared-header'] = { version: 1 }`.
+When the same host-context key supplies `{ height, left, right }` in pixels, only
+the top toolbar hides its duplicate title and reserves the host-owned areas.
+Save/export buttons stay in the original iframe and use the existing SDK paths;
+the editor canvas keeps its full width. A null or missing layout restores the
+complete standalone toolbar. This presentation extension grants no permissions
+and requires no knowledge of host tabs, menus or display locations.
+
 The App exposes a read-only standard App tool with
 `_meta['workspace/prepare-context'] = true`. Before first send the generic host
 discovers this opt-in tool, commits active cell editing, exports current XML and

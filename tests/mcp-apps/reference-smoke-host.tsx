@@ -16,6 +16,25 @@ import { McpAppMethod } from '../../src/shared/plugins/mcpApps';
 const fixture = window as any;
 i18nService.setLanguage('en', { persist: false });
 fixture.calls = [];
+fixture.iconLight =
+  'data:image/svg+xml,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><rect width="20" height="20" rx="4" fill="#ea580c"/><path d="M5 5h10v10H5z" fill="none" stroke="white"/></svg>',
+  );
+fixture.iconDark = fixture.iconLight.replace('ea580c', 'fb923c');
+fixture.iconCatalog = {
+  servers: [
+    {
+      serverName: 'fixture',
+      label: 'Fixture',
+      icons: [
+        { src: fixture.iconLight, theme: 'light' },
+        { src: fixture.iconDark, theme: 'dark' },
+      ],
+      entrypoints: [],
+    },
+  ],
+};
 let active = true;
 const client = {
   generation: 1,
@@ -23,6 +42,7 @@ const client = {
   subscribeEvents: () => () => undefined,
   request: async (method: string, params: any) => {
     fixture.calls.push({ method, params });
+    if (method === McpAppMethod.Discover) return fixture.iconCatalog;
     if (method === McpAppMethod.View)
       return {
         ...fixture.fixturePayload,
@@ -48,6 +68,7 @@ const apps = new McpAppSession(() =>
       }
     : undefined,
 );
+fixture.discoverIcons = () => apps.discover();
 function context(): McpAppViewContext {
   const binding = apps.bind();
   return {
@@ -98,6 +119,19 @@ function Harness() {
     );
   fixture.closeReference = () => refs.tabs[0]?.onClose?.();
   fixture.selectNormal = () => select('ordinary');
+  fixture.openFileTab = () =>
+    openWorkspaceApp({
+      id: 'file',
+      sessionId: 'conversation',
+      label: 'Example.file',
+      filePath: 'E:/Example.file',
+      preview: preview('mcp-app-file'),
+      context: context(),
+    });
+  fixture.closeFileTab = async () => {
+    await normal.tabs.find(tab => tab.id === 'file')?.onClose?.();
+    select('ordinary');
+  };
   fixture.selectReference = () => refs.tabs[0]?.onSelect();
   fixture.toggleOpen = () => setOpen(value => !value);
   fixture.replaceHistory = (removeOnly = false) => {
@@ -105,6 +139,17 @@ function Harness() {
     if (!removeOnly) ref.current!.append(anchor());
   };
   fixture.addDuplicate = () => ref.current!.append(anchor());
+  fixture.cardLayout = (width = 400, language = 'en', long = false, dark = false) => {
+    ref.current!.style.width = `${width}px`;
+    i18nService.setLanguage(language, { persist: false });
+    document.documentElement.classList.toggle('dark', dark);
+    originalPreview.title = long
+      ? 'A deliberately long document title for checking ellipsis and keeping actions visible'
+      : 'Example dashboard';
+    ref
+      .current!.querySelectorAll<McpAppAnchor>('mcp-app-anchor')
+      .forEach(element => element.requestUpdate());
+  };
   fixture.overlay = (kind?: string) => {
     document.getElementById('fixture-overlay')?.remove();
     if (!kind) return;
@@ -133,6 +178,7 @@ function Harness() {
     }
   };
   useLayoutEffect(() => {
+    void apps.discover();
     ref.current!.append(anchor());
     openWorkspaceApp({
       id: 'ordinary',

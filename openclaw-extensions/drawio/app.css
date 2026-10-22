@@ -17,9 +17,9 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 12px;
+  padding: 4px var(--app-header-right, 12px) 4px var(--app-header-left, 12px);
   border-bottom: 1px solid var(--color-border-primary, #e5e7eb);
-  height: 46px;
+  height: var(--app-header-height, 46px);
   flex-shrink: 0;
 }
 #title {
@@ -37,6 +37,20 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+:root[data-shared-header] #title {
+  display: none;
+}
+:root[data-shared-header] #toolbar {
+  gap: 4px;
+}
+:root[data-shared-header] #toolbar button {
+  min-width: 28px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+:root[data-shared-header] #status {
+  min-width: 0;
 }
 button {
   border: 1px solid var(--color-border-primary, #e5e7eb);

@@ -9,14 +9,18 @@ const fixture = vi.hoisted(() => ({
   update: vi.fn().mockResolvedValue({}),
   prepare: undefined as undefined | (() => Promise<unknown>),
   tools: new Map<string, (input?: unknown) => Promise<any>>(),
+  capabilities: {} as Record<string, unknown>,
+  hostContext: { locale: 'en', theme: 'light' } as Record<string, unknown>,
   app: {} as {
     ontoolresult: (result: { structuredContent: Record<string, unknown> }) => Promise<void>;
     onteardown: () => Promise<unknown>;
+    onhostcontextchanged: () => void;
   },
 }));
 vi.mock('@modelcontextprotocol/ext-apps', () => ({
   App: class {
-    constructor() {
+    constructor(_info: unknown, capabilities: Record<string, unknown>) {
+      fixture.capabilities = capabilities;
       fixture.app = this as unknown as typeof fixture.app;
     }
     readServerResource = fixture.read;
@@ -26,7 +30,7 @@ vi.mock('@modelcontextprotocol/ext-apps', () => ({
       fixture.tools.set(name, callback);
     };
     connect = async () => {};
-    getHostContext = () => ({ locale: 'en', theme: 'light' });
+    getHostContext = () => fixture.hostContext;
     getHostCapabilities = () => ({ updateModelContext: { text: {} } });
   },
   applyDocumentTheme: vi.fn(),
@@ -93,6 +97,7 @@ beforeEach(async () => {
   fixture.read.mockReset();
   fixture.update.mockReset().mockResolvedValue({});
   fixture.tools.clear();
+  fixture.hostContext = { locale: 'en', theme: 'light' };
   document.body.innerHTML =
     '<span id="title"></span><span id="status"></span><button id="save"></button>' +
     '<button id="png"></button><button id="svg"></button><iframe id="editor"></iframe>';
@@ -108,6 +113,37 @@ beforeEach(async () => {
     posted.push(data as string);
   });
   message(new MessageEvent('message', { source: frame, origin: 'null', data: '{"event":"init"}' }));
+});
+
+test('shares only its toolbar layout and restores its title without replacing the editor', () => {
+  expect(fixture.capabilities).toEqual({ experimental: { 'ui/shared-header': { version: 1 } } });
+  const frame = document.querySelector('#editor');
+  const save = document.querySelector('#save');
+  fixture.hostContext['ui/shared-header'] = { height: 44, left: 120, right: 96 };
+  fixture.app.onhostcontextchanged();
+  expect(document.documentElement.hasAttribute('data-shared-header')).toBe(true);
+  expect(document.documentElement.style.getPropertyValue('--app-header-left')).toBe('120px');
+  expect(document.documentElement.style.getPropertyValue('--app-header-right')).toBe('96px');
+  expect(document.documentElement.style.getPropertyValue('--app-header-height')).toBe('44px');
+  fixture.hostContext['ui/shared-header'] = null;
+  fixture.app.onhostcontextchanged();
+  expect(document.documentElement.hasAttribute('data-shared-header')).toBe(false);
+  expect(document.documentElement.style.getPropertyValue('--app-header-left')).toBe('12px');
+  expect(document.querySelector('#editor')).toBe(frame);
+  expect(document.querySelector('#save')).toBe(save);
+});
+
+test('ignores malformed shared-header sizes and keeps the standalone toolbar', () => {
+  for (const layout of [
+    { height: 44, left: '120px', right: 96 },
+    { height: 80, left: 120, right: 96 },
+    { height: 44, left: 120, right: Infinity },
+    { height: 44, left: -1, right: 96 },
+  ]) {
+    fixture.hostContext['ui/shared-header'] = layout;
+    fixture.app.onhostcontextchanged();
+    expect(document.documentElement.hasAttribute('data-shared-header')).toBe(false);
+  }
 });
 afterEach(async () => {
   await fixture.app.onteardown();
