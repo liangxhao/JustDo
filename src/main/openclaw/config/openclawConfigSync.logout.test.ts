@@ -76,6 +76,53 @@ vi.mock('node:child_process', async importOriginal => {
 
 const temporaryDirectories: string[] = [];
 
+test('marks only verified model-default projections for skipping historical session scans', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'model-default-projection-'));
+  temporaryDirectories.push(directory);
+  const configPath = path.join(directory, 'openclaw.json');
+  const appConfig = {
+    model: { defaultModel: 'first', defaultModelProvider: 'custom_0' },
+    providers: {
+      custom_0: {
+        enabled: true,
+        displayName: 'Internal',
+        apiKey: 'test-key',
+        baseUrl: 'http://model.test/v1',
+        apiFormat: 'openai',
+        models: [{ id: 'first' }, { id: 'second' }],
+      },
+    },
+  };
+  setStoreGetter(() => ({ get: () => appConfig }) as never);
+  const sync = new OpenClawConfigSync({
+    engineManager: {
+      getConfigPath: () => configPath,
+      getStateDir: () => directory,
+      getDesiredVersion: () => '2026.10.4',
+    },
+    getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+    getAgents: () => [],
+    getBrowserMode: () => BrowserMode.User,
+  } as never);
+  expect(sync.sync('startup')).toMatchObject({ ok: true, modelDefaultsOnly: false });
+  const previous = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
+  appConfig.model.defaultModel = 'second';
+  expect(sync.sync('default-model-change')).toMatchObject({
+    ok: true, configChanged: true, secretsChanged: false, modelDefaultsOnly: true,
+  });
+  const next = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  expect(next.agents.defaults.model.primary).toBe('internal/second');
+  expect(next.models).toEqual(previous.models);
+
+  appConfig.model.defaultModel = 'first';
+  expect(sync.sync('default-model-change-rollback')).toMatchObject({
+    ok: true, configChanged: true, modelDefaultsOnly: true,
+  });
+  appConfig.providers.custom_0.models.pop();
+  expect(sync.sync('default-model-change')).toMatchObject({ ok: true, modelDefaultsOnly: false });
+});
+
 test.each(['full', 'minimal'])(
   '%s sync preserves Gateway-owned worktree and extension MCP settings across startup and auth changes',
   mode => {

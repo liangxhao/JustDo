@@ -3077,6 +3077,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                                         sessionId,
                                         agentId: effectiveAgentId,
                                         model: nextModel,
+                                        shouldSaveDefault: () =>
+                                          modelSelectionTaskQueue.isLatestInScope(
+                                            effectiveAgentId,
+                                            taskId,
+                                          ),
                                         onDefaultModelUpdated: () => {
                                           syncDefaultModelSelectionState(
                                             dispatch,
@@ -3128,6 +3133,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                                       },
                                       coworkService,
                                     );
+                                    if (result.defaultSaveSkipped) return;
                                     if (!sessionId || !result.sessionModelRef) {
                                       dispatch(
                                         confirmManualModelSelection({
@@ -3185,6 +3191,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                                     throw error;
                                   }
                                 },
+                                effectiveAgentId,
                               );
                               dispatch(
                                 beginManualModelSelection({

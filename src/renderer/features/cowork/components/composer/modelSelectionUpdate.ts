@@ -3,6 +3,7 @@ import { toOpenClawModelRef } from '@/features/models/openclawModelRef';
 
 interface ModelSelectionUpdateResult {
   sessionModelRef?: string;
+  defaultSaveSkipped?: true;
 }
 
 interface ModelSelectionUpdateServices {
@@ -27,6 +28,8 @@ interface ApplyModelSelectionUpdateOptions {
   /** Existing sessions can finish switching while the future-chat default saves. */
   onBackgroundDefaultError?: (error: DefaultModelApplyError) => void;
   onBackgroundDefaultStart?: () => void;
+  /** A slower session switch must not replace a more recent default choice. */
+  shouldSaveDefault?: () => boolean;
 }
 
 export class SessionModelApplyError extends Error {
@@ -94,6 +97,10 @@ export const applyModelSelectionUpdate = async (
     if (!sessionModelRef) {
       throw new SessionModelApplyError('patchSessionModel returned no confirmed model');
     }
+  }
+
+  if (options.shouldSaveDefault?.() === false) {
+    return sessionModelRef ? { sessionModelRef } : { defaultSaveSkipped: true };
   }
 
   const saveDefault = async () => {

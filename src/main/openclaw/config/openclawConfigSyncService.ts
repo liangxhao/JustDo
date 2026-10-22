@@ -586,6 +586,12 @@ export class OpenClawConfigSyncService {
           gatewayLaunchEnvVarsChanged,
           requiresGatewayRestart: syncResult.requiresGatewayRestart,
         });
+    const verificationOptions = {
+      retiredProviderIds: options.retiredProviderIds,
+      // This is based on the complete persisted diff, never on the sync reason alone.
+      skipSessionModelReconciliation: syncResult.modelDefaultsOnly === true &&
+        !syncResult.secretsChanged && !gatewayLaunchEnvVarsChanged,
+    };
 
     if (applyMode === 'none') {
       return this.verifySuccessfulConfigApplication(
@@ -595,8 +601,8 @@ export class OpenClawConfigSyncService {
           configSynced: true,
         },
         {
+          ...verificationOptions,
           execPolicyAlreadyVerified: fallbackExecPolicyVerified,
-          retiredProviderIds: options.retiredProviderIds,
         },
       );
     }
@@ -611,7 +617,7 @@ export class OpenClawConfigSyncService {
             configSynced: true,
             status: engineManager.getStatus(),
           },
-          { retiredProviderIds: options.retiredProviderIds },
+          verificationOptions,
         );
       }
       if (isAuthLogout) {
@@ -747,6 +753,7 @@ export class OpenClawConfigSyncService {
       executionAdmission?: boolean;
       initializeExecPolicy?: boolean;
       prepareComputerForSend?: boolean;
+      skipSessionModelReconciliation?: boolean;
     } = {},
   ): Promise<SyncOpenClawConfigResult> {
     const engineManager = this.deps.getOpenClawEngineManager();
@@ -807,7 +814,9 @@ export class OpenClawConfigSyncService {
           }
           return { ...result, hostPolicyVerified: true };
         }
-        await this.syncManagedSessionModelsViaGateway(runtimeConfigResult.snapshot);
+        if (!options.skipSessionModelReconciliation) {
+          await this.syncManagedSessionModelsViaGateway(runtimeConfigResult.snapshot);
+        }
         await this.discoverOrphanedManagedAuthProfiles(runtimeConfigResult.snapshot);
         await this.cleanupRetiredProviderAuthProfiles(
           runtimeConfigResult.snapshot,

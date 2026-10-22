@@ -2289,6 +2289,7 @@ export type OpenClawConfigSyncResult = {
   error?: string;
   agentsMdWarning?: string;
   secretsChanged?: boolean;
+  modelDefaultsOnly?: boolean;
 };
 
 export const buildVerifiedConfigSyncResult = (

@@ -10,6 +10,7 @@ import {
 import { mergeLocalSpeechExtensionTtsConfig } from './localSpeechExtensionConfig';
 import { buildManagedLocalSpeechPluginEntries } from './localSpeechPluginConfig';
 import { buildManagedMcpConfig } from './mcpAppsConfig';
+import { hasOnlyModelDefaultChanges } from './modelDefaultConfigChange';
 import {
   applyNativeVideoConfiguration,
   captureNativeVideoConfiguration,
@@ -752,6 +753,9 @@ export class OpenClawConfigSync {
       configChanged,
       requiresGatewayRestart: false,
       configPath,
+      modelDefaultsOnly:
+        (reason === 'default-model-change' || reason === 'default-model-change-rollback') &&
+        hasOnlyModelDefaultChanges(existingConfig, configToPersist),
     };
   }
 

@@ -290,6 +290,7 @@ describe('OpenClawConfigSyncService', () => {
     permissionMode?: 'ask' | 'auto' | 'full';
     reportedPermissionMode?: 'ask' | 'auto' | 'full';
     configChanged?: boolean;
+    modelDefaultsOnly?: boolean;
     getExtensionMcpServerNames?: () => Promise<ReadonlySet<string>>;
     syncError?: string;
     nativeRestartStatus?: string;
@@ -465,6 +466,7 @@ describe('OpenClawConfigSyncService', () => {
               ok: true,
               changed: (options.configChanged ?? true) || (options.secretsChanged ?? false),
               configChanged: options.configChanged ?? true,
+              modelDefaultsOnly: options.modelDefaultsOnly,
               requiresGatewayRestart: false,
               secretsChanged: options.secretsChanged ?? false,
               configPath: options.configPath ?? 'openclaw.json',
@@ -812,6 +814,48 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.configSync.sync).toHaveBeenCalledWith('test', new Set(), new Set());
     expect(harness.stopGateway).not.toHaveBeenCalled();
     expect(harness.startGateway).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('skips historical model scans for a verified default-only change (config changed: %s)', async configChanged => {
+    const harness = createHarness({ modelDefaultsOnly: true, configChanged });
+    const reconciliation = vi.spyOn(harness.service as unknown as {
+      syncManagedSessionModelsViaGateway: () => Promise<void>;
+    }, 'syncManagedSessionModelsViaGateway').mockResolvedValue();
+    let finishReload!: (applied: boolean) => void;
+    const reload = new Promise<boolean>(resolve => { finishReload = resolve; });
+    harness.engineManager.waitForGatewayConfigReload.mockImplementationOnce(() => reload);
+    const finished = vi.fn();
+    const saving = harness.service.syncConfig({ reason: 'default-model-change' }).then(result => {
+      finished();
+      return result;
+    });
+    if (configChanged) {
+      await vi.waitFor(() => expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalled());
+      expect(finished).not.toHaveBeenCalled();
+      finishReload(true);
+    }
+
+    await expect(saving).resolves.toMatchObject({ success: true, hostPolicyVerified: true });
+    expect(harness.requestGateway).toHaveBeenCalledWith('config.get');
+    expect(harness.requestGateway).toHaveBeenCalledWith('exec.approvals.get');
+    expect(reconciliation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { modelDefaultsOnly: false },
+    { modelDefaultsOnly: undefined },
+    { modelDefaultsOnly: true, secretsChanged: true },
+    { modelDefaultsOnly: true, nextSecrets: { MANAGED_KEY: 'test-value' } },
+  ])('retains reconciliation when a model-default fast path cannot be verified: %j', async options => {
+    const harness = createHarness(options);
+    const reconciliation = vi.spyOn(harness.service as unknown as {
+      syncManagedSessionModelsViaGateway: () => Promise<void>;
+    }, 'syncManagedSessionModelsViaGateway').mockResolvedValue();
+
+    await expect(harness.service.syncConfig({ reason: 'default-model-change' }))
+      .resolves.toMatchObject({ success: true, hostPolicyVerified: true });
+
+    expect(reconciliation).toHaveBeenCalledOnce();
   });
 
   it('stops a running Gateway instead of falling back when the sandbox is not ready', async () => {

@@ -37,7 +37,7 @@ describe('LatestSerialTaskQueue', () => {
     expect(queue.isLatest(latestRun.taskId)).toBe(true);
   });
 
-  test('preserves choices in other contexts and their shared default-save order', async () => {
+  test('preserves choices in other contexts while replacing pending choices in the same context', async () => {
     const queue = new LatestSerialTaskQueue();
     const calls: string[] = [];
     const select = (key: string, value: string) =>
@@ -56,6 +56,39 @@ describe('LatestSerialTaskQueue', () => {
     await expect(otherAgent.completion).resolves.toBe('review');
     await expect(latestHome.completion).resolves.toBe('latest home');
     expect(calls).toEqual(['session', 'review', 'latest home']);
+  });
+
+  test('does not hold another session behind a slow model selection', async () => {
+    const queue = new LatestSerialTaskQueue();
+    const first = deferred<string>();
+    const firstRun = queue.enqueueLatest('home', () => first.promise);
+    await Promise.resolve();
+    const otherTask = vi.fn(async () => 'confirmed');
+    const otherRun = queue.enqueueLatest('session-2', otherTask);
+
+    try {
+      await Promise.resolve();
+      expect(otherTask).toHaveBeenCalledOnce();
+      await expect(otherRun.completion).resolves.toBe('confirmed');
+    } finally {
+      first.resolve('saved');
+      await firstRun.completion;
+    }
+  });
+
+  test('tracks the latest default choice across sessions independently for each assistant', async () => {
+    const queue = new LatestSerialTaskQueue();
+    const first = queue.enqueueLatest('session-1', async () => 'first', 'main');
+    const latest = queue.enqueueLatest('session-2', async () => 'latest', 'main');
+    const specialist = queue.enqueueLatest('session-3', async () => 'review', 'review');
+
+    await Promise.all([first.completion, latest.completion, specialist.completion]);
+
+    expect(queue.isLatestInScope('main', first.taskId)).toBe(false);
+    expect(queue.isLatestInScope('main', latest.taskId)).toBe(true);
+    expect(queue.isLatestInScope('review', specialist.taskId)).toBe(true);
+    queue.invalidate();
+    expect(queue.isLatestInScope('main', latest.taskId)).toBe(false);
   });
 
   test('continues with the latest choice after an in-flight switch fails', async () => {

@@ -42,6 +42,88 @@ describe('resolvePersistedSessionModelRefAfterApplyError', () => {
 });
 
 describe('applyModelSelectionUpdate', () => {
+  test('skips a queued home default after a newer session selection has started saving', async () => {
+    const queue = new LatestSerialTaskQueue();
+    let releaseFirst!: () => void;
+    const firstDefault = new Promise<void>(resolve => { releaseFirst = resolve; });
+    let configTail = Promise.resolve();
+    let savedDefault = 'original';
+    const setDefaultModel = vi.fn(({ modelId }: { modelId: string }) => {
+      const saving = configTail.then(async () => {
+        if (modelId === 'first') await firstDefault;
+        savedDefault = modelId;
+        return { success: true };
+      });
+      configTail = saving.then(() => undefined);
+      return saving;
+    });
+    const patchSessionModel = vi.fn(async ({ model: modelRef }: { model: string }) => ({
+      success: true, modelRef,
+    }));
+    const onBackgroundDefaultStart = vi.fn();
+    const onDefaultModelUpdated = vi.fn();
+    const select = (id: string, sessionId?: string) => {
+      const { taskId, completion } = queue.enqueueLatest(sessionId ?? 'home', () => applyModelSelectionUpdate({
+        sessionId, agentId: 'main', model: { ...model, id }, onDefaultModelUpdated,
+        shouldSaveDefault: (): boolean => queue.isLatestInScope('main', taskId),
+        onBackgroundDefaultStart, onBackgroundDefaultError: vi.fn(),
+      }, { patchSessionModel, setDefaultModel }), 'main');
+      return completion;
+    };
+
+    const first = select('first');
+    await vi.waitFor(() => expect(setDefaultModel).toHaveBeenCalledOnce());
+    const intermediate = select('intermediate');
+    const latest = select('latest', 'session-1');
+    try {
+      await expect(latest).resolves.toEqual({ sessionModelRef: 'openai/latest' });
+      expect(setDefaultModel.mock.calls.map(([options]) => options.modelId)).toEqual(['first', 'latest']);
+    } finally {
+      releaseFirst();
+      await Promise.all([first, intermediate, latest]);
+      await configTail;
+    }
+
+    await expect(intermediate).resolves.toEqual({ defaultSaveSkipped: true });
+    expect(savedDefault).toBe('latest');
+    expect(setDefaultModel.mock.calls.map(([options]) => options.modelId)).toEqual(['first', 'latest']);
+    expect(onDefaultModelUpdated).toHaveBeenCalledTimes(2);
+    expect(onBackgroundDefaultStart).toHaveBeenCalledOnce();
+  });
+
+  test('confirms a slow session switch without overwriting a later choice in another session', async () => {
+    const queue = new LatestSerialTaskQueue();
+    let releaseFirst!: (result: { success: true; modelRef: string }) => void;
+    const firstPatch = new Promise<{ success: true; modelRef: string }>(resolve => {
+      releaseFirst = resolve;
+    });
+    const patchSessionModel = vi.fn(async ({ model: modelRef }: { model: string }) => ({
+      success: true as const, modelRef,
+    })).mockImplementationOnce(() => firstPatch);
+    const setDefaultModel = vi.fn(async () => ({ success: true }));
+    const select = (sessionId: string, selected: Model) => {
+      const { taskId, completion } = queue.enqueueLatest(sessionId, () => applyModelSelectionUpdate({
+        sessionId, agentId: 'main', model: selected, onDefaultModelUpdated: vi.fn(),
+        shouldSaveDefault: (): boolean => queue.isLatestInScope('main', taskId),
+      }, { patchSessionModel, setDefaultModel }), 'main');
+      return completion;
+    };
+    const first = select('session-1', model);
+    await Promise.resolve();
+
+    try {
+      await expect(select('session-2', { ...model, id: 'latest' }))
+        .resolves.toEqual({ sessionModelRef: 'openai/latest' });
+      expect(setDefaultModel).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ modelId: 'latest' }),
+      );
+    } finally {
+      releaseFirst({ success: true, modelRef: 'openai/gpt-5' });
+      await expect(first).resolves.toEqual({ sessionModelRef: 'openai/gpt-5' });
+    }
+    expect(setDefaultModel).toHaveBeenCalledOnce();
+  });
+
   test('finishes an existing-session switch before a slow default save and lets the next switch proceed', async () => {
     const queue = new LatestSerialTaskQueue();
     let releaseDefault!: (result: { success: boolean }) => void;

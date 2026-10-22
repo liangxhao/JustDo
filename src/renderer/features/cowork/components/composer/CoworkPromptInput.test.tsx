@@ -152,7 +152,9 @@ test('keeps model clicks immediate and skips intermediate choices while native c
   expect(store.getState().cowork.pendingModelSelectionTaskIds[contextKey]).toBeUndefined();
   expect(store.getState().cowork.userConfirmedSessionModelRefs[sessionId]).toBe('acme/latest');
   expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy();
-  expect(setDefaultModel).toHaveBeenCalledTimes(2);
+  expect(setDefaultModel).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ modelId: 'latest' }),
+  );
   expect(input.value).toBe('Keep this draft');
   expect(onSubmit).not.toHaveBeenCalled();
 
@@ -163,6 +165,88 @@ test('keeps model clicks immediate and skips intermediate choices while native c
     expect(store.getState().cowork.pendingModelSelectionTaskIds['__home__\0main']).toBeUndefined(),
   );
 });
+
+test.each(['home', 'session'] as const)(
+  'allows sending in another chat while a %s model selection is still pending',
+  async pendingContext => {
+    const models = ['Current', 'First', 'Intermediate', 'Latest'].map(name => ({
+      id: name.toLowerCase(), name, provider: 'Acme', providerKey: 'custom_0',
+    }));
+    store.dispatch(setAvailableModels(models));
+    store.dispatch(setSelectedModel(models[0]));
+    vi.spyOn(configService, 'acceptDefaultModelSelection').mockImplementation(() => undefined);
+    let finishFirst!: (result: { success: true; modelRef: string }) => void;
+    let finishDefaults!: (result: { success: true }) => void;
+    const firstPatch = new Promise<{ success: true; modelRef: string }>(resolve => { finishFirst = resolve; });
+    const defaults = new Promise<{ success: true }>(resolve => { finishDefaults = resolve; });
+    const patchSessionModel = vi.fn(({ model }: { model: string }) => model === 'acme/first'
+      ? firstPatch
+      : Promise.resolve({ success: true as const, modelRef: model }));
+    const setDefaultModel = vi.fn(() => defaults);
+    vi.stubGlobal('electron', {
+      extensions: {
+        list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
+        onChanged: () => () => {},
+      },
+      cowork: {
+        patchSessionModel,
+        setDefaultModel,
+        getSessionModel: vi.fn().mockResolvedValue({ success: true, source: 'gateway', modelRef: 'acme/current' }),
+        getSessionGoal: vi.fn().mockResolvedValue({ success: true, goal: null }),
+        getGoalExecution: vi.fn().mockResolvedValue({ success: true }),
+        onSessionGoalChanged: () => () => {},
+        onGoalExecutionChanged: () => () => {},
+      },
+      localAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
+      localSpeechModels: { onChanged: () => () => {} },
+    });
+    const onSubmit = vi.fn(() => false);
+    const composer = (sessionId?: string) => (
+      <Provider store={store}>
+        <CoworkPromptInput
+          size="large"
+          sessionId={sessionId}
+          sessionModelRef={sessionId ? 'acme/current' : undefined}
+          modelAgentId="main"
+          showModelSelector
+          onSubmit={onSubmit}
+        />
+      </Provider>
+    );
+    const view = render(composer(pendingContext === 'session' ? 'pending-model-session' : undefined));
+    fireEvent.click(screen.getByRole('button', { name: 'Current' }));
+    fireEvent.click(screen.getByText('First'));
+    await waitFor(() => expect(pendingContext === 'home' ? setDefaultModel : patchSessionModel).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: 'First' }));
+    fireEvent.click(screen.getByText('Intermediate'));
+
+    try {
+      const targetSessionId = `independent-model-${pendingContext}`;
+      view.rerender(composer(targetSessionId));
+      const input = screen.getByRole('textbox') as HTMLTextAreaElement;
+      fireEvent.change(input, { target: { value: 'Send with the latest model' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Current' }));
+      fireEvent.click(screen.getByText('Latest'));
+      const send = screen.getByRole('button', { name: i18nService.t('coworkSendMessage') }) as HTMLButtonElement;
+
+      await waitFor(() => expect(send.disabled).toBe(false));
+      expect(store.getState().cowork.userConfirmedSessionModelRefs[targetSessionId]).toBe('acme/latest');
+      fireEvent.click(send);
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+      expect(input.value).toBe('Send with the latest model');
+    } finally {
+      await act(async () => {
+        finishFirst({ success: true, modelRef: 'acme/first' });
+        finishDefaults({ success: true });
+      });
+    }
+    await waitFor(() => expect(store.getState().cowork.pendingModelSelectionTaskIds['__home__\0main']).toBeUndefined());
+    expect(store.getState().model.selectedModel?.id).toBe('latest');
+    expect(setDefaultModel.mock.calls.flat()).not.toContainEqual(
+      expect.objectContaining({ modelId: 'intermediate' }),
+    );
+  },
+);
 
 test.each(['normal', 'large'] as const)(
   '%s composer keeps one feature menu and resets its open state when switching chats',
