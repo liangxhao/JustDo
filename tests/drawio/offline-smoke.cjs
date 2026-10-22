@@ -454,10 +454,49 @@ if (!process.versions.electron) {
         );
         if (process.argv.includes('--reference')) {
           const reads = await win.webContents.executeJavaScript('window.fixtureViewReads');
+          // Historical/local-only presentations use the same editor but must not
+          // add a second host notice row above the App's own title and toolbar.
+          const inactive = await win.webContents.executeJavaScript('window.fixtureView.inactive');
+          await win.webContents.executeJavaScript(
+            'window.fixtureView.inactive=true;window.fixtureView.updateComplete',
+          );
           await editor.executeJavaScript('window.referenceDocumentInstance=Math.random()');
           const instance = await editor.executeJavaScript('window.referenceDocumentInstance');
           for (const pinned of [true, false, true, false]) {
             await win.webContents.executeJavaScript(`window.fixtureReference(${pinned})`);
+            await until(
+              () =>
+                win.webContents.executeJavaScript(`window.fixtureView.fillContainer===${pinned}`),
+              'Reference presentation mode',
+            );
+            await win.webContents.executeJavaScript('window.fixtureView.updateComplete');
+            if (pinned) {
+              assert.equal(
+                await win.webContents.executeJavaScript(
+                  'Array.from(window.fixtureView.shadowRoot.querySelectorAll(".notice")).filter(node=>node.getClientRects().length).length',
+                ),
+                0,
+                'Workspace local editing hints must not reserve a separate row',
+              );
+              assert.equal(
+                await win.webContents.executeJavaScript(
+                  'window.fixtureView.shadowRoot.querySelector("iframe").getBoundingClientRect().top-window.fixtureView.getBoundingClientRect().top',
+                ),
+                0,
+                'The App starts at the top of its workspace surface',
+              );
+              fs.writeFileSync(
+                path.join(output, 'reference-compact.png'),
+                (await win.webContents.capturePage()).toPNG(),
+              );
+            } else {
+              assert.ok(
+                await win.webContents.executeJavaScript(
+                  'window.fixtureView.shadowRoot.querySelector("header .notice")?.textContent.trim()',
+                ),
+                'Inline local editing hints stay in the title row',
+              );
+            }
             await until(
               () =>
                 editor.executeJavaScript(
@@ -471,6 +510,9 @@ if (!process.versions.electron) {
             instance,
           );
           assert.equal(await win.webContents.executeJavaScript('window.fixtureViewReads'), reads);
+          await win.webContents.executeJavaScript(
+            `window.fixtureView.inactive=${inactive};window.fixtureView.updateComplete`,
+          );
           assert.equal(
             await win.webContents.executeJavaScript(
               'window.fixtureView.shadowRoot.querySelector("iframe")===window.fixtureOriginalFrame',

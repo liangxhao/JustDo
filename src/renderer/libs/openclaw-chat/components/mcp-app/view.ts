@@ -855,7 +855,7 @@ export class McpAppView extends LitElement {
             </div>`
           : nothing
       }
-      ${this.inactive && !this.closed && this.fillContainer ? html`<div class="notice">${t(this.resources?.localNotice ?? 'mcpAppsReadOnly')}</div>` : nothing}
+      ${this.inactive && !this.closed && this.fillContainer && !this.resources?.localNotice ? html`<div class="notice">${t('mcpAppsReadOnly')}</div>` : nothing}
       ${this.loading ? html`<div class="status" role="status"><span class="spinner" aria-hidden="true"></span>${t('mcpAppsLoading')}</div>` : nothing}
       ${
         this.error
