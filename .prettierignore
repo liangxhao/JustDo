@@ -7,6 +7,7 @@ vendor/
 
 # Build outputs
 build/
+cache/
 *.log
 
 # IDE
@@ -34,7 +35,6 @@ Thumbs.db
 
 # OpenClaw
 openclaw/
-resources/python-win/
 
 # Vendored upstream TypeSafe sources retain upstream formatting.
 plugins/extensions/typesafe/

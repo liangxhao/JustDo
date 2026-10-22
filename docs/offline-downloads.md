@@ -8,13 +8,16 @@
 | --- | --- |
 | [MinGit 2.55.0.3 x64](https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.3/MinGit-2.55.0.3-64-bit.zip) | `cache/mingit/MinGit-2.55.0.3-64-bit.zip` |
 
-准备：`npm run setup:mingit`
+准备：`npm run setup:mingit`，输出到 `build/runtimes/mingit/`。
 
 ## 2. Windows Python
 
 | 下载地址 | 放置位置 |
 | --- | --- |
 | [CPython 3.12.10 x64](https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip) | `cache/python/python-3.12.10-embed-amd64.zip` |
+
+准备：`npm run setup:python-runtime`，输出到 `build/runtimes/python-win/`。
+受管依赖清单和路径初始化源码位于 `resources/python/`。
 
 ## 3. 本地语音引擎（Windows x64）
 
@@ -23,7 +26,7 @@
 | [Sherpa ONNX 1.13.7 运行时](https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.7/sherpa-onnx-v1.13.7-win-x64-shared-MD-MinSizeRel.tar.bz2) | `cache/local-speech/sherpa-onnx-v1.13.7-win-x64-shared-MD-MinSizeRel.tar.bz2` |
 | [Sherpa 许可证](https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v1.13.7/LICENSE) | `cache/local-speech/sherpa-onnx-LICENSE` |
 
-准备：`npm run setup:local-tts`
+准备：`npm run setup:local-tts`，输出到 `build/runtimes/local-tts/win-x64/`。
 
 ## 4. 语音模型
 
@@ -39,7 +42,7 @@
 | [Piper Lessac INT8](https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium-int8.tar.bz2) | `cache/local-speech/vits-piper-en_US-lessac-medium-int8.tar.bz2` |
 | [Lessac 数据许可证](https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html) | `cache/local-speech/vits-piper-en_US-lessac-medium-int8-LICENSE` |
 
-准备：`npm run setup:local-speech-models`
+准备：`npm run setup:local-speech-models`，模型输出到 `build/runtimes/local-tts/win-x64/<model-id>/`，开发环境可直接复用。
 
 生成发布包：`npm run build:local-speech-model-artifacts`，输出到 `build/speech-models/v1/`。
 

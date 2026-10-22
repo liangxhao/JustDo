@@ -18,7 +18,7 @@ export const resolveLocalSpeechResourceRoot = (options?: LocalSpeechPathOptions)
   const packaged = options?.packaged ?? app.isPackaged;
   const resourceRoot = packaged
     ? (options?.resourcesPath ?? process.resourcesPath)
-    : path.join(options?.appPath ?? app.getAppPath(), 'resources');
+    : path.join(options?.appPath ?? app.getAppPath(), 'build', 'runtimes');
   return path.join(resourceRoot, 'local-tts', 'win-x64');
 };
 

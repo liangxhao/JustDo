@@ -70,7 +70,7 @@ const ADDITIONAL_MODELS = [
 ];
 
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
-const OUTPUT_ROOT = path.join(PROJECT_ROOT, 'resources', 'local-tts', 'win-x64');
+const OUTPUT_ROOT = path.join(PROJECT_ROOT, 'build', 'runtimes', 'local-tts', 'win-x64');
 const CACHE_ROOT = path.join(PROJECT_ROOT, 'cache', 'local-speech');
 const RUNTIME_ROOT = path.join(OUTPUT_ROOT, 'runtime');
 const EXECUTABLE_PATH = path.join(RUNTIME_ROOT, 'bin', 'sherpa-onnx-offline-tts.exe');

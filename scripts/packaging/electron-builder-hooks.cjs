@@ -877,9 +877,9 @@ async function beforePack(context) {
     // directories will be empty and the installed app will lack Python/Git.
 
     await prepareWindowsResources();
-    const pythonRoot = path.join(__dirname, '../..', 'resources', 'python-win');
-    const mingitRoot = path.join(__dirname, '../..', 'resources', 'mingit');
-    const localTtsRoot = path.join(__dirname, '../..', 'resources', 'local-tts');
+    const pythonRoot = path.join(__dirname, '../..', 'build', 'runtimes', 'python-win');
+    const mingitRoot = path.join(__dirname, '../..', 'build', 'runtimes', 'mingit');
+    const localTtsRoot = path.join(__dirname, '../..', 'build', 'runtimes', 'local-tts');
 
     // ── Build combined tar for NSIS ──
     // Pack all large resource directories into one pre-compressed tarball.

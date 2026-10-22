@@ -15,10 +15,7 @@ vendor/openclaw-runtime/
 vendor/openclaw-plugins/
 .agent-tasks/
 
-# Prepared runtime payloads and offline download caches.
-resources/mingit/
-resources/python-win/
-resources/local-tts/
+# Generated icon intermediates and plugin assets.
 resources/icons/_tmp/
 resources/icons/mac/icon.iconset/
 resources/icons/mac/icon.icns.backup

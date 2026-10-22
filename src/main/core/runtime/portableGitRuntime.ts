@@ -45,8 +45,8 @@ const prependWindowsPath = (current: string | undefined, entries: string[]): str
 const resolvePortableGitCandidates = (): string[] => {
   const candidates = [
     process.resourcesPath ? path.join(process.resourcesPath, PORTABLE_GIT_DIR_NAME) : null,
-    path.join(process.cwd(), 'resources', PORTABLE_GIT_DIR_NAME),
-    path.join(path.resolve(__dirname, '..', '..', '..', '..'), 'resources', PORTABLE_GIT_DIR_NAME),
+    path.join(process.cwd(), 'build', 'runtimes', PORTABLE_GIT_DIR_NAME),
+    path.join(path.resolve(__dirname, '..', '..', '..', '..'), 'build', 'runtimes', PORTABLE_GIT_DIR_NAME),
   ];
   return candidates.filter((value): value is string => Boolean(value));
 };

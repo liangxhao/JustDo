@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Prepare bundled Windows Python runtime under resources/python-win.
+ * Prepare bundled Windows Python runtime under build/runtimes/python-win.
  *
  * This script mirrors setup-mingit.js behavior:
  * - Supports local offline archive via JUSTDO_PORTABLE_PYTHON_ARCHIVE
@@ -28,7 +28,7 @@ const { path7za } = (() => {
 })();
 
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
-const OUTPUT_DIR = path.join(PROJECT_ROOT, 'resources', 'python-win');
+const OUTPUT_DIR = path.join(PROJECT_ROOT, 'build', 'runtimes', 'python-win');
 const DEFAULT_REQUIREMENTS_PATH = path.join(PROJECT_ROOT, 'resources', 'python', 'requirements.txt');
 const DEFAULT_SITE_CUSTOMIZE_PATH = path.join(PROJECT_ROOT, 'resources', 'python', 'sitecustomize.py');
 const MANAGED_SITE_PACKAGES_REL_PATH = path.join('Lib', 'bundled-site-packages');

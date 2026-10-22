@@ -10,7 +10,7 @@ const tar = require('tar');
 const { constants: zlibConstants, createZstdCompress } = require('zlib');
 
 const projectRoot = path.resolve(__dirname, '../..');
-const sourceRoot = path.join(projectRoot, 'resources', 'local-tts', 'win-x64');
+const sourceRoot = path.join(projectRoot, 'build', 'runtimes', 'local-tts', 'win-x64');
 const outputRoot = path.join(projectRoot, 'build', 'speech-models', 'v1');
 const models = [
   {

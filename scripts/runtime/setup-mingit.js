@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Prepare MinGit under resources/mingit for Windows packaging/runtime.
+ * Prepare MinGit under build/runtimes/mingit for Windows packaging/runtime.
  *
  * Features:
  * - Cross-platform execution (macOS/Linux can prepare assets for Windows packaging)
@@ -28,7 +28,7 @@ const EXPECTED_MINGIT_SHA256 = 'f48e2d2dc74a24454adc6d8fd0ac25bf9c2386f19cfb0620
 const EXPECTED_GIT_VERSION_OUTPUT = `git version ${GIT_VERSION}.windows.${GIT_FOR_WINDOWS_PATCH}`;
 
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
-const OUTPUT_DIR = path.join(PROJECT_ROOT, 'resources', 'mingit');
+const OUTPUT_DIR = path.join(PROJECT_ROOT, 'build', 'runtimes', 'mingit');
 const DEFAULT_ARCHIVE_PATH = path.join(PROJECT_ROOT, 'cache', 'mingit', MINGIT_FILE);
 const VERSION_MARKER_PATH = path.join(OUTPUT_DIR, '.justdo-mingit-version');
 

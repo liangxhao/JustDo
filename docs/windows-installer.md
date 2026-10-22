@@ -257,9 +257,10 @@ runtime are read directly from the installation resources. Startup does not
 duplicate these bundles into userData.
 
 Tracked Python preparation inputs live in `resources/python/`, and download
-caches are grouped under the repository-root `cache/`. Windows runtime archives
-are generated in `build/tar/`. Prepared Python, Git and speech
-payloads retain their existing source and installation directory names. Tray
+caches are grouped under the repository-root `cache/`. Prepared Python, Git and
+speech payloads live in `build/runtimes/{python-win,mingit,local-tts}/`, shared by
+development and packaging. Windows runtime archives are generated in `build/tar/`;
+installation resource directory names remain `python-win/`, `mingit/` and `local-tts/`. Tray
 assets come from `resources/icons/tray/` and are installed as `resources/tray/`.
 The inert preference reader is packaged at
 `resources/pages/renderer-preferences.html` inside the application package.

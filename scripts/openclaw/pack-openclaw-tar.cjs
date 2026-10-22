@@ -10,7 +10,7 @@
  * Used by electron-builder-hooks beforePack to pack:
  *   - OpenClaw runtime (vendor/openclaw-runtime/current -> cfmind/)
  *   - Custom skills already synchronized into the OpenClaw runtime
- *   - Python runtime (resources/python-win -> python-win/)
+ *   - Python runtime (build/runtimes/python-win -> python-win/)
  *
  * Usage:
  *   Single dir:      node scripts/openclaw/pack-openclaw-tar.cjs [sourceDir] [outputTar]
@@ -436,12 +436,12 @@ function main() {
         exclude: PACKAGED_RUNTIME_EXCLUDES,
       },
       {
-        dir: path.join(projectRoot, 'resources', 'python-win'),
+        dir: path.join(projectRoot, 'build', 'runtimes', 'python-win'),
         prefix: 'python-win',
         preservePythonLicenses: true,
       },
       {
-        dir: path.join(projectRoot, 'resources', 'local-tts'),
+        dir: path.join(projectRoot, 'build', 'runtimes', 'local-tts'),
         prefix: 'local-tts',
         preservePythonLicenses: true,
         exclude: [

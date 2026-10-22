@@ -17,18 +17,19 @@ assets belong in `plugins/`; repository design documentation belongs in `docs/`.
 | `pets/` | Pet sprites and animation metadata |
 | `openclaw/docs/` | OpenClaw runtime documentation and role templates |
 | `package-manager-config/` | Optional environment-specific npm and pip configuration |
-| `mingit/`, `python-win/`, `local-tts/` | Ignored prepared runtime payloads consumed by packaging |
 
 Download destinations and preparation commands are maintained in
 [offline downloads](../docs/offline-downloads.md). Retain the caches on offline
 build hosts: preparation scripts reuse their versioned archives and licenses from
 the repository-root `cache/`, grouped as `mingit/`, `python/`, `local-speech/` and
-`drawio/`. Prepared runtime payloads remain separate from their download caches.
+`drawio/`. Prepared runtime payloads live under `build/runtimes/`, grouped as
+`mingit/`, `python-win/` and `local-tts/`.
 
 Generated build artifacts are grouped under the repository-root `build/`:
-`tar/` contains Windows runtime archives, `speech-models/v1/` contains published
-model artifacts, and `browser-extension/` contains the assembled browser package
-and Native Messaging helper. Both `build/` and `cache/` are ignored by Git.
+`runtimes/` contains prepared runtimes, `tar/` contains Windows runtime archives,
+`speech-models/v1/` contains published model artifacts, and `browser-extension/`
+contains the assembled browser package and Native Messaging helper. Both
+`build/` and `cache/` are ignored by Git.
 
 Source layout and installed layout have explicit mappings. `icons/tray/` is
 packaged into the installation resource directory as `tray/`; the native

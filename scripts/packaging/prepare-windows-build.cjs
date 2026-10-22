@@ -76,7 +76,7 @@ async function prepareResource(task) {
   if (task === 'python') {
     const { ensurePortablePythonRuntime, checkRuntimeHealth } = require('../runtime/setup-python-runtime.js');
     await ensurePortablePythonRuntime({ required: true });
-    const health = checkRuntimeHealth(path.join(PROJECT_ROOT, 'resources/python-win'), { requirePip: true });
+    const health = checkRuntimeHealth(path.join(PROJECT_ROOT, 'build/runtimes/python-win'), { requirePip: true });
     if (!health.ok) throw new Error(`Portable Python runtime health check failed: ${health.missing.join(', ')}`);
   } else if (task === 'git') {
     await require('../runtime/setup-mingit.js').ensurePortableGit({ required: true });
