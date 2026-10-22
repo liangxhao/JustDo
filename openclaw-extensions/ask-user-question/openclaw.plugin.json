@@ -18,7 +18,7 @@
         "minimum": 1,
         "maximum": 1440,
         "default": 10,
-        "description": "Wait time for questions with timeoutEnabled"
+        "description": "Default question wait time in minutes; timeout is enabled unless timeoutEnabled is explicitly false."
       }
     }
   }

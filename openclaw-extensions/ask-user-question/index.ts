@@ -214,8 +214,8 @@ export const buildWaitPolicy = (
   questions: Question[],
   timeoutMinutes = ASK_USER_TIMEOUT_MINUTES,
 ): WaitPolicy | null => {
-  if (timeoutEnabled === undefined || timeoutEnabled === false) return { mode: 'required' };
-  if (timeoutEnabled !== true) return null;
+  if (timeoutEnabled === false) return { mode: 'required' };
+  if (timeoutEnabled !== undefined && timeoutEnabled !== true) return null;
   return {
     mode: 'timeout',
     timeoutMinutes,
@@ -491,8 +491,9 @@ export const AskUserQuestionSchema = Type.Object(
     }),
     timeoutEnabled: Type.Optional(
       Type.Boolean({
+        default: true,
         description:
-          'Enable the configured timeout only when the model can safely decide after no answer. Defaults are applied only when every question defines defaultOptionIds.',
+          'Defaults to true: wait for the configured timeout (10 minutes by default), then continue with defaults or best judgment. Set false only when an explicit user answer is essential and the task cannot safely proceed without it. Defaults are applied only when every question defines defaultOptionIds.',
       }),
     ),
   },
@@ -506,7 +507,8 @@ export const ASK_USER_QUESTION_DESCRIPTION = [
   'Put every selectable choice in options, never only in question prose. Put the recommended option first and suffix its label with (Recommended).',
   'Use multiSelect only when several choices may be selected.',
   'When a selected option requires details, define its input instead of asking in a later message. Free-text Other is enabled by default.',
-  'Omit timeoutEnabled when an explicit user answer is essential. Enable it only when no answer can safely fall back to defaults or your best judgment.',
+  'The configured timeout is enabled by default (10 minutes unless configured otherwise). Set timeoutEnabled to false only when an explicit user answer is essential and you cannot safely proceed without it.',
+  'After a timeout, continue with configured defaults or your best judgment; do not keep waiting for the expired question. A question timeout alone is not a reason to pause or block an active goal.',
 ].join(' ');
 
 const plugin = {

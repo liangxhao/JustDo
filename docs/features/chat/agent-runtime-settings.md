@@ -9,7 +9,7 @@
 | 主 Agent thinking                  | null    | 保留继承/未指定语义                       |
 | 主 Agent run timeout               | 0       | 未设置正向运行时限，不是立刻超时          |
 | 主 Agent 并发                      | null    | 不强制产品覆盖                            |
-| AskUserQuestion                    | 10 分钟 | 结构化问答等待                            |
+| AskUserQuestion                    | 10 分钟 | 默认启用超时；必须回答时显式关闭          |
 | automation approval                | 2 分钟  | 允许 2/5/10 三档                          |
 | MCP request timeout                | 60 秒   | 用户 server 的默认请求等待                |
 | session visibility                 | tree    | 原生跨会话可见范围                        |
@@ -60,6 +60,23 @@ flowchart LR
 原生负责子任务 admission、队列、运行开始与 timeout。JustDo 不维护另一套 pending FIFO，也不通过循环调用 subagents list 消耗模型工具回合。子任务查询使用原生 sessions.list/describe 投影及 sessions.changed 事件，不再使用已移除的 tasks 账本。
 
 排队等待与真正 running 的计时不同；queued 没有 startedAt 时不显示虚构运行时长。限制达到应呈现原生拒绝/排队状态，而不是 UI 暗中放宽容量。
+
+### AskUserQuestion 的等待策略
+
+结构化问答默认启用超时。工具调用省略 `timeoutEnabled` 或传入 `true` 时，按
+`timeoutMinutes` 等待，默认 10 分钟。只有确实必须获得用户明确回答、缺少回答无法
+安全推进时，才显式传入 `timeoutEnabled: false`，使用 `required` 持续等待回答或
+明确取消。普通聊天和 Goal 模式遵循同一规则；超时模式显示倒计时，明确关闭后显示必须等待回答。
+
+所有问题都定义有效 `defaultOptionIds` 时，超时自动使用这些默认项，工具结果先说明用户没有响应、
+默认项由系统自动选择，再列出问题和选择；否则返回
+`No answer arrived before the timeout; proceed with best judgment.`。
+这是当前工具调用的结果，不是新用户消息或另一轮发送。
+
+超时会清除插件的待回答请求并发布 resolved 事件，Main 据此关闭问答界面。
+原生执行继续消费工具结果；Goal 后继轮仍必须等待当前运行的精确整轮结算，
+工具说明要求超时后继续推进，不再等待已过期问题，也不能仅以问答超时为由暂停或阻塞目标。
+不能把问答超时当成运行超时或已经完成。完整续跑条件见[Goal 模式](goal-mode.md)。
 
 ## 5. 权限不要与调优混淆
 

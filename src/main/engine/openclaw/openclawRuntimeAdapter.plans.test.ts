@@ -198,7 +198,7 @@ const seedPresentedPlan = (
   internals.pendingPlanModeRequests.set(request.requestId, request);
 };
 
-test('forwards AskUserQuestion extension events through the renderer interaction channel', () => {
+test.each(['answered', 'cancelled', 'timeout'])('forwards AskUserQuestion events and dismisses the question after %s', status => {
   sendToRenderer.mockClear();
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
@@ -220,7 +220,7 @@ test('forwards AskUserQuestion extension events through the renderer interaction
 
   adapter.handleGatewayEvent({
     event: AskUserQuestionGateway.RESOLVED_EVENT,
-    payload: { requestId: request.requestId, status: 'cancelled' },
+    payload: { requestId: request.requestId, status },
   });
   expect(sendToRenderer).toHaveBeenCalledWith(CoworkInteractionIpc.Dismiss, {
     requestId: request.requestId,

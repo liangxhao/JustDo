@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  AskUserQuestionManager,
+  buildWaitPolicy,
+} from '../../../../openclaw-extensions/ask-user-question/index';
+import {
   GoalExecutionPhase,
   type SessionGoal,
   SessionGoalStatus,
@@ -123,6 +127,99 @@ const createHarness = (
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+it.each([false, true])(
+  'continues an active Goal after AskUserQuestion times out by default (defaults: %s)',
+  async withDefaults => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    const manager = new AskUserQuestionManager({
+      debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
+    });
+    manager.setGatewayEventEmitter(vi.fn());
+    const questions = [{
+      id: 'report_format',
+      question: 'Which report format should I use?',
+      options: [{ id: 'markdown', label: 'Markdown' }, { id: 'html', label: 'HTML' }],
+      ...(withDefaults ? { defaultOptionIds: ['markdown'] } : {}),
+    }];
+    try {
+      await harness.coordinator.handleLifecycle({
+        runId: 'parent-run', sessionKey, sessionId: nativeIdentity.sessionId, phase: 'start',
+      });
+      const waitPolicy = buildWaitPolicy(undefined, questions)!;
+      expect(waitPolicy).toMatchObject({ mode: 'timeout', timeoutMinutes: 10 });
+      const response = manager.request(questions, waitPolicy, sessionKey);
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      const result = await response;
+      expect(result).toMatchObject(
+        withDefaults ? { status: 'answered', timedOut: true } : { status: 'timeout' },
+      );
+      expect(manager.list()).toEqual([]);
+
+      harness.coordinator.handleToolEvent({
+        runId: 'parent-run', sessionKey, sessionId: nativeIdentity.sessionId,
+        name: 'AskUserQuestion', toolCallId: 'call-question', status: 'completed',
+        output: result, failed: false,
+      });
+      expect(harness.coordinator.getSnapshot(sessionId)?.phase).toBe(GoalExecutionPhase.Running);
+      expect(harness.request).not.toHaveBeenCalled();
+
+      await harness.coordinator.handleLifecycle({
+        runId: 'parent-run', sessionKey, sessionId: nativeIdentity.sessionId, phase: 'end',
+      });
+      expect(harness.request).not.toHaveBeenCalled();
+
+      await harness.coordinator.handleLifecycle({
+        runId: 'parent-run', sessionKey, sessionId: nativeIdentity.sessionId,
+        phase: 'end', executionSettled: true,
+      });
+      expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1);
+      expect(harness.request).toHaveBeenCalledWith('agent', expect.objectContaining({
+        goalContinuation: expect.objectContaining({ predecessorRunId: 'parent-run', automatic: true }),
+      }));
+      expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+        phase: GoalExecutionPhase.Running, continuationCount: 1,
+      });
+    } finally {
+      manager.cancelAll();
+      harness.coordinator.clear();
+    }
+  },
+);
+
+it('keeps an essential Goal question waiting when timeoutEnabled is explicitly false', async () => {
+  vi.useFakeTimers();
+  const harness = createHarness();
+  const manager = new AskUserQuestionManager({
+    debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
+  });
+  manager.setGatewayEventEmitter(vi.fn());
+  const questions = [{
+    id: 'destination', question: 'Which required destination should I use?',
+    options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }],
+  }];
+  let response: ReturnType<typeof manager.request> | undefined;
+  try {
+    await harness.coordinator.handleLifecycle({
+      runId: 'parent-run', sessionKey, sessionId: nativeIdentity.sessionId, phase: 'start',
+    });
+    response = manager.request(questions, buildWaitPolicy(false, questions)!, sessionKey);
+    const completed = vi.fn();
+    void response.then(completed);
+
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+    expect(completed).not.toHaveBeenCalled();
+    expect(manager.list()).toHaveLength(1);
+    expect(harness.coordinator.getSnapshot(sessionId)?.phase).toBe(GoalExecutionPhase.Running);
+    expect(harness.request).not.toHaveBeenCalled();
+  } finally {
+    manager.cancelAll();
+    await response;
+    harness.coordinator.clear();
+  }
 });
 
 describe('Goal continuation ownership and native waiting', () => {
