@@ -2408,8 +2408,7 @@ export const chatStyles = [
       color: var(--justdo-chat-text-secondary, #6b7280);
       margin-top: 2px;
       border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.04));
-      max-height: 18em;
-      overflow-y: auto;
+      overflow-x: auto;
     }
 
     .chat-thinking__content p,
@@ -2899,8 +2898,6 @@ export const chatStyles = [
       color: var(--justdo-chat-text-secondary, #64748b);
       font-size: 13px;
       line-height: 1.65;
-      max-height: 18em;
-      overflow-y: auto;
     }
     .process-summary__thinking > :first-child {
       margin-top: 0;

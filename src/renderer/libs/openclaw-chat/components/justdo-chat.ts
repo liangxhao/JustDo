@@ -176,7 +176,6 @@ function latestPersistedUserEntryId(messages: readonly GatewayMessage[]): string
 
 @customElement('justdo-chat')
 export class JustDoChatElement extends LitElement {
-  private readonly streamingThinkingScrollHeights = new WeakMap<HTMLElement, number>();
   private readonly codeCopyFeedbackTimers = new WeakMap<HTMLButtonElement, number>();
 
   // ─── Properties ─────────────────────────────────────────────────────────
@@ -1077,7 +1076,6 @@ export class JustDoChatElement extends LitElement {
     this.richMessageControls.sync();
     this.chatScrollController.afterRender(transcriptRevision);
     this.syncScrollIndicator();
-    this.scrollStreamingThinkingToBottom();
     this.scheduleEditDiffMonacoSync();
     if (changedProperties?.has('searchQuery') || changedProperties?.has('searchCaseSensitive')) {
       this.activeSearchIndex = -1;
@@ -1128,24 +1126,6 @@ export class JustDoChatElement extends LitElement {
     if (!indicator) return;
     indicator.hidden =
       this.chatScrollController.state.mode !== 'paused' || !this.chatScrollController.canScrollDown;
-  }
-
-  private scrollStreamingThinkingToBottom(): void {
-    const contents = this.renderRoot.querySelectorAll<HTMLElement>(
-      '.chat-thinking--streaming .chat-thinking__content',
-    );
-    for (const content of contents) {
-      const previousScrollHeight = this.streamingThinkingScrollHeights.get(content);
-      if (previousScrollHeight !== content.scrollHeight) {
-        if (
-          previousScrollHeight === undefined ||
-          previousScrollHeight - content.scrollTop - content.clientHeight <= 1
-        ) {
-          content.scrollTop = content.scrollHeight;
-        }
-        this.streamingThinkingScrollHeights.set(content, content.scrollHeight);
-      }
-    }
   }
 
   private syncActiveTurnClock(): void {
