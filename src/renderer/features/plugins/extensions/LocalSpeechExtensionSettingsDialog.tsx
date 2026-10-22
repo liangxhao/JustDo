@@ -6,8 +6,8 @@ import { LOCAL_TTS_MODEL_IDS, type LocalTtsModelId } from '@shared/speech/localT
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import LocalSpeechModelStatusView from '@/features/speech/models/LocalSpeechModelStatusView';
-import { useLocalSpeechModels } from '@/features/speech/models/useLocalSpeechModels';
+import LocalSpeechModelStatusView from '@/features/speech/LocalSpeechModelStatusView';
+import { useLocalSpeechModels } from '@/features/speech/useLocalSpeechModels';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';

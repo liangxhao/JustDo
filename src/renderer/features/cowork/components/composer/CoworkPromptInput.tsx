@@ -1,3 +1,11 @@
+import {
+  appendMediaDirectiveLines,
+  extractBase64FromDataUrl,
+  isImageAttachment,
+} from './draft/composerMedia';
+import { selectComposerModel } from './selection/selectComposerModel';
+import { SlashCommandMenu } from './SlashCommandMenu';
+export { appendMediaDirectiveLines } from './draft/composerMedia';
 import { ChevronDownIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
 import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
@@ -29,20 +37,11 @@ import { useDispatch, useSelector } from 'react-redux';
 import BrowserAnnotationCard from '@/features/browser/annotation/BrowserAnnotationCard';
 import { BrowserRecordingDraftCard } from '@/features/browser/recording/BrowserRecordingDraftCard';
 import { recordingSubmissionIssue } from '@/features/browser/recording/browserRecordingSubmission';
-import { resolveAgentModelSelection } from '@/features/cowork/components/composer/agentModelSelection';
-import AttachmentCard from '@/features/cowork/components/composer/AttachmentCard';
+import AttachmentCard from '@/features/cowork/components/composer/attachments/AttachmentCard';
 import { rejectBlockedSlashCommand } from '@/features/cowork/components/composer/blockedSlashCommand';
-import { syncDefaultModelSelectionState } from '@/features/cowork/components/composer/defaultModelSelectionState';
-import FolderSelectorPopover from '@/features/cowork/components/composer/FolderSelectorPopover';
-import { LatestSerialTaskQueue } from '@/features/cowork/components/composer/latestSerialTaskQueue';
-import { LocalSpeechInputButton } from '@/features/cowork/components/composer/LocalSpeechInputButton';
-import {
-  applyModelSelectionUpdate,
-  DefaultModelApplyError,
-  resolvePersistedSessionModelRefAfterApplyError,
-} from '@/features/cowork/components/composer/modelSelectionUpdate';
-import PermissionModeSelector from '@/features/cowork/components/composer/PermissionModeSelector';
-import { RunControlButton } from '@/features/cowork/components/composer/RunControlButton';
+import { resolveAgentModelSelection } from '@/features/cowork/components/composer/selection/agentModelSelection';
+import FolderSelectorPopover from '@/features/cowork/components/composer/selection/FolderSelectorPopover';
+import PermissionModeSelector from '@/features/cowork/components/composer/selection/PermissionModeSelector';
 import {
   getHiddenCommandCount,
   getSlashCommandByName,
@@ -50,10 +49,11 @@ import {
   mergeAppSlashCommands,
   SLASH_COMMANDS,
   type SlashCommandCategory,
-  SlashCommandCategoryLabels,
   type SlashCommandDef,
 } from '@/features/cowork/components/composer/slashCommands';
-import { useSessionStop } from '@/features/cowork/components/composer/useSessionStop';
+import { LocalSpeechInputButton } from '@/features/cowork/components/composer/speech/LocalSpeechInputButton';
+import { RunControlButton } from '@/features/cowork/components/composer/submission/RunControlButton';
+import { useSessionStop } from '@/features/cowork/components/composer/submission/useSessionStop';
 import { runGoalActionSingleFlight } from '@/features/cowork/components/goals/goalActionSingleFlight';
 import {
   shouldDiscardGoalCompletionFeedback,
@@ -91,18 +91,12 @@ import {
   setDraftAgentTeamMode,
 } from '@/features/cowork/coworkSlice';
 import {
-  beginManualModelSelection,
   clearDraftAttachments,
   clearDraftBrowserAnnotations,
-  completeManualModelSelection,
-  confirmCurrentSessionModelSelection,
-  confirmDefaultModelSelection,
-  confirmManualModelSelection,
   type DraftAttachment,
   hydrateDraftImageAttachment,
   removeDraftBrowserAnnotation,
   removeDraftBrowserRecording,
-  rollbackManualModelSelection,
   setDraftPrompt,
 } from '@/features/cowork/coworkSlice';
 import { CoworkAttachmentPayload } from '@/features/cowork/coworkTypes';
@@ -135,21 +129,19 @@ import {
   submitAgentTeamMessage,
   teamSubmissionConflict,
 } from './agentTeamSubmission';
-import { isImagePath } from './composerAttachmentFiles';
-import { hasComposerContent } from './composerContent';
+import { isImagePath } from './attachments/composerAttachmentFiles';
+import { useComposerAttachments } from './attachments/useComposerAttachments';
 import ComposerFeatureMenu from './ComposerFeatureMenu';
 import { buildComposerFeatures } from './composerFeatures';
+import { hasComposerContent } from './draft/composerContent';
 import {
   COMPOSER_SURFACE_CLASS,
   COMPOSER_TEXTAREA_CLASS,
   COMPOSER_TEXTAREA_MAX_HEIGHT,
   COMPOSER_TEXTAREA_MIN_HEIGHT,
   resizeComposerTextarea,
-} from './composerStyles';
-import { ConversationAgentSelector } from './ConversationAgentSelector';
-import FeatureTextarea from './FeatureTextarea';
-import { createGoalReadRetry } from './goalReadRetry';
-import { readGoalState } from './goalReadState';
+} from './draft/composerStyles';
+import FeatureTextarea from './draft/FeatureTextarea';
 import {
   appendMessageQuotes,
   EMPTY_MESSAGE_QUOTES,
@@ -157,55 +149,27 @@ import {
   quotedGatewayPrompt,
   submitMessageQuoteDrafts,
   submittedMessageQuotes,
-} from './messageQuote';
+} from './draft/messageQuote';
+import { useComposerFeatureDraft } from './draft/useComposerFeatureDraft';
 import PlanModeBadge from './PlanModeBadge';
+import { ConversationAgentSelector } from './selection/ConversationAgentSelector';
 import { isComposerSendShortcut } from './sendShortcut';
-import { canClearSubmittedDraft } from './sessionSubmission';
+import { createGoalReadRetry } from './submission/goalReadRetry';
+import { readGoalState } from './submission/goalReadState';
+import { canClearSubmittedDraft } from './submission/sessionSubmission';
+import { useGoalReadiness } from './submission/useGoalReadiness';
 import { buildSwarmWorkflowComposerFeature } from './swarmWorkflowComposerFeature';
 import { blocksSwarmWorkflowGoalSubmission } from './swarmWorkflowSubmission';
-import { useComposerAttachments } from './useComposerAttachments';
-import { useComposerFeatureDraft } from './useComposerFeatureDraft';
-import { useGoalReadiness } from './useGoalReadiness';
 import { usePlanModeComposerFeature } from './usePlanModeComposerFeature';
 
 // CoworkAttachment is aliased from the Redux-persisted DraftAttachment type
 // so that attachment state survives view switches (cowork ↔ skills, etc.)
 type CoworkAttachment = DraftAttachment;
 
-const isImageAttachment = (attachment: DraftAttachment): boolean =>
-  attachment.isImage === true ||
-  isImagePath(attachment.path) ||
-  attachment.dataUrl?.startsWith('data:image/') === true;
-
-const extractBase64FromDataUrl = (
-  dataUrl: string,
-): { mimeType: string; base64Data: string } | null => {
-  const match = /^data:(.+);base64,(.*)$/.exec(dataUrl);
-  if (!match) return null;
-  return { mimeType: match[1], base64Data: match[2] };
-};
-
-const toMediaDirectivePath = (filePath: string): string => {
-  return filePath.replace(/[\r\n]+/g, ' ').trim();
-};
-
-export const appendMediaDirectiveLines = (prompt: string, filePaths: string[]): string => {
-  const mediaLines = filePaths
-    .map(toMediaDirectivePath)
-    .filter(Boolean)
-    .map(filePath => `MEDIA:${filePath}`);
-  if (mediaLines.length === 0) return prompt;
-  return prompt ? `${prompt}\n\n${mediaLines.join('\n')}` : mediaLines.join('\n');
-};
-
 const SEND_SHORTCUT_OPTIONS = [
   { value: 'Enter', label: 'Enter', labelMac: 'Enter' },
   { value: 'Ctrl+Enter', label: 'Ctrl+Enter', labelMac: 'Cmd+Enter' },
 ] as const;
-
-// Model changes must remain ordered even when navigation unmounts and recreates
-// CoworkPromptInput while an earlier request is still in flight.
-const modelSelectionTaskQueue = new LatestSerialTaskQueue();
 
 const isMacPlatform = navigator.platform.includes('Mac');
 
@@ -2763,105 +2727,22 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           </div>
         )}
         {supportsSlashCommands && slashMenuVisible && (
-          <div
-            ref={slashMenuRef}
-            className="absolute bottom-full left-0 right-0 z-40 mb-2 max-h-80 overflow-y-auto rounded-lg border border-border bg-surface p-1.5 shadow-elevated"
-            role="listbox"
-            aria-label="Slash commands"
-          >
-            {slashMenuMode === 'args' && slashMenuCommand ? (
-              <div>
-                <div className="px-2.5 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wide text-primary/75">
-                  /{slashMenuCommand.name} {slashMenuCommand.description}
-                </div>
-                {slashMenuArgItems.map((arg, index) => (
-                  <button
-                    key={arg}
-                    type="button"
-                    onClick={() => handleSlashArgSelect(arg, false)}
-                    onMouseEnter={() => setSlashMenuIndex(index)}
-                    className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors ${
-                      index === slashMenuIndex ? 'bg-primary-muted' : 'hover:bg-surface-raised'
-                    }`}
-                    role="option"
-                    aria-selected={index === slashMenuIndex}
-                  >
-                    <span className="font-mono text-sm font-semibold text-primary">{arg}</span>
-                    <span className="min-w-0 flex-1 truncate text-right text-xs text-secondary">
-                      /{slashMenuCommand.name} {arg}
-                    </span>
-                  </button>
-                ))}
-                <div className="mt-1 border-t border-border px-2.5 py-1.5 text-[11px] text-secondary">
-                  ↑↓ navigate · Tab fill · Enter run · Esc close
-                </div>
-              </div>
-            ) : (
-              <>
-                {groupedSlashItems.map(([category, entries]) => (
-                  <div
-                    key={category}
-                    className="border-border pt-1 first:pt-0 [&:not(:first-child)]:mt-1 [&:not(:first-child)]:border-t"
-                  >
-                    <div className="px-2.5 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wide text-primary/75">
-                      {SlashCommandCategoryLabels[category]}
-                    </div>
-                    {entries.map(({ command, index }) => (
-                      <button
-                        key={command.key}
-                        type="button"
-                        onClick={() => handleSlashCommandSelect(command, true)}
-                        onMouseEnter={() => setSlashMenuIndex(index)}
-                        className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors ${
-                          index === slashMenuIndex ? 'bg-primary-muted' : 'hover:bg-surface-raised'
-                        }`}
-                        role="option"
-                        aria-selected={index === slashMenuIndex}
-                      >
-                        <span className="font-mono text-sm font-semibold text-primary">
-                          /{command.name}
-                        </span>
-                        {command.args && (
-                          <span className="font-mono text-xs text-secondary/70">
-                            {command.args}
-                          </span>
-                        )}
-                        <span className="min-w-0 flex-1 truncate text-right text-xs text-secondary">
-                          {command.description}
-                        </span>
-                        {command.argOptions?.length ? (
-                          <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold text-primary">
-                            {command.argOptions.length} options
-                          </span>
-                        ) : command.executeLocal && !command.args ? (
-                          <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold text-primary">
-                            instant
-                          </span>
-                        ) : null}
-                      </button>
-                    ))}
-                  </div>
-                ))}
-                {hiddenCommandCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={event => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setSlashMenuExpanded(true);
-                      updateSlashMenu(value, { keepExpanded: true });
-                    }}
-                    className="mt-1 w-full border-t border-border px-2.5 py-2 text-center text-xs font-semibold text-primary hover:bg-primary/10"
-                  >
-                    Show {hiddenCommandCount} more command{hiddenCommandCount !== 1 ? 's' : ''}
-                  </button>
-                )}
-                <div className="mt-1 border-t border-border px-2.5 py-1.5 text-[11px] text-secondary">
-                  ↑↓ navigate · Tab fill · Enter select · Esc close
-                </div>
-              </>
-            )}
-          </div>
+          <SlashCommandMenu
+            menuRef={slashMenuRef}
+            mode={slashMenuMode}
+            command={slashMenuCommand}
+            argItems={slashMenuArgItems}
+            selectedIndex={slashMenuIndex}
+            groupedItems={groupedSlashItems}
+            hiddenCommandCount={hiddenCommandCount}
+            onSelectArgument={handleSlashArgSelect}
+            onSelectCommand={handleSlashCommandSelect}
+            onHighlight={setSlashMenuIndex}
+            onExpand={() => {
+              setSlashMenuExpanded(true);
+              updateSlashMenu(value, { keepExpanded: true });
+            }}
+          />
         )}
         <div
           className={
@@ -3065,180 +2946,17 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                             }
                             models={selectableModels}
                             disabled={disabled}
-                            onChange={async nextModel => {
-                              if (!nextModel) return;
-                              const selectionContextKey = modelSelectionContextKey;
-                              const { taskId, completion } = modelSelectionTaskQueue.enqueueLatest(
-                                selectionContextKey,
-                                async () => {
-                                  try {
-                                    const result = await applyModelSelectionUpdate(
-                                      {
-                                        sessionId,
-                                        agentId: effectiveAgentId,
-                                        model: nextModel,
-                                        shouldSaveDefault: () =>
-                                          modelSelectionTaskQueue.isLatestInScope(
-                                            effectiveAgentId,
-                                            taskId,
-                                          ),
-                                        onDefaultModelUpdated: () => {
-                                          syncDefaultModelSelectionState(
-                                            dispatch,
-                                            effectiveAgentId,
-                                            nextModel,
-                                          );
-                                          if (sessionId) {
-                                            dispatch(
-                                              confirmDefaultModelSelection({
-                                                contextKey: `__home__\0${effectiveAgentId}`,
-                                                model: nextModel,
-                                              }),
-                                            );
-                                            dispatch(
-                                              completeManualModelSelection({
-                                                contextKey: `__home__\0${effectiveAgentId}`,
-                                                taskId,
-                                              }),
-                                            );
-                                          }
-                                        },
-                                        onBackgroundDefaultStart: () => {
-                                          dispatch(
-                                            beginManualModelSelection({
-                                              contextKey: `__home__\0${effectiveAgentId}`,
-                                              taskId,
-                                              model: nextModel,
-                                              previousModel: agentSelectedModel,
-                                            }),
-                                          );
-                                        },
-                                        onBackgroundDefaultError: error => {
-                                          // The native session is already pinned. A late
-                                          // default-save failure must never undo its model.
-                                          dispatch(
-                                            rollbackManualModelSelection({
-                                              contextKey: `__home__\0${effectiveAgentId}`,
-                                              taskId,
-                                            }),
-                                          );
-                                          window.dispatchEvent(
-                                            new CustomEvent('app:showToast', {
-                                              detail: i18nService
-                                                .t('coworkDefaultModelApplyFailedSessionUpdated')
-                                                .replace('{error}', error.message),
-                                            }),
-                                          );
-                                        },
-                                      },
-                                      coworkService,
-                                    );
-                                    if (result.defaultSaveSkipped) return;
-                                    if (!sessionId || !result.sessionModelRef) {
-                                      dispatch(
-                                        confirmManualModelSelection({
-                                          contextKey: selectionContextKey,
-                                          taskId,
-                                          model: nextModel,
-                                        }),
-                                      );
-                                      return;
-                                    }
-                                    const confirmed =
-                                      resolveOpenClawModelRef(
-                                        result.sessionModelRef,
-                                        availableModels,
-                                      ) ?? nextModel;
-                                    dispatch(
-                                      confirmManualModelSelection({
-                                        contextKey: selectionContextKey,
-                                        taskId,
-                                        model: confirmed,
-                                      }),
-                                    );
-                                    dispatch(
-                                      confirmCurrentSessionModelSelection({
-                                        sessionId,
-                                        modelRef: result.sessionModelRef,
-                                      }),
-                                    );
-                                  } catch (error) {
-                                    const persistedModelRef =
-                                      resolvePersistedSessionModelRefAfterApplyError(
-                                        error,
-                                        nextModel,
-                                      );
-                                    if (persistedModelRef && sessionId) {
-                                      const persistedModel =
-                                        resolveOpenClawModelRef(
-                                          persistedModelRef,
-                                          availableModels,
-                                        ) ?? nextModel;
-                                      dispatch(
-                                        confirmManualModelSelection({
-                                          contextKey: selectionContextKey,
-                                          taskId,
-                                          model: persistedModel,
-                                        }),
-                                      );
-                                      dispatch(
-                                        confirmCurrentSessionModelSelection({
-                                          sessionId,
-                                          modelRef: persistedModelRef,
-                                        }),
-                                      );
-                                    }
-                                    throw error;
-                                  }
-                                },
+                            onChange={nextModel =>
+                              selectComposerModel(nextModel, {
+                                dispatch,
+                                modelSelectionContextKey,
+                                sessionId,
                                 effectiveAgentId,
-                              );
-                              dispatch(
-                                beginManualModelSelection({
-                                  contextKey: selectionContextKey,
-                                  taskId,
-                                  model: nextModel,
-                                  previousModel: effectiveSelectedModel,
-                                }),
-                              );
-                              try {
-                                await completion;
-                                dispatch(
-                                  completeManualModelSelection({
-                                    contextKey: selectionContextKey,
-                                    taskId,
-                                  }),
-                                );
-                              } catch (error) {
-                                const isLatestSelection =
-                                  store.getState().cowork.pendingModelSelectionTaskIds[
-                                    selectionContextKey
-                                  ] === taskId;
-                                dispatch(
-                                  rollbackManualModelSelection({
-                                    contextKey: selectionContextKey,
-                                    taskId,
-                                  }),
-                                );
-                                if (!isLatestSelection) return;
-                                const errorMessage =
-                                  error instanceof Error ? error.message : String(error);
-                                const userMessage = i18nService
-                                  .t(
-                                    error instanceof DefaultModelApplyError
-                                      ? 'coworkDefaultModelApplyFailedSessionUpdated'
-                                      : 'coworkModelApplyFailed',
-                                  )
-                                  .replace('{error}', errorMessage);
-                                window.dispatchEvent(
-                                  new CustomEvent('app:showToast', { detail: userMessage }),
-                                );
-                                console.warn('[CoworkPromptInput] Failed to update session model', {
-                                  sessionId,
-                                  error,
-                                });
-                              }
-                            }}
+                                agentSelectedModel,
+                                effectiveSelectedModel,
+                                availableModels,
+                              })
+                            }
                           />
                         )}
                       </div>

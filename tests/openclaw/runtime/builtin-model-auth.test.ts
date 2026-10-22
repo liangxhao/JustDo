@@ -9,8 +9,8 @@ import ts from 'typescript';
 import { expect, test } from 'vitest';
 
 import { MODEL_AUTH_SESSION_ENV } from '../../../plugins/extensions/runtime-services/contracts/model-auth';
-import { sealBuiltinCredential, syncBuiltinCredentialFile } from '../../../src/main/openclaw/config/builtinCredentialFile';
-import { buildWindowsChildProcessPreload } from '../../../src/main/openclaw/runtime/electronNodeRuntime';
+import { sealBuiltinCredential, syncBuiltinCredentialFile } from '../../../src/main/openclaw/config/models/builtinCredentialFile';
+import { buildWindowsChildProcessPreload } from '../../../src/main/openclaw/runtime/launch/electronNodeRuntime';
 
 const runtime = path.resolve('vendor/openclaw-runtime/current');
 const sdk = path.join(runtime, 'dist/plugin-sdk');

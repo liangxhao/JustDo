@@ -21,8 +21,8 @@ import type {
 } from '@/features/cowork/coworkTypes';
 import type { Model } from '@/features/models/modelSlice';
 
-import type { MessageQuote } from './components/composer/messageQuote';
-import { MESSAGE_QUOTE_KIND, validCollaborationQuote } from './components/composer/messageQuote';
+import type { MessageQuote } from './components/composer/draft/messageQuote';
+import { MESSAGE_QUOTE_KIND, validCollaborationQuote } from './components/composer/draft/messageQuote';
 
 export interface DraftAttachment {
   path: string;

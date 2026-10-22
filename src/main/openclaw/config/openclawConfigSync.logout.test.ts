@@ -14,6 +14,7 @@ import {
   setActiveBuiltinModelCredential,
 } from '../../providers/builtinModelCredential';
 import { setStoreGetter } from '../../providers/providerApiConfig';
+import * as providerSecretFile from './models/providerSecretFile';
 import {
   listAvailableOpenClawExtensionIds,
   listManagedOpenClawPluginIds,
@@ -21,7 +22,6 @@ import {
   type OpenClawConfigSyncResult,
   verifyLoggedOutOpenClawConfig,
 } from './openclawConfigSync';
-import * as providerSecretFile from './providerSecretFile';
 
 vi.mock('electron', () => ({
   app: {

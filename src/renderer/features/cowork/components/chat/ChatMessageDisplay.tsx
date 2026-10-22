@@ -8,7 +8,7 @@ import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controlle
 import type { AssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
 import type { GatewayMessage, UserMessageHistoryAction } from '@/libs/openclaw-chat/types';
 
-import type { MessageQuoteHandler } from '../composer/messageQuote';
+import type { MessageQuoteHandler } from '../composer/draft/messageQuote';
 
 interface ChatMessageDisplayProps {
   className?: string;

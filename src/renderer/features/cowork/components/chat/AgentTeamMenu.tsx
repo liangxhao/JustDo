@@ -5,8 +5,8 @@ import { createPortal } from 'react-dom';
 import { i18nService } from '@/services/i18n';
 import { isDomNode, useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
-import type { AgentTeamEntry } from '../display/agentTeamEntries';
-import AgentTeamRecordSummary from '../display/AgentTeamRecordSummary';
+import type { AgentTeamEntry } from '../display/summary/agentTeamEntries';
+import AgentTeamRecordSummary from '../display/summary/AgentTeamRecordSummary';
 
 export default function AgentTeamMenu({
   entries,

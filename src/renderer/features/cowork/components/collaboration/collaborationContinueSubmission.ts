@@ -5,7 +5,7 @@ import { coworkService } from '@/features/cowork/coworkService';
 import type { CoworkAttachmentPayload } from '@/features/cowork/coworkTypes';
 import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 
-import { isImagePath } from '../composer/composerAttachmentFiles';
+import { isImagePath } from '../composer/attachments/composerAttachmentFiles';
 import type {
   CollaborationContinueRequest,
   CollaborationContinueStatus,

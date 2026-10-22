@@ -9,7 +9,7 @@ import type {
 } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { i18nService } from '@/services/i18n';
 
-import type { CoworkSideChatTab } from '../display/useSessionDisplayState';
+import type { CoworkSideChatTab } from '../display/tabs/useSessionDisplayState';
 
 const SIDE_CHAT_DISPLAY_TAB_PREFIX = 'side-chat:';
 

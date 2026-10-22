@@ -859,14 +859,16 @@ module.exports = { applyPatch, verifyPatch };
     );
   });
 
-  test('rejects a build recipe changed after the runtime was built', () => {
+  test.each([
+    'scripts/openclaw/bundle-openclaw-gateway.cjs',
+    'src/main/openclaw/config/models/providerProjection.ts',
+  ])('rejects a build recipe source changed after the runtime was built: %s', source => {
     const { repoRoot, runtimeRoot } = createFixture();
     writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
 
-    fs.appendFileSync(
-      path.join(repoRoot, 'scripts', 'openclaw', 'bundle-openclaw-gateway.cjs'),
-      '// changed\n',
-    );
+    const sourceFile = path.join(repoRoot, source);
+    expect(listBuildRecipeFiles(repoRoot)).toContain(sourceFile);
+    fs.appendFileSync(sourceFile, '// changed\n');
 
     expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(
       /source proof is missing, incomplete, or stale/,

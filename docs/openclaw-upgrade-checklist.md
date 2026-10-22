@@ -211,7 +211,7 @@
 - [ ] 首次有意义内容只自动展开一次，不抢焦点或切换 Tab；手动关闭后轮询、新条目和
       切回会话不重新打开。主题、窄屏、键盘及独立窗口保持可用。
 
-入口：Cowork `components/display/SessionSummaryPanel`、资源列表/打开逻辑，
+入口：Cowork `components/display/summary/SessionSummaryPanel`、资源列表/打开逻辑，
 聊天 `chat-summary-resources`、`session-summary-resources`、`process-summary-takeover`
 及对应测试；数据边界见[聊天渲染](architecture/15-chat-rendering.md)。
 

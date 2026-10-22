@@ -5,7 +5,7 @@ import { createRoot } from 'react-dom/client';
 
 import { renderCoworkHomeWorkspace } from '@/features/cowork/components/chat/CoworkHomeWorkspace';
 import CoworkDisplayPanel from '@/features/cowork/components/display/CoworkDisplayPanel';
-import { useMcpAppTabs } from '@/features/cowork/components/display/useMcpAppTabs';
+import { useMcpAppTabs } from '@/features/cowork/components/display/tabs/useMcpAppTabs';
 import { useHomeFileApps } from '@/features/cowork/components/mcpApps/useHomeFileApps';
 import type { CoworkConfig } from '@/features/cowork/coworkTypes';
 import type { McpAppView } from '@/libs/openclaw-chat/components/mcp-app/view';

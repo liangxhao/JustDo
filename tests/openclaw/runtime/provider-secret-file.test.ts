@@ -6,12 +6,11 @@ import { pathToFileURL } from 'node:url';
 
 import { expect, test, vi } from 'vitest';
 vi.mock('electron', () => ({ app: { getName: () => 'JustDo', getPath: () => '', isPackaged: false } }));
-import { buildWindowsChildProcessPreload } from '../../../src/main/openclaw/runtime/electronNodeRuntime';
-
 import {
   managedProviderSecretRef,
   syncProviderSecretFile,
-} from '../../../src/main/openclaw/config/providerSecretFile';
+} from '../../../src/main/openclaw/config/models/providerSecretFile';
+import { buildWindowsChildProcessPreload } from '../../../src/main/openclaw/runtime/launch/electronNodeRuntime';
 
 const dist = path.resolve('vendor/openclaw-runtime/current/dist');
 

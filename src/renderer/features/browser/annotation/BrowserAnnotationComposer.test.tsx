@@ -7,7 +7,7 @@ import { i18nService } from '@/services/i18n';
 
 import BrowserAnnotationComposer from './BrowserAnnotationComposer';
 
-vi.mock('@/features/cowork/components/composer/LocalSpeechInputButton', () => ({
+vi.mock('@/features/cowork/components/composer/speech/LocalSpeechInputButton', () => ({
   LocalSpeechInputButton: ({ onTranscript }: { onTranscript: (text: string) => void }) => (
     <button type="button" aria-label="mock voice" onClick={() => onTranscript('voice comment')}>
       voice

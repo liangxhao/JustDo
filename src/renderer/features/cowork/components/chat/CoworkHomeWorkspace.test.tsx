@@ -8,7 +8,7 @@ import type { CoworkPromptInputRef } from '@/features/cowork/components/composer
 import type { FilePreviewDrawerHandle } from '@/features/cowork/components/preview/FilePreviewDrawer';
 import { i18nService } from '@/services/i18n';
 
-import { fileDisplayTabId } from '../display/displayTabIds';
+import { fileDisplayTabId } from '../display/tabs/displayTabIds';
 import { renderCoworkHomeWorkspace } from './CoworkHomeWorkspace';
 
 vi.mock('@/features/cowork/components/composer/CoworkPromptInput', () => ({

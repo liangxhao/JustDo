@@ -11,7 +11,7 @@ import WindowHeader from '@/app/shell/window/WindowHeader';
 import { WorkspaceNotifications } from '@/app/shell/WorkspaceNotifications';
 import { MessageBrowserEvent } from '@/features/browser/messageBrowserLinks';
 import CoworkDisplayPanel from '@/features/cowork/components/display/CoworkDisplayPanel';
-import DisplayTabContextMenu from '@/features/cowork/components/display/DisplayTabContextMenu';
+import DisplayTabContextMenu from '@/features/cowork/components/display/tabs/DisplayTabContextMenu';
 import { useDraggableModal } from '@/features/cowork/components/shared/useDraggableModal';
 import { CoworkPet } from '@/features/cowork/components/status/CoworkPet';
 import SwarmWorkflowPanel from '@/features/cowork/components/swarm-workflow/SwarmWorkflowPanel';

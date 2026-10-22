@@ -8,7 +8,7 @@ vi.mock('electron', () => ({ ipcMain: { handle: mocks.handle } }));
 vi.mock('../../plugins/extensions/openclawLocalExtensions', () => ({
   hasBundledOpenClawExtension: () => true,
 }));
-vi.mock('../../openclaw/config/computerControlNativePolicy', () => ({
+vi.mock('../../openclaw/config/policies/computerControlNativePolicy', () => ({
   evaluateComputerControlNativePolicy: mocks.policy,
 }));
 afterEach(() => vi.clearAllMocks());

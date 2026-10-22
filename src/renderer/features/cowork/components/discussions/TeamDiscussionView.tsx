@@ -43,10 +43,10 @@ import {
   COMPOSER_FRAME_CLASS,
   COMPOSER_SURFACE_CLASS,
   COMPOSER_TEXTAREA_CLASS,
-} from '../composer/composerStyles';
-import { LocalSpeechInputButton } from '../composer/LocalSpeechInputButton';
-import type { DiscussionQuote } from '../composer/messageQuote';
-import { RunControlButton } from '../composer/RunControlButton';
+} from '../composer/draft/composerStyles';
+import type { DiscussionQuote } from '../composer/draft/messageQuote';
+import { LocalSpeechInputButton } from '../composer/speech/LocalSpeechInputButton';
+import { RunControlButton } from '../composer/submission/RunControlButton';
 import { COLLABORATION_PALETTE } from '../shared/collaborationPalette';
 import DiscussionActionsMenu from './DiscussionActionsMenu';
 import { discussionQuestionAgents, discussionRunningAgents } from './discussionActivity';

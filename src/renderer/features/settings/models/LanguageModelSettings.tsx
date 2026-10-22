@@ -28,9 +28,9 @@ import {
 import { hasConfirmedModelCapabilities } from '@/features/settings/models/modelCapabilityState';
 import { getModelActionAvailability } from '@/features/settings/models/modelSettingsAvailability';
 import { i18nService } from '@/services/i18n';
+import CustomProviderIcon from '@/shared/components/icons/CustomProviderIcon';
 import PencilIcon from '@/shared/components/icons/PencilIcon';
 import PlusCircleIcon from '@/shared/components/icons/PlusCircleIcon';
-import { CustomProviderIcon } from '@/shared/components/icons/providers';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
 
 import ProviderRequestHeadersModal from './ProviderRequestHeadersModal';

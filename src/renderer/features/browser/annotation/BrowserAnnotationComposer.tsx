@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import BrowserElementInspectorCard from '@/features/browser/annotation/BrowserElementInspectorCard';
-import { LocalSpeechInputButton } from '@/features/cowork/components/composer/LocalSpeechInputButton';
+import { LocalSpeechInputButton } from '@/features/cowork/components/composer/speech/LocalSpeechInputButton';
 import { i18nService } from '@/services/i18n';
 import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 

@@ -9,7 +9,7 @@ import { McpWorkspaceSession } from '@/libs/openclaw-chat/gateway/mcp-app/mcp-wo
 import { decodeMcpAppLaunch } from '@/libs/openclaw-chat/pipeline/native-mcp-app';
 import { i18nService } from '@/services/i18n';
 
-import { HOME_DISPLAY_SESSION_KEY } from '../display/useSessionDisplayState';
+import { HOME_DISPLAY_SESSION_KEY } from '../display/tabs/useSessionDisplayState';
 import { findFileApp, type OpenMcpAppFile } from './fileApps';
 import { McpAppIcon } from './McpAppIcon';
 import type { McpAppComposerMenu } from './McpAppsControls';

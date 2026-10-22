@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { t } from '../../core/i18n';
-import { restrictCredentialFile } from '../../openclaw/config/providerSecretFile';
+import { restrictCredentialFile } from '../../openclaw/config/models/providerSecretFile';
 
 export const EXTENSION_SECRET_PROVIDER = 'justdo-extension-secrets';
 

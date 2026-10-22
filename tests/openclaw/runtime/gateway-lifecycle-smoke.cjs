@@ -9,7 +9,7 @@ const { spawn } = require('node:child_process');
 const { once } = require('node:events');
 const { randomBytes } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
-const { ensureGatewayShutdownPreload, OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE } = require('../../../dist-electron/src/main/openclaw/runtime/openclawLauncher.js');
+const { ensureGatewayShutdownPreload, OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE } = require('../../../dist-electron/src/main/openclaw/runtime/launch/openclawLauncher.js');
 const { buildOpenClawCompileCacheEnvironment, GATEWAY_READY_MESSAGE } = require('../../../src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs');
 
 (async () => {

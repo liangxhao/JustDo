@@ -30,17 +30,26 @@ import { applyDependencyManagerConfigEnv } from '../../core/runtime/dependencyMa
 import { applyPortableGitRuntimeEnv } from '../../core/runtime/portableGitRuntime';
 import { appendPythonRuntimeToEnv } from '../../core/runtime/pythonRuntime';
 import { syncLocalOpenClawExtensionsIntoRuntime } from '../../plugins/extensions';
+import { GatewayConfigReloadMonitor } from './gatewayConfigReloadMonitor';
 import {
   appendNodeRequireOption,
   ensureElectronNodeShim,
   getElectronNodeRuntimePath,
   resolveElectronNpmBinDir,
-} from './electronNodeRuntime';
-import { GatewayConfigReloadMonitor } from './gatewayConfigReloadMonitor';
-import { buildGatewayLaunchArgs, buildGatewayLaunchEnvironment } from './gatewayLaunchArgs';
-import { GatewayStdoutLogFilter } from './gatewayLogFilter';
-import { ensureGatewayStartupPriority } from './gatewayProcessPriority';
-import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './loopbackPort';
+} from './launch/electronNodeRuntime';
+import { buildGatewayLaunchArgs, buildGatewayLaunchEnvironment } from './launch/gatewayLaunchArgs';
+import { GatewayStdoutLogFilter } from './launch/gatewayLogFilter';
+import { ensureGatewayStartupPriority } from './launch/gatewayProcessPriority';
+import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './launch/loopbackPort';
+import {
+  ensureGatewayShutdownPreload,
+  OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE,
+  OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE,
+} from './launch/openclawLauncher';
+import {
+  loadPreparedWindowsRuntimePreload,
+  resolvePreparedWindowsGatewayLauncher,
+} from './launch/preparedGatewayRuntime';
 import {
   buildOpenClawCompileCacheEnvironment,
   buildOpenClawCompileCacheSetupSource,
@@ -48,15 +57,6 @@ import {
   GATEWAY_READY_MESSAGE,
   prepareWindowsRuntimeCleanup,
 } from './openclawGatewayBundleLauncher.cjs';
-import {
-  ensureGatewayShutdownPreload,
-  OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE,
-  OPENCLAW_LAUNCHER_KEEP_ALIVE_SOURCE,
-} from './openclawLauncher';
-import {
-  loadPreparedWindowsRuntimePreload,
-  resolvePreparedWindowsGatewayLauncher,
-} from './preparedGatewayRuntime';
 import { SessionStoreMigrationCoordinator } from './sessionStoreMigration';
 import {
   mergeRegisteredSystemPromptReplacementRules,

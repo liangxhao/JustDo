@@ -5,10 +5,10 @@ import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import { defaultLocalSpeechSettings } from '../../shared/speech/localSpeechSettings';
-import { buildManagedLocalTtsConfig } from '../openclaw/config/localTtsConfig';
+import { buildManagedLocalTtsConfig } from '../openclaw/config/speech/localTtsConfig';
 import { synthesizeLocalSpeech } from './localTtsService';
 
-vi.mock('../openclaw/config/localTtsConfig', () => ({ buildManagedLocalTtsConfig: vi.fn() }));
+vi.mock('../openclaw/config/speech/localTtsConfig', () => ({ buildManagedLocalTtsConfig: vi.fn() }));
 const settings = { ...defaultLocalSpeechSettings, outputEnabled: true };
 let fixture: string | undefined;
 afterEach(async () => {

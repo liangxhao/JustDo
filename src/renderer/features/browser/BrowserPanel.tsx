@@ -79,7 +79,6 @@ import BrowserTabContextMenu, {
 } from '@/features/browser/BrowserTabContextMenu';
 import BrowserClearDataModal from '@/features/browser/data/BrowserClearDataModal';
 import BrowserDataImportModal from '@/features/browser/data/BrowserDataImportModal';
-import { isLikelyPdfUrl } from '@/features/browser/pdf/browserPdf';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import Tooltip from '@/shared/components/ui/Tooltip';
@@ -153,6 +152,10 @@ const ANNOTATION_NOTICE_DURATION_MS = 3_500;
 const BROWSER_WEBVIEW_CAPABILITY_VERSION = 'isolated-session-v4-pdf';
 const getBrowserPanelMaxWidth = (availableWidth = window.innerWidth): number =>
   Math.max(BROWSER_PANEL_MIN_WIDTH, availableWidth - 32);
+
+// Fragments select a position within the document and are absent from HTTP responses.
+const matchesPdfResponseUrl = (responseUrl: string | undefined, documentUrl: string): boolean =>
+  !!responseUrl && responseUrl.split('#', 1)[0] === documentUrl.split('#', 1)[0];
 
 type BrowserLocalHtmlSource = {
   sourceFilePath: string;
@@ -511,9 +514,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   }, [retainsRecording]);
   const isRecording = !!recorder.session && recorder.session.status !== RecordingStatus.Review;
   const detectedPdfUrl =
-    activeTab && (activeTab.pdfUrl === activeTab.url || isLikelyPdfUrl(activeTab.url))
-      ? activeTab.url
-      : null;
+    activeTab && matchesPdfResponseUrl(activeTab.pdfUrl, activeTab.url) ? activeTab.url : null;
   const loading = activeTab ? loadingTargets.has(activeTab.targetId) : false;
   const visibleError = error ?? (activeTab ? loadErrors.get(activeTab.targetId) : null);
   const visibleHttpAuthRequest = httpAuthRequests.find(request => {
@@ -1116,7 +1117,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       updateTab(targetId, {
         url: nextUrl,
         title: title || webview.getTitle() || '',
-        pdfUrl: retainedTab?.pdfUrl === nextUrl ? nextUrl : undefined,
+        pdfUrl: matchesPdfResponseUrl(retainedTab?.pdfUrl, nextUrl)
+          ? retainedTab?.pdfUrl
+          : undefined,
       });
       if (activeTargetRef.current === targetId) {
         setCredentialOfferTargetId(null);

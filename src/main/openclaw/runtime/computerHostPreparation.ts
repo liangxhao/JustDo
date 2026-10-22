@@ -1,6 +1,6 @@
 import { OpenClawExtensionId, OpenClawToolName } from '../../../shared/plugins/nativeIds';
 import type { GatewayClientLike } from '../../engine/gateway/types';
-import { asComputerConfigRecord } from '../config/computerControlConfig';
+import { asComputerConfigRecord } from '../config/policies/computerControlConfig';
 
 type Preparation = {
   client: GatewayClientLike;

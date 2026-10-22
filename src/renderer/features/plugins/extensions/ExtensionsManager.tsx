@@ -24,7 +24,7 @@ import { LOCAL_TTS_PROVIDER_ID } from '@shared/speech/localTts';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import { OPEN_TEAM_RECORDS } from '@/features/cowork/components/display/agentTeamHistory';
+import { OPEN_TEAM_RECORDS } from '@/features/cowork/components/display/summary/agentTeamHistory';
 import {
   canToggleExtension,
   ExtensionGroupId,

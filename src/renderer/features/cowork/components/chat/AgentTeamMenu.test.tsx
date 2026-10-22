@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
 
-import { type AgentTeamEntry, AgentTeamKind } from '../display/agentTeamEntries';
+import { type AgentTeamEntry, AgentTeamKind } from '../display/summary/agentTeamEntries';
 import AgentTeamMenu from './AgentTeamMenu';
 
 vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));

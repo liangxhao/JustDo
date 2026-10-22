@@ -5,8 +5,8 @@ import path from 'node:path';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
-import { mergeNativeMcpOverrides } from '../../openclaw/config/nativeMcpOverrides';
 import { OpenClawConfigSyncService } from '../../openclaw/config/openclawConfigSyncService';
+import { mergeNativeMcpOverrides } from '../../openclaw/config/plugins/nativeMcpOverrides';
 import { PluginInstallationService, PluginInstallOrigin } from '../../plugins/installation';
 import type { McpServerRecord, McpStore } from '../../plugins/mcp';
 import { McpConfigSyncService } from '../../plugins/mcp/mcpConfigSyncService';

@@ -2,7 +2,7 @@ import { addDraftMessageQuote, setDraftPrompt } from '@/features/cowork/coworkSl
 import { i18nService } from '@/services/i18n';
 import { store } from '@/store';
 
-import { type DiscussionQuote, MESSAGE_QUOTE_KIND } from '../composer/messageQuote';
+import { type DiscussionQuote, MESSAGE_QUOTE_KIND } from '../composer/draft/messageQuote';
 
 export function buildDiscussionReference(
   roomId: string,

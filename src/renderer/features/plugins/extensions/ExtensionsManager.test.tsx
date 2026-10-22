@@ -12,7 +12,7 @@ import { getExtensionManagement } from '@shared/plugins/management';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { OPEN_TEAM_RECORDS } from '@/features/cowork/components/display/agentTeamHistory';
+import { OPEN_TEAM_RECORDS } from '@/features/cowork/components/display/summary/agentTeamHistory';
 
 import ExtensionsManager from './ExtensionsManager';
 

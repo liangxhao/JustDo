@@ -15,7 +15,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { guard } from 'lit/directives/guard.js';
 import { repeat } from 'lit/directives/repeat.js';
 
-import type { MessageQuoteHandler } from '@/features/cowork/components/composer/messageQuote';
+import type { MessageQuoteHandler } from '@/features/cowork/components/composer/draft/messageQuote';
 import {
   renderMessageBlock,
   renderMessageBlockWithTrailingStream,

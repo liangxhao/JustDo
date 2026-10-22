@@ -24,6 +24,7 @@ import {
   GatewayConfigRestartOutcome,
   requestGatewayConfigRestart,
 } from '../runtime/gatewayConfigRestart';
+import { maintainStartupAuthProfiles } from './models/startupAuthProfileMaintenance';
 import {
   OPENCLAW_FALLBACK_EXEC_MODE,
   OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
@@ -31,7 +32,6 @@ import {
   resolveOpenClawExecHost,
   verifyLoggedOutOpenClawConfig,
 } from './openclawConfigSync';
-import { maintainStartupAuthProfiles } from './startupAuthProfileMaintenance';
 
 type OpenClawConfigSyncServiceDeps = {
   getCoworkStore: () => CoworkStore;

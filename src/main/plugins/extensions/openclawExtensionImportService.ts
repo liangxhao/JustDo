@@ -25,7 +25,7 @@ import {
 import { extractZipSafely } from '../../core/filesystem/safeZipExtractor';
 import { t } from '../../core/i18n';
 import type { EffectiveOutboundHeaderPolicySnapshot } from '../../core/network/outboundHeaderPolicyService';
-import { restrictCredentialFile } from '../../openclaw/config/providerSecretFile';
+import { restrictCredentialFile } from '../../openclaw/config/models/providerSecretFile';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import { prepareExtensionForInstall } from './extensionConversion';
 import { prepareExtensionInstallSource } from './extensionInstallSource';

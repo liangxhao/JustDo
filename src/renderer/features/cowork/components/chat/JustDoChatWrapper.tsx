@@ -59,7 +59,7 @@ import {
 import type { GatewayMessage, UserMessageHistoryAction } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
-import type { MessageQuoteHandler } from '../composer/messageQuote';
+import type { MessageQuoteHandler } from '../composer/draft/messageQuote';
 import { type McpAppComposerMenu, McpAppsControls } from '../mcpApps/McpAppsControls';
 
 const HISTORY_LOADING_NOTICE_DELAY_MS = 3_000;

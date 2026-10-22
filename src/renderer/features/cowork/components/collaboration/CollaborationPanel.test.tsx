@@ -65,7 +65,7 @@ vi.mock('./CollaborationMemberHistory', () => ({
     );
   },
 }));
-vi.mock('../composer/LocalSpeechInputButton', () => ({ LocalSpeechInputButton: () => null }));
+vi.mock('../composer/speech/LocalSpeechInputButton', () => ({ LocalSpeechInputButton: () => null }));
 import type { CollaborationContinueRequest } from './collaborationContinueDraft';
 import CollaborationPanel, {
   CollaborationMemberLinks,

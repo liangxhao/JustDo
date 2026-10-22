@@ -215,28 +215,28 @@ import {
   registerOnlineTtsHandlers,
   registerSpeechSynthesisHandlers,
 } from './ipc/speech';
-import { revokeBuiltinCredentialFile } from './openclaw/config/builtinCredentialFile';
-import {
-  buildLocalSpeechExtensionSttConfig,
-  buildLocalSpeechExtensionTtsConfig,
-} from './openclaw/config/localSpeechExtensionConfig';
-import { buildManagedLocalTtsConfig } from './openclaw/config/localTtsConfig';
-import { NativeAssistantCreation } from './openclaw/config/nativeAssistantCreation';
-import { resolveNativeVideoSelection } from './openclaw/config/nativeVideoModelConfig';
+import { NativeAssistantCreation } from './openclaw/config/agents/nativeAssistantCreation';
+import { revokeBuiltinCredentialFile } from './openclaw/config/models/builtinCredentialFile';
+import { resolveNativeVideoSelection } from './openclaw/config/models/nativeVideoModelConfig';
 import {
   buildProviderSelection,
   listManagedOpenClawPluginIds,
 } from './openclaw/config/openclawConfigSync';
 import { OpenClawConfigSyncService } from './openclaw/config/openclawConfigSyncService';
+import {
+  buildLocalSpeechExtensionSttConfig,
+  buildLocalSpeechExtensionTtsConfig,
+} from './openclaw/config/speech/localSpeechExtensionConfig';
+import { buildManagedLocalTtsConfig } from './openclaw/config/speech/localTtsConfig';
 import { resolveQualifiedAgentModelRef } from './openclaw/models/openclawAgentModels';
 import { SessionPermissionModeCoordinator } from './openclaw/permissions/sessionPermissionModeCoordinator';
 import { createEngineDiagnosticsCollector } from './openclaw/runtime/engineDiagnostics';
 import { ensureExecutionReady } from './openclaw/runtime/executionReadiness';
+import { acquireOpenClawRuntimeDevLease } from './openclaw/runtime/launch/openclawRuntimeDevLease';
 import {
   OpenClawEngineManager,
   type OpenClawEngineStatus,
 } from './openclaw/runtime/openclawEngineManager';
-import { acquireOpenClawRuntimeDevLease } from './openclaw/runtime/openclawRuntimeDevLease';
 import { justDoSlashCommandPolicy } from './openclaw/slashCommands/slashCommandPolicies';
 import {
   createPluginMarketplaceService,

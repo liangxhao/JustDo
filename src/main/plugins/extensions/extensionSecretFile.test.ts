@@ -5,14 +5,14 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { t } from '../../core/i18n';
-import { restrictCredentialFile } from '../../openclaw/config/providerSecretFile';
+import { restrictCredentialFile } from '../../openclaw/config/models/providerSecretFile';
 import {
   EXTENSION_SECRET_PROVIDER,
   isExtensionSecretReferenceField,
   saveExtensionSecrets,
 } from './extensionSecretFile';
 
-vi.mock('../../openclaw/config/providerSecretFile', () => ({ restrictCredentialFile: vi.fn() }));
+vi.mock('../../openclaw/config/models/providerSecretFile', () => ({ restrictCredentialFile: vi.fn() }));
 
 describe('extension SecretRef credentials', () => {
   let directory: string;

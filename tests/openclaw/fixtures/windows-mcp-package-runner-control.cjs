@@ -47,17 +47,17 @@ const loadSource = (relative, imports) => {
   );
   return compiled.exports;
 };
-const nodeRuntime = loadSource('src/main/openclaw/runtime/electronNodeRuntime.ts', {
+const nodeRuntime = loadSource('src/main/openclaw/runtime/launch/electronNodeRuntime.ts', {
   electron: { app: {} },
-  '../../core/network/trustedCertificates': loadSource(
+  '../../../core/network/trustedCertificates': loadSource(
     'src/main/core/network/trustedCertificates.ts',
     {},
   ),
-  '../../cowork/coworkLogger': { coworkLog: () => {} },
+  '../../../cowork/coworkLogger': { coworkLog: () => {} },
 });
 const { projectMcpPackageRunner } = loadSource('src/main/openclaw/runtime/mcpPackageRunner.ts', {
   electron: { app: {} },
-  './electronNodeRuntime': nodeRuntime,
+  './launch/electronNodeRuntime': nodeRuntime,
 });
 const { buildElectronNodeShimScripts, buildWindowsChildProcessPreload } = nodeRuntime;
 const electron =

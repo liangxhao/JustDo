@@ -20,6 +20,8 @@ scripts/patches/v2026.10.4/
 
 该目录的 `README.md` 是能力、上游原始证据、依赖关系、测试和删除条件的唯一权威总账。本文只说明工程流程，不能维护另一份逐文件行为副本。
 
+Main 原生配置投影拆分后，构建 recipe 同时覆盖 `openclawConfigBuilders.ts` 聚合入口及其所属的配置结构、校验、助手、模型、插件、语音和执行策略源文件。不能只校验转导出入口，使实际投影代码的变化绕过已有运行时指纹。
+
 ## 2. 当前锁定供应链
 
 目标是未经修改的 `openclaw@2026.10.4` npm 产物。`source-lock.json` 记录精确 npm integrity 与 tarball SHA-256。项目 Node 支持范围为 `>=24.16.0 <25`。

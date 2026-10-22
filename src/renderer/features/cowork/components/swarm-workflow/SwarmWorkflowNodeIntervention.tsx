@@ -17,8 +17,8 @@ import {
   COMPOSER_FRAME_CLASS,
   COMPOSER_SURFACE_CLASS,
   COMPOSER_TEXTAREA_CLASS,
-} from '../composer/composerStyles';
-import { RunControlButton } from '../composer/RunControlButton';
+} from '../composer/draft/composerStyles';
+import { RunControlButton } from '../composer/submission/RunControlButton';
 import { useSwarmWorkflowInterventionState } from './workflowBrowserState';
 
 export default function SwarmWorkflowNodeIntervention({

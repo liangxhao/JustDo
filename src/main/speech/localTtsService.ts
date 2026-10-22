@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 
 import type { LocalSpeechSettings } from '../../shared/speech/localSpeechSettings';
 import { LOCAL_TTS_PROVIDER_ID, type LocalTtsSpeakResult } from '../../shared/speech/localTts';
-import { buildManagedLocalTtsConfig } from '../openclaw/config/localTtsConfig';
+import { buildManagedLocalTtsConfig } from '../openclaw/config/speech/localTtsConfig';
 
 const runFile = promisify(execFile);
 const MAX_AUDIO_BYTES = 32 * 1024 * 1024;

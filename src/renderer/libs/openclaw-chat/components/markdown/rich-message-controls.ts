@@ -1,4 +1,4 @@
-import type { MessageQuoteHandler } from '@/features/cowork/components/composer/messageQuote';
+import type { MessageQuoteHandler } from '@/features/cowork/components/composer/draft/messageQuote';
 import { i18nService } from '@/services/i18n';
 
 import { downloadText, type ToolOutput } from '../tools/tool-output';

@@ -17,7 +17,7 @@ import {
 import {
   buildElectronNodeShimScripts,
   buildWindowsChildProcessPreload,
-} from '../../../src/main/openclaw/runtime/electronNodeRuntime';
+} from '../../../src/main/openclaw/runtime/launch/electronNodeRuntime';
 import { projectMcpPackageRunner } from '../../../src/main/openclaw/runtime/mcpPackageRunner';
 
 const runtimeRoot = path.resolve(

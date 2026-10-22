@@ -47,9 +47,9 @@ import {
 import {
   OPEN_TEAM_RECORDS,
   openTeamHistoryEntry,
-} from '@/features/cowork/components/display/agentTeamHistory';
-import AgentTeamHistoryDialog from '@/features/cowork/components/display/AgentTeamHistoryDialog';
-import { workspaceKeyboardDocument } from '@/features/cowork/components/display/useWorkspacePortal';
+} from '@/features/cowork/components/display/summary/agentTeamHistory';
+import AgentTeamHistoryDialog from '@/features/cowork/components/display/summary/AgentTeamHistoryDialog';
+import { workspaceKeyboardDocument } from '@/features/cowork/components/display/workspace/useWorkspacePortal';
 import {
   type FilePreviewNavigationOptions,
   runGuardedFilePreviewNavigation,

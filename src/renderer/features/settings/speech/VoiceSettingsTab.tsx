@@ -29,8 +29,8 @@ import type { OnlineAsrStatus } from '@shared/speech/onlineAsr';
 import type { OnlineTtsStatus } from '@shared/speech/onlineTts';
 import React, { useEffect, useRef, useState } from 'react';
 
-import ModelStatus from '@/features/speech/models/LocalSpeechModelStatusView';
-import { useLocalSpeechModels } from '@/features/speech/models/useLocalSpeechModels';
+import ModelStatus from '@/features/speech/LocalSpeechModelStatusView';
+import { useLocalSpeechModels } from '@/features/speech/useLocalSpeechModels';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import ThemedSelect from '@/shared/components/ui/ThemedSelect';

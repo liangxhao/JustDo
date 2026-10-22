@@ -17,17 +17,17 @@ import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
 import FilePathBreadcrumbBar from '../preview/FilePathBreadcrumbBar';
 import { FilePreviewToolbarContext } from '../shared/FilePreviewToolbarContext';
 import { WorkspaceFileIconContext } from '../shared/WorkspaceFileIconContext';
-import DisplayTabContextMenu, { type DisplayTabContextMenuItem } from './DisplayTabContextMenu';
+import DisplayTabContextMenu, { type DisplayTabContextMenuItem } from './tabs/DisplayTabContextMenu';
 import {
   consumeDisplayTabFocus,
   readDisplayTabFocus,
   requestDisplayTabFocus,
   subscribeDisplayTabFocus,
-} from './displayTabFocus';
-import { FILE_DISPLAY_TAB_PREFIX, WORKSPACE_FILES_DISPLAY_TAB_ID } from './displayTabIds';
-import DisplayTabListMenu from './DisplayTabListMenu';
-import useDisplayTabLayout from './useDisplayTabLayout';
-import { useWorkspacePortal } from './useWorkspacePortal';
+} from './tabs/displayTabFocus';
+import { FILE_DISPLAY_TAB_PREFIX, WORKSPACE_FILES_DISPLAY_TAB_ID } from './tabs/displayTabIds';
+import DisplayTabListMenu from './tabs/DisplayTabListMenu';
+import useDisplayTabLayout from './tabs/useDisplayTabLayout';
+import { useWorkspacePortal } from './workspace/useWorkspacePortal';
 
 export interface CoworkDisplayTab {
   id: string;

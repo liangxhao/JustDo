@@ -12,7 +12,7 @@ vi.mock('@/services/config', () => ({
   configService: { getConfig: () => ({ shortcuts: { sendMessage: 'Enter' } }) },
 }));
 const speech = vi.hoisted(() => ({ callbacks: [] as Array<(text: string) => void> }));
-vi.mock('../composer/LocalSpeechInputButton', () => ({
+vi.mock('../composer/speech/LocalSpeechInputButton', () => ({
   LocalSpeechInputButton: ({
     disabled,
     onTranscript,

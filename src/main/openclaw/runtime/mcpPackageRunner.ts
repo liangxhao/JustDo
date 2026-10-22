@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import path from 'path';
 
-import { getElectronNodeRuntimePath, resolveElectronNpmBinDir } from './electronNodeRuntime';
+import { getElectronNodeRuntimePath, resolveElectronNpmBinDir } from './launch/electronNodeRuntime';
 
 export type McpPackageRuntime = {
   electronPath: string;

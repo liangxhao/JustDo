@@ -11,7 +11,7 @@ import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { openMessageHtmlLink, openMessageWebLink } from '@/features/browser/messageBrowserLinks';
-import { renderMessageQuoteText } from '@/features/cowork/components/composer/messageQuote';
+import { renderMessageQuoteText } from '@/features/cowork/components/composer/draft/messageQuote';
 import {
   getTranscriptMedia,
   isTranscriptImage,

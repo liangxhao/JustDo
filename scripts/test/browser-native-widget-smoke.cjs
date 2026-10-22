@@ -28,7 +28,7 @@ if (!process.versions.electron) {
     `
 import {NativeWidgetView} from ${source('src/renderer/libs/openclaw-chat/components/native-widget/view.ts')};
 import {decodeNativeCanvasResult} from ${source('src/renderer/libs/openclaw-chat/pipeline/native-canvas.ts')};
-import {readWorkspaceOcclusion} from ${source('src/renderer/features/cowork/components/display/workspaceOcclusion.ts')};
+import {readWorkspaceOcclusion} from ${source('src/renderer/features/cowork/components/display/workspace/workspaceOcclusion.ts')};
 const config=await fetch('/fixture').then(response=>response.json());
 let reads=0;
 const client={generation:1,gatewayUrl:config.gatewayUrl,request:async(method,params)=>{

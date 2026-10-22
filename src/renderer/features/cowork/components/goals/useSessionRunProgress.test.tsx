@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-li
 import { useLayoutEffect, useState } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { RunControlButton } from '../composer/RunControlButton';
+import { RunControlButton } from '../composer/submission/RunControlButton';
 import { canStopCoworkRun, isCoworkRunActive } from '../status/coworkRunActivity';
 import type { GoalRunProgress } from './goalRunProgress';
 import { useSessionRunProgress } from './useSessionRunProgress';

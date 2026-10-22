@@ -2,8 +2,8 @@ import React, { useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import CoworkDisplayPanel from '../../src/renderer/features/cowork/components/display/CoworkDisplayPanel';
-import { useMcpAppReferenceTabs } from '../../src/renderer/features/cowork/components/display/useMcpAppReferenceTabs';
-import { useMcpAppTabs } from '../../src/renderer/features/cowork/components/display/useMcpAppTabs';
+import { useMcpAppReferenceTabs } from '../../src/renderer/features/cowork/components/display/tabs/useMcpAppReferenceTabs';
+import { useMcpAppTabs } from '../../src/renderer/features/cowork/components/display/tabs/useMcpAppTabs';
 import { openWorkspaceApp } from '../../src/renderer/features/cowork/components/mcpApps/workspaceApps';
 import { McpAppAnchor } from '../../src/renderer/libs/openclaw-chat/components/mcp-app/anchor';
 import { getMcpAppPresentations } from '../../src/renderer/libs/openclaw-chat/components/mcp-app/presentations';

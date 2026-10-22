@@ -48,7 +48,7 @@ vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }))
 vi.mock('@/services/config', () => ({
   configService: { getConfig: () => ({ shortcuts: { sendMessage: 'Enter' } }) },
 }));
-vi.mock('../composer/LocalSpeechInputButton', () => ({
+vi.mock('../composer/speech/LocalSpeechInputButton', () => ({
   LocalSpeechInputButton: ({
     disabled,
     onTranscript,

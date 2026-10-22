@@ -1,12 +1,12 @@
 // Product components with synthetic data; no Gateway, user state, or credentials.
-import { createRoot } from 'react-dom/client';
 import { type ComponentProps, useState } from 'react';
+import { createRoot } from 'react-dom/client';
 
-import ComposerFeatureMenu from '../../src/renderer/features/cowork/components/composer/ComposerFeatureMenu';
 import { buildAgentTeamFeature } from '../../src/renderer/features/cowork/components/composer/AgentTeamSelector';
+import ComposerFeatureMenu from '../../src/renderer/features/cowork/components/composer/ComposerFeatureMenu';
 import { buildSwarmWorkflowComposerFeature } from '../../src/renderer/features/cowork/components/composer/swarmWorkflowComposerFeature';
-import { useMcpAppTabs } from '../../src/renderer/features/cowork/components/display/useMcpAppTabs';
 import DisplayPanelLauncher from '../../src/renderer/features/cowork/components/display/DisplayPanelLauncher';
+import { useMcpAppTabs } from '../../src/renderer/features/cowork/components/display/tabs/useMcpAppTabs';
 import {
   type McpAppComposerMenu,
   McpAppsControls,

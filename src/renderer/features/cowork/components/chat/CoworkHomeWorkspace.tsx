@@ -1,15 +1,15 @@
 import type { BrowserPanelTab } from '@shared/browser/browser';
 import { HOME_WORKSPACE_SESSION_ID } from '@shared/preview/filePreview';
 
-import { COMPOSER_FRAME_CLASS } from '@/features/cowork/components/composer/composerStyles';
 import CoworkPromptInput, {
   type CoworkPromptInputRef,
 } from '@/features/cowork/components/composer/CoworkPromptInput';
+import { COMPOSER_FRAME_CLASS } from '@/features/cowork/components/composer/draft/composerStyles';
 import CoworkDisplayPanel, {
   type CoworkDisplayTab,
 } from '@/features/cowork/components/display/CoworkDisplayPanel';
 import DisplayPanelLauncher from '@/features/cowork/components/display/DisplayPanelLauncher';
-import NewDisplayTabButton from '@/features/cowork/components/display/NewDisplayTabButton';
+import NewDisplayTabButton from '@/features/cowork/components/display/tabs/NewDisplayTabButton';
 import FilePreviewDrawer, {
   type FilePreviewDrawerHandle,
 } from '@/features/cowork/components/preview/FilePreviewDrawer';
@@ -26,8 +26,8 @@ import {
   fileDisplayTabId,
   MAX_TERMINAL_TABS,
   WORKSPACE_FILES_DISPLAY_TAB_ID,
-} from '../display/displayTabIds';
-import type { CoworkTerminalTab, SessionDisplayState } from '../display/useSessionDisplayState';
+} from '../display/tabs/displayTabIds';
+import type { CoworkTerminalTab, SessionDisplayState } from '../display/tabs/useSessionDisplayState';
 import type { McpAppComposerMenu } from '../mcpApps/McpAppsControls';
 import type { FilePreview } from '../preview/FilePreviewDrawer';
 

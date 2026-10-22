@@ -28,7 +28,7 @@ import { redactLogText } from '../../core/logRedaction';
 import { JUSTDO_MANAGED_PYTHON_USER_BASE_ENV } from '../../core/runtime/pythonRuntime';
 import type { CoworkStore } from '../../data/coworkStore';
 import { isWorkspacePathWithin } from '../../engine/openclaw/runtimeAdapterSupport';
-import { WorktreeSettingsService } from '../../openclaw/config/worktreeSettingsService';
+import { WorktreeSettingsService } from '../../openclaw/config/policies/worktreeSettingsService';
 import { isGatewayRestartRequestUnavailable } from '../../openclaw/runtime/gatewayConfigRestart';
 import type {
   OpenClawEngineManager,

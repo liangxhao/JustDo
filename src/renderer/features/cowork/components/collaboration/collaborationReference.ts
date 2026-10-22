@@ -11,7 +11,7 @@ import {
   type CollaborationQuote,
   MESSAGE_QUOTE_KIND,
   validCollaborationQuote,
-} from '../composer/messageQuote';
+} from '../composer/draft/messageQuote';
 
 /** Read-only fallback: fresh managed identities, no direct peer send or source submission. */
 export async function prepareCollaborationReference(

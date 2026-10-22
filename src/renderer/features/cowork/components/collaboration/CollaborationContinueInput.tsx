@@ -11,10 +11,10 @@ import {
   COMPOSER_TEXTAREA_MAX_HEIGHT,
   COMPOSER_TEXTAREA_MIN_HEIGHT,
   resizeComposerTextarea,
-} from '../composer/composerStyles';
-import { LocalSpeechInputButton } from '../composer/LocalSpeechInputButton';
-import { RunControlButton } from '../composer/RunControlButton';
+} from '../composer/draft/composerStyles';
 import { isComposerSendShortcut } from '../composer/sendShortcut';
+import { LocalSpeechInputButton } from '../composer/speech/LocalSpeechInputButton';
+import { RunControlButton } from '../composer/submission/RunControlButton';
 import {
   getContinueDraft,
   type RequestCollaborationContinue,

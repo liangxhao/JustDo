@@ -19,8 +19,8 @@ vi.mock('../../core/runtime/dependencyManagerConfig', () => ({
 }));
 vi.mock('../../core/runtime/portableGitRuntime', () => ({ applyPortableGitRuntimeEnv: vi.fn() }));
 vi.mock('../../core/runtime/pythonRuntime', () => ({ appendPythonRuntimeToEnv: vi.fn() }));
-vi.mock('./electronNodeRuntime', async importOriginal => ({
-  ...(await importOriginal<typeof import('./electronNodeRuntime')>()),
+vi.mock('./launch/electronNodeRuntime', async importOriginal => ({
+  ...(await importOriginal<typeof import('./launch/electronNodeRuntime')>()),
   getElectronNodeRuntimePath: () => process.execPath,
   ensureElectronNodeShim: () => null,
   resolveElectronNpmBinDir: () => null,

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import type { MessageQuote } from '../composer/messageQuote';
+import type { MessageQuote } from '../composer/draft/messageQuote';
 import {
   appendDiscussionReference,
   appendTeamResultDraft,

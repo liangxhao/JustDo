@@ -89,32 +89,32 @@ import JustDoChatWrapper, {
   type JustDoChatWrapperRef,
 } from '@/features/cowork/components/chat/JustDoChatWrapper';
 import SideChatPanel from '@/features/cowork/components/chat/SideChatPanel';
-import { resolveAgentModelSelection } from '@/features/cowork/components/composer/agentModelSelection';
-import { COMPOSER_FRAME_CLASS } from '@/features/cowork/components/composer/composerStyles';
-import { submitCoworkMessage } from '@/features/cowork/components/composer/coworkMessageSubmit';
 import CoworkPromptInput, {
   appendMediaDirectiveLines,
   type CoworkPromptInputRef,
 } from '@/features/cowork/components/composer/CoworkPromptInput';
-import { QueuedInputCards } from '@/features/cowork/components/composer/QueuedInputCards';
+import { COMPOSER_FRAME_CLASS } from '@/features/cowork/components/composer/draft/composerStyles';
+import { resolveAgentModelSelection } from '@/features/cowork/components/composer/selection/agentModelSelection';
+import { submitCoworkMessage } from '@/features/cowork/components/composer/submission/coworkMessageSubmit';
+import { QueuedInputCards } from '@/features/cowork/components/composer/submission/QueuedInputCards';
 import CoworkDisplayPanel, {
   type CoworkDisplayTab,
   type CoworkDisplayTabCloseActions,
 } from '@/features/cowork/components/display/CoworkDisplayPanel';
 import DisplayPanelLauncher from '@/features/cowork/components/display/DisplayPanelLauncher';
-import { getAdjacentDisplayTabId } from '@/features/cowork/components/display/displayTabSelection';
-import NewDisplayTabButton from '@/features/cowork/components/display/NewDisplayTabButton';
-import SessionSummaryPanel from '@/features/cowork/components/display/SessionSummaryPanel';
-import SessionSummaryResourceList from '@/features/cowork/components/display/SessionSummaryResourceList';
-import { useDisplayTabOrder } from '@/features/cowork/components/display/useDisplayTabOrder';
-import { useMcpAppTabs } from '@/features/cowork/components/display/useMcpAppTabs';
-import { useRecordingReviewTabs } from '@/features/cowork/components/display/useRecordingReviewTabs';
+import SessionSummaryPanel from '@/features/cowork/components/display/summary/SessionSummaryPanel';
+import SessionSummaryResourceList from '@/features/cowork/components/display/summary/SessionSummaryResourceList';
+import { useSessionSummaryVisibility } from '@/features/cowork/components/display/summary/useSessionSummaryVisibility';
+import { getAdjacentDisplayTabId } from '@/features/cowork/components/display/tabs/displayTabSelection';
+import NewDisplayTabButton from '@/features/cowork/components/display/tabs/NewDisplayTabButton';
+import { useDisplayTabOrder } from '@/features/cowork/components/display/tabs/useDisplayTabOrder';
+import { useMcpAppTabs } from '@/features/cowork/components/display/tabs/useMcpAppTabs';
+import { useRecordingReviewTabs } from '@/features/cowork/components/display/tabs/useRecordingReviewTabs';
 import {
   HOME_DISPLAY_SESSION_KEY,
   useSessionDisplayState,
-} from '@/features/cowork/components/display/useSessionDisplayState';
-import { useSessionSummaryVisibility } from '@/features/cowork/components/display/useSessionSummaryVisibility';
-import { WORKSPACE_PRESENTATION_EVENT } from '@/features/cowork/components/display/useWorkspacePortal';
+} from '@/features/cowork/components/display/tabs/useSessionDisplayState';
+import { WORKSPACE_PRESENTATION_EVENT } from '@/features/cowork/components/display/workspace/useWorkspacePortal';
 import { inferInitialGoalObjective } from '@/features/cowork/components/goals/goalPendingObjective';
 import { useSessionRunProgress } from '@/features/cowork/components/goals/useSessionRunProgress';
 import type { OpenMcpAppFile } from '@/features/cowork/components/mcpApps/fileApps';
@@ -219,17 +219,17 @@ import {
   submitCollaborationContinuation,
 } from './collaboration/collaborationContinueSubmission';
 import { useCollaborationRooms } from './collaboration/CollaborationPanel';
-import type { MessageQuoteHandler } from './composer/messageQuote';
+import type { MessageQuoteHandler } from './composer/draft/messageQuote';
 import {
   bindSessionSubmissionRun,
   createSessionSubmission,
   getSessionStopOperationKey,
   type SessionSubmission,
   stopSessionSubmission,
-} from './composer/sessionSubmission';
+} from './composer/submission/sessionSubmission';
 import { OPEN_TEAM_PANEL, useTeamDiscussionRooms } from './discussions/teamDiscussionNavigation';
-import { buildAgentTeamEntries, groupTeamKey } from './display/agentTeamEntries';
-import AgentTeamPanel from './display/AgentTeamPanel';
+import { buildAgentTeamEntries, groupTeamKey } from './display/summary/agentTeamEntries';
+import AgentTeamPanel from './display/summary/AgentTeamPanel';
 import {
   BROWSER_DISPLAY_TAB_PREFIX,
   browserDisplayTabId,
@@ -245,9 +245,9 @@ import {
   SWARM_WORKFLOW_DISPLAY_TAB_ID,
   TERMINAL_DISPLAY_TAB_PREFIX,
   WORKSPACE_FILES_DISPLAY_TAB_ID,
-} from './display/displayTabIds';
-import { useCoworkBrowserPanels } from './display/useCoworkBrowserPanels';
-import { useMcpAppReferenceTabs } from './display/useMcpAppReferenceTabs';
+} from './display/tabs/displayTabIds';
+import { useCoworkBrowserPanels } from './display/tabs/useCoworkBrowserPanels';
+import { useMcpAppReferenceTabs } from './display/tabs/useMcpAppReferenceTabs';
 import SessionReviewPanel from './review/SessionReviewPanel';
 import type { SessionTranscriptMutation } from './sessions/useCoworkSessionActions';
 import { useCoworkSessionActions } from './sessions/useCoworkSessionActions';

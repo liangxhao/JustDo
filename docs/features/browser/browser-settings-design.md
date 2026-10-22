@@ -113,6 +113,8 @@ HTTP auth challenge 绑定随机 request 与 guest，只有主窗口主 frame �
 
 本地和在线 PDF 统一使用 Chromium 原生查看器，不再维护自建查看器、专用 PDF 正文读取接口或 PDF.js 打包资源。内部 PDF 扩展的特殊子 frame 流导航有精确放行条件，不能为修白屏允许任意 chrome-extension 页面。打印使用原生 PDF 自带入口，避免打印外层空白页。
 
+侧栏的 PDF 操作状态统一由 Main 对顶层文档响应 `Content-Type: application/pdf` 的检测通知驱动。Renderer 只接受与当前标签文档地址匹配的检测结果，匹配时忽略页码等 fragment，同一文档内跳转保留已确认的 PDF 标记，不根据域名、路径或 `.pdf` 后缀预判；新文档开始加载时清除旧标记，等待该次响应重新确认。
+
 文件树、消息 `MEDIA` 和摘要里的本地 PDF 使用同一文件预览页签，通过原生 `file://` 地址加载，不启动本地 HTTP 服务。Main 只准备文件地址，原生查看器读取 PDF 正文；文本预览的 2 MiB 上限与编辑授权不适用于 PDF。文件树保持当前可见性，重复点击复用已打开的文件页签。
 
 ## 7. 数据导入与清理

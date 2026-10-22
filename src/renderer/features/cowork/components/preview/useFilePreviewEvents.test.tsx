@@ -4,8 +4,8 @@ import { act, cleanup, renderHook } from '@testing-library/react';
 import { useRef } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 
-import { WORKSPACE_FILES_DISPLAY_TAB_ID } from '../display/displayTabIds';
-import { useSessionDisplayState } from '../display/useSessionDisplayState';
+import { WORKSPACE_FILES_DISPLAY_TAB_ID } from '../display/tabs/displayTabIds';
+import { useSessionDisplayState } from '../display/tabs/useSessionDisplayState';
 import type { OpenMcpAppFile } from '../mcpApps/fileApps';
 import { IMAGE_PREVIEW_EVENT } from './imageFilePreview';
 import { useFilePreviewEvents } from './useFilePreviewEvents';

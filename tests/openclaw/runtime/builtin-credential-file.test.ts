@@ -6,10 +6,9 @@ import { pathToFileURL } from 'node:url';
 
 import { expect, test, vi } from 'vitest';
 vi.mock('electron', () => ({ app: { getName: () => 'JustDo', getPath: () => '', isPackaged: false } }));
-import { buildWindowsChildProcessPreload } from '../../../src/main/openclaw/runtime/electronNodeRuntime';
-
-import { buildProviderSelection, buildBuiltinMemorySearchConfig } from '../../../src/main/openclaw/config/openclawConfigSync';
-import { syncBuiltinCredentialFile, sealBuiltinCredential } from '../../../src/main/openclaw/config/builtinCredentialFile';
+import { sealBuiltinCredential,syncBuiltinCredentialFile } from '../../../src/main/openclaw/config/models/builtinCredentialFile';
+import { buildBuiltinMemorySearchConfig,buildProviderSelection } from '../../../src/main/openclaw/config/openclawConfigSync';
+import { buildWindowsChildProcessPreload } from '../../../src/main/openclaw/runtime/launch/electronNodeRuntime';
 
 const dist = path.resolve('vendor/openclaw-runtime/current/dist');
 test.skipIf(!fs.existsSync(dist))('native JWT references protect tokens without redacting ordinary account identity', () => {

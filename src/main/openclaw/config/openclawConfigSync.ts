@@ -1,21 +1,17 @@
 import fs from 'fs';
 import path from 'path';
 
-import { withComputerControlPolicy } from './computerControlConfig';
 import {
   applyDecisionModelConfiguration,
   captureDecisionModelConfiguration,
   resolveDecisionModelSelection,
-} from './decisionModelConfig';
-import { mergeLocalSpeechExtensionTtsConfig } from './localSpeechExtensionConfig';
-import { buildManagedLocalSpeechPluginEntries } from './localSpeechPluginConfig';
-import { buildManagedMcpConfig } from './mcpAppsConfig';
-import { hasOnlyModelDefaultChanges } from './modelDefaultConfigChange';
+} from './models/decisionModelConfig';
+import { hasOnlyModelDefaultChanges } from './models/modelDefaultConfigChange';
 import {
   applyNativeVideoConfiguration,
   captureNativeVideoConfiguration,
   resolveNativeVideoSelection,
-} from './nativeVideoModelConfig';
+} from './models/nativeVideoModelConfig';
 import {
   applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,
@@ -79,6 +75,10 @@ import {
   verifyOpenClawConfigMatches,
   withMemorySearch,
 } from './openclawConfigBuilders';
+import { buildManagedMcpConfig } from './plugins/mcpAppsConfig';
+import { withComputerControlPolicy } from './policies/computerControlConfig';
+import { mergeLocalSpeechExtensionTtsConfig } from './speech/localSpeechExtensionConfig';
+import { buildManagedLocalSpeechPluginEntries } from './speech/localSpeechPluginConfig';
 export {
   applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,
@@ -163,12 +163,12 @@ import {
   validateConfiguredOpenClawProviderNames,
 } from '../../providers/providerApiConfig';
 import { buildAgentEntry, buildManagedAgentEntries } from '../models/openclawAgentModels';
-import { getElectronNodeRuntimePath } from '../runtime/electronNodeRuntime';
-import { resolveManagedAgentWorkspace, resolveManagedAgentWorkspaceRoot } from './agentWorkspace';
-import { syncBuiltinCredentialFile } from './builtinCredentialFile';
-import { seedMainRoleFiles } from './mainRoleFiles';
-import { mergeNativeMcpOverrides } from './nativeMcpOverrides';
-import { restrictCredentialFile, syncProviderSecretFile } from './providerSecretFile';
+import { getElectronNodeRuntimePath } from '../runtime/launch/electronNodeRuntime';
+import { resolveManagedAgentWorkspace, resolveManagedAgentWorkspaceRoot } from './agents/agentWorkspace';
+import { seedMainRoleFiles } from './agents/mainRoleFiles';
+import { syncBuiltinCredentialFile } from './models/builtinCredentialFile';
+import { restrictCredentialFile, syncProviderSecretFile } from './models/providerSecretFile';
+import { mergeNativeMcpOverrides } from './plugins/nativeMcpOverrides';
 
 export class OpenClawConfigSync {
   private readonly getNativeVideoCategory: () => unknown;

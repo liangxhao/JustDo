@@ -7,7 +7,7 @@ import {
   COMPOSER_TEXTAREA_MAX_HEIGHT,
   COMPOSER_TEXTAREA_MIN_HEIGHT,
   resizeComposerTextarea,
-} from '../composer/composerStyles';
+} from '../composer/draft/composerStyles';
 import { isComposerSendShortcut } from '../composer/sendShortcut';
 
 export default forwardRef<

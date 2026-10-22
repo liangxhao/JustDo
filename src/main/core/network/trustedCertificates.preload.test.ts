@@ -18,7 +18,7 @@ import {
   appendNodeRequireOption,
   buildElectronNodeShimScripts,
   buildWindowsChildProcessPreload,
-} from '../../openclaw/runtime/electronNodeRuntime';
+} from '../../openclaw/runtime/launch/electronNodeRuntime';
 import { projectMcpPackageRunner } from '../../openclaw/runtime/mcpPackageRunner';
 import {
   applyTrustedCertificateEnv,

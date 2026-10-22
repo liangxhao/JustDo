@@ -7,6 +7,7 @@ import { expect, test, vi } from 'vitest';
 
 import cliRuntimeFiles from '../../../shared/openclaw/cliRuntimeFiles.json';
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
+import { OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE } from './launch/openclawLauncher';
 import {
   applyOpenClawCliNetworkMode,
   buildInitialOpenClawConfig,
@@ -18,7 +19,6 @@ import {
   resolveOpenClawGatewayBundleEntry,
   resolveOpenClawRuntimeResourcePaths,
 } from './openclawEngineManager';
-import { OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE } from './openclawLauncher';
 
 test.each([false, true])(
   'requests native shutdown before forcing an unresponsive child (%s)',

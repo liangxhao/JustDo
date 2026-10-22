@@ -56,7 +56,7 @@ const require = createRequire(import.meta.url);
 const { buildSync } = require('esbuild');
 const lifecycleModule = path.join(base, 'host-lifecycle.cjs');
 buildSync({
-  entryPoints: [path.join(root, 'src/main/openclaw/runtime/openclawLauncher.ts')],
+  entryPoints: [path.join(root, 'src/main/openclaw/runtime/launch/openclawLauncher.ts')],
   bundle: true,
   platform: 'node',
   format: 'cjs',

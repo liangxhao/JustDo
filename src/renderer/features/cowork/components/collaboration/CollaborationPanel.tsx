@@ -28,8 +28,8 @@ import type { RootState } from '@/store';
 import AgentTeamMenu from '../chat/AgentTeamMenu';
 import DiscussionActionsMenu from '../discussions/DiscussionActionsMenu';
 import { useTeamDiscussionRooms } from '../discussions/teamDiscussionNavigation';
-import { type AgentTeamEntry, buildAgentTeamEntries } from '../display/agentTeamEntries';
-import { OPEN_TEAM_RECORDS } from '../display/agentTeamHistory';
+import { type AgentTeamEntry, buildAgentTeamEntries } from '../display/summary/agentTeamEntries';
+import { OPEN_TEAM_RECORDS } from '../display/summary/agentTeamHistory';
 import { COLLABORATION_PALETTE } from '../shared/collaborationPalette';
 import type { Subtask } from '../subagents/subtaskPresentation';
 import {
