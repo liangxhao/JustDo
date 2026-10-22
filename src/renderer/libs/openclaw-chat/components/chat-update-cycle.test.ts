@@ -45,6 +45,112 @@ function processMessages(entryId: string): GatewayMessage[] {
 }
 
 describe('chat update cycle', () => {
+  test.each(['pointerup', 'pointercancel', 'blur'])(
+    'defers transcript reflow during native dragging and commits on %s',
+    async endEvent => {
+      const chat = document.createElement('justdo-chat') as JustDoChatElement;
+      chat.stream = 'Initial response';
+      chat.isStreaming = true;
+      Object.defineProperties(chat, {
+        clientHeight: { value: 300 },
+        clientWidth: { value: 490 },
+        offsetWidth: { value: 500 },
+        scrollHeight: { value: 1000 },
+      });
+      chat.getBoundingClientRect = () =>
+        ({ left: 20, right: 520, top: 30, bottom: 330 }) as DOMRect;
+      document.body.append(chat);
+      await chat.updateComplete;
+      const render = vi.spyOn(chat, 'render');
+      chat.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          clientX: 518,
+          clientY: 315,
+          button: 0,
+          pointerId: 1,
+        }),
+      );
+
+      chat.stream = 'Latest response received during dragging';
+      expect(await chat.updateComplete).toBe(true);
+      expect(render).not.toHaveBeenCalled();
+      expect(chat.shadowRoot!.textContent).toContain('Initial response');
+      expect(chat.shadowRoot!.textContent).not.toContain('Latest response');
+      let committed = false;
+      const complete = chat.historyRenderComplete.then(() => {
+        committed = true;
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(committed).toBe(false);
+
+      if (endEvent === 'blur') window.dispatchEvent(new Event('blur'));
+      else document.dispatchEvent(new PointerEvent(endEvent, { pointerId: 1 }));
+      await complete;
+      expect(render).toHaveBeenCalledOnce();
+      expect(chat.shadowRoot!.textContent).toContain('Latest response received during dragging');
+    },
+  );
+
+  test('releasing a removed chat cannot resurrect its deferred transcript', async () => {
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    Object.defineProperties(chat, {
+      clientHeight: { value: 300 },
+      clientWidth: { value: 490 },
+      offsetWidth: { value: 500 },
+      scrollHeight: { value: 1000 },
+    });
+    chat.getBoundingClientRect = () => ({ left: 20, right: 520, top: 30, bottom: 330 }) as DOMRect;
+    document.body.append(chat);
+    await chat.updateComplete;
+    chat.dispatchEvent(
+      new PointerEvent('pointerdown', { clientX: 518, clientY: 315, button: 0, pointerId: 1 }),
+    );
+    chat.stream = 'Deferred';
+    await chat.updateComplete;
+    const complete = chat.historyRenderComplete;
+    await Promise.resolve();
+    await Promise.resolve();
+    const render = vi.spyOn(chat, 'render');
+    chat.remove();
+    document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
+    await complete;
+    expect(render).not.toHaveBeenCalled();
+  });
+
+  test('output cannot steal a message reveal before native smooth scrolling starts', async () => {
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.messages = [
+      { role: 'assistant', content: 'Prior response', __openclaw: { id: 'prior-reply' } },
+    ];
+    let top = 0;
+    let height = 1000;
+    Object.defineProperties(chat, {
+      clientHeight: { value: 300 },
+      scrollHeight: { get: () => height },
+      scrollTop: {
+        get: () => top,
+        set: (value: number) => {
+          top = Math.max(0, Math.min(value, height - 300));
+        },
+      },
+    });
+    document.body.append(chat);
+    await chat.updateComplete;
+    const row = chat.shadowRoot!.querySelector<HTMLElement>('[data-entry-id="prior-reply"]')!;
+    row.scrollIntoView = vi.fn();
+    row.getBoundingClientRect = () => new DOMRect(0, 100 - top, 100, 40);
+
+    expect(chat.revealMessage('prior-reply')).toBe(true);
+    height = 1200;
+    chat.stream = 'New output';
+    chat.isStreaming = true;
+    await chat.updateComplete;
+
+    expect(row.scrollIntoView).toHaveBeenCalled();
+    expect(top).toBe(700);
+  });
+
   test('invalidates cached history when live compaction ownership arrives after its persisted marker', async () => {
     const state = createChatTranscriptState('compaction-cache', 'physical-compaction');
     const turn = beginAssistantTurn(

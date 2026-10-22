@@ -90,6 +90,69 @@ afterEach(() => {
 });
 
 describe('justdo-chat direct-property streaming', () => {
+  test('keeps the manually scrolled Thinking position and resumes following at its bottom', async () => {
+    const frames = createAnimationFrameHarness();
+    const transcript = createChatTranscriptState('thinking-scroll');
+    const turn = beginAssistantTurn(
+      transcript,
+      { runId: 'thinking-run', startedAt: 1_000 },
+      { now: () => 1_000, createId: prefix => prefix },
+    );
+    const thinking = {
+      id: 'thinking-1',
+      runId: 'thinking-run',
+      firstSeq: 1,
+      lastSeq: 1,
+      startedAt: 1_001,
+      updatedAt: 1_001,
+      type: 'thinking' as const,
+      status: 'running' as const,
+      text: 'Inspecting the current context.',
+    };
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.activeTurn = { ...turn, items: [thinking], lastAgentSeq: 1 };
+    document.body.append(chat);
+    await chat.updateComplete;
+    await frames.drain(chat);
+    const content = chat.shadowRoot!.querySelector<HTMLElement>('.chat-thinking__content')!;
+    expect(content).not.toBeNull();
+    let height = 800;
+    let top = 0;
+    Object.defineProperties(content, {
+      scrollHeight: { get: () => height },
+      clientHeight: { value: 100 },
+      scrollTop: {
+        get: () => top,
+        set: (value: number) => {
+          top = Math.max(0, Math.min(value, height - 100));
+        },
+      },
+    });
+    const update = async () => {
+      const seq = chat.activeTurn!.lastAgentSeq + 1;
+      chat.activeTurn = {
+        ...chat.activeTurn!,
+        items: [{ ...thinking, text: thinking.text.repeat(seq), lastSeq: seq }],
+        lastAgentSeq: seq,
+      };
+      await chat.updateComplete;
+      await frames.drain(chat);
+      expect(chat.shadowRoot!.querySelector('.chat-thinking__content')).toBe(content);
+    };
+    await update();
+    expect(top).toBe(700);
+
+    top = 400;
+    height = 900;
+    await update();
+    expect(top).toBe(400);
+
+    top = 800;
+    height = 1000;
+    await update();
+    expect(top).toBe(900);
+  });
+
   test('announces responding when the same native Content resumes after Thinking', async () => {
     const frames = createAnimationFrameHarness();
     const controller = prepareController();

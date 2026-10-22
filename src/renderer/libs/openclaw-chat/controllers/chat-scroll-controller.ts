@@ -7,7 +7,6 @@ export class ChatScrollController {
   private host: HTMLElement | null = null;
   private mode: ChatScrollMode = 'follow';
   private hasContentBelow = false;
-  private programmatic = false;
   private lastScrollTop = 0;
   private previousRevision = -1;
   private unseenRevisions = 0;
@@ -20,6 +19,9 @@ export class ChatScrollController {
   private pendingNewerHistoryShift: object | null = null;
   private interactionAnchor: { element: HTMLElement; offset: number } | null = null;
   private navigationTargetTop: number | null = null;
+  private scrollbarPointerId: number | null = null;
+  private scrollbarOwnerDocument: Document | null = null;
+  private scrollbarDirection = 0;
   private historyTouchY: number | null = null;
   private anchorScrollRemainder = 0;
 
@@ -27,6 +29,7 @@ export class ChatScrollController {
     private readonly onStateChange: () => void,
     private readonly onNearTop?: () => boolean | void | Promise<boolean>,
     private readonly onNearBottom?: () => boolean | Promise<boolean>,
+    private readonly onScrollbarInteractionEnd?: () => void,
   ) {}
 
   get state(): { mode: ChatScrollMode; unseenRevisions: number } {
@@ -35,6 +38,10 @@ export class ChatScrollController {
 
   get canScrollDown(): boolean {
     return this.hasContentBelow;
+  }
+
+  get isDraggingScrollbar(): boolean {
+    return this.scrollbarPointerId !== null;
   }
 
   private updateScrollAvailability(): void {
@@ -62,6 +69,7 @@ export class ChatScrollController {
     host.addEventListener('touchmove', this.handleHistoryIntent, { passive: true });
     host.addEventListener('touchend', this.handleHistoryIntent, { passive: true });
     host.addEventListener('touchcancel', this.handleHistoryIntent, { passive: true });
+    host.addEventListener('pointerdown', this.handleScrollbarPointerDown);
     const ownerWindow = (host.ownerDocument.defaultView ?? window) as Window & typeof globalThis;
     if (ownerWindow.ResizeObserver) {
       this.resizeObserver = new ownerWindow.ResizeObserver(() => this.handleResize());
@@ -95,7 +103,8 @@ export class ChatScrollController {
           ? this.interactionAnchor
           : this.pausedAnchors.find(anchor => anchor.element.isConnected);
       if (survivingAnchor) {
-        const nextOffset = survivingAnchor.element.getBoundingClientRect().top;
+        const nextOffset =
+          survivingAnchor.element.getBoundingClientRect().top - host.getBoundingClientRect().top;
         this.setScrollTop(
           Math.max(0, host.scrollTop + (nextOffset - survivingAnchor.offset)),
           true,
@@ -118,21 +127,73 @@ export class ChatScrollController {
     this.clearPendingHistoryShifts();
     this.interactionAnchor = null;
     this.historyTouchY = null;
+    this.cancelScrollbarInteraction();
     this.finishNavigation();
     this.scrollToBottom();
     this.onStateChange();
   }
 
   navigateTo(top: number, behavior: ScrollBehavior): void {
+    this.performNavigation(top, () => this.host?.scrollTo({ top: Math.max(0, top), behavior }));
+  }
+
+  navigateToElement(element: HTMLElement, behavior: ScrollBehavior): void {
+    const host = this.host;
+    if (!host || !element.isConnected) return;
+    const nested = this.hasNestedScrollContainer(element);
+    const rect = element.getBoundingClientRect();
+    const top =
+      host.scrollTop +
+      rect.top -
+      host.getBoundingClientRect().top -
+      host.clientTop -
+      (host.clientHeight - rect.height) / 2;
+    this.performNavigation(top, () =>
+      element.scrollIntoView({
+        behavior: nested ? 'instant' : behavior,
+        block: 'center',
+        inline: 'nearest',
+      }),
+    );
+    if (nested) {
+      // Native navigation may only move an inner container and emit no host
+      // scrollend. Settle all nested offsets together, using the real host top.
+      this.finishNavigation();
+      this.lastScrollTop = host.scrollTop;
+      this.updateScrollAvailability();
+    }
+  }
+
+  private hasNestedScrollContainer(element: HTMLElement): boolean {
+    const overflow = ['auto', 'scroll', 'overlay', 'hidden'];
+    for (
+      let parent = element.parentElement;
+      parent && parent !== this.host;
+      parent = parent.parentElement
+    ) {
+      const style = parent.ownerDocument.defaultView?.getComputedStyle(parent);
+      if (
+        style &&
+        ((parent.scrollHeight > parent.clientHeight && overflow.includes(style.overflowY)) ||
+          (parent.scrollWidth > parent.clientWidth && overflow.includes(style.overflowX)))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private performNavigation(top: number, scroll: () => void): void {
     const host = this.host;
     if (!host) return;
+    this.cancelScrollbarInteraction();
     this.anchorScrollRemainder = 0;
     const modeChanged = this.mode !== 'paused';
     this.mode = 'paused';
     this.interactionAnchor = null;
     this.pausedAnchors = [];
     this.navigationTargetTop = Math.max(0, top);
-    host.scrollTo({ top: this.navigationTargetTop, behavior });
+    scroll();
     if (this.isNavigationAtTarget(host)) {
       this.finishNavigation();
       this.lastScrollTop = host.scrollTop;
@@ -142,13 +203,14 @@ export class ChatScrollController {
 
   preserveAnchorForInteraction(element: HTMLElement): void {
     if (!this.host || !element.isConnected) return;
+    this.cancelScrollbarInteraction();
     this.anchorScrollRemainder = 0;
     this.finishNavigation();
     const modeChanged = this.mode !== 'paused';
     this.mode = 'paused';
     this.interactionAnchor = {
       element,
-      offset: element.getBoundingClientRect().top,
+      offset: element.getBoundingClientRect().top - this.host.getBoundingClientRect().top,
     };
     this.pausedAnchors = this.captureVisibleAnchorsNow(this.host);
     if (modeChanged) this.onStateChange();
@@ -162,6 +224,7 @@ export class ChatScrollController {
     this.clearPendingHistoryShifts();
     this.interactionAnchor = null;
     this.historyTouchY = null;
+    this.cancelScrollbarInteraction();
     this.finishNavigation();
     this.onStateChange();
   }
@@ -176,6 +239,7 @@ export class ChatScrollController {
     this.host?.removeEventListener('touchmove', this.handleHistoryIntent);
     this.host?.removeEventListener('touchend', this.handleHistoryIntent);
     this.host?.removeEventListener('touchcancel', this.handleHistoryIntent);
+    this.host?.removeEventListener('pointerdown', this.handleScrollbarPointerDown);
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.observedContent = null;
@@ -186,7 +250,117 @@ export class ChatScrollController {
     this.interactionAnchor = null;
     this.navigationTargetTop = null;
     this.historyTouchY = null;
+    this.clearScrollbarPointer();
   }
+
+  private readonly handleScrollbarPointerDown = (event: PointerEvent): void => {
+    const host = this.host;
+    if (
+      !host ||
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      (event.composedPath()[0] ?? event.target) !== host ||
+      host.scrollHeight <= host.clientHeight ||
+      host.offsetWidth <= host.clientWidth
+    )
+      return;
+    const rect = host.getBoundingClientRect();
+    const contentLeft = rect.left + host.clientLeft;
+    if (
+      event.clientY < rect.top ||
+      event.clientY > rect.bottom ||
+      event.clientX < rect.left ||
+      event.clientX > rect.right ||
+      (event.clientX >= contentLeft && event.clientX < contentLeft + host.clientWidth)
+    )
+      return;
+    // Take ownership before the first native scroll event: a stream commit can
+    // otherwise move the thumb while the user is still pressing it.
+    this.clearScrollbarPointer();
+    this.scrollbarPointerId = event.pointerId;
+    this.scrollbarDirection = 0;
+    this.scrollbarOwnerDocument = host.ownerDocument;
+    this.scrollbarOwnerDocument.addEventListener('pointerup', this.handleScrollbarPointerEnd, true);
+    this.scrollbarOwnerDocument.addEventListener(
+      'pointercancel',
+      this.handleScrollbarPointerEnd,
+      true,
+    );
+    this.scrollbarOwnerDocument.defaultView?.addEventListener('blur', this.handleScrollbarBlur);
+    if (this.navigationTargetTop !== null) {
+      host.scrollTo({ top: host.scrollTop, behavior: 'instant' });
+      this.finishNavigation();
+    }
+    this.anchorScrollRemainder = 0;
+    this.interactionAnchor = null;
+    const modeChanged = this.mode !== 'paused';
+    this.mode = 'paused';
+    this.pausedAnchors = this.captureVisibleAnchorsNow(host);
+    if (modeChanged) this.onStateChange();
+  };
+
+  private readonly handleScrollbarPointerEnd = (event: PointerEvent): void => {
+    const host = this.host;
+    if (!host || this.scrollbarPointerId === null || event.pointerId !== this.scrollbarPointerId)
+      return;
+    const direction = this.scrollbarDirection;
+    this.clearScrollbarPointer();
+    this.pausedAnchors = this.captureVisibleAnchorsNow(host);
+    const threshold = Math.max(
+      ChatScrollController.MIN_HISTORY_SHIFT_THRESHOLD_PX,
+      host.clientHeight * ChatScrollController.HISTORY_SHIFT_THRESHOLD_VIEWPORTS,
+    );
+    if (event.type === 'pointerup') {
+      if (direction < 0 && host.scrollTop <= threshold && !this.pendingOlderHistoryRequest) {
+        this.requestOlderHistory();
+      } else if (
+        direction > 0 &&
+        host.scrollHeight - host.scrollTop - host.clientHeight <= threshold &&
+        !this.pendingNewerHistoryShift
+      ) {
+        this.requestNewerHistory();
+      }
+    }
+    if (
+      event.type === 'pointerup' &&
+      host.scrollHeight - host.scrollTop - host.clientHeight <= 0.5 &&
+      this.pendingNewerHistoryShift === null
+    ) {
+      this.mode = 'follow';
+      this.unseenRevisions = 0;
+      this.onStateChange();
+    }
+    this.onScrollbarInteractionEnd?.();
+  };
+
+  private clearScrollbarPointer(): void {
+    this.scrollbarOwnerDocument?.removeEventListener(
+      'pointerup',
+      this.handleScrollbarPointerEnd,
+      true,
+    );
+    this.scrollbarOwnerDocument?.defaultView?.removeEventListener('blur', this.handleScrollbarBlur);
+    this.scrollbarOwnerDocument?.removeEventListener(
+      'pointercancel',
+      this.handleScrollbarPointerEnd,
+      true,
+    );
+    this.scrollbarPointerId = null;
+    this.scrollbarOwnerDocument = null;
+    this.scrollbarDirection = 0;
+  }
+
+  private cancelScrollbarInteraction(): void {
+    const active = this.isDraggingScrollbar;
+    this.clearScrollbarPointer();
+    if (active) this.onScrollbarInteractionEnd?.();
+  }
+
+  private readonly handleScrollbarBlur = (): void => {
+    if (!this.host || !this.isDraggingScrollbar) return;
+    this.pausedAnchors = this.captureVisibleAnchorsNow(this.host);
+    this.cancelScrollbarInteraction();
+  };
 
   private readonly handleHistoryIntent = (event: Event): void => {
     const host = this.host;
@@ -251,6 +425,7 @@ export class ChatScrollController {
       );
       if (
         host.scrollTop <= threshold &&
+        !this.isDraggingScrollbar &&
         this.onNearTop &&
         this.pendingOlderHistoryRequest === null
       ) {
@@ -262,7 +437,7 @@ export class ChatScrollController {
   private nestedElementConsumesScroll(event: Event, upward: boolean): boolean {
     for (const target of event.composedPath()) {
       if (target === this.host) break;
-      if (typeof HTMLElement === 'undefined' || !(target instanceof HTMLElement)) continue;
+      if (!isDomHTMLElement(target)) continue;
       const style = target.ownerDocument.defaultView?.getComputedStyle(target);
       if (!style || !['auto', 'scroll', 'overlay'].includes(style.overflowY)) continue;
       const available = upward
@@ -277,7 +452,7 @@ export class ChatScrollController {
 
   private readonly handleScroll = (): void => {
     const host = this.host;
-    if (!host || this.programmatic) return;
+    if (!host) return;
     this.updateScrollAvailability();
     if (this.navigationTargetTop !== null) {
       if (!this.isNavigationAtTarget(host)) {
@@ -289,9 +464,29 @@ export class ChatScrollController {
       return;
     }
     const scrollTop = host.scrollTop;
-    const scrollDelta = scrollTop - this.lastScrollTop;
-    if (scrollDelta !== 0) this.anchorScrollRemainder = 0;
+    // Native scroll events arrive after the write, beyond its microtask. A
+    // notification for an already-recorded position must not change user intent.
+    if (scrollTop === this.lastScrollTop) return;
+    const maxScrollTop = Math.max(0, host.scrollHeight - host.clientHeight);
+    // Layout can clamp before ResizeObserver runs, possibly coalescing with
+    // real user input. Only the movement beyond that clamp changes the anchor.
+    const scrollDelta = scrollTop - Math.min(this.lastScrollTop, maxScrollTop);
     this.lastScrollTop = scrollTop;
+    if (scrollDelta === 0) return;
+    this.anchorScrollRemainder = 0;
+    if (this.isDraggingScrollbar) this.scrollbarDirection = Math.sign(scrollDelta);
+    // The next frame refreshes the visible rows. Until then, keep the old
+    // anchors relative to the user's new position so resize cannot undo it.
+    this.pausedAnchors = this.pausedAnchors.map(anchor => ({
+      ...anchor,
+      offset: anchor.offset - scrollDelta,
+    }));
+    if (this.interactionAnchor) {
+      this.interactionAnchor = {
+        ...this.interactionAnchor,
+        offset: this.interactionAnchor.offset - scrollDelta,
+      };
+    }
     const distance = host.scrollHeight - host.scrollTop - host.clientHeight;
     const historyShiftThreshold = Math.max(
       ChatScrollController.MIN_HISTORY_SHIFT_THRESHOLD_PX,
@@ -299,6 +494,7 @@ export class ChatScrollController {
     );
     if (
       scrollDelta > 0 &&
+      !this.isDraggingScrollbar &&
       distance <= historyShiftThreshold &&
       this.pendingNewerHistoryShift === null &&
       this.requestNewerHistory()
@@ -308,7 +504,12 @@ export class ChatScrollController {
       return;
     }
     const nextMode: ChatScrollMode =
-      distance <= 0.5 && this.pendingNewerHistoryShift === null ? 'follow' : 'paused';
+      scrollDelta > 0 &&
+      distance <= 0.5 &&
+      this.pendingNewerHistoryShift === null &&
+      this.scrollbarPointerId === null
+        ? 'follow'
+        : 'paused';
     if (nextMode !== this.mode) {
       this.mode = nextMode;
       if (nextMode === 'follow') this.unseenRevisions = 0;
@@ -317,6 +518,7 @@ export class ChatScrollController {
     if (this.mode === 'paused') this.scheduleVisibleAnchorCapture(host);
     if (
       scrollDelta < 0 &&
+      !this.isDraggingScrollbar &&
       host.scrollTop <= historyShiftThreshold &&
       this.pendingOlderHistoryRequest === null &&
       this.onNearTop
@@ -342,7 +544,10 @@ export class ChatScrollController {
     }
     const survivingAnchor = this.pausedAnchors.find(anchor => anchor.element.isConnected);
     if (survivingAnchor) {
-      const delta = survivingAnchor.element.getBoundingClientRect().top - survivingAnchor.offset;
+      const delta =
+        survivingAnchor.element.getBoundingClientRect().top -
+        host.getBoundingClientRect().top -
+        survivingAnchor.offset;
       if (Math.abs(delta) > 0.5) this.setScrollTop(Math.max(0, host.scrollTop + delta), true);
     }
     this.pausedAnchors = this.captureVisibleAnchorsNow(host);
@@ -378,9 +583,9 @@ export class ChatScrollController {
   private setScrollTop(value: number, preserveFraction = false): void {
     const host = this.host;
     if (!host) return;
-    this.programmatic = true;
     const target = value + (preserveFraction ? this.anchorScrollRemainder : 0);
-    host.scrollTop = target;
+    // Even writing the current position cancels Chromium's native thumb drag.
+    if (host.scrollTop !== target) host.scrollTop = target;
     // Chromium can round scroll offsets while message heights remain fractional.
     // Carry that rounding across batches instead of drifting a little every frame.
     this.anchorScrollRemainder = preserveFraction
@@ -388,9 +593,6 @@ export class ChatScrollController {
       : 0;
     this.lastScrollTop = host.scrollTop;
     this.updateScrollAvailability();
-    queueMicrotask(() => {
-      this.programmatic = false;
-    });
   }
 
   private scheduleVisibleAnchorCapture(host: HTMLElement): void {
@@ -501,6 +703,6 @@ export class ChatScrollController {
     }
     return candidates
       .slice(low, low + 3)
-      .map(element => ({ element, offset: element.getBoundingClientRect().top }));
+      .map(element => ({ element, offset: element.getBoundingClientRect().top - viewportTop }));
   }
 }

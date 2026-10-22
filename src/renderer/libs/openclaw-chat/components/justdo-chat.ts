@@ -306,7 +306,13 @@ export class JustDoChatElement extends LitElement {
       const shifted = this._controller?.showNewerHistory() ?? false;
       return shifted ? this.historyRenderComplete.then(() => true) : false;
     },
+    () => {
+      if (this.scrollbarRenderDeferred) this.requestUpdate();
+    },
   );
+  private scrollbarRenderDeferred = false;
+  private scrollbarDeferredProperties = new Map<string | number | symbol, unknown>();
+  private scrollbarRenderWaiters: Array<() => void> = [];
   private readonly streamRenderScheduler = new StreamRenderScheduler(
     () => this.publishStreamFrame(),
     () => Date.now(),
@@ -407,9 +413,14 @@ export class JustDoChatElement extends LitElement {
     this.requestUpdate();
   }
 
-  /** Resolves after progressive history commits, without delaying the live lane. */
+  /** Resolves after actual commits, including history batches and thumb-drag deferral. */
   public get historyRenderComplete(): Promise<void> {
-    return this.updateComplete.then(() => this.historyRenderScheduler.complete);
+    return this.updateComplete.then(async () => {
+      if (this.scrollbarRenderDeferred) {
+        await new Promise<void>(resolve => this.scrollbarRenderWaiters.push(resolve));
+      }
+      await this.historyRenderScheduler.complete;
+    });
   }
 
   private speechAudio: HTMLAudioElement | null = null;
@@ -926,6 +937,9 @@ export class JustDoChatElement extends LitElement {
     this.messageThemeObserver?.disconnect();
     this.messageThemeObserver = null;
     this.chatScrollController.disconnect();
+    this.scrollbarRenderDeferred = false;
+    this.scrollbarDeferredProperties.clear();
+    for (const resolve of this.scrollbarRenderWaiters.splice(0)) resolve();
     this.streamRenderScheduler.dispose();
     this.persistedTimelineCache.clear();
     this.persistedTimelineRenderCache.clear();
@@ -965,8 +979,22 @@ export class JustDoChatElement extends LitElement {
     this.animationWindow.requestAnimationFrame(() => void this.renderMermaidDiagrams());
   }
 
-  protected shouldUpdate(): boolean {
-    return this.isConnected;
+  protected shouldUpdate(changedProperties: Map<string | number | symbol, unknown>): boolean {
+    if (!this.isConnected) return false;
+    if (this.chatScrollController.isDraggingScrollbar) {
+      this.scrollbarRenderDeferred = true;
+      for (const [key, value] of changedProperties) {
+        if (!this.scrollbarDeferredProperties.has(key))
+          this.scrollbarDeferredProperties.set(key, value);
+      }
+      return false;
+    }
+    for (const [key, value] of this.scrollbarDeferredProperties) {
+      if (!changedProperties.has(key)) changedProperties.set(key, value);
+    }
+    this.scrollbarDeferredProperties.clear();
+    this.scrollbarRenderDeferred = false;
+    return true;
   }
 
   protected willUpdate(changedProperties: Map<string | number | symbol, unknown>): void {
@@ -1091,6 +1119,7 @@ export class JustDoChatElement extends LitElement {
       this.scheduleMinimapSync();
     }
     this.historyRenderScheduler.afterCommit(performance.now() - this.renderStartedAt);
+    for (const resolve of this.scrollbarRenderWaiters.splice(0)) resolve();
   }
 
   private syncScrollIndicator(): void {
@@ -1108,7 +1137,12 @@ export class JustDoChatElement extends LitElement {
     for (const content of contents) {
       const previousScrollHeight = this.streamingThinkingScrollHeights.get(content);
       if (previousScrollHeight !== content.scrollHeight) {
-        content.scrollTop = content.scrollHeight;
+        if (
+          previousScrollHeight === undefined ||
+          previousScrollHeight - content.scrollTop - content.clientHeight <= 1
+        ) {
+          content.scrollTop = content.scrollHeight;
+        }
         this.streamingThinkingScrollHeights.set(content, content.scrollHeight);
       }
     }
@@ -1523,7 +1557,7 @@ export class JustDoChatElement extends LitElement {
     if (!target) return false;
     this.expandSearchMatchContainers(target);
     target.classList.remove('chat-history-row--revealed');
-    target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+    this.chatScrollController.navigateToElement(target, 'smooth');
     this.animationWindow.requestAnimationFrame(() =>
       target.classList.add('chat-history-row--revealed'),
     );
@@ -1592,7 +1626,7 @@ export class JustDoChatElement extends LitElement {
     mark.dataset.justdoSearchMark = 'true';
     range.surroundContents(mark);
     this.expandSearchMatchContainers(mark);
-    mark.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+    this.chatScrollController.navigateToElement(mark, 'smooth');
   }
 
   private expandSearchMatchContainers(mark: HTMLElement): void {

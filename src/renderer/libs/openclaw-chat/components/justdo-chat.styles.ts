@@ -414,7 +414,10 @@ export const chatStyles = [
     }
 
     .chat-container {
-      width: calc(100% - (100% - var(--justdo-chat-content-width, 60%)) * var(--chat-content-width-progress, 0));
+      width: calc(
+        100% - (100% - var(--justdo-chat-content-width, 60%)) *
+          var(--chat-content-width-progress, 0)
+      );
       /* Match the composer's continuous window-size adaptation. */
       max-width: calc(100% - 96px);
       min-width: min(320px, calc(100% - 96px));
@@ -3415,7 +3418,8 @@ export const chatStyles = [
       width: 34px;
       height: 34px;
       place-items: center;
-      margin: 8px auto 0;
+      /* A visibility change must not resize the native scrollbar mid-drag. */
+      margin: -34px auto 0;
       border: 1px solid rgba(100, 116, 139, 0.2);
       border-radius: 999px;
       padding: 0;

@@ -10,6 +10,8 @@ function host(options: { asyncSmooth?: boolean } = {}) {
     scrollHeight: 1000,
     scrollTop: 700,
     clientHeight: 300,
+    clientTop: 0,
+    getBoundingClientRect: () => ({ top: 0 }),
     scrollTo: vi.fn(({ top, behavior }: ScrollToOptions) => {
       if (typeof top === 'number' && !(options.asyncSmooth && behavior === 'smooth')) {
         target.scrollTop = top;
@@ -33,6 +35,125 @@ function host(options: { asyncSmooth?: boolean } = {}) {
 }
 
 describe('ChatScrollController', () => {
+  function scrollbarHost(
+    onNearTop?: () => boolean | void,
+    onNearBottom?: () => boolean,
+    scrollTop = 700,
+  ) {
+    const target = document.createElement('div');
+    Object.defineProperties(target, {
+      scrollHeight: { value: 1000, configurable: true },
+      clientHeight: { value: 300 },
+      clientWidth: { value: 490 },
+      offsetWidth: { value: 500 },
+    });
+    target.getBoundingClientRect = () =>
+      ({ left: 20, right: 520, top: 30, bottom: 330 }) as DOMRect;
+    target.scrollTop = scrollTop;
+    target.scrollTo = vi.fn();
+    const controller = new ChatScrollController(vi.fn(), onNearTop, onNearBottom);
+    controller.connect(target);
+    const press = (options: PointerEventInit = {}) =>
+      target.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          clientX: 518,
+          clientY: 315,
+          button: 0,
+          pointerId: 1,
+          bubbles: true,
+          ...options,
+        }),
+      );
+    return { target, controller, press };
+  }
+
+  test('pressing the native scrollbar pauses output before the first scroll event', () => {
+    const { target, controller, press } = scrollbarHost();
+    press();
+    Object.defineProperty(target, 'scrollHeight', { value: 1200 });
+    controller.beforeRender();
+    controller.afterRender(1);
+
+    expect(controller.state.mode).toBe('paused');
+    expect(target.scrollTop).toBe(700);
+    document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
+    expect(controller.state.mode).toBe('paused');
+    controller.disconnect();
+  });
+
+  test('keeps scrollbar dragging paused until the matching pointer is released at the bottom', () => {
+    const { target, controller, press } = scrollbarHost();
+    press();
+    target.scrollTop = 500;
+    target.dispatchEvent(new Event('scroll'));
+    target.scrollTop = 700;
+    target.dispatchEvent(new Event('scroll'));
+    expect(controller.state.mode).toBe('paused');
+
+    document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 2 }));
+    expect(controller.state.mode).toBe('paused');
+    document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
+    expect(controller.state.mode).toBe('follow');
+    controller.disconnect();
+  });
+
+  test('scrollbar input interrupts smooth navigation before streaming can restore it', () => {
+    const { target, controller, press } = scrollbarHost();
+    controller.navigateTo(100, 'smooth');
+    press();
+    expect(target.scrollTo).toHaveBeenLastCalledWith({ top: 700, behavior: 'instant' });
+    expect(controller.state.mode).toBe('paused');
+    controller.disconnect();
+  });
+
+  test.each(['older', 'newer'] as const)(
+    'waits for thumb release before shifting %s history',
+    direction => {
+      const older = vi.fn(() => false);
+      const newer = vi.fn(() => true);
+      const { target, controller, press } = scrollbarHost(older, newer, 300);
+      press();
+      target.scrollTop = direction === 'older' ? 100 : 500;
+      target.dispatchEvent(new Event('scroll'));
+      expect(older).not.toHaveBeenCalled();
+      expect(newer).not.toHaveBeenCalled();
+
+      document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
+
+      expect(direction === 'older' ? older : newer).toHaveBeenCalledOnce();
+      expect(direction === 'older' ? newer : older).not.toHaveBeenCalled();
+      controller.disconnect();
+    },
+  );
+
+  test.each([{ clientX: 250 }, { button: 2 }])(
+    'does not pause follow for a content click or secondary scrollbar click: %o',
+    options => {
+      const { controller, press } = scrollbarHost();
+      press(options);
+      expect(controller.state.mode).toBe('follow');
+      controller.disconnect();
+    },
+  );
+
+  test('a nested scrollbar does not take over the transcript scroll mode', () => {
+    const { target, controller } = scrollbarHost();
+    const child = document.createElement('div');
+    target.attachShadow({ mode: 'open' }).append(child);
+    child.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        clientX: 518,
+        clientY: 315,
+        button: 0,
+        pointerId: 1,
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    expect(controller.state.mode).toBe('follow');
+    controller.disconnect();
+  });
+
   function nestedHost() {
     const target = document.createElement('div');
     const root = target.attachShadow({ mode: 'open' });
@@ -63,6 +184,37 @@ describe('ChatScrollController', () => {
     inner.dispatchEvent(new WheelEvent('wheel', { deltaY: -40, bubbles: true, composed: true }));
     expect(controller.state.mode).toBe('paused');
     controller.disconnect();
+  });
+
+  test('recognizes nested scrolling in a detached workspace document', () => {
+    const frame = document.createElement('iframe');
+    document.body.append(frame);
+    const owner = frame.contentDocument!;
+    const target = owner.createElement('div');
+    const inner = owner.createElement('div');
+    inner.style.overflowY = 'auto';
+    target.attachShadow({ mode: 'open' }).append(inner);
+    Object.defineProperties(target, {
+      scrollHeight: { value: 1000 },
+      clientHeight: { value: 300 },
+    });
+    Object.defineProperties(inner, {
+      scrollHeight: { value: 600 },
+      clientHeight: { value: 200 },
+    });
+    target.scrollTop = 700;
+    inner.scrollTop = 100;
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target);
+
+    inner.dispatchEvent(new WheelEvent('wheel', { deltaY: -40, bubbles: true, composed: true }));
+
+    expect(controller.state.mode).toBe('follow');
+    inner.scrollTop = 0;
+    inner.dispatchEvent(new WheelEvent('wheel', { deltaY: -40, bubbles: true, composed: true }));
+    expect(controller.state.mode).toBe('paused');
+    controller.disconnect();
+    frame.remove();
   });
 
   test.each(['contain', 'none'])('respects inner %s scroll containment at its boundary', policy => {
@@ -170,6 +322,47 @@ describe('ChatScrollController', () => {
     expect(controller.state.mode).toBe('paused');
   });
 
+  test('a delayed programmatic scroll event cannot resume follow after upward intent', async () => {
+    const target = host();
+    Object.defineProperty(target, 'scrollTop', {
+      get: () => 700,
+      set: () => {},
+    });
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target as unknown as HTMLElement);
+    controller.afterRender(1);
+    await Promise.resolve();
+
+    target.emit('wheel', new WheelEvent('wheel', { deltaY: -40 }));
+    target.emitScroll();
+    target.scrollHeight = 1200;
+    controller.beforeRender();
+    controller.afterRender(2);
+
+    expect(controller.state.mode).toBe('paused');
+    expect(target.scrollTop).toBe(700);
+    controller.disconnect();
+  });
+
+  test('clamping a shrinking transcript does not resume follow', () => {
+    const target = host();
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target as unknown as HTMLElement);
+    target.scrollTop = 500;
+    target.emitScroll();
+
+    target.scrollHeight = 700;
+    target.scrollTop = 400;
+    target.emitScroll();
+
+    expect(controller.state.mode).toBe('paused');
+    target.scrollHeight = 1200;
+    controller.beforeRender();
+    controller.afterRender(1);
+    expect(target.scrollTop).toBe(400);
+    controller.disconnect();
+  });
+
   test.each([200, 300, 301])('hides the jump button when content fits (%s px)', height => {
     const target = host();
     target.scrollTop = 0;
@@ -274,6 +467,77 @@ describe('ChatScrollController', () => {
     expect(target.scrollTop).toBe(260);
   });
 
+  test('element navigation owns smooth scrolling while output continues', () => {
+    const target = host();
+    const element = {
+      isConnected: true,
+      getBoundingClientRect: () => ({ top: 100, height: 40 }),
+      scrollIntoView: vi.fn(),
+    };
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target as unknown as HTMLElement);
+
+    controller.navigateToElement(element as unknown as HTMLElement, 'smooth');
+    controller.beforeRender();
+    target.scrollHeight = 1200;
+    controller.afterRender(1);
+
+    expect(element.scrollIntoView).toHaveBeenCalledWith({
+      behavior: 'smooth',
+      block: 'center',
+      inline: 'nearest',
+    });
+    expect(controller.state.mode).toBe('paused');
+    expect(target.scrollTop).toBe(700);
+    controller.disconnect();
+  });
+
+  test('finishes inner-only element navigation so later layout changes preserve the reader', () => {
+    const target = host() as ReturnType<typeof host> & {
+      shadowRoot: { querySelector: () => object; querySelectorAll: () => object[] };
+    };
+    target.scrollTop = 450;
+    let contentTop = 500;
+    const inner = document.createElement('div');
+    inner.style.overflowY = 'auto';
+    Object.defineProperties(inner, {
+      scrollHeight: { value: 2000 },
+      clientHeight: { value: 200 },
+    });
+    inner.getBoundingClientRect = () =>
+      ({
+        top: contentTop - target.scrollTop,
+        bottom: contentTop - target.scrollTop + 200,
+      }) as DOMRect;
+    const element = document.createElement('span');
+    inner.append(element);
+    document.body.append(inner);
+    element.getBoundingClientRect = () =>
+      ({ top: contentTop + 400 - inner.scrollTop - target.scrollTop, height: 20 }) as DOMRect;
+    element.scrollIntoView = vi.fn(() => {
+      inner.scrollTop = 310;
+    });
+    target.shadowRoot = { querySelector: () => ({}), querySelectorAll: () => [inner] };
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target as unknown as HTMLElement);
+
+    controller.navigateToElement(element, 'smooth');
+    controller.beforeRender();
+    contentTop += 60;
+    controller.afterRender(1);
+
+    expect(element.scrollIntoView).toHaveBeenCalledWith({
+      behavior: 'instant',
+      block: 'center',
+      inline: 'nearest',
+    });
+    expect(target.scrollTop).toBe(510);
+    expect(inner.getBoundingClientRect().top).toBe(50);
+    expect(controller.state.mode).toBe('paused');
+    controller.disconnect();
+    inner.remove();
+  });
+
   test('ends smooth minimap navigation when scrolling is interrupted', () => {
     const target = host({ asyncSmooth: true });
     const loadOlder = vi.fn();
@@ -314,6 +578,29 @@ describe('ChatScrollController', () => {
     expect(controller.state).toEqual({ mode: 'paused', unseenRevisions: 0 });
     expect(target.scrollTop).toBe(640);
     expect(onStateChange).toHaveBeenCalled();
+  });
+
+  test('output below a paused reader does not cancel native dragging with redundant scroll writes', () => {
+    const target = host() as ReturnType<typeof host> & {
+      shadowRoot: { querySelector: () => object; querySelectorAll: () => object[] };
+    };
+    const anchor = {
+      isConnected: true,
+      getBoundingClientRect: () => ({ top: 20, bottom: 60 }),
+    };
+    const write = vi.fn();
+    Object.defineProperty(target, 'scrollTop', { get: () => 500, set: write });
+    target.shadowRoot = { querySelector: () => ({}), querySelectorAll: () => [anchor] };
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target as unknown as HTMLElement);
+    controller.preserveAnchorForInteraction(anchor as unknown as HTMLElement);
+
+    controller.beforeRender();
+    target.scrollHeight = 1200;
+    controller.afterRender(1);
+
+    expect(write).not.toHaveBeenCalled();
+    controller.disconnect();
   });
 
   test('does not accumulate fractional scroll rounding across progressive history commits', () => {
@@ -695,6 +982,131 @@ describe('ChatScrollController', () => {
 
     expect(target.scrollTop).toBe(530);
   });
+
+  test.each([-80, 80])(
+    'keeps %i px of manual scrolling when content resizes before the anchor refresh',
+    async scrollDelta => {
+      let resize = () => {};
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          constructor(callback: () => void) {
+            resize = callback;
+          }
+          observe() {}
+          unobserve() {}
+          disconnect() {}
+        },
+      );
+      const target = host() as ReturnType<typeof host> & {
+        shadowRoot: { querySelector: () => object; querySelectorAll: () => object[] };
+      };
+      let contentTop = 520;
+      const anchor = {
+        isConnected: true,
+        getBoundingClientRect: () => ({
+          top: contentTop - target.scrollTop,
+          bottom: contentTop - target.scrollTop + 200,
+        }),
+      };
+      target.shadowRoot = { querySelector: () => ({}), querySelectorAll: () => [anchor] };
+      const controller = new ChatScrollController(vi.fn());
+      controller.connect(target as unknown as HTMLElement);
+      target.scrollTop = 500;
+      target.emitScroll();
+      controller.beforeRender();
+      controller.afterRender(1);
+      await Promise.resolve();
+
+      target.scrollTop += scrollDelta;
+      target.emitScroll();
+      contentTop += 30;
+      resize();
+
+      expect(target.scrollTop).toBe(530 + scrollDelta);
+      controller.disconnect();
+    },
+  );
+
+  test('moving the transcript viewport does not move the paused reading position', () => {
+    const target = host() as ReturnType<typeof host> & {
+      shadowRoot: { querySelector: () => object; querySelectorAll: () => object[] };
+    };
+    let viewportTop = 0;
+    target.getBoundingClientRect = () => ({ top: viewportTop });
+    const anchor = {
+      isConnected: true,
+      getBoundingClientRect: () => ({
+        top: viewportTop + 520 - target.scrollTop,
+        bottom: viewportTop + 560 - target.scrollTop,
+      }),
+    };
+    target.shadowRoot = { querySelector: () => ({}), querySelectorAll: () => [anchor] };
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target as unknown as HTMLElement);
+    target.scrollTop = 500;
+    target.emitScroll();
+    controller.beforeRender();
+    viewportTop += 60;
+    controller.afterRender(1);
+
+    expect(target.scrollTop).toBe(500);
+    controller.disconnect();
+  });
+
+  test.each([0, -50])(
+    'separates a native clamp before resize from %i px of coalesced user scrolling',
+    async userScroll => {
+      let resize = () => {};
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          constructor(callback: () => void) {
+            resize = callback;
+          }
+          observe() {}
+          unobserve() {}
+          disconnect() {}
+        },
+      );
+      const target = host() as ReturnType<typeof host> & {
+        shadowRoot: { querySelector: () => object; querySelectorAll: () => object[] };
+      };
+      let scrollTop = 500;
+      let contentTop = 520;
+      Object.defineProperty(target, 'scrollTop', {
+        get: () => Math.min(scrollTop, target.scrollHeight - target.clientHeight),
+        set: (value: number) => {
+          scrollTop = Math.max(0, Math.min(value, target.scrollHeight - target.clientHeight));
+        },
+      });
+      const anchor = {
+        isConnected: true,
+        getBoundingClientRect: () => ({
+          top: contentTop - target.scrollTop,
+          bottom: contentTop - target.scrollTop + 40,
+        }),
+      };
+      target.shadowRoot = { querySelector: () => ({}), querySelectorAll: () => [anchor] };
+      const controller = new ChatScrollController(vi.fn());
+      controller.connect(target as unknown as HTMLElement);
+      controller.preserveAnchorForInteraction(anchor as unknown as HTMLElement);
+      controller.afterRender(1);
+      await Promise.resolve();
+
+      contentTop -= 400;
+      target.scrollHeight -= 400;
+      expect(target.scrollTop).toBe(300);
+      target.scrollTop += userScroll;
+      target.emitScroll();
+      resize();
+
+      expect(target.scrollTop).toBe(100 + userScroll);
+      expect(anchor.getBoundingClientRect().top).toBe(20 - userScroll);
+      expect(controller.state.mode).toBe('paused');
+      controller.disconnect();
+    },
+  );
 });
 
 afterEach(() => {
