@@ -75,6 +75,7 @@ function debugLog(...args: unknown[]): void {
 
 interface JustDoChatWrapperProps {
   onWidgetDraft?: (sessionKey: string, text: string) => void | boolean;
+  onWidgetLink?: (sessionKey: string, url: string) => void;
   onOpenMcpAppFile?: (file: { path: string; name: string }) => Promise<boolean>;
   mcpAppFilePath?: string;
   onNewMcpAppDraft?: (text: string, content: unknown[]) => Promise<boolean>;
@@ -214,6 +215,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       onLastUserMessageAction,
       onMessageQuote,
       onWidgetDraft,
+      onWidgetLink,
       onOpenMcpAppFile,
       mcpAppFilePath,
       onNewMcpAppDraft,
@@ -255,6 +257,21 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const chatElementRef = useRef<JustDoChatElement | null>(null);
     const widgetDraftCallback = useRef(onWidgetDraft);
     widgetDraftCallback.current = onWidgetDraft;
+    const widgetLinkCallback = useRef(onWidgetLink);
+    widgetLinkCallback.current = onWidgetLink;
+    const openWidgetLink = useCallback(
+      (sessionKey: string, url: string) => {
+        const state = controllerRef.current?.state;
+        if (
+          activeProductSessionId.current === currentSessionId &&
+          state?.connected &&
+          state.sessionKey === sessionKey &&
+          canonicalSessionKeyRef.current === sessionKey
+        )
+          widgetLinkCallback.current?.(sessionKey, url);
+      },
+      [currentSessionId],
+    );
     const openMcpAppFileCallback = useRef(onOpenMcpAppFile);
     openMcpAppFileCallback.current = onOpenMcpAppFile;
     const newMcpAppDraftCallback = useRef(onNewMcpAppDraft);
@@ -410,6 +427,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         if (previous && previous !== element) {
           previous.captureMcpAppContext = undefined;
           previous.canDraftWidget = undefined;
+          previous.openWidgetLink = undefined;
           previous.addMcpAppDraft = undefined;
           previous.openMcpAppFile = undefined;
           previous.addNewMcpAppDraft = undefined;
@@ -418,6 +436,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         if (element) {
           element.captureMcpAppContext = captureMcpAppContext;
           element.canDraftWidget = canDraftWidget;
+          element.openWidgetLink = openWidgetLink;
           element.addMcpAppDraft = addMcpAppDraft;
           element.openMcpAppFile = openMcpAppFile;
           element.addNewMcpAppDraft = (text, content) =>
@@ -425,7 +444,14 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         }
         element?.addEventListener(NATIVE_WIDGET_DRAFT_EVENT, handleWidgetDraft);
       },
-      [captureMcpAppContext, canDraftWidget, handleWidgetDraft, addMcpAppDraft, openMcpAppFile],
+      [
+        captureMcpAppContext,
+        canDraftWidget,
+        handleWidgetDraft,
+        addMcpAppDraft,
+        openMcpAppFile,
+        openWidgetLink,
+      ],
     );
     useLayoutEffect(() => {
       // The live callback fences input immediately; refresh policy/UI without

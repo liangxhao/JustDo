@@ -110,6 +110,13 @@ Main 在 attach 前核对固定 origin/path/mount，强制最小 preload、sandb
 认证读取继续属于当前聊天 client，只传当前 HTML/沙箱 URL、主题与草稿策略，不传 token。
 guest 内沿用 source/origin/renderId、私有 prompt port 和真实激活检查；封闭语义事件通过
 当前 webview 回到聊天组件，再检查当前绑定、焦点、可见性和速率。加入草稿仍需用户确认。
+HTTP(S) 链接使用挂载时最前置的内存脚本，在生成脚本之前捕获原生点击和 DOM 方法，
+通过原生 shell 首个 `widget-bridge-port-offer` 转交独立私有端口，仅接收真实链接点击。
+该通道不发送原生 dashboard ticket，也不授予工具或资源权限；原生 prompt 端口保持独立。
+宿主核对 source/origin、单一端口及本次 linkId，激活时再查文档焦点、可见性、URL 和速率。
+guest 只返回当前 mount 的链接语义事件，聊天再次核对 client/generation/session/docId。
+主聊天以捕获的产品会话和原生 sessionKey 回调到自己的浏览器标签入口，不作全局事件广播，
+不跟随 Chrome 偏好；旧回调、失效挂载与运行错误均撤销链接。放大卡片先收起，仍保留同一文档。
 切会话、卸载或宿主导航销毁旧 guest；放大只提升原有 dialog，保留同一文档与本地输入。
 Electron guest 失败显示现有恢复入口，不回退主 session iframe。普通浏览器继续原 iframe
 路径。代理只影响原生策略已允许的请求，不放宽 CSP 或添加 OpenClaw patch。

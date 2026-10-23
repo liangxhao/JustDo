@@ -123,6 +123,68 @@ function sandbox(view: NativeWidgetView) {
 }
 
 describe('native widget viewer lifecycle', () => {
+  it('routes desktop links to the current consumer even in read-only history, rejecting hidden and stale cards', async () => {
+    vi.stubGlobal('electron', {});
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    const { view, context, client } = mount();
+    const open = vi.fn();
+    context.openLink = open;
+    context.canDraft = () => false;
+    await settle(view);
+    const guest = view.shadowRoot!.querySelector('webview')! as HTMLElement & {
+      send: ReturnType<typeof vi.fn>;
+    };
+    guest.send = vi.fn();
+    guest.tabIndex = 0;
+    guest.focus();
+    guest.dispatchEvent(new Event('dom-ready'));
+    const { mountId } = guest.send.mock.calls[0][1];
+    const emit = (data: unknown) =>
+      guest.dispatchEvent(
+        Object.assign(new Event('ipc-message'), {
+          channel: WidgetViewerIpc.Event,
+          args: [data],
+        }),
+      );
+    const link = { mountId, type: 'link', url: 'https://example.com/report' };
+    emit(link);
+    expect(open).not.toHaveBeenCalled();
+    emit({ mountId, type: 'ready' });
+    emit({ ...link, mountId: 'old' });
+    for (const url of [
+      'file:///private.txt',
+      'javascript:alert(1)',
+      'https://user:secret@example.com',
+    ])
+      emit({ ...link, url });
+    expect(open).not.toHaveBeenCalled();
+    emit(link);
+    expect(open).toHaveBeenCalledExactlyOnceWith(link.url);
+    const dialog = view.shadowRoot!.querySelector('dialog')!;
+    dialog.close = vi.fn();
+    dialog.showModal = vi.fn();
+    view.shadowRoot!.querySelector<HTMLButtonElement>('.view-actions button')!.click();
+    await settle(view);
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    guest.focus();
+    emit(link);
+    await settle(view);
+    expect(dialog.getAttribute('aria-modal')).toBeNull();
+    expect(dialog.close).toHaveBeenCalledTimes(2);
+    expect(view.shadowRoot!.querySelector('webview')).toBe(guest);
+    expect(open).toHaveBeenCalledTimes(2);
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    emit(link);
+    expect(open).toHaveBeenCalledTimes(2);
+    visibility.mockReturnValue('visible');
+    client.generation++;
+    emit(link);
+    expect(open).toHaveBeenCalledTimes(2);
+    view.remove();
+    emit(link);
+    expect(open).toHaveBeenCalledTimes(2);
+  });
+
   it('does not send a final state message into a guest being destroyed', async () => {
     vi.stubGlobal('electron', {});
     const { view } = mount();

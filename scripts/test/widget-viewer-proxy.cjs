@@ -50,12 +50,12 @@ const recordRejection=event=>errors.push(String(event.reason));addEventListener(
 const client={generation:1,gatewayUrl:data.gatewayUrl,request:async()=>{reads++;return data.view}};
 const preview=id=>decodeNativeCanvasResult(JSON.stringify({kind:'canvas',presentation:{target:'assistant_message',sandbox:'scripts',title:'Proxy fixture'},view:{id}}),'show_widget','fixture-call');
 const view=new NativeWidgetView();view.preview=preview('fixture-doc');
-let current=true,canDraft=true;
-view.context={client,generation:1,sessionKey:'fixture-session',isCurrent:()=>current,canDraft:()=>canDraft};
+let current=true,canDraft=true;const links=[];
+view.context={client,generation:1,sessionKey:'fixture-session',isCurrent:()=>current,canDraft:()=>canDraft,openLink:url=>links.push(url)};
 let destination=document;
 if(data.workspace){const child=window.open('/workspace.html?generation=2e4ec192-521e-4b76-b132-e34598e41bb2','widget-proxy-workspace');for(let n=0;n<200;n++){try{if(child.document.body?.dataset.ready==='true'){destination=child.document;break}}catch{}await new Promise(resolve=>setTimeout(resolve,25))}if(destination===document)throw new Error('Workspace did not load')}
 if(destination!==document)destination.defaultView.addEventListener('unhandledrejection',recordRejection);
-destination.body.append(view);window.fixture={view,errors,replace:id=>{view.preview=preview(id)},reads:()=>reads,setCurrent:value=>{current=value;view.requestUpdate()},setDraft:value=>{canDraft=value;view.requestUpdate()}};
+destination.body.append(view);window.fixture={view,links,errors,replace:id=>{view.preview=preview(id)},reads:()=>reads,setCurrent:value=>{current=value;view.requestUpdate()},setDraft:value=>{canDraft=value;view.requestUpdate()}};
 window.fixture.socket=new WebSocket(data.socketUrl);window.fixture.socket.onclose=()=>window.fixture.socketClosed=true;`,
         'dist/assets/parent.js',
         'browser',
@@ -109,7 +109,7 @@ addEventListener('resize',draw);draw()</script>`
           sandboxPath: sandboxPath(policy),
           html: wrap(
             'Proxy fixture',
-            `${content}<script src="http://widget.fixture.invalid/asset.js"></script><script>window.documentIdentity=Math.random();window.blocked=false;fetch('http://widget.fixture.invalid/blocked').catch(()=>window.blocked=true)</script>`,
+            `${content}${process.argv.includes('--links') ? '<a id="link" href="https://example.com/report" target="_blank"><span>Report</span></a><a id="local-link" href="#scene">Local</a>' : ''}<script src="http://widget.fixture.invalid/asset.js"></script><script>window.documentIdentity=Math.random();window.blocked=false;fetch('http://widget.fixture.invalid/blocked').catch(()=>window.blocked=true)</script>`,
             { scriptOrigins: ['http://widget.fixture.invalid'] },
           ),
         }),
@@ -434,6 +434,41 @@ addEventListener('resize',draw);draw()</script>`
         () => read('!window.fixture.view.shadowRoot.querySelector(".suggestion")'),
         'draft capability revocation',
       );
+      if (process.argv.includes('--links')) {
+        // Neither programmatic clicks nor public postMessage may open a URL.
+        await inner.executeJavaScript(
+          'document.getElementById("link").click();parent.postMessage({type:"widget-view:open-link",url:"https://example.com/forged"},"*")',
+        );
+        assert.deepEqual(await read('window.fixture.links'), []);
+        const documentIdentity = await inner.executeJavaScript('window.documentIdentity');
+        const linkRect = await inner.executeJavaScript(
+          '(()=>{const r=document.getElementById("link").getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()',
+        );
+        const clickLink = async () => {
+          await read('window.fixture.view.shadowRoot.querySelector("webview").focus()');
+          for (const type of ['mousePressed', 'mouseReleased'])
+            await guest.debugger.sendCommand(
+              'Input.dispatchMouseEvent',
+              {
+                type,
+                button: 'left',
+                clickCount: 1,
+                x: linkRect.x + outerOffset.x + innerOffset.x,
+                y: linkRect.y + outerOffset.y + innerOffset.y,
+              },
+              targetSession,
+            );
+        };
+        await clickLink();
+        await until(
+          async () => (await read('window.fixture.links.length')) === 1,
+          'trusted URL activation while drafts are disabled',
+        );
+        assert.deepEqual(await read('window.fixture.links'), ['https://example.com/report']);
+        assert.equal(await inner.executeJavaScript('window.documentIdentity'), documentIdentity);
+        assert.equal(await inner.executeJavaScript('typeof window.widgetViewer'), 'undefined');
+        assert.equal(guest.getURL().startsWith(host.origin), true);
+      }
       await guest.session.cookies.set({ url: host.origin, name: 'widget-only', value: '1' });
       assert.equal((await session.defaultSession.cookies.get({ name: 'widget-only' })).length, 0);
       const identity = await inner.executeJavaScript('window.documentIdentity');

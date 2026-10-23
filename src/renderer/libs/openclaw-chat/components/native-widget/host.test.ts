@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { NativeWidgetSandboxHost, resolveNativeSandboxUrl, WIDGET_TIMEOUT_MS } from './host';
+import { WIDGET_LINK_OFFER, WIDGET_LINK_OPEN, WIDGET_LINK_READY } from './links';
 import { WIDGET_LAYOUT_REQUEST, WIDGET_MEASURED_HEIGHT } from './sizing';
 
 const gateway = 'ws://127.0.0.1:18789';
@@ -12,9 +13,85 @@ afterEach(() => {
   document.body.replaceChildren();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('native sandbox transport', () => {
+  it('opens links only through the current private port and revokes it on failure or disposal', () => {
+    vi.useFakeTimers();
+    const widget = document.createElement('justdo-native-widget');
+    const frame = document.createElement('iframe');
+    frame.src = 'http://127.0.0.1:18790/mcp-app-sandbox';
+    widget.attachShadow({ mode: 'open' }).append(frame);
+    document.body.append(widget);
+    frame.focus();
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    const activation = { isActive: true };
+    vi.stubGlobal('navigator', { userActivation: activation });
+    vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 500, 300));
+    const post = vi.spyOn(frame.contentWindow!, 'postMessage');
+    const open = vi.fn();
+    const host = new NativeWidgetSandboxHost(
+      frame,
+      frame.src,
+      '<body>fixture</body>',
+      vi.fn(),
+      vi.fn(),
+      open,
+    );
+    const receive = (
+      data: unknown,
+      ports: MessagePort[] = [],
+      source = frame.contentWindow,
+      origin = new URL(frame.src).origin,
+    ) => host.handleMessage(new MessageEvent('message', { data, ports, source, origin }));
+    const channel = () => ({
+      onmessage: null as ((event: { data: unknown }) => void) | null,
+      start: vi.fn(),
+      postMessage: vi.fn(),
+      close: vi.fn(),
+    });
+    receive({ method: 'ui/notifications/sandbox-proxy-ready', params: { sandboxUrl: frame.src } });
+    const { html, renderId } = post.mock.calls[0][0].params;
+    const linkId = /\)\("([^"]+)","openclaw:widget-bridge-port-offer"/u.exec(html)![1];
+    const offer = { type: WIDGET_LINK_OFFER, linkId };
+    const wrong = channel();
+    receive(offer, [wrong as unknown as MessagePort], window);
+    receive(offer, [wrong as unknown as MessagePort], frame.contentWindow, 'https://other.test');
+    expect(wrong.start).not.toHaveBeenCalled();
+    receive({ ...offer, linkId: 'old' }, [wrong as unknown as MessagePort]);
+    expect(wrong.close).toHaveBeenCalledOnce();
+    const port = channel();
+    receive(offer, [port as unknown as MessagePort]);
+    expect(port.postMessage).toHaveBeenCalledWith({ type: WIDGET_LINK_READY });
+    const link = { type: WIDGET_LINK_OPEN, url: 'https://example.com/report' };
+    port.onmessage!({ data: link });
+    expect(open).not.toHaveBeenCalled();
+    receive({ method: 'ui/notifications/sandbox-resource-loaded', params: { renderId } });
+    receive(link);
+    port.onmessage!({ data: { ...link, url: 'file:///private.txt' } });
+    expect(open).not.toHaveBeenCalled();
+    activation.isActive = false;
+    port.onmessage!({ data: link });
+    expect(open).not.toHaveBeenCalled();
+    activation.isActive = true;
+    port.onmessage!({ data: link });
+    expect(open).toHaveBeenCalledExactlyOnceWith(link.url);
+    port.onmessage!({ data: link });
+    expect(open).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(300);
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    port.onmessage!({ data: link });
+    expect(open).toHaveBeenCalledOnce();
+    host.disableLinks();
+    expect(port.close).toHaveBeenCalledOnce();
+    port.onmessage!({ data: link });
+    receive(offer, [wrong as unknown as MessagePort]);
+    expect(wrong.close).toHaveBeenCalledTimes(2);
+    host.dispose();
+    expect(open).toHaveBeenCalledOnce();
+  });
+
   it('accepts the actual locked Gateway canvas.document.view sandbox metadata', () => {
     const actual = {
       sandboxPort: 5103,

@@ -40,6 +40,7 @@ const fail = (runtime: boolean) => {
   failed = true;
   port?.close();
   port = undefined;
+  host?.disableLinks();
   sendState();
   if (!runtime) host?.dispose();
   emit({ mountId, type: 'failure', runtime });
@@ -86,6 +87,9 @@ bridge?.onInitialize((value: WidgetViewerInitialize) => {
       }
     },
     () => fail(false),
+    url => {
+      if (!failed) emit({ mountId, type: 'link', url });
+    },
   );
   window.addEventListener('message', event => {
     if (!host || event.source !== frame?.contentWindow || event.origin !== new URL(host.url).origin)
@@ -111,10 +115,6 @@ bridge?.onInitialize((value: WidgetViewerInitialize) => {
       port.start();
       port.postMessage({ type: 'openclaw:widget-prompt-host-ready' });
       sendState();
-      return;
-    }
-    if (event.data?.type === 'openclaw:widget-bridge-port-offer') {
-      for (const extra of event.ports) extra.close();
       return;
     }
     const size = host.handleMessage(event);

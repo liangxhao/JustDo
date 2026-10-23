@@ -22,7 +22,7 @@ import {
   composeBrowserGatewayPrompt,
   serializeBrowserAnnotationContext,
 } from '@shared/browser/browser';
-import { BrowserLinkTarget } from '@shared/browser/browserLinkOpening';
+import { BrowserLinkTarget, isWebBrowserLink } from '@shared/browser/browserLinkOpening';
 import { recordingImagesInStepOrder } from '@shared/browser/browserRecording';
 import { recognizeAgentTeamMode } from '@shared/cowork/agent-team/agentTeamPrompt';
 import type {
@@ -3540,6 +3540,16 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   }),
                 );
                 return true;
+              }}
+              onWidgetLink={(sessionKey, url) => {
+                if (
+                  currentSessionIdRef.current !== currentSession.id ||
+                  currentGatewaySessionKeyRef.current !== sessionKey ||
+                  !isWebBrowserLink(url)
+                )
+                  return;
+                handleCreateBrowserTab(url);
+                if (isWorkspaceDetached) window.electron.workspaceWindow?.focus();
               }}
               onWidgetDraft={
                 sessionTranscriptMutation === null && !currentSession.external?.readOnly

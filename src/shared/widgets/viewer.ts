@@ -31,6 +31,7 @@ export type WidgetViewerEvent = { mountId: string } & (
   | { type: 'height'; height: number; revision: number }
   | { type: 'scroll'; deltaY: number }
   | { type: 'draft'; text: string }
+  | { type: 'link'; url: string }
 );
 export type WidgetViewerBridge = {
   onInitialize: (callback: (value: WidgetViewerInitialize) => void) => void;

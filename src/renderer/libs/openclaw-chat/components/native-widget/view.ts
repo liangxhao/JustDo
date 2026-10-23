@@ -16,6 +16,7 @@ import {
   resolveNativeSandboxUrl,
   WIDGET_SLOW_NOTICE_MS,
 } from './host';
+import { normalizeWidgetLink } from './links';
 import { postNativeWidgetMessage } from './messaging';
 import { WidgetFailure, type WidgetFailureKind, widgetRebuildDraft } from './rebuild';
 import { forwardWidgetScroll } from './scroll';
@@ -431,6 +432,7 @@ export class NativeWidgetView extends LitElement {
           this.postHostState();
         }
         if (event.type === 'height') this.updateHeight(event.height, event.revision);
+        if (event.type === 'link') this.openLink(event.url, binding);
         if (event.type === 'scroll' && this.ready && Number.isFinite(event.deltaY)) {
           const delta = Math.max(-8000, Math.min(8000, event.deltaY));
           if (this.expanded) this.renderRoot.querySelector('dialog')?.scrollBy({ top: delta });
@@ -472,6 +474,7 @@ export class NativeWidgetView extends LitElement {
       () => {
         if (this.current(binding) && !this.failure) this.fail();
       },
+      url => this.openLink(url, binding),
     );
     this.observeLayout(frame);
     this.observeTheme();
@@ -488,6 +491,7 @@ export class NativeWidgetView extends LitElement {
   }
 
   private fail(kind: WidgetFailureKind = WidgetFailure.LOAD): void {
+    this.host?.disableLinks();
     this.layoutObserver?.disconnect();
     this.layoutObserver = undefined;
     clearTimeout(this.slowTimer);
@@ -649,11 +653,6 @@ export class NativeWidgetView extends LitElement {
       this.requestUpdate();
       return;
     }
-    // Inline widgets never receive dashboard, tools, resources or execution grants.
-    if (event.data?.type === 'openclaw:widget-bridge-port-offer') {
-      for (const port of event.ports) port.close();
-      return;
-    }
     const size = host.handleMessage(event);
     if (size) this.updateHeight(size.height, size.revision);
     if (
@@ -677,6 +676,15 @@ export class NativeWidgetView extends LitElement {
     }
     if (event.data?.type === 'openclaw:widget-bridge-ready') this.postHostState();
   };
+
+  private openLink(raw: unknown, binding = this.binding): void {
+    if (!this.current(binding) || !this.ready || this.failure || !this.context?.openLink) return;
+    const frame = this.guest?.frame ?? this.host?.frame;
+    const url = normalizeWidgetLink(raw);
+    if (!url || !frame || !widgetFrameInteractable(frame)) return;
+    this.collapse();
+    this.context.openLink(url);
+  }
 
   private readonly requestRebuild = (event: MouseEvent, binding = this.binding): void => {
     if (!event.isTrusted || !this.failure || !this.draftAllowed(binding) || !this.preview) return;

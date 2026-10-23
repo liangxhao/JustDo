@@ -255,6 +255,9 @@ export class JustDoChatElement extends LitElement {
   declare canDraftWidget: (() => boolean) | undefined;
 
   @property({ attribute: false })
+  declare openWidgetLink: ((sessionKey: string, url: string) => void) | undefined;
+
+  @property({ attribute: false })
   declare addMcpAppDraft: ((text: string) => Promise<boolean>) | undefined;
 
   @property({ attribute: false })
@@ -378,6 +381,7 @@ export class JustDoChatElement extends LitElement {
     this.onAssistantMessageFork = undefined;
     this.onMessageQuote = undefined;
     this.canDraftWidget = undefined;
+    this.openWidgetLink = undefined;
     this.userMessageEditor = null;
     this.openProcessSummaryKey = null;
     this.collapsedProcessSummaryKeys = new Set();
@@ -1411,18 +1415,24 @@ export class JustDoChatElement extends LitElement {
     const sessionKey = controller?.state.sessionKey;
     if (!controller?.state.connected || !client || !sessionKey) return;
     const generation = client.generation;
+    const openWidgetLink = this.openWidgetLink;
+    const isCurrent = () =>
+      this.isConnected &&
+      this._controller === controller &&
+      controller.state.client === client &&
+      controller.state.connected &&
+      controller.state.sessionKey === sessionKey &&
+      this.openWidgetLink === openWidgetLink &&
+      client.generation === generation;
     return {
       client,
       sessionKey,
       generation,
       canDraft: () => this.canDraftWidget?.() === true,
-      isCurrent: () =>
-        this.isConnected &&
-        this._controller === controller &&
-        controller.state.client === client &&
-        controller.state.connected &&
-        controller.state.sessionKey === sessionKey &&
-        client.generation === generation,
+      isCurrent,
+      openLink: url => {
+        if (isCurrent()) openWidgetLink?.(sessionKey, url);
+      },
     };
   }
 

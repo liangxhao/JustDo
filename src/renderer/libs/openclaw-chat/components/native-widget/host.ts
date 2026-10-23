@@ -1,5 +1,13 @@
 import type { WidgetViewportLayout } from '@shared/widgets/viewer';
 
+import { widgetFrameInteractable } from './draft';
+import {
+  normalizeWidgetLink,
+  WIDGET_LINK_OFFER,
+  WIDGET_LINK_OPEN,
+  WIDGET_LINK_READY,
+  withWidgetLinks,
+} from './links';
 import { postNativeWidgetMessage } from './messaging';
 import {
   WIDGET_LAYOUT_READY,
@@ -29,6 +37,8 @@ export interface NativeWidgetContext {
   isCurrent: () => boolean;
   /** Live product admission; read-only views retain local interaction without draft actions. */
   canDraft: () => boolean;
+  /** Opens a web link in this consumer's own workspace, independently of draft permission. */
+  openLink?: (url: string) => void;
 }
 
 export function resolveNativeSandboxUrl(
@@ -98,8 +108,13 @@ export class NativeWidgetSandboxHost {
   private active = true;
   private ready = false;
   private delivered = false;
+  private rendered = false;
   private renderId = crypto.randomUUID();
   private sizingId = crypto.randomUUID();
+  private linkId = crypto.randomUUID();
+  private linkPort?: MessagePort;
+  private linksDisabled = false;
+  private lastLinkAt = -Infinity;
   private layout?: WidgetViewportLayout;
   private timer: ReturnType<typeof setTimeout>;
 
@@ -109,6 +124,7 @@ export class NativeWidgetSandboxHost {
     private html: string,
     private onRendered: () => void,
     private onFailure: () => void,
+    private onOpenLink?: (url: string) => void,
   ) {
     this.timer = setTimeout(() => {
       if (this.active) this.onFailure();
@@ -148,7 +164,10 @@ export class NativeWidgetSandboxHost {
         {
           jsonrpc: '2.0',
           method: 'ui/notifications/sandbox-resource-ready',
-          params: { html: withWidgetSizing(this.html, this.sizingId), renderId: this.renderId },
+          params: {
+            html: withWidgetLinks(withWidgetSizing(this.html, this.sizingId), this.linkId),
+            renderId: this.renderId,
+          },
         },
         event.origin,
       );
@@ -165,7 +184,44 @@ export class NativeWidgetSandboxHost {
       event.data?.params?.renderId === this.renderId
     ) {
       clearTimeout(this.timer);
+      this.rendered = true;
       this.onRendered();
+    }
+    if (event.data?.type === WIDGET_LINK_OFFER) {
+      const port = event.ports[0];
+      if (
+        !this.delivered ||
+        this.linksDisabled ||
+        !this.onOpenLink ||
+        this.linkPort ||
+        event.data.linkId !== this.linkId ||
+        !port ||
+        event.ports.length !== 1
+      ) {
+        for (const offered of event.ports) offered.close();
+        return;
+      }
+      this.linkPort = port;
+      port.onmessage = message => {
+        if (
+          !this.active ||
+          !this.rendered ||
+          this.linksDisabled ||
+          this.linkPort !== port ||
+          message.data?.type !== WIDGET_LINK_OPEN ||
+          !widgetFrameInteractable(this.frame) ||
+          this.frame.ownerDocument.defaultView?.navigator.userActivation?.isActive !== true
+        )
+          return;
+        const url = normalizeWidgetLink(message.data.url);
+        const now = Date.now();
+        if (!url || now - this.lastLinkAt < 250) return;
+        this.lastLinkAt = now;
+        this.onOpenLink?.(url);
+      };
+      port.start();
+      port.postMessage({ type: WIDGET_LINK_READY });
+      return;
     }
     if (
       this.delivered &&
@@ -197,7 +253,14 @@ export class NativeWidgetSandboxHost {
 
   dispose(): void {
     this.active = false;
+    this.disableLinks();
     this.html = '';
     clearTimeout(this.timer);
+  }
+
+  disableLinks(): void {
+    this.linksDisabled = true;
+    this.linkPort?.close();
+    this.linkPort = undefined;
   }
 }
