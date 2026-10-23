@@ -14,12 +14,12 @@ npm run electron:dev:openclaw
 
 首次运行需要网络以准备依赖和 host runtime。`npm install` 会执行原生模块重建；运行时、模型或凭据未配置就绪，不代表聊天已可执行。
 
-| 命令                            | 用途                                                          |
-| ------------------------------- | ------------------------------------------------------------- |
-| `npm run dev`                   | 仅启动 Vite，不启动完整桌面执行环境                           |
-| `npm run electron:dev`          | 准备开发资源、编译 Main 并启动 Electron；适用于已准备 runtime |
+| 命令                            | 用途                                                                         |
+| ------------------------------- | ---------------------------------------------------------------------------- |
+| `npm run dev`                   | 仅启动 Vite，不启动完整桌面执行环境                                          |
+| `npm run electron:dev`          | 准备开发资源、编译 Main 并启动 Electron；适用于已准备 runtime                |
 | `npm run electron:dev:openclaw` | 校验并按需准备 draw.io 离线资源，再准备 host OpenClaw runtime 并启动开发应用 |
-| `npm run electron:dev:isolated` | 使用隔离开发配置；host runtime 仍需先准备                     |
+| `npm run electron:dev:isolated` | 使用隔离开发配置；host runtime 仍需先准备                                    |
 
 默认 Vite 端口是 43127。隔离预览的目录及启动参数由 `scripts/electron/run-isolated-dev.cjs` 管理；不要把真实用户数据库、凭据或原生日志复制进仓库。
 
@@ -129,3 +129,30 @@ productName 来自 package.json；隔离开发会话使用其独立数据目录�
 - 消息或工具卡缺失：对照原生历史、实时事件与 Renderer 恢复；不往 Main/Redux 加 transcript 缓存补洞。
 - 停止后仍活动：区分主运行、后代任务、协作成员和 Goal 续跑；核对原生取消结果与轮次冻结。
 - 插件看似启用却不可用：核对用户开关、有效配置、运行态 inventory 和重新加载情况；文件存在不代表注册成功。
+
+## 6. 代码导航与贡献约定
+
+应用采用 Electron + React，并通过 OpenClaw Gateway 执行任务。修改代码前阅读根目录 [AGENTS.md](../AGENTS.md) 及对应领域文档。
+
+| 目录                  | 职责                                                           |
+| --------------------- | -------------------------------------------------------------- |
+| `src/main/`           | 应用生命周期、IPC、权限、配置、SQLite 元数据与系统资源         |
+| `src/main/preload.ts` | 向 Renderer 暴露显式、受控的桥接 API                           |
+| `src/renderer/`       | 浏览器端界面、功能状态及聊天展示，不直接导入 Node/Electron     |
+| `src/shared/`         | 跨进程纯契约与工具，不依赖运行时状态                           |
+| `plugins/`            | 内置扩展、技能、MCP 服务、Hook 和浏览器扩展                    |
+| `scripts/`            | 开发、构建、测试与打包工具，见[脚本说明](../scripts/README.md) |
+| `build/runtimes/`     | 准备后的运行时载荷；构建中间产物统一放在 `build/`              |
+| `cache/`              | 离线下载缓存，不提交到 Git                                     |
+
+Main 通过显式 preload 桥接提供系统能力；聊天控制器直接消费经过认证的 Gateway 历史和实时事件。产品数据库只保存元数据与执行回执，不建立 Main/Redux 消息副本。详细合约见[系统架构](architecture/02-architecture.md)、[进程模型](architecture/03-process-model.md)和[数据存储](architecture/10-data-storage.md)。Redux 状态按功能领域组织，以 `src/renderer/store/index.ts` 的实际挂载为准。
+
+应用版本、OpenClaw 版本、Node 引擎范围和开发端口以根目录 `package.json` 为准，不在文档中维护另一份配置快照。内置技能清单见 `plugins/skills/builtin-skills.json`；技能可用性以 Gateway 返回的运行状态为准。运行时资源准备与离线下载统一见[离线资源说明](offline-downloads.md)。
+
+贡献时遵循以下约定：
+
+- 用户可见文案使用 i18n，并同步中文和英文词条。
+- IPC 通道、状态和判别字段使用所属领域的共享常量。
+- 保持 Renderer、Main 和插件的职责边界；跨进程修改同步契约、处理器、preload 和 Renderer 类型。
+- 合约或数据流变化时同步更新所属架构或功能文档。
+- 提交使用英文 Conventional Commits；发布前执行本页的构建与测试检查。
