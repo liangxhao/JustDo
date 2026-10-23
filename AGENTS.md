@@ -161,7 +161,7 @@ npm test
   build-time resource preparation follows `docs/offline-downloads.md`.
 
 - Before any OpenClaw version upgrade or local OpenAI fork refresh, read
-  [upgrade checklist](docs/openclaw-upgrade-checklist.md). Validate patches, SDK
+  [upgrade checklist](docs/upgrade-checklist/checklist.md). Validate patches, SDK
   contracts, complete source replacement and the freshly rebuilt artifact.
 
 - Avoid new OpenClaw runtime patches; prefer application-side or `runtime-services`

@@ -38,7 +38,7 @@ TTS, realtime transcription, file transcription and video share one extension
 but retain separate configuration domains. Clearing video never disables OpenAI.
 Main excludes build-only source replacements from source discovery/copying.
 All production source, manifests, dependency locks and workers are fingerprinted.
-See [the mandatory upgrade checklist](../../../docs/openclaw-upgrade-checklist.md)
+See [the mandatory upgrade checklist](../../../docs/upgrade-checklist/checklist.md)
 for baseline comparison, native SDK checks and fresh-artifact validation.
 
 034 and 038 retain only their native bindings, control-flow edits, schema/type

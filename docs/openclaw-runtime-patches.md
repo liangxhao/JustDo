@@ -16,7 +16,7 @@ v2026.10.4
 scripts/patches/v2026.10.4/
 ```
 
-升级前必须先读[OpenClaw 升级检查清单](openclaw-upgrade-checklist.md)，包括补丁、SDK 共享、本地 OpenAI 源码替换与产物验收。
+升级前必须先读[OpenClaw 升级检查清单](upgrade-checklist/checklist.md)，包括补丁、SDK 共享、本地 OpenAI 源码替换与产物验收。
 
 该目录的 `README.md` 是能力、上游原始证据、依赖关系、测试和删除条件的唯一权威总账。本文只说明工程流程，不能维护另一份逐文件行为副本。
 

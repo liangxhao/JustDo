@@ -92,7 +92,7 @@ Code Mode；未做 MXC 实机或安装版 UI 验收。Code Mode 仍需启用其�
 
 经锁定源码与公开 SDK 复核、用户明确确认，删除原 MCP Apps 生命周期补丁 `030-mcp-app-operation-lifecycle.cjs` 及其 helper，该 worktree 当时回到 28 项原有补丁。工具、资源、审批、提问、文件、上下文与标准 AppBridge 继续使用原生认证 WS；宿主和表单预览不再要求本地 appIdentity/hostLeaseId 字段。
 
-关闭停止本地交互并尝试清理已知精确 updateId；已发出的操作可能继续，视图和临时授权按原生租约回收，最长为创建后约十分钟。这个取舍不是协议功能缺失。后续升级必须重新核对公开取消与最终视图释放接口，见[升级清单](../../openclaw-upgrade-checklist.md#21-mcp-apps-原生生命周期)和[宿主契约](../../features/chat/mcp-apps.md#原生接口与插件替代审计)。下节指纹和补丁测试仅对应已移除 030 的历史候选，不能作为当前产物证明。
+关闭停止本地交互并尝试清理已知精确 updateId；已发出的操作可能继续，视图和临时授权按原生租约回收，最长为创建后约十分钟。这个取舍不是协议功能缺失。后续升级必须重新核对公开取消与最终视图释放接口，见[升级清单](../../upgrade-checklist/checklist.md#21-mcp-apps-原生生命周期)和[宿主契约](../../features/chat/mcp-apps.md#原生接口与插件替代审计)。下节指纹和补丁测试仅对应已移除 030 的历史候选，不能作为当前产物证明。
 
 Windows x64 已从锁定 pristine 包强制重建、bundle、资源同步、预编译和裁剪，并通过 28 项补丁最终校验。该 worktree 验证时 Gateway bundle SHA-256 为 `2a807004b695065822a99608d5fad70d94a027198fb388825b8e27172ff4449b`，patch set 为 `b92cc1be485ce170fddda657b19a2800a63a13de2f67156dad96bf331e33dd55`，build recipe 为 `fef5a727d2dc0acdaaffd6b113d27d01a12f0713b3fef058b98d296245bef30a`。
 

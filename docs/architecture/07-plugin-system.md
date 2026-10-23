@@ -107,7 +107,7 @@ v2026.10.4。资源同步完整替换原包目录；裁剪策略明确移除上�
 决定可用性。来源版本不匹配时构建失败，全部源码/依赖锁/worker 纳入 build recipe。
 保留图像、TTS、实时 STT、文件转录、embedding 和配置模型的原生协议能力，视频
 也由同一插件注册。官网账号/RTC 专属 Realtime Voice 不注册，不影响现有 TTS/STT。
-更新时先读[升级检查清单](../openclaw-upgrade-checklist.md)，再三方比较上游基线、
+更新时先读[升级检查清单](../upgrade-checklist/checklist.md)，再三方比较上游基线、
 新上游与本地差异。020/021 补丁保持删除。Gateway bundle 和动态 SDK
 通过构建时共享原生会话访问模块实例完成授权注册表共享，移除 027 补丁。
 

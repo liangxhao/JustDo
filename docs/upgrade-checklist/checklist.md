@@ -4,20 +4,20 @@
 检查范围包括供应链、Gateway/SDK 契约、配置与执行、消息展示、产品功能和最终安装包。
 运行时能够启动、TypeScript 编译通过或一次聊天成功，都不足以证明升级完成。
 
+升级时同时核对[流式与执行](streaming-and-execution.md)、
+[宿主与发行](host-and-release.md)中的专项检查项。
+
 当前仓库基线为 `openclaw@2026.10.4`；后续升级以 `package.json.openclaw.version`
 为准。源包 integrity 以目标版本补丁目录的 `source-lock.json` 为准，逐补丁能力、
 上游证据、依赖与删除条件以该目录 `README.md` 为唯一总账。本文不固定补丁数量，
 也不把历史版本验收结果当作目标版本的通过记录。
 
-当前 10.4 升级决策与验证范围见[升级记录](openclaw-upgrades/v2026.10.4/README.md)。
-原生已覆盖旧 039 的转发写入隔离；旧 043 依据目标包并发复现重写为 025，保留原生
-`beginClose`/异步 `stop` 的维护任务 join。原生 immutable registry 的 owned-run 接线
-改用原生事务发布，结果不明不重试。旧预审保存在历史 9.8 总账，不作为新版通过证据。
+版本对应的产物身份、验证范围与未验收项见[升级记录](../openclaw-upgrades/README.md)。
 
 本文中的勾选项是升级时需要执行的检查。每个领域应记录「通过 / 需适配 / 未验证 /
 不适用」，附目标版本、测试或人工场景及证据；不适用必须说明原因。即使判断无需
 修改代码，也应说明对照了哪些原生契约、运行了什么回归。已知限制仍以
-[功能文档](features/README.md)和[待验收计划](plans/README.md)为准。
+[功能文档](../features/README.md)和[待验收计划](../plans/README.md)为准。
 
 ## 1. 升级基线、范围与变更记录
 
@@ -40,9 +40,9 @@
       必要配置；凭据和原生日志不进入 Git。存储变更必须单独说明上游支持范围及恢复方法。
       不恢复已撤回的 9.6→9.8 原生 SQLite 迁移桥、启动门禁或构建资产，也不自动删库重建。
 
-工程流程见[补丁操作指南](openclaw-runtime-patches.md)和
-[构建脚本说明](../scripts/README.md)。离线资源地址、文件名和准备命令统一维护在
-[离线下载文档](offline-downloads.md)，不要在本文复制另一份下载清单。
+工程流程见[补丁操作指南](../openclaw-runtime-patches.md)和
+[构建脚本说明](../../scripts/README.md)。离线资源地址、文件名和准备命令统一维护在
+[离线下载文档](../offline-downloads.md)，不要在本文复制另一份下载清单。
 
 ## 2. Gateway、SDK 与跨进程契约
 
@@ -72,12 +72,15 @@
       显示投影边界。不得恢复 `cowork_messages`、Main/Redux transcript cache，或由插件
       导入应用 `src`；required Runtime Services 不依赖可选插件注册时机。
 
-参考：[架构](architecture/02-architecture.md)、[进程模型](architecture/03-process-model.md)、
-[执行引擎](architecture/05-agent-engine.md)、[数据存储](architecture/10-data-storage.md)。
+参考：[架构](../architecture/02-architecture.md)、[进程模型](../architecture/03-process-model.md)、
+[执行引擎](../architecture/05-agent-engine.md)、[数据存储](../architecture/10-data-storage.md)。
 
 ### 2.1 MCP Apps 原生生命周期
 
-当前 MCP Apps 完全使用原生认证 WS 接口，原 MCP Apps 生命周期补丁 `030-mcp-app-operation-lifecycle.cjs` 已于 2026-10-18 移除；不要与后续 dev 的同编号工具调用修复补丁混淆。用户已接受原生关闭语义：停止本地交互不保证后台取消，视图及临时授权按原生租约到期回收（当前创建后约十分钟）。详细来源和取舍见 [MCP Apps 宿主](features/chat/mcp-apps.md#原生接口与插件替代审计)。
+MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视图停止本地交互，
+不保证后台取消；视图及临时授权按原生租约到期回收（当前创建后约十分钟）。
+工具调用格式纠正补丁 030 不提供 MCP Apps 生命周期能力。
+完整契约见 [MCP Apps 宿主](../features/chat/mcp-apps.md#原生接口与插件替代审计)。
 
 - [ ] 重读目标版本 WS 派发、App view/disposer、SDK 与方法描述，核对是否新增公开的精确请求取消、可确认的最终视图释放和多窗口隔离接口；有则通过公开接口接入，无则保留原生行为，不恢复补丁或访问私有 store。
 - [ ] 核对 TTL、授权范围、原生过期和后台收尾语义；分别测试本地 AbortSignal、已发出操作、等待审批/提问、断线、迟到响应，不把取消 ACK 当成副作用回滚。
@@ -150,7 +153,7 @@
       最近请求的上下文占用与累计 Token 分开，过期/未知预算不显示为准确值。
 
 实现与回归入口：`src/renderer/libs/openclaw-chat/{gateway,model,pipeline,components}/`
-及 Cowork chat/composer；完整契约见[聊天渲染](architecture/15-chat-rendering.md)。
+及 Cowork chat/composer；完整契约见[聊天渲染](../architecture/15-chat-rendering.md)。
 
 ## 4. 上下文压缩、预算与物理会话切换
 
@@ -213,7 +216,7 @@
 
 入口：Cowork `components/display/summary/SessionSummaryPanel`、资源列表/打开逻辑，
 聊天 `chat-summary-resources`、`session-summary-resources`、`process-summary-takeover`
-及对应测试；数据边界见[聊天渲染](architecture/15-chat-rendering.md)。
+及对应测试；数据边界见[聊天渲染](../architecture/15-chat-rendering.md)。
 
 ## 6. 执行、审批、Goal、Plan 与助手
 
@@ -274,9 +277,9 @@
       面向展示的聊天历史；Main/Redux 不复制中间结果，也不新增 VM 或等待快照缓存。
       使用精确整轮 `executionSettled:true` 终态核对，重启前确认关闭结果，不重发未知执行。
 
-参考：[权限管理](features/chat/openclaw-permission-management.md)、
-[运行参数](features/chat/agent-runtime-settings.md)、
-[助手](features/assistants/assistants-and-collaboration.md)、[执行引擎](architecture/05-agent-engine.md)。
+参考：[权限管理](../features/chat/openclaw-permission-management.md)、
+[运行参数](../features/chat/agent-runtime-settings.md)、
+[助手](../features/assistants/assistants-and-collaboration.md)、[执行引擎](../architecture/05-agent-engine.md)。
 
 ## 7. 工程、Worktree、共享终端与记忆
 
@@ -300,8 +303,8 @@
       与 embedding 实时健康分开。强制重建仅在用户触发后执行，退出码为零还需回读
       状态，不把关闭/仅关键词/未确认显示为无条件成功；不另建记忆库。
 
-参考：[Worktree](features/workspace/worktree.md)、
-[共享终端/审阅 IPC](architecture/03-process-model.md)、[执行引擎](architecture/05-agent-engine.md)。
+参考：[Worktree](../features/workspace/worktree.md)、
+[共享终端/审阅 IPC](../architecture/03-process-model.md)、[执行引擎](../architecture/05-agent-engine.md)。
 
 ## 8. 定时任务、结果收件箱与系统任务
 
@@ -329,7 +332,7 @@
 
 入口：`src/main/scheduler/`、`src/main/ipc/scheduledTask/`、
 `src/shared/scheduledTask/`、结果 Store 与 Renderer scheduled-tasks；
-完整契约见[定时任务架构](architecture/08-scheduled-tasks.md)。
+完整契约见[定时任务架构](../architecture/08-scheduled-tasks.md)。
 
 ## 9. 插件、技能、MCP、Hooks 与产品扩展
 
@@ -397,6 +400,7 @@
 | embedded-browser                          | 唯一 browser 工具、真实 guest/目标/权限桥、文件边界与取消；模式切换不产生两个提供方                                                                                        |
 | widget-kit / 原生 Widget              | kind/resource 注册、真实 `show_widget` 准入、认证 `canvas.document.view`、CSP/origin/source/generation、嵌套核心工具身份及去重；建议先确认加入草稿，再由用户发送           |
 | stt-local-cli                             | 显式开关、模型路径/依赖、录音与附件转录、取消/释放、离线可用性；关闭麦克风入口不误关闭独立附件转录                                                                         |
+| tts-local-cli                             | 原生 `tts` 工具与本地 speech provider 注册、独立模型选择、缺失模型撤下 provider、试听/朗读及取消释放；语音页选择不覆盖扩展设置，下载文件共享 |
 | typesafe / 决策模型                       | 原生 `decision_evaluate` provider、schema、模型/凭据配置、条件托管及失败行为；不绕过会话权限                                                                               |
 | acpx / 外部 Agent                         | setup 预编译、目录发现、连接/session/replay/cancel 与外部 MCP；保持外部执行器边界，不能假定拥有本地 managed-run 的结算/清理保证                                            |
 | 原生 Workboard                            | boards/cards CRUD、expectedUpdatedAt 冲突、ready 派发、start/stop 与真实 session/run、事件后刷新、可选关闭；四栏 UI 不冒充另一套调度器                                     |
@@ -426,11 +430,11 @@
       在“可更新”筛选下仍可看到待处理反馈。页内切换、离页再返回、多窗口及交错读取
       不释放在途安装锁、不覆盖较新清单，不依靠重复安装修复刷新失败。
 
-参考：[插件系统](architecture/07-plugin-system.md)、[Plugin Hub](features/plugins/plugin-hub-experience.md)、
-[市场适配](architecture/16-skill-marketplace-adapter.md)、
-[Agent Team](features/assistants/agent-team.md)、[Workflow](features/workflow/swarm-workflow.md)、
-[批次](features/workflow/swarm-workflow-batches.md)、[Workboard](features/workflow/workboard.md)、
-[交互式回答](features/chat/interactive-answers.md)。
+参考：[插件系统](../architecture/07-plugin-system.md)、[Plugin Hub](../features/plugins/plugin-hub-experience.md)、
+[市场适配](../architecture/16-skill-marketplace-adapter.md)、
+[Agent Team](../features/assistants/agent-team.md)、[Workflow](../features/workflow/swarm-workflow.md)、
+[批次](../features/workflow/swarm-workflow-batches.md)、[Workboard](../features/workflow/workboard.md)、
+[交互式回答](../features/chat/interactive-answers.md)。
 
 ## 10. 浏览器模式、Chrome 扩展与人工介入
 
@@ -468,9 +472,9 @@
 - [ ] 网页历史、favicon、最近访问、导入、密码存储、下载记录及数据清理分别验收；
       旧异步请求不在清理后复活记录，清除记录不误删下载文件或其他 profile 数据。
 
-参考：[浏览器设置](features/browser/browser-settings-design.md)、
-[扩展侧聊](features/browser/browser-extension-side-chat.md)、[app-server 协议](app-server-api/README.md)、
-[人工介入](features/browser/browser-intervention.md)、[操作录制](features/browser/browser-operation-recording.md)。
+参考：[浏览器设置](../features/browser/browser-settings-design.md)、
+[扩展侧聊](../features/browser/browser-extension-side-chat.md)、[app-server 协议](../app-server-api/README.md)、
+[人工介入](../features/browser/browser-intervention.md)、[操作录制](../features/browser/browser-operation-recording.md)。
 
 ## 11. 设置项、配置投影与认证切换
 
@@ -519,10 +523,10 @@
 - [ ] 品牌从 `productMetadata`/构建 metadata 读取，兼容标识保持稳定；新内部字段、
       KV/IPC/plugin state/source symbol 使用领域名称，不从产品名派生。
 
-参考：[模型管理](features/models/model-management.md)、[语音](features/models/local-tts.md)、
-[决策模型](features/models/jev-integration.md)、[登录](features/integrations/login-sdk-template.md)、
-[模型认证](features/integrations/authentication-builtin-model-lifecycle.md)、
-[出站请求头](features/integrations/outbound-headers.md)、[CLI / ACP / app-server](features/integrations/agent-cli.md)。
+参考：[模型管理](../features/models/model-management.md)、[语音](../features/models/local-tts.md)、
+[决策模型](../features/models/jev-integration.md)、[登录](../features/integrations/login-sdk-template.md)、
+[模型认证](../features/integrations/authentication-builtin-model-lifecycle.md)、
+[出站请求头](../features/integrations/outbound-headers.md)、[CLI / ACP / app-server](../features/integrations/agent-cli.md)。
 
 ## 12. 左侧导航、会话列表与右侧工作区
 
@@ -555,8 +559,8 @@
       ResizeObserver、调度、DPI、剪贴板和焦点使用真实展示文档。主窗口托盘/恢复、
       顶层审批引导、屏幕变化与退出清理分别验证。
 
-参考：[侧栏首页](features/workspace/sidebar-home.md)、
-[独立工作区](features/workspace/detached-workspace.md)、[聊天渲染](architecture/15-chat-rendering.md)。
+参考：[侧栏首页](../features/workspace/sidebar-home.md)、
+[独立工作区](../features/workspace/detached-workspace.md)、[聊天渲染](../architecture/15-chat-rendering.md)。
 
 ## 13. 本地 OpenAI 完整源码替换
 
@@ -602,7 +606,7 @@ API Key/SecretRef 仍可用于用户显式选择的内网服务；删除的是�
 
 ## 14. 运行时补丁与宿主接缝复核
 
-逐项读取[当前版本总账](../scripts/patches/v2026.10.4/README.md)和 transformer，
+逐项读取[当前版本总账](../../scripts/patches/v2026.10.4/README.md)和 transformer，
 升级后将链接更新为目标版本总账。下表按集成风险组织验证，不替代逐补丁删除条件。
 
 | 接缝（当前编号）                                  | 目标版本必须验证的重点                                                                                                                                                           |
@@ -615,6 +619,11 @@ API Key/SecretRef 仍可用于用户显式选择的内网服务；删除的是�
 | 共享终端（020/021）                               | native PTY launch/close、cwd/shell/args、viewer ownership、buffer/offset 与 attach；欢迎文字只影响展示，删除候选需单独说明用户影响                                               |
 | 压缩/转发（022/原生）                             | operation-scoped 状态/取消覆盖准备与清理，自动恢复压缩生命周期；恢复调用者授权后仅退出源 transcript/CLI-history 写入 scope，目标保持自己的写入 claim                             |
 | 电脑提示/Windows 恢复（023/024）                  | 内容无关的 activity start/end/heartbeat/release 与真实操作分别验收；原生 recovery capture 保留获准目录 junction，不改文件链接、hardlink、相对/坏链接或授权                       |
+| SQLite 退休/历史发布（025/027/028） | 非阻塞 checkpoint 保留 stop/join；Windows canonical readiness 使用已准入路径；deferred read 未就绪前不得发布成功或失败响应 |
+| 流式交接（026/029/033） | attempt 级 finalize admission、消息 scope 与真实完成关联、长参数无正文进度及有界恢复；详见[流式专题](streaming-and-execution.md) |
+| 格式恢复/Goal（030/032） | 同一原生循环的两请求纠正上限与精确整轮结算；Goal 前驱、回交 owner 和累计次数原子准入，未知发送不重放 |
+| 手动 Apps（031） | 手动准备与后续模型运行使用同一持久会话工作区，准备过程身份变化拒绝，下一轮不退役仍被使用的资源 |
+| Windows 插件发布（034） | 同一事务、stage 与精确字节的有界 rename 恢复；禁止重放安装，详见[宿主专题](host-and-release.md) |
 
 - [ ] 以下均指 9.8 旧编号：删除的 002/003 由 Main MCP/Chrome 启动器及配置投影承载，
       真实连接回归仍必需；020/021 由完整本地 OpenAI 源码替换承载，027 由构建时共享 SDK 模块承载。
@@ -676,8 +685,7 @@ git diff --check
 ```
 
 `npm test` 先使用 Node better-sqlite3，再恢复 Electron ABI；必要时按脚本说明执行
-`npm run rebuild:electron-native`。纯清单/文档修改只需 `git diff --check`，
-不因编辑本文启动 Gateway、重建 runtime 或执行全部升级验收。
+`npm run rebuild:electron-native`。
 
 | 范围                 | 当前可复用的测试入口                                                                                                                                                                                                   |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -686,18 +694,21 @@ git diff --check
 | 流/历史/过程         | chat `agent-event-reducer*`、`history-reconciler`、`chat-history-protocol`、`chunked-message-history`、`process-summary-takeover`、`browser-extension-stream` 与 components streaming tests                            |
 | 压缩/摘要            | chat `chat-controller.compaction*`、`chat-summary-resources`、`session-summary-resources`、`SessionSummaryPanel` / 资源列表 / `openSummaryResource`，当前补丁 `native-compaction-lifecycle`                            |
 | 配置/执行/身份       | Main adapter、wire validator、permissions、Goal/Plan、config sync/logout、worktree/sandbox 领域测试及当前版本补丁测试                                                                                                  |
-| 技能发现/Code Mode   | `scripts/test/verify-native-skill-state-runtime.mjs [runtime-directory]` 验证真实隔离 Gateway 的技能发现、读取权限与 JSON 跨轮/重启保存；`scripts/test/verify-code-mode-runtime.mjs` 验证 QuickJS 资产及执行/等待/取消；Node/Electron 分别运行 |
+| 技能发现/Code Mode   | `node scripts/test/verify-native-skill-state-runtime.mjs <runtime-directory>` 验证真实隔离 Gateway 的技能发现、读取权限与 JSON 跨轮/重启保存；`node scripts/test/verify-code-mode-runtime.mjs <runtime-directory>` 验证 QuickJS 资产及执行/等待/取消；Node/Electron 分别运行 |
 | SQLite 关闭/恢复     | 先按目标版本适配 `scripts/openclaw/probe-sqlite-retirement.mjs`、`tests/openclaw/runtime/sqlite-retirement-lifecycle.native-smoke.mjs`；覆盖备份、回滚拒绝与成功、删除排他、退出租约及重启恢复；Node/Electron 分别验证 |
+| 启动/历史升级       | `src/main/startup/routing/startupCoordinator.test.ts`、`src/main/startup/history/` 的 `historyRecovery`、`nativeHistoryRuntime`、`nativeHistoryFailure` 等测试；覆盖三类启动、备份完整性、导入身份和阶段恢复 |
 | 定时任务             | scheduler `cronJobService`、`scheduledTaskResultSyncService`、`scheduledTaskSessionHistory`、结果 Store/IPC/UI，`tests/openclaw/runtime/scheduled-task-permissions.test.ts`                                            |
 | 插件页生命周期      | `src/main/plugins/`、`src/main/ipc/plugins/`、`src/renderer/features/plugins/` 的安装、更新、卸载、归属、部分提交、状态刷新与迟到回包测试                                                                                      |
 | Team/Workflow        | `tests/openclaw/extensions/`、Renderer composer 及当前 plugin recovery/owned-run/cleanup 测试                                                                                                                          |
 | 浏览器/工作区/设置   | browser bridge/extension assembly、Main app-server、Renderer browser/settings/display；`tests/openclaw/runtime/windows-mcp-launch.test.ts` 与 `scripts/test/workspace-window-probe.cjs`                                |
 
 按目标契约更新有意义的行为断言，不能为了通过只改版本快照或删除失败用例。
+所有接受 runtime 目录的探针必须显式传入本次构建的最终产物目录（按项目约定位于
+`build/runtimes/`），核对其版本、manifest 与 freeze 身份；不依赖脚本中的历史默认路径。
 旧版本目录测试保留为历史回归，不可作为目标版本通过证据；缺失关键场景时补齐。
 技能/Code Mode 探针使用隔离状态与本机合成模型；分阶段续验应分别保留前序失败与
 续验结果，不冒充一次全量通过。此类验证不证明真实模型会主动选择技能、正确编排
-Code Mode 或通过 MXC 实机准入；本版专项证据见[升级记录](openclaw-upgrades/v2026.10.4/README.md)。
+Code Mode 或通过 MXC 实机准入；本版专项证据见[升级记录](../openclaw-upgrades/v2026.10.4/README.md)。
 
 插件还需按目标版本适配并运行 `tests/openclaw/runtime/` 下的实际原生验证：
 `plugin-management.native-smoke.mjs`（安装/更新/启停/卸载）、
@@ -723,6 +734,7 @@ fixture、合成输入和本机测试服务不替代真实模型、设备或企�
 | 浏览器与扩展     | 四模式、真实 Chrome 授权/配对、侧栏聊天与 relay 分别检查；内置页面人工介入、文件/PDF/下载正确             |
 | 设置与认证       | 保存后实际新任务使用，取消/冲突/完整/最小/登录退出投影；chat/image/STT/TTS/video 不串凭据                 |
 | 工程与桌面       | 普通工程/Worktree、Review、共享终端 attach、左右侧栏、工作区分离/最小化/托盘及安装版资源正确              |
+| 启动与历史升级   | 新装、当前 SQLite 覆盖安装、已发布 JSONL 升级分别验证；无缓存断公网冷启动，备份/隔离/初始化/导入/映射/最终检查各阶段退出重启，历史与附件可读且能续聊 |
 
 长任务相关升级应执行真实超过一小时的任务，验证排队不计执行预算、跨 yield/fallback
 计时、停止后工具清理、重启后精确核对及安全人工重试。物理双屏、不同 DPI、系统
@@ -733,7 +745,7 @@ fixture、合成输入和本机测试服务不替代真实模型、设备或企�
 指向的完整原生 JSON 日志及认证原生事件。简化日志缺行、控制台没有输出或 UI 已空闲
 均不构成结算证据。会话诊断只用已有连接及受限历史/日志接口，不为诊断启动 Gateway，
 不直接读取 transcript 文件；提交记录仅保存脱敏证据。见
-[开发排障](development.md)与[会话诊断](features/chat/session-diagnostics.md)。
+[开发排障](../development.md)与[会话诊断](../features/chat/session-diagnostics.md)。
 
 升级记录至少包含：
 
