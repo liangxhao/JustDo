@@ -61,8 +61,8 @@
       当前轮继续。点击单题/多题弹窗的 × 取消时，开启和关闭超时两种设置都立即解除提问，清除计时器，
       不提交答案、不触发 Stop/Goal 暂停；问答结束本身不提前创建 Goal 后继轮。
 
-依据：[Goal](../features/chat/goal-mode.md)、[待验收矩阵](../plans/goal-continuation-coordination.md)、
-[交互回答](../features/chat/interactive-answers.md)、补丁总账及格式纠正验收计划。
+依据：[Goal](../features/chat/goal-mode.md)、[交互回答](../features/chat/interactive-answers.md)、
+[工具格式纠正](../architecture/05-agent-engine.md#工具调用格式纠正)及补丁总账。
 
 ## 重放拒绝与诊断
 

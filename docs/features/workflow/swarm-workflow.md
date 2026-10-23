@@ -132,7 +132,7 @@ flowchart LR
 
 所选 Workflow 轮允许助手发现、读取旧讨论、收束已有 Team 及临时子任务准备通信，但禁止准备持久 Team peer、发起/继续群聊或向产品会话派发另一套任务。该动作校验在 Team 的投递准入钩子前执行，避免拒绝的发送先产生 dispatching 记录；仍有合法读取动作的工具不从目录整体隐藏。接纳后继续保留来源 run 的模式约束，只在同代次、精确 sessionId/runId 的 executionSettled 原生整轮终态清理；停止服务和有界到期清理不建立执行结果。接纳后的提示重建只要求确认既有回执并结束，不重新准备或启动。
 
-当前未为此增加 runtime patch。Team 发起期间的 Workflow 启动由工厂隐藏；首次 Swarm 发起的可信登记发生在 `before_prompt_build`，此时工具工厂已经构造目录，不能据正文标记提前裁剪 Team 定义或授予操作。原生 `sessions_send` 仍可显示，因为准备阶段的原生子任务通信合法。其按目标的限制、Team 创建/派发的限制继续在调用时检查；目录级同步过滤的缺口统一记录在 [Team 验收清单](../../plans/agent-team-acceptance.md#后续工具目录与模式可见性)。
+当前未为此增加 runtime patch。Team 发起期间的 Workflow 启动由工厂隐藏；首次 Swarm 发起的可信登记发生在 `before_prompt_build`，此时工具工厂已经构造目录，不能据正文标记提前裁剪 Team 定义或授予操作。原生 `sessions_send` 仍可显示，因为准备阶段的原生子任务通信合法。其按目标的限制、Team 创建/派发的限制继续在调用时检查；目录级同步过滤的缺口统一记录在 [现行说明与验证边界](../assistants/agent-team.md)。
 
 轮末补充明确的模式和交接指令，并提供直接调用与
 Code Mode `tool_call` 的参数示例。若模型只回复文字

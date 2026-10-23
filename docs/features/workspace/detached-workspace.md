@@ -60,7 +60,7 @@ Swarm 图形布局和聊天滚动继续更新；详情弹窗拖动与缩小窗�
 
 以上文件 URL 是测试探针的验证模式；安装版使用 Main 提供的同源 HTTP。
 该探针不能代替安装版 HTTP/ASAR 的工作区加载、跨文档样式、原生交互卡片与
-无继承 preload 验收，检查入口见 [交互式回答验收](../../plans/interactive-answers-acceptance.md)。
+无继承 preload 验收，检查入口见 [现行说明与验证边界](../chat/interactive-answers.md)。
 
 物理双屏拖动、不同显示缩放、操作系统中文输入法、原生剪贴板和麦克风/系统音频
 需要人工验收。合成 composition、编辑器程序输入及终端 paste 不能替代这些

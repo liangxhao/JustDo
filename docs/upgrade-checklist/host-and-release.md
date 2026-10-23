@@ -87,4 +87,4 @@
       本功能不恢复撤回的 9.6→9.8 SQLite 桥。
 
 依据：[启动与历史升级](../features/app/startup-and-history-upgrade.md)、
-[待验收范围](../plans/startup-upgrade-acceptance.md)、[存储](../architecture/10-data-storage.md)。
+[现行说明与验证边界](../features/README.md)、[存储](../architecture/10-data-storage.md)。

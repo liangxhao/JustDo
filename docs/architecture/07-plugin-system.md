@@ -61,7 +61,7 @@ Runtime Services 还通过公开 prompt/agent-end hooks 记录有限的轮次准
 表单多选以一组原生复选框呈现，支持空初值与组级必选，草稿按选项分别记录布尔值。
 组件只发布 `/__widget_kit__/ui.js` 资源。搜索、排序、选择、
 表单值只在当前 iframe 内存中，切换保留输入、重载恢复默认值；有界草稿标明省略，
-完整选择可在本地复制。模型质量与发布检查见 [验收清单](../plans/interactive-answers-acceptance.md)。
+完整选择可在本地复制。模型质量与发布检查见 [现行说明与验证边界](../features/chat/interactive-answers.md)。
 
 ACPX 随包保留 ACP 协议适配器及其运行库，组装时移除 Codex/Claude 的平台代理二进制，
 最终打包再次检查不得混入。代理由用户独立安装维护；受管包装器启动时读取本机 PATH
@@ -704,7 +704,7 @@ Agent Team 的 `team_discussion` 新增 `configure`/`organizerParticipates` 与�
 
 `task_assistants` 的查询现在返回最近的精确投递/执行回执和验收报告。独立验收助手通过 `review:{deliveryIds,verdict}` 上报；hook 使用原生 sessionKey/runId/toolCallId 绑定，Plan 拦截变更，过期、重放调用和混合动作拒绝。Main 对原生接收竞态做有界等待，再检查当前档案及会话归属；报告成功不表示验收执行已结束。协议与 skill 仍属于默认关闭的 Agent Team 扩展，无新增运行时补丁。
 
-团队 skill 引导来源助手在派发前定义交付物和检查标准、按依赖顺序收取结果、安排独立检查；返工产生新执行和新验收。当前没有自动 DAG 调度或强制质量门禁，来源助手仍负责给用户综合结果。MoA 另行实现为独立扩展，交接见 [MoA 实施方案](../plans/moa-extension-plan.md)。
+团队 skill 引导来源助手在派发前定义交付物和检查标准、按依赖顺序收取结果、安排独立检查；返工产生新执行和新验收。当前没有自动 DAG 调度或强制质量门禁，来源助手仍负责给用户综合结果。
 
 Agent Team 的输入框模式选择只为用户显式选择的单次消息附加模式指令；普通消息不注入团队指令。选择群组讨论时使用 team_discussion，选择任务协作时使用持久 task peers 和 sessions_send；技能明确遵从用户所选模式。UI 发送前检查扩展启用状态，原生执行仍受现有工具准入、来源、Plan 与生命周期限制，不增加运行时补丁。
 
@@ -726,7 +726,7 @@ skill 和一次性发起指令在目标与必要上下文明确时优先尽快�
 
 所选模式也约束竞争发起：Runtime Services 的无正文 Team 发起状态仅向 Workflow 提供同步只读判断，工厂隐藏竞争的 Workflow 启动并在真实调用时复核；Workflow 的高优先级动作钩子在 Team 记录投递前拒绝竞争建队/派发，保留读取、发现和既有 Team 收尾。Workflow 接纳后保留来源 run 的约束至精确原生整轮终态，避免同轮接纳后再启动另一套执行。两个可选插件不互相导入；必需 Runtime Services 不依赖 Workflow。实际身份、工具权限、生命周期、已接纳去重和未知结果不回放的规则继续独立执行。
 
-Runtime Services 同一无正文发起状态也向 Agent Team 工厂提供目录模式提示；工厂只投影自身 schema 和描述，不直接改写 system prompt。任务协作期间讨论工具只读；群聊期间只展示 create/read/stop，成员工具只展示发现。未知或取消状态隐藏自有工具，精确已接纳且 whole-run 已结算或 released 后恢复正常定义。原生目录生成和工具描述沿用原生代码，目录提示不替代精确 run 的执行守卫。当前原生 prompt hook 仅支持 `toolsAllow`，不能直接表达“全部有效工具减本轮冲突工具”；原生发送工具和首次 Swarm 的跨插件目录同步仍未完成。本期不增加 patch，后续候选见 [Team 验收清单](../plans/agent-team-acceptance.md#后续工具目录与模式可见性)。
+Runtime Services 同一无正文发起状态也向 Agent Team 工厂提供目录模式提示；工厂只投影自身 schema 和描述，不直接改写 system prompt。任务协作期间讨论工具只读；群聊期间只展示 create/read/stop，成员工具只展示发现。未知或取消状态隐藏自有工具，精确已接纳且 whole-run 已结算或 released 后恢复正常定义。原生目录生成和工具描述沿用原生代码，目录提示不替代精确 run 的执行守卫。当前原生 prompt hook 仅支持 `toolsAllow`，不能直接表达“全部有效工具减本轮冲突工具”；原生发送工具和首次 Swarm 的跨插件目录同步仍未完成。当前不为此增加 patch；现行限制见 [Agent Team](../features/assistants/agent-team.md)。
 
 Runtime Services 的发起账本位于 `stateDir/runtime-services/agent-team-launch/`，只保存来源身份、generation、owner、状态、指纹及 whole-run 元数据，不保存输入或回复。原生 `pluginExtensions.runtime-services.agent-team-launch` 仅作镜像：正常 SIGTERM 无后继 registry 时会按 disable 清除普通会话的插件状态。账本先持久提交再更新镜像；同进程各注册实例共用来源串行约束，写入前检查客户端授权和退役状态。旧进程未 released、读取失败、损坏或写入未知均冻结，精确 released 才可接纳下一代。锁定自有 holding harness 的原生状态有单独的退休保留规则，不将普通来源的 namespace 清理结论扩展到锁定 holding。
 
@@ -737,3 +737,7 @@ Runtime Services 的发起账本位于 `stateDir/runtime-services/agent-team-lau
 正常 shutdown 保留 saved，产品明确关闭先持久取消代次并冻结新准入，再改插件配置。公开 service.stop 可能仍持有旧配置且没有关闭原因，因此扩展 stop 的配置检查不能独立保证热关闭取消。Main 的 disable lease 与串行开关 lane 覆盖这一边界。关闭房间先收齐持久 native 身份，正常 operator 客户端归档，owning SDK 仅对 exact archived session 解锁，再由 operator 精确 archivedOnly 删除；harness 归属不能伪造成 pluginOwnerId。已解锁后正常 SIGTERM 会清除 native holding marker；仅 durable closed slot 与仍 archived/unlocked 的精确 key/SID/revision/harness/root 吻合且没有冲突 marker 时可继续清理，正常正文准入未放宽。真实当前 SDK 已验证此清理闭环（含解锁后重启）、保存/重启/禁用和启用 memory-core 的 session FTS 隔离，dreaming 和所有管理恢复入口尚无实际全覆盖。
 
 详情页补充走正常来源新 user turn，由来源模型受管工具转发；真实新 peer accepted run 才证明目标已发起。它不伪造新执行或复用旧 round，unknown 不自动重试，也不保证定向转述。详见[本轮实现与验证边界](../features/assistants/agent-team.md)。本轮没有增加或修改运行时 patch。
+
+## 当前验证边界
+
+技能提案的 `/learn` → 审核 → 列表刷新流程尚未用真实公司模型与账号完成验证，包括冲突、断线及跨 Agent 隔离。公司 MCP 的身份与权限规范尚未确定，不将浏览器登录身份或公网可达性视为后台服务授权。

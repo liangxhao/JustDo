@@ -38,7 +38,7 @@ SQLite 相关回归由统一测试 wrapper 串行处理 ABI 切换；浏览器�
 
 原生 sessions.abort 缺少 expectedSessionId 的原子比较参数；客户端重读身份只能缩小竞争窗口，不能承诺跨 RPC 的原子取消。Plan 只读策略也不是未知第三方插件副作用的通用沙盒。源码审查、mock 与隔离真实进程各有不同覆盖，不能替代上述环境验证。
 
-Worktree 与内网专项未完成验收继续见[Worktree 清单](../../plans/worktree-integration-plan.md)及[内网清单](../../plans/intranet-feature-acceptance.md)，完成后更新相应现行说明。
+Worktree 与内网专项未完成验收继续见[现行说明与验证边界](../../features/README.md)及[现行说明与验证边界](../../architecture/10-data-storage.md)，完成后更新相应现行说明。
 
 ## 后续复验入口
 

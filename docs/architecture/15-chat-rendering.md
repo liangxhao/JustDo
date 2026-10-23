@@ -210,7 +210,7 @@ iframe；内容使用扣除标题和建议后的剩余高度，随所属窗口�
 标记后恢复，不移动或重建原生工作区文档。侧聊内的放大标记只属于其实际文档，不能
 误隐藏承载自己的原生视图。
 
-原生私有 prompt port 只接收当前 frame 的真实用户激活，检查可见性、焦点、当前会话和长度/速率；拒绝 slash/执行前缀。草稿能力默认关闭，由当前 React consumer 的实时回调决定；只读会话或转录修改时撤销该能力、清除旧建议，并在私有消息、重建与加入草稿入口再次校验。能力切换保留原 iframe、端口与本地选择，不重新读取文档。建议以可读文字在紧凑行内区域展示供用户确认，可信「加入草稿」点击只追加当前 composer 文字，保留附件与已有草稿；发送仍由用户操作。没有 dashboard/MCP/tool/resource 权限。固定组件不访问外部网络，原生任意 HTML 类型仍沿用原生 CSP/CDN/media 边界，不承诺全类型断网。用户入口与限制见 [交互式回答](../features/chat/interactive-answers.md)，未完成验收见 [验收清单](../plans/interactive-answers-acceptance.md)。
+原生私有 prompt port 只接收当前 frame 的真实用户激活，检查可见性、焦点、当前会话和长度/速率；拒绝 slash/执行前缀。草稿能力默认关闭，由当前 React consumer 的实时回调决定；只读会话或转录修改时撤销该能力、清除旧建议，并在私有消息、重建与加入草稿入口再次校验。能力切换保留原 iframe、端口与本地选择，不重新读取文档。建议以可读文字在紧凑行内区域展示供用户确认，可信「加入草稿」点击只追加当前 composer 文字，保留附件与已有草稿；发送仍由用户操作。没有 dashboard/MCP/tool/resource 权限。固定组件不访问外部网络，原生任意 HTML 类型仍沿用原生 CSP/CDN/media 边界，不承诺全类型断网。用户入口与限制见 [交互式回答](../features/chat/interactive-answers.md)，未完成验收见 [现行说明与验证边界](../features/chat/interactive-answers.md)。
 
 消息中的普通网页 URL、Markdown 链接和 `MEDIA` 附件共享浏览器打开偏好，打开当前会话内置网页 Tab 或已安装的 Chrome。句子中的本地 HTML 路径和 Markdown HTML 链接转换为受控点击标记，主窗口不导航到 file URL；文件查找与 URL 查询参数、锚点分离，路径只解码一次，裸文件路径中的 `%`、`#` 保持原名。Main 校验 HTML 文件后，通过主窗口主 frame 专用 IPC 选择内置 browser guest 或 Chrome，以原生 file URL 打开；不再发布本地 HTTP 预览站点或附加目录范围与预览 CSP。已挂载的内置浏览器通过自身 handle 创建实际 Tab，容量拒绝时不插入外层虚假 Tab。该偏好只影响用户点击，不改变 Gateway 的 browser Tool 模式或原生消息所有权。详见[浏览器设置](../features/browser/browser-settings-design.md)。
 

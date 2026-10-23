@@ -347,8 +347,8 @@ observation 的唯一拒绝记录读取版本 1 白名单。反馈包含同批�
 执行原调用；潜在大整数预处理时省略细因和位置，预算之外的调用不被指认为失败。
 提示明确整批均未派发、合法兄弟也须重新评估，以及此前已完成结果继续有效。
 反馈缺失或非法时保留原有通用提示，不改变准入、排除、次数或终态；主聊天与原生
-subagent 共用这条接线，不增加 Swarm 节点重试。真实模型纠正率仍按
-[具体错误反馈验收](../plans/tool-call-format-feedback-plan.md)进行内网配对实验。
+subagent 共用这条接线，不增加 Swarm 节点重试。尚无目标内网模型的配对实验结果
+证明纠正率提高；诊断正确、反馈实际送达和模型纠正成功须分别判断。
 
 已接管格式纠正链的普通失败，由原生 dispatch 在发布等待回执前调用 Runtime Services
 纯投影，复用当前结果所有者已经脱敏的终态原因。只输出 JSON 编码后不超过 2 KiB 的
@@ -359,8 +359,8 @@ subagent 共用这条接线，不增加 Swarm 节点重试。真实模型纠正�
 实际安排纠正后由原生发布 lifecycle progress：`stage: retrying`、
 `reason: tool_call_format`、`retryAttempt: 1..2`、`maxRetries: 2`。
 聊天仅作有界投影，阶段变化清理旧次数；整轮结果仍须精确匹配的
-`executionSettled: true` 终态。当前接线、冻结和真实验收进度保留在
-[恢复方案](../plans/tool-call-format-recovery-plan.md)，局部测试不代表整套能力已验收。
+`executionSettled: true` 终态。历史冻结记录由 Git 追溯；真实模型的 schema→坏 JSON
+混合路径、重连和远端安装版尚未完成验收，局部模拟测试不代表整套能力已验收。
 
 ## 7. Goal、Plan 与子任务不重造执行器
 

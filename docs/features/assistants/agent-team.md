@@ -2,7 +2,7 @@
 
 Agent Team 是默认关闭、用户可切换的可选扩展。任务协作保留持久助手之间的分工和消息投递；群组讨论提供公开讨论时间线，用户可直接参与。两种模式共享助手档案和来源任务导航，各自拥有执行、权限和结束契约，不转换已有会话历史。
 
-本说明维护当前实现。长期助手档案、角色文件与原生 SubAgent 的区别见[长期助手与任务内协作](assistants-and-collaboration.md)；跨进程及存储所有权见 [Cowork](../../architecture/04-cowork-system.md)、[插件系统](../../architecture/07-plugin-system.md)及[数据存储](../../architecture/10-data-storage.md)。未完成的真实业务验收与候选能力见[Agent Team 验收与后续候选](../../plans/agent-team-acceptance.md)。
+本说明维护当前实现。长期助手档案、角色文件与原生 SubAgent 的区别见[长期助手与任务内协作](assistants-and-collaboration.md)；跨进程及存储所有权见 [Cowork](../../architecture/04-cowork-system.md)、[插件系统](../../architecture/07-plugin-system.md)及[数据存储](../../architecture/10-data-storage.md)。当前业务验证边界见[现行说明与验证边界](#当前验证边界)。
 
 ## 用户入口与两种模式
 
@@ -175,7 +175,7 @@ Main 在准备时核对真实来源、完整成员身份、当前原生 sessionI
 
 Agent Team 工具工厂通过 Runtime Services 的同一账本读取无正文目录提示，并在注册定义时缩小自身工具的 schema 和描述。任务协作发起期间，`team_discussion` 只展示 `read`、必填 `roomId` 及可选的批次筛选 `discussionIds`；群聊发起期间，`team_discussion` 只展示 `create/read/stop`，`task_assistants` 只展示无参数发现，不再宣传 peer 准备、seal 或 review。原生 deferred 目录和 `tool_describe` 使用这些定义，不通过字符串删除目录项。取消、未知 owner、损坏或原生身份失配时隐藏 Team 自有工具；已接纳但来源尚未整轮结算时保留收窄，精确整轮终态或 released 后恢复后续请求的正常定义。目录提示不构成调用授权，执行前守卫继续校验精确来源与 run。
 
-本期不增加 runtime patch。原生 `sessions_send` 的模式可见性及首次 Swarm 发起时对 Team 定义的同步裁剪仍未实现；这些路径继续依赖调用前检查，不能宣称所有禁止操作已从 system prompt 消失。原生接口缺口及后续验证记录在[验收清单](../../plans/agent-team-acceptance.md#后续工具目录与模式可见性)。
+本期不增加 runtime patch。原生 `sessions_send` 的模式可见性及首次 Swarm 发起时对 Team 定义的同步裁剪仍未实现；这些路径继续依赖调用前检查，不能宣称所有禁止操作已从 system prompt 消失。
 
 Team 发起期间也禁止竞争的 `swarm_workflow_start`。Runtime Services 的无正文发起状态模块向 Workflow 提供窄的同步目录判断，共用既有账本、解析、owner、取消和身份核验，不依赖可能被原生清除的镜像；Workflow 工厂隐藏该单一启动工具，保留的旧工具定义在执行时再次拒绝，原生可信政策继续兜底。损坏、未知或旧 owner 保守隐藏，精确 released 或已接纳且来源整轮已结算后可供后续请求重新发现；原始发起 run 不因后续展示恢复而获得竞争启动权限。必需 Runtime Services 不导入可选 Workflow。
 
@@ -189,7 +189,7 @@ Team 发起期间也禁止竞争的 `swarm_workflow_start`。Runtime Services �
 
 OpenClaw 的紧凑工具目录通过 `tool_search`、`tool_describe` 和 `tool_call` 发现及调用团队工具。精确当前提交完成验证后，守卫允许这些原生入口；`tool_call` 的实际目标仍由原生执行器再次接受可信工具政策检查，入口本身不能证明团队已启动，也不能绕过所选 Team 操作、原生写入权限或命令审批。
 
-原生 queued/followup 的通用提交/执行绑定仍未成立，显式 Team 在忙碌或已有未确认队列时保留草稿并拒绝普通 followup。有限纠正最多使用两次原生 revise，只能在精确阶段、尚无已确认或不确定副作用时执行；副作用已发生后不回退。此能力不保证建群成功，也不扩大工具权限。完整业务建群的剩余验收见[验收清单](../../plans/agent-team-acceptance.md)。
+原生 queued/followup 的通用提交/执行绑定仍未成立，显式 Team 在忙碌或已有未确认队列时保留草稿并拒绝普通 followup。有限纠正最多使用两次原生 revise，只能在精确阶段、尚无已确认或不确定副作用时执行；副作用已发生后不回退。此能力不保证建群成功，也不扩大工具权限。完整业务建群的剩余验收见[现行说明与验证边界](#当前验证边界)。
 
 Main 候选回执通过 KV CAS 保存原生 generation、来源 incarnation、clientTurnId、prompt SHA-256 和提交边界，没有正文。指纹按原生普通 `chat.send` 入库规则先 NFC、拒绝 NUL、移除禁止的控制字符再 trim；保持原生消息及普通聊天发送不变，避免合法组合字符导致精确绑定错误。正常 release 需要 native inspect 的精确 whole-run proof，以及 fresh fullScan 和 chat.history 的无活动/无队列事实；Stop、产品终态或空历史本身都不能释放。register ACK 丢失而从未发送的候选可通过原生 abandon 核对同一 client:user 确实缺失、来源空闲及 generation 后写 released tombstone，防止旧 register 迟到复活。
 
@@ -256,8 +256,12 @@ flowchart LR
 
 既有能力在 v2026.9.8 使用公开 Gateway/SDK 和当时补丁集完成接入，没有为上述 Team 功能新增运行时 patch。真实 holding、冷/热禁用、精确清理、guard/QuickJS、原生输入规范化和附件绑定已有隔离确定性模型验证；正式回归覆盖容量事务、FIFO/汇总结算、ACK 丢失、停止/迟到返回、权限漂移、独立补充草稿与可信发起身份。
 
-这些证据不等于完整生产 Main/room/业务模型、麦克风点击、系统级故障或讨论质量已验收。尚未运行的 dreaming、其他原生管理/channel 恢复路径不被概括为全部隔离。真实模型内容质量、完整 UI、多窗口与权限竞争验收继续见[验收清单](../../plans/agent-team-acceptance.md)。
+这些证据不等于完整生产 Main/room/业务模型、麦克风点击、系统级故障或讨论质量已验收。尚未运行的 dreaming、其他原生管理/channel 恢复路径不被概括为全部隔离。真实模型内容质量、完整 UI、多窗口与权限竞争验收继续见[现行说明与验证边界](#当前验证边界)。
 
 修改时应同时核对 shared 合约、Main IPC/store/coordinator、扩展 service/guard、preload 和 Renderer，运行对应行为回归。不要只以文件存在或注册成功宣称功能完整；也不要将这份现行说明恢复成已完成计划和逐轮审查流水。
 
 当前 v2026.10.4 的 owned-run registry 接线通过原生 immutable actor 发布，Team 不接管该事务。目标版本的实际通过范围见[升级记录](../../openclaw-upgrades/v2026.10.4/README.md)，上述历史验证不自动延续为本版真实模型验收。
+
+## 当前验证边界
+
+完整生产群 FIFO、首条消息 viewer 委托、真实 UI/语音、多窗口及权限竞争尚未完成端到端验收。隔离 Gateway 的历史开关探针通过，但完整组织者探针仍在 sender/relay/authorization 联合断言处失败，不能据此宣布组织者流程通过。长期记忆已有 custom-role/隐藏上下文及 FTS 局部证据，REM/NREM dreaming 和其他原生恢复入口尚未实际验收。

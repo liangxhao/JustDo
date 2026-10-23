@@ -437,3 +437,7 @@ Agent Team 的表初始化、房间/投递/验收/待发输入及资源偏好事
 Main KV 记录产品候选与提交边界；Runtime Services 的 `stateDir/runtime-services/agent-team-launch/` 以来源 key 的 SHA-256 文件保存 generation、来源 incarnation、clientTurnId、prompt SHA-256、owner、状态及精确 whole-run 元数据。两层均不保存正文。写入使用同步 fsync 和原子替换，在原生 namespace 镜像之前完成；读取失败、损坏和写入未知不能转为空状态。正常 SIGTERM 清理普通来源插件状态，故 `pluginExtensions.runtime-services.agent-team-launch` 不是跨重启权威。未 released 的旧 owner 冻结，released 保留代次 tombstone，下一次发起必须 CAS 精确前代；账本没有原生 transcript 直读或副本。
 
 released tombstone 的历史身份在合法 reset/revision 后仍可核对，原 SID 或当前精确 SID 可读取前代 generation；身份变化后旧 whole-run proof 不转移到当前 incarnation。新候选必须绑定当前 SID/revision 且 CAS 下一代，不能复用旧 clientTurnId。未 released 的身份变化不作历史完成推断。
+
+## 当前验证边界
+
+冷归档在最终锁定运行时中的正常/损坏归档读取，以及归档后重启、恢复附件引用并继续会话，尚未完成真实环境验收；关闭自动归档后的历史读取也不能视为已经验证。原生读取失败必须保留错误，禁止用空历史、正文缓存或盲目重试掩盖恢复问题。

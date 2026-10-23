@@ -120,3 +120,7 @@ INVALID_REQUEST 结合结构化 details.reason 分类。receipt-invalid 和未�
 
 自动化覆盖发送后 ACK 丢失、失配回执、暂停/替换准备竞态、原生事件隔离、迟到完成回执
 和过期操作恢复。合成测试不替代真实模型下的暂停、停止清理、断连和重启组合验收。
+
+## 当前验证边界
+
+合成模型和协议测试不替代真实模型下的 subagent/yield、collector/Code Mode 等待、新输入与 Stop/reset 竞争，以及断连、ACK 丢失和应用/Gateway 双重启组合验收；最终安装包的内网冷启动尚需实际环境证据。

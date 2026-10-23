@@ -28,5 +28,5 @@
 - 本目录：后续开发者的接入步骤、接口合同、示例、失败行为与验收要求。
 - `docs/architecture/`：系统架构、进程边界与状态归属。
 - `docs/features/`：按领域维护的现行功能与已知限制。
-- `docs/plans/`：尚待推进的候选设计与未完成验收。
+- `docs/plans/`：仍需记录的具体未实施需求；现行验证边界见对应功能或架构文档。
 - [出站请求头使用指南](outbound-headers/README.md)：用户配置和 Extension 接入。

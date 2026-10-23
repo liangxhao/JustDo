@@ -1,6 +1,6 @@
 # 功能文档
 
-本目录只维护当前已接入的用户流程、实现契约和已知限制。剩余候选设计和验收见[计划索引](../plans/README.md)。尚未完成真实环境验收的功能仍保留限制，不能因移出计划目录而视为验收通过。
+本目录只维护当前已接入的用户流程、实现契约和已知限制。仅仍需记录的具体未实施需求见[需求索引](../plans/README.md)，验证边界随对应功能维护。尚未完成真实环境验收的功能仍保留限制，不能因移出计划目录而视为验收通过。
 
 [启动分流与历史升级](app/startup-and-history-upgrade.md) 维护首次安装、历史升级、普通启动、共用引导与恢复事务。
 
@@ -62,4 +62,4 @@ Swarm 主会话管理已并入主说明；批次是独立的扩展契约。Workb
 | 外部客户端 | [通用 CLI / ACP](integrations/agent-cli.md)                            | 默认可用命令行、ACP、app-server 子集与客户端接入示例     |
 | app-server | [统一 app-server](integrations/app-server.md)                          | Chrome 与 CLI 共用协议引擎，保留能力和生命周期边界       |
 
-账号 UI/SDK、模型换证与开发调用步骤的所有者不同：先从上表阅读相应实现，再从[开发接入索引](../developer-integration/README.md)查接口和示例。待复验的内网模型、企业网页及冷历史恢复集中在[内网验收清单](../plans/intranet-feature-acceptance.md)。
+账号 UI/SDK、模型换证与开发调用步骤的所有者不同：先从上表阅读相应实现，再从[开发接入索引](../developer-integration/README.md)查接口和示例。内网模型、企业网页及冷历史恢复的验证边界分别维护在插件、浏览器和数据存储说明中。

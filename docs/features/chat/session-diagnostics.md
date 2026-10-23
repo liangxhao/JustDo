@@ -217,7 +217,7 @@ handoff 分支；没有最终回复观察时，明确说明结束原因证据不
 只有当前原生生产者的完整流/整批拒绝事实能够授予恢复，历史错误文案、工具块被移除、
 provider response ID 或服务器汇总的 finish_reason 都不能单独证明该事实。
 导出继续使用有界闭合原因和次数，不新增原始参数、命令、thinking 或认证材料。
-当前验收限制见[恢复方案](../../plans/tool-call-format-recovery-plan.md)。
+当前验收限制见[工具格式纠正](../../architecture/05-agent-engine.md#工具调用格式纠正)。
 
 具体格式反馈只保留有界的固定类别和数值：最多检查 16 个调用、保留 3 个问题，
 共享 16 Ki UTF-16 诊断扫描预算；反馈 JSON 上限 2 KiB、附加提示上限 3 KiB。
@@ -226,7 +226,7 @@ provider response ID 或服务器汇总的 finish_reason 都不能单独证明�
 
 JSON/对象格式拒绝现在与 schema 拒绝一样，在当前原生 Agent 循环内反馈给模型；
 两者保留各自的校验与派发语义。隐藏 custom 反馈不能成为新的用户发送或恢复授权，
-具体适配和混合错误验收见[当前修复记录](../../plans/tool-call-format-feedback-plan.md#18-schema-后出现坏-json-的原生循环修复)。
+混合错误剩余验收见[工具格式纠正](../../architecture/05-agent-engine.md#工具调用格式纠正)。
 
 纠正期间遇到其它模型错误，最终必须呈现最近一次模型生成的原生脱敏原因，
 如无法连接模型服务或服务过载，不能以最初的工具格式错误覆盖，也不能静默报成功。
@@ -239,8 +239,8 @@ JSON/对象格式拒绝现在与 schema 拒绝一样，在当前原生 Agent 循
 已经脱敏的 terminal diagnostic，再由 Runtime Services 投影为 JSON 编码后最多 2 KiB
 的摘要；`agent.wait` / plugin `waitForRun` 和 Swarm 节点沿用这一错误，不增加原因缓存。
 缺少该诊断、普通非恢复链、incognito、取消及超时仍沿用原生协议，异常抛出路径不变。
-此接线不改变整轮终态、重试额度或工具派发；修复前发现及独立产物验收见
-[假模型实测](../../plans/tool-call-format-feedback-plan.md#16-假模型驱动的真实-gateway-验证)及其后续修复记录。
+此接线不改变整轮终态、重试额度或工具派发；历史探针与修复记录由 Git 追溯，
+真实环境验证见[工具格式纠正](../../architecture/05-agent-engine.md#工具调用格式纠正)。
 
 ### OpenClaw 2026.10.4 接口适配
 

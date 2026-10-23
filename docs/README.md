@@ -17,7 +17,7 @@
 | [features/](features/README.md)                           | 按领域组织的现行功能说明                         | 查用户路径、实现契约和已知限制   |
 | [developer-integration/](developer-integration/README.md) | 登录、外部 Agent、请求头等开发接入接口及分发示例 | 增加集成模块时阅读               |
 | [app-server-api/](app-server-api/README.md)               | 通用 stdio、WebSocket 与 Chrome 扩展协议规范     | 外部客户端对接时阅读             |
-| [plans/](plans/README.md)                                 | 剩余候选设计与未完成验收                         | 先核对现行能力，再推进真实差异   |
+| [plans/](plans/README.md)                                 | 具体未实施需求                         | 先核对现行能力，再推进真实差异   |
 | [openclaw-upgrades/](openclaw-upgrades/README.md)         | 按目标版本组织的升级记录                         | 从版本索引查差异、复核与验收演进 |
 | [releases/](releases/README.md)                           | 已发布应用版本说明                               | 保留发布时事实，不按当前源码改写 |
 | `assets/`                                                 | 文档引用的资源                                   | 不存放方案或独立功能说明         |
@@ -49,7 +49,7 @@
 ## 维护规则
 
 - 每个主题明确现行说明的维护入口。用户行为放在功能说明，跨进程契约放在架构，开发调用步骤放在接入指南；用链接连接不同层次，不重复维护整份规格。
-- `plans/` 只保留尚待推进的设计和未完成验收。实现后将现行规则与必要限制归入 `features/` 或 `architecture/`，删除完成或被替代的方案。
+- `plans/` 仅保留仍需记录的具体未实施需求；现行规则、已知问题和验证边界随 `features/` 或 `architecture/` 维护，不另建重复验收计划。
 - 不保留重复的旧版调研、阶段审查和测试流水；历史由 Git 追溯。升级与发布记录按目标版本维护，不能将旧环境测试改写成当前版本已通过。
 - 事实核对顺序为 shared 合约 → 注册入口 → service/store/adapter → preload/Renderer 消费方 → 测试。文件存在不等于接入，测试文件存在不等于本次执行通过。
 - 保留所有权、正常调用链、身份约束、失败恢复和必要 Mermaid 图，不用文件路径列表代替设计。

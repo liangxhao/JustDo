@@ -197,7 +197,7 @@ npm test
 ## Read by Task
 
 Read the matching contract before editing; use [feature index](docs/features/README.md)
-for other areas. Pending acceptance limits remain in `docs/plans/`.
+for other areas. Current validation limits belong in the owning feature or architecture document.
 
 | Task                                                       | Required documents                                                                                                                                                              |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -205,7 +205,7 @@ for other areas. Pending acceptance limits remain in `docs/plans/`.
 | Execution, permissions, terminals                          | [Engine](docs/architecture/05-agent-engine.md), [permissions](docs/features/chat/openclaw-permission-management.md)                                                             |
 | Persistence and native storage                             | [Data storage](docs/architecture/10-data-storage.md)                                                                                                                            |
 | Chat rendering, widgets                                    | [Chat rendering](docs/architecture/15-chat-rendering.md), [interactive answers](docs/features/chat/interactive-answers.md)                                                      |
-| Assistant profiles, Team collaboration/discussions/holding | [Assistants](docs/features/assistants/assistants-and-collaboration.md), [Agent Team](docs/features/assistants/agent-team.md), [acceptance](docs/plans/agent-team-acceptance.md) |
+| Assistant profiles, Team collaboration/discussions/holding | [Assistants](docs/features/assistants/assistants-and-collaboration.md), [Agent Team](docs/features/assistants/agent-team.md) |
 | Swarm DAG, batches, host/browser ownership                 | [Workflow](docs/features/workflow/swarm-workflow.md), [batches](docs/features/workflow/swarm-workflow-batches.md)                                                               |
 | Plugins, skills, managed adapters, computer control        | [Plugin system](docs/architecture/07-plugin-system.md), [Plugin Hub](docs/features/plugins/plugin-hub-experience.md)                                                            |
 | Browser pairing/relay and extension chat                   | [Browser settings](docs/features/browser/browser-settings-design.md), [side chat](docs/features/browser/browser-extension-side-chat.md)                                         |
@@ -227,7 +227,8 @@ for other areas. Pending acceptance limits remain in `docs/plans/`.
   Diagnostic reads must not start Gateway or read transcript files directly.
 - Update relevant architecture/feature docs in the same change when contracts
   or data flow change. Preserve explanatory design and useful Mermaid diagrams.
-  Keep current contracts in `docs/features/`, pending work in `docs/plans/`;
+  Keep current contracts and validation limits in their owning feature/architecture docs,
+  concrete unimplemented requirements in `docs/plans/`;
   remove completed/superseded plans after integrating their contracts.
 - Keep all offline-download URLs, filenames, destinations and preparation
   commands in `docs/offline-downloads.md`.
