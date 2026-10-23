@@ -11,6 +11,10 @@ import type {
   MarketplaceUpdateCheckRequest,
   MarketplaceUpdateCheckResult,
 } from '../../shared/plugins/marketplace';
+import type {
+  PluginOperationContext,
+  PluginOperationStage,
+} from '../../shared/plugins/pluginOperation';
 import type { PluginInstallResult } from './installation';
 import type { PluginMarketplaceService } from './marketplace';
 
@@ -47,8 +51,14 @@ export class PluginManager {
     return this.marketplace.checkUpdates(request);
   }
 
-  installFromMarketplace(request: MarketplaceInstallRequest): Promise<PluginInstallResult> {
-    return this.marketplace.install(request);
+  installFromMarketplace(
+    request: MarketplaceInstallRequest,
+    onProgress?: (stage: PluginOperationStage) => void,
+    context?: PluginOperationContext,
+  ): Promise<PluginInstallResult> {
+    return context
+      ? this.marketplace.install(request, onProgress, context)
+      : this.marketplace.install(request, onProgress);
   }
 
   forgetMarketplaceInstallation(

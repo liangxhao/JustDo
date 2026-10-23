@@ -1,3 +1,4 @@
+import { PluginOperationStage } from '@shared/plugins/pluginOperation';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 const nativeHook = (id: string) => ({
@@ -33,6 +34,67 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
+test('queues one Hook mutation failure with its original stage without a mounted category', async () => {
+  api.setEnabled.mockResolvedValue({
+    success: false,
+    error: 'Native apply refused',
+    failedStage: PluginOperationStage.APPLYING_CONFIGURATION,
+  });
+  const { hookService } = await import('./hookService');
+  const { getPluginOperationOwner } = await import('../shared/pluginOperationService');
+  await hookService.loadHooks();
+
+  await expect(hookService.setHookEnabled('removed', false)).rejects.toThrow(
+    'Native apply refused',
+  );
+
+  expect(getPluginOperationOwner().snapshot()).toEqual([]);
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+    expect.objectContaining({
+      message: 'Native apply refused',
+      failedStage: PluginOperationStage.APPLYING_CONFIGURATION,
+      state: 'failed',
+    }),
+  ]);
+});
+
+test('does not duplicate per-file Hook errors when a batch owns their result', async () => {
+  api.importPath.mockResolvedValue({
+    success: false,
+    error: 'Invalid Hook',
+    failedStage: PluginOperationStage.VALIDATING,
+  });
+  const { hookService } = await import('./hookService');
+  const { getPluginOperationOwner } = await import('../shared/pluginOperationService');
+
+  await expect(
+    hookService.importHook('C:/imports/hook.zip', { reportFailure: false }),
+  ).resolves.toMatchObject({ success: false, failedStage: PluginOperationStage.VALIDATING });
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([]);
+});
+
+test('propagates a failed fresh read after Hook deletion as a refresh warning', async () => {
+  let resolve!: (value: { success: boolean; hooks: ReturnType<typeof nativeHook>[] }) => void;
+  api.delete.mockReturnValue(
+    new Promise(finish => {
+      resolve = finish;
+    }),
+  );
+  const { hookService } = await import('./hookService');
+  const { getPluginOperationOwner } = await import('../shared/pluginOperationService');
+  await hookService.loadHooks();
+  const deletion = hookService.deleteHook('removed');
+  await hookService.loadHooks({ force: true });
+  api.list.mockResolvedValue({ success: false, error: 'Read failed' });
+
+  resolve({ success: true, hooks: [nativeHook('retained')] });
+
+  await expect(deletion).resolves.toMatchObject({ success: true, refreshWarning: true });
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+    expect.objectContaining({ state: 'refresh_failed' }),
+  ]);
+});
+
 test.each([false, true])(
   'removes a confirmed deleted Hook from the list when refreshed status is present: %s',
   async withStatus => {
@@ -48,7 +110,7 @@ test.each([false, true])(
     expect(result.success).toBe(true);
     expect(result.hooks?.map(hook => hook.id)).toEqual(['retained']);
     expect(hookService.getHooks().map(hook => hook.id)).toEqual(['retained']);
-    expect(api.delete).toHaveBeenCalledWith('removed');
+    expect(api.delete).toHaveBeenCalledWith('removed', { requestId: expect.any(String) });
   },
 );
 

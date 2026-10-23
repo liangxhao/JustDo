@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron';
 
+import type { PluginOperationContext } from '../../../shared/plugins/pluginOperation';
 import type { McpStore } from './mcpStore';
 
 type OpenClawConfigSyncResult = {
@@ -40,17 +41,20 @@ export class McpConfigSyncService {
 
   syncConfigAfterExclusiveMutation(
     syncOpenClawConfig: McpConfigSyncServiceDeps['syncOpenClawConfig'],
+    context?: PluginOperationContext,
   ): Promise<McpConfigSyncResult> {
-    return this.syncConfigExclusive(syncOpenClawConfig);
+    return this.syncConfigExclusive(syncOpenClawConfig, context);
   }
 
   private syncConfigExclusive(
     syncOpenClawConfig = this.deps.syncOpenClawConfig,
+    context?: PluginOperationContext,
   ): Promise<McpConfigSyncResult> {
+    const correlation = context ? { requestId: context.requestId } : {};
     return (async () => {
       try {
         console.log('[OpenClawMcp] syncing configuration...');
-        this.broadcast('mcp:config:syncStart');
+        this.broadcast('mcp:config:syncStart', correlation);
         const syncResult = await syncOpenClawConfig({
           reason: 'mcp-server-changed',
           discoverExternalMcpServers: false,
@@ -68,12 +72,16 @@ export class McpConfigSyncService {
       }
     })()
       .then(result => {
-        this.broadcast('mcp:config:syncDone', { tools: result.tools, error: result.error });
+        this.broadcast('mcp:config:syncDone', {
+          ...correlation,
+          tools: result.tools,
+          error: result.error,
+        });
         return result;
       })
       .catch(err => {
         const error = err instanceof Error ? err.message : String(err);
-        this.broadcast('mcp:config:syncDone', { tools: 0, error });
+        this.broadcast('mcp:config:syncDone', { ...correlation, tools: 0, error });
         return { tools: 0, error };
       });
   }

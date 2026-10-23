@@ -224,6 +224,7 @@ import {
   type MarketplaceUpdateCheckRequest,
 } from '../shared/plugins/marketplace';
 import { type ExtensionMcpEnabledInput, ExtensionMcpIpc } from '../shared/plugins/mcp';
+import type { PluginOperationContext } from '../shared/plugins/pluginOperation';
 import type { OpenClawSkillSource } from '../shared/plugins/skills';
 import { type SkillWorkshopDecision, SkillWorkshopIpc } from '../shared/plugins/skillWorkshop';
 import {
@@ -290,6 +291,7 @@ import { type OnlineTtsConfigurationUpdate, OnlineTtsIpc } from '../shared/speec
 import { SpeechSynthesisIpc } from '../shared/speech/speechSynthesis';
 import { createExtensionChangedSubscription } from './preload/extensions';
 import { createMcpAppPreloadApi } from './preload/mcpApps';
+import { createPluginOperationSubscription } from './preload/pluginOperations';
 
 // 暴露安全的 API 到渲染进程
 contextBridge.exposeInMainWorld('electron', {
@@ -306,6 +308,9 @@ contextBridge.exposeInMainWorld('electron', {
     patchAppConfig: (patch: AppConfigPatch) => ipcRenderer.invoke(AppConfigIpc.Patch, patch),
     remove: (key: string) => ipcRenderer.invoke('store:remove', key),
   },
+  plugins: {
+    onOperationProgress: createPluginOperationSubscription(),
+  },
   marketplace: {
     resolveInstalled: (request: MarketplaceResolveRequest) =>
       ipcRenderer.invoke(MarketplaceIpc.ResolveInstalled, request),
@@ -318,8 +323,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(MarketplaceIpc.CheckUpdates, request),
     detail: (request: MarketplaceDetailRequest) =>
       ipcRenderer.invoke(MarketplaceIpc.Detail, request),
-    install: (request: MarketplaceInstallRequest) =>
-      ipcRenderer.invoke(MarketplaceIpc.Install, request),
+    install: (request: MarketplaceInstallRequest, context?: PluginOperationContext) =>
+      ipcRenderer.invoke(MarketplaceIpc.Install, request, context),
   },
   skillWorkshop: {
     list: (agentId: string) => ipcRenderer.invoke(SkillWorkshopIpc.List, agentId),
@@ -329,23 +334,29 @@ contextBridge.exposeInMainWorld('electron', {
   },
   skills: {
     list: () => ipcRenderer.invoke('skills:list'),
-    setEnabled: (options: { id: string; enabled: boolean }) =>
-      ipcRenderer.invoke('skills:setEnabled', options),
+    setEnabled: (options: { id: string; enabled: boolean }, context?: PluginOperationContext) =>
+      ipcRenderer.invoke('skills:setEnabled', options, context),
     // Offline import from a local folder or archive
-    importPath: (sourcePath: string) => ipcRenderer.invoke('skills:import', sourcePath),
-    delete: (options: { id: string; source?: OpenClawSkillSource }) =>
-      ipcRenderer.invoke('skills:delete', options),
+    importPath: (sourcePath: string, context?: PluginOperationContext) =>
+      ipcRenderer.invoke('skills:import', sourcePath, context),
+    delete: (
+      options: { id: string; source?: OpenClawSkillSource },
+      context?: PluginOperationContext,
+    ) => ipcRenderer.invoke('skills:delete', options, context),
   },
   extensions: {
     list: () => ipcRenderer.invoke(ExtensionIpc.List),
-    delete: (request: ExtensionDeleteRequest) => ipcRenderer.invoke(ExtensionIpc.Delete, request),
-    setEnabled: (request: ExtensionSetEnabledRequest) =>
-      ipcRenderer.invoke(ExtensionIpc.SetEnabled, request),
-    updateConfiguration: (request: ExtensionUpdateConfigurationRequest) =>
-      ipcRenderer.invoke(ExtensionIpc.UpdateConfiguration, request),
+    delete: (request: ExtensionDeleteRequest, context?: PluginOperationContext) =>
+      ipcRenderer.invoke(ExtensionIpc.Delete, request, context),
+    setEnabled: (request: ExtensionSetEnabledRequest, context?: PluginOperationContext) =>
+      ipcRenderer.invoke(ExtensionIpc.SetEnabled, request, context),
+    updateConfiguration: (
+      request: ExtensionUpdateConfigurationRequest,
+      context?: PluginOperationContext,
+    ) => ipcRenderer.invoke(ExtensionIpc.UpdateConfiguration, request, context),
     // Import a native OpenClaw extension from a local folder or archive.
-    importPath: (request: ExtensionImportRequest) =>
-      ipcRenderer.invoke(ExtensionIpc.Import, request),
+    importPath: (request: ExtensionImportRequest, context?: PluginOperationContext) =>
+      ipcRenderer.invoke(ExtensionIpc.Import, request, context),
     onImportProgress: (callback: (progress: ExtensionImportProgress) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, progress: ExtensionImportProgress) =>
         callback(progress);
@@ -356,10 +367,12 @@ contextBridge.exposeInMainWorld('electron', {
   },
   hooks: {
     list: () => ipcRenderer.invoke(HookIpc.List),
-    importPath: (sourcePath: string) => ipcRenderer.invoke(HookIpc.Import, sourcePath),
-    delete: (hookId: string) => ipcRenderer.invoke(HookIpc.Delete, hookId),
-    setEnabled: (options: { id: string; enabled: boolean }) =>
-      ipcRenderer.invoke(HookIpc.SetEnabled, options),
+    importPath: (sourcePath: string, context?: PluginOperationContext) =>
+      ipcRenderer.invoke(HookIpc.Import, sourcePath, context),
+    delete: (hookId: string, context?: PluginOperationContext) =>
+      ipcRenderer.invoke(HookIpc.Delete, hookId, context),
+    setEnabled: (options: { id: string; enabled: boolean }, context?: PluginOperationContext) =>
+      ipcRenderer.invoke(HookIpc.SetEnabled, options, context),
   },
   slashCommands: {
     list: (options?: { agentId?: string | null }) =>
@@ -368,27 +381,33 @@ contextBridge.exposeInMainWorld('electron', {
   mcp: {
     list: () => ipcRenderer.invoke('mcp:list'),
     listExtensionServers: () => ipcRenderer.invoke('mcp:listExtensionServers'),
-    setExtensionEnabled: (input: ExtensionMcpEnabledInput) =>
-      ipcRenderer.invoke(ExtensionMcpIpc.SetEnabled, input),
+    setExtensionEnabled: (input: ExtensionMcpEnabledInput, context?: PluginOperationContext) =>
+      ipcRenderer.invoke(ExtensionMcpIpc.SetEnabled, input, context),
     readExtensionSettings: (id: string) => ipcRenderer.invoke(ExtensionMcpIpc.ReadSettings, id),
-    create: (data: unknown) => ipcRenderer.invoke('mcp:create', data),
-    update: (id: string, data: unknown) => ipcRenderer.invoke('mcp:update', id, data),
-    delete: (id: string) => ipcRenderer.invoke('mcp:delete', id),
-    setEnabled: (options: { id: string; enabled: boolean }) =>
-      ipcRenderer.invoke('mcp:setEnabled', options),
-    syncConfig: () => ipcRenderer.invoke('mcp:syncConfig'),
+    create: (data: unknown, context?: PluginOperationContext) =>
+      ipcRenderer.invoke('mcp:create', data, context),
+    update: (id: string, data: unknown, context?: PluginOperationContext) =>
+      ipcRenderer.invoke('mcp:update', id, data, context),
+    delete: (id: string, context?: PluginOperationContext) =>
+      ipcRenderer.invoke('mcp:delete', id, context),
+    setEnabled: (options: { id: string; enabled: boolean }, context?: PluginOperationContext) =>
+      ipcRenderer.invoke('mcp:setEnabled', options, context),
+    syncConfig: (context?: PluginOperationContext) => ipcRenderer.invoke('mcp:syncConfig', context),
     probe: (id: string) => ipcRenderer.invoke('mcp:probe', id),
     readResource: (options: { id: string; uri: string }) =>
       ipcRenderer.invoke('mcp:readResource', options),
-    onConfigSyncStart: (callback: () => void) => {
-      const handler = () => callback();
+    onConfigSyncStart: (callback: (data?: { requestId?: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data?: { requestId?: string }) =>
+        callback(data);
       ipcRenderer.on('mcp:config:syncStart', handler);
       return () => ipcRenderer.removeListener('mcp:config:syncStart', handler);
     },
-    onConfigSyncDone: (callback: (data: { tools: number; error?: string }) => void) => {
+    onConfigSyncDone: (
+      callback: (data: { tools: number; error?: string; requestId?: string }) => void,
+    ) => {
       const handler = (
         _event: Electron.IpcRendererEvent,
-        data: { tools: number; error?: string },
+        data: { tools: number; error?: string; requestId?: string },
       ) => callback(data);
       ipcRenderer.on('mcp:config:syncDone', handler);
       return () => ipcRenderer.removeListener('mcp:config:syncDone', handler);
@@ -677,8 +696,10 @@ contextBridge.exposeInMainWorld('electron', {
     engine: {
       getStatus: () => ipcRenderer.invoke('openclaw:engine:getStatus'),
       startGateway: () => ipcRenderer.invoke(EngineIpc.StartGateway),
-      collectDiagnostics: (query: EngineDiagnosticsQuery) => ipcRenderer.invoke(EngineDiagnosticsIpc.Collect, query),
-      cancelDiagnostics: (query: EngineDiagnosticsQuery) => ipcRenderer.invoke(EngineDiagnosticsIpc.Cancel, query),
+      collectDiagnostics: (query: EngineDiagnosticsQuery) =>
+        ipcRenderer.invoke(EngineDiagnosticsIpc.Collect, query),
+      cancelDiagnostics: (query: EngineDiagnosticsQuery) =>
+        ipcRenderer.invoke(EngineDiagnosticsIpc.Cancel, query),
       restartGateway: () => ipcRenderer.invoke('openclaw:engine:restartGateway'),
       getPort: () => ipcRenderer.invoke('openclaw:engine:getPort'),
       getToken: () => ipcRenderer.invoke('openclaw:engine:getToken'),

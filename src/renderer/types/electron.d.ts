@@ -64,7 +64,7 @@ type TerminalWriteRequest = import('../../shared/app/terminal').TerminalWriteReq
 type ExtensionImportProgress = import('../../shared/plugins/extensions').ExtensionImportProgress;
 type ExtensionChangedEvent = import('../../shared/plugins/extensions').ExtensionChangedEvent;
 type ExtensionImportRequest = import('../../shared/plugins/extensions').ExtensionImportRequest;
-type ExtensionImportStage = import('../../shared/plugins/extensions').ExtensionImportStage;
+type ExtensionImportResult = import('../../shared/plugins/extensions').ExtensionImportResult;
 type ExtensionDeleteRequest = import('../../shared/plugins/extensions').ExtensionDeleteRequest;
 type ExtensionDeleteResult = import('../../shared/plugins/extensions').ExtensionDeleteResult;
 type ExtensionSetEnabledRequest =
@@ -78,6 +78,11 @@ type ExtensionUpdateConfigurationResult =
 type InstalledOpenClawExtension =
   import('../../shared/plugins/extensions').InstalledOpenClawExtension;
 type OpenClawSkillSource = import('../../shared/plugins/skills').OpenClawSkillSource;
+type PluginOperationContext = import('../../shared/plugins/pluginOperation').PluginOperationContext;
+type PluginOperationFeedback =
+  import('../../shared/plugins/pluginOperation').PluginOperationFeedback;
+type PluginOperationProgress =
+  import('../../shared/plugins/pluginOperation').PluginOperationProgress;
 type PluginHubScope = import('../../shared/plugins/management').PluginHubScope;
 type PluginManagementCapabilities =
   import('../../shared/plugins/management').PluginManagementCapabilities;
@@ -555,6 +560,9 @@ interface IElectronAPI {
     patchAppConfig: <T extends object>(patch: Partial<T>) => Promise<T>;
     remove: (key: string) => Promise<void>;
   };
+  plugins: {
+    onOperationProgress: (callback: (progress: PluginOperationProgress) => void) => () => void;
+  };
   marketplace: {
     resolveInstalled: (request: MarketplaceResolveRequest) => Promise<MarketplaceResolveResponse>;
     listSources: (kind?: MarketplacePluginKind) => Promise<MarketplaceSourcesResponse>;
@@ -564,7 +572,10 @@ interface IElectronAPI {
       request: MarketplaceUpdateCheckRequest,
     ) => Promise<MarketplaceUpdateCheckResponse>;
     detail: (request: MarketplaceDetailRequest) => Promise<MarketplaceDetailResponse>;
-    install: (request: MarketplaceInstallRequest) => Promise<MarketplaceInstallResponse>;
+    install: (
+      request: MarketplaceInstallRequest,
+      context?: PluginOperationContext,
+    ) => Promise<MarketplaceInstallResponse>;
   };
   skillWorkshop: import('../../shared/plugins/skillWorkshop').SkillWorkshopApi;
   skills: {
@@ -574,21 +585,39 @@ interface IElectronAPI {
       error?: string;
       gatewayOffline?: boolean;
     }>;
-    setEnabled: (options: {
-      id: string;
-      enabled: boolean;
-    }) => Promise<{ success: boolean; skills?: Skill[]; error?: string; gatewayOffline?: boolean }>;
+    setEnabled: (
+      options: {
+        id: string;
+        enabled: boolean;
+      },
+      context?: PluginOperationContext,
+    ) => Promise<
+      PluginOperationFeedback & {
+        success: boolean;
+        skills?: Skill[];
+        error?: string;
+        gatewayOffline?: boolean;
+      }
+    >;
     // Offline skill import from a folder or archive
-    importPath: (sourcePath: string) => Promise<{
-      success: boolean;
-      skillId?: string;
-      error?: string;
-      skills?: Skill[];
-    }>;
-    delete: (options: {
-      id: string;
-      source?: OpenClawSkillSource;
-    }) => Promise<{ success: boolean; skills?: Skill[]; error?: string }>;
+    importPath: (
+      sourcePath: string,
+      context?: PluginOperationContext,
+    ) => Promise<
+      PluginOperationFeedback & {
+        success: boolean;
+        skillId?: string;
+        error?: string;
+        skills?: Skill[];
+      }
+    >;
+    delete: (
+      options: {
+        id: string;
+        source?: OpenClawSkillSource;
+      },
+      context?: PluginOperationContext,
+    ) => Promise<PluginOperationFeedback & { success: boolean; skills?: Skill[]; error?: string }>;
   };
   extensions: {
     list: () => Promise<{
@@ -596,18 +625,22 @@ interface IElectronAPI {
       extensions: InstalledOpenClawExtension[];
       error?: string;
     }>;
-    delete: (request: ExtensionDeleteRequest) => Promise<ExtensionDeleteResult>;
-    setEnabled: (request: ExtensionSetEnabledRequest) => Promise<ExtensionSetEnabledResult>;
+    delete: (
+      request: ExtensionDeleteRequest,
+      context?: PluginOperationContext,
+    ) => Promise<ExtensionDeleteResult>;
+    setEnabled: (
+      request: ExtensionSetEnabledRequest,
+      context?: PluginOperationContext,
+    ) => Promise<ExtensionSetEnabledResult>;
     updateConfiguration: (
       request: ExtensionUpdateConfigurationRequest,
+      context?: PluginOperationContext,
     ) => Promise<ExtensionUpdateConfigurationResult>;
-    importPath: (request: ExtensionImportRequest) => Promise<{
-      success: boolean;
-      extensionId?: string;
-      error?: string;
-      failedStage?: ExtensionImportStage;
-      capabilityReview?: import('../../shared/plugins/extensions').OpenClawPluginCapabilityReview;
-    }>;
+    importPath: (
+      request: ExtensionImportRequest,
+      context?: PluginOperationContext,
+    ) => Promise<ExtensionImportResult>;
     onImportProgress: (callback: (progress: ExtensionImportProgress) => void) => () => void;
     onChanged: (callback: (event: ExtensionChangedEvent) => void) => () => void;
   };
@@ -620,31 +653,46 @@ interface IElectronAPI {
       error?: string;
       gatewayOffline?: boolean;
     }>;
-    importPath: (sourcePath: string) => Promise<{
-      success: boolean;
-      hookId?: string;
-      hooks?: HookEntryIPC[];
-      workspaceDir?: string;
-      managedHooksDir?: string;
-      error?: string;
-    }>;
-    delete: (hookId: string) => Promise<{
-      success: boolean;
-      hooks?: HookEntryIPC[];
-      workspaceDir?: string;
-      managedHooksDir?: string;
-      restartRequired?: boolean;
-      error?: string;
-    }>;
-    setEnabled: (options: { id: string; enabled: boolean }) => Promise<{
-      success: boolean;
-      hooks?: HookEntryIPC[];
-      workspaceDir?: string;
-      managedHooksDir?: string;
-      restartRequired?: boolean;
-      error?: string;
-      gatewayOffline?: boolean;
-    }>;
+    importPath: (
+      sourcePath: string,
+      context?: PluginOperationContext,
+    ) => Promise<
+      PluginOperationFeedback & {
+        success: boolean;
+        hookId?: string;
+        hooks?: HookEntryIPC[];
+        workspaceDir?: string;
+        managedHooksDir?: string;
+        error?: string;
+      }
+    >;
+    delete: (
+      hookId: string,
+      context?: PluginOperationContext,
+    ) => Promise<
+      PluginOperationFeedback & {
+        success: boolean;
+        hooks?: HookEntryIPC[];
+        workspaceDir?: string;
+        managedHooksDir?: string;
+        restartRequired?: boolean;
+        error?: string;
+      }
+    >;
+    setEnabled: (
+      options: { id: string; enabled: boolean },
+      context?: PluginOperationContext,
+    ) => Promise<
+      PluginOperationFeedback & {
+        success: boolean;
+        hooks?: HookEntryIPC[];
+        workspaceDir?: string;
+        managedHooksDir?: string;
+        restartRequired?: boolean;
+        error?: string;
+        gatewayOffline?: boolean;
+      }
+    >;
   };
   slashCommands: {
     list: (
@@ -665,25 +713,42 @@ interface IElectronAPI {
     }>;
     setExtensionEnabled: (
       input: import('@shared/plugins/mcp').ExtensionMcpEnabledInput,
+      context?: PluginOperationContext,
     ) => Promise<import('@shared/plugins/mcp').ExtensionMcpMutationResult>;
     readExtensionSettings: (
       id: string,
     ) => Promise<import('@shared/plugins/mcp').ExtensionMcpSettingsResult>;
     create: (
       data: McpServerFormData,
-    ) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
+      context?: PluginOperationContext,
+    ) => Promise<
+      PluginOperationFeedback & { success: boolean; servers?: McpServerConfigIPC[]; error?: string }
+    >;
     update: (
       id: string,
       data: Partial<McpServerFormData>,
-    ) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
+      context?: PluginOperationContext,
+    ) => Promise<
+      PluginOperationFeedback & { success: boolean; servers?: McpServerConfigIPC[]; error?: string }
+    >;
     delete: (
       id: string,
-    ) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
-    setEnabled: (options: {
-      id: string;
-      enabled: boolean;
-    }) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
-    syncConfig: () => Promise<{ success: boolean; tools: number; error?: string }>;
+      context?: PluginOperationContext,
+    ) => Promise<
+      PluginOperationFeedback & { success: boolean; servers?: McpServerConfigIPC[]; error?: string }
+    >;
+    setEnabled: (
+      options: {
+        id: string;
+        enabled: boolean;
+      },
+      context?: PluginOperationContext,
+    ) => Promise<
+      PluginOperationFeedback & { success: boolean; servers?: McpServerConfigIPC[]; error?: string }
+    >;
+    syncConfig: (
+      context?: PluginOperationContext,
+    ) => Promise<PluginOperationFeedback & { success: boolean; tools: number; error?: string }>;
     probe: (
       id: string,
     ) => Promise<{ success: boolean; result?: McpProbeResultIPC; error?: string }>;
@@ -691,8 +756,10 @@ interface IElectronAPI {
       id: string;
       uri: string;
     }) => Promise<{ success: boolean; result?: McpReadResourceResultIPC; error?: string }>;
-    onConfigSyncStart: (callback: () => void) => () => void;
-    onConfigSyncDone: (callback: (data: { tools: number; error?: string }) => void) => () => void;
+    onConfigSyncStart: (callback: (data?: { requestId?: string }) => void) => () => void;
+    onConfigSyncDone: (
+      callback: (data: { tools: number; error?: string; requestId?: string }) => void,
+    ) => () => void;
   };
   teamDiscussion: {
     participation: (input: {

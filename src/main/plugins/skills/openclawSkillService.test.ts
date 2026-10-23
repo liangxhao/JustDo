@@ -27,6 +27,72 @@ const createConfirmationService = (request: ReturnType<typeof vi.fn>) => {
   return { service, requestGateway };
 };
 
+test('waits for the exact managed installation instead of a same-name fallback', async () => {
+  vi.useFakeTimers();
+  const installed = statusWith(true, {
+    source: 'openclaw-managed',
+    baseDir: 'C:/skills/example',
+    skillKey: 'native-example-key',
+  });
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce(
+      statusWith(false, { source: 'openclaw-workspace', baseDir: 'C:/project/skills/example' }),
+    )
+    .mockResolvedValueOnce(
+      statusWith(false, { source: 'openclaw-managed', baseDir: 'C:/skills/sibling' }),
+    )
+    .mockResolvedValueOnce(installed);
+  const { service, requestGateway } = createConfirmationService(request);
+  const confirmation = service.waitForInstalledStatus('C:/skills/example');
+
+  await vi.advanceTimersByTimeAsync(1_000);
+
+  await expect(confirmation).resolves.toBe(installed);
+  expect(request).toHaveBeenCalledTimes(3);
+  expect(requestGateway).not.toHaveBeenCalled();
+});
+
+test('bounds installed identity discovery and cancels pending native reads', async () => {
+  vi.useFakeTimers();
+  const request = vi.fn(
+    (_method: string, _params: unknown, _options: { signal: AbortSignal }) =>
+      new Promise(() => undefined),
+  );
+  const { service, requestGateway } = createConfirmationService(request);
+  const confirmation = expect(service.waitForInstalledStatus('C:/skills/example')).rejects.toThrow(
+    'native identity could not be confirmed',
+  );
+
+  await vi.advanceTimersByTimeAsync(45_000);
+  await confirmation;
+
+  expect(requestGateway).not.toHaveBeenCalled();
+  expect(request.mock.calls.every(call => call[2].signal.aborted)).toBe(true);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test('does not confirm activation through a same-key replacement from another source', async () => {
+  vi.useFakeTimers();
+  const installed = statusWith(false, { source: 'openclaw-managed', baseDir: 'C:/skills/example' });
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce(
+      statusWith(false, { source: 'openclaw-workspace', baseDir: 'C:/project/skills/example' }),
+    )
+    .mockResolvedValueOnce(installed);
+  const { service } = createConfirmationService(request);
+  const confirmation = service.waitForEnabledStatus('example', true, {
+    source: 'openclaw-managed',
+    baseDir: 'C:/skills/example',
+  });
+
+  await vi.advanceTimersByTimeAsync(100);
+
+  await expect(confirmation).resolves.toBe(installed);
+  expect(request).toHaveBeenCalledTimes(2);
+});
+
 test('refreshes skills for the product main assistant rather than the native default agent', async () => {
   const requestGateway = vi.fn().mockResolvedValue({ skills: [] });
   const service = new OpenClawSkillService(() => ({ requestGateway }));

@@ -1,7 +1,109 @@
 // @vitest-environment jsdom
+import { PluginOperationStage } from '@shared/plugins/pluginOperation';
 import { expect, test, vi } from 'vitest';
 
 import type { ExtensionProvidedMcpServer, McpProbeResult, McpServerConfig } from './mcp';
+
+const mutationFailureFixture = async () => {
+  vi.resetModules();
+  const api = {
+    list: vi.fn<() => Promise<{ success: boolean; servers: McpServerConfig[] }>>(async () => ({
+      success: true,
+      servers: [],
+    })),
+    create: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+    setEnabled: vi.fn(),
+    syncConfig: vi.fn(),
+    setExtensionEnabled: vi.fn(),
+  };
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: { mcp: api, extensions: { onChanged: () => () => undefined } },
+  });
+  const { mcpService } = await import('./mcpService');
+  const { getPluginOperationOwner } = await import('../shared/pluginOperationService');
+  return { service: mcpService, api, owner: getPluginOperationOwner() };
+};
+
+test.each(['create', 'update', 'delete', 'setEnabled', 'syncConfig'] as const)(
+  'delivers one %s failure and its native phase outside a mounted MCP page',
+  async method => {
+    const { service, api, owner } = await mutationFailureFixture();
+    api[method].mockResolvedValue({
+      success: false,
+      error: 'Native mutation rejected',
+      failedStage: PluginOperationStage.APPLYING_CONFIGURATION,
+    });
+    const config = { name: 'Example MCP', transportType: 'stdio' as const, command: 'node' };
+    if (method === 'setEnabled')
+      await expect(service.setServerEnabled('example', true)).rejects.toThrow(
+        'Native mutation rejected',
+      );
+    else {
+      const result =
+        method === 'create'
+          ? await service.createServer(config)
+          : method === 'update'
+            ? await service.updateServer('example', config)
+            : method === 'delete'
+              ? await service.deleteServer('example')
+              : await service.syncConfig();
+      expect(result.success).toBe(false);
+    }
+    expect(owner.snapshot()).toEqual([]);
+    expect(owner.failureSnapshot()).toEqual([
+      expect.objectContaining({
+        message: 'Native mutation rejected',
+        failedStage: PluginOperationStage.APPLYING_CONFIGURATION,
+      }),
+    ]);
+  },
+);
+
+test('keeps confirmed MCP inventory when a completed mutation cannot refresh its list', async () => {
+  const { service, api, owner } = await mutationFailureFixture();
+  const server = {
+    id: 'example',
+    name: 'Example MCP',
+    enabled: false,
+    transportType: 'stdio',
+    command: 'node',
+  } as McpServerConfig;
+  api.list.mockResolvedValue({ success: true, servers: [server] });
+  await service.loadServers();
+  api.setEnabled.mockResolvedValue({ success: true, refreshWarning: true });
+
+  await expect(service.setServerEnabled(server.id, true)).resolves.toEqual([server]);
+
+  expect(service.getServers()).toEqual([server]);
+  expect(owner.failureSnapshot()).toEqual([
+    expect.objectContaining({
+      state: 'refresh_failed',
+      failedStage: PluginOperationStage.REFRESHING_INVENTORY,
+    }),
+  ]);
+});
+
+test('preserves an explicit unknown extension MCP result rather than claiming its write failed', async () => {
+  const { service, api, owner } = await mutationFailureFixture();
+  api.setExtensionEnabled.mockResolvedValue({
+    success: false,
+    code: 'unknown',
+    failedStage: PluginOperationStage.SAVING_CONFIGURATION,
+  });
+
+  await expect(
+    service.setExtensionServerEnabled('extension:provider:example', true),
+  ).rejects.toThrow('mcpExtensionMutation.unknown');
+  expect(owner.failureSnapshot()).toEqual([
+    expect.objectContaining({
+      state: 'unconfirmed',
+      failedStage: PluginOperationStage.SAVING_CONFIGURATION,
+    }),
+  ]);
+});
 
 const appProbeResult = (app = true): McpProbeResult => ({
   available: true,

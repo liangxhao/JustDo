@@ -63,14 +63,14 @@ sequenceDiagram
 
 类型定义以 `src/main/plugins/marketplace/types.ts` 和 `src/shared/plugins/marketplace.ts` 为准。
 
-| 接口                      | 必需 | 输入与输出                                                               | UI 行为                            |
-| ------------------------- | ---- | ------------------------------------------------------------------------ | ---------------------------------- |
-| `source`                  | 是   | 固定 `id`、名称、`supportedKinds`                                        | 单一来源，不显示市场选择器         |
-| `search(query)`           | 是   | `kind/query/categoryId/limit/cursor/sourceId` → `{ items, nextCursor? }` | 搜索与默认推荐                     |
-| `prepareInstall(request)` | 是   | `sourceId/pluginId/kind/version/operation` → `{ payload, cleanup? }`     | 安装及更新共用                     |
-| `checkUpdates(request)`   | 建议 | `kind/installed[]` → 更新候选数组                                        | 进入页面和手动检查，不依赖搜索命中 |
-| `listCategories(request)` | 否   | `sourceId/kind` → 分类数组                                               | 仅默认推荐显示分类                 |
-| `getDetail(request)`      | 否   | `sourceId/pluginId/kind` → 详情或 `null`                                 | 缺失接口时不打开空详情             |
+| 接口                                | 必需 | 输入与输出                                                                                             | UI 行为                            |
+| ----------------------------------- | ---- | ------------------------------------------------------------------------------------------------------ | ---------------------------------- |
+| `source`                            | 是   | 固定 `id`、名称、`supportedKinds`                                                                      | 单一来源，不显示市场选择器         |
+| `search(query)`                     | 是   | `kind/query/categoryId/limit/cursor/sourceId` → `{ items, nextCursor? }`                               | 搜索与默认推荐                     |
+| `prepareInstall(request, context?)` | 是   | `sourceId/pluginId/kind/version/operation` → `{ payload, cleanup? }`；可选 `context.onProgress(stage)` | 安装及更新共用                     |
+| `checkUpdates(request)`             | 建议 | `kind/installed[]` → 更新候选数组                                                                      | 进入页面和手动检查，不依赖搜索命中 |
+| `listCategories(request)`           | 否   | `sourceId/kind` → 分类数组                                                                             | 仅默认推荐显示分类                 |
+| `getDetail(request)`                | 否   | `sourceId/pluginId/kind` → 详情或 `null`                                                               | 缺失接口时不打开空详情             |
 
 `supportsDetail`、`supportsCategories`、`supportsUpdates` 由 Main 根据实现的方法投影，不必由 SDK 伪造能力。最小接入只需搜索和下载。没有 `checkUpdates` 时，UI 仍可使用搜索结果中明确标注的 `update-available`；不会声称已全面检查更新。
 
@@ -105,6 +105,15 @@ Main 校验 kind、来源、字段长度、分页和响应结构，并将 Provid
 
 `prepareInstall` 必须完成下载，返回现有安装器能够处理的输入。它不自行写运行时安装目录、不直接改启用状态、不维护第二份安装清单。
 
+安装请求可以通过独立的可选操作上下文关联进度，不把请求 ID 或进度回调传入目录查询协议。
+Main 在真正开始 `prepareInstall` 时显示“获取信息并准备安装包”；SDK 没有更细的回调时，
+这就是获取目录信息、下载和准备临时输入期间的整体阶段，不模拟下载百分比或固定步骤。
+适配器若能观察真实阶段，可使用第二参数的 `context.onProgress` 报告
+`src/shared/plugins/pluginOperation.ts` 中的闭合 `PluginOperationStage`，例如实际解包时的
+`EXTRACTING` 或实际格式校验时的 `VALIDATING`。回调只接受阶段，不传 URL、目录、原始 SDK
+输出或凭据；未知字符串被 Main 丢弃。`prepareInstall` 返回或抛错后，该回调失效，
+迟到的下载通知不能覆盖后续安装状态。现有只实现单参数的方法继续有效。
+
 ```ts
 // Skill / Extension：kind 按本次请求选择。
 return {
@@ -134,7 +143,9 @@ Extension 的市场来源目前进入既有 `trustMarketplaceSource` 安装分�
 
 MCP 更新由应用按市场目录 ID 找到现有记录，忽略 Provider 提供的本地 `targetId`。更新配置只提供需要改变的字段；不要用空凭据覆盖用户配置。启用状态仍由本地管理操作决定。
 
-Extension 更新传递原生 `--no-enable`，保留已有启停、允许/拒绝列表和独占槽选择；离线安装后的应用 allowlist 补充也不用于更新。首次安装继续使用既有安装流程。Skill 更新沿用原生技能配置。
+市场首次安装以启用为目标，MCP 在新建记录时默认启用；Extension 和 Skill 使用各自原生启用流程。
+需要补充必需配置、缺少运行依赖或无法确认原生状态时，页面保留相应反馈，不能把文件已复制解释为能力已经可用。
+Extension 更新传递原生 `--no-enable`，保留已有启停、允许/拒绝列表和独占槽选择；离线安装后的应用 allowlist 补充也不用于更新。Skill 和 MCP 更新同样保留用户已有开关。
 
 ## 5. 安装身份与更新
 
@@ -166,6 +177,8 @@ Extension 更新传递原生 `--no-enable`，保留已有启停、允许/拒绝�
 - 分类切换或离开插件页不会释放进行中的操作锁；返回后继续展示结果并刷新当前清单。此状态只在当前 Renderer 会话内保留，不新增安装清单或数据库缓存。
 - 安装失败保留对应卡片和重试操作。市场不可用不隐藏本地清单。
 - 安装提交成功但清单刷新失败，显示状态待确认和“刷新状态”，不再次调用安装接口。
+- 安装期间显示实际进入的阶段和累计等待时间，包括排队、准备安装包、校验/解包、安装、启用、清单确认和清理临时目录；没有发生的阶段不展示。Main 只对当前操作所属窗口发送闭合阶段与耗时，窗口关闭或通知失败不改变已提交安装的结果。
+- 失败响应仅补充闭合的 `failedStage`，便于页面说明失败所在阶段；后续保存安装身份或清理临时目录不会覆盖此前安装或启用的失败点。它不携带 SDK 原始错误、下载路径或凭据，也不代替 `installationCommitted`。
 - 可更新筛选中的成功反馈在清单刷新完成后保留片刻；刷新失败或需要重启的提示持续保留，避免卡片提前消失。身份重新对账中断更新检查时，仍可重新检查。
 - `restartRequired: true` 显示重启后生效，不能将其当作已经启用。
 - 更新检测失败与没有已知更新分别提示；未实现批量更新接口时不声称“全部最新”。
@@ -189,5 +202,32 @@ Extension 更新传递原生 `--no-enable`，保留已有启停、允许/拒绝�
 11. SDK 的独立认证/下载客户端、下载重定向、流式写入、响应大小限制和取消清理；直连与代理模式保持一致，跨域跳转不泄漏市场认证信息。
 
 相关测试位于 `src/main/plugins/marketplace/`、`src/main/ipc/plugins/marketplace.test.ts` 和 `src/renderer/features/plugins/marketplace/`。真实业务认证与运行时安装验收不能由模拟测试代替。
+
+### 本地市场联调探针
+
+`tests/electron/plugin-marketplace/` 提供仅测试使用的本地市场。它从实际 HTTP 响应读取目录和安装包，下载到本次临时目录并解包，再通过生产市场服务、领域安装器和真实原生 Gateway 执行安装。Renderer 复用 `usePluginMarketplace`、市场结果卡片、进度卡片和错误弹窗，使用隔离 preload 与真实 IPC，不注入预设安装结果。这个 Provider 不注册到产品启动流程，也不是离线市场或业务服务的回退来源。
+
+先准备仓库锁定版本的完整原生运行时，并确保 `better-sqlite3` 已恢复 Electron ABI。需要本地已安装的 Playwright；未安装在本仓库时，可通过 `PLAYWRIGHT_MODULE` 指向现有包目录。运行：
+
+```powershell
+npm run test:plugins:marketplace -- --runtime <prepared-runtime-root>
+```
+
+若精简过的 prepared runtime 没有 CLI/SDK 所需的完整依赖，可以额外显式传入 `--runtime-dependencies <same-version-complete-runtime-root>`。探针检查两者版本，将现有运行时代码和依赖复制到本 worktree 的 `build/plugin-marketplace/`；不会修改输入目录、自动寻找其他版本或从公网补包。不要传用户状态目录。
+
+每次运行创建 `.agent-tasks/plugin-marketplace/probe-*`，隔离 home、appData、userData、原生配置、SQLite、临时文件、端口和客户端身份；包含中文及空格路径以验证 Windows 安装场景。生成代码和运行时副本位于根 `build/plugin-marketplace/`。结束时关闭本次 HTTP 服务、Electron 与原生子进程；保留 `result.json`、脱敏测试日志和实际界面截图用于复核。只有断言和关闭均成功才输出 `ok: true`。
+
+探针核对三种市场安装的正式文件/记录、原生清单、默认启用、禁用后升级及卸载，并核对元数据请求失败、下载失败、损坏归档、真实启用校验失败、重复点击和切换分类后的错误通知。需要配置的测试扩展通过原生安装/启用校验产生真实的 `installationCommitted: true`，核对文件保留、状态禁用及防止重复安装。升级、启停及卸载通过生产 bridge 调用，不能据此宣称各管理卡片的所有按钮交互均已验收。Hook 不属于市场支持类型，其既有本地导入与状态流程继续由领域测试覆盖。
+
+MCP 使用真实 `McpStore`、生产配置投影及同步服务；测试生命周期适配器通过原生 `config.patch` 的版本/应用回执核对结果，不替代完整应用配置同步器的专门测试。探针只对预先明确要删除的本次测试服务器声明数组删除路径，保留原生配置的防误删检查。
+
+该探针不验证企业 SDK 的真实登录、应用代理、签名下载、重定向及企业网络环境；这些仍须使用真实业务接入完成单独验收。
+
+Windows 扩展发布的占用回归另有显式 `extension-publication-lock-probe.cjs`：复用
+原始 v1/v2 包和实际导入页面，在已复制临时目录的入口文件上持有真实的不允许
+DELETE 共享句柄，分别验证短暂占用后的同目录发布、持续占用后的有界失败与
+完整旧版恢复。它与无故障注入的完整包回归分开执行；命令与证明边界见
+[测试说明](../../tests/README.md)。测试快照在使用时还核对 manifest 声明的
+依赖和支持模块哈希，不能仅凭旧 bundle 或 ready 标记信任已被修改的依赖。
 
 架构与状态归属见 [插件市场适配架构](../architecture/16-skill-marketplace-adapter.md)。

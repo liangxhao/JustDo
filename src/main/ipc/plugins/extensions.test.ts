@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { ExtensionIpc } from '../../../shared/plugins/extensions';
 import { PluginKind } from '../../../shared/plugins/marketplace';
+import { PluginOperationIpc } from '../../../shared/plugins/pluginOperation';
 import type { OpenClawExtensionImportService } from '../../plugins/extensions';
 import type { PluginInstallationService } from '../../plugins/installation';
 
@@ -61,10 +62,50 @@ test('publishes the actual disabled setting even if a saved toggle reports a res
       extensionId: 'feature-plugin',
       enabled: false,
     }),
-  ).toEqual(failure);
+  ).toEqual({ ...failure, failedStage: 'queued' });
   const expected = [ExtensionIpc.Changed, { extensionId: 'feature-plugin', enabled: false }];
   expect(f.sender.send).toHaveBeenCalledWith(...expected);
   expect(f.peer.send).toHaveBeenCalledWith(...expected);
+});
+
+test('reports native stages to the requester while publishing observed state to all windows', async () => {
+  const f = fixture();
+  f.service.setEnabled.mockImplementation(async (_id, _enabled, _reviewToken, report) => {
+    report('enabling');
+    report('restarting_gateway');
+    return { success: true };
+  });
+
+  await handlers.get(ExtensionIpc.SetEnabled)!(
+    f.event,
+    { extensionId: 'feature-plugin', enabled: true },
+    { requestId: 'extension-operation' },
+  );
+
+  const events = f.sender.send.mock.calls.filter(call => call[0] === PluginOperationIpc.Progress);
+  expect(events.map(call => call[1].stage)).toEqual([
+    'queued',
+    'enabling',
+    'restarting_gateway',
+    'refreshing_inventory',
+  ]);
+  expect(events.every(call => call[1].requestId === 'extension-operation')).toBe(true);
+  expect(f.peer.send.mock.calls.every(call => call[0] === ExtensionIpc.Changed)).toBe(true);
+});
+
+test('rejects invalid progress context before starting an extension mutation', async () => {
+  const f = fixture();
+
+  await expect(
+    handlers.get(ExtensionIpc.Delete)!(
+      f.event,
+      { extensionId: 'feature-plugin' },
+      { requestId: 'unsafe/private-path' },
+    ),
+  ).resolves.toMatchObject({ success: false });
+
+  expect(f.service.delete).not.toHaveBeenCalled();
+  expect(f.service.listCatalog).not.toHaveBeenCalled();
 });
 
 test('a rejected enable request publishes the observed setting instead of the requested value', async () => {
@@ -140,9 +181,34 @@ test('failed catalog reads preserve the mutation result and do not invent an ena
       extensionId: 'feature-plugin',
       enabled: false,
     }),
-  ).toEqual({ success: true });
+  ).toEqual({ success: true, refreshWarning: true });
   expect(f.sender.send).not.toHaveBeenCalled();
   warn.mockRestore();
+});
+
+test('local import preserves committed failure evidence without exposing installation paths', async () => {
+  const f = fixture();
+  f.installation.install.mockResolvedValue({
+    success: false,
+    pluginId: 'feature-plugin',
+    installationCommitted: true,
+    installSourceInUse: true,
+    installPath: 'C:/private-installation',
+    failedStage: 'confirming',
+    error: 'confirmation failed',
+  });
+  const result = await handlers.get(ExtensionIpc.Import)!(f.event, {
+    requestId: 'local-committed',
+    sourcePath: 'C:/source',
+  });
+  expect(result).toMatchObject({
+    success: false,
+    extensionId: 'feature-plugin',
+    installationCommitted: true,
+    installSourceInUse: true,
+    failedStage: 'confirming',
+  });
+  expect(result).not.toHaveProperty('installPath');
 });
 
 test('a partially installed extension still invalidates attached capabilities when its reload fails', async () => {
@@ -173,6 +239,8 @@ test('retains committed installation identity when applying its runtime state fa
     success: false,
     extensionId: 'feature-plugin',
     installationCommitted: true,
+    failedStage: 'installing',
+    operationFailedStage: 'confirming',
     error: 'restart failed',
   });
   const installer = f.installation.registerInstaller.mock.calls[0][0];
@@ -187,6 +255,25 @@ test('retains committed installation identity when applying its runtime state fa
     pluginId: 'feature-plugin',
     installPath: 'C:/installed/feature-plugin',
     installationCommitted: true,
+    failedStage: 'confirming',
+  });
+});
+
+test('preserves a native failure step while finally refreshing the catalog', async () => {
+  const f = fixture();
+  f.service.setEnabled.mockImplementation(async (_id, _enabled, _token, report) => {
+    report?.('applying_configuration');
+    return { success: false, error: 'apply failed', operationUnconfirmed: true };
+  });
+  const result = await handlers.get(ExtensionIpc.SetEnabled)!(f.event, {
+    extensionId: 'feature-plugin',
+    enabled: true,
+  });
+  expect(result).toMatchObject({
+    success: false,
+    error: 'apply failed',
+    failedStage: 'applying_configuration',
+    operationUnconfirmed: true,
   });
 });
 
@@ -212,7 +299,7 @@ test('preserves the verified package path when native installation returns a chi
   expect(f.service.listInstalled).not.toHaveBeenCalled();
 });
 
-test('keeps unconfirmed source ownership inside Main while preserving its native consumer', async () => {
+test('exposes unconfirmed source ownership without exposing the temporary source path', async () => {
   const f = fixture();
   f.service.importPath.mockResolvedValue({
     success: false,
@@ -233,7 +320,7 @@ test('keeps unconfirmed source ownership inside Main while preserving its native
     requestId: 'request-1',
     sourcePath: 'C:/source',
   });
-  expect(response).not.toHaveProperty('installSourceInUse');
+  expect(response).toHaveProperty('installSourceInUse', true);
 });
 
 test('serialized notifications prevent an older catalog response from arriving after a newer one', async () => {
@@ -288,7 +375,7 @@ test('a thrown mutation error still refreshes persisted state without losing the
       extensionId: 'feature-plugin',
       enabled: false,
     }),
-  ).toEqual({ success: false, error: 'Restart failed' });
+  ).toEqual({ success: false, error: 'Restart failed', failedStage: 'queued' });
   expect(f.peer.send).toHaveBeenCalledWith(ExtensionIpc.Changed, {
     extensionId: 'feature-plugin',
     enabled: false,

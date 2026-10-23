@@ -1,3 +1,5 @@
+import type { PluginOperationFeedback } from './pluginOperation';
+
 export const PluginKind = {
   EXTENSION: 'extension',
   SKILL: 'skill',
@@ -206,12 +208,13 @@ export interface MarketplaceDetailResponse {
   errorCode?: MarketplaceErrorCode;
 }
 
-export interface MarketplaceInstallResponse {
+export interface MarketplaceInstallResponse extends PluginOperationFeedback {
   success: boolean;
   /** Installation persisted; an unsuccessful response still requires inventory reconciliation. */
   installationCommitted?: true;
   pluginId?: string;
   restartRequired?: boolean;
+  failedStage?: import('./pluginOperation').PluginOperationStage;
   error?: string;
   errorCode?: MarketplaceErrorCode;
 }

@@ -1,3 +1,5 @@
+import path from 'path';
+
 import { MAIN_USER_AGENT_ID } from '../../../shared/agents/agents';
 import { t } from '../../core/i18n';
 import type {
@@ -11,6 +13,7 @@ const SKILL_STATE_CONFIRM_INTERVAL_MS = 100;
 const SKILL_STATE_CONFIRM_MAX_INTERVAL_MS = 1_000;
 const SKILL_STATE_CONFIRM_TIMEOUT_MS = 30_000;
 const SKILL_STATE_READ_TIMEOUT_MS = 5_000;
+const SKILL_DISCOVERY_CONFIRM_TIMEOUT_MS = 45_000;
 const RETRYABLE_STATUS_ERROR_CODES = new Set([
   'CLIENT_TIMEOUT',
   'UNAVAILABLE',
@@ -42,6 +45,9 @@ class SkillStatusReadTimeoutError extends Error {
 
 export const isGatewaySkillEnabled = (entry: GatewaySkillEntry): boolean =>
   !entry.disabled && !entry.missing.config.includes(`skills.entries.${entry.skillKey}.enabled`);
+
+const matchesSkillDirectory = (entry: GatewaySkillEntry, directory: string): boolean =>
+  path.resolve(entry.baseDir) === path.resolve(directory);
 
 export class SkillStateConfirmationError extends Error {
   readonly gatewayOffline: boolean;
@@ -99,10 +105,54 @@ export class OpenClawSkillService {
     return this.requireGateway().requestGateway('skills.update', params);
   }
 
-  async waitForEnabledStatus(skillKey: string, enabled: boolean): Promise<GatewaySkillStatus> {
+  waitForEnabledStatus(
+    skillKey: string,
+    enabled: boolean,
+    identity?: Pick<GatewaySkillEntry, 'source' | 'baseDir'>,
+  ): Promise<GatewaySkillStatus> {
     // skills.update acknowledges the saved entry before the asynchronous native
     // config publication. Only a matching status proves the switch has applied.
-    const deadline = Date.now() + SKILL_STATE_CONFIRM_TIMEOUT_MS;
+    return OpenClawSkillService.waitForStatus(
+      this,
+      status => {
+        const entry = status.skills.find(
+          skill =>
+            skill.skillKey === skillKey &&
+            (!identity ||
+              (skill.source === identity.source && matchesSkillDirectory(skill, identity.baseDir))),
+        );
+        return Boolean(entry && isGatewaySkillEnabled(entry) === enabled);
+      },
+      SKILL_STATE_CONFIRM_TIMEOUT_MS,
+    );
+  }
+
+  async waitForInstalledStatus(installPath: string): Promise<GatewaySkillStatus> {
+    try {
+      // Windows directory polling can take 30 seconds. Read native discovery
+      // without restarting it or guessing a key from a local manifest.
+      return await OpenClawSkillService.waitForStatus(
+        this,
+        status =>
+          status.skills.some(
+            entry =>
+              entry.source === 'openclaw-managed' && matchesSkillDirectory(entry, installPath),
+          ),
+        SKILL_DISCOVERY_CONFIRM_TIMEOUT_MS,
+      );
+    } catch (cause) {
+      throw new Error('Skill installed, but its native identity could not be confirmed.', {
+        cause,
+      });
+    }
+  }
+
+  private static async waitForStatus(
+    service: Pick<OpenClawSkillService, 'getStatus'>,
+    matches: (status: GatewaySkillStatus) => boolean,
+    timeoutMs: number,
+  ): Promise<GatewaySkillStatus> {
+    const deadline = Date.now() + timeoutMs;
     let interval = SKILL_STATE_CONFIRM_INTERVAL_MS;
     let lastError: unknown;
     while (true) {
@@ -113,14 +163,17 @@ export class OpenClawSkillService {
       let readTimeout: ReturnType<typeof setTimeout> | undefined;
       try {
         const status = await Promise.race([
-          this.getStatus(undefined, { connectedOnly: true, timeoutMs, signal: controller.signal }),
+          service.getStatus(undefined, {
+            connectedOnly: true,
+            timeoutMs,
+            signal: controller.signal,
+          }),
           new Promise<never>((_resolve, reject) => {
             readTimeout = setTimeout(() => reject(new SkillStatusReadTimeoutError()), timeoutMs);
           }),
         ]);
         lastError = undefined;
-        const entry = status.skills.find(skill => skill.skillKey === skillKey);
-        if (entry && isGatewaySkillEnabled(entry) === enabled) return status;
+        if (matches(status)) return status;
       } catch (error) {
         if (!isRetryableStatusError(error)) throw new SkillStateConfirmationError(error);
         lastError = error;

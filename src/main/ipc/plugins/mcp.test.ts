@@ -5,6 +5,7 @@ import path from 'node:path';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
+import { PluginOperationIpc, PluginOperationStage } from '../../../shared/plugins/pluginOperation';
 import { OpenClawConfigSyncService } from '../../openclaw/config/openclawConfigSyncService';
 import { mergeNativeMcpOverrides } from '../../openclaw/config/plugins/nativeMcpOverrides';
 import { PluginInstallationService, PluginInstallOrigin } from '../../plugins/installation';
@@ -214,7 +215,11 @@ test('marketplace MCP install rejects an existing catalog id', async () => {
     },
   });
 
-  expect(result).toEqual({ success: false, error: 'MCP server is already installed' });
+  expect(result).toEqual({
+    success: false,
+    error: 'MCP server is already installed',
+    failedStage: PluginOperationStage.VALIDATING,
+  });
   expect(store.createServer).not.toHaveBeenCalled();
 });
 
@@ -235,6 +240,7 @@ test('custom MCP install rejects an invalid per-server request timeout', async (
   expect(result).toEqual({
     success: false,
     error: 'MCP request timeout must be an integer between 1 and 86400 seconds.',
+    failedStage: PluginOperationStage.VALIDATING,
   });
   expect(store.createServer).not.toHaveBeenCalled();
 });
@@ -248,10 +254,15 @@ test('does not report success when an MCP mutation target is missing', async () 
   await expect(handlers.get('mcp:delete')?.(undefined, 'missing')).resolves.toEqual({
     success: false,
     error: 'MCP server was not found',
+    failedStage: PluginOperationStage.UNINSTALLING,
   });
   await expect(
     handlers.get('mcp:setEnabled')?.(undefined, { id: 'missing', enabled: true }),
-  ).resolves.toEqual({ success: false, error: 'MCP server was not found' });
+  ).resolves.toEqual({
+    success: false,
+    error: 'MCP server was not found',
+    failedStage: PluginOperationStage.SAVING_CONFIGURATION,
+  });
 });
 
 const createMutationHarness = (
@@ -334,6 +345,57 @@ const createMutationHarness = (
     installationService,
   };
 };
+
+test('reports real queued and runtime-application phases without completing the waiting mutation', async () => {
+  vi.spyOn(console, 'info').mockImplementation(() => undefined);
+  const harness = createMutationHarness();
+  let release!: (result: { tools: number }) => void;
+  harness.syncConfig.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        release = resolve;
+      }),
+  );
+  const sender = { isDestroyed: () => false, send: vi.fn() };
+  const first = handlers.get('mcp:setEnabled')!(
+    { sender },
+    { id: 'server', enabled: false },
+    { requestId: 'mcp-disable' },
+  );
+  const second = handlers.get('mcp:setEnabled')!(
+    { sender },
+    { id: 'server', enabled: true },
+    { requestId: 'mcp-enable' },
+  );
+  await vi.waitFor(() => expect(harness.syncConfig).toHaveBeenCalledOnce());
+  const phases = (requestId: string) =>
+    sender.send.mock.calls
+      .filter(
+        ([channel, progress]) =>
+          channel === PluginOperationIpc.Progress && progress.requestId === requestId,
+      )
+      .map(([, progress]) => progress.stage);
+  expect(phases('mcp-disable').at(-1)).toBe(PluginOperationStage.APPLYING_CONFIGURATION);
+  expect(phases('mcp-enable')).toEqual([PluginOperationStage.QUEUED]);
+  expect(harness.store.setEnabled).toHaveBeenCalledTimes(1);
+  release({ tools: 1 });
+  await Promise.all([first, second]);
+  expect(phases('mcp-enable').at(-1)).toBe(PluginOperationStage.REFRESHING_INVENTORY);
+  expect(harness.records.get('server')?.enabled).toBe(true);
+});
+
+test('invalid progress context cannot mutate MCP configuration', () => {
+  const harness = createMutationHarness();
+  expect(() =>
+    handlers.get('mcp:setEnabled')!(
+      undefined,
+      { id: 'server', enabled: false },
+      { requestId: '\nbad' },
+    ),
+  ).toThrow('Invalid plugin operation request id');
+  expect(harness.store.setEnabled).not.toHaveBeenCalled();
+  expect(harness.syncConfig).not.toHaveBeenCalled();
+});
 
 test.each(['create', 'update', 'delete', 'setEnabled'])(
   'waits for runtime application before reporting MCP %s success',
@@ -446,8 +508,61 @@ test('reports a failed manual MCP sync instead of success with an error', async 
     success: false,
     tools: 0,
     error: 'application failed',
+    failedStage: PluginOperationStage.APPLYING_CONFIGURATION,
   });
 });
+
+test('correlates explicit MCP sync and rollback broadcasts with the invoking operation', async () => {
+  const harness = createMutationHarness();
+  const context = { requestId: 'mcp-save-request' };
+  harness.syncConfig.mockResolvedValueOnce({ tools: 0, error: 'apply failed' });
+  await expect(
+    handlers.get('mcp:setEnabled')!({}, { id: 'server', enabled: false }, context),
+  ).resolves.toMatchObject({
+    success: false,
+    failedStage: PluginOperationStage.APPLYING_CONFIGURATION,
+  });
+  expect(harness.syncConfig).toHaveBeenNthCalledWith(1, [], context);
+  expect(harness.syncConfig).toHaveBeenNthCalledWith(2, [], context);
+});
+
+test('passes an installation operation context into the MCP config synchronization', async () => {
+  const harness = createMutationHarness();
+  const context = { requestId: 'mcp-install-request' };
+  await expect(
+    handlers.get('mcp:create')!(
+      {},
+      { name: 'Created', transportType: 'stdio', command: 'node' },
+      context,
+    ),
+  ).resolves.toMatchObject({ success: true });
+  expect(harness.syncConfig).toHaveBeenCalledWith([], context);
+});
+
+test.each(['create', 'update', 'delete', 'setEnabled'])(
+  'keeps completed MCP %s committed when only its final inventory read fails',
+  async action => {
+    const harness = createMutationHarness();
+    harness.syncConfig.mockImplementationOnce(async () => {
+      harness.store.listServers.mockImplementation(() => {
+        throw new Error('inventory unavailable');
+      });
+      return { tools: 1 };
+    });
+    const args =
+      action === 'create'
+        ? [{ name: 'Created', transportType: 'stdio', command: 'node' }]
+        : action === 'update'
+          ? ['server', { name: 'Docs' }]
+          : action === 'delete'
+            ? ['server']
+            : [{ id: 'server', enabled: false }];
+    const result = await handlers.get(`mcp:${action}`)!({}, ...args);
+    expect(result).toEqual({ success: true, refreshWarning: true });
+    expect(result).not.toHaveProperty('servers');
+    expect(harness.syncConfig).toHaveBeenCalledOnce();
+  },
+);
 
 test('the shared MCP installer waits for synchronization too', async () => {
   const harness = createMutationHarness();

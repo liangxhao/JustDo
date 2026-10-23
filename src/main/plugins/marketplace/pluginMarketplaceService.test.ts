@@ -7,6 +7,7 @@ import {
   type MarketplacePlugin,
   PluginKind,
 } from '../../../shared/plugins/marketplace';
+import { PluginOperationStage } from '../../../shared/plugins/pluginOperation';
 import { PluginInstallationService } from '../installation';
 import {
   type MarketplaceInstallRecordStore,
@@ -195,6 +196,187 @@ test('routes installation to its marketplace provider', async () => {
     marketplacePluginId: 'writer',
     payload: { kind: PluginKind.SKILL, sourcePath: 'C:\\downloads\\writer.zip' },
   });
+});
+
+test('passes the validated operation context to the installer without leaking it into provider input', async () => {
+  const provider = createProvider();
+  const installationService = new PluginInstallationService();
+  const install = vi.fn(async () => ({ success: true, pluginId: 'writer' }));
+  installationService.registerInstaller({ kind: PluginKind.SKILL, install });
+  const service = new PluginMarketplaceService([provider], installationService);
+  const context = { requestId: 'marketplace-install' };
+  await service.install(
+    { sourceId: provider.source.id, pluginId: 'writer', kind: PluginKind.SKILL },
+    undefined,
+    context,
+  );
+  expect(install).toHaveBeenCalledWith(expect.objectContaining({ operationContext: context }));
+  expect(provider.prepareInstall).toHaveBeenCalledWith(
+    expect.not.objectContaining({ operationContext: expect.anything() }),
+  );
+});
+
+test('reports entered preparation, native installation, registry and cleanup stages', async () => {
+  const provider = createProvider();
+  let providerProgress: ((stage: PluginOperationStage) => void) | undefined;
+  provider.prepareInstall = vi.fn(async (_request, context) => {
+    providerProgress = context?.onProgress;
+    providerProgress?.(PluginOperationStage.EXTRACTING);
+    return {
+      payload: { kind: PluginKind.SKILL, sourcePath: 'C:\\downloads\\writer' },
+      cleanup: vi.fn(),
+    };
+  });
+  const installationService = new PluginInstallationService();
+  let installerProgress: ((progress: { stage: string; percent: number }) => void) | undefined;
+  installationService.registerInstaller({
+    kind: PluginKind.SKILL,
+    install: vi.fn(async request => {
+      installerProgress = request.onProgress;
+      // A delayed SDK callback cannot make an active install appear to be downloading again.
+      providerProgress?.(PluginOperationStage.PREPARING_PACKAGE);
+      request.onProgress?.({ stage: PluginOperationStage.ENABLING, percent: 80 });
+      return { success: true, pluginId: 'writer' };
+    }),
+  });
+  const service = new PluginMarketplaceService([provider], installationService);
+  const progress = vi.fn();
+
+  await service.install(
+    { sourceId: provider.source.id, pluginId: 'writer', kind: PluginKind.SKILL },
+    progress,
+  );
+  providerProgress?.(PluginOperationStage.PREPARING_PACKAGE);
+  installerProgress?.({ stage: PluginOperationStage.ENABLING, percent: 90 });
+
+  expect(progress.mock.calls.map(([stage]) => stage)).toEqual([
+    PluginOperationStage.QUEUED,
+    PluginOperationStage.PREPARING_PACKAGE,
+    PluginOperationStage.EXTRACTING,
+    PluginOperationStage.INSTALLING,
+    PluginOperationStage.ENABLING,
+    PluginOperationStage.CONFIRMING,
+    PluginOperationStage.CLEANING_UP,
+  ]);
+});
+
+test('does not publish arbitrary provider or installer progress text', async () => {
+  const provider = createProvider();
+  provider.prepareInstall = vi.fn(async (_request, context) => {
+    context?.onProgress?.('Bearer private-token' as PluginOperationStage);
+    return { payload: { kind: PluginKind.SKILL, sourcePath: 'C:\\downloads\\writer' } };
+  });
+  const installationService = new PluginInstallationService();
+  installationService.registerInstaller({
+    kind: PluginKind.SKILL,
+    install: vi.fn(async request => {
+      request.onProgress?.({ stage: 'C:\\private-download', percent: 20 });
+      return { success: true, pluginId: 'writer' };
+    }),
+  });
+  const service = new PluginMarketplaceService([provider], installationService);
+  const progress = vi.fn();
+
+  const result = await service.install(
+    { sourceId: provider.source.id, pluginId: 'writer', kind: PluginKind.SKILL },
+    progress,
+  );
+
+  expect(result.success).toBe(true);
+  expect(progress.mock.calls.map(([stage]) => stage)).toEqual([
+    PluginOperationStage.QUEUED,
+    PluginOperationStage.PREPARING_PACKAGE,
+    PluginOperationStage.INSTALLING,
+    PluginOperationStage.CONFIRMING,
+  ]);
+});
+
+test('progress observers cannot interrupt a committed installation or its cleanup', async () => {
+  const provider = createProvider();
+  const cleanup = vi.fn();
+  vi.mocked(provider.prepareInstall).mockResolvedValue({
+    payload: { kind: PluginKind.SKILL, sourcePath: 'C:\\downloads\\writer' },
+    cleanup,
+  });
+  const installationService = new PluginInstallationService();
+  installationService.registerInstaller({
+    kind: PluginKind.SKILL,
+    install: vi.fn(async () => ({ success: true, pluginId: 'writer' })),
+  });
+  const service = new PluginMarketplaceService([provider], installationService);
+
+  const result = await service.install(
+    { sourceId: provider.source.id, pluginId: 'writer', kind: PluginKind.SKILL },
+    () => {
+      throw new Error('The requesting view has closed');
+    },
+  );
+
+  expect(result).toMatchObject({ success: true, pluginId: 'writer' });
+  expect(cleanup).toHaveBeenCalledOnce();
+});
+
+test('retains a committed activation failure phase while temporary files are cleaned', async () => {
+  const provider = createProvider();
+  const cleanup = vi.fn();
+  vi.mocked(provider.prepareInstall).mockResolvedValue({
+    payload: { kind: PluginKind.SKILL, sourcePath: 'C:\\downloads\\writer' },
+    cleanup,
+  });
+  const installationService = new PluginInstallationService();
+  installationService.registerInstaller({
+    kind: PluginKind.SKILL,
+    install: vi.fn(async request => {
+      request.onProgress?.({ stage: PluginOperationStage.ENABLING, percent: 80 });
+      return { success: false, installationCommitted: true, pluginId: 'writer' };
+    }),
+  });
+  const service = new PluginMarketplaceService([provider], installationService);
+  const progress = vi.fn();
+
+  const result = await service.install(
+    { sourceId: provider.source.id, pluginId: 'writer', kind: PluginKind.SKILL },
+    progress,
+  );
+
+  expect(result).toMatchObject({
+    success: false,
+    installationCommitted: true,
+    failedStage: PluginOperationStage.ENABLING,
+  });
+  expect(progress).toHaveBeenLastCalledWith(PluginOperationStage.CLEANING_UP);
+  expect(cleanup).toHaveBeenCalledOnce();
+});
+
+test('retains the entered failure phase of an installer exception after cleanup', async () => {
+  const provider = createProvider();
+  const cleanup = vi.fn();
+  vi.mocked(provider.prepareInstall).mockResolvedValue({
+    payload: { kind: PluginKind.SKILL, sourcePath: 'C:\\downloads\\writer' },
+    cleanup,
+  });
+  const installationService = new PluginInstallationService();
+  installationService.registerInstaller({
+    kind: PluginKind.SKILL,
+    install: vi.fn(async request => {
+      request.onProgress?.({ stage: PluginOperationStage.VALIDATING, percent: 20 });
+      throw new Error('Bearer private-token');
+    }),
+  });
+  const service = new PluginMarketplaceService([provider], installationService);
+  const progress = vi.fn();
+
+  await expect(
+    service.install(
+      { sourceId: provider.source.id, pluginId: 'writer', kind: PluginKind.SKILL },
+      progress,
+    ),
+  ).rejects.toMatchObject({
+    message: 'Marketplace installation failed',
+    failedStage: PluginOperationStage.VALIDATING,
+  });
+  expect(progress).toHaveBeenLastCalledWith(PluginOperationStage.CLEANING_UP);
+  expect(cleanup).toHaveBeenCalledOnce();
 });
 
 test('persists marketplace identity and maps update checks back to the runtime id', async () => {

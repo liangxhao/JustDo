@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 
+import type { PluginOperationContext } from '../../../shared/plugins/pluginOperation';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import { runExtensionMcpOperation } from './extensionMcpRuntime';
 import { McpConfigSyncService } from './mcpConfigSyncService';
@@ -41,8 +42,12 @@ export class McpServices {
 
   syncConfigAfterExclusiveMutation(
     syncOpenClawConfig: McpServicesDeps['syncOpenClawConfig'],
+    context?: PluginOperationContext,
   ): Promise<{ tools: number; error?: string }> {
-    return this.getConfigSyncService().syncConfigAfterExclusiveMutation(syncOpenClawConfig);
+    return this.getConfigSyncService().syncConfigAfterExclusiveMutation(
+      syncOpenClawConfig,
+      context,
+    );
   }
 
   async probeServer(id: string): Promise<McpProbeResult> {

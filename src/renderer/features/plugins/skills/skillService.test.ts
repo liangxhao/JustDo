@@ -1,3 +1,4 @@
+import { PluginOperationStage } from '@shared/plugins/pluginOperation';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import type { Skill } from './skill';
@@ -30,6 +31,75 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+test('retains a native skill failure and its explicit unknown outcome without a mounted page', async () => {
+  api.list.mockResolvedValue({ success: true, skills: [skill] });
+  api.setEnabled.mockResolvedValue({
+    success: false,
+    error: 'Native confirmation unavailable',
+    failedStage: PluginOperationStage.CONFIRMING,
+    operationUnconfirmed: true,
+  });
+  const { skillService } = await import('./skillService');
+  const { getPluginOperationOwner } = await import('../shared/pluginOperationService');
+  await skillService.loadSkills();
+
+  await expect(skillService.setSkillEnabled(skill.id, true)).rejects.toThrow(
+    'Native confirmation unavailable',
+  );
+
+  const owner = getPluginOperationOwner();
+  expect(owner.snapshot()).toEqual([]);
+  expect(owner.failureSnapshot()).toEqual([
+    expect.objectContaining({
+      label: skill.name,
+      state: 'unconfirmed',
+      failedStage: PluginOperationStage.CONFIRMING,
+      message: 'Native confirmation unavailable',
+    }),
+  ]);
+});
+
+test('a batch owns import failure feedback and retains each native receipt', async () => {
+  api.importPath.mockResolvedValue({
+    success: false,
+    error: 'Installed files could not be confirmed',
+    failedStage: PluginOperationStage.CONFIRMING,
+    installationCommitted: true,
+    skillId: skill.id,
+  });
+  const { skillService } = await import('./skillService');
+  const { getPluginOperationOwner } = await import('../shared/pluginOperationService');
+
+  const result = await skillService.importSkill('C:/imports/example.zip', { reportFailure: false });
+
+  expect(result).toMatchObject({
+    success: false,
+    installationCommitted: true,
+    failedStage: PluginOperationStage.CONFIRMING,
+  });
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([]);
+});
+
+test('reports a completed skill deletion with failed inventory refresh separately from mutation failure', async () => {
+  api.list.mockResolvedValue({ success: true, skills: [skill] });
+  api.delete.mockResolvedValue({ success: true, skills: [], refreshWarning: true });
+  const { skillService } = await import('./skillService');
+  const { getPluginOperationOwner } = await import('../shared/pluginOperationService');
+  await skillService.loadSkills();
+
+  await expect(skillService.deleteSkill(skill.id, skill.source)).resolves.toMatchObject({
+    success: true,
+    skills: [],
+    refreshWarning: true,
+  });
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+    expect.objectContaining({
+      state: 'refresh_failed',
+      failedStage: PluginOperationStage.REFRESHING_INVENTORY,
+    }),
+  ]);
+});
+
 test('reports inventory failure independently of Gateway connectivity and clears it after recovery', async () => {
   api.list
     .mockResolvedValueOnce({ success: false, gatewayOffline: false, error: 'RPC timeout' })
@@ -45,7 +115,7 @@ test('reports inventory failure independently of Gateway connectivity and clears
   expect(skillService.getSkills()).toEqual([skill]);
 });
 
-test('automatically rereads native inventory after import within a five-second window', async () => {
+test('automatically rereads native inventory after import within a bounded discovery window', async () => {
   vi.useFakeTimers();
   api.list.mockResolvedValue({ success: true, skills: [] });
   api.importPath.mockResolvedValue({ success: true, skillId: skill.id });
@@ -59,8 +129,11 @@ test('automatically rereads native inventory after import within a five-second w
   await vi.advanceTimersByTimeAsync(3_600);
   expect(changed).toHaveBeenLastCalledWith([skill]);
   expect(api.list).toHaveBeenCalledTimes(5);
-  await vi.advanceTimersByTimeAsync(10_000);
-  expect(api.list).toHaveBeenCalledTimes(5);
+  await vi.advanceTimersByTimeAsync(40_000);
+  const settledReads = api.list.mock.calls.length;
+  expect(settledReads).toBeLessThanOrEqual(13);
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(api.list).toHaveBeenCalledTimes(settledReads);
   expect(api.importPath).toHaveBeenCalledOnce();
   stop();
 });
@@ -92,7 +165,7 @@ test('a newer list during deletion cannot restore its cached row before the watc
   stop();
 });
 
-test('a switch inventory keeps the confirmed deletion projection and same-path reimports are visible after its bounded lifetime', async () => {
+test('a deleted skill stays hidden through thirty seconds of stale native reads and reappears after confirmed absence', async () => {
   vi.useFakeTimers();
   const other = { ...skill, id: 'other', skillPath: 'C:/skills/other/SKILL.md' };
   api.list.mockResolvedValue({ success: true, skills: [skill, other] });
@@ -110,9 +183,33 @@ test('a switch inventory keeps the confirmed deletion projection and same-path r
   ]);
   const reimported = { ...skill, description: 'External reimport' };
   api.list.mockResolvedValue({ success: true, skills: [reimported, other] });
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(skillService.getSkills()).toEqual([other]);
+  api.list.mockResolvedValue({ success: true, skills: [other] });
+  await vi.advanceTimersByTimeAsync(5_000);
+  api.list.mockResolvedValue({ success: true, skills: [reimported, other] });
   await vi.advanceTimersByTimeAsync(5_000);
   expect(skillService.getSkills()).toEqual([reimported, other]);
   expect(api.delete).toHaveBeenCalledOnce();
+  stop();
+});
+
+test('an explicitly confirmed same-path reimport is visible without waiting for deletion suppression to expire', async () => {
+  vi.useFakeTimers();
+  api.list.mockResolvedValue({ success: true, skills: [skill] });
+  api.delete.mockResolvedValue({ success: true, skills: [] });
+  api.importPath.mockResolvedValue({ success: true, skillId: skill.id });
+  const { skillService } = await import('./skillService');
+  await skillService.loadSkills();
+  const stop = skillService.subscribeInventory(vi.fn());
+  await skillService.deleteSkill(skill.id, skill.source);
+  const reimported = { ...skill, description: 'Confirmed replacement' };
+  api.list.mockResolvedValue({ success: true, skills: [reimported] });
+
+  await skillService.importSkill('C:/imports/replacement.zip');
+  await expect(skillService.loadSkills({ force: true })).resolves.toEqual([reimported]);
+  expect(api.delete).toHaveBeenCalledOnce();
+  expect(api.importPath).toHaveBeenCalledOnce();
   stop();
 });
 
@@ -238,7 +335,10 @@ test('a delayed list cannot restore the prior switch state after a confirmed cha
 
   await expect(oldRead).resolves.toEqual([disabled]);
   expect(skillService.getSkills()).toEqual([disabled]);
-  expect(api.setEnabled).toHaveBeenCalledExactlyOnceWith({ id: skill.id, enabled: false });
+  expect(api.setEnabled).toHaveBeenCalledExactlyOnceWith(
+    { id: skill.id, enabled: false },
+    { requestId: expect.any(String) },
+  );
 });
 
 test('the final list consumer cannot receive the old state after a switch confirms in the same turn', async () => {
@@ -299,9 +399,13 @@ test('queues the opposite switch intent instead of treating it as the in-flight 
   await expect(disabling).resolves.toEqual([disabled]);
   await expect(enabling).resolves.toEqual([enabled]);
   expect(api.setEnabled.mock.calls).toEqual([
-    [{ id: skill.id, enabled: false }],
-    [{ id: skill.id, enabled: true }],
+    [{ id: skill.id, enabled: false }, { requestId: expect.any(String) }],
+    [{ id: skill.id, enabled: true }, { requestId: expect.any(String) }],
   ]);
+  const requestIds = api.setEnabled.mock.calls.map(([, context]) => context.requestId);
+  expect(new Set(requestIds).size).toBe(2);
+  for (const requestId of requestIds)
+    expect(requestId).toMatch(/^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/);
 });
 
 test('a remounted page waits for the pending switch before reading the native inventory', async () => {
@@ -386,7 +490,7 @@ test('supplementary reads do not wait for the current switch or later queued swi
   expect(api.setEnabled).toHaveBeenCalledTimes(2);
 });
 
-test('marketplace reconciliation rereads a stale native inventory after its watcher settles', async () => {
+test('reconciliation covers a native thirty-second watcher delay and ends after forty-five seconds', async () => {
   vi.useFakeTimers();
   api.list.mockResolvedValue({ success: true, skills: [] });
   const { skillService } = await import('./skillService');
@@ -394,9 +498,18 @@ test('marketplace reconciliation rereads a stale native inventory after its watc
   const stop = skillService.subscribeInventory(changed);
   await skillService.refreshInventoryAfterMutation();
   expect(api.list).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(changed).toHaveBeenLastCalledWith([]);
   api.list.mockResolvedValue({ success: true, skills: [skill] });
-  await vi.advanceTimersByTimeAsync(200);
+  await vi.advanceTimersByTimeAsync(5_000);
   expect(changed).toHaveBeenLastCalledWith([skill]);
+  await vi.advanceTimersByTimeAsync(10_000);
+  const settledReads = api.list.mock.calls.length;
+  expect(settledReads).toBeLessThanOrEqual(14);
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(api.list).toHaveBeenCalledTimes(settledReads);
+  expect(api.importPath).not.toHaveBeenCalled();
+  expect(api.setEnabled).not.toHaveBeenCalled();
   stop();
 });
 
@@ -421,7 +534,7 @@ test.each([
   stop();
 });
 
-test('recovers an RPC disconnect during import even after the five-second mutation window', async () => {
+test('recovers an RPC disconnect after the bounded discovery window without resending the import', async () => {
   vi.useFakeTimers();
   api.list.mockResolvedValue({ success: true, skills: [] });
   api.importPath.mockResolvedValue({ success: true, skillId: skill.id });
@@ -431,7 +544,7 @@ test('recovers an RPC disconnect during import even after the five-second mutati
   await skillService.loadSkills();
   await skillService.importSkill('C:/imports/example.zip');
   api.list.mockRejectedValue(new Error('WebSocket closed'));
-  await vi.advanceTimersByTimeAsync(6_200);
+  await vi.advanceTimersByTimeAsync(46_000);
   expect(skillService.isGatewayOffline()).toBe(true);
   api.list.mockResolvedValue({ success: true, skills: [skill] });
   await vi.advanceTimersByTimeAsync(3_000);
@@ -439,6 +552,36 @@ test('recovers an RPC disconnect during import even after the five-second mutati
   const count = api.list.mock.calls.length;
   await vi.advanceTimersByTimeAsync(30_000);
   expect(api.list).toHaveBeenCalledTimes(count);
+  stop();
+});
+
+test('offline recovery keeps reconciling a successful stale read until the original discovery deadline', async () => {
+  vi.useFakeTimers();
+  api.list.mockResolvedValue({ success: true, skills: [] });
+  const { skillService } = await import('./skillService');
+  const changed = vi.fn();
+  const stop = skillService.subscribeInventory(changed);
+  await skillService.refreshInventoryAfterMutation();
+  api.list.mockResolvedValue({ success: false, gatewayOffline: true });
+  await vi.advanceTimersByTimeAsync(200);
+  expect(skillService.isGatewayOffline()).toBe(true);
+
+  api.list.mockResolvedValue({ success: true, skills: [] });
+  await vi.advanceTimersByTimeAsync(3_000);
+  expect(skillService.isGatewayOffline()).toBe(false);
+  expect(changed).toHaveBeenLastCalledWith([]);
+  await vi.advanceTimersByTimeAsync(26_800);
+  api.list.mockResolvedValue({ success: true, skills: [skill] });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(changed).toHaveBeenLastCalledWith([skill]);
+
+  await vi.advanceTimersByTimeAsync(10_000);
+  const settledReads = api.list.mock.calls.length;
+  expect(settledReads).toBeLessThanOrEqual(14);
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(api.list).toHaveBeenCalledTimes(settledReads);
+  expect(api.importPath).not.toHaveBeenCalled();
+  expect(api.setEnabled).not.toHaveBeenCalled();
   stop();
 });
 
@@ -483,7 +626,9 @@ test('mutation retries share pending reads with offline recovery and stop recove
 
 test('reconciles a switch interrupted by RPC disconnect without resending the mutation', async () => {
   vi.useFakeTimers();
-  api.list.mockResolvedValue({ success: true, skills: [skill] });
+  api.list
+    .mockResolvedValueOnce({ success: true, skills: [skill] })
+    .mockResolvedValue({ success: false, gatewayOffline: true, error: 'Gateway disconnected' });
   api.setEnabled.mockResolvedValue({
     success: false,
     gatewayOffline: true,

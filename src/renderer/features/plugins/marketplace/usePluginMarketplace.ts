@@ -1,14 +1,21 @@
 import {
   type MarketplaceCategory,
+  MarketplaceErrorCode,
   type MarketplaceInstallationIdentity,
   MarketplaceInstallOperation,
+  type MarketplaceInstallResponse,
   MarketplaceInstallState,
   type MarketplacePlugin,
   type MarketplacePluginKind,
   type MarketplaceSource,
 } from '@shared/plugins/marketplace';
+import { PluginOperationAction, PluginOperationStage } from '@shared/plugins/pluginOperation';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
+import {
+  reportPluginOperationFailure,
+  startPluginOperation,
+} from '@/features/plugins/shared/pluginOperationService';
 import { i18nService } from '@/services/i18n';
 
 import { getMarketplaceOperationOwner } from './marketplaceOperationOwner';
@@ -18,6 +25,31 @@ export const MarketplaceFilter = {
   INSTALLED: 'installed',
   UPDATES: 'updates',
 } as const;
+
+const preparationFailureKeys: Partial<Record<PluginOperationStage, string>> = {
+  [PluginOperationStage.FETCHING_METADATA]: 'marketplacePreparationFailure.fetching_metadata',
+  [PluginOperationStage.DOWNLOADING]: 'marketplacePreparationFailure.downloading',
+  [PluginOperationStage.EXTRACTING]: 'marketplacePreparationFailure.extracting',
+};
+
+const installFailurePresentation = (response: MarketplaceInstallResponse) => {
+  const key =
+    !response.success &&
+    response.installationCommitted === true &&
+    response.errorCode === MarketplaceErrorCode.INTERNAL &&
+    response.error === 'Marketplace installation failed' &&
+    response.failedStage === PluginOperationStage.ENABLING
+      ? 'marketplaceActivationIncomplete'
+      : response.errorCode === MarketplaceErrorCode.PROVIDER_FAILURE &&
+          response.error === 'Marketplace provider failed to prepare installation' &&
+          response.failedStage
+        ? preparationFailureKeys[response.failedStage]
+        : undefined;
+  return {
+    message: key ? i18nService.t(key) : response.error || i18nService.t('marketplaceInstallFailed'),
+    ...(key && response.error ? { details: response.error } : {}),
+  };
+};
 export type MarketplaceFilter = (typeof MarketplaceFilter)[keyof typeof MarketplaceFilter];
 export interface InstalledMarketplacePlugin {
   id: string;
@@ -37,6 +69,7 @@ export interface MarketplaceOptions {
 export interface MarketplaceOperation {
   busy?: boolean;
   committed?: boolean;
+  unconfirmed?: boolean;
   error?: string;
   warning?: string;
   message?: string;
@@ -47,7 +80,15 @@ export const marketplaceKey = (item: Pick<MarketplacePlugin, 'sourceId' | 'id'>)
   JSON.stringify([item.sourceId, item.id]);
 
 export function usePluginMarketplace(options: MarketplaceOptions) {
-  const { kind, installed, searchQuery, readOnly, runtimeUnavailable } = options;
+  const { kind, searchQuery, readOnly, runtimeUnavailable } = options;
+  // Enable switches and native status notifications often replace the complete
+  // inventory. Only catalog-relevant changes need new identity/update requests.
+  const inventorySignature = JSON.stringify(options.installed);
+  const installedSnapshot = useRef({ signature: inventorySignature, items: options.installed });
+  if (installedSnapshot.current.signature !== inventorySignature) {
+    installedSnapshot.current = { signature: inventorySignature, items: options.installed };
+  }
+  const installed = installedSnapshot.current.items;
   const inventoryReady = options.inventoryReady !== false;
   const query = searchQuery.trim();
   const discovering = !query;
@@ -299,6 +340,7 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
         local &&
         local.updateEligible !== false &&
         item.installState === MarketplaceInstallState.UPDATE_AVAILABLE &&
+        !operations[key]?.unconfirmed &&
         !(operations[key]?.committed && operations[key]?.version === item.version)
       ) {
         result.set(local.id, item);
@@ -328,7 +370,8 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
   const matchesInstalled = (id: string, textMatches: boolean) => {
     const operation = operationFor(id);
     const needsAttention = Boolean(
-      operation?.committed && (operation.error || operation.warning || operation.restartRequired),
+      (operation?.committed || operation?.unconfirmed) &&
+      (operation.error || operation.warning || operation.restartRequired),
     );
     return (
       !(query && filter === MarketplaceFilter.ALL && pinnedIds.has(id)) &&
@@ -347,10 +390,30 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
     filter === MarketplaceFilter.ALL
       ? items.filter(item => discovering || !localFor(item) || pinnedKeys.has(marketplaceKey(item)))
       : [];
-  const refreshInventory = async (key: string) => {
+  const refreshInventory = async (
+    key: string,
+    operation?: ReturnType<typeof startPluginOperation>,
+  ) => {
     try {
       await owner.refresh(key);
+      return Boolean(optionsRef.current.onInstalled) && !owner.hasPendingRefresh(key);
     } catch {
+      const failure = {
+        message: i18nService.t('marketplaceRefreshAfterInstallFailed'),
+        failedStage: PluginOperationStage.REFRESHING_INVENTORY,
+        state: 'refresh_failed' as const,
+      };
+      if (operation) operation.fail(failure);
+      else
+        reportPluginOperationFailure(
+          {
+            kind,
+            action: PluginOperationAction.SYNC,
+            label:
+              items.find(item => marketplaceKey(item) === key)?.name || i18nService.t('plugins'),
+          },
+          failure,
+        );
       setOperations(current => ({
         ...current,
         [key]: {
@@ -358,6 +421,7 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
           warning: i18nService.t('marketplaceRefreshAfterInstallFailed'),
         },
       }));
+      return false;
     }
   };
   const install = async (item: MarketplacePlugin) => {
@@ -375,22 +439,58 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
     const key = marketplaceKey(candidate);
     if (
       locks.has(key) ||
+      operations[key]?.unconfirmed ||
       (operations[key]?.committed && (!local || operations[key]?.version === candidate.version)) ||
       (!local && item.installState === MarketplaceInstallState.UNAVAILABLE)
     )
       return;
     locks.add(key);
     setOperations(current => ({ ...current, [key]: { busy: true } }));
+    const operation = startPluginOperation({
+      kind,
+      action: local ? PluginOperationAction.UPDATE : PluginOperationAction.INSTALL,
+      label: item.name,
+    });
+    let responseReceived = false;
     try {
-      const response = await window.electron.marketplace.install({
-        sourceId: candidate.sourceId,
-        pluginId: candidate.id,
-        kind,
-        version: candidate.version,
-        operation: local ? MarketplaceInstallOperation.UPDATE : MarketplaceInstallOperation.INSTALL,
-      });
-      if (!response.success && !response.installationCommitted)
-        throw new Error(response.error || i18nService.t('marketplaceInstallFailed'));
+      const response = await window.electron.marketplace.install(
+        {
+          sourceId: candidate.sourceId,
+          pluginId: candidate.id,
+          kind,
+          version: candidate.version,
+          operation: local
+            ? MarketplaceInstallOperation.UPDATE
+            : MarketplaceInstallOperation.INSTALL,
+        },
+        operation.context,
+      );
+      responseReceived = true;
+      const failure = installFailurePresentation(response);
+      if (!response.success) {
+        operation.fail({
+          ...failure,
+          failedStage: response.failedStage,
+          installationCommitted: response.installationCommitted,
+          installSourceInUse: response.installSourceInUse,
+          operationUnconfirmed: response.operationUnconfirmed,
+        });
+      }
+      const failureMessage = response.failedStage
+        ? `${i18nService
+            .t('pluginOperationFailedAt')
+            .replace(
+              '{stage}',
+              i18nService.t(`pluginOperationStage.${response.failedStage}`).replace(/…$/, ''),
+            )}\n${failure.message}`
+        : failure.message;
+      if (!response.success && (response.installSourceInUse || response.operationUnconfirmed)) {
+        setOperations(current => ({
+          ...current,
+          [key]: { ...current[key], unconfirmed: true, version: candidate.version },
+        }));
+      }
+      if (!response.success && !response.installationCommitted) throw new Error(failureMessage);
       if (mounted.current && !local) setPinnedKeys(current => new Set(current).add(key));
       if (mounted.current && local && response.success) {
         setRecentlyUpdated(current => new Set(current).add(local.id));
@@ -398,6 +498,7 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
       setOperations(current => ({
         ...current,
         [key]: {
+          ...current[key],
           busy: true,
           committed: true,
           version: candidate.version,
@@ -414,18 +515,40 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
                   )
                   .replace('{name}', item.name),
               }
-            : { error: response.error || i18nService.t('marketplaceInstallFailed') }),
+            : { error: failureMessage }),
         },
       }));
-      await refreshInventory(key);
+      operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
+      const refreshed = await refreshInventory(key, operation);
+      if (response.refreshWarning && !refreshed) {
+        const message = i18nService.t('marketplaceRefreshAfterInstallFailed');
+        operation.fail({
+          message,
+          failedStage: PluginOperationStage.REFRESHING_INVENTORY,
+          state: 'refresh_failed',
+        });
+        setOperations(current => ({ ...current, [key]: { ...current[key], warning: message } }));
+      }
     } catch (error) {
+      const unconfirmed = !responseReceived;
+      operation.fail({
+        message: error instanceof Error ? error.message : i18nService.t('marketplaceInstallFailed'),
+        ...(unconfirmed ? { operationUnconfirmed: true as const } : {}),
+      });
       setOperations(current => ({
         ...current,
         [key]: {
+          ...current[key],
+          ...(unconfirmed ? { unconfirmed: true, version: candidate.version } : {}),
           error: error instanceof Error ? error.message : i18nService.t('marketplaceInstallFailed'),
         },
       }));
+      if (unconfirmed || (responseReceived && owner.operations[key]?.unconfirmed)) {
+        operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
+        await refreshInventory(key, operation);
+      }
     } finally {
+      operation.finish();
       locks.delete(key);
       setOperations(current => ({ ...current, [key]: { ...current[key], busy: false } }));
     }

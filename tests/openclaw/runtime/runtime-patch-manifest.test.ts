@@ -72,14 +72,28 @@ const {
   PROVIDER_PACKAGE_PATH,
   PROVIDER_PARTITIONER_PATH,
   PROVIDER_TRANSPORT_PATH,
+  FS_SAFE_PACKAGE_PATH,
+  FS_SAFE_MOVE_PATH,
+  FS_SAFE_GUARDED_MUTATION_PATH,
+  PLUGIN_PUBLICATION_SUPPORT_PATH,
 } = require('../../../scripts/openclaw/openclaw-patch-dependencies.cjs') as {
   PROVIDER_PACKAGE_PATH: string;
   PROVIDER_PARTITIONER_PATH: string;
   PROVIDER_TRANSPORT_PATH: string;
+  FS_SAFE_PACKAGE_PATH: string;
+  FS_SAFE_MOVE_PATH: string;
+  FS_SAFE_GUARDED_MUTATION_PATH: string;
+  PLUGIN_PUBLICATION_SUPPORT_PATH: string;
 };
 
 function writeProviderFixture(runtimeRoot: string): void {
   addLockedAiDependency(runtimeRoot);
+  fs.mkdirSync(path.dirname(path.join(runtimeRoot, FS_SAFE_MOVE_PATH)), { recursive: true });
+  fs.writeFileSync(path.join(runtimeRoot, FS_SAFE_PACKAGE_PATH), JSON.stringify({ name: '@openclaw/fs-safe', version: '0.24.2' }));
+  fs.writeFileSync(path.join(runtimeRoot, FS_SAFE_MOVE_PATH), 'const ownedMove = true;\n');
+  fs.writeFileSync(path.join(runtimeRoot, FS_SAFE_GUARDED_MUTATION_PATH), 'const ownedRename = true;\n');
+  fs.mkdirSync(path.dirname(path.join(runtimeRoot, PLUGIN_PUBLICATION_SUPPORT_PATH)), { recursive: true });
+  fs.writeFileSync(path.join(runtimeRoot, PLUGIN_PUBLICATION_SUPPORT_PATH), 'const publicationRecovery = true;\n');
   const target = path.join(runtimeRoot, PROVIDER_TRANSPORT_PATH);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, 'const providerTransport = true;\n');
@@ -270,6 +284,17 @@ afterEach(() => {
 });
 
 describe('OpenClaw runtime patch manifest', () => {
+  test.each(['.openclaw-lifecycle-pending', 'dist/openclaw-install-guard', '.openclaw-lifecycle-lock'])(
+    'rejects incomplete or unsettled lifecycle before trusting build proof: %s', marker => {
+      const { repoRoot, runtimeRoot } = createFixture('v2026.10.4');
+      writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
+      fs.mkdirSync(path.dirname(path.join(runtimeRoot, marker)), { recursive: true });
+      fs.writeFileSync(path.join(runtimeRoot, marker), 'pending');
+      expect(() => writeOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(/lifecycle is incomplete or unsettled/);
+      expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(/lifecycle is incomplete or unsettled/);
+      expect(() => verifyFrozenOpenClawRuntime(runtimeRoot, { requireBundle: true })).toThrow(/lifecycle is incomplete or unsettled/);
+    },
+  );
   test.each(['producer', 'managed importer', 'provider registry', 'direct provider', 'metadata'] as const)(
     'freezes the exact dependency %s independently of the Gateway bundle',
     artifact => {
@@ -278,10 +303,12 @@ describe('OpenClaw runtime patch manifest', () => {
       writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
       const manifest = JSON.parse(fs.readFileSync(path.join(runtimeRoot, PATCH_MANIFEST_FILENAME), 'utf8'));
       expect(manifest.patchDependencyArtifacts.map((entry: { path: string }) => entry.path)).toEqual([
-        PROVIDER_PACKAGE_PATH, PROVIDER_TRANSPORT_PATH, PROVIDER_PARTITIONER_PATH,
+        PROVIDER_PACKAGE_PATH, FS_SAFE_PACKAGE_PATH, PROVIDER_TRANSPORT_PATH, PROVIDER_PARTITIONER_PATH,
+        FS_SAFE_MOVE_PATH, FS_SAFE_GUARDED_MUTATION_PATH,
         'node_modules/@openclaw/ai/dist/transports.mjs',
         'node_modules/@openclaw/ai/dist/providers.mjs',
         'node_modules/@openclaw/ai/dist/openai-completions-XvUwdvJc.mjs',
+        PLUGIN_PUBLICATION_SUPPORT_PATH,
       ]);
       expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).not.toThrow();
       expect(() => verifyFrozenOpenClawRuntime(runtimeRoot, { requireBundle: true })).not.toThrow();
@@ -628,11 +655,15 @@ describe('OpenClaw runtime patch manifest', () => {
       );
       expect(manifest.patchDependencyArtifacts.map((entry: { path: string }) => entry.path)).toEqual([
         PROVIDER_PACKAGE_PATH,
+        FS_SAFE_PACKAGE_PATH,
         PROVIDER_TRANSPORT_PATH,
         PROVIDER_PARTITIONER_PATH,
+        FS_SAFE_MOVE_PATH,
+        FS_SAFE_GUARDED_MUTATION_PATH,
         'node_modules/@openclaw/ai/dist/transports.mjs',
         'node_modules/@openclaw/ai/dist/providers.mjs',
         'node_modules/@openclaw/ai/dist/openai-completions-XvUwdvJc.mjs',
+        PLUGIN_PUBLICATION_SUPPORT_PATH,
       ]);
       const target = path.join(
         runtimeRoot,
@@ -663,6 +694,22 @@ describe('OpenClaw runtime patch manifest', () => {
     expect(() => writeOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(
       'Runtime patch dependency must be @openclaw/ai@2026.10.4',
     );
+  });
+
+  test.each([FS_SAFE_MOVE_PATH, FS_SAFE_GUARDED_MUTATION_PATH, FS_SAFE_PACKAGE_PATH, PLUGIN_PUBLICATION_SUPPORT_PATH])(
+    'rejects changed filesystem publication dependency %s', artifact => {
+      const { repoRoot, runtimeRoot } = createFixture('v2026.10.4');
+      writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
+      fs.appendFileSync(path.join(runtimeRoot, artifact), '\n ');
+      expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(/dependencies/);
+      expect(() => verifyFrozenOpenClawRuntime(runtimeRoot, { requireBundle: true })).toThrow(/dependencies/);
+    },
+  );
+
+  test('rejects an unproven filesystem package version', () => {
+    const { repoRoot, runtimeRoot } = createFixture('v2026.10.4');
+    fs.writeFileSync(path.join(runtimeRoot, FS_SAFE_PACKAGE_PATH), JSON.stringify({ name: '@openclaw/fs-safe', version: '0.24.1' }));
+    expect(() => writeOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow('@openclaw/fs-safe@0.24.2');
   });
 
   test('skips the patch pass when the recorded patch set and bundle are unchanged', () => {

@@ -2,6 +2,7 @@ import fs from 'fs';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
+import { PluginOperationIpc } from '../../../shared/plugins/pluginOperation';
 import type { GatewaySkillEntry, GatewaySkillStatus } from '../../engine/types';
 import { PluginInstallationService, PluginInstallOrigin } from '../../plugins/installation';
 import { OpenClawSkillService } from '../../plugins/skills';
@@ -53,6 +54,181 @@ beforeEach(() => {
 
 afterEach(() => vi.useRealTimers());
 
+test.each(['install', 'update'] as const)(
+  'uses the native skill key and preserves activation policy for market %s',
+  async operation => {
+    const skill = createSkill('openclaw-managed', { skillKey: 'native-key', disabled: true });
+    const waitForInstalledStatus = vi.fn(async () => createStatus(skill));
+    const updateConfig = vi.fn(async () => ({ ok: true }));
+    const waitForEnabledStatus = vi.fn(async () => createStatus({ ...skill, disabled: false }));
+    const installation = new PluginInstallationService();
+    registerSkillHandlers({
+      skillService: {
+        getStatus: vi.fn(async () => createStatus(skill)),
+        waitForInstalledStatus,
+        updateConfig,
+        waitForEnabledStatus,
+      } as unknown as OpenClawSkillService,
+      skillFileService: {
+        importPath: vi.fn(async () => ({ success: true, skillId: 'frontmatter-name' })),
+        deleteDirectory: vi.fn(),
+        getManagedSkillPath: () => skill.baseDir,
+      },
+      installationService: installation,
+    });
+
+    const result = await installation.install({
+      operation,
+      origin: PluginInstallOrigin.MARKETPLACE,
+      payload: { kind: PluginKind.SKILL, sourcePath: 'C:/download' },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      pluginId: skill.skillKey,
+      installPath: skill.baseDir,
+    });
+    if (operation === 'install') {
+      expect(updateConfig).toHaveBeenCalledExactlyOnceWith({
+        skillKey: skill.skillKey,
+        enabled: true,
+      });
+      expect(waitForEnabledStatus).toHaveBeenCalledExactlyOnceWith(skill.skillKey, true, {
+        source: skill.source,
+        baseDir: skill.baseDir,
+      });
+    } else {
+      expect(updateConfig).not.toHaveBeenCalled();
+      expect(waitForInstalledStatus).toHaveBeenCalledExactlyOnceWith(skill.baseDir);
+    }
+  },
+);
+
+test.each(['discovery-unconfirmed', 'enable-rejected', 'publication-unconfirmed'])(
+  'keeps the committed skill installation after %s without replaying files or guessing a key',
+  async failure => {
+    const skill = createSkill('openclaw-managed', { skillKey: 'native-key', disabled: true });
+    const importPath = vi.fn(async () => ({ success: true, skillId: 'frontmatter-name' }));
+    const updateConfig = vi.fn(async () => ({ ok: false, error: 'Enable rejected' }));
+    if (failure === 'publication-unconfirmed')
+      updateConfig.mockResolvedValue({ ok: true, error: '' });
+    const installation = new PluginInstallationService();
+    registerSkillHandlers({
+      skillService: {
+        waitForInstalledStatus:
+          failure === 'discovery-unconfirmed'
+            ? vi.fn().mockRejectedValue(new Error('Discovery unconfirmed'))
+            : vi.fn(async () => createStatus(skill)),
+        updateConfig,
+        waitForEnabledStatus: vi.fn().mockRejectedValue(new Error('Publication unconfirmed')),
+      } as unknown as OpenClawSkillService,
+      skillFileService: {
+        importPath,
+        deleteDirectory: vi.fn(),
+        getManagedSkillPath: () => skill.baseDir,
+      },
+      installationService: installation,
+    });
+
+    const result = await installation.install({
+      operation: MarketplaceInstallOperation.INSTALL,
+      origin: PluginInstallOrigin.MARKETPLACE,
+      payload: { kind: PluginKind.SKILL, sourcePath: 'C:/download' },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      installationCommitted: true,
+      installPath: skill.baseDir,
+    });
+    expect(result.pluginId).toBe(failure === 'discovery-unconfirmed' ? undefined : skill.skillKey);
+    expect(importPath).toHaveBeenCalledOnce();
+    expect(updateConfig).toHaveBeenCalledTimes(failure === 'discovery-unconfirmed' ? 0 : 1);
+  },
+);
+
+test('rejects invalid progress correlation before admitting a skill mutation', async () => {
+  const getStatus = vi.fn();
+  registerSkillHandlers({
+    skillService: { getStatus } as unknown as OpenClawSkillService,
+    skillFileService: { deleteDirectory: vi.fn() },
+    installationService: new PluginInstallationService(),
+  });
+
+  await expect(
+    handlers.get('skills:setEnabled')!(
+      undefined,
+      { id: 'example', enabled: true },
+      { requestId: '../private-path' },
+    ),
+  ).resolves.toMatchObject({ success: false });
+
+  expect(getStatus).not.toHaveBeenCalled();
+});
+
+test('does not report a market update successful without its authoritative native identity', async () => {
+  const installation = new PluginInstallationService();
+  const updateConfig = vi.fn();
+  registerSkillHandlers({
+    skillService: {
+      waitForInstalledStatus: vi.fn().mockRejectedValue(new Error('Discovery unavailable')),
+      updateConfig,
+    } as unknown as OpenClawSkillService,
+    skillFileService: {
+      importPath: vi.fn(async () => ({ success: true, skillId: 'frontmatter-name' })),
+      getManagedSkillPath: () => 'C:/skills/frontmatter-name',
+      deleteDirectory: vi.fn(),
+    },
+    installationService: installation,
+  });
+
+  const result = await installation.install({
+    operation: MarketplaceInstallOperation.UPDATE,
+    origin: PluginInstallOrigin.MARKETPLACE,
+    payload: { kind: PluginKind.SKILL, sourcePath: 'C:/download' },
+  });
+
+  expect(result).toMatchObject({
+    success: false,
+    installationCommitted: true,
+    failedStage: 'refreshing_inventory',
+  });
+  expect(result.pluginId).toBeUndefined();
+  expect(updateConfig).not.toHaveBeenCalled();
+});
+
+test('reports saved skill state confirmation only to the requesting window', async () => {
+  const skill = createSkill('openclaw-managed');
+  const sender = { isDestroyed: () => false, send: vi.fn() };
+  registerSkillHandlers({
+    skillService: {
+      getStatus: vi.fn(async () => createStatus(skill)),
+      updateConfig: vi.fn(async () => ({ ok: true })),
+      waitForEnabledStatus: vi.fn(async () => createStatus({ ...skill, disabled: true })),
+    } as unknown as OpenClawSkillService,
+    skillFileService: { deleteDirectory: vi.fn() },
+    installationService: new PluginInstallationService(),
+  });
+
+  await handlers.get('skills:setEnabled')!(
+    { sender },
+    { id: skill.skillKey, enabled: false },
+    { requestId: 'skill-operation' },
+  );
+
+  expect(sender.send.mock.calls.map(call => call[1].stage)).toEqual([
+    'queued',
+    'validating',
+    'disabling',
+    'confirming',
+  ]);
+  expect(
+    sender.send.mock.calls.every(
+      call => call[0] === PluginOperationIpc.Progress && call[1].requestId === 'skill-operation',
+    ),
+  ).toBe(true);
+});
+
 test.each([
   'openclaw-managed',
   'openclaw-workspace',
@@ -92,7 +268,11 @@ test('rejects noncanonical source names', async () => {
 
   await expect(
     handlers.get('skills:delete')?.(undefined, { id: 'example', source: 'managed' }),
-  ).resolves.toEqual({ success: false, error: 'Skill id and source are required' });
+  ).resolves.toEqual({
+    success: false,
+    error: 'Skill id and source are required',
+    failedStage: 'queued',
+  });
   expect(getStatus).not.toHaveBeenCalled();
 });
 
@@ -128,6 +308,7 @@ test('keeps committed skill deletion successful when the native status refresh f
 
   expect(result).toMatchObject({
     success: true,
+    refreshWarning: true,
     skills: [
       { id: retained.skillKey, source: retained.source, skillPath: retained.filePath },
       { id: sibling.skillKey, source: sibling.source, skillPath: sibling.filePath },
@@ -160,7 +341,7 @@ test('reports an actual skill deletion failure without reading a replacement inv
       id: skill.skillKey,
       source: skill.source,
     }),
-  ).resolves.toEqual({ success: false, error: 'Directory is locked' });
+  ).resolves.toEqual({ success: false, error: 'Directory is locked', failedStage: 'uninstalling' });
   expect(getStatus).toHaveBeenCalledOnce();
   expect(onMarketplacePluginDeleted).not.toHaveBeenCalled();
 });
@@ -367,6 +548,7 @@ test('returns the skill import validation error to the renderer', async () => {
   ).resolves.toEqual({
     success: false,
     skillId: undefined,
+    failedStage: 'installing',
     error:
       'SKILL.md "name" must be 1-64 characters and contain only lowercase letters, numbers, and single hyphens.',
   });
@@ -390,7 +572,11 @@ test('does not delete a same-key skill from a different source', async () => {
       id: skill.skillKey,
       source: 'openclaw-managed',
     }),
-  ).resolves.toEqual({ success: false, error: 'Only user-owned skills can be deleted' });
+  ).resolves.toEqual({
+    success: false,
+    error: 'Only user-owned skills can be deleted',
+    failedStage: 'validating',
+  });
   expect(deleteDirectory).not.toHaveBeenCalled();
 });
 
@@ -411,7 +597,11 @@ test('does not delete bundled skills even when their source looks user-owned', a
       id: skill.skillKey,
       source: skill.source,
     }),
-  ).resolves.toEqual({ success: false, error: 'Only user-owned skills can be deleted' });
+  ).resolves.toEqual({
+    success: false,
+    error: 'Only user-owned skills can be deleted',
+    failedStage: 'validating',
+  });
   expect(deleteDirectory).not.toHaveBeenCalled();
 });
 

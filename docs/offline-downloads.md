@@ -63,3 +63,34 @@ ACP SDK 和 MCP client 的精确版本由根 `package.json` 管理，构建机�
 源或预先准备的 npm 缓存安装。ACP 随应用打包；MCP client 及其内嵌 Ajv 在资源同步和
 TypeScript 预编译时随 Runtime Services 打包。安装后无需另装 Node、npm 依赖或首启下载。
 客户端提供的 MCP 服务器应提前安装在本机，不由应用自动下载。
+
+## 7. OpenClaw 目录发布修复的 pristine 复验资源
+
+重建只使用锁定原包与完整的同版本依赖树，不能修改已经用于运行的冻结目录。
+以下归档用于离线复验；OpenClaw 的 integrity 与 SHA-256 必须匹配当前补丁目录的
+`source-lock.json`，两个依赖的 integrity 必须匹配完整依赖树的 `npm-shrinkwrap.json`。
+
+| 下载地址 | 缓存文件 |
+| --- | --- |
+| [OpenClaw 2026.10.4](https://registry.npmjs.org/openclaw/-/openclaw-2026.10.4.tgz) | `cache/openclaw-publication-pristine/openclaw-2026.10.4.tgz` |
+| [fs-safe 0.24.2](https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.24.2.tgz) | `cache/openclaw-publication-pristine/openclaw-fs-safe-0.24.2.tgz` |
+| [ai 2026.10.4](https://registry.npmjs.org/@openclaw/ai/-/ai-2026.10.4.tgz) | `cache/openclaw-publication-pristine/openclaw-ai-2026.10.4.tgz` |
+
+已经缓存这些归档时，以下命令只访问 npm 离线缓存；缺失就明确失败，不能在产品
+启动或测试中隐式联网补齐：
+
+```powershell
+npm pack --offline openclaw@2026.10.4 --pack-destination cache/openclaw-publication-pristine
+npm pack --offline https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.24.2.tgz --pack-destination cache/openclaw-publication-pristine
+npm pack --offline https://registry.npmjs.org/@openclaw/ai/-/ai-2026.10.4.tgz --pack-destination cache/openclaw-publication-pristine
+```
+
+将校验后的原包解压到全新 `build/` 子目录，在完整同版本依赖中恢复这两个依赖
+的原包内容。必须先在隔离环境、离线 npm 配置下，经原生
+`dist/infra/package-lifecycle.js` 的 `completePendingPackageLifecycle` 正常执行原包
+preinstall/postinstall 并释放所属锁，再执行现有 pristine 合同检查、补丁事务、技能同步、真实 asar
+打包及 Gateway bundle 构建。源码、原包、依赖锁、构建配方、补丁和最终产物均须
+通过正常构建证明；不要手写快照 ready 标记、替换旧 bundle 或补写旧产物证明。
+原包的 pending/legacy guard 或 lifecycle lock 仍存在时，最终 manifest、冻结验证和
+测试快照都必须拒绝；不能删除标记冒充原生安装脚本已经完成，也不能在补丁之后
+补跑会清理 dist 的上游 postinstall。

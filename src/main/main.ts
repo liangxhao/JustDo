@@ -124,6 +124,7 @@ import { SessionDiagnosticsStore } from './data/sessionDiagnosticsStore';
 import { SqliteStore } from './data/sqliteStore';
 import { CoworkEngineService } from './engine';
 import { bindCoworkRuntimeForwarder } from './engine/cowork/coworkRuntimeForwarder';
+import type { GatewayRequestOptions } from './engine/types';
 import {
   resolveDevelopmentAgentCliExecutable,
   resolvePackagedAgentCliExecutable,
@@ -672,7 +673,7 @@ const getOpenClawExtensionImportService = (): OpenClawExtensionImportService => 
   openClawExtensionImportService ??= new OpenClawExtensionImportService({
     getOpenClawEngineManager,
     getManagedPluginIds: getApplicationManagedPluginIds,
-    requestGateway: <T>(method: string, params?: unknown, options?: { timeoutMs?: number }) =>
+    requestGateway: <T>(method: string, params?: unknown, options?: GatewayRequestOptions) =>
       getCoworkEngineService().requestGateway<T>(method, params, options),
     runConfigMutationExclusive: operation =>
       getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
@@ -1633,9 +1634,10 @@ if (agentBridgeArgv) {
       getCoworkEngineService().requestGateway<T>(method, params),
     runConfigMutationExclusive: operation =>
       getOpenClawConfigSyncService().runConfigMutationExclusive(({ syncConfig }) =>
-        operation(retiredMcpServerNames =>
-          getMcpServices().syncConfigAfterExclusiveMutation(options =>
-            syncConfig({ ...options, retiredMcpServerNames }),
+        operation((retiredMcpServerNames, context) =>
+          getMcpServices().syncConfigAfterExclusiveMutation(
+            options => syncConfig({ ...options, retiredMcpServerNames }),
+            context,
           ),
         ),
       ),

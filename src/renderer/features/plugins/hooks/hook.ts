@@ -29,7 +29,7 @@ export interface HookEntry {
   management?: PluginManagementCapabilities;
 }
 
-export interface HookListResult {
+export interface HookListResult extends PluginOperationFeedback {
   success: boolean;
   hooks?: HookEntry[];
   workspaceDir?: string;
@@ -40,3 +40,4 @@ export interface HookListResult {
   hookId?: string;
 }
 import type { PluginHubScope, PluginManagementCapabilities } from '@shared/plugins/management';
+import type { PluginOperationFeedback } from '@shared/plugins/pluginOperation';

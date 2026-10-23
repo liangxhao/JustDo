@@ -3,6 +3,7 @@ import type { SessionTitleFetch } from '../../cowork/sessionTitleGenerator';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import { OpenClawRuntimeAdapter } from '../openclaw/openclawRuntimeAdapter';
+import type { GatewayRequestOptions } from '../types';
 import { CoworkEngineRouter } from './coworkEngineRouter';
 
 type CoworkEngineServiceDeps = {
@@ -75,7 +76,7 @@ export class CoworkEngineService {
   async requestGateway<T>(
     method: string,
     params?: unknown,
-    options?: { timeoutMs?: number },
+    options?: GatewayRequestOptions,
   ): Promise<T> {
     this.getRouter();
     if (!this.runtimeAdapter) {

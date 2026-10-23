@@ -1,14 +1,31 @@
-import { Skill } from '@/features/plugins/skills/skill';
+import { PluginKind } from '@shared/plugins/marketplace';
+import {
+  PluginOperationAction,
+  type PluginOperationFeedback,
+  PluginOperationStage,
+} from '@shared/plugins/pluginOperation';
 
-type SkillListResult = {
+import {
+  pluginOperationFailure,
+  pluginOperationRefreshFailure,
+} from '@/features/plugins/shared/pluginMutationFeedback';
+import {
+  pluginSourceLabel,
+  startPluginOperation,
+} from '@/features/plugins/shared/pluginOperationService';
+import { Skill } from '@/features/plugins/skills/skill';
+import { i18nService } from '@/services/i18n';
+
+type SkillListResult = PluginOperationFeedback & {
   success: boolean;
   skills?: Skill[];
   error?: string;
   gatewayOffline?: boolean;
 };
 
-const INVENTORY_REFRESH_DELAYS_MS = [200, 400, 800, 1_600, 2_000];
-const INVENTORY_REFRESH_WINDOW_MS = 5_000;
+const INVENTORY_REFRESH_DELAYS_MS = [200, 400, 800, 1_600, 2_000, 5_000];
+// Windows native skill-tree discovery can take one 30-second polling interval.
+const INVENTORY_REFRESH_WINDOW_MS = 45_000;
 const INVENTORY_RECOVERY_INTERVAL_MS = 3_000;
 
 class SkillService {
@@ -66,7 +83,17 @@ class SkillService {
         this.scheduleInventoryRecovery();
         return;
       }
+      const generation = this.inventoryRefreshGeneration;
       await this.loadSkills();
+      if (
+        generation === this.inventoryRefreshGeneration &&
+        !this.inventoryReadFailed &&
+        !this.inventoryRefreshTimer
+      ) {
+        // A successful reconnect can still read the native watcher's old cache.
+        // Resume only the remaining window, using its existing slowest interval.
+        this.scheduleInventoryRefresh(generation, INVENTORY_REFRESH_DELAYS_MS.length - 1);
+      }
     }, INVENTORY_RECOVERY_INTERVAL_MS);
   }
 
@@ -80,12 +107,9 @@ class SkillService {
 
   private scheduleInventoryRefresh(generation: number, index: number): void {
     const remaining = this.inventoryRefreshDeadline - Date.now();
-    if (
-      this.inventoryListeners.size === 0 ||
-      remaining <= 0 ||
-      index >= INVENTORY_REFRESH_DELAYS_MS.length
-    )
-      return;
+    if (this.inventoryRefreshTimer || this.inventoryListeners.size === 0 || remaining <= 0) return;
+    const delayMs =
+      INVENTORY_REFRESH_DELAYS_MS[Math.min(index, INVENTORY_REFRESH_DELAYS_MS.length - 1)];
     this.inventoryRefreshTimer = setTimeout(
       async () => {
         this.inventoryRefreshTimer = null;
@@ -96,7 +120,7 @@ class SkillService {
           this.scheduleInventoryRefresh(generation, index + 1);
         }
       },
-      Math.min(INVENTORY_REFRESH_DELAYS_MS[index], remaining),
+      Math.min(delayMs, remaining),
     );
   }
 
@@ -157,6 +181,17 @@ class SkillService {
     this.loadPromise = null;
   }
 
+  private async reconcileFailedMutation(
+    operation: ReturnType<typeof startPluginOperation>,
+    generation: number,
+  ) {
+    if (generation !== this.loadGeneration) return;
+    operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
+    // This read belongs to the current switch and must not wait on its own queue entry.
+    await this.readSkills({ force: true });
+    if (this.inventoryReadFailed) operation.fail(pluginOperationRefreshFailure());
+  }
+
   private async fetchSkills(generation: number): Promise<Skill[]> {
     try {
       const result: SkillListResult = await window.electron.skills.list();
@@ -202,11 +237,32 @@ class SkillService {
     const existing = this.pendingSkillUpdates.get(id);
     if (existing?.enabled === enabled) return existing.promise;
 
+    const operation = startPluginOperation({
+      kind: PluginKind.SKILL,
+      action: enabled ? PluginOperationAction.ENABLE : PluginOperationAction.DISABLE,
+      label: this.skills.find(skill => skill.id === id)?.name || id,
+    });
     const pending = this.skillUpdateQueue
-      .then(() => this.updateSkillEnabled(id, enabled))
+      .then(() => this.updateSkillEnabled(id, enabled, operation))
+      .catch(error => {
+        operation.fail({
+          message: error instanceof Error ? error.message : i18nService.t('skillUpdateFailed'),
+        });
+        throw error;
+      })
       .finally(() => {
+        operation.finish();
         if (this.pendingSkillUpdates.get(id)?.promise === pending) {
           this.pendingSkillUpdates.delete(id);
+          if (this.pendingSkillUpdates.size === 0) {
+            for (const listener of this.inventoryListeners) {
+              try {
+                listener(this.skills);
+              } catch {
+                /* Inventory observers cannot replace a mutation receipt. */
+              }
+            }
+          }
         }
       });
     this.pendingSkillUpdates.set(id, { enabled, promise: pending });
@@ -217,17 +273,31 @@ class SkillService {
     return pending;
   }
 
-  private async updateSkillEnabled(id: string, enabled: boolean): Promise<Skill[]> {
+  private async updateSkillEnabled(
+    id: string,
+    enabled: boolean,
+    operation: ReturnType<typeof startPluginOperation>,
+  ): Promise<Skill[]> {
     const generation = this.loadGeneration;
     try {
-      const result: SkillListResult = await window.electron.skills.setEnabled({ id, enabled });
+      const result: SkillListResult = await window.electron.skills.setEnabled(
+        { id, enabled },
+        operation.context,
+      );
       if (result.success && result.skills) {
         // Internal reads cannot wait for the operation that owns this promise,
         // or for later switches queued behind it.
-        if (generation !== this.loadGeneration) return this.readSkills({ force: true });
+        if (generation !== this.loadGeneration) {
+          operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
+          const skills = await this.readSkills({ force: true });
+          if (this.inventoryReadFailed || result.refreshWarning)
+            operation.fail(pluginOperationRefreshFailure(result));
+          return skills;
+        }
         this.invalidateListRead();
         this.skills = this.projectConfirmedDeletions(result.skills);
         this.gatewayOffline = false;
+        if (result.refreshWarning) operation.fail(pluginOperationRefreshFailure(result));
         return this.skills;
       }
       if (generation === this.loadGeneration) {
@@ -235,21 +305,28 @@ class SkillService {
         this.inventoryReadFailed = true;
         this.scheduleInventoryRecovery();
       }
-      throw new Error(result.error || 'Failed to update skill');
+      operation.fail(pluginOperationFailure(result, i18nService.t('skillUpdateFailed')));
+      throw new Error(result.error || i18nService.t('skillUpdateFailed'));
     } catch (error) {
       console.error('Failed to update skill:', error);
+      operation.fail({
+        message: error instanceof Error ? error.message : i18nService.t('skillUpdateFailed'),
+      });
+      await this.reconcileFailedMutation(operation, generation);
       throw error;
     }
   }
 
-  async deleteSkill(
-    id: string,
-    source?: Skill['source'],
-  ): Promise<{ success: boolean; skills?: Skill[]; error?: string }> {
+  async deleteSkill(id: string, source?: Skill['source']): Promise<SkillListResult> {
     const generation = this.loadGeneration;
     const removed = this.skills.find(skill => skill.id === id && skill.source === source);
+    const operation = startPluginOperation({
+      kind: PluginKind.SKILL,
+      action: PluginOperationAction.REMOVE,
+      label: removed?.name || id,
+    });
     try {
-      const result = await window.electron.skills.delete({ id, source });
+      const result = await window.electron.skills.delete({ id, source }, operation.context);
       if (result.success && result.skills) {
         // Main retains a same-path entry only when files already exist again.
         // Otherwise suppress this confirmed removal while the watcher catches up.
@@ -267,18 +344,34 @@ class SkillService {
         }
         this.beginInventoryRefresh();
         if (generation !== this.loadGeneration) {
-          return { success: true, skills: await this.loadSkills({ force: true }) };
+          operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
+          const skills = await this.loadSkills({ force: true });
+          const refreshFailed = this.inventoryReadFailed || result.refreshWarning;
+          if (refreshFailed) operation.fail(pluginOperationRefreshFailure(result));
+          return {
+            ...result,
+            success: true,
+            skills,
+            ...(refreshFailed ? { refreshWarning: true as const } : {}),
+          };
         }
         this.invalidateListRead();
         this.skills = result.skills.filter(
           skill => !this.deletedPaths.has(`${skill.source}\0${skill.skillPath}`),
         );
-        return { success: true, skills: this.skills };
+        if (result.refreshWarning) operation.fail(pluginOperationRefreshFailure(result));
+        return { ...result, success: true, skills: this.skills };
       }
-      return { success: false, error: result.error };
+      operation.fail(pluginOperationFailure(result, i18nService.t('skillDeleteFailed')));
+      await this.reconcileFailedMutation(operation, generation);
+      return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to delete skill';
+      operation.fail({ message });
+      await this.reconcileFailedMutation(operation, generation);
       return { success: false, error: message };
+    } finally {
+      operation.finish();
     }
   }
 
@@ -297,10 +390,21 @@ class SkillService {
   /** Import a skill from a local folder or archive */
   async importSkill(
     sourcePath: string,
-  ): Promise<{ success: boolean; skillId?: string; error?: string }> {
+    options: { reportFailure?: boolean } = {},
+  ): Promise<PluginOperationFeedback & { success: boolean; skillId?: string; error?: string }> {
+    const operation = startPluginOperation({
+      kind: PluginKind.SKILL,
+      action: PluginOperationAction.INSTALL,
+      label: pluginSourceLabel(sourcePath),
+    });
     try {
-      const result = await window.electron.skills.importPath(sourcePath);
-      if (result.success) {
+      const result = await window.electron.skills.importPath(sourcePath, operation.context);
+      if (
+        result.success ||
+        result.installationCommitted ||
+        result.installSourceInUse ||
+        result.operationUnconfirmed
+      ) {
         for (const [key, removal] of this.deletedPaths) {
           if (removal.id === result.skillId || removal.name === result.skillId)
             this.deletedPaths.delete(key);
@@ -308,11 +412,19 @@ class SkillService {
         this.invalidateListRead();
         this.beginInventoryRefresh();
       }
-      return { success: result.success, skillId: result.skillId, error: result.error };
+      if (options.reportFailure !== false) {
+        if (!result.success)
+          operation.fail(pluginOperationFailure(result, i18nService.t('skillImportFailed')));
+        else if (result.refreshWarning) operation.fail(pluginOperationRefreshFailure(result));
+      }
+      return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to import skill';
       console.error('Failed to import skill:', error);
+      if (options.reportFailure !== false) operation.fail({ message });
       return { success: false, error: message };
+    } finally {
+      operation.finish();
     }
   }
 

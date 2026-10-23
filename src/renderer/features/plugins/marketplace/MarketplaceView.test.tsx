@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
 import {
+  MarketplaceErrorCode,
   type MarketplaceInstallResponse,
   MarketplaceInstallState,
   type MarketplacePlugin,
   PluginKind,
 } from '@shared/plugins/marketplace';
+import { PluginOperationStage } from '@shared/plugins/pluginOperation';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+
+import { getPluginOperationOwner } from '@/features/plugins/shared/pluginOperationService';
 
 import { InstalledMarketplaceAction, MarketplaceFeedback } from './MarketplaceActions';
 import MarketplaceToolbar from './MarketplaceToolbar';
@@ -14,7 +18,10 @@ import { MarketplaceResults } from './MarketplaceView';
 import { type InstalledMarketplacePlugin, usePluginMarketplace } from './usePluginMarketplace';
 
 vi.mock('@/services/i18n', () => ({
-  i18nService: { t: (key: string) => key, getLanguage: () => 'en' },
+  i18nService: {
+    t: (key: string) => (key === 'pluginOperationFailedAt' ? 'Step not completed: {stage}' : key),
+    getLanguage: () => 'en',
+  },
 }));
 const writer: MarketplacePlugin = {
   id: 'catalog-writer',
@@ -143,6 +150,259 @@ test('searches the market and includes installed matches found only in market me
   expect(screen.queryByRole('combobox')).toBeNull();
 });
 
+test('does not repeat identity and update queries for an unchanged inventory projection', async () => {
+  const view = render(<Harness installed={INSTALLED} />);
+  await waitFor(() => expect(api.checkUpdates).toHaveBeenCalledOnce());
+  const identityReads = api.resolveInstalled.mock.calls.length;
+  view.rerender(<Harness installed={INSTALLED.map(item => ({ ...item }))} />);
+  await act(async () => undefined);
+  expect(api.resolveInstalled).toHaveBeenCalledTimes(identityReads);
+  expect(api.checkUpdates).toHaveBeenCalledOnce();
+});
+
+test('retains the actual failed stage after installation progress ends', async () => {
+  api.install.mockResolvedValueOnce({
+    success: false,
+    error: 'Package validation failed',
+    failedStage: PluginOperationStage.VALIDATING,
+  });
+  render(<Harness />);
+  fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
+  expect(await screen.findByRole('alert')).toHaveProperty(
+    'textContent',
+    'Step not completed: pluginOperationStage.validating\nPackage validation failed',
+  );
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+    expect.objectContaining({
+      label: 'Market writer',
+      message: 'Package validation failed',
+      failedStage: PluginOperationStage.VALIDATING,
+      state: 'failed',
+    }),
+  ]);
+});
+
+test.each([
+  PluginOperationStage.FETCHING_METADATA,
+  PluginOperationStage.DOWNLOADING,
+  PluginOperationStage.EXTRACTING,
+])(
+  'explains controlled provider preparation failures at %s and retains the Main detail',
+  async failedStage => {
+    const diagnostic = 'Marketplace provider failed to prepare installation';
+    api.install.mockResolvedValueOnce({
+      success: false,
+      errorCode: MarketplaceErrorCode.PROVIDER_FAILURE,
+      error: diagnostic,
+      failedStage,
+    });
+    render(<Harness />);
+    fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain(`marketplacePreparationFailure.${failedStage}`);
+    expect(alert.textContent).not.toContain(diagnostic);
+    expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+      expect.objectContaining({
+        message: `marketplacePreparationFailure.${failedStage}`,
+        details: diagnostic,
+        failedStage,
+      }),
+    ]);
+  },
+);
+
+test.each([
+  {
+    errorCode: MarketplaceErrorCode.INTERNAL,
+    error: 'Native extension activation rejected: accessCode is required',
+    failedStage: PluginOperationStage.ENABLING,
+  },
+  {
+    errorCode: MarketplaceErrorCode.PROVIDER_FAILURE,
+    error: 'Native package validation rejected',
+    failedStage: PluginOperationStage.EXTRACTING,
+  },
+  {
+    errorCode: MarketplaceErrorCode.INTERNAL,
+    error: 'Marketplace provider failed to prepare installation',
+    failedStage: PluginOperationStage.DOWNLOADING,
+  },
+  {
+    errorCode: MarketplaceErrorCode.PROVIDER_FAILURE,
+    error: 'Marketplace provider failed to prepare installation',
+    failedStage: PluginOperationStage.VALIDATING,
+  },
+])('preserves other native or provider diagnostics: $errorCode / $failedStage', async response => {
+  api.install.mockResolvedValueOnce({ success: false, ...response });
+  render(<Harness />);
+  fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
+  await screen.findByRole('alert');
+
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+    expect.objectContaining({ message: response.error, failedStage: response.failedStage }),
+  ]);
+  expect(getPluginOperationOwner().failureSnapshot()[0].details).toBeUndefined();
+});
+
+test('retains a market failure after switching away before the request settles', async () => {
+  let finish!: (response: MarketplaceInstallResponse) => void;
+  api.install.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+  );
+  const view = render(<Harness />);
+  fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
+  view.unmount();
+  await act(async () =>
+    finish({
+      success: false,
+      error: 'Installation rejected',
+      failedStage: PluginOperationStage.VALIDATING,
+    }),
+  );
+  expect(getPluginOperationOwner().snapshot()).toEqual([]);
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+    expect.objectContaining({ message: 'Installation rejected', failedStage: 'validating' }),
+  ]);
+});
+
+test('explains a controlled committed activation failure without guessing a configuration cause', async () => {
+  api.install.mockResolvedValueOnce({
+    success: false,
+    installationCommitted: true,
+    pluginId: 'writer',
+    error: 'Marketplace installation failed',
+    errorCode: MarketplaceErrorCode.INTERNAL,
+    failedStage: PluginOperationStage.ENABLING,
+  });
+  render(<Harness />);
+  fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
+  const alert = await screen.findByRole('alert');
+
+  expect(alert.textContent).toContain('marketplaceActivationIncomplete');
+  expect(alert.textContent).not.toContain('Marketplace installation failed');
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+    expect.objectContaining({
+      state: 'committed',
+      message: 'marketplaceActivationIncomplete',
+      details: 'Marketplace installation failed',
+      failedStage: PluginOperationStage.ENABLING,
+    }),
+  ]);
+});
+
+test.each([
+  {
+    error: 'Marketplace installation failed',
+    errorCode: MarketplaceErrorCode.INTERNAL,
+    failedStage: PluginOperationStage.ENABLING,
+  },
+  {
+    error: 'Marketplace installation failed',
+    errorCode: MarketplaceErrorCode.INTERNAL,
+    failedStage: PluginOperationStage.CONFIRMING,
+    installationCommitted: true,
+  },
+  {
+    error: 'Native plugin activation rejected: required accessCode is missing',
+    errorCode: MarketplaceErrorCode.INTERNAL,
+    failedStage: PluginOperationStage.ENABLING,
+    installationCommitted: true,
+  },
+  {
+    error: 'Marketplace installation failed',
+    errorCode: MarketplaceErrorCode.PROVIDER_FAILURE,
+    failedStage: PluginOperationStage.ENABLING,
+    installationCommitted: true,
+  },
+] as const)(
+  'preserves activation diagnostics outside the exact controlled receipt: $failedStage / $error',
+  async response => {
+    api.install.mockResolvedValueOnce({ success: false, ...response });
+    render(<Harness />);
+    fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
+    await screen.findByRole('alert');
+
+    expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+      expect.objectContaining({ message: response.error, failedStage: response.failedStage }),
+    ]);
+    expect(getPluginOperationOwner().failureSnapshot()[0].details).toBeUndefined();
+  },
+);
+
+test('retains a native refresh warning when a successful install settles after its view unmounts', async () => {
+  let finish!: (response: MarketplaceInstallResponse) => void;
+  api.install.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+  );
+  const view = render(<Harness onInstalled={vi.fn(async () => undefined)} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
+  view.unmount();
+  await act(async () => finish({ success: true, pluginId: 'writer', refreshWarning: true }));
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+    expect.objectContaining({ state: 'refresh_failed', failedStage: 'refreshing_inventory' }),
+  ]);
+});
+
+test('a final successful inventory read resolves a native post-install refresh warning', async () => {
+  api.install.mockResolvedValueOnce({ success: true, pluginId: 'writer', refreshWarning: true });
+  const refresh = vi.fn(async () => undefined);
+  render(<Harness onInstalled={refresh} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
+  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  await waitFor(() => expect(getPluginOperationOwner().snapshot()).toEqual([]));
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([]);
+});
+
+test('keeps committed installation protection after dismissing its failure result', async () => {
+  api.install.mockResolvedValueOnce({
+    success: false,
+    installationCommitted: true,
+    failedStage: PluginOperationStage.ENABLING,
+    error: 'Activation refused',
+  });
+  const refresh = vi.fn().mockRejectedValue(new Error('offline'));
+  render(<Harness onInstalled={refresh} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
+  await waitFor(() => expect(getPluginOperationOwner().failureSnapshot()).toHaveLength(1));
+  const owner = getPluginOperationOwner();
+  expect(owner.failureSnapshot()[0]).toMatchObject({
+    message: 'Activation refused',
+    failedStage: PluginOperationStage.ENABLING,
+    state: 'committed',
+    details: 'marketplaceRefreshAfterInstallFailed',
+  });
+  act(() => owner.dismissFailure(owner.failureSnapshot()[0].requestId));
+  const pending = screen.getByRole('button', { name: 'marketplaceStatusPending' });
+  expect(pending.hasAttribute('disabled')).toBe(true);
+  fireEvent.click(pending);
+  expect(api.install).toHaveBeenCalledOnce();
+});
+
+test('an explicitly unconfirmed installation offers status refresh without replaying the install', async () => {
+  api.install.mockResolvedValueOnce({
+    success: false,
+    installSourceInUse: true,
+    failedStage: PluginOperationStage.INSTALLING,
+    error: 'Installation result is unavailable',
+  });
+  render(<Harness />);
+  fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
+  await waitFor(() => expect(getPluginOperationOwner().failureSnapshot()).toHaveLength(1));
+  expect(getPluginOperationOwner().failureSnapshot()[0].state).toBe('unconfirmed');
+  const pending = screen.getByRole('button', { name: 'marketplaceStatusPending' });
+  expect(pending.hasAttribute('disabled')).toBe(true);
+  fireEvent.click(pending);
+  expect(api.install).toHaveBeenCalledOnce();
+  expect(screen.getByRole('button', { name: 'marketplaceRefreshStatus' })).toBeTruthy();
+});
+
 test('retains installed recommendations with a disabled install action and separate local controls', async () => {
   render(<Harness installed={INSTALLED} />);
   const installed = await screen.findByRole('button', { name: 'marketplaceInstalled' });
@@ -174,13 +434,16 @@ test('updates directly from the installed card even when recommendations are emp
   render(<Harness installed={INSTALLED} />);
   fireEvent.click(await screen.findByRole('button', { name: 'marketplaceUpdate' }));
   await waitFor(() =>
-    expect(api.install).toHaveBeenCalledWith({
-      sourceId: 'enterprise',
-      pluginId: 'catalog-writer',
-      kind: PluginKind.SKILL,
-      version: '2.0',
-      operation: 'update',
-    }),
+    expect(api.install).toHaveBeenCalledWith(
+      {
+        sourceId: 'enterprise',
+        pluginId: 'catalog-writer',
+        kind: PluginKind.SKILL,
+        version: '2.0',
+        operation: 'update',
+      },
+      { requestId: expect.any(String) },
+    ),
   );
   expect(await screen.findByText('marketplaceUpdateSucceeded')).toBeTruthy();
   expect(screen.getByRole('switch').getAttribute('aria-checked')).toBe('false');
@@ -194,7 +457,9 @@ test('uses the bulk candidate version rather than stale search metadata', async 
   render(<Harness installed={INSTALLED} query="notes" />);
   fireEvent.click(await screen.findByRole('button', { name: 'marketplaceUpdate' }));
   await waitFor(() =>
-    expect(api.install).toHaveBeenCalledWith(expect.objectContaining({ version: '2.0' })),
+    expect(api.install).toHaveBeenCalledWith(expect.objectContaining({ version: '2.0' }), {
+      requestId: expect.any(String),
+    }),
   );
 });
 
@@ -203,7 +468,9 @@ test('shows install for an absent item even if the catalog claims it has updates
   const install = await screen.findByRole('button', { name: 'marketplaceInstall' });
   fireEvent.click(install);
   await waitFor(() =>
-    expect(api.install).toHaveBeenCalledWith(expect.objectContaining({ operation: 'install' })),
+    expect(api.install).toHaveBeenCalledWith(expect.objectContaining({ operation: 'install' }), {
+      requestId: expect.any(String),
+    }),
   );
 });
 
@@ -301,12 +568,28 @@ test('shows restart-required feedback without claiming immediate activation', as
 });
 
 test('leaves the failed card retryable and does not lose local controls', async () => {
-  api.install.mockRejectedValueOnce(new Error('Download failed'));
+  api.install.mockResolvedValueOnce({
+    success: false,
+    error: 'Download failed',
+    failedStage: PluginOperationStage.DOWNLOADING,
+  });
   render(<Harness installed={INSTALLED} />);
   fireEvent.click(await screen.findByRole('button', { name: 'marketplaceUpdate' }));
-  expect(await screen.findByText('Download failed')).toBeTruthy();
+  expect(await screen.findByText(/Download failed/)).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'marketplaceUpdate' }));
   await waitFor(() => expect(api.install).toHaveBeenCalledTimes(2));
+});
+
+test('retains a pending guard when the install bridge rejects without an outcome response', async () => {
+  api.install.mockRejectedValueOnce(new Error('IPC connection closed'));
+  render(<Harness />);
+  fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
+  await waitFor(() => expect(getPluginOperationOwner().failureSnapshot()).toHaveLength(1));
+  expect(getPluginOperationOwner().failureSnapshot()[0].state).toBe('unconfirmed');
+  const pending = screen.getByRole('button', { name: 'marketplaceStatusPending' });
+  expect(pending.hasAttribute('disabled')).toBe(true);
+  fireEvent.click(pending);
+  expect(api.install).toHaveBeenCalledOnce();
 });
 
 test.each([
@@ -525,6 +808,7 @@ test('a completed update does not suppress a subsequently discovered newer versi
   await waitFor(() =>
     expect(api.install).toHaveBeenLastCalledWith(
       expect.objectContaining({ version: '3.0', operation: 'update' }),
+      { requestId: expect.any(String) },
     ),
   );
 });

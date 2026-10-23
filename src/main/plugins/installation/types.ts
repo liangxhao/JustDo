@@ -25,6 +25,7 @@ export interface PluginInstallRequest {
   origin: PluginInstallOrigin;
   payload: PluginInstallPayload;
   marketplacePluginId?: string;
+  operationContext?: import('../../../shared/plugins/pluginOperation').PluginOperationContext;
   onProgress?: (progress: { stage: string; percent: number }) => void;
 }
 
@@ -32,8 +33,10 @@ export interface PluginInstallResult {
   success: boolean;
   /** The installation persisted, even if applying the runtime state subsequently failed. */
   installationCommitted?: true;
-  /** Main-only: a native operation may still be reading the prepared source. */
+  /** A native operation may still be reading the prepared source; its path stays Main-only. */
   installSourceInUse?: true;
+  operationUnconfirmed?: true;
+  refreshWarning?: true;
   pluginId?: string;
   /** Internal install location used to disambiguate layered capabilities. Never expose over IPC. */
   installPath?: string;

@@ -20,4 +20,4 @@ export const createPluginMarketplaceService = (
   );
 
 export { PluginMarketplaceService } from './pluginMarketplaceService';
-export type { PluginMarketplaceProvider } from './types';
+export type { MarketplacePreparationContext, PluginMarketplaceProvider } from './types';

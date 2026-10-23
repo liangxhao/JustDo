@@ -4,6 +4,8 @@ import { getHookManagement } from '@shared/plugins/management';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+import PluginOperationFeedback from '@/features/plugins/shared/PluginOperationFeedback';
+
 import type { HookEntry } from './hook';
 import HookManager from './HookManager';
 import { hookService } from './hookService';
@@ -291,7 +293,7 @@ test.each([true, false])(
 
     expect(screen.queryByRole('button', { name: 'hookDeleting' })).toBeNull();
     if (!success) {
-      expect(screen.getByText('Native delete refused')).toBeTruthy();
+      expect(screen.queryByText('Native delete refused')).toBeNull();
       expect(screen.getByRole('button', { name: 'delete' }).hasAttribute('disabled')).toBe(false);
     }
   },
@@ -354,7 +356,7 @@ test('cancelling the Hook picker leaves the in-flight provider refresh eligible'
 });
 
 test.each(['toggle', 'delete'] as const)(
-  'a failed Hook %s reconciles the provider inventory and preserves its actual error',
+  'a failed Hook %s reconciles provider inventory without repeating service-owned feedback',
   async operation => {
     let finishRead!: (result: { success: boolean; hooks: HookEntry[] }) => void;
     const added = { ...customHook, id: 'provider-hook', name: 'New provider Hook' };
@@ -386,11 +388,11 @@ test.each(['toggle', 'delete'] as const)(
     });
     expect(screen.getByText(added.name)).toBeTruthy();
     expect(hookService.loadHooks).toHaveBeenLastCalledWith({ force: true });
-    expect(screen.getByText(`Native ${operation} refused`)).toBeTruthy();
+    expect(screen.queryByText(`Native ${operation} refused`)).toBeNull();
     await act(async () => finishRead({ success: true, hooks: [] }));
 
     expect(screen.getByText(added.name)).toBeTruthy();
-    expect(screen.getByText(`Native ${operation} refused`)).toBeTruthy();
+    expect(screen.queryByText(`Native ${operation} refused`)).toBeNull();
     expect(screen.queryByText('loading')).toBeNull();
   },
 );
@@ -410,7 +412,12 @@ test('a failed Hook import refreshes native provider metadata without claiming s
   window.electron.dialog = {
     selectFolders: vi.fn().mockResolvedValue({ success: true, paths: ['C:/imports/invalid-hook'] }),
   } as unknown as typeof window.electron.dialog;
-  render(<HookManager />);
+  render(
+    <>
+      <HookManager />
+      <PluginOperationFeedback />
+    </>,
+  );
   fireEvent.click(await screen.findByRole('button', { name: 'importHook' }));
   await act(async () => {
     vi.mocked(window.electron.extensions.onChanged).mock.calls[0][0]({
@@ -425,7 +432,9 @@ test('a failed Hook import refreshes native provider metadata without claiming s
   });
   expect(screen.getByText(added.name)).toBeTruthy();
   expect(screen.getByText('Import refused')).toBeTruthy();
-  expect(hookService.importHook).toHaveBeenCalledExactlyOnceWith('C:/imports/invalid-hook');
+  expect(hookService.importHook).toHaveBeenCalledExactlyOnceWith('C:/imports/invalid-hook', {
+    reportFailure: false,
+  });
   await act(async () => finishRead({ success: true, hooks: [] }));
 
   expect(screen.getByText(added.name)).toBeTruthy();
@@ -440,7 +449,10 @@ test('Hook failure reconciliation does not consume an older projection after a n
     .mockResolvedValueOnce({ success: true, hooks: [customHook] })
     .mockReturnValueOnce(new Promise(resolve => (finishMutationRead = resolve)))
     .mockReturnValueOnce(new Promise(resolve => (finishProviderRead = resolve)));
-  vi.mocked(hookService.setHookEnabled).mockRejectedValueOnce(new Error('Native toggle refused'));
+  vi.mocked(hookService.setHookEnabled).mockImplementationOnce(async () => {
+    await hookService.loadHooks({ force: true });
+    throw new Error('Native toggle refused');
+  });
   vi.mocked(hookService.getHooks).mockReturnValue([customHook]);
   render(<HookManager />);
   fireEvent.click(await screen.findByRole('switch', { name: 'disableHook' }));

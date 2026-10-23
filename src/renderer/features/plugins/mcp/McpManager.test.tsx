@@ -2,9 +2,16 @@
 
 import { configureStore } from '@reduxjs/toolkit';
 import { getExtensionProvidedManagement } from '@shared/plugins/management';
+import { PluginKind } from '@shared/plugins/marketplace';
+import { PluginOperationAction } from '@shared/plugins/pluginOperation';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+
+import {
+  getPluginOperationOwner,
+  startPluginOperation,
+} from '@/features/plugins/shared/pluginOperationService';
 
 import type { ExtensionProvidedMcpServer, McpServerConfig } from './mcp';
 import McpManager from './McpManager';
@@ -140,6 +147,36 @@ test('configuration sync succeeds silently and reports failures in a dismissible
   expect(within(dialog).getByText('Connection refused')).toBeTruthy();
   fireEvent.click(within(dialog).getByRole('button', { name: 'close' }));
   expect(screen.queryByRole('alertdialog')).toBeNull();
+});
+
+test('deduplicates matching sync failures including late events while keeping unrelated broadcasts', async () => {
+  renderManager();
+  await screen.findByText('personal-mcp');
+  const startCalls = vi.mocked(mcpService.onConfigSyncStart).mock.calls;
+  const doneCalls = vi.mocked(mcpService.onConfigSyncDone).mock.calls;
+  const start = startCalls[startCalls.length - 1][0];
+  const done = doneCalls[doneCalls.length - 1][0];
+  const operation = startPluginOperation({
+    kind: PluginKind.MCP,
+    action: PluginOperationAction.SAVE,
+    label: 'Example',
+  });
+  act(() => start(operation.context));
+  act(() => done({ tools: 0, error: 'Native sync failed', ...operation.context }));
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  act(() => {
+    operation.fail({ message: 'Native sync failed' });
+    operation.finish();
+    done({ tools: 0, error: 'Late duplicate', ...operation.context });
+  });
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(getPluginOperationOwner().failureSnapshot()).toHaveLength(1);
+
+  act(() => {
+    start();
+    done({ tools: 0, error: 'Unrelated background sync failed' });
+  });
+  expect(screen.getByRole('alertdialog', { name: 'mcpBridgeSyncError' })).toBeTruthy();
 });
 
 const customServer: McpServerConfig = {
@@ -561,7 +598,7 @@ test.each([true, false])(
 
     if (success) expect(screen.queryByRole('button', { name: 'confirmDelete' })).toBeNull();
     else {
-      expect(screen.getAllByText('Delete refused').length).toBeGreaterThan(0);
+      expect(screen.queryByText('Delete refused')).toBeNull();
       const retry = screen.getByRole('button', { name: 'confirmDelete' });
       expect(retry.getAttribute('aria-busy')).toBeNull();
       expect(retry.hasAttribute('disabled')).toBe(false);
@@ -629,8 +666,11 @@ test('a failed creation reconciles the inventory when it superseded the initial 
     target: { value: 'node' },
   });
   fireEvent.click(screen.getByRole('button', { name: 'saveMcpServer' }));
-  await screen.findByText('Native create refused');
-  expect(screen.getByText(customServer.name)).toBeTruthy();
+  await screen.findByText(customServer.name);
+  expect(screen.queryByText('Native create refused')).toBeNull();
+  expect((screen.getByPlaceholderText('mcpServerNamePlaceholder') as HTMLInputElement).value).toBe(
+    'Another MCP',
+  );
   expect(screen.queryByText('mcpLoadingServers')).toBeNull();
   await act(async () => finishRead([]));
 

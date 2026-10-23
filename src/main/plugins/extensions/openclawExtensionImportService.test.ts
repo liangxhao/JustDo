@@ -5,7 +5,7 @@ import * as tar from 'tar';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ManagedDirectoryOperationCoordinator } from '../../core/filesystem/managedDirectoryOperations';
-import { t } from '../../core/i18n';
+import { getLanguage, setLanguage, t } from '../../core/i18n';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import {
   __openClawExtensionImportTestUtils,
@@ -28,6 +28,160 @@ describe('OpenClawExtensionImportService', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  });
+
+  it('shares concurrent catalog discovery without caching a completed inventory', async () => {
+    let publish!: (value: unknown) => void;
+    const inventory = { plugins: [], diagnostics: [], mutationAllowed: true };
+    const requestGateway = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            publish = resolve;
+          }),
+      )
+      .mockResolvedValue(inventory);
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () => ({}) as OpenClawEngineManager,
+      requestGateway,
+    });
+    vi.spyOn(service, 'listInstalled').mockReturnValue([]);
+
+    const first = service.listCatalog();
+    const concurrent = service.listCatalog();
+    expect(concurrent).toBe(first);
+    expect(requestGateway).toHaveBeenCalledOnce();
+    publish(inventory);
+    await Promise.all([first, concurrent]);
+    await service.listCatalog();
+
+    expect(requestGateway).toHaveBeenCalledTimes(2);
+  });
+
+  it('invalidates in-flight catalog reads at both mutation boundaries', async () => {
+    const inventory = { plugins: [], diagnostics: [], mutationAllowed: true };
+    let finishMutation!: (value: unknown) => void;
+    const readers: Array<(value: unknown) => void> = [];
+    const requestGateway = vi.fn((method: string) =>
+      method === 'plugins.setEnabled'
+        ? new Promise(resolve => {
+            finishMutation = resolve;
+          })
+        : new Promise(resolve => {
+            readers.push(resolve);
+          }),
+    );
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () =>
+        ({ getStatus: () => ({ phase: 'ready' }) }) as OpenClawEngineManager,
+      requestGateway,
+    });
+    vi.spyOn(service, 'listInstalled').mockReturnValue([]);
+
+    const before = service.listCatalog();
+    const mutation = service.setEnabled('example', true);
+    await vi.waitFor(() => expect(finishMutation).toBeTypeOf('function'));
+    const during = service.listCatalog();
+    expect(during).not.toBe(before);
+    finishMutation({ ok: true, restartRequired: false });
+    await mutation;
+    const after = service.listCatalog();
+    expect(after).not.toBe(during);
+    expect(readers).toHaveLength(3);
+    readers.forEach(resolve => resolve(inventory));
+    await Promise.all([before, during, after]);
+  });
+
+  it.each([
+    'enabled-by-install',
+    'residual-disable',
+    'missing-configuration',
+    'new-missing-configuration',
+  ])('activates a fresh marketplace installation only when repairing %s', async scenario => {
+    const sourceDir = path.join(fixtureRoot, 'source');
+    const stateDir = path.join(fixtureRoot, 'state');
+    const installedDir = path.join(stateDir, 'extensions', 'market-extension');
+    const configPath = path.join(stateDir, 'openclaw.json');
+    fs.mkdirSync(sourceDir);
+    fs.mkdirSync(stateDir);
+    fs.writeFileSync(
+      path.join(sourceDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'market-extension' }),
+    );
+    const disabledBefore = scenario === 'residual-disable' || scenario === 'missing-configuration';
+    const requiredConfigurationMissing = scenario.includes('missing-configuration');
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        plugins: { entries: disabledBefore ? { 'market-extension': { enabled: false } } : {} },
+      }),
+    );
+    const requestGateway = vi.fn(async (method: string) => {
+      expect(method).toBe('plugins.setEnabled');
+      if (requiredConfigurationMissing) throw new Error('Required plugin configuration is missing');
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({ plugins: { entries: { 'market-extension': { enabled: true } } } }),
+      );
+      return { ok: true, restartRequired: false };
+    });
+    const restart = vi.fn();
+    const manager = {
+      getStatus: () => ({ phase: 'running' }),
+      getBaseDir: () => fixtureRoot,
+      getStateDir: () => stateDir,
+      getConfigPath: () => configPath,
+      buildCliEnvironment: async () => ({
+        env: { OPENCLAW_STATE_DIR: stateDir },
+        runtimeRoot: fixtureRoot,
+        openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
+      }),
+    } as unknown as OpenClawEngineManager;
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () => manager,
+      requestGateway,
+      restartGatewayAfterMutation: restart,
+      runCommand: vi.fn(async () => {
+        fs.cpSync(sourceDir, installedDir, { recursive: true });
+        if (scenario === 'new-missing-configuration') {
+          fs.writeFileSync(
+            configPath,
+            JSON.stringify({
+              plugins: { entries: { 'market-extension': { enabled: false } } },
+            }),
+          );
+        }
+        return {
+          exitCode: 0,
+          stderr: '',
+          stdout: 'Installed plugin: market-extension\nApplied in Gateway generation 2.',
+        };
+      }),
+    });
+
+    const result = await service.importPath(sourceDir, undefined, undefined, {
+      trustMarketplaceSource: true,
+    });
+
+    expect(result).toMatchObject({
+      success: !requiredConfigurationMissing,
+      extensionId: 'market-extension',
+      installPath: installedDir,
+    });
+    expect(requestGateway).toHaveBeenCalledTimes(scenario === 'enabled-by-install' ? 0 : 1);
+    if (scenario !== 'enabled-by-install')
+      expect(requestGateway).toHaveBeenCalledWith('plugins.setEnabled', {
+        pluginId: 'market-extension',
+        enabled: true,
+      });
+    if (requiredConfigurationMissing)
+      expect(result).toMatchObject({
+        installationCommitted: true,
+        error: 'Required plugin configuration is missing',
+        operationFailedStage: 'enabling',
+      });
+    expect(restart).not.toHaveBeenCalled();
   });
 
   it.each([0, 1])(
@@ -655,7 +809,9 @@ describe('OpenClawExtensionImportService', () => {
         ['skills.update', { skillKey: 'agent-team', enabled }],
       ]);
       if (restartRequired) {
-        expect(restartGatewayAfterMutation).toHaveBeenCalledExactlyOnceWith('extension-status-change');
+        expect(restartGatewayAfterMutation).toHaveBeenCalledExactlyOnceWith(
+          'extension-status-change',
+        );
         expect(requestGateway.mock.invocationCallOrder.at(-1)).toBeLessThan(
           restartGatewayAfterMutation.mock.invocationCallOrder[0],
         );
@@ -806,8 +962,11 @@ describe('OpenClawExtensionImportService', () => {
         skills: { entries: { 'agent-team': { enabled: true } } },
       }),
     );
-    const requestGateway = vi.fn()
-      .mockRejectedValueOnce(new Error('gateway not connected'))
+    const requestGateway = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error('gateway not connected'), { requestSent: false }),
+      )
       .mockResolvedValue({ ok: true, restartRequired: false });
     const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
     const runCommand = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
@@ -1061,7 +1220,10 @@ describe('OpenClawExtensionImportService', () => {
       restartGatewayAfterMutation,
     });
 
-    await expect(service.delete('pending-extension')).resolves.toMatchObject({ success: false });
+    await expect(service.delete('pending-extension')).resolves.toMatchObject({
+      success: false,
+      operationUnconfirmed: true,
+    });
     expect(requestGateway).toHaveBeenNthCalledWith(2, 'plugins.list', {});
     expect(manager.buildCliEnvironment).not.toHaveBeenCalled();
     expect(runCommand).not.toHaveBeenCalled();
@@ -1406,7 +1568,7 @@ describe('OpenClawExtensionImportService', () => {
     expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-network-policy-change');
   });
 
-  it('converges policy and restores Gateway when an enable response is lost after commit', async () => {
+  it('keeps a lost enable response unconfirmed even when the saved flag matches', async () => {
     const stateDir = path.join(fixtureRoot, 'state');
     const installedDir = path.join(stateDir, 'extensions', 'response-lost-extension');
     const configPath = path.join(stateDir, 'openclaw.json');
@@ -1452,12 +1614,14 @@ describe('OpenClawExtensionImportService', () => {
     });
 
     await expect(service.setEnabled('response-lost-extension', true)).resolves.toEqual({
-      success: true,
+      success: false,
+      error: 'Gateway response was lost',
+      operationUnconfirmed: true,
     });
     expect(runCommand).not.toHaveBeenCalled();
-    expect(reconcile).toHaveBeenCalledTimes(2);
-    expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-network-policy-change');
-    expect(phase).toBe('running');
+    expect(reconcile).toHaveBeenCalledOnce();
+    expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
+    expect(phase).toBe('ready');
   });
 
   it('removes a partially disabled extension policy even when cold uninstall fails', async () => {
@@ -1636,6 +1800,316 @@ describe('OpenClawExtensionImportService', () => {
       error: 'Plugin inventory transaction failed',
     });
     expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  describe('native lifecycle refusal feedback', () => {
+    const busyMessage =
+      'Another plugin or config operation is already running; retry when it completes.';
+    const mutations = [
+      {
+        action: 'enable',
+        method: 'plugins.setEnabled',
+        invoke: (service: OpenClawExtensionImportService) =>
+          service.setEnabled('busy-extension', true),
+      },
+      {
+        action: 'disable',
+        method: 'plugins.setEnabled',
+        invoke: (service: OpenClawExtensionImportService) =>
+          service.setEnabled('busy-extension', false),
+      },
+      {
+        action: 'remove',
+        method: 'plugins.uninstall',
+        invoke: (service: OpenClawExtensionImportService) => service.delete('busy-extension'),
+      },
+    ];
+    let previousLanguage: ReturnType<typeof getLanguage>;
+
+    beforeEach(() => {
+      previousLanguage = getLanguage();
+    });
+
+    afterEach(() => {
+      setLanguage(previousLanguage);
+    });
+
+    const setup = (error: Error) => {
+      const requestGateway = vi.fn().mockRejectedValue(error);
+      const runCommand = vi.fn();
+      const restartGatewayAfterMutation = vi.fn();
+      const buildCliEnvironment = vi.fn();
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () =>
+          ({
+            getStatus: () => ({ phase: 'running' }),
+            getStateDir: () => path.join(fixtureRoot, 'state'),
+            buildCliEnvironment,
+            getGatewayProcessId: () => 4242,
+            getGatewayProcessGeneration: () => 1,
+          }) as unknown as OpenClawEngineManager,
+        requestGateway,
+        runCommand,
+        restartGatewayAfterMutation,
+      });
+      return {
+        service,
+        requestGateway,
+        runCommand,
+        restartGatewayAfterMutation,
+        buildCliEnvironment,
+      };
+    };
+
+    it.each(['zh', 'en'] as const)(
+      'localizes the exact native busy refusal in %s after its admission budget is exhausted',
+      async language => {
+        setLanguage(language);
+        const expected =
+          language === 'zh'
+            ? '另一个插件或配置操作仍在处理中，请等待完成后再试。'
+            : 'Another plugin or configuration operation is still in progress. Wait for it to finish, then try again.';
+        for (const codeField of ['code', 'gatewayCode']) {
+          for (const mutation of mutations) {
+            const error = Object.assign(new Error(busyMessage), {
+              [codeField]: 'UNAVAILABLE',
+              retryable: true,
+              retryAfterMs: 30_000,
+            });
+            const fixture = setup(error);
+
+            await expect(mutation.invoke(fixture.service)).resolves.toEqual({
+              success: false,
+              error: expected,
+            });
+            expect(fixture.requestGateway).toHaveBeenCalledOnce();
+            expect(fixture.requestGateway.mock.calls[0][0]).toBe(mutation.method);
+            expect(fixture.runCommand).not.toHaveBeenCalled();
+            expect(fixture.buildCliEnvironment).not.toHaveBeenCalled();
+            expect(fixture.restartGatewayAfterMutation).not.toHaveBeenCalled();
+          }
+        }
+      },
+    );
+
+    it.each([false, true])(
+      'waits for native admission with the same reviewed parameters (owner replaced: %s)',
+      async replaced => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+        try {
+          let generation = 1;
+          const error = Object.assign(new Error(busyMessage), {
+            gatewayCode: 'UNAVAILABLE',
+            retryable: true,
+            retryAfterMs: 1000,
+          });
+          const requestGateway = vi
+            .fn()
+            .mockRejectedValueOnce(error)
+            .mockResolvedValue({ ok: true, restartRequired: false });
+          const runCommand = vi.fn();
+          const restartGatewayAfterMutation = vi.fn();
+          const service = new OpenClawExtensionImportService({
+            getOpenClawEngineManager: () =>
+              ({
+                getStatus: () => ({ phase: 'running' }),
+                getGatewayProcessId: () => 4242,
+                getGatewayProcessGeneration: () => generation,
+              }) as unknown as OpenClawEngineManager,
+            requestGateway,
+            runCommand,
+            restartGatewayAfterMutation,
+          });
+
+          const pending = service.setEnabled('busy-extension', true, 'same-reviewed-surface');
+          await vi.advanceTimersByTimeAsync(0);
+          expect(requestGateway).toHaveBeenCalledOnce();
+          if (replaced) generation += 1;
+          await vi.advanceTimersByTimeAsync(1000);
+
+          await expect(pending).resolves.toEqual(
+            replaced
+              ? { success: false, error: t('extensionOperationBusy') }
+              : { success: true, warnings: undefined },
+          );
+          expect(requestGateway).toHaveBeenCalledTimes(replaced ? 1 : 2);
+          if (!replaced) {
+            expect(requestGateway.mock.calls[1][1]).toBe(requestGateway.mock.calls[0][1]);
+            expect(requestGateway.mock.calls[1]).toEqual([
+              'plugins.setEnabled',
+              {
+                pluginId: 'busy-extension',
+                enabled: true,
+                acknowledgeCapabilities: { reviewToken: 'same-reviewed-surface' },
+              },
+              { timeoutMs: 29_000, assertBeforeSend: expect.any(Function) },
+            ]);
+          }
+          expect(runCommand).not.toHaveBeenCalled();
+          expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
+        } finally {
+          vi.useRealTimers();
+        }
+      },
+    );
+
+    it.each([
+      { code: 'CLIENT_TIMEOUT', enabled: false, inventoryMatches: false },
+      { code: 'CLIENT_TIMEOUT', enabled: true, inventoryMatches: true },
+      { code: 'CLIENT_CLOSED', enabled: false, inventoryMatches: true },
+      { code: 'CLIENT_CLOSED', enabled: true, inventoryMatches: false },
+    ])(
+      'does not replay an unknown toggle after admission ($code, enabled=$enabled, matching inventory=$inventoryMatches)',
+      async ({ code, enabled, inventoryMatches }) => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+        try {
+          const refusal = Object.assign(new Error(busyMessage), {
+            gatewayCode: 'UNAVAILABLE',
+            retryable: true,
+            retryAfterMs: 1000,
+          });
+          const unknown = Object.assign(
+            new Error(
+              code === 'CLIENT_TIMEOUT' ? 'gateway request timed out' : 'Gateway client stopped',
+            ),
+            { code, requestSent: true },
+          );
+          const requestGateway = vi.fn().mockRejectedValueOnce(refusal).mockRejectedValue(unknown);
+          const runCommand = vi.fn();
+          const restartGatewayAfterMutation = vi.fn();
+          const service = new OpenClawExtensionImportService({
+            getOpenClawEngineManager: () =>
+              ({
+                getStatus: () => ({ phase: 'running' }),
+                getGatewayProcessId: () => 4242,
+                getGatewayProcessGeneration: () => 1,
+              }) as unknown as OpenClawEngineManager,
+            requestGateway,
+            runCommand,
+            restartGatewayAfterMutation,
+          });
+          const listInstalled = vi.spyOn(service, 'listInstalled').mockReturnValue([
+            {
+              id: 'busy-extension',
+              enabled: inventoryMatches ? enabled : !enabled,
+              installPath: path.join(fixtureRoot, 'state', 'extensions', 'busy-extension'),
+            },
+          ] as ReturnType<OpenClawExtensionImportService['listInstalled']>);
+
+          const pending = service.setEnabled('busy-extension', enabled);
+          await vi.advanceTimersByTimeAsync(1000);
+
+          await expect(pending).resolves.toEqual({
+            success: false,
+            error: unknown.message,
+            operationUnconfirmed: true,
+          });
+          expect(requestGateway).toHaveBeenCalledTimes(2);
+          expect(listInstalled).not.toHaveBeenCalled();
+          expect(runCommand).not.toHaveBeenCalled();
+          expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
+        } finally {
+          vi.useRealTimers();
+        }
+      },
+    );
+
+    it('does not dispatch or use CLI if Gateway changes during readmission readiness', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+      try {
+        let generation = 1;
+        let dispatches = 0;
+        const refusal = Object.assign(new Error(busyMessage), {
+          gatewayCode: 'UNAVAILABLE',
+          retryable: true,
+          retryAfterMs: 1000,
+        });
+        const requestGateway = vi.fn(async (_method, _params, options) => {
+          if (dispatches === 0) {
+            dispatches += 1;
+            throw refusal;
+          }
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          options.assertBeforeSend();
+          dispatches += 1;
+          return { ok: true, restartRequired: false };
+        });
+        const runCommand = vi.fn();
+        const restartGatewayAfterMutation = vi.fn();
+        const service = new OpenClawExtensionImportService({
+          getOpenClawEngineManager: () =>
+            ({
+              getStatus: () => ({ phase: 'running' }),
+              getGatewayProcessId: () => 4242,
+              getGatewayProcessGeneration: () => generation,
+            }) as unknown as OpenClawEngineManager,
+          requestGateway,
+          runCommand,
+          restartGatewayAfterMutation,
+        });
+
+        const pending = service.setEnabled('busy-extension', true);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(requestGateway).toHaveBeenCalledTimes(2);
+        generation += 1;
+        await vi.advanceTimersByTimeAsync(1000);
+
+        await expect(pending).resolves.toEqual({
+          success: false,
+          error: t('extensionOperationBusy'),
+        });
+        expect(dispatches).toBe(1);
+        expect(runCommand).not.toHaveBeenCalled();
+        expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it.each([
+      {
+        name: 'another UNAVAILABLE diagnostic',
+        message: 'Plugin inventory transaction failed',
+        metadata: { gatewayCode: 'UNAVAILABLE', retryable: true, retryAfterMs: 1000 },
+      },
+      {
+        name: 'an unclassified message',
+        message: busyMessage,
+        metadata: { retryable: true, retryAfterMs: 1000 },
+      },
+      {
+        name: 'another native code',
+        message: busyMessage,
+        metadata: { gatewayCode: 'INVALID_REQUEST', retryable: true, retryAfterMs: 1000 },
+      },
+      {
+        name: 'a nonretryable refusal',
+        message: busyMessage,
+        metadata: { gatewayCode: 'UNAVAILABLE', retryable: false, retryAfterMs: 1000 },
+      },
+      {
+        name: 'a missing native delay',
+        message: busyMessage,
+        metadata: { gatewayCode: 'UNAVAILABLE', retryable: true },
+      },
+      {
+        name: 'a nonfinite native delay',
+        message: busyMessage,
+        metadata: { gatewayCode: 'UNAVAILABLE', retryable: true, retryAfterMs: Number.NaN },
+      },
+    ])('preserves $name without replacing its diagnostic', async ({ message, metadata }) => {
+      for (const mutation of mutations) {
+        const fixture = setup(Object.assign(new Error(message), metadata));
+
+        await expect(mutation.invoke(fixture.service)).resolves.toEqual({
+          success: false,
+          error: message,
+        });
+        expect(fixture.requestGateway).toHaveBeenCalledOnce();
+        expect(fixture.runCommand).not.toHaveBeenCalled();
+        expect(fixture.restartGatewayAfterMutation).not.toHaveBeenCalled();
+      }
+    });
   });
 
   it.each([false, true])(
@@ -2282,9 +2756,14 @@ describe('OpenClawExtensionImportService', () => {
       expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.allow).toEqual([childId]);
       expect(runCommand).toHaveBeenCalledOnce();
     } else {
-      const result = await service.importPath(sourceDir, undefined, 'review-token');
+      const onOperationProgress = vi.fn();
+      const result = await service.importPath(sourceDir, undefined, 'review-token', {
+        onOperationProgress,
+      });
       expect(result.success).toBe(false);
       expect(result.installationCommitted).toBe(true);
+      expect(result.operationFailedStage).toBe('confirming');
+      expect(onOperationProgress).toHaveBeenCalledWith('confirming');
       expect(result.extensionId).toBe(
         outcome === 'receipt-child-unconfirmed' ? childId : undefined,
       );
@@ -2292,6 +2771,70 @@ describe('OpenClawExtensionImportService', () => {
       expect(runCommand).not.toHaveBeenCalled();
     }
   });
+
+  it.each(['inspection', 'reconciliation'])(
+    'preserves the post-install network policy %s failure stage',
+    async failure => {
+      const sourceDir = path.join(fixtureRoot, 'source');
+      const stateDir = path.join(fixtureRoot, 'state');
+      const installedDir = path.join(stateDir, 'extensions', 'policy-extension');
+      const configPath = path.join(stateDir, 'openclaw.json');
+      fs.mkdirSync(sourceDir);
+      fs.mkdirSync(stateDir);
+      fs.writeFileSync(
+        path.join(sourceDir, 'openclaw.plugin.json'),
+        JSON.stringify({ id: 'policy-extension' }),
+      );
+      let committed = false;
+      const onOperationProgress = vi.fn();
+      const runCommand = vi.fn(async () => {
+        fs.cpSync(sourceDir, installedDir, { recursive: true });
+        committed = true;
+        return { exitCode: 0, stdout: '', stderr: '' };
+      });
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () =>
+          ({
+            getStatus: () => ({ phase: 'ready' }),
+            getBaseDir: () => fixtureRoot,
+            getStateDir: () => stateDir,
+            getConfigPath: () => configPath,
+            buildCliEnvironment: async () => ({
+              env: { OPENCLAW_STATE_DIR: stateDir },
+              runtimeRoot: fixtureRoot,
+              openclawEntry: 'fixture.mjs',
+            }),
+          }) as unknown as OpenClawEngineManager,
+        runCommand,
+        outboundHeaderPolicy: {
+          inspectExtension: directory => {
+            if (directory === installedDir && failure === 'inspection')
+              throw new Error('Installed policy inspection failed');
+            return null;
+          },
+          reconcile: () => {
+            if (committed && failure === 'reconciliation')
+              throw new Error('Installed policy reconciliation failed');
+            return { overwrite: false, enabled: false, groups: [], digest: 'unchanged' };
+          },
+        },
+      });
+
+      const result = await service.importPath(sourceDir, undefined, undefined, {
+        trustMarketplaceSource: true,
+        onOperationProgress,
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        installationCommitted: true,
+        installPath: installedDir,
+        operationFailedStage: 'validating',
+      });
+      expect(onOperationProgress).toHaveBeenLastCalledWith('validating');
+      expect(runCommand).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each(['policy-change', 'unchanged', 'restart-required'])(
     'converges the Gateway started by a reviewed installation: %s',
@@ -2677,102 +3220,118 @@ describe('OpenClawExtensionImportService', () => {
     30_000,
   );
 
-  it.each([false, true])('refreshes Jev secrets without exposing values and honors plugin restartRequired=%s', async restartRequired => {
-    const stateDir = path.join(fixtureRoot, 'state');
-    const runtimeRoot = path.join(fixtureRoot, 'runtime');
-    const bundledDir = path.join(runtimeRoot, 'dist', 'extensions', 'typesafe');
-    const configPath = path.join(stateDir, 'openclaw.json');
-    fs.mkdirSync(bundledDir, { recursive: true });
-    fs.mkdirSync(stateDir, { recursive: true });
-    fs.copyFileSync(
-      'plugins/extensions/typesafe/openclaw.plugin.json',
-      path.join(bundledDir, 'openclaw.plugin.json'),
-    );
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({ plugins: { entries: { typesafe: { enabled: false } } } }),
-    );
-    const restartGateway = vi.fn().mockResolvedValue({ phase: 'running' });
-    const manager = {
-      getStateDir: () => stateDir,
-      getBaseDir: () => fixtureRoot,
-      getRuntimeRoot: () => runtimeRoot,
-      getConfigPath: () => configPath,
-      getStatus: () => ({ phase: 'running' }),
-      getGatewayConfigReloadGeneration: vi.fn(),
-      waitForGatewayConfigReload: vi.fn(),
-    } as unknown as OpenClawEngineManager;
-    let secretReloadFails = false;
-    const requestGateway = vi.fn(async (method: string) => {
-      if (method === 'secrets.reload') {
-        if (secretReloadFails) throw new Error('credential provider unavailable');
-        return { ok: true };
-      }
-      if (method === 'plugins.reload') return { ok: true, restartRequired };
-      return {
-        plugins: [{
-          id: 'typesafe', name: 'TypeSafe AI', installed: true, origin: 'bundled',
-          enabled: false, state: 'disabled', removable: false,
-        }],
-        mutationAllowed: true, diagnostics: [],
-      };
-    });
-    const service = new OpenClawExtensionImportService({
-      getOpenClawEngineManager: () => manager,
-      restartGatewayAfterMutation: restartGateway,
-      requestGateway,
-    });
-    expect((await service.listCatalog())[0]).toMatchObject({
-      canToggle: true,
-      removable: false,
-      configurationFields: [
-        expect.objectContaining({ path: 'apiKey', configured: false, sensitive: true }),
-      ],
-    });
-    await expect(
-      service.updateConfiguration('typesafe', { apiKey: 'synthetic-first-key' }),
-    ).resolves.toEqual({ success: true });
-    const saved = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(saved.plugins.entries.typesafe.enabled).toBe(false);
-    expect(saved.plugins.entries.typesafe.config.apiKey).toMatchObject({
-      source: 'file',
-      provider: 'justdo-extension-secrets',
-    });
-    expect(JSON.stringify(saved)).not.toContain('synthetic-first-key');
-    const catalog = await service.listCatalog();
-    expect(catalog[0].configurationFields[0].configured).toBe(true);
-    expect(JSON.stringify(catalog)).not.toContain('synthetic-first-key');
-    expect(restartGateway).toHaveBeenCalledTimes(restartRequired ? 1 : 0);
-    await service.updateConfiguration('typesafe', { apiKey: 'synthetic-first-key' });
-    expect(restartGateway).toHaveBeenCalledTimes(restartRequired ? 1 : 0);
-    await service.updateConfiguration('typesafe', { apiKey: 'synthetic-rotated-key' });
-    expect(restartGateway).toHaveBeenCalledTimes(restartRequired ? 2 : 0);
-    expect(requestGateway.mock.calls.filter(([method]) => method !== 'plugins.list')).toEqual([
-      ['secrets.reload', {}],
-      ['plugins.reload', { plugins: [{ pluginId: 'typesafe' }] }],
-      ['secrets.reload', {}],
-      ['plugins.reload', { plugins: [{ pluginId: 'typesafe' }] }],
-    ]);
-    expect(manager.waitForGatewayConfigReload).not.toHaveBeenCalled();
-    expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(saved);
-    const credentialStore = JSON.parse(
-      fs.readFileSync(path.join(stateDir, 'extension-secrets.json'), 'utf8'),
-    );
-    expect(credentialStore[saved.plugins.entries.typesafe.config.apiKey.id.slice(1)]).toBe(
-      'synthetic-rotated-key',
-    );
-    secretReloadFails = true;
-    await expect(service.updateConfiguration('typesafe', { apiKey: 'retry-key' })).resolves.toMatchObject({
-      success: false, error: 'credential provider unavailable',
-    });
-    expect(restartGateway).toHaveBeenCalledTimes(restartRequired ? 2 : 0);
-    secretReloadFails = false;
-    await expect(service.updateConfiguration('typesafe', { apiKey: 'retry-key' })).resolves.toEqual({ success: true });
-    expect(restartGateway).toHaveBeenCalledTimes(restartRequired ? 3 : 0);
-    await expect(
-      service.updateConfiguration('../typesafe', { apiKey: 'synthetic-key' }),
-    ).resolves.toMatchObject({ success: false });
-  });
+  it.each([false, true])(
+    'refreshes Jev secrets without exposing values and honors plugin restartRequired=%s',
+    async restartRequired => {
+      const stateDir = path.join(fixtureRoot, 'state');
+      const runtimeRoot = path.join(fixtureRoot, 'runtime');
+      const bundledDir = path.join(runtimeRoot, 'dist', 'extensions', 'typesafe');
+      const configPath = path.join(stateDir, 'openclaw.json');
+      fs.mkdirSync(bundledDir, { recursive: true });
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.copyFileSync(
+        'plugins/extensions/typesafe/openclaw.plugin.json',
+        path.join(bundledDir, 'openclaw.plugin.json'),
+      );
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({ plugins: { entries: { typesafe: { enabled: false } } } }),
+      );
+      const restartGateway = vi.fn().mockResolvedValue({ phase: 'running' });
+      const manager = {
+        getStateDir: () => stateDir,
+        getBaseDir: () => fixtureRoot,
+        getRuntimeRoot: () => runtimeRoot,
+        getConfigPath: () => configPath,
+        getStatus: () => ({ phase: 'running' }),
+        getGatewayConfigReloadGeneration: vi.fn(),
+        waitForGatewayConfigReload: vi.fn(),
+      } as unknown as OpenClawEngineManager;
+      let secretReloadFails = false;
+      const requestGateway = vi.fn(async (method: string) => {
+        if (method === 'secrets.reload') {
+          if (secretReloadFails) throw new Error('credential provider unavailable');
+          return { ok: true };
+        }
+        if (method === 'plugins.reload') return { ok: true, restartRequired };
+        return {
+          plugins: [
+            {
+              id: 'typesafe',
+              name: 'TypeSafe AI',
+              installed: true,
+              origin: 'bundled',
+              enabled: false,
+              state: 'disabled',
+              removable: false,
+            },
+          ],
+          mutationAllowed: true,
+          diagnostics: [],
+        };
+      });
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () => manager,
+        restartGatewayAfterMutation: restartGateway,
+        requestGateway,
+      });
+      expect((await service.listCatalog())[0]).toMatchObject({
+        canToggle: true,
+        removable: false,
+        configurationFields: [
+          expect.objectContaining({ path: 'apiKey', configured: false, sensitive: true }),
+        ],
+      });
+      await expect(
+        service.updateConfiguration('typesafe', { apiKey: 'synthetic-first-key' }),
+      ).resolves.toEqual({ success: true });
+      const saved = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(saved.plugins.entries.typesafe.enabled).toBe(false);
+      expect(saved.plugins.entries.typesafe.config.apiKey).toMatchObject({
+        source: 'file',
+        provider: 'justdo-extension-secrets',
+      });
+      expect(JSON.stringify(saved)).not.toContain('synthetic-first-key');
+      const catalog = await service.listCatalog();
+      expect(catalog[0].configurationFields[0].configured).toBe(true);
+      expect(JSON.stringify(catalog)).not.toContain('synthetic-first-key');
+      expect(restartGateway).toHaveBeenCalledTimes(restartRequired ? 1 : 0);
+      await service.updateConfiguration('typesafe', { apiKey: 'synthetic-first-key' });
+      expect(restartGateway).toHaveBeenCalledTimes(restartRequired ? 1 : 0);
+      await service.updateConfiguration('typesafe', { apiKey: 'synthetic-rotated-key' });
+      expect(restartGateway).toHaveBeenCalledTimes(restartRequired ? 2 : 0);
+      expect(requestGateway.mock.calls.filter(([method]) => method !== 'plugins.list')).toEqual([
+        ['secrets.reload', {}],
+        ['plugins.reload', { plugins: [{ pluginId: 'typesafe' }] }],
+        ['secrets.reload', {}],
+        ['plugins.reload', { plugins: [{ pluginId: 'typesafe' }] }],
+      ]);
+      expect(manager.waitForGatewayConfigReload).not.toHaveBeenCalled();
+      expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(saved);
+      const credentialStore = JSON.parse(
+        fs.readFileSync(path.join(stateDir, 'extension-secrets.json'), 'utf8'),
+      );
+      expect(credentialStore[saved.plugins.entries.typesafe.config.apiKey.id.slice(1)]).toBe(
+        'synthetic-rotated-key',
+      );
+      secretReloadFails = true;
+      await expect(
+        service.updateConfiguration('typesafe', { apiKey: 'retry-key' }),
+      ).resolves.toMatchObject({
+        success: false,
+        error: 'credential provider unavailable',
+      });
+      expect(restartGateway).toHaveBeenCalledTimes(restartRequired ? 2 : 0);
+      secretReloadFails = false;
+      await expect(
+        service.updateConfiguration('typesafe', { apiKey: 'retry-key' }),
+      ).resolves.toEqual({ success: true });
+      expect(restartGateway).toHaveBeenCalledTimes(restartRequired ? 3 : 0);
+      await expect(
+        service.updateConfiguration('../typesafe', { apiKey: 'synthetic-key' }),
+      ).resolves.toMatchObject({ success: false });
+    },
+  );
 
   it.each(['config-write', 'restart-throws', 'restart-error'])(
     'retries the same rotated credential after %s fails',

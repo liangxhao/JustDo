@@ -37,17 +37,19 @@ export function MarketplaceAction({
       ? updating
         ? 'marketplaceUpdating'
         : 'marketplaceInstalling'
-      : completed || alreadyInstalled
-        ? local
-          ? 'marketplaceInstalled'
-          : 'marketplaceStatusPending'
-        : controller.conflicts(item)
-          ? 'marketplaceLocalConflict'
-          : unavailable
-            ? 'marketplaceUnavailable'
-            : updating
-              ? 'marketplaceUpdate'
-              : 'marketplaceInstall',
+      : operation?.unconfirmed
+        ? 'marketplaceStatusPending'
+        : completed || alreadyInstalled
+          ? local
+            ? 'marketplaceInstalled'
+            : 'marketplaceStatusPending'
+          : controller.conflicts(item)
+            ? 'marketplaceLocalConflict'
+            : unavailable
+              ? 'marketplaceUnavailable'
+              : updating
+                ? 'marketplaceUpdate'
+                : 'marketplaceInstall',
   );
   return (
     <button
@@ -64,6 +66,7 @@ export function MarketplaceAction({
         controller.readOnly ||
         controller.runtimeUnavailable ||
         operation?.busy ||
+        operation?.unconfirmed ||
         completed ||
         alreadyInstalled ||
         controller.conflicts(item) ||
@@ -79,7 +82,7 @@ export function MarketplaceAction({
     >
       {operation?.busy ? (
         <ArrowPathIcon className="h-4 w-4 animate-spin" />
-      ) : completed && !local ? (
+      ) : operation?.unconfirmed || (completed && !local) ? (
         <ClockIcon className="h-4 w-4" />
       ) : completed || alreadyInstalled ? (
         <CheckIcon className="h-4 w-4" />
@@ -136,11 +139,13 @@ export function MarketplaceFeedback({
   if (!operation || operation.busy) return null;
   const warning =
     operation.warning ||
-    (operation.committed && operation.error
-      ? i18nService.t('marketplaceInstallCommittedWithError')
-      : item && operation.committed && !controller.localFor(item)
-        ? i18nService.t('marketplaceStatusPending')
-        : '');
+    (operation.unconfirmed
+      ? i18nService.t('marketplaceStatusPending')
+      : operation.committed && operation.error
+        ? i18nService.t('marketplaceInstallCommittedWithError')
+        : item && operation.committed && !controller.localFor(item)
+          ? i18nService.t('marketplaceStatusPending')
+          : '');
   if (!operation.message && !operation.error && !warning) return null;
   return (
     <div

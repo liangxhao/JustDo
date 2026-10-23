@@ -15,8 +15,15 @@ import {
   type MarketplaceSourcesResponse,
   type MarketplaceUpdateCheckResponse,
 } from '../../../shared/plugins/marketplace';
+import {
+  PluginOperationAction,
+  type PluginOperationContext,
+  type PluginOperationStage,
+  toPluginOperationStage,
+} from '../../../shared/plugins/pluginOperation';
 import type { PluginManager } from '../../plugins';
 import { MarketplaceError } from '../../plugins/marketplace/types';
+import { createPluginOperationReporter } from './pluginOperationProgress';
 
 const pluginKinds = new Set<string>(Object.values(MarketplacePluginKind));
 const installOperations = new Set<string>(Object.values(MarketplaceInstallOperation));
@@ -134,28 +141,40 @@ const logError = (operation: string, error: unknown): void => {
   console.error(`[PluginMarketplace] ${operation} failed:`, safe.errorCode, safe.error);
 };
 
-const publicInstallResult = (result: {
-  success: boolean;
-  pluginId?: string;
-  restartRequired?: boolean;
-  installationCommitted?: true;
-}): MarketplaceInstallResponse => {
+const publicInstallResult = (
+  result: {
+    success: boolean;
+    pluginId?: string;
+    restartRequired?: boolean;
+    installationCommitted?: true;
+    installSourceInUse?: true;
+    operationUnconfirmed?: true;
+    refreshWarning?: true;
+    failedStage?: string;
+  },
+  currentStage?: PluginOperationStage,
+): MarketplaceInstallResponse => {
   const pluginId =
     typeof result.pluginId === 'string' && result.pluginId.trim().length <= 256
       ? result.pluginId.trim() || undefined
       : undefined;
   if (!result.success) {
+    const failedStage = toPluginOperationStage(result.failedStage ?? '') ?? currentStage;
     return {
       success: false,
       ...(result.installationCommitted
         ? { installationCommitted: true as const, ...(pluginId ? { pluginId } : {}) }
         : {}),
+      ...(result.installSourceInUse ? { installSourceInUse: true as const } : {}),
+      ...(result.operationUnconfirmed ? { operationUnconfirmed: true as const } : {}),
       error: 'Marketplace installation failed',
       errorCode: MarketplaceErrorCode.INTERNAL,
+      ...(failedStage ? { failedStage } : {}),
     };
   }
   return {
     success: true,
+    ...(result.refreshWarning ? { refreshWarning: true as const } : {}),
     ...(pluginId ? { pluginId } : {}),
     ...(typeof result.restartRequired === 'boolean'
       ? { restartRequired: result.restartRequired }
@@ -286,20 +305,60 @@ export const registerMarketplaceHandlers = (pluginManager: PluginManager): void 
 
   ipcMain.handle(
     MarketplaceIpc.Install,
-    async (_event, request: unknown): Promise<MarketplaceInstallResponse> => {
+    async (event, request: unknown, context?: unknown): Promise<MarketplaceInstallResponse> => {
+      let reporter: ReturnType<typeof createPluginOperationReporter> | undefined;
+      let currentStage: PluginOperationStage | undefined;
       try {
         const input = requireRecord(request);
-        const result = await pluginManager.installFromMarketplace({
+        const installRequest: MarketplaceInstallRequest = {
           sourceId: requireString(input.sourceId, 'source id'),
           pluginId: requireString(input.pluginId, 'plugin id'),
           kind: requireKind(input.kind),
           version: optionalString(input.version, 'version', 128),
           operation: optionalOperation(input.operation),
-        });
-        return publicInstallResult(result);
+        };
+        try {
+          reporter = createPluginOperationReporter(
+            event,
+            context as PluginOperationContext | undefined,
+            installRequest.kind,
+            installRequest.operation === MarketplaceInstallOperation.UPDATE
+              ? PluginOperationAction.UPDATE
+              : PluginOperationAction.INSTALL,
+          );
+        } catch {
+          throw new MarketplaceError(
+            MarketplaceErrorCode.INVALID_REQUEST,
+            'Invalid plugin operation context',
+          );
+        }
+        const operationReporter = reporter;
+        const onProgress = (stage: PluginOperationStage) => {
+          const enteredStage = toPluginOperationStage(stage);
+          if (!enteredStage) return;
+          currentStage = enteredStage;
+          operationReporter.report(enteredStage);
+        };
+        const result = context
+          ? await pluginManager.installFromMarketplace(
+              installRequest,
+              onProgress,
+              context as PluginOperationContext,
+            )
+          : await pluginManager.installFromMarketplace(installRequest, onProgress);
+        return publicInstallResult(result, currentStage);
       } catch (error) {
         logError('install', error);
-        return { success: false, ...publicError(error) };
+        const failedStage =
+          (error instanceof MarketplaceError && toPluginOperationStage(error.failedStage ?? '')) ||
+          currentStage;
+        return {
+          success: false,
+          ...publicError(error),
+          ...(failedStage ? { failedStage } : {}),
+        };
+      } finally {
+        reporter?.finish();
       }
     },
   );

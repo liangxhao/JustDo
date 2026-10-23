@@ -43,6 +43,7 @@
     "format:check": "prettier --check .",
     "prepare": "husky",
     "test": "node scripts/test/run-tests.cjs",
+    "test:plugins:marketplace": "node scripts/test/plugin-marketplace-probe.cjs",
     "preview": "vite preview",
     "compile:electron": "tsc --project electron-tsconfig.json",
     "precompile:electron": "npm run rebuild:electron-native",

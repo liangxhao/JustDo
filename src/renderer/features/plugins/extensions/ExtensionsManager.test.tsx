@@ -9,10 +9,13 @@ import type {
   OpenClawPluginCapabilityReview,
 } from '@shared/plugins/extensions';
 import { getExtensionManagement } from '@shared/plugins/management';
+import { PluginOperationStage } from '@shared/plugins/pluginOperation';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { OPEN_TEAM_RECORDS } from '@/features/cowork/components/display/summary/agentTeamHistory';
+import PluginOperationFeedback from '@/features/plugins/shared/PluginOperationFeedback';
+import { getPluginOperationOwner } from '@/features/plugins/shared/pluginOperationService';
 
 import ExtensionsManager from './ExtensionsManager';
 
@@ -48,7 +51,9 @@ vi.mock('@/features/plugins/marketplace/usePluginMarketplace', async importOrigi
 
 vi.mock('@/services/i18n', () => ({
   i18nService: {
-    t: (key: string) => (key === 'extensionDeleteSuccess' ? 'Extension "{name}" deleted' : key),
+    t: (key: string) => key === 'extensionDeleteSuccess'
+      ? 'Extension "{name}" deleted'
+      : key === 'pluginImportPartialSummary' ? '{successCount} succeeded and {failureCount} failed.' : key,
     getLanguage: () => 'en',
   },
 }));
@@ -94,6 +99,167 @@ const deferred = <T,>() => {
   });
   return { promise, resolve };
 };
+
+test.each([1, 2])('reports the real reason and counts for %s rejected imports', async count => {
+  const paths = ['C:/imports/first', 'C:/imports/second'].slice(0, count);
+  const importPath = vi.fn().mockResolvedValue({
+    success: false, error: 'Invalid native package', failedStage: 'validating',
+  });
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: {
+      extensions: {
+        list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
+        importPath, onChanged: () => () => undefined,
+      },
+      dialog: { selectFolders: vi.fn().mockResolvedValue({
+        success: true, paths,
+      }) },
+    },
+  });
+  render(<ExtensionsManager />);
+  fireEvent.click(await screen.findByRole('button', { name: 'importExtension' }));
+  fireEvent.click(screen.getByRole('button', { name: /selectExtensionFolders/ }));
+  await waitFor(() => expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+    expect.objectContaining({
+      label: count === 1 ? 'first' : 'importExtension',
+      message: count === 1 ? 'Invalid native package' : '0 succeeded and 2 failed.',
+      items: paths.map(sourcePath => expect.objectContaining({
+        label: sourcePath.split('/').pop(), failedStage: 'validating',
+      })),
+    }),
+  ]));
+  expect(importPath).toHaveBeenCalledTimes(count);
+  cleanup();
+});
+
+test('retains an extension failure after leaving the category and preserves the failed phase', async () => {
+  const reply = deferred<ExtensionSetEnabledResult>();
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: {
+      extensions: {
+        list: vi.fn().mockResolvedValue({ success: true, extensions: [extension] }),
+        setEnabled: vi.fn(() => reply.promise),
+        onChanged: () => () => undefined,
+      },
+    },
+  });
+  const view = render(<ExtensionsManager />);
+  fireEvent.click(await screen.findByRole('switch', { name: 'extensionEnable' }));
+  view.unmount();
+
+  await act(async () =>
+    reply.resolve({
+      success: false,
+      error: 'Native apply failed',
+      failedStage: PluginOperationStage.APPLYING_CONFIGURATION,
+    }),
+  );
+
+  expect(getPluginOperationOwner().snapshot()).toEqual([]);
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+    expect.objectContaining({
+      message: 'Native apply failed',
+      failedStage: PluginOperationStage.APPLYING_CONFIGURATION,
+    }),
+  ]);
+});
+
+test.each(['cancel', 'unmount'] as const)(
+  'keeps earlier import failures when capability review ends by %s',
+  async end => {
+    const importPath = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: false,
+        error: 'Invalid first package',
+        failedStage: PluginOperationStage.VALIDATING,
+      })
+      .mockResolvedValueOnce({ success: false, capabilityReview });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
+          importPath,
+          onChanged: () => () => undefined,
+        },
+        dialog: {
+          selectFolders: vi.fn().mockResolvedValue({
+            success: true,
+            paths: ['C:/imports/invalid', 'C:/imports/reviewed'],
+          }),
+        },
+      },
+    });
+    const view = render(<ExtensionsManager />);
+    fireEvent.click(await screen.findByRole('button', { name: 'importExtension' }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: /selectExtensionFolders selectExtensionFoldersDescription/,
+      }),
+    );
+    await screen.findByText('extensionCapabilityReviewTitle');
+    if (end === 'cancel') fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
+    else view.unmount();
+
+    const failures = getPluginOperationOwner().failureSnapshot();
+    expect(failures).toHaveLength(1);
+    expect(failures[0].items).toEqual([
+      expect.objectContaining({
+        label: 'invalid',
+        message: 'Invalid first package',
+        failedStage: PluginOperationStage.VALIDATING,
+      }),
+    ]);
+    expect(importPath).toHaveBeenCalledTimes(2);
+    cleanup();
+  },
+);
+
+test('keeps accumulated errors when the next review response arrives after unmount', async () => {
+  const review = deferred<ExtensionImportResult>();
+  const importPath = vi
+    .fn()
+    .mockResolvedValueOnce({
+      success: false,
+      error: 'First package rejected',
+      failedStage: PluginOperationStage.VALIDATING,
+    })
+    .mockReturnValueOnce(review.promise);
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: {
+      extensions: {
+        list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
+        importPath,
+        onChanged: () => () => undefined,
+      },
+      dialog: {
+        selectFolders: vi
+          .fn()
+          .mockResolvedValue({ success: true, paths: ['C:/imports/first', 'C:/imports/second'] }),
+      },
+    },
+  });
+  const view = render(<ExtensionsManager />);
+  fireEvent.click(await screen.findByRole('button', { name: 'importExtension' }));
+  fireEvent.click(
+    screen.getByRole('button', {
+      name: /selectExtensionFolders selectExtensionFoldersDescription/,
+    }),
+  );
+  await waitFor(() => expect(importPath).toHaveBeenCalledTimes(2));
+  view.unmount();
+  await act(async () => review.resolve({ success: false, capabilityReview }));
+
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+    expect.objectContaining({
+      items: [expect.objectContaining({ message: 'First package rejected' })],
+    }),
+  ]);
+});
 
 describe('ExtensionsManager extension toggle', () => {
   beforeEach(() => {
@@ -227,21 +393,34 @@ describe('ExtensionsManager extension toggle', () => {
   });
 
   test.each(['stt-local-cli', 'tts-local-cli'])(
-    'shows a model settings gear on the disabled %s card without enabling it', async id => {
+    'shows a model settings gear on the disabled %s card without enabling it',
+    async id => {
       const setEnabled = vi.fn();
-      Object.defineProperty(window, 'electron', { configurable: true, value: {
-        extensions: {
-          list: vi.fn(async () => ({ success: true, extensions: [{ ...extension, id, name: id }] })),
-          setEnabled, onChanged: vi.fn(() => vi.fn()), onImportProgress: vi.fn(() => vi.fn()),
+      Object.defineProperty(window, 'electron', {
+        configurable: true,
+        value: {
+          extensions: {
+            list: vi.fn(async () => ({
+              success: true,
+              extensions: [{ ...extension, id, name: id }],
+            })),
+            setEnabled,
+            onChanged: vi.fn(() => vi.fn()),
+            onImportProgress: vi.fn(() => vi.fn()),
+          },
+          localSpeechModels: {
+            list: vi.fn(async () => ({ supported: true, models: [] })),
+            onChanged: vi.fn(() => vi.fn()),
+          },
         },
-        localSpeechModels: {
-          list: vi.fn(async () => ({ supported: true, models: [] })),
-          onChanged: vi.fn(() => vi.fn()),
-        },
-      } });
+      });
       render(<ExtensionsManager />);
-      fireEvent.click(await screen.findByRole('button', { name: `${id} · speechExtensionModelSettings` }));
-      expect(screen.getByRole('dialog', { name: `${id} · speechExtensionModelSettings` })).toBeTruthy();
+      fireEvent.click(
+        await screen.findByRole('button', { name: `${id} · speechExtensionModelSettings` }),
+      );
+      expect(
+        screen.getByRole('dialog', { name: `${id} · speechExtensionModelSettings` }),
+      ).toBeTruthy();
       expect(setEnabled).not.toHaveBeenCalled();
       expect(screen.queryByRole('heading', { name: id, level: 2 })).toBeNull();
     },
@@ -350,10 +529,10 @@ describe('ExtensionsManager extension toggle', () => {
       expect(draft.value).toBe('new-detail-draft');
       expect(screen.queryByText('extensionConfigurationSaved')).toBeNull();
       expect(screen.queryByText('Stale configuration error')).toBeNull();
-      expect(updateConfiguration).toHaveBeenCalledExactlyOnceWith({
-        extensionId: first.id,
-        values: { apiKey: 'first-value' },
-      });
+      expect(updateConfiguration).toHaveBeenCalledExactlyOnceWith(
+        { extensionId: first.id, values: { apiKey: 'first-value' } },
+        { requestId: expect.any(String) },
+      );
     },
   );
 
@@ -386,7 +565,10 @@ describe('ExtensionsManager extension toggle', () => {
     await waitFor(() => expect(screen.queryByText('Sample Extension')).toBeNull());
     expect(screen.queryByText('extensionDeleteFailed')).toBeNull();
     expect(screen.queryByText(/unavailable/i)).toBeNull();
-    expect(deleteExtension).toHaveBeenCalledWith({ extensionId: extension.id });
+    expect(deleteExtension).toHaveBeenCalledWith(
+      { extensionId: extension.id },
+      { requestId: expect.any(String) },
+    );
   });
 
   test.each([true, false])(
@@ -406,7 +588,12 @@ describe('ExtensionsManager extension toggle', () => {
           },
         },
       });
-      render(<ExtensionsManager />);
+      render(
+        <>
+          <ExtensionsManager />
+          <PluginOperationFeedback />
+        </>,
+      );
       fireEvent.click(
         await screen.findByRole('button', { name: 'subtaskShowInfo: Sample Extension' }),
       );
@@ -420,7 +607,10 @@ describe('ExtensionsManager extension toggle', () => {
       expect(screen.getByRole('status').textContent).toBe('extensionDeleting');
       expect(screen.getByRole('button', { name: 'cancel' }).hasAttribute('disabled')).toBe(true);
       fireEvent.click(deleting);
-      expect(deleteExtension).toHaveBeenCalledExactlyOnceWith({ extensionId: extension.id });
+      expect(deleteExtension).toHaveBeenCalledExactlyOnceWith(
+        { extensionId: extension.id },
+        { requestId: expect.any(String) },
+      );
 
       await act(async () => {
         installed = !success;
@@ -430,7 +620,7 @@ describe('ExtensionsManager extension toggle', () => {
       await waitFor(() =>
         expect(screen.queryByRole('button', { name: 'extensionDeleting' })).toBeNull(),
       );
-      expect(screen.queryByRole('status')).toBeNull();
+      expect(screen.queryByText('extensionDeleting')).toBeNull();
       if (success) {
         expect(screen.getByText('Extension "Sample Extension" deleted')).toBeTruthy();
       } else {
@@ -621,10 +811,13 @@ describe('ExtensionsManager extension toggle', () => {
     fireEvent.click(toggle);
 
     await waitFor(() =>
-      expect(setEnabled).toHaveBeenCalledWith({
-        extensionId: extension.id,
-        enabled: true,
-      }),
+      expect(setEnabled).toHaveBeenCalledWith(
+        {
+          extensionId: extension.id,
+          enabled: true,
+        },
+        { requestId: expect.any(String) },
+      ),
     );
     expect(toggle.getAttribute('aria-checked')).toBe('true');
     expect(toggle.getAttribute('aria-busy')).toBe('true');
@@ -882,10 +1075,13 @@ describe('ExtensionsManager extension toggle', () => {
     fireEvent.change(input, { target: { value: 'synthetic-ui-key' } });
     fireEvent.click(screen.getByRole('button', { name: 'save' }));
     await waitFor(() =>
-      expect(updateConfiguration).toHaveBeenCalledWith({
-        extensionId: 'typesafe',
-        values: { apiKey: 'synthetic-ui-key' },
-      }),
+      expect(updateConfiguration).toHaveBeenCalledWith(
+        {
+          extensionId: 'typesafe',
+          values: { apiKey: 'synthetic-ui-key' },
+        },
+        { requestId: expect.any(String) },
+      ),
     );
     await waitFor(() => expect(input.value).toBe(''));
     expect(setEnabled).not.toHaveBeenCalled();
@@ -999,10 +1195,13 @@ describe('ExtensionsManager extension toggle', () => {
     fireEvent.change(input, { target: { value: 'synthetic-ui-secret' } });
     fireEvent.click(screen.getByRole('button', { name: 'save' }));
     await waitFor(() =>
-      expect(updateConfiguration).toHaveBeenCalledWith({
-        extensionId: extension.id,
-        values: { 'env.vars.EXAMPLE_ALIAS': 'synthetic-ui-secret' },
-      }),
+      expect(updateConfiguration).toHaveBeenCalledWith(
+        {
+          extensionId: extension.id,
+          values: { 'env.vars.EXAMPLE_ALIAS': 'synthetic-ui-secret' },
+        },
+        { requestId: expect.any(String) },
+      ),
     );
     await waitFor(() => expect(input.value).toBe(''));
     expect(input.placeholder).toBe('extensionConfigurationStored');
@@ -1060,10 +1259,13 @@ describe('ExtensionsManager extension toggle', () => {
     fireEvent.change(input, { target: { value: 'synthetic-alias-key' } });
     fireEvent.click(screen.getByRole('button', { name: 'save' }));
     await waitFor(() =>
-      expect(updateConfiguration).toHaveBeenCalledWith({
-        extensionId: extension.id,
-        values: { 'env.vars.EXAMPLE_ALIAS': 'synthetic-alias-key' },
-      }),
+      expect(updateConfiguration).toHaveBeenCalledWith(
+        {
+          extensionId: extension.id,
+          values: { 'env.vars.EXAMPLE_ALIAS': 'synthetic-alias-key' },
+        },
+        { requestId: expect.any(String) },
+      ),
     );
   });
 
@@ -1151,6 +1353,49 @@ describe('ExtensionsManager extension toggle', () => {
     expect(importPath).toHaveBeenNthCalledWith(
       3,
       expect.objectContaining({ sourcePath: 'C:\\extensions\\second' }),
+      { requestId: expect.any(String) },
     );
   });
+});
+
+test('retains an earlier refresh warning when a later capability review is cancelled', async () => {
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: {
+      extensions: {
+        list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
+        importPath: vi
+          .fn()
+          .mockResolvedValueOnce({
+            success: true,
+            extensionId: 'installed-first',
+            refreshWarning: true,
+          })
+          .mockResolvedValueOnce({ success: false, capabilityReview }),
+        onChanged: () => () => undefined,
+      },
+      dialog: {
+        selectFolders: vi
+          .fn()
+          .mockResolvedValue({ success: true, paths: ['C:/imports/first', 'C:/imports/second'] }),
+      },
+    },
+  });
+  render(<ExtensionsManager />);
+  fireEvent.click(await screen.findByRole('button', { name: 'importExtension' }));
+  fireEvent.click(
+    screen.getByRole('button', {
+      name: /selectExtensionFolders selectExtensionFoldersDescription/,
+    }),
+  );
+  await screen.findByText('extensionCapabilityReviewTitle');
+  fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
+
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+    expect.objectContaining({
+      state: 'refresh_failed',
+      items: [expect.objectContaining({ label: 'installed-first', type: 'success' })],
+    }),
+  ]);
+  cleanup();
 });

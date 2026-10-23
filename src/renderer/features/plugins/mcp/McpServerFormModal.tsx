@@ -39,6 +39,7 @@ interface McpServerFormModalProps {
   existingNames: string[];
   onClose: () => void;
   onSave: (data: McpServerFormData) => Promise<{ success: boolean; error?: string }>;
+  executionFailureHandled?: boolean;
   onDelete?: () => void;
   onProbe?: () => void;
   probing?: boolean;
@@ -51,6 +52,7 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
   artworkTone = getPluginArtworkTone('mcp:user'),
   registryEntry,
   defaultRequestTimeoutSeconds = DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS,
+  executionFailureHandled = false,
   existingNames,
   onClose,
   onSave,
@@ -253,16 +255,17 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
       const result = await onSave(data);
       if (generation !== formGeneration.current) return;
       if (!result.success) {
-        setError(
-          result.error === MCP_NAME_CONFLICT_ERROR
-            ? i18nService.t(MCP_NAME_CONFLICT_ERROR)
-            : result.error || i18nService.t(isEdit ? 'mcpUpdateFailed' : 'mcpCreateFailed'),
-        );
+        if (!executionFailureHandled)
+          setError(
+            result.error === MCP_NAME_CONFLICT_ERROR
+              ? i18nService.t(MCP_NAME_CONFLICT_ERROR)
+              : result.error || i18nService.t(isEdit ? 'mcpUpdateFailed' : 'mcpCreateFailed'),
+          );
         return;
       }
       onClose();
     } catch (failure) {
-      if (generation === formGeneration.current) {
+      if (generation === formGeneration.current && !executionFailureHandled) {
         setError(
           failure instanceof Error
             ? failure.message

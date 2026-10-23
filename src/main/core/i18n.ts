@@ -92,7 +92,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     sessionModelConfigurationUnavailable: '无法读取模型配置，请稍后重试。',
     sessionModelIdentityChanged: '模型准备期间会话身份发生变化，操作已停止。',
     sessionModelPreparationUnconfirmed: '未能确认会话模型已生效，请重新选择模型后重试。',
-    extensionConversionNotImplemented: '该扩展需要转换为 OpenClaw 格式，转换功能暂未实现。',
+    extensionConversionNotImplemented: `该扩展不满足 ${PRODUCT_NAME} 的扩展格式。请使用包含 openclaw.plugin.json 和已编译运行入口的原生扩展包；其他插件格式不能直接导入。`,
     extensionImportSourceChanged: '导入准备期间源目录发生变化，请重试。',
     agentTeamSkillSyncFailed: '扩展开关已保存，但 Agent Team 技能同步未完成。请重试同一开关操作。',
     engineRestartUnconfirmed: '重启请求的结果尚未确认，未追加重启。请稍后查看引擎状态。',
@@ -101,6 +101,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
       '设置已保存，但重启请求的结果尚未确认。未追加重启，设置是否生效仍待确认。',
     extensionCredentialRefreshUnconfirmed: '扩展凭据已保存，但尚未确认运行时刷新成功。',
     extensionRuntimeServiceFailed: '扩展服务启动失败，请查看运行时诊断。',
+    extensionOperationBusy: '另一个插件或配置操作仍在处理中，请等待完成后再试。',
     extensionUninstallUnconfirmed: '扩展卸载结果尚未确认，请稍后刷新状态；未重复执行卸载。',
     extensionInstallUnconfirmed: '原生运行时未确认扩展安装结果，请稍后刷新状态。',
     extensionInstallReceiptIncomplete:
@@ -277,8 +278,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'The session identity changed while preparing the model. The operation has stopped.',
     sessionModelPreparationUnconfirmed:
       'The session model could not be confirmed. Select the model again and retry.',
-    extensionConversionNotImplemented:
-      'This extension requires conversion to OpenClaw format. Conversion is not implemented yet.',
+    extensionConversionNotImplemented: `This extension does not meet ${PRODUCT_NAME}'s extension format requirements. Use a native extension package containing openclaw.plugin.json and a compiled runtime entry. Other plugin formats cannot be imported directly.`,
     extensionImportSourceChanged: 'The import source changed during preparation. Please try again.',
     agentTeamSkillSyncFailed:
       'The extension setting was saved, but the Agent Team skill could not be synchronized. Retry the same toggle.',
@@ -292,6 +292,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'Extension credentials were saved, but runtime refresh is unconfirmed.',
     extensionRuntimeServiceFailed:
       'An extension service failed to start. Check the runtime diagnostics.',
+    extensionOperationBusy:
+      'Another plugin or configuration operation is still in progress. Wait for it to finish, then try again.',
     extensionUninstallUnconfirmed:
       'The extension uninstall result is not confirmed. Refresh its status later; uninstall was not repeated.',
     extensionInstallUnconfirmed:

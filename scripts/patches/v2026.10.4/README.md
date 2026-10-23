@@ -4,7 +4,7 @@ The source is the pristine `openclaw@2026.10.4` npm archive locked by `source-lo
 
 ## Disposition
 
-The target contains 33 independently removable patches. Native in-process dispatch now separates both transcript and CLI-history writer scopes after caller-context restoration and authority capture; former 039 is removed. Pristine contracts and cross-bundle SDK tests retain this boundary. Former 043 remains necessary: the target native stop/close lifecycle still reproduces foreground SQLITE_BUSY. Its new 025 transformer preserves scheduled-maintenance joining and checks six native copies plus the final bundle. Real UI acceptance additionally exposed global finalization-hook buffering; 026 scopes that hold to the admitted native attempt without weakening owned revisions. Fresh-session acceptance exposed Windows canonical-readiness aliases and response publication during deferred reads; 027/028 address those separate native boundaries. Structured reasoning exposed an independent provider-parser and Agent delivery hold; 029 streams native normalized public text independently of the private thinking lane. Manual Apps exposed a persisted-workspace mismatch that retires their MCP runtime on the next model run; 031 aligns native workspace selection.
+The target contains 34 independently removable patches. Native in-process dispatch now separates both transcript and CLI-history writer scopes after caller-context restoration and authority capture; former 039 is removed. Pristine contracts and cross-bundle SDK tests retain this boundary. Former 043 remains necessary: the target native stop/close lifecycle still reproduces foreground SQLITE_BUSY. Its new 025 transformer preserves scheduled-maintenance joining and checks six native copies plus the final bundle. Real UI acceptance additionally exposed global finalization-hook buffering; 026 scopes that hold to the admitted native attempt without weakening owned revisions. Fresh-session acceptance exposed Windows canonical-readiness aliases and response publication during deferred reads; 027/028 address those separate native boundaries. Structured reasoning exposed an independent provider-parser and Agent delivery hold; 029 streams native normalized public text independently of the private thinking lane. Manual Apps exposed a persisted-workspace mismatch that retires their MCP runtime on the next model run; 031 aligns native workspace selection.
 
 Most former worker/recovery duplicates are now shared imports. Target counts are audited from this archive; old 9.8 counts are not target evidence. Source application, current-shape idempotence and final bundle verification are separate requirements.
 
@@ -43,6 +43,44 @@ Most former worker/recovery duplicates are now shared imports. Target counts are
 | [031-mcp-app-session-workspace.cjs](031-mcp-app-session-workspace.cjs) | New | prepare manual Apps in the same persisted session workspace as model runs, retaining their native runtime and local resources across turns. | upstream manual App preparation uses the native session ingress workspace resolver and fences changes during preparation. |
 | [032-goal-continuation-admission.cjs](032-goal-continuation-admission.cjs) | New | admit a conditional backend Goal successor after exact settlement and native handoff arbitration, atomically recording acceptance and cumulative automatic count. | upstream agent ingress supplies equivalent final admission, durable acceptance/count and exact settled predecessor observation. |
 | [033-run-progress-observations.cjs](033-run-progress-observations.cjs) | New | expose content-free tool argument/model stream activity through existing native status items. | native Gateway publishes equivalent provider-independent stream progress before tool execution, including bounded replay. |
+| [034-windows-plugin-directory-publication.cjs](034-windows-plugin-directory-publication.cjs) | New | recover a refused local Windows plugin-directory publication within the same copied artifact, guarded transaction and bounded wait. | native plugin installs provide equivalent receipt-bound, bounded Windows publication recovery. |
+
+## Windows plugin directory publication
+
+Pristine `@openclaw/fs-safe@0.24.2` copies hardlink-rejected plugin sources into a
+fresh `.fs-safe-move-*.tmp` tree, calls `guardedRename` once, and cleans the stage
+when publication fails. A real Windows `CreateFileW` handle on a copied child
+file with `FILE_SHARE_READ | FILE_SHARE_WRITE` but no `FILE_SHARE_DELETE`
+reproduces the observed `EPERM` at that final rename. Ordinary Node reads,
+directory handles and skill junctions are not evidence of the blocking owner.
+Public plugin APIs cannot resume just this final syscall; repeating the whole
+install would discard the captured artifact and repeat a mutation.
+
+034 opts only native extension directory installation into recovery. Its ordinary
+implementation lives in `src/main/openclaw/runtime/native-support/`. Normal
+successful installs do not probe volumes or compare the copied tree again. A
+matching `rename` syscall `EPERM`/`EBUSY` can recover only after proving a local
+fixed NTFS volume, the absent destination and the original guarded ownership.
+The five-second total budget includes volume verification. Before each retry it
+revalidates the original source manifest, every copied inode and exact file
+bytes, rejects extra entries and hardlink changes, and reruns the original
+parent/authority/stage guards synchronously at dispatch. Each comparison also
+stops after 100 ms, 4,096 entries or 64 MiB, retaining the original refusal rather
+than blocking Gateway on a large tree. It retains one stage,
+one backup and one native installation request. Guard/callback failures,
+post-publication failures, changed artifacts, unknown outcomes, remote volumes
+and other callers never trigger replay. Exhaustion follows native failure and
+old-version restoration.
+
+Source application validates four exact locked files before writing; mixed and
+historical shapes fail. The final bundled helper and its live caller bindings
+are verified independently. Patched fs-safe metadata/JavaScript and the copied
+support module are hashed in the frozen artifact manifest, independently of the
+Gateway bundle. Focused behavior tests live in
+`tests/openclaw/patches/v2026.10.4/plugin-directory-publication.test.ts`;
+actual Native acceptance uses the original import packages and a separate,
+explicit test-only no-delete handle, retaining both old-runtime failure and
+fresh-runtime recovery evidence.
 
 ## Native bindings and ordinary implementations
 

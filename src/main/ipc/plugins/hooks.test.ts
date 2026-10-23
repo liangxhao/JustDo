@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { HookIpc } from '../../../shared/plugins/hooks';
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
+import { PluginOperationIpc, PluginOperationStage } from '../../../shared/plugins/pluginOperation';
 import { OpenClawConfigSyncService } from '../../openclaw/config/openclawConfigSyncService';
 import type { OpenClawHookStore } from '../../plugins/hooks';
 import type { OpenClawHookRecord } from '../../plugins/hooks/openclawHookStore';
@@ -41,6 +42,57 @@ beforeEach(() => {
 });
 
 const importRoots: string[] = [];
+
+test('Hook toggle waits with real progress and only enriches the final inventory', async () => {
+  vi.spyOn(console, 'info').mockImplementation(() => undefined);
+  let release!: (result: { hooks: number }) => void;
+  const syncConfig = vi.fn(
+    () =>
+      new Promise<{ hooks: number }>(resolve => {
+        release = resolve;
+      }),
+  );
+  const sender = { isDestroyed: () => false, send: vi.fn() };
+  const requestGateway = vi.fn(async (method: string) =>
+    method === 'plugins.list'
+      ? { plugins: [{ id: 'parent', origin: 'bundled' }] }
+      : {
+          ...hookReport,
+          hooks: [
+            ...hookReport.hooks,
+            { name: 'managed-child', hookKey: 'child', managedByPlugin: true, pluginId: 'parent' },
+          ],
+        },
+  );
+  registerHookHandlers({
+    getStore: () =>
+      ({ getHook: vi.fn(() => null), setEnabled: vi.fn() }) as unknown as OpenClawHookStore,
+    requestGateway,
+    syncConfig,
+    installationService: new PluginInstallationService(),
+  });
+  const mutation = handlers.get(HookIpc.SetEnabled)!(
+    { sender },
+    { id: 'session-memory', enabled: false },
+    { requestId: 'hook-disable' },
+  );
+  await vi.waitFor(() => expect(syncConfig).toHaveBeenCalledOnce());
+  expect(requestGateway.mock.calls.map(([method]) => method)).toEqual(['hooks.status']);
+  expect(sender.send).toHaveBeenLastCalledWith(
+    PluginOperationIpc.Progress,
+    expect.objectContaining({
+      requestId: 'hook-disable',
+      stage: PluginOperationStage.APPLYING_CONFIGURATION,
+    }),
+  );
+  release({ hooks: 1 });
+  await expect(mutation).resolves.toMatchObject({ success: true });
+  expect(requestGateway.mock.calls.map(([method]) => method)).toEqual([
+    'hooks.status',
+    'hooks.status',
+    'plugins.list',
+  ]);
+});
 
 afterEach(() => {
   for (const root of importRoots.splice(0)) {
@@ -448,7 +500,7 @@ test('restores the Hook files and enabled record when deletion cannot be applied
   expect(harness.syncConfig).toHaveBeenCalledTimes(2);
 });
 
-test('does not relabel committed Hook deletion as failure when its status refresh is unavailable', async () => {
+test('marks committed Hook deletion refresh failure without relabeling the mutation as failed', async () => {
   const harness = createHookImportHarness();
   await expect(harness.importHook()).resolves.toMatchObject({ success: true });
   const report = await harness.requestGateway('hooks.status');
@@ -459,6 +511,7 @@ test('does not relabel committed Hook deletion as failure when its status refres
   await expect(handlers.get(HookIpc.Delete)?.(undefined, 'demo-hook')).resolves.toMatchObject({
     success: true,
     restartRequired: false,
+    refreshWarning: true,
   });
   expect(fs.existsSync(harness.installedPath)).toBe(false);
   expect(harness.records.has('demo-hook')).toBe(false);
@@ -629,7 +682,11 @@ test('rolls back a newly inserted hook state when configuration sync fails', asy
 
   await expect(
     handlers.get(HookIpc.SetEnabled)?.(undefined, { id: 'session-memory', enabled: false }),
-  ).resolves.toEqual({ success: false, error: 'sync failed Rollback incomplete: sync failed' });
+  ).resolves.toEqual({
+    success: false,
+    error: 'sync failed Rollback incomplete: sync failed',
+    failedStage: PluginOperationStage.APPLYING_CONFIGURATION,
+  });
   expect(deleteHook).toHaveBeenCalledWith('session-memory');
 });
 
@@ -649,7 +706,11 @@ test('rolls back a newly inserted hook state when configuration sync throws', as
 
   await expect(
     handlers.get(HookIpc.SetEnabled)?.(undefined, { id: 'session-memory', enabled: false }),
-  ).resolves.toEqual({ success: false, error: 'sync crashed Rollback incomplete: sync crashed' });
+  ).resolves.toEqual({
+    success: false,
+    error: 'sync crashed Rollback incomplete: sync crashed',
+    failedStage: PluginOperationStage.APPLYING_CONFIGURATION,
+  });
   expect(deleteHook).toHaveBeenCalledWith('session-memory');
 });
 
@@ -668,10 +729,18 @@ test('rejects malformed and plugin-managed hook mutations', async () => {
 
   await expect(
     handlers.get(HookIpc.SetEnabled)?.(undefined, { id: 'session-memory', enabled: 'yes' }),
-  ).resolves.toEqual({ success: false, error: 'Hook id and enabled state are required' });
+  ).resolves.toEqual({
+    success: false,
+    error: 'Hook id and enabled state are required',
+    failedStage: PluginOperationStage.VALIDATING,
+  });
   await expect(
     handlers.get(HookIpc.SetEnabled)?.(undefined, { id: 'session-memory', enabled: false }),
-  ).resolves.toEqual({ success: false, error: 'Plugin-managed Hooks cannot be changed here' });
+  ).resolves.toEqual({
+    success: false,
+    error: 'Plugin-managed Hooks cannot be changed here',
+    failedStage: PluginOperationStage.VALIDATING,
+  });
   expect(setEnabled).not.toHaveBeenCalled();
 });
 

@@ -1,3 +1,4 @@
+import { BrowserWindow } from 'electron';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 vi.mock('electron', () => ({
@@ -54,5 +55,36 @@ test('returns an error for a rejected MCP application even when the native error
   await expect(service.syncConfig()).resolves.toEqual({
     tools: 0,
     error: 'Failed to synchronize MCP configuration',
+  });
+});
+
+test('correlates operation-owned sync notifications without changing background sync events', async () => {
+  const send = vi.fn();
+  vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([
+    { isDestroyed: () => false, webContents: { send } } as unknown as BrowserWindow,
+  ]);
+  const sync = vi
+    .fn()
+    .mockResolvedValue({ success: false, changed: false, error: 'Apply refused' });
+  const service = new McpConfigSyncService({
+    getMcpStore: () => ({ getEnabledServers: () => [] }) as unknown as McpStore,
+    syncOpenClawConfig: sync,
+  });
+
+  await service.syncConfigAfterExclusiveMutation(sync, { requestId: 'mcp-operation:one' });
+  expect(send).toHaveBeenNthCalledWith(1, 'mcp:config:syncStart', {
+    requestId: 'mcp-operation:one',
+  });
+  expect(send).toHaveBeenNthCalledWith(2, 'mcp:config:syncDone', {
+    requestId: 'mcp-operation:one',
+    tools: 0,
+    error: 'Apply refused',
+  });
+  send.mockClear();
+  await service.syncConfig();
+  expect(send).toHaveBeenNthCalledWith(1, 'mcp:config:syncStart', {});
+  expect(send).toHaveBeenNthCalledWith(2, 'mcp:config:syncDone', {
+    tools: 0,
+    error: 'Apply refused',
   });
 });

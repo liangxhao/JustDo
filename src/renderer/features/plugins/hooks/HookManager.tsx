@@ -4,13 +4,14 @@ import {
   ArrowUpTrayIcon,
   FolderIcon,
   LockClosedIcon,
-  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { PluginHubScope } from '@shared/plugins/management';
+import { PluginKind } from '@shared/plugins/marketplace';
+import { PluginOperationAction } from '@shared/plugins/pluginOperation';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import { HookEntry } from '@/features/plugins/hooks/hook';
+import { HookEntry, HookListResult } from '@/features/plugins/hooks/hook';
 import { hookService } from '@/features/plugins/hooks/hookService';
 import ExtensionBadge from '@/features/plugins/shared/ExtensionBadge';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
@@ -24,6 +25,11 @@ import {
 import PluginGroupSection from '@/features/plugins/shared/PluginGroupSection';
 import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubTypes';
 import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownDescription';
+import {
+  pluginOperationFailure,
+  pluginOperationRefreshFailure,
+} from '@/features/plugins/shared/pluginMutationFeedback';
+import { reportPluginOperationFailure } from '@/features/plugins/shared/pluginOperationService';
 import { comparePluginNames } from '@/features/plugins/shared/pluginOrdering';
 import PluginStateButton, {
   PluginLockedIndicator,
@@ -80,7 +86,6 @@ const HookManager: React.FC<HookManagerProps> = ({
   const [importPickerOpen, setImportPickerOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importSuccess, setImportSuccess] = useState('');
-  const [importErrors, setImportErrors] = useState<{ fileName: string; error: string }[]>([]);
   const [hookPendingDelete, setHookPendingDelete] = useState<HookEntry | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteSuccess, setDeleteSuccess] = useState('');
@@ -153,7 +158,6 @@ const HookManager: React.FC<HookManagerProps> = ({
   };
 
   const reconcileFailedMutation = async (generation: number) => {
-    if (!mounted.current || generation !== inventoryReadGeneration.current) return;
     const result = await hookService.loadHooks({ force: true });
     if (!mounted.current || generation !== inventoryReadGeneration.current) return;
     const currentHooks = hookService.getHooks();
@@ -168,11 +172,21 @@ const HookManager: React.FC<HookManagerProps> = ({
     if (updatingHookIds.has(hook.id)) return;
     const capability = hook.enabled ? hook.management?.disable : hook.management?.enable;
     if (capability && !capability.allowed) {
-      setActionError(i18nService.t('hookManagedByPlugin'));
+      reportPluginOperationFailure(
+        {
+          kind: PluginKind.HOOK,
+          action: hook.enabled ? PluginOperationAction.DISABLE : PluginOperationAction.ENABLE,
+          label: hook.name,
+        },
+        { message: i18nService.t('hookManagedByPlugin') },
+      );
       return;
     }
     if (!hook.enabled && !hook.requirementsSatisfied) {
-      setActionError(i18nService.t('hookMissingRequirements'));
+      reportPluginOperationFailure(
+        { kind: PluginKind.HOOK, action: PluginOperationAction.ENABLE, label: hook.name },
+        { message: i18nService.t('hookMissingRequirements') },
+      );
       return;
     }
 
@@ -185,7 +199,6 @@ const HookManager: React.FC<HookManagerProps> = ({
       const currentHooks = hookService.getHooks();
       setHooks(currentHooks);
       setGatewayOffline(hookService.isGatewayOffline());
-      if (hookService.hasHookLoadFailed()) setActionError(i18nService.t('hookLoadFailed'));
       setWorkspaceDir(result.workspaceDir ?? workspaceDir);
       setManagedHooksDir(result.managedHooksDir ?? managedHooksDir);
       setRestartNotice(Boolean(result.restartRequired));
@@ -194,10 +207,10 @@ const HookManager: React.FC<HookManagerProps> = ({
           ? (currentHooks.find(item => item.id === hook.id) ?? null)
           : current,
       );
-    } catch (error) {
-      if (!mounted.current) return;
-      setActionError(error instanceof Error ? error.message : i18nService.t('hookUpdateFailed'));
-      await reconcileFailedMutation(generation);
+    } catch {
+      if (!mounted.current || generation !== inventoryReadGeneration.current) return;
+      setHooks(hookService.getHooks());
+      setGatewayOffline(hookService.isGatewayOffline());
     } finally {
       if (mounted.current) {
         setHookUpdating(hook.id, false);
@@ -213,13 +226,22 @@ const HookManager: React.FC<HookManagerProps> = ({
 
   const handleImportHooks = async (sourceType: 'folders' | 'archives') => {
     if (importing) return;
+    const batchStartedAt = Date.now();
+    const reportFailure = (failure: Parameters<typeof reportPluginOperationFailure>[1]) =>
+      reportPluginOperationFailure(
+        {
+          kind: PluginKind.HOOK,
+          action: PluginOperationAction.INSTALL,
+          label: i18nService.t('importHook'),
+        },
+        { ...failure, elapsedMs: Date.now() - batchStartedAt },
+      );
     let generation: number | undefined;
     try {
       setImportPickerOpen(false);
       setImporting(true);
       setActionError('');
       setImportSuccess('');
-      setImportErrors([]);
 
       const selection =
         sourceType === 'folders'
@@ -236,16 +258,21 @@ const HookManager: React.FC<HookManagerProps> = ({
               ],
             });
       if (!selection.success || !selection.paths?.length) {
-        if (selection.error) setActionError(selection.error);
+        if (selection.error) reportFailure({ message: selection.error });
         return;
       }
       generation = ++inventoryReadGeneration.current;
 
-      const results = [];
+      const results: (HookListResult & { sourcePath: string })[] = [];
       for (const sourcePath of selection.paths) {
-        const result = await hookService.importHook(sourcePath);
+        const result: HookListResult = await hookService
+          .importHook(sourcePath, { reportFailure: false })
+          .catch(error => ({
+            success: false,
+            error: error instanceof Error ? error.message : i18nService.t('hookImportFailed'),
+          }));
         results.push({ sourcePath, ...result });
-        if (result.success) {
+        if (result.success && mounted.current) {
           setHooks(hookService.getHooks());
           setWorkspaceDir(result.workspaceDir ?? workspaceDir);
           setManagedHooksDir(result.managedHooksDir ?? managedHooksDir);
@@ -257,24 +284,44 @@ const HookManager: React.FC<HookManagerProps> = ({
         .filter(result => result.success)
         .map(result => result.hookId)
         .filter((id): id is string => Boolean(id));
-      if (importedIds.length > 0) {
+      const failed = results.filter(result => !result.success);
+      const refreshFailed =
+        results.some(result => result.refreshWarning) || hookService.hasHookLoadFailed();
+      if (importedIds.length > 0 && failed.length === 0 && !refreshFailed && mounted.current) {
         setImportSuccess(importedIds.join(', '));
         setTimeout(() => setImportSuccess(''), 5000);
       }
-      setImportErrors(
-        results
-          .filter(result => !result.success)
-          .map(result => ({
-            fileName: result.sourcePath.split(/[/\\]/).pop() || result.sourcePath,
-            error: result.error || i18nService.t('hookImportFailed'),
+      if (failed.length > 0)
+        reportFailure({
+          ...(failed.length === 1 && importedIds.length === 0
+            ? pluginOperationFailure(failed[0], i18nService.t('hookImportFailed'))
+            : {}),
+          message:
+            importedIds.length > 0
+              ? i18nService
+                  .t('pluginImportPartialSummary')
+                  .replace('{successCount}', String(importedIds.length))
+                  .replace('{failureCount}', String(failed.length))
+              : i18nService.t('hookImportFailed'),
+          ...(refreshFailed ? { details: i18nService.t('pluginOperationRefreshFailed') } : {}),
+          items: results.map(result => ({
+            label: result.hookId || result.sourcePath.split(/[/\\]/).pop() || result.sourcePath,
+            ...(result.success
+              ? { message: i18nService.t('pluginImportItemSuccess'), type: 'success' as const }
+              : {
+                  ...pluginOperationFailure(result, i18nService.t('hookImportFailed')),
+                  type: 'error' as const,
+                }),
           })),
-      );
+        });
+      else if (refreshFailed) reportFailure(pluginOperationRefreshFailure());
       if (mounted.current) {
         setGatewayOffline(hookService.isGatewayOffline());
-        if (hookService.hasHookLoadFailed()) setActionError(i18nService.t('hookLoadFailed'));
       }
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : i18nService.t('hookImportFailed'));
+      reportFailure({
+        message: error instanceof Error ? error.message : i18nService.t('hookImportFailed'),
+      });
       if (generation !== undefined) await reconcileFailedMutation(generation);
     } finally {
       if (mounted.current) {
@@ -302,17 +349,16 @@ const HookManager: React.FC<HookManagerProps> = ({
       if (!mounted.current) return;
       setHooks(hookService.getHooks());
       setGatewayOffline(hookService.isGatewayOffline());
-      if (hookService.hasHookLoadFailed()) setActionError(i18nService.t('hookLoadFailed'));
       setWorkspaceDir(result.workspaceDir ?? workspaceDir);
       setManagedHooksDir(result.managedHooksDir ?? managedHooksDir);
       setRestartNotice(Boolean(result.restartRequired));
-      setDeleteSuccess(hookPendingDelete.name);
+      if (!result.refreshWarning) setDeleteSuccess(hookPendingDelete.name);
       setHookPendingDelete(null);
       setTimeout(() => setDeleteSuccess(''), 5000);
-    } catch (error) {
-      if (!mounted.current) return;
-      setActionError(error instanceof Error ? error.message : i18nService.t('hookDeleteFailed'));
-      await reconcileFailedMutation(generation);
+    } catch {
+      if (!mounted.current || generation !== inventoryReadGeneration.current) return;
+      setHooks(hookService.getHooks());
+      setGatewayOffline(hookService.isGatewayOffline());
     } finally {
       if (mounted.current) {
         setDeleting(false);
@@ -370,28 +416,6 @@ const HookManager: React.FC<HookManagerProps> = ({
       )}
 
       {actionError && <ErrorMessage message={actionError} onClose={() => setActionError('')} />}
-
-      {importErrors.length > 0 && (
-        <div className="space-y-2 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-500">
-          <div className="flex items-center justify-between">
-            <span className="font-medium">{i18nService.t('hookImportFailed')}</span>
-            <button
-              type="button"
-              onClick={() => setImportErrors([])}
-              className="rounded p-1 transition-colors hover:bg-red-500/20"
-            >
-              <XMarkIcon className="h-4 w-4" />
-            </button>
-          </div>
-          <ul className="list-inside list-disc space-y-1 text-xs">
-            {importErrors.map(error => (
-              <li key={error.fileName}>
-                <span className="font-medium">{error.fileName}:</span> {error.error}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
 
       {importSuccess && (
         <div className="rounded-xl border border-green-500/30 bg-green-500/10 p-3 text-sm text-green-600">

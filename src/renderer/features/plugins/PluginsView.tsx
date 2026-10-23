@@ -11,6 +11,8 @@ import HookManager from '@/features/plugins/hooks/HookManager';
 import { MarketplaceToolbarSlot } from '@/features/plugins/marketplace/MarketplaceToolbarSlot';
 import McpManager from '@/features/plugins/mcp/McpManager';
 import { mcpService } from '@/features/plugins/mcp/mcpService';
+import PluginOperationFeedback from '@/features/plugins/shared/PluginOperationFeedback';
+import PluginOperationStatus from '@/features/plugins/shared/PluginOperationStatus';
 import SkillsManager from '@/features/plugins/skills/SkillsManager';
 import { i18nService } from '@/services/i18n';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
@@ -174,6 +176,7 @@ const PluginsView: React.FC<PluginsViewProps> = ({
             </div>
           </div>
 
+          <PluginOperationStatus />
           <div className="mt-5">
             <MarketplaceToolbarSlot.Provider value={toolbarSlot}>
               {activeTab === 'extensions' && (
@@ -206,6 +209,7 @@ const PluginsView: React.FC<PluginsViewProps> = ({
           </div>
         </div>
       </main>
+      <PluginOperationFeedback />
     </div>
   );
 };

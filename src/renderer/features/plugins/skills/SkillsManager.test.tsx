@@ -8,6 +8,7 @@ import { Provider } from 'react-redux';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { usePluginMarketplace } from '@/features/plugins/marketplace/usePluginMarketplace';
+import PluginOperationFeedback from '@/features/plugins/shared/PluginOperationFeedback';
 
 import type { Skill } from './skill';
 import { skillService } from './skillService';
@@ -114,7 +115,9 @@ beforeEach(() => {
   vi.mocked(skillService.subscribeInventory)
     .mockReset()
     .mockReturnValue(() => undefined);
-  vi.mocked(skillService.refreshInventoryAfterMutation).mockReset();
+  vi.mocked(skillService.refreshInventoryAfterMutation)
+    .mockReset()
+    .mockImplementation(() => skillService.loadSkills({ force: true }));
   extensionEvents.onChanged.mockReset().mockReturnValue(() => undefined);
   vi.stubGlobal('electron', { extensions: extensionEvents });
 });
@@ -140,6 +143,37 @@ test('does not authorize marketplace inventory or confirm refresh after an onlin
   await expect(options.onInstalled?.()).rejects.toThrow('Inventory unavailable');
 });
 
+test('reconciles an extension change missed before mounting and ignores updates after leaving', async () => {
+  let notify!: (skills: Skill[]) => void;
+  const stopInventory = vi.fn();
+  vi.mocked(skillService.subscribeInventory).mockImplementation(listener => {
+    notify = listener;
+    return stopInventory;
+  });
+  vi.mocked(skillService.refreshInventoryAfterMutation).mockResolvedValue([]);
+  const store = configureStore({ reducer: { skill: skillReducer } });
+  const view = render(
+    <Provider store={store}>
+      <SkillsManager searchQuery={skill.name} visibility="installed" />
+    </Provider>,
+  );
+  await waitFor(() => {
+    const calls = vi.mocked(usePluginMarketplace).mock.calls;
+    expect(calls[calls.length - 1][0].inventoryReady).toBe(true);
+  });
+  expect(store.getState().skill.skills).toEqual([]);
+  expect(skillService.refreshInventoryAfterMutation).toHaveBeenCalledOnce();
+
+  // Native discovery publishes after the initial successful, but stale, read.
+  // No new extensions.onChanged event is needed once this page is mounted.
+  await act(async () => notify([skill]));
+  expect(screen.getByRole('button', { name: `subtaskShowInfo: ${skill.name}` })).toBeTruthy();
+  view.unmount();
+  expect(stopInventory).toHaveBeenCalledOnce();
+  await act(async () => notify([]));
+  expect(store.getState().skill.skills).toEqual([skill]);
+});
+
 test('refreshes attached skills and open details when their parent extension changes', async () => {
   let changed!: (event: ExtensionChangedEvent) => void;
   const stop = vi.fn();
@@ -152,10 +186,12 @@ test('refreshes attached skills and open details when their parent extension cha
     notify = listener;
     return () => undefined;
   });
-  vi.mocked(skillService.refreshInventoryAfterMutation).mockImplementation(async () => {
-    notify([]);
-    return [];
-  });
+  vi.mocked(skillService.refreshInventoryAfterMutation)
+    .mockResolvedValueOnce([skill])
+    .mockImplementation(async () => {
+      notify([]);
+      return [];
+    });
   const store = configureStore({ reducer: { skill: skillReducer } });
   const view = render(
     <Provider store={store}>
@@ -168,7 +204,7 @@ test('refreshes attached skills and open details when their parent extension cha
 
   await act(async () => changed({ extensionId: 'parent-plugin', enabled: false }));
 
-  expect(skillService.refreshInventoryAfterMutation).toHaveBeenCalledOnce();
+  expect(skillService.refreshInventoryAfterMutation).toHaveBeenCalledTimes(2);
   expect(store.getState().skill.skills).toEqual([]);
   expect(screen.queryByRole('button', { name: 'close' })).toBeNull();
   await act(async () => notify([skill]));
@@ -256,7 +292,6 @@ test('keeps the original state and allows retrying after enabling fails', async 
   fireEvent.click(screen.getByRole('button', { name: 'close' }));
   fireEvent.click(screen.getByRole('switch', { name: 'enableSkill' }));
 
-  await screen.findByText('Save failed');
   await waitFor(() =>
     expect(screen.getByRole('switch', { name: 'enableSkill' }).hasAttribute('disabled')).toBe(
       false,
@@ -265,6 +300,7 @@ test('keeps the original state and allows retrying after enabling fails', async 
   expect(screen.getByRole('switch', { name: 'enableSkill' }).getAttribute('aria-checked')).toBe(
     'false',
   );
+  expect(screen.queryByText('Save failed')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'subtaskShowInfo: coding-agent' }));
   expect(screen.getByText('missingConfig: tools.exec.enabled')).toBeTruthy();
   expect(screen.getByText('missingBins: codex')).toBeTruthy();
@@ -566,7 +602,7 @@ test.each(['success', 'failure'] as const)(
       if (outcome === 'success') finishSwitch([disabled]);
       else failSwitch(new Error('Save failed'));
     });
-    if (outcome === 'failure') expect(screen.getByText('Save failed')).toBeTruthy();
+    if (outcome === 'failure') expect(screen.queryByText('Save failed')).toBeNull();
     await act(async () => finishRefresh(refreshed));
 
     expect(store.getState().skill.skills).toEqual(refreshed);
@@ -586,6 +622,7 @@ async function startImport(paths: string[], sourceType: 'folders' | 'archives' =
   render(
     <Provider store={store}>
       <SkillsManager visibility="installed" />
+      <PluginOperationFeedback />
     </Provider>,
   );
   await waitFor(() => expect(store.getState().skill.skills).toEqual([skill]));
@@ -615,7 +652,9 @@ test.each(['folders', 'archives'] as const)(
 
     const store = await startImport(paths, sourceType);
 
-    const dialog = await screen.findByRole('alertdialog', { name: 'pluginImportPartialTitle' });
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'pluginOperationFailureTitle.install',
+    });
     expect(within(dialog).getByText('1 succeeded and 1 failed.')).toBeTruthy();
     expect(within(dialog).getByText(`invalid-skill${suffix}`)).toBeTruthy();
     expect(within(dialog).getByText('SKILL.md is missing')).toBeTruthy();
@@ -623,8 +662,8 @@ test.each(['folders', 'archives'] as const)(
     expect(within(dialog).getByText('pluginImportItemSuccess')).toBeTruthy();
     await screen.findByRole('button', { name: 'subtaskShowInfo: imported-skill' });
     expect(store.getState().skill.skills).toEqual([skill, importedSkill]);
-    expect(skillService.importSkill).toHaveBeenNthCalledWith(1, paths[0]);
-    expect(skillService.importSkill).toHaveBeenNthCalledWith(2, paths[1]);
+    expect(skillService.importSkill).toHaveBeenNthCalledWith(1, paths[0], { reportFailure: false });
+    expect(skillService.importSkill).toHaveBeenNthCalledWith(2, paths[1], { reportFailure: false });
     expect(skillService.loadSkills).toHaveBeenCalledTimes(2);
     expect(skillService.loadSkills).toHaveBeenLastCalledWith({ force: true });
   },
@@ -656,13 +695,15 @@ test('shows every failure and keeps the list when all imports fail', async () =>
 
   const store = await startImport(['C:/imports/missing-skill', 'C:/imports/invalid-skill']);
 
-  const dialog = await screen.findByRole('alertdialog', { name: 'skillImportFailed' });
+  const dialog = await screen.findByRole('alertdialog', {
+    name: 'pluginOperationFailureTitle.install',
+  });
   expect(within(dialog).getByText('missing-skill')).toBeTruthy();
   expect(within(dialog).getByText('SKILL.md is missing')).toBeTruthy();
   expect(within(dialog).getByText('invalid-skill')).toBeTruthy();
   expect(within(dialog).getByText('Invalid skill name')).toBeTruthy();
   expect(store.getState().skill.skills).toEqual([skill]);
-  expect(skillService.loadSkills).toHaveBeenCalledOnce();
+  expect(skillService.loadSkills).toHaveBeenCalledTimes(2);
   expect(screen.getByRole('button', { name: 'importSkill' }).hasAttribute('disabled')).toBe(false);
 });
 
@@ -717,5 +758,5 @@ test('marketplace installation and updates start the shared native inventory rec
   fireEvent.click(
     await screen.findByRole('button', { name: 'finish marketplace install or update' }),
   );
-  expect(skillService.refreshInventoryAfterMutation).toHaveBeenCalledOnce();
+  expect(skillService.refreshInventoryAfterMutation).toHaveBeenCalledTimes(2);
 });

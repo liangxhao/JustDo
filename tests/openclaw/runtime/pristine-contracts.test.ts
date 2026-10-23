@@ -91,6 +91,7 @@ const EXPECTED_PATCH_FILES = [
   '031-mcp-app-session-workspace.cjs',
   '032-goal-continuation-admission.cjs',
   '033-run-progress-observations.cjs',
+  '034-windows-plugin-directory-publication.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

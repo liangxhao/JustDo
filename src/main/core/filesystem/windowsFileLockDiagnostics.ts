@@ -1,4 +1,5 @@
 import childProcess from 'child_process';
+import fs from 'fs';
 import path from 'path';
 
 export type WindowsLockingProcess = {
@@ -14,6 +15,8 @@ export type WindowsLockDiagnosticResult = {
 
 const RESTART_MANAGER_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -266,9 +269,9 @@ try {
     }
   })
   if ($restartManagerProcesses.Count -gt 0) {
-    $restartManagerProcesses | ConvertTo-Json -Compress
+    ConvertTo-Json -InputObject @($restartManagerProcesses) -Compress
   } else {
-    @([JustDoHandleScanner]::Find($env:JUSTDO_LOCK_TARGET)) | ConvertTo-Json -Compress
+    ConvertTo-Json -InputObject @([JustDoHandleScanner]::Find($env:JUSTDO_LOCK_TARGET)) -Compress
   }
 } finally {
   [void][JustDoRestartManager]::RmEndSession($handle)
@@ -287,6 +290,17 @@ export const findWindowsLockingProcesses = async (
 ): Promise<WindowsLockDiagnosticResult> => {
   if (process.platform !== 'win32') return { available: false, processes: [] };
 
+  const resolvedTarget = path.resolve(targetPath);
+  try {
+    fs.lstatSync(resolvedTarget);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    // Let native publication validate absent destinations without starting a
+    // scanner. Absence is not proof of no locks: Windows can hide a directory
+    // pending deletion, so retain an unknown diagnostic result.
+    if (code === 'ENOENT' || code === 'ENOTDIR') return { available: false, processes: [] };
+  }
+
   const encodedCommand = Buffer.from(RESTART_MANAGER_SCRIPT, 'utf16le').toString('base64');
   const result = await new Promise<{ stdout: string; stderr: string; error?: Error }>(resolve => {
     childProcess.execFile(
@@ -294,7 +308,7 @@ export const findWindowsLockingProcesses = async (
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand],
       {
         encoding: 'utf8',
-        env: { ...process.env, JUSTDO_LOCK_TARGET: path.resolve(targetPath) },
+        env: { ...process.env, JUSTDO_LOCK_TARGET: resolvedTarget },
         timeout: 10_000,
         windowsHide: true,
         maxBuffer: 1024 * 1024,

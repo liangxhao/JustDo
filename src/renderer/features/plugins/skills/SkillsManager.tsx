@@ -6,6 +6,10 @@ import {
 } from '@heroicons/react/24/outline';
 import { PluginHubScope } from '@shared/plugins/management';
 import { PluginKind } from '@shared/plugins/marketplace';
+import {
+  PluginOperationAction,
+  type PluginOperationFeedback,
+} from '@shared/plugins/pluginOperation';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
@@ -35,6 +39,11 @@ import {
 import PluginGroupSection from '@/features/plugins/shared/PluginGroupSection';
 import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubTypes';
 import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownDescription';
+import {
+  pluginOperationFailure,
+  pluginOperationRefreshFailure,
+} from '@/features/plugins/shared/pluginMutationFeedback';
+import { reportPluginOperationFailure } from '@/features/plugins/shared/pluginOperationService';
 import { comparePluginNames } from '@/features/plugins/shared/pluginOrdering';
 import PluginStateButton, {
   PluginLockedIndicator,
@@ -102,7 +111,9 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
     let isActive = true;
     const generation = ++inventoryReadGeneration.current;
     const loadSkills = async () => {
-      const loadedSkills = await skillService.loadSkills();
+      // Parent extensions can change while this category is unmounted. Keep the
+      // shared read-only reconciliation active while native discovery catches up.
+      const loadedSkills = await skillService.refreshInventoryAfterMutation();
       if (!isActive || generation !== inventoryReadGeneration.current) return;
       dispatch(setSkills(loadedSkills));
       setGatewayOffline(skillService.isGatewayOffline());
@@ -130,13 +141,14 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
   }, [dispatch]);
 
   const refreshSkillList = async (options: { force?: boolean } = {}) => {
-    if (!mounted.current) return;
     const generation = ++inventoryReadGeneration.current;
     const loadedSkills = await skillService.loadSkills(options);
-    if (!mounted.current || generation !== inventoryReadGeneration.current) return;
+    const success = !skillService.hasInventoryReadFailed();
+    if (!mounted.current || generation !== inventoryReadGeneration.current) return success;
     dispatch(setSkills(loadedSkills));
     setGatewayOffline(skillService.isGatewayOffline());
     setInventoryReady(!skillService.hasInventoryReadFailed());
+    return success;
   };
 
   const installedMarketplaceSkills = useMemo(
@@ -228,11 +240,14 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
     if (marketplace.operationFor(skillId)?.busy) return;
     if (readOnly || updatingSkillIds.has(skillId)) return;
     if (gatewayOffline) {
-      setActionOutcome({
-        type: 'error',
-        title: i18nService.t('skillUpdateFailed'),
-        message: i18nService.t('gatewayOffline'),
-      });
+      reportPluginOperationFailure(
+        {
+          kind: PluginKind.SKILL,
+          action: PluginOperationAction.ENABLE,
+          label: skills.find(skill => skill.id === skillId)?.name || skillId,
+        },
+        { message: i18nService.t('gatewayOffline') },
+      );
       return;
     }
     const targetSkill = skills.find(skill => skill.id === skillId);
@@ -251,21 +266,16 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
       const resolutionMessage = updatedSkills.some(skill => skill.name === targetSkill.name)
         ? getResolutionChangeMessage(targetSkill, updatedSkills)
         : null;
-      if (resolutionMessage) {
+      if (resolutionMessage && !skillService.hasInventoryReadFailed()) {
         setActionOutcome({
           type: 'success',
           title: i18nService.t('skillStatusUpdated'),
           message: resolutionMessage,
         });
       }
-    } catch (error) {
+    } catch {
       if (!mounted.current) return;
       setGatewayOffline(skillService.isGatewayOffline());
-      setActionOutcome({
-        type: 'error',
-        title: i18nService.t('skillUpdateFailed'),
-        message: error instanceof Error ? error.message : i18nService.t('skillUpdateFailed'),
-      });
     } finally {
       if (mounted.current) {
         setUpdatingSkillIds(current => {
@@ -279,6 +289,16 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
 
   const handleImportSkills = async (sourceType: 'folders' | 'archives') => {
     if (readOnly || importing) return;
+    const batchStartedAt = Date.now();
+    const reportFailure = (failure: Parameters<typeof reportPluginOperationFailure>[1]) =>
+      reportPluginOperationFailure(
+        {
+          kind: PluginKind.SKILL,
+          action: PluginOperationAction.INSTALL,
+          label: i18nService.t('importSkill'),
+        },
+        { ...failure, elapsedMs: Date.now() - batchStartedAt },
+      );
 
     try {
       setImportPickerOpen(false);
@@ -301,33 +321,34 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             });
 
       if (!result.success) {
-        setActionOutcome({
-          type: 'error',
-          title: i18nService.t('skillImportFailed'),
-          message: result.error || i18nService.t('skillImportFailed'),
-        });
+        if (result.error) reportFailure({ message: result.error });
         return;
       }
       if (!result.paths || result.paths.length === 0) {
         return;
       }
 
-      const results: { path: string; success: boolean; skillId?: string; error?: string }[] = [];
+      const results: (PluginOperationFeedback & {
+        path: string;
+        success: boolean;
+        skillId?: string;
+        error?: string;
+      })[] = [];
       for (const sourcePath of result.paths) {
-        const importResult = await skillService.importSkill(sourcePath);
+        const importResult = await skillService.importSkill(sourcePath, { reportFailure: false });
         results.push({
           path: sourcePath,
-          success: importResult.success,
-          skillId: importResult.skillId,
-          error: importResult.error,
+          ...importResult,
         });
       }
 
       // Check results
       const succeeded = results.filter(r => r.success);
       const failed = results.filter(r => !r.success);
+      const refreshSucceeded = await refreshSkillList({ force: true });
+      const refreshFailed = !refreshSucceeded || results.some(item => item.refreshWarning);
 
-      if (succeeded.length > 0 && failed.length === 0) {
+      if (succeeded.length > 0 && failed.length === 0 && !refreshFailed && mounted.current) {
         const skillIds = succeeded
           .map(r => r.skillId)
           .filter(Boolean)
@@ -341,17 +362,17 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
 
       if (failed.length > 0) {
         const partial = succeeded.length > 0;
-        setActionOutcome({
-          type: 'error',
-          title: i18nService.t(partial ? 'pluginImportPartialTitle' : 'skillImportFailed'),
-          ...(partial
-            ? {
-                message: i18nService
-                  .t('pluginImportPartialSummary')
-                  .replace('{successCount}', String(succeeded.length))
-                  .replace('{failureCount}', String(failed.length)),
-              }
+        reportFailure({
+          ...(failed.length === 1 && succeeded.length === 0
+            ? pluginOperationFailure(failed[0], i18nService.t('skillImportFailed'))
             : {}),
+          message: partial
+            ? i18nService
+                .t('pluginImportPartialSummary')
+                .replace('{successCount}', String(succeeded.length))
+                .replace('{failureCount}', String(failed.length))
+            : i18nService.t('skillImportFailed'),
+          ...(refreshFailed ? { details: i18nService.t('pluginOperationRefreshFailed') } : {}),
           items: [
             ...succeeded.map(r => ({
               label: r.skillId || r.path.split(/[/\\]/).pop() || r.path,
@@ -360,24 +381,20 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             })),
             ...failed.map(r => ({
               label: r.path.split(/[/\\]/).pop() || r.path,
-              message: r.error || i18nService.t('skillImportFailed'),
+              ...pluginOperationFailure(r, i18nService.t('skillImportFailed')),
               type: 'error' as const,
             })),
           ],
         });
       }
 
-      if (succeeded.length > 0) {
-        await refreshSkillList({ force: true });
-      }
+      if (failed.length === 0 && refreshFailed) reportFailure(pluginOperationRefreshFailure());
     } catch (error) {
-      setActionOutcome({
-        type: 'error',
-        title: i18nService.t('skillImportFailed'),
+      reportFailure({
         message: error instanceof Error ? error.message : i18nService.t('skillImportFailed'),
       });
     } finally {
-      setImporting(false);
+      if (mounted.current) setImporting(false);
     }
   };
 
@@ -417,24 +434,15 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
         const deleteMessage = i18nService
           .t('skillDeleteSuccess')
           .replace('{name}', pendingSkill.name);
-        setActionOutcome({
-          type: 'success',
-          title: i18nService.t('deleteSkill'),
-          message: resolutionMessage ? `${deleteMessage}\n\n${resolutionMessage}` : deleteMessage,
-        });
-      } else {
-        setActionOutcome({
-          type: 'error',
-          title: i18nService.t('skillDeleteFailed'),
-          message: result.error || i18nService.t('skillDeleteFailed'),
-        });
+        if (!result.refreshWarning && mounted.current)
+          setActionOutcome({
+            type: 'success',
+            title: i18nService.t('deleteSkill'),
+            message: resolutionMessage ? `${deleteMessage}\n\n${resolutionMessage}` : deleteMessage,
+          });
       }
-    } catch (error) {
-      setActionOutcome({
-        type: 'error',
-        title: i18nService.t('skillDeleteFailed'),
-        message: error instanceof Error ? error.message : i18nService.t('skillDeleteFailed'),
-      });
+    } catch {
+      // The service owns failure delivery even when this category unmounts.
     } finally {
       setSkillPendingDelete(null);
       setDeleting(false);

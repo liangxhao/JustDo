@@ -1,4 +1,16 @@
+import { PluginKind } from '@shared/plugins/marketplace';
+import { PluginOperationAction, PluginOperationStage } from '@shared/plugins/pluginOperation';
+
 import { HookEntry, HookListResult } from '@/features/plugins/hooks/hook';
+import {
+  pluginOperationFailure,
+  pluginOperationRefreshFailure,
+} from '@/features/plugins/shared/pluginMutationFeedback';
+import {
+  pluginSourceLabel,
+  startPluginOperation,
+} from '@/features/plugins/shared/pluginOperationService';
+import { i18nService } from '@/services/i18n';
 
 type GatewayHookEntry = Omit<HookEntry, 'id' | 'enabled'> & {
   hookKey?: string;
@@ -116,33 +128,113 @@ class HookService {
     return !this.lastResult.success;
   }
 
-  async setHookEnabled(id: string, enabled: boolean): Promise<HookListResult> {
-    const generation = this.loadGeneration;
-    const result: GatewayHookListResult = await window.electron.hooks.setEnabled({ id, enabled });
-    if (result.success) {
-      return this.applyMutationResult(result, generation);
-    }
-    if (generation === this.loadGeneration) this.gatewayOffline = result.gatewayOffline || false;
-    throw new Error(result.error || 'Failed to update hook');
+  private async reconcileFailedMutation(operation: ReturnType<typeof startPluginOperation>) {
+    operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
+    const current = await this.loadHooks({ force: true });
+    if (!current.success) operation.fail(pluginOperationRefreshFailure());
   }
 
-  async importHook(sourcePath: string): Promise<HookListResult> {
-    const generation = this.loadGeneration;
-    const result: GatewayHookListResult = await window.electron.hooks.importPath(sourcePath);
-    if (result.success) return this.applyMutationResult(result, generation);
-    const hooks = result.hooks?.map(normalizeHook);
-    return { ...result, hooks };
+  async setHookEnabled(id: string, enabled: boolean): Promise<HookListResult> {
+    const operation = startPluginOperation({
+      kind: PluginKind.HOOK,
+      action: enabled ? PluginOperationAction.ENABLE : PluginOperationAction.DISABLE,
+      label: this.hooks.find(hook => hook.id === id)?.name || id,
+    });
+    try {
+      const generation = this.loadGeneration;
+      const result: GatewayHookListResult = await window.electron.hooks.setEnabled(
+        { id, enabled },
+        operation.context,
+      );
+      if (result.success) {
+        const applied = await this.applyMutationResult(result, generation);
+        if (result.refreshWarning || this.hasHookLoadFailed())
+          operation.fail(pluginOperationRefreshFailure(result));
+        return applied;
+      }
+      if (generation === this.loadGeneration) this.gatewayOffline = result.gatewayOffline || false;
+      operation.fail(pluginOperationFailure(result, i18nService.t('hookUpdateFailed')));
+      throw new Error(result.error || i18nService.t('hookUpdateFailed'));
+    } catch (error) {
+      operation.fail({
+        message: error instanceof Error ? error.message : i18nService.t('hookUpdateFailed'),
+      });
+      await this.reconcileFailedMutation(operation);
+      throw error;
+    } finally {
+      operation.finish();
+    }
+  }
+
+  async importHook(
+    sourcePath: string,
+    options: { reportFailure?: boolean } = {},
+  ): Promise<HookListResult> {
+    const operation = startPluginOperation({
+      kind: PluginKind.HOOK,
+      action: PluginOperationAction.INSTALL,
+      label: pluginSourceLabel(sourcePath),
+    });
+    try {
+      const generation = this.loadGeneration;
+      const result: GatewayHookListResult = await window.electron.hooks.importPath(
+        sourcePath,
+        operation.context,
+      );
+      if (result.success) {
+        const applied = await this.applyMutationResult(result, generation);
+        const refreshFailed = result.refreshWarning || this.hasHookLoadFailed();
+        if (refreshFailed && options.reportFailure !== false)
+          operation.fail(pluginOperationRefreshFailure(result));
+        return { ...applied, ...(refreshFailed ? { refreshWarning: true as const } : {}) };
+      }
+      if (options.reportFailure !== false)
+        operation.fail(pluginOperationFailure(result, i18nService.t('hookImportFailed')));
+      return { ...result, hooks: result.hooks?.map(normalizeHook) };
+    } catch (error) {
+      if (options.reportFailure !== false)
+        operation.fail({
+          message: error instanceof Error ? error.message : i18nService.t('hookImportFailed'),
+        });
+      throw error;
+    } finally {
+      operation.finish();
+    }
   }
 
   async deleteHook(id: string): Promise<HookListResult> {
-    const generation = this.loadGeneration;
-    const result: GatewayHookListResult = await window.electron.hooks.delete(id);
-    if (!result.success) throw new Error(result.error || 'Failed to delete Hook');
-    return this.applyMutationResult(
-      result,
-      generation,
-      this.hooks.filter(hook => hook.id !== id),
-    );
+    const operation = startPluginOperation({
+      kind: PluginKind.HOOK,
+      action: PluginOperationAction.REMOVE,
+      label: this.hooks.find(hook => hook.id === id)?.name || id,
+    });
+    try {
+      const generation = this.loadGeneration;
+      const result: GatewayHookListResult = await window.electron.hooks.delete(
+        id,
+        operation.context,
+      );
+      if (!result.success) {
+        operation.fail(pluginOperationFailure(result, i18nService.t('hookDeleteFailed')));
+        throw new Error(result.error || i18nService.t('hookDeleteFailed'));
+      }
+      const applied = await this.applyMutationResult(
+        result,
+        generation,
+        this.hooks.filter(hook => hook.id !== id),
+      );
+      const refreshFailed = result.refreshWarning || this.hasHookLoadFailed();
+      if (refreshFailed) operation.fail(pluginOperationRefreshFailure(result));
+      return { ...applied, ...(refreshFailed ? { refreshWarning: true as const } : {}) };
+    } catch (error) {
+      operation.fail({
+        message: error instanceof Error ? error.message : i18nService.t('hookDeleteFailed'),
+      });
+      await this.reconcileFailedMutation(operation);
+      throw error;
+    } finally {
+      operation.finish();
+    }
   }
 
   getHooks(): HookEntry[] {

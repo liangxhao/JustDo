@@ -10,8 +10,8 @@ import {
   QuestionMarkCircleIcon,
 } from '@heroicons/react/24/outline';
 import {
-  type ExtensionImportProgress,
-  type ExtensionImportStage,
+  type ExtensionImportRequest,
+  type ExtensionImportResult,
   ExtensionState,
   type InstalledOpenClawExtension,
   type OpenClawExtensionConfigurationField,
@@ -19,6 +19,7 @@ import {
 } from '@shared/plugins/extensions';
 import { PluginKind } from '@shared/plugins/marketplace';
 import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
+import { PluginOperationAction, PluginOperationStage } from '@shared/plugins/pluginOperation';
 import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
 import { LOCAL_TTS_PROVIDER_ID } from '@shared/speech/localTts';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -54,6 +55,17 @@ import {
 import PluginGroupSection from '@/features/plugins/shared/PluginGroupSection';
 import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubTypes';
 import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownDescription';
+import {
+  pluginOperationErrorMessage,
+  pluginOperationFailure,
+  pluginOperationRefreshFailure,
+} from '@/features/plugins/shared/pluginMutationFeedback';
+import {
+  type PluginOperationFailureItem,
+  pluginSourceLabel,
+  reportPluginOperationFailure,
+  startPluginOperation,
+} from '@/features/plugins/shared/pluginOperationService';
 import PluginStateButton, {
   PluginLockedIndicator,
 } from '@/features/plugins/shared/PluginStateButton';
@@ -68,27 +80,6 @@ import { useOwnerDocument } from '@/shared/dom/ownerDocument';
 import AgentTeamSettingsDialog from './AgentTeamSettingsDialog';
 import LocalSpeechExtensionSettingsButton from './LocalSpeechExtensionSettingsButton';
 import LocalSpeechExtensionSettingsDialog from './LocalSpeechExtensionSettingsDialog';
-
-const getImportStageLabel = (stage: ExtensionImportStage): string => {
-  switch (stage) {
-    case 'preparing':
-      return i18nService.t('extensionImportStagePreparing');
-    case 'extracting':
-      return i18nService.t('extensionImportStageExtracting');
-    case 'validating':
-      return i18nService.t('extensionImportStageValidating');
-    case 'preparing_runtime':
-      return i18nService.t('extensionImportStagePreparingRuntime');
-    case 'installing':
-      return i18nService.t('extensionImportStageInstalling');
-    case 'installing_dependencies':
-      return i18nService.t('extensionImportStageInstallingDependencies');
-    case 'restarting_gateway':
-      return i18nService.t('extensionImportStageRestartingGateway');
-    case 'completed':
-      return i18nService.t('extensionImportStageCompleted');
-  }
-};
 
 type ExtensionToggleProps = {
   extension: InstalledOpenClawExtension;
@@ -139,6 +130,50 @@ interface ExtensionsManagerProps extends PluginHubManagerProps {
   onRequestedExtensionHandled?: () => void;
 }
 
+const reportInterruptedImportFailures = (pending: {
+  completedLabels: string[];
+  failures: PluginOperationFailureItem[];
+  startedAt: number;
+  refreshFailed?: boolean;
+}) => {
+  if (pending.failures.length === 0 && !pending.refreshFailed) return;
+  reportPluginOperationFailure(
+    {
+      kind: PluginKind.EXTENSION,
+      action: PluginOperationAction.INSTALL,
+      label: pending.failures.length === 1 && pending.completedLabels.length === 0
+        ? pending.failures[0].label : i18nService.t('importExtension'),
+    },
+    {
+      ...(pending.failures.length === 1 && pending.completedLabels.length === 0
+        ? pending.failures[0]
+        : {}),
+      ...(pending.failures.length === 0 ? pluginOperationRefreshFailure() : {}),
+      message:
+        pending.failures.length === 0
+          ? i18nService.t('pluginOperationRefreshFailed')
+          : pending.completedLabels.length > 0 || pending.failures.length > 1
+            ? i18nService
+                .t('pluginImportPartialSummary')
+                .replace('{successCount}', String(pending.completedLabels.length))
+                .replace('{failureCount}', String(pending.failures.length))
+            : pending.failures[0].message || i18nService.t('extensionImportFailed'),
+      elapsedMs: Date.now() - pending.startedAt,
+      ...(pending.failures.length > 0 && pending.refreshFailed
+        ? { details: i18nService.t('pluginOperationRefreshFailed') }
+        : {}),
+      items: [
+        ...pending.completedLabels.map(label => ({
+          label,
+          message: i18nService.t('pluginImportItemSuccess'),
+          type: 'success' as const,
+        })),
+        ...pending.failures.map(item => ({ ...item, type: 'error' as const })),
+      ],
+    },
+  );
+};
+
 const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   searchQuery: sharedSearchQuery,
   visibility = 'all',
@@ -156,6 +191,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   const searchQuery = sharedSearchQuery ?? localSearchQuery;
   const [importPickerOpen, setImportPickerOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+  const importOperation = useRef<ReturnType<typeof startPluginOperation> | null>(null);
   const [actionOutcome, setActionOutcome] = useState<OperationResult | null>(null);
   const [extensions, setExtensions] = useState<InstalledOpenClawExtension[]>([]);
   const [loadingExtensions, setLoadingExtensions] = useState(true);
@@ -166,9 +202,15 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       extension => extension.id === OpenClawExtensionId.AGENT_TEAM && extension.enabled,
     );
   useEffect(() => {
-    const id = speechSettingsKind === LocalSpeechModelKind.Asr
-      ? OpenClawExtensionId.STT_LOCAL_CLI : LOCAL_TTS_PROVIDER_ID;
-    if (speechSettingsKind && inventoryReady && !extensions.some(extension => extension.id === id)) {
+    const id =
+      speechSettingsKind === LocalSpeechModelKind.Asr
+        ? OpenClawExtensionId.STT_LOCAL_CLI
+        : LOCAL_TTS_PROVIDER_ID;
+    if (
+      speechSettingsKind &&
+      inventoryReady &&
+      !extensions.some(extension => extension.id === id)
+    ) {
       setSpeechSettingsKind(null);
     }
   }, [extensions, inventoryReady, speechSettingsKind]);
@@ -178,8 +220,6 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   const inventoryGeneration = useRef(0);
   const inventoryMounted = useRef(false);
   const latestInventoryRead = useRef<Promise<InstalledOpenClawExtension[] | null> | null>(null);
-  const [importProgress, setImportProgress] = useState<ExtensionImportProgress | null>(null);
-  const [importElapsedSeconds, setImportElapsedSeconds] = useState(0);
   const [pendingDelete, setPendingDelete] = useState<InstalledOpenClawExtension | null>(null);
   const [deletingExtensionId, setDeletingExtensionId] = useState<string | null>(null);
   const [togglingExtensionId, setTogglingExtensionId] = useState<string | null>(null);
@@ -197,10 +237,20 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         review: OpenClawPluginCapabilityReview;
         remainingSourcePaths: string[];
         completedLabels: string[];
-        failures: Array<{ label: string; message: string }>;
+        failures: PluginOperationFailureItem[];
+        startedAt: number;
+        refreshFailed: boolean;
       }
     | null
   >(null);
+  const pendingReviewRef = useRef(pendingCapabilityReview);
+  pendingReviewRef.current = pendingCapabilityReview;
+  const cancelCapabilityReview = () => {
+    const pending = pendingReviewRef.current;
+    pendingReviewRef.current = null;
+    setPendingCapabilityReview(null);
+    if (pending?.kind === 'import') reportInterruptedImportFailures(pending);
+  };
   const [selectedExtension, setSelectedExtension] = useState<InstalledOpenClawExtension | null>(
     null,
   );
@@ -238,42 +288,49 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     togglingExtensionId !== null ||
     savingConfiguration;
 
-  const loadExtensions = useCallback((): Promise<InstalledOpenClawExtension[] | null> => {
-    if (!inventoryMounted.current) return Promise.resolve(null);
-    const generation = ++inventoryGeneration.current;
-    const isCurrent = () => inventoryMounted.current && generation === inventoryGeneration.current;
-    const pending = (async () => {
-      try {
-        const result = await window.electron.extensions.list();
-        if (!isCurrent()) return inventoryMounted.current ? latestInventoryRead.current : null;
-        if (!result.success) throw new Error(result.error || i18nService.t('extensionListFailed'));
-        setExtensions(result.extensions);
-        setSelectedExtension(current => {
-          if (!current) return null;
-          const updated = result.extensions.find(extension => extension.id === current.id);
-          if (!updated) detailGeneration.current += 1;
-          return updated ?? null;
-        });
-        setInventoryReady(true);
-        return result.extensions;
-      } catch (error) {
-        if (!isCurrent()) return inventoryMounted.current ? latestInventoryRead.current : null;
-        setInventoryReady(false);
-        setActionOutcome({
-          type: 'error',
-          title: i18nService.t('extensionListFailed'),
-          message: error instanceof Error ? error.message : i18nService.t('extensionListFailed'),
-        });
-        return null;
-      } finally {
-        if (isCurrent()) setLoadingExtensions(false);
-      }
-    })();
-    // Event and action refreshes can overlap. Their callers join the newest read
-    // instead of using a superseded inventory to update an open details dialog.
-    latestInventoryRead.current = pending;
-    return pending;
-  }, []);
+  const loadExtensions = useCallback(
+    (options: { reportFailure?: boolean } = {}): Promise<InstalledOpenClawExtension[] | null> => {
+      const generation = ++inventoryGeneration.current;
+      const isCurrent = () =>
+        inventoryMounted.current && generation === inventoryGeneration.current;
+      const pending = (async () => {
+        try {
+          const result = await window.electron.extensions.list();
+          if (!result.success)
+            throw new Error(result.error || i18nService.t('extensionListFailed'));
+          if (!isCurrent())
+            return inventoryMounted.current ? latestInventoryRead.current : result.extensions;
+          setExtensions(result.extensions);
+          setSelectedExtension(current => {
+            if (!current) return null;
+            const updated = result.extensions.find(extension => extension.id === current.id);
+            if (!updated) detailGeneration.current += 1;
+            return updated ?? null;
+          });
+          setInventoryReady(true);
+          return result.extensions;
+        } catch (error) {
+          if (!isCurrent()) return inventoryMounted.current ? latestInventoryRead.current : null;
+          setInventoryReady(false);
+          if (options.reportFailure !== false)
+            setActionOutcome({
+              type: 'error',
+              title: i18nService.t('extensionListFailed'),
+              message:
+                error instanceof Error ? error.message : i18nService.t('extensionListFailed'),
+            });
+          return null;
+        } finally {
+          if (isCurrent()) setLoadingExtensions(false);
+        }
+      })();
+      // Event and action refreshes can overlap. Their callers join the newest read
+      // instead of using a superseded inventory to update an open details dialog.
+      latestInventoryRead.current = pending;
+      return pending;
+    },
+    [],
+  );
 
   useEffect(() => {
     inventoryMounted.current = true;
@@ -287,9 +344,12 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
           extension.id === event.extensionId ? { ...extension, enabled: event.enabled } : extension,
         ),
       );
-      void loadExtensions();
+      void loadExtensions({ reportFailure: false });
     });
     return () => {
+      const pending = pendingReviewRef.current;
+      pendingReviewRef.current = null;
+      if (pending?.kind === 'import') reportInterruptedImportFailures(pending);
       inventoryMounted.current = false;
       detailGeneration.current += 1;
       inventoryGeneration.current += 1;
@@ -319,21 +379,6 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     );
     onRequestedExtensionHandled?.();
   }, [extensions, onRequestedExtensionHandled, openExtensionDetails, requestedExtensionId]);
-
-  useEffect(
-    () => window.electron.extensions.onImportProgress(progress => setImportProgress(progress)),
-    [],
-  );
-
-  useEffect(() => {
-    if (!importing) return;
-    const startedAt = Date.now();
-    const timer = window.setInterval(
-      () => setImportElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000)),
-      1000,
-    );
-    return () => window.clearInterval(timer);
-  }, [importing]);
 
   const installedMarketplaceExtensions = useMemo(
     () =>
@@ -378,15 +423,89 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     return [{ id: ExtensionGroupId.USER, extensions: [] }, ...groupedExtensions];
   }, [groupedExtensions, searchQuery]);
 
+  const importExtension = (request: ExtensionImportRequest) => {
+    importOperation.current?.finish();
+    const operation = startPluginOperation({
+      kind: PluginKind.EXTENSION,
+      action: PluginOperationAction.INSTALL,
+      label: pluginSourceLabel(request.sourcePath),
+    });
+    importOperation.current = operation;
+    return window.electron.extensions
+      .importPath(request, operation.context)
+      .catch((error): ExtensionImportResult => ({
+        success: false,
+        error: error instanceof Error ? error.message : i18nService.t('extensionImportFailed'),
+      }));
+  };
+  const refreshAfterImport = () => {
+    importOperation.current?.stage(PluginOperationStage.REFRESHING_INVENTORY);
+    return loadExtensions({ reportFailure: false });
+  };
+
+  const finishImportBatch = (
+    completedLabels: string[],
+    failures: PluginOperationFailureItem[],
+    refreshFailed: boolean,
+    startedAt: number,
+  ) => {
+    if (failures.length > 0) {
+      reportPluginOperationFailure(
+        {
+          kind: PluginKind.EXTENSION,
+          action: PluginOperationAction.INSTALL,
+          label: failures.length === 1 && completedLabels.length === 0
+            ? failures[0].label : i18nService.t('importExtension'),
+        },
+        {
+          ...(failures.length === 1 && completedLabels.length === 0 ? failures[0] : {}),
+          message:
+            completedLabels.length > 0 || failures.length > 1
+              ? i18nService
+                  .t('pluginImportPartialSummary')
+                  .replace('{successCount}', String(completedLabels.length))
+                  .replace('{failureCount}', String(failures.length))
+              : failures[0].message || i18nService.t('extensionImportFailed'),
+          ...(refreshFailed ? { details: i18nService.t('pluginOperationRefreshFailed') } : {}),
+          elapsedMs: Date.now() - startedAt,
+          items: [
+            ...completedLabels.map(label => ({
+              label,
+              message: i18nService.t('pluginImportItemSuccess'),
+              type: 'success' as const,
+            })),
+            ...failures.map(item => ({ ...item, type: 'error' as const })),
+          ],
+        },
+      );
+    } else if (refreshFailed) {
+      reportPluginOperationFailure(
+        {
+          kind: PluginKind.EXTENSION,
+          action: PluginOperationAction.INSTALL,
+          label: i18nService.t('importExtension'),
+        },
+        { ...pluginOperationRefreshFailure(), elapsedMs: Date.now() - startedAt },
+      );
+    } else if (completedLabels.length > 0 && inventoryMounted.current) {
+      setActionOutcome({
+        type: 'success',
+        title: i18nService.t('importExtension'),
+        message: i18nService
+          .t('extensionImportSuccess')
+          .replace('{extensionId}', completedLabels.join(', ')),
+      });
+    }
+  };
+
   const handleImportExtensions = async (sourceType: 'folders' | 'archives') => {
     if (extensionActionBusy) return;
+    const startedAt = Date.now();
 
     try {
       setImportPickerOpen(false);
       setImporting(true);
       setActionOutcome(null);
-      setImportProgress(null);
-      setImportElapsedSeconds(0);
 
       const result =
         sourceType === 'folders'
@@ -403,12 +522,23 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
               ],
             });
 
-      if (!result.success || !result.paths?.length) return;
+      if (!result.success || !result.paths?.length) {
+        if (result.error)
+          reportPluginOperationFailure(
+            {
+              kind: PluginKind.EXTENSION,
+              action: PluginOperationAction.INSTALL,
+              label: i18nService.t('importExtension'),
+            },
+            { message: result.error, elapsedMs: Date.now() - startedAt },
+          );
+        return;
+      }
 
       const results = [];
       for (const [index, sourcePath] of result.paths.entries()) {
         const requestId = `${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`;
-        const importResult = await window.electron.extensions.importPath({ requestId, sourcePath });
+        const importResult = await importExtension({ requestId, sourcePath });
         if (importResult.capabilityReview) {
           const completedLabels = results
             .filter(item => item.success)
@@ -419,8 +549,20 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
             .filter(item => !item.success)
             .map(item => ({
               label: item.sourcePath.split(/[/\\]/).pop() || item.sourcePath,
-              message: item.error || i18nService.t('extensionImportFailed'),
+              ...pluginOperationFailure(item, i18nService.t('extensionImportFailed')),
             }));
+          const inventory = await refreshAfterImport();
+          const refreshFailed =
+            inventory === null || results.some(item => item.refreshWarning === true);
+          if (!inventoryMounted.current) {
+            reportInterruptedImportFailures({
+              completedLabels,
+              failures,
+              startedAt,
+              refreshFailed,
+            });
+            return;
+          }
           setPendingCapabilityReview({
             kind: 'import',
             requestId,
@@ -430,8 +572,9 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
             remainingSourcePaths: result.paths.slice(index + 1),
             completedLabels,
             failures,
+            startedAt,
+            refreshFailed,
           });
-          await loadExtensions();
           return;
         }
         results.push({ sourcePath, ...importResult });
@@ -441,93 +584,83 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       const failed = results.filter(item => !item.success);
       // Reconcile with disk even when a later installer step reports failure. OpenClaw
       // may have already published the extension before its CLI or Gateway restart fails.
-      await loadExtensions();
-      if (succeeded.length > 0 && failed.length === 0) {
-        const labels = succeeded
-          .map(item => item.extensionId || item.sourcePath.split(/[/\\]/).pop())
-          .filter(Boolean)
-          .join(', ');
-        setActionOutcome({
-          type: 'success',
-          title: i18nService.t('importExtension'),
-          message: i18nService.t('extensionImportSuccess').replace('{extensionId}', labels),
-        });
-      }
-      if (failed.length > 0) {
-        const partial = succeeded.length > 0;
-        setActionOutcome({
-          type: 'error',
-          title: i18nService.t(partial ? 'pluginImportPartialTitle' : 'extensionImportFailed'),
-          ...(partial
-            ? {
-                message: i18nService
-                  .t('pluginImportPartialSummary')
-                  .replace('{successCount}', String(succeeded.length))
-                  .replace('{failureCount}', String(failed.length)),
-              }
-            : {}),
-          items: [
-            ...succeeded.map(item => ({
-              label: item.extensionId || item.sourcePath.split(/[/\\]/).pop() || item.sourcePath,
-              message: i18nService.t('pluginImportItemSuccess'),
-              type: 'success' as const,
-            })),
-            ...failed.map(item => {
-              const fileName = item.sourcePath.split(/[/\\]/).pop() || item.sourcePath;
-              const error = item.failedStage
-                ? i18nService
-                    .t('extensionImportFailedAtStage')
-                    .replace('{stage}', getImportStageLabel(item.failedStage))
-                    .replace('{error}', item.error || i18nService.t('extensionImportFailed'))
-                : item.error || i18nService.t('extensionImportFailed');
-              return { label: fileName, message: error, type: 'error' as const };
-            }),
-          ],
-        });
-      }
+      const inventory = await refreshAfterImport();
+      finishImportBatch(
+        succeeded.map(item => item.extensionId || pluginSourceLabel(item.sourcePath)),
+        failed.map(item => ({
+          label: pluginSourceLabel(item.sourcePath),
+          ...pluginOperationFailure(item, i18nService.t('extensionImportFailed')),
+        })),
+        inventory === null || results.some(item => item.refreshWarning === true),
+        startedAt,
+      );
     } catch (error) {
-      setActionOutcome({
-        type: 'error',
-        title: i18nService.t('extensionImportFailed'),
-        message: error instanceof Error ? error.message : i18nService.t('extensionImportFailed'),
-      });
+      reportPluginOperationFailure(
+        {
+          kind: PluginKind.EXTENSION,
+          action: PluginOperationAction.INSTALL,
+          label: i18nService.t('importExtension'),
+        },
+        {
+          message: error instanceof Error ? error.message : i18nService.t('extensionImportFailed'),
+          elapsedMs: Date.now() - startedAt,
+        },
+      );
     } finally {
+      importOperation.current?.finish();
+      importOperation.current = null;
       setImporting(false);
-      setImportProgress(null);
     }
   };
 
   const handleConfirmDelete = async () => {
     if (!pendingDelete || extensionActionBusy) return;
     const extension = pendingDelete;
+    const operation = startPluginOperation({
+      kind: PluginKind.EXTENSION,
+      action: PluginOperationAction.REMOVE,
+      label: extension.name,
+    });
+    let mutationResult: Awaited<ReturnType<typeof window.electron.extensions.delete>> | undefined;
     try {
       setDeletingExtensionId(extension.id);
       setActionOutcome(null);
-      const result = await window.electron.extensions.delete({ extensionId: extension.id });
+      const result = await window.electron.extensions.delete(
+        { extensionId: extension.id },
+        operation.context,
+      );
+      mutationResult = result;
       if (!result.success) {
+        operation.fail(pluginOperationFailure(result, i18nService.t('extensionDeleteFailed')));
         throw new Error(result.error || i18nService.t('extensionDeleteFailed'));
       }
       setPendingDelete(null);
-      setActionOutcome({
-        type: 'success',
-        title: i18nService.t('extensionDelete'),
-        message: [
-          i18nService.t('extensionDeleteSuccess').replace('{name}', extension.name),
-          ...(result.warnings ?? []),
-        ].join('\n'),
-      });
     } catch (error) {
-      setActionOutcome({
-        type: 'error',
-        title: i18nService.t('extensionDeleteFailed'),
-        message: error instanceof Error ? error.message : String(error),
+      operation.fail({
+        message:
+          error instanceof Error
+            ? pluginOperationErrorMessage(error.message)
+            : i18nService.t('extensionDeleteFailed'),
       });
     } finally {
-      const latestExtensions = await loadExtensions();
+      operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
+      const latestExtensions = await loadExtensions({ reportFailure: false });
+      if (!latestExtensions || mutationResult?.refreshWarning)
+        operation.fail(pluginOperationRefreshFailure(mutationResult));
+      else if (mutationResult?.success && inventoryMounted.current)
+        setActionOutcome({
+          type: 'success',
+          title: i18nService.t('extensionDelete'),
+          message: [
+            i18nService.t('extensionDeleteSuccess').replace('{name}', extension.name),
+            ...(mutationResult.warnings ?? []),
+          ].join('\n'),
+        });
       if (latestExtensions && !latestExtensions.some(item => item.id === extension.id)) {
         setPendingDelete(null);
       }
       setDeletingExtensionId(null);
+      operation.finish();
     }
   };
 
@@ -536,37 +669,60 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     reviewToken?: string,
   ) => {
     if (extensionActionBusy) return;
+    const operation = startPluginOperation({
+      kind: PluginKind.EXTENSION,
+      action: extension.enabled ? PluginOperationAction.DISABLE : PluginOperationAction.ENABLE,
+      label: extension.name,
+    });
+    let mutationResult:
+      Awaited<ReturnType<typeof window.electron.extensions.setEnabled>> | undefined;
     try {
       setTogglingExtensionId(extension.id);
       setActionOutcome(null);
-      const result = await window.electron.extensions.setEnabled({
-        extensionId: extension.id,
-        enabled: !extension.enabled,
-        reviewToken,
-      });
+      const result = await window.electron.extensions.setEnabled(
+        {
+          extensionId: extension.id,
+          enabled: !extension.enabled,
+          reviewToken,
+        },
+        operation.context,
+      );
+      mutationResult = result;
       if (result.capabilityReview) {
+        if (!inventoryMounted.current) return;
         setPendingCapabilityReview({ kind: 'toggle', extension, review: result.capabilityReview });
         return;
       }
       if (!result.success) {
+        operation.fail(
+          pluginOperationFailure(result, i18nService.t('extensionStatusUpdateFailed')),
+        );
         throw new Error(result.error || i18nService.t('extensionStatusUpdateFailed'));
       }
-      if (result.warnings?.length) {
+    } catch (error) {
+      operation.fail({
+        message:
+          error instanceof Error
+            ? pluginOperationErrorMessage(error.message)
+            : i18nService.t('extensionStatusUpdateFailed'),
+      });
+    } finally {
+      operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
+      const inventory = await loadExtensions({ reportFailure: false });
+      if (!inventory || mutationResult?.refreshWarning)
+        operation.fail(pluginOperationRefreshFailure(mutationResult));
+      else if (
+        mutationResult?.success &&
+        mutationResult.warnings?.length &&
+        inventoryMounted.current
+      )
         setActionOutcome({
           type: 'success',
           title: i18nService.t('extensionStatusUpdatedWithWarnings'),
-          message: result.warnings.join('\n'),
+          message: mutationResult.warnings.join('\n'),
         });
-      }
-    } catch (error) {
-      setActionOutcome({
-        type: 'error',
-        title: i18nService.t('extensionStatusUpdateFailed'),
-        message: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      await loadExtensions();
       setTogglingExtensionId(null);
+      operation.finish();
     }
   };
 
@@ -576,33 +732,49 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     if (extensionActionBusy) return;
     try {
       setPendingCapabilityReview(null);
+      pendingReviewRef.current = null;
       setImporting(true);
       setActionOutcome(null);
-      setImportProgress(null);
-      setImportElapsedSeconds(0);
-      const result = await window.electron.extensions.importPath({
+      const result = await importExtension({
         requestId: pending.requestId,
         sourcePath: pending.sourcePath,
         reviewToken: pending.review.reviewToken,
       });
       if (result.capabilityReview) {
+        if (!inventoryMounted.current) {
+          reportInterruptedImportFailures(pending);
+          return;
+        }
         setPendingCapabilityReview({ ...pending, review: result.capabilityReview });
         return;
       }
       const completedLabels = [...pending.completedLabels];
       const failures = [...pending.failures];
+      let refreshFailed = pending.refreshFailed || result.refreshWarning === true;
       if (result.success) {
         completedLabels.push(result.extensionId || pending.displayName);
       } else {
         failures.push({
           label: pending.displayName,
-          message: result.error || i18nService.t('extensionImportFailed'),
+          ...pluginOperationFailure(result, i18nService.t('extensionImportFailed')),
         });
       }
       for (const [index, sourcePath] of pending.remainingSourcePaths.entries()) {
         const requestId = `${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`;
-        const nextResult = await window.electron.extensions.importPath({ requestId, sourcePath });
+        const nextResult = await importExtension({ requestId, sourcePath });
+        refreshFailed ||= nextResult.refreshWarning === true;
         if (nextResult.capabilityReview) {
+          const inventory = await refreshAfterImport();
+          refreshFailed = refreshFailed || inventory === null;
+          if (!inventoryMounted.current) {
+            reportInterruptedImportFailures({
+              completedLabels,
+              failures,
+              startedAt: pending.startedAt,
+              refreshFailed,
+            });
+            return;
+          }
           setPendingCapabilityReview({
             kind: 'import',
             requestId,
@@ -612,8 +784,9 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
             remainingSourcePaths: pending.remainingSourcePaths.slice(index + 1),
             completedLabels,
             failures,
+            startedAt: pending.startedAt,
+            refreshFailed,
           });
-          await loadExtensions();
           return;
         }
         const label = nextResult.extensionId || sourcePath.split(/[/\\]/).pop() || sourcePath;
@@ -622,52 +795,33 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         } else {
           failures.push({
             label,
-            message: nextResult.error || i18nService.t('extensionImportFailed'),
+            ...pluginOperationFailure(nextResult, i18nService.t('extensionImportFailed')),
           });
         }
       }
-      await loadExtensions();
-      if (failures.length === 0) {
-        setActionOutcome({
-          type: 'success',
-          title: i18nService.t('importExtension'),
-          message: i18nService
-            .t('extensionImportSuccess')
-            .replace('{extensionId}', completedLabels.join(', ')),
-        });
-      } else {
-        setActionOutcome({
-          type: 'error',
-          title: i18nService.t(
-            completedLabels.length > 0 ? 'pluginImportPartialTitle' : 'extensionImportFailed',
-          ),
-          ...(completedLabels.length > 0
-            ? {
-                message: i18nService
-                  .t('pluginImportPartialSummary')
-                  .replace('{successCount}', String(completedLabels.length))
-                  .replace('{failureCount}', String(failures.length)),
-              }
-            : {}),
-          items: [
-            ...completedLabels.map(label => ({
-              label,
-              message: i18nService.t('pluginImportItemSuccess'),
-              type: 'success' as const,
-            })),
-            ...failures.map(item => ({ ...item, type: 'error' as const })),
-          ],
-        });
-      }
+      const inventory = await refreshAfterImport();
+      finishImportBatch(
+        completedLabels,
+        failures,
+        inventory === null || refreshFailed,
+        pending.startedAt,
+      );
     } catch (error) {
-      setActionOutcome({
-        type: 'error',
-        title: i18nService.t('extensionImportFailed'),
-        message: error instanceof Error ? error.message : i18nService.t('extensionImportFailed'),
-      });
+      reportPluginOperationFailure(
+        {
+          kind: PluginKind.EXTENSION,
+          action: PluginOperationAction.INSTALL,
+          label: pending.displayName,
+        },
+        {
+          message: error instanceof Error ? error.message : i18nService.t('extensionImportFailed'),
+          elapsedMs: Date.now() - pending.startedAt,
+        },
+      );
     } finally {
+      importOperation.current?.finish();
+      importOperation.current = null;
       setImporting(false);
-      setImportProgress(null);
     }
   };
 
@@ -692,19 +846,35 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     const generation = detailGeneration.current;
     const isCurrentDetail = () =>
       inventoryMounted.current && generation === detailGeneration.current;
+    const operation = startPluginOperation({
+      kind: PluginKind.EXTENSION,
+      action: PluginOperationAction.SAVE,
+      label: selectedExtension.name,
+    });
     try {
       setSavingConfiguration(true);
       setConfigurationError('');
       setConfigurationSaved(false);
       setConfigurationPending(false);
-      const result = await window.electron.extensions.updateConfiguration({
-        extensionId: selectedExtension.id,
-        values,
-      });
+      const result = await window.electron.extensions.updateConfiguration(
+        {
+          extensionId: selectedExtension.id,
+          values,
+        },
+        operation.context,
+      );
       if (!result.success) {
+        operation.fail(
+          pluginOperationFailure(result, i18nService.t('extensionConfigurationSaveFailed')),
+        );
         throw new Error(result.error || i18nService.t('extensionConfigurationSaveFailed'));
       }
-      const latestExtensions = await loadExtensions();
+      operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
+      const latestExtensions = await loadExtensions({ reportFailure: false });
+      if (!latestExtensions || result.refreshWarning) {
+        operation.fail(pluginOperationRefreshFailure(result));
+        return;
+      }
       if (!isCurrentDetail()) return;
       const updatedExtension = latestExtensions?.find(item => item.id === selectedExtension.id);
       if (updatedExtension) {
@@ -716,15 +886,18 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       setConfigurationSaved(true);
       setConfigurationPending(result.pending === true);
     } catch (error) {
-      if (isCurrentDetail()) {
-        setConfigurationError(
+      operation.fail({
+        message:
           error instanceof Error
-            ? error.message
+            ? pluginOperationErrorMessage(error.message)
             : i18nService.t('extensionConfigurationSaveFailed'),
-        );
-      }
+      });
+      operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
+      if (!(await loadExtensions({ reportFailure: false })))
+        operation.fail(pluginOperationRefreshFailure());
     } finally {
       setSavingConfiguration(false);
+      operation.finish();
     }
   };
 
@@ -827,15 +1000,22 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                 </button>
               </>
             )}
-            {(extension.id === OpenClawExtensionId.STT_LOCAL_CLI || extension.id === LOCAL_TTS_PROVIDER_ID) && (
+            {(extension.id === OpenClawExtensionId.STT_LOCAL_CLI ||
+              extension.id === LOCAL_TTS_PROVIDER_ID) && (
               <LocalSpeechExtensionSettingsButton
-                kind={extension.id === OpenClawExtensionId.STT_LOCAL_CLI
-                  ? LocalSpeechModelKind.Asr : LocalSpeechModelKind.Tts}
+                kind={
+                  extension.id === OpenClawExtensionId.STT_LOCAL_CLI
+                    ? LocalSpeechModelKind.Asr
+                    : LocalSpeechModelKind.Tts
+                }
                 name={extension.name}
                 disabled={extensionActionBusy}
                 onOpen={() => {
-                  setSpeechSettingsKind(extension.id === OpenClawExtensionId.STT_LOCAL_CLI
-                    ? LocalSpeechModelKind.Asr : LocalSpeechModelKind.Tts);
+                  setSpeechSettingsKind(
+                    extension.id === OpenClawExtensionId.STT_LOCAL_CLI
+                      ? LocalSpeechModelKind.Asr
+                      : LocalSpeechModelKind.Tts,
+                  );
                 }}
               />
             )}
@@ -919,33 +1099,6 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
 
   return (
     <div className="space-y-4">
-      {importing && importProgress && (
-        <div className="rounded-xl border border-primary/30 bg-primary/5 p-3">
-          <div className="flex items-center justify-between gap-3 text-sm">
-            <div className="min-w-0">
-              <div className="truncate font-medium text-foreground">
-                {importProgress.sourcePath.split(/[/\\]/).pop() || importProgress.sourcePath}
-              </div>
-              <div className="mt-0.5 text-xs text-secondary">
-                {getImportStageLabel(importProgress.stage)}
-              </div>
-            </div>
-            <span className="shrink-0 text-xs tabular-nums text-secondary">
-              {importProgress.percent}% ·{' '}
-              {i18nService
-                .t('extensionImportElapsed')
-                .replace('{seconds}', String(importElapsedSeconds))}
-            </span>
-          </div>
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-raised">
-            <div
-              className="h-full rounded-full bg-primary transition-all duration-300"
-              style={{ width: `${importProgress.percent}%` }}
-            />
-          </div>
-        </div>
-      )}
-
       <MarketplaceToolbar
         controller={marketplace}
         hasLocalMatches={filteredExtensions.length > 0}
@@ -1026,8 +1179,10 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         />
       )}
       {speechSettingsKind && (
-        <LocalSpeechExtensionSettingsDialog kind={speechSettingsKind}
-          onClose={() => setSpeechSettingsKind(null)} />
+        <LocalSpeechExtensionSettingsDialog
+          kind={speechSettingsKind}
+          onClose={() => setSpeechSettingsKind(null)}
+        />
       )}
       {importPickerOpen &&
         createPortal(
@@ -1416,7 +1571,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       {pendingCapabilityReview &&
         createPortal(
           <Modal
-            onClose={() => setPendingCapabilityReview(null)}
+            onClose={cancelCapabilityReview}
             overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
             className="mx-4 w-full max-w-lg rounded-2xl border border-border bg-surface p-5 shadow-2xl"
           >
@@ -1548,7 +1703,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
             <div className="mt-5 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setPendingCapabilityReview(null)}
+                onClick={cancelCapabilityReview}
                 className="rounded-lg px-3 py-2 text-sm text-secondary transition-colors hover:bg-surface-raised"
               >
                 {i18nService.t('cancel')}

@@ -29,7 +29,9 @@ class MarketplaceOperationOwner {
   ) => {
     this.operations = change(this.operations);
     // Bound settled session feedback; active mutations are never evicted.
-    const settled = Object.keys(this.operations).filter(key => !this.operations[key].busy);
+    const settled = Object.keys(this.operations).filter(
+      key => !this.operations[key].busy && !this.operations[key].unconfirmed,
+    );
     for (const key of settled.slice(0, Math.max(0, settled.length - 100))) {
       delete this.operations[key];
       this.pendingRefresh.delete(key);
@@ -41,7 +43,7 @@ class MarketplaceOperationOwner {
   reconcile = (installedKeys: Set<string>) => {
     const retired: string[] = [];
     for (const [key, operation] of Object.entries(this.operations)) {
-      if (!operation.committed) continue;
+      if (!operation.committed || operation.unconfirmed) continue;
       if (installedKeys.has(key)) this.observedInstalled.add(key);
       else if (!operation.busy && this.observedInstalled.has(key)) retired.push(key);
     }
@@ -71,6 +73,7 @@ class MarketplaceOperationOwner {
     this.syncFeedbackTimers();
     await this.refreshPending();
   };
+  hasPendingRefresh = (key: string) => this.pendingRefresh.has(key);
   private syncFeedbackTimers = () => {
     const canDismiss = (key: string) => {
       const operation = this.operations[key];

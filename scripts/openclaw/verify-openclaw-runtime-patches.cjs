@@ -71,6 +71,7 @@ const BUILD_RECIPE_FILES = [
   'src/main/openclaw/runtime/native-support/compaction-lifecycle.mjs',
   'src/main/openclaw/runtime/native-support/goal-continuation.mjs',
   'src/main/openclaw/runtime/native-support/run-progress.mjs',
+  'src/main/openclaw/runtime/native-support/plugin-directory-publication.mjs',
   'plugins/extensions/runtime-services/tool-call-recovery/policy.mjs',
   'plugins/extensions/runtime-services/tool-call-recovery/facts.mjs',
   'plugins/extensions/runtime-services/index.ts',
@@ -175,10 +176,27 @@ function readJsonFile(filePath, label) {
   }
 }
 
+function assertRuntimePackageLifecycleComplete(runtimeRoot) {
+  for (const relative of ['.openclaw-lifecycle-pending', 'dist/openclaw-install-guard', '.openclaw-lifecycle-lock']) {
+    try {
+      fs.lstatSync(path.join(runtimeRoot, relative));
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      throw error;
+    }
+    throw new Error(`Runtime package lifecycle is incomplete or unsettled: ${relative}`);
+  }
+}
+
 function verifyFrozenOpenClawRuntime(runtimeRoot, options = {}) {
   const buildInfoPath = path.join(runtimeRoot, 'runtime-build-info.json');
   const buildInfo = readJsonFile(buildInfoPath, 'OpenClaw runtime build info');
   const problems = [];
+  try {
+    assertRuntimePackageLifecycleComplete(runtimeRoot);
+  } catch (error) {
+    problems.push(error.message);
+  }
   const gatewayAsarPath = path.join(runtimeRoot, 'gateway.asar');
   const runtimePackagePath = path.join(runtimeRoot, 'package.json');
   const runtimePackageLockPath = path.join(runtimeRoot, RUNTIME_DEPENDENCY_LOCK_FILENAME);
@@ -431,6 +449,7 @@ function readOpenClawSourceLock(repoRoot, version) {
 }
 
 function buildOpenClawPatchManifest(runtimeRoot, options = {}) {
+  assertRuntimePackageLifecycleComplete(runtimeRoot);
   const repoRoot = options.repoRoot || path.resolve(__dirname, '../..');
   const version = normalizeOpenClawVersion(options.version || readOpenClawVersion(repoRoot));
   const gatewayBundlePath = path.join(runtimeRoot, 'gateway-bundle.mjs');
@@ -652,6 +671,7 @@ if (require.main === module) {
 
 module.exports = {
   INITIAL_BUNDLE_PENDING_FILENAME,
+  assertRuntimePackageLifecycleComplete,
   PATCH_MANIFEST_FILENAME,
   buildOpenClawBuildRecipeFingerprint,
   buildOpenClawPatchManifest,

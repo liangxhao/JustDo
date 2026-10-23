@@ -35,6 +35,20 @@ test('bounds settled feedback without evicting an active mutation', () => {
   expect(owner.snapshot().active.busy).toBe(true);
 });
 
+test.each([false, true])(
+  'never retires an unconfirmed native mutation when trimming feedback or rereading inventory (committed: %s)',
+  committed => {
+    const owner = getMarketplaceOperationOwner({}, PluginKind.SKILL);
+    owner.update(() => ({ unknown: { unconfirmed: true, committed, version: '2' } }));
+    for (let index = 0; index < 110; index++)
+      owner.update(current => ({ ...current, [index]: { error: 'failed' } }));
+    owner.reconcile(new Set(['unknown']));
+    owner.reconcile(new Set());
+    expect(owner.snapshot().unknown).toMatchObject({ unconfirmed: true, version: '2' });
+    expect(Object.keys(owner.snapshot())).toHaveLength(101);
+  },
+);
+
 test('defers refresh until a current view can reconcile a completed mutation', async () => {
   const owner = getMarketplaceOperationOwner({}, PluginKind.SKILL);
   await owner.refresh('writer');

@@ -1,4 +1,10 @@
+import { PluginKind } from '@shared/plugins/marketplace';
 import { mcpToolHasApp } from '@shared/plugins/mcpAppCapabilities';
+import {
+  PluginOperationAction,
+  type PluginOperationFeedback,
+  PluginOperationStage,
+} from '@shared/plugins/pluginOperation';
 
 import {
   ExtensionProvidedMcpServer,
@@ -7,6 +13,19 @@ import {
   McpServerConfig,
   McpServerFormData,
 } from '@/features/plugins/mcp/mcp';
+import {
+  pluginOperationErrorMessage,
+  pluginOperationFailure,
+  pluginOperationRefreshFailure,
+} from '@/features/plugins/shared/pluginMutationFeedback';
+import { startPluginOperation } from '@/features/plugins/shared/pluginOperationService';
+import { i18nService } from '@/services/i18n';
+
+type McpMutationResult = PluginOperationFeedback & {
+  success: boolean;
+  servers?: McpServerConfig[];
+  error?: string;
+};
 
 type McpInventoryServer = McpServerConfig | ExtensionProvidedMcpServer;
 
@@ -134,6 +153,12 @@ class McpService {
     return this.serverLoadFailed;
   }
 
+  private async reconcileFailedMutation(operation: ReturnType<typeof startPluginOperation>) {
+    operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
+    await this.loadServers();
+    if (this.serverLoadFailed) operation.fail(pluginOperationRefreshFailure());
+  }
+
   async loadExtensionServers(): Promise<ExtensionProvidedMcpServer[]> {
     if (!this.watchingExtensions) {
       this.watchingExtensions = true;
@@ -197,17 +222,52 @@ class McpService {
     this.invalidateAppSupport();
     const generation = ++this.extensionGeneration;
     this.extensionLoad = null;
+    const operation = startPluginOperation({
+      kind: PluginKind.MCP,
+      action: enabled ? PluginOperationAction.ENABLE : PluginOperationAction.DISABLE,
+      label: this.extensionServers?.find(server => server.id === id)?.name || id,
+    });
     try {
-      const result = await window.electron.mcp.setExtensionEnabled({ id, enabled });
+      const result = await window.electron.mcp.setExtensionEnabled(
+        { id, enabled },
+        operation.context,
+      );
       if (!result.success) {
         if (generation === this.extensionGeneration) this.extensionServers = null;
+        operation.fail({
+          ...pluginOperationFailure(result, i18nService.t(`mcpExtensionMutation.${result.code}`)),
+          message: i18nService.t(`mcpExtensionMutation.${result.code}`),
+          ...(result.code === 'unknown' ? { operationUnconfirmed: true as const } : {}),
+        });
         throw new Error(`mcpExtensionMutation.${result.code}`);
       }
-      if (generation !== this.extensionGeneration) return this.loadExtensionServers();
+      if (generation !== this.extensionGeneration) {
+        try {
+          return await this.loadExtensionServers();
+        } catch (error) {
+          operation.fail(pluginOperationRefreshFailure());
+          throw error;
+        }
+      }
       this.extensionServers = result.extensionServers;
       return result.extensionServers;
+    } catch (error) {
+      operation.fail({
+        message:
+          error instanceof Error
+            ? pluginOperationErrorMessage(error.message)
+            : i18nService.t('mcpExtensionMutation.unknown'),
+      });
+      operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
+      try {
+        await this.loadExtensionServers();
+      } catch {
+        operation.fail(pluginOperationRefreshFailure());
+      }
+      throw error;
     } finally {
       this.invalidateAppSupport();
+      operation.finish();
     }
   }
 
@@ -215,81 +275,143 @@ class McpService {
     return window.electron.mcp.readExtensionSettings(id);
   }
 
-  async createServer(
-    data: McpServerFormData,
-  ): Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }> {
+  async createServer(data: McpServerFormData): Promise<McpMutationResult> {
     this.invalidateAppSupport();
     const generation = this.serverGeneration;
+    const operation = startPluginOperation({
+      kind: PluginKind.MCP,
+      action: PluginOperationAction.INSTALL,
+      label: data.name,
+    });
     try {
-      const result = await window.electron.mcp.create(data);
+      const result = await window.electron.mcp.create(data, operation.context);
       if (result.success && result.servers) {
-        return { ...result, servers: await this.applyMutationServers(result.servers, generation) };
+        const servers = await this.applyMutationServers(result.servers, generation);
+        if (result.refreshWarning || this.serverLoadFailed)
+          operation.fail(pluginOperationRefreshFailure(result));
+        return { ...result, servers };
       }
+      if (result.success && result.refreshWarning) {
+        operation.fail(pluginOperationRefreshFailure(result));
+        return result;
+      }
+      operation.fail(pluginOperationFailure(result, i18nService.t('mcpCreateFailed')));
+      await this.reconcileFailedMutation(operation);
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to create MCP server';
       console.error('Failed to create MCP server:', error);
+      operation.fail({ message });
+      await this.reconcileFailedMutation(operation);
       return { success: false, error: message };
     } finally {
       this.invalidateAppSupport();
+      operation.finish();
     }
   }
 
-  async updateServer(
-    id: string,
-    data: Partial<McpServerFormData>,
-  ): Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }> {
+  async updateServer(id: string, data: Partial<McpServerFormData>): Promise<McpMutationResult> {
     this.invalidateAppSupport();
     const generation = this.serverGeneration;
+    const operation = startPluginOperation({
+      kind: PluginKind.MCP,
+      action: PluginOperationAction.SAVE,
+      label: data.name || this.servers.find(server => server.id === id)?.name || id,
+    });
     try {
-      const result = await window.electron.mcp.update(id, data);
+      const result = await window.electron.mcp.update(id, data, operation.context);
       if (result.success && result.servers) {
-        return { ...result, servers: await this.applyMutationServers(result.servers, generation) };
+        const servers = await this.applyMutationServers(result.servers, generation);
+        if (result.refreshWarning || this.serverLoadFailed)
+          operation.fail(pluginOperationRefreshFailure(result));
+        return { ...result, servers };
       }
+      if (result.success && result.refreshWarning) {
+        operation.fail(pluginOperationRefreshFailure(result));
+        return result;
+      }
+      operation.fail(pluginOperationFailure(result, i18nService.t('mcpUpdateFailed')));
+      await this.reconcileFailedMutation(operation);
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to update MCP server';
       console.error('Failed to update MCP server:', error);
+      operation.fail({ message });
+      await this.reconcileFailedMutation(operation);
       return { success: false, error: message };
     } finally {
       this.invalidateAppSupport();
+      operation.finish();
     }
   }
 
-  async deleteServer(
-    id: string,
-  ): Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }> {
+  async deleteServer(id: string): Promise<McpMutationResult> {
     this.invalidateAppSupport();
     const generation = this.serverGeneration;
+    const operation = startPluginOperation({
+      kind: PluginKind.MCP,
+      action: PluginOperationAction.REMOVE,
+      label: this.servers.find(server => server.id === id)?.name || id,
+    });
     try {
-      const result = await window.electron.mcp.delete(id);
+      const result = await window.electron.mcp.delete(id, operation.context);
       if (result.success && result.servers) {
-        return { ...result, servers: await this.applyMutationServers(result.servers, generation) };
+        const servers = await this.applyMutationServers(result.servers, generation);
+        if (result.refreshWarning || this.serverLoadFailed)
+          operation.fail(pluginOperationRefreshFailure(result));
+        return { ...result, servers };
       }
+      if (result.success && result.refreshWarning) {
+        operation.fail(pluginOperationRefreshFailure(result));
+        return result;
+      }
+      operation.fail(pluginOperationFailure(result, i18nService.t('mcpDeleteFailed')));
+      await this.reconcileFailedMutation(operation);
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to delete MCP server';
       console.error('Failed to delete MCP server:', error);
+      operation.fail({ message });
+      await this.reconcileFailedMutation(operation);
       return { success: false, error: message };
     } finally {
       this.invalidateAppSupport();
+      operation.finish();
     }
   }
 
   async setServerEnabled(id: string, enabled: boolean): Promise<McpServerConfig[]> {
     this.invalidateAppSupport();
     const generation = this.serverGeneration;
+    const operation = startPluginOperation({
+      kind: PluginKind.MCP,
+      action: enabled ? PluginOperationAction.ENABLE : PluginOperationAction.DISABLE,
+      label: this.servers.find(server => server.id === id)?.name || id,
+    });
     try {
-      const result = await window.electron.mcp.setEnabled({ id, enabled });
+      const result = await window.electron.mcp.setEnabled({ id, enabled }, operation.context);
       if (result.success && result.servers) {
-        return this.applyMutationServers(result.servers, generation);
+        const servers = await this.applyMutationServers(result.servers, generation);
+        if (result.refreshWarning || this.serverLoadFailed)
+          operation.fail(pluginOperationRefreshFailure(result));
+        return servers;
       }
+      if (result.success && result.refreshWarning) {
+        operation.fail(pluginOperationRefreshFailure(result));
+        return this.servers;
+      }
+      operation.fail(pluginOperationFailure(result, i18nService.t('mcpUpdateFailed')));
       throw new Error(result.error || 'Failed to update MCP server');
     } catch (error) {
       console.error('Failed to update MCP server:', error);
+      operation.fail({
+        message: error instanceof Error ? error.message : i18nService.t('mcpUpdateFailed'),
+      });
+      await this.reconcileFailedMutation(operation);
       throw error;
     } finally {
       this.invalidateAppSupport();
+      operation.finish();
     }
   }
 
@@ -308,14 +430,25 @@ class McpService {
   /** Sync MCP server configuration to OpenClaw. */
   async syncConfig(): Promise<{ success: boolean; tools: number; error?: string }> {
     this.invalidateAppSupport();
+    const operation = startPluginOperation({
+      kind: PluginKind.MCP,
+      action: PluginOperationAction.SYNC,
+      label: 'MCP',
+    });
     try {
-      return await window.electron.mcp.syncConfig();
+      const result = await window.electron.mcp.syncConfig(operation.context);
+      if (!result.success)
+        operation.fail(pluginOperationFailure(result, i18nService.t('mcpBridgeSyncError')));
+      else if (result.refreshWarning) operation.fail(pluginOperationRefreshFailure(result));
+      return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to sync MCP configuration';
       console.error('Failed to sync MCP configuration:', error);
+      operation.fail({ message });
       return { success: false, tools: 0, error: message };
     } finally {
       this.invalidateAppSupport();
+      operation.finish();
     }
   }
 
@@ -367,14 +500,16 @@ class McpService {
     }
   }
 
-  onConfigSyncStart(callback: () => void): () => void {
-    return window.electron.mcp.onConfigSyncStart(() => {
+  onConfigSyncStart(callback: (data?: { requestId?: string }) => void): () => void {
+    return window.electron.mcp.onConfigSyncStart(data => {
       this.invalidateAppSupport();
-      callback();
+      callback(data);
     });
   }
 
-  onConfigSyncDone(callback: (data: { tools: number; error?: string }) => void): () => void {
+  onConfigSyncDone(
+    callback: (data: { tools: number; error?: string; requestId?: string }) => void,
+  ): () => void {
     return window.electron.mcp.onConfigSyncDone(data => {
       this.invalidateAppSupport();
       callback(data);

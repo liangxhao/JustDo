@@ -70,11 +70,12 @@ export type ExtensionUpdateConfigurationRequest = {
   values: Record<string, string>;
 };
 
-export type ExtensionUpdateConfigurationResult = {
-  success: boolean;
-  error?: string;
-  pending?: boolean;
-};
+export type ExtensionUpdateConfigurationResult =
+  import('./pluginOperation').PluginOperationFeedback & {
+    success: boolean;
+    error?: string;
+    pending?: boolean;
+  };
 
 export type ExtensionSetEnabledRequest = {
   extensionId: string;
@@ -141,7 +142,7 @@ export type OpenClawPluginCapabilityReview = {
   };
 };
 
-export type ExtensionSetEnabledResult = {
+export type ExtensionSetEnabledResult = import('./pluginOperation').PluginOperationFeedback & {
   success: boolean;
   error?: string;
   warnings?: string[];
@@ -152,7 +153,7 @@ export type ExtensionDeleteRequest = {
   extensionId: string;
 };
 
-export type ExtensionDeleteResult = {
+export type ExtensionDeleteResult = import('./pluginOperation').PluginOperationFeedback & {
   success: boolean;
   error?: string;
   warnings?: string[];
@@ -183,6 +184,10 @@ export type ExtensionImportResult = {
   success: boolean;
   extensionId?: string;
   error?: string;
-  failedStage?: ExtensionImportStage;
+  failedStage?: import('./pluginOperation').PluginOperationStage | ExtensionImportStage;
+  installationCommitted?: true;
+  installSourceInUse?: true;
+  operationUnconfirmed?: true;
+  refreshWarning?: true;
   capabilityReview?: OpenClawPluginCapabilityReview;
 };

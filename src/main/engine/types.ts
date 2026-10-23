@@ -3,6 +3,12 @@ import type { PermissionMode } from '../../shared/security/approvals';
 
 export type CoworkAgentEngine = 'openclaw';
 
+export type GatewayRequestOptions = {
+  timeoutMs?: number;
+  /** Main-owned admission check. Runs before connection preparation and native dispatch. */
+  assertBeforeSend?: () => void;
+};
+
 // ============================================================
 // Gateway Skill Types
 // ============================================================

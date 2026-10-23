@@ -22,7 +22,10 @@ export type ExtensionMcpMutationError =
   'invalid' | 'forbidden' | 'conflict' | 'unavailable' | 'apply-failed' | 'unknown';
 export type ExtensionMcpMutationResult =
   | { success: true; extensionServers: ExtensionProvidedMcpServer[] }
-  | { success: false; code: ExtensionMcpMutationError };
+  | ({
+      success: false;
+      code: ExtensionMcpMutationError;
+    } & import('./pluginOperation').PluginOperationFeedback);
 
 export const MCP_REQUEST_TIMEOUT_LIMITS = {
   min: 1,

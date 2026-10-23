@@ -10,6 +10,7 @@ import type {
   ExtensionMcpSettingsResult,
   ExtensionProvidedMcpServer,
 } from '../../../shared/plugins/mcp';
+import { PluginOperationStage } from '../../../shared/plugins/pluginOperation';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -110,6 +111,7 @@ export class ExtensionMcpSettingsService {
   async setEnabled(
     input: unknown,
     syncConfig: () => Promise<{ error?: string }>,
+    onProgress?: (stage: PluginOperationStage) => void,
   ): Promise<ExtensionMcpMutationResult> {
     if (
       !isRecord(input) ||
@@ -122,6 +124,7 @@ export class ExtensionMcpSettingsService {
     }
     let failure: ExtensionMcpMutationError = 'unknown';
     try {
+      onProgress?.(PluginOperationStage.VALIDATING);
       const snapshot = await this.snapshot();
       const servers = await this.deps.listServers();
       const server = servers.find(entry => entry.id === input.id);
@@ -135,6 +138,7 @@ export class ExtensionMcpSettingsService {
         return { success: false, code: 'conflict' };
       }
       if (server.enabled !== input.enabled) {
+        onProgress?.(PluginOperationStage.SAVING_CONFIGURATION);
         await this.deps.request('config.patch', {
           baseHash: snapshot.revision,
           raw: JSON.stringify({
@@ -153,8 +157,10 @@ export class ExtensionMcpSettingsService {
       // Use the existing application/reload confirmation, including global config serialization.
       // An uncertain native write is never replayed or compensated by an inverse write.
       failure = 'apply-failed';
+      onProgress?.(PluginOperationStage.APPLYING_CONFIGURATION);
       const applied = await syncConfig();
       if (applied.error) return { success: false, code: failure };
+      onProgress?.(PluginOperationStage.CONFIRMING);
       const confirmed = await this.deps.listServers();
       if (confirmed.find(entry => entry.id === input.id)?.enabled !== input.enabled) {
         return { success: false, code: failure };

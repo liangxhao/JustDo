@@ -472,6 +472,93 @@ test('uses the installation deadline without changing default Gateway request op
   expect(request).toHaveBeenNthCalledWith(2, 'plugins.list', {});
 });
 
+test('rejects a failed admission check before preparing the Gateway connection', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn();
+  const ensureReady = vi.fn().mockResolvedValue(undefined);
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike;
+    ensureGatewayClientReady: () => Promise<void>;
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = ensureReady;
+  const refusal = new Error('The admitted Gateway process is no longer current.');
+  const assertBeforeSend = vi.fn(() => { throw refusal; });
+
+  await expect(adapter.requestGateway('plugins.uninstall', { pluginId: 'sample' }, {
+    assertBeforeSend,
+  })).rejects.toBe(refusal);
+
+  expect(assertBeforeSend).toHaveBeenCalledOnce();
+  expect(ensureReady).not.toHaveBeenCalled();
+  expect(request).not.toHaveBeenCalled();
+});
+
+test('does not dispatch to a replacement Gateway after connection preparation', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const originalRequest = vi.fn();
+  const replacementRequest = vi.fn();
+  let releaseReady!: () => void;
+  const ready = new Promise<void>(resolve => { releaseReady = resolve; });
+  const ensureReady = vi.fn(() => ready);
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike;
+    ensureGatewayClientReady: () => Promise<void>;
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request: originalRequest };
+  internals.ensureGatewayClientReady = ensureReady;
+  let generation = 1;
+  const refusal = new Error('The admitted Gateway process is no longer current.');
+  const assertBeforeSend = vi.fn(() => {
+    if (generation !== 1) throw refusal;
+  });
+
+  const pending = adapter.requestGateway('plugins.uninstall', { pluginId: 'sample' }, {
+    assertBeforeSend,
+  });
+  expect(ensureReady).toHaveBeenCalledOnce();
+  generation += 1;
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request: replacementRequest };
+  releaseReady();
+
+  await expect(pending).rejects.toBe(refusal);
+  expect(assertBeforeSend).toHaveBeenCalledTimes(2);
+  expect(originalRequest).not.toHaveBeenCalled();
+  expect(replacementRequest).not.toHaveBeenCalled();
+});
+
+test('keeps admission callbacks local while preserving native timeout and default options', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const order: string[] = [];
+  const request = vi.fn().mockImplementation(() => {
+    order.push('send');
+    return Promise.resolve({ ok: true });
+  });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike;
+    ensureGatewayClientReady: () => Promise<void>;
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn(async () => { order.push('ready'); });
+  const assertBeforeSend = vi.fn(() => { order.push('check'); });
+
+  await expect(adapter.requestGateway('plugins.install', { source: 'local' }, {
+    timeoutMs: 600_000,
+    assertBeforeSend,
+  })).resolves.toEqual({ ok: true });
+  expect(order).toEqual(['check', 'ready', 'check', 'send']);
+  expect(request).toHaveBeenNthCalledWith(1, 'plugins.install', { source: 'local' }, {
+    timeoutMs: 600_000,
+  });
+
+  await adapter.requestGateway('plugins.refresh', {}, { assertBeforeSend });
+  expect(request).toHaveBeenNthCalledWith(2, 'plugins.refresh', {});
+  expect(assertBeforeSend).toHaveBeenCalledTimes(4);
+});
+
 test('keeps the initial cutoff pending when the Gateway generation changes mid-scan', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});

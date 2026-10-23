@@ -20,6 +20,11 @@ import {
   MarketplaceInstallState,
   MarketplacePluginKind,
 } from '../../../shared/plugins/marketplace';
+import {
+  type PluginOperationContext,
+  PluginOperationStage,
+  toPluginOperationStage,
+} from '../../../shared/plugins/pluginOperation';
 import type { PluginInstallResult } from '../installation';
 import { PluginInstallationService, PluginInstallOrigin } from '../installation';
 import {
@@ -33,6 +38,7 @@ const MAX_LIMIT = 100;
 const installStates = new Set<string>(Object.values(MarketplaceInstallState));
 const pluginKinds = new Set<string>(Object.values(MarketplacePluginKind));
 const MAX_CATEGORIES = 100;
+const operationStages = new Set<string>(Object.values(PluginOperationStage));
 
 export class PluginMarketplaceService {
   private readonly providers: Map<string, PluginMarketplaceProvider>;
@@ -275,7 +281,11 @@ export class PluginMarketplaceService {
     return { updates };
   }
 
-  async install(request: MarketplaceInstallRequest): Promise<PluginInstallResult> {
+  async install(
+    request: MarketplaceInstallRequest,
+    onProgress?: (stage: PluginOperationStage) => void,
+    context?: PluginOperationContext,
+  ): Promise<PluginInstallResult> {
     const provider = this.requireProviderForKind(request.sourceId, request.kind);
     const pluginId = this.requirePluginId(request.pluginId);
     const normalizedRequest = {
@@ -284,63 +294,123 @@ export class PluginMarketplaceService {
       version: request.version?.trim() || undefined,
       operation: request.operation ?? MarketplaceInstallOperation.INSTALL,
     };
-    const installKey = `${request.sourceId}:${request.kind}:${pluginId.toLowerCase()}`;
-    return this.runInstallExclusive(installKey, async () => {
-      const prepared = await this.callProvider(
-        () => provider.prepareInstall(normalizedRequest),
-        'prepare installation',
-      );
-      let installSourceInUse = false;
+    let currentStage: PluginOperationStage | undefined;
+    let thrownFailureStage: PluginOperationStage | undefined;
+    const reportProgress = (stage: string): void => {
+      if (!operationStages.has(stage)) return;
+      currentStage = stage as PluginOperationStage;
       try {
-        if (!prepared || prepared.payload?.kind !== request.kind) {
-          throw new MarketplaceError(
-            MarketplaceErrorCode.INVALID_RESPONSE,
-            'Marketplace source returned an invalid installation payload',
-          );
-        }
-        const result = await this.installationService.install({
-          operation: normalizedRequest.operation,
-          origin: PluginInstallOrigin.MARKETPLACE,
-          marketplacePluginId: pluginId,
-          payload: prepared.payload,
-        });
-        installSourceInUse = result.installSourceInUse === true;
-        if ((result.success || result.installationCommitted) && result.pluginId) {
-          try {
-            const previous = this.installRegistry
-              .list(request.kind)
-              .find(
-                record =>
-                  record.sourceId === request.sourceId &&
-                  record.marketplacePluginId.toLowerCase() === pluginId.toLowerCase(),
-              );
-            this.installRegistry.upsert({
-              sourceId: request.sourceId,
-              kind: request.kind,
-              marketplacePluginId: pluginId,
-              runtimeId: result.pluginId,
-              installedVersion: normalizedRequest.version || previous?.installedVersion,
-              installPath: result.installPath || previous?.installPath,
-            });
-          } catch {
-            console.warn('[PluginMarketplace] Failed to persist marketplace installation identity');
-          }
-        }
-        return result;
-      } finally {
-        try {
-          if (installSourceInUse) {
-            console.warn(
-              '[PluginMarketplace] Retaining prepared source after an unconfirmed installation',
-            );
-          } else {
-            await prepared?.cleanup?.();
-          }
-        } catch {
-          console.warn('[PluginMarketplace] Failed to clean prepared installation payload');
-        }
+        onProgress?.(stage as PluginOperationStage);
+      } catch {
+        // Presentation observers cannot change the outcome of an installation.
       }
-    });
+    };
+    const installKey = `${request.sourceId}:${request.kind}:${pluginId.toLowerCase()}`;
+    reportProgress(PluginOperationStage.QUEUED);
+    try {
+      return await this.runInstallExclusive(installKey, async () => {
+        reportProgress(PluginOperationStage.PREPARING_PACKAGE);
+        let preparing = true;
+        const prepared = await this.callProvider(async () => {
+          try {
+            return onProgress
+              ? await provider.prepareInstall(normalizedRequest, {
+                  onProgress: stage => {
+                    if (preparing) reportProgress(stage);
+                  },
+                })
+              : await provider.prepareInstall(normalizedRequest);
+          } finally {
+            preparing = false;
+          }
+        }, 'prepare installation');
+        let installSourceInUse = false;
+        try {
+          if (!prepared || prepared.payload?.kind !== request.kind) {
+            throw new MarketplaceError(
+              MarketplaceErrorCode.INVALID_RESPONSE,
+              'Marketplace source returned an invalid installation payload',
+            );
+          }
+          reportProgress(PluginOperationStage.INSTALLING);
+          let installing = true;
+          let result: PluginInstallResult;
+          try {
+            result = await this.installationService.install({
+              operation: normalizedRequest.operation,
+              origin: PluginInstallOrigin.MARKETPLACE,
+              marketplacePluginId: pluginId,
+              ...(context ? { operationContext: context } : {}),
+              payload: prepared.payload,
+              ...(onProgress
+                ? {
+                    onProgress: (progress: { stage: string }) => {
+                      if (installing) reportProgress(progress.stage);
+                    },
+                  }
+                : {}),
+            });
+          } finally {
+            installing = false;
+          }
+          installSourceInUse = result.installSourceInUse === true;
+          // Capture the failure before recording identity or cleaning the temporary source.
+          const failedStage = result.success
+            ? undefined
+            : (toPluginOperationStage(result.failedStage ?? '') ?? currentStage);
+          if ((result.success || result.installationCommitted) && result.pluginId) {
+            reportProgress(PluginOperationStage.CONFIRMING);
+            try {
+              const previous = this.installRegistry
+                .list(request.kind)
+                .find(
+                  record =>
+                    record.sourceId === request.sourceId &&
+                    record.marketplacePluginId.toLowerCase() === pluginId.toLowerCase(),
+                );
+              this.installRegistry.upsert({
+                sourceId: request.sourceId,
+                kind: request.kind,
+                marketplacePluginId: pluginId,
+                runtimeId: result.pluginId,
+                installedVersion: normalizedRequest.version || previous?.installedVersion,
+                installPath: result.installPath || previous?.installPath,
+              });
+            } catch {
+              console.warn(
+                '[PluginMarketplace] Failed to persist marketplace installation identity',
+              );
+            }
+          }
+          return failedStage ? { ...result, failedStage } : result;
+        } catch (error) {
+          thrownFailureStage = currentStage;
+          throw error;
+        } finally {
+          try {
+            if (installSourceInUse) {
+              console.warn(
+                '[PluginMarketplace] Retaining prepared source after an unconfirmed installation',
+              );
+            } else {
+              if (prepared?.cleanup) reportProgress(PluginOperationStage.CLEANING_UP);
+              await prepared?.cleanup?.();
+            }
+          } catch {
+            console.warn('[PluginMarketplace] Failed to clean prepared installation payload');
+          }
+        }
+      });
+    } catch (error) {
+      // Report the entered failure phase without exporting SDK text or temporary paths.
+      throw error instanceof MarketplaceError
+        ? new MarketplaceError(error.code, error.message, thrownFailureStage ?? currentStage)
+        : new MarketplaceError(
+            MarketplaceErrorCode.INTERNAL,
+            'Marketplace installation failed',
+            thrownFailureStage ?? currentStage,
+          );
+    }
   }
 
   forgetInstallation(kind: MarketplacePluginKind, runtimeId: string, installPath?: string): void {

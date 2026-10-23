@@ -140,6 +140,7 @@ import type {
   CoworkRuntimeEvents,
   CoworkStartOptions,
   CoworkStopOptions,
+  GatewayRequestOptions,
 } from '../types';
 import { type GatewaySubagent, listGatewaySubagents, SUBAGENT_STATUSES } from './subagentGateway';
 
@@ -2922,11 +2923,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   async requestGateway<T>(
     method: string,
     params?: unknown,
-    options?: { timeoutMs?: number },
+    options?: GatewayRequestOptions,
   ): Promise<T> {
+    const assertBeforeSend = options?.assertBeforeSend;
+    assertBeforeSend?.();
     await this.ensureGatewayClientReady();
-    return options
-      ? this.requireGatewayClient().request<T>(method, params, options)
+    assertBeforeSend?.();
+    // Admission stays inside Main; only native transport options cross this boundary.
+    return options?.timeoutMs !== undefined
+      ? this.requireGatewayClient().request<T>(method, params, { timeoutMs: options.timeoutMs })
       : this.requireGatewayClient().request<T>(method, params);
   }
 

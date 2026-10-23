@@ -38,6 +38,7 @@ import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
 import PluginGroupSection from '@/features/plugins/shared/PluginGroupSection';
 import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubTypes';
 import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownDescription';
+import { getPluginOperationOwner } from '@/features/plugins/shared/pluginOperationService';
 import { comparePluginNames } from '@/features/plugins/shared/pluginOrdering';
 import PluginStateButton from '@/features/plugins/shared/PluginStateButton';
 import { i18nService } from '@/services/i18n';
@@ -386,7 +387,6 @@ const McpManager: React.FC<McpManagerProps> = ({
 
   const reconcileFailedMutation = async (generation: number) => {
     if (!mounted.current || generation !== inventoryReadGeneration.current) return;
-    await mcpService.loadServers();
     if (mounted.current && generation === inventoryReadGeneration.current) {
       dispatch(setMcpServers(mcpService.getServers()));
     }
@@ -404,10 +404,9 @@ const McpManager: React.FC<McpManagerProps> = ({
       await mcpService.setServerEnabled(serverId, !targetServer.enabled);
       if (!mounted.current) return;
       dispatch(setMcpServers(mcpService.getServers()));
-      setActionError(mcpService.hasServerLoadFailed() ? i18nService.t('mcpLoadFailed') : '');
-    } catch (error) {
+      setActionError('');
+    } catch {
       if (!mounted.current) return;
-      setActionError(error instanceof Error ? error.message : i18nService.t('mcpUpdateFailed'));
       await reconcileFailedMutation(generation);
     } finally {
       if (mounted.current) {
@@ -440,22 +439,13 @@ const McpManager: React.FC<McpManagerProps> = ({
         setProviderLoadFailed(false);
         setActionError('');
       }
-    } catch (error) {
+    } catch {
+      const loaded = mcpService.getExtensionServers();
       if (isCurrent()) {
-        const key =
-          error instanceof Error && error.message.startsWith('mcpExtensionMutation.')
-            ? error.message
-            : 'mcpExtensionMutation.unknown';
-        setActionError(i18nService.t(key));
-      }
-      try {
-        const loaded = await mcpService.loadExtensionServers();
-        if (isCurrent()) {
+        if (loaded) {
           setExtensionServers(loaded);
           setProviderLoadFailed(false);
-        }
-      } catch {
-        if (isCurrent()) setProviderLoadFailed(true);
+        } else setProviderLoadFailed(true);
       }
     } finally {
       if (mounted.current) {
@@ -490,17 +480,13 @@ const McpManager: React.FC<McpManagerProps> = ({
       const result = await mcpService.deleteServer(pendingDelete.id);
       if (!mounted.current) return;
       if (!result.success) {
-        setActionError(result.error || i18nService.t('mcpDeleteFailed'));
         await reconcileFailedMutation(generation);
         return;
       }
       if (result.servers) dispatch(setMcpServers(mcpService.getServers()));
-      if (mcpService.hasServerLoadFailed()) setActionError(i18nService.t('mcpLoadFailed'));
       setPendingDelete(null);
-    } catch (error) {
-      if (mounted.current) {
-        setActionError(error instanceof Error ? error.message : i18nService.t('mcpDeleteFailed'));
-      }
+    } catch {
+      await reconcileFailedMutation(generation);
     } finally {
       if (mounted.current) {
         invalidateConnectionResults();
@@ -551,9 +537,6 @@ const McpManager: React.FC<McpManagerProps> = ({
         : await mcpService.createServer(data);
       if (mounted.current && formRevision === formGeneration.current) {
         if (result.success && result.servers) dispatch(setMcpServers(mcpService.getServers()));
-        if (result.success && mcpService.hasServerLoadFailed()) {
-          setActionError(i18nService.t('mcpLoadFailed'));
-        }
         if (!result.success) await reconcileFailedMutation(generation);
       }
       return result;
@@ -801,15 +784,23 @@ const McpManager: React.FC<McpManagerProps> = ({
    */
   useEffect(() => {
     let syncTimeout: ReturnType<typeof setTimeout> | null = null;
+    let reportedByOperation = false;
 
-    const cleanupStart = mcpService.onConfigSyncStart(() => {
+    const cleanupStart = mcpService.onConfigSyncStart(data => {
+      reportedByOperation = Boolean(
+        data?.requestId &&
+        [
+          ...getPluginOperationOwner().snapshot(),
+          ...getPluginOperationOwner().failureSnapshot(),
+        ].some(operation => operation.requestId === data.requestId),
+      );
       setBridgeSyncing(true);
       setBridgeSyncError('');
       // Fallback: auto-clear overlay after 40s to prevent permanent lock
       if (syncTimeout) clearTimeout(syncTimeout);
       syncTimeout = setTimeout(() => {
         setBridgeSyncing(false);
-        setBridgeSyncError(i18nService.t('mcpBridgeSyncError'));
+        if (!reportedByOperation) setBridgeSyncError(i18nService.t('mcpBridgeSyncError'));
       }, 40_000);
     });
     const cleanupDone = mcpService.onConfigSyncDone(data => {
@@ -818,7 +809,14 @@ const McpManager: React.FC<McpManagerProps> = ({
         syncTimeout = null;
       }
       setBridgeSyncing(false);
-      setBridgeSyncError(data.error || '');
+      const mutationActive = Boolean(
+        data.requestId &&
+        [
+          ...getPluginOperationOwner().snapshot(),
+          ...getPluginOperationOwner().failureSnapshot(),
+        ].some(operation => operation.requestId === data.requestId),
+      );
+      setBridgeSyncError(mutationActive ? '' : data.error || '');
     });
     return () => {
       cleanupStart();
@@ -1167,6 +1165,7 @@ const McpManager: React.FC<McpManagerProps> = ({
         />
       )}
       <McpServerFormModal
+        executionFailureHandled
         key={formGeneration.current}
         isOpen={isFormOpen}
         server={editingServer}
