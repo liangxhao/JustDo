@@ -1,7 +1,11 @@
 /** Shared by native workspace surfaces and retained same-document App surfaces. */
-export function readSurfaceOcclusion(rect: DOMRect, doc: Document = document) {
+export function readSurfaceOcclusion(
+  rect: DOMRect,
+  doc: Document = document,
+  ignoredOverlay?: Element,
+) {
   const blocked = Array.from(doc.querySelectorAll('[data-workspace-overlay="true"]')).some(
-    overlay => overlay.getClientRects().length > 0,
+    overlay => overlay !== ignoredOverlay && overlay.getClientRects().length > 0,
   );
   const occluded =
     blocked ||

@@ -24,6 +24,7 @@ import type { McpAppSession, McpAppSessionView } from '../../gateway/mcp-app/mcp
 import { isNativeAppReference } from '../../pipeline/native-app-reference';
 import { isNativeMcpAppPreview, readNativeMcpAppIdentity } from '../../pipeline/native-mcp-app';
 import { resolveNativeSandboxUrl } from '../native-widget/host';
+import { presentationTargetVisible } from '../presentation-documents';
 import { createMcpAppBridge } from './bridge';
 import { prepareMcpAppDownload } from './download';
 import { MCP_APP_ICON_STYLE, renderMcpAppIcon } from './icon';
@@ -242,10 +243,15 @@ export class McpAppView extends LitElement {
     return (
       this.isConnected &&
       this.ownerDocument.visibilityState !== 'hidden' &&
-      this.getClientRects().length > 0 &&
+      presentationTargetVisible(this) &&
       this.presentationVisible?.() !== false &&
       this.context?.isCurrent() === true
     );
+  }
+
+  refreshPresentation(): void {
+    if (!this.visible()) this.confirmation?.respond(false);
+    this.requestUpdate();
   }
 
   private clear(): void {
@@ -856,9 +862,9 @@ export class McpAppView extends LitElement {
         <span class="branding">
           <span class="app-icon" aria-hidden="true"
             >${renderMcpAppIcon(icons, this.failedIcons, src => {
-          this.failedIcons = [...this.failedIcons, src];
-          this.requestUpdate();
-        })}</span
+              this.failedIcons = [...this.failedIcons, src];
+              this.requestUpdate();
+            })}</span
           >
           <span class="title" title=${this.contentTitle ?? this.preview?.title ?? t('mcpAppsTitle')}
             >${this.contentTitle ?? this.preview?.title ?? t('mcpAppsTitle')}</span
@@ -868,31 +874,32 @@ export class McpAppView extends LitElement {
         <span class="app-header-space" aria-hidden="true"></span>
         <span class="host-actions">
           ${
-          !this.closed
-            ? html`${this.pinPresentation ? html`<button class="icon-button" data-action="pin" ?disabled=${!this.canReference} aria-label=${t('mcpAppsPin')} title=${t('mcpAppsPin')} @click=${() => this.pinPresentation?.()}>${icon('M14 3h7v7 M21 3l-9 9 M21 14v6H4V3h6')}</button>` : nothing}${!this.expanded && this.modes.includes('inline') && this.modes.includes('fullscreen') ? html`<button class="icon-button" data-action="display-mode" aria-label=${t(this.mode === 'fullscreen' ? 'mcpAppsReturn' : 'mcpAppsExpand')} title=${t(this.mode === 'fullscreen' ? 'mcpAppsReturn' : 'mcpAppsExpand')} @click=${() => void this.setMode(this.mode === 'fullscreen' ? 'inline' : 'fullscreen')}>${icon(this.mode === 'fullscreen' ? 'M4 9h5V4 M20 9h-5V4 M4 15h5v5 M20 15h-5v5' : 'M9 4H4v5 M15 4h5v5 M4 15v5h5 M20 15v5h-5')}</button>` : nothing}
-                <button
+            !this.closed
+              ? html`${this.pinPresentation ? html`<button class="icon-button" data-action="pin" ?disabled=${!this.canReference} aria-label=${t('mcpAppsPin')} title=${t('mcpAppsPin')} @click=${() => this.pinPresentation?.()}>${icon('M14 3h7v7 M21 3l-9 9 M21 14v6H4V3h6')}</button>` : nothing}${!this.expanded && this.modes.includes('inline') && this.modes.includes('fullscreen') ? html`<button class="icon-button" data-action="display-mode" aria-label=${t(this.mode === 'fullscreen' ? 'mcpAppsReturn' : 'mcpAppsExpand')} title=${t(this.mode === 'fullscreen' ? 'mcpAppsReturn' : 'mcpAppsExpand')} @click=${() => void this.setMode(this.mode === 'fullscreen' ? 'inline' : 'fullscreen')}>${icon(this.mode === 'fullscreen' ? 'M4 9h5V4 M20 9h-5V4 M4 15h5v5 M20 15h-5v5' : 'M9 4H4v5 M15 4h5v5 M4 15v5h5 M20 15v5h-5')}</button>` : nothing}
+                  <button
+                    class="icon-button"
+                    data-action="dismiss"
+                    aria-label=${t(this.expanded && this.modes.includes('inline') ? 'mcpAppsReturn' : 'mcpAppsClose')}
+                    title=${t(this.expanded && this.modes.includes('inline') ? 'mcpAppsReturn' : 'mcpAppsClose')}
+                    @click=${() => {
+                      if (this.expanded && this.modes.includes('inline'))
+                        void this.setMode('inline');
+                      else void this.closeApp();
+                    }}
+                  >
+                    ${icon('m6 6 12 12 M6 18 18 6')}
+                  </button>`
+              : html`<button
                   class="icon-button"
-                  data-action="dismiss"
-                  aria-label=${t(this.expanded && this.modes.includes('inline') ? 'mcpAppsReturn' : 'mcpAppsClose')}
-                  title=${t(this.expanded && this.modes.includes('inline') ? 'mcpAppsReturn' : 'mcpAppsClose')}
-                  @click=${() => {
-                    if (this.expanded && this.modes.includes('inline')) void this.setMode('inline');
-                    else void this.closeApp();
-                  }}
+                  data-action="reopen"
+                  aria-label=${t('mcpAppsReopen')}
+                  title=${t('mcpAppsReopen')}
+                  ?disabled=${this.loading}
+                  @click=${() => void this.reload()}
                 >
-                  ${icon('m6 6 12 12 M6 18 18 6')}
+                  ${icon('M3 10a9 9 0 1 1 2.6 8.4 M3 4v6h6')}
                 </button>`
-            : html`<button
-                class="icon-button"
-                data-action="reopen"
-                aria-label=${t('mcpAppsReopen')}
-                title=${t('mcpAppsReopen')}
-                ?disabled=${this.loading}
-                @click=${() => void this.reload()}
-              >
-                ${icon('M3 10a9 9 0 1 1 2.6 8.4 M3 4v6h6')}
-              </button>`
-        }
+          }
         </span>
       </header>
       ${

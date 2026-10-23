@@ -130,6 +130,22 @@ function resize(width: number) {
   act(() => observers.slice().forEach(observer => observer.callback([], observer.instance)));
 }
 
+it('marks content from messages with a sidebar icon and explains how to return it', () => {
+  const tab = { ...tabs(1)[0], reference: true };
+  render(
+    <CoworkDisplayPanel activeTabId={tab.id} isOpen onClose={vi.fn()} tabs={[tab]}>
+      <div>Content</div>
+    </CoworkDisplayPanel>,
+  );
+  const marker = within(screen.getByRole('tab')).getByLabelText(
+    i18nService.t('mcpAppsReferenceHint'),
+  );
+  expect(marker.querySelector('svg')).not.toBeNull();
+  expect(marker.textContent).toBe('');
+  expect(marker.title).toBe('From chat; close this tab to return it to the message');
+  expect(screen.getByRole('button', { name: `Move back to message: ${tab.label}` })).toBeTruthy();
+});
+
 function tabWidths() {
   return screen.getAllByRole('tab').map(tab => parseFloat(tab.parentElement!.style.width));
 }

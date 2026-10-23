@@ -32,7 +32,10 @@ import { selectCurrentSession } from '@/features/cowork/coworkSelectors';
 import type { CoworkAttachmentPayload, CoworkSession } from '@/features/cowork/coworkTypes';
 import type { JustDoChatElement } from '@/libs/openclaw-chat/components/justdo-chat';
 import type { McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
-import { NATIVE_WIDGET_DRAFT_EVENT } from '@/libs/openclaw-chat/components/native-widget/host';
+import {
+  NATIVE_WIDGET_DRAFT_EVENT,
+  type NativeWidgetContext,
+} from '@/libs/openclaw-chat/components/native-widget/host';
 import { NativeWidgetView } from '@/libs/openclaw-chat/components/native-widget/view';
 import {
   type ChatContextUsageSnapshot,
@@ -295,6 +298,49 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       },
       [canDraftWidget],
     );
+    const captureWidgetContext = useCallback((): NativeWidgetContext | undefined => {
+      const controller = controllerRef.current;
+      const state = controller?.state;
+      const client = state?.client;
+      const sessionKey = canonicalSessionKeyRef.current;
+      if (!controller || !state?.connected || !client || !sessionKey || !currentSessionId) return;
+      const generation = client.generation;
+      const sessionId = state.currentSessionId ?? undefined;
+      const isCurrent = () =>
+        activeProductSessionId.current === currentSessionId &&
+        controllerRef.current === controller &&
+        controller.state.client === client &&
+        controller.state.connected &&
+        canonicalSessionKeyRef.current === sessionKey &&
+        controller.state.sessionKey === sessionKey &&
+        (controller.state.currentSessionId ?? undefined) === sessionId &&
+        client.generation === generation;
+      if (!isCurrent()) return;
+      return {
+        client,
+        generation,
+        sessionKey,
+        sessionId,
+        presentationScope: currentSessionId,
+        isCurrent,
+        canDraft: () => isCurrent() && canDraftWidget(),
+        addDraft: text => {
+          if (
+            !isCurrent() ||
+            !canDraftWidget() ||
+            typeof text !== 'string' ||
+            !text.trim() ||
+            text.length > 4000 ||
+            /^\s*[!/]/.test(text)
+          )
+            return false;
+          return widgetDraftCallback.current?.(sessionKey, text) !== false;
+        },
+        openLink: url => {
+          if (isCurrent()) openWidgetLink(sessionKey, url);
+        },
+      };
+    }, [currentSessionId, canDraftWidget, openWidgetLink]);
     const openMcpAppFile = useCallback(
       (file: { path: string; name: string }) =>
         openMcpAppFileCallback.current?.(file) ?? Promise.resolve(false),
@@ -426,6 +472,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         previous?.removeEventListener(NATIVE_WIDGET_DRAFT_EVENT, handleWidgetDraft);
         if (previous && previous !== element) {
           previous.captureMcpAppContext = undefined;
+          previous.captureWidgetContext = undefined;
           previous.canDraftWidget = undefined;
           previous.openWidgetLink = undefined;
           previous.addMcpAppDraft = undefined;
@@ -435,6 +482,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         chatElementRef.current = element;
         if (element) {
           element.captureMcpAppContext = captureMcpAppContext;
+          element.captureWidgetContext = captureWidgetContext;
           element.canDraftWidget = canDraftWidget;
           element.openWidgetLink = openWidgetLink;
           element.addMcpAppDraft = addMcpAppDraft;
@@ -446,6 +494,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       },
       [
         captureMcpAppContext,
+        captureWidgetContext,
         canDraftWidget,
         handleWidgetDraft,
         addMcpAppDraft,

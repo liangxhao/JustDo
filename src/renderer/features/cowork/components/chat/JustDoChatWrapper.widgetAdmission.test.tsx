@@ -5,8 +5,12 @@ import { cleanup, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { JustDoChatElement } from '@/libs/openclaw-chat/components/justdo-chat';
+import { NativeWidgetAnchor } from '@/libs/openclaw-chat/components/native-widget/anchor';
 import type { NativeWidgetContext } from '@/libs/openclaw-chat/components/native-widget/host';
+import { getNativeWidgetPresentations } from '@/libs/openclaw-chat/components/native-widget/presentations';
+import { NativeWidgetView } from '@/libs/openclaw-chat/components/native-widget/view';
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
+import { decodeNativeCanvasResult } from '@/libs/openclaw-chat/pipeline/native-canvas';
 
 import JustDoChatWrapper from './JustDoChatWrapper';
 
@@ -125,6 +129,164 @@ describe('widget product draft admission', () => {
     const chat = fixture.chat!;
     screen.unmount();
     expect(chat.canDraftWidget).toBeUndefined();
+  });
+
+  it('routes a confirmed sidebar suggestion through its captured product and native identity', async () => {
+    const connect = connection();
+    const onDraft = vi.fn();
+    const screen = render(<JustDoChatWrapper onWidgetDraft={onDraft} />);
+    await waitFor(() => expect(connect).toHaveBeenCalledOnce());
+    const context = widgetContext();
+
+    expect(context.presentationScope).toBe('widget-admission');
+    expect(context.presentationOwner).toBe(fixture.chat);
+    expect(await context.addDraft?.('Confirmed selection')).toBe(true);
+    expect(onDraft).toHaveBeenCalledExactlyOnceWith(context.sessionKey, 'Confirmed selection');
+    for (const text of ['', '   ', '/execute', '!run', 'x'.repeat(4001)])
+      expect(await context.addDraft?.(text)).toBe(false);
+    expect(onDraft).toHaveBeenCalledOnce();
+
+    screen.unmount();
+    expect(await context.addDraft?.('Unmounted selection')).toBe(false);
+    expect(onDraft).toHaveBeenCalledOnce();
+  });
+
+  it.each(['generation', 'client', 'sessionId', 'connection'] as const)(
+    'rejects a confirmed sidebar suggestion after its native %s changes',
+    async change => {
+      const connect = connection();
+      const onDraft = vi.fn();
+      render(<JustDoChatWrapper onWidgetDraft={onDraft} />);
+      await waitFor(() => expect(connect).toHaveBeenCalledOnce());
+      const context = widgetContext();
+      const state = fixture.chat!.controller!.state;
+      if (change === 'generation') Object.assign(state.client!, { generation: 2 });
+      if (change === 'client') state.client = Object.create(state.client!);
+      if (change === 'sessionId') state.currentSessionId = 'replacement-incarnation';
+      if (change === 'connection') state.connected = false;
+
+      expect(await context.addDraft?.('Stale selection')).toBe(false);
+      expect(onDraft).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects an old sidebar suggestion when another product uses the same native session', async () => {
+    fixture.session.nativeSessionKey = 'agent:main:shared-native';
+    const connect = connection();
+    const onDraft = vi.fn();
+    const screen = render(<JustDoChatWrapper onWidgetDraft={onDraft} />);
+    await waitFor(() => expect(connect).toHaveBeenCalledOnce());
+    const old = widgetContext();
+    fixture.session = {
+      id: 'widget-next',
+      agentId: 'main',
+      nativeSessionKey: old.sessionKey,
+    };
+    screen.rerender(<JustDoChatWrapper onWidgetDraft={onDraft} />);
+
+    expect(await old.addDraft?.('Old selection')).toBe(false);
+    const current = widgetContext();
+    expect(await current.addDraft?.('Current selection')).toBe(true);
+    expect(onDraft).toHaveBeenCalledExactlyOnceWith(current.sessionKey, 'Current selection');
+  });
+});
+
+describe('widget product presentation retention', () => {
+  it('restores one pinned tab after the real chat owner remounts across product sessions', async () => {
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const manager = getNativeWidgetPresentations();
+    vi.spyOn(manager, 'requestLayout').mockImplementation(() => undefined);
+    vi.spyOn(NativeWidgetView.prototype, 'canPin', 'get').mockImplementation(function (
+      this: NativeWidgetView,
+    ) {
+      return this.context?.isCurrent() === true;
+    });
+    const release = manager.retainWorkspace();
+    fixture.session.nativeSessionKey = 'agent:main:shared-native';
+    const firstSession = fixture.session;
+    const connect = connection();
+    const screen = render(<JustDoChatWrapper onWidgetDraft={vi.fn()} />);
+    try {
+      await waitFor(() => expect(connect).toHaveBeenCalledOnce());
+      const firstChat = fixture.chat!;
+      firstChat.controller!.state.currentSessionId = 'widget-incarnation';
+      await firstChat.updateComplete;
+      const preview = decodeNativeCanvasResult(
+        JSON.stringify({
+          kind: 'canvas',
+          presentation: { target: 'assistant_message', sandbox: 'scripts', title: 'Pinned chart' },
+          view: { id: 'widget-retained' },
+        }),
+        'show_widget',
+        'retained-call',
+      )!;
+      const attach = (chat: JustDoChatElement) => {
+        const anchor = new NativeWidgetAnchor();
+        anchor.preview = preview;
+        chat.shadowRoot!.append(anchor);
+        return { anchor, entry: manager.acquire(anchor, preview, widgetContext(chat))! };
+      };
+      const first = attach(firstChat);
+      await first.anchor.updateComplete;
+      manager.pin(first.entry);
+      expect(first.entry.pinned).toBe(true);
+      const retainedId = first.entry.id;
+      const firstContext = widgetContext(firstChat);
+
+      fixture.session = {
+        id: 'widget-next',
+        agentId: 'main',
+        nativeSessionKey: firstContext.sessionKey,
+      };
+      screen.rerender(<JustDoChatWrapper onWidgetDraft={vi.fn()} />);
+      const nextChat = fixture.chat!;
+      expect(nextChat).not.toBe(firstChat);
+      expect(firstChat.isConnected).toBe(false);
+      await nextChat.updateComplete;
+      const next = attach(nextChat);
+      await next.anchor.updateComplete;
+      expect(next.entry).not.toBe(first.entry);
+      expect(next.entry.scope).toBe('widget-next');
+      expect(next.entry.pinned).toBe(false);
+      expect(first.entry.pinned).toBe(true);
+      expect(firstContext.isCurrent()).toBe(false);
+
+      fixture.session = firstSession;
+      screen.rerender(<JustDoChatWrapper onWidgetDraft={vi.fn()} />);
+      const restoredChat = fixture.chat!;
+      expect(restoredChat).not.toBe(firstChat);
+      expect(restoredChat).not.toBe(nextChat);
+      await restoredChat.updateComplete;
+      const restoredContext = widgetContext(restoredChat);
+      expect(restoredContext.client).toBe(firstContext.client);
+      expect(restoredContext.generation).toBe(firstContext.generation);
+      expect(restoredContext.sessionKey).toBe(firstContext.sessionKey);
+      expect(restoredContext.sessionId).toBe('widget-incarnation');
+      const restored = attach(restoredChat);
+      await restored.anchor.updateComplete;
+
+      expect(restored.entry).toBe(first.entry);
+      expect(restored.entry.id).toBe(retainedId);
+      expect(restored.entry.pinned).toBe(true);
+      expect(restored.entry.owner).toBe(restoredChat);
+      expect(restored.entry.view.context?.isCurrent()).toBe(true);
+      const currentContext = restored.entry.view.context;
+      manager.refresh(firstChat);
+      expect(restored.entry.view.context).toBe(currentContext);
+      expect(restored.entry.view.context?.isCurrent()).toBe(true);
+      await waitFor(() => expect(manager.entries).toEqual([first.entry]));
+    } finally {
+      screen.unmount();
+      release();
+      await waitFor(() => expect(manager.entries).toHaveLength(0));
+      vi.unstubAllGlobals();
+    }
   });
 });
 

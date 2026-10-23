@@ -3,6 +3,7 @@ import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import { NATIVE_WIDGET_OWNER_MESSENGER } from '@/libs/openclaw-chat/components/native-widget/messaging';
+import { getNativeWidgetPresentations } from '@/libs/openclaw-chat/components/native-widget/presentations';
 import type { NativeWidgetView } from '@/libs/openclaw-chat/components/native-widget/view';
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 
@@ -22,6 +23,12 @@ it('renders native widget history in a workspace chat through its own sandbox ha
   workspace.contentDocument!.close();
   const doc = workspace.contentDocument!;
   const owner = workspace.contentWindow!;
+  Object.defineProperty(owner, 'ResizeObserver', {
+    value: class {
+      observe() {}
+      disconnect() {}
+    },
+  });
   Object.defineProperty(owner, NATIVE_WIDGET_OWNER_MESSENGER, {
     value: (frame: HTMLIFrameElement, data: unknown, origin: string) => {
       frame.contentWindow!.postMessage(data, origin);
@@ -66,8 +73,15 @@ it('renders native widget history in a workspace chat through its own sandbox ha
   await act(async () => {
     await (chat as unknown as { updateComplete: Promise<boolean> }).updateComplete;
   });
-  const widget = chat.shadowRoot!.querySelector('justdo-native-widget') as NativeWidgetView;
+  const anchor = chat.shadowRoot!.querySelector('native-widget-anchor')! as HTMLElement & {
+    updateComplete: Promise<boolean>;
+  };
+  await act(async () => {
+    await anchor.updateComplete;
+  });
+  const widget = anchor.shadowRoot!.querySelector('justdo-native-widget') as NativeWidgetView;
   expect(widget.ownerDocument).toBe(doc);
+  expect(getNativeWidgetPresentations(doc).entries).toHaveLength(0);
   await act(async () => {
     await widget.updateComplete;
     await Promise.resolve();

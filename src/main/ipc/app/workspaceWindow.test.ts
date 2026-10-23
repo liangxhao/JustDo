@@ -41,6 +41,27 @@ it('denies subframes and unregistered contents without creating a workspace', ()
     mocks.handlers.get(WorkspaceWindowIpc.SetDetached)!(event(999), 'generation', true),
   ).toEqual({ success: false });
 });
+
+it('admits surface ownership only from the registered current owner main frame', () => {
+  const prepareSurface = vi.fn(() => ({ id: 'owned' }));
+  const updateSurface = vi.fn();
+  const closeSurface = vi.fn();
+  mocks.get.mockReturnValue({ prepareSurface, updateSurface, closeSurface });
+  const update = { id: 'owned', target: 'main' };
+  expect(mocks.handlers.get(WorkspaceWindowIpc.PrepareSurface)!(event(10, 21))).toBeNull();
+  mocks.handlers.get(WorkspaceWindowIpc.UpdateSurface)!(event(10, 21), update);
+  mocks.handlers.get(WorkspaceWindowIpc.CloseSurface)!(event(10, 21), 'owned');
+  expect(prepareSurface).not.toHaveBeenCalled();
+  expect(updateSurface).not.toHaveBeenCalled();
+  expect(closeSurface).not.toHaveBeenCalled();
+  expect(mocks.handlers.get(WorkspaceWindowIpc.PrepareSurface)!(event())).toEqual({ id: 'owned' });
+  mocks.handlers.get(WorkspaceWindowIpc.UpdateSurface)!(event(), update);
+  mocks.handlers.get(WorkspaceWindowIpc.CloseSurface)!(event(), 'owned');
+  expect(updateSurface).toHaveBeenCalledExactlyOnceWith(update);
+  expect(closeSurface).toHaveBeenCalledExactlyOnceWith('owned');
+  mocks.get.mockReturnValue(undefined);
+  expect(mocks.handlers.get(WorkspaceWindowIpc.PrepareSurface)!(event(999))).toBeNull();
+});
 it('keeps generation and payload validation owned by the window manager', () => {
   const setDetached = vi.fn(() => ({ success: false })),
     updateLayout = vi.fn();

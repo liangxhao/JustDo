@@ -5,74 +5,23 @@ import { observeChatContentWidth } from '@/app/chatContentWidth';
 import { setDockedWorkspaceSurface } from '@/app/shell/dockedWorkspaceSurface';
 import { setWorkspaceNotificationDocument } from '@/app/shell/WorkspaceNotifications';
 import { i18nService } from '@/services/i18n';
+import { copyDocumentAppearance } from '@/shared/dom/copyDocumentAppearance';
+import { forwardSurfaceKeyboard } from '@/shared/dom/surfaceKeyboard';
+import { registerWorkspacePresentation } from '@/shared/dom/workspacePresentation';
 
 import { readWorkspaceOcclusion as readOcclusion } from './workspaceOcclusion';
 import { createWorkspaceWindowControls } from './workspaceWindowControls';
 
 export const WORKSPACE_PRESENTATION_EVENT = 'cowork:workspace-presentation-changed';
 
-export const workspaceKeyboardDocument = new WeakMap<Event, Document>();
+export { surfaceKeyboardDocument as workspaceKeyboardDocument } from '@/shared/dom/surfaceKeyboard';
 
 const copyAppearance = (target: Document, controls: Window['electron']['window']): (() => void) => {
-  const copies = new Map<Element, Element>();
   const widthObserver = observeChatContentWidth(target.documentElement, controls);
-  const sync = () => {
-    const sources = new Set(document.head.querySelectorAll('style, link[rel="stylesheet"]'));
-    for (const [source, copy] of copies) {
-      if (!sources.has(source)) {
-        copy.remove();
-        copies.delete(source);
-      }
-    }
-    for (const source of sources) {
-      let copy = copies.get(source);
-      if (!copy) {
-        copy = target.importNode(source, true);
-        if (source.tagName === 'LINK')
-          (copy as HTMLLinkElement).href = (source as HTMLLinkElement).href;
-        target.head.appendChild(copy);
-        copies.set(source, copy);
-      }
-      if (source.tagName === 'STYLE') {
-        const sheet = (source as HTMLStyleElement).sheet;
-        copy.textContent = sheet
-          ? Array.from(sheet.cssRules, rule => rule.cssText).join('\n')
-          : source.textContent;
-      }
-    }
-    target.documentElement.className = document.documentElement.className;
-    target.documentElement.style.cssText = document.documentElement.style.cssText;
-    widthObserver.update();
-    target.documentElement.lang = document.documentElement.lang;
-    target.documentElement.dir = document.documentElement.dir;
-    // Theme tokens and appearance switches are selected by root data attributes.
-    for (const attribute of Array.from(target.documentElement.attributes)) {
-      if (
-        attribute.name.startsWith('data-') &&
-        !document.documentElement.hasAttribute(attribute.name)
-      ) {
-        target.documentElement.removeAttribute(attribute.name);
-      }
-    }
-    for (const attribute of Array.from(document.documentElement.attributes)) {
-      if (attribute.name.startsWith('data-')) {
-        target.documentElement.setAttribute(attribute.name, attribute.value);
-      }
-    }
-  };
-  sync();
-  const observer = new MutationObserver(sync);
-  observer.observe(document.head, {
-    childList: true,
-    subtree: true,
-    characterData: true,
-    attributes: true,
-  });
-  observer.observe(document.documentElement, { attributes: true });
+  const cleanup = copyDocumentAppearance(document, target, () => widthObserver.update());
   return () => {
-    observer.disconnect();
+    cleanup();
     widthObserver.dispose();
-    copies.forEach(copy => copy.remove());
   };
 };
 
@@ -90,6 +39,13 @@ export function useWorkspacePortal(slot: RefObject<HTMLElement>, open: boolean, 
   const latestRef = useRef({ open, detached });
   latestRef.current = { open, detached };
   const transitionRef = useRef(false);
+  useEffect(() => {
+    if (!target) return;
+    return registerWorkspacePresentation(target.ownerDocument, () => ({
+      ...latestRef.current,
+      slot: slot.current,
+    }));
+  }, [target, slot]);
 
   const windowControls = useMemo<Window['electron']['window'] | undefined>(() => {
     const generation = grantRef.current?.generation;
@@ -153,23 +109,8 @@ export function useWorkspacePortal(slot: RefObject<HTMLElement>, open: boolean, 
             targetDocument,
             createWorkspaceWindowControls(api, grant.generation),
           );
-          const keydown = (event: KeyboardEvent) => {
-            if (event.defaultPrevented || event.isComposing) return;
-            const forwarded = new KeyboardEvent('keydown', {
-              key: event.key,
-              code: event.code,
-              altKey: event.altKey,
-              ctrlKey: event.ctrlKey,
-              metaKey: event.metaKey,
-              shiftKey: event.shiftKey,
-              repeat: event.repeat,
-              bubbles: true,
-              cancelable: true,
-            });
-            workspaceKeyboardDocument.set(forwarded, targetDocument);
-            document.dispatchEvent(forwarded);
-            if (forwarded.defaultPrevented) event.preventDefault();
-          };
+          const keydown = (event: KeyboardEvent) =>
+            forwardSurfaceKeyboard(event, targetDocument, document);
           targetDocument.addEventListener('keydown', keydown);
           cleanupKeyboard = () => targetDocument.removeEventListener('keydown', keydown);
           publishDetached(grant.detached);
@@ -228,6 +169,11 @@ export function useWorkspacePortal(slot: RefObject<HTMLElement>, open: boolean, 
       const { blocked, occluded } = readOcclusion(rect);
       setBlocked(blocked);
       const latest = latestRef.current;
+      // Native visibility alone does not revoke a retained viewer's bridge.
+      // Mirror presentation admission into the owning document as well.
+      target.inert =
+        blocked ||
+        (!latest.detached && (!latest.open || occluded || element.getClientRects().length === 0));
       setWorkspaceNotificationDocument(
         !blocked &&
           (latest.detached || (!occluded && latest.open && element.getClientRects().length > 0))
@@ -287,6 +233,10 @@ export function useWorkspacePortal(slot: RefObject<HTMLElement>, open: boolean, 
     if (!api || !grant || !element) return;
     const rect = element.getBoundingClientRect();
     const { blocked: currentBlocked, occluded } = readOcclusion(rect);
+    if (target)
+      target.inert =
+        currentBlocked ||
+        (!detached && (!open || occluded || element.getClientRects().length === 0));
     api.update({
       generation: grant.generation,
       x: rect.x,

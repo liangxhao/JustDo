@@ -1052,6 +1052,18 @@ interface IElectronAPI {
     onStateChanged: (callback: (state: WindowState) => void) => () => void;
   };
   workspaceWindow: {
+    prepareSurface: () => Promise<
+      import('../../shared/cowork/workspaceWindow').WorkspaceSurfaceGrant | null
+    >;
+    updateSurface: (
+      update: import('../../shared/cowork/workspaceWindow').WorkspaceSurfaceUpdate,
+    ) => void;
+    closeSurface: (id: string) => void;
+    onSurfaceInvalidated: (
+      callback: (
+        state: import('../../shared/cowork/workspaceWindow').WorkspaceSurfaceInvalidated,
+      ) => void,
+    ) => () => void;
     getWindowState: (
       generation: string,
     ) => Promise<import('../../shared/cowork/workspaceWindow').WorkspaceNativeWindowState | null>;

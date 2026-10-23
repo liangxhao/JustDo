@@ -27,9 +27,14 @@ contextBridge.exposeInMainWorld('electron', {
   },
   workspaceWindow: {
     getWindowState: generation => ipcRenderer.invoke(prefix + 'getWindowState', generation),
-    control: (generation, action, position) => ipcRenderer.send(prefix + 'control', generation, action, position),
+    control: (generation, action, position) =>
+      ipcRenderer.send(prefix + 'control', generation, action, position),
     onInvalidated: listener => listen(prefix + 'invalidated', listener),
     prepare: () => ipcRenderer.invoke(prefix + 'prepare'),
+    prepareSurface: () => ipcRenderer.invoke(prefix + 'prepareSurface'),
+    updateSurface: value => ipcRenderer.send(prefix + 'updateSurface', value),
+    closeSurface: id => ipcRenderer.send(prefix + 'closeSurface', id),
+    onSurfaceInvalidated: listener => listen(prefix + 'surfaceInvalidated', listener),
     update: value => ipcRenderer.send(prefix + 'update', value),
     setDetached: (generation, detached) =>
       ipcRenderer.invoke(prefix + 'setDetached', generation, detached),

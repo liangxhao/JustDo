@@ -16,7 +16,8 @@ function ReferencePanel({ entry }: { entry: McpAppPresentation }) {
     const manager = getMcpAppPresentations();
     const target = mount.current!;
     manager.setSidebar(entry, target);
-    const observer = new ResizeObserver(manager.requestLayout);
+    const owner = target.ownerDocument.defaultView as Window & typeof globalThis;
+    const observer = new owner.ResizeObserver(manager.requestLayout);
     observer.observe(target);
     return () => {
       observer.disconnect();
@@ -28,6 +29,18 @@ function ReferencePanel({ entry }: { entry: McpAppPresentation }) {
       {!entry.view.context?.isCurrent() && (
         <div role="status" className="p-4 text-sm text-secondary">
           {i18nService.t('mcpAppsUnavailable')}
+        </div>
+      )}
+      {entry.surface?.failed && entry.view.context?.isCurrent() && (
+        <div role="status" className="p-4 text-sm text-secondary">
+          {i18nService.t('mcpAppsUnavailable')}
+          <button
+            type="button"
+            className="ml-3 underline"
+            onClick={() => getMcpAppPresentations().retrySurface(entry)}
+          >
+            {i18nService.t('mcpAppsRetry')}
+          </button>
         </div>
       )}
     </div>

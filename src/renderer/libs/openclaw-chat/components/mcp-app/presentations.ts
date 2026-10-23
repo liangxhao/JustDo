@@ -5,11 +5,19 @@ import {
 } from '@shared/plugins/mcpAppReferences';
 import { McpAppEvent, type McpAppPreview } from '@shared/plugins/mcpApps';
 
+import { NativePresentationSurface } from '@/shared/dom/nativePresentationSurface';
 import { readSurfaceOcclusion } from '@/shared/dom/surfaceOcclusion';
 
 import type { McpAppSessionView } from '../../gateway/mcp-app/mcp-app-session';
 import { isNativeAppReference } from '../../pipeline/native-app-reference';
 import { readNativeMcpAppIdentity } from '../../pipeline/native-mcp-app';
+import {
+  observePresentationSize,
+  PresentationDocuments,
+  presentationParent as parentElement,
+  presentationSurfaceVisible,
+  presentationTargetVisible,
+} from '../presentation-documents';
 import { readRecoveredAppContent } from './plugin-content';
 import { McpAppView, type McpAppViewContext } from './view';
 
@@ -31,6 +39,8 @@ export interface McpAppPresentation {
   primary?: McpAppPresentationAnchor;
   sidebar?: HTMLElement;
   height: number;
+  visible: boolean;
+  surface?: NativePresentationSurface;
   dispose: () => void;
 }
 
@@ -44,10 +54,7 @@ export const getMcpAppPresentations = (owner: Document = document): McpAppPresen
   return host;
 };
 
-const parentElement = (element: Element): Element | null =>
-  element.parentElement ?? ((element.getRootNode() as ShadowRoot).host || null);
-
-/** Geometry only: the App and all its iframe ancestors stay in their original Document. */
+/** Authenticated viewers keep their original document as native presentation parents move. */
 export class McpAppPresentations {
   readonly entries: McpAppPresentation[] = [];
   private sequence = 0;
@@ -58,28 +65,14 @@ export class McpAppPresentations {
   private frame?: number;
   private consumers = 0;
   private readonly ownerWindow: Window & typeof globalThis;
+  private readonly documents: PresentationDocuments;
+  private readonly syncSize = new WeakMap<McpAppPresentation, () => void>();
 
   constructor(readonly owner: Document) {
     this.ownerWindow = owner.defaultView as Window & typeof globalThis;
-    this.ownerWindow.addEventListener('resize', this.schedule);
-    owner.addEventListener('scroll', this.schedule, true);
-    const observer = new this.ownerWindow.MutationObserver(records => {
-      if (records.some(record => !this.entries.some(entry => entry.layer.contains(record.target))))
-        this.schedule();
-    });
-    observer.observe(owner.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: [
-        'class',
-        'style',
-        'open',
-        'hidden',
-        'data-workspace-overlay',
-        'data-workspace-occlusion',
-      ],
-    });
+    this.documents = new PresentationDocuments(owner, this.schedule, target =>
+      this.entries.some(entry => entry.layer.contains(target)),
+    );
   }
 
   subscribe = (listener: () => void) => {
@@ -167,7 +160,6 @@ export class McpAppPresentations {
       layer.style.cssText = 'position:fixed;display:none;pointer-events:none;z-index:10';
       view.style.cssText = 'margin:0;max-width:none;pointer-events:auto';
       layer.append(view);
-      this.owner.body.append(layer);
       const namespace = JSON.stringify([
         context.presentationScope,
         binding.sessionKey,
@@ -195,23 +187,47 @@ export class McpAppPresentations {
         pinned: false,
         returnPending: false,
         height: 646,
+        visible: false,
         dispose: () => undefined,
       };
       const current = entry;
       view.pinPresentation = () => this.pin(current);
       view.revealCanvas = () => this.reveal(current);
       view.presentationVisible = () =>
-        !readSurfaceOcclusion(current.layer.getBoundingClientRect(), this.owner).occluded;
-      const resize = new this.ownerWindow.ResizeObserver(() => {
+        current.visible &&
+        presentationSurfaceVisible(
+          this.owner,
+          current.pinned ? current.sidebar : current.primary,
+          view.expanded,
+          current.surface?.overlay,
+        );
+      const resize = observePresentationSize(view, () => {
         if (!current.pinned && !view.expanded && view.getClientRects().length) {
           const height = view.getBoundingClientRect().height;
           if (height > 0) current.height = height;
         }
         this.schedule();
       });
-      resize.observe(view);
+      this.syncSize.set(current, resize.sync);
+      current.surface = NativePresentationSurface.create(layer, () => {
+        if (current.surface?.ready) resize.sync();
+        this.changed();
+      });
+      if (!current.surface) this.owner.body.append(layer);
       const changed = () => this.changed();
       view.addEventListener(McpAppEvent.PresentationChanged, changed);
+      const displayMode = (event: Event) => {
+        if (!current.pinned || !current.sidebar) return;
+        event.stopPropagation();
+        current.sidebar.dispatchEvent(
+          new CustomEvent(McpAppEvent.DisplayMode, {
+            bubbles: true,
+            composed: true,
+            detail: { ...(event as CustomEvent).detail, view },
+          }),
+        );
+      };
+      view.addEventListener(McpAppEvent.DisplayMode, displayMode);
       const stop = context.apps.subscribe(() =>
         queueMicrotask(() => {
           // invalidate() publishes before the controller finishes switching owner.
@@ -224,6 +240,8 @@ export class McpAppPresentations {
         stop();
         resize.disconnect();
         view.removeEventListener(McpAppEvent.PresentationChanged, changed);
+        view.removeEventListener(McpAppEvent.DisplayMode, displayMode);
+        current.surface?.dispose();
         layer.remove();
       };
       this.entries.push(current);
@@ -324,9 +342,23 @@ export class McpAppPresentations {
   }
 
   setSidebar(entry: McpAppPresentation, target?: HTMLElement) {
-    if (!this.entries.includes(entry) || (target && target.ownerDocument !== this.owner)) return;
+    if (!this.entries.includes(entry)) return;
+    if (target && target.ownerDocument !== this.owner && !entry.surface) return;
     entry.sidebar = target;
+    if (!target) this.setVisible(entry, false);
     this.schedule();
+  }
+
+  retrySurface(entry: McpAppPresentation): void {
+    if (!this.entries.includes(entry) || !entry.surface?.failed || !entry.view.context?.isCurrent())
+      return;
+    entry.surface.dispose();
+    this.owner.adoptNode(entry.layer);
+    entry.surface = NativePresentationSurface.create(entry.layer, () => {
+      if (entry.surface?.ready) this.syncSize.get(entry)?.();
+      this.changed();
+    });
+    this.changed();
   }
 
   resume(scope: string) {
@@ -354,12 +386,28 @@ export class McpAppPresentations {
   requestLayout = () => this.schedule();
 
   private readonly schedule = () => {
+    this.documents?.sync(
+      this.entries.flatMap(entry => [
+        entry.layer.ownerDocument,
+        ...(entry.sidebar ? [entry.sidebar.ownerDocument] : []),
+      ]),
+    );
     if (this.frame !== undefined) return;
-    this.frame = this.ownerWindow.requestAnimationFrame(() => {
+    this.frame = this.ownerWindow.setTimeout(() => {
       this.frame = undefined;
       this.layout();
-    });
+    }, 16);
   };
+
+  private setVisible(entry: McpAppPresentation, visible: boolean): void {
+    if (!visible) {
+      entry.surface?.hide();
+      if (entry.layer.style.display !== 'none') entry.layer.style.display = 'none';
+    }
+    if (entry.visible === visible) return;
+    entry.visible = visible;
+    entry.view.refreshPresentation?.();
+  }
 
   /** Called by anchor/target observers; it never reads the App's internal document. */
   layout = () => {
@@ -367,33 +415,40 @@ export class McpAppPresentations {
       const target = entry.pinned ? entry.sidebar : entry.primary;
       const view = entry.view;
       const active =
-        target?.isConnected && target.getClientRects().length && view.context?.isCurrent();
+        target &&
+        presentationTargetVisible(target) &&
+        view.context?.isCurrent() &&
+        !entry.surface?.failed;
       if (!active || !target) {
-        entry.layer.style.display = 'none';
+        this.setVisible(entry, false);
         continue;
       }
+      const doc = target.ownerDocument;
+      const owner = doc.defaultView as Window & typeof globalThis;
       const rect = target.getBoundingClientRect();
       const surface = view.expanded
-        ? new this.ownerWindow.DOMRect(
-            0,
-            0,
-            this.ownerWindow.innerWidth,
-            this.ownerWindow.innerHeight,
-          )
+        ? new owner.DOMRect(0, 0, owner.innerWidth, owner.innerHeight)
         : rect;
-      if (readSurfaceOcclusion(surface, this.owner).occluded) {
-        entry.layer.style.display = 'none';
+      if (
+        readSurfaceOcclusion(surface, doc, entry.surface?.overlay).occluded ||
+        (doc !== this.owner && readSurfaceOcclusion(rect, this.owner).blocked)
+      ) {
+        this.setVisible(entry, false);
         continue;
       }
-      let top = Math.max(0, rect.top),
-        left = Math.max(0, rect.left);
-      let bottom = Math.min(
-        this.ownerWindow.innerHeight,
-        rect.top + (entry.pinned ? rect.height : entry.height),
-      );
-      let right = Math.min(this.ownerWindow.innerWidth, rect.right);
-      for (let parent = parentElement(target); parent; parent = parentElement(parent)) {
-        const style = this.ownerWindow.getComputedStyle(parent);
+      entry.surface?.setExpanded(view.expanded ? doc : undefined);
+      const bounds = view.expanded ? surface : rect;
+      let top = Math.max(0, bounds.top),
+        left = Math.max(0, bounds.left);
+      const height = view.expanded ? bounds.height : entry.pinned ? rect.height : entry.height;
+      let bottom = Math.min(owner.innerHeight, bounds.top + height);
+      let right = Math.min(owner.innerWidth, bounds.right);
+      for (
+        let parent = view.expanded ? null : parentElement(target);
+        parent;
+        parent = parentElement(parent)
+      ) {
+        const style = owner.getComputedStyle(parent);
         if (/(auto|scroll|hidden|clip)/.test(`${style.overflowX} ${style.overflowY}`)) {
           const bounds = parent.getBoundingClientRect();
           top = Math.max(top, bounds.top);
@@ -402,17 +457,32 @@ export class McpAppPresentations {
           right = Math.min(right, bounds.right);
         }
       }
-      if (rect.width <= 0 || (!view.expanded && (bottom <= top || right <= left))) {
-        entry.layer.style.display = 'none';
+      if (bounds.width <= 0 || bottom <= top || right <= left) {
+        this.setVisible(entry, false);
         continue;
       }
-      const height = entry.pinned ? rect.height : entry.height;
-      entry.layer.style.cssText = view.expanded
-        ? 'position:fixed;inset:0;pointer-events:none;z-index:60'
-        : `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${height}px;pointer-events:none;z-index:${entry.pinned ? 51 : 10};clip-path:inset(${top - rect.top}px ${rect.right - right}px ${rect.top + height - bottom}px ${left - rect.left}px)`;
+      const style = entry.surface
+        ? 'position:fixed;inset:0;pointer-events:none'
+        : view.expanded
+          ? 'position:fixed;inset:0;pointer-events:none;z-index:60'
+          : `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${height}px;pointer-events:none;z-index:${entry.pinned ? 51 : 10};clip-path:inset(${top - rect.top}px ${rect.right - right}px ${rect.top + height - bottom}px ${left - rect.left}px)`;
+      // Other retained surfaces observe this document too. Stable geometry must
+      // not publish another style mutation and wake their layout observers.
+      if (entry.layer.getAttribute('style') !== style) entry.layer.setAttribute('style', style);
+      if (entry.surface)
+        entry.surface.present(target, {
+          x: bounds.left,
+          y: bounds.top,
+          width: bounds.width,
+          height,
+          clip: { x: left, y: top, width: right - left, height: bottom - top },
+          visible: true,
+          occluded: false,
+        });
       view.fillContainer = entry.pinned;
       if (entry.primary && !entry.pinned && entry.primary.style.height !== `${entry.height}px`)
         entry.primary.style.height = `${entry.height}px`;
+      this.setVisible(entry, !entry.surface || entry.surface.ready);
     }
   };
 }

@@ -31,7 +31,7 @@ function loadView(binding: Binding, isCurrent: () => boolean): Promise<unknown> 
     pending = new Map();
     pendingViews.set(context.client, pending);
   }
-  const key = `${context.generation}\0${context.sessionKey}\0${docId}`;
+  const key = JSON.stringify([context.generation, context.sessionKey, context.sessionId, docId]);
   if (!isCurrent()) return Promise.reject(new Error('widget read superseded'));
   const existing = pending.get(key);
   if (existing) return existing;
@@ -60,6 +60,7 @@ export class NativeWidgetView extends LitElement {
     suggestion: { state: true },
     slow: { state: true },
     expanded: { state: true },
+    fillContainer: { type: Boolean, attribute: 'fill-container', reflect: true },
   };
   static styles = css`
     :host {
@@ -69,41 +70,63 @@ export class NativeWidgetView extends LitElement {
       max-width: 840px;
       min-width: 0;
       margin: 12px auto;
-      border: 1px solid var(--justdo-border-subtle, var(--justdo-border, #ddd));
+      border: 0;
       border-radius: 14px;
       overflow: hidden;
       color: var(--justdo-text-primary, inherit);
     }
+    :host([fill-container]) {
+      height: 100%;
+      max-width: none;
+      margin: 0;
+      border: 0;
+      border-radius: 0;
+    }
     header {
       display: flex;
+      box-sizing: border-box;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
-      padding: 18px 22px 0;
-      font-size: 14px;
-      font-weight: 600;
-      overflow-wrap: anywhere;
+      gap: 8px;
+      min-height: 38px;
+      padding: 4px 14px;
+      border-bottom: 1px solid var(--justdo-border-subtle, var(--justdo-border, #ddd));
+      background: var(--justdo-surface-raised, #f1f2f4);
+      font-size: 13px;
+      font-weight: 500;
+      line-height: 20px;
     }
     .title {
+      flex: 1;
       min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .view-actions {
       display: flex;
       flex-shrink: 0;
-      gap: 4px;
+      gap: 2px;
     }
     .view-actions button {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 30px;
-      height: 30px;
+      width: 26px;
+      height: 26px;
       margin: 0;
       padding: 5px;
-      border-color: transparent;
+      border: 0;
+      border-radius: 6px;
+      color: var(--justdo-text-secondary, #69717d);
+    }
+    .view-actions svg {
+      width: 16px;
+      height: 16px;
     }
     .view-actions button:hover {
-      background: var(--justdo-surface-raised, #eee);
+      color: var(--justdo-text-primary, inherit);
+      background: var(--justdo-surface, #fff);
     }
     button:disabled {
       opacity: 0.45;
@@ -117,10 +140,12 @@ export class NativeWidgetView extends LitElement {
       max-height: none;
       padding: 0;
       margin: 0;
-      border: 0;
+      /* Keep the card boundary inside Shadow DOM: page resets can override :host. */
+      border: 1px solid var(--justdo-border-subtle, var(--justdo-border, #ddd));
+      border-radius: 14px;
       color: inherit;
       background: transparent;
-      overflow: visible;
+      overflow: hidden;
     }
     dialog:modal {
       position: fixed;
@@ -134,6 +159,16 @@ export class NativeWidgetView extends LitElement {
       display: flex;
       flex-direction: column;
     }
+    :host([fill-container]) dialog:not(:modal) {
+      height: 100%;
+      border: 0;
+      border-radius: 0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    :host([fill-container]) dialog > header,
+    :host([fill-container]) dialog > .status,
     dialog:modal > header,
     dialog:modal > .status {
       flex: 0 0 auto;
@@ -142,6 +177,11 @@ export class NativeWidgetView extends LitElement {
       flex: 1 1 0;
       min-height: 48px;
     }
+    :host([fill-container]) dialog > .frame {
+      flex: 1 1 0;
+      min-height: 48px;
+    }
+    :host([fill-container]) dialog > .suggestion,
     dialog:modal > .suggestion {
       flex: 0 1 auto;
       min-height: 0;
@@ -155,8 +195,6 @@ export class NativeWidgetView extends LitElement {
       position: sticky;
       top: 0;
       z-index: 2;
-      padding-bottom: 10px;
-      background: var(--justdo-background, #fff);
     }
     iframe,
     webview {
@@ -166,7 +204,9 @@ export class NativeWidgetView extends LitElement {
       min-height: 48px;
     }
     dialog:modal iframe,
-    dialog:modal webview {
+    dialog:modal webview,
+    :host([fill-container]) iframe,
+    :host([fill-container]) webview {
       /* Follow top-layer promotion immediately, before the next Lit update. */
       height: 100%;
     }
@@ -245,7 +285,11 @@ export class NativeWidgetView extends LitElement {
   declare private height: number;
   declare private suggestion: string;
   declare private slow: boolean;
-  declare private expanded: boolean;
+  declare expanded: boolean;
+  declare fillContainer: boolean;
+  pinPresentation?: () => void;
+  presentationVisible?: () => boolean;
+  forwardScroll?: (deltaY: number) => void;
   private workspaceOverlay?: HTMLElement;
   private binding?: Binding;
   private host?: NativeWidgetSandboxHost;
@@ -261,6 +305,8 @@ export class NativeWidgetView extends LitElement {
   private layoutObserver?: ResizeObserver;
   private layout?: WidgetViewportLayout;
   private layoutRevision = 0;
+  private pendingDraft?: object;
+  private presentationActive?: boolean;
 
   constructor() {
     super();
@@ -271,6 +317,7 @@ export class NativeWidgetView extends LitElement {
     this.suggestion = '';
     this.slow = false;
     this.expanded = false;
+    this.fillContainer = false;
   }
 
   connectedCallback(): void {
@@ -325,6 +372,9 @@ export class NativeWidgetView extends LitElement {
       this.context?.client === binding.context.client &&
       this.context.generation === binding.context.generation &&
       this.context.sessionKey === binding.context.sessionKey &&
+      this.context.sessionId === binding.context.sessionId &&
+      this.context.presentationScope === binding.context.presentationScope &&
+      this.context.presentationOwner === binding.context.presentationOwner &&
       binding.context.client.generation === binding.context.generation &&
       binding.context.isCurrent() &&
       this.preview?.docId === binding.docId &&
@@ -333,7 +383,44 @@ export class NativeWidgetView extends LitElement {
   }
 
   private draftAllowed(binding = this.binding): boolean {
-    return this.current(binding) && this.context?.canDraft() === true;
+    return (
+      this.current(binding) &&
+      this.presentationVisible?.() !== false &&
+      this.context?.canDraft() === true
+    );
+  }
+
+  get canPin(): boolean {
+    return Boolean(
+      this.pinPresentation && this.current() && this.presentationVisible?.() !== false,
+    );
+  }
+
+  get presentationOverlay(): HTMLElement | undefined {
+    return this.workspaceOverlay;
+  }
+
+  collapsePresentation(): void {
+    this.collapse();
+  }
+
+  refreshPresentation(): void {
+    const active = this.presentationVisible?.() !== false;
+    if (this.presentationActive === active) return;
+    this.presentationActive = active;
+    if (!active) {
+      this.suggestion = '';
+      this.collapse();
+      this.postDraftPolicy(false);
+    }
+    this.requestUpdate();
+  }
+
+  private forwardUnconsumedScroll(deltaY: number): void {
+    if (this.presentationVisible?.() === false) return;
+    if (this.expanded) this.renderRoot.querySelector('dialog')?.scrollBy({ top: deltaY });
+    else if (this.forwardScroll) this.forwardScroll(deltaY);
+    else if (!this.fillContainer) forwardWidgetScroll(this, deltaY);
   }
 
   private clear(): void {
@@ -353,6 +440,7 @@ export class NativeWidgetView extends LitElement {
     this.promptPort?.close();
     this.promptPort = undefined;
     this.suggestion = '';
+    this.pendingDraft = undefined;
     this.version++;
     this.binding = undefined;
     this.host?.dispose();
@@ -365,6 +453,7 @@ export class NativeWidgetView extends LitElement {
   }
 
   protected willUpdate(_changes: PropertyValues): void {
+    if (_changes.has('fillContainer')) this.layout = undefined;
     if (!this.isConnected || this.ownerDocument !== this.listenerDocument) {
       if (this.binding || this.view) this.clear();
       return;
@@ -435,8 +524,7 @@ export class NativeWidgetView extends LitElement {
         if (event.type === 'link') this.openLink(event.url, binding);
         if (event.type === 'scroll' && this.ready && Number.isFinite(event.deltaY)) {
           const delta = Math.max(-8000, Math.min(8000, event.deltaY));
-          if (this.expanded) this.renderRoot.querySelector('dialog')?.scrollBy({ top: delta });
-          else forwardWidgetScroll(this, delta);
+          this.forwardUnconsumedScroll(delta);
         }
         if (
           event.type === 'draft' &&
@@ -664,9 +752,7 @@ export class NativeWidgetView extends LitElement {
       Number.isFinite(event.data.deltaY) &&
       event.data.deltaY !== 0
     ) {
-      if (this.expanded)
-        this.renderRoot.querySelector('dialog')?.scrollBy({ top: event.data.deltaY });
-      else forwardWidgetScroll(this, event.data.deltaY);
+      this.forwardUnconsumedScroll(event.data.deltaY);
       return;
     }
     if (event.data?.type === 'openclaw:widget-runtime-error') {
@@ -678,7 +764,14 @@ export class NativeWidgetView extends LitElement {
   };
 
   private openLink(raw: unknown, binding = this.binding): void {
-    if (!this.current(binding) || !this.ready || this.failure || !this.context?.openLink) return;
+    if (
+      !this.current(binding) ||
+      this.presentationVisible?.() === false ||
+      !this.ready ||
+      this.failure ||
+      !this.context?.openLink
+    )
+      return;
     const frame = this.guest?.frame ?? this.host?.frame;
     const url = normalizeWidgetLink(raw);
     if (!url || !frame || !widgetFrameInteractable(frame)) return;
@@ -710,10 +803,15 @@ export class NativeWidgetView extends LitElement {
     if (
       this.layout?.width === width &&
       this.layout.height === height &&
-      this.layout.expanded === this.expanded
+      this.layout.expanded === (this.expanded || this.fillContainer)
     )
       return;
-    this.layout = { revision: ++this.layoutRevision, expanded: this.expanded, width, height };
+    this.layout = {
+      revision: ++this.layoutRevision,
+      expanded: this.expanded || this.fillContainer,
+      width,
+      height,
+    };
     this.postHostState();
   }
 
@@ -721,6 +819,7 @@ export class NativeWidgetView extends LitElement {
     this.syncLayout();
     if (
       this.expanded ||
+      this.fillContainer ||
       this.failure ||
       !this.current() ||
       !this.layout ||
@@ -771,6 +870,32 @@ export class NativeWidgetView extends LitElement {
       this.expanded ? 'coworkWidgetCollapse' : 'coworkWidgetExpand',
     );
     return html`<div class="view-actions">
+      ${
+        this.pinPresentation && !this.fillContainer && !this.expanded
+          ? html`<button
+              type="button"
+              data-action="pin"
+              title=${i18nService.t('mcpAppsPin')}
+              aria-label=${i18nService.t('mcpAppsPin')}
+              ?disabled=${!this.canPin}
+              @click=${() => {
+                if (this.canPin) this.pinPresentation?.();
+              }}
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                aria-hidden="true"
+              >
+                <path d="M14 3h7v7M21 3l-9 9M21 14v6H4V3h6" />
+              </svg>
+            </button>`
+          : nothing
+      }
       <button
         type="button"
         title=${expandLabel}
@@ -810,7 +935,31 @@ export class NativeWidgetView extends LitElement {
         <button
           class="primary"
           @click=${(event: MouseEvent) => {
-            if (!event.isTrusted || !this.draftAllowed(binding) || this.suggestion !== text) return;
+            if (
+              !event.isTrusted ||
+              !this.draftAllowed(binding) ||
+              this.suggestion !== text ||
+              this.pendingDraft
+            )
+              return;
+            if (this.context?.addDraft) {
+              const pending = {};
+              this.pendingDraft = pending;
+              const addDraft = this.context.addDraft;
+              void Promise.resolve()
+                .then(() =>
+                  this.draftAllowed(binding) && this.suggestion === text ? addDraft(text) : false,
+                )
+                .then(accepted => {
+                  if (accepted && this.current(binding) && this.suggestion === text)
+                    this.suggestion = '';
+                })
+                .catch(() => undefined)
+                .finally(() => {
+                  if (this.pendingDraft === pending) this.pendingDraft = undefined;
+                });
+              return;
+            }
             this.dispatchEvent(
               new CustomEvent(NATIVE_WIDGET_DRAFT_EVENT, {
                 bubbles: true,
@@ -855,7 +1004,7 @@ export class NativeWidgetView extends LitElement {
         this.collapse();
       }}
     >
-      <header><span class="title">${title}</span>${this.renderViewActions()}</header>
+      <header><span class="title" title=${title}>${title}</span>${this.renderViewActions()}</header>
       ${
         this.failure
           ? html`<div class="status" role="alert">

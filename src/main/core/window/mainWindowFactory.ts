@@ -978,6 +978,14 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       showSystemMenu: options.showSystemMenu,
       isQuitting: options.isQuitting,
       configureHost: configureBrowserHost,
+      configureSurfaceHost: host => {
+        host.on('will-attach-webview', (event, preferences, params) => {
+          if (!widgetViewers.prepare(event, preferences, params, host)) event.preventDefault();
+        });
+        host.on('did-attach-webview', (_event, guest) => {
+          if (!widgetViewers.attach(guest, host) && !guest.isDestroyed()) guest.close();
+        });
+      },
       openExternal: openExternalLink,
       readBounds: options.readWorkspaceWindowBounds,
       saveBounds: options.saveWorkspaceWindowBounds,

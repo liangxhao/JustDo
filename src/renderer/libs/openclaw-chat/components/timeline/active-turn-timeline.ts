@@ -1,5 +1,5 @@
 import '../tools/tool-output';
-import '../native-widget/view';
+import '../native-widget/anchor';
 import '../mcp-app/view';
 
 import {
@@ -789,7 +789,7 @@ export function renderTimelineItem(
   }
   if (item.kind === 'native-widget') {
     return renderAssistantTimelineRow(
-      html`<justdo-native-widget .preview=${item.preview}></justdo-native-widget>`,
+      html`<native-widget-anchor .preview=${item.preview}></native-widget-anchor>`,
       showAvatar,
       '',
       'assistant',

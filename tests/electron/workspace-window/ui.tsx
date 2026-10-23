@@ -36,7 +36,7 @@ window.addEventListener(MessageBrowserEvent.OpenWebUrl, event => {
   probe.webLinks.push((event as CustomEvent).detail.url);
 });
 
-function Tools() {
+function Tools({ reference }: { reference: boolean }) {
   const ownerDocument = useOwnerDocument();
   const [count, setCount] = useState(0);
   const [menu, setMenu] = useState(false);
@@ -47,6 +47,7 @@ function Tools() {
   const editorRef = useRef<HTMLDivElement>(null);
   const diffRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
+  const referenceFrameRef = useRef<HTMLIFrameElement | null>(null);
   useEffect(() => {
     probe.mounts++;
     const terminal = new Terminal({ cols: 40, rows: 8, allowProposedApi: true });
@@ -93,6 +94,15 @@ function Tools() {
     chatRef.current!.append(chat);
     probe.chat = chat;
     probe.document = ownerDocument;
+    // A retained reference is part of the same sidebar document from its first
+    // load; changing the selected tab changes visibility, never its ownership.
+    const referenceFrame = ownerDocument.createElement('iframe');
+    referenceFrame.srcdoc = '<input id="local-draft"><script>window.documentInstance=Math.random();window.ticks=0;setInterval(()=>window.ticks++,20)</script>';
+    referenceFrame.style.cssText =
+      'position:fixed;right:20px;top:220px;width:340px;height:180px;z-index:51;display:none';
+    ownerDocument.body.append(referenceFrame);
+    referenceFrameRef.current = referenceFrame;
+    probe.referenceFrame = referenceFrame;
     probe.click = () => ownerDocument.querySelector<HTMLButtonElement>('#increment')!.click();
     probe.menu = () => ownerDocument.querySelector<HTMLButtonElement>('#menu')!.click();
     probe.move = () =>
@@ -130,8 +140,14 @@ function Tools() {
       modifiedModel.dispose();
       scrollController.disconnect();
       chat.remove();
+      referenceFrame.remove();
+      referenceFrameRef.current = null;
     };
   }, [ownerDocument]);
+  useEffect(() => {
+    if (referenceFrameRef.current)
+      referenceFrameRef.current.style.display = reference ? 'block' : 'none';
+  }, [reference, ownerDocument]);
   return (
     <>
       <button id="increment" onClick={() => setCount(value => value + 1)}>
@@ -235,18 +251,6 @@ function Harness() {
   const [activeTabId, setActiveTabId] = useState('Browser');
   const [reference, setReference] = useState(false);
   probe.reference = (value: boolean) => setReference(value);
-  useEffect(() => {
-    const frame = document.createElement('iframe');
-    frame.srcdoc = '<input id="local-draft"><script>window.documentInstance=Math.random()</script>';
-    frame.style.cssText =
-      'position:fixed;right:20px;top:220px;width:340px;height:180px;z-index:51;display:none';
-    document.body.append(frame);
-    probe.referenceFrame = frame;
-    return () => frame.remove();
-  }, []);
-  useEffect(() => {
-    probe.referenceFrame.style.display = reference ? 'block' : 'none';
-  }, [reference]);
   probe.remount = () => setEpoch(value => value + 1);
   probe.toggleOpen = () => setOpen(value => !value);
   return (
@@ -286,7 +290,7 @@ function Harness() {
             onSelect: () => setActiveTabId(label),
           }))}
         >
-          <Tools />
+          <Tools reference={reference} />
         </CoworkDisplayPanel>
       </div>
     </>

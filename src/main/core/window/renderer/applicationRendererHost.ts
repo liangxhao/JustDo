@@ -101,7 +101,9 @@ const requestAssetPath = (rawUrl: string | undefined): string | null => {
         !['/workspace.html', '/widget-viewer.html'].includes(pathname) ||
         [...query].length !== 1 ||
         !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/iu.test(
-          query.get(pathname === '/workspace.html' ? 'generation' : 'mount') ?? '',
+          (pathname === '/workspace.html'
+            ? query.get('generation') ?? query.get('surface')
+            : query.get('mount')) ?? '',
         )
       )
         return null;

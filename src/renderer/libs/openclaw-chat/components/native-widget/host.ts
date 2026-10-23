@@ -33,10 +33,15 @@ export interface NativeWidgetContext {
   client: NativeWidgetClient;
   generation: number;
   sessionKey: string;
+  sessionId?: string;
+  presentationScope?: string;
+  presentationOwner?: object;
   /** Also checks current controller connection and session after asynchronous work. */
   isCurrent: () => boolean;
   /** Live product admission; read-only views retain local interaction without draft actions. */
   canDraft: () => boolean;
+  /** Called only after the user confirms the visible suggestion. */
+  addDraft?: (text: string) => boolean | Promise<boolean>;
   /** Opens a web link in this consumer's own workspace, independently of draft permission. */
   openLink?: (url: string) => void;
 }

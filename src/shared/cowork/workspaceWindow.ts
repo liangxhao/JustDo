@@ -8,6 +8,10 @@ export const WorkspaceWindowIpc = {
   Invalidated: 'cowork:workspaceWindow:invalidated',
   GetWindowState: 'cowork:workspaceWindow:getWindowState',
   Control: 'cowork:workspaceWindow:control',
+  PrepareSurface: 'cowork:workspaceWindow:prepareSurface',
+  UpdateSurface: 'cowork:workspaceWindow:updateSurface',
+  CloseSurface: 'cowork:workspaceWindow:closeSurface',
+  SurfaceInvalidated: 'cowork:workspaceWindow:surfaceInvalidated',
 } as const;
 
 export const WorkspaceWindowControl = {
@@ -54,6 +58,29 @@ export interface WorkspaceWindowUpdate extends WorkspaceWindowBounds {
   generation: string;
   visible: boolean;
   occluded: boolean;
+}
+
+export const WorkspaceSurfaceTarget = { Main: 'main', Workspace: 'workspace' } as const;
+export type WorkspaceSurfaceTarget =
+  (typeof WorkspaceSurfaceTarget)[keyof typeof WorkspaceSurfaceTarget];
+
+export interface WorkspaceSurfaceGrant {
+  id: string;
+  url: string;
+  frameName: string;
+}
+
+export interface WorkspaceSurfaceUpdate extends WorkspaceWindowBounds {
+  id: string;
+  target: WorkspaceSurfaceTarget;
+  workspaceGeneration?: string;
+  clip: WorkspaceWindowBounds;
+  visible: boolean;
+  occluded: boolean;
+}
+
+export interface WorkspaceSurfaceInvalidated {
+  id: string;
 }
 
 export type WorkspaceWindowResult =

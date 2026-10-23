@@ -1,9 +1,10 @@
 import { randomUUID } from 'crypto';
-import { BrowserWindow, screen, WebContentsView } from 'electron';
+import { BrowserWindow, screen, View, WebContentsView } from 'electron';
 
 import {
   WORKSPACE_WINDOW_FRAME_NAME,
   type WorkspaceNativeWindowState,
+  type WorkspaceSurfaceGrant,
   type WorkspaceWindowBounds,
   WorkspaceWindowControl,
   type WorkspaceWindowGrant,
@@ -12,6 +13,7 @@ import {
   type WorkspaceWindowUpdate,
 } from '../../../shared/cowork/workspaceWindow';
 import { getWindowChromeOptions } from './windowChrome';
+import { WorkspaceSurfaceManager } from './workspaceSurfaceManager';
 import {
   clipWorkspaceViewBounds,
   fitWorkspaceWindowBounds,
@@ -28,6 +30,7 @@ type WorkspaceWindowOptions = {
   showSystemMenu: (window: BrowserWindow, position?: { x: number; y: number }) => void;
   isQuitting: () => boolean;
   configureHost: (host: Electron.WebContents) => void;
+  configureSurfaceHost?: (host: Electron.WebContents) => void;
   openExternal: (url: string) => void;
   readBounds: () => unknown;
   saveBounds: (bounds: WorkspaceWindowBounds) => void;
@@ -53,24 +56,33 @@ export class WorkspaceWindowManager {
   private generation = randomUUID();
   private grant: WorkspaceWindowGrant | null = null;
   private view: WebContentsView | null = null;
+  private root: View | null = null;
   private contents: Electron.WebContents | null = null;
   private shell: BrowserWindow | null = null;
   private update: WorkspaceWindowUpdate | null = null;
   private hiddenWithOwner = false;
   private disposed = false;
   private readonly ownerId: number;
+  private readonly surfaces: WorkspaceSurfaceManager;
 
   constructor(
     private readonly owner: BrowserWindow,
     private readonly options: WorkspaceWindowOptions,
   ) {
     this.ownerId = owner.webContents.id;
+    this.surfaces = new WorkspaceSurfaceManager(owner, {
+      url: options.url,
+      configureHost: options.configureSurfaceHost ?? options.configureHost,
+      workspace: () => this.root
+        ? { generation: this.generation, root: this.root, window: this.shell ?? this.owner }
+        : undefined,
+    });
     managers.set(this.ownerId, this);
     owner.on('resize', () => this.applyLayout());
     owner.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
-      if (mainFrame && !inPlace) this.reset();
+      if (mainFrame && !inPlace) this.reset(true);
     });
-    owner.webContents.on('render-process-gone', () => this.reset());
+    owner.webContents.on('render-process-gone', () => this.reset(true));
     owner.once('closed', () => this.dispose());
     owner.on('hide', () => {
       // On Windows hide can precede the native minimize state change.
@@ -102,6 +114,10 @@ export class WorkspaceWindowManager {
   }
 
   presentationWindow(hostId?: number): BrowserWindow {
+    if (hostId !== undefined) {
+      const surfaceWindow = this.surfaces.presentationWindow(hostId);
+      if (surfaceWindow) return surfaceWindow;
+    }
     return this.shell && (hostId === undefined || this.ownsHost(hostId)) ? this.shell : this.owner;
   }
 
@@ -124,7 +140,21 @@ export class WorkspaceWindowManager {
     return { ...this.grant, detached: this.shell !== null, existing: this.view !== null };
   }
 
+  prepareSurface(): WorkspaceSurfaceGrant | null {
+    return this.disposed ? null : this.surfaces.prepare();
+  }
+
+  updateSurface(update: unknown): void {
+    if (!this.disposed) this.surfaces.update(update);
+  }
+
+  closeSurface(id: unknown): void {
+    this.surfaces.close(id);
+  }
+
   handleOpen(details: Electron.HandlerDetails): Electron.WindowOpenHandlerResponse | null {
+    const surface = this.surfaces.handleOpen(details);
+    if (surface) return surface;
     if (
       !this.grant ||
       this.view ||
@@ -159,8 +189,11 @@ export class WorkspaceWindowManager {
         contents.setBackgroundThrottling(false);
         this.view = view;
         this.contents = contents;
-        this.owner.contentView.addChildView(view);
-        view.setVisible(false);
+        const root = new View();
+        root.addChildView(view);
+        this.root = root;
+        this.owner.contentView.addChildView(root);
+        root.setVisible(false);
         contents.setWindowOpenHandler(details => {
           this.options.openExternal(details.url);
           return { action: 'deny' };
@@ -264,13 +297,18 @@ export class WorkspaceWindowManager {
 
   private applyLayout(): void {
     const view = this.view;
+    const root = this.root;
     const contents = this.contents;
-    if (!view || !contents || contents.isDestroyed() || this.owner.isDestroyed()) return;
+    if (!view || !root || !contents || contents.isDestroyed() || this.owner.isDestroyed()) {
+      this.surfaces.applyLayout();
+      return;
+    }
     contents.setZoomFactor(this.owner.webContents.getZoomFactor());
     if (this.shell) {
       const [width, height] = this.shell.getContentSize();
+      root.setBounds({ x: 0, y: 0, width, height });
       view.setBounds({ x: 0, y: 0, width, height });
-      view.setVisible(true);
+      root.setVisible(true);
     } else if (this.update) {
       const [width, height] = this.owner.getContentSize();
       const bounds = clipWorkspaceViewBounds(
@@ -278,11 +316,13 @@ export class WorkspaceWindowManager {
         { width, height },
         this.owner.webContents.getZoomFactor(),
       );
-      view.setBounds(bounds);
-      view.setVisible(
+      root.setBounds(bounds);
+      view.setBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height });
+      root.setVisible(
         this.update.visible && !this.update.occluded && bounds.width > 0 && bounds.height > 0,
       );
     }
+    this.surfaces.applyLayout();
   }
 
   setDetached(generation: unknown, detached: unknown): WorkspaceWindowResult {
@@ -290,6 +330,7 @@ export class WorkspaceWindowManager {
       generation !== this.generation ||
       typeof detached !== 'boolean' ||
       !this.view ||
+      !this.root ||
       !this.contents ||
       this.contents.isDestroyed() ||
       this.owner.isDestroyed()
@@ -326,8 +367,8 @@ export class WorkspaceWindowManager {
         shell.setMenu(null);
         shell.webContents.on('page-title-updated', event => event.preventDefault());
         shell.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-        this.owner.contentView.removeChildView(this.view);
-        shell.contentView.addChildView(this.view);
+        this.owner.contentView.removeChildView(this.root);
+        shell.contentView.addChildView(this.root);
         this.shell = shell;
         shell.on('resize', () => this.applyLayout());
         const forwardWindowState = () => this.emitState();
@@ -356,8 +397,8 @@ export class WorkspaceWindowManager {
       } else if (!detached && this.shell) {
         const shell = this.shell;
         if (!shell.isMaximized() && !shell.isMinimized()) this.saveBounds(shell.getBounds());
-        shell.contentView.removeChildView(this.view);
-        this.owner.contentView.addChildView(this.view);
+        shell.contentView.removeChildView(this.root);
+        this.owner.contentView.addChildView(this.root);
         this.shell = null;
         this.hiddenWithOwner = false;
         this.applyLayout();
@@ -373,14 +414,14 @@ export class WorkspaceWindowManager {
     } catch (error) {
       console.error('[WorkspaceWindow] Failed to change presentation:', error);
       // A failed move must leave the original presentation and its live contents intact.
-      if (this.view && this.contents && !this.contents.isDestroyed()) {
+      if (this.root && this.contents && !this.contents.isDestroyed()) {
         try {
           const destination = previousShell ?? this.owner;
           const other = previousShell ? this.owner : createdShell;
-          if (other && !other.isDestroyed() && other.contentView.children.includes(this.view)) {
-            other.contentView.removeChildView(this.view);
+          if (other && !other.isDestroyed() && other.contentView.children.includes(this.root)) {
+            other.contentView.removeChildView(this.root);
           }
-          destination.contentView.addChildView(this.view);
+          destination.contentView.addChildView(this.root);
           this.shell = previousShell;
           if (createdShell && !createdShell.isDestroyed()) createdShell.destroy();
           this.applyLayout();
@@ -460,23 +501,26 @@ export class WorkspaceWindowManager {
     if (!pendingClose) notify();
   }
 
-  private reset(): void {
+  private reset(closeSurfaces = false): void {
+    if (closeSurfaces) this.surfaces.closeAll();
+    else this.surfaces.suspendWorkspace();
     this.generation = randomUUID();
     this.grant = null;
     this.update = null;
-    const view = this.view;
+    const root = this.root;
     const contents = this.contents;
     const shell = this.shell;
     this.view = null;
+    this.root = null;
     this.contents = null;
     this.shell = null;
     if (shell && !shell.isDestroyed()) {
-      if (view && shell.contentView.children.includes(view))
-        shell.contentView.removeChildView(view);
+      if (root && shell.contentView.children.includes(root))
+        shell.contentView.removeChildView(root);
       shell.destroy();
-    } else if (view && !this.owner.isDestroyed()) {
-      if (this.owner.contentView.children.includes(view))
-        this.owner.contentView.removeChildView(view);
+    } else if (root && !this.owner.isDestroyed()) {
+      if (this.owner.contentView.children.includes(root))
+        this.owner.contentView.removeChildView(root);
     }
     if (contents && !contents.isDestroyed()) contents.close();
     this.hiddenWithOwner = false;
@@ -484,7 +528,7 @@ export class WorkspaceWindowManager {
 
   private dispose(): void {
     try {
-      this.reset();
+      this.reset(true);
     } finally {
       this.disposed = true;
       managers.delete(this.ownerId);

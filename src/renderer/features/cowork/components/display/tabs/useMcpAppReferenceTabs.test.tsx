@@ -22,6 +22,8 @@ test('a stale session list retains the active App and removes it after leaving t
     pinned: false,
     returnPending: true,
     anchors: new Set(),
+    layer: document.createElement('div'),
+    visible: false,
     view: { resume: vi.fn() },
     dispose,
   } as unknown as McpAppPresentation);

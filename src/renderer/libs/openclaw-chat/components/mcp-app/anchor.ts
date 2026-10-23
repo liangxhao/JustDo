@@ -147,6 +147,10 @@ export class McpAppAnchor extends LitElement {
     const view = this.target();
     if (view) {
       const entry = manager.find(view);
+      if (entry?.surface?.failed) {
+        manager.retrySurface(entry);
+        return;
+      }
       if (entry && !entry.pinned && view.canReference) manager.pin(entry);
       else view.revealCanvas?.();
       return;
@@ -171,7 +175,8 @@ export class McpAppAnchor extends LitElement {
     const manager = getMcpAppPresentations(this.ownerDocument);
     const view = this.target();
     const entry = view ? manager.find(view) : undefined;
-    const inline = this.entry && this.entry.primary === this && !this.entry.pinned;
+    const failed = entry?.surface?.failed;
+    const inline = this.entry && this.entry.primary === this && !this.entry.pinned && !failed;
     if (inline) {
       this.style.height = `${this.entry!.height}px`;
       return nothing;
@@ -187,11 +192,16 @@ export class McpAppAnchor extends LitElement {
     const icons = identity
       ? resolveMcpAppIcons((view?.context ?? this.context)?.apps.iconCatalog, identity)
       : undefined;
-    const status = pinned
-      ? `${reference ? `${t('mcpAppsUpdated')} · ` : ''}${t('mcpAppsPinned')}`
-      : reference
-        ? t('mcpAppsUpdated')
-        : t('mcpAppsLoading');
+    const status = failed
+      ? t('mcpAppsUnavailable')
+      : pinned
+        ? `${reference ? `${t('mcpAppsUpdated')} · ` : ''}${t('mcpAppsPinned')}`
+        : reference
+          ? t('mcpAppsUpdated')
+          : t('mcpAppsLoading');
+    const label = t(
+      failed ? 'mcpAppsRetry' : pinned || (view && !entry) ? 'mcpAppsViewReference' : 'mcpAppsPin',
+    );
     return html`<div class="reference">
         <span class="app-icon" aria-hidden="true">
           ${renderMcpAppIcon(icons, this.failedIcons, src => {
@@ -209,12 +219,12 @@ export class McpAppAnchor extends LitElement {
           <span>${status}</span>
         </div>
         <button
-          ?disabled=${this.loading || !this.context?.isCurrent() || Boolean(entry && !entry.pinned && !view?.canReference)}
-          title=${`${pinned || (view && !entry) ? t('mcpAppsViewReference') : t('mcpAppsPin')}: ${title}`}
-          aria-label=${`${pinned || (view && !entry) ? t('mcpAppsViewReference') : t('mcpAppsPin')}: ${title}`}
+          ?disabled=${this.loading || !this.context?.isCurrent() || Boolean(!failed && entry && !entry.pinned && !view?.canReference)}
+          title=${`${label}: ${title}`}
+          aria-label=${`${label}: ${title}`}
           @click=${() => void this.open()}
         >
-          ${t(pinned || (view && !entry) ? 'mcpAppsViewReference' : 'mcpAppsPin')}
+          ${label}
           ${svg`<svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12 12 4M5 4h7v7"/></svg>`}
         </button>
       </div>

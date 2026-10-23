@@ -80,6 +80,33 @@ Renderer 在 resize 和原生窗口状态变化时更新临时布局系数，不
 对应测试与实现同目录。消息 descriptor 投影留在 pipeline，首条发送留在 gateway，
 React composer 仍负责消费用户确认的草稿；归组不改变这些层的所有权。
 
+主聊天的 `show_widget` 消息以 `native-widget-anchor` 提供布局锚点，独立的 widget
+presentation manager 持有稳定 viewer。桌面在首次 iframe、webview 或桥连接创建前，
+通过共享 `NativePresentationSurface` 为已准入卡片准备无应用 preload 的独立原生载体；
+MCP App 的消息视图复用相同展示基础设施，各自的认证准入和协议保持独立。
+侧边栏标签与其它内容使用 `display/` 的同一个 workspace portal。固定和移回消息只切换
+载体的原生父视图与几何位置；分离和停靠由 Main 搬动完整侧栏 View 组，不搬动 DOM、
+重读原生视图、重建 AppBridge 或改变运行实例。消息、侧栏、独立窗口及返回停靠之间
+保留同一个内部文档、未保存输入、选择与本地状态。无原生表面 API 的浏览器仍使用
+同 Document 的稳定布局容器。展示回执 ID 只管理承载资源，不替代原生 viewId / docId
+或成为新会话、工具调用与执行回执。
+实例按真实 client、连接 generation、原生会话身份、产品会话作用域与已准入 docId
+隔离；保留实例通过确切聊天所有者刷新上下文，即使原历史行已离开窗口也不能保留旧权限。
+草稿确认与消息滚动通过捕获的所有者回调路由，侧边栏滚动不控制消息；隐藏或遮挡时
+清除建议并撤销草稿策略。侧栏视口适配与消息高度分别保留，布局报告继续核对代次。
+该机制与 MCP App 展示分别持有各自的准入、传输与生命周期，不新增正文缓存或原生补丁。
+独立历史查看器没有侧栏作用域，Widget 继续挂载在消息锚点内部，继承所属抽屉、
+标签页的层叠、可见性和 inert 状态。主聊天保留标签在聊天 DOM 替换后，只能通过
+新的真实历史准入及相同 client、generation、sessionKey、非空物理 sessionId 和 docId
+恢复所属产品会话；原所有者已失效后才移交，重新认证读取，不恢复旧挂载的权限或输入。
+等价上下文刷新只更新 viewer，不通知 React 标签订阅；只有可用性或标签状态变化才通知，
+避免聊天与侧栏互相触发渲染。两类稳定容器的布局均跳过未变化的样式写入，避免彼此的
+DOM 观察器在稳定几何状态下持续调度。几何计算、隐藏及遮挡以实际布局目标的文档为准，
+原生裁切保留载体的完整逻辑视口，部分滚出消息区域不通过缩小文档视口来裁切。
+侧栏窗口控制始终使用唯一工作区所有者，所有标签内容随侧栏一起分离、停靠。
+MCP App 的侧栏展示模式请求由 manager 从实际目标转交，面板核对确切视图、固定状态
+及目标归属后响应；不能通过任意 DOM 事件接管其它卡片。
+
 工作区侧聊中的组件使用实际 `ownerDocument/defaultView` 接收沙箱消息、读取宿主
 origin 与主题、观察主题和可见性；监听目标在连接时捕获，移植或卸载时在原目标解除。
 shadow 样式使用文档本地 style，避免主窗口注册的构造样式表跨文档采用失败。
@@ -890,16 +917,17 @@ Markdown-it 处理列表、代码、表格、公式和链接，DOMPurify 统一�
 ### MCP Apps 的消息锚点与侧栏引用
 
 消息时间线只挂载 `mcp-app-anchor`，原生 descriptor 仍经过既有不可变准入。
-主 Document 的 `presentations.ts` 管理稳定 App 容器、消息／侧栏位置、会话内序号及必要保活；
-iframe 在该容器中首次创建，历史行接管不重新创建已有实例。
+主 Renderer 的 `presentations.ts` 管理稳定 App 容器、消息／侧栏位置、会话内序号及必要保活；
+桌面在首次 iframe / bridge 创建前确定独立原生载体文档，历史行接管不重新创建已有实例。
 普通未固定实例随最后锚点释放；固定及等待原消息返回的实例才保留。
 产品会话删除和展示区域销毁清理所属实例，不引入转录或内容缓存。
 
-正常停靠的 workspace 本身是另一个 WebContents。选中引用 Tab 时隐藏原生表面，
-保留其整棵组件树，在主文档侧栏复用 `CoworkDisplayPanel` 与同一份标签状态。
-原 App 始终留在原文档；分离 workspace 的引用页只定位主窗口。
+workspace 的固定文档接收同一 `CoworkDisplayPanel` 与标签状态，普通组件树持续挂载。
+选中引用 Tab 将原生载体纳入完整侧栏 View 组；返回消息则恢复原生父视图和布局，
+原 App DOM、内部文档、bridge 与认证上下文不变。分离和停靠统一搬动侧栏组，
+引用页直接显示原 App。浏览器回退仍在同一 Document 内调整稳定容器几何位置。
 关闭引用页取消固定，标准 App 关闭仍真正关闭；普通应用和文件页签不走引用关闭分支。
-主文档固定表面与原生 workspace 共用遮挡判断，Modal／菜单阻塞期间同时拒绝交互 RPC。
+消息布局目标与原生 workspace 共用遮挡判断，Modal／菜单阻塞期间同时拒绝交互 RPC。
 
 `McpAppSessionView.sameNativeIdentity` 比较原 client、generation、agent、sessionKey 与物理 sessionId。
 展示作用域、标题、序号、viewId 显示定位不授予新权限；保留实例的恢复不得换连接代次。

@@ -184,31 +184,43 @@ app
       assert.equal(before.childMarker, false);
       assert.equal(before.hasAllTabs, true);
       assert.ok(before.litStyles > 0);
-      // A reference stays in Main while the normal native workspace remains mounted.
+      // Reference content belongs to the unified sidebar document and follows
+      // the same native group without rebuilding its original runtime.
       await owner.webContents.executeJavaScript('probe.reference(true)');
       await waitFor(() =>
-        owner.webContents.executeJavaScript('!!document.querySelector("#reference-draft")'),
+        owner.webContents.executeJavaScript('!!probe.document.querySelector("#reference-draft") && !!probe.referenceFrame.contentDocument?.querySelector("input")'),
       );
       await owner.webContents.executeJavaScript(
-        'probe.referenceDocument=probe.referenceFrame.contentDocument;probe.referenceDocument.querySelector("input").value="unsaved reference";probe.referenceDocument.querySelector("input").setSelectionRange(2,8)',
+        'probe.referenceDocument=probe.referenceFrame.contentDocument;probe.referenceInstance=probe.referenceFrame.contentWindow.documentInstance;probe.referenceDocument.querySelector("input").value="unsaved reference";probe.referenceDocument.querySelector("input").setSelectionRange(2,8)',
       );
+      assert.equal(await owner.webContents.executeJavaScript('document.querySelector("#reference-draft")===null && probe.referenceFrame.ownerDocument===probe.document'), true);
       const referenceGeneration = manager.prepare().generation;
       for (let index = 0; index < 3; index++) {
         await owner.webContents.executeJavaScript('probe.reference(false)');
         await waitFor(() =>
-          owner.webContents.executeJavaScript('!document.querySelector("#reference-draft")'),
+          owner.webContents.executeJavaScript('!probe.document.querySelector("#reference-draft")'),
         );
         await owner.webContents.executeJavaScript('probe.reference(true)');
         await waitFor(() =>
-          owner.webContents.executeJavaScript('!!document.querySelector("#reference-draft")'),
+          owner.webContents.executeJavaScript('!!probe.document.querySelector("#reference-draft")'),
         );
       }
       assert.equal(
         await owner.webContents.executeJavaScript(
-          'probe.referenceDocument===probe.referenceFrame.contentDocument && probe.referenceDocument.querySelector("input").value==="unsaved reference" && probe.referenceDocument.querySelector("input").selectionStart===2 && probe.referenceDocument.querySelector("input").selectionEnd===8',
+          'probe.referenceDocument===probe.referenceFrame.contentDocument && probe.referenceFrame.contentWindow.documentInstance===probe.referenceInstance && probe.referenceDocument.querySelector("input").value==="unsaved reference" && probe.referenceDocument.querySelector("input").selectionStart===2 && probe.referenceDocument.querySelector("input").selectionEnd===8',
         ),
         true,
       );
+      const referenceTicks = await owner.webContents.executeJavaScript('probe.referenceFrame.contentWindow.ticks');
+      await owner.webContents.executeJavaScript('probe.move()');
+      await waitFor(() => manager.prepare().detached);
+      assert.ok(manager.presentationWindow().contentView.children.includes(manager.root));
+      await waitFor(() => owner.webContents.executeJavaScript(`probe.referenceFrame.contentWindow.ticks>${referenceTicks}`));
+      assert.equal(await owner.webContents.executeJavaScript('!!probe.document.querySelector("#reference-draft") && probe.referenceFrame.ownerDocument===probe.document && probe.referenceDocument===probe.referenceFrame.contentDocument && probe.referenceFrame.contentWindow.documentInstance===probe.referenceInstance && probe.referenceDocument.querySelector("input").value==="unsaved reference" && probe.referenceDocument.querySelector("input").selectionStart===2 && probe.referenceDocument.querySelector("input").selectionEnd===8'), true);
+      manager.presentationWindow().close();
+      await waitFor(() => !manager.prepare().detached);
+      assert.ok(owner.contentView.children.includes(manager.root));
+      assert.equal(await owner.webContents.executeJavaScript('probe.referenceDocument===probe.referenceFrame.contentDocument && probe.referenceFrame.contentWindow.documentInstance===probe.referenceInstance && probe.referenceDocument.querySelector("input").value==="unsaved reference"'), true);
       assert.equal(manager.prepare().generation, referenceGeneration);
       const retainedWorkspace = await owner.webContents.executeJavaScript('probe.snapshot()');
       assert.equal(retainedWorkspace.mounts, before.mounts);
@@ -220,9 +232,9 @@ app
       );
       await owner.webContents.executeJavaScript('probe.reference(false)');
       await waitFor(() =>
-        owner.webContents.executeJavaScript('!document.querySelector("#reference-draft")'),
+        owner.webContents.executeJavaScript('!probe.document.querySelector("#reference-draft")'),
       );
-      console.log(`${mode}: main-document reference and native workspace retention passed`);
+      console.log(`${mode}: unified sidebar reference runtime and native workspace retention passed`);
       // Main's pet retains its node and viewport coordinates. The docked native
       // layer only paints the covered portion at the same on-screen position.
       await owner.webContents.executeJavaScript('probe.mainPet=document.querySelector(".cowork-pet--floating");probe.petPosition=[probe.mainPet.style.left,probe.mainPet.style.top]');

@@ -158,6 +158,8 @@ import {
   type SwarmWorkflowOptions,
 } from '../shared/cowork/swarm-workflow';
 import {
+  type WorkspaceSurfaceInvalidated,
+  type WorkspaceSurfaceUpdate,
   type WorkspaceWindowControl,
   WorkspaceWindowIpc,
   type WorkspaceWindowState,
@@ -642,6 +644,16 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
   workspaceWindow: {
+    prepareSurface: () => ipcRenderer.invoke(WorkspaceWindowIpc.PrepareSurface),
+    updateSurface: (update: WorkspaceSurfaceUpdate) =>
+      ipcRenderer.send(WorkspaceWindowIpc.UpdateSurface, update),
+    closeSurface: (id: string) => ipcRenderer.send(WorkspaceWindowIpc.CloseSurface, id),
+    onSurfaceInvalidated: (callback: (state: WorkspaceSurfaceInvalidated) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: WorkspaceSurfaceInvalidated) =>
+        callback(state);
+      ipcRenderer.on(WorkspaceWindowIpc.SurfaceInvalidated, listener);
+      return () => ipcRenderer.removeListener(WorkspaceWindowIpc.SurfaceInvalidated, listener);
+    },
     prepare: () => ipcRenderer.invoke(WorkspaceWindowIpc.Prepare),
     update: (update: WorkspaceWindowUpdate) => ipcRenderer.send(WorkspaceWindowIpc.Update, update),
     setDetached: (generation: string, detached: boolean) =>

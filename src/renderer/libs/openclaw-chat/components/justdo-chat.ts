@@ -126,7 +126,13 @@ import {
   handleMessageImageContextMenu,
   handleMessageLinkClick,
 } from './message/message-content-interactions';
-import { NATIVE_WIDGET_CONTEXT_REQUEST, type NativeWidgetContext } from './native-widget/host';
+import { NativeWidgetAnchor } from './native-widget/anchor';
+import {
+  NATIVE_WIDGET_CONTEXT_REQUEST,
+  NATIVE_WIDGET_DRAFT_EVENT,
+  type NativeWidgetContext,
+} from './native-widget/host';
+import { getNativeWidgetPresentations } from './native-widget/presentations';
 import { NativeWidgetView } from './native-widget/view';
 import { EditDiffMonacoController } from './tools/edit-diff-monaco';
 import { TOOL_OUTPUT_REQUEST, type ToolOutput } from './tools/tool-output';
@@ -266,6 +272,7 @@ export class JustDoChatElement extends LitElement {
   @property({ attribute: false })
   declare openMcpAppFile: McpAppViewContext['openFile'];
   captureMcpAppContext?: () => McpAppViewContext | undefined;
+  captureWidgetContext?: () => NativeWidgetContext | undefined;
 
   @property({ attribute: false })
   declare onAssistantMessageFork: ((entryId: string) => boolean | Promise<boolean>) | undefined;
@@ -933,6 +940,7 @@ export class JustDoChatElement extends LitElement {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     this.removeEventListener(NATIVE_WIDGET_CONTEXT_REQUEST, this.handleWidgetContext);
+    getNativeWidgetPresentations(this.ownerDocument).refresh(this);
     this.removeEventListener(McpAppEvent.ContextRequest, this.handleMcpAppContext);
     this.richMessageControls?.dispose();
     this.richMessageControls = null;
@@ -1410,11 +1418,33 @@ export class JustDoChatElement extends LitElement {
   }
 
   private widgetContext(): NativeWidgetContext | undefined {
+    if (this.captureWidgetContext) {
+      const capture = this.captureWidgetContext;
+      const context = capture();
+      if (!context) return;
+      const isCurrent = () =>
+        this.isConnected && this.captureWidgetContext === capture && context.isCurrent();
+      return {
+        ...context,
+        presentationOwner: this,
+        isCurrent,
+        canDraft: () => isCurrent() && context.canDraft(),
+        addDraft: context.addDraft
+          ? text => (isCurrent() ? context.addDraft!(text) : false)
+          : undefined,
+        openLink: context.openLink
+          ? url => {
+              if (isCurrent()) context.openLink!(url);
+            }
+          : undefined,
+      };
+    }
     const controller = this._controller;
     const client = controller?.state.client;
     const sessionKey = controller?.state.sessionKey;
     if (!controller?.state.connected || !client || !sessionKey) return;
     const generation = client.generation;
+    const sessionId = controller.state.currentSessionId ?? undefined;
     const openWidgetLink = this.openWidgetLink;
     const isCurrent = () =>
       this.isConnected &&
@@ -1422,14 +1452,35 @@ export class JustDoChatElement extends LitElement {
       controller.state.client === client &&
       controller.state.connected &&
       controller.state.sessionKey === sessionKey &&
+      (controller.state.currentSessionId ?? undefined) === sessionId &&
       this.openWidgetLink === openWidgetLink &&
       client.generation === generation;
     return {
       client,
       sessionKey,
       generation,
+      sessionId,
+      presentationOwner: this,
       canDraft: () => this.canDraftWidget?.() === true,
       isCurrent,
+      addDraft: text => {
+        if (
+          !isCurrent() ||
+          this.canDraftWidget?.() !== true ||
+          typeof text !== 'string' ||
+          !text.trim() ||
+          text.length > 4000 ||
+          /^\s*[!/]/.test(text)
+        )
+          return false;
+        return this.dispatchEvent(
+          new CustomEvent(NATIVE_WIDGET_DRAFT_EVENT, {
+            bubbles: true,
+            composed: true,
+            detail: { sessionKey, text },
+          }),
+        );
+      },
       openLink: url => {
         if (isCurrent()) openWidgetLink?.(sessionKey, url);
       },
@@ -1438,16 +1489,25 @@ export class JustDoChatElement extends LitElement {
 
   private readonly handleWidgetContext = (event: Event): void => {
     const widget = event.composedPath()[0];
-    if (!(widget instanceof NativeWidgetView) || !this.renderRoot.contains(widget)) return;
+    if (
+      !(widget instanceof NativeWidgetView || widget instanceof NativeWidgetAnchor) ||
+      !this.renderRoot.contains(widget)
+    )
+      return;
     event.stopPropagation();
     widget.context = this.widgetContext();
   };
 
   private syncWidgetContexts(): void {
     const context = this.widgetContext();
-    this.renderRoot?.querySelectorAll<NativeWidgetView>('justdo-native-widget').forEach(widget => {
-      widget.context = context;
-    });
+    getNativeWidgetPresentations(this.ownerDocument).refresh(this, context);
+    this.renderRoot
+      ?.querySelectorAll<NativeWidgetView | NativeWidgetAnchor>(
+        'justdo-native-widget, native-widget-anchor',
+      )
+      .forEach(widget => {
+        widget.context = context;
+      });
     this.renderRoot
       ?.querySelectorAll<McpAppView | McpAppAnchor>('mcp-app-view, mcp-app-anchor')
       .forEach(view => {

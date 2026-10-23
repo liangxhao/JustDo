@@ -123,6 +123,103 @@ function sandbox(view: NativeWidgetView) {
 }
 
 describe('native widget viewer lifecycle', () => {
+  it('fills the sidebar and restores inline height without reloading its document', async () => {
+    const { view, request } = mount();
+    await settle(view);
+    const { frame, ready, size, measured, send, post } = sandbox(view);
+    ready();
+    size(480);
+    await settle(view);
+    const pin = vi.fn();
+    view.pinPresentation = pin;
+    view.requestUpdate();
+    await settle(view);
+    view.shadowRoot!.querySelector<HTMLButtonElement>('[data-action="pin"]')!.click();
+    expect(pin).toHaveBeenCalledOnce();
+    const inlineReport = measured(720);
+
+    view.fillContainer = true;
+    await settle(view);
+    expect(view.hasAttribute('fill-container')).toBe(true);
+    expect(view.shadowRoot!.querySelector('[data-action="pin"]')).toBeNull();
+    expect(
+      post.mock.calls.filter(([data]) => data?.type === WIDGET_LAYOUT_REQUEST).slice(-1)[0]?.[0]
+        .layout.expanded,
+    ).toBe(true);
+    size(1250);
+    await settle(view);
+    expect(inlineHeight(view)).toBe('480px');
+
+    const sidebarReport = measured(1600);
+    view.fillContainer = false;
+    await settle(view);
+    send(sidebarReport);
+    send(inlineReport);
+    await settle(view);
+    expect(inlineHeight(view)).toBe('480px');
+    size(600);
+    await settle(view);
+    expect(inlineHeight(view)).toBe('600px');
+    expect(view.shadowRoot!.querySelector('iframe')).toBe(frame);
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it('does not share pending reads across native session incarnations', async () => {
+    const request = vi.fn(() => new Promise(() => undefined));
+    const { view, context } = mount(request);
+    view.context = { ...context, sessionId: 'first-incarnation' };
+    await settle(view);
+    const second = document.createElement('justdo-native-widget') as NativeWidgetView;
+    second.preview = view.preview;
+    second.context = { ...context, sessionId: 'second-incarnation' };
+    document.body.append(second);
+    await settle(second);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it('routes only confirmed sidebar suggestions through the current context and revokes hidden suggestions', async () => {
+    const { view, context, request } = mount();
+    const addDraft = vi.fn().mockResolvedValue(false);
+    context.addDraft = addDraft;
+    let visible = true;
+    view.presentationVisible = () => visible;
+    await settle(view);
+    const { frame, ready } = sandbox(view);
+    ready();
+    const internal = view as unknown as {
+      suggestion: string;
+      renderSuggestion: () => { values: unknown[] };
+    };
+    internal.suggestion = 'Confirmed local choice';
+    await settle(view);
+    const confirm = internal
+      .renderSuggestion()
+      .values.find(value => typeof value === 'function') as (event: MouseEvent) => void;
+    confirm({ isTrusted: false } as MouseEvent);
+    await settle(view);
+    expect(addDraft).not.toHaveBeenCalled();
+    confirm({ isTrusted: true } as MouseEvent);
+    await settle(view);
+    expect(addDraft).toHaveBeenCalledExactlyOnceWith('Confirmed local choice');
+    expect(view.shadowRoot!.querySelector('section')?.textContent).toContain(
+      'Confirmed local choice',
+    );
+
+    visible = false;
+    view.refreshPresentation();
+    await settle(view);
+    confirm({ isTrusted: true } as MouseEvent);
+    expect(addDraft).toHaveBeenCalledOnce();
+    expect(view.shadowRoot!.querySelector('section')).toBeNull();
+    visible = true;
+    view.refreshPresentation();
+    await settle(view);
+    confirm({ isTrusted: true } as MouseEvent);
+    expect(addDraft).toHaveBeenCalledOnce();
+    expect(view.shadowRoot!.querySelector('iframe')).toBe(frame);
+    expect(request).toHaveBeenCalledOnce();
+  });
+
   it('routes desktop links to the current consumer even in read-only history, rejecting hidden and stale cards', async () => {
     vi.stubGlobal('electron', {});
     vi.spyOn(document, 'hasFocus').mockReturnValue(true);

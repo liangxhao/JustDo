@@ -16,7 +16,12 @@ if (!process.versions.electron) {
       JSON.parse(fs.readFileSync(path.join(runtime, 'package.json'))).version,
       '2026.10.4',
     );
-    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'widget-viewer-proxy-'));
+    const sidebarMode = process.argv.includes('--sidebar');
+    const fixtureRoot = sidebarMode ? path.join(root, '.agent-tasks/browser') : os.tmpdir();
+    fs.mkdirSync(fixtureRoot, { recursive: true });
+    const fixture = fs.mkdtempSync(
+      path.join(fixtureRoot, sidebarMode ? 'widget-viewer-sidebar-' : 'widget-viewer-proxy-'),
+    );
     try {
       const dist = path.join(fixture, 'dist');
       fs.mkdirSync(path.join(dist, 'assets'), { recursive: true });
@@ -44,18 +49,32 @@ if (!process.versions.electron) {
       );
       build(
         `import {NativeWidgetView} from './src/renderer/libs/openclaw-chat/components/native-widget/view';
+import {NativeWidgetAnchor} from './src/renderer/libs/openclaw-chat/components/native-widget/anchor';
+import {getNativeWidgetPresentations} from './src/renderer/libs/openclaw-chat/components/native-widget/presentations';
 import {decodeNativeCanvasResult} from './src/renderer/libs/openclaw-chat/pipeline/native-canvas';
 const data=window.fixtureData;let reads=0;const errors=[];
 const recordRejection=event=>errors.push(String(event.reason));addEventListener('unhandledrejection',recordRejection);
 const client={generation:1,gatewayUrl:data.gatewayUrl,request:async()=>{reads++;return data.view}};
 const preview=id=>decodeNativeCanvasResult(JSON.stringify({kind:'canvas',presentation:{target:'assistant_message',sandbox:'scripts',title:'Proxy fixture'},view:{id}}),'show_widget','fixture-call');
-const view=new NativeWidgetView();view.preview=preview('fixture-doc');
 let current=true,canDraft=true;const links=[];
-view.context={client,generation:1,sessionKey:'fixture-session',isCurrent:()=>current,canDraft:()=>canDraft,openLink:url=>links.push(url)};
+const context={client,generation:1,sessionKey:'fixture-session',sessionId:'fixture-incarnation',presentationOwner:{},presentationScope:data.sidebar?'fixture-scope':undefined,isCurrent:()=>current,canDraft:()=>canDraft,openLink:url=>links.push(url)};
 let destination=document;
 if(data.workspace){const child=window.open('/workspace.html?generation=2e4ec192-521e-4b76-b132-e34598e41bb2','widget-proxy-workspace');for(let n=0;n<200;n++){try{if(child.document.body?.dataset.ready==='true'){destination=child.document;break}}catch{}await new Promise(resolve=>setTimeout(resolve,25))}if(destination===document)throw new Error('Workspace did not load')}
 if(destination!==document)destination.defaultView.addEventListener('unhandledrejection',recordRejection);
-destination.body.append(view);window.fixture={view,links,errors,replace:id=>{view.preview=preview(id)},reads:()=>reads,setCurrent:value=>{current=value;view.requestUpdate()},setDraft:value=>{canDraft=value;view.requestUpdate()}};
+let view,manager,entry,sidebar,sidebarTarget;
+if(data.sidebar){
+  manager=getNativeWidgetPresentations(destination);manager.retainWorkspace();
+  const history=destination.createElement('section');history.style.cssText='padding:16px;box-sizing:border-box;width:calc(100% - 360px)';
+  const anchor=new NativeWidgetAnchor();anchor.preview=preview('fixture-doc');anchor.context=context;history.append(anchor);
+  sidebar=destination.createElement('section');sidebar.style.cssText='position:absolute;top:24px;bottom:24px;right:16px;width:300px;overflow:hidden;box-sizing:border-box';
+  sidebarTarget=destination.createElement('div');sidebarTarget.style.cssText='width:100%;height:100%';sidebar.append(sidebarTarget);
+  destination.body.append(history,sidebar);await anchor.updateComplete;
+  entry=manager.entries[0];view=entry.view;manager.layout();
+}else{view=new NativeWidgetView();view.preview=preview('fixture-doc');view.context=context;destination.body.append(view)}
+window.fixture={view,links,errors,sidebar,sidebarTarget,entry,manager,
+pin:()=>{manager.pin(entry);manager.setSidebar(entry,sidebarTarget);manager.layout()},
+unpin:()=>{manager.unpin(entry);manager.layout()},
+replace:id=>{view.preview=preview(id)},reads:()=>reads,setCurrent:value=>{current=value;view.requestUpdate()},setDraft:value=>{canDraft=value;view.requestUpdate()}};
 window.fixture.socket=new WebSocket(data.socketUrl);window.fixture.socket.onclose=()=>window.fixture.socketClosed=true;`,
         'dist/assets/parent.js',
         'browser',
@@ -153,9 +172,13 @@ addEventListener('resize',draw);draw()</script>`
       if (result.error) throw result.error;
       assert.equal(result.status, 0, 'Electron proxy check failed');
     } finally {
-      assert.equal(path.dirname(fixture), path.resolve(os.tmpdir()));
-      assert.ok(path.basename(fixture).startsWith('widget-viewer-proxy-'));
-      fs.rmSync(fixture, { recursive: true, force: true });
+      if (sidebarMode) {
+        console.log(`Widget sidebar guest artifacts: ${fixture}`);
+      } else {
+        assert.equal(path.dirname(fixture), path.resolve(os.tmpdir()));
+        assert.ok(path.basename(fixture).startsWith('widget-viewer-proxy-'));
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
     }
   })().catch(error => {
     console.error(error);
@@ -211,6 +234,7 @@ addEventListener('resize',draw);draw()</script>`
       await new Promise(resolve => sockets.once('listening', resolve));
       const data = {
         workspace: process.argv.includes('--workspace'),
+        sidebar: process.argv.includes('--sidebar'),
         gatewayUrl: 'ws://127.0.0.1:18789',
         socketUrl: `ws://127.0.0.1:${sockets.address().port}`,
         view: { html: native.html, sandboxPort, sandboxUrl: native.sandboxPath },
@@ -473,7 +497,93 @@ addEventListener('resize',draw);draw()</script>`
       assert.equal((await session.defaultSession.cookies.get({ name: 'widget-only' })).length, 0);
       const identity = await inner.executeJavaScript('window.documentIdentity');
       await inner.executeJavaScript('document.getElementById("input").value="Preserved"');
-      await read('window.fixture.view.shadowRoot.querySelector(".view-actions button").click()');
+      if (process.argv.includes('--sidebar')) {
+        const assertRetained = async () => {
+          assert.equal(
+            webContents
+              .getAllWebContents()
+              .find(contents => contents.getURL().includes('/widget-viewer.html?'))?.id,
+            guest.id,
+            'Pinning must preserve the isolated guest',
+          );
+          assert.equal(await inner.executeJavaScript('window.documentIdentity'), identity);
+          assert.equal(
+            await inner.executeJavaScript('document.getElementById("input").value'),
+            'Preserved',
+          );
+          assert.equal(await read('window.fixture.reads()'), 1);
+        };
+        const pin = async () => {
+          await read('window.fixture.pin()');
+          await until(
+            () =>
+              read(
+                `(()=>{const v=fixture.view,r=v.shadowRoot,t=fixture.sidebarTarget.getBoundingClientRect(),d=r.querySelector('dialog').getBoundingClientRect(),f=r.querySelector('webview').getBoundingClientRect();return fixture.entry.pinned&&v.fillContainer&&Math.abs(d.height-t.height)<=1&&Math.abs(f.bottom-d.bottom)<=1})()`,
+              ),
+            'native widget fills sidebar',
+          );
+          const viewport = await assertViewport('native guest, sandbox and canvas fill sidebar');
+          await assertRetained();
+          return viewport;
+        };
+        const unpin = async () => {
+          await read('window.fixture.unpin()');
+          await until(
+            () => read(`!fixture.entry.pinned&&!fixture.view.fillContainer`),
+            'native widget returns to message',
+          );
+          const viewport = await assertViewport('native guest returns to its inline viewport');
+          assert.equal(viewport.height, inlineViewport.height);
+          await assertRetained();
+          return viewport;
+        };
+        const pinnedViewport = await pin();
+        assert.ok(pinnedViewport.height > inlineViewport.height);
+        const painted =
+          'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))';
+        await inner.executeJavaScript(painted);
+        await guest.executeJavaScript(painted);
+        await owner.webContents.executeJavaScript(painted);
+        await new Promise(resolve => setTimeout(resolve, 150));
+        const inputValue = await inner.executeJavaScript('document.getElementById("input").value');
+        assert.equal(inputValue, 'Preserved');
+        fs.writeFileSync(
+          path.join(fixture, 'sidebar-pinned.png'),
+          (await owner.webContents.capturePage()).toPNG(),
+        );
+        await read('fixture.sidebarTarget.style.display="none";fixture.manager.layout()');
+        await until(
+          () => read('getComputedStyle(fixture.entry.layer).display==="none"'),
+          'inactive native widget sidebar hidden',
+        );
+        await assertRetained();
+        await read('fixture.sidebarTarget.style.display="block";fixture.manager.layout()');
+        await assertViewport('native guest returns after hiding sidebar target');
+        await unpin();
+        const repinnedViewport = await pin();
+        await unpin();
+        fs.writeFileSync(
+          path.join(fixture, 'sidebar-result.json'),
+          JSON.stringify(
+            {
+              inlineViewport,
+              pinnedViewport,
+              repinnedViewport,
+              sameGuest: true,
+              sameDocument: true,
+              inputPreserved: true,
+              inputValue,
+              authenticatedReads: 1,
+              inactiveHidden: true,
+            },
+            null,
+            2,
+          ),
+        );
+      }
+      await read(
+        'window.fixture.view.shadowRoot.querySelector(".view-actions button:not([data-action=pin])").click()',
+      );
       const expandedViewport = await assertViewport(
         'all native guest frames fill the expanded card',
       );
@@ -512,7 +622,9 @@ addEventListener('resize',draw);draw()</script>`
       owner.setSize(900, 700);
       workspace?.setBounds({ x: 0, y: 0, width: 900, height: 700 });
       await assertViewport('all native guest frames return after the window resize');
-      await read('window.fixture.view.shadowRoot.querySelector(".view-actions button").click()');
+      await read(
+        'window.fixture.view.shadowRoot.querySelector(".view-actions button:not([data-action=pin])").click()',
+      );
       const collapsedViewport = await assertViewport(
         'all native guest frames return to inline height',
       );
@@ -538,10 +650,14 @@ addEventListener('resize',draw);draw()</script>`
         }
       }
       for (let attempt = 0; attempt < 6; attempt++) {
-        await read('window.fixture.view.shadowRoot.querySelector(".view-actions button").click()');
+        await read(
+          'window.fixture.view.shadowRoot.querySelector(".view-actions button:not([data-action=pin])").click()',
+        );
         owner.setSize(900, 1050);
         workspace?.setBounds({ x: 0, y: 0, width: 900, height: 1050 });
-        await read('window.fixture.view.shadowRoot.querySelector(".view-actions button").click()');
+        await read(
+          'window.fixture.view.shadowRoot.querySelector(".view-actions button:not([data-action=pin])").click()',
+        );
         await new Promise(resolve => setTimeout(resolve, 100));
         assert.equal(
           (await assertViewport('inline height survives a resize during collapse')).height,

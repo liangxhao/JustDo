@@ -153,12 +153,16 @@ describe('packaged application renderer host', () => {
     );
     expect((await read(host, pathname, { method: 'HEAD' })).body).toBe('');
     expect((await read(host, '/workspace.html')).status).toBe(200);
+    expect((await read(host, `/workspace.html?surface=${generation}`)).status).toBe(200);
     for (const target of [
       '/workspace.html?',
       '/workspace.html?generation=',
       '/workspace.html?generation=not-a-native-generation',
       `/workspace.html?generation=${generation}&generation=${generation}`,
       `/workspace.html?generation=${generation}&token=unowned`,
+      `/workspace.html?surface=${generation}&generation=${generation}`,
+      `/workspace.html?surface=${generation}&surface=${generation}`,
+      '/workspace.html?surface=not-a-native-surface',
       `/workspace.html?source=${generation}`,
       `/workspace.html?generation=${generation}#fragment`,
       `/workspace.html?generation=${generation}/../index.html`,

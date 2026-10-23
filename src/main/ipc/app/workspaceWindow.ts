@@ -10,6 +10,15 @@ export const registerWorkspaceWindowHandlers = (): void => {
       ? getWorkspaceWindowManager(event.sender.id)
       : undefined;
   ipcMain.handle(WorkspaceWindowIpc.Prepare, event => resolve(event)?.prepare() ?? null);
+  ipcMain.handle(WorkspaceWindowIpc.PrepareSurface, event =>
+    resolve(event)?.prepareSurface() ?? null,
+  );
+  ipcMain.on(WorkspaceWindowIpc.UpdateSurface, (event, update: unknown) =>
+    resolve(event)?.updateSurface(update),
+  );
+  ipcMain.on(WorkspaceWindowIpc.CloseSurface, (event, id: unknown) =>
+    resolve(event)?.closeSurface(id),
+  );
   ipcMain.on(WorkspaceWindowIpc.Update, (event, update: unknown) =>
     resolve(event)?.updateLayout(update),
   );

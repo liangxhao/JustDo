@@ -69,25 +69,40 @@ flowchart LR
 
 侧边栏从首次展示起就使用固定的 `workspace.html` 文档承载。主 Renderer
 与工作区文档在开发和安装版均同 origin，安装版共享上述只读 HTTP 宿主。
-静态请求仅允许工作区入口携带单个 UUID 格式的 `generation` 参数，以及 Widget viewer
+静态请求仅允许工作区入口携带单个 UUID 格式的 `generation` 或 `surface` 参数，以及 Widget viewer
 入口携带单个 UUID 格式的 `mount` 参数；其他入口或额外参数均拒绝。静态读取不授予
 原生窗口能力，窗口创建仍须匹配 Main 的当前授予。
 主 Renderer
 通过 React portal 渲染完整工具区；该文档没有应用入口脚本、preload 或
 `window.electron`，也不创建第二个 Redux store。源组件闭包仍调用主 Renderer
-的显式 bridge。Main 使用相同的 WebContentsView 承载这个文档，停靠时放入
-主窗口 contentView，分离时移入普通 BrowserWindow；拆出和收回均不改变
-portal 目标，不重建浏览器 guest、终端或编辑器。
+的显式 bridge。Main 用通用原生 `View` 组拥有整个侧边栏：工作区的 WebContentsView
+与已固定的消息卡片载体是组内的并列子视图。停靠时整组放入主窗口 contentView，
+分离时将同一组移入普通 BrowserWindow；所有侧栏内容统一跟随该组，不按内容类型
+另设主窗口表面。拆出和收回均不改变 portal 目标，不重建浏览器 guest、终端或编辑器。
 Main 对已创建的 WebContents 显式设置后台调度策略，确保视图收回后动画帧继续执行。
+
+主聊天中可固定的 MCP App 和 Widget 在首次 iframe、webview 或 AppBridge 创建之前，
+先取得独立的同源被动 `workspace.html?surface=<UUID>` 载体。载体同样没有应用 preload、
+独立 store 或 Gateway 连接；原组件和捕获的认证上下文仍由主 Renderer 所有。
+每个载体有稳定的 WebContentsView 和裁切 View；消息与侧栏之间只改变原生父视图及
+几何位置，不跨 Document 搬动 DOM、不重读原生视图或重建运行实例。裁切仅改变外层
+可见矩形及内层偏移，不缩小原文档的逻辑视口。固定后的载体进入完整侧栏组，因而
+消息、侧栏、独立窗口和返回停靠之间保留同一文档、输入、选择与本地运行状态。
+没有原生载体 API 的浏览器环境继续采用同 Document 的稳定容器。
 
 ```mermaid
 flowchart LR
   Renderer[主 Renderer：React / Redux / bridge] -->|稳定 portal| Document[workspace.html：无应用 preload]
-  Document --> View[同一个 WebContentsView]
-  View -->|停靠| MainWindow[主窗口 contentView]
-  View -->|分离| WorkspaceWindow[独立 BrowserWindow]
+  Document --> View[固定工作区 WebContentsView]
+  Renderer -->|首次挂载前准备| Carrier[消息卡片：固定无 preload 载体]
+  View --> Group[完整侧栏 View 组]
+  Carrier -->|固定到侧栏：原生父视图| Group
+  Carrier -->|返回消息：原生父视图| MainWindow[主窗口 contentView]
+  Group -->|停靠| MainWindow
+  Group -->|分离| WorkspaceWindow[独立 BrowserWindow]
   Renderer -->|窗口 IPC / generation| Manager[Main：窗口与原生视图管理]
-  Manager --> View
+  Manager --> Group
+  Manager --> Carrier
 ```
 
 创建文档须匹配一次性授予的 URL、frameName 和当前 generation；frameName 包含
@@ -101,7 +116,13 @@ preload。后续页面导航及新原生窗口被拒绝；未被消息交互接�
 该 operator 当前登记的精确 workspace host。浏览器 partition、固定 guest
 preload、权限、PDF、下载及导航策略由原有 factory 同时应用到两种 host。
 
-Main 仅保存窗口位置、generation 和显示状态，不接收工具正文、终端输出
+卡片载体使用独立的一次性精确 URL / frameName 授予；其展示回执 ID 只定位 Main 的
+原生承载资源，与 App viewId、Widget docId、会话或工具调用身份分开。位置更新与释放
+仅接受原主 Renderer 的主框架；侧栏目标还须匹配当前工作区 generation。载体不因此
+成为浏览器 operator 或获得任意 IPC。卡片的原生准入、client、generation、sessionKey、
+物理 sessionId 和权限继续由所属聊天验证，展示回执不能恢复失效授权或代替执行回执。
+
+Main 仅保存窗口位置、generation、展示回执、父视图、裁切及显示状态，不接收工具正文、终端输出
 或编辑草稿。源 Renderer 导航、reload 或进程丢失会撤销 generation、销毁
 旧 host 并取消其 browser host 授权。关闭独立窗口先收回视图；主窗口收起
 到托盘时隐藏独立窗口，恢复时重新显示；主窗口最小化不隐藏独立窗口。
@@ -117,6 +138,9 @@ shell，窗口状态回传同一个 owner；不使用主窗口按钮的控制通
 后重新取得被动文档，恢复原先的分离状态；旧通知重放无效。Main 导航、重载和
 退出的主动清理不触发这个恢复。真实进程丢失或文档销毁可能丢失页面未保存状态，
 界面明确提示这一点；它与正常拆出、收回时保留同一文档的语义不同。
+卡片载体自身失效时撤销该展示回执及交互，不因位置变化静默创建替代运行实例；
+恢复须由用户明确重试并沿原有认证读取流程处理，不重放工具。单独重建工作区框架时，
+仍存活的卡片载体先隐藏脱离旧组，待新 generation 的真实目标就绪后继续使用。
 
 原生视图高于主文档的 CSS 层。主文档的阻塞弹窗明确标记并暂停停靠视图；
 独立窗口使用后加入的顶层 modal dialog 引导用户返回主窗口，覆盖已有工具

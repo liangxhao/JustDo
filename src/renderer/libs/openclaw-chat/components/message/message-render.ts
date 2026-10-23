@@ -1,5 +1,5 @@
 import './message-media';
-import '../native-widget/view';
+import '../native-widget/anchor';
 
 /**
  * Ordinary message rendering for persisted Content and streaming text.
@@ -353,7 +353,7 @@ function safeCanvasUrl(value: string | undefined): string | null {
 
 function renderAssistantCanvas(item: AssistantCanvasItem): TemplateResult {
   if (item.preview.render === 'native') {
-    return html`<justdo-native-widget .preview=${item.preview}></justdo-native-widget>`;
+    return html`<native-widget-anchor .preview=${item.preview}></native-widget-anchor>`;
   }
   const title = item.preview.title?.trim() || i18nService.t('coworkCanvasTitle');
   const url = safeCanvasUrl(item.preview.url);
