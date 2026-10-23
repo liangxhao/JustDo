@@ -131,7 +131,7 @@ HTTP auth challenge 绑定随机 request 与 guest，只有主窗口主 frame �
 
 手动自动化配对由锁定 OpenClaw CLI 生成 relay pairing，只写剪贴板，不返回 Renderer 或日志。Automatic connection 复用产品 Native Messaging host 发现本机 app-server，初始化并鉴权后调用 `browser/extension/pair`；Main 准备 Gateway，再通过同一锁定 CLI 的 `--local-gateway` 生成原生 `/browser/extension` 唤醒入口。配对信息仅返回扩展后台，不进入桌面 Renderer、发现文件或日志，不安装或调用另一套上游 Native host。原生 relay 仍负责授权 Tab 和自动化。
 
-侧栏聊天通过固定扩展 ID 的 Native Messaging 发现 Main app-server，不依赖手工 relay 配对，也不取得 Gateway token。详见[扩展侧聊](browser-extension-side-chat.md)和[协议](../../browser-extension-api/README.md)。
+侧栏聊天通过固定扩展 ID 的 Native Messaging 发现 Main app-server，不依赖手工 relay 配对，也不取得 Gateway token。详见[扩展侧聊](browser-extension-side-chat.md)和[Chrome 接口](../../app-server-api/browser/README.md)。
 
 Automatic connection 点击后立即显示连接进度，失败提示允许重试。设置页状态轮询只读取原生控制器状态，不能隐式启动配对；自动重试仍由原生 watchdog 负责。Main 合并进行中的配对请求，完成或失败即释放，不缓存配对凭据；Gateway 配置与权限检查保持执行。
 
@@ -159,7 +159,7 @@ Agent 请求新标签时，`AgentEnsureTab` 在当前任务已挂载的 `Browser
 | 已有 Tab 无法操作             | 任务归属、profile、真实 webContents、lease    |
 | stale ref                     | 文档导航或快照失效，不盲目复用                |
 | 下载不结束                    | guest 匹配、路径 reservation、取消/超时       |
-| PDF 空白                      | 原生内部流导航与文件／网络加载结果                  |
+| PDF 空白                      | 原生内部流导航与文件／网络加载结果            |
 | 侧栏连不上但自动化可用        | Native host/app-server，不重配 relay 冒充修复 |
 
 WebContentsView 迁移需单独验证 DPI/bounds、焦点、输入、实时标注、profile 和销毁，不能退化成截图遥控。当前验证重点包括 bridge action/schema、页面安全、lease 竞争、文件边界、PDF 和扩展组装测试；真实浏览器与平台验收另行记录。

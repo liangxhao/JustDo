@@ -1,4 +1,7 @@
-# 生命周期、错误与恢复
+# Chrome 扩展生命周期、错误与恢复
+
+本文的 `clientTurnId`、`activeTurn`、`executionSettled` 与错误码只适用于 Chrome
+能力入口。CLI stdio／本机 WebSocket 的通知和恢复边界见[通用客户端](../external-clients.md)。
 
 ## 正常启动与对话
 
@@ -57,17 +60,25 @@ Side Panel 在当前所选线程收到 `turn/started` 后把 Send 按钮切换�
 
 ## 完成判定
 
-`turn/completed` 必须携带 `executionSettled:true`。Runtime 只在已准入的精确
-`lifecycle end/error` 且 `executionSettled:true` 时保留有界运行元数据：原生 key、物理
-sessionId、lifecycleGeneration、runId、客户端连接代次、序号、状态、结束时间与错误。
-聊天 final 可先退役本地显示 owner；其有界原生绑定只允许同一身份和更高序号的真正末端
-补齐回执。绑定退役后，同一身份的所有 canonical agent 帧仍推进序号高水位，
-因此已观察到较新工具或正文帧后，较旧终态不能再补齐回执；非终态帧本身不生成回执。
-chat final、普通 `agent.wait` 状态、单次尝试、idle 和 Stop ACK 均不生成回执。
+`turn/completed` 必须携带 `executionSettled:true`。运行结果须来自精确 whole-run
+终态证据；chat final、单次尝试、yield、idle 和 Stop ACK 均不能结算执行。
+Runtime 保留有界运行元数据：原生 key、物理 sessionId、runId、客户端连接代次、
+序号、状态、结束时间与错误。私有 `lifecycleGeneration` 可缺省；有显式值时拒绝冲突，
+缺省时仍严格核对物理身份、run、连接代次和序号，不按后缀或当前 owner 猜测身份。
 
-Controller 再核对发送准备的物理身份、当前连接代次和 `sessions.describe` 前后身份，
-才投影 `completed`、`failed` 或 `interrupted`。后继运行、旧 incarnation、旧代次和迟到
-序号不能结算当前输入。已有内部 managed handoff 错误过滤保持一致。
+实时路径只接受已准入的 `lifecycle end/error` 且 `executionSettled:true`。
+聊天 final 可先退役本地显示 owner；其有界原生绑定允许同一身份和更高序号的真正末端
+补齐回执。退役后 canonical agent 帧仍推进序号高水位，旧终态不能越过已观察的新帧。
+
+缺少实时终态时，只能使用发送前已捕获的精确绑定进行 `agent.wait(timeoutMs:0)` 核对，
+并在前后复核 `sessions.describe`、连接代次和生命周期版本。必须匹配原生 run，
+返回有限 `endedAt`、可确认的结果且非 yield；普通等待超时不算终态。
+已核实结果只进入最多 100 项的元数据缓存，后续读取仍复核身份，不缓存正文或伪造事件序号。
+timeout 证据优先于随之产生的机械 aborted 标记，不能误报用户停止。
+具体身份准入与回执补偿规则见[扩展侧聊](../../features/browser/browser-extension-side-chat.md)。
+
+Controller 核对后才投影 `completed`、`failed` 或 `interrupted`。后继运行、旧 incarnation、
+旧代次和迟到序号不能结算当前输入。已有内部 managed handoff 错误过滤保持一致。
 
 精确终态后至少保留 3 次稳定历史校准；缺少最终历史最多再校准 20 次。
 这些次数只决定历史刷新何时收敛，不产生执行结果。读取失败保留已有消息；连续异常

@@ -1,7 +1,8 @@
-# 数据模型
+# Chrome 扩展数据模型
 
-本文列出 JustDo 当前在 app-server 兼容层实际产生或接受的字段。客户端必须忽略未知字段，并允许
-标记为 nullable 的字段为 `null`。
+本文仅列出 Chrome 扩展入口实际产生或接受的字段，不能用于 CLI stdio 或通用本机
+WebSocket；后者的数据模型见[通用客户端](../external-clients.md)。客户端必须忽略未知字段，
+并允许标记为 nullable 的字段为 `null`。
 
 ## Thread
 
@@ -172,8 +173,12 @@ type MessageDisplay = {
   nativeFailure?: true;
   stopReason?: 'error' | 'aborted';
   keepVisible?: true;
-  kind?: 'compaction' | 'compaction-status' | 'compaction-skipped'
-    | 'phase-boundary' | 'unsupported-content';
+  kind?:
+    | 'compaction'
+    | 'compaction-status'
+    | 'compaction-skipped'
+    | 'phase-boundary'
+    | 'unsupported-content';
   phase?: string;
   sourceId?: string;
   sourceIndex?: number;

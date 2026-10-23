@@ -1,6 +1,10 @@
-# 浏览器扩展接口文档
+# Chrome 扩展 app-server 接口
 
-本目录是 JustDo Chrome 扩展与桌面应用通信接口的规范入口。实现以 Codex
+本目录描述 Chrome 扩展专用入口，不适用于 CLI stdio 或通用本机 WebSocket。
+通用入口与能力对照见 [app-server 总览](../README.md)，外部客户端接入见
+[通用客户端](../external-clients.md)。
+
+Chrome 扩展与桌面应用通信以 Codex
 [app-server wire protocol](https://developers.openai.com/zh-Hans/docs/app-server) 的公开
 JSON-RPC v2 形态为基线，并实现侧栏对话所需的兼容子集。Native Messaging 启动协议来自
 对本机 ChatGPT 扩展 `1.26.901.11451` 的静态分析，不属于 OpenAI 公开 API。
@@ -9,7 +13,7 @@ JSON-RPC v2 形态为基线，并实现侧栏对话所需的兼容子集。Nativ
 不将当时观察的外部客户端版本作为现行兼容保证。实时消息已接入产品
 `thread/stream`，`thread/updated` 继续承担权威历史校准；两者均不是完整官方 API。
 
-Chrome、通用本机 WebSocket 与 CLI 的 app-server 由同一个 `AppServerConnection` 解析、初始化和路由，两类 WebSocket 也复用同一传输实现。本目录描述 Chrome 能力 binding 的字段与通知；通用原生客户端使用应用接入页复制的独立 Bearer 配置。Chrome 仅访问 `source: browser-extension` 的会话，不继续桌面或 CLI 创建的会话。协议共用不合并凭据、会话归属或断开策略，详见[统一契约](../features/integrations/app-server.md)。
+Chrome、通用本机 WebSocket 与 CLI 的 app-server 由同一个 `AppServerConnection` 解析、初始化和路由，两类 WebSocket 也复用同一传输实现。Chrome 仅访问 `source: browser-extension` 的会话，不继续桌面或 CLI 创建的会话。协议共用不合并凭据、会话归属或断开策略，详见[统一契约](../../features/integrations/app-server.md)。
 
 ## 文档导航
 
@@ -49,7 +53,7 @@ flowchart LR
 | Native Host | Chrome Native Messaging，4 字节小端长度 + UTF-8 JSON | 必须为 `"jsonrpc":"2.0"`     | 版本协商、发现已运行实例的动态地址 |
 | app-server  | `ws://127.0.0.1:<port>/app-server?token=<token>`     | 按 Codex app-server 约定省略 | 会话、消息、运行状态与通知         |
 
-## 版本与身份常量
+## Chrome 发现协议版本与身份常量
 
 | 名称                 | 当前值                             | 说明                                |
 | -------------------- | ---------------------------------- | ----------------------------------- |
@@ -59,7 +63,7 @@ flowchart LR
 | native host protocol | `2`                                | `codexRuntime/*` 方法版本           |
 | app-server protocol  | `2`                                | rendezvous 与扩展期望版本           |
 
-协议版本变化必须同步修改桌面端、扩展、测试和本目录文档。新增可选字段可保持当前版本；删除字段、改变字段含义或改变时序需要提升相应协议版本。
+这些版本号用于 Chrome Native Messaging 与 rendezvous，不是通用 app-server 的版本协商。Chrome 协议版本变化必须同步修改桌面端、扩展、测试和本目录文档。新增可选字段可保持当前版本；删除字段、改变字段含义或改变时序需要提升相应协议版本。
 
 ## 权威实现
 

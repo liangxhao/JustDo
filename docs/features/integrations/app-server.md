@@ -34,17 +34,17 @@ requested capabilities and notification preferences cannot add operations or
 change session authority. An absent operation returns method-not-found; the router
 does not fall back to another endpoint's backend.
 
-| Capability | Chrome extension profile | stdio and native-client WebSocket |
-| --- | --- | --- |
-| Initialization, requests, errors and notification envelopes | Shared protocol engine | Shared protocol engine |
-| Session scope | Only conversations created by the browser extension | One external thread owned by the connection |
-| Create and continue | Extension conversations | New or explicitly resumed external thread |
-| List, history, images and composer options | Extension conversations | Not exposed |
-| Model discovery | Composer options | `model/list` |
-| Text and cancellation | Supported | Supported |
-| Attachments, page context and per-turn model/permission selection | Supported under existing validation | Not exposed |
-| Live progress | Native `thread/stream` and calibrated `thread/updated` | Standard item and text/reasoning notifications |
-| Automation pairing | Authenticated browser-specific operation | Not exposed |
+| Capability                                                        | Chrome extension profile                               | stdio and native-client WebSocket              |
+| ----------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------- |
+| Initialization, requests, errors and notification envelopes       | Shared protocol engine                                 | Shared protocol engine                         |
+| Session scope                                                     | Only conversations created by the browser extension    | One external thread owned by the connection    |
+| Create and continue                                               | Extension conversations                                | New or explicitly resumed external thread      |
+| List, history, images and composer options                        | Extension conversations                                | Not exposed                                    |
+| Model discovery                                                   | Composer options                                       | `model/list`                                   |
+| Text and cancellation                                             | Supported                                              | Supported                                      |
+| Attachments, page context and per-turn model/permission selection | Supported under existing validation                    | Not exposed                                    |
+| Live progress                                                     | Native `thread/stream` and calibrated `thread/updated` | Standard item and text/reasoning notifications |
+| Automation pairing                                                | Authenticated browser-specific operation               | Not exposed                                    |
 
 Browser scope is checked by `source: browser-extension` at the domain boundary,
 including list, read, stream subscription, image/media access, composer selection,
@@ -159,10 +159,12 @@ credentials, native history, permissions and application lifecycle ownership are
 unchanged by app-server consolidation.
 
 See [CLI and ACP](agent-cli.md), [Chrome side chat](../browser/browser-extension-side-chat.md)
-and the [browser wire contract](../../browser-extension-api/README.md) for each
-endpoint's supported fields and limitations.
+and the [app-server API reference](../../app-server-api/README.md) for each
+endpoint's supported fields and limitations. The [external-client reference](../../app-server-api/external-clients.md)
+covers stdio and native WebSocket; the [Chrome profile](../../app-server-api/browser/README.md)
+defines browser-only fields and notifications.
 
 The [official Codex app-server documentation](https://learn.chatgpt.com/docs/app-server#protocol)
-describes stdio and WebSocket transports (the upstream WebSocket is experimental).
-This product implements the documented subset above; Chrome-only events and
+provides the upstream protocol reference. This product implements the documented
+subset above; Chrome-only events and
 methods remain explicit extensions rather than being advertised as standard APIs.

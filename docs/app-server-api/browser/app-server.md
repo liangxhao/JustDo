@@ -1,6 +1,6 @@
-# WebSocket app-server 协议
+# Chrome WebSocket app-server 协议
 
-本文描述 Chrome 自动发现的扩展能力入口。通用原生客户端使用“设置 → 外部连接 → 应用接入”复制的独立 Bearer 配置，两者共用协议与 WebSocket 传输实现，但不共用凭据或会话权限。通用入口的标准子集及连接方式见[统一 app-server](../features/integrations/app-server.md)。
+本文描述 Chrome 自动发现的扩展能力入口。通用原生客户端使用“设置 → 外部连接 → 应用接入”复制的独立 Bearer 配置，两者共用协议与 WebSocket 传输实现，但不共用凭据或会话权限。通用入口的方法、字段及连接方式见[通用客户端](../external-clients.md)，架构见[统一 app-server](../../features/integrations/app-server.md)。
 
 JustDo app-server 使用 Codex app-server 的双向 JSON-RPC v2 消息形态：请求有 `id`，通知无
 `id`，响应包含 `result` 或 `error`，但在 WebSocket payload 中省略 `"jsonrpc":"2.0"`。
@@ -20,8 +20,9 @@ HTTP Upgrade 必须同时满足：
 - query 中的 `token` 与当前进程 capability 一致；
 - `Origin` 精确为 `chrome-extension://jboajogplelmaahjbomgflnfngpolgcb`。
 
-不满足时返回 HTTP `401` 并关闭连接。每个 WebSocket 文本帧只能包含一条消息，最大
-payload 为 `8 MiB`。Side Panel 本身把附件限制为最多 5 个、原始文件合计最多 4 MiB；
+不满足时返回 HTTP `401` 并关闭连接。每个 WebSocket 文本消息只包含一条 JSON，入站最大
+payload 为 `8 MiB`。Chrome 出站消息上限为 `32 MiB`，待发缓冲上限为 `64 MiB`，
+用于承载最大 20 MiB 图片的编码响应。Side Panel 本身把附件限制为最多 5 个、原始文件合计最多 4 MiB；
 Main 还会校验编码后的附件总量。
 
 ## 消息格式
@@ -305,12 +306,12 @@ Main 还会校验编码后的附件总量。
 
 ## 通知
 
-| method           | params                      | 触发条件                                 |
-| ---------------- | --------------------------- | ---------------------------------------- |
-| `thread/started` | `{ thread }`                | `thread/start` 创建成功                  |
-| `turn/started`   | `{ threadId, turn }`        | `turn/start` 已被 Gateway 接受           |
-| `thread/stream`  | `{ threadId, kind, event }` | 当前订阅会话的已归一化原生 Agent/Chat 流 |
-| `thread/updated` | `{ threadId, thread }`      | JustDo 扩展通知；轮询到权威消息历史变化  |
+| method           | params                      | 触发条件                                  |
+| ---------------- | --------------------------- | ----------------------------------------- |
+| `thread/started` | `{ thread }`                | `thread/start` 创建成功                   |
+| `turn/started`   | `{ threadId, turn }`        | `turn/start` 已被 Gateway 接受            |
+| `thread/stream`  | `{ threadId, kind, event }` | 当前订阅会话的已归一化原生 Agent/Chat 流  |
+| `thread/updated` | `{ threadId, thread }`      | JustDo 扩展通知；轮询到权威消息历史变化   |
 | `turn/completed` | `{ threadId, turn }`        | 精确原生 whole-run 已结算，完成/失败/中断 |
 
 `thread/stream` 与 `thread/updated` 都是产品扩展，不是官方逐 item 协议。

@@ -1,4 +1,7 @@
-# Native Messaging 实例发现协议
+# Chrome Native Messaging 实例发现协议
+
+此发现协议只服务于 Chrome 扩展入口，不用于通用 Bearer WebSocket 或 CLI stdio。
+通用客户端使用[独立连接配置](../external-clients.md#连接)。
 
 Native Host 只负责发现已经运行的桌面 app-server，不启动或重启应用，也不承载对话内容。Chrome 扩展通过
 `chrome.runtime.connectNative('com.justdo.browserextension')` 建立长连接。

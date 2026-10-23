@@ -16,7 +16,7 @@
 | [architecture/](#架构专题)                                | 持续维护的所有权、状态、数据与进程契约           | 修改架构和判断实现边界时阅读     |
 | [features/](features/README.md)                           | 按领域组织的现行功能说明                         | 查用户路径、实现契约和已知限制   |
 | [developer-integration/](developer-integration/README.md) | 登录、外部 Agent、请求头等开发接入接口及分发示例 | 增加集成模块时阅读               |
-| [browser-extension-api/](browser-extension-api/README.md) | Native Messaging 与 app-server 协议规范          | 浏览器扩展客户端对接时阅读       |
+| [app-server-api/](app-server-api/README.md)               | 通用 stdio、WebSocket 与 Chrome 扩展协议规范     | 外部客户端对接时阅读             |
 | [plans/](plans/README.md)                                 | 剩余候选设计与未完成验收                         | 先核对现行能力，再推进真实差异   |
 | [openclaw-upgrades/](openclaw-upgrades/README.md)         | 按目标版本组织的升级记录                         | 从版本索引查差异、复核与验收演进 |
 | [releases/](releases/README.md)                           | 已发布应用版本说明                               | 保留发布时事实，不按当前源码改写 |

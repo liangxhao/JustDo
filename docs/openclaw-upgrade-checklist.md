@@ -469,7 +469,7 @@
       旧异步请求不在清理后复活记录，清除记录不误删下载文件或其他 profile 数据。
 
 参考：[浏览器设置](features/browser/browser-settings-design.md)、
-[扩展侧聊](features/browser/browser-extension-side-chat.md)、[扩展协议](browser-extension-api/README.md)、
+[扩展侧聊](features/browser/browser-extension-side-chat.md)、[app-server 协议](app-server-api/README.md)、
 [人工介入](features/browser/browser-intervention.md)、[操作录制](features/browser/browser-operation-recording.md)。
 
 ## 11. 设置项、配置投影与认证切换

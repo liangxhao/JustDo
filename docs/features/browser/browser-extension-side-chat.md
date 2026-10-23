@@ -1,6 +1,6 @@
 # Chrome 扩展侧栏对话
 
-侧栏对话已接入产品会话、模型/权限选择、附件、页面上下文和停止。本文说明当前 JustDo 行为，不再以其他产品某个已安装版本的静态观察作为功能承诺。逐字段规范见[扩展 API](../../browser-extension-api/README.md)。
+侧栏对话已接入产品会话、模型/权限选择、附件、页面上下文和停止。本文说明当前 JustDo 行为，不再以其他产品某个已安装版本的静态观察作为功能承诺。逐字段规范见[Chrome 接口](../../app-server-api/browser/README.md)。
 
 ## 1. 用户入口与范围
 
@@ -183,7 +183,7 @@ fixture 和本开发机通过不代表已复现用户安装现场；真正安装
 
 共享聊天解析或 stream reducer 变化时，先运行 `browser-extension:build-markdown` 与 `browser-extension:build-stream`，提交对应生成物，再执行 `browser-extension:prepare`。后者只组装已有模块，不替代前两项生成；侧栏 DOM 回归直接加载提交的模块，必须验证参数流不会提前显示 Tool 卡片。
 
-当前不能将手动 Chrome 加载验证扩展为所有 Chromium 浏览器/商店发布承诺。右键提问、YouTube transcript、tab mention 等未接通能力不列作现有功能；新增时需同步[兼容规范](../../browser-extension-api/compatibility.md)。
+当前不能将手动 Chrome 加载验证扩展为所有 Chromium 浏览器/商店发布承诺。右键提问、YouTube transcript、tab mention 等未接通能力不列作现有功能；新增时需同步[兼容规范](../../app-server-api/browser/compatibility.md)。
 
 折叠的分组和主要操作复用桌面规则，仍有协议能力差异：当前没有完整的原生物理会话／
 历史 generation 显示作用域，不能承诺所有无可靠来源 ID 的历史更换都保留节点和选择；

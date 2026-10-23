@@ -4,13 +4,13 @@ This package contains the browser extension for page automation, page context
 and desktop conversations in the Chrome side panel. Chrome loads the composed
 extension; it is independent of OpenClaw's Gateway plugin installation flow.
 
-| Path | Responsibility |
-| --- | --- |
-| `openclaw/` | Version-locked upstream relay baseline and its original notices |
-| `conversation-overlay/` | Product side panel, options, client modules and generated offline bundles |
-| `scripts/prepare.cjs` | Verify source snapshots, compose the extension and inject product metadata |
-| `scripts/browser-extension-markdown-entry.mjs` | Browser-only Markdown renderer |
-| `tests/` | Browser extension UI and client unit tests |
+| Path                                           | Responsibility                                                             |
+| ---------------------------------------------- | -------------------------------------------------------------------------- |
+| `openclaw/`                                    | Version-locked upstream relay baseline and its original notices            |
+| `conversation-overlay/`                        | Product side panel, options, client modules and generated offline bundles  |
+| `scripts/prepare.cjs`                          | Verify source snapshots, compose the extension and inject product metadata |
+| `scripts/browser-extension-markdown-entry.mjs` | Browser-only Markdown renderer                                             |
+| `tests/`                                       | Browser extension UI and client unit tests                                 |
 
 Run `npm run browser-extension:prepare` from the repository root to create the
 loadable extension at `build/browser-extension/chrome-extension/`. Packaging copies
@@ -32,5 +32,5 @@ node node_modules/vitest/vitest.mjs run plugins/browser-extensions/browser-assis
 ```
 
 See the [side panel contract](../../../docs/features/browser/browser-extension-side-chat.md)
-and [browser extension API](../../../docs/browser-extension-api/README.md) for
+and [Chrome app-server API](../../../docs/app-server-api/browser/README.md) for
 connection, security and lifecycle ownership.
