@@ -67,7 +67,6 @@ export class NativeWidgetView extends LitElement {
       display: block;
       box-sizing: border-box;
       width: 100%;
-      max-width: 840px;
       min-width: 0;
       margin: 12px auto;
       border: 0;

@@ -27,7 +27,7 @@ export class NativeWidgetAnchor extends LitElement {
     const root = this.attachShadow({ mode: 'open' });
     const style = this.ownerDocument.createElement('style');
     style.textContent = `
-      :host{display:block;max-width:840px;margin:12px auto;color:var(${TOKEN_CONTRACT['text-primary']},inherit)}
+      :host{display:block;width:100%;min-width:0;margin:12px auto;color:var(${TOKEN_CONTRACT['text-primary']},inherit)}
       .reference{box-sizing:border-box;display:flex;align-items:center;gap:10px;min-height:52px;padding:8px 12px;border:1px solid var(${TOKEN_CONTRACT.border},#ddd);border-radius:12px;background:var(${TOKEN_CONTRACT.background},transparent);font:inherit;font-size:13px}
       .widget-icon{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:28px;height:28px;border-radius:7px;background:var(${TOKEN_CONTRACT.surface},#f4f4f5)}
       svg{width:16px;height:16px;flex-shrink:0}
