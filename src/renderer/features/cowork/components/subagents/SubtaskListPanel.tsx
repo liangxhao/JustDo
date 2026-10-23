@@ -1,6 +1,5 @@
 import {
   ArrowPathIcon,
-  CheckCircleIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   DocumentDuplicateIcon,
@@ -16,6 +15,7 @@ import Modal from '@/shared/components/ui/Modal';
 import { isDomNode, OwnerDocumentContext, useOwnerDocument } from '@/shared/dom/ownerDocument';
 
 import { useDraggableModal } from '../shared/useDraggableModal';
+import SubagentIcon from './SubagentIcon';
 import { reconcileSubagentLabel, type SubagentLabelSource } from './subagentLabel';
 import { resolveSubagentPollInterval } from './subagentPolling';
 import SubagentTokenUsage from './SubagentTokenUsage';
@@ -32,7 +32,6 @@ import {
   type Subtask,
   SUBTASK_DELIVERY_I18N_KEYS,
   SUBTASK_STATUS_I18N_KEYS,
-  subtaskStatusStyles,
 } from './subtaskPresentation';
 
 const SUBTASK_CHANGE_REFRESH_DELAY_MS = 100;
@@ -568,17 +567,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
         role="listitem"
         className="group flex min-w-0 items-center gap-2.5 rounded-lg px-2.5 py-2.5 transition-colors hover:bg-surface focus-within:bg-surface"
       >
-        {subtask.status === 'done' ? (
-          <CheckCircleIcon
-            className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400"
-            aria-hidden="true"
-          />
-        ) : (
-          <span
-            className={`h-2 w-2 shrink-0 rounded-full ${subtaskStatusStyles[subtask.status]}`}
-            aria-hidden="true"
-          />
-        )}
+        <SubagentIcon identity={subtask.id} />
         <button
           type="button"
           className="min-w-0 flex-1 truncate text-left text-sm font-medium text-foreground hover:text-primary"

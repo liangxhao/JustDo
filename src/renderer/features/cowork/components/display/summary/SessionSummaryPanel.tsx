@@ -17,6 +17,7 @@ import { i18nService } from '@/services/i18n';
 import { isDomNode, useOwnerDocument } from '@/shared/dom/ownerDocument';
 
 import SessionProgressCard, { type ProgressCardRunState } from '../../status/SessionProgressCard';
+import SubagentIcon from '../../subagents/SubagentIcon';
 import type { Subtask } from '../../subagents/subtaskPresentation';
 import { isActiveSubtask } from '../../subagents/subtaskPresentation';
 import type { SummaryResourceListKind } from '../tabs/displayTabIds';
@@ -57,26 +58,6 @@ interface Props {
 
 const rowClass =
   'session-summary-panel__action flex w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary';
-
-const subagentIconColors = [
-  'text-amber-500',
-  'text-orange-400',
-  'text-violet-500',
-  'text-teal-500',
-] as const;
-
-function SubagentSummaryIcon({ className }: { className: string }) {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" className={`h-4 w-4 shrink-0 ${className}`}>
-      <g fill="currentColor">
-        {[0, 45, 90, 135].map(angle => (
-          <ellipse key={angle} cx="10" cy="10" rx="3" ry="8" transform={`rotate(${angle} 10 10)`} />
-        ))}
-      </g>
-      <circle cx="10" cy="10" r="2.5" fill="white" fillOpacity="0.25" />
-    </svg>
-  );
-}
 
 function ResourceRows({
   items,
@@ -262,8 +243,8 @@ export default function SessionSummaryPanel(props: Props) {
               onClick={props.onOpenSubagents}
             >
               <span aria-hidden="true" className="flex shrink-0 items-center gap-1">
-                {props.tasks.slice(0, subagentIconColors.length).map((task, index) => (
-                  <SubagentSummaryIcon key={task.id} className={subagentIconColors[index]} />
+                {props.tasks.slice(0, 4).map(task => (
+                  <SubagentIcon key={task.id} identity={task.id} className="h-4 w-4" />
                 ))}
               </span>
               <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 leading-5 tabular-nums">

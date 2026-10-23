@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
 
+import SubagentIcon from './SubagentIcon';
 import { resolveSubtaskExecutionKey, type Subtask } from './subtaskPresentation';
 
 /** Fetch one native level only when requested. Failed pages preserve previous results. */
@@ -98,7 +99,8 @@ function SubtaskChildrenContent({ sessionId, task, ancestors, onOpen }: SubtaskC
           className="flex w-full items-center justify-between gap-3 rounded-md bg-surface-raised px-2 py-1.5 text-left text-sm hover:text-primary"
           onClick={() => onOpen(child)}
         >
-          <span className="min-w-0">
+          <SubagentIcon identity={child.id} />
+          <span className="min-w-0 flex-1">
             <span className="block truncate">{child.label}</span>
             {child.swarmGroupId && (
               <span className="block truncate text-xs text-secondary" title={child.swarmGroupId}>
