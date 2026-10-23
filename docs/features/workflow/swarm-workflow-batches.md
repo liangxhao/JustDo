@@ -109,11 +109,11 @@ stateDir 内的工作流业务状态写入，不授予向用户项目写报告�
 
 原生为 plugin_subagent run 保存 registry，重启后标记中断且不自动重放；agent.wait 只读进程内缓存。新增 runtime.subagent.describeRun({runId}) 按可信插件和原生所有者返回精确状态、时间、Gateway epoch、terminal outcome、executionSettled 与 cleanupSettled，并核对原生会话身份。它不返回持久化终态文本。工作/验收依靠已保存的工具提交恢复；规划/交付仍需要原生等待接口的可见终态回复，缓存丢失且没有已保存结果时明确失败并要求人工重试，不能读取“最新回复”冒充该 run。复用原生 registry 元数据，不建立第二份原生运行或聊天数据库。取消的 sticky outcome 与真正收敛时间分开。
 
-历史行缺少 executionSettled 或受管理工具清理元数据时返回 unknown，不默认 true。原生 registry terminal 或旧 epoch 退役不自动证明主机工具子进程已经结束；精确状态接口须分别表示执行收敛与工具清理，缺证明继续保留 uncertain 和占用。P0b 验证原生 exec/background/process 的清理路径及延迟，不支持脱离管理的后台写进程。
+历史行缺少 executionSettled 或受管理工具清理元数据时返回 unknown，不默认 true。原生 registry terminal 或旧 epoch 退役不自动证明主机工具子进程已经结束；精确状态接口须分别表示执行收敛与工具清理，缺证明继续保留 uncertain 和占用。验证须覆盖原生 exec/background/process 的清理路径及延迟，不支持脱离管理的后台写进程。
 
-工具清理需要实际 SDK 落点：run 增加可选 managedToolsLifetime='run'，复用原生 one-shot 的 scope cleanup 模式，只收窄本插件叶子任务的工具生命周期，不直接开启会同时改变其他语义的 oneShotCliRun。describeRun 增加 owned session 的 managedTool 状态与 cleanupSettled，通用 cancelRun({runId, sessionKey}) 由原生授权当前 owner 发起取消并收敛本项 scope。复用 process supervisor 的 cancelScope/acquireScopeCleanup 与 waitForExecScope，不让插件用 Node 猜 PID 杀进程。原生已有内部原语，但未公开此插件契约；普通 run 不自动清理全部 exec，默认 yield 也会生成背景执行。后台计算必须 poll 至结束后提交，活动工具未收敛时拒绝完成发布，正常退出和取消都等待 scope 清理。其他插件默认 session 生命周期不变。实时 executionSettled 使用已有 runtime.events.onAgentEvent，丢事件/重启后以精确查询为准。
+工具清理需要实际 SDK 落点：run 增加可选 managedToolsLifetime='run'，复用原生 one-shot 的 scope cleanup 模式，只收窄本插件叶子任务的工具生命周期，不直接开启会同时改变其他语义的 oneShotCliRun。describeRun 增加 owned session 的 managedTool 状态与 cleanupSettled，通用 cancelRun({runId, sessionKey}) 由原生授权当前 owner 发起取消并收敛本项 scope。复用 process supervisor 的 cancelScope/acquireScopeCleanup 与 waitForExecScope，不让插件用 Node 猜 PID 杀进程。该通用插件契约由当前锁定运行时的 SDK 增强提供，见文末补丁总账；普通 run 不自动清理全部 exec，默认 yield 也会生成背景执行。后台计算必须 poll 至结束后提交，活动工具未收敛时拒绝完成发布，正常退出和取消都等待 scope 清理。其他插件默认 session 生命周期不变。实时 executionSettled 使用已有 runtime.events.onAgentEvent，丢事件/重启后以精确查询为准。
 
-本项运行与会话 scope 必须精确绑定，拒绝取消其他会话；同一项的继续/纠错不能在旧 scope 未清理时启动新的写执行。重启后无法证明旧背景命令已清理时保留 unknown；P0b 必须验证当前 native supervisor/后端在 Gateway 死亡、正常停止和恢复中的所有权及清理证据，缺可靠证据就不能发布长命令停止后安全重试能力。
+本项运行与会话 scope 必须精确绑定，拒绝取消其他会话；同一项的继续/纠错不能在旧 scope 未清理时启动新的写执行。重启后无法证明旧背景命令已清理时保留 unknown；回归必须验证当前 native supervisor/后端在 Gateway 死亡、正常停止和恢复中的所有权及清理证据，缺可靠证据就不能发布长命令停止后安全重试能力。
 
 首版仅支持经核验的本地 Gateway host 工具执行。exec host=node 和 nodes 派发是另一个远端所有者，不属于本机 scope；按有效执行后端和工具准入拒绝未验证远端路径，不能只检查用户有没有显式传 host。需要远端批处理时，由该 adapter 提供等价执行/清理证据后再开放，不引入节点管理改造。
 

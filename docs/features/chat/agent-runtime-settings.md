@@ -12,6 +12,7 @@
 | AskUserQuestion                    | 10 分钟 | 默认启用超时；必须回答时显式关闭          |
 | automation approval                | 2 分钟  | 允许 2/5/10 三档                          |
 | MCP request timeout                | 60 秒   | 用户 server 的默认请求等待                |
+| MCP Apps                           | true    | 交互界面宿主开关，投影到 mcp.apps.enabled |
 | session visibility                 | tree    | 原生跨会话可见范围                        |
 | Subagent model/thinking/delegation | null    | 继承或未指定                              |
 | Subagent 并发                      | 3       | 原生全局并发限制                          |
@@ -38,7 +39,9 @@ Goal 次数按当前目标在原生持久接纳的自动回合累计，准备、
 
 版本必须匹配共享合约，枚举、整数、范围和模型引用长度由 Main/shared 校验。部分 v1 早期字段缺失时填充受管默认，尤其 visibility=tree，避免升级后默默扩大访问。
 
-并发上限、children、depth 等各自有范围；正向 run timeout 为 60–86400 秒，0 的特殊意义按字段校验。不要在 Renderer 自己 clamp 后让 Main 接受任意数据。
+主 Agent／Subagent 并发范围均为 1–16（主 Agent 另允许 null），children 为 1–20，depth 为 1–5；正向 run timeout 为 60–86400 秒，0 的特殊意义按字段校验。AskUserQuestion 为 1–1440 分钟，MCP request timeout 为 1–86400 秒，archiveAfterMinutes 为 0–525600 分钟。不要在 Renderer 自己 clamp 后让 Main 接受任意数据。
+
+MCP Apps 当前只保存布尔值，旧记录的缺失值或 null 补为 true，明确的 false 保留；界面不再提供继承选项。该开关不负责安装插件或创建手动应用入口。
 
 ## 3. 保存链路
 
@@ -93,3 +96,7 @@ worker/WASM、exec/wait、取消与内部工具审批由原生管理，执行器
 ## 6. 修改与验证
 
 参数新增需同步共享默认/校验、产品持久化、ConfigSync、设置页面、双语文案及原生消费测试。重点检查缺字段升级、0/null、边界值、配置失败和运行中变更。不要仅根据 Gateway 能接受的字段就把所有选项暴露为已支持产品能力。
+
+## 实现核对入口
+
+[共享默认和校验](../../../src/shared/agents/agentRuntimeSettings.ts)；[原生 Agent/Subagent 投影](../../../src/main/openclaw/config/agents/agentProjection.ts)；[MCP Apps 投影](../../../src/main/openclaw/config/plugins/mcpAppsConfig.ts)。这些入口用于核对当前实现，测试文件列出回归场景，不表示本轮文档维护重新执行了相应测试。

@@ -69,7 +69,7 @@ Main 执行前重新核对剪贴板、工作区根与目标身份，原生执行
 | 源码       | `js cjs mjs jsx ts cts mts tsx css scss less py sh bash ps1 bat java go rs c h cpp cs sql vue svelte astro rb php lua r kt kts swift scala hpp cc cxx sass styl graphql gql proto http rest mk` | 源码编辑，不执行文件或编译项目                       |
 | 其他文本   | `txt log rst adoc tex bib ipynb`                                                                                                                                                                | 文本／源码编辑；Notebook 展示原始 JSON，不运行单元格 |
 
-`.env`、`.env.*`、Dockerfile、Makefile、LICENSE、NOTICE、README 类 Markdown 及已有点文件配置沿现有文本准入。源码和文本仍有 2 MiB 上限、编辑授权、版本冲突与未保存修改确认；PDF 和音视频仅准备真实文件地址，不解码成文本、不授予编辑权限、不应用该文本上限。
+`.env`、`.env.*`、Dockerfile、Makefile、LICENSE、NOTICE、带 `.md`/`.markdown` 后缀的 README 及白名单内的点文件配置沿现有文本准入；无后缀 `README` 不在文本白名单中，不能仅凭名称按 Markdown 打开。源码和文本仍有 2 MiB 上限、编辑授权、版本冲突与未保存修改确认；PDF 和音视频仅准备真实文件地址，不解码成文本、不授予编辑权限、不应用该文本上限。
 
 ## 播放与资源生命周期
 

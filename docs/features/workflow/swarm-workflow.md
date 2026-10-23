@@ -182,7 +182,7 @@ prompt build 后冻结：精确来源发起记录、节点提交 owner，以及�
 
 隔离测试的固定响应模型根据启动工具名和精确请求身份识别发起阶段，不依赖启动提示的自然语言措辞。来源聊天查询返回结束状态而尚无流程时，测试重新读取流程清单后报告未接纳错误，不继续等待笼统超时。启动纠正保留原生工具名单；纠正耗尽后也重新查询，确认没有创建流程。暂停/重启场景等待工作运行确认接纳后才暂停，并在暂停确认后释放固定模型回复；派发中的未知结果仍按生产契约保留，不能借测试假定未运行或可安全重放。测试产物统一写入 `.agent-tasks/swarm-workflow/`。
 
-真实 Gateway 的消息发起、普通四阶段交付、Code Mode 原生 wait、超过一小时执行及精确取消/工具清理已通过隔离验证。批次验证和真实 Electron 隐藏窗口的中英文组件检查见批量实施计划。固定响应模型验证执行协议，不证明真实业务模型任务质量；隐藏窗口使用 mock bridge，不替代用户当前应用/Gateway 的完整联调。旧 Gateway 清理缺证明时保留 unknown，不自动重试。
+真实 Gateway 的消息发起、普通四阶段交付、Code Mode 原生 wait、超过一小时执行及精确取消/工具清理已通过隔离验证。批次契约和验收边界见[批量执行契约](swarm-workflow-batches.md#原生能力与验证边界)；批次隔离探针为 `tests/openclaw/extensions/swarm-workflow-batch.native-smoke.cjs`。固定响应模型验证执行协议，不证明真实业务模型任务质量；隐藏窗口使用 mock bridge，不替代用户当前应用/Gateway 的完整联调。旧 Gateway 清理缺证明时保留 unknown，不自动重试。
 
 开发环境需同步并预编译当前插件后使用：`npm run electron:dev:openclaw` 会先准备运行时，发布 `beforePack` 也自动同步并编译。普通 `npm run build` 和 `npm run electron:dev` 不会替换 vendor 中已有的编译插件；直接重启旧开发运行时可能仍没有新增管理工具。
 

@@ -124,3 +124,7 @@ INVALID_REQUEST 结合结构化 details.reason 分类。receipt-invalid 和未�
 ## 当前验证边界
 
 合成模型和协议测试不替代真实模型下的 subagent/yield、collector/Code Mode 等待、新输入与 Stop/reset 竞争，以及断连、ACK 丢失和应用/Gateway 双重启组合验收；最终安装包的内网冷启动尚需实际环境证据。
+
+## 实现核对入口
+
+[续跑协调与身份检查](../../../src/main/openclaw/goals/goalContinuationCoordinator.ts)；[共享状态与回执合约](../../../src/shared/cowork/sessionGoal.ts)；[协调回归用例](../../../src/main/openclaw/goals/goalContinuationCoordinator.test.ts)。这些入口用于核对当前实现，测试文件列出回归场景，不表示本轮文档维护重新执行了相应测试。

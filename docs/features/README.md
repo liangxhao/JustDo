@@ -55,6 +55,7 @@ Swarm 主会话管理已并入主说明；批次是独立的扩展契约。Workb
 | 模型       | [模型管理](models/model-management.md)                                 | 语言、决策、语音、图像与视频的目录和选择                 |
 | 模型       | [语音与本地转录](models/local-tts.md)                                  | 输入、朗读、附件转录与离线模型                           |
 | 模型       | [Jev / TypeSafe](models/jev-integration.md)                            | 决策模型与原生 decision_evaluate 的 provider 接入        |
+| 插件       | [内置技能](plugins/bundled-skills.md)                               | 技能源文件、运行时投影与维护边界                         |
 | 插件       | [Plugin Hub](plugins/plugin-hub-experience.md)                         | 列表、来源、导入、市场与受保护扩展                       |
 | 账号       | [登录 SDK 模板](integrations/login-sdk-template.md)                    | 已实现的 LoginService 和 SDK 接缝；真实 SDK 尚未接入     |
 | 账号       | [内置模型认证](integrations/authentication-builtin-model-lifecycle.md) | mtoken/JWT、模型发现、轮换与退出清理                     |

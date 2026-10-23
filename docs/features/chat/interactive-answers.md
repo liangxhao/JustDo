@@ -62,7 +62,7 @@ HTML 按需参考提供主题字体、间距、控件、焦点与响应式布局
 通用表单不是任意计算引擎；自由计算或模拟使用原生 HTML 与本地脚本。
 固定组件使用本地 renderer，不请求外部服务；任意 HTML 仍沿用原生 CSP/media 规则。
 
-卡片在消息区域水平居中，最大宽度 840 CSS 像素，窄窗口按可用宽度收缩。高度
+卡片宽度跟随消息正文的可用宽度，不设置独立的最大宽度；侧边栏中填满当前标签的可用区域。高度
 跟随当前原生 sandbox 内文档的尺寸报告，并限制在 48–8000 像素；旧文档的尺寸事件不能改变新
 卡片。应用不读取跨域 DOM 来猜宽度，组件内部的图表布局仍由对应文档负责。
 
@@ -215,3 +215,7 @@ client/session/generation/docId、可见 webview 与文本限制，保留“加�
 ## 当前验证边界
 
 真实模型的自然请求仍出现生成较慢、自由 HTML 布局不佳或重复介绍，通用 visualize 指引改写后的效果尚未完成验证。历史生成耗时不代表首次可见延迟；局部沙箱探针不代表完整应用的窄屏、主题、侧聊、拆出或最终安装包已通过。组件重载仍恢复默认值，不支持跨重启保留未确认输入；加载占位不等于渐进生成组件。
+
+## 实现核对入口
+
+[原生组件 viewer](../../../src/renderer/libs/openclaw-chat/components/native-widget/view.ts)；[原生文档准入测试](../../../src/renderer/features/cowork/components/chat/JustDoChatWrapper.widgetAdmission.test.tsx)；[侧栏引用与生命周期](../../../src/renderer/features/cowork/components/display/tabs/useWidgetReferenceTabs.tsx)。这些入口用于核对当前实现，测试文件列出回归场景，不表示本轮文档维护重新执行了相应测试。

@@ -51,7 +51,7 @@ UML、ER 和网络图使用实际可用的绘图 MCP 工具；先搜索目录，
 现有保存对话框保存 `.drawio` 或导出 PNG/SVG。
 
 “MCP Apps 交互界面”是宿主能力开关，不负责安装应用或创建目录入口。
-“沿用原生设置”保留显式原生选择，未配置时开启；改成“启用”并不必然带来界面变化。
+当前仅提供“启用／关闭”，默认启用；旧空值按启用处理，明确关闭保留。打开宿主开关不等于安装或启用 draw.io 扩展。
 
 在新对话首页打开并编辑 draw.io 后，可直接发送首条消息。宿主提交仍在输入中的
 节点文字并等待当前 XML 的原生上下文回执，再沿用画布所属的原生会话创建普通对话。
@@ -98,7 +98,7 @@ HTML 资源保持在原生 2 MiB 上限内，绘图脚本不塞入工具结果�
 准备脚本先验证归档哈希，再构建 MCP 服务和标准 App SDK bundle，生成每个文件的 SHA-256 清单并保留第三方许可证。组装和打包同时检查源码指纹、缺失文件、多余文件和逐文件内容。未准备、陈旧或不完整的资源使构建失败，不能退回在线版本。适配器、来源锁定与构建脚本进入 OpenClaw build recipe。
 
 - `plugins/extensions/drawio/tests/server.test.ts` 覆盖 XML、DTD、体积限制、HTTP 路径和 CSP；同目录的 `ports.test.ts` 覆盖禁用端口、关闭后重选、重试上限与失败清理，`assets.test.ts` 覆盖资源损坏与缺失。
-- 连续编辑的插件状态、真实会话取消、锁定 Gateway 与实际编辑器分层验证见[当前画布验证](drawio-current-canvas.md#7-必须通过的验证)。
+- 连续编辑的插件状态、真实会话取消、锁定 Gateway 与实际编辑器分层验证见[当前画布验证](drawio-current-canvas.md#6-必须通过的验证)。
 - `node tests/drawio/native-smoke.mjs` 使用隔离状态及实际组装的原生运行时，验证插件发现、标准工具元数据、正常工具物化和原生 App 准入，不请求模型。
 - `node tests/mcp-apps/gateway-smoke.cjs --drawio` 使用隔离 Gateway 验证实际绘图服务的手动与文件入口发现、原生启动和文件资源读取，拒绝跨视图和工作区外文件，确认对话仍为空，不发起模型请求。
 - `node tests/drawio/offline-smoke.cjs --runtime` 使用全新 Chromium profile、实际产品视图及原生双层沙箱，拦截公网，验证源文件/PNG/SVG 导出、展开、主题和窄窗口。该 UI 探针只替代 Gateway 身份接口和原生保存对话框；Main 文件保存另有权限与取消测试。

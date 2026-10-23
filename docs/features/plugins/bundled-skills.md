@@ -6,9 +6,9 @@
 
 ## 当前基线
 
-2026-10-22 核对的来源：
+下表记录清单中锁定的来源，不表示持续跟踪上游最新版本：
 
-| 本地 ID | 上游 | 本轮处理 |
+| 本地 ID | 上游 | 当前保留内容与适配 |
 | --- | --- | --- |
 | docx | [ivangdavila/word-docx](https://clawhub.ai/ivangdavila/skills/word-docx) 1.0.2 | 恢复完整的样式、编号、分节、修订、字段及兼容性指导；保留本地 ID |
 | pptx | [ivangdavila/powerpoint-pptx](https://clawhub.ai/ivangdavila/skills/powerpoint-pptx) 1.0.1 | 恢复完整的模板、占位符、布局和独立内容／视觉检查指导 |
@@ -19,8 +19,8 @@
 | pdf | [anthropics/skills](https://github.com/anthropics/skills/tree/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/pdf) | 核对后保留既有 Python 适配；核对时七个辅助脚本与上游一致，保留 PDFium 渲染器，再补充 UTF-8 JSON 读写 |
 | skill-creator | [anthropics/skills](https://github.com/anthropics/skills/tree/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/skill-creator) | 恢复创建、写作、测试、评分、反馈及迭代正文和评估资源；接入原生 workshop，保留已有校验／打包器 |
 
-ClawHub 四项的最新发布版本与原有版本相同；本轮恢复此前精简掉的有效正文，
-不虚构新版本。PDF 的既有许可证保持原样，Office 三项继续使用原有 MIT-0 来源，
+ClawHub 四项使用 manifest 锁定的发布版本和归档 SHA-256；变更版本时同步更新追溯信息。
+PDF 的既有许可证保持原样，Office 三项继续使用原有 MIT-0 来源，
 不混用 Anthropic Office 源码或更换其许可证。绘图技能包含上游 MIT 和第三方许可文件。
 
 ## 产品适配
@@ -59,7 +59,9 @@ ClawHub 四项的最新发布版本与原有版本相同；本轮恢复此前精
 先逐段对照固定上游，保留可支持的原文和资源；宿主、路径或依赖冲突采用局部替换，
 不将完整流程压缩成另写的摘要，也不把上游自身的重构算作本地适配。
 来源信息保存在 manifest 和本文，避免占用技能运行上下文。
-`taskflow/` 未被 manifest 选中，本轮不启用它，也不改变原生技能白名单。
+`taskflow/` 未被 manifest 选中，不作为内置独立技能打包。原生技能另由
+manifest 的 `openclaw.skills` 与 `openclaw.custodianSkills` 筛选，当前分别保留
+`coding-agent` 与 `diagnose-gateway`；这两项不计入八个独立技能，也不替代原生可用性判断。
 
 检查所有选中技能的 frontmatter、相对引用及 Python 语法，执行
 `tests/scripts/sync-bundled-skills.test.ts`、skill-creator 自带测试及绘图脚本的

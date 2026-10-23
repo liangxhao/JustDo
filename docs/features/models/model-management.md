@@ -25,6 +25,7 @@ Provider 目录描述可选择模型，应用默认决定新用户会话，sessi
 | 能力     | 原生入口/位置                     | 隔离要求                                    |
 | -------- | --------------------------------- | ------------------------------------------- |
 | 语言     | models providers 与会话模型       | builtin 与用户 provider 分开                |
+| 决策     | agents.defaults.decisionModel     | TypeSafe serviceUrl 与凭据独立于聊天；详见 [Jev](jev-integration.md) |
 | 在线识别 | talk.catalog、config API          | transcription-only Talk，不触发对话脑       |
 | 在线合成 | tts.providers、config API         | voice 属于具体模型                          |
 | 图像生成 | agents.defaults.mediaModels.image | justdo-image-openai 配置域                  |

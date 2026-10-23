@@ -72,3 +72,5 @@ guest 在隔离 preload 中被动观察用户事件，不通过页面脚本暴�
 ## 验证
 
 专项测试覆盖事件清洗、输入归并、IME、敏感字段、暂停/恢复、旧文档和重复事件拒绝、控制权、预览编辑以及长度前缀解析。回归需覆盖原标注、标签页保留、Composer、历史显示与原生附件。Electron smoke 应使用真实 sandboxed guest 验证事件可信性与导航重载，不能仅以 jsdom 事件模拟替代。
+
+维护入口：录制上限与序列化位于 `src/shared/browser/browserRecording.ts`，guest 采集与清洗位于 `src/main/browser/recording/`，录制控制、编辑和消息投影位于 `src/renderer/features/browser/recording/`。调整上限时应同时核对共享契约、采集端、发送预算和历史解析，避免只修改预览文案。

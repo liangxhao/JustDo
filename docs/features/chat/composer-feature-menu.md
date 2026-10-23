@@ -1,7 +1,7 @@
 # 输入框功能菜单
 
-消息输入框下方的“+”菜单是通用功能入口。“添加”分组中的“文件和文件夹”
-复用原有附件选择动作，Swarm Workflow 等启用的扩展入口显示在“插件”分组。
+消息输入框下方的“+”菜单是通用功能入口。“文件和文件夹”复用原有附件选择动作；
+计划模式作为内置入口，Swarm Workflow 和 Agent Team 等启用的扩展入口显示在“插件”分组。
 菜单不持有插件业务参数、草稿或执行逻辑。主界面两种输入框布局共用同一组注册项，
 没有可见功能时菜单自身隐藏加号。
 
@@ -44,6 +44,10 @@ Agent Team 的适配器 `buildAgentTeamFeature` 提供群组讨论 / 任务协�
 需要输入框标签的功能可使用 `useComposerFeatureDraft` 保存类型明确的选项对象；
 它统一处理按聊天分隔、关闭后取消选择、发送快照核对和仅清理已接收的选择。
 
+计划模式由 `usePlanModeComposerFeature` 调用既有 `setPlanMode` 保存，展示当前选择；
+它不声明 `extensionId`，不被通用插件目录过滤。保存中禁止重复切换；运行中不能新开启，
+已有选择仍可关闭。保存失败显示提示，不伪造成功状态。
+
 ## 状态与交互
 
 每个输入框通过 `useExtensionEnablement` 一次读取整个原生插件目录，并使用一个
@@ -80,3 +84,7 @@ Team 与 Swarm 的模式选择明确本次协作方式。目标与必要上下�
 标签的现有正文编辑行为。
 另覆盖已保存但重启失败、安装/卸载、多窗口广播、快速开关合并更新、取消后
 异步发送失效、聊天切换与旧发送清理，以及一个插件关闭时其他插件草稿不受影响。
+
+## 实现核对入口
+
+[菜单注册与过滤](../../../src/renderer/features/cowork/components/composer/composerFeatures.tsx)；[计划模式入口](../../../src/renderer/features/cowork/components/composer/usePlanModeComposerFeature.tsx)；[输入框组装](../../../src/renderer/features/cowork/components/composer/CoworkPromptInput.tsx)。这些入口用于核对当前实现，测试文件列出回归场景，不表示本轮文档维护重新执行了相应测试。
