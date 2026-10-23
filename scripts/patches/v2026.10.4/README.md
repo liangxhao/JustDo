@@ -116,7 +116,7 @@ arguments, sparse replay, ownership rejection, session switches, silent announce
 and stable animated elements. `tests/openclaw/runtime/chat-stream-smoke.cjs --run-progress` uses a
 real isolated Gateway with a loopback model to verify incremental 64 KiB arguments cross the wire
 before tool execution, preserve content exclusion and complete the native read and settled run.
-The [033 validation record](../../../docs/openclaw-upgrades/v2026.10.4/run-progress-observations.md)
+The [033 validation record](../../../docs/openclaw-upgrades/v2026.10.4/validation.md)
 records fresh archive/bundle identity, native snapshot evidence and the application checks.
 
 MCP Apps use the native authenticated WebSocket APIs without a lifecycle patch. Former MCP Apps patch `030-mcp-app-operation-lifecycle.cjs` is removed (distinct from the later `030-tool-call-format-recovery.cjs` already on dev) by an explicit host contract decision: closing stops local interaction and attempts exact known-context cleanup, while dispatched operations may complete and view grants/resources retire under the native lease (currently up to ten minutes from creation). This is not a missing MCP Apps protocol capability. Recheck native cancellation and public final-view release during each upgrade; see [the host contract](../../../docs/features/chat/mcp-apps.md#原生接口与插件替代审计).

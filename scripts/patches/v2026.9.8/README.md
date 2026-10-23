@@ -561,4 +561,4 @@ Tests: `tests/scripts/mxc-sandbox-patches.test.ts` and
 `src/main/security/windowsSandboxService.test.ts`.
 
 For feature-level integration and validation results see
-[the upgrade audit](../../../docs/openclaw-upgrades/v2026.9.8/v2026.9.8.md).
+[the upgrade audit](../../../docs/openclaw-upgrades/v2026.9.8/upgrade.md).
