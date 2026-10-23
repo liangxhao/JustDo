@@ -18,6 +18,7 @@ vi.mock('../../cowork/coworkLogger', () => ({
 }));
 
 import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
+import { normalizeAgentEvent } from '../../../shared/openclaw/agentEvent';
 import type { GatewayClientLike, SessionTurn } from '../gateway/types';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
@@ -200,6 +201,86 @@ test('does not grant a trailing terminal receipt to a replacement Gateway client
     data: { phase: 'error', executionSettled: true, error: 'Late error' },
   } });
   expect(adapter.getRunTerminalReceipt(turn.runId)).toBeNull();
+});
+
+test.each(['active', 'retired'])(
+  'records a %s whole-run receipt from the real public wire shape without private generation',
+  state => {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const internals = adapter as unknown as {
+      activeTurns: Map<string, SessionTurn>;
+      rememberTerminalTurn: (turn: SessionTurn) => void;
+      observeRunTerminal: (event: unknown, admitted: boolean) => void;
+      handleGatewayEvent: (frame: { event: string; payload: unknown }) => void;
+    };
+    const turn = createSessionTurn({ gatewaySessionId: 'native-1', lifecycleGeneration: null,
+      lastAgentSeq: 1, status: 'running' });
+    if (state === 'active') internals.activeTurns.set(turn.sessionId, turn);
+    else internals.rememberTerminalTurn(turn);
+    const native = {
+      deliveryEvent: 'agent', sessionKey: turn.sessionKey, sessionId: 'native-1',
+      runId: turn.runId, spawnedBy: null, agentSeq: 3, seq: 3, stream: 'lifecycle', timestamp: 1234,
+      data: { phase: 'end', executionSettled: true, endedAt: 1234 },
+    };
+    Object.defineProperty(native, 'lifecycleGeneration', { value: 'internal-only', enumerable: false });
+    const publicEvent = JSON.parse(JSON.stringify(native));
+    expect(publicEvent).not.toHaveProperty('lifecycleGeneration');
+    if (state === 'active') internals.observeRunTerminal(normalizeAgentEvent({
+      deliveryEvent: 'agent', payload: publicEvent,
+    }).event, true);
+    else internals.handleGatewayEvent({ event: 'agent', payload: publicEvent });
+    expect(adapter.getRunTerminalReceipt(turn.runId)).toMatchObject({
+      lifecycleGeneration: null, status: 'completed', executionSettled: true, agentSeq: 3,
+    });
+  },
+);
+
+test('pins a first explicit retired generation and rejects later conflicts', () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as {
+    rememberTerminalTurn: (turn: SessionTurn) => void;
+    handleGatewayEvent: (frame: { event: string; payload: unknown }) => void;
+  };
+  const turn = createSessionTurn({ gatewaySessionId: 'native-1', lifecycleGeneration: null, lastAgentSeq: 1 });
+  internals.rememberTerminalTurn(turn);
+  const identity = { sessionKey: turn.sessionKey, sessionId: 'native-1', runId: turn.runId };
+  internals.handleGatewayEvent({ event: 'agent', payload: {
+    ...identity, lifecycleGeneration: 'known', seq: 2, stream: 'assistant', data: {},
+  } });
+  internals.handleGatewayEvent({ event: 'agent', payload: {
+    ...identity, lifecycleGeneration: 'different', seq: 3, stream: 'lifecycle',
+    data: { phase: 'end', executionSettled: true },
+  } });
+  expect(adapter.getRunTerminalReceipt(turn.runId)).toBeNull();
+  internals.handleGatewayEvent({ event: 'agent', payload: {
+    ...identity, seq: 4, stream: 'lifecycle', data: { phase: 'end', executionSettled: true },
+  } });
+  expect(adapter.getRunTerminalReceipt(turn.runId)).toMatchObject({ executionSettled: true });
+});
+
+test.each([
+  { data: { status: 'timeout', stopReason: 'timeout' }, expected: 'failed' },
+  { data: { status: 'error' }, expected: 'failed' },
+  { data: { status: 'timeout', aborted: true }, expected: 'failed' },
+  { data: { stopReason: 'timeout', aborted: true }, expected: 'failed' },
+  { data: { stopReason: 'aborted', aborted: true }, expected: 'interrupted' },
+  { data: { yielded: true }, expected: undefined },
+])('preserves explicit end outcome and yield metadata: %j', ({ data, expected }) => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as {
+    rememberTerminalTurn: (turn: SessionTurn) => void;
+    handleGatewayEvent: (frame: { event: string; payload: unknown }) => void;
+  };
+  const turn = createSessionTurn({ gatewaySessionId: 'native-1', lifecycleGeneration: null, lastAgentSeq: 1 });
+  internals.rememberTerminalTurn(turn);
+  internals.handleGatewayEvent({ event: 'agent', payload: {
+    sessionKey: turn.sessionKey, sessionId: 'native-1', runId: turn.runId,
+    seq: 2, stream: 'lifecycle', data: { phase: 'end', executionSettled: true, endedAt: 1234, ...data },
+  } });
+  expect(adapter.getRunTerminalReceipt(turn.runId)?.status).toBe(expected);
 });
 
 test.each(['tool', 'assistant', 'lifecycle'])(

@@ -76,8 +76,10 @@ test.each(['zh', 'en'] as const)('shows the available entry without an enable sw
 
   expect(screen.getByRole('status').textContent).toBe(text().agentCliReady);
   expect(screen.queryByRole('switch')).toBeNull();
-  expect(screen.getAllByRole('button')).toHaveLength(2);
+  expect(screen.getAllByRole('button')).toHaveLength(3);
   expect(button(text().agentCliCopyCommand).disabled).toBe(false);
+  expect(button(text().agentCliCopyConfig).disabled).toBe(false);
+  expect(screen.getByText('acp')).toBeTruthy();
   expect(screen.getByText(command).textContent).toBe(command);
   expect(screen.getByText(text().agentCliActiveTasks.replace('{count}', '2'))).toBeTruthy();
   expect(api.getStatus).toHaveBeenCalledOnce();
@@ -113,6 +115,61 @@ test('copies the original long path containing spaces, Chinese and an apostrophe
   expect(api.writeText).toHaveBeenCalledExactlyOnceWith(command);
   expect(button(text().agentCliCommandCopied)).toBeTruthy();
   expect(api.getStatus).toHaveBeenCalledOnce();
+});
+
+test('copies ACP configuration from the shared CLI path with the exact launch argument', async () => {
+  const api = setup();
+  await mount();
+
+  await click(button(text().agentCliCopyConfig));
+
+  expect(JSON.parse(api.writeText.mock.lastCall![0])).toEqual({ command, args: ['acp'] });
+  expect(button(text().agentCliCopied)).toBeTruthy();
+  expect(button(text().agentCliCopyCommand)).toBeTruthy();
+  expect(api.getStatus).toHaveBeenCalledOnce();
+});
+
+test.each(['resolve', 'reject'] as const)('ignores an ACP copy that later %ss after copying the path', async settlement => {
+  const api = setup();
+  const pending = deferred<void>();
+  api.writeText.mockReturnValueOnce(pending.promise);
+  await mount();
+  vi.useFakeTimers();
+  await click(button(text().agentCliCopyConfig));
+  await click(button(text().agentCliCopyCommand));
+
+  await act(async () => {
+    if (settlement === 'resolve') pending.resolve(undefined);
+    else pending.reject(new Error('Old ACP copy failed.'));
+  });
+
+  expect(button(text().agentCliCommandCopied)).toBeTruthy();
+  expect(button(text().agentCliCopyConfig)).toBeTruthy();
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(vi.getTimerCount()).toBe(1);
+});
+
+test.each(['resolve', 'reject'] as const)('retires an ACP copy that later %ss after the shared command changes', async settlement => {
+  const api = setup();
+  const pending = deferred<void>();
+  api.writeText.mockReturnValueOnce(pending.promise);
+  await mount();
+  vi.useFakeTimers();
+  await click(button(text().agentCliCopyConfig));
+  const nextCommand = 'D:\\新目录 空格\\assistant-cli.exe';
+  api.getStatus.mockResolvedValueOnce(snapshot({ command: nextCommand }));
+  await click(button(text().agentCliRefresh));
+
+  await act(async () => {
+    if (settlement === 'resolve') pending.resolve(undefined);
+    else pending.reject(new Error('Old ACP copy failed.'));
+  });
+
+  expect(button(text().agentCliCopyConfig)).toBeTruthy();
+  expect(vi.getTimerCount()).toBe(0);
+  expect(screen.queryByRole('alert')).toBeNull();
+  await click(button(text().agentCliCopyConfig));
+  expect(JSON.parse(api.writeText.mock.lastCall![0])).toEqual({ command: nextCommand, args: ['acp'] });
 });
 
 test('a newer path copy keeps its own full feedback lifetime', async () => {
@@ -264,6 +321,7 @@ test('initial loading disables copy and duplicate reads until the status is know
   expect(screen.getByRole('status').textContent).toBe(text().agentCliLoading);
   expect(button(text().agentCliRefresh).disabled).toBe(true);
   expect(button(text().agentCliCopyCommand).disabled).toBe(true);
+  expect(button(text().agentCliCopyConfig).disabled).toBe(true);
   await click(button(text().agentCliRefresh));
   expect(api.getStatus).toHaveBeenCalledOnce();
 

@@ -122,6 +122,8 @@ flowchart LR
 
 浏览器侧栏 app-server、Native Messaging 发现文件、Agent CLI 本机桥和托盘属于产品生命周期。它们有各自凭据和清理逻辑，不共用 Gateway token。UI 可显示启动或配置错误；窗口存在本身不证明模型可用。
 
+Chrome、通用本机 WebSocket 与 CLI stdio 的 app-server 共用 `main/appServer/` 中唯一的协议连接实现，统一解析、握手、方法路由及响应/通知；两类 WebSocket 入口也复用同一传输实现。连接由 Main 注入浏览器或外部线程的显式能力；浏览器仅访问扩展创建的会话，通用 WebSocket 与 stdio 使用相同的外部线程 binding。通用服务随应用启动，独立 Bearer 凭据仅由主 frame 的复制配置 IPC 按需读取，不进入状态查询或 CLI 输出。各入口保留独立鉴权和断连权限。见[统一 app-server](../features/integrations/app-server.md)。
+
 Agent CLI、ACP 与已实现的 Codex app-server 协议共用受认证本机桥和发现文件，随桌面后台启动即提供服务，没有客户端专用总开关或环境鉴权。
 控制台进程只拥有 stdio，Main 外部会话服务负责映射、模型与权限准备，OpenClaw 继续拥有执行和历史。
 ACP 会话 MCP 由 Runtime Services 通过公开工具与审批接口按原生身份租约提供，不改全局配置。
@@ -203,7 +205,7 @@ Renderer 提交产品期望 → Main 校验并持久化 → 配置同步器生�
 `registerAppShutdown` 保证 cleanup 只进入一次。main.ts 的清理顺序具有依赖：
 
 1. 停止开发服务监控、凭据监控与活动上报，失效内存认证。
-2. 清理浏览器 app-server 发现信息并关闭服务；销毁托盘，停止 Agent bridge。
+2. 立即撤销通用 WebSocket 的地址、凭据及新连接准入，并等待所属任务清理；清理浏览器 app-server 发现信息并关闭服务，销毁托盘，停止 Agent bridge。
 3. 停止 cron 轮询，防止关闭过程中再启动后台工作。
 4. 停止 Cowork 会话，再停止 Gateway。
 5. 关闭 browser agent bridge、出站代理，最后关闭 SQLite。

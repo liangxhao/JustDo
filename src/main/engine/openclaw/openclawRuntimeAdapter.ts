@@ -2023,8 +2023,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       event.deliveryEvent !== 'agent' ||
       event.spawnedBy ||
       !event.sessionKey ||
-      !event.sessionId ||
-      !event.lifecycleGeneration
+      !event.sessionId
     ) return;
     const active = [...this.activeTurns.values()].find(turn => turn.runId === event.runId);
     const binding = admitted && active
@@ -2035,28 +2034,35 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       binding.clientGeneration !== this.gatewayClientGeneration ||
       binding.runId !== event.runId ||
       binding.gatewaySessionId !== event.sessionId ||
-      binding.lifecycleGeneration !== event.lifecycleGeneration ||
+      (binding.lifecycleGeneration && event.lifecycleGeneration &&
+        binding.lifecycleGeneration !== event.lifecycleGeneration) ||
       normalizeMessageSessionKey(binding.sessionKey) !== normalizeMessageSessionKey(event.sessionKey) ||
       (!admitted && event.agentSeq <= binding.lastAgentSeq)
     ) return;
     if (!admitted) {
-      this.retiredRunBindings.set(event.runId, { ...binding, lastAgentSeq: event.agentSeq });
+      this.retiredRunBindings.set(event.runId, {
+        ...binding,
+        lifecycleGeneration: binding.lifecycleGeneration ?? event.lifecycleGeneration,
+        lastAgentSeq: event.agentSeq,
+      });
     }
     if (
       event.stream !== 'lifecycle' ||
       event.data.executionSettled !== true ||
+      event.data.yielded === true ||
       !['end', 'error'].includes(String(event.data.phase))
     ) return;
     const previous = this.runTerminalReceipts.get(event.runId);
     if (previous && event.agentSeq <= previous.agentSeq) return;
-    const interrupted =
-      event.data.aborted === true ||
-      event.data.stopReason === 'aborted' ||
-      event.data.stopReason === 'rpc';
-    const failed =
-      event.data.phase === 'error' &&
-      !interrupted &&
-      !isInternalManagedSubagentHandoffError(event.data.error);
+    const timedOut = event.data.status === 'timeout' || event.data.status === 'timed_out' ||
+      event.data.stopReason === 'timeout';
+    const interrupted = !timedOut && (
+      event.data.aborted === true || event.data.stopReason === 'aborted' || event.data.stopReason === 'rpc'
+    );
+    const failed = !interrupted && (
+      timedOut || event.data.status === 'error' ||
+      (event.data.phase === 'error' && !isInternalManagedSubagentHandoffError(event.data.error))
+    );
     this.runTerminalReceipts.set(event.runId, {
       runId: event.runId,
       sessionKey: binding.sessionKey,

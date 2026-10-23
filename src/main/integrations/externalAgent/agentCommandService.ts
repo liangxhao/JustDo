@@ -45,6 +45,29 @@ export class AgentCommandService {
     return this.options.backend.activeTaskCount;
   }
 
+  connectAppServer(cwd: string, send: (message: unknown) => void): {
+    receiveRaw: CodexAppServerSession['receiveRaw'];
+    close: CodexAppServerSession['close'];
+  } {
+    return this.openAppServer(cwd, {}, send);
+  }
+
+  private openAppServer(cwd: string, env: Record<string, string>, send: (message: unknown) => void) {
+    const session = new CodexAppServerSession(
+      createCodexAppServerBackend(this.options.backend.connect(), { cwd, codexHome: env.CODEX_HOME }),
+      send,
+    );
+    this.sessions.add(session);
+    return {
+      receiveRaw: session.receiveRaw,
+      receive: session.receive,
+      close: (reason?: Error) => {
+        this.sessions.delete(session);
+        return session.close(reason);
+      },
+    };
+  }
+
   connect(
     cwd: string,
     env: Record<string, string>,
@@ -55,17 +78,10 @@ export class AgentCommandService {
     close(reason?: Error): Promise<void>;
     transportClosed?: Promise<void>;
   } {
+    if (argv[0] === 'app-server') return this.openAppServer(cwd, env, send);
+    if (argv[0] !== 'acp') throw new Error('Unsupported stdio protocol.');
     const backend = this.options.backend.connect();
-    const session =
-      argv[0] === 'acp'
-        ? new AcpSession(backend, send, this.options.createResources())
-        : argv[0] === 'app-server'
-          ? new CodexAppServerSession(
-              createCodexAppServerBackend(backend, { cwd, codexHome: env.CODEX_HOME }),
-              send,
-            )
-          : undefined;
-    if (!session) throw new Error('Unsupported stdio protocol.');
+    const session = new AcpSession(backend, send, this.options.createResources());
     this.sessions.add(session);
     return {
       ...(session instanceof AcpSession ? { transportClosed: session.transportClosed } : {}),

@@ -4,6 +4,10 @@ import {
   type NormalizedAgentEvent,
   readTerminalGuardObservation,
 } from '../../../shared/openclaw/agentEvent';
+import {
+  AppServerNotificationMethod,
+  type AppServerNotify,
+} from '../../appServer/appServerProtocol';
 
 const MAX_TEXT_LENGTH = 2 * 1024 * 1024;
 
@@ -21,7 +25,7 @@ export class CodexAppServerProgress {
 
   constructor(
     private readonly input: string,
-    private readonly notify: (method: string, params: Record<string, unknown>) => void,
+    private readonly notify: AppServerNotify,
     private readonly fail: (message: string) => void,
   ) {}
 
@@ -36,8 +40,8 @@ export class CodexAppServerProgress {
         type: 'userMessage',
         content: [{ type: 'text', text: this.input }],
       };
-      this.notify('item/started', { item });
-      this.notify('item/completed', { item });
+      this.notify(AppServerNotificationMethod.ItemStarted, { item });
+      this.notify(AppServerNotificationMethod.ItemCompleted, { item });
     }
     if (event.stream === 'thinking') {
       this.completeAssistant('commentary');
@@ -52,14 +56,14 @@ export class CodexAppServerProgress {
       if (this.reasoning && !text.startsWith(this.reasoning.text)) this.completeReasoning();
       if (!this.reasoning) {
         this.reasoning = { id: randomUUID(), text: '' };
-        this.notify('item/started', {
+        this.notify(AppServerNotificationMethod.ItemStarted, {
           item: { id: this.reasoning.id, type: 'reasoning', summary: [], content: [] },
         });
       }
       const delta = text.slice(this.reasoning.text.length);
       this.reasoning.text = text;
       if (delta)
-        this.notify('item/reasoning/textDelta', {
+        this.notify(AppServerNotificationMethod.ReasoningTextDelta, {
           itemId: this.reasoning.id,
           contentIndex: 0,
           delta,
@@ -131,18 +135,18 @@ export class CodexAppServerProgress {
     if (!text || (!this.assistant && !text.trim())) return;
     if (!this.assistant) {
       this.assistant = { id: randomUUID(), text: '' };
-      this.notify('item/started', {
+      this.notify(AppServerNotificationMethod.ItemStarted, {
         item: { id: this.assistant.id, type: 'agentMessage', text: '', phase: 'commentary' },
       });
     }
     const delta = text.slice(this.assistant.text.length);
     this.assistant.text = text;
-    if (delta) this.notify('item/agentMessage/delta', { itemId: this.assistant.id, delta });
+    if (delta) this.notify(AppServerNotificationMethod.AgentMessageDelta, { itemId: this.assistant.id, delta });
   }
 
   private completeAssistant(phase: 'commentary' | 'final_answer'): void {
     if (!this.assistant) return;
-    this.notify('item/completed', {
+    this.notify(AppServerNotificationMethod.ItemCompleted, {
       item: { ...this.assistant, type: 'agentMessage', phase },
     });
     this.assistant = null;
@@ -150,7 +154,7 @@ export class CodexAppServerProgress {
 
   private completeReasoning(): void {
     if (!this.reasoning) return;
-    this.notify('item/completed', {
+    this.notify(AppServerNotificationMethod.ItemCompleted, {
       item: {
         id: this.reasoning.id,
         type: 'reasoning',

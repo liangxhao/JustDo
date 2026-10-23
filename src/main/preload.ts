@@ -168,6 +168,11 @@ import {
   type AgentCliIntegrationStatus,
 } from '../shared/integrations/agentCliIntegration';
 import {
+  type AppServerConnectionConfig,
+  AppServerIntegrationIpc,
+  type AppServerIntegrationStatus,
+} from '../shared/integrations/appServerIntegration';
+import {
   type ExternalAgentId,
   ExternalAgentIpc,
   type ExternalAgentSettings,
@@ -309,6 +314,12 @@ contextBridge.exposeInMainWorld('electron', {
   agentCli: {
     getStatus: (): Promise<AgentCliIntegrationStatus> =>
       ipcRenderer.invoke(AgentCliIntegrationIpc.GetStatus),
+  },
+  appServer: {
+    getStatus: (): Promise<AppServerIntegrationStatus> =>
+      ipcRenderer.invoke(AppServerIntegrationIpc.GetStatus),
+    getConnectionConfig: (): Promise<AppServerConnectionConfig> =>
+      ipcRenderer.invoke(AppServerIntegrationIpc.GetConnectionConfig),
   },
   store: {
     get: (key: string) => ipcRenderer.invoke('store:get', key),

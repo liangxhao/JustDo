@@ -4,11 +4,13 @@
 
 ## 1. 用户入口与范围
 
-工具栏按钮打开 Side Panel，对话区可新建或继续桌面会话。输入区提供文字、附件、权限、模型和发送/停止；设置入口打开扩展 options，那里继续管理 OpenClaw relay 配对与 Tab 授权。
+工具栏按钮打开 Side Panel，对话区可新建或继续扩展创建的会话。输入区提供文字、附件、权限、模型和发送/停止；设置入口打开扩展 options，那里继续管理 OpenClaw relay 配对与 Tab 授权。侧栏不列出或接管由桌面、CLI 等其他入口创建的会话。
 
 扩展图标复用应用图标。设置页独立于上游 relay 基线，固定使用英文，分为 Automatic connection、Manual connection、Tab Access 和 Background color；界面品牌由产品元数据注入。颜色选择自动保存并同步到设置页和已打开的侧栏。
 
 两条连接独立：自动化 relay 控制已授权网页，聊天 app-server 管理产品会话。自动发现聊天服务不等于已配对自动化；重新配对 relay 也不能修复 Native host 发现失败。
+
+聊天与 CLI、通用本机 WebSocket app-server 共用 `main/appServer/AppServerConnection` 的请求解析、握手、方法路由、错误与通知出口。Chrome 与通用入口也复用 `AppServerWebSocketServer` 传输实现，保留独立的凭据和能力 binding；Chrome 仍用自动发现及固定扩展 Origin，通用原生客户端使用设置页复制的 Bearer 配置。浏览器服务只拥有鉴权和生命周期；历史投影、订阅共享与运行校准由浏览器能力 binding 提供。客户端请求不能改变绑定的能力或会话范围。分层及能力矩阵见[统一 app-server](../integrations/app-server.md)。
 
 Automatic connection 通过同一个产品 Native host 发现 app-server，再经独立的 `browser/extension/pair` 方法取得锁定运行时生成的本地 Gateway 配对信息。它复用发现与鉴权，不调用聊天 Controller，也不新建线程或发送消息。配对仍由上游原生状态机应用，Disconnect 可撤销迟到结果，手动配对不能被自动结果覆盖。
 
@@ -55,8 +57,8 @@ Main 复用 Cowork 身份、权限、模型和原生历史。流直接转发原�
 扩展通过 thread/start 或首条 turn/start 新建的产品会话保存 `source: browser-extension`。
 桌面会话列表按此来源自动归入“Chrome”分组，默认收起、显示会话数量，
 选中其中的会话时自动展开；组内按最近活动排序，置顶仍保留在来源分组内。
-该分组与 Multica 来源分组一样由列表投影生成，不写入用户分组表，也不提供改名、删除或移出操作。
-会话仍可在桌面继续、重命名、删除和搜索；从扩展继续已有桌面会话不会改变创建来源。
+该分组由列表投影生成，不写入用户分组表，也不提供改名、删除或移出操作。
+扩展会话仍可在桌面继续、重命名、删除和搜索。扩展的列表、历史、图片、订阅、模型/权限选择、发送与停止均在 Main 按产品会话的 `source: browser-extension` 核验；传入其他来源的产品 ID 也不能接管会话。
 来源在重启后保留。此前未记录来源的会话保持原有列表归属，不依据标题或消息正文推断来源。
 
 新建产品会话可能尚未创建原生会话或 transcript，此时 `chat.history` 合法返回不带游标的空页，甚至没有 `sessionId`。Main 再次读取并确认空页和身份未变化后返回空历史，不发布正文快照；读取失败、非空但缺少身份/游标、待处理输入不完整时仍报错，不能当作新会话。已有历史的完整页使用顶层 `sessionId`，增量页使用 `sessionInfo.sessionId`；分页、回执和最终确认均校验同一物理身份。
@@ -151,6 +153,17 @@ Windows 关闭系统动画或请求 `prefers-reduced-motion: reduce` 时仍保�
 停止绑定当前 turn 与确切原生运行，不因面板切换取消另一会话。Stop ACK 只进入停止等待；
 idle、Chat final、读取失败和轮询超时均不结束运行。只有同一执行的原生 whole-run 结算证据
 才能产生 `executionSettled:true` 完成通知。断线保留已知身份并暂停操作，重新发现、初始化与读取原生历史后核对。
+
+公共原生事件有意省略内部 `lifecycleGeneration`，不能把该字段设为收到整轮回执的前提；
+同一原生 run、物理 session、原生序列和 Main 连接代次仍须精确匹配，出现显式代次时继续拒绝冲突。
+明确 timeout 保留为失败，不能把模型超时触发的机械 abort 当作用户停止；yield 继续等待核对。
+
+若错过 live 终态，Main 仅在仍持有本进程发送准备的原生身份绑定时，补查该 run 的
+`agent.wait(timeoutMs:0)`；前后会话描述、当前连接代次、原生 run 映射与来源须保持一致。
+合法整轮终态必须有有限 `endedAt`，超时但没有结束时间、运行中、yield 或身份变化都保持未知。
+已核验结果保留为最多 100 项无正文的终态元数据，连续轮询及替换面板仍重新核对身份，
+不会因原生短期回执过期而把已确认结算改回未知。冷重启后没有原发送绑定的旧运行仍不能靠当前描述、
+正文回复或 idle 证明完成；刷新只核对，不自动重发消息。
 
 ## 7. 安全边界
 

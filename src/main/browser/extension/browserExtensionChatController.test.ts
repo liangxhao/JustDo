@@ -47,7 +47,7 @@ const turnStateFixture = () => {
     getRouter: () => ({ isSessionActive: () => false }) as never,
     getStore: () =>
       ({
-        getSession: () => ({ id: 'one' }),
+        getSession: () => ({ id: 'one', source: CoworkSessionSource.BrowserExtension }),
         getLatestSessionRun: () => timing,
         getSessionRunByClientTurnId: (id: string) => (id === 'client-1' ? timing : undefined),
         finishSessionRun,
@@ -56,7 +56,136 @@ const turnStateFixture = () => {
   return { controller, timing, receipt, runtime, request, finishSessionRun };
 };
 
+const waitStateFixture = () => {
+  const f = turnStateFixture();
+  f.runtime.getRunTerminalReceipt.mockReturnValue(null);
+  const binding = {
+    runId: 'client-1', sessionKey: 'agent:main:justdo:one', nativeSessionId: 'physical-1',
+    clientGeneration: 3, accepted: true,
+  };
+  const bindings = (f.controller as unknown as { activeTurns: Map<string, typeof binding> }).activeTurns;
+  bindings.set('one', binding);
+  const wait: Record<string, unknown> = { runId: 'native-run-1', status: 'ok', endedAt: 1234 };
+  const description = { session: {
+    sessionId: 'physical-1', key: 'agent:main:justdo:one', lifecycleRevision: 'revision-1',
+  } };
+  f.request.mockImplementation(async method => (method === 'agent.wait' ? wait : description) as never);
+  return { ...f, binding, bindings, wait, description };
+};
+
+describe('browser exact wait receipt recovery', () => {
+  it.each([
+    { status: 'ok', expected: 'completed' },
+    { status: 'error', expected: 'failed' },
+    { status: 'timeout', expected: 'failed' },
+    { status: 'ok', stopReason: 'timeout', expected: 'failed' },
+    { status: 'error', stopReason: 'aborted', expected: 'interrupted' },
+    { status: 'timeout', stopReason: 'rpc', expected: 'failed' },
+  ])('adopts only verified whole-run $status/$stopReason as $expected', async ({ expected, ...result }) => {
+    const f = waitStateFixture();
+    Object.assign(f.wait, result);
+    await expect(f.controller.getTurnState('one', 'client-1')).resolves.toMatchObject({
+      id: 'client-1', nativeRunId: 'native-run-1', executionSettled: true, status: expected,
+    });
+    expect(f.request.mock.calls.map(([method]) => method)).toEqual([
+      'sessions.describe', 'agent.wait', 'sessions.describe',
+    ]);
+    expect(f.request).toHaveBeenCalledWith('agent.wait', { runId: 'native-run-1', timeoutMs: 0 });
+    expect(f.bindings.has('one')).toBe(false);
+  });
+
+  it.each([
+    { runId: 'other-run' }, { sessionId: 'other-physical' }, { sessionKey: 'other-key' },
+    { yielded: true }, { status: 'pending' }, { status: 'running' }, { status: ['ok'] },
+    { status: 'timeout', endedAt: undefined }, { endedAt: Number.POSITIVE_INFINITY },
+  ])('keeps incomplete or foreign wait evidence unknown: %j', async changed => {
+    const f = waitStateFixture();
+    Object.assign(f.wait, changed);
+    await expect(f.controller.getTurnState('one', 'client-1')).resolves.toMatchObject({
+      status: 'unknown', executionSettled: false,
+    });
+    expect(f.finishSessionRun).not.toHaveBeenCalled();
+    expect(f.bindings.has('one')).toBe(true);
+  });
+
+  it('never manufactures an old send binding from current describe or wait results', async () => {
+    const f = waitStateFixture();
+    f.bindings.clear();
+    await expect(f.controller.getTurnState('one', 'client-1')).resolves.toMatchObject({
+      status: 'unknown', executionSettled: false,
+    });
+    expect(f.request).not.toHaveBeenCalled();
+    expect(f.finishSessionRun).not.toHaveBeenCalled();
+  });
+
+  it.each(['physical identity', 'key', 'revision', 'generation', 'client', 'run alias'])(
+    'refuses a wait result when %s changes during recovery', async changed => {
+      const f = waitStateFixture();
+      let reads = 0;
+      f.request.mockImplementation(async method => {
+        if (method === 'agent.wait') {
+          if (changed === 'generation') f.runtime.getGatewayClientGeneration = () => 4;
+          if (changed === 'client') f.runtime.getGatewayClient.mockReturnValue({ request: vi.fn() });
+          if (changed === 'run alias') f.timing.rootRunId = 'successor-run';
+          return f.wait as never;
+        }
+        reads += 1;
+        if (reads === 2) {
+          if (changed === 'physical identity') return { session: { sessionId: 'replacement' } } as never;
+          if (changed === 'key') return { session: { ...f.description.session, key: 'foreign-key' } } as never;
+          if (changed === 'revision') return { session: { ...f.description.session, lifecycleRevision: 'next' } } as never;
+        }
+        return f.description as never;
+      });
+      await expect(f.controller.getTurnState('one', 'client-1')).resolves.toMatchObject({
+        status: 'unknown', executionSettled: false,
+      });
+      expect(f.finishSessionRun).not.toHaveBeenCalled();
+    },
+  );
+
+  it('coalesces recovery reads and preserves exact completion across three polls and expired native wait cache', async () => {
+    const f = waitStateFixture();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let descriptions = 0;
+    f.request.mockImplementation(async method => {
+      if (method === 'agent.wait') return f.wait as never;
+      if (++descriptions === 1) await gate;
+      return f.description as never;
+    });
+    const first = f.controller.getTurnState('one', 'client-1');
+    const concurrent = f.controller.getTurnState('one', 'client-1');
+    expect(f.request).toHaveBeenCalledTimes(1);
+    release();
+    await expect(first).resolves.toMatchObject({ executionSettled: true });
+    await expect(concurrent).resolves.toMatchObject({ executionSettled: true });
+    expect(f.bindings.has('one')).toBe(false);
+    f.timing.state = 'completed';
+    Object.assign(f.wait, { status: 'timeout', endedAt: undefined });
+    for (let poll = 0; poll < 3; poll += 1)
+      await expect(f.controller.getTurnState('one', 'client-1')).resolves.toMatchObject({
+        status: 'completed', executionSettled: true,
+      });
+    expect(f.request.mock.calls.filter(([method]) => method === 'agent.wait')).toHaveLength(1);
+    await expect(f.controller.getTurnState('one', 'next-client-turn')).resolves.toMatchObject({
+      id: 'next-client-turn', executionSettled: false,
+    });
+    f.description.session.sessionId = 'replacement';
+    await expect(f.controller.getTurnState('one', 'client-1')).resolves.toMatchObject({
+      status: 'unknown', executionSettled: false,
+    });
+  });
+});
+
 describe('browser turn execution receipts', () => {
+  it('accepts an exact public receipt whose private native generation is absent', async () => {
+    const f = turnStateFixture();
+    f.receipt.lifecycleGeneration = null;
+    await expect(f.controller.getTurnState('one', 'client-1')).resolves.toMatchObject({
+      executionSettled: true, status: 'completed',
+    });
+  });
   it('keeps idle and completed product timing unknown without a whole-run receipt', async () => {
     const f = turnStateFixture();
     f.runtime.getRunTerminalReceipt.mockReturnValue(null);
@@ -155,7 +284,13 @@ describe('browser turn execution receipts', () => {
 
   it('returns the accepted native alias without replacing the client input identity', async () => {
     const clientTurnId = 'd28c0cb6-9ddc-4118-885b-4420a16f7a9a';
-    const session = { id: 'one', cwd: process.cwd(), agentId: 'main', permissionMode: 'auto' };
+    const session = {
+      source: CoworkSessionSource.BrowserExtension,
+      id: 'one',
+      cwd: process.cwd(),
+      agentId: 'main',
+      permissionMode: 'auto',
+    };
     let registered = false;
     const timing = { id: 'timing', sessionId: 'one', clientTurnId, rootRunId: clientTurnId };
     const prepareSession = vi.fn(async () => ({
@@ -273,7 +408,10 @@ describe('BrowserExtensionChatController', () => {
           getSessionKeysForSession: () => ['agent:main:justdo:one'],
         }) as never,
       getStore: () =>
-        ({ getSession: (id: string) => (id === 'one' ? { id } : undefined) }) as never,
+        ({
+          getSession: (id: string) =>
+            id === 'one' ? { id, source: CoworkSessionSource.BrowserExtension } : undefined,
+        }) as never,
       readAssistantMedia,
     });
     await expect(
@@ -305,7 +443,10 @@ describe('BrowserExtensionChatController', () => {
       ensureEngineRunning: vi.fn(),
       getRouter: vi.fn(),
       getRuntime: () => runtime as never,
-      getStore: () => ({ getSession: () => ({ id: 'one' }) }) as never,
+      getStore: () =>
+        ({
+          getSession: () => ({ id: 'one', source: CoworkSessionSource.BrowserExtension }),
+        }) as never,
     });
     const listener = vi.fn();
     const dispose = await controller.subscribeThreadEvents('one', listener);
@@ -358,7 +499,10 @@ describe('BrowserExtensionChatController', () => {
       ensureEngineRunning: vi.fn(),
       getRouter: vi.fn(),
       getRuntime: () => runtime as never,
-      getStore: () => ({ getSession: () => ({ id: 'one' }) }) as never,
+      getStore: () =>
+        ({
+          getSession: () => ({ id: 'one', source: CoworkSessionSource.BrowserExtension }),
+        }) as never,
     });
     const dispose = await controller.subscribeThreadEvents('one', vi.fn());
     let resolveReconnect!: (value: object) => void;
@@ -410,7 +554,10 @@ describe('BrowserExtensionChatController', () => {
       ensureEngineRunning: vi.fn(),
       getRouter: vi.fn(),
       getRuntime: () => runtime as never,
-      getStore: () => ({ getSession: () => ({ id: 'one' }) }) as never,
+      getStore: () =>
+        ({
+          getSession: () => ({ id: 'one', source: CoworkSessionSource.BrowserExtension }),
+        }) as never,
     });
     const subscribing = controller.subscribeThreadEvents('one', vi.fn());
     const rejected = expect(subscribing).rejects.toThrow('Disconnected');
@@ -444,7 +591,10 @@ describe('BrowserExtensionChatController', () => {
       ensureEngineRunning: vi.fn(),
       getRouter: vi.fn(),
       getRuntime: () => runtime as never,
-      getStore: () => ({ getSession: () => ({ id: 'one' }) }) as never,
+      getStore: () =>
+        ({
+          getSession: () => ({ id: 'one', source: CoworkSessionSource.BrowserExtension }),
+        }) as never,
     });
     await expect(controller.subscribeThreadEvents('one', vi.fn())).rejects.toThrow('Disconnected');
     expect(runtime.listenerCount('gatewayEvent')).toBe(0);
@@ -530,7 +680,10 @@ describe('BrowserExtensionChatController', () => {
           fetchSessionHistoryByKey,
           getSessionKeysForSession: () => [],
         }) as never,
-      getStore: () => ({ getSession: () => ({ id: 'session-1' }) }) as never,
+      getStore: () =>
+        ({
+          getSession: () => ({ id: 'session-1', source: CoworkSessionSource.BrowserExtension }),
+        }) as never,
     });
 
     await expect(controller.getMessages('session-1')).resolves.toEqual([]);
@@ -553,7 +706,10 @@ describe('BrowserExtensionChatController', () => {
           fetchSessionHistoryByKey,
           getSessionKeysForSession: () => ['agent:main:justdo:session-1'],
         }) as never,
-      getStore: () => ({ getSession: () => ({ id: 'session-1' }) }) as never,
+      getStore: () =>
+        ({
+          getSession: () => ({ id: 'session-1', source: CoworkSessionSource.BrowserExtension }),
+        }) as never,
     });
 
     await expect(controller.getMessages('session-1', { forceFullSnapshot: true })).resolves.toEqual(
@@ -591,7 +747,10 @@ describe('BrowserExtensionChatController', () => {
           fetchSessionHistoryByKey: vi.fn(async () => history),
           getSessionKeysForSession: () => ['agent:main:justdo:session-1'],
         }) as never,
-      getStore: () => ({ getSession: () => ({ id: 'session-1' }) }) as never,
+      getStore: () =>
+        ({
+          getSession: () => ({ id: 'session-1', source: CoworkSessionSource.BrowserExtension }),
+        }) as never,
     });
     const visible = await controller.getMessages('session-1');
     expect(visible.map(message => message.text)).toEqual([
@@ -657,7 +816,10 @@ describe('BrowserExtensionChatController', () => {
             ],
           })),
         }) as never,
-      getStore: () => ({ getSession: () => ({ id: 'session-1' }) }) as never,
+      getStore: () =>
+        ({
+          getSession: () => ({ id: 'session-1', source: CoworkSessionSource.BrowserExtension }),
+        }) as never,
     });
     const messages = await controller.getMessages('session-1');
     expect(messages[0]).toMatchObject({
@@ -719,7 +881,10 @@ describe('BrowserExtensionChatController', () => {
             ],
           })),
         }) as never,
-      getStore: () => ({ getSession: () => ({ id: 'session-1' }) }) as never,
+      getStore: () =>
+        ({
+          getSession: () => ({ id: 'session-1', source: CoworkSessionSource.BrowserExtension }),
+        }) as never,
     });
     const messages = await controller.getMessages('session-1');
     expect(messages[0].rawMessage?.content).toEqual([image, annotation]);
@@ -754,7 +919,10 @@ describe('BrowserExtensionChatController', () => {
             ],
           })),
         }) as never,
-      getStore: () => ({ getSession: () => ({ id: 'session-1' }) }) as never,
+      getStore: () =>
+        ({
+          getSession: () => ({ id: 'session-1', source: CoworkSessionSource.BrowserExtension }),
+        }) as never,
     });
     const messages = await controller.getMessages('session-1');
     expect(messages).toHaveLength(3);
@@ -799,7 +967,10 @@ describe('BrowserExtensionChatController', () => {
               ],
             })),
           }) as never,
-        getStore: () => ({ getSession: () => ({ id: 'session-1' }) }) as never,
+        getStore: () =>
+          ({
+            getSession: () => ({ id: 'session-1', source: CoworkSessionSource.BrowserExtension }),
+          }) as never,
       });
       const messages = await controller.getMessages('session-1');
       expect(messages[0]).toEqual({ role: 'assistant', text: '', thinking: 'Generate' });
@@ -842,7 +1013,10 @@ describe('BrowserExtensionChatController', () => {
           })),
           getSessionKeysForSession: () => ['agent:main:justdo:session-1'],
         }) as never,
-      getStore: () => ({ getSession: () => ({ id: 'session-1' }) }) as never,
+      getStore: () =>
+        ({
+          getSession: () => ({ id: 'session-1', source: CoworkSessionSource.BrowserExtension }),
+        }) as never,
     });
 
     const messages = await controller.getMessages('session-1');
@@ -875,7 +1049,10 @@ describe('BrowserExtensionChatController', () => {
           })),
           getSessionKeysForSession: () => ['agent:main:justdo:session-1'],
         }) as never,
-      getStore: () => ({ getSession: () => ({ id: 'session-1' }) }) as never,
+      getStore: () =>
+        ({
+          getSession: () => ({ id: 'session-1', source: CoworkSessionSource.BrowserExtension }),
+        }) as never,
     });
 
     await expect(controller.getMessages('session-1')).resolves.toEqual([
@@ -894,7 +1071,10 @@ describe('BrowserExtensionChatController', () => {
           fetchSessionHistoryByKey: vi.fn(async () => null),
           getSessionKeysForSession: () => ['agent:main:justdo:session-1'],
         }) as never,
-      getStore: () => ({ getSession: () => ({ id: 'session-1' }) }) as never,
+      getStore: () =>
+        ({
+          getSession: () => ({ id: 'session-1', source: CoworkSessionSource.BrowserExtension }),
+        }) as never,
     });
 
     await expect(controller.getMessages('session-1')).rejects.toThrow(
@@ -934,7 +1114,10 @@ describe('BrowserExtensionChatController', () => {
           })),
           getSessionKeysForSession: () => ['agent:main:justdo:session-1'],
         }) as never,
-      getStore: () => ({ getSession: () => ({ id: 'session-1' }) }) as never,
+      getStore: () =>
+        ({
+          getSession: () => ({ id: 'session-1', source: CoworkSessionSource.BrowserExtension }),
+        }) as never,
     });
 
     await expect(controller.getMessages('session-1')).resolves.toEqual([
@@ -961,6 +1144,7 @@ describe('BrowserExtensionChatController', () => {
     'releases a definitely unsent %s submission after its native sender reports abandonment',
     async outcome => {
       const session = {
+        source: CoworkSessionSource.BrowserExtension,
         id: 'session-1',
         agentId: 'main',
         cwd: 'C:\\workspace',
@@ -1011,6 +1195,7 @@ describe('BrowserExtensionChatController', () => {
 
   it('retains a possibly issued submission when no sender-abandoned proof exists', async () => {
     const session = {
+      source: CoworkSessionSource.BrowserExtension,
       id: 'session-1',
       agentId: 'main',
       cwd: 'C:\\workspace',
@@ -1055,6 +1240,7 @@ describe('BrowserExtensionChatController', () => {
       return new Promise<void>(() => undefined);
     });
     const session = {
+      source: CoworkSessionSource.BrowserExtension,
       id: 'session-1',
       agentId: 'main',
       cwd: 'C:\\workspace',
@@ -1108,7 +1294,7 @@ describe('BrowserExtensionChatController', () => {
   });
 
   it.each([false, true])(
-    'marks only newly created conversations when sending from the extension (existing=%s)',
+    'rejects desktop continuation and marks a new extension conversation (existing=%s)',
     async existing => {
       const desktop = {
         id: 'desktop',
@@ -1137,35 +1323,35 @@ describe('BrowserExtensionChatController', () => {
         getStore: () =>
           ({
             getConfig: () => ({ workingDirectory: process.cwd(), permissionMode: 'auto' }),
-            getSession: () => desktop,
+            getSession: (id: string) => (id === browser.id ? browser : desktop),
             createSession,
             updateSession,
             beginSessionRun: () => ({ id: 'timing' }),
           }) as never,
       });
 
-      const result = await controller.sendMessage({
-        message: 'Hello',
-        ...(existing ? { sessionId: desktop.id } : {}),
-      });
-
-      expect(result.sessionId).toBe(existing ? desktop.id : browser.id);
       if (existing) {
+        await expect(
+          controller.sendMessage({ message: 'Hello', sessionId: desktop.id }),
+        ).rejects.toMatchObject({ requestSent: false });
         expect(createSession).not.toHaveBeenCalled();
-        expect(desktop).not.toHaveProperty('source');
-      } else {
-        expect(createSession).toHaveBeenCalledWith(
-          'Hello',
-          process.cwd(),
-          'local',
-          [],
-          'main',
-          'auto',
-          undefined,
-          undefined,
-          CoworkSessionSource.BrowserExtension,
-        );
+        expect(updateSession).not.toHaveBeenCalled();
+        return;
       }
+      const result = await controller.sendMessage({ message: 'Hello' });
+
+      expect(result.sessionId).toBe(browser.id);
+      expect(createSession).toHaveBeenCalledWith(
+        'Hello',
+        process.cwd(),
+        'local',
+        [],
+        'main',
+        'auto',
+        undefined,
+        undefined,
+        CoworkSessionSource.BrowserExtension,
+      );
       expect(updateSession).not.toHaveBeenCalled();
     },
   );
@@ -1177,6 +1363,7 @@ describe('BrowserExtensionChatController', () => {
       resolveExecution = resolve;
     });
     const session = {
+      source: CoworkSessionSource.BrowserExtension,
       id: 'session-1',
       agentId: 'main',
       cwd: 'C:\\workspace',
@@ -1238,6 +1425,7 @@ describe('BrowserExtensionChatController', () => {
       };
     });
     const session = {
+      source: CoworkSessionSource.BrowserExtension,
       agentId: 'main',
       cwd: 'C:\\workspace',
       id: 'session-1',
@@ -1329,10 +1517,24 @@ it('marks newly created extension threads while inheriting the application model
   );
 });
 
-it('lists application sessions without reserving assistant names', () => {
+it('lists browser sessions without reserving assistant names', () => {
   const sessions = [
-    { id: 'main-session', agentId: 'main', title: 'Main', cwd: '', permissionMode: 'ask' },
-    { id: 'peer-session', agentId: 'scheduler', title: 'Peer', cwd: '', permissionMode: 'ask' },
+    {
+      id: 'main-session',
+      source: CoworkSessionSource.BrowserExtension,
+      agentId: 'main',
+      title: 'Main',
+      cwd: '',
+      permissionMode: 'ask',
+    },
+    {
+      id: 'peer-session',
+      source: CoworkSessionSource.BrowserExtension,
+      agentId: 'scheduler',
+      title: 'Peer',
+      cwd: '',
+      permissionMode: 'ask',
+    },
   ];
   const controller = new BrowserExtensionChatController({
     ensureEngineRunning: vi.fn(),

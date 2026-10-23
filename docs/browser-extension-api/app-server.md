@@ -1,5 +1,7 @@
 # WebSocket app-server 协议
 
+本文描述 Chrome 自动发现的扩展能力入口。通用原生客户端使用“设置 → 外部连接 → 应用接入”复制的独立 Bearer 配置，两者共用协议与 WebSocket 传输实现，但不共用凭据或会话权限。通用入口的标准子集及连接方式见[统一 app-server](../features/integrations/app-server.md)。
+
 JustDo app-server 使用 Codex app-server 的双向 JSON-RPC v2 消息形态：请求有 `id`，通知无
 `id`，响应包含 `result` 或 `error`，但在 WebSocket payload 中省略 `"jsonrpc":"2.0"`。
 
@@ -104,7 +106,7 @@ Main 还会校验编码后的附件总量。
 
 ## `thread/list`
 
-分页列出应用会话，不按助手名称隐藏会话。默认每页 50 条，`limit` 被限制在 1–100。
+分页列出扩展创建的应用会话，不按助手名称隐藏会话。默认每页 50 条，`limit` 被限制在 1–100。
 
 ```json
 {

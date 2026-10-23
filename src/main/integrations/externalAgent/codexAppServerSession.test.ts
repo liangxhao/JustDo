@@ -41,6 +41,172 @@ function fixture() {
 }
 
 describe('Codex app-server session', () => {
+  it('keeps console initialization optional notifications from dispatching work', async () => {
+    const { session, backend, output, request } = fixture();
+    await session.receive({ method: 'initialized' });
+    await session.receive({ method: 'thread/start', params: {} });
+    expect(output).toEqual([]);
+    expect(backend.start).not.toHaveBeenCalled();
+    await request('initialize');
+    const initializedOutput = [...output];
+
+    await session.receive({ method: 'initialized' });
+    await session.receive({ method: 'thread/start', params: {} });
+    await session.receive({ method: 'turn/start', params: { input: [{ type: 'text', text: 'task' }] } });
+
+    expect(output).toEqual(initializedOutput);
+    expect(backend.start).not.toHaveBeenCalled();
+    expect(backend.run).not.toHaveBeenCalled();
+    await request('thread/start');
+    expect(backend.start).toHaveBeenCalledOnce();
+    expect(output.at(-1)).toMatchObject({ result: { thread: { id: 'thread' } } });
+    await session.close();
+  });
+
+  it('sends the local turn reply before starting native execution or progress', async () => {
+    const { session, backend, output, request } = fixture();
+    let replyPresentAtLaunch = false;
+    backend.run = vi.fn(async () => {
+      replyPresentAtLaunch = output.some(value => value.id === 'turn-admission' && 'result' in value);
+      return 'Exact completed reply';
+    });
+    await request('initialize');
+    await request('thread/start');
+
+    await session.receive({
+      id: 'turn-admission',
+      method: 'turn/start',
+      params: { threadId: 'thread', input: [{ type: 'text', text: 'task' }] },
+    });
+
+    expect(backend.run).not.toHaveBeenCalled();
+    const replyIndex = output.findIndex(value => value.id === 'turn-admission');
+    expect(replyIndex).toBeGreaterThanOrEqual(0);
+    expect(output.some(value => value.method === 'turn/started')).toBe(false);
+    await tick();
+    expect(replyPresentAtLaunch).toBe(true);
+    expect(output.findIndex(value => value.method === 'turn/started')).toBeGreaterThan(replyIndex);
+    expect(output.at(-1)).toMatchObject({
+      method: 'turn/completed',
+      params: { turn: { status: 'completed' } },
+    });
+    await session.close();
+  });
+
+  it('applies shared notification opt-out without suppressing execution or other item events', async () => {
+    const { session, backend, output, request } = fixture();
+    await request('initialize', {
+      capabilities: { optOutNotificationMethods: ['item/agentMessage/delta'] },
+    });
+    await request('thread/start');
+    await request('turn/start', { threadId: 'thread', input: [{ type: 'text', text: 'task' }] });
+    await tick();
+
+    expect(backend.run).toHaveBeenCalledOnce();
+    expect(output.some(value => value.method === 'item/agentMessage/delta')).toBe(false);
+    expect(output.some(value => value.method === 'item/started')).toBe(true);
+    expect(output.some(value => value.method === 'item/completed')).toBe(true);
+    expect(output.at(-1)).toMatchObject({ method: 'turn/completed' });
+    await session.close();
+  });
+
+  it('keeps thread operations bound to their CLI ownership when the shared router extracts them', async () => {
+    const { session, backend, output, request } = fixture();
+    await request('initialize');
+    await request('thread/resume', { threadId: 'saved-thread', cwd: null, model: null });
+
+    expect(backend.resume).toHaveBeenCalledExactlyOnceWith('saved-thread', {
+      cwd: undefined,
+      model: undefined,
+    });
+    expect(backend.start).not.toHaveBeenCalled();
+    expect(output.at(-1)).toMatchObject({ result: { thread: { id: 'thread' } } });
+    await request('thread/name/set', { threadId: 'thread', name: 'Client presentation title' });
+    expect(output.at(-1)).toMatchObject({ result: {} });
+    await request('thread/name/set', { threadId: 'foreign', name: 'Foreign title' });
+    expect(output.at(-1)).toMatchObject({
+      error: { code: -32000, message: 'Thread is not owned by this connection.' },
+    });
+    await request('thread/start');
+    expect(output.at(-1)).toHaveProperty('error');
+    expect(backend.start).not.toHaveBeenCalled();
+    await session.close();
+  });
+
+  it('reserves its single thread while asynchronous creation is still opening', async () => {
+    const { session, backend, output, request } = fixture();
+    const thread = { id: 'thread', cwd: '/task', agentId: 'main' };
+    let finish!: (value: typeof thread) => void;
+    backend.start = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+    await request('initialize');
+    const opening = session.receive({ id: 'first-open', method: 'thread/start', params: {} });
+
+    await session.receive({ id: 'second-open', method: 'thread/start', params: {} });
+
+    expect(backend.start).toHaveBeenCalledOnce();
+    expect(output.at(-1)).toMatchObject({
+      id: 'second-open',
+      error: { message: 'This connection already owns a thread.' },
+    });
+    finish(thread);
+    await opening;
+    expect(output.at(-1)).toMatchObject({ id: 'first-open', result: { thread: { id: thread.id } } });
+    await session.close();
+  });
+
+  it('suppresses a late thread response after shared connection closure', async () => {
+    const { session, backend, output, request } = fixture();
+    const thread = { id: 'thread', cwd: '/task', agentId: 'main' };
+    let finish!: (value: typeof thread) => void;
+    backend.start = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+    await request('initialize');
+    const opening = session.receive({ id: 'late-open', method: 'thread/start', params: {} });
+    const beforeClose = [...output];
+
+    const closed = session.close();
+    expect(session.close()).toBe(closed);
+    await closed;
+    finish(thread);
+    await opening;
+    await request('turn/start', { threadId: 'thread', input: [{ type: 'text', text: 'task' }] });
+
+    expect(output).toEqual(beforeClose);
+    expect(backend.run).not.toHaveBeenCalled();
+  });
+
+  it('ignores a foreign interrupt and close aborts the exact owned run while awaiting its settlement', async () => {
+    const { session, backend, output, request } = fixture();
+    let nativeSignal!: AbortSignal;
+    let finish!: (value: string) => void;
+    backend.run = vi.fn(async (_thread, _run, _text, _notify, signal) => {
+      nativeSignal = signal;
+      return new Promise(resolve => { finish = resolve; });
+    });
+    await request('initialize');
+    await request('thread/start');
+    await request('turn/start', { threadId: 'thread', input: [{ type: 'text', text: 'task' }] });
+    await tick();
+    await request('turn/interrupt', { threadId: 'thread', turnId: 'foreign-turn' });
+    expect(output.at(-1)).toMatchObject({ error: { message: 'Turn is not active.' } });
+    expect(nativeSignal.aborted).toBe(false);
+    const reason = new ExternalAgentStreamError('Console transport closed');
+    const beforeClose = [...output];
+    let settled = false;
+
+    const closed = session.close(reason);
+    expect(session.close(reason)).toBe(closed);
+    void closed.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(nativeSignal.reason).toBe(reason);
+    expect(settled).toBe(false);
+    finish('Exact completed reply');
+    await closed;
+
+    expect(settled).toBe(true);
+    expect(output).toEqual(beforeClose);
+    expect(backend.run).toHaveBeenCalledOnce();
+  });
+
   it.each([
     { cwd: 42 },
     { model: {} },

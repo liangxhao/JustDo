@@ -98,7 +98,8 @@ export type NativeRunTerminalReceipt = {
   runId: string;
   sessionKey: string;
   sessionId: string;
-  lifecycleGeneration: string;
+  /** Private native metadata is absent from public wire events in OpenClaw 10.4. */
+  lifecycleGeneration: string | null;
   clientGeneration: number;
   agentSeq: number;
   executionSettled: true;

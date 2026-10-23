@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { BrowserExtensionMessageDisplay } from '../../../shared/browser/browserExtensionDisplay';
 import type { BrowserExtensionStreamEvent } from '../../../shared/browser/browserExtensionStream';
 import { parseCoworkAttachments } from '../../../shared/cowork/attachments';
+import type { SessionRunTiming } from '../../../shared/cowork/sessionRun';
 import { CoworkSessionSource } from '../../../shared/cowork/sessionSource';
 import { normalizeAgentEvent, normalizeChatEvent } from '../../../shared/openclaw/agentEvent';
 import type {
@@ -18,9 +19,9 @@ import {
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import { isPermissionMode, resolvePermissionMode } from '../../../shared/security/approvals';
 import { resolveTaskWorkingDirectory } from '../../core/filesystem/taskWorkspace';
-import type { CoworkStore } from '../../data/coworkStore';
+import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
-import type { GatewayEventFrame } from '../../engine/gateway/types';
+import type { GatewayClientLike, GatewayEventFrame, NativeRunTerminalReceipt } from '../../engine/gateway/types';
 import type { OpenClawRuntimeAdapter } from '../../engine/openclaw/openclawRuntimeAdapter';
 import type { OpenClawEngineStatus } from '../../openclaw/runtime/openclawEngineManager';
 import type { GatewayHistoryEntry } from '../../openclaw/sessions/openclawHistory';
@@ -30,7 +31,7 @@ import type {
   BrowserExtensionChatRequest,
   BrowserExtensionPageContext,
   BrowserExtensionTurnState,
-} from './browserExtensionChatServer';
+} from './browserAppServerTypes';
 import { readBrowserExtensionHistoryDisplay } from './browserExtensionHistoryDisplay';
 
 const MAX_PROMPT_LENGTH = 32_000;
@@ -44,7 +45,18 @@ const MAX_ATTACHMENT_COUNT = 5;
 const MAX_ATTACHMENT_BASE64_LENGTH = 6 * 1024 * 1024;
 const MAX_MODEL_REF_LENGTH = 500;
 const MAX_TRACKED_TURN_ERRORS = 100;
+const MAX_RETAINED_TURN_RECEIPTS = 100;
 const GENERIC_FAILED_RUN_MESSAGE = 'The agent run failed before producing a reply.';
+
+type WaitTerminalReceipt = Omit<NativeRunTerminalReceipt, 'agentSeq'>;
+type RetainedWaitReceipt = {
+  productSessionId: string;
+  timingId: string;
+  clientTurnId: string;
+  runtime: OpenClawRuntimeAdapter;
+  client: GatewayClientLike;
+  receipt: WaitTerminalReceipt;
+};
 
 type BrowserExtensionChatControllerDependencies = {
   ensureEngineRunning: () => Promise<OpenClawEngineStatus>;
@@ -379,8 +391,11 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
     }
   >();
   private readonly completedTurnErrors = new Map<string, { sessionId: string; message: string }>();
+  private readonly waitTerminalReceipts = new Map<string, RetainedWaitReceipt>();
+  private readonly turnStateReads = new Map<string, Promise<BrowserExtensionTurnState | null>>();
   private errorRouter: CoworkEngineRouter | null = null;
   private readonly handleRouterError = (sessionId: string, error: string): void => {
+    if (!this.findBrowserSession(sessionId)) return;
     const turn = this.activeTurns.get(sessionId);
     if (!turn) return;
     this.activeTurns.set(sessionId, {
@@ -391,18 +406,34 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
 
   constructor(private readonly deps: BrowserExtensionChatControllerDependencies) {}
 
+  private findBrowserSession(sessionId: string): CoworkSession | undefined {
+    const session = this.deps.getStore().getSession(sessionId);
+    return session?.id === sessionId && session.source === CoworkSessionSource.BrowserExtension
+      ? session
+      : undefined;
+  }
+
+  private requireBrowserSession(sessionId: string): CoworkSession {
+    const session = this.findBrowserSession(sessionId);
+    if (!session) throw new Error('Conversation not found.');
+    return session;
+  }
+
   async subscribeThreadEvents(
     sessionId: string,
     listener: (event: BrowserExtensionStreamEvent) => void,
   ): Promise<() => void> {
-    if (!this.deps.getStore().getSession(sessionId)) throw new Error('Conversation not found.');
+    this.requireBrowserSession(sessionId);
     await this.deps.ensureEngineRunning();
+    this.requireBrowserSession(sessionId);
     const runtime = this.deps.getRuntime();
     if (!runtime) throw new Error('OpenClaw runtime is unavailable.');
     await runtime.ensureReady();
+    this.requireBrowserSession(sessionId);
     const keys = runtime.getSessionKeysForSession(sessionId);
     const identities = new Set(keys.map(normalizeMessageSessionKey));
     const handle = (frame: GatewayEventFrame) => {
+      if (!this.findBrowserSession(sessionId)) return;
       let value: BrowserExtensionStreamEvent;
       if (frame.event === 'agent' || frame.event === 'session.tool') {
         const event = normalizeAgentEvent({
@@ -429,7 +460,9 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
     const subscribe = async () => {
       for (const key of keys) {
         if (disposed) return;
+        this.requireBrowserSession(sessionId);
         await runtime.requestGateway('sessions.messages.subscribe', { key });
+        this.requireBrowserSession(sessionId);
       }
     };
     const reconnect = () => {
@@ -458,6 +491,7 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
   }
 
   consumeTurnError(sessionId: string, runId: string): string | undefined {
+    this.requireBrowserSession(sessionId);
     const error = this.completedTurnErrors.get(runId);
     if (error?.sessionId !== sessionId) return undefined;
     this.completedTurnErrors.delete(runId);
@@ -466,41 +500,45 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
 
   listSessions() {
     const store = this.deps.getStore();
-    return store.listSessions().map(summary => {
-      const session = store.getSession(summary.id);
-      return {
-        id: summary.id,
-        title: summary.title,
-        status: summary.status,
-        createdAt: summary.createdAt,
-        updatedAt: summary.updatedAt,
-        cwd: session?.cwd ?? '',
-        ...(session?.modelRef ? { modelRef: session.modelRef } : {}),
-        permissionMode: resolvePermissionMode(session?.permissionMode),
-      };
+    return store.listSessions().flatMap(summary => {
+      const session = this.findBrowserSession(summary.id);
+      if (!session) return [];
+      return [
+        {
+          id: summary.id,
+          title: summary.title,
+          status: summary.status,
+          createdAt: summary.createdAt,
+          updatedAt: summary.updatedAt,
+          cwd: session?.cwd ?? '',
+          ...(session?.modelRef ? { modelRef: session.modelRef } : {}),
+          permissionMode: resolvePermissionMode(session?.permissionMode),
+        },
+      ];
     });
   }
 
   async readManagedImage(sessionId: string, source: string): Promise<string> {
-    if (!this.deps.getStore().getSession(sessionId)) throw new Error('Conversation not found.');
+    this.requireBrowserSession(sessionId);
     const runtime = this.deps.getRuntime();
     if (!runtime || !this.deps.readAssistantMedia)
       throw new Error('Gateway image reader is unavailable.');
     await runtime.ensureReady();
+    this.requireBrowserSession(sessionId);
     const sessionKey = runtime.getSessionKeysForSession(sessionId)[0];
     if (!sessionKey) throw new Error('Conversation scope is unavailable.');
     const result = await this.deps.readAssistantMedia({ source, sessionKey });
+    this.requireBrowserSession(sessionId);
     if (result.success === false) throw new Error(result.error);
     return result.dataUrl;
   }
 
   async getMessages(sessionId: string, options: { forceFullSnapshot?: boolean } = {}) {
-    const store = this.deps.getStore();
-    const session = store.getSession(sessionId);
-    if (!session) throw new Error('Conversation not found.');
+    this.requireBrowserSession(sessionId);
     const runtime = this.deps.getRuntime();
     if (!runtime) throw new Error('OpenClaw runtime is unavailable.');
     await runtime.ensureReady();
+    this.requireBrowserSession(sessionId);
     const sessionKey = runtime.getSessionKeysForSession(sessionId)[0];
     if (!sessionKey) return [];
     // Extension polling must observe the authoritative transcript. The shared
@@ -510,6 +548,7 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
       forceFullSnapshot: options.forceFullSnapshot === true,
       includePendingInputs: true,
     });
+    this.requireBrowserSession(sessionId);
     if (!history) throw new Error('Unable to load conversation history.');
     const projected = history.messages.map(message => ({
       message,
@@ -580,8 +619,7 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
 
   async getComposerOptions(sessionId?: string) {
     const store = this.deps.getStore();
-    const session = sessionId ? store.getSession(sessionId) : undefined;
-    if (sessionId && !session) throw new Error('Conversation not found.');
+    const session = sessionId ? this.requireBrowserSession(sessionId) : undefined;
     const defaultModelRef = this.deps.getDefaultModelRef?.()?.trim() || undefined;
     let runtime = this.deps.getRuntime();
     if (!runtime) {
@@ -593,6 +631,7 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
       }
     }
     let models: Array<{ id: string; name: string }> = [];
+    if (sessionId) this.requireBrowserSession(sessionId);
     if (runtime) {
       try {
         const result = await runtime.requestGateway<{ models?: unknown }>('models.list', {
@@ -604,6 +643,7 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
         // A reconnect or startup race must not remove the current/default model controls.
       }
     }
+    if (sessionId) this.requireBrowserSession(sessionId);
     const modelRefs = new Set(models.map(model => model.id.toLowerCase()));
     const addStoredModel = (modelRef: string | undefined) => {
       const id = modelRef?.trim();
@@ -631,8 +671,7 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
     turnId?: string,
   ): Promise<BrowserExtensionTurnState | null> {
     const store = this.deps.getStore();
-    const session = store.getSession(sessionId);
-    if (!session) throw new Error('Conversation not found.');
+    this.requireBrowserSession(sessionId);
     const tracked = this.activeTurns.get(sessionId)?.runId;
     const timing =
       turnId || tracked
@@ -641,8 +680,25 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
     if (timing?.sessionId !== sessionId) {
       return turnId ? { id: turnId, status: 'unknown', executionSettled: false } : null;
     }
+    const readKey = JSON.stringify([sessionId, timing.clientTurnId]);
+    const existing = this.turnStateReads.get(readKey);
+    if (existing) return existing;
+    const reading = this.readTurnState(sessionId, timing, Boolean(turnId), tracked).finally(() => {
+      if (this.turnStateReads.get(readKey) === reading) this.turnStateReads.delete(readKey);
+    });
+    this.turnStateReads.set(readKey, reading);
+    return reading;
+  }
+
+  private async readTurnState(
+    sessionId: string,
+    timing: SessionRunTiming,
+    explicitTurn: boolean,
+    tracked: string | undefined,
+  ): Promise<BrowserExtensionTurnState | null> {
+    const store = this.deps.getStore();
     const historical =
-      !turnId &&
+      !explicitTurn &&
       !tracked &&
       timing.state !== 'running' &&
       !this.deps.getRouter().isSessionActive(sessionId);
@@ -658,57 +714,100 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
     if (!runtime || !client || !sessionKey) return historical ? null : unknown;
     const nativeRunId = timing.rootRunId || timing.clientTurnId;
     const unconfirmed = historical ? null : unknown;
-    const receipt = runtime.getRunTerminalReceipt(nativeRunId);
-    if (!receipt && historical) return null;
-    if (!receipt)
-      return {
-        ...unknown,
-        status:
-          this.deps.getRouter().isSessionActive(sessionId) &&
-          (timing.acceptedAt || this.activeTurns.get(sessionId)?.accepted)
-            ? 'inProgress'
-            : 'unknown',
-      };
-    const trackedBinding = this.activeTurns.get(sessionId);
+    const generation = runtime.getGatewayClientGeneration();
+    const liveReceipt = runtime.getRunTerminalReceipt(nativeRunId);
+    const cached = this.waitTerminalReceipts.get(nativeRunId);
+    const retained = cached?.productSessionId === sessionId && cached.timingId === timing.id &&
+      cached.clientTurnId === timing.clientTurnId && cached.runtime === runtime && cached.client === client
+      ? cached : undefined;
+    let receipt: Omit<NativeRunTerminalReceipt, 'agentSeq'> | null = liveReceipt ?? retained?.receipt ?? null;
+    const trackedBinding = this.activeTurns.get(sessionId)?.runId === timing.clientTurnId
+      ? this.activeTurns.get(sessionId) : undefined;
+    const needsWait = !receipt;
+    const pending = (): BrowserExtensionTurnState | null => historical ? null : ({
+      ...unknown,
+      status: this.deps.getRouter().isSessionActive(sessionId) &&
+        (timing.acceptedAt || trackedBinding?.accepted) ? 'inProgress' : 'unknown',
+    });
+    if (needsWait && (!trackedBinding || !trackedBinding.nativeSessionId ||
+      trackedBinding.clientGeneration !== generation ||
+      normalizeMessageSessionKey(trackedBinding.sessionKey) !== normalizeMessageSessionKey(sessionKey)))
+      return pending();
     if (
-      receipt.executionSettled !== true ||
-      receipt.runId !== nativeRunId ||
-      receipt.clientGeneration !== runtime.getGatewayClientGeneration() ||
+      receipt && (receipt.executionSettled !== true ||
+      receipt.runId !== nativeRunId || receipt.clientGeneration !== generation ||
       normalizeMessageSessionKey(receipt.sessionKey) !== normalizeMessageSessionKey(sessionKey) ||
-      (trackedBinding?.runId === timing.clientTurnId &&
+      (trackedBinding &&
         (trackedBinding.nativeSessionId !== receipt.sessionId ||
           trackedBinding.clientGeneration !== receipt.clientGeneration ||
           normalizeMessageSessionKey(trackedBinding.sessionKey) !==
-            normalizeMessageSessionKey(receipt.sessionKey)))
+            normalizeMessageSessionKey(receipt.sessionKey))))
     )
       return unconfirmed;
-    const current = () =>
-      this.deps.getRuntime() === runtime &&
-      runtime.getGatewayClient() === client &&
-      runtime.getGatewayClientGeneration() === receipt.clientGeneration &&
-      runtime.getSessionKeysForSession(sessionId)[0] === sessionKey &&
-      Boolean(store.getSession(sessionId)) &&
-      (store.getSessionRunByClientTurnId(timing.clientTurnId)?.rootRunId || timing.clientTurnId) ===
-        nativeRunId &&
-      runtime.getRunTerminalReceipt(nativeRunId)?.agentSeq === receipt.agentSeq;
+    const expectedSessionId = receipt?.sessionId ?? trackedBinding!.nativeSessionId;
+    const current = () => {
+      const currentTiming = store.getSessionRunByClientTurnId(timing.clientTurnId);
+      const latest = liveReceipt ? runtime.getRunTerminalReceipt(nativeRunId) : undefined;
+      return this.deps.getRuntime() === runtime && runtime.getGatewayClient() === client &&
+        runtime.getGatewayClientGeneration() === generation &&
+        runtime.getSessionKeysForSession(sessionId)[0] === sessionKey &&
+        Boolean(this.findBrowserSession(sessionId)) && currentTiming?.id === timing.id &&
+        currentTiming.sessionId === sessionId &&
+        (currentTiming.rootRunId || timing.clientTurnId) === nativeRunId &&
+        (!needsWait || this.activeTurns.get(sessionId) === trackedBinding) &&
+        (!retained || this.waitTerminalReceipts.get(nativeRunId) === retained) &&
+        (!liveReceipt || (latest?.agentSeq === liveReceipt.agentSeq &&
+          latest.sessionId === liveReceipt.sessionId && latest.clientGeneration === generation &&
+          (!latest.lifecycleGeneration || !liveReceipt.lifecycleGeneration ||
+            latest.lifecycleGeneration === liveReceipt.lifecycleGeneration)));
+    };
+    type Description = { key?: unknown; session?: { key?: unknown; sessionId?: unknown; lifecycleRevision?: unknown } };
+    const matches = (description: Description) => {
+      const returnedKey = description.session?.key ?? description.key;
+      return description.session?.sessionId === expectedSessionId &&
+        (returnedKey === undefined || (typeof returnedKey === 'string' &&
+          normalizeMessageSessionKey(returnedKey) === normalizeMessageSessionKey(sessionKey)));
+    };
     try {
-      const before = await client.request<{ session?: { sessionId?: string } }>(
-        'sessions.describe',
-        { key: sessionKey },
-      );
-      if (!current() || !before.session?.sessionId) return unconfirmed;
-      const after = await client.request<{ session?: { sessionId?: string } }>(
-        'sessions.describe',
-        { key: sessionKey },
-      );
+      const before = await client.request<Description>('sessions.describe', { key: sessionKey });
+      this.requireBrowserSession(sessionId);
+      if (!current() || !matches(before)) return unconfirmed;
+      if (!receipt) {
+        const result = await client.request<unknown>('agent.wait', { runId: nativeRunId, timeoutMs: 0 });
+        this.requireBrowserSession(sessionId);
+        if (!current()) return unconfirmed;
+        if (!isRecord(result) || result.runId !== nativeRunId || result.yielded === true ||
+          (result.sessionId !== undefined && result.sessionId !== expectedSessionId) ||
+          (result.sessionKey !== undefined && (typeof result.sessionKey !== 'string' ||
+            normalizeMessageSessionKey(result.sessionKey) !== normalizeMessageSessionKey(sessionKey))) ||
+          typeof result.endedAt !== 'number' || !Number.isFinite(result.endedAt) ||
+          (result.status !== 'ok' && result.status !== 'error' && result.status !== 'timeout')) return pending();
+        const timedOut = result.status === 'timeout' || result.stopReason === 'timeout';
+        const interrupted = !timedOut && (result.stopReason === 'aborted' || result.stopReason === 'rpc');
+        const failed = !interrupted && (timedOut || result.status !== 'ok');
+        receipt = {
+          runId: nativeRunId, sessionKey, sessionId: expectedSessionId,
+          lifecycleGeneration: null, clientGeneration: generation, executionSettled: true,
+          status: interrupted ? 'interrupted' : failed ? 'failed' : 'completed',
+          endedAt: result.endedAt,
+          ...(failed && typeof result.error === 'string' ? { error: result.error.slice(0, 4096) } : {}),
+        };
+      }
+      const after = await client.request<Description>('sessions.describe', { key: sessionKey });
+      this.requireBrowserSession(sessionId);
       if (
-        !current() ||
-        before.session.sessionId !== after.session?.sessionId ||
-        receipt.sessionId !== before.session.sessionId ||
-        runtime.getRunTerminalReceipt(nativeRunId)?.lifecycleGeneration !==
-          receipt.lifecycleGeneration
+        !current() || !matches(after) ||
+        before.session?.lifecycleRevision !== after.session?.lifecycleRevision
       )
         return unconfirmed;
+      if (needsWait) {
+        this.waitTerminalReceipts.set(nativeRunId, {
+          productSessionId: sessionId, timingId: timing.id, clientTurnId: timing.clientTurnId,
+          runtime, client, receipt,
+        });
+        while (this.waitTerminalReceipts.size > MAX_RETAINED_TURN_RECEIPTS)
+          this.waitTerminalReceipts.delete(this.waitTerminalReceipts.keys().next().value!);
+      }
       const interrupted = receipt.status === 'interrupted';
       const failed = receipt.status === 'failed';
       const message = failed
@@ -731,14 +830,14 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
         ...(message ? { error: { message } } : {}),
       };
     } catch {
+      this.requireBrowserSession(sessionId);
       return unconfirmed;
     }
   }
 
   async interruptThread(sessionId: string, turnId: string): Promise<void> {
     const store = this.deps.getStore();
-    const session = store.getSession(sessionId);
-    if (!session) throw new Error('Conversation not found.');
+    this.requireBrowserSession(sessionId);
     const timing = store.getSessionRunByClientTurnId(turnId);
     if (!turnId || timing?.sessionId !== sessionId)
       throw new Error('Turn identity is unavailable.');
@@ -749,23 +848,26 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
     // An exact abort cannot cancel a successor even if it starts while this
     // request is in flight. Its ACK is deliberately not execution completion.
     await client.request('sessions.abort', { key: sessionKey, runId: timing.rootRunId || turnId });
+    this.requireBrowserSession(sessionId);
   }
 
   async getThreadRuntimeStatus(
     sessionId: string,
     options: { forceRefresh?: boolean } = {},
   ): Promise<{ known: boolean; running: boolean }> {
-    if (!this.deps.getStore().getSession(sessionId)) throw new Error('Conversation not found.');
+    this.requireBrowserSession(sessionId);
     const status = await this.deps.getRouter().getSessionRuntimeStatus(sessionId, {
       includeSubagents: false,
       forceRefresh: options.forceRefresh === true,
     });
+    this.requireBrowserSession(sessionId);
     return { known: status.known, running: status.running };
   }
 
   async sendMessage(request: BrowserExtensionChatRequest) {
     let dispatchStarted = false;
     try {
+      if (request.sessionId) this.requireBrowserSession(request.sessionId);
       if (
         request.clientTurnId !== undefined &&
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
@@ -791,8 +893,7 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
           },
         );
       }
-      let session = request.sessionId ? store.getSession(request.sessionId) : undefined;
-      if (request.sessionId && !session) throw new Error('Conversation not found.');
+      let session = request.sessionId ? this.requireBrowserSession(request.sessionId) : undefined;
       if (session && (router.isSessionActive(session.id) || this.activeTurns.has(session.id))) {
         throw new Error('This conversation already has a running response.');
       }
@@ -829,21 +930,23 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
           permissionMode: permissionMode ?? session.permissionMode,
           workspaceRoot: session.cwd,
         });
+        session = this.requireBrowserSession(session.id);
         const result = await router.patchSessionModel(
           session.id,
           requestedModelRef,
           session.agentId,
         );
+        session = this.requireBrowserSession(session.id);
         if (!result.ok) {
           if (result.modelRef) store.updateSession(session.id, { modelRef: result.modelRef });
           throw new Error('error' in result ? result.error : 'Unable to change the model.');
         }
         store.updateSession(session.id, { modelRef: result.modelRef });
-        session = store.getSession(session.id) ?? session;
+        session = this.requireBrowserSession(session.id);
       }
       if (permissionMode && session.permissionMode !== permissionMode) {
         store.updateSession(session.id, { permissionMode });
-        session = store.getSession(session.id) ?? session;
+        session = this.requireBrowserSession(session.id);
       }
 
       const runId = request.clientTurnId || randomUUID();
@@ -852,6 +955,7 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
         permissionMode: session.permissionMode,
         workspaceRoot: session.cwd,
       });
+      session = this.requireBrowserSession(session.id);
       const timing = store.beginSessionRun({
         sessionId: session.id,
         clientTurnId: runId,
@@ -922,6 +1026,7 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
         },
       );
       await acceptedPromise;
+      this.requireBrowserSession(session.id);
       return {
         sessionId: session.id,
         runId,

@@ -3,6 +3,7 @@ import WebSocket from 'ws';
 
 import { BrowserExtensionStream } from '../../../renderer/libs/openclaw-chat/model/browser-extension/browser-extension-stream';
 import type { BrowserExtensionStreamEvent } from '../../../shared/browser/browserExtensionStream';
+import { CoworkSessionSource } from '../../../shared/cowork/sessionSource';
 import { BrowserExtensionChatController } from './browserExtensionChatController';
 import {
   BROWSER_EXTENSION_ID,
@@ -82,6 +83,159 @@ afterEach(async () => {
 });
 
 describe('BrowserExtensionChatServer', () => {
+  it('singleflights startup and keeps a stop from reactivating the old browser hub', async () => {
+    server = new BrowserExtensionChatServer(createApi(), token, 'test');
+    const first = server.start();
+    expect(server.start()).toBe(first);
+    const rejected = expect(first).rejects.toThrow('cancelled');
+    const stopping = server.stop();
+    expect(server.stop()).toBe(stopping);
+    await rejected;
+    await stopping;
+    expect(() => server!.getCapability()).toThrow('not running');
+    await server.start();
+    const socket = await connect(server.getCapability().localAppServerUrl);
+    try {
+      expect(await request(socket, 'init', 'initialize')).toHaveProperty('result');
+      socket.send(JSON.stringify({ method: 'initialized' }));
+      expect(await request(socket, 'list', 'thread/list')).toHaveProperty('result');
+    } finally {
+      socket.close();
+    }
+  });
+
+  it('does not let a pending restart revive the listener after an explicit stop', async () => {
+    server = new BrowserExtensionChatServer(createApi(), token, 'test');
+    await server.start();
+    const restarting = server.restart();
+    const rejected = expect(restarting).rejects.toThrow('cancelled');
+    await server.stop();
+    await rejected;
+    expect(() => server!.getCapability()).toThrow('not running');
+  });
+
+  it.each([
+    ['start', 'full stop'],
+    ['read', 'full stop'],
+    ['start', 'restart'],
+    ['read', 'restart'],
+  ])(
+    'finishes %s %s before a late RPC receipt, preserving the browser observation policy',
+    async (kind, mode) => {
+      const api = createApi();
+      const gate = Promise.withResolvers<never>();
+      const turn = { id: 'late-run', status: 'unknown' as const, executionSettled: false };
+      const dispose = vi.fn();
+      vi.mocked(api.subscribeThreadEvents).mockResolvedValue(dispose);
+      vi.mocked(api.getThreadRuntimeStatus).mockResolvedValue({ known: true, running: true });
+      vi.mocked(api.getTurnState).mockResolvedValue(turn);
+      if (kind === 'start') vi.mocked(api.sendMessage).mockReturnValueOnce(gate.promise);
+      else vi.mocked(api.getTurnState).mockReturnValueOnce(gate.promise);
+      server = new BrowserExtensionChatServer(api, token, 'test');
+      await server.start();
+      const socket = await connect(server.getCapability().localAppServerUrl);
+      const oldMessages: unknown[] = [];
+      let lifecycle: Promise<void> | undefined;
+      const release = () =>
+        gate.resolve((kind === 'start' ? { sessionId: 'one', runId: turn.id } : turn) as never);
+      try {
+        await request(socket, 'init', 'initialize');
+        socket.send(JSON.stringify({ method: 'initialized' }));
+        socket.on('message', raw => oldMessages.push(JSON.parse(raw.toString())));
+        socket.send(
+          JSON.stringify({
+            id: 'pending',
+            method: kind === 'start' ? 'turn/start' : 'thread/read',
+            params: { threadId: 'one', message: 'Question', turnId: turn.id },
+          }),
+        );
+        await vi.waitFor(() =>
+          expect(kind === 'start' ? api.sendMessage : api.getTurnState).toHaveBeenCalledOnce(),
+        );
+        const historyReads = vi.mocked(api.getMessages).mock.calls.length;
+        let finished = false;
+        lifecycle = mode === 'restart' ? server.restart() : server.stop();
+        void lifecycle.then(() => {
+          finished = true;
+        });
+        // The receipt is still pending: a Chrome detach never waits for a native ACK.
+        await vi.waitFor(() => expect(finished).toBe(true));
+        await lifecycle;
+        if (mode === 'full stop') await server.start();
+        release();
+        if (mode === 'restart') {
+          await vi.waitFor(() => expect(api.getMessages).toHaveBeenCalledTimes(historyReads + 1));
+        } else {
+          await new Promise(resolve => setTimeout(resolve, 550));
+          expect(api.getMessages).toHaveBeenCalledTimes(historyReads);
+        }
+        expect(api.subscribeThreadEvents).toHaveBeenCalledOnce();
+        expect(dispose).toHaveBeenCalledOnce();
+        expect(api.interruptThread).not.toHaveBeenCalled();
+        expect(oldMessages).toEqual([]);
+      } finally {
+        release();
+        await lifecycle;
+        socket.close();
+      }
+    },
+  );
+
+  it('uses the shared protocol while denying non-browser product sessions at the wire boundary', async () => {
+    const rows = [
+      { id: 'browser', source: CoworkSessionSource.BrowserExtension },
+      { id: 'desktop', source: 'desktop' },
+      { id: 'cli', external: { origin: 'cli' } },
+      { id: 'missing' },
+    ];
+    const native = vi.fn();
+    const controller = new BrowserExtensionChatController({
+      getStore: () =>
+        ({
+          listSessions: () => rows,
+          getSession: (id: string) => rows.find(row => row.id === id),
+        }) as never,
+      ensureEngineRunning: native,
+      getRouter: native,
+      getRuntime: native,
+      readAssistantMedia: native,
+    });
+    server = new BrowserExtensionChatServer(controller, token, 'test');
+    await server.start();
+    const socket = await connect(server.getCapability().localAppServerUrl);
+    try {
+      await request(socket, 'init', 'initialize');
+      socket.send(JSON.stringify({ method: 'initialized' }));
+      const listed = await request(socket, 'list', 'thread/list');
+      expect((listed.result as { data: Array<{ id: string }> }).data.map(row => row.id)).toEqual([
+        'browser',
+      ]);
+      for (const threadId of ['desktop', 'cli', 'missing']) {
+        for (const method of [
+          'thread/read',
+          'thread/image',
+          'composer/options',
+          'turn/start',
+          'turn/interrupt',
+        ]) {
+          const response = await request(socket, `${threadId}:${method}`, method, {
+            threadId,
+            turnId: 'turn',
+            source: 'media://private',
+            message: 'Do not send',
+          });
+          expect(response).toHaveProperty('error');
+          expect(response).not.toHaveProperty('result');
+          if (method === 'turn/start')
+            expect(response.error).toMatchObject({ data: { requestSent: false } });
+        }
+      }
+      expect(native).not.toHaveBeenCalled();
+    } finally {
+      socket.close();
+    }
+  });
+
   it('keeps a native media tool result visible through the controller, wire and display projection', async () => {
     const controller = new BrowserExtensionChatController({
       ensureEngineRunning: vi.fn(),
@@ -115,7 +269,10 @@ describe('BrowserExtensionChatServer', () => {
             ],
           })),
         }) as never,
-      getStore: () => ({ getSession: () => ({ id: 'one' }) }) as never,
+      getStore: () =>
+        ({
+          getSession: () => ({ id: 'one', source: CoworkSessionSource.BrowserExtension }),
+        }) as never,
     });
     const api = createApi();
     vi.mocked(api.getMessages).mockImplementation(id => controller.getMessages(id));
@@ -316,6 +473,33 @@ describe('BrowserExtensionChatServer', () => {
       }
     },
   );
+  it('retains the permitted 20 MiB managed-image reply over the browser output allowance', async () => {
+    const api = createApi();
+    const prefix = 'data:image/png;base64,';
+    const dataUrl = prefix + 'a'.repeat(Math.ceil((20 * 1024 * 1024) / 3) * 4);
+    api.readManagedImage = vi.fn(async () => dataUrl);
+    server = new BrowserExtensionChatServer(api, token, 'test');
+    await server.start();
+    const socket = await connect(server.getCapability().localAppServerUrl);
+    try {
+      await request(socket, 'init', 'initialize');
+      socket.send(JSON.stringify({ method: 'initialized' }));
+      const result = await request(socket, 'large-image', 'thread/image', {
+        threadId: 'one',
+        source: 'media://outbound/large.png',
+      });
+      const received = (result.result as { dataUrl: string }).dataUrl;
+      expect(received.startsWith(prefix)).toBe(true);
+      expect(received).toHaveLength(dataUrl.length);
+      expect(api.readManagedImage).toHaveBeenCalledExactlyOnceWith(
+        'one',
+        'media://outbound/large.png',
+      );
+    } finally {
+      socket.close();
+    }
+  });
+
   it('returns image-only items and rejects image reads before initialization or for another thread', async () => {
     const api = createApi();
     const rawMessage = {

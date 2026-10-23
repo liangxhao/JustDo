@@ -66,16 +66,16 @@ const ApplicationConnectionExamples: React.FC<Props> = ({ command }) => {
   const copiedField = fields.find(field => field.id === copied);
 
   return (
-    <details className="group min-w-0 rounded-xl border border-border bg-surface-raised/40">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-4 py-3 text-sm font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 [&::-webkit-details-marker]:hidden">
+    <details className="group min-w-0">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-md py-1 text-xs font-medium text-secondary transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 [&::-webkit-details-marker]:hidden">
         {i18nService.t('applicationConnectionExampleSummary')}
-        <ChevronDownIcon className="h-4 w-4 shrink-0 text-secondary transition-transform group-open:rotate-180" />
+        <ChevronDownIcon className="h-3.5 w-3.5 shrink-0 text-secondary transition-transform group-open:rotate-180" />
       </summary>
-      <div className="min-w-0 space-y-4 border-t border-border p-4">
+      <div className="min-w-0 space-y-3 pt-3">
         <p className="text-xs leading-5 text-secondary">
           {i18nService.t('applicationConnectionExamplesDescription')}
         </p>
-        <ol className="space-y-3 text-xs leading-5 text-secondary">
+        <ol className="space-y-2 text-xs leading-5 text-secondary">
           {[
             'applicationConnectionSetupRuntime',
             'applicationConnectionSetupValues',
@@ -89,7 +89,7 @@ const ApplicationConnectionExamples: React.FC<Props> = ({ command }) => {
             </li>
           ))}
         </ol>
-        <dl className="divide-y divide-border rounded-lg border border-border bg-surface">
+        <dl className="divide-y divide-border/60 rounded-lg bg-surface-raised/60">
           {fields.map(({ id, label, value }) => (
             <div key={id} className="min-w-0 space-y-1.5 p-3">
               <dt className="flex items-center justify-between gap-3 text-xs font-medium leading-5 text-secondary">

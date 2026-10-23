@@ -476,6 +476,14 @@ import type { Agent } from '@/features/agents/agentTypes';
 import type { McpServerFormData } from '@/features/plugins/mcp/mcp';
 
 interface IElectronAPI {
+  appServer: {
+    getStatus: () => Promise<
+      import('../../shared/integrations/appServerIntegration').AppServerIntegrationStatus
+    >;
+    getConnectionConfig: () => Promise<
+      import('../../shared/integrations/appServerIntegration').AppServerConnectionConfig
+    >;
+  };
   agentCli: {
     getStatus: () => Promise<
       import('../../shared/integrations/agentCliIntegration').AgentCliIntegrationStatus

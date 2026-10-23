@@ -51,6 +51,8 @@ import { BuiltinModelIpc, BuiltinModelSyncReason } from '../shared/providers/bui
 import { normalizeLocalSpeechExtensionSettings } from '../shared/speech/localSpeechExtensionSettings';
 import { LocalSpeechModelIpc } from '../shared/speech/localSpeechModels';
 import { normalizeLocalSpeechSettings } from '../shared/speech/localSpeechSettings';
+import { AppServerIntegrationService } from './appServer/appServerIntegrationService';
+import { waitForAppServerShutdown } from './appServer/appServerShutdown';
 import { BrowserAgentBridge } from './browser/browserAgentBridge';
 import { BrowserExtensionChatController } from './browser/extension/browserExtensionChatController';
 import { BrowserExtensionChatServer } from './browser/extension/browserExtensionChatServer';
@@ -167,6 +169,7 @@ import {
   registerWorkspaceWindowHandlers,
 } from './ipc/app';
 import { registerAppInitializationHandlers } from './ipc/app/initialization';
+import { registerAppServerIntegrationHandlers } from './ipc/appServer';
 import {
   registerAgentHandlers,
   registerCoworkConfigHandlers,
@@ -576,6 +579,7 @@ let preventSleepBlockerId: number | null = null;
 let agentBridgeServer: AgentBridgeServer | null = null;
 let agentBridgeStartPromise: Promise<void> | null = null;
 let agentCliIntegrationService: AgentCliIntegrationService | null = null;
+let appServerIntegrationService: AppServerIntegrationService | null = null;
 let agentCommandService: AgentCommandService | null = null;
 let cliExternalSessionStore: ExternalSessionStore | null = null;
 
@@ -1095,6 +1099,14 @@ const getAgentCommandService = (): AgentCommandService => {
   return agentCommandService;
 };
 
+const getAppServerIntegrationService = (): AppServerIntegrationService => {
+  appServerIntegrationService ??= new AppServerIntegrationService({
+    commandService: getAgentCommandService(),
+    getDefaultCwd: () => getCoworkStore().getConfig().workingDirectory,
+  });
+  return appServerIntegrationService;
+};
+
 const getOpenClawSkillFiles = () => {
   if (!openClawSkillFileService) {
     openClawSkillFileService = new OpenClawSkillFileService({
@@ -1480,6 +1492,11 @@ if (agentBridgeArgv) {
   registerAgentCliIntegrationHandlers({
     getService: getAgentCliIntegrationService,
     getMainWindow: () => mainWindow,
+  });
+  registerAppServerIntegrationHandlers({
+    getService: getAppServerIntegrationService,
+    getMainWindow: () => mainWindow,
+    isQuitting: () => appShutdown.isQuitting(),
   });
   registerBrowserHandlers({
     getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
@@ -2013,6 +2030,9 @@ if (agentBridgeArgv) {
   };
 
   const runAppCleanup = async (): Promise<void> => {
+    const appServerStopped = appServerIntegrationService?.stop().catch(() => {
+      console.error('[AppServer] Failed to stop local WebSocket service.');
+    });
     await startupHistoryRuntime.stop();
     disposeComputerOverlay?.();
     disposeComputerOverlay = undefined;
@@ -2038,6 +2058,9 @@ if (agentBridgeArgv) {
     });
     await browserExtensionChatServer?.stop();
     browserExtensionChatServer = null;
+    if (!(await waitForAppServerShutdown(appServerStopped))) {
+      console.warn('[AppServer] Native cleanup is still pending; continuing runtime shutdown.');
+    }
     destroyTray();
     if (agentBridgeServer) {
       await agentBridgeServer.stop().catch(error => {
@@ -2479,7 +2502,15 @@ if (agentBridgeArgv) {
       console.error('[AgentBridge] Failed to start:', error);
       agentBridgeServer = null;
     });
+    if (!appShutdown.isQuitting()) {
+      await getAppServerIntegrationService().start().catch(() => {
+        console.error('[AppServer] Failed to start local WebSocket service.');
+      });
+    }
     if (appShutdown.isQuitting()) {
+      await waitForAppServerShutdown(appServerIntegrationService?.stop().catch(() => {
+        console.error('[AppServer] Failed to stop local WebSocket service.');
+      }));
       await agentBridgeServer?.stop();
       agentBridgeServer = null;
       return;

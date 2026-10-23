@@ -58,7 +58,9 @@ Gateway、本机合成模型和与产品相同的 `stateDir/skills` 导入位置
 
 Adapter 入口保留生命周期及状态，runtimeGatewayConnection、runtimeGatewayEvents、runtimeHistory、runtimePlanInteractions、runtimeGoalOperations、runtimeSessionStatus 处理各领域操作。它们通过显式实时上下文访问入口状态，不复制控制器状态，更不保存 transcript。
 
-Chrome 侧聊通过 Runtime 的窄 `getRunTerminalReceipt` 读取已准入 whole-run `executionSettled:true` 的有界原生身份与终态元数据；chat final 后仅保留精确退役绑定以接受迟到末端，普通 wait/idle/Stop ACK 不生成回执。Controller 复核发送准备的物理 session、原生 run 映射、连接代次和当前身份后才结束进度；冷重启或代次变化后证据缺失保持 unknown，不另建正文缓存或补发输入。
+Chrome 侧聊通过 Runtime 的窄 `getRunTerminalReceipt` 读取已准入 whole-run `executionSettled:true` 的有界原生身份与终态元数据；chat final 后保留精确退役绑定以接受迟到末端。OpenClaw 10.4 不把内部 `lifecycleGeneration` 序列化到公共事件，缺字段不阻止精确原生 session、run、序列及 Main 连接代次准入；双方提供时仍拒绝冲突，首次显式代次会固定到退役绑定。yield 不作为整轮完成；原生明确 timeout 优先于机械 `aborted` 标志，保留为失败。
+
+live 回执缺失时，Controller 仅能使用本进程发送准备已捕获的物理 session/key/连接代次补查精确 `agent.wait({runId,timeoutMs:0})`，并在前后 `sessions.describe` 核对身份和生命周期 revision。合法整轮终态还须有匹配 run、有限 `endedAt` 且非 yield；普通 wait timeout、idle、Stop ACK 均不生成终态。已验证的 wait 结算只缓存最多 100 项结果与身份元数据，后续读取仍复核当前原生身份，避免原生 wait 缓存过期或后续轮询使已确认结果倒退；不保存正文、不伪造事件序列。冷重启、连接代次变化或缺少原发送绑定时证据不足仍保持 unknown，不用当前 session 为旧 run 补造授权，也不补发输入。
 
 电脑控制设置每次读取仍获取原生 `config.get`。同一配置 hash 和 runtime 路径的全局
 工具权限判断复用一个进程内结果（并发读取共享 Promise），避免反复启动独立的原生

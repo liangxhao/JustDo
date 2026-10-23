@@ -18,11 +18,13 @@ wire conventions，以降低扩展客户端适配成本。
 
 ## 当前支持矩阵
 
+此矩阵描述共享 app-server 引擎上的 Chrome 能力。会话范围限于扩展创建的产品会话；`thread/list/read/image`、composer、订阅、发送和停止不开放其他来源会话。CLI 的能力矩阵与传输策略见[统一 app-server](../features/integrations/app-server.md)。
+
 | 能力                                         | JustDo      | 备注                                            |
 | -------------------------------------------- | ----------- | ----------------------------------------------- |
 | WebSocket request/response/notification 外形 | 支持        | payload 省略 `jsonrpc`                          |
 | initialize/initialized                       | 支持        | notification opt-out 支持精确方法名             |
-| thread/list                                  | 支持子集    | cursor/limit；不支持官方筛选参数                |
+| thread/list                                  | 支持子集    | 仅扩展会话；cursor/limit；不支持官方筛选参数    |
 | thread/read                                  | 支持        | `includeTurns`、按 `turnId` 核对 `activeTurn`    |
 | thread/start                                 | 支持子集    | title；忽略模型、沙盒等高级覆盖项               |
 | thread/unsubscribe                           | 支持        | 每连接订阅                                      |
@@ -89,6 +91,7 @@ wire conventions，以降低扩展客户端适配成本。
 相关测试：
 
 - `src/main/browser/extension/browserExtensionNativeMessaging.test.ts`
+- `src/main/appServer/appServerConnection.test.ts` 与 `appServerBindings.test.ts`
 - `src/main/browser/extension/browserExtensionChatServer.test.ts`
 - `src/main/browser/extension/browserExtensionChatController.test.ts`
 - `src/shared/browser/browserExtensionStream.ts` 及聊天库 `browser-extension-stream` 回归

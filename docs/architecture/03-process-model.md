@@ -216,6 +216,8 @@ Chrome Side Panel 不取得 Gateway token。Native host 在开发版和安装版
 
 Agent CLI launcher 通过当前用户管道提交白名单命令。Main 验证 token、frame、cwd、argv 与生命周期后，按 CLI、ACP 或 Codex app-server 协议进入同一会话与执行后端。只有 app-server 可传入可选 CODEX_HOME 标记目录；其他环境变量不转发。外部 CLI stdout 只返回约定可见结果，不透出运行凭据。它不复用 Chrome 的 URL capability。
 
+stdio、通用本机 WebSocket 和 Chrome 入口共用每连接一实例的 `AppServerConnection`，不再分别实现 RPC dispatcher；两类 WebSocket 复用 `AppServerWebSocketServer` 的连接、帧和背压处理。Main 在完成传输认证后注入固定能力 binding；客户端握手不能提升能力。Chrome binding 仅访问扩展来源会话，断开只释放订阅；stdio 与通用 WebSocket 复用 CLI binding，限制外部线程归属，断开请求精确取消。通用服务固定监听 loopback，要求独立 Bearer 凭据且不接受网页 Origin；主 frame 可只读查询无凭据状态，复制时按需取当前配置，重启后旧配置失效。公共协议关闭后丢弃迟到响应与通知，领域服务继续核对原生身份和整轮结算，不从连接状态推断结果。见[能力与生命周期矩阵](../features/integrations/app-server.md)。
+
 ## 3. 一次 IPC 请求必须有完整生命期
 
 ```mermaid

@@ -9,11 +9,22 @@ running desktop. A separately installed Node.js, first-run download and public
 network service are not required. The entry never opens a second product database
 or starts a separate Gateway.
 
+The Codex app-server adapter and Chrome side chat use one
+`main/appServer/AppServerConnection` protocol implementation. WebSocket and stdio
+retain separate authenticated transports and capability bindings. The console
+binding owns one external thread and its cancellation; it cannot acquire browser
+history, images or automation pairing by requesting those methods. See the
+[shared app-server contract](app-server.md). ACP and ordinary CLI commands keep
+their existing adapters and execution backend.
+
 Settings → External connections → App access shows a shared CLI entry with
-launcher/bridge availability and a wrapping, copyable command path. Two peer
-protocol cards explain ACP and the supported Codex app-server subset, each with
-its own launch arguments and copyable configuration. The collapsed Multica setup
-example belongs only to the Codex app-server card. Rechecking only reads status.
+launcher/bridge availability and a wrapping, copyable command path. ACP appears
+as the `acp` command alongside the other CLI commands, with its configuration
+copy action. A separate Codex app-server section groups stdio launch configuration
+and the application's native-client WebSocket address/configuration in peer panels.
+The collapsed Multica example belongs to stdio. Rechecking
+only reads status. WebSocket copying fetches the current Bearer configuration
+through a separate main-frame-only IPC; it is never part of CLI status output.
 Opening settings, copying values or installing a particular client is not required
 to activate the entry.
 

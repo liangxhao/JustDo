@@ -4,6 +4,7 @@ import {
   type NormalizedAgentEvent,
   TERMINAL_GUARD_OBSERVATION_KEY,
 } from '../../../shared/openclaw/agentEvent';
+import type { AppServerNotify } from '../../appServer/appServerProtocol';
 import { CodexAppServerProgress } from './codexAppServerProgress';
 
 const event = (stream: string, data: Record<string, unknown>): NormalizedAgentEvent => ({
@@ -22,7 +23,7 @@ const event = (stream: string, data: Record<string, unknown>): NormalizedAgentEv
 });
 
 function fixture() {
-  const notify = vi.fn<(method: string, params: Record<string, unknown>) => void>();
+  const notify = vi.fn<AppServerNotify>();
   const fail = vi.fn();
   const progress = new CodexAppServerProgress('Actual user input', notify, fail);
   return { progress, notify, fail };

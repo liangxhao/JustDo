@@ -9,6 +9,8 @@ JSON-RPC v2 形态为基线，并实现侧栏对话所需的兼容子集。Nativ
 不将当时观察的外部客户端版本作为现行兼容保证。实时消息已接入产品
 `thread/stream`，`thread/updated` 继续承担权威历史校准；两者均不是完整官方 API。
 
+Chrome、通用本机 WebSocket 与 CLI 的 app-server 由同一个 `AppServerConnection` 解析、初始化和路由，两类 WebSocket 也复用同一传输实现。本目录描述 Chrome 能力 binding 的字段与通知；通用原生客户端使用应用接入页复制的独立 Bearer 配置。Chrome 仅访问 `source: browser-extension` 的会话，不继续桌面或 CLI 创建的会话。协议共用不合并凭据、会话归属或断开策略，详见[统一契约](../features/integrations/app-server.md)。
+
 ## 文档导航
 
 - [Native Messaging 实例发现协议](native-messaging.md)：Chrome 到已运行桌面进程的发现、版本协商、rendezvous 文件和消息帧。
@@ -26,6 +28,8 @@ flowchart LR
   Native[JustDo Native Host]
   Rendezvous[(app-server.json)]
   Server[JustDo WebSocket app-server]
+  Protocol[共享 AppServerConnection]
+  Binding[Browser capability binding]
   Controller[BrowserExtensionChatController]
   Gateway[OpenClaw Gateway]
 
@@ -35,7 +39,7 @@ flowchart LR
   Server -->|发布已运行实例| Rendezvous
   Background -->|localAppServerUrl| Panel
   Panel <-->|JSON-RPC-like WebSocket| Server
-  Server --> Controller --> Gateway
+  Server --> Protocol --> Binding --> Controller --> Gateway
 ```
 
 两层协议的 framing 不同：
@@ -61,6 +65,9 @@ flowchart LR
 
 - Native Host：`src/main/browser/extension/browserExtensionNativeMessaging.ts`
 - WebSocket server：`src/main/browser/extension/browserExtensionChatServer.ts`
+- 公共协议引擎：`src/main/appServer/appServerConnection.ts`
+- 浏览器能力与订阅：`src/main/browser/extension/browserAppServerBinding.ts`
+- 历史字段投影：`src/main/browser/extension/browserAppServerProjection.ts`
 - 业务适配：`src/main/browser/extension/browserExtensionChatController.ts`
 - 实时事件外形：`src/shared/browser/browserExtensionStream.ts`
 - 扩展 bootstrap：`plugins/browser-extensions/browser-assistant/conversation-overlay/modules/app-server-background.js`
