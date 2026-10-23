@@ -4,8 +4,10 @@ import {
   type DiagnosticFinding,
 } from '@shared/cowork/diagnostics/diagnosticFindings';
 import { diagnoseHistoryFailure } from '@shared/cowork/diagnostics/diagnosticHistoryFindings';
+import { DiagnosticRuntimeFailure } from '@shared/cowork/diagnostics/diagnosticRuntimeFailure';
 import { assessDiagnosticStop } from '@shared/cowork/diagnostics/diagnosticStop';
 import type {
+  DiagnosticEvent,
   DiagnosticExportSummary,
   DiagnosticLogRecord,
   DiagnosticReport,
@@ -14,6 +16,20 @@ import type {
 import { i18nService } from '@/services/i18n';
 
 const t = (key: string) => i18nService.t(key);
+
+export function presentDiagnosticRuntimeFailure(event: DiagnosticEvent) {
+  if (
+    (event.kind !== 'lifecycle' && event.kind !== 'chat') ||
+    event.phase !== 'error' ||
+    event.runtimeFailure !== DiagnosticRuntimeFailure.ReplayAdmissionRejected
+  )
+    return;
+  return {
+    title: t('diagnosticsRuntimeFailure_replay_admission_rejected'),
+    adviceKey: 'diagnosticsHistoryAdvice_replay_admission_rejected',
+  };
+}
+
 export function presentDiagnosticStop(report: DiagnosticReport) {
   const assessment = assessDiagnosticStop(report);
   const explained =
@@ -152,6 +168,7 @@ export function presentDiagnosticFinding(finding: DiagnosticFinding, report: Dia
   };
   for (const id of finding.eventIds) {
     const event = report.events.find(item => item.id === id)!;
+    const runtimeFailure = presentDiagnosticRuntimeFailure(event);
     let description = event.responseIssue
       ? t(`diagnosticsResponseEvidence_${event.responseIssue}`)
       : event.toolValidationFailed
@@ -176,6 +193,7 @@ export function presentDiagnosticFinding(finding: DiagnosticFinding, report: Dia
                 : event.phase === 'disconnected'
                   ? t('diagnosticsReason_disconnected')
                   : t('diagnosticsEvidenceEventError');
+    if (runtimeFailure) description = runtimeFailure.title;
     if (event.operation)
       description = `${t(`diagnosticsOperation_${event.operation}`)} · ${description}`;
     if (event.exitCode !== undefined)
@@ -190,27 +208,30 @@ export function presentDiagnosticFinding(finding: DiagnosticFinding, report: Dia
       event.occurredAt ?? event.observedAt,
       description,
       t(`diagnosticsKind_${event.kind}`),
-      event.toolValidationFailed
-        ? 4
-        : event.errorCode
-          ? 3
-          : event.statusCode || event.exitCode !== undefined
-            ? 2
-            : 0,
-      event.toolValidationFailed
-        ? 'diagnosticsRemedy_invalid_arguments'
-        : adviceFor(
-            finding.signal,
-            event.errorCode,
-            event.kind === 'command' ? 'command' : undefined,
-            event.kind === 'command'
-              ? event.stopReason === 'timeout'
-                ? 'command_timeout'
-                : event.exitCode !== undefined && event.exitCode !== 0
-                  ? 'command_exit'
-                  : 'command_error'
-              : undefined,
-          ),
+      runtimeFailure
+        ? 5
+        : event.toolValidationFailed
+          ? 4
+          : event.errorCode
+            ? 3
+            : event.statusCode || event.exitCode !== undefined
+              ? 2
+              : 0,
+      runtimeFailure?.adviceKey ??
+        (event.toolValidationFailed
+          ? 'diagnosticsRemedy_invalid_arguments'
+          : adviceFor(
+              finding.signal,
+              event.errorCode,
+              event.kind === 'command' ? 'command' : undefined,
+              event.kind === 'command'
+                ? event.stopReason === 'timeout'
+                  ? 'command_timeout'
+                  : event.exitCode !== undefined && event.exitCode !== 0
+                    ? 'command_exit'
+                    : 'command_error'
+                : undefined,
+            )),
     );
   }
   for (const id of finding.logIds) {

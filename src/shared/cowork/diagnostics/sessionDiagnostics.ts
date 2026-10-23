@@ -3,6 +3,7 @@ import type {
   DiagnosticOperation,
   DiagnosticStage,
 } from './diagnosticLogDetails';
+import type { DiagnosticRuntimeFailure } from './diagnosticRuntimeFailure';
 
 export const SessionDiagnosticsIpc = {
   List: 'cowork:diagnostics:list',
@@ -79,6 +80,7 @@ export interface DiagnosticEvent {
   yielded?: boolean;
   providerStarted?: boolean;
   errorCategory?: DiagnosticErrorCategory;
+  runtimeFailure?: DiagnosticRuntimeFailure;
   userInitiated?: boolean;
   toolFailed?: boolean;
   operation?: DiagnosticOperation;
@@ -187,7 +189,7 @@ export interface DiagnosticHistoryEvidence {
     clipped: boolean;
     association: 'run' | 'run_window';
     basis?: 'activity' | 'result' | 'model' | 'failure_receipt';
-    cause?: 'state_contention';
+    cause?: 'state_contention' | DiagnosticRuntimeFailure;
     outcome?: 'failed' | 'blocked' | 'aborted';
   }>;
 }

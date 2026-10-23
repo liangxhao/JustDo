@@ -1,5 +1,6 @@
 import type { DiagnosticFinding } from '@shared/cowork/diagnostics/diagnosticFindings';
 import type {
+  DiagnosticEvent,
   DiagnosticLogRecord,
   DiagnosticReport,
 } from '@shared/cowork/diagnostics/sessionDiagnostics';
@@ -11,6 +12,7 @@ import {
   presentDiagnosticCoverage,
   presentDiagnosticExport,
   presentDiagnosticFinding,
+  presentDiagnosticRuntimeFailure,
   presentDiagnosticStop,
   summarizeDiagnosticFinding,
   summarizeDiagnosticReport,
@@ -153,6 +155,100 @@ function project(
 }
 
 describe('diagnostic finding presentation', () => {
+  it.each(['lifecycle', 'chat'] as const)(
+    'explains an observed %s replay rejection without claiming whole-run settlement',
+    kind => {
+      i18nService.setLanguage('en', { persist: false });
+      const report = collectionReport({
+        run: { id: 'r', startedAt: 1, state: 'running' },
+        conclusion: { reason: 'unknown', confidence: 'unknown', evidenceIds: [], toolFailures: 0 },
+        events: [
+          {
+            id: 'replay',
+            runId: 'r',
+            epoch: 'e',
+            observedAt: 100,
+            kind,
+            phase: 'error',
+            runtimeFailure: 'replay_admission_rejected',
+          },
+        ],
+      });
+      const finding: DiagnosticFinding = {
+        signal: 'unknown',
+        association: 'event',
+        eventIds: ['replay'],
+        logIds: [],
+      };
+      const value = presentDiagnosticFinding(finding, report);
+      expect(value.rows[0].description).toBe(
+        i18nService.t('diagnosticsRuntimeFailure_replay_admission_rejected'),
+      );
+      expect(value.advice).toBe(
+        i18nService.t('diagnosticsHistoryAdvice_replay_admission_rejected'),
+      );
+      expect(presentDiagnosticStop(report)).toMatchObject({
+        reason: 'unknown',
+        certainty: 'unknown',
+      });
+      const copied = summarizeDiagnosticReport(report);
+      expect(copied).toContain(value.rows[0].description);
+      expect(copied).toContain(value.advice);
+    },
+  );
+
+  it.each([
+    { kind: 'lifecycle', phase: 'end' },
+    { kind: 'lifecycle', phase: 'start' },
+    { kind: 'chat', phase: 'final' },
+    { kind: 'chat', phase: 'aborted' },
+    { kind: 'tool', phase: 'error' },
+    { kind: 'command', phase: 'failed' },
+    { kind: 'lifecycle', phase: 'error', runtimeFailure: 'PRIVATE_TEXT' },
+    { kind: 'chat', phase: 'error', runtimeFailure: undefined },
+  ])('ignores an invalid replay marker: %j', fields => {
+    const event = {
+      id: 'e',
+      runId: 'r',
+      epoch: 'e',
+      observedAt: 100,
+      runtimeFailure: 'replay_admission_rejected',
+      ...fields,
+    } as DiagnosticEvent;
+    expect(presentDiagnosticRuntimeFailure(event)).toBeUndefined();
+  });
+
+  it('keeps the replay observation advice when generic errors share its finding', () => {
+    i18nService.setLanguage('en', { persist: false });
+    const report = collectionReport({
+      events: [
+        { id: 'generic', runId: 'r', epoch: 'e', observedAt: 50, kind: 'chat', phase: 'error' },
+        {
+          id: 'replay',
+          runId: 'r',
+          epoch: 'e',
+          observedAt: 100,
+          kind: 'lifecycle',
+          phase: 'error',
+          runtimeFailure: 'replay_admission_rejected',
+        },
+      ],
+    });
+    const value = presentDiagnosticFinding(
+      {
+        signal: 'unknown',
+        association: 'event',
+        eventIds: ['generic', 'replay'],
+        logIds: [],
+      },
+      report,
+    );
+    expect(value.rows[0].description).toBe(
+      i18nService.t('diagnosticsRuntimeFailure_replay_admission_rejected'),
+    );
+    expect(value.advice).toBe(i18nService.t('diagnosticsHistoryAdvice_replay_admission_rejected'));
+  });
+
   it('explains the affected operation and invalid arguments instead of just repeating failure', () => {
     i18nService.setLanguage('en', { persist: false });
     const finding: DiagnosticFinding = {

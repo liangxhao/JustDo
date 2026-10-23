@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { DiagnosticRuntimeFailure } from '../../../shared/cowork/diagnostics/diagnosticRuntimeFailure';
 import type {
   DiagnosticEvent,
   DiagnosticGatewayInfo,
@@ -99,6 +100,34 @@ export class SessionDiagnosticsService {
       if (projected.event.executionSettled || projected.event.kind === 'chat') this.flush();
       // Run binding is performed by the execution owner after gatewayEvent delivery.
       this.scheduleFlush();
+      if (projected.event.runtimeFailure === DiagnosticRuntimeFailure.ReplayAdmissionRejected) {
+        // Logging is optional evidence; failure must not discard the original event.
+        try {
+          const event = projected.event;
+          console.warn(
+            JSON.stringify({
+              message: '[SessionDiagnosticsService] Native replay admission rejection observed',
+              runtimeFailure: event.runtimeFailure,
+              site: 'not_exposed',
+              source: frame.event,
+              nativeRunId: projected.nativeRunId,
+              ...(validId(sessionId) ? { sessionId } : {}),
+              ...(projected.sessionKey ? { sessionKey: projected.sessionKey } : {}),
+              ...(event.generation ? { generation: event.generation } : {}),
+              ...(event.sequence === undefined ? {} : { sequence: event.sequence }),
+              phase: event.phase,
+              ...(event.executionSettled === undefined
+                ? {}
+                : { executionSettled: event.executionSettled }),
+              ...(event.providerStarted === undefined
+                ? {}
+                : { providerStarted: event.providerStarted }),
+            }),
+          );
+        } catch {
+          // Main logging must not change storage coverage or native execution.
+        }
+      }
     } catch {
       this.storageFailed = true;
     }

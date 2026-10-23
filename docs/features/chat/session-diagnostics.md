@@ -296,6 +296,41 @@ Embedded agent 错误日志通常只写消息摘要，不保证记录栈或 expe
 证据不足时需要可控复现，或在锁定运行时的准确边界增加不含正文的受限诊断。
 保留原生身份与恢复保护，不能通过自动重发或放宽检查来消除提示，避免再次执行已消费的旧请求。
 
+当前宿主诊断不增加运行时 patch。只在原生失败的 lifecycle/chat 错误字段或
+`run-failed-before-reply` 的公开正文精确匹配完整固定文案时，保留闭合的
+`replay_admission_rejected` 观察：实时事件写入 `runtimeFailure`，失败回执写入已有
+短期证据的 `cause`。普通用户、assistant 正文、工具输出、私有 details.error、引用
+片段及截断文本不作为此类别的来源；已有结构化 `state_contention` 仍优先保留。
+该观察说明运行服务报告了轮次准入拒绝，不说明三个内部校验中哪项失败。
+
+Main 对已观测到的实时拒绝记录有模块前缀的元数据 warning，包含原有 native run、
+会话、来源、公开 phase、sequence/generation 及上游实际提供的 settled/providerStarted
+事实；没有的字段保持缺失。具体 native site 标为 `not_exposed`，没有 expected/current
+版本、anchor、walk 停止原因或原始异常正文；写日志失败不阻止既有诊断事件保留。
+诊断事件沿用已有有界 JSON 存储，无新增表、消息缓存、Gateway 请求或私有文件读取。
+
+Runtime Services 仅通过现有 `before_prompt_build` 和 `agent_end` hook 补充独立的
+原生结构化日志：前者以 info 记录到达该 hook，后者只在 `success: false` 且公开错误
+完整匹配固定文案时记录 warning，具体位置仍为 `not_exposed`。每条只保留本次 hook
+实际提供的 run/session 和有效 traceId/spanId，不读取 prompt/messages，不缓存阶段，
+不查询最新会话补齐身份；event 与 context 的 runId 冲突时不记录失败观察。写日志失败
+不改变 hook 结果。原生注册生命周期负责清理，无新增 service、全局订阅或诊断开关。
+这些元数据随现有诊断包的 `logs/native.log` 导出，不扩展界面或持久事件结构。
+到达 prompt hook 不表示其他 hook 已完成或 replay 已准入；同 run 下可能有多次 attempt，
+不能用该记录解释缺少对应 trace 的失败。初次准备失败可能没有上述 hook，继续使用
+Main 的公开错误观察；没有阶段记录也不能证明阶段未发生。
+
+界面、复制摘要和导出的 `summary.md` 说明具体校验位置及比较状态未公开。
+`report.json` 保留实时闭合标记，`session-evidence.json` 保留回执的闭合类别与原有
+`run` / `run_window` 关联；后者仍只代表本会话时间范围内，不能提升为本轮根因。
+该类别不替代 `executionSettled: true` 的整轮终态，也不授权重发。
+
+原生队列和回复错误日志先把 Error 转成消息，公开 `agent_end.error` 也只有字符串，
+且准备阶段失败未必经过该 hook。current-turn reader 的 worker 错误传递亦不保留原始
+stack。提高日志级别、记录宿主接收堆栈或使用日志调用点不能恢复三个真实抛错位置。
+因此此次宿主改动不能承诺下次一定区分三个分支；需要上游公开诊断字段或在隔离开发
+环境复现并观察原生断点，才能取得当时的版本、anchor 及导航原因。旧日志不回填。
+
 公开 `run-failed-before-reply` 回执在聊天中使用现有红色错误头像及错误行，
 不再进入未知 `custom` 角色的问号头像兜底。回执不替代整轮 lifecycle 的终态依据。
 

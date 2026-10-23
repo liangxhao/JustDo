@@ -4,6 +4,7 @@ import {
   diagnosticErrorCodes,
   isDiagnosticMetricValue,
 } from '../../../shared/cowork/diagnostics/diagnosticLogDetails';
+import { DiagnosticRuntimeFailure } from '../../../shared/cowork/diagnostics/diagnosticRuntimeFailure';
 import {
   projectDiagnosticGatewayInfo,
   projectDiagnosticRuntimeArtifact,
@@ -127,6 +128,11 @@ export function buildDiagnosticReadableFiles(
       ...(stop.outputIssue && stop.outputIssue !== stop.reason ? [strings[stop.outputIssue]] : []),
       ...(stop.outputLimited ? [strings.outputLimited] : []),
       ...(stop.recoveryExhausted ? [strings.recoveryExhausted] : []),
+      ...(report.events.some(
+        event => event.runtimeFailure === DiagnosticRuntimeFailure.ReplayAdmissionRejected,
+      )
+        ? [strings.replayAdmission]
+        : []),
       ...(references.length
         ? [
             `${strings.evidence}: ${references.map(id => `\`${id}\``).join(', ')} — report.json${stop.logIds.length ? ' / logs/index.json' : ''}`,
@@ -163,6 +169,11 @@ export function buildDiagnosticReadableFiles(
                 `### ${time(failure.timestamp)} · ${member(failure.kind, ['tool', 'model', 'runtime'])}${failure.tool ? ` · ${escape(redactDiagnosticLog(failure.tool).slice(0, 100))}` : ''}`,
                 `${strings.association}: ${member(failure.association, ['run', 'run_window'])}; session-evidence.json → failures[${Math.max(0, failures.length - 8) + position}]${failure.clipped ? ' (clipped)' : ''}`,
                 excerptBlock(failure.excerpt),
+                ...(failure.kind === 'runtime' &&
+                failure.basis === 'failure_receipt' &&
+                failure.cause === DiagnosticRuntimeFailure.ReplayAdmissionRejected
+                  ? [strings.replayAdmission]
+                  : []),
               ].join('\n\n'),
             )
             .join('\n\n')
@@ -222,6 +233,9 @@ export function buildDiagnosticReadableFiles(
           ]
         : []),
       ...(event.errorCode ? [`code=${member(event.errorCode, diagnosticErrorCodes)}`] : []),
+      ...(event.runtimeFailure === DiagnosticRuntimeFailure.ReplayAdmissionRejected
+        ? [`runtimeFailure=${event.runtimeFailure}`]
+        : []),
       ...(isDiagnosticMetricValue('exitCode', event.exitCode)
         ? [`exitCode=${event.exitCode}`]
         : []),

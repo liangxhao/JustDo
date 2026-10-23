@@ -108,8 +108,11 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsStopAdvice_waiting:
       'The run yielded control. Check pending approvals, child work or follow-up delivery; yielding is not a model failure.',
     diagnosticsHistoryRuntime: 'Run failed before a reply',
+    diagnosticsRuntimeFailure_replay_admission_rejected: 'Saved turn replay admission rejected',
     diagnosticsHistoryBasis_failure_receipt:
       'Evidence: native failure receipt saved before a reply was produced.',
+    diagnosticsHistoryAdvice_replay_admission_rejected:
+      'The native runtime rejected admission for a saved user turn. The public error does not identify which of its three checks failed or expose the compared state. Check the recorded outcome before resending, and export diagnostics with the failed computer’s version and time.',
     diagnosticsHistoryAdvice_state_contention:
       'The native runtime reported state contention. Let concurrent operations finish and retry; if it repeats, export diagnostics to investigate the state owner. Do not delete the conversation database.',
     diagnosticsEnvironmentScope:
@@ -639,7 +642,10 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsStopAdvice_waiting:
       '执行已让出控制，请检查待审批事项、子任务或后续投递；让出控制不等于模型故障。',
     diagnosticsHistoryRuntime: '回复产生前运行失败',
+    diagnosticsRuntimeFailure_replay_admission_rejected: '已保存轮次的接续校验失败',
     diagnosticsHistoryBasis_failure_receipt: '依据：原生运行服务保存的回复前失败记录。',
+    diagnosticsHistoryAdvice_replay_admission_rejected:
+      '原生运行服务拒绝接续已保存的用户轮次。公开错误不能区分三个内部校验位置，也不提供当时比较的状态。重发前先核对已记录的执行结果，并导出诊断包，保留故障电脑的版本和时间。',
     diagnosticsHistoryAdvice_state_contention:
       '原生运行服务报告状态争用。等待并发操作结束后重试；若反复出现，导出诊断包排查状态占用方，不要删除会话数据库。',
     diagnosticsEnvironmentScope:

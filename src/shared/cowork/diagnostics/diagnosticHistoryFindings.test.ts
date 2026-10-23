@@ -12,6 +12,31 @@ const failure = (overrides: Partial<DiagnosticHistoryFailure>): DiagnosticHistor
 });
 
 describe('failure excerpt suggestions', () => {
+  it('explains an observed native replay rejection without selecting an internal reason', () => {
+    expect(
+      diagnoseHistoryFailure(
+        failure({
+          kind: 'runtime',
+          basis: 'failure_receipt',
+          cause: 'replay_admission_rejected',
+        }),
+      ),
+    ).toMatchObject({
+      signal: 'unknown',
+      adviceKey: 'diagnosticsHistoryAdvice_replay_admission_rejected',
+      inferred: false,
+    });
+    expect(
+      diagnoseHistoryFailure(
+        failure({
+          kind: 'tool',
+          basis: 'result',
+          cause: 'replay_admission_rejected',
+        }),
+      ).adviceKey,
+    ).toBe('diagnosticsAdvice_tool');
+  });
+
   it('does not mistake file names, line numbers or counts for HTTP status codes', () => {
     for (const excerpt of ['Failed at line 401', 'Could not read 403.txt', '429 checks failed']) {
       expect(diagnoseHistoryFailure(failure({ excerpt }))).toMatchObject({

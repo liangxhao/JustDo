@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { DiagnosticReport } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
+import { DiagnosticExportLogs } from './exportLogs';
 import { collectDiagnosticLogs } from './logCollector';
 
 const time = Date.parse('2026-09-28T10:00:00Z');
@@ -41,6 +42,105 @@ const line = (extra: Record<string, unknown> = {}) =>
   });
 
 describe('payload-free bounded diagnostic log collection', () => {
+  it('exports structured native hook context without correlating other runs or promoting stages to errors', async () => {
+    const nativeLine = (source: string, runId = 'native-run') =>
+      JSON.stringify({
+        _meta: {
+          date: new Date(time).toISOString(),
+          logLevelName: source === 'agent_end' ? 'WARN' : 'INFO',
+        },
+        0: JSON.stringify({ subsystem: 'plugins/runtime-services' }),
+        1: {
+          source,
+          runId,
+          sessionKey: 'native-key',
+          sessionId: 'native-session',
+          traceId: '1'.repeat(32),
+          spanId: '2'.repeat(16),
+          ...(source === 'agent_end'
+            ? { runtimeFailure: 'replay_admission_rejected', site: 'not_exposed' }
+            : {}),
+        },
+        2:
+          source === 'agent_end'
+            ? '[runtime-services] Replay admission rejection observed'
+            : '[runtime-services] Prompt build hook reached',
+      });
+    const capture = new DiagnosticExportLogs();
+    const result = await collectDiagnosticLogs(
+      report(),
+      empty(),
+      {
+        lines: [
+          nativeLine('before_prompt_build'),
+          nativeLine('agent_end'),
+          nativeLine('agent_end', 'foreign-run'),
+        ],
+      },
+      {
+        nativeSessionKey: 'native-key',
+        onExportRecord: (kind, text, association, details) =>
+          capture.append(kind, text, association, details),
+      },
+    );
+    expect(result.records).toMatchObject([{ source: 'native', association: 'run', level: 'warn' }]);
+    expect(result.records).toHaveLength(1);
+    const exported = capture.finish();
+    expect(exported.index).toHaveLength(2);
+    expect(exported.index?.every(item => item.association === 'run')).toBe(true);
+    expect(exported.entries['logs/native.log']).toContain('before_prompt_build');
+    expect(exported.entries['logs/native.log']).toContain('replay_admission_rejected');
+    expect(exported.entries['logs/native.log']).toContain('"site":"not_exposed"');
+    expect(exported.entries['logs/native.log']).not.toContain('foreign-run');
+  });
+
+  it('preserves exact run association and metadata for the replay observer Main JSON log format', async () => {
+    const metadata = {
+      message: '[SessionDiagnosticsService] Native replay admission rejection observed',
+      runtimeFailure: 'replay_admission_rejected',
+      site: 'not_exposed',
+      source: 'agent',
+      nativeRunId: 'native-run',
+      sessionId: 'secret-session',
+      sessionKey: 'native-key',
+      phase: 'error',
+      sequence: 2,
+      generation: 'generation-1',
+      executionSettled: false,
+      providerStarted: false,
+    };
+    const mainLine = (extra: Record<string, unknown> = {}) =>
+      `[${new Date(time).toISOString()}] [warn] ${JSON.stringify({ ...metadata, ...extra })}`;
+    const source = await file(
+      [
+        mainLine(),
+        mainLine({ nativeRunId: 'foreign-run' }),
+        mainLine({ sessionKey: 'foreign-key' }),
+      ].join('\n'),
+    );
+    const capture = new DiagnosticExportLogs();
+    const result = await collectDiagnosticLogs(
+      report(),
+      { ...empty(), main: [source] },
+      {
+        lines: [],
+      },
+      {
+        nativeSessionKey: 'native-key',
+        onExportRecord: (kind, text, association, details) =>
+          capture.append(kind, text, association, details),
+      },
+    );
+    expect(result.records).toMatchObject([{ source: 'main', association: 'run', level: 'warn' }]);
+    expect(result.records).toHaveLength(1);
+    const exported = capture.finish();
+    expect(exported.index.map(item => item.association)).toEqual(['run']);
+    expect(exported.entries['logs/main.log']).toContain('replay_admission_rejected');
+    expect(exported.entries['logs/main.log']).toContain('"site":"not_exposed"');
+    expect(exported.entries['logs/main.log']).not.toContain('foreign-');
+    expect(exported.entries['logs/main.log']).not.toContain('expectedVersion');
+  });
+
   it('collects native exhausted reasoning-only recovery as closed model evidence', async () => {
     const result = await collectDiagnosticLogs(report(), empty(), {
       lines: [

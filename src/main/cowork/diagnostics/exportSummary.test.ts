@@ -44,6 +44,50 @@ const aliaser = () => {
 };
 
 describe('readable diagnostic archive overview', () => {
+  it.each(['en', 'zh'] as const)(
+    'explains replay rejection with unknown private checks in %s',
+    language => {
+      const input = report();
+      input.events[0].runtimeFailure = 'replay_admission_rejected';
+      input.events[0].executionSettled = undefined;
+      const files = buildDiagnosticReadableFiles(input, language, aliaser());
+      expect(files['summary.md']).toContain('replay_admission_rejected');
+      expect(files['summary.md']).toContain(
+        language === 'en'
+          ? 'does not distinguish the three internal checks'
+          : '不能区分三个内部校验位置',
+      );
+      expect(files['evidence-timeline.md']).toContain('runtimeFailure=replay');
+      expect(files['summary.md']).not.toContain('private-');
+    },
+  );
+
+  it('keeps a window-only replay receipt below the whole-run conclusion', () => {
+    const input = report();
+    input.history = {
+      status: 'scanned',
+      messagesScanned: 1,
+      omitted: 0,
+      failures: [
+        {
+          timestamp: at,
+          kind: 'runtime',
+          association: 'run_window',
+          basis: 'failure_receipt',
+          cause: 'replay_admission_rejected',
+          clipped: false,
+          excerpt: 'Persisted user turn changed before replay admission',
+        },
+      ],
+    };
+    const summary = buildDiagnosticReadableFiles(input, 'en', aliaser())['summary.md'];
+    expect(summary).toContain('run_window');
+    expect(summary.indexOf('Observed error: replay_admission_rejected')).toBeGreaterThan(
+      summary.indexOf('## Failure excerpts from conversation history'),
+    );
+    expect(input.conclusion.reason).toBe('failed');
+  });
+
   it('places missing source evidence and zero log text before run details', () => {
     const input = report();
     input.logs = {

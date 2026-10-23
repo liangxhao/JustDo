@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
-import type { DiagnosticReport } from '@shared/cowork/diagnostics/sessionDiagnostics';
+import type {
+  DiagnosticEvent,
+  DiagnosticReport,
+} from '@shared/cowork/diagnostics/sessionDiagnostics';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
 
 import CoworkSessionDiagnosticsModal from './CoworkSessionDiagnosticsModal';
+import { DiagnosticTimeline } from './SessionDiagnosticsEvidence';
 
 const report = (overrides: Partial<DiagnosticReport> = {}): DiagnosticReport => ({
   version: 1,
@@ -58,6 +62,33 @@ const open = () =>
   );
 
 describe('session diagnostics', () => {
+  it('shows the public replay observation only on failed lifecycle and chat timeline events', () => {
+    const events = [
+      { kind: 'lifecycle', phase: 'error' },
+      { kind: 'chat', phase: 'error' },
+      { kind: 'lifecycle', phase: 'end', executionSettled: true },
+      { kind: 'chat', phase: 'final' },
+      { kind: 'tool', phase: 'error' },
+      { kind: 'command', phase: 'failed' },
+      { kind: 'lifecycle', phase: 'error', runtimeFailure: 'PRIVATE_TEXT' },
+    ].map((fields, index) => ({
+      id: `event-${index}`,
+      runId: 'r',
+      epoch: 'e',
+      observedAt: 10 + index,
+      runtimeFailure: 'replay_admission_rejected',
+      ...fields,
+    })) as DiagnosticEvent[];
+    render(<DiagnosticTimeline report={report({ events })} />);
+    expect(
+      screen.getAllByText(i18nService.t('diagnosticsRuntimeFailure_replay_admission_rejected')),
+    ).toHaveLength(2);
+    expect(
+      screen.getAllByText(i18nService.t('diagnosticsHistoryAdvice_replay_admission_rejected')),
+    ).toHaveLength(2);
+    expect(screen.queryByText('PRIVATE_TEXT')).toBeNull();
+  });
+
   it.each(['completed', 'unknown', 'failed'] as const)(
     'keeps generic %s explanations collapsed while retaining concrete failure excerpts',
     async reason => {

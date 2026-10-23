@@ -2,7 +2,93 @@ import { describe, expect, it } from 'vitest';
 
 import { projectDiagnosticEvent } from './runtimeDiagnostics';
 
+const replayAdmissionError = 'Persisted user turn changed before replay admission';
+
 describe('projectDiagnosticEvent', () => {
+  it.each([
+    replayAdmissionError,
+    `Error: ${replayAdmissionError}`,
+    `Your request couldn't be completed: ${replayAdmissionError}`,
+    `Your request couldn't be completed: Error: ${replayAdmissionError}`,
+  ])('classifies only the public rejection from real failure fields: %s', error => {
+    for (const source of ['agent', 'chat'] as const) {
+      const projected = projectDiagnosticEvent(
+        {
+          event: source,
+          payload: {
+            runId: 'native-run',
+            sessionKey: 'native-session-key',
+            lifecycleGeneration: 'generation',
+            seq: 0,
+            ...(source === 'chat'
+              ? { state: 'error', errorMessage: error }
+              : {
+                  stream: 'lifecycle',
+                  data: {
+                    phase: 'error',
+                    error,
+                    executionSettled: false,
+                    stopReason: 'error',
+                  },
+                }),
+            config: { token: 'PRIVATE-CANARY' },
+          },
+        },
+        'epoch',
+        123,
+      );
+      expect(projected).toMatchObject({
+        nativeRunId: 'native-run',
+        sessionKey: 'native-session-key',
+        event: {
+          nativeRunId: 'native-run',
+          generation: 'generation',
+          sequence: 0,
+          epoch: 'epoch',
+          observedAt: 123,
+          kind: source === 'chat' ? 'chat' : 'lifecycle',
+          phase: 'error',
+          runtimeFailure: 'replay_admission_rejected',
+        },
+      });
+      expect(projected?.event.executionSettled).toBe(source === 'agent' ? false : undefined);
+      expect(projected?.event.stopReason).toBe(source === 'agent' ? 'error' : undefined);
+      expect(projected?.event.errorCode).toBeUndefined();
+      expect(projected?.event).not.toHaveProperty('site');
+      expect(JSON.stringify(projected)).not.toContain(error);
+      expect(JSON.stringify(projected)).not.toContain('PRIVATE-CANARY');
+    }
+  });
+
+  it.each([
+    ['lifecycle start', { event: 'agent', payload: { stream: 'lifecycle', data: { phase: 'start', error: replayAdmissionError } } }],
+    ['lifecycle finishing', { event: 'agent', payload: { stream: 'lifecycle', data: { phase: 'finishing', error: replayAdmissionError } } }],
+    ['lifecycle end', { event: 'agent', payload: { stream: 'lifecycle', data: { phase: 'end', error: replayAdmissionError, stopReason: 'error', executionSettled: true } } }],
+    ['chat final', { event: 'chat', payload: { state: 'final', errorMessage: replayAdmissionError } }],
+    ['chat aborted', { event: 'chat', payload: { state: 'aborted', errorMessage: replayAdmissionError } }],
+    ['ordinary chat body', { event: 'chat', payload: { state: 'error', message: { content: replayAdmissionError } } }],
+    ['chat error detail', { event: 'chat', payload: { state: 'error', errorDetail: { message: replayAdmissionError } } }],
+    ['nested chat error', { event: 'chat', payload: { state: 'error', errorMessage: { message: replayAdmissionError } } }],
+    ['ordinary lifecycle body', { event: 'agent', payload: { stream: 'lifecycle', data: { phase: 'error', text: replayAdmissionError } } }],
+    ['private lifecycle observation', { event: 'agent', payload: { stream: 'lifecycle', data: { phase: 'error', errorObservation: { error: replayAdmissionError } } } }],
+    ['nested lifecycle error', { event: 'agent', payload: { stream: 'lifecycle', data: { phase: 'error', error: { message: replayAdmissionError } } } }],
+    ['different lifecycle error', { event: 'agent', payload: { stream: 'lifecycle', data: { phase: 'error', error: `${replayAdmissionError}: PRIVATE-CANARY` } } }],
+    ['tool event', { event: 'agent', payload: { stream: 'tool', data: { phase: 'result', error: replayAdmissionError } } }],
+    ['tool channel with lifecycle shape', { event: 'session.tool', payload: { stream: 'lifecycle', data: { phase: 'error', error: replayAdmissionError } } }],
+    ['truncated chat', { event: 'chat', payload: { state: 'error', errorMessage: replayAdmissionError, truncated: true } }],
+    ['truncated lifecycle payload', { event: 'agent', payload: { stream: 'lifecycle', truncated: true, data: { phase: 'error', error: replayAdmissionError } } }],
+    ['truncated lifecycle error', { event: 'agent', payload: { stream: 'lifecycle', data: { phase: 'error', error: replayAdmissionError, truncated: true } } }],
+    ['child lifecycle', { event: 'agent', payload: { stream: 'lifecycle', spawnedBy: 'parent', data: { phase: 'error', error: replayAdmissionError } } }],
+    ['child chat', { event: 'chat', payload: { state: 'error', spawnedBy: 'parent', errorMessage: replayAdmissionError } }],
+  ])('does not classify %s as the public rejection', (_label, frame) => {
+    const projected = projectDiagnosticEvent(
+      { ...frame, payload: { runId: 'run', ...frame.payload } },
+      'epoch',
+    );
+    expect(projected?.event.runtimeFailure).toBeUndefined();
+    expect(JSON.stringify(projected ?? null)).not.toContain('PRIVATE-CANARY');
+  });
+
   it('projects unmodified native settlement without inferring a private exit branch', () => {
     const make = (data: Record<string, unknown>) =>
       projectDiagnosticEvent(

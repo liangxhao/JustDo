@@ -33,6 +33,7 @@ import { i18nService } from '@/services/i18n';
 import {
   presentDiagnosticCoverage,
   presentDiagnosticFinding,
+  presentDiagnosticRuntimeFailure,
   presentDiagnosticStop,
   visibleDiagnosticFindings,
 } from './sessionDiagnosticsPresentation';
@@ -662,6 +663,7 @@ export function DiagnosticTimeline({ report }: { report: DiagnosticReport }) {
         <ol className="diagnostics-timeline">
           {report.events.map(event => {
             const Icon = eventIcons[event.kind];
+            const runtimeFailure = presentDiagnosticRuntimeFailure(event);
             return (
               <li
                 key={event.id}
@@ -685,6 +687,12 @@ export function DiagnosticTimeline({ report }: { report: DiagnosticReport }) {
                     <p className="diagnostics-event-error">
                       {t(`diagnosticsCategory_${event.errorCategory}`)}
                     </p>
+                  )}
+                  {runtimeFailure && (
+                    <>
+                      <p className="diagnostics-event-error">{runtimeFailure.title}</p>
+                      <p className="diagnostics-muted">{t(runtimeFailure.adviceKey)}</p>
+                    </>
                   )}
                   <p className="diagnostics-event-time">
                     {t('diagnosticsObserved')}: {date(event.observedAt)}

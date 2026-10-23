@@ -31,6 +31,8 @@ export const exportSummaryTranslations = {
     timeout_gateway_draining: 'runtime draining or shutdown',
     outputLimited: 'That response also reported an output-length limit.',
     recoveryExhausted: 'Native retries were exhausted without obtaining a usable response.',
+    replayAdmission:
+      'Observed error: replay_admission_rejected. The native runtime rejected admission for a saved user turn. Its public error does not distinguish the three internal checks or expose the compared version and anchor. This observation does not establish whole-run settlement; check the recorded outcome before resending.',
     confidence: 'Evidence strength',
     confirmed: 'confirmed by native settlement',
     observed: 'observed in available evidence',
@@ -133,6 +135,8 @@ export const exportSummaryTranslations = {
     timeout_gateway_draining: '运行服务退出或关闭',
     outputLimited: '该回复还报告了输出长度限制。',
     recoveryExhausted: '原生重试次数已耗尽，仍未取得可用回复。',
+    replayAdmission:
+      '观测到错误：replay_admission_rejected。原生运行服务拒绝接续已保存的用户轮次，公开错误不能区分三个内部校验位置，也不提供当时比较的版本和 anchor。该观察不确认整轮结算；重发前先核对已记录的执行结果。',
     confidence: '证据强度',
     confirmed: '原生整轮终态已确认',
     observed: '根据现有记录判断',

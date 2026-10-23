@@ -12,6 +12,7 @@ import {
   diagnosticStages,
   isDiagnosticMetricValue,
 } from '../../../shared/cowork/diagnostics/diagnosticLogDetails';
+import { DiagnosticRuntimeFailure } from '../../../shared/cowork/diagnostics/diagnosticRuntimeFailure';
 import {
   projectDiagnosticGatewayInfo,
   projectDiagnosticRuntimeArtifact,
@@ -307,6 +308,10 @@ export function buildDiagnosticArchive(
           : member(event.replyDisposition, ['visible', 'silent', 'empty']),
       errorCode:
         event.errorCode === undefined ? undefined : member(event.errorCode, diagnosticErrorCodes),
+      runtimeFailure:
+        event.runtimeFailure === DiagnosticRuntimeFailure.ReplayAdmissionRejected
+          ? event.runtimeFailure
+          : undefined,
       statusCode:
         typeof event.statusCode === 'number' &&
         Number.isInteger(event.statusCode) &&
@@ -502,7 +507,10 @@ export function buildDiagnosticArchive(
           clipped: failure.clipped,
           association: failure.association,
           basis: member(failure.basis, ['activity', 'result', 'model', 'failure_receipt']),
-          cause: member(failure.cause, ['state_contention']),
+          cause: member(failure.cause, [
+            'state_contention',
+            DiagnosticRuntimeFailure.ReplayAdmissionRejected,
+          ]),
           outcome: member(failure.outcome, ['failed', 'blocked', 'aborted']),
         })),
       },

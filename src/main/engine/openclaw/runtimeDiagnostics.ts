@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { diagnosticErrorCodes } from '../../../shared/cowork/diagnostics/diagnosticLogDetails';
+import { identifyDiagnosticRuntimeFailure } from '../../../shared/cowork/diagnostics/diagnosticRuntimeFailure';
 import type {
   DiagnosticErrorCategory,
   DiagnosticEvent,
@@ -103,6 +104,10 @@ export function projectDiagnosticEvent(
   const sessionKey = identity(payload.sessionKey) ?? identity(data.sessionKey);
   if (frame.event === 'chat') {
     if (!['final', 'error', 'aborted'].includes(String(payload.state))) return;
+    const runtimeFailure =
+      payload.state === 'error' && payload.truncated !== true
+        ? identifyDiagnosticRuntimeFailure(payload.errorMessage)
+        : undefined;
     return {
       sessionKey,
       nativeRunId,
@@ -111,6 +116,7 @@ export function projectDiagnosticEvent(
         ...failureDetails(payload.errorDetail),
         kind: 'chat',
         phase: payload.state as DiagnosticPhase,
+        ...(runtimeFailure ? { runtimeFailure } : {}),
         ...(errorCategory(payload.errorDetail)
           ? { errorCategory: errorCategory(payload.errorDetail) }
           : {}),
@@ -132,6 +138,13 @@ export function projectDiagnosticEvent(
           : 'unknown'
         : undefined;
     const category = errorCategory(data.errorObservation);
+    const runtimeFailure =
+      frame.event === 'agent' &&
+      data.phase === 'error' &&
+      payload.truncated !== true &&
+      data.truncated !== true
+        ? identifyDiagnosticRuntimeFailure(data.error)
+        : undefined;
     return {
       sessionKey,
       nativeRunId,
@@ -140,6 +153,7 @@ export function projectDiagnosticEvent(
         ...failureDetails(data.errorObservation),
         kind: 'lifecycle',
         phase: data.phase as DiagnosticPhase,
+        ...(runtimeFailure ? { runtimeFailure } : {}),
         ...(occurredAt === undefined ? {} : { occurredAt }),
         ...(stopReason ? { stopReason } : {}),
         ...(category ? { errorCategory: category } : {}),

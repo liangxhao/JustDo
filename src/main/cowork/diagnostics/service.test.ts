@@ -589,6 +589,149 @@ describe('SessionDiagnosticsService', () => {
     },
   );
 
+  it.each(['lifecycle', 'chat'] as const)(
+    'logs only available metadata for a native %s rejection and retains the event',
+    source => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const error = 'Persisted user turn changed before replay admission';
+      service.observe({
+        event: source === 'chat' ? 'chat' : 'agent',
+        payload: {
+          runId: 'native',
+          sessionKey: 'session-key',
+          lifecycleGeneration: 'generation',
+          seq: 0,
+          ...(source === 'chat'
+            ? { state: 'error', errorMessage: error }
+            : {
+                stream: 'lifecycle',
+                data: {
+                  phase: 'error',
+                  error,
+                  executionSettled: false,
+                  providerStarted: false,
+                  errorObservation: { details: { token: 'PRIVATE-CANARY' } },
+                },
+              }),
+          config: { secret: 'PRIVATE-CANARY' },
+          message: { content: 'PRIVATE-CANARY' },
+        },
+      });
+      service.flush();
+      expect(warn).toHaveBeenCalledTimes(1);
+      const args = warn.mock.calls[0];
+      expect(args).toHaveLength(1);
+      const logged = JSON.parse(args[0] as string);
+      expect(logged).toEqual({
+        message: '[SessionDiagnosticsService] Native replay admission rejection observed',
+        runtimeFailure: 'replay_admission_rejected',
+        site: 'not_exposed',
+        source: source === 'chat' ? 'chat' : 'agent',
+        nativeRunId: 'native',
+        sessionId: 's',
+        sessionKey: 'session-key',
+        generation: 'generation',
+        sequence: 0,
+        phase: 'error',
+        ...(source === 'chat' ? {} : { executionSettled: false, providerStarted: false }),
+      });
+      const events = store.read('s', 'r').events;
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        runId: 'r',
+        nativeRunId: 'native',
+        generation: 'generation',
+        sequence: 0,
+        kind: source,
+        phase: 'error',
+        runtimeFailure: 'replay_admission_rejected',
+      });
+      expect(events[0].executionSettled).toBe(source === 'chat' ? undefined : false);
+      expect(events[0]).not.toHaveProperty('site');
+      expect(JSON.stringify({ logged, events })).not.toContain(error);
+      expect(JSON.stringify({ logged, events })).not.toContain('PRIVATE-CANARY');
+      expect(client.start).not.toHaveBeenCalled();
+      expect(client.stop).not.toHaveBeenCalled();
+      expect(request).not.toHaveBeenCalled();
+    },
+  );
+
+  it('retains pre-binding rejection evidence when optional Main logging throws', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {
+      throw new Error('PRIVATE-LOGGER-FAILURE');
+    });
+    resolved = false;
+    expect(() =>
+      service.observe({
+        event: 'agent',
+        payload: {
+          runId: 'native',
+          sessionKey: 'session-key',
+          stream: 'lifecycle',
+          data: {
+            phase: 'error',
+            error: 'Persisted user turn changed before replay admission',
+            executionSettled: false,
+          },
+        },
+      }),
+    ).not.toThrow();
+    expect(warn).toHaveBeenCalledTimes(1);
+    const logged = JSON.parse(warn.mock.calls[0][0] as string);
+    expect(logged).not.toHaveProperty('sessionId');
+    expect(logged).not.toHaveProperty('generation');
+    expect(logged).not.toHaveProperty('sequence');
+    expect(logged).not.toHaveProperty('providerStarted');
+    service.flush();
+    expect(store.read('s', 'r').events).toHaveLength(0);
+    resolved = true;
+    service.flush();
+    const report = service.read({ sessionId: 's' }, 1);
+    expect(report.events).toMatchObject([
+      {
+        nativeRunId: 'native',
+        phase: 'error',
+        executionSettled: false,
+        runtimeFailure: 'replay_admission_rejected',
+      },
+    ]);
+    expect(report.coverage).toMatchObject({ storageFailed: false, dropped: 0 });
+    expect(store.read('other', 'other-run').events).toHaveLength(0);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(client.start).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('does not log normal replies, unrelated errors or private error-like content', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = 'Persisted user turn changed before replay admission';
+    for (const frame of [
+      { event: 'chat', payload: { state: 'final', errorMessage: error } },
+      {
+        event: 'chat',
+        payload: { state: 'error', errorMessage: 'Unrelated failure', message: { content: error } },
+      },
+      {
+        event: 'agent',
+        payload: { stream: 'lifecycle', data: { phase: 'error', errorObservation: { error } } },
+      },
+      {
+        event: 'agent',
+        payload: { stream: 'lifecycle', data: { phase: 'end', executionSettled: true, error } },
+      },
+    ]) {
+      service.observe({
+        ...frame,
+        payload: { runId: 'native', sessionKey: 'session-key', ...frame.payload },
+      });
+    }
+    service.flush();
+    expect(warn).not.toHaveBeenCalled();
+    expect(store.read('s', 'r').events.every(event => event.runtimeFailure === undefined)).toBe(
+      true,
+    );
+  });
+
   it('retains pre-binding metadata until exact run and session binding is available', () => {
     resolved = false;
     service.observe({

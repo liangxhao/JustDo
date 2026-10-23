@@ -24,6 +24,10 @@ Runtime Services 提供嵌套 MCP App 历史的受限恢复 RPC：只读原生�
 按原工具和原参数读取已记录结果，缺省值按当前 schema 核对，不执行原业务工具或恢复旧工具授权。
 会话 incarnation、生命周期和配置权限变化立即使恢复视图失效，详见[MCP Apps](../features/chat/mcp-apps.md)。
 
+Runtime Services 还通过公开 prompt/agent-end hooks 记录有限的轮次准入诊断元数据，
+只观察本次 hook 的原生身份及 trace，不缓存或推断失败阶段，不改变 prompt 或原生准入。
+日志沿现有原生 JSON 导出，能力和证据缺口见[会话诊断](../features/chat/session-diagnostics.md#已保存用户轮次的准入错误)。
+
 `plugins/extensions/widget-kit` 在 `ui/` 聚合通用固定组件的 schema、组合器、
 渲染逻辑、文案与样式；`document/` 提供 HTML/JSON 安全序列化和资源初始化。
 组件单元测试归插件 `tests/`，宿主边界及打包集成测试保留在主工程。

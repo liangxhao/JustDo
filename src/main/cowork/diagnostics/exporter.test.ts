@@ -38,6 +38,44 @@ const report = (): DiagnosticReport => ({
   ],
 });
 
+it('exports a bounded replay rejection observation without changing settlement or inventing a site', () => {
+  const input = report();
+  input.events[0].phase = 'error';
+  input.events[0].runtimeFailure = 'replay_admission_rejected';
+  input.history = {
+    status: 'scanned',
+    messagesScanned: 1,
+    omitted: 0,
+    failures: [
+      {
+        kind: 'runtime',
+        basis: 'failure_receipt',
+        cause: 'replay_admission_rejected',
+        association: 'run_window',
+        timestamp: 2,
+        excerpt: 'Persisted user turn changed before replay admission',
+        clipped: false,
+      },
+    ],
+  };
+  const entries = buildDiagnosticArchive(input, '1.0.0', 'en');
+  const data = JSON.parse(entries['report.json']);
+  expect(data.events[0].runtimeFailure).toBe('replay_admission_rejected');
+  expect(data.events[0].executionSettled).toBeUndefined();
+  expect(data.events[0]).not.toHaveProperty('site');
+  expect(JSON.parse(entries['session-evidence.json']).failures[0]).toMatchObject({
+    cause: 'replay_admission_rejected',
+    association: 'run_window',
+  });
+  expect(entries['summary.md']).toContain('does not distinguish the three internal checks');
+  expect(entries['summary.md']).toContain('does not establish whole-run settlement');
+  Object.assign(input.events[0], { runtimeFailure: 'PRIVATE_RAW_TEXT' });
+  Object.assign(input.history.failures[0], { cause: 'PRIVATE_RAW_TEXT' });
+  const invalid = buildDiagnosticArchive(input, '1.0.0', 'en');
+  expect(JSON.parse(invalid['report.json']).events[0].runtimeFailure).toBeUndefined();
+  expect(JSON.stringify(invalid)).not.toContain('PRIVATE_RAW_TEXT');
+});
+
 it('exports current runtime identity and artifact fingerprints without claiming historical provenance', () => {
   const input = report();
   input.runtimeInfo = {

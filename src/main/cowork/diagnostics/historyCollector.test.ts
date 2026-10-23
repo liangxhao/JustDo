@@ -22,6 +22,119 @@ const clientWith = (request: ReturnType<typeof vi.fn>) =>
   ({ request }) as unknown as GatewayClientLike;
 
 describe('native conversation diagnostic scan', () => {
+  it.each([
+    'Persisted user turn changed before replay admission',
+    'Error: Persisted user turn changed before replay admission',
+    "Your request couldn't be completed: Persisted user turn changed before replay admission",
+    "Your request couldn't be completed: Error: Persisted user turn changed before replay admission",
+  ])('classifies the exact public replay rejection receipt (%s)', async content => {
+    const request = vi.fn().mockResolvedValue({
+      messages: [
+        {
+          role: 'custom',
+          customType: 'run-failed-before-reply',
+          timestamp: 1500,
+          __openclaw: { id: 'receipt', runId: 'run-1' },
+          content,
+        },
+      ],
+    });
+    const result = await collectDiagnosticHistory(report, clientWith(request), 'native');
+    expect(result.failures).toMatchObject([
+      {
+        kind: 'runtime',
+        basis: 'failure_receipt',
+        cause: 'replay_admission_rejected',
+        association: 'run',
+        outcome: 'failed',
+        excerpt: content,
+      },
+    ]);
+    expect(result.failures[0]).not.toHaveProperty('site');
+    expect(result.failures[0]).not.toHaveProperty('expectedVersion');
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not promote a window-only replay receipt or include a known foreign run', async () => {
+    const request = vi.fn().mockResolvedValue({
+      messages: [
+        {
+          role: 'custom',
+          customType: 'run-failed-before-reply',
+          timestamp: 1500,
+          content: 'Persisted user turn changed before replay admission',
+          __openclaw: { id: 'window' },
+        },
+        {
+          role: 'custom',
+          customType: 'run-failed-before-reply',
+          timestamp: 1600,
+          content: 'Persisted user turn changed before replay admission',
+          __openclaw: { id: 'other', runId: 'foreign' },
+        },
+      ],
+    });
+    const result = await collectDiagnosticHistory(report, clientWith(request), 'native');
+    expect(result.failures).toMatchObject([
+      {
+        kind: 'runtime',
+        cause: 'replay_admission_rejected',
+        association: 'run_window',
+      },
+    ]);
+    expect(result.failures).toHaveLength(1);
+  });
+
+  it('ignores quoted, partial and private replay text outside the exact public failure receipt', async () => {
+    const error = 'Persisted user turn changed before replay admission';
+    const request = vi.fn().mockResolvedValue({
+      messages: [
+        { role: 'user', timestamp: 1400, content: error },
+        { role: 'assistant', timestamp: 1450, content: error },
+        { role: 'assistant', stopReason: 'error', timestamp: 1500, content: error },
+        { role: 'toolResult', isError: true, timestamp: 1550, content: error },
+        { role: 'custom', customType: 'unrelated', timestamp: 1600, content: error },
+        {
+          role: 'custom',
+          customType: 'run-failed-before-reply',
+          timestamp: 1650,
+          content: `Quoted: ${error}`,
+        },
+        {
+          role: 'custom',
+          customType: 'run-failed-before-reply',
+          timestamp: 1700,
+          content: error.slice(0, -2),
+        },
+        {
+          role: 'custom',
+          customType: 'run-failed-before-reply',
+          timestamp: 1750,
+          content: 'Different public failure',
+          details: { error },
+        },
+        {
+          role: 'custom',
+          customType: 'run-failed-before-reply',
+          timestamp: 1775,
+          content: error,
+          __openclaw: { truncated: true },
+        },
+        {
+          role: 'custom',
+          customType: 'run-failed-before-reply',
+          timestamp: 1800,
+          content: error,
+          details: { errorKind: 'state_contention' },
+        },
+      ],
+    });
+    const result = await collectDiagnosticHistory(report, clientWith(request), 'native');
+    expect(result.failures).toHaveLength(7);
+    expect(result.failures.slice(0, -1).every(failure => failure.cause === undefined)).toBe(true);
+    expect(result.failures.at(-1)?.cause).toBe('state_contention');
+  });
+
   it('uses trusted receipt run identities without retaining live diagnostic events', async () => {
     const request = vi.fn().mockResolvedValue({
       messages: [

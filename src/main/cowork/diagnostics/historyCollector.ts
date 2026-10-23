@@ -1,4 +1,5 @@
 import { projectDiagnosticResponse } from '../../../shared/cowork/diagnostics/diagnosticResponse';
+import { identifyDiagnosticRuntimeFailure } from '../../../shared/cowork/diagnostics/diagnosticRuntimeFailure';
 import type {
   DiagnosticHistoryEvidence,
   DiagnosticReport,
@@ -165,6 +166,13 @@ export async function collectDiagnosticHistory(
       const identity = JSON.stringify([text(metadata.id), callId, timestamp, name, excerpt]);
       if (seen.has(identity)) continue;
       seen.add(identity);
+      const cause = runtime
+        ? details.errorKind === 'state_contention'
+          ? ('state_contention' as const)
+          : metadata.truncated === true
+            ? undefined
+            : identifyDiagnosticRuntimeFailure(content || text(item.text))
+        : undefined;
       const failure: DiagnosticHistoryEvidence['failures'][number] = {
         timestamp,
         kind: tool ? 'tool' : runtime ? 'runtime' : 'model',
@@ -172,9 +180,7 @@ export async function collectDiagnosticHistory(
         excerpt,
         clipped: sanitized.length > 1600 || metadata.truncated === true,
         association: runId && runIds.has(runId) ? 'run' : 'run_window',
-        ...(runtime && details.errorKind === 'state_contention'
-          ? { cause: 'state_contention' as const }
-          : {}),
+        ...(cause ? { cause } : {}),
         basis: runtime
           ? 'failure_receipt'
           : model

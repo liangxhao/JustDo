@@ -1,4 +1,5 @@
 import { diagnosticErrorCodes } from './diagnosticLogDetails';
+import { DiagnosticRuntimeFailure } from './diagnosticRuntimeFailure';
 import type { DiagnosticHistoryEvidence, DiagnosticLogSignal } from './sessionDiagnostics';
 
 export type DiagnosticHistoryFailure = DiagnosticHistoryEvidence['failures'][number];
@@ -40,18 +41,22 @@ export function diagnoseHistoryFailure(failure: DiagnosticHistoryFailure) {
   if (hint) signal = hint[0];
   if (failure.outcome === 'blocked') signal = 'permission';
   const adviceKey =
-    failure.cause === 'state_contention'
-      ? 'diagnosticsHistoryAdvice_state_contention'
-      : failure.outcome === 'aborted'
-        ? 'diagnosticsHistoryAdvice_aborted'
-        : failure.outcome === 'blocked'
-          ? 'diagnosticsAdvice_permission'
-          : code
-            ? `diagnosticsRemedy_${code}`
-            : failure.kind === 'tool' &&
-                ['auth', 'rate_limit', 'billing', 'provider', 'network'].includes(signal)
-              ? `diagnosticsRemedy_service_${signal}`
-              : `diagnosticsAdvice_${signal}`;
+    failure.kind === 'runtime' &&
+    failure.basis === 'failure_receipt' &&
+    failure.cause === DiagnosticRuntimeFailure.ReplayAdmissionRejected
+      ? 'diagnosticsHistoryAdvice_replay_admission_rejected'
+      : failure.cause === 'state_contention'
+        ? 'diagnosticsHistoryAdvice_state_contention'
+        : failure.outcome === 'aborted'
+          ? 'diagnosticsHistoryAdvice_aborted'
+          : failure.outcome === 'blocked'
+            ? 'diagnosticsAdvice_permission'
+            : code
+              ? `diagnosticsRemedy_${code}`
+              : failure.kind === 'tool' &&
+                  ['auth', 'rate_limit', 'billing', 'provider', 'network'].includes(signal)
+                ? `diagnosticsRemedy_service_${signal}`
+                : `diagnosticsAdvice_${signal}`;
   return {
     signal,
     adviceKey,
