@@ -1,15 +1,36 @@
 import {
   ArrowPathIcon,
   ChevronRightIcon,
+  ClipboardDocumentIcon,
+  DocumentDuplicateIcon,
   FolderIcon,
+  FolderOpenIcon,
+  FolderPlusIcon,
+  LinkIcon,
   MagnifyingGlassIcon,
+  PencilSquareIcon,
+  ScissorsIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline';
 import type { WorkspaceDirectoryEntry } from '@shared/preview/filePreview';
+import {
+  normalizeWorkspaceRelativePath,
+  WorkspaceFileMutationKind,
+  WorkspaceFileTransferMode,
+  workspaceParentDirectory,
+} from '@shared/preview/workspaceFiles';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
+import { isDomElement, useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
 import WorkspaceFileIcon from '../shared/WorkspaceFileIcon';
+import { isFilePreviewWithinPath } from './filePreviewNavigation';
+import { useWorkspaceFileClipboard } from './useWorkspaceFileClipboard';
+import WorkspaceFileNameDialog from './WorkspaceFileNameDialog';
+import WorkspaceFilesContextMenu, {
+  type WorkspaceFilesMenuItem,
+} from './WorkspaceFilesContextMenu';
 
 interface WorkspaceFilesPanelProps {
   activeFilePath?: string;
@@ -17,8 +38,17 @@ interface WorkspaceFilesPanelProps {
   revealPath?: string;
   revealVersion?: number;
   onOpenFile: (filePath: string) => void;
+  onBeforeMutation?: (affectedPaths: string[]) => Promise<boolean>;
   sessionId: string;
 }
+
+type NameDialogState = {
+  initialName: string;
+  isSubmitting?: boolean;
+} & (
+  | { kind: typeof WorkspaceFileMutationKind.Rename; entry: WorkspaceDirectoryEntry }
+  | { kind: typeof WorkspaceFileMutationKind.CreateDirectory; relativePath: string }
+);
 
 const WorkspaceFilesPanel = ({
   activeFilePath,
@@ -26,8 +56,20 @@ const WorkspaceFilesPanel = ({
   revealPath,
   revealVersion,
   onOpenFile,
+  onBeforeMutation,
   sessionId,
 }: WorkspaceFilesPanelProps) => {
+  const ownerDocument = useOwnerDocument();
+  const ownerWindow = useOwnerWindow();
+  const treeRef = useRef<HTMLDivElement>(null);
+  const [nameDialog, setNameDialog] = useState<NameDialogState | null>(null);
+  const nameSubmission = useRef<symbol | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    entry?: WorkspaceDirectoryEntry;
+    sessionId: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const [entriesByDirectory, setEntriesByDirectory] = useState<
     Record<string, WorkspaceDirectoryEntry[]>
   >({});
@@ -76,7 +118,13 @@ const WorkspaceFilesPanel = ({
           markFailed();
           return;
         }
-        setEntriesByDirectory(current => ({ ...current, [relativePath]: result.entries }));
+        setEntriesByDirectory(current => ({
+          ...current,
+          [relativePath]: result.entries.map(entry => ({
+            ...entry,
+            relativePath: normalizeWorkspaceRelativePath(entry.relativePath),
+          })),
+        }));
         setTruncatedDirectories(current => {
           const next = new Set(current);
           if (result.truncated) next.add(relativePath);
@@ -118,6 +166,12 @@ const WorkspaceFilesPanel = ({
   }, [isVisible]);
 
   useEffect(() => {
+    setContextMenu(null);
+    setNameDialog(null);
+    nameSubmission.current = null;
+  }, [sessionId, isVisible, ownerDocument]);
+
+  useEffect(() => {
     pendingRevealPath.current = null;
     if (!revealPath) return;
     const parts = revealPath.split('/');
@@ -138,10 +192,132 @@ const WorkspaceFilesPanel = ({
     node.focus();
   }, [isVisible, revealPath, revealVersion, entriesByDirectory, query, expandedDirectories]);
 
-  const refreshDirectories = () => {
+  const refreshDirectories = useCallback(() => {
     const directories = new Set(['', ...Object.keys(entriesByDirectory), ...expandedDirectories]);
     for (const directory of directories) void loadDirectory(directory);
+  }, [entriesByDirectory, expandedDirectories, loadDirectory]);
+
+  const {
+    clipboard,
+    refreshClipboard,
+    copy,
+    paste,
+    mutate,
+    clearError,
+    isReadingClipboard,
+    isWritingClipboard,
+    isTransferring,
+    affectedPaths,
+    error,
+  } = useWorkspaceFileClipboard({
+    sessionId,
+    onBeforeMutation,
+    onTransferred: refreshDirectories,
+  });
+
+  useEffect(() => {
+    if (!isVisible) return;
+    const refresh = () => {
+      void refreshClipboard();
+    };
+    ownerWindow.addEventListener('focus', refresh);
+    return () => ownerWindow.removeEventListener('focus', refresh);
+  }, [isVisible, ownerWindow, refreshClipboard]);
+
+  const openMenu = (menu: NonNullable<typeof contextMenu>) => {
+    setContextMenu(menu);
+    void refreshClipboard();
   };
+
+  const pasteDirectory = (entry?: WorkspaceDirectoryEntry) =>
+    entry?.kind === 'directory'
+      ? entry.relativePath
+      : workspaceParentDirectory(entry?.relativePath ?? '');
+
+  const startRename = (entry: WorkspaceDirectoryEntry) => {
+    if (isTransferring || isWritingClipboard || nameDialog) return;
+    clearError();
+    setContextMenu(null);
+    setNameDialog({ kind: WorkspaceFileMutationKind.Rename, entry, initialName: entry.name });
+  };
+
+  const startCreateDirectory = (entry?: WorkspaceDirectoryEntry) => {
+    if (isTransferring || isWritingClipboard || nameDialog) return;
+    clearError();
+    setContextMenu(null);
+    setNameDialog({
+      kind: WorkspaceFileMutationKind.CreateDirectory,
+      relativePath: pasteDirectory(entry),
+      initialName: i18nService.t('coworkWorkspaceFilesNewFolderDefault'),
+    });
+  };
+
+  const revealMutationResult = (relativePath: string) => {
+    const normalizedPath = normalizeWorkspaceRelativePath(relativePath);
+    const parts = normalizedPath.split('/');
+    const parents = parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join('/'));
+    pendingRevealPath.current = normalizedPath;
+    setQuery('');
+    setFocusedPath(normalizedPath);
+    setExpandedDirectories(current => new Set([...current, ...parents]));
+    void loadDirectory(workspaceParentDirectory(normalizedPath));
+  };
+
+  const submitName = async (newName: string) => {
+    if (!nameDialog || nameSubmission.current || isTransferring || isWritingClipboard) return;
+    if (nameDialog.kind === WorkspaceFileMutationKind.Rename && newName === nameDialog.entry.name) {
+      setNameDialog(null);
+      return;
+    }
+    const operation = Symbol();
+    nameSubmission.current = operation;
+    const submittedDialog = { ...nameDialog, initialName: newName, isSubmitting: true };
+    setNameDialog(submittedDialog);
+    const result = await mutate({
+      sessionId,
+      kind: submittedDialog.kind,
+      relativePath:
+        submittedDialog.kind === WorkspaceFileMutationKind.Rename
+          ? submittedDialog.entry.relativePath
+          : submittedDialog.relativePath,
+      newName,
+    });
+    if (nameSubmission.current !== operation) return;
+    nameSubmission.current = null;
+    setNameDialog(current =>
+      current === submittedDialog
+        ? result
+          ? null
+          : { ...submittedDialog, isSubmitting: false }
+        : current,
+    );
+    if (result) revealMutationResult(result.relativePath);
+  };
+
+  const trashEntry = async (entry: WorkspaceDirectoryEntry) => {
+    if (isTransferring || isWritingClipboard || nameDialog) return;
+    const result = await mutate({
+      sessionId,
+      kind: WorkspaceFileMutationKind.Trash,
+      relativePath: entry.relativePath,
+    });
+    if (!result) return;
+    const parent = workspaceParentDirectory(entry.relativePath);
+    (treeItemRefs.current.get(parent) ?? treeRef.current)?.focus();
+  };
+
+  const dismissMenu = () => {
+    setContextMenu(null);
+    const trigger = contextMenu?.entry && treeItemRefs.current.get(contextMenu.entry.relativePath);
+    (trigger || treeRef.current)?.focus();
+  };
+
+  const reportActionFailure = () =>
+    window.dispatchEvent(
+      new CustomEvent('app:showToast', {
+        detail: i18nService.t('coworkWorkspaceFilesOperationFailed'),
+      }),
+    );
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
 
@@ -195,6 +371,121 @@ const WorkspaceFilesPanel = ({
   );
   const focusedPathIsVisible = visibleTree.some(row => row.entry.relativePath === focusedPath);
 
+  const menuEntry = contextMenu?.entry;
+  const isFileMutationPending = (entry: WorkspaceDirectoryEntry) =>
+    entry.kind !== 'directory' &&
+    isTransferring &&
+    affectedPaths.some(filePath => isFilePreviewWithinPath(entry.filePath, filePath));
+  const iconClass = 'h-4 w-4 shrink-0';
+  const menuItems: WorkspaceFilesMenuItem[] = [
+    ...(menuEntry
+      ? [
+          {
+            id: 'open',
+            disabled: isFileMutationPending(menuEntry),
+            label: i18nService.t(
+              menuEntry.kind === 'directory'
+                ? expandedDirectories.has(menuEntry.relativePath)
+                  ? 'coworkWorkspaceFilesCollapseFolder'
+                  : 'coworkWorkspaceFilesExpandFolder'
+                : 'coworkWorkspaceFilesOpenFile',
+            ),
+            icon: <FolderOpenIcon className={iconClass} />,
+            onSelect: () =>
+              menuEntry.kind === 'directory'
+                ? toggleDirectory(menuEntry.relativePath)
+                : onOpenFile(menuEntry.filePath),
+          },
+          {
+            id: 'copy',
+            label: i18nService.t('coworkWorkspaceFilesCopy'),
+            icon: <DocumentDuplicateIcon className={iconClass} />,
+            separated: true,
+            disabled: isTransferring || isWritingClipboard,
+            onSelect: () => {
+              void copy(menuEntry, WorkspaceFileTransferMode.Copy);
+            },
+          },
+          {
+            id: 'cut',
+            label: i18nService.t('coworkWorkspaceFilesCut'),
+            icon: <ScissorsIcon className={iconClass} />,
+            disabled: isTransferring || isWritingClipboard,
+            onSelect: () => {
+              void copy(menuEntry, WorkspaceFileTransferMode.Move);
+            },
+          },
+        ]
+      : []),
+    {
+      id: 'new-folder',
+      label: i18nService.t('coworkWorkspaceFilesNewFolder'),
+      icon: <FolderPlusIcon className={iconClass} />,
+      disabled: isTransferring || isWritingClipboard,
+      onSelect: () => startCreateDirectory(menuEntry),
+    },
+    {
+      id: 'paste',
+      label: i18nService.t('coworkWorkspaceFilesPaste'),
+      icon: <ClipboardDocumentIcon className={iconClass} />,
+      disabled:
+        !clipboard?.paths.length || isReadingClipboard || isWritingClipboard || isTransferring,
+      onSelect: () => {
+        void paste(pasteDirectory(menuEntry));
+      },
+    },
+    ...(menuEntry
+      ? [
+          {
+            id: 'rename',
+            label: i18nService.t('coworkWorkspaceFilesRename'),
+            icon: <PencilSquareIcon className={iconClass} />,
+            separated: true,
+            disabled: isTransferring || isWritingClipboard,
+            onSelect: () => startRename(menuEntry),
+          },
+          {
+            id: 'trash',
+            label: i18nService.t('coworkWorkspaceFilesTrash'),
+            icon: <TrashIcon className={iconClass} />,
+            disabled: isTransferring || isWritingClipboard,
+            onSelect: () => {
+              void trashEntry(menuEntry);
+            },
+          },
+          {
+            id: 'copy-path',
+            label: i18nService.t('coworkWorkspaceFilesCopyPath'),
+            icon: <LinkIcon className={iconClass} />,
+            separated: true,
+            disabled: isWritingClipboard,
+            onSelect: () => {
+              void ownerWindow.navigator.clipboard
+                .writeText(menuEntry.filePath)
+                .then(refreshClipboard, reportActionFailure);
+            },
+          },
+          {
+            id: 'reveal',
+            label: i18nService.t('coworkFilePreviewShowInFolder'),
+            icon: <FolderOpenIcon className={iconClass} />,
+            onSelect: () => {
+              void window.electron.shell.showItemInFolder(menuEntry.filePath).then(result => {
+                if (!result.success) reportActionFailure();
+              }, reportActionFailure);
+            },
+          },
+        ]
+      : []),
+    {
+      id: 'refresh',
+      label: i18nService.t('coworkWorkspaceFilesRefresh'),
+      icon: <ArrowPathIcon className={iconClass} />,
+      separated: true,
+      onSelect: refreshDirectories,
+    },
+  ];
+
   return (
     <section
       className="flex h-full min-h-0 flex-col bg-background"
@@ -217,7 +508,7 @@ const WorkspaceFilesPanel = ({
           aria-busy={loadingDirectories.size > 0}
         >
           <ArrowPathIcon
-            className={`h-4 w-4 ${loadingDirectories.size > 0 ? 'animate-spin motion-reduce:animate-none' : ''}`}
+            className={`h-4 w-4 ${loadingDirectories.size > 0 ? 'animate-spin motion-reduce:animate-spin' : ''}`}
           />
         </button>
         <button
@@ -262,7 +553,81 @@ const WorkspaceFilesPanel = ({
           />
         </label>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto py-1" role="tree">
+      {error && (!nameDialog || nameDialog.isSubmitting) && (
+        <div className="shrink-0 px-3 py-2 text-xs text-destructive" role="alert">
+          {error}
+        </div>
+      )}
+      {isTransferring && (
+        <div className="shrink-0 px-3 py-2 text-xs text-muted" role="status">
+          {i18nService.t('coworkWorkspaceFilesTransferring')}
+        </div>
+      )}
+      <div
+        ref={treeRef}
+        className="min-h-0 flex-1 overflow-auto py-1"
+        role="tree"
+        tabIndex={visibleTree.length ? -1 : 0}
+        aria-busy={isTransferring}
+        onContextMenu={event => {
+          event.preventDefault();
+          openMenu({ sessionId, x: event.clientX, y: event.clientY });
+        }}
+        onKeyDown={event => {
+          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+          const itemPath = isDomElement(event.target)
+            ? event.target.closest('[role="treeitem"]')?.getAttribute('data-relative-path')
+            : null;
+          const entry = visibleTree.find(row => row.entry.relativePath === itemPath)?.entry;
+          if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+            event.preventDefault();
+            const rect = (
+              entry ? treeItemRefs.current.get(entry.relativePath) : treeRef.current
+            )?.getBoundingClientRect();
+            openMenu({ entry, sessionId, x: rect?.left ?? 8, y: rect?.bottom ?? 8 });
+          } else if (
+            (event.ctrlKey || event.metaKey) &&
+            event.shiftKey &&
+            !event.altKey &&
+            event.key.toLowerCase() === 'n'
+          ) {
+            event.preventDefault();
+            startCreateDirectory(entry);
+          } else if (
+            !event.ctrlKey &&
+            !event.metaKey &&
+            !event.altKey &&
+            !event.shiftKey &&
+            event.key === 'F2' &&
+            entry
+          ) {
+            event.preventDefault();
+            startRename(entry);
+          } else if (
+            !event.ctrlKey &&
+            !event.metaKey &&
+            !event.altKey &&
+            !event.shiftKey &&
+            event.key === 'Delete' &&
+            entry
+          ) {
+            event.preventDefault();
+            void trashEntry(entry);
+          } else if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
+            const key = event.key.toLowerCase();
+            if (key === 'v') {
+              event.preventDefault();
+              void paste(pasteDirectory(entry));
+            } else if ((key === 'c' || key === 'x') && entry) {
+              event.preventDefault();
+              void copy(
+                entry,
+                key === 'c' ? WorkspaceFileTransferMode.Copy : WorkspaceFileTransferMode.Move,
+              );
+            }
+          }
+        }}
+      >
         {loadingDirectories.has('') && !entriesByDirectory[''] ? (
           <div className="px-4 py-3 text-sm text-muted" role="status">
             {i18nService.t('loading')}
@@ -291,8 +656,10 @@ const WorkspaceFilesPanel = ({
                   }}
                   type="button"
                   role="treeitem"
+                  data-relative-path={entry.relativePath}
                   aria-expanded={isDirectory ? isExpanded : undefined}
                   aria-level={depth + 1}
+                  aria-disabled={isFileMutationPending(entry) || undefined}
                   aria-selected={!isDirectory && activeFilePath === entry.filePath}
                   tabIndex={
                     focusedPath === entry.relativePath || (!focusedPathIsVisible && index === 0)
@@ -300,9 +667,17 @@ const WorkspaceFilesPanel = ({
                       : -1
                   }
                   onFocus={() => setFocusedPath(entry.relativePath)}
-                  onClick={() =>
-                    isDirectory ? toggleDirectory(entry.relativePath) : onOpenFile(entry.filePath)
-                  }
+                  onContextMenu={event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.currentTarget.focus();
+                    setFocusedPath(entry.relativePath);
+                    openMenu({ entry, sessionId, x: event.clientX, y: event.clientY });
+                  }}
+                  onClick={() => {
+                    if (isDirectory) toggleDirectory(entry.relativePath);
+                    else if (!isFileMutationPending(entry)) onOpenFile(entry.filePath);
+                  }}
                   onKeyDown={event => {
                     if (event.key === 'ArrowDown') {
                       event.preventDefault();
@@ -337,6 +712,13 @@ const WorkspaceFilesPanel = ({
                   }}
                   className={`flex h-7 w-full items-center gap-1.5 pr-3 text-left text-sm text-foreground hover:bg-surface-raised focus-visible:bg-surface-raised focus-visible:outline-none ${
                     !isDirectory && activeFilePath === entry.filePath ? 'bg-surface-raised' : ''
+                  } ${
+                    clipboard?.mode === WorkspaceFileTransferMode.Move &&
+                    clipboard.paths.some(filePath =>
+                      isFilePreviewWithinPath(entry.filePath, filePath),
+                    )
+                      ? 'opacity-50'
+                      : ''
                   }`}
                   style={{ paddingLeft: `${8 + depth * 16}px` }}
                   title={entry.filePath}
@@ -384,6 +766,33 @@ const WorkspaceFilesPanel = ({
           </div>
         )}
       </div>
+      {isVisible && contextMenu?.sessionId === sessionId && (
+        <WorkspaceFilesContextMenu
+          key={`${contextMenu.entry?.relativePath ?? ''}:${contextMenu.x}:${contextMenu.y}`}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={menuItems}
+          onDismiss={dismissMenu}
+        />
+      )}
+      {isVisible && nameDialog && !nameDialog.isSubmitting && (
+        <WorkspaceFileNameDialog
+          initialName={nameDialog.initialName}
+          isRenaming={nameDialog.kind === WorkspaceFileMutationKind.Rename}
+          selectBasename={
+            nameDialog.kind === WorkspaceFileMutationKind.Rename && nameDialog.entry.kind === 'file'
+          }
+          error={error}
+          onChange={clearError}
+          onCancel={() => {
+            clearError();
+            setNameDialog(null);
+          }}
+          onSubmit={newName => {
+            void submitName(newName);
+          }}
+        />
+      )}
     </section>
   );
 };

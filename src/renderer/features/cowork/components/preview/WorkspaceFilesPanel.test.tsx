@@ -1,23 +1,1063 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type {
+  WorkspaceFileClipboardResult,
+  WorkspaceFileClipboardSnapshot,
+  WorkspaceFileMutationPreparation,
+  WorkspaceFilePasteOutcome,
+  WorkspaceFilePastePreparation,
+} from '@shared/preview/workspaceFiles';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
+import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
 
 import WorkspaceFilesPanel from './WorkspaceFilesPanel';
 
 const listWorkspaceDirectory = vi.fn();
+const readWorkspaceFileClipboard = vi.fn();
+const writeWorkspaceFileClipboard = vi.fn();
+const prepareWorkspaceFilePaste = vi.fn();
+const pasteWorkspaceFiles = vi.fn();
+const prepareWorkspaceFileMutation = vi.fn();
+const mutateWorkspaceFile = vi.fn();
+const writeClipboardText = vi.fn();
+const showItemInFolder = vi.fn();
+let systemClipboard: WorkspaceFileClipboardSnapshot;
+
+const succeeded = <T,>(value: T) => ({ success: true as const, value });
+const emptyClipboard = (): WorkspaceFileClipboardSnapshot => ({
+  paths: [],
+  mode: 'copy',
+  revision: 'empty',
+});
+const externalClipboard = (
+  paths = ['D:/incoming/report.md'],
+  mode: 'copy' | 'move' = 'copy',
+  revision = 'external',
+) => {
+  systemClipboard = { paths, mode, revision };
+  return systemClipboard;
+};
+const deferred = <T,>() => {
+  let resolve!: (result: T) => void;
+  const promise = new Promise<T>(settle => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
+  systemClipboard = emptyClipboard();
+  readWorkspaceFileClipboard.mockReset().mockImplementation(async () => succeeded(systemClipboard));
+  writeWorkspaceFileClipboard.mockReset().mockImplementation(async request => {
+    systemClipboard = {
+      paths: [`C:/workspace/${request.sourcePath}`],
+      mode: request.mode,
+      revision: 'written',
+    };
+    return succeeded(systemClipboard);
+  });
+  prepareWorkspaceFilePaste.mockReset().mockImplementation(async request => {
+    const targetPath = `C:/workspace${request.targetDirectory ? `/${request.targetDirectory}` : ''}`;
+    const affectedPaths = systemClipboard.paths.flatMap(sourcePath => {
+      const normalized = sourcePath.replace(/\\/g, '/');
+      const lastSlash = normalized.lastIndexOf('/');
+      if (systemClipboard.mode === 'move' && normalized.slice(0, lastSlash) === targetPath)
+        return [];
+      return [
+        ...(systemClipboard.mode === 'move' ? [sourcePath] : []),
+        `${targetPath}/${normalized.slice(lastSlash + 1)}`,
+      ];
+    });
+    return succeeded({
+      clipboard: systemClipboard,
+      affectedPaths,
+      destinationRevision: 'destination',
+    });
+  });
+  pasteWorkspaceFiles.mockReset().mockImplementation(async () => {
+    if (systemClipboard.mode === 'move') systemClipboard = emptyClipboard();
+    return succeeded({ cancelled: false, clipboard: systemClipboard });
+  });
+  prepareWorkspaceFileMutation.mockReset().mockImplementation(async request =>
+    succeeded({
+      affectedPaths:
+        request.kind === 'create-directory' ? [] : [`C:/workspace/${request.relativePath}`],
+      revision: 'mutation-1',
+      locationRevision: 'location-1',
+    }),
+  );
+  mutateWorkspaceFile.mockReset().mockImplementation(async request => {
+    const parent = request.relativePath.includes('/')
+      ? request.relativePath.slice(0, request.relativePath.lastIndexOf('/'))
+      : '';
+    return succeeded({
+      relativePath:
+        request.kind === 'trash'
+          ? request.relativePath
+          : request.kind === 'create-directory'
+            ? [request.relativePath, request.newName].filter(Boolean).join('/')
+            : [parent, request.newName].filter(Boolean).join('/'),
+    });
+  });
+  writeClipboardText.mockReset().mockImplementation(async () => {
+    systemClipboard = emptyClipboard();
+  });
+  showItemInFolder.mockReset().mockResolvedValue({ success: true });
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: writeClipboardText },
+  });
   Object.defineProperty(window, 'electron', {
     configurable: true,
-    value: { shell: { listWorkspaceDirectory } },
+    value: {
+      shell: {
+        listWorkspaceDirectory,
+        readWorkspaceFileClipboard,
+        writeWorkspaceFileClipboard,
+        prepareWorkspaceFilePaste,
+        pasteWorkspaceFiles,
+        prepareWorkspaceFileMutation,
+        mutateWorkspaceFile,
+        showItemInFolder,
+      },
+    },
   });
 });
 
 afterEach(cleanup);
+
+const mockFileOperationTree = () => {
+  listWorkspaceDirectory.mockImplementation(async (_session: string, directory = '') => ({
+    success: true,
+    truncated: false,
+    entries:
+      directory === ''
+        ? [
+            { filePath: 'C:/workspace/src', kind: 'directory', name: 'src', relativePath: 'src' },
+            {
+              filePath: 'C:/workspace/target',
+              kind: 'directory',
+              name: 'target',
+              relativePath: 'target',
+            },
+            {
+              filePath: 'C:/workspace/readme.md',
+              kind: 'file',
+              name: 'readme.md',
+              relativePath: 'readme.md',
+            },
+          ]
+        : directory === 'src'
+          ? [
+              {
+                filePath: 'C:/workspace/src/a.txt',
+                kind: 'file',
+                name: 'a.txt',
+                relativePath: 'src\\a.txt',
+              },
+            ]
+          : [],
+  }));
+};
+const menuItem = (key: Parameters<typeof i18nService.t>[0]) =>
+  screen.getByRole('menuitem', { name: i18nService.t(key) });
+const openMenu = async (target: HTMLElement) => {
+  await act(async () => {
+    fireEvent.contextMenu(target);
+  });
+};
+const choose = async (key: Parameters<typeof i18nService.t>[0]) => {
+  await act(async () => {
+    fireEvent.click(menuItem(key));
+  });
+};
+
+test('opens a file menu without opening or expanding it and supports path and reveal actions', async () => {
+  mockFileOperationTree();
+  const onOpenFile = vi.fn();
+  render(<WorkspaceFilesPanel sessionId="session" onOpenFile={onOpenFile} />);
+  const file = await screen.findByRole('treeitem', { name: 'readme.md' });
+  await openMenu(file);
+  expect(menuItem('coworkWorkspaceFilesPaste')).toHaveProperty('disabled', true);
+  expect(onOpenFile).not.toHaveBeenCalled();
+  await choose('coworkWorkspaceFilesCopyPath');
+  expect(writeClipboardText).toHaveBeenCalledWith('C:/workspace/readme.md');
+  expect(readWorkspaceFileClipboard).toHaveBeenCalledTimes(2);
+  expect(file).toBe(document.activeElement);
+  await openMenu(file);
+  await choose('coworkFilePreviewShowInFolder');
+  expect(showItemInFolder).toHaveBeenCalledWith('C:/workspace/readme.md');
+  await openMenu(screen.getByRole('treeitem', { name: 'src' }));
+  expect(screen.queryByText('a.txt')).toBeNull();
+  fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+  expect(screen.getByRole('treeitem', { name: 'src' })).toBe(document.activeElement);
+});
+
+test('pastes Explorer files and folders with Ctrl+V without opening a menu first', async () => {
+  mockFileOperationTree();
+  externalClipboard(['D:/incoming/report.md', 'D:/incoming/assets']);
+  const onBeforeMutation = vi.fn(async () => true);
+  render(
+    <WorkspaceFilesPanel
+      sessionId="session"
+      onOpenFile={vi.fn()}
+      onBeforeMutation={onBeforeMutation}
+    />,
+  );
+  await screen.findByRole('treeitem', { name: 'readme.md' });
+  fireEvent.keyDown(screen.getByRole('tree'), { key: 'v', ctrlKey: true });
+  await waitFor(() =>
+    expect(pasteWorkspaceFiles).toHaveBeenCalledWith({
+      sessionId: 'session',
+      targetDirectory: '',
+      clipboardRevision: 'external',
+      destinationRevision: 'destination',
+    }),
+  );
+  expect(onBeforeMutation).toHaveBeenCalledWith(['C:/workspace/report.md', 'C:/workspace/assets']);
+  expect(readWorkspaceFileClipboard).not.toHaveBeenCalled();
+  expect(writeWorkspaceFileClipboard).not.toHaveBeenCalled();
+});
+
+test('uses folder, file-parent and blank-root paste targets with normalized Windows paths', async () => {
+  mockFileOperationTree();
+  externalClipboard();
+  render(<WorkspaceFilesPanel sessionId="session" onOpenFile={vi.fn()} />);
+  await openMenu(await screen.findByRole('treeitem', { name: 'target' }));
+  await choose('coworkWorkspaceFilesPaste');
+  expect(prepareWorkspaceFilePaste).toHaveBeenLastCalledWith({
+    sessionId: 'session',
+    targetDirectory: 'target',
+  });
+  fireEvent.click(screen.getByRole('treeitem', { name: 'src' }));
+  await openMenu(await screen.findByRole('treeitem', { name: 'a.txt' }));
+  await choose('coworkWorkspaceFilesPaste');
+  expect(prepareWorkspaceFilePaste).toHaveBeenLastCalledWith({
+    sessionId: 'session',
+    targetDirectory: 'src',
+  });
+  await openMenu(screen.getByRole('tree'));
+  await choose('coworkWorkspaceFilesPaste');
+  expect(prepareWorkspaceFilePaste).toHaveBeenLastCalledWith({
+    sessionId: 'session',
+    targetDirectory: '',
+  });
+});
+
+test('writes copy and cut to the system clipboard and keeps it across sessions and Escape', async () => {
+  mockFileOperationTree();
+  const view = render(<WorkspaceFilesPanel sessionId="old" onOpenFile={vi.fn()} />);
+  const source = await screen.findByRole('treeitem', { name: 'readme.md' });
+  await openMenu(source);
+  await choose('coworkWorkspaceFilesCopy');
+  expect(writeWorkspaceFileClipboard).toHaveBeenLastCalledWith({
+    sessionId: 'old',
+    sourcePath: 'readme.md',
+    mode: 'copy',
+  });
+  fireEvent.keyDown(source, { key: 'x', ctrlKey: true });
+  await waitFor(() => expect(source.className).toContain('opacity-50'));
+  expect(writeWorkspaceFileClipboard).toHaveBeenLastCalledWith({
+    sessionId: 'old',
+    sourcePath: 'readme.md',
+    mode: 'move',
+  });
+  fireEvent.keyDown(source, { key: 'Escape' });
+  expect(source.className).toContain('opacity-50');
+  view.rerender(<WorkspaceFilesPanel sessionId="new" onOpenFile={vi.fn()} />);
+  const target = await screen.findByRole('treeitem', { name: 'target' });
+  fireEvent.keyDown(target, { key: 'v', ctrlKey: true });
+  await waitFor(() =>
+    expect(pasteWorkspaceFiles).toHaveBeenCalledWith({
+      sessionId: 'new',
+      targetDirectory: 'target',
+      clipboardRevision: 'written',
+      destinationRevision: 'destination',
+    }),
+  );
+  expect(writeWorkspaceFileClipboard).toHaveBeenCalledTimes(2);
+});
+
+test('keeps Paste disabled during a menu read and prepares the current clipboard again on selection', async () => {
+  mockFileOperationTree();
+  const reading = deferred<WorkspaceFileClipboardResult<WorkspaceFileClipboardSnapshot>>();
+  readWorkspaceFileClipboard.mockImplementationOnce(() => reading.promise);
+  render(<WorkspaceFilesPanel sessionId="session" onOpenFile={vi.fn()} />);
+  fireEvent.contextMenu(await screen.findByRole('treeitem', { name: 'target' }));
+  expect(menuItem('coworkWorkspaceFilesPaste')).toHaveProperty('disabled', true);
+  reading.resolve(succeeded(externalClipboard(['D:/old.md'], 'copy', 'old')));
+  await waitFor(() =>
+    expect(menuItem('coworkWorkspaceFilesPaste')).toHaveProperty('disabled', false),
+  );
+  externalClipboard(['D:/new.md'], 'copy', 'new');
+  await choose('coworkWorkspaceFilesPaste');
+  expect(pasteWorkspaceFiles).toHaveBeenCalledWith({
+    sessionId: 'session',
+    targetDirectory: 'target',
+    clipboardRevision: 'new',
+    destinationRevision: 'destination',
+  });
+});
+
+test('does not let a pending availability read block Ctrl+V or restore an older cut snapshot', async () => {
+  mockFileOperationTree();
+  const reading = deferred<WorkspaceFileClipboardResult<WorkspaceFileClipboardSnapshot>>();
+  readWorkspaceFileClipboard.mockImplementationOnce(() => reading.promise);
+  externalClipboard(['D:/new.md']);
+  render(<WorkspaceFilesPanel sessionId="session" onOpenFile={vi.fn()} />);
+  const source = await screen.findByRole('treeitem', { name: 'readme.md' });
+  fireEvent.contextMenu(source);
+  fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+  fireEvent.keyDown(source, { key: 'v', ctrlKey: true });
+  await waitFor(() => expect(pasteWorkspaceFiles).toHaveBeenCalledOnce());
+  await act(async () => {
+    reading.resolve(
+      succeeded({ paths: ['C:/workspace/readme.md'], mode: 'move', revision: 'stale' }),
+    );
+  });
+  expect(source.className).not.toContain('opacity-50');
+});
+
+test('serializes clipboard writes until they finish and leaves text-input shortcuts untouched', async () => {
+  mockFileOperationTree();
+  const writing = deferred<WorkspaceFileClipboardResult<WorkspaceFileClipboardSnapshot>>();
+  writeWorkspaceFileClipboard.mockImplementationOnce(() => writing.promise);
+  render(<WorkspaceFilesPanel sessionId="session" onOpenFile={vi.fn()} />);
+  const source = await screen.findByRole('treeitem', { name: 'readme.md' });
+  fireEvent.keyDown(source, { key: 'x', ctrlKey: true });
+  fireEvent.keyDown(source, { key: 'c', ctrlKey: true });
+  fireEvent.keyDown(source, { key: 'v', ctrlKey: true });
+  expect(writeWorkspaceFileClipboard).toHaveBeenCalledOnce();
+  expect(prepareWorkspaceFilePaste).not.toHaveBeenCalled();
+  await act(async () => {
+    writing.resolve(succeeded(externalClipboard(['C:/workspace/readme.md'], 'move', 'written')));
+  });
+  fireEvent.keyDown(screen.getByRole('textbox'), { key: 'v', ctrlKey: true });
+  expect(prepareWorkspaceFilePaste).not.toHaveBeenCalled();
+  fireEvent.keyDown(screen.getByRole('treeitem', { name: 'target' }), { key: 'v', ctrlKey: true });
+  await waitFor(() => expect(pasteWorkspaceFiles).toHaveBeenCalledOnce());
+});
+
+test('disables Copy Path until an earlier system file clipboard write finishes', async () => {
+  mockFileOperationTree();
+  const writing = deferred<WorkspaceFileClipboardResult<WorkspaceFileClipboardSnapshot>>();
+  writeWorkspaceFileClipboard.mockImplementationOnce(() => writing.promise);
+  render(<WorkspaceFilesPanel sessionId="session" onOpenFile={vi.fn()} />);
+  const source = await screen.findByRole('treeitem', { name: 'readme.md' });
+  fireEvent.keyDown(source, { key: 'c', ctrlKey: true });
+  await openMenu(source);
+  expect(menuItem('coworkWorkspaceFilesCopyPath')).toHaveProperty('disabled', true);
+  fireEvent.click(menuItem('coworkWorkspaceFilesCopyPath'));
+  expect(writeClipboardText).not.toHaveBeenCalled();
+  await act(async () => {
+    writing.resolve(succeeded(externalClipboard(['C:/workspace/readme.md'], 'copy', 'written')));
+  });
+  expect(menuItem('coworkWorkspaceFilesCopyPath')).toHaveProperty('disabled', false);
+  await choose('coworkWorkspaceFilesCopyPath');
+  expect(writeClipboardText).toHaveBeenCalledWith('C:/workspace/readme.md');
+  expect(systemClipboard.paths).toEqual([]);
+});
+
+test('guards affected source and destination previews, blocks duplicate paste and preserves cut on cancel', async () => {
+  mockFileOperationTree();
+  externalClipboard(['C:/workspace/readme.md'], 'move');
+  const decision = deferred<boolean>();
+  const onBeforeMutation = vi.fn(() => decision.promise);
+  render(
+    <WorkspaceFilesPanel
+      sessionId="session"
+      onOpenFile={vi.fn()}
+      onBeforeMutation={onBeforeMutation}
+    />,
+  );
+  const source = await screen.findByRole('treeitem', { name: 'readme.md' });
+  const target = screen.getByRole('treeitem', { name: 'target' });
+  fireEvent.keyDown(target, { key: 'v', ctrlKey: true });
+  fireEvent.keyDown(target, { key: 'v', ctrlKey: true });
+  await waitFor(() =>
+    expect(onBeforeMutation).toHaveBeenCalledWith([
+      'C:/workspace/readme.md',
+      'C:/workspace/target/readme.md',
+    ]),
+  );
+  await act(async () => {
+    decision.resolve(false);
+  });
+  expect(pasteWorkspaceFiles).not.toHaveBeenCalled();
+  expect(source.className).toContain('opacity-50');
+  expect(prepareWorkspaceFilePaste).toHaveBeenCalledOnce();
+});
+
+test('does not guard a no-op paste or invoke native paste after invalid preparation', async () => {
+  mockFileOperationTree();
+  externalClipboard(['C:/workspace/readme.md'], 'move');
+  const onBeforeMutation = vi.fn(async () => true);
+  render(
+    <WorkspaceFilesPanel
+      sessionId="session"
+      onOpenFile={vi.fn()}
+      onBeforeMutation={onBeforeMutation}
+    />,
+  );
+  const source = await screen.findByRole('treeitem', { name: 'readme.md' });
+  fireEvent.keyDown(source, { key: 'v', ctrlKey: true });
+  await waitFor(() => expect(pasteWorkspaceFiles).toHaveBeenCalledOnce());
+  await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+  expect(onBeforeMutation).not.toHaveBeenCalled();
+  prepareWorkspaceFilePaste.mockResolvedValueOnce({ success: false, code: 'invalid-target' });
+  fireEvent.keyDown(screen.getByRole('treeitem', { name: 'src' }), { key: 'v', ctrlKey: true });
+  expect((await screen.findByRole('alert')).textContent).toBe(
+    i18nService.t('coworkWorkspaceFilesInvalidTarget'),
+  );
+  expect(onBeforeMutation).not.toHaveBeenCalled();
+  expect(pasteWorkspaceFiles).toHaveBeenCalledOnce();
+});
+
+test('does not commit an old paste after changing sessions during preview confirmation', async () => {
+  mockFileOperationTree();
+  externalClipboard();
+  const decision = deferred<boolean>();
+  const onBeforeMutation = vi.fn(() => decision.promise);
+  const view = render(
+    <WorkspaceFilesPanel
+      sessionId="old"
+      onOpenFile={vi.fn()}
+      onBeforeMutation={onBeforeMutation}
+    />,
+  );
+  fireEvent.keyDown(await screen.findByRole('treeitem', { name: 'target' }), {
+    key: 'v',
+    ctrlKey: true,
+  });
+  await waitFor(() => expect(onBeforeMutation).toHaveBeenCalledOnce());
+  view.rerender(
+    <WorkspaceFilesPanel
+      sessionId="new"
+      onOpenFile={vi.fn()}
+      onBeforeMutation={onBeforeMutation}
+    />,
+  );
+  await act(async () => {
+    decision.resolve(true);
+  });
+  expect(pasteWorkspaceFiles).not.toHaveBeenCalled();
+  await openMenu(await screen.findByRole('treeitem', { name: 'target' }));
+  expect(menuItem('coworkWorkspaceFilesPaste')).toHaveProperty('disabled', false);
+  expect(writeWorkspaceFileClipboard).not.toHaveBeenCalled();
+});
+
+test('does not commit after unmounting during preparation or preview confirmation', async () => {
+  mockFileOperationTree();
+  externalClipboard();
+  const preparing = deferred<WorkspaceFileClipboardResult<WorkspaceFilePastePreparation>>();
+  prepareWorkspaceFilePaste.mockImplementationOnce(() => preparing.promise);
+  const onBeforeMutation = vi.fn(async () => true);
+  const view = render(
+    <WorkspaceFilesPanel
+      sessionId="session"
+      onOpenFile={vi.fn()}
+      onBeforeMutation={onBeforeMutation}
+    />,
+  );
+  fireEvent.keyDown(await screen.findByRole('treeitem', { name: 'target' }), {
+    key: 'v',
+    ctrlKey: true,
+  });
+  view.unmount();
+  await act(async () => {
+    preparing.resolve(
+      succeeded({
+        clipboard: systemClipboard,
+        affectedPaths: ['C:/workspace/report.md'],
+        destinationRevision: 'destination',
+      }),
+    );
+  });
+  expect(onBeforeMutation).not.toHaveBeenCalled();
+  expect(pasteWorkspaceFiles).not.toHaveBeenCalled();
+
+  const decision = deferred<boolean>();
+  onBeforeMutation.mockImplementationOnce(() => decision.promise);
+  const next = render(
+    <WorkspaceFilesPanel
+      sessionId="session"
+      onOpenFile={vi.fn()}
+      onBeforeMutation={onBeforeMutation}
+    />,
+  );
+  fireEvent.keyDown(await screen.findByRole('treeitem', { name: 'target' }), {
+    key: 'v',
+    ctrlKey: true,
+  });
+  await waitFor(() => expect(onBeforeMutation).toHaveBeenCalledOnce());
+  next.unmount();
+  await act(async () => {
+    decision.resolve(true);
+  });
+  expect(pasteWorkspaceFiles).not.toHaveBeenCalled();
+});
+
+test('blocks reopening copy-overwrite targets and move sources while native paste is pending', async () => {
+  mockFileOperationTree();
+  externalClipboard(['D:/incoming/readme.md']);
+  const transferring = deferred<WorkspaceFileClipboardResult<WorkspaceFilePasteOutcome>>();
+  pasteWorkspaceFiles.mockImplementationOnce(() => transferring.promise);
+  const onOpenFile = vi.fn();
+  render(<WorkspaceFilesPanel sessionId="session" onOpenFile={onOpenFile} />);
+  const source = await screen.findByRole('treeitem', { name: 'readme.md' });
+  fireEvent.keyDown(screen.getByRole('tree'), { key: 'v', ctrlKey: true });
+  await waitFor(() => expect(pasteWorkspaceFiles).toHaveBeenCalledOnce());
+  fireEvent.click(source);
+  expect(onOpenFile).not.toHaveBeenCalled();
+  await openMenu(source);
+  expect(menuItem('coworkWorkspaceFilesOpenFile')).toHaveProperty('disabled', true);
+  fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+  fireEvent.click(screen.getByRole('treeitem', { name: 'src' }));
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'a.txt' }));
+  expect(onOpenFile).toHaveBeenCalledWith('C:/workspace/src/a.txt');
+  await act(async () => {
+    transferring.resolve(succeeded({ cancelled: true, clipboard: systemClipboard }));
+  });
+  expect(screen.queryByRole('alert')).toBeNull();
+  fireEvent.click(source);
+  expect(onOpenFile).toHaveBeenLastCalledWith('C:/workspace/readme.md');
+
+  const moving = deferred<WorkspaceFileClipboardResult<WorkspaceFilePasteOutcome>>();
+  externalClipboard(['C:/workspace/readme.md'], 'move');
+  pasteWorkspaceFiles.mockImplementationOnce(() => moving.promise);
+  fireEvent.keyDown(screen.getByRole('treeitem', { name: 'target' }), { key: 'v', ctrlKey: true });
+  await waitFor(() => expect(pasteWorkspaceFiles).toHaveBeenCalledTimes(2));
+  onOpenFile.mockClear();
+  fireEvent.click(source);
+  expect(onOpenFile).not.toHaveBeenCalled();
+  await act(async () => {
+    moving.resolve(succeeded({ cancelled: false, clipboard: emptyClipboard() }));
+  });
+});
+
+test('refreshes newly expanded folders after a partially cancelled native paste', async () => {
+  mockFileOperationTree();
+  externalClipboard();
+  const transferring = deferred<WorkspaceFileClipboardResult<WorkspaceFilePasteOutcome>>();
+  pasteWorkspaceFiles.mockImplementationOnce(() => transferring.promise);
+  render(<WorkspaceFilesPanel sessionId="session" onOpenFile={vi.fn()} />);
+  const target = await screen.findByRole('treeitem', { name: 'target' });
+  fireEvent.keyDown(target, { key: 'v', ctrlKey: true });
+  await waitFor(() => expect(pasteWorkspaceFiles).toHaveBeenCalledOnce());
+  fireEvent.click(target);
+  await waitFor(() => expect(listWorkspaceDirectory).toHaveBeenCalledWith('session', 'target'));
+  listWorkspaceDirectory.mockClear();
+  await act(async () => {
+    transferring.resolve(succeeded({ cancelled: true, clipboard: systemClipboard }));
+  });
+  await waitFor(() => expect(listWorkspaceDirectory).toHaveBeenCalledWith('session', 'target'));
+  expect(target.getAttribute('aria-expanded')).toBe('true');
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+test('reports a changed clipboard without retrying or consuming the newer clipboard', async () => {
+  mockFileOperationTree();
+  externalClipboard();
+  pasteWorkspaceFiles.mockResolvedValueOnce({ success: false, code: 'clipboard-changed' });
+  render(<WorkspaceFilesPanel sessionId="session" onOpenFile={vi.fn()} />);
+  fireEvent.keyDown(await screen.findByRole('treeitem', { name: 'target' }), {
+    key: 'v',
+    ctrlKey: true,
+  });
+  expect((await screen.findByRole('alert')).textContent).toBe(
+    i18nService.t('coworkWorkspaceFilesClipboardChanged'),
+  );
+  expect(pasteWorkspaceFiles).toHaveBeenCalledOnce();
+  expect(prepareWorkspaceFilePaste).toHaveBeenCalledOnce();
+  expect(writeWorkspaceFileClipboard).not.toHaveBeenCalled();
+});
+
+test('provides keyboard menu navigation without intercepting text-field clipboard commands', async () => {
+  mockFileOperationTree();
+  render(<WorkspaceFilesPanel sessionId="session" onOpenFile={vi.fn()} />);
+  const source = await screen.findByRole('treeitem', { name: 'readme.md' });
+  source.focus();
+  fireEvent.keyDown(source, { key: 'F10', shiftKey: true });
+  const first = menuItem('coworkWorkspaceFilesOpenFile');
+  expect(first).toBe(document.activeElement);
+  fireEvent.keyDown(first, { key: 'ArrowDown' });
+  expect(menuItem('coworkWorkspaceFilesCopy')).toBe(document.activeElement);
+  fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+  fireEvent.keyDown(screen.getByRole('textbox'), { key: 'c', ctrlKey: true });
+  fireEvent.keyDown(screen.getByRole('textbox'), { key: 'v', ctrlKey: true });
+  expect(writeWorkspaceFileClipboard).not.toHaveBeenCalled();
+  expect(prepareWorkspaceFilePaste).not.toHaveBeenCalled();
+});
+
+test('reads the system clipboard from the owning window focus and renders its menu there', async () => {
+  mockFileOperationTree();
+  const frame = document.createElement('iframe');
+  document.body.appendChild(frame);
+  const ownerDocument = frame.contentDocument!;
+  const ownerWindow = frame.contentWindow!;
+  try {
+    const view = render(
+      <OwnerDocumentContext.Provider value={ownerDocument}>
+        <WorkspaceFilesPanel sessionId="session" onOpenFile={vi.fn()} />
+      </OwnerDocumentContext.Provider>,
+    );
+    const source = await screen.findByRole('treeitem', { name: 'readme.md' });
+    externalClipboard(['C:/workspace/readme.md'], 'move');
+    await act(async () => {
+      ownerWindow.dispatchEvent(new Event('focus'));
+    });
+    expect(readWorkspaceFileClipboard).toHaveBeenCalledOnce();
+    expect(source.className).toContain('opacity-50');
+    await openMenu(source);
+    expect(within(ownerDocument.body).getByRole('menu')).toBeTruthy();
+    expect(screen.queryByRole('menu')).toBeNull();
+    view.rerender(
+      <OwnerDocumentContext.Provider value={ownerDocument}>
+        <WorkspaceFilesPanel sessionId="session" onOpenFile={vi.fn()} isVisible={false} />
+      </OwnerDocumentContext.Provider>,
+    );
+    expect(within(ownerDocument.body).queryByRole('menu')).toBeNull();
+  } finally {
+    frame.remove();
+  }
+});
+
+test('opens a rename dialog with the basename selected and cancels without filesystem calls', async () => {
+  mockFileOperationTree();
+  const onOpenFile = vi.fn();
+  render(<WorkspaceFilesPanel sessionId="session" onOpenFile={onOpenFile} />);
+  const source = await screen.findByRole('treeitem', { name: 'readme.md' });
+  await openMenu(source);
+  await choose('coworkWorkspaceFilesRename');
+  const input = screen.getByRole('textbox', {
+    name: i18nService.t('coworkWorkspaceFilesName'),
+  }) as HTMLInputElement;
+  expect(input.value).toBe('readme.md');
+  expect(input.selectionStart).toBe(0);
+  expect(input.selectionEnd).toBe(6);
+  expect(input).toBe(document.activeElement);
+  fireEvent.keyDown(input, { key: 'Escape' });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(source).toBe(document.activeElement);
+  expect(prepareWorkspaceFileMutation).not.toHaveBeenCalled();
+  expect(onOpenFile).not.toHaveBeenCalled();
+});
+
+test('keeps a failed rename editable for retry and treats an unchanged name as a no-op', async () => {
+  mockFileOperationTree();
+  mutateWorkspaceFile.mockResolvedValueOnce({ success: false, code: 'already-exists' });
+  render(<WorkspaceFilesPanel sessionId="session" onOpenFile={vi.fn()} />);
+  const source = await screen.findByRole('treeitem', { name: 'readme.md' });
+  fireEvent.keyDown(source, { key: 'F2' });
+  await act(async () => {
+    fireEvent.submit(screen.getByRole('dialog'));
+  });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(prepareWorkspaceFileMutation).not.toHaveBeenCalled();
+  fireEvent.keyDown(source, { key: 'F2' });
+  fireEvent.change(
+    screen.getByRole('textbox', { name: i18nService.t('coworkWorkspaceFilesName') }),
+    { target: { value: '季度 report.md' } },
+  );
+  await act(async () => {
+    fireEvent.submit(screen.getByRole('dialog'));
+  });
+  expect(screen.getByRole('alert').textContent).toBe(
+    i18nService.t('coworkWorkspaceFilesAlreadyExists'),
+  );
+  const retry = screen.getByRole('textbox', { name: i18nService.t('coworkWorkspaceFilesName') });
+  expect(retry).toHaveProperty('value', '季度 report.md');
+  expect(retry).not.toHaveProperty('disabled', true);
+  fireEvent.change(retry, { target: { value: 'final.md' } });
+  await act(async () => {
+    fireEvent.submit(screen.getByRole('dialog'));
+  });
+  expect(mutateWorkspaceFile).toHaveBeenLastCalledWith({
+    sessionId: 'session',
+    kind: 'rename',
+    relativePath: 'readme.md',
+    newName: 'final.md',
+    revision: 'mutation-1',
+  });
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+test('uses a refreshed source revision after the preview guard saves an atomic file replacement', async () => {
+  mockFileOperationTree();
+  prepareWorkspaceFileMutation.mockResolvedValueOnce(
+    succeeded({
+      affectedPaths: ['C:/workspace/readme.md'],
+      revision: 'before-save',
+      locationRevision: 'location-1',
+    }),
+  );
+  prepareWorkspaceFileMutation.mockResolvedValueOnce(
+    succeeded({
+      affectedPaths: ['C:/workspace/readme.md'],
+      revision: 'after-save',
+      locationRevision: 'location-1',
+    }),
+  );
+  const onBeforeMutation = vi.fn(async () => true);
+  render(
+    <WorkspaceFilesPanel
+      sessionId="session"
+      onOpenFile={vi.fn()}
+      onBeforeMutation={onBeforeMutation}
+    />,
+  );
+  fireEvent.keyDown(await screen.findByRole('treeitem', { name: 'readme.md' }), { key: 'F2' });
+  fireEvent.change(
+    screen.getByRole('textbox', { name: i18nService.t('coworkWorkspaceFilesName') }),
+    { target: { value: 'saved.md' } },
+  );
+  await act(async () => {
+    fireEvent.submit(screen.getByRole('dialog'));
+  });
+  expect(onBeforeMutation).toHaveBeenCalledWith(['C:/workspace/readme.md']);
+  expect(prepareWorkspaceFileMutation).toHaveBeenCalledTimes(2);
+  expect(mutateWorkspaceFile).toHaveBeenCalledWith({
+    sessionId: 'session',
+    kind: 'rename',
+    relativePath: 'readme.md',
+    newName: 'saved.md',
+    revision: 'after-save',
+  });
+});
+
+test('rejects a changed set of affected paths after preview confirmation', async () => {
+  mockFileOperationTree();
+  prepareWorkspaceFileMutation.mockResolvedValueOnce(
+    succeeded({
+      affectedPaths: ['C:/workspace/readme.md'],
+      revision: 'old',
+      locationRevision: 'location-1',
+    }),
+  );
+  prepareWorkspaceFileMutation.mockResolvedValueOnce(
+    succeeded({
+      affectedPaths: ['D:/other/readme.md'],
+      revision: 'new',
+      locationRevision: 'location-1',
+    }),
+  );
+  render(
+    <WorkspaceFilesPanel
+      sessionId="session"
+      onOpenFile={vi.fn()}
+      onBeforeMutation={async () => true}
+    />,
+  );
+  fireEvent.keyDown(await screen.findByRole('treeitem', { name: 'readme.md' }), { key: 'F2' });
+  fireEvent.change(
+    screen.getByRole('textbox', { name: i18nService.t('coworkWorkspaceFilesName') }),
+    { target: { value: 'new.md' } },
+  );
+  await act(async () => {
+    fireEvent.submit(screen.getByRole('dialog'));
+  });
+  expect(mutateWorkspaceFile).not.toHaveBeenCalled();
+  expect(screen.getByRole('dialog')).toBeTruthy();
+  expect(screen.getByRole('alert')).toBeTruthy();
+});
+
+test('rejects replacing the same named parent while a preview guard is pending', async () => {
+  mockFileOperationTree();
+  prepareWorkspaceFileMutation.mockResolvedValueOnce(
+    succeeded({
+      affectedPaths: ['C:/workspace/readme.md'],
+      revision: 'old',
+      locationRevision: 'location-1',
+    }),
+  );
+  prepareWorkspaceFileMutation.mockResolvedValueOnce(
+    succeeded({
+      affectedPaths: ['C:/workspace/readme.md'],
+      revision: 'new',
+      locationRevision: 'replaced-location',
+    }),
+  );
+  render(
+    <WorkspaceFilesPanel
+      sessionId="session"
+      onOpenFile={vi.fn()}
+      onBeforeMutation={async () => true}
+    />,
+  );
+  fireEvent.keyDown(await screen.findByRole('treeitem', { name: 'readme.md' }), { key: 'F2' });
+  fireEvent.change(
+    screen.getByRole('textbox', { name: i18nService.t('coworkWorkspaceFilesName') }),
+    { target: { value: 'new.md' } },
+  );
+  await act(async () => {
+    fireEvent.submit(screen.getByRole('dialog'));
+  });
+  expect(prepareWorkspaceFileMutation).toHaveBeenCalledTimes(2);
+  expect(mutateWorkspaceFile).not.toHaveBeenCalled();
+  expect(screen.getByRole('dialog')).toBeTruthy();
+  expect(screen.getByRole('alert')).toBeTruthy();
+});
+
+test('restores the rename draft after guard cancellation and shares its operation lock with paste and delete', async () => {
+  mockFileOperationTree();
+  const decision = deferred<boolean>();
+  const onBeforeMutation = vi.fn(() => decision.promise);
+  render(
+    <WorkspaceFilesPanel
+      sessionId="session"
+      onOpenFile={vi.fn()}
+      onBeforeMutation={onBeforeMutation}
+    />,
+  );
+  const source = await screen.findByRole('treeitem', { name: 'readme.md' });
+  fireEvent.keyDown(source, { key: 'F2' });
+  fireEvent.change(
+    screen.getByRole('textbox', { name: i18nService.t('coworkWorkspaceFilesName') }),
+    { target: { value: 'draft.md' } },
+  );
+  fireEvent.submit(screen.getByRole('dialog'));
+  await waitFor(() => expect(onBeforeMutation).toHaveBeenCalledOnce());
+  expect(screen.queryByRole('dialog')).toBeNull();
+  fireEvent.keyDown(source, { key: 'Delete' });
+  fireEvent.keyDown(source, { key: 'v', ctrlKey: true });
+  fireEvent.keyDown(source, { key: 'x', ctrlKey: true });
+  expect(prepareWorkspaceFileMutation).toHaveBeenCalledOnce();
+  expect(prepareWorkspaceFilePaste).not.toHaveBeenCalled();
+  expect(writeWorkspaceFileClipboard).not.toHaveBeenCalled();
+  await act(async () => {
+    decision.resolve(false);
+  });
+  expect(mutateWorkspaceFile).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole('textbox', { name: i18nService.t('coworkWorkspaceFilesName') }),
+  ).toHaveProperty('value', 'draft.md');
+});
+
+test('deletes only a selected tree entry through recycling and preserves it when the guard cancels', async () => {
+  mockFileOperationTree();
+  const onBeforeMutation = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true);
+  render(
+    <WorkspaceFilesPanel
+      sessionId="session"
+      onOpenFile={vi.fn()}
+      onBeforeMutation={onBeforeMutation}
+    />,
+  );
+  const source = await screen.findByRole('treeitem', { name: 'readme.md' });
+  fireEvent.keyDown(source, { key: 'Delete', shiftKey: true });
+  fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Delete' });
+  fireEvent.keyDown(screen.getByRole('tree'), { key: 'Delete' });
+  expect(prepareWorkspaceFileMutation).not.toHaveBeenCalled();
+  fireEvent.keyDown(source, { key: 'Delete' });
+  await waitFor(() => expect(onBeforeMutation).toHaveBeenCalledOnce());
+  await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+  expect(mutateWorkspaceFile).not.toHaveBeenCalled();
+  await openMenu(source);
+  await choose('coworkWorkspaceFilesTrash');
+  expect(mutateWorkspaceFile).toHaveBeenCalledWith({
+    sessionId: 'session',
+    kind: 'trash',
+    relativePath: 'readme.md',
+    revision: 'mutation-1',
+  });
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+test.each([
+  ['blank', ''],
+  ['file', ''],
+  ['directory', 'src'],
+  ['nested-file', 'src'],
+])(
+  'creates a folder in the correct %s target without touching previews',
+  async (targetKind, relativePath) => {
+    mockFileOperationTree();
+    const onBeforeMutation = vi.fn(async () => true);
+    render(
+      <WorkspaceFilesPanel
+        sessionId="session"
+        onOpenFile={vi.fn()}
+        onBeforeMutation={onBeforeMutation}
+      />,
+    );
+    await screen.findByRole('treeitem', { name: 'readme.md' });
+    let target = screen.getByRole('tree');
+    if (targetKind === 'file') target = screen.getByRole('treeitem', { name: 'readme.md' });
+    if (targetKind === 'directory') target = screen.getByRole('treeitem', { name: 'src' });
+    if (targetKind === 'nested-file') {
+      fireEvent.click(screen.getByRole('treeitem', { name: 'src' }));
+      target = await screen.findByRole('treeitem', { name: 'a.txt' });
+    }
+    fireEvent.keyDown(target, { key: 'N', ctrlKey: true, shiftKey: true });
+    const input = screen.getByRole('textbox', { name: i18nService.t('coworkWorkspaceFilesName') });
+    fireEvent.change(input, { target: { value: '中文 folder' } });
+    await act(async () => {
+      fireEvent.submit(screen.getByRole('dialog'));
+    });
+    expect(mutateWorkspaceFile).toHaveBeenCalledWith({
+      sessionId: 'session',
+      kind: 'create-directory',
+      relativePath,
+      newName: '中文 folder',
+      revision: 'mutation-1',
+    });
+    expect(onBeforeMutation).not.toHaveBeenCalled();
+    expect(prepareWorkspaceFileMutation).toHaveBeenCalledOnce();
+  },
+);
+
+test('reveals and focuses a created folder without opening a file preview', async () => {
+  let created = false;
+  listWorkspaceDirectory.mockImplementation(async () => ({
+    success: true,
+    truncated: false,
+    entries: [
+      {
+        filePath: 'C:/workspace/readme.md',
+        kind: 'file',
+        name: 'readme.md',
+        relativePath: 'readme.md',
+      },
+      ...(created
+        ? [
+            {
+              filePath: 'C:/workspace/新资料',
+              kind: 'directory',
+              name: '新资料',
+              relativePath: '新资料',
+            },
+          ]
+        : []),
+    ],
+  }));
+  mutateWorkspaceFile.mockImplementationOnce(async () => {
+    created = true;
+    return succeeded({ relativePath: '新资料' });
+  });
+  const onOpenFile = vi.fn();
+  render(<WorkspaceFilesPanel sessionId="session" onOpenFile={onOpenFile} />);
+  await screen.findByRole('treeitem', { name: 'readme.md' });
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'read' } });
+  fireEvent.keyDown(screen.getByRole('tree'), { key: 'N', ctrlKey: true, shiftKey: true });
+  fireEvent.change(
+    screen.getByRole('textbox', { name: i18nService.t('coworkWorkspaceFilesName') }),
+    { target: { value: '新资料' } },
+  );
+  await act(async () => {
+    fireEvent.submit(screen.getByRole('dialog'));
+  });
+  const folder = await screen.findByRole('treeitem', { name: '新资料' });
+  await waitFor(() => expect(document.activeElement).toBe(folder));
+  expect(screen.getByRole('textbox')).toHaveProperty('value', '');
+  expect(onOpenFile).not.toHaveBeenCalled();
+});
+
+test('offers only folder creation at the root and rejects invalid names and IME submit', async () => {
+  mockFileOperationTree();
+  render(<WorkspaceFilesPanel sessionId="session" onOpenFile={vi.fn()} />);
+  await screen.findByRole('treeitem', { name: 'readme.md' });
+  await openMenu(screen.getByRole('tree'));
+  expect(
+    screen.queryByRole('menuitem', { name: i18nService.t('coworkWorkspaceFilesRename') }),
+  ).toBeNull();
+  expect(
+    screen.queryByRole('menuitem', { name: i18nService.t('coworkWorkspaceFilesTrash') }),
+  ).toBeNull();
+  await choose('coworkWorkspaceFilesNewFolder');
+  const input = screen.getByRole('textbox', { name: i18nService.t('coworkWorkspaceFilesName') });
+  fireEvent.change(input, { target: { value: '../outside' } });
+  fireEvent.submit(screen.getByRole('dialog'));
+  expect(screen.getByRole('alert').textContent).toBe(
+    i18nService.t('coworkWorkspaceFilesInvalidName'),
+  );
+  expect(prepareWorkspaceFileMutation).not.toHaveBeenCalled();
+  fireEvent.change(input, { target: { value: '中文' } });
+  fireEvent.compositionStart(input);
+  fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+  fireEvent.submit(screen.getByRole('dialog'));
+  expect(prepareWorkspaceFileMutation).not.toHaveBeenCalled();
+  fireEvent.compositionEnd(input);
+  await act(async () => {
+    fireEvent.submit(screen.getByRole('dialog'));
+  });
+  expect(mutateWorkspaceFile).toHaveBeenCalledOnce();
+});
+
+test('does not resurrect a name dialog or commit after session change during mutation preparation', async () => {
+  mockFileOperationTree();
+  const preparation = deferred<WorkspaceFileClipboardResult<WorkspaceFileMutationPreparation>>();
+  prepareWorkspaceFileMutation.mockImplementationOnce(() => preparation.promise);
+  const view = render(<WorkspaceFilesPanel sessionId="old" onOpenFile={vi.fn()} />);
+  fireEvent.keyDown(await screen.findByRole('treeitem', { name: 'readme.md' }), { key: 'F2' });
+  fireEvent.change(
+    screen.getByRole('textbox', { name: i18nService.t('coworkWorkspaceFilesName') }),
+    { target: { value: 'new.md' } },
+  );
+  fireEvent.submit(screen.getByRole('dialog'));
+  view.rerender(<WorkspaceFilesPanel sessionId="new" onOpenFile={vi.fn()} />);
+  await act(async () => {
+    preparation.resolve(
+      succeeded({
+        affectedPaths: ['C:/workspace/readme.md'],
+        revision: 'late',
+        locationRevision: 'location-1',
+      }),
+    );
+  });
+  expect(mutateWorkspaceFile).not.toHaveBeenCalled();
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+test('does not commit after the tree unmounts while mutation preview confirmation is pending', async () => {
+  mockFileOperationTree();
+  const decision = deferred<boolean>();
+  const onBeforeMutation = vi.fn(() => decision.promise);
+  const view = render(
+    <WorkspaceFilesPanel
+      sessionId="session"
+      onOpenFile={vi.fn()}
+      onBeforeMutation={onBeforeMutation}
+    />,
+  );
+  fireEvent.keyDown(await screen.findByRole('treeitem', { name: 'readme.md' }), { key: 'Delete' });
+  await waitFor(() => expect(onBeforeMutation).toHaveBeenCalledOnce());
+  view.unmount();
+  await act(async () => {
+    decision.resolve(true);
+  });
+  expect(mutateWorkspaceFile).not.toHaveBeenCalled();
+});
+
+test('renders name entry and its focus trap in a detached workspace document', async () => {
+  mockFileOperationTree();
+  const frame = document.createElement('iframe');
+  document.body.appendChild(frame);
+  const ownerDocument = frame.contentDocument!;
+  try {
+    render(
+      <OwnerDocumentContext.Provider value={ownerDocument}>
+        <WorkspaceFilesPanel sessionId="session" onOpenFile={vi.fn()} />
+      </OwnerDocumentContext.Provider>,
+    );
+    fireEvent.keyDown(await screen.findByRole('treeitem', { name: 'readme.md' }), { key: 'F2' });
+    const dialog = within(ownerDocument.body).getByRole('dialog');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const input = within(dialog).getByRole('textbox');
+    expect(ownerDocument.activeElement).toBe(input);
+    fireEvent.keyDown(input, { key: 'Tab', shiftKey: true });
+    expect(ownerDocument.activeElement).toBe(
+      within(dialog).getByRole('button', { name: i18nService.t('coworkWorkspaceFilesRename') }),
+    );
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(within(ownerDocument.body).queryByRole('dialog')).toBeNull();
+  } finally {
+    frame.remove();
+  }
+});
 
 test('loads folders lazily and opens a selected file', async () => {
   listWorkspaceDirectory.mockImplementation(async (_sessionId: string, relativePath = '') => ({

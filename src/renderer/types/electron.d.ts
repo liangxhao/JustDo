@@ -40,7 +40,8 @@ type SessionRunBeginErrorCode = import('../../shared/cowork/sessionRun').Session
 type SessionRunTiming = import('../../shared/cowork/sessionRun').SessionRunTiming;
 type CoworkSessionSource = import('../../shared/cowork/sessionSource').CoworkSessionSource;
 type SessionRuntimeSnapshot = import('../../shared/cowork/sessionRun').SessionRuntimeSnapshot;
-type ExternalSessionMetadata = import('../../shared/integrations/externalSession').ExternalSessionMetadata;
+type ExternalSessionMetadata =
+  import('../../shared/integrations/externalSession').ExternalSessionMetadata;
 type CoworkSessionDetailsResult =
   import('../../shared/cowork/sessionDetails').CoworkSessionDetailsResult<CoworkSession>;
 type CoworkSubagentDetailsResult =
@@ -1523,6 +1524,46 @@ interface IElectronAPI {
       sessionId: string,
       relativeDirectory?: string,
     ) => Promise<WorkspaceDirectoryListResult>;
+    readWorkspaceFileClipboard: () => Promise<
+      import('../../shared/preview/workspaceFiles').WorkspaceFileClipboardResult<
+        import('../../shared/preview/workspaceFiles').WorkspaceFileClipboardSnapshot
+      >
+    >;
+    writeWorkspaceFileClipboard: (
+      request: import('../../shared/preview/workspaceFiles').WorkspaceFileClipboardWriteRequest,
+    ) => Promise<
+      import('../../shared/preview/workspaceFiles').WorkspaceFileClipboardResult<
+        import('../../shared/preview/workspaceFiles').WorkspaceFileClipboardSnapshot
+      >
+    >;
+    prepareWorkspaceFilePaste: (
+      request: import('../../shared/preview/workspaceFiles').WorkspaceFilePasteTarget,
+    ) => Promise<
+      import('../../shared/preview/workspaceFiles').WorkspaceFileClipboardResult<
+        import('../../shared/preview/workspaceFiles').WorkspaceFilePastePreparation
+      >
+    >;
+    pasteWorkspaceFiles: (
+      request: import('../../shared/preview/workspaceFiles').WorkspaceFilePasteRequest,
+    ) => Promise<
+      import('../../shared/preview/workspaceFiles').WorkspaceFileClipboardResult<
+        import('../../shared/preview/workspaceFiles').WorkspaceFilePasteOutcome
+      >
+    >;
+    prepareWorkspaceFileMutation: (
+      request: import('../../shared/preview/workspaceFiles').WorkspaceFileMutationTarget,
+    ) => Promise<
+      import('../../shared/preview/workspaceFiles').WorkspaceFileClipboardResult<
+        import('../../shared/preview/workspaceFiles').WorkspaceFileMutationPreparation
+      >
+    >;
+    mutateWorkspaceFile: (
+      request: import('../../shared/preview/workspaceFiles').WorkspaceFileMutationRequest,
+    ) => Promise<
+      import('../../shared/preview/workspaceFiles').WorkspaceFileClipboardResult<
+        import('../../shared/preview/workspaceFiles').WorkspaceFileMutationOutcome
+      >
+    >;
     readPreviewFile: (
       filePath: string,
       workingDirectory?: string,

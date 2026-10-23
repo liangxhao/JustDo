@@ -240,6 +240,14 @@ import {
   type ImagePreviewOpenResult,
 } from '../shared/preview/imagePreview';
 import {
+  type WorkspaceFileClipboardWriteRequest,
+  type WorkspaceFileMutationRequest,
+  type WorkspaceFileMutationTarget,
+  type WorkspaceFilePasteRequest,
+  type WorkspaceFilePasteTarget,
+  WorkspaceFilesIpc,
+} from '../shared/preview/workspaceFiles';
+import {
   SystemPromptReplacementIpc,
   type SystemPromptReplacementRule,
 } from '../shared/prompts/systemPromptReplacements';
@@ -1238,6 +1246,17 @@ contextBridge.exposeInMainWorld('electron', {
     openPathWith: (filePath: string) => ipcRenderer.invoke(FilePreviewIpc.OpenWith, filePath),
     listWorkspaceDirectory: (sessionId: string, relativeDirectory?: string) =>
       ipcRenderer.invoke(FilePreviewIpc.ListDirectory, sessionId, relativeDirectory),
+    readWorkspaceFileClipboard: () => ipcRenderer.invoke(WorkspaceFilesIpc.ReadClipboard),
+    writeWorkspaceFileClipboard: (request: WorkspaceFileClipboardWriteRequest) =>
+      ipcRenderer.invoke(WorkspaceFilesIpc.WriteClipboard, request),
+    prepareWorkspaceFilePaste: (request: WorkspaceFilePasteTarget) =>
+      ipcRenderer.invoke(WorkspaceFilesIpc.PreparePaste, request),
+    pasteWorkspaceFiles: (request: WorkspaceFilePasteRequest) =>
+      ipcRenderer.invoke(WorkspaceFilesIpc.Paste, request),
+    prepareWorkspaceFileMutation: (request: WorkspaceFileMutationTarget) =>
+      ipcRenderer.invoke(WorkspaceFilesIpc.PrepareMutation, request),
+    mutateWorkspaceFile: (request: WorkspaceFileMutationRequest) =>
+      ipcRenderer.invoke(WorkspaceFilesIpc.Mutate, request),
     readPreviewFile: (filePath: string, workingDirectory?: string) =>
       ipcRenderer.invoke(FilePreviewIpc.Read, filePath, workingDirectory),
     authorizePreviewFileEdit: (

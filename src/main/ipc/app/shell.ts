@@ -18,11 +18,21 @@ import {
   type WorkspaceDirectoryListResult,
 } from '../../../shared/preview/filePreview';
 import {
+  isWorkspaceFileClipboardWriteRequest,
+  isWorkspaceFileMutationRequest,
+  isWorkspaceFileMutationTarget,
+  isWorkspaceFilePasteRequest,
+  isWorkspaceFilePasteTarget,
+  WorkspaceFilesIpc,
+  WorkspaceFileTransferError,
+} from '../../../shared/preview/workspaceFiles';
+import {
   isLocalHtmlPreviewUrl,
   resolveLocalHtmlPreviewFilePath,
 } from '../../browser/preview/localHtmlPreviewServer';
 import { t } from '../../core/i18n';
 import { getWorkspaceDialogOwner } from '../../core/window/workspaceWindowManager';
+import { WorkspaceFileOperations } from './workspaceFiles';
 
 const AttachmentMenuAction = {
   OPEN: 'open',
@@ -626,6 +636,55 @@ interface RegisterShellHandlersOptions {
 }
 
 export const registerShellHandlers = (options: RegisterShellHandlersOptions = {}): void => {
+  const workspaceFiles = new WorkspaceFileOperations(options.resolveWorkspaceRoot ?? (() => null));
+  const fileClipboardCaller = (event: IpcMainInvokeEvent) => {
+    const frame = event.senderFrame;
+    return () =>
+      !event.sender.isDestroyed() &&
+      event.sender.getType() === 'window' &&
+      frame === event.sender.mainFrame;
+  };
+  const denyFileClipboard = () => ({
+    success: false,
+    code: WorkspaceFileTransferError.Failed,
+    error: 'Access denied or invalid file operation',
+  });
+  ipcMain.handle(WorkspaceFilesIpc.ReadClipboard, event => {
+    if (!fileClipboardCaller(event)()) return denyFileClipboard();
+    return workspaceFiles.read();
+  });
+  ipcMain.handle(WorkspaceFilesIpc.WriteClipboard, (event, request: unknown) => {
+    const isCurrent = fileClipboardCaller(event);
+    if (!isCurrent() || !isWorkspaceFileClipboardWriteRequest(request)) return denyFileClipboard();
+    return workspaceFiles.write(request, isCurrent);
+  });
+  ipcMain.handle(WorkspaceFilesIpc.PreparePaste, (event, request: unknown) => {
+    const isCurrent = fileClipboardCaller(event);
+    if (!isCurrent() || !isWorkspaceFilePasteTarget(request)) return denyFileClipboard();
+    return workspaceFiles.prepare(request, isCurrent);
+  });
+  ipcMain.handle(WorkspaceFilesIpc.Paste, (event, request: unknown) => {
+    const isCurrent = fileClipboardCaller(event);
+    if (!isCurrent() || !isWorkspaceFilePasteRequest(request)) return denyFileClipboard();
+    const handle = getWorkspaceDialogOwner(event.sender)?.getNativeWindowHandle();
+    const owner = !handle
+      ? '0'
+      : handle.length >= 8
+        ? handle.readBigUInt64LE().toString()
+        : handle.readUInt32LE().toString();
+    return workspaceFiles.paste(request, owner, isCurrent);
+  });
+  ipcMain.handle(WorkspaceFilesIpc.PrepareMutation, (event, request: unknown) => {
+    const isCurrent = fileClipboardCaller(event);
+    if (!isCurrent() || !isWorkspaceFileMutationTarget(request)) return denyFileClipboard();
+    return workspaceFiles.prepareMutation(request, isCurrent);
+  });
+  ipcMain.handle(WorkspaceFilesIpc.Mutate, (event, request: unknown) => {
+    const isCurrent = fileClipboardCaller(event);
+    if (!isCurrent() || !isWorkspaceFileMutationRequest(request)) return denyFileClipboard();
+    return workspaceFiles.mutate(request, isCurrent);
+  });
+
   ipcMain.handle('shell:showAttachmentContextMenu', event => {
     return new Promise<string | null>(resolve => {
       let selectedAction: string | null = null;

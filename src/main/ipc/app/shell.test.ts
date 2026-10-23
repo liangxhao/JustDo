@@ -5,11 +5,32 @@ import { pathToFileURL } from 'url';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { FilePreviewIpc, MAX_PREVIEW_FILE_BYTES } from '../../../shared/preview/filePreview';
+import {
+  WorkspaceFileMutationKind,
+  WorkspaceFilesIpc,
+  WorkspaceFileTransferMode,
+} from '../../../shared/preview/workspaceFiles';
 import { createLocalHtmlPreview } from '../../browser/preview/localHtmlPreviewServer';
 
-const { ipcHandle, openExternal } = vi.hoisted(() => ({
+const { ipcHandle, openExternal, writeFileClipboard, trashFile } = vi.hoisted(() => ({
   ipcHandle: vi.fn(),
   openExternal: vi.fn(),
+  trashFile: vi.fn(async (_filePath: string) => {}),
+  writeFileClipboard: vi.fn(async (paths: string[], mode: 'copy' | 'move') => ({
+    paths,
+    mode,
+    revision: '1',
+  })),
+}));
+
+vi.mock('../../core/filesystem/windowsFileClipboard', () => ({
+  WindowsFileClipboard: class {
+    write = writeFileClipboard;
+    read = vi.fn(async () => ({ paths: [], mode: 'copy', revision: '0' }));
+    paste = vi.fn();
+    rename = vi.fn();
+    trash = trashFile;
+  },
 }));
 
 vi.mock('electron', () => ({
@@ -36,6 +57,8 @@ beforeEach(() => {
   ipcHandle.mockClear();
   openExternal.mockReset();
   openExternal.mockResolvedValue(undefined);
+  writeFileClipboard.mockClear();
+  trashFile.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -49,6 +72,101 @@ test('keeps an absolute attachment path unchanged', () => {
   const absolutePath = path.resolve('existing', 'report.pdf');
 
   expect(resolveShellOpenPath(absolutePath, path.resolve('workspace'))).toBe(absolutePath);
+});
+
+test('binds file clipboard writes to a validated window main frame and a Main-resolved workspace', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-transfer-ipc-'));
+  temporaryDirectories.push(root);
+  fs.writeFileSync(path.join(root, 'a.txt'), 'source');
+  const resolveWorkspaceRoot = vi.fn((sessionId: string) =>
+    sessionId === 'session' ? root : null,
+  );
+  registerShellHandlers({ resolveWorkspaceRoot });
+  const handler = ipcHandle.mock.calls.find(
+    ([channel]) => channel === WorkspaceFilesIpc.WriteClipboard,
+  )![1];
+  const frame = {};
+  const sender = { getType: () => 'window', mainFrame: frame, isDestroyed: () => false };
+  const request = {
+    sessionId: 'session',
+    sourcePath: 'a.txt',
+    mode: WorkspaceFileTransferMode.Copy,
+  };
+  for (const [event, payload] of [
+    [{ sender: { ...sender, getType: () => 'webview' }, senderFrame: frame }, request],
+    [{ sender, senderFrame: {} }, request],
+    [
+      { sender, senderFrame: frame },
+      { ...request, sourcePath: '../outside' },
+    ],
+    [
+      { sender, senderFrame: frame },
+      { ...request, mode: 'delete' },
+    ],
+    [{ sender, senderFrame: frame }, null],
+  ]) {
+    expect(await handler(event, payload)).toMatchObject({ success: false });
+  }
+  expect(resolveWorkspaceRoot).not.toHaveBeenCalled();
+  expect(fs.readdirSync(root)).toEqual(['a.txt']);
+
+  await expect(handler({ sender, senderFrame: frame }, request)).resolves.toMatchObject({
+    success: true,
+  });
+  expect(writeFileClipboard).toHaveBeenCalledWith(
+    [path.join(root, 'a.txt')],
+    WorkspaceFileTransferMode.Copy,
+  );
+  expect(fs.readdirSync(root)).toEqual(['a.txt']);
+});
+
+test('restricts every file clipboard bridge to a window main frame', async () => {
+  registerShellHandlers();
+  const frame = {};
+  for (const channel of Object.values(WorkspaceFilesIpc)) {
+    const handler = ipcHandle.mock.calls.find(([name]) => name === channel)![1];
+    for (const event of [
+      {
+        sender: { getType: () => 'webview', mainFrame: frame, isDestroyed: () => false },
+        senderFrame: frame,
+      },
+      {
+        sender: { getType: () => 'window', mainFrame: frame, isDestroyed: () => false },
+        senderFrame: {},
+      },
+    ])
+      expect(await handler(event, {})).toMatchObject({ success: false });
+  }
+});
+
+test('routes deletion exclusively to the system recycle bin after source validation', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-mutation-ipc-'));
+  temporaryDirectories.push(root);
+  const filePath = path.join(root, 'a.txt');
+  fs.writeFileSync(filePath, 'keep');
+  registerShellHandlers({ resolveWorkspaceRoot: sessionId => sessionId === 'session' ? root : null });
+  const prepare = ipcHandle.mock.calls.find(([name]) => name === WorkspaceFilesIpc.PrepareMutation)![1];
+  const mutate = ipcHandle.mock.calls.find(([name]) => name === WorkspaceFilesIpc.Mutate)![1];
+  const frame = {};
+  const sender = { getType: () => 'window', mainFrame: frame, isDestroyed: () => false };
+  const event = { sender, senderFrame: frame };
+  const target = { sessionId: 'session', relativePath: 'a.txt', kind: WorkspaceFileMutationKind.Trash };
+  for (const payload of [null, {}, { ...target, relativePath: '' }, { ...target, relativePath: '../outside' }, { ...target, kind: 'remove' }]) {
+    expect(await prepare(event, payload)).toMatchObject({ success: false });
+    expect(await mutate(event, payload)).toMatchObject({ success: false });
+  }
+  expect(trashFile).not.toHaveBeenCalled();
+  const preparation = await prepare(event, target);
+  expect(preparation).toMatchObject({ success: true, value: { affectedPaths: [filePath] } });
+  trashFile.mockRejectedValueOnce(new Error('Not recyclable'));
+  expect(await mutate(event, { ...target, revision: preparation.value.revision })).toMatchObject({ success: false });
+  expect(trashFile).toHaveBeenCalledExactlyOnceWith(filePath, {
+    dev: fs.lstatSync(filePath, { bigint: true }).dev.toString(),
+    ino: fs.lstatSync(filePath, { bigint: true }).ino.toString(),
+    parentDev: fs.lstatSync(root, { bigint: true }).dev.toString(),
+    parentIno: fs.lstatSync(root, { bigint: true }).ino.toString(),
+  });
+  expect(fs.readFileSync(filePath, 'utf8')).toBe('keep');
 });
 
 test('resolves an existing relative attachment path against the session working directory', () => {

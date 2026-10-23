@@ -2,8 +2,17 @@ import { describe, expect, test, vi } from 'vitest';
 
 import {
   isCurrentFilePreviewRequest,
+  isFilePreviewWithinPath,
   runGuardedFilePreviewNavigation,
 } from './filePreviewNavigation';
+
+test('matches only the moved file or its descendants, including Windows paths', () => {
+  expect(isFilePreviewWithinPath('C:\\Work\\src\\a.txt', 'c:/work/src')).toBe(true);
+  expect(isFilePreviewWithinPath('C:/work/src', 'C:\\work\\src')).toBe(true);
+  expect(isFilePreviewWithinPath('C:/work/src-other/a.txt', 'C:/work/src')).toBe(false);
+  expect(isFilePreviewWithinPath('/work/Src/a.txt', '/work/src')).toBe(false);
+  expect(isFilePreviewWithinPath('\\\\server\\share\\src\\a.txt', '//SERVER/share/src')).toBe(true);
+});
 
 describe('runGuardedFilePreviewNavigation', () => {
   test('does not navigate when the user cancels the pending file transition', async () => {

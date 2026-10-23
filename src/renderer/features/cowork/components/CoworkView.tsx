@@ -126,7 +126,10 @@ import { useHomeFileApps } from '@/features/cowork/components/mcpApps/useHomeFil
 import FilePreviewDrawer, {
   type FilePreviewDrawerHandle,
 } from '@/features/cowork/components/preview/FilePreviewDrawer';
-import { type FilePreviewNavigationOptions } from '@/features/cowork/components/preview/filePreviewNavigation';
+import {
+  type FilePreviewNavigationOptions,
+  isFilePreviewWithinPath,
+} from '@/features/cowork/components/preview/filePreviewNavigation';
 import { IMAGE_PREVIEW_EVENT } from '@/features/cowork/components/preview/imageFilePreview';
 import { openSummaryResource } from '@/features/cowork/components/preview/openSummaryResource';
 import UnsupportedFilePreview from '@/features/cowork/components/preview/UnsupportedFilePreview';
@@ -1748,6 +1751,35 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       selectAdjacentDisplayTabAfterClose(tabId);
     },
     [selectAdjacentDisplayTabAfterClose, setUnsupportedFilePreviews],
+  );
+
+  const prepareWorkspaceFileMutation = useCallback(
+    async (affectedPaths: string[]): Promise<boolean> => {
+      if (!affectedPaths.length) return true;
+      const sourceSession = currentSessionIdRef.current;
+      const isAffected = (filePath: string) =>
+        affectedPaths.some(sourcePath => isFilePreviewWithinPath(filePath, sourcePath));
+      const affected = filePreviewsRef.current.filter(preview => isAffected(preview.filePath));
+      for (const preview of affected) {
+        const drawer = filePreviewDrawerRefs.current.get(fileDisplayTabId(preview.filePath));
+        if (drawer && !(await drawer.requestTransition())) return false;
+        if (currentSessionIdRef.current !== sourceSession) return false;
+      }
+      // Edit grants and native viewers still point at the old path. Close only the
+      // affected previews after their unsaved-change guards have been resolved.
+      filePreviewRequestIdRef.current += 1;
+      setFilePreviews(current => current.filter(preview => !isAffected(preview.filePath)));
+      setUnsupportedFilePreviews(current => current.filter(filePath => !isAffected(filePath)));
+      const affectedTabIds = new Set([
+        ...affected.map(preview => fileDisplayTabId(preview.filePath)),
+        ...unsupportedFilePreviewsRef.current.filter(isAffected).map(fileDisplayTabId),
+      ]);
+      setPreferredDisplayTabId(current =>
+        current && affectedTabIds.has(current) ? null : current,
+      );
+      return true;
+    },
+    [setFilePreviews, setUnsupportedFilePreviews, setPreferredDisplayTabId],
   );
 
   useImperativeHandle(
@@ -3484,11 +3516,16 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               )}
             </div>
             {/* Messages */}
-            <RestoredHistoryNotice key={currentSession.id} sessionId={currentSession.id}
+            <RestoredHistoryNotice
+              key={currentSession.id}
+              sessionId={currentSession.id}
               binding={currentSession.historyBinding}
-              onWorkspaceChanged={() => coworkService.loadSession(currentSession.id, {
-                canSelect: () => currentSessionIdRef.current === currentSession.id,
-              })} />
+              onWorkspaceChanged={() =>
+                coworkService.loadSession(currentSession.id, {
+                  canSelect: () => currentSessionIdRef.current === currentSession.id,
+                })
+              }
+            />
             <JustDoChatWrapper
               key="chat-controller"
               onMcpAppMenuChange={setMcpAppMenu}
@@ -3763,6 +3800,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 currentSessionFolderPath && !currentSession.id.startsWith('temp-') ? (
                   <WorkspaceFilesPanel
                     key={`${currentSession.id}:${currentSessionFolderPath}`}
+                    onBeforeMutation={prepareWorkspaceFileMutation}
                     isVisible={isWorkspaceVisible && isWorkspaceFilesOpen}
                     revealPath={filesRevealPath}
                     revealVersion={filesRevealVersion}
@@ -4104,6 +4142,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     filePreviewDrawerRefs,
     closeFilePreview,
     closeUnsupportedFilePreview,
+    prepareWorkspaceFileMutation,
   });
 });
 

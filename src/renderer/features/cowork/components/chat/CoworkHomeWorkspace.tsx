@@ -27,7 +27,10 @@ import {
   MAX_TERMINAL_TABS,
   WORKSPACE_FILES_DISPLAY_TAB_ID,
 } from '../display/tabs/displayTabIds';
-import type { CoworkTerminalTab, SessionDisplayState } from '../display/tabs/useSessionDisplayState';
+import type {
+  CoworkTerminalTab,
+  SessionDisplayState,
+} from '../display/tabs/useSessionDisplayState';
 import type { McpAppComposerMenu } from '../mcpApps/McpAppsControls';
 import type { FilePreview } from '../preview/FilePreviewDrawer';
 
@@ -87,6 +90,7 @@ interface CoworkHomeWorkspaceProps {
   filePreviewDrawerRefs: React.MutableRefObject<Map<string, FilePreviewDrawerHandle>>;
   closeFilePreview: (filePath: string) => Promise<boolean>;
   closeUnsupportedFilePreview: (filePath: string) => void;
+  prepareWorkspaceFileMutation?: (affectedPaths: string[]) => Promise<boolean>;
 }
 
 export function renderCoworkHomeWorkspace({
@@ -129,6 +133,7 @@ export function renderCoworkHomeWorkspace({
   filePreviewDrawerRefs,
   closeFilePreview,
   closeUnsupportedFilePreview,
+  prepareWorkspaceFileMutation,
 }: CoworkHomeWorkspaceProps) {
   return (
     <div className="cowork-home flex-1 flex flex-col h-full">
@@ -234,6 +239,7 @@ export function renderCoworkHomeWorkspace({
                   isVisible={(isDisplayPanelOpen || isWorkspaceDetached) && isWorkspaceFilesOpen}
                   activeFilePath={activeFilePreview?.filePath ?? activeUnsupportedFilePath}
                   sessionId={HOME_WORKSPACE_SESSION_ID}
+                  onBeforeMutation={prepareWorkspaceFileMutation}
                   onOpenFile={filePath => {
                     window.dispatchEvent(
                       new CustomEvent('cowork:preview-file', {
