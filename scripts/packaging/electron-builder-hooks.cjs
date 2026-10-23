@@ -123,7 +123,8 @@ const {
   verifyOpenClawPatchManifest,
 } = require('../openclaw/verify-openclaw-runtime-patches.cjs');
 const { PATCH_DEPENDENCY_ARTIFACT_PATHS } = require('../openclaw/openclaw-patch-dependencies.cjs');
-const { createMulticaAgentLauncher } = require('../multica/create-multica-agent-launcher.cjs');
+const { createAgentCliLauncher } = require('../external-agent/create-agent-cli-launcher.cjs');
+const { getAgentCliCommandName } = require('../../src/shared/integrations/agentCli.ts');
 const {
   verifyMxcNativeBinaries,
   verifyMxcSandboxPlugin,
@@ -1129,8 +1130,11 @@ async function afterPack(context) {
 
   if (isWindowsTarget(context)) {
     verifyPackagedWindowsNativeModules(context);
-    const productFilename = context.packager.appInfo.productFilename;
-    createMulticaAgentLauncher(path.join(context.appOutDir, `${productFilename}-agent.exe`));
+    const productName = context.packager.appInfo.productName;
+    createAgentCliLauncher(
+      path.join(context.appOutDir, `${getAgentCliCommandName(productName)}.exe`),
+      { productName, version: context.packager.appInfo.version },
+    );
     const resourcesRoot = path.join(context.appOutDir, 'resources');
     const updateConfigPath = path.join(resourcesRoot, 'app-update.yml');
     const configuredMarkerPath = path.join(resourcesRoot, '.justdo-auto-update-configured');
@@ -1228,9 +1232,10 @@ async function verifyPackagedApplicationLegalMetadata(
     // electron-builder hoists npm's nested production dependencies. Bind each
     // staged package to its installed metadata using the builder's actual
     // metadata transform, rather than assuming its original filesystem path.
-    const candidates = [prefix, ...sourcePackages.filter(
-      relative => relative.split('node_modules/').at(-1) === name,
-    )].map(relative => path.join(repoRoot, relative));
+    const candidates = [
+      prefix,
+      ...sourcePackages.filter(relative => relative.split('node_modules/').at(-1) === name),
+    ].map(relative => path.join(repoRoot, relative));
     // Linked packages can resolve dependencies from an installed tree that is
     // absent from the root lockfile. Inspect those physical package boundaries
     // too, with real-path cycle protection, and keep the exact metadata check.
@@ -1809,20 +1814,21 @@ async function verifyPackagedOpenClawRuntime(context) {
         getOpenClawRuntimeBuildHint(resolveOpenClawRuntimeTargetId(context)),
         'Packaged Windows OpenClaw CLI runtime',
       );
+      // The archived build proof owns this target. A mutable local "current"
+      // runtime can point to another architecture or be absent during verification.
+      const packagedInstallTarget = resolveRuntimeInstallTarget(
+        path.join(temporaryRoot, 'cfmind'),
+      );
       verifyAcpxArtifactEntryPaths(
         archiveEntryPaths,
         'cfmind/',
-        resolveRuntimeInstallTarget(
-          path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
-        ),
+        packagedInstallTarget,
         'packaged Windows archive',
       );
       verifyMxcArtifactEntryPaths(
         archiveEntryPaths,
         'cfmind/',
-        resolveRuntimeInstallTarget(
-          path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
-        ),
+        packagedInstallTarget,
         'packaged Windows archive',
       );
       verifyRuntimeWorkerEntries(

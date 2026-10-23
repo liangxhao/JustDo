@@ -246,7 +246,7 @@ it.each(['open', 'closing'] as const)(
 );
 
 describe('sidebar browser extension group', () => {
-  it('defaults to collapsed, keeps browser sessions out of recent and user groups, and leaves Multica separate', () => {
+  it('keeps browser sessions out of recent and user groups and preserves a neutral historical external group', () => {
     const store = createStore();
     store.dispatch(
       setGroups([{ id: 'work', name: 'Work', color: '#359daf', sortOrder: 0, createdAt: 1 }]),
@@ -256,7 +256,7 @@ describe('sidebar browser extension group', () => {
       ...browserSessions,
       summary('Desktop chat', 3),
       {
-        ...summary('Multica chat', 4),
+        ...summary('Historical external chat', 4),
         external: {
           origin: 'multica',
           readOnly: true,
@@ -278,7 +278,7 @@ describe('sidebar browser extension group', () => {
     expect(screen.queryByText('Browser older')).toBeNull();
     expect(screen.getByText('Desktop chat')).toBeTruthy();
     expect(
-      screen.getByRole('button', { name: /^Multica\s*1$/ }).getAttribute('aria-expanded'),
+      screen.getByRole('button', { name: /^External clients\s*1$/ }).getAttribute('aria-expanded'),
     ).toBe('false');
 
     fireEvent.click(browserGroup);
@@ -286,11 +286,39 @@ describe('sidebar browser extension group', () => {
     expect(within(panel).getByText('Browser newer')).toBeTruthy();
     expect(within(panel).getByText('Browser older')).toBeTruthy();
     expect(screen.getAllByText('Browser newer')).toHaveLength(1);
-    expect(screen.queryByText('Multica chat')).toBeNull();
+    expect(screen.queryByText('Historical external chat')).toBeNull();
     fireEvent.click(screen.getByText('Browser newer'));
     expect(props.onSelectSession).toHaveBeenCalledWith('Browser newer');
     fireEvent.click(browserGroup);
     expect(screen.queryByText('Browser newer')).toBeNull();
+  });
+
+  it('opens a selected historical external session without relabeling its stored source as CLI', () => {
+    const historical: CoworkSessionSummary = {
+      ...summary('Historical external chat', 1),
+      external: {
+        origin: 'multica',
+        readOnly: true,
+        status: 'completed',
+        sessionKey: 'agent:main:multica:original',
+      },
+    };
+    const store = createStore();
+    const props = { ...createProps([historical]), currentSessionId: historical.id };
+    render(<Provider store={store}><CoworkSessionList {...props} /></Provider>);
+
+    const group = screen.getByRole('button', { name: /^External clients\s*1$/ });
+    expect(group.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('External')).toBeTruthy();
+    expect(screen.queryByText('CLI')).toBeNull();
+    fireEvent.click(screen.getByText(historical.title));
+    expect(props.onSelectSession).toHaveBeenCalledExactlyOnceWith(historical.id);
+    expect(historical.external).toEqual({
+      origin: 'multica',
+      readOnly: true,
+      status: 'completed',
+      sessionKey: 'agent:main:multica:original',
+    });
   });
 
   it('opens the active browser group and respects manual collapse through list refreshes', () => {

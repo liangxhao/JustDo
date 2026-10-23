@@ -219,6 +219,10 @@ export class SqliteStore {
     `);
     this.ensureColumn('cowork_external_sessions', 'agent_id', "TEXT NOT NULL DEFAULT 'main'");
     this.ensureColumn('cowork_external_sessions', 'openclaw_session_key', 'TEXT');
+    this.ensureColumn('cowork_external_sessions', 'execution_run_id', 'TEXT');
+    this.ensureColumn('cowork_external_sessions', 'native_session_id', 'TEXT');
+    this.ensureColumn('cowork_external_sessions', 'lifecycle_revision', 'TEXT');
+    this.ensureColumn('cowork_external_sessions', 'execution_state', 'TEXT');
 
     // The former dual-session Plan design stored one globally unique
     // implementation key per handoff and a separate transcript lineage table.

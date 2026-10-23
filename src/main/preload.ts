@@ -35,7 +35,11 @@ import {
   StartupSupportIpc,
   type StartupSupportResult,
 } from '../shared/app/startup/history';
-import { STARTUP_CLOCK_ARGUMENT, STARTUP_ROUTE_ARGUMENT, StartupRoute } from '../shared/app/startup/routing';
+import {
+  STARTUP_CLOCK_ARGUMENT,
+  STARTUP_ROUTE_ARGUMENT,
+  StartupRoute,
+} from '../shared/app/startup/routing';
 import {
   type TerminalActionResult,
   type TerminalCreateRequest,
@@ -160,22 +164,24 @@ import {
   type WorkspaceWindowUpdate,
 } from '../shared/cowork/workspaceWindow';
 import {
+  AgentCliIntegrationIpc,
+  type AgentCliIntegrationStatus,
+} from '../shared/integrations/agentCliIntegration';
+import {
   type ExternalAgentId,
   ExternalAgentIpc,
   type ExternalAgentSettings,
   type ExternalAgentTestResult,
 } from '../shared/integrations/externalAgents';
-import {
-  MulticaIntegrationIpc,
-  type MulticaIntegrationResult,
-  type MulticaIntegrationStatus,
-} from '../shared/integrations/multica';
 import { type ApiFetchOptions, NetworkIpc } from '../shared/network/network';
 import {
   OpenClawAssistantMediaIpc,
   type OpenClawAssistantMediaRequest,
 } from '../shared/openclaw/assistantMedia';
-import { EngineDiagnosticsIpc, type EngineDiagnosticsQuery } from '../shared/openclaw/engineDiagnostics';
+import {
+  EngineDiagnosticsIpc,
+  type EngineDiagnosticsQuery,
+} from '../shared/openclaw/engineDiagnostics';
 import { EngineIpc } from '../shared/openclaw/engineStatus';
 import { OpenClawHistoryIpc } from '../shared/openclaw/historyIpc';
 import { MemoryIpc } from '../shared/openclaw/memory';
@@ -290,15 +296,9 @@ contextBridge.exposeInMainWorld('electron', {
   mcpApps: createMcpAppPreloadApi(),
   platform: process.platform,
   arch: process.arch,
-  multica: {
-    getStatus: (): Promise<MulticaIntegrationStatus> =>
-      ipcRenderer.invoke(MulticaIntegrationIpc.GetStatus),
-    enable: (): Promise<MulticaIntegrationResult> =>
-      ipcRenderer.invoke(MulticaIntegrationIpc.Enable),
-    disable: (): Promise<MulticaIntegrationResult> =>
-      ipcRenderer.invoke(MulticaIntegrationIpc.Disable),
-    refresh: (): Promise<MulticaIntegrationResult> =>
-      ipcRenderer.invoke(MulticaIntegrationIpc.Refresh),
+  agentCli: {
+    getStatus: (): Promise<AgentCliIntegrationStatus> =>
+      ipcRenderer.invoke(AgentCliIntegrationIpc.GetStatus),
   },
   store: {
     get: (key: string) => ipcRenderer.invoke('store:get', key),
@@ -1252,8 +1252,15 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(HistoryRecoveryIpc.SelectWorkspace, input),
     isTransientWindow: process.argv.includes(INITIALIZATION_WINDOW_ARGUMENT),
     firstLaunch: process.argv.includes(FIRST_LAUNCH_WINDOW_ARGUMENT),
-    route: Object.values(StartupRoute).find(route => process.argv.includes(`${STARTUP_ROUTE_ARGUMENT}${route}`)),
-    entryStartedAt: Number(process.argv.find(argument => argument.startsWith(STARTUP_CLOCK_ARGUMENT))?.slice(STARTUP_CLOCK_ARGUMENT.length)) || undefined,
+    route: Object.values(StartupRoute).find(route =>
+      process.argv.includes(`${STARTUP_ROUTE_ARGUMENT}${route}`),
+    ),
+    entryStartedAt:
+      Number(
+        process.argv
+          .find(argument => argument.startsWith(STARTUP_CLOCK_ARGUMENT))
+          ?.slice(STARTUP_CLOCK_ARGUMENT.length),
+      ) || undefined,
     appearance: readWindowAppearance(
       () => ipcRenderer.sendSync(WindowAppearanceIpc.Get),
       process.argv.includes(INITIALIZATION_WINDOW_ARGUMENT),

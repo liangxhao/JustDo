@@ -500,6 +500,8 @@ test.each(['delete', 'update'])(
       getOpenClawEngineManager: () => ({
         getStatus: () => ({ phase: 'ready' }),
         getConfigPath: () => configPath,
+        getGatewayProcessGeneration: () => 0,
+        getGatewayLifecycleGeneration: () => 0,
         getGatewayConfigReloadGeneration: () => 0,
         getGatewayLaunchEnvVars: () => ({}),
         setGatewayLaunchEnvVars: vi.fn(),

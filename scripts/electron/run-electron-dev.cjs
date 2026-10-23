@@ -7,16 +7,16 @@ const { findFreePort } = require('./find-free-port.cjs');
 const {
   prepareBrowserExtensionDevHost,
 } = require('../browser/prepare-browser-extension-dev-host.cjs');
-const { prepareMulticaDevAgent } = require('../multica/create-multica-dev-agent.cjs');
+const { prepareDevelopmentLauncher } = require('../external-agent/prepare-development-launcher.cjs');
 const { launchElectron } = require('./launch-electron.cjs');
 const { stopElectron } = require('./electron-shutdown.cjs');
 const waitOn = require('wait-on');
 
 const start = async () => {
   try {
-    prepareMulticaDevAgent();
+    prepareDevelopmentLauncher();
   } catch (error) {
-    console.warn(`[Electron Dev] Multica launcher preparation failed: ${error.message}`);
+    console.warn(`[Electron Dev] Agent CLI launcher preparation failed: ${error.message}`);
   }
   const devServerPort = await findFreePort(port);
   const devServerUrl = `http://localhost:${devServerPort}`;

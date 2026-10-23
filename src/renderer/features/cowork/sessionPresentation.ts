@@ -1,4 +1,5 @@
 import { CoworkSessionSource } from '@shared/cowork/sessionSource';
+import { ExternalSessionSource } from '@shared/integrations/externalSession';
 
 import type { CoworkSessionSummary } from '@/features/cowork/coworkTypes';
 export type { SessionDetailStats } from '@shared/cowork/sessionDetails';
@@ -12,7 +13,8 @@ export interface SessionDateGroup {
 }
 
 export interface SidebarSessionBuckets {
-  multica: CoworkSessionSummary[];
+  cli: CoworkSessionSummary[];
+  historicalAppServer: CoworkSessionSummary[];
   browserExtension: CoworkSessionSummary[];
   regular: CoworkSessionSummary[];
 }
@@ -40,13 +42,16 @@ const sortByRecentActivity = (a: CoworkSessionSummary, b: CoworkSessionSummary):
 export const partitionSidebarSessions = (
   sessions: CoworkSessionSummary[],
 ): SidebarSessionBuckets => {
-  const multica: CoworkSessionSummary[] = [];
+  const historicalAppServer: CoworkSessionSummary[] = [];
+  const cli: CoworkSessionSummary[] = [];
   const browserExtension: CoworkSessionSummary[] = [];
   const regular: CoworkSessionSummary[] = [];
 
   for (const session of sessions) {
-    if (session.external?.origin === 'multica') {
-      multica.push(session);
+    if (session.external?.origin === ExternalSessionSource.Cli) {
+      cli.push(session);
+    } else if (session.external?.origin === ExternalSessionSource.HistoricalAppServer) {
+      historicalAppServer.push(session);
     } else if (session.source === CoworkSessionSource.BrowserExtension) {
       browserExtension.push(session);
     } else {
@@ -55,7 +60,8 @@ export const partitionSidebarSessions = (
   }
 
   return {
-    multica: multica.sort(sortByRecentActivity),
+    cli: cli.sort(sortByRecentActivity),
+    historicalAppServer: historicalAppServer.sort(sortByRecentActivity),
     browserExtension: browserExtension.sort(sortByRecentActivity),
     regular,
   };

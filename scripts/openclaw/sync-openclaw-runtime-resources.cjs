@@ -359,6 +359,8 @@ function cleanInterruptedExtensionStaging(targetDir) {
 function bundleProductExtension(sourceDir, targetDir) {
   const pkg = readJsonFile(path.join(sourceDir, 'package.json'));
   if (pkg?.justdo?.bundle !== true) return;
+  const isRuntimeServices =
+    pkg.name === 'runtime-services' && path.basename(sourceDir) === 'runtime-services';
   const entries = pkg.openclaw?.extensions;
   if (!Array.isArray(entries) || entries.length !== 1)
     throw new Error('Bundled product extension must have one entry');
@@ -369,7 +371,17 @@ function bundleProductExtension(sourceDir, targetDir) {
     platform: 'node',
     format: 'esm',
     target: 'node24',
-    packages: 'external',
+    ...(isRuntimeServices
+      ? {
+          // Required Runtime Services ships its MCP client and schema validator
+          // from the root lockfile. Only the native public SDK stays external.
+          external: ['openclaw/plugin-sdk', 'openclaw/plugin-sdk/*'],
+          nodePaths: [path.join(resolveRepoRoot(), 'node_modules')],
+          banner: {
+            js: "import { createRequire as createRuntimeRequire } from 'node:module'; const require = createRuntimeRequire(import.meta.url);",
+          },
+        }
+      : { packages: 'external' }),
   });
   fs.writeFileSync(
     path.join(targetDir, 'package.json'),

@@ -103,6 +103,11 @@ import type { CoworkStore } from '../../data/coworkStore';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
 import { GoalEventAdmission } from '../../openclaw/goals/goalEventAdmission';
 import {
+  type ExternalApprovalBinding,
+  ExternalApprovalRouting,
+  type ExternalPermissionPresenter,
+} from '../../openclaw/permissions/externalApprovalRouting';
+import {
   buildSessionExecApprovalFingerprint,
   SessionExecApprovalGrants,
 } from '../../openclaw/permissions/sessionExecApprovalGrants';
@@ -214,6 +219,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly latestTurnTokenBySession = new Map<string, number>();
   private readonly sessionExecApprovalGrants = new SessionExecApprovalGrants();
   private readonly approvalResolutionByKey = new Map<string, Promise<void>>();
+  private readonly externalApprovalRouting = new ExternalApprovalRouting(() => this.gatewayClient);
   private readonly planResolutionByRequestId = new Map<string, Promise<{ sessionId: string }>>();
   private approvalReconciliation: {
     generation: number;
@@ -1725,6 +1731,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private broadcastApproval(channel: string, kind: ApprovalKind, payload: unknown): void {
     if (!isRecord(payload)) return;
+    if (channel === OpenClawApprovalIpc.Resolved && typeof payload.id === 'string') {
+      this.externalApprovalRouting.resolved(kind, payload.id);
+    }
     const normalizedPayload = { ...payload, kind };
     const reconciliation = this.approvalReconciliation;
     if (reconciliation?.generation === this.gatewayClientGeneration) {
@@ -1791,13 +1800,24 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private async handleExecApprovalRequested(payload: unknown): Promise<void> {
     const request = this.normalizeExecApprovalRequest(payload);
+    if (request && this.externalApprovalRouting.route({ ...request, kind: ApprovalKind.Exec })) return;
     if (!request || !(await this.tryAutoResolveSessionApproval(request))) {
       this.broadcastApproval(OpenClawApprovalIpc.Requested, ApprovalKind.Exec, payload);
     }
   }
 
   private handlePluginApprovalRequested(payload: unknown): void {
+    if (isRecord(payload) && typeof payload.id === 'string' && isRecord(payload.request) &&
+      this.externalApprovalRouting.route({ ...payload, kind: ApprovalKind.Plugin } as ApprovalRequest)) return;
     this.broadcastApproval(OpenClawApprovalIpc.Requested, ApprovalKind.Plugin, payload);
+  }
+
+  claimExternalApprovalOwner(
+    binding: ExternalApprovalBinding,
+    present: ExternalPermissionPresenter,
+    signal?: AbortSignal,
+  ): () => void {
+    return this.externalApprovalRouting.claim(binding, present, signal);
   }
 
   async listPendingApprovals(): Promise<ApprovalRequest[]> {
@@ -1809,11 +1829,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     ]);
     const requests: ApprovalRequest[] = [];
     for (const request of Array.isArray(execRequests) ? execRequests : []) {
+      if (this.externalApprovalRouting.route({ ...request, kind: ApprovalKind.Exec })) continue;
       if (!(await this.tryAutoResolveSessionApproval(request))) {
         requests.push({ ...request, kind: ApprovalKind.Exec });
       }
     }
     for (const request of Array.isArray(pluginRequests) ? pluginRequests : []) {
+      if (this.externalApprovalRouting.route({ ...request, kind: ApprovalKind.Plugin })) continue;
       requests.push({ ...request, kind: ApprovalKind.Plugin });
     }
     return requests.sort((a, b) => a.createdAtMs - b.createdAtMs);
@@ -1824,6 +1846,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     decision: ApprovalDecisionValue,
     kind: ApprovalKind,
   ): Promise<void> {
+    if (this.externalApprovalRouting.ownsRequest(kind, id)) {
+      throw new Error('This approval belongs to the external client.');
+    }
     await this.ensureGatewayClientReady();
     const client = this.requireGatewayClient();
     if (decision === ApprovalDecision.AllowForView) {

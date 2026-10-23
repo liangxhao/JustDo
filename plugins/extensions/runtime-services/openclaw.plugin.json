@@ -5,12 +5,13 @@
   "providers": ["builtin_models"],
   "activation": {
     "onStartup": true,
-    "onCapabilities": ["hook"]
+    "onCapabilities": ["hook", "tool"]
   },
   "contracts": {
     "gatewayMethodDispatch": ["authenticated-request"],
     "embeddingProviders": ["runtime-services"],
-    "trustedToolPolicies": ["agent-team-launch"]
+    "trustedToolPolicies": ["agent-team-launch", "external-mcp"],
+    "tools": ["external_mcp"]
   },
   "configSchema": {
     "type": "object",

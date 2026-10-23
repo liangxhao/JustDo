@@ -86,11 +86,11 @@ describe('session date grouping', () => {
 });
 
 describe('sidebar source grouping', () => {
-  it('separates Multica sessions by metadata instead of title or user group', () => {
+  it('preserves historical external ownership without classifying by title or user group', () => {
     const local = summary('local', 1);
-    const olderMultica: CoworkSessionSummary = {
+    const olderExternal: CoworkSessionSummary = {
       ...summary('external-old', 2),
-      title: '# Multica Agent Runtime',
+      title: '# Historical Agent Runtime',
       groupId: 'user-group',
       external: {
         origin: 'multica',
@@ -99,7 +99,7 @@ describe('sidebar source grouping', () => {
         sessionKey: 'agent:main:multica:old',
       },
     };
-    const newerMultica: CoworkSessionSummary = {
+    const newerExternal: CoworkSessionSummary = {
       ...summary('external-new', 3),
       title: 'A useful title',
       external: {
@@ -110,11 +110,14 @@ describe('sidebar source grouping', () => {
       },
     };
 
-    expect(partitionSidebarSessions([olderMultica, local, newerMultica])).toEqual({
-      multica: [newerMultica, olderMultica],
+    expect(partitionSidebarSessions([olderExternal, local, newerExternal])).toEqual({
+      historicalAppServer: [newerExternal, olderExternal],
+      cli: [],
       browserExtension: [],
       regular: [local],
     });
+    expect(olderExternal.external).toMatchObject({ origin: 'multica', readOnly: true });
+    expect(newerExternal.external).toMatchObject({ origin: 'multica', readOnly: true });
   });
 
   it('keeps extension sessions out of recent and user groups regardless of title or pin', () => {
@@ -129,7 +132,8 @@ describe('sidebar source grouping', () => {
     const input = [older, local, sameActivity, newer];
 
     expect(partitionSidebarSessions(input)).toEqual({
-      multica: [],
+      historicalAppServer: [],
+      cli: [],
       browserExtension: [newer, sameActivity, older],
       regular: [local],
     });

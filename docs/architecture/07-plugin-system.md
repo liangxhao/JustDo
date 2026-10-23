@@ -1,5 +1,15 @@
 # 插件系统：管理状态、文件事务与运行能力
 
+Runtime Services 还提供通用 CLI / ACP 的会话级 stdio MCP 代理：通过公开 v2 工具工厂按
+精确 native session/lease 提供固定声明的 `external_mcp`，保留服务器原始 schema 和结果；
+每次调用经原生单次审批，不把客户端 MCP 写进全局配置。进程、授权与租约随会话关闭清理。
+MCP client 使用根工程精确版本生产依赖，其发布代码已内嵌 Ajv。资源同步与 TypeScript
+预编译两条路径都将其随扩展离线打包，不增加插件独立 npm 安装链；仅该扩展添加 ESM
+`createRequire` 入口以支持所捆绑依赖。完整边界见[通用 CLI / ACP](../features/integrations/agent-cli.md)。
+会话 stdio MCP 仅在 Windows / Linux 提供；macOS 的普通 CLI / ACP 仍可用，但在启动
+MCP 进程前拒绝该能力。锁定的公开 MCP SDK 不提供 detached 进程组创建选项，原生清理
+API 也不能清理 macOS 上 attached wrapper 的后代，因此本轮不声明该平台的进程树清理保证。
+
 插件页组合多种能力，但它们不是同一种安装单元。本文以 Main 插件服务、原生 API、配置同步和 Extension 注册为依据，说明读取、启停、安装和恢复各由谁负责。
 
 内置插件源码统一位于仓库根目录的 `plugins/`，按 `extensions/`、`skills/`、`mcp-servers/`、`hooks/`、`browser-extensions/` 分类。OpenClaw 扩展位于 `plugins/extensions/<plugin-id>/`，独立技能及筛选清单位于 `plugins/skills/`；扩展自带的技能保留在所属扩展内部。`mcp-servers/`、`hooks/` 当前仅预留目录，尚无内置加载逻辑。构建仍将 OpenClaw 扩展和选中技能组装到原生的 `dist/extensions/`、`skills/`、`custodian-skills/`，开发源码发现读取对应扩展目录。图标、文档模板和运行时准备缓存继续由 `resources/` 管理。目录约定见[内置插件说明](../../plugins/README.md)。

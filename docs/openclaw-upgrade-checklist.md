@@ -522,7 +522,7 @@
 参考：[模型管理](features/models/model-management.md)、[语音](features/models/local-tts.md)、
 [决策模型](features/models/jev-integration.md)、[登录](features/integrations/login-sdk-template.md)、
 [模型认证](features/integrations/authentication-builtin-model-lifecycle.md)、
-[出站请求头](features/integrations/outbound-headers.md)、[Multica](features/integrations/multica-integration.md)。
+[出站请求头](features/integrations/outbound-headers.md)、[CLI / ACP / app-server](features/integrations/agent-cli.md)。
 
 ## 12. 左侧导航、会话列表与右侧工作区
 

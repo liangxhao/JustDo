@@ -76,7 +76,7 @@ Extension 导入审查 capability surface、operator grants、来源和 integrit
 | ---------------------------- | -------------------------------------------------------------- |
 | Gateway token                | 本地认证能力，只交集中式聊天 client；不进入日志/Redux          |
 | Chrome app-server capability | 每进程随机，连同 path/Origin 验证；与 relay/Gateway token 分离 |
-| Multica bridge token         | 当前用户受限发现文件与认证管道                                 |
+| Agent CLI bridge token         | 当前用户受限发现文件与认证管道                                 |
 | 内置模型 JWT                 | 短期、账号绑定、派生快照与 exec SecretRef；退出/到期清理       |
 | 自定义模型秘密               | 产品配置来源及受限权限派生 file SecretRef；不宣称全部 OS 加密  |
 | 导入浏览器密码               | browser-import.sqlite 内 safeStorage 密文，Renderer 不读取     |

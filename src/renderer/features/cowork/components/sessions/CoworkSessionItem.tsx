@@ -8,6 +8,7 @@ import {
   Square2StackIcon,
 } from '@heroicons/react/24/outline';
 import { CoworkSessionSource } from '@shared/cowork/sessionSource';
+import { ExternalSessionSource } from '@shared/integrations/externalSession';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import CoworkSessionDetailsModal from '@/features/cowork/components/sessions/CoworkSessionDetailsModal';
@@ -455,11 +456,12 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
               onClick: handleCopyClick,
               tone: 'neutral' as const,
               disabled: isRuntimeRunning || (!!session.nativeSessionKey && !session.historyBinding),
-              title: session.nativeSessionKey && !session.historyBinding
-                ? i18nService.t('worktreeCopyUnavailable')
-                : isRuntimeRunning
-                  ? i18nService.t('coworkCopyWaitForCompletion')
-                  : undefined,
+              title:
+                session.nativeSessionKey && !session.historyBinding
+                  ? i18nService.t('worktreeCopyUnavailable')
+                  : isRuntimeRunning
+                    ? i18nService.t('coworkCopyWaitForCompletion')
+                    : undefined,
             },
           ]
         : []),
@@ -622,9 +624,13 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                 />
               ) : (
                 <div className="flex-1 min-w-0 flex items-center gap-1">
-                  {session.external?.origin === 'multica' && (
+                  {session.external && (
                     <span className="shrink-0 rounded bg-primary/10 px-1 py-0.5 text-[9px] font-semibold uppercase leading-none text-primary">
-                      {i18nService.t('multicaSessionBadge')}
+                      {i18nService.t(
+                        session.external.origin === ExternalSessionSource.Cli
+                          ? 'agentCliSessionBadge'
+                          : 'externalClientSessionBadge',
+                      )}
                     </span>
                   )}
                   <Tooltip

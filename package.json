@@ -53,7 +53,7 @@
     "electron:dev": "rimraf dist-electron && npm run compile:electron && node scripts/electron/run-electron-dev.cjs",
     "preelectron:dev": "npm run browser-extension:prepare && npm run setup:local-tts",
     "electron:dev:openclaw": "npm run drawio:prepare -- --ensure --download && npm run openclaw:runtime:host && npm run electron:dev",
-    "multica:dev-agent": "node scripts/multica/create-multica-dev-agent.cjs",
+    "agent-cli:prepare": "node scripts/external-agent/prepare-development-launcher.cjs",
     "postinstall": "node scripts/runtime/patch-http-mitm-proxy.cjs && npm run rebuild:electron-native",
     "pack": "npm run setup:python-runtime && npm run build && npm run compile:electron && electron-builder --config electron-builder.config.cjs --dir",
     "dist": "npm run setup:python-runtime && npm run build && npm run compile:electron && electron-builder --config electron-builder.config.cjs",
@@ -96,6 +96,7 @@
     "fix:mac-icon": "bash scripts/assets/mac-icon.sh fix-display"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "1.5.0",
     "@modelcontextprotocol/client": "2.2.0",
     "@modelcontextprotocol/ext-apps": "2.0.0",
     "@tanstack/react-virtual": "^3.14.13",

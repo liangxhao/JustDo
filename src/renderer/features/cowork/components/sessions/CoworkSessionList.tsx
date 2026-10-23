@@ -318,18 +318,27 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   const groups = useSelector(selectGroups);
   const expandedGroupIds = useSelector(selectExpandedGroupIds);
   const {
-    multica: multicaSessions,
+    cli: cliSessions,
+    historicalAppServer: historicalAppServerSessions,
     browserExtension: browserExtensionSessions,
     regular: regularSessions,
   } = useMemo(() => partitionSidebarSessions(sessions), [sessions]);
   const [expandedSourceGroupIds, setExpandedSourceGroupIds] = useState<Set<string>>(new Set());
-  const currentSourceGroupId = multicaSessions.some(session => session.id === currentSessionId)
-    ? 'multica'
-    : browserExtensionSessions.some(session => session.id === currentSessionId)
-      ? 'browserExtension'
-      : null;
+  const currentSourceGroupId = cliSessions.some(session => session.id === currentSessionId)
+    ? 'cli'
+    : historicalAppServerSessions.some(session => session.id === currentSessionId)
+      ? 'historicalAppServer'
+      : browserExtensionSessions.some(session => session.id === currentSessionId)
+        ? 'browserExtension'
+        : null;
   const sourceGroups = [
-    { id: 'multica', sessions: multicaSessions, label: 'multicaSessionGroup', color: '#6f7ed8' },
+    { id: 'cli', sessions: cliSessions, label: 'agentCliSessionGroup', color: '#478f94' },
+    {
+      id: 'historicalAppServer',
+      sessions: historicalAppServerSessions,
+      label: 'externalClientSessionGroup',
+      color: '#6f7ed8',
+    },
     {
       id: 'browserExtension',
       sessions: browserExtensionSessions,

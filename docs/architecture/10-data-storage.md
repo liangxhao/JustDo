@@ -192,6 +192,34 @@ SqliteStore.create 打开当前目标库、设置 PRAGMA、初始化表及增量
 
 ## 4. 会话与运行回执
 
+通用 CLI、ACP 与 Codex app-server 入站会话共用 `cowork_external_sessions`，新建一律
+使用 `source='cli'`。历史 `source='multica'` 仅保留已有映射、墓碑与原生身份，不转换
+命名空间、不按裸 UUID 猜测旧 scope，也不再提供专用客户端后端。同一个产品会话
+仍只有一个外部映射，新旧来源
+都以只读会话投影到桌面，外部客户端只能提交不透明的产品外部 UUID，不能借此传入
+任意原生 session key。创建、恢复与运行分别核对任务目录、产品助手和存活的产品行；
+删除触发器为各来源写入原有 tombstone，恢复不会重新创建已删会话。
+
+CLI 执行在同一映射行增加可空的 `execution_run_id`、`native_session_id`、
+`lifecycle_revision` 和 `execution_state`。旧库通过增列保持原映射及数据；没有正文、
+工具结果或原生 transcript 副本。开始发送前先保存 run 意图，原生准备后保存精确
+session key、SID 和 incarnation，再安装会话工具／审批归属。执行状态按
+`preparing → running → settled` 推进；传输中断或无法归属的原生 continuation
+保留为 `unknown`，映射的显示状态仍为 running，继续占用会话。应用重启不把外部会话的
+running／unknown 推断为已取消，也不会自动重发；再次执行明确拒绝并保留诊断身份。
+已安装 ACP 会话工具或审批 owner 时，Gateway 连接替换也进入 unknown，不自动转移
+原连接的资源所有权；保留取消信号，后续 EOF／关闭仍可请求停止精确 run，停止 ACK
+本身不会清除 unknown 或释放持久执行占用。
+缺失原生 authority 或精确回执的核对窗口为 30 秒，单次读调用也受同一窗口限制；
+超窗返回 unknown，而不推断失败或取消。精确 pending／running 回执或同 SID／revision
+的 `activeRunIds` 仍包含当前 run 时刷新窗口，不为正常长任务设置总时限。调用方取消只
+撤销无界 `agent` RPC 等待并请求停止精确 run，随后仍须核对原生结算证据。
+
+正常结算只接受精确原生 whole-run lifecycle（`executionSettled:true`）或精确
+`agent.wait` 终态回执，并重新核对原生 SID／lifecycle revision。chat final、idle、
+Stop ACK、新的 owner 和最新历史消息都不能替代结算证据。当前公共 API 不能证明
+yield 后唤醒运行的前驱关系时，保留 unknown，而不从 run-ID 后缀推测归属。
+
 扩展托管 MCP 的独立开关与连接参数覆盖只保存在原生 `openclaw.json` 的 `mcp.servers`，不写入 `mcp_servers`、`kv` 或另一份产品设置。原生扩展名称归属用于发现排除与配置同步保留；界面中的脱敏编辑草稿只存在当前窗口内存中，不增加产品表或迁移。
 
 cowork_sessions 保存 title、status、pinned、cwd、execution_mode、permission_mode、active_skill_ids、agent_id、model_ref、group_id 及时间。status 是产品快照，不能替代原生 runtime 查询。列表索引服务 pinned/updated_at 排序和 Agent 范围查询。

@@ -2,7 +2,7 @@ import type { CoworkAttachmentPayload } from '@shared/cowork/attachments';
 import type { CoworkInteractionKind } from '@shared/cowork/interactions/interactions';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import type { CoworkSessionSource } from '@shared/cowork/sessionSource';
-import type { ExternalSessionMetadata } from '@shared/integrations/multica';
+import type { ExternalSessionMetadata } from '@shared/integrations/externalSession';
 
 export type { CoworkAttachmentPayload } from '@shared/cowork/attachments';
 

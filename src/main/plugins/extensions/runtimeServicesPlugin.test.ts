@@ -5,6 +5,11 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import {
+  EXTERNAL_MCP_CLOSE_METHOD,
+  EXTERNAL_MCP_OPEN_METHOD,
+  EXTERNAL_MCP_TOOL_NAME,
+} from '../../../../plugins/extensions/runtime-services/contracts/external-mcp';
+import {
   MCP_APP_HISTORY_TOOL_METHOD,
   MCP_APP_HISTORY_VIEW_METHOD,
 } from '../../../../plugins/extensions/runtime-services/contracts/mcp-apps';
@@ -38,6 +43,10 @@ vi.mock('openclaw/plugin-sdk/codex-mcp-projection', () => ({
 }));
 vi.mock('openclaw/plugin-sdk/gateway-method-runtime', () => ({
   dispatchGatewayMethod: vi.fn(),
+}));
+vi.mock('openclaw/plugin-sdk/process-runtime', () => ({
+  isPidDefinitelyDead: vi.fn(),
+  signalProcessTree: vi.fn(),
 }));
 
 vi.mock('openclaw/plugin-sdk/routing', () => ({
@@ -106,6 +115,10 @@ function registerPlugin() {
   const emitAgentEvent = vi.fn((_event: { data: { stage: string } }) => ({ emitted: true }));
   const registerGatewayMethod = vi.fn();
   const registerEmbeddingProvider = vi.fn();
+  const registerTool = vi.fn();
+  const registerTrustedToolPolicy = vi.fn();
+  const registerService = vi.fn();
+  const registerRuntimeLifecycle = vi.fn();
   runtimeServicesPlugin.register({
     config: { memory: { search: { enabled: false } } },
     on: (name: string, hook: Hook) => hooks.set(name, hook),
@@ -114,16 +127,28 @@ function registerPlugin() {
     runtime: {
       events: { onAgentEvent: vi.fn() },
       state: { resolveStateDir: () => stateDir },
+      config: { current: () => ({}) },
     },
-    registerTrustedToolPolicy: vi.fn(),
+    lifecycle: { registerRuntimeLifecycle },
+    registerTrustedToolPolicy,
+    registerTool,
     registerProvider: vi.fn(),
     registerAgentHarness: vi.fn(),
-    registerService: vi.fn(),
+    registerService,
     registerGatewayMethod,
     registerEmbeddingProvider,
     logger: { info: vi.fn() },
   } as never);
-  return { hooks, emitAgentEvent, registerGatewayMethod, registerEmbeddingProvider };
+  return {
+    hooks,
+    emitAgentEvent,
+    registerGatewayMethod,
+    registerEmbeddingProvider,
+    registerTool,
+    registerTrustedToolPolicy,
+    registerService,
+    registerRuntimeLifecycle,
+  };
 }
 
 async function createEmbeddingProvider(data: unknown, ok = true) {
@@ -152,7 +177,13 @@ describe('runtime services startup and progress', () => {
       ),
     );
     expect(manifest.activation.onStartup).toBe(true);
-    const { registerGatewayMethod } = registerPlugin();
+    const {
+      registerGatewayMethod,
+      registerTool,
+      registerTrustedToolPolicy,
+      registerService,
+      registerRuntimeLifecycle,
+    } = registerPlugin();
     expect(registerGatewayMethod).toHaveBeenCalledWith(
       'runtimeServices.historyDetails',
       expect.any(Function),
@@ -167,6 +198,34 @@ describe('runtime services startup and progress', () => {
       expect(registerGatewayMethod).toHaveBeenCalledWith(method, expect.any(Function), {
         scope: 'operator.admin',
       });
+    expect(registerGatewayMethod).toHaveBeenCalledWith(
+      EXTERNAL_MCP_OPEN_METHOD,
+      expect.any(Function),
+      {
+        scope: 'operator.write',
+        profileAccess: 'required',
+        sessionAccess: { mode: 'write' },
+      },
+    );
+    expect(registerGatewayMethod).toHaveBeenCalledWith(
+      EXTERNAL_MCP_CLOSE_METHOD,
+      expect.any(Function),
+      { scope: 'operator.admin' },
+    );
+    expect(manifest.contracts.tools).toContain(EXTERNAL_MCP_TOOL_NAME);
+    expect(registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ contextVersion: 2, create: expect.any(Function) }),
+      { name: EXTERNAL_MCP_TOOL_NAME },
+    );
+    expect(registerTrustedToolPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'external-mcp', evaluate: expect.any(Function) }),
+    );
+    expect(registerService).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'external-mcp', stop: expect.any(Function) }),
+    );
+    expect(registerRuntimeLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'external-mcp', cleanup: expect.any(Function) }),
+    );
   });
 
   test('keeps successful tool-loop model calls in waiting state without inventing retries', () => {

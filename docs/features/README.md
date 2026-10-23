@@ -59,6 +59,6 @@ Swarm 主会话管理已并入主说明；批次是独立的扩展契约。Workb
 | 账号       | [登录 SDK 模板](integrations/login-sdk-template.md)                    | 已实现的 LoginService 和 SDK 接缝；真实 SDK 尚未接入     |
 | 账号       | [内置模型认证](integrations/authentication-builtin-model-lifecycle.md) | mtoken/JWT、模型发现、轮换与退出清理                     |
 | 网络       | [出站请求头](integrations/outbound-headers.md)                         | 手工与 Extension 策略、Main 注入、Gateway 代理的统一契约 |
-| 外部客户端 | [Multica](integrations/multica-integration.md)                         | launcher、受认证桥接、会话恢复与协议边界                 |
+| 外部客户端 | [通用 CLI / ACP](integrations/agent-cli.md)                            | 默认可用命令行、ACP、app-server 子集与客户端接入示例    |
 
 账号 UI/SDK、模型换证与开发调用步骤的所有者不同：先从上表阅读相应实现，再从[开发接入索引](../developer-integration/README.md)查接口和示例。待复验的内网模型、企业网页及冷历史恢复集中在[内网验收清单](../plans/intranet-feature-acceptance.md)。

@@ -124,22 +124,29 @@ import { SessionDiagnosticsStore } from './data/sessionDiagnosticsStore';
 import { SqliteStore } from './data/sqliteStore';
 import { CoworkEngineService } from './engine';
 import { bindCoworkRuntimeForwarder } from './engine/cowork/coworkRuntimeForwarder';
-import { runMulticaBridgeClient } from './integrations/multica/multicaBridgeClient';
 import {
-  MULTICA_DEV_BRIDGE_SWITCH,
-  parseMulticaBridgeArgv,
-} from './integrations/multica/multicaBridgeProtocol';
-import { MulticaBridgeServer } from './integrations/multica/multicaBridgeServer';
-import { createMulticaCodexExecution } from './integrations/multica/multicaCodexExecution';
-import { resolvePackagedMulticaTargetPath } from './integrations/multica/multicaCommandLauncher';
-import { MulticaCommandService } from './integrations/multica/multicaCommandService';
+  resolveDevelopmentAgentCliExecutable,
+  resolvePackagedAgentCliExecutable,
+} from './integrations/externalAgent/agentCliDevLauncher';
+import { AgentCliIntegrationService } from './integrations/externalAgent/agentCliIntegrationService';
 import {
-  resolveMulticaDevAgentExecutable,
-  resolvePackagedMulticaAgentExecutable,
-} from './integrations/multica/multicaDevAgent';
-import { MulticaExternalSessionStore } from './integrations/multica/multicaExternalSessionStore';
-import { MulticaIntegrationService } from './integrations/multica/multicaIntegrationService';
-import { getMulticaModelCatalog } from './integrations/multica/multicaModelCatalog';
+  buildAgentCliBridgeArguments,
+  ensureAgentCliCommandLauncher,
+  resolvePackagedAgentCliTargetPath,
+} from './integrations/externalAgent/agentCliLauncher';
+import { AgentCommandService } from './integrations/externalAgent/agentCommandService';
+import { ExternalAgentBackendFactory } from './integrations/externalAgent/externalAgentBackend';
+import { createExternalAgentExecution } from './integrations/externalAgent/externalAgentExecution';
+import { getExternalAgentModelCatalog } from './integrations/externalAgent/externalAgentModelCatalog';
+import { ExternalAgentResources } from './integrations/externalAgent/externalAgentResources';
+import { ExternalSessionStore } from './integrations/externalAgent/externalSessionStore';
+import { runAgentBridgeClient } from './integrations/externalAgent/transport/agentBridgeClient';
+import {
+  parseAgentBridgeArgv,
+  resolveAgentBridgeProfile,
+} from './integrations/externalAgent/transport/agentBridgeProtocol';
+import { AgentBridgeServer } from './integrations/externalAgent/transport/agentBridgeServer';
+import { registerAgentCliIntegrationHandlers } from './ipc/agentCli';
 import {
   applyBrowserModeChange,
   registerAppHandlers,
@@ -179,7 +186,6 @@ import { registerCollaborationHandlers } from './ipc/cowork/agent-team/collabora
 import { registerTeamDiscussionHandlers } from './ipc/cowork/agent-team/teamDiscussion';
 import { registerSessionDiagnosticsHandlers } from './ipc/cowork/sessionDiagnostics';
 import { registerSessionReviewHandlers } from './ipc/cowork/sessionReview';
-import { registerMulticaIntegrationHandlers } from './ipc/multica';
 import {
   registerOpenClawEngineHandlers,
   registerOpenClawHistoryHandlers,
@@ -391,15 +397,17 @@ const migrateAgentModelRefs = (): number => {
   return changed;
 };
 
-const configureUserDataPath = (): void => {
+const configureUserDataPath = (bridgeProfile?: string): void => {
   const appDataPath = app.getPath('appData');
-  const developmentDirectory = resolveDevelopmentDataDirectory({
-    isPackaged: app.isPackaged,
-    nodeEnv: process.env.NODE_ENV,
-    directory: process.env.JUSTDO_DEV_USER_DATA_DIR,
-  });
+  const developmentDirectory = bridgeProfile
+    ? undefined
+    : resolveDevelopmentDataDirectory({
+        isPackaged: app.isPackaged,
+        nodeEnv: process.env.NODE_ENV,
+        directory: process.env.JUSTDO_DEV_USER_DATA_DIR,
+      });
   const preferredUserDataPath =
-    developmentDirectory ?? path.join(appDataPath, USER_DATA_DIRECTORY_NAME);
+    bridgeProfile ?? developmentDirectory ?? path.join(appDataPath, USER_DATA_DIRECTORY_NAME);
   if (developmentDirectory) {
     fs.mkdirSync(developmentDirectory, { recursive: true });
     process.env.JUSTDO_DEV_WORKSPACE_DIR = path.join(developmentDirectory, 'project');
@@ -412,12 +420,8 @@ const configureUserDataPath = (): void => {
   }
 };
 
-const multicaBridgeArgv = parseMulticaBridgeArgv(process.argv);
-if (process.argv.includes(MULTICA_DEV_BRIDGE_SWITCH) && !multicaBridgeArgv) {
-  fs.writeSync(2, 'Unsupported runtime command. Select the Codex provider in Multica.\n');
-  process.exit(64);
-}
-if (multicaBridgeArgv) {
+const agentBridgeArgv = parseAgentBridgeArgv(process.argv);
+if (agentBridgeArgv) {
   console.log = () => undefined;
   console.info = () => undefined;
   console.warn = () => undefined;
@@ -425,12 +429,12 @@ if (multicaBridgeArgv) {
 }
 let startupPreparationError: unknown;
 try {
-  configureUserDataPath();
+  configureUserDataPath(agentBridgeArgv ? resolveAgentBridgeProfile(process.argv) : undefined);
 } catch (error) {
-  if (multicaBridgeArgv) throw error;
+  if (agentBridgeArgv) throw error;
   startupPreparationError = error;
 }
-if (!multicaBridgeArgv) {
+if (!agentBridgeArgv) {
   try {
     initLogger();
   } catch (error) {
@@ -568,11 +572,11 @@ let activeOutboundHeaderPolicyDigest: string | null = null;
 let openClawStatusForwarderBound = false;
 let openClawGatewayPortProxyBypassBound = false;
 let preventSleepBlockerId: number | null = null;
-let multicaExternalSessionStore: MulticaExternalSessionStore | null = null;
-let multicaCommandService: MulticaCommandService | null = null;
-let multicaBridgeServer: MulticaBridgeServer | null = null;
-let multicaBridgeStartPromise: Promise<void> | null = null;
-let multicaIntegrationService: MulticaIntegrationService | null = null;
+let agentBridgeServer: AgentBridgeServer | null = null;
+let agentBridgeStartPromise: Promise<void> | null = null;
+let agentCliIntegrationService: AgentCliIntegrationService | null = null;
+let agentCommandService: AgentCommandService | null = null;
+let cliExternalSessionStore: ExternalSessionStore | null = null;
 
 const initStore = async (): Promise<SqliteStore> => {
   if (!storeInitPromise) {
@@ -1020,75 +1024,74 @@ const notifyCoworkSessionsChanged = (): void => {
   }
 };
 
-const getMulticaExternalSessionStore = (): MulticaExternalSessionStore => {
-  multicaExternalSessionStore ??= new MulticaExternalSessionStore(getStore().getDatabase());
-  return multicaExternalSessionStore;
-};
-
-const ensureMulticaBridgeRunning = async (): Promise<void> => {
-  if (multicaBridgeServer?.running) return;
-  if (multicaBridgeStartPromise) return multicaBridgeStartPromise;
-  const candidate = new MulticaBridgeServer({
+const ensureAgentBridgeRunning = async (): Promise<void> => {
+  if (agentBridgeServer?.running) return;
+  if (agentBridgeStartPromise) return agentBridgeStartPromise;
+  const candidate = new AgentBridgeServer({
     userDataPath: app.getPath('userData'),
-    commandService: getMulticaCommandService(),
+    commandService: getAgentCommandService(),
   });
-  multicaBridgeStartPromise = candidate
+  agentBridgeStartPromise = candidate
     .start()
     .then(() => {
-      multicaBridgeServer = candidate;
+      agentBridgeServer = candidate;
     })
     .finally(() => {
-      multicaBridgeStartPromise = null;
+      agentBridgeStartPromise = null;
     });
-  return multicaBridgeStartPromise;
+  return agentBridgeStartPromise;
 };
 
-const getMulticaIntegrationService = (): MulticaIntegrationService => {
-  multicaIntegrationService ??= new MulticaIntegrationService({
-    getStore,
+const getAgentCliIntegrationService = (): AgentCliIntegrationService => {
+  agentCliIntegrationService ??= new AgentCliIntegrationService({
     getBridgeState: () => ({
-      running: multicaBridgeServer?.running === true,
-      activeTaskCount: multicaBridgeServer?.activeTaskCount ?? 0,
+      running: agentBridgeServer?.running === true,
+      activeTaskCount: agentCommandService?.activeTaskCount ?? 0,
     }),
-    ensureBridgeRunning: ensureMulticaBridgeRunning,
-    getOpenClawVersion: () => getOpenClawEngineManager().getStatus().version,
-    getLauncherTarget: () => {
-      if (process.platform === 'win32') {
-        return {
-          path: app.isPackaged
-            ? resolvePackagedMulticaAgentExecutable(process.execPath)
-            : resolveMulticaDevAgentExecutable(app.getAppPath(), app.getPath('userData')),
-          args: [],
-        };
-      }
-      return {
-        path: app.isPackaged
-          ? resolvePackagedMulticaTargetPath(process.execPath)
+    getGatewayPhase: () => getOpenClawEngineManager().getStatus().phase,
+    prepareLauncher: () => {
+      if (process.platform === 'win32')
+        return ensureAgentCliCommandLauncher({
+          targetPath: app.isPackaged
+            ? resolvePackagedAgentCliExecutable(process.execPath)
+            : resolveDevelopmentAgentCliExecutable(app.getAppPath(), app.getPath('userData')),
+        });
+      return ensureAgentCliCommandLauncher({
+        profileDirectory: app.getPath('userData'),
+        targetPath: app.isPackaged
+          ? resolvePackagedAgentCliTargetPath(process.execPath)
           : process.execPath,
-        args: app.isPackaged
-          ? [MULTICA_DEV_BRIDGE_SWITCH]
-          : [app.getAppPath(), MULTICA_DEV_BRIDGE_SWITCH],
-      };
+        targetArgs: buildAgentCliBridgeArguments(
+          app.getPath('userData'),
+          app.isPackaged ? undefined : app.getAppPath(),
+        ),
+      });
     },
   });
-  return multicaIntegrationService;
+  return agentCliIntegrationService;
 };
 
-const getMulticaCommandService = (): MulticaCommandService => {
-  multicaCommandService ??= new MulticaCommandService({
-    getCoworkStore,
-    getExternalSessionStore: getMulticaExternalSessionStore,
-    getModels: () => getMulticaModelCatalog(resolveDefaultAgentModelRef()),
-    execute: createMulticaCodexExecution({
-      getStore: getCoworkStore,
-      getRouter: getCoworkEngineRouter,
-      getRuntime: getOpenClawRuntimeAdapter,
-      ensureReady: ensureOpenClawRunningForCowork,
+const getAgentCommandService = (): AgentCommandService => {
+  agentCommandService ??= new AgentCommandService({
+    backend: new ExternalAgentBackendFactory({
+      getCoworkStore,
+      getExternalSessionStore: () => {
+        cliExternalSessionStore ??= new ExternalSessionStore(getStore().getDatabase());
+        return cliExternalSessionStore;
+      },
+      getModels: () => getExternalAgentModelCatalog(resolveDefaultAgentModelRef()),
+      onSessionsChanged: notifyCoworkSessionsChanged,
+      execute: createExternalAgentExecution({
+        getStore: getCoworkStore,
+        getRouter: getCoworkEngineRouter,
+        getRuntime: getOpenClawRuntimeAdapter,
+        ensureReady: ensureOpenClawRunningForCowork,
+      }),
     }),
-    isEnabled: () => getMulticaIntegrationService().isEnabled(),
-    onSessionsChanged: notifyCoworkSessionsChanged,
+    createResources: () => new ExternalAgentResources(getOpenClawRuntimeAdapter),
+    getStatus: () => getAgentCliIntegrationService().getStatus(),
   });
-  return multicaCommandService;
+  return agentCommandService;
 };
 
 const getOpenClawSkillFiles = () => {
@@ -1405,13 +1408,13 @@ const scheduleReload = (reason: string, webContents?: WebContents) => {
 };
 
 // Bridge subprocesses never join the UI singleton.
-const gotTheLock = multicaBridgeArgv ? true : app.requestSingleInstanceLock();
+const gotTheLock = agentBridgeArgv ? true : app.requestSingleInstanceLock();
 
-if (multicaBridgeArgv) {
+if (agentBridgeArgv) {
   void (async () => {
     let code = 70;
     try {
-      code = await runMulticaBridgeClient(app.getPath('userData'), multicaBridgeArgv);
+      code = await runAgentBridgeClient(app.getPath('userData'), agentBridgeArgv);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       process.stderr.write(`${message}\n`);
@@ -1473,7 +1476,10 @@ if (multicaBridgeArgv) {
 
   registerNetworkHandlers();
   registerLogHandlers();
-  registerMulticaIntegrationHandlers(getMulticaIntegrationService);
+  registerAgentCliIntegrationHandlers({
+    getService: getAgentCliIntegrationService,
+    getMainWindow: () => mainWindow,
+  });
   registerBrowserHandlers({
     getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
     buildCliEnvironment: () => getOpenClawEngineManager().buildCliEnvironment(),
@@ -1923,7 +1929,10 @@ if (multicaBridgeArgv) {
     mainWindow = createMainWindow({
       appName: APP_NAME,
       firstLaunch: initialization.getState().firstLaunch,
-      startupPresentation: { route: startupCoordinator.route, entryStartedAt: initialization.getState().startedAt },
+      startupPresentation: {
+        route: startupCoordinator.route,
+        entryStartedAt: initialization.getState().startedAt,
+      },
       readWorkspaceWindowBounds: () =>
         getStore().get<WorkspaceWindowBounds>(WORKSPACE_WINDOW_BOUNDS_KEY),
       saveWorkspaceWindowBounds: bounds => getStore().set(WORKSPACE_WINDOW_BOUNDS_KEY, bounds),
@@ -2016,7 +2025,9 @@ if (multicaBridgeArgv) {
     try {
       builtinModelTokenExchange?.invalidate();
     } catch {
-      console.warn('[BuiltinModelTokenExchange] Snapshot revocation failed; continuing runtime shutdown.');
+      console.warn(
+        '[BuiltinModelTokenExchange] Snapshot revocation failed; continuing runtime shutdown.',
+      );
     }
     builtinModelAuthCoordinator?.initialize(null);
     clearActiveBuiltinModelCredential();
@@ -2026,11 +2037,11 @@ if (multicaBridgeArgv) {
     await browserExtensionChatServer?.stop();
     browserExtensionChatServer = null;
     destroyTray();
-    if (multicaBridgeServer) {
-      await multicaBridgeServer.stop().catch(error => {
-        console.error('[MulticaBridge] Failed to stop:', error);
+    if (agentBridgeServer) {
+      await agentBridgeServer.stop().catch(error => {
+        console.error('[AgentBridge] Failed to stop:', error);
       });
-      multicaBridgeServer = null;
+      agentBridgeServer = null;
     }
     // Prevent scheduled work from starting while dependent runtimes are draining.
     try {
@@ -2147,7 +2158,8 @@ if (multicaBridgeArgv) {
   const startupCoordinator = new StartupCoordinator(app.getPath('userData'));
   const startupHistoryRuntime = new NativeHistoryRuntime({
     getEnvironment: () => getOpenClawEngineManager().buildCliEnvironment(),
-    gatewayStopped: () => !getOpenClawEngineManager().getGatewayProcessId() &&
+    gatewayStopped: () =>
+      !getOpenClawEngineManager().getGatewayProcessId() &&
       !['running', 'starting'].includes(getOpenClawEngineManager().getStatus().phase),
     stateDir: () => getOpenClawEngineManager().getStateDir(),
   });
@@ -2174,15 +2186,20 @@ if (multicaBridgeArgv) {
   });
   registerHistoryRecoveryHandlers({
     getWindow: () => mainWindow,
-    isReady: () => !appShutdown.isQuitting() && initialization.getState().phase === AppInitializationPhase.Ready,
-    getStore, getCoworkStore,
+    isReady: () =>
+      !appShutdown.isQuitting() && initialization.getState().phase === AppInitializationPhase.Ready,
+    getStore,
+    getCoworkStore,
   });
 
   const createStartupWindow = (): InitializationWindow => {
     const startup = createInitializationWindow({
       appName: APP_NAME,
       firstLaunch: initialization.getState().firstLaunch,
-      startupPresentation: { route: startupCoordinator.route, entryStartedAt: initialization.getState().startedAt },
+      startupPresentation: {
+        route: startupCoordinator.route,
+        entryStartedAt: initialization.getState().startedAt,
+      },
       preloadPath: PRELOAD_PATH,
       isWindows,
       isDev,
@@ -2324,24 +2341,18 @@ if (multicaBridgeArgv) {
     // 注册 localfile:// 自定义协议，用于安全加载本地文件（图片等）
     registerLocalFileProtocol();
 
-    // Open receipts belong to the previous app process. Checkpoint them as
-    // interrupted so startup does not present stale work as running. Runtime
-    // reconciliation reopens a checkpoint if Gateway still reports active work.
+    // Checkpoint previous desktop receipts; unresolved CLI executions keep
+    // their open receipt and reservation until exact native settlement is known.
+    // Runtime reconciliation can reopen ordinary desktop checkpoints.
     const interruptedRunCount = getCoworkStore().interruptOpenSessionRuns(Date.now());
     if (interruptedRunCount > 0) {
       console.log(`[Main] Interrupted ${interruptedRunCount} stale cowork run receipt(s)`);
     }
     // Defensive recovery: app may be force-closed during execution and leave
-    // stale running flags in DB. Normalize them on startup.
+    // stale running flags in DB. Unresolved external execution flags retain their evidence.
     const resetCount = getCoworkStore().resetRunningSessions();
     if (resetCount > 0) {
       console.log(`[Main] Reset ${resetCount} stuck cowork session(s) from running -> idle`);
-    }
-    const resetExternalCount = getMulticaExternalSessionStore().resetRunning();
-    if (resetExternalCount > 0) {
-      console.log(
-        `[MulticaBridge] Reset ${resetExternalCount} interrupted external session(s) to cancelled`,
-      );
     }
     // Inject store getter into providerApiConfig
     setStoreGetter(() => store);
@@ -2439,25 +2450,36 @@ if (multicaBridgeArgv) {
     if (appShutdown.isQuitting()) return;
 
     await startupCoordinator.restoreHistory(
-      getStore().getDatabase(), getOpenClawEngineManager().getStateDir(), initialization,
+      getStore().getDatabase(),
+      getOpenClawEngineManager().getStateDir(),
+      initialization,
       (mode, planFile) => startupHistoryRuntime.run(mode, planFile),
     );
     if (appShutdown.isQuitting()) return;
     if (initialization.getState().historySummary) {
       const result = await syncOpenClawConfig({ reason: 'startup-history' });
-      if (!result.success) throw new Error(`Historical assistant identities could not be prepared: ${result.error}`);
+      if (!result.success)
+        throw new Error(`Historical assistant identities could not be prepared: ${result.error}`);
     }
     startupHistoryAdmissionReady = true;
     initialization.reportActivity(AppInitializationActivity.Integrations);
     await startBrowserExtensionIngress();
     if (appShutdown.isQuitting()) return;
-    await ensureMulticaBridgeRunning().catch(error => {
-      console.error('[MulticaBridge] Failed to start:', error);
-      multicaBridgeServer = null;
+    try {
+      getAgentCliIntegrationService().prepare();
+    } catch (error) {
+      console.warn(
+        '[AgentCli] Launcher preparation failed:',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    await ensureAgentBridgeRunning().catch(error => {
+      console.error('[AgentBridge] Failed to start:', error);
+      agentBridgeServer = null;
     });
     if (appShutdown.isQuitting()) {
-      await multicaBridgeServer?.stop();
-      multicaBridgeServer = null;
+      await agentBridgeServer?.stop();
+      agentBridgeServer = null;
       return;
     }
 

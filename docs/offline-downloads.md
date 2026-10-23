@@ -56,3 +56,10 @@
 准备：`npm run drawio:prepare`；校验：`npm run drawio:verify`。
 
 `npm run electron:dev:openclaw` 和 `npm run dist:win` 已自动准备，优先复用资源和本地归档，归档缺失才下载。断网电脑提前放好归档即可。
+
+## 6. Agent CLI 协议依赖
+
+ACP SDK 和 MCP client 的精确版本由根 `package.json` 管理，构建机通过已配置的内部 npm
+源或预先准备的 npm 缓存安装。ACP 随应用打包；MCP client 及其内嵌 Ajv 在资源同步和
+TypeScript 预编译时随 Runtime Services 打包。安装后无需另装 Node、npm 依赖或首启下载。
+客户端提供的 MCP 服务器应提前安装在本机，不由应用自动下载。

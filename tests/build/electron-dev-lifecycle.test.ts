@@ -93,7 +93,7 @@ function startRunner() {
     '../../package.json': { devServer: { port: 43127 } },
     './find-free-port.cjs': { findFreePort: async () => 43127 },
     '../browser/prepare-browser-extension-dev-host.cjs': { prepareBrowserExtensionDevHost: () => null },
-    '../multica/create-multica-dev-agent.cjs': { prepareMulticaDevAgent: () => undefined },
+    '../external-agent/prepare-development-launcher.cjs': { prepareDevelopmentLauncher: () => undefined },
     './launch-electron.cjs': { launchElectron },
     './electron-shutdown.cjs': { stopElectron }, 'wait-on': waitOn,
   };

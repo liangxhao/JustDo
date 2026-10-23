@@ -299,6 +299,21 @@ Preparing the bundled Python environment sets its user-package paths without
 creating empty user-package directories; pip creates them when a package is
 actually installed.
 
+### Agent console CLI
+
+Packaging installs `<productName lowercase>-cli.exe` beside the desktop executable.
+It handles help and version locally and relays commands or ACP stdio through Main's
+authenticated local pipe. Enable CLI access and copy its full path from settings;
+installation does not mutate Windows PATH or start a second Gateway. The existing
+Multica command remains available through its independent setting.
+
+ACP and MCP dependencies are bundled at build time. Runtime Services' resource-sync
+and TypeScript precompile paths both include the MCP SDK and its schema validator,
+without adding a separate runtime npm installation. Validate the installed console
+under Chinese and space-containing paths without system Node, public network or
+warmed caches. The command and protocol contract is in
+[Agent CLI / ACP](features/integrations/agent-cli.md).
+
 ### Startup diagnostics and review coverage
 
 Main logs retain the failed operation, initialization step, filesystem path,

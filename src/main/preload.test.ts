@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { AppInitializationIpc, INITIALIZATION_WINDOW_ARGUMENT } from '../shared/app/initialization';
+import { AgentCliIntegrationIpc } from '../shared/integrations/agentCliIntegration';
 import { type ExtensionChangedEvent, ExtensionIpc } from '../shared/plugins/extensions';
 
 const electronMocks = vi.hoisted(() => ({
@@ -29,6 +30,17 @@ afterEach(() => {
   electronMocks.removeListener.mockReset();
   vi.restoreAllMocks();
   vi.resetModules();
+});
+
+test('exposes CLI status without access switches or a client-specific configuration API', async () => {
+  await import('./preload');
+  const bridge = electronMocks.expose.mock.calls[0][1];
+
+  expect(Object.keys(bridge.agentCli)).toEqual(['getStatus']);
+  expect(bridge).not.toHaveProperty('multica');
+  expect(electronMocks.invoke).not.toHaveBeenCalled();
+  await bridge.agentCli.getStatus();
+  expect(electronMocks.invoke).toHaveBeenCalledExactlyOnceWith(AgentCliIntegrationIpc.GetStatus);
 });
 
 test.each([

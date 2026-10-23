@@ -18,6 +18,12 @@ export type LanguageType = 'zh' | 'en';
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
     ...startupWindowTranslations.zh,
+    externalAgentModel: '模型',
+    externalAgentAllowOnce: '允许一次',
+    externalAgentReject: '拒绝',
+    externalAgentToolPermission: '工具权限',
+    externalAgentTool: '工具',
+    externalAgentTaskCancelled: '任务已取消。',
     mcpAppsContextPrepareFailed: '图表内容暂时无法同步，请检查应用状态后重新发送。画布修改已保留。',
     localSpeechModelServerNotConfigured: '尚未配置内网语音模型服务，请联系管理员配置后再安装模型。',
     localSpeechModelRangeIgnored: '模型服务未按请求返回文件分段，请联系管理员检查分段下载支持。',
@@ -167,6 +173,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
   },
   en: {
     ...startupWindowTranslations.en,
+    externalAgentModel: 'Model',
+    externalAgentAllowOnce: 'Allow once',
+    externalAgentReject: 'Reject',
+    externalAgentToolPermission: 'Tool permission',
+    externalAgentTool: 'Tool',
+    externalAgentTaskCancelled: 'Task cancelled.',
     mcpAppsContextPrepareFailed:
       'Could not sync the diagram. Check the app and send again. Your edits are preserved.',
     localSpeechModelRangeIgnored:

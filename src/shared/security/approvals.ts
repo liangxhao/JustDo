@@ -35,6 +35,9 @@ export interface ExecApprovalCommandAnalysis {
 }
 
 export interface ExecApprovalRequestPayload {
+  sessionId?: string | null;
+  runId?: string | null;
+  toolCallId?: string | null;
   command?: string;
   commandPreview?: string | null;
   commandArgv?: string[];
@@ -80,6 +83,7 @@ export const ApprovalKind = {
 export type ApprovalKind = (typeof ApprovalKind)[keyof typeof ApprovalKind];
 
 export interface PluginApprovalRequestPayload {
+  runId?: string | null;
   pluginId?: string | null;
   title: string;
   description: string;

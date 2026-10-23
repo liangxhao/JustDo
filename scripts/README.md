@@ -15,26 +15,31 @@ use `build/runtimes/`, Windows runtime archives use `build/tar/`, local speech m
 `build/speech-models/v1/`, and the browser package uses `build/browser-extension/`.
 The build and cache directories are ignored by Git.
 
-| Directory    | Responsibility                                                      |
-| ------------ | ------------------------------------------------------------------- |
-| `assets/`    | Application and tray icon generation, macOS icon repair             |
-| `browser/`   | Host adapters for browser content bundles and Native Messaging      |
-| `build/`     | Vite build integration                                              |
-| `electron/`  | Electron development startup, ports and native module rebuilds      |
-| `multica/`   | Multica agent launcher generation and development registration      |
-| `openclaw/`  | OpenClaw runtime installation, patching, verification and bundling  |
-| `packaging/` | Electron Builder hooks, installers, signing and update validation   |
-| `runtime/`   | Bundled Git, Python, speech and skill preparation, dependency fixes |
-| `test/`      | Test runner and browser smoke checks                                |
-| `fixtures/`  | Shared script verification fixtures                                 |
-| `patches/`   | Versioned OpenClaw capability patches and their inventories         |
-| `theme/`     | Offline theme CSS generation and Tailwind integration               |
+| Directory    | Responsibility                                                           |
+| ------------ | ------------------------------------------------------------------------ |
+| `assets/`    | Application and tray icon generation, macOS icon repair                  |
+| `browser/`   | Host adapters for browser content bundles and Native Messaging           |
+| `build/`     | Vite build integration                                                   |
+| `electron/`  | Electron development startup, ports and native module rebuilds           |
+| `external-agent/` | Shared console CLI generation and profile-bound development launchers |
+| `openclaw/`  | OpenClaw runtime installation, patching, verification and bundling       |
+| `packaging/` | Electron Builder hooks, installers, signing and update validation        |
+| `runtime/`   | Bundled Git, Python, speech and skill preparation, dependency fixes      |
+| `test/`      | Test runner and browser smoke checks                                     |
+| `fixtures/`  | Shared script verification fixtures                                      |
+| `patches/`   | Versioned OpenClaw capability patches and their inventories              |
+| `theme/`     | Offline theme CSS generation and Tailwind integration                    |
 
 Keep script-specific helpers beside their entry points and import cross-domain
 helpers explicitly. Resolve repository paths relative to the script location;
 do not rely on the caller's working directory when locating repository assets.
 Versioned patches remain under `patches/`; runtime orchestration belongs in
 `openclaw/`.
+
+The console executable provides CLI, ACP and the supported Codex app-server entry.
+Generation scripts live under `external-agent/`; development launchers are prepared
+under `.agent-tasks/external-agent/development/`. See
+[Agent CLI / ACP](../docs/features/integrations/agent-cli.md).
 
 `openclaw/sync-openclaw-runtime-resources.cjs` reads role templates and channel
 documentation from `resources/openclaw/docs/` and assembles them at the native

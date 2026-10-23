@@ -38,10 +38,11 @@ import {
   parseExternalAgentSettings,
   validateExternalAgentSettings,
 } from '../../shared/integrations/externalAgents';
-import type {
-  ExternalSessionMetadata,
-  ExternalSessionStatus,
-} from '../../shared/integrations/multica';
+import {
+  type ExternalSessionMetadata,
+  ExternalSessionSource,
+  type ExternalSessionStatus,
+} from '../../shared/integrations/externalSession';
 import { DEFAULT_WORKSPACE_DIRECTORY_NAME } from '../../shared/productMetadata';
 import { rewriteOpenClawModelProviderId } from '../../shared/providers';
 import {
@@ -432,11 +433,18 @@ export class CoworkStore {
   }
 
   interruptOpenSessionRuns(interruptedAt: number): number {
+    const externalGuard = this.hasExternalSessionMappings()
+      ? `AND NOT EXISTS (
+           SELECT 1 FROM cowork_external_sessions AS external
+           WHERE external.status = 'running'
+             AND external.cowork_session_id = cowork_session_runs.session_id
+         )`
+      : '';
     const result = this.db
       .prepare(
         `UPDATE cowork_session_runs
          SET state = 'aborted', started_at = ?, accepted_at = ?, ended_at = ?, updated_at = ?
-         WHERE ended_at IS NULL`,
+         WHERE ended_at IS NULL ${externalGuard}`,
       )
       .run(interruptedAt, interruptedAt, interruptedAt, interruptedAt);
     return result.changes;
@@ -804,7 +812,8 @@ export class CoworkStore {
     if (row) return this.getSession(row.id);
     try {
       const imported = this.getOne<{ session_id: string }>(
-        'SELECT session_id FROM history_session_bindings WHERE session_key = ?', [sessionKey],
+        'SELECT session_id FROM history_session_bindings WHERE session_key = ?',
+        [sessionKey],
       );
       return imported ? this.getSession(imported.session_id) : null;
     } catch (error) {
@@ -1024,18 +1033,26 @@ export class CoworkStore {
     })();
   }
 
-  private getHistorySessionPresentation(sessionId: string, cwd?: string): {
+  private getHistorySessionPresentation(
+    sessionId: string,
+    cwd?: string,
+  ): {
     nativeSessionKey?: string;
     historyBinding?: HistorySessionBinding;
   } {
-    let row: {
-      session_key: string;
-      native_session_id: string;
-      availability: HistorySessionBinding['availability'];
-    } | undefined;
+    let row:
+      | {
+          session_key: string;
+          native_session_id: string;
+          availability: HistorySessionBinding['availability'];
+        }
+      | undefined;
     try {
-      row = this.db.prepare(`SELECT session_key,native_session_id,availability
-        FROM history_session_bindings WHERE session_id=?`)
+      row = this.db
+        .prepare(
+          `SELECT session_key,native_session_id,availability
+        FROM history_session_bindings WHERE session_id=?`,
+        )
         .get(sessionId) as typeof row;
     } catch (error) {
       if (error instanceof Error && error.message.includes('no such table')) return {};
@@ -1058,22 +1075,37 @@ export class CoworkStore {
   }
 
   resetRunningSessions(): number {
+    const externalGuard = this.hasExternalSessionMappings()
+      ? `AND NOT EXISTS (
+        SELECT 1 FROM cowork_external_sessions AS external
+        WHERE external.status = 'running'
+          AND external.cowork_session_id = cowork_sessions.id
+      )`
+      : '';
     const result = this.db
       .prepare(
         `
       UPDATE cowork_sessions
       SET status = 'idle'
-      WHERE status = 'running'
+      WHERE status = 'running' ${externalGuard}
     `,
       )
       .run();
     return result.changes;
   }
 
+  private hasExternalSessionMappings(): boolean {
+    return Boolean(
+      this.getOne<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_external_sessions'",
+      ),
+    );
+  }
+
   private listExternalSessionMetadata(): Map<string, ExternalSessionMetadata> {
     interface ExternalSessionRow {
       cowork_session_id: string;
-      source: string;
+      source: ExternalSessionMetadata['origin'];
       status: ExternalSessionStatus;
       openclaw_session_key: string | null;
     }
@@ -1082,7 +1114,8 @@ export class CoworkStore {
       rows = this.getAll<ExternalSessionRow>(
         `SELECT cowork_session_id, source, status, openclaw_session_key
          FROM cowork_external_sessions
-         WHERE source = 'multica'`,
+         WHERE source IN (?, ?)`,
+        [ExternalSessionSource.HistoricalAppServer, ExternalSessionSource.Cli],
       );
     } catch (error) {
       if (error instanceof Error && error.message.includes('no such table')) return new Map();
@@ -1092,7 +1125,7 @@ export class CoworkStore {
       rows.map(row => [
         row.cowork_session_id,
         {
-          origin: 'multica',
+          origin: row.source,
           readOnly: true,
           status: row.status,
           sessionKey: row.openclaw_session_key ?? '',
@@ -1103,18 +1136,22 @@ export class CoworkStore {
 
   private getExternalSessionMetadata(sessionId: string): ExternalSessionMetadata | undefined {
     let row:
-      | { source: string; status: ExternalSessionStatus; openclaw_session_key: string | null }
+      | {
+          source: ExternalSessionMetadata['origin'];
+          status: ExternalSessionStatus;
+          openclaw_session_key: string | null;
+        }
       | undefined;
     try {
       row = this.getOne<{
-        source: string;
+        source: ExternalSessionMetadata['origin'];
         status: ExternalSessionStatus;
         openclaw_session_key: string | null;
       }>(
         `SELECT source, status, openclaw_session_key
          FROM cowork_external_sessions
-         WHERE source = 'multica' AND cowork_session_id = ?`,
-        [sessionId],
+         WHERE source IN (?, ?) AND cowork_session_id = ?`,
+        [ExternalSessionSource.HistoricalAppServer, ExternalSessionSource.Cli, sessionId],
       );
     } catch (error) {
       if (error instanceof Error && error.message.includes('no such table')) return undefined;
@@ -1122,7 +1159,7 @@ export class CoworkStore {
     }
     return row
       ? {
-          origin: 'multica',
+          origin: row.source,
           readOnly: true,
           status: row.status,
           sessionKey: row.openclaw_session_key ?? '',

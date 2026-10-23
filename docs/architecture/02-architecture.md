@@ -116,11 +116,16 @@ flowchart LR
   Static --> Renderer[主 Renderer / 图片预览]
 ```
 
-特殊 Multica bridge client 模式在普通 UI 初始化之前处理。正常启动设置产品 userData、日志、依赖管理器环境和系统 CA；ready 后初始化数据库，整理上次中断的产品运行状态，恢复网络偏好，再准备内置模型与受管配置。
+通用 Agent bridge client 模式在普通 UI 初始化之前处理。正常启动设置产品 userData、日志、依赖管理器环境和系统 CA；ready 后初始化数据库，整理上次中断的产品运行状态，恢复网络偏好，再准备内置模型与受管配置。
 
 有效请求头策略由手工配置和已启用、验证通过的 Extension 声明合成，不能等 Gateway 已发出请求后才切换代理 generation。配置同步失败会记录原因，后续执行准入不得把失败状态当可用。
 
-浏览器侧栏 app-server、Native Messaging 发现文件、Multica 本机桥和托盘属于产品生命周期。它们有各自凭据和清理逻辑，不共用 Gateway token。UI 可显示启动或配置错误；窗口存在本身不证明模型可用。
+浏览器侧栏 app-server、Native Messaging 发现文件、Agent CLI 本机桥和托盘属于产品生命周期。它们有各自凭据和清理逻辑，不共用 Gateway token。UI 可显示启动或配置错误；窗口存在本身不证明模型可用。
+
+Agent CLI、ACP 与已实现的 Codex app-server 协议共用受认证本机桥和发现文件，随桌面后台启动即提供服务，没有客户端专用总开关或环境鉴权。
+控制台进程只拥有 stdio，Main 外部会话服务负责映射、模型与权限准备，OpenClaw 继续拥有执行和历史。
+ACP 会话 MCP 由 Runtime Services 通过公开工具与审批接口按原生身份租约提供，不改全局配置。
+详见[通用 CLI / ACP](../features/integrations/agent-cli.md)。
 
 随机静态端口会改变浏览器 origin。桌面聊天的 Ed25519 Gateway 连接身份通过既有 preload Store 保存到 Main 的 SQLite `kv`，不依赖该 origin 的 `localStorage`，因而重建窗口和重新启动仍可复用身份。此记录不新增 Redux 状态或消息缓存；存储不可用时只保留当前 Renderer 生命周期内的内存身份。
 
@@ -198,7 +203,7 @@ Renderer 提交产品期望 → Main 校验并持久化 → 配置同步器生�
 `registerAppShutdown` 保证 cleanup 只进入一次。main.ts 的清理顺序具有依赖：
 
 1. 停止开发服务监控、凭据监控与活动上报，失效内存认证。
-2. 清理浏览器 app-server 发现信息并关闭服务；销毁托盘，停止 Multica bridge。
+2. 清理浏览器 app-server 发现信息并关闭服务；销毁托盘，停止 Agent bridge。
 3. 停止 cron 轮询，防止关闭过程中再启动后台工作。
 4. 停止 Cowork 会话，再停止 Gateway。
 5. 关闭 browser agent bridge、出站代理，最后关闭 SQLite。

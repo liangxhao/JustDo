@@ -586,7 +586,12 @@ describe('cowork session recent activity', () => {
     expect(updated.currentSession).toMatchObject({
       status: 'completed',
       updatedAt: activityTime,
-      external: { status: 'completed', sessionKey: 'agent:main:multica:one' },
+      external: {
+        origin: 'multica',
+        readOnly: true,
+        status: 'completed',
+        sessionKey: 'agent:main:multica:one',
+      },
     });
   });
 

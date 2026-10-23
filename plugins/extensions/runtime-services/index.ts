@@ -11,6 +11,7 @@ import {
 } from 'openclaw/plugin-sdk/ssrf-runtime';
 
 import { registerAgentTeamRuntimeServices } from './agent-team';
+import { registerExternalMcp } from './external-mcp';
 import {
   HISTORY_FAILURE_PARTIAL_BATCH_MAX_CHARS,
   type HistoryFailurePartial,
@@ -242,6 +243,7 @@ const plugin = {
     api.registerProvider(buildBuiltinModelAuthProvider());
     registerReplayAdmissionObservations(api);
     registerAgentTeamRuntimeServices(api);
+    registerExternalMcp(api);
     registerScheduledTaskHistory(api);
     registerMcpAppHistory(api);
     const historyMessageTransfers = new Map<string, HistoryMessageTransfer>();

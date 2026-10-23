@@ -160,6 +160,20 @@ async function precompileOpenClawExtensions(runtimeDir, options = {}) {
           bundle: true,
           platform: 'node',
           format: outputExtension === '.cjs' ? 'cjs' : 'esm',
+          // The external-client MCP transport bundles cross-spawn's CJS helpers.
+          // Give only this plugin's ESM bundle a native require for Node builtins.
+          ...(name === 'runtime-services'
+            ? {
+                nodePaths: [path.join(rootDir, 'node_modules')],
+                ...(outputExtension !== '.cjs'
+                  ? {
+                      banner: {
+                        js: "import { createRequire as createRuntimeRequire } from 'node:module'; const require = createRuntimeRequire(import.meta.url);",
+                      },
+                    }
+                  : {}),
+              }
+            : {}),
           target: 'es2023',
           outfile: outFile,
           // Bundle all dependencies except SDK imports (resolved by jiti at runtime).

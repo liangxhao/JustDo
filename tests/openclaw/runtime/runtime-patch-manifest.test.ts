@@ -862,6 +862,14 @@ module.exports = { applyPatch, verifyPatch };
   test.each([
     'scripts/openclaw/bundle-openclaw-gateway.cjs',
     'src/main/openclaw/config/models/providerProjection.ts',
+    'plugins/extensions/runtime-services/index.ts',
+    'plugins/extensions/runtime-services/openclaw.plugin.json',
+    'plugins/extensions/runtime-services/package.json',
+    'plugins/extensions/runtime-services/contracts/external-mcp.ts',
+    'plugins/extensions/runtime-services/external-mcp/index.ts',
+    'plugins/extensions/runtime-services/external-mcp/registry.ts',
+    'plugins/extensions/runtime-services/external-mcp/transport.ts',
+    'plugins/extensions/runtime-services/external-mcp/validation.ts',
   ])('rejects a build recipe source changed after the runtime was built: %s', source => {
     const { repoRoot, runtimeRoot } = createFixture();
     writeOpenClawPatchManifest(runtimeRoot, { repoRoot });

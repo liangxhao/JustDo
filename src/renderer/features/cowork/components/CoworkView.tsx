@@ -40,6 +40,7 @@ import { getMessageTitleInput } from '@shared/cowork/messageInput';
 import { REVIEW_OPEN_EVENT, REVIEW_TAB_ID } from '@shared/cowork/sessionReview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { isGoalEditCommand } from '@shared/cowork/slashCommands';
+import { ExternalSessionSource } from '@shared/integrations/externalSession';
 import { type ProgressCard, type ProgressCardViewState } from '@shared/openclaw/progressCard';
 import { OpenClawExtensionId, OpenClawToolName } from '@shared/plugins/nativeIds';
 import {
@@ -3627,7 +3628,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     {i18nService.t(
                       currentSession.branchCreationPending
                         ? 'coworkBranchCreationPending'
-                        : 'multicaSessionReadOnly',
+                        : currentSession.external?.origin === ExternalSessionSource.Cli
+                          ? 'agentCliSessionReadOnly'
+                          : 'externalClientSessionReadOnly',
                     )}
                   </div>
                 ) : (
