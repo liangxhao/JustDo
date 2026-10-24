@@ -575,12 +575,17 @@ export const registerCoworkSessionHandlers = ({
       const owner = session?.agentId;
       if (owner && !store.getAgent(owner)?.enabled)
         return { success: false, error: 'agentUnavailable' };
-      if (isRestartCheckpoint(store.getLatestSessionRun(input.sessionId))) {
+      const restartCheckpoint = store.getLatestSessionRun(input.sessionId);
+      if (isRestartCheckpoint(restartCheckpoint)) {
+        const checkpointIdentity = JSON.stringify(restartCheckpoint);
         const raw = await getCoworkEngineRouter().getSessionRuntimeStatus(input.sessionId, {
           includeSubagents: true,
           forceRefresh: true,
-          fullScan: true,
+          targeted: true,
         });
+        const latest = store.getLatestSessionRun(input.sessionId);
+        if (!isRestartCheckpoint(latest) || JSON.stringify(latest) !== checkpointIdentity)
+          return { success: false, errorCode: SessionRunBeginErrorCode.RuntimeUnknown };
         if (getCollaboration?.().isSourceDeleting(input.sessionId))
           return { success: false, error: 'collaborationDeletePending' };
         if (!raw.known) {

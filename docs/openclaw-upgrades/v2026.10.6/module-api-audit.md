@@ -85,7 +85,8 @@ TTS builder、扩展合并、完整/最小/退出配置及设置 IPC 统一写�
 还会触及配置、插件及服务，不能用于只维护数据库的正常升级。
 
 Main 新增 `startup/upgrade`：使用交付 Node 和锁定当前版本的原生 owner，
-在产品 Store、配置同步、外部入口和 Gateway 启动前完成维护。应用不写原生迁移 SQL，
+在产品 Store、配置同步前完成 schema 维护；配置及历史恢复后、外部入口和 Gateway
+启动前再完成原生 canonical 准备。应用不写原生迁移 SQL，
 不复制 transcript，不新增 runtime patch。selected owner 的路径、字节和导出由静态合同
 及冻结 manifest 校验；完整依赖图仍由构建配方与封存产物验证，不能以局部 owner hash 替代。
 维护使用原生 Gateway 排他锁、数据库维护 scope、agent lease、完整备份和原生更新，
@@ -153,6 +154,102 @@ Store 配置读取与真实临时文件，验证中文隔离路径、生产/相�
 与停机竞争而未确认，不能把进程退出 0 当作删除完成；真实模型或 App 工具操作仍未由
 这些启动与只读/创建调用替代。
 
+### 2.6 dev 启动复查：规范校验与 Team 首次发送
+
+2026-10-24 在 `dev@6f192d3bf` 后续复查。实际主目录运行时经严格验收为
+10.6/33 patches/16 owners/207 recipe 输入，排除沿用旧运行时；原始日志只保存在
+ignored 证据目录，不提交会话内容。首次 canonical Worker 提交授权超过原生 5 秒
+期限，随后两个助手 unavailable，报告日志中反复出现 828 次同类 RPC 错误。
+其前后有约 5–6 秒同步插件加载；没有精确 commit-request 时刻，不能归咎于某个插件。
+也没有据此宣称数据库损坏或仅 schema 不兼容。
+
+| 模块/上游 owner | 适配与原生依据 | 回归边界 |
+| --- | --- | --- |
+| 启动、原生存储 | `assertOpenClawDatabasesReady` 只证明 schema，不能替代 `certifySessionCanonicalValidationPending`。Gateway 前增加离线准备，由原生 certifier 决定是否待写；真实文件代际回执不能在复制文件或只读快照上复用 | 正式 `native-canonical-preparation.native-probe.mjs` 直接编译调用生产 transport/SOURCE，含大量行、下一进程复用、复制/替换、撤销、备份失败和真实 5 秒 commit 拒绝负控 |
+| 维护/Worker 授权 | 原生 Doctor 外锁全程持有；维护租约下探测与全组备份，正常释放后 Worker 获取自己的普通租约；全部 Worker join 后重新维护复验。两个新增 owner 导出进入精确 bytes/alias/ASAR 合同，既有 patch 不变 | 无待写不重复备份；未知提交或退休不得发布成功；原生 private snapshot 改变物理身份，且直接只读打开缺 SHM 的 WAL 库会创建 SHM，故不把这项维护塞入只读 inspect |
+| Team 两种显式模式 | 原空闲检查把 `known:false` 也提示为 busy，全局 full scan 会在任意会话通知后失效。改用原生 describe 的当前主运行/queued/递归后代聚合；保留 SID、nullable revision、连接和来源围栏。旧普通会话也可能未持久化 native key，明确缺席还须验证没有旧执行回执和继承来源 | `runtimeSessionStatus.targeted.native-contract.test.ts` 直接执行目标源码完整投影函数与真实事件 payload；行为测试包含无关独立 root、未知祖先、错身份/修订、连接替换及旧回执。真实 Gateway 首发脚本另测 host/native 边界，不冒充真实企业模型或完整组队 UI |
+
+用户确认的 busy 文案只能定位两次发送前空闲检查之一；原日志未记录该次具体 flags，
+不能断言点击时一定是 unknown。新增安全阶段日志只记录 known/running 等标志，
+不记录正文或凭据；未知仍拒绝且使用准确提示，不自动重发。最终产物身份、测试结果、
+实际界面观察与未验收项见[本轮验证记录](validation.md#2026-10-24dev-启动与-team-首次发送修复)。
+
+### 2.7 五条人工发送入口：定点准入与扩展产物
+
+后续复审覆盖 Team 主会话、成员单聊、公开群聊，以及 Swarm 主会话和节点人工输入。
+10.4→10.6 的 `chat.send` 没有新增必填发送字段；问题集中在应用仍用全局目录判断
+单个目标是否可发送、局部事件身份过宽，以及既有探针没有经过真正的五条产品链路。
+`sessions.send` / `sessions.steer` 复用原生聊天执行入口，但 steer 具有中断语义，
+不能用它或裸 `agent` RPC 替换全部人工消息。Swarm 节点继续使用自己的受管执行权限。
+
+| 入口 | 实际消费者与本轮处置 | 当前证据及限制 |
+| --- | --- | --- |
+| Team / Swarm 主会话 | `SessionRunBegin` 仅将旧 restart-checkpoint 的发送前检查改为 `targeted`；真实 Renderer `ChatController` 和 `dispatchInitialTurn` 仍发送同一准备好的 `chat.send` | Main IPC 与实际状态函数组合回归；真实 controller/client 经 Gateway 完成新建、续发、重连、initial dispatch、错身份拒绝及 ACK 丢失不重发，全部 wire（含初始化）零全局列表；不宣称该原生探针覆盖 Main IPC 或 React UI |
+| Team 成员单聊 | `CollaborationCoordinator.prepareContinuation` 对来源、选定目标及全队成员读取精确 key/SID/revision，保留 room/成员/配置/连接代次；未知独立于 busy | 真实 Host→native peer 发送及历史通过；原生 bind/dispatch→Requested→host.handle→resolve 的 ensure 桥创建一次，已有意图只读、未知零创建/发送/删除；不宣称模型自行组织团队 |
+| Team 公开群聊 | 真正的 `TeamDiscussionCoordinator`→`teamDiscussion.prepare/start/status/history`；执行与汇总两个 whole-run 消费点都要求事件 SID 严格等于已登记 SID，缺失也拒绝 | 两个缺 SID 负控通过；实际建群、两成员精确终态、公开原生历史和同请求零重发通过，含三成员团队的精确 CAS 清理 |
+| Swarm 节点人工输入 | `intervene` 的 note/continue/retry 保留各自受管来源、回执与 native execution 语义，不以普通 `chat.send` 绕过所属关系 | 正式 bundled 扩展真实 source-start、note 零派发、失败节点同 SID 新 run 继续、丢 ACK 同 operation 对账、新 key/SID/run 重试及已有主会话 status 工具通过；原生 whole-run、公开 cleanup 与原文历史分别核对，无需 Swarm 生产适配 |
+| 首条消息后的单目标观察 | 标题 SID 解析、usage 详情及三处 Goal replay 去掉 search-list 补桥，使用精确 `sessions.describe` | 168 项定向回归含两个上游真实函数/连线契约；省略或损坏 `activeRunIds`、错 SID/key、连接或产品身份改变均保持未知，不补发输入 |
+
+原生 `server-methods/sessions-read-by-key.ts` 为 describe 注入
+`createVisibleActiveSessionRunProjector`，通过同一 presentation 发布 `hasActiveRun`
+及完整可见时的 `activeRunIds`。上游 `sessions-describe-active-run.test.ts` 对照 describe
+和 roster 的 queued/running/done；projected owner 仅提供活跃事实时，两者均省略精确
+run ID 集合。应用不能把这种省略当作旧 run 未执行。成功 ACK 后的 Goal 观察失败保留
+原 run/operation；Main 的执行 Promise 继续等待精确 whole-run，而非提前返回成功。
+后台 Goal 恢复、侧栏目录及其它确需完整范围的读取仍保留原职责，本轮没有整体替换。
+
+Team 的首次创建、发送前旧回执释放和删除同样使用定点观察。删除要求真实字符串
+revision 的原生 CAS；nullable/未知身份保留删除待确认，不能放宽成只按 key 删除。
+已知原生缺席、停止 ACK、空闲或产品状态都不能替代 whole-run 和清理回执。
+
+本轮只修改本地 Team 扩展的两个 SID guard，未新增 native patch 或重建 Gateway core。
+新 `win-x64-collaboration-send-2` 从已验 753 运行包复制，执行官方资源同步、扩展编译、
+prune 和 manifest writer。207 项配方、core manifest、Gateway bundle、ASAR、SDK、
+Node 及全部非扩展字节不变；独立 `extension-assembly-receipt.json` 绑定当前扩展
+源码闭包、生产入口、资源输出、工具和完整树。core manifest 不被宣称为本地扩展全包身份。
+
+永久入口 `scripts/test/run-collaboration-send-contracts.cjs` 按精确上游 tag 与当前配方
+准入，再串行调用实际 Main 通知准入、controller、Team 和 Swarm 探针；有装配回执时核对其来源和输出，
+全新构建没有回执时可只读重现两个官方生产 bundle 并逐字节比较。发送及清理阶段
+强制拒绝应用层 `sessions.list`，controller 初始化也要求零全局列表。插件静态入口检查
+与 Host 实际 wire 计数分别记录，不能混称动态观测。实际五路径通过与否须以各
+探针的 exact SID/run whole-run、原生 history、零未知重发和自然关闭结果为准；
+三个最终探针均实际通过并正常关闭，逐项身份、失败复验和范围见
+[五类消息验证记录](validation.md#2026-10-24team-与-swarm-五类消息入口定点复查)。
+
+本轮未改写既存 accepted-timing 的空闲/root 变更后备收敛；它不构成原生执行终态证据，
+已单独记录[待实施计划](../../plans/session-run-terminal-evidence.md)。发送 checkpoint 在
+等待后须仍是同一启动 marker，计时被替换即返回未知，不能借本次定点查询进入旧后备。
+Goal 历史重放退役的是重复操作的本地展示和等待，不是给旧运行补造 whole-run 结论。
+
+### 2.8 准备响应后的会话通知与 Main 准入接缝
+
+同日用户在 dev 实测，普通聊天已完成，随后选择 Team 仍在 `before-preparation`
+返回未知。四次 console/Main 日志均出现 create 成功、迟到 changed、describe 成功的
+交错。只读产品元数据为 idle/main、没有持久 native key 或 history binding，存在已完成
+的普通运行，没有旧 Team launch 回执；用户给出的是物理 SID，不能把它当产品会话 ID。
+
+实际生产链路是 `CoworkView` 先同步会话权限，经
+`SessionPermissionModeCoordinator` → `OpenClawRuntimeAdapter.prepareSession` 调用
+原生 create，再由 `SessionRunBegin` → Team launch 检查空闲。上游
+`server-methods/sessions-create.ts` 在 `respond(true)` 之后才调用
+`emitSessionsChanged`；`session-change-event.ts` 异步准备快照，某些失败形态仅发送
+无 key 的目录通知。应用原有事件处理会淘汰目标或祖先不明的在途状态读取，因此请求
+本身成功仍可能返回未知。不能通过忽略通知、把缺失状态当空闲或扫描全局会话绕过。
+
+本轮只调整应用侧状态观察：首读确为合法原生行、只有事件 token 被淘汰，且产品身份、
+client/generation、本地未知执行/恢复边界保持时，丢弃首个结果并重新精确 describe 一次。
+第二次固定首读物理 SID 和 lifecycle revision 的省略/null/字符串三态，错身份、换代、错误、
+缺行、再次失效均保持未知；实际主执行/后代忙碌仍拒绝准入。没有 mutation 或发送重试，
+没有新增 runtime patch、核心或扩展重建。安全原因日志区分查询失败、身份改变、未知
+custody 和事件反复失效，不记录响应正文或提示词。
+
+此前 controller 原生探针绕过 Main IPC；Team 原生探针使用受控产品元数据与准备/状态
+端口，两者均未证明上述完整接缝。本轮补充实际 Store、Adapter/propertyContext、生产
+事件处理、Router 与 IPC 组合，及真实原生事件帧的投递时序验证，分别标注控制端口与
+桌面 UI 边界。回归先在旧实现明确失败，再按固定身份和负控复验。
+实际结果、探针和未验收范围见[本轮验证记录](validation.md#2026-10-24迟到会话通知与-main-准入补查)。
+
 ## 3. 按功能模块检查
 
 以下上游路径相对 OpenClaw 源码，应用路径相对本仓库。测试结果与限制集中在第 5、6 节。
@@ -162,11 +259,11 @@ Store 配置读取与真实临时文件，验证中文隔离路径、生产/相�
 | --- | --- | --- | --- |
 | [x] | Gateway 关闭、开发监督与更新安装 | 原生已有 shutdown325/stop330 秒预算；真实桌面发现宿主 15 秒强杀及 16 秒无退出即成功。Main/launcher 监督层、成功回收和失败传播均受影响 | 已适配共享预算、同 child 单次 deadline、实际 close 证明和失败围栏；正常关闭超过 15 秒仍等待，强杀/无退出不重启，未知清理不关闭 Store 或继续安装。shutdownPolicy 原生敏感测试、Gateway owner/launcher/Main 阶段测试，完整 GUI 结果见 validation |
 | [x] | Gateway 连接、认证、scope、订阅 | `server/ws-connection/connect-{hello,session,operator-access}.ts` 新增能力和设备来源校验；共享 secret operator、backend mode 与已有 scope 不改。应用 `engine/openclaw/runtimeGatewayConnection.ts` 使用真实原生 client、受管 token、`deviceIdentity:null`，Renderer 指定 controller 使用独立认证连接 | 无需新增适配；连接 generation、拒绝/断连/迟到 hello 与重连测试，未新接入公网 account 或 worker 管理 |
-| [x] | 聊天发送、排队与未知提交 | `logs-chat.ts` send 参数未变；内部 normalization 改为异步。应用只 await RPC，不直接同步调用内部 normalization，保留 idempotency 身份 | 无需新增适配；initial-turn-dispatch、queued-input/pending-input、native input receipt 与 cancellation 用例 |
+| [x] | 聊天发送、排队与未知提交 | `logs-chat.ts` send 参数未变；内部 normalization 改为异步。应用只 await RPC，不直接同步调用内部 normalization，保留 idempotency 身份 | 发送字段无需调整；应用发送前定点准入、Goal replay 及五路径验证接缝见 2.7；initial-turn-dispatch、queued-input/pending-input、native input receipt 与 cancellation 用例保留 |
 | [x] | History/startup/分页/完整消息 | 新增可选 `toolResultMaxChars`，`chat.message.get.sessionId` 和 8M 上限；reader 改成 prepared/current-sharing publication。`wire/v2026_10_6.ts`、Renderer `chat-history-protocol.ts` 已在升级基线传选定物理 SID，保持更小请求预算与分块回退 | 基线已适配；目标真实 validator 边界、wire/history/reconciliation、SID 不符、旧 generation、截断与分块测试 |
 | [x] | Thinking/Content/Tool/activity/进度 | 新 `AgentActivityItem.unpairedCall?:boolean` 是无配对显示标记；原生异步 publication 内部实变。应用保留 sidecar，按 owner/scope/seq 合并，未把 unpaired call 当工具或执行终态 | 无需新增适配；流式段序、preamble/rollback/空替换、snapshot、重复/乱序/迟到与恢复测试；具体传输历史仍以 validation 的 native 场景为限 |
-| [x] | Stop、whole-run、恢复 | `agent.wait` 从独立文件移到 `agent.ts`，前后授权及 generation/SID 检查保留；abort 参数未改 | 无需新增适配；仍只信精确 `executionSettled:true` whole-run，Stop ACK/chat final/idle 不替代；execution/recovery/terminal 负例 |
-| [x] | Sessions list/search/status | 新可选 source/excludeDock、lifecycleRevision/sessionModelRevision/hasBoard/isDock/childOwnerSessionKeys；移除 conversationLink。应用 sessionListClient/runtimeSessionStatus/subagentGateway 不依赖被删 link | 无需新增适配；compact/full 保留已知事实，历史 ancestry 仍用 spawnedBy；wire/status/search/subagent 回归 |
+| [x] | Stop、whole-run、恢复 | `agent.wait` 从独立文件移到 `agent.ts`，前后授权及 generation/SID 检查保留；abort 参数未改 | 原生执行回执仍只信精确 `executionSettled:true` whole-run，Stop ACK/chat final/idle 不替代；execution/recovery/terminal 负例。既存产品计时后备限制见 2.7，不宣称本轮已修复全部计时收敛 |
+| [x] | Sessions list/search/status | 新可选 source/excludeDock、lifecycleRevision/sessionModelRevision/hasBoard/isDock/childOwnerSessionKeys；移除 conversationLink。应用 sessionListClient/runtimeSessionStatus/subagentGateway 不依赖被删 link | 目录用途保留；当前发送、cleanup、标题和 usage 单目标读取改为 describe，见 2.7。compact/full 保留已知事实，历史 ancestry 仍用 spawnedBy；wire/status/search/subagent 回归 |
 | [x] | create/fork/reset/delete/worktree adoption | 新可选 `surface:'plugin-dock'`、worker placement；handler 强化 trusted spawn 与 prepared source。应用显式 key/agent/cwd，不制造原生可信来源 | 无需新增适配；sessionBranching/worktreeSession/adoption 测试；既有 managed-fork 窄补丁仍目标版本专属 |
 | [x] | 权限、cwd、exec/plugin approvals | 请求/decision enum 无实质 diff；native writer/source authority 加强。应用现有 pending 身份、允许选择、过期和 exact SID 校验保持 | 无需新增适配；permission coordinator、approval routing/grants、迟到/撤销/Stop 回归 |
 | [x] | Goal、压缩、Plan、问题 | Goal schema 未改，handler 改为 await fingerprint 并捕获原生 SID/revision/owner；Plan/问题由所属扩展等待工具持有，压缩取消不等于结算 | 无需新增适配；Goal continuation/receipt、compaction、plan/question tests；不恢复宿主 transcript/终态推断 |
@@ -231,10 +328,10 @@ maintenance owner、Workshop library 和 STT descriptor 分别证明，不能混
 统一必跑入口（从本 worktree 执行）：
 
 ```powershell
-node scripts/test/run-openclaw-module-contracts.cjs --runtime-dir E:/workspace/worktrees/openclaw-upgrade-audit/JustDo/build/runtimes/openclaw/win-x64-desktop-regression --source-root E:/workspace/openclaw
+node scripts/test/run-openclaw-module-contracts.cjs --runtime-dir E:/workspace/worktrees/openclaw-upgrade-audit/JustDo/build/runtimes/openclaw/win-x64-collaboration-send-2 --source-root E:/workspace/openclaw
 ```
 
-当前 Windows x64 入口串行执行十一组上游敏感测试，精确检查 source HEAD=目标 tag 且 tracked 源码干净，
+当前 Windows x64 入口串行执行十三组上游敏感测试，精确检查 source HEAD=目标 tag 且 tracked 源码干净，
 任一步缺资源、超时或失败均整体失败；后续升级须替换目标产物并随实际差异扩充用例。
 原七组之外，启动补查新增真实 Main 落盘配置的 schema/legacy 双检，以及实际原生数据库
 升级/拒绝/占用/回滚/取消/packed-shape 场景。此前启动补查的固定产物严格通过全部九组，
@@ -245,7 +342,15 @@ node scripts/test/run-openclaw-module-contracts.cjs --runtime-dir E:/workspace/w
 第十一组检查创建前只读 readiness 与实际 Main loader 的原生相关响应证明；第二组同时检查
 原生关闭预算与 Main 接线。新构建身份、先前十组与最终十一组结果单独记录在
 [桌面启动章节](validation.md#2026-10-24工作区关联修复与真实桌面启动)。
-本次在本地执行该验收入口；未远程运行或修改 GitHub Actions。CI 使用它前必须准备精确目标源码及其
+第十二组是后续 canonical 准备边界，第十三组是 2.7/2.8 的发送契约。可单独执行后者的五个阶段，
+避免为纯应用发送适配重复全部原生矩阵：
+
+```powershell
+node scripts/test/run-collaboration-send-contracts.cjs --runtime-dir E:/workspace/worktrees/openclaw-upgrade-audit/JustDo/build/runtimes/openclaw/win-x64-collaboration-send-2 --source-root E:/workspace/openclaw
+```
+
+这是永久验收入口说明，不表示本轮已经完整运行十三组或该五阶段命令；具体逐项实跑结果另记验证记录。
+此前十一组入口已在本地执行；未远程运行或修改 GitHub Actions。CI 使用它前必须准备精确目标源码及其
 schema 构建依赖、完整冻结产物，现有 CI 的旧补丁检查不能代替本报告的模块验收。
 
 以下表格是先前七组模块审计的历史结果。当时新 checkout 的 CRLF 与冻结输入字节不同，曾被严格准入拒绝。51 个 recipe 文件在规范化文本完全相同的前提下

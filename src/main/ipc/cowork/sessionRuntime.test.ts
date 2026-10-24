@@ -252,159 +252,51 @@ describe('createRevisionedSessionHistoryLoader', () => {
 });
 
 describe('queryGatewaySession', () => {
-  it('combines the exact session row with the active-run registry projection', async () => {
-    const request = vi.fn(async (method: string, params: { key?: string; search?: string }) => {
-      if (method === 'sessions.describe') {
-        return params.key === 'agent:main:justdo:session-1'
-          ? {
-              session: {
-                key: params.key,
-                sessionId: 'gateway-1',
-                totalTokens: 10_000,
-              },
-            }
-          : { session: null };
-      }
-      expect(method).toBe('sessions.list');
-      expect(params.search).toBe('agent:main:justdo:session-1');
-      return {
-        sessions: [
-          {
-            key: 'agent:main:justdo:session-1',
-            sessionId: 'gateway-1',
-            totalTokens: 10_000,
-            hasActiveRun: false,
-          },
-        ],
-      };
-    });
-    const result = await queryGatewaySession(
-      {
-        getCoworkStore: () => ({ getSession: () => ({ agentId: 'main' }) }) as never,
-        getRuntime: () =>
-          ({
-            getGatewayClient: () => ({ request }),
-            getSessionKeysForSession: () => [],
-          }) as never,
-      },
-      'session-1',
-    );
+  function fixture() {
+    let source = { agentId: 'main', nativeSessionKey: 'agent:main:justdo:session-1',
+      historyBinding: { nativeSessionId: 'gateway-1' } };
+    const request = vi.fn(async (_method: string, _params: unknown): Promise<unknown> => ({ session: {
+      key: 'agent:main:justdo:session-1', sessionId: 'gateway-1', totalTokens: 10_000, hasActiveRun: false,
+    } }));
+    let generation = 1;
+    let client = { request };
+    const runtime = { getGatewayClient: () => client, getGatewayClientGeneration: () => generation,
+      getSessionKeysForSession: () => [source.nativeSessionKey] };
+    return { request, dependencies: { getCoworkStore: () => ({ getSession: () => source }) as never,
+      getRuntime: () => runtime as never },
+      changeGeneration: () => { generation += 1; }, changeClient: () => { client = { request: vi.fn() }; },
+      changeSource: () => { source = { ...source, nativeSessionKey: 'agent:main:changed' }; } };
+  }
 
-    expect(result.session).toMatchObject({
-      sessionId: 'gateway-1',
-      totalTokens: 10_000,
-      hasActiveRun: false,
-    });
-    expect(request).toHaveBeenCalledWith('sessions.list', {
-      rowMode: 'compact',
-      search: 'agent:main:justdo:session-1',
-      limit: 20,
-      agentId: 'main',
+  it.each([true, false, undefined])('uses one exact native row for usage and activity %s', async hasActiveRun => {
+    const f = fixture();
+    f.request.mockResolvedValue({ session: { key: 'agent:main:justdo:session-1', sessionId: 'gateway-1',
+      totalTokens: 10_000, ...(hasActiveRun === undefined ? {} : { hasActiveRun }) } });
+    const result = await queryGatewaySession(f.dependencies, 'session-1');
+    expect(result.session).toMatchObject({ sessionId: 'gateway-1', totalTokens: 10_000 });
+    expect(result.session?.hasActiveRun).toBe(hasActiveRun);
+    expect(f.request).toHaveBeenCalledExactlyOnceWith('sessions.describe', {
+      key: 'agent:main:justdo:session-1', agentId: 'main',
     });
   });
 
-  it('re-reads exact usage after a run ends between the first two requests', async () => {
-    let describeCalls = 0;
-    const request = vi.fn(async (method: string, params: { key?: string }) => {
-      if (method === 'sessions.describe') {
-        describeCalls += 1;
-        return {
-          session: {
-            key: params.key,
-            sessionId: 'gateway-1',
-            totalTokens: describeCalls === 1 ? 21_000 : 10_000,
-            status: describeCalls === 1 ? 'running' : 'done',
-          },
-        };
-      }
-      return {
-        sessions: [
-          {
-            key: 'agent:main:justdo:session-1',
-            sessionId: 'gateway-1',
-            totalTokens: 10_000,
-            status: 'done',
-            hasActiveRun: false,
-          },
-        ],
-      };
-    });
-    const result = await queryGatewaySession(
-      {
-        getCoworkStore: () => ({ getSession: () => ({ agentId: 'main' }) }) as never,
-        getRuntime: () =>
-          ({
-            getGatewayClient: () => ({ request }),
-            getSessionKeysForSession: () => [],
-          }) as never,
-      },
-      'session-1',
-    );
-
-    expect(result.session).toMatchObject({
-      totalTokens: 10_000,
-      status: 'done',
-      hasActiveRun: false,
-    });
-    expect(describeCalls).toBe(2);
+  it.each(['key', 'sessionId'])('rejects a different native %s instead of borrowing its usage', async field => {
+    const f = fixture();
+    f.request.mockResolvedValue({ session: { key: 'agent:main:justdo:session-1', sessionId: 'gateway-1', [field]: 'other' } });
+    expect((await queryGatewaySession(f.dependencies, 'session-1')).error).toMatch(/different session identity/);
+    expect(f.request).toHaveBeenCalledTimes(1);
   });
 
-  it('preserves a newer active signal returned by the second exact read', async () => {
-    let describeCalls = 0;
-    const request = vi.fn(async (method: string, params: { key?: string }) => {
-      if (method === 'sessions.describe') {
-        describeCalls += 1;
-        return {
-          session: {
-            key: params.key,
-            sessionId: 'gateway-1',
-            totalTokens: 21_000,
-            ...(describeCalls === 2 ? { hasActiveRun: true } : {}),
-          },
-        };
-      }
-      return {
-        sessions: [{ key: 'agent:main:justdo:session-1', hasActiveRun: false }],
-      };
+  it.each(['changeGeneration', 'changeClient', 'changeSource'] as const)('rejects late usage after %s', async mutation => {
+    const f = fixture();
+    f.request.mockImplementation(async () => {
+      f[mutation]();
+      return { session: { key: 'agent:main:justdo:session-1', sessionId: 'gateway-1', hasActiveRun: false } };
     });
-    const result = await queryGatewaySession(
-      {
-        getCoworkStore: () => ({ getSession: () => ({ agentId: 'main' }) }) as never,
-        getRuntime: () =>
-          ({
-            getGatewayClient: () => ({ request }),
-            getSessionKeysForSession: () => [],
-          }) as never,
-      },
-      'session-1',
-    );
-
-    expect(result.session?.hasActiveRun).toBe(true);
-    expect(describeCalls).toBe(2);
-  });
-
-  it('keeps exact usage available if active-run projection fails', async () => {
-    const request = vi.fn(async (method: string, params: { key?: string }) => {
-      if (method === 'sessions.list') throw new Error('list unavailable');
-      return { session: { key: params.key, sessionId: 'gateway-1' } };
-    });
-    const result = await queryGatewaySession(
-      {
-        getCoworkStore: () => ({ getSession: () => ({ agentId: 'main' }) }) as never,
-        getRuntime: () =>
-          ({
-            getGatewayClient: () => ({ request }),
-            getSessionKeysForSession: () => [],
-          }) as never,
-      },
-      'session-1',
-    );
-
-    expect(result.session).toMatchObject({ sessionId: 'gateway-1' });
-    expect(result.session).not.toHaveProperty('hasActiveRun');
+    expect((await queryGatewaySession(f.dependencies, 'session-1')).error).toMatch(/session changed/);
+    expect(f.request).toHaveBeenCalledTimes(1);
   });
 });
-
 describe('readGatewaySessionId', () => {
   it('prefers the Gateway sessionId and normalizes whitespace', () => {
     expect(readGatewaySessionId({ sessionId: ' gateway-session-1 ', id: 'fallback-id' })).toBe(

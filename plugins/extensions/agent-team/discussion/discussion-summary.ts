@@ -1,21 +1,22 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+
 import type { OpenClawConfig, OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import { dispatchInboundMessageWithBufferedDispatcher } from 'openclaw/plugin-sdk/reply-runtime';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 import { readVisibleSessionTranscriptMessageEntries } from 'openclaw/plugin-sdk/session-transcript-runtime';
 
 import {
-  isTeamDiscussionId,
-  TeamDiscussionGateway,
-  type TeamDiscussionRoom,
-  type TeamDiscussionSource,
-  type TeamDiscussionMessage,
-} from '../contracts/teamDiscussion';
-import {
   DiscussionLedger,
   type DiscussionReceipt,
 } from '../../runtime-services/agent-team/discussion/discussion-ledger';
+import {
+  isTeamDiscussionId,
+  TeamDiscussionGateway,
+  type TeamDiscussionMessage,
+  type TeamDiscussionRoom,
+  type TeamDiscussionSource,
+} from '../contracts/teamDiscussion';
 import { assertDiscussionRuntime } from './discussion-source-policy';
 
 /** One consumed native admission per batch. Receipts never contain result text. */
@@ -203,7 +204,7 @@ export function registerDiscussionSummary(api: OpenClawPluginApi): void {
             event.data.executionSettled !== true ||
             !['end', 'error'].includes(String(event.data.phase)) ||
             event.sessionKey !== execution.sessionKey ||
-            (event.sessionId && event.sessionId !== execution.sessionId)
+            event.sessionId !== execution.sessionId
           )
             return;
           execution.outcome =

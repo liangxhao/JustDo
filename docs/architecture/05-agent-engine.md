@@ -311,6 +311,25 @@ Windows 沙盒准入先验证锁定的 MXC 二进制，再运行执行器 `--pro
 
 Adapter 接收产品会话身份，准备原生 session、模型和权限，再提交 chat 请求并绑定原生 run。用户后续直接聊天发送也需要先完成同样的产品准备。
 
+应用重启留下的 checkpoint 在下一次用户输入前，通过当前原生 `sessions.describe`
+确认本会话及后代活动，不依赖全部历史目录的分页快照。原生明确缺席的旧会话、读取失败、
+身份或连接代次变化仍拒绝新输入；本地未确认执行、停止和恢复边界保持。该只读准入不能
+生成上一轮终态，原有未知运行恢复与整轮结算仍走各自的精确证据及目录复核流程。
+
+原生 `sessions.create` 的成功响应先于异步 `sessions.changed` 通知。准备后的定点读取
+可能与这条迟到通知交错；不能将第一次读到的空闲结果直接用于准入。仅当产品身份、
+客户端及连接代次均未变化、没有本地未知执行/恢复/压缩时，允许丢弃被通知淘汰的
+结果，再精确只读一次同 key。重读固定首读的物理 SID 与 lifecycle revision 的
+字段省略/null/字符串三态，
+仍有通知失效、换代、缺行、错误或身份冲突时返回未知；忙碌仍拒绝发送。
+该重读不重新执行准备、创建、注册或发送，也不回退到全局目录。未知原因日志只记录
+准入原因和身份元数据，不记录提示词或原生响应正文。
+
+Goal 重放核对、会话用量和标题身份也使用同一目标的 `sessions.describe`，不再搜索目录
+后拼接另一时刻的活动事实。原生省略 `activeRunIds` 不等于空数组；已接纳的 Goal 输入
+若无法核对当前 run，保留原执行及未知回执，不清成空闲或重新发送。标题查询只读且有界，
+源身份或连接代次改变即丢弃结果；这些点查不替代后台恢复或侧栏目录本身的职责。
+
 可见 worktree 子会话由模型经原生 `sessions_spawn` 创建。产品会话列表读取 Gateway 原生会话，按 `parentSessionKey` / `spawnedBy` 与受管父会话关联，并持久绑定原生 session key。继续该会话时 Adapter 用 `sessions.describe` 核对 sessionId、worktree 元数据与实际目录（`sessionRoot`、`spawnedCwd` 或 `spawnedWorkspaceDir`），不再调用 `sessions.create`；Renderer 历史使用同一原生 key。设置页 Worktree 面板调用 `worktrees.list/restore/remove/gc` 管理原生登记的记录，不能管理模型通过 shell 自建的普通 Git worktree。
 
 原生 `worktrees.gc` 先返回后台任务回执。Main 在同一 Gateway 代次内仅按原任务 ID 观察，`completed` 才报告完成；断线或超时保留未知结果，不能重新提交替代清理。完整行为与验证边界见[Worktree](../features/workspace/worktree.md#恢复删除与清理)。

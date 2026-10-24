@@ -7,5 +7,8 @@
 - [升级说明](upgrade.md)：原包、独立 Node、补丁及 SDK/本地源码接入决策。
 - [验证记录](validation.md)：测试、完整产物、独立复审、失败修复及未验收范围。
 - [启动适配与四类安装流程](module-api-audit.md#23-启动配置实际-cli-admission-与-schema-需要分别核对)：启动配置遗漏、正常数据库升级、跨版本支持范围及降级提醒/继续启动；当前契约见[启动设计](../../features/app/startup-and-history-upgrade.md)。
+- [dev 启动与 Team 首发复查](module-api-audit.md#26-dev-启动复查规范校验与-team-首次发送)：原生规范校验时序、持久文件回执、发送前定点状态与新增正反向用例；执行证据统一记录在验证文件。
+- [Team 与 Swarm 五类发送链路复查](module-api-audit.md#27-五条人工发送入口定点准入与扩展产物)：主会话、成员、群聊和节点的精确准入、原生接口对照与验证边界。
+- [准备通知与 Main 准入接缝补查](module-api-audit.md#28-准备响应后的会话通知与-main-准入接缝)：迟到事件造成的状态失效、固定身份的有界只读重查及生产 Main 组合验证。
 
 当前补丁能力以 [33 项总账](../../../scripts/patches/v2026.10.6/README.md)为准；历史版本的验收不能替代本次验证。

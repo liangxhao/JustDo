@@ -131,6 +131,7 @@ test('a different delivery cannot resume a pending JSONL migration or modify its
     identity: vi.fn(async () => ({ runtimeVersion: 'v2026.10.6', runtimeBuildId: 'b'.repeat(64) })),
     inspect: vi.fn(async () => ({ needsUpgrade: false })),
     upgrade: vi.fn(async () => {}),
+    prepareCanonical: vi.fn(async () => {}),
   };
   expect(classifyInstallation(directory).route).toBe(StartupRoute.Migration);
   const coordinator = await StartupCoordinator.prepare(directory, { appVersion: target.appVersion, native });
@@ -199,6 +200,7 @@ test('an application-only release uses the normal screen and preserves the actua
     identity: vi.fn(async () => ({ runtimeVersion: target.runtimeVersion, runtimeBuildId: target.runtimeBuildId })),
     inspect: vi.fn(async () => ({ needsUpgrade: false })),
     upgrade: vi.fn(async () => {}),
+    prepareCanonical: vi.fn(async () => {}),
   };
   const coordinator = await StartupCoordinator.prepare(directory, { appVersion: target.appVersion, native });
   expect(coordinator.route).toBe(StartupRoute.Normal);

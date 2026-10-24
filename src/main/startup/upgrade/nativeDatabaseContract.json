@@ -38,6 +38,20 @@
         "completeDoctorMigrationBackups": "t"
       }
     },
+    "canonicalValidation": {
+      "path": "dist/session-canonical-validation-readiness-C_kdXYHx.mjs",
+      "sha256": "75e3258db0b6487a83b43bd6bfb5ec691ffc49447c19338d812699c75a29299e",
+      "exports": {
+        "certifySessionCanonicalValidationPending": "certifySessionCanonicalValidationPending"
+      }
+    },
+    "canonicalWorker": {
+      "path": "dist/session-accessor.sqlite-reclamation-worker-Ds8kYWwv.mjs",
+      "sha256": "2c21c16da227cb99f7fcf43861d9cd4dbc69a38cba77229b4277f7df9f4070b3",
+      "exports": {
+        "withSqliteCanonicalValidationWorker": "t"
+      }
+    },
     "lease": {
       "path": "dist/openclaw-agent-db-maintenance-lease-CbW3zwY9.mjs",
       "sha256": "32a2a057bc2fb29cbae8ea0e7ace7716d5150266cb53df8150b4babc7b172141",

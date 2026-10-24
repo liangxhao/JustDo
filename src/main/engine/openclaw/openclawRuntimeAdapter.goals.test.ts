@@ -301,12 +301,10 @@ test('refreshes a replayed Goal start receipt instead of adopting a historical r
             tokensUsed: 10,
             continuationTurns: 1,
           },
+          key: 'agent:main:justdo:session-1',
+          sessionId: 'gateway-session-1',
+          activeRunIds: [],
         },
-      };
-    }
-    if (method === 'sessions.list') {
-      return {
-        sessions: [{ key: 'agent:main:justdo:session-1', activeRunIds: [] }],
       };
     }
     throw new Error(`unexpected method ${method}`);
@@ -342,6 +340,7 @@ test('refreshes a replayed Goal start receipt instead of adopting a historical r
   expect(goalSend).not.toHaveProperty('timeoutMs');
   expect(request).toHaveBeenCalledWith('sessions.describe', {
     key: 'agent:main:justdo:session-1',
+    agentId: 'main',
   });
   expect(internals.activeTurns.has(session.id)).toBe(false);
 });
@@ -488,6 +487,90 @@ test('does not bind a replayed resume run to a replacement canonical goal', asyn
     execution: { goalId: 'goal-2', phase: 'waiting' },
   });
 });
+
+test.each(['missing-run-ids', 'malformed-run-ids', 'wrong-key', 'wrong-sid', 'read-failure', 'connection-change'])(
+  'holds an acknowledged replay run pending for %s until its exact whole-run terminal', async failure => {
+    const { store, session } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const key = 'agent:main:justdo:session-1';
+    let runId = '';
+    const internals = adapter as unknown as {
+      gatewayClient: GatewayClientLike; gatewayClientGeneration: number;
+      ensureGatewayClientReady: () => Promise<void>; prepareSession: () => Promise<{ sessionKey: string; gatewaySessionId: string }>;
+      runTurn: (id: string, prompt: string, options: Record<string, never>) => Promise<void>;
+      unknownSessionRuns: Map<string, { runId: string }>;
+      handleAgentEvent: (event: string, payload: unknown) => void;
+    };
+    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'chat.send') {
+        runId = String(params?.idempotencyKey);
+        return { operationId: runId, action: 'start', sessionId: 'gateway-session-1', goalId: 'goal-1',
+          runId, status: 'started', replayed: true };
+      }
+      expect(method).toBe('sessions.describe');
+      if (failure === 'read-failure') throw new Error('Observation unavailable after ACK');
+      if (failure === 'connection-change') internals.gatewayClientGeneration += 1;
+      return { session: { key: failure === 'wrong-key' ? 'other' : key,
+        sessionId: failure === 'wrong-sid' ? 'other' : 'gateway-session-1',
+        ...(failure === 'missing-run-ids' ? {} : { activeRunIds: failure === 'malformed-run-ids' ? [true] : [runId] }),
+        goal: { schemaVersion: 1, id: 'goal-1', objective: 'Ship', status: 'active',
+          createdAt: 1, updatedAt: 2, tokenStart: 0, tokensUsed: 0, continuationTurns: 0 } } };
+    });
+    internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+    internals.ensureGatewayClientReady = async () => {};
+    internals.prepareSession = async () => ({ sessionKey: key, gatewaySessionId: 'gateway-session-1' });
+    let completed = false;
+    const pending = internals.runTurn(session.id, '/goal start Ship', {}).then(() => { completed = true; });
+    await vi.waitFor(() => expect(internals.unknownSessionRuns.get(session.id)?.runId).toBe(runId));
+    expect(completed).toBe(false);
+    expect(request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(1);
+    expect(request.mock.calls.some(([method]) => method === 'sessions.list')).toBe(false);
+    const identity = { sessionKey: key, runId, stream: 'lifecycle' };
+    internals.handleAgentEvent('agent', { ...identity, sessionId: 'wrong-sid', seq: 1,
+      data: { phase: 'end', executionSettled: true } });
+    expect(completed).toBe(false);
+    internals.handleAgentEvent('agent', { ...identity, sessionId: 'gateway-session-1', seq: 2,
+      data: { phase: 'end', executionSettled: true } });
+    await pending;
+    expect(completed).toBe(true);
+    adapter.goalContinuationCoordinator.clear();
+  },
+);
+
+test.each(['missing-run-ids', 'malformed-run-ids', 'wrong-sid', 'read-failure', 'product-identity-change'])(
+  'retains the exact resume operation when the post-ACK observation is %s', async failure => {
+    const { store, session } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const paused = { schemaVersion: 1, id: 'goal-1', objective: 'Ship', status: 'paused',
+      createdAt: 1, updatedAt: 2, tokenStart: 0, tokensUsed: 0, continuationTurns: 0 };
+    let reads = 0, runId = '';
+    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'automationPermission.info') return { loaded: true, policyId: 'native-session-automation-permission' };
+      if (method === 'sessions.create') return createPreparedSessionReceipt();
+      if (method === 'sessions.goal.update') {
+        runId = String(params?.operationId);
+        return { operationId: runId, action: 'resume', sessionId: 'gateway-session-1', goalId: 'goal-1',
+          runId, status: 'started', replayed: true };
+      }
+      expect(method).toBe('sessions.describe');
+      reads += 1;
+      if (reads > 1 && failure === 'read-failure') throw new Error('Observation unavailable after ACK');
+      if (reads > 1 && failure === 'product-identity-change') session.agentId = 'other';
+      return { session: { key: 'agent:main:justdo:session-1',
+        sessionId: reads > 1 && failure === 'wrong-sid' ? 'other' : 'gateway-session-1',
+        ...(failure === 'missing-run-ids' ? {} : { activeRunIds: failure === 'malformed-run-ids' ? [true] : [runId] }),
+        goal: { ...paused, status: reads === 1 ? 'paused' : 'active' } } };
+    });
+    const internals = adapter as unknown as { gatewayClient: GatewayClientLike; goalMutationOperations: Map<string, unknown> };
+    internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+    const restore = vi.spyOn(adapter.goalContinuationCoordinator, 'restoreRunning');
+    await expect(adapter.mutateSessionGoal(session.id, { action: 'resume', goalId: 'goal-1' })).rejects.toThrow();
+    expect(internals.goalMutationOperations.has(session.id)).toBe(true);
+    expect(restore).not.toHaveBeenCalled();
+    expect(request.mock.calls.filter(([method]) => method === 'sessions.goal.update')).toHaveLength(1);
+    expect(request.mock.calls.some(([method]) => method === 'sessions.list')).toBe(false);
+  },
+);
 
 test('reuses the exact Goal operation identity after an ambiguous transport failure', async () => {
   const { store } = createEmptyStore();

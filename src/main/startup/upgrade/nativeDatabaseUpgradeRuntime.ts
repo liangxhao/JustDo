@@ -99,8 +99,14 @@ export class NativeDatabaseUpgradeRuntime {
     this.inventory = result.inventory;
   }
 
+  async prepareCanonical(onActivity: (activity: NativeDatabaseUpgradeActivity) => void = () => {}): Promise<void> {
+    const result = await this.run('prepare', onActivity);
+    if (result.needsUpgrade || !result.verified) throw new Error('Native session canonical validation was not verified.');
+    this.inventory = result.inventory;
+  }
+
   private run(
-    operation: 'inspect' | 'upgrade',
+    operation: 'inspect' | 'upgrade' | 'prepare',
     onActivity?: (activity: NativeDatabaseUpgradeActivity) => void,
   ): Promise<NativeDatabaseResult> {
     if (this.retirementFailure) return Promise.reject(this.retirementFailure);
@@ -114,7 +120,7 @@ export class NativeDatabaseUpgradeRuntime {
   }
 
   private async execute(
-    operation: 'inspect' | 'upgrade',
+    operation: 'inspect' | 'upgrade' | 'prepare',
     onActivity?: (activity: NativeDatabaseUpgradeActivity) => void,
   ): Promise<NativeDatabaseResult> {
     if (this.stopped || !this.deps.gatewayStopped())
@@ -126,7 +132,7 @@ export class NativeDatabaseUpgradeRuntime {
       configPath: this.deps.configPath, identity, contract, operation,
       unsupportedCode: StartupCompatibilityErrorCode.NativeSchemaUnsupported,
       nativeFailureCodes,
-      ...(operation === 'upgrade' && this.inventory ? { expectedInventory: this.inventory } : {}) };
+      ...(operation !== 'inspect' && this.inventory ? { expectedInventory: this.inventory } : {}) };
     return await new Promise<NativeDatabaseResult>((resolve, reject) => {
       const child = (this.deps.spawn ?? spawn)(identity.executable,
         ['--input-type=module', '-e', NATIVE_DATABASE_UPGRADE_SOURCE, JSON.stringify(input)], {

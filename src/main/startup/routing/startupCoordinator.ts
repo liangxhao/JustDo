@@ -42,6 +42,7 @@ export type NativeStartupDatabaseRuntime = {
   identity(): Promise<{ runtimeVersion: string; runtimeBuildId: string }>;
   inspect(): Promise<{ needsUpgrade: boolean }>;
   upgrade(onActivity: (activity: 'nativeInspect' | 'nativeBackup' | 'nativeUpgrade' | 'nativeVerify') => void): Promise<void>;
+  prepareCanonical(onActivity?: (activity: 'nativeInspect' | 'nativeBackup' | 'nativeUpgrade' | 'nativeVerify') => void): Promise<void>;
 };
 type StartupPreparation = {
   decision: StartupDecision;
@@ -76,6 +77,7 @@ export class StartupCoordinator {
   private readonly targetIdentity?: StartupIdentity;
   private readonly native?: NativeStartupDatabaseRuntime;
   private nativeVerified = false;
+  private canonicalPrepared = false;
   private readonly downgradeConfirmation?: StartupDowngradeConfirmation;
   private readonly downgradeSourceIdentity?: StartupIdentity;
   private downgradeConfirmed = false;
@@ -206,16 +208,27 @@ export class StartupCoordinator {
   }
 
   /** Fresh/import paths may retain access to settings when optional engine preparation fails. */
-  async verifyNativeReady(): Promise<void> {
-    if (!this.native || this.nativeVerified) return;
+  async verifyNativeReady(onActivity?: Parameters<NativeStartupDatabaseRuntime['prepareCanonical']>[0]): Promise<boolean> {
+    if (this.preparationError) throw this.preparationError;
+    if (this.stopped) throw new Error('Application startup was interrupted.');
+    if (!this.native || this.canonicalPrepared) return true;
     try {
-      this.nativeVerified = !(await this.native.inspect()).needsUpgrade;
-      if (!this.nativeVerified && (this.route === StartupRoute.Normal || this.route === StartupRoute.Upgrade))
+      const schemaReady = this.nativeVerified || !(await this.native.inspect()).needsUpgrade;
+      if (!schemaReady && (this.route === StartupRoute.Normal || this.route === StartupRoute.Upgrade))
         throw Object.assign(new Error('Native database readiness changed after startup routing. Existing data has been preserved.'),
           { code: StartupCompatibilityErrorCode.VersionUnconfirmed });
+      if (!schemaReady) return false;
+      // The native certifier owns persisted session proof and pending rows. Drain
+      // it in an offline child before synchronous Gateway plugin registration.
+      await this.native.prepareCanonical(onActivity);
+      if (this.stopped) throw new Error('Application startup was interrupted.');
+      this.nativeVerified = true;
+      this.canonicalPrepared = true;
+      return true;
     } catch (error) {
       if (this.route === StartupRoute.Upgrade || this.route === StartupRoute.Normal) throw error;
       console.warn('[StartupCoordinator] Native readiness was not confirmed; no completed identity will be recorded:', error);
+      return false;
     }
   }
 
@@ -457,7 +470,7 @@ export class StartupCoordinator {
   complete(): void {
     if (this.preparationError) throw this.preparationError;
     if ((this.route === StartupRoute.Upgrade || (this.route === StartupRoute.Normal && this.native)) &&
-        !this.nativeVerified)
+        (!this.nativeVerified || !this.canonicalPrepared))
       throw new Error('The application runtime has not completed its startup checks.');
     if (
       this.route === StartupRoute.Migration &&
@@ -484,7 +497,7 @@ export class StartupCoordinator {
       }
       return;
     }
-    this.commit(StartupStage.Complete, this.targetIdentity && this.nativeVerified
+    this.commit(StartupStage.Complete, this.targetIdentity && this.nativeVerified && this.canonicalPrepared
       ? { completedIdentity: this.targetIdentity, targetIdentity: undefined } : {});
     if (this.route === StartupRoute.Migration) {
       // Temporary isolation is a same-volume rename, not a retained full-profile backup.

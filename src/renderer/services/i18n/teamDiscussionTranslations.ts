@@ -143,6 +143,7 @@ export const teamDiscussionTranslations = {
       '只添加成员和原批次引用。请在主会话补充要求并发送，请求开启新的协作阶段。',
     teamReturnToSource: '回主会话补充',
     teamFeatureBusy: '请等待当前执行结束后再发起 Agent Team；草稿和所选模式已保留。',
+    teamFeatureStatusUnknown: '暂时无法确认当前会话的执行状态，请稍后重试；草稿和所选模式已保留。',
     teamReferenceLimit: '主会话最多保留 8 条引用，请先移除一条。',
     teamRecords: '团队记录',
     teamRecordMembers: '团队成员',
@@ -403,6 +404,8 @@ export const teamDiscussionTranslations = {
     teamReturnToSource: 'Continue in main chat',
     teamFeatureBusy:
       'Wait for the current run to finish before starting Agent Team. Your draft and mode are preserved.',
+    teamFeatureStatusUnknown:
+      'The current session’s execution status could not be confirmed. Try again shortly. Your draft and mode are preserved.',
     teamReferenceLimit: 'The main chat supports up to 8 references. Remove one first.',
     teamRecords: 'Team records',
     teamRecordMembers: 'Team members',

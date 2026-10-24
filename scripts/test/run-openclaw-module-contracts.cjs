@@ -53,6 +53,7 @@ const steps = [
   ['management source contracts and retired handlers', [
     path.join(path.dirname(require.resolve('vitest/package.json')), 'vitest.mjs'),
     'run', 'tests/openclaw/runtime/management-protocol-native.test.ts',
+    'src/main/engine/openclaw/runtimeSessionStatus.targeted.native-contract.test.ts',
     '--pool=threads', '--maxWorkers=1',
   ]],
   ['Workboard native handlers and SQLite adapter', [
@@ -69,8 +70,14 @@ const steps = [
   ['native workspace readiness contracts and actual Main response correlation', [
     'tests/openclaw/runtime/workspace-preflight.native-probe.cjs', runtime, source,
   ]],
+  ['native offline canonical preparation and durable session proof', [
+    'tests/openclaw/runtime/native-canonical-preparation.native-probe.mjs', runtime,
+  ], 600_000],
+  ['all Team and Swarm user-message paths', [
+    'scripts/test/run-collaboration-send-contracts.cjs', '--runtime-dir', runtime, '--source-root', source,
+  ], 3_600_000],
 ];
-for (const [label, command] of steps) {
+for (const [label, command, timeout = 240_000] of steps) {
   process.stdout.write(`\nModule contract gate: ${label}\n`);
   const result = spawnSync(executable, command, {
     cwd: root,
@@ -79,7 +86,7 @@ for (const [label, command] of steps) {
       OPENCLAW_REQUIRE_MANAGED_CONFIG_CONTRACTS: '1' },
     windowsHide: true,
     stdio: 'inherit',
-    timeout: 240_000,
+    timeout,
   });
   if (result.error || result.signal || result.status !== 0) {
     process.stderr.write(`Module contract gate failed: ${label}${result.error ? `: ${result.error.message}` : ''}\n`);

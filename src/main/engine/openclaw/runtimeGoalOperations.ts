@@ -273,6 +273,11 @@ export async function performSessionGoalMutation(
 ): Promise<SessionGoalMutationOutcome> {
   const client = this.requireGatewayClient();
   const generation = this.gatewayClientGeneration;
+  const sessionIdentity = () => {
+    const session = this.store.getSession(sessionId);
+    return session && JSON.stringify([session.agentId, session.nativeSessionKey, session.historyBinding, session.external]);
+  };
+  const capturedIdentity = sessionIdentity();
   const method = request.action === 'clear' ? 'sessions.goal.clear' : 'sessions.goal.update';
   let rawMutation: SessionGoalMutationResult;
   try {
@@ -318,22 +323,19 @@ export async function performSessionGoalMutation(
   let activeRunIds: string[] = [];
   if (rawMutation.replayed || (request.action !== 'clear' && !goal)) {
     const described = await client.request<{
-      session?: { goal?: unknown } | null;
-    }>('sessions.describe', { key: params.sessionKey });
+      session?: { key?: unknown; sessionId?: unknown; activeRunIds?: unknown; goal?: unknown } | null;
+    }>('sessions.describe', { key: params.sessionKey, agentId: params.agentId });
+    if (described.session?.key !== params.sessionKey || described.session.sessionId !== params.sessionId)
+      throw new Error('Gateway session changed while reconciling the Goal operation');
     goal = normalizeSessionGoal(described.session?.goal) ?? null;
+    if (rawMutation.replayed && request.action === 'resume' && goal?.id === request.goalId &&
+      goal.status === SessionGoalStatus.Active && (!Array.isArray(described.session.activeRunIds) ||
+        !described.session.activeRunIds.every(id => typeof id === 'string' && id.trim())))
+      throw new Error('Goal replay activity is still unconfirmed');
+    activeRunIds = readActiveRunIds(described.session.activeRunIds);
   }
-  if (rawMutation.replayed && request.action === 'resume') {
-    const listed = await client.request<{
-      sessions?: Array<{ key?: unknown; activeRunIds?: unknown }>;
-    }>('sessions.list', {
-      search: String(params.sessionKey),
-      limit: 20,
-      ...(typeof params.agentId === 'string' && params.agentId ? { agentId: params.agentId } : {}),
-    });
-    const runtimeRow = listed.sessions?.find(row => row.key === params.sessionKey);
-    activeRunIds = readActiveRunIds(runtimeRow?.activeRunIds);
-  }
-  if (this.gatewayClient !== client || this.gatewayClientGeneration !== generation) {
+  if (this.gatewayClient !== client || this.gatewayClientGeneration !== generation ||
+    sessionIdentity() !== capturedIdentity) {
     throw new Error('Gateway connection changed while reconciling the Goal operation');
   }
   const mutation: SessionGoalMutationResult = {

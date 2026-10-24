@@ -11,6 +11,7 @@ export interface TeamHostSession {
   external?: unknown;
   nativeSessionKey?: string;
   nativeParentSessionId?: string;
+  historyBinding?: { sessionKey: string; nativeSessionId: string };
 }
 
 export interface TeamHostAgent {
@@ -54,7 +55,10 @@ export interface TeamHostRouter {
   prepareSession(sessionId: string): Promise<{ sessionKey: string; gatewaySessionId: string }>;
   getSessionRuntimeStatus(
     sessionId: string,
-    options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
+    options?: {
+      includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean;
+      targeted?: boolean; expectedSessionId?: string; expectedLifecycleRevision?: string | null;
+    },
   ): Promise<{ known: boolean; running: boolean; mainRunning: boolean; subagentRunning: boolean }>;
   stopSession(sessionId: string): Promise<void>;
   onSessionDeleted(
@@ -66,6 +70,7 @@ export interface TeamHostRouter {
 }
 
 export interface TeamHostRuntime {
+  captureGatewayResponseContext(): { isCurrent(): boolean } | null;
   getPlanMode(sessionId: string): Promise<{ enabled: boolean }>;
   getGoalExecution(sessionId: string):
     | {

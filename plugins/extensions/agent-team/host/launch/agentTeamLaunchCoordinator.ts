@@ -20,6 +20,8 @@ const RPC = {
   RELEASE: 'agentTeam.launch.release',
   CONFIRM: 'agentTeam.launch.confirm',
 } as const;
+const LaunchReadStage = { BeforePreparation: 'before-preparation', BeforeRegistration: 'before-registration' } as const;
+type LaunchReadStage = typeof LaunchReadStage[keyof typeof LaunchReadStage];
 type Mode = 'collaboration' | 'discussion';
 type State =
   'pending' | 'verified' | 'attempted' | 'launched' | 'cancelled' | 'released' | 'unknown';
@@ -203,12 +205,21 @@ export class AgentTeamLaunchCoordinator {
       throw new Error('teamLaunchContractUnavailable');
     return source;
   }
-  private async idle(sessionId: string): Promise<boolean> {
+  private async idle(sessionId: string, stage?: LaunchReadStage, expectedSessionId?: string, expectedLifecycleRevision?: string | null): Promise<boolean> {
     const status = await this.deps.getRouter().getSessionRuntimeStatus(sessionId, {
       includeSubagents: true,
       forceRefresh: true,
-      fullScan: true,
+      targeted: true,
+      ...(expectedSessionId ? { expectedSessionId } : {}),
+      ...(expectedLifecycleRevision !== undefined ? { expectedLifecycleRevision } : {}),
     });
+    if (stage && (!status.known || status.running || status.mainRunning || status.subagentRunning)) {
+      console.warn('[AgentTeamLaunch] Source admission was not idle:', {
+        stage, known: status.known, running: status.running,
+        mainRunning: status.mainRunning, subagentRunning: status.subagentRunning,
+      });
+      if (!status.known) throw new Error('teamFeatureStatusUnknown');
+    }
     return status.known && !status.running && !status.mainRunning && !status.subagentRunning;
   }
   private params(receipt: LaunchReceipt) {
@@ -246,7 +257,18 @@ export class AgentTeamLaunchCoordinator {
     });
   }
   private async cleanupIdle(receipt: LaunchReceipt, neverSubmitted: boolean): Promise<boolean> {
-    if (!(await this.idle(receipt.sessionId))) return false;
+    const source = this.source(receipt.sessionId);
+    const described = await this.deps.requestGateway<{ session?: Record<string, unknown> }>(
+      'sessions.describe', { key: receipt.sessionKey, agentId: source.agentId },
+    );
+    this.current(receipt);
+    const native = described.session;
+    if (!native || native.sessionId !== receipt.nativeSessionId ||
+      !(native.lifecycleRevision === null || id(native.lifecycleRevision)) ||
+      (receipt.lifecycleRevision !== undefined && native.lifecycleRevision !== receipt.lifecycleRevision))
+      return false;
+    if (!(await this.idle(receipt.sessionId, undefined, receipt.nativeSessionId,
+      native.lifecycleRevision as string | null))) return false;
     this.current(receipt);
     const history = await this.deps.requestGateway<Record<string, unknown>>('chat.history', {
       sessionKey: receipt.sessionKey,
@@ -341,7 +363,7 @@ export class AgentTeamLaunchCoordinator {
     let pending: LaunchReceipt | undefined;
     try {
       assertCurrent();
-      if (!(await this.idle(input.sessionId))) throw new Error('teamFeatureBusy');
+      if (!(await this.idle(input.sessionId, LaunchReadStage.BeforePreparation))) throw new Error('teamFeatureBusy');
       assertCurrent();
       const prepared = await this.deps.getRouter().prepareSession(input.sessionId);
       assertCurrent();
@@ -364,6 +386,8 @@ export class AgentTeamLaunchCoordinator {
         native.permissionMode === 'read-only'
       )
         throw new Error('teamLaunchContractUnavailable');
+      if (!(native.lifecycleRevision === null || id(native.lifecycleRevision)))
+        throw new Error('teamFeatureStatusUnknown');
       const plan = Array.isArray(native.pluginExtensions)
         ? native.pluginExtensions.find(
             value =>
@@ -389,7 +413,8 @@ export class AgentTeamLaunchCoordinator {
         !['absent', 'released'].includes(String(inspection.state))
       )
         throw new Error('teamLaunchUnconfirmed');
-      if (!(await this.idle(input.sessionId))) throw new Error('teamFeatureBusy');
+      if (!(await this.idle(input.sessionId, LaunchReadStage.BeforeRegistration, prepared.gatewaySessionId,
+        native.lifecycleRevision as string | null))) throw new Error('teamFeatureBusy');
       assertCurrent();
       pending = {
         version: 1,

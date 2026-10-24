@@ -46,7 +46,7 @@ const nativeFailureCode = (error) => {
     if (Array.isArray(current.errors)) pending.push(...current.errors.slice(0, 16));
   }
 };
-assert.ok(['inspect', 'upgrade'].includes(operation));
+assert.ok(['inspect', 'upgrade', 'prepare'].includes(operation));
 assert.equal(fs.realpathSync(process.execPath), fs.realpathSync(identity.executable));
 assert.equal(
   hash(fs.readFileSync(path.join(runtimeRoot, 'runtime-patch-manifest.json'))),
@@ -203,6 +203,13 @@ try {
           inventoryKey(expectedInventory),
           'Native database inventory changed after routing.',
         );
+      if (operation === 'prepare') {
+        assert.equal(initial.needsUpgrade, false, 'Native schema must be current before canonical preparation.');
+        if (!initial.inventory.length) {
+          result = { needsUpgrade: false, inventory: [], verified: true };
+          return;
+        }
+      }
       const lock = await native('maintenanceLock', 'withDoctorSqliteMaintenanceLock');
       const paths = initial.inventory.map((row) => row.path);
       await closeAgents();
@@ -210,7 +217,7 @@ try {
       current();
       await lock({
         env: process.env,
-        operation: 'native database schema upgrade',
+        operation: operation === 'prepare' ? 'native session canonical preparation' : 'native database schema upgrade',
         protectedPaths: paths.flatMap((file) => [
           file,
           file + '-wal',
@@ -231,6 +238,99 @@ try {
             authority.assertCurrent();
             assertConfig();
           });
+          if (operation === 'prepare') {
+            assert.equal(locked.needsUpgrade, false, 'Native schema changed before canonical preparation.');
+            const lease = await native('lease', 'withAgentDatabaseMaintenanceLease');
+            const certify = await native('canonicalValidation', 'certifySessionCanonicalValidationPending');
+            const withWorker = await native('canonicalWorker', 'withSqliteCanonicalValidationWorker');
+            let backedUp = false;
+            const assertSource = () => {
+              authority.assertCurrent();
+              assertConfig();
+              assert.equal(
+                inventoryKey(initial.inventory.map((row) => ({ agentId: row.agentId, ...fileIdentity(row.path) }))),
+                inventoryKey(initial.inventory),
+                'Native database physical identity changed during canonical preparation.',
+              );
+            };
+            const inspectFleet = async () => {
+              assertSource();
+              const checked = await inspect(true);
+              assert.equal(inventoryKey(checked.inventory), inventoryKey(initial.inventory),
+                'Native database fleet changed during canonical preparation.');
+              assertSource();
+              return checked;
+            };
+            const probe = async (maintenance) => {
+              let needsWork = false;
+              const undispatched = new Error('Canonical preparation requires a native worker.');
+              const assertOwned = () => { assertSource(); maintenance.assertOwned(); };
+              for (const target of locked.targets) {
+                assertOwned();
+                try {
+                  // The unique sentinel is thrown before worker creation or canonical mutation.
+                  await certify({ agentId: target.agentId, path: target.path, env: process.env },
+                    async () => { needsWork = true; throw undispatched; }, assertOwned);
+                } catch (error) {
+                  if (error !== undispatched) throw error;
+                }
+                assertOwned();
+              }
+              return needsWork;
+            };
+            await lease({ env: process.env, schemaPolicy: 'existing', processBound: true }, async (maintenance) => {
+              await inspectFleet();
+              if (await probe(maintenance)) {
+                progress('nativeBackup');
+                const backup = await native('backup', 'backupDoctorSqliteDatabases');
+                const saved = await backup({ env: process.env, pendingDatabasePaths: paths,
+                  databasePaths: paths, authority, requireSnapshots: true });
+                assert.deepEqual(saved.warnings ?? [], [], 'Native database backup did not complete.');
+                for (const file of paths.map((file) => fs.realpathSync.native(file)))
+                  assert.ok(saved.snapshots?.some((row) => row.sourcePath === file),
+                    'A verified native database backup is missing.');
+                maintenance.assertOwned();
+                await inspectFleet();
+                backedUp = true;
+              }
+              maintenance.assertOwned();
+              assertSource();
+            });
+            // Ordinary native workers intentionally cannot borrow the maintenance lease.
+            // Release it normally; the Gateway/Doctor state lock remains held throughout.
+            await inspectFleet();
+            progress('nativeUpgrade');
+            await withWorker(async (useWorker) => {
+              for (const target of locked.targets) {
+                assertSource();
+                await certify({ agentId: target.agentId, path: target.path, env: process.env },
+                  async (...args) => {
+                    assert.ok(backedUp, 'Canonical mutation requires a complete pre-operation backup.');
+                    assertSource();
+                    return useWorker(...args);
+                  }, assertSource);
+                assertSource();
+              }
+            });
+            // The whole worker scope has joined before exclusive post-operation validation.
+            progress('nativeVerify');
+            await lease({ env: process.env, schemaPolicy: 'existing', processBound: true }, async (maintenance) => {
+              const verified = await inspectFleet();
+              assert.equal(await probe(maintenance), false, 'Native canonical preparation did not settle.');
+              await ready({ env: process.env, config: cfg, operation: 'doctor',
+                configuredAgentDatabaseTargets: verified.targets });
+              maintenance.assertOwned();
+              assertSource();
+              if (backedUp) {
+                const complete = await native('backupCompletion', 'completeDoctorMigrationBackups');
+                complete(process.env, paths);
+              }
+              maintenance.assertOwned();
+              assertSource();
+              result = { needsUpgrade: false, inventory: verified.inventory, verified: true };
+            });
+            return;
+          }
           const maintain = async (maintenance) => {
             const admitted = await inspect(false);
             assert.equal(

@@ -1141,6 +1141,7 @@ test('adopts a replayed resume run only while Gateway still reports that exact r
           key: 'agent:main:justdo:session-1',
           sessionId: 'gateway-session-1',
           goal: describeCalls === 1 ? pausedGoal : activeGoal,
+          activeRunIds: resumeRunId ? [resumeRunId] : [],
         },
       };
     }
@@ -1178,6 +1179,7 @@ test('adopts a replayed resume run only while Gateway still reports that exact r
     execution: { phase: 'running', runId: expect.any(String) },
   });
   expect(resumeRunId).not.toBe('');
+  expect(request.mock.calls.some(([method]) => method === 'sessions.list')).toBe(false);
 });
 
 test('does not clear active metadata based on a stale local completion latch', async () => {

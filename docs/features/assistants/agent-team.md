@@ -8,7 +8,22 @@ Agent Team 是默认关闭、用户可切换的可选扩展。任务协作保留
 
 先在「插件 → 扩展」启用 Agent Team。主输入框的“+”菜单中选择 Agent Team，再选择「任务协作」或「群组讨论」；模式标签只代表下一次提交。发送前不创建团队，取消标签不删除已有团队，切换模式不搬迁、重写或拼接原生历史。Team 与 Swarm 的本次模式选择互斥，各自插件和已有执行独立。
 
-Agent Team 的插件开关通过原生 API 同步插件和技能配置，使用运行时热应用回执；只有原生要求重启或出站 Header 策略变化时才申请安全重启。当前锁定的 OpenClaw 10.4 watcher 会替换配置 owner 并拒绝旧回调，不再保留针对 9.8 旧发现配置的强制重启。`skills.update` 继续独立失效原生会话技能快照，技能写入失败报告部分失败并允许同状态修复。重启由原生协调器等待活动执行结束，不强行中断其他任务；离线设置不启动 Gateway。技能文件及目录链接仍由 OpenClaw 发布，应用不复制到生成目录、不改写模型的读取参数、不注入读取兜底，也不新增运行时补丁。
+显式 Team 发送的两次空闲核验使用当前来源会话的原生 `sessions.describe` 活动投影，
+包含已排队或正在运行的后代。其他历史会话变更不能把该定点查询变成全局列表的不确定
+结果。仅尚未绑定且无历史、无本地执行或未知提交的新来源，才可将原生明确的空结果
+视为不存在；已绑定身份缺失、错 SID、连接或当前来源身份变动仍属未知。实际忙碌时
+提示等待结束，无法确认状态时明确提示暂不可确认；两者均保留草稿和模式，未知不重发。
+
+常规权限同步对已有会话的原生准备可能先收到 `sessions.create` 回应，随后才收到异步
+`sessions.changed`。如果只有事件令正在等待的定点观察失效，而产品、连接、代次和
+本地执行归属都未变化，Main 丢弃该旧观察，最多再精确读取一次。第二次必须保持首次
+响应的物理 SID 和 lifecycle revision，包括省略、null 与字符串的区别；再次失效、
+身份变化、原生错误或未确认提交仍拒绝。重新观察只读，不重放准备、注册或消息发送。
+
+准入测试须经过生产 Main 的会话物化、
+Adapter 事件处理及 Router，不能用固定返回空闲的宿主端口代替这段链路。
+
+Agent Team 的插件开关通过原生 API 同步插件和技能配置，使用运行时热应用回执；只有原生要求重启或出站 Header 策略变化时才申请安全重启。当前锁定的 OpenClaw 10.6 watcher 会替换配置 owner 并拒绝旧回调，不再保留针对 9.8 旧发现配置的强制重启。`skills.update` 继续独立失效原生会话技能快照，技能写入失败报告部分失败并允许同状态修复。重启由原生协调器等待活动执行结束，不强行中断其他任务；离线设置不启动 Gateway。技能文件及目录链接仍由 OpenClaw 发布，应用不复制到生成目录、不改写模型的读取参数、不注入读取兜底，也不新增运行时补丁。
 
 用户也可在普通主会话明确要求来源助手组织团队。显式选择模式时，应用在实际来源消息中附加组织说明与自包含交接要求；隐藏提示使用不带产品品牌的 `<agent-team-request>` 标签，继续协作使用 `<collaboration-continuation>`，不保留旧标签或旧提示格式的处理分支。显示和编辑投影仅隐藏精确的当前应用后缀，原生正文不被改写。来源模型使用真实工具组织团队，工具结果才证明创建或接纳，正文宣称不能充当回执。
 
@@ -70,11 +85,15 @@ flowchart LR
 
 `task_assistants` 发现助手、准备持久 peer 会话，不发送任务正文。原生 `sessions_send` 的前置 hook 将可信来源和精确目标交给 Main；Main 验证房间、轮次、权限、停止状态、幂等和预算后登记 delivery，扩展收到原生结果后记录接纳身份。模型自报 room/run/tool 身份不能授权。
 
-成员准备与助手创建、群聊准备共用 60 秒的宿主处理上限，外层 Gateway RPC 等待 75 秒，覆盖原生会话冷创建和权限准备；成员列表及普通投递准入仍使用 8 秒上限。超时不自动重发；Main 在原生准备返回后重新检查期限、停止和删除状态，过期成员执行清理而不加入房间或发起工作，迟到回执不能恢复已过期请求。
+Team 主会话发起、成员单聊、建房前检查和发起回执清理均不依赖全局 `sessions.list`。成员单聊仍要求全队当前空闲，但只按当前房间各成员的精确 key 查询；选中成员必须匹配其控制器的 native SID，其他成员不能借用与产品历史绑定不同的 SID。每次异步读取前后均核对当前 router、连接代次、产品身份和房间成员，明确的 nullable revision 保持原值，缺失或错误字段不推为空闲。未知状态与实际忙碌分别提示，历史未确认投递仍保留。
+
+建房过程固定同一 router、runtime 和实际连接代次，并在原生准备前后重核。准备拒绝、超时或连接换代均保留已经建立的房间及成员意图并向调用方抛错，不按 key 自动删除可能已创建的原生会话。重读现有房间只返回元数据，不证明成员已准备成功；实际发送仍须通过原生身份与定点活动准入。用户可显式删除待清理团队：删除只检查该房间成员，当前 native SID 与非空 revision 必须通过原生 compare-and-delete，缺少可比较 revision 时保持待清理，产品元数据最后原子删除。只有当前连接对该 key 明确返回 `session:null` 才确认已不存在，不把读取失败或替换身份当成删除成功。
+
+成员准备与助手创建、群聊准备共用 60 秒的宿主处理上限，外层 Gateway RPC 等待 75 秒，覆盖原生会话冷创建和权限准备；成员列表及普通投递准入仍使用 8 秒上限。`task_assistants` 先原子记录固定 product ID/key 的成员意图，再发起一次原生准备。失败、超时、停止或连接换代保留该意图并返回错误，不自动删除、换 UUID 或重发准备。后续发现同一成员只按精确 key、SID、明确 revision 和当前绑定进行只读核验；元数据存在、空结果或读取错误均不证明原生已准备，实际投递仍走原生准入。Main 在原生准备返回后重新检查期限、来源轮次、停止和删除状态，迟到回执不能恢复已过期请求或发起工作。
 
 平级发送只支持省略模式或 followup；steer、notify、resume 在登记和扣预算前拒绝，原生 SubAgent/ACP 继续由自己的原生契约控制。成员可使用已有成员关系，不能自行扩大房间或权限。普通 Team 不是 Swarm DAG，不提供统一的协作运行池或公平自动排队。
 
-投递状态与执行结果分开：accepted 是原生接纳；只有精确 run 的 whole-run `executionSettled:true` end/error 才确定执行结果。可见 final、一次模型 attempt 结束、Stop ACK 或 session idle 不能补造终态。快速 peer 回复可能早于 after-tool 回执，使用有界身份匹配等待；执行事件丢失保持未确认，不自动重放未知投递。
+投递状态与执行结果分开：accepted 是原生接纳；只有精确 run 的 whole-run `executionSettled:true` end/error 才确定执行结果。群聊成员与来源汇总还必须匹配执行回执的精确 SID 和 key，缺 SID 不结算。可见 final、一次模型 attempt 结束、Stop ACK 或 session idle 不能补造终态。快速 peer 回复可能早于 after-tool 回执，使用有界身份匹配等待；执行事件丢失保持未确认，不自动重放未知投递。
 
 `task_assistants({seal:true})` 只允许组织者关闭当前批次的协作准入。`closing_run_id` 和 `collaboration_execution_receipts` 将组织者收尾与工作助手执行分别核对；相关执行未结算时不显示整批结束，也不重复发起一个总结 run。新的用户阶段采用新轮次和新证据，旧回复不会重开封闭阶段。
 
@@ -191,7 +210,7 @@ OpenClaw 的紧凑工具目录通过 `tool_search`、`tool_describe` 和 `tool_c
 
 原生 queued/followup 的通用提交/执行绑定仍未成立，显式 Team 在忙碌或已有未确认队列时保留草稿并拒绝普通 followup。有限纠正最多使用两次原生 revise，只能在精确阶段、尚无已确认或不确定副作用时执行；副作用已发生后不回退。此能力不保证建群成功，也不扩大工具权限。完整业务建群的剩余验收见[现行说明与验证边界](#当前验证边界)。
 
-Main 候选回执通过 KV CAS 保存原生 generation、来源 incarnation、clientTurnId、prompt SHA-256 和提交边界，没有正文。指纹按原生普通 `chat.send` 入库规则先 NFC、拒绝 NUL、移除禁止的控制字符再 trim；保持原生消息及普通聊天发送不变，避免合法组合字符导致精确绑定错误。正常 release 需要 native inspect 的精确 whole-run proof，以及 fresh fullScan 和 chat.history 的无活动/无队列事实；Stop、产品终态或空历史本身都不能释放。register ACK 丢失而从未发送的候选可通过原生 abandon 核对同一 client:user 确实缺失、来源空闲及 generation 后写 released tombstone，防止旧 register 迟到复活。
+Main 候选回执通过 KV CAS 保存原生 generation、来源 incarnation、clientTurnId、prompt SHA-256 和提交边界，没有正文。指纹按原生普通 `chat.send` 入库规则先 NFC、拒绝 NUL、移除禁止的控制字符再 trim；保持原生消息及普通聊天发送不变，避免合法组合字符导致精确绑定错误。正常 release 需要 native inspect 的精确 whole-run proof，以及同一 key/SID/revision 的 fresh 定点状态和 chat.history 的无活动/无队列事实；发送前及 cleanup 不扫描全局会话目录。Stop、产品终态或空历史本身都不能释放。register ACK 丢失而从未发送的候选可通过原生 abandon 核对同一 client:user 确实缺失、来源空闲及 generation 后写 released tombstone，防止旧 register 迟到复活。
 
 冷重启边界：Gateway 正常 SIGTERM 在没有后继 registry 时按 disable 退役插件，会清除普通来源会话的 `pluginExtensions.runtime-services`。`sessions.pluginPatch` 的 namespace 因此不能作为跨进程守卫的唯一权威。常驻 Runtime Services 另以 `stateDir/runtime-services/agent-team-launch/` 的无正文账本保存精确来源、generation、owner、状态、输入指纹和 whole-run 元数据；原生 namespace 只作镜像。账本先同步写入并 fsync、原子替换，再更新镜像；同一 stateDir/来源的注册实例共用串行 CAS。损坏、不可读、写入结果不明或旧进程未 released 的 owner 保持 unknown，不凭缺失镜像恢复为空，也不复制原生正文。只有精确 released 回执才能接纳下一代；失联 owner 不能自动重放。每次持久写入前重核当前客户端和退役状态，历史读取中的迟到续体不能释放或改写旧候选。正常 SIGTERM 后仍须保留 released 代次、执行下一代 CAS，冻结旧 owner 并拒绝迟到旧请求。
 
@@ -202,6 +221,32 @@ Main 候选回执通过 KV CAS 保存原生 generation、来源 incarnation、cl
 已经 released 的历史候选不阻断同 key 的合法 reset/revision 后续发起：inspect 仅接受其原 SID 或原生当前精确 SID，保留旧身份与 generation，但 identity 变化后不返回旧 whole-run proof。下一代 register 仍必须绑定当前 SID/revision 并 CAS 前代，新代不继承旧终态。未 released 候选的 identity 漂移仍保持冻结；不能用 reset 把未确认执行伪装成完成。
 
 ## 数据、禁用与删除的所有权
+
+### 发送与清理的定点准入
+
+显式任务协作、群聊发起及成员单聊不以全局 `sessions.list` 是否成功决定单个目标可否发送。
+来源或成员由原生 `sessions.describe({key,agentId})` 读取；current status 包含主运行、queued
+及递归后代活动。`known:false` 单独反馈未知，不能显示为空闲或与真实 busy 混淆。
+首次新来源的 `session:null` 只有在没有历史/运行回执、继承来源或其它未确认状态时才可
+证明缺席；既有来源缺行仍未知，不自动创建替代会话。公开发送没有通用的原子
+reject-if-busy，外部客户端竞争仍由原生执行与权限规则决定。
+
+成员单聊保留全队空闲条件。宿主先固定 live room、成员、来源配置和 Gateway context，
+选定目标必须匹配界面已确认的物理 SID；其他成员的现读 SID 只用于当前活跃状态观察。
+每次 await 后重验成员所属、key、SID、nullable lifecycle revision、来源/停止代次及
+连接 context，缺字段或漂移拒绝发送，不把新观察到的 SID 变成旧历史的授权。
+来源和选定目标的 Goal、规划及待审批计划限制仍保留。
+
+首次创建协作房间前只读检查来源；成员原生准备完成后才允许首条执行。旧发起回执的
+release/abandon 仍核对该回执的精确 identity、whole-run、输入消费和队列，定点 idle
+本身不是释放证据。删除前固定同一房间/产品身份与 Gateway context，逐成员确认
+实际原生 SID 和字符串 lifecycle revision，再调用 native delete 的精确 CAS；revision
+为 null、未知或改变时保留 pending，不降低为只按 key 删除，部分删除也不补造完成。
+
+公开群聊的执行与汇总终态均要求 `event.sessionId === registered.sessionId`，缺失 SID
+同样拒绝。仍须同时匹配 run、来源及原生生命周期归属，并且只有
+`executionSettled:true` 的 whole-run end/error 可确定执行结局；chat final、Stop ACK、
+空闲和 owner 改变不替代该证据。
 
 OpenClaw 保存长期 transcript、公开群消息、成员执行、汇总及待发正文。Main SQLite 只保存产品房间/成员/轮次、来源身份、权限与资源快照、参数指纹、定位和执行/取消/删除回执；Runtime Services 的账本同样不保存正文。Renderer 只维护当前挂载面板的投影，不新增 Main、Redux 或持久化 transcript 缓存。
 
@@ -263,5 +308,11 @@ flowchart LR
 当前 v2026.10.6 的 owned-run registry 接线通过原生 immutable actor 发布，Team 不接管该事务。目标版本的实际通过范围见[升级记录](../../openclaw-upgrades/v2026.10.6/README.md)，上述历史验证不自动延续为本版真实模型验收。
 
 ## 当前验证边界
+
+v2026.10.6 的 `tests/openclaw/runtime/agent-team-message-paths.native-probe.mjs` 已在严格校验的独立资源产物上通过真实 host/native 链路：来源执行、成员单聊及两人公开群聊共四次本地模拟模型请求，逐项核对精确 SID/run 的 whole-run terminal，并核对成员和群聊的原生历史；群请求重放没有新增模型调用。真实 `bind → dispatch → Requested → host.handle → resolve` 另覆盖新增成员、已有成员只读复核及读取失败保留原错，后两种情况没有新建、发送或删除。发送、准备和三位成员的精确 CAS 清理均未调用全局 `sessions.list`，最后 Gateway 与客户端正常退出并完成 join。
+
+`tests/openclaw/runtime/main-send-admission.native-probe.mjs` 另覆盖真实 CoworkStore SQL 物化、Adapter、Router、生产事件处理及 Team 发起协调器：同一 main 会话已有实际普通消息与原生历史后，准备保持 SID，将原生真实变更帧延迟到定点读取窗口，重新观察后完成 Team 注册、发送、whole-run 与原生历史验证。释放前独立等待精确原生活动空闲，随后只调用一次释放；whole-run 本身不替代清理证据。自定义助手、连接代次变化及错误 SID 也分别覆盖。该隔离探针有五次本地模型请求，暂停了无 Goal fixture 中独立的后台 Goal 库存恢复，不能据其零列表调用声称整个生产应用没有后台全局查询。
+
+前述成员/群聊探针调用当前生产 host 协调器并真实创建房间和原生会话，但产品元数据、权限适配端口及工具操作选择由隔离 fixture 控制，模型仅为 loopback 模拟服务。它不代表模型自主组织团队、完整 Electron IPC/React 界面或真实内网业务模型已验收；上述成功也不把保留的房间意图当成所有成员均已准备的证据。
 
 完整生产群 FIFO、首条消息 viewer 委托、真实 UI/语音、多窗口及权限竞争尚未完成端到端验收。隔离 Gateway 的历史开关探针通过，但完整组织者探针仍在 sender/relay/authorization 联合断言处失败，不能据此宣布组织者流程通过。长期记忆已有 custom-role/隐藏上下文及 FTS 局部证据，REM/NREM dreaming 和其他原生恢复入口尚未实际验收。

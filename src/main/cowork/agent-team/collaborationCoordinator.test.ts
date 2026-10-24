@@ -13,6 +13,7 @@ import { CollaborationCoordinator } from './collaborationCoordinator';
 let db: Database.Database;
 let metadata: CollaborationStore;
 let coordinator: CollaborationCoordinator;
+let hostStore: CoworkStore;
 const request = vi.fn();
 const start = vi.fn();
 const stop = vi.fn();
@@ -24,9 +25,28 @@ const createAssistant = vi.fn();
 const discussion = vi.fn();
 const stopDiscussions = vi.fn();
 const getRuntime = vi.fn<() => OpenClawRuntimeAdapter | null>();
+const getRouter = vi.fn<() => CoworkEngineRouter>();
+const creationContextCurrent = vi.fn(() => true);
 const key = (id: string) => `agent:${id}:justdo:${id}`;
+const deletionDescription = (params: { key: string }) => ({ session: {
+  key: params.key, sessionId: `native-${params.key.split(':')[1]}`,
+  lifecycleRevision: `revision-${params.key.split(':')[1]}`,
+} });
+const preparedIdentity = (id: string) => {
+  const row = hostStore.getSession(id)!;
+  return { sessionKey: `agent:${row.agentId}:justdo:${id}`, gatewaySessionId: `native-${row.agentId}` };
+};
+const enableDeletion = () => {
+  getRuntime.mockReturnValue({ captureGatewayResponseContext: () => ({ isCurrent: () => true }) } as unknown as OpenClawRuntimeAdapter);
+  request.mockImplementation(async (method, params) => method === 'sessions.describe'
+    ? deletionDescription(params) : { ok: true });
+};
 beforeEach(() => {
-  getRuntime.mockReset().mockReturnValue(null);
+  creationContextCurrent.mockReset().mockReturnValue(true);
+  getRuntime.mockReset().mockReturnValue({
+    captureGatewayResponseContext: () => ({ isCurrent: creationContextCurrent }),
+    getPlanMode: async () => ({ enabled: false }), getGoalExecution: () => null,
+  } as unknown as OpenClawRuntimeAdapter);
   vi.useFakeTimers();
   db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
@@ -56,11 +76,12 @@ beforeEach(() => {
     assertActive();
     return { status: 'created', agentId: 'new-agent' };
   });
-  prepare.mockReset().mockResolvedValue(undefined);
-  request.mockReset().mockResolvedValue({ ok: true });
+  prepare.mockReset().mockImplementation(async id => preparedIdentity(id));
+  request.mockReset().mockImplementation(async (method, params) => method === 'sessions.describe'
+    ? deletionDescription(params) : { ok: true });
   start.mockReset().mockResolvedValue(undefined);
   stop.mockReset().mockResolvedValue(undefined);
-  runtimeStatus.mockReset().mockResolvedValue({ known: true, running: false });
+  runtimeStatus.mockReset().mockResolvedValue({ known: true, running: false, mainRunning: false, subagentRunning: false });
   const store = {
     getSession: (id: string) =>
       db
@@ -75,7 +96,7 @@ beforeEach(() => {
     ) => {
       const id = `peer-${agentId}`;
       db.prepare('INSERT INTO cowork_sessions VALUES (?, ?, ?)').run(id, agentId, 'idle');
-      return { id };
+      return { id, agentId, status: 'idle' };
     },
     deleteSession: (id: string) => db.prepare('DELETE FROM cowork_sessions WHERE id = ?').run(id),
     listPlanHandoffs: (id: string) => [{ artifact: { workspaceRoot: `workspace-${id}` } }],
@@ -96,6 +117,8 @@ beforeEach(() => {
     getSessionRuntimeStatus: runtimeStatus,
     onSessionDeleted,
   } as unknown as CoworkEngineRouter;
+  hostStore = store;
+  getRouter.mockReset().mockReturnValue(router);
   coordinator = new CollaborationCoordinator({
     onSessionsChanged: notifyChanged,
     createAssistant,
@@ -103,7 +126,7 @@ beforeEach(() => {
     stopDiscussions,
     getDatabase: () => db,
     getStore: () => store,
-    getRouter: () => router,
+    getRouter,
     getRuntime,
     requestGateway: request,
   });
@@ -123,6 +146,158 @@ const ensure = (from = 'a', agentId = 'b', runId = 'user-run', call = 'call') =>
     expiresAt: Date.now() + 8000,
     input: { agentId },
   });
+
+describe('point-scoped collaboration creation and cleanup', () => {
+  it('creates a room after only a current-source point read, without a roster RPC', async () => {
+    db.prepare('DELETE FROM collaboration_rooms').run();
+    request.mockResolvedValue({ version: 2 });
+    await coordinator.create('a', ['a', 'b']);
+    expect(runtimeStatus).toHaveBeenCalledExactlyOnceWith('a', {
+      forceRefresh: true, includeSubagents: true, targeted: true,
+    });
+    expect(request.mock.calls.some(([method]) => method === 'sessions.list')).toBe(false);
+  });
+  it('does not prepare any members when source status is unknown', async () => {
+    db.prepare('DELETE FROM collaboration_rooms').run();
+    request.mockResolvedValue({ version: 2 });
+    runtimeStatus.mockResolvedValue({ known: false, running: false });
+    await expect(coordinator.create('a', ['a', 'b'])).rejects.toThrow('teamFeatureStatusUnknown');
+    expect(prepare).not.toHaveBeenCalled();
+  });
+  it('does not copy an old source policy after the point read changes its owner', async () => {
+    db.prepare('DELETE FROM collaboration_rooms').run();
+    request.mockResolvedValue({ version: 2 });
+    runtimeStatus.mockImplementation(async () => {
+      db.prepare("UPDATE cowork_sessions SET agent_id='c' WHERE id='a'").run();
+      return { known: true, running: false, mainRunning: false, subagentRunning: false };
+    });
+    await expect(coordinator.create('a', ['a', 'b'])).rejects.toThrow('collaborationStateConflict');
+    expect(prepare).not.toHaveBeenCalled();
+    expect(coordinator.read('a').room).toBeUndefined();
+  });
+  it('does not prepare through a replacement router after an old point read', async () => {
+    db.prepare('DELETE FROM collaboration_rooms').run();
+    request.mockResolvedValue({ version: 2 });
+    const replacement = { ...getRouter() };
+    runtimeStatus.mockImplementation(async () => {
+      getRouter.mockReturnValue(replacement);
+      return { known: true, running: false, mainRunning: false, subagentRunning: false };
+    });
+    await expect(coordinator.create('a', ['a', 'b'])).rejects.toThrow('teamFeatureStatusUnknown');
+    expect(prepare).not.toHaveBeenCalled();
+    expect(coordinator.read('a').room).toBeUndefined();
+  });
+  it('keeps late native preparation unconfirmed instead of deleting through a new router', async () => {
+    db.prepare('DELETE FROM collaboration_rooms').run();
+    request.mockResolvedValue({ version: 2 });
+    const replacement = { ...getRouter() };
+    prepare.mockImplementationOnce(async () => { getRouter.mockReturnValue(replacement); });
+    await expect(coordinator.create('a', ['a', 'b'])).rejects.toThrow('teamFeatureStatusUnknown');
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(coordinator.read('a').room?.members).toHaveLength(2);
+    expect(request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
+  });
+  it('does not prepare after the native connection retires on the same router', async () => {
+    db.prepare('DELETE FROM collaboration_rooms').run();
+    request.mockResolvedValue({ version: 2 });
+    runtimeStatus.mockImplementation(async () => {
+      creationContextCurrent.mockReturnValue(false);
+      return { known: true, running: false, mainRunning: false, subagentRunning: false };
+    });
+    await expect(coordinator.create('a', ['a', 'b'])).rejects.toThrow('teamFeatureStatusUnknown');
+    expect(prepare).not.toHaveBeenCalled();
+    expect(coordinator.read('a').room).toBeUndefined();
+  });
+  it('keeps an old-client preparation unknown when the same router reconnects', async () => {
+    db.prepare('DELETE FROM collaboration_rooms').run();
+    request.mockResolvedValue({ version: 2 });
+    const router = getRouter();
+    prepare.mockImplementationOnce(async () => { creationContextCurrent.mockReturnValue(false); });
+    await expect(coordinator.create('a', ['a', 'b'])).rejects.toThrow('teamFeatureStatusUnknown');
+    expect(getRouter()).toBe(router);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(coordinator.read('a').room?.members).toHaveLength(2);
+    expect(request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
+  });
+  it.each(['reject', 'retire'] as const)(
+    'preserves both peer intents when the final native prepare becomes %s', async outcome => {
+      db.prepare('DELETE FROM collaboration_rooms').run();
+      request.mockResolvedValue({ version: 2 });
+      prepare.mockImplementation(async id => {
+        if (id !== 'peer-c') return;
+        if (outcome === 'reject') throw new Error('Native preparation outcome unknown');
+        creationContextCurrent.mockReturnValue(false);
+      });
+      await expect(coordinator.create('a', ['a', 'b', 'c'])).rejects.toThrow(
+        outcome === 'reject' ? 'Native preparation outcome unknown' : 'teamFeatureStatusUnknown',
+      );
+      expect(prepare.mock.calls.map(([id]) => id)).toEqual(['a', 'peer-b', 'peer-c']);
+      expect(coordinator.read('a').room?.members.map(member => member.sessionId))
+        .toEqual(['a', 'peer-b', 'peer-c']);
+      for (const id of ['peer-b', 'peer-c']) expect(hostStore.getSession(id)).toBeTruthy();
+      expect(request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
+      prepare.mockClear();
+      // Existing intent can be read; its presence is not native execution admission.
+      expect((await coordinator.create('a', ['a', 'b', 'c'])).room?.members).toHaveLength(3);
+      expect(prepare).not.toHaveBeenCalled();
+      expect(start).not.toHaveBeenCalled();
+    },
+  );
+  it('deletes only exact idle member incarnations without a roster RPC', async () => {
+    enableDeletion();
+    await expect(coordinator.deleteTask('a')).resolves.toBe(true);
+    for (const id of ['a', 'b', 'c']) {
+      expect(runtimeStatus).toHaveBeenCalledWith(id, {
+        forceRefresh: true, includeSubagents: true, targeted: true,
+        expectedSessionId: `native-${id}`, expectedLifecycleRevision: `revision-${id}`,
+      });
+      expect(request).toHaveBeenCalledWith('sessions.delete', {
+        key: key(id), agentId: id, expectedSessionId: `native-${id}`,
+        expectedLifecycleRevision: `revision-${id}`,
+      });
+    }
+    expect(request.mock.calls.some(([method]) => method === 'sessions.list')).toBe(false);
+    expect(runtimeStatus.mock.calls.every(([, options]) => options.targeted && !options.fullScan)).toBe(true);
+  });
+  it.each([undefined, null, '', 0])('does not delete a member without a string CAS revision: %s', async revision => {
+    enableDeletion();
+    request.mockImplementation(async (method, params) => method === 'sessions.describe'
+      ? { session: { ...deletionDescription(params).session, lifecycleRevision: revision } } : { ok: true });
+    await expect(coordinator.deleteTask('a')).rejects.toThrow('collaborationDeletePending');
+    expect(request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
+  });
+  it('rejects a replacement of a historically bound member rather than deleting it', async () => {
+    enableDeletion();
+    const original = hostStore.getSession.bind(hostStore);
+    vi.spyOn(hostStore, 'getSession').mockImplementation(id => {
+      const session = original(id);
+      return session && id === 'a' ? { ...session, historyBinding: {
+        sessionKey: key(id), nativeSessionId: 'previous-native-a',
+      } } : session;
+    });
+    await expect(coordinator.deleteTask('a')).rejects.toThrow('collaborationDeletePending');
+    expect(request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
+  });
+  it('recognizes only an explicit absent member and never deletes its key', async () => {
+    enableDeletion();
+    request.mockImplementation(async (method, params) => method === 'sessions.describe'
+      ? params.key === key('a') ? { session: null } : deletionDescription(params) : { ok: true });
+    await coordinator.deleteTask('a');
+    expect(request.mock.calls.filter(([method]) => method === 'sessions.delete')
+      .map(([, params]) => params.key)).toEqual([key('b'), key('c')]);
+  });
+  it('keeps all members when the response context retires during inspection', async () => {
+    enableDeletion();
+    let current = true;
+    getRuntime.mockReturnValue({ captureGatewayResponseContext: () => ({ isCurrent: () => current }) } as unknown as OpenClawRuntimeAdapter);
+    request.mockImplementation(async (method, params) => {
+      if (method === 'sessions.describe') { current = false; return deletionDescription(params); }
+      return { ok: true };
+    });
+    await expect(coordinator.deleteTask('a')).rejects.toThrow('collaborationDeletePending');
+    expect(request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
+  });
+});
 
 describe('individual collaboration member cancellation', () => {
   const input = {
@@ -317,6 +492,7 @@ it('joins all member cancellations and duplicate room Stops before reporting a p
 });
 
 describe('direct member message preparation', () => {
+  const currentContext = vi.fn(() => true);
   const input = {
     sourceSessionId: 'a',
     roomId: 'room',
@@ -324,7 +500,9 @@ describe('direct member message preparation', () => {
     nativeSessionId: 'native-b',
   };
   const available = () => {
+    currentContext.mockReset().mockReturnValue(true);
     getRuntime.mockReturnValue({
+      captureGatewayResponseContext: () => ({ isCurrent: currentContext }),
       getPlanMode: async () => ({ enabled: false }),
       getGoalExecution: () => null,
     } as unknown as OpenClawRuntimeAdapter);
@@ -334,7 +512,8 @@ describe('direct member message preparation', () => {
         : {
             session: {
               key: params.key,
-              sessionId: params.key === key('b') ? 'native-b' : 'native-a',
+              sessionId: `native-${params.key.split(':')[1]}`,
+              lifecycleRevision: `revision-${params.key.split(':')[1]}`,
             },
           },
     );
@@ -344,6 +523,7 @@ describe('direct member message preparation', () => {
     async phase => {
       available();
       getRuntime.mockReturnValue({
+        captureGatewayResponseContext: () => ({ isCurrent: currentContext }),
         getPlanMode: async () => ({ enabled: false }),
         getGoalExecution: (sessionId: string) => ({
           sessionId,
@@ -367,6 +547,7 @@ describe('direct member message preparation', () => {
   ])('refuses non-neutral Goal execution evidence %j', snapshot => {
     available();
     getRuntime.mockReturnValue({
+      captureGatewayResponseContext: () => ({ isCurrent: currentContext }),
       getPlanMode: async () => ({ enabled: false }),
       getGoalExecution: () => snapshot,
     } as unknown as OpenClawRuntimeAdapter);
@@ -390,6 +571,7 @@ describe('direct member message preparation', () => {
             session: {
               key: params.key,
               sessionId: params.key === key('b') ? 'native-b' : 'native-a',
+              lifecycleRevision: `revision-${params.key.split(':')[1]}`,
               ...(params.key === key('b') ? { goal: { id: 'member-goal' } } : {}),
             },
           },
@@ -479,7 +661,9 @@ describe('direct member message preparation', () => {
     expect(runtimeStatus).toHaveBeenCalledWith('b', {
       includeSubagents: true,
       forceRefresh: true,
-      fullScan: true,
+      targeted: true,
+      expectedSessionId: 'native-b',
+      expectedLifecycleRevision: 'revision-b',
     });
     expect(coordinator.read('a')).toEqual(before);
     expect(coordinator.read('a').deliveries.find(item => item.id === reply.id)).toMatchObject({
@@ -492,6 +676,7 @@ describe('direct member message preparation', () => {
     expect(start).not.toHaveBeenCalled();
     expect(request.mock.calls.map(([method]) => method)).toEqual([
       'collaboration.health',
+      'sessions.describe',
       'sessions.describe',
       'sessions.describe',
       'sessions.describe',
@@ -529,7 +714,7 @@ describe('direct member message preparation', () => {
       id === 'b' ? status : { known: true, running: false },
     );
 
-    await expect(coordinator.prepareContinuation(input)).rejects.toThrow('agentBusy');
+    await expect(coordinator.prepareContinuation(input)).rejects.toThrow(status.known ? 'agentBusy' : 'teamFeatureStatusUnknown');
 
     expect(coordinator.read('a').deliveries[0].executionOutcome).toBeUndefined();
     expect(start).not.toHaveBeenCalled();
@@ -541,15 +726,18 @@ describe('direct member message preparation', () => {
       'collaborationRuntimeUnavailable',
     );
     available();
-    request.mockImplementation(async method =>
-      method === 'collaboration.health' ? { version: 2 } : { session: { goal: { id: 'goal' } } },
+    request.mockImplementation(async (method, params) =>
+      method === 'collaboration.health' ? { version: 2 } : { session: {
+        key: params.key, sessionId: `native-${params.key.split(':')[1]}`,
+        lifecycleRevision: 'revision', goal: { id: 'goal' },
+      } },
     );
     await expect(coordinator.prepareContinuation(input)).rejects.toThrow(
       'collaborationContinuationUnavailable',
     );
     available();
     runtimeStatus.mockResolvedValue({ known: false, running: false });
-    await expect(coordinator.prepareContinuation(input)).rejects.toThrow('agentBusy');
+    await expect(coordinator.prepareContinuation(input)).rejects.toThrow('teamFeatureStatusUnknown');
     expect(start).not.toHaveBeenCalled();
   });
   it('rechecks member disable and source deletion after asynchronous idle reads', async () => {
@@ -572,6 +760,7 @@ describe('direct member message preparation', () => {
             session: {
               key: params.key,
               sessionId: params.key === key('b') ? 'native-b' : 'native-a',
+              lifecycleRevision: `revision-${params.key.split(':')[1]}`,
               pluginExtensions: [
                 {
                   pluginId: 'plan-mode',
@@ -597,6 +786,7 @@ describe('direct member message preparation', () => {
             session: {
               key: params.key,
               sessionId: params.key === key('b') ? 'native-b' : 'native-a',
+              lifecycleRevision: `revision-${params.key.split(':')[1]}`,
               pluginExtensions: [
                 {
                   pluginId: 'plan-mode',
@@ -629,14 +819,126 @@ describe('direct member message preparation', () => {
     await expect(coordinator.prepareContinuation(input)).rejects.toThrow('agentBusy');
     expect(start).not.toHaveBeenCalled();
   });
+
+  it('checks every member by exact native identity without scanning the historical roster', async () => {
+    available();
+    await coordinator.prepareContinuation(input);
+    expect(runtimeStatus.mock.calls).toEqual(['a', 'b', 'c'].map(id => [id, {
+      includeSubagents: true, forceRefresh: true, targeted: true,
+      expectedSessionId: `native-${id}`, expectedLifecycleRevision: `revision-${id}`,
+    }]));
+    expect(request.mock.calls.filter(([method]) => method === 'sessions.describe')
+      .every(([, params]) => params.agentId === params.key.split(':')[1])).toBe(true);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('retains explicit null revisions for every point read', async () => {
+    available();
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(async (method, params) => {
+      const value = await original(method, params);
+      if (method === 'sessions.describe') value.session.lifecycleRevision = null;
+      return value;
+    });
+    await coordinator.prepareContinuation(input);
+    expect(runtimeStatus.mock.calls.every(([, options]) => options.expectedLifecycleRevision === null)).toBe(true);
+  });
+
+  it.each([undefined, 0, ''])('does not infer a revision from malformed native field %j', async revision => {
+    available();
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(async (method, params) => {
+      const value = await original(method, params);
+      if (method === 'sessions.describe') value.session.lifecycleRevision = revision;
+      return value;
+    });
+    await expect(coordinator.prepareContinuation(input)).rejects.toThrow('teamFeatureStatusUnknown');
+    expect(runtimeStatus).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it.each(['missing', 'foreign-key', 'read-error'] as const)(
+    'rejects %s native rows without creating or dispatching replacement sessions', async kind => {
+      available();
+      const original = request.getMockImplementation()!;
+      request.mockImplementation(async (method, params) => {
+        const value = await original(method, params);
+        if (method === 'sessions.describe') {
+          if (kind === 'read-error') throw new Error('native read unavailable');
+          if (kind === 'missing') value.session = null;
+          else value.session.key = key('foreign');
+        }
+        return value;
+      });
+      await expect(coordinator.prepareContinuation(input)).rejects.toThrow('teamFeatureStatusUnknown');
+      expect(request.mock.calls.some(([method]) => ['sessions.create', 'chat.send'].includes(method))).toBe(false);
+      expect(start).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['context', 'router', 'runtime'] as const)('retires %s changes during a point read', async kind => {
+    available();
+    const before = coordinator.read('a');
+    runtimeStatus.mockImplementationOnce(async () => {
+      if (kind === 'context') currentContext.mockReturnValue(false);
+      if (kind === 'router') getRouter.mockReturnValue({} as CoworkEngineRouter);
+      if (kind === 'runtime') getRuntime.mockReturnValue({} as OpenClawRuntimeAdapter);
+      return { known: true, running: false, mainRunning: false, subagentRunning: false };
+    });
+    await expect(coordinator.prepareContinuation(input)).rejects.toThrow('teamFeatureStatusUnknown');
+    expect(coordinator.read('a')).toEqual(before);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('does not use a newly read third-member SID to override its historical binding', async () => {
+    available();
+    const original = hostStore.getSession.bind(hostStore);
+    vi.spyOn(hostStore, 'getSession').mockImplementation(id => {
+      const row = original(id);
+      return id === 'c' && row ? { ...row, historyBinding: {
+        sessionKey: key('c'), nativeSessionId: 'old-native-c', availability: 'native',
+      } } : row;
+    });
+    await expect(coordinator.prepareContinuation(input)).rejects.toThrow('collaborationInvalidRecipient');
+    expect(runtimeStatus.mock.calls.some(([id]) => id === 'c')).toBe(false);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('rejects nullable revision rotation during the final selected-member recheck', async () => {
+    available();
+    const original = request.getMockImplementation()!;
+    let targetReads = 0;
+    request.mockImplementation(async (method, params) => {
+      const value = await original(method, params);
+      if (method === 'sessions.describe' && params.key === key('b')) {
+        value.session.lifecycleRevision = ++targetReads === 1 ? null : 'new-incarnation';
+      }
+      return value;
+    });
+    await expect(coordinator.prepareContinuation(input)).rejects.toThrow('teamFeatureStatusUnknown');
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it.each(['added', 'removed'] as const)('rejects a member %s during the point-read sequence', async kind => {
+    available();
+    if (kind === 'added') db.exec("INSERT INTO agents VALUES ('d',1); INSERT INTO cowork_sessions VALUES ('d','d','idle');");
+    runtimeStatus.mockImplementationOnce(async () => {
+      if (kind === 'added') metadata.addMember('room', { agentId: 'd', sessionId: 'd', sessionKey: key('d') });
+      else db.prepare("DELETE FROM collaboration_members WHERE room_id='room' AND agent_id='c'").run();
+      return { known: true, running: false, mainRunning: false, subagentRunning: false };
+    });
+    await expect(coordinator.prepareContinuation(input)).rejects.toThrow('teamFeatureStatusUnknown');
+    expect(start).not.toHaveBeenCalled();
+  });
 });
 
 describe('peer execution coordination', () => {
   it('admits a cold member preparation taking longer than eight seconds within its preparation deadline', async () => {
     vi.useFakeTimers();
     db.prepare("DELETE FROM collaboration_members WHERE agent_id = 'c'").run();
-    prepare.mockImplementationOnce(async () => {
+    prepare.mockImplementationOnce(async id => {
       await new Promise(resolve => setTimeout(resolve, 10000));
+      return preparedIdentity(id);
     });
     const pending = coordinator.handle({
       requestId: 'slow-prepare',
@@ -664,7 +966,7 @@ describe('peer execution coordination', () => {
     expect(start).not.toHaveBeenCalled();
   });
 
-  it('cleans a member prepared after the deadline without publishing or dispatching it', async () => {
+  it('keeps a timed-out member intent without confirming or dispatching it', async () => {
     vi.useFakeTimers();
     db.prepare("DELETE FROM collaboration_members WHERE agent_id = 'c'").run();
     prepare.mockImplementationOnce(async () => {
@@ -681,11 +983,9 @@ describe('peer execution coordination', () => {
     });
     await vi.advanceTimersByTimeAsync(60001);
     await pending;
-    expect(coordinator.read('a').room?.members.some(member => member.sessionId === 'peer-c')).toBe(
-      false,
-    );
-    expect(db.prepare('SELECT id FROM cowork_sessions WHERE id = ?').get('peer-c')).toBeUndefined();
-    expect(request).toHaveBeenCalledWith('sessions.delete', { key: 'agent:c:justdo:peer-c' });
+    expect(coordinator.read('a').room?.members.some(member => member.sessionId === 'peer-c')).toBe(true);
+    expect(db.prepare('SELECT id FROM cowork_sessions WHERE id = ?').get('peer-c')).toBeTruthy();
+    expect(request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
     expect(request).toHaveBeenCalledWith('collaboration.resolve', {
       requestId: 'expired-prepare',
       result: { error: 'collaborationInvalidMessage' },
@@ -824,15 +1124,17 @@ describe('peer execution coordination', () => {
     );
   });
   it('keeps the task frozen after partial deletion and retries only remaining native sessions', async () => {
+    enableDeletion();
     request.mockImplementation(async (method, input) => {
       if (method === 'sessions.delete' && input.key === key('b'))
         throw new Error('Gateway offline');
-      return { ok: true };
+      return method === 'sessions.describe' ? deletionDescription(input) : { ok: true };
     });
     await expect(coordinator.deleteTask('a')).rejects.toThrow('Gateway offline');
     expect(coordinator.read('a').room?.deleting).toBe(true);
     expect(db.prepare('SELECT COUNT(*) AS n FROM cowork_sessions').get()).toEqual({ n: 3 });
-    request.mockClear().mockResolvedValue({ ok: true });
+    request.mockClear();
+    enableDeletion();
     runtimeStatus.mockImplementation(async id => ({ known: id !== 'a', running: false }));
     await expect(coordinator.deleteTask('a')).resolves.toBe(true);
     expect(
@@ -906,14 +1208,18 @@ describe('peer execution coordination', () => {
       },
     });
   });
-  it('cancels initial setup when Stop occurs during native preparation', async () => {
+  it('rejects late setup after Stop while retaining its fixed member intent', async () => {
     db.prepare('DELETE FROM collaboration_rooms').run();
     prepare.mockImplementationOnce(async () => {
       await coordinator.stop('a');
     });
     await ensure();
-    expect(metadata.getRoomForSession('a')).toBeUndefined();
-    expect(db.prepare("SELECT id FROM cowork_sessions WHERE id = 'peer-b'").get()).toBeUndefined();
+    expect(metadata.getRoomForSession('a')?.members).toHaveLength(2);
+    expect(db.prepare("SELECT id FROM cowork_sessions WHERE id = 'peer-b'").get()).toBeTruthy();
+    expect(request).toHaveBeenLastCalledWith('collaboration.resolve', {
+      requestId: 'call', result: { error: 'collaborationInvalidMembers' },
+    });
+    expect(request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
     expect(start).not.toHaveBeenCalled();
   });
   it('waits for native admission before a fast nested main turn recruits another peer', async () => {
@@ -946,12 +1252,91 @@ describe('peer execution coordination', () => {
       },
     });
   });
-  it('cleans up failed native preparation and never publishes a fake member', async () => {
+  it('retains a fixed member intent after failed native preparation without claiming readiness', async () => {
     db.prepare('DELETE FROM collaboration_rooms').run();
     prepare.mockRejectedValueOnce(new Error('unavailable'));
     await ensure();
-    expect(metadata.listRooms()).toHaveLength(0);
-    expect(request).toHaveBeenCalledWith('sessions.delete', { key: 'agent:b:justdo:peer-b' });
+    expect(request).toHaveBeenLastCalledWith('collaboration.resolve', expect.objectContaining({ result: { error: 'unavailable' } }));
+    expect(metadata.listRooms()).toHaveLength(1);
+    expect(metadata.getRoomForSession('a')?.members).toContainEqual({ agentId: 'b', sessionId: 'peer-b', sessionKey: 'agent:b:justdo:peer-b' });
+    expect(request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
+    expect(request).toHaveBeenLastCalledWith('collaboration.resolve', expect.objectContaining({ result: { error: 'unavailable' } }));
+  });
+  it('reconciles an uncertain peer read-only without preparing or allocating another identity', async () => {
+    db.prepare('DELETE FROM collaboration_rooms').run();
+    const create = vi.spyOn(hostStore, 'createSession');
+    prepare.mockRejectedValueOnce(new Error('Native preparation outcome unknown'));
+    await ensure();
+    const intent = metadata.getRoomForSession('a')!.members.find(member => member.agentId === 'b')!;
+    request.mockImplementation(async method => method === 'sessions.describe' ? { session: null } : { ok: true });
+    await ensure('a', 'b', 'user-run', 'recheck-absent');
+    expect(request).toHaveBeenLastCalledWith('collaboration.resolve', {
+      requestId: 'recheck-absent', result: { error: 'teamFeatureStatusUnknown' },
+    });
+    request.mockImplementation(async (method, params) => method === 'sessions.describe' ? deletionDescription(params) : { ok: true });
+    await ensure('a', 'b', 'user-run', 'recheck-materialized');
+    expect(request).toHaveBeenLastCalledWith('collaboration.resolve', {
+      requestId: 'recheck-materialized', result: { member: intent },
+    });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls.some(([method]) => ['sessions.delete', 'sessions.list', 'chat.send'].includes(method))).toBe(false);
+  });
+  it('keeps a peer intent after connection retirement during prepare, with no cleanup or dispatch', async () => {
+    db.prepare('DELETE FROM collaboration_rooms').run();
+    prepare.mockImplementationOnce(async id => {
+      creationContextCurrent.mockReturnValue(false);
+      return preparedIdentity(id);
+    });
+    await ensure();
+    expect(metadata.getRoomForSession('a')?.members.find(member => member.agentId === 'b')?.sessionId).toBe('peer-b');
+    expect(request).toHaveBeenLastCalledWith('collaboration.resolve', {
+      requestId: 'call', result: { error: 'teamFeatureStatusUnknown' },
+    });
+    expect(request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
+    expect(start).not.toHaveBeenCalled();
+  });
+  it.each(['absent', 'missing-revision', 'foreign-key'] as const)(
+    'does not mistake an existing %s member projection for a prepared peer', async kind => {
+      request.mockImplementation(async (method, params) => {
+        if (method !== 'sessions.describe') return { ok: true };
+        const result = deletionDescription(params);
+        if (kind === 'absent') return { session: null };
+        if (kind === 'missing-revision') return { session: { ...result.session, lifecycleRevision: undefined } };
+        return { session: { ...result.session, key: key('foreign') } };
+      });
+      await ensure();
+      expect(request).toHaveBeenLastCalledWith('collaboration.resolve', {
+        requestId: 'call', result: { error: 'teamFeatureStatusUnknown' },
+      });
+      expect(prepare).not.toHaveBeenCalled();
+      expect(request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
+    },
+  );
+  it('does not adopt a replacement peer over its persisted native history binding', async () => {
+    const original = hostStore.getSession.bind(hostStore);
+    vi.spyOn(hostStore, 'getSession').mockImplementation(id => {
+      const row = original(id);
+      return row && id === 'b' ? { ...row, historyBinding: { sessionKey: key('b'), nativeSessionId: 'original-native-b' } } : row;
+    });
+    await ensure();
+    expect(request).toHaveBeenLastCalledWith('collaboration.resolve', {
+      requestId: 'call', result: { error: 'teamFeatureStatusUnknown' },
+    });
+    expect(prepare).not.toHaveBeenCalled();
+  });
+  it('shares one retained intent across concurrent failed preparations', async () => {
+    db.prepare('DELETE FROM collaboration_rooms').run();
+    const create = vi.spyOn(hostStore, 'createSession');
+    prepare.mockRejectedValueOnce(new Error('Native preparation outcome unknown'));
+    request.mockImplementation(async method => method === 'sessions.describe' ? { session: null } : { ok: true });
+    await Promise.all([ensure('a', 'b', 'user-run', 'first'), ensure('a', 'b', 'user-run', 'second')]);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(metadata.getRoomForSession('a')?.members).toHaveLength(2);
+    expect(request).toHaveBeenCalledWith('collaboration.resolve', {
+      requestId: 'second', result: { error: 'teamFeatureStatusUnknown' },
+    });
   });
   it('does not allow peers to recruit new assistants', async () => {
     db.prepare("DELETE FROM collaboration_members WHERE agent_id = 'c'").run();
@@ -1043,6 +1428,7 @@ it('does not leave partial source deletion leases when reading member runs fails
 });
 
 it('freezes new native discussion requests before awaiting source deletion checks', async () => {
+  enableDeletion();
   let release!: () => void;
   const waiting = new Promise<void>(resolve => {
     release = resolve;
@@ -1192,7 +1578,7 @@ it('keeps an old native peer run fenced after deletion releases its lease before
   });
 });
 
-it('does not publish a nested main turn recruit after deletion starts during native preparation', async () => {
+it('retains an unconfirmed recruit intent but rejects its result after deletion starts', async () => {
   db.prepare("DELETE FROM collaboration_members WHERE agent_id = 'c'").run();
   metadata.beginRound('room', 'user-turn');
   const incoming = metadata.enqueue('room', 'user-turn', key('b'), 'reply', 'peer-run', {
@@ -1214,9 +1600,12 @@ it('does not publish a nested main turn recruit after deletion starts during nat
   finishPrepare();
   await pending;
 
-  expect(metadata.getRoom('room')?.members.map(member => member.agentId)).toEqual(['a', 'b']);
-  expect(db.prepare("SELECT id FROM cowork_sessions WHERE id = 'peer-c'").get()).toBeUndefined();
-  expect(request).toHaveBeenCalledWith('sessions.delete', { key: 'agent:c:justdo:peer-c' });
+  expect(metadata.getRoom('room')?.members.map(member => member.agentId)).toEqual(['a', 'b', 'c']);
+  expect(db.prepare("SELECT id FROM cowork_sessions WHERE id = 'peer-c'").get()).toBeTruthy();
+  expect(request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
+  expect(request).toHaveBeenCalledWith('collaboration.resolve', {
+    requestId: 'late-recruit', result: { error: 'collaborationDeletePending' },
+  });
   expect(start).not.toHaveBeenCalled();
   release();
 });

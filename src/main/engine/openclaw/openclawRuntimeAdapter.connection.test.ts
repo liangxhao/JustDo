@@ -179,12 +179,7 @@ test('resolves the Gateway session ID used by title generation', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const request = vi.fn().mockResolvedValue({
-    sessions: [
-      {
-        key: 'agent:main:justdo:session-1',
-        sessionId: 'gateway-session-123',
-      },
-    ],
+    session: { key: 'agent:main:justdo:session-1', sessionId: 'gateway-session-123' },
   });
   const internals = adapter as unknown as {
     ensureGatewayClientReady: () => Promise<void>;
@@ -201,7 +196,34 @@ test('resolves the Gateway session ID used by title generation', async () => {
   await expect(internals.resolveGatewaySessionIdForTitle('session-1')).resolves.toBe(
     'gateway-session-123',
   );
-  expect(request).toHaveBeenCalledWith('sessions.list', { rowMode: 'compact', limit: 500 });
+  expect(request).toHaveBeenCalledExactlyOnceWith('sessions.describe',
+    { key: 'agent:main:justdo:session-1', agentId: 'main' }, { timeoutMs: expect.any(Number) });
+});
+
+test.each(['key', 'agent', 'session', 'connection', 'product'])('rejects a stale or foreign title lookup: %s', async kind => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as {
+    ensureGatewayClientReady: () => Promise<void>;
+    gatewayClient: GatewayClientLike | null;
+    gatewayClientGeneration: number;
+    resolveGatewaySessionIdForTitle: (sessionId: string) => Promise<string | undefined>;
+  };
+  Object.assign(session, { historyBinding: { sessionKey: 'agent:main:justdo:session-1', nativeSessionId: 'expected-native' } });
+  const request = vi.fn(async (_method: string) => {
+    if (kind === 'connection') internals.gatewayClientGeneration += 1;
+    if (kind === 'product') session.agentId = 'replacement';
+    return { session: {
+      key: kind === 'key' ? 'agent:main:foreign' : 'agent:main:justdo:session-1',
+      agentId: kind === 'agent' ? 'foreign' : 'main',
+      sessionId: kind === 'session' ? 'foreign-native' : 'expected-native',
+    } };
+  });
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  await expect(internals.resolveGatewaySessionIdForTitle('session-1')).resolves.toBeUndefined();
+  expect(request).toHaveBeenCalledOnce();
+  expect(request.mock.calls.every(([method]) => method !== 'sessions.list')).toBe(true);
 });
 
 test('an intentionally stopped gateway client cannot reclaim the active connection', async () => {

@@ -733,3 +733,236 @@ manifest 同为 `01103cc0…6ace4`。Main、Store 和新增目录测试不属于
 dev 新增的 Widget 生产输入已纳入构建 recipe，原 `01103cc0…6ace4` 的冻结运行时和
 此前十一门/桌面证据仅适用于原先构建，不能当作 rebase 后 current-recipe 证明。
 本轮没有重建或改写该产物；后续启动使用标准 `electron:dev:openclaw` 准备新运行时。
+
+## 2026-10-24：dev 启动与 Team 首次发送修复
+
+本轮基于 `dev@6f192d3bf`，在 `codex/openclaw-startup-team-recovery` worktree 实施，
+保留 dev 已有 thinking/streaming 修复。开发前分工检查原生数据库准备、Team 准入和
+构建身份；实现后由其他 agent 独立复审，处理了历史会话误判为全新、nullable revision
+不严格、Main 缺少未知状态翻译等发现。未增加 OpenClaw runtime patch。
+
+首份用户控制台捕获中，828 次同类 canonical checkpoint 错误伴随 4569 次
+`sessions.describe`，原生 Worker 的提交授权窗口为五秒，记录的两次等待约 5002/5004ms。
+Gateway 同期存在同步加载阻塞，但缺少精确请求派发时间，不能归罪于某个插件；后续请求
+洪泛也不能解释更早的首次失败。没有证据确认数据库损坏。原 Team 提示没有记录当次
+known/running 状态，不能据此断言用户点击一定属于 unknown，或把两个问题串成单一因果。
+第二份捕获没有 checkpoint 错误，仍保留六次其他 RPC 错误；不把一次恢复视为永久无故障。
+
+修复将原生 canonical 准备放在停止 Gateway 的独立进程内，继续使用官方租约、完整备份、
+Worker 授权和实际退出回执。schema 就绪不能替代 canonical 就绪。无待处理任务时不新建
+备份；原生同组备份可复用首次快照，不宣称每次都有最新快照或支持自动回滚。失败、取消、
+身份改变和未知退出均不开放 Gateway。Team 的两次空闲检查改为目标会话读取，保留本地
+执行、排队、后代、客户端代次、精确身份和变更事件围栏；未知状态单独提示并保留草稿。
+
+本轮冻结产物身份如下，完整回执保存在 ignored 证据目录
+`build/upgrade-audit/dev-startup-team-recovery/`：
+
+| 项目 | 身份 |
+| --- | --- |
+| OpenClaw / Node | v2026.10.6 / v24.22.1 |
+| manifest SHA256 | `75316448a9d09210d87ed4015f6878b54f1f53f5463c81ad4e6567aeabe6d5cc` |
+| build recipe SHA256 | `8472b55d23124f0eaa64fa9e0e6050de96ec9416b86313ff5f6e306b436b4702`，207 项原始字节输入 |
+| patch set SHA256 | `3acfeba0ce1dce2aa13d48f35f4b34d934ce946bfae5429edccaeeae316b6b45`，33 项不变 |
+| 原生 owner | 18 项，新增 canonical validation/worker 两项准入 |
+| bundle / ASAR SHA256 | `9e8898bbb432d7ac6511e339a453c4e68d094255883cb9aedff8557feb2ce21b` / `1145ae602d4fc3d54327d3312558d018577e19f92b30d46ea18b3d790683e187` |
+
+Gateway bundle 构建耗时约 8.7 分钟，后续还有插件装配和预编译。这次构建范围过大：
+与用户原 B8 产物比较，11096 项原生核心
+文件字节完全相同。随后复用本次验证产物，不再重复原生构建。输入和产物身份分别见
+`fresh-source-identity.json`、`fresh-frozen-runtime-identity.json`；主目录暂存完整 39532
+项文件/链接与冻结副本一致，见 `main-staged-runtime-identity.json`。目录之间仅换行符
+不同的生产输入仍须对齐到已验证的原始字节，不能修改 manifest 绕过 recipe 校验。
+
+主目录最终复用同一产物，59 个输入仅对齐换行字节后，207 项 recipe、18 owner、
+ASAR 和完整随包 Node 的严格准入通过。暂存目录通过同盘 rename 安装，保留原 B8
+产物；Git 跟踪内容无附加变更，用户日志原样保留，未修改用户资料或数据库。回执为
+`main-final-current-runtime-identity.json`；后续本节文字修订不属于 recipe 输入。
+
+最终行为回归为 **42 文件、1024/1024、零跳过**，使用实际目标上游源码，测试 wrapper
+恢复并验证 Electron ABI146。首次全批次有一个旧测试 mock 未实现新必需接口的失败，
+补齐 fixture 后同批次全过，没有放宽生产校验。完整 lint、Renderer build 和 Main 编译
+通过；最后 Main 翻译补充后再次 build、对应 lint 通过。日志为
+`regression-tests-final.log`、`build-final.log` 及本目录其他检查日志。
+
+| 新产物原生验证 | 结果与覆盖 |
+| --- | --- |
+| canonical 准备 | 五组通过；空目录不创建数据库、260 行历史和配置保留、备份先于 canonical 写入、新进程认可同一文件回执、重复执行零 Worker/零新备份、复制/替换/撤销失效、损坏原始备份组拒绝、真实提交消息延后 5400ms 后仍按五秒原生授权拒绝 |
+| Electron 身份 | 五项通过；真实 Electron/ASAR 成员与原始字节准入、18 owner、目录和损坏归档等负例 |
+| Team 首次发送 | task/group 均经实际宿主 coordinator 和认证 Gateway 创建、注册、发送；精确 key/SID/runId 的 `executionSettled:true` 整轮终态及官方历史可核对；未知状态在任何创建/注册/发送前拒绝 |
+
+两个受影响原生 gate 均以严格 current recipe 执行并 exit0，见
+`fresh-affected-native-gates-result.json`；本轮没有执行完整十二门矩阵。
+Team 回执位于 `.agent-tasks/runtime/agent-team-first-send/probe-jA1Fta/result.json`，
+所有自有客户端和 Gateway 正常关闭。loopback 模型共六次请求，两种模式各三次，符合
+实际 runtime-services 的两次纠正上限；这验证首发链路，不代表模型实际组织了成员、
+完整 Team 桌面对话或企业模型服务已验收。
+
+主 agent 另亲自启动真实 Electron/Main/Gateway，使用中文及空格路径的全新隔离资料：
+
+| 路由 | 实际结果 |
+| --- | --- |
+| Fresh | 四步首次准备进入首页，fresh/complete 与完整新产物身份正确；启动期间零 checkpoint 和 RPC 错误；标准关闭 Gateway0/null、Main/launcher0，原生清理约 59.17 秒 |
+| Normal | 复用同一资料，紧凑“正在启动”进入首页，日志 route normal，没有重复升级界面；保留相同完成身份；启动期间零 checkpoint 和 RPC 错误；标准退出时一次 `cron.list` 被原生以 restart 拒绝，随后 Gateway0/null、Main/launcher0，原生清理约 5.75 秒 |
+
+桌面日志及进程退出回执为 `desktop-{fresh,normal}.log`、
+`desktop-{fresh,normal}/close.json`。未配置模型的首页禁止发送符合当前规则；没有使用
+真实账号、用户数据库或用户草稿。原生准备仍有耗时：本机独立单 agent 正常复验约
+20–27 秒，实际 Gateway 启动另有后台准备及同步加载等待；本轮不宣称启动性能已优化。
+安装包、无缓存且公网阻断的冷启动、其他平台和真实企业模型仍需另行验收。原始日志、
+数据库和诊断产物不进入 Git。
+
+## 2026-10-24：Team 与 Swarm 五类消息入口定点复查
+
+本轮继续在升级 worktree 实施，覆盖 Team 主会话、成员单聊、实际群聊，以及
+Swarm 主会话和节点输入。前节 task/group 首发只证明宿主创建与普通消息发送，
+不能代替实际群聊成员执行或 Swarm 工具创建流程。本轮补充三个独立原生探针，
+实际使用生产 Renderer controller、Team host 和 Swarm host/native 插件，分别记录证据。
+接口差异和每条生产链路见[专项报告 2.7](module-api-audit.md#27-五条人工发送入口定点准入与扩展产物)。
+
+发送前旧会话检查、Team 创建/成员准入/清理/删除、Goal 重放、标题和统计均使用精确
+`sessions.describe`，不依赖全局会话扫描；保留当前成员、SID、revision、连接代次、
+本地未结算和原生后代检查。未知保持未知，不自动补发。群聊结算缺少原生 SID 时
+拒绝接纳，不能以缺字段放行。背景目录展示和历史运行恢复仍承担各自的目录职责，
+不进入发送准入链路。
+
+### 资源范围与产物身份
+
+本轮没有重建 Gateway 核心或新增 runtime patch。正式资源同步、扩展预编译和
+裁剪写入新目录 `build/runtimes/openclaw/win-x64-collaboration-send-2`，原冻结目录保留。
+207 项 recipe、18 项原生数据库 owner、bundle、ASAR、SDK 和完整随包 Node 与前节
+753 产物一致；所有非 `dist/extensions/` 文件逐字节相同。
+
+| 项目 | 本轮身份 |
+| --- | --- |
+| core manifest SHA256 | `75316448a9d09210d87ed4015f6878b54f1f53f5463c81ad4e6567aeabe6d5cc` |
+| build recipe SHA256 | `8472b55d23124f0eaa64fa9e0e6050de96ec9416b86313ff5f6e306b436b4702` |
+| 独立 extension assembly SHA256 | `a055e1843b8a5c981e47b26644ecb8145db3e4c1fdaf45fa46bc3a522855e671`，57 项原生扩展输入 |
+| extension receipt SHA256 | `3032a590089062e5c0bd17af0f53766d5252c7c4656ec952c5f08971396fddcb` |
+| Team / Swarm 编译入口 SHA256 | `35736222078d9c014c659d55bfe3e04505a48b07a97daa369f340169dd2170da` / `d35e478ab18543788efd8f90bcb477074b462e72fa84033d986c7e9bf85267b6` |
+
+core manifest 不绑定本轮插件源码；独立 receipt 记录完整扩展输出库存及源闭包，
+原生探针还只读重编两个真实入口并逐字节核对产物。缺 receipt 的标准新构建仍须通过
+当前核心严格准入和真实入口重现，不能凭 manifest 相同认定扩展相同。控制用例实际
+拒绝修改入口、遗漏源文件、未记录的额外输出和错误核心回执。
+
+### 自动化结果与复验边界
+
+最终相关回归 **94 文件、1,929/1,929、零跳过**，目标源码固定为
+`v2026.10.6@fe06181dc5ecc01cf8904abbfc26925925efefbc`。测试 wrapper 恢复并验证
+Electron ABI146。独立的发送 gate 源码/准入/结算/产物控制分项 **7 文件、116/116**；
+它们与前述应用回归存在重叠，不相加。完整 lint、Renderer/Main 生产 build 和
+Main noEmit 通过。日志在 ignored `build/upgrade-audit/collaboration-send-matrix/`，
+不提交原始日志或用户数据。
+
+最后复审补充 checkpoint 等待期间的计时替换围栏：只有同一启动 marker 才能继续，
+新的已接纳运行、替代 marker 和删除均返回未知，零 finish/reopen/begin。
+两 IPC 文件 **99/99**，最终发送 gate 源码控制 **7 文件、119/119**；
+包含在先前大批次中的用例不重复相加。围栏后再次生产 build、Main noEmit 和对应 lint
+通过，日志 `checkpoint-race-final.log`、`send-gate-source-controls-final.log`、
+`build-checkpoint-final.log`。既存 accepted-timing 的空闲/root 后备未混入本轮，
+其收敛缺口见[独立计划](../../plans/session-run-terminal-evidence.md)。
+
+| 最终真实原生分项 | 实际结果与范围 | 隔离证据 |
+| --- | --- | --- |
+| 共享主会话 controller | 新建、续发、重连、真实 initial dispatch 四次精确 SID/run 整轮终态及历史；错 SID/key/断线前零发送；已接纳 ACK 丢失保留 unknown，仅一次发送、零自动重放；全部 wire 含初始化零 sessions.list | `collaboration-main-send/probe-BRkUgh`，5 次模型请求 |
+| Team 成员与实际群聊 | 来源一次、成员一次、群聊两位成员均有精确 whole-run；原生历史、群聊同请求重放零发送；真实 bind/dispatch→Requested→handle→resolve ensure 三次，只创建一个新成员，已有/未知零新创建、发送或删除；三位团队成员精确 CAS 删除 | `agent-team-message-paths/probe-oxWJ9X`，4 次模型请求，全部 application sessions.list 为零 |
+| Swarm 主会话及节点 | 实际 start 工具发起；运行中 note 零派发且拒绝 continue；失败同 key/SID 新 run 继续、同 operation 丢 ACK 对账及原文持久保存；retry 新 key/SID/run 并完成验收和投递；已有主会话 status 真工具一次；三个 work 的 whole-run 和公开 cleanupSettled 分别取证 | `swarm-workflow-send/probe-rKAbSt`，14 次模型请求；Host 实际零 sessions.list，插件无该调用另以当前 bundle 静态检查证明 |
+
+三个分项均 `verified:true/cleanClose:true`，所有自有 Gateway 和客户端实际正常退出。
+证据目录位于 ignored `.agent-tasks/runtime/`；最后独立核对生产源闭包分别为
+217、32、12 项，全部 raw SHA 漂移为零，见 `final-component-proofs.json`。
+原生运行包均为本节同一 `-2`，未新增 Swarm 生产适配或重复构建核心。
+
+保留失败及修复复验：Controller 首轮 Node relay 缺浏览器 Origin，原生拒绝；测试补精确
+loopback allowlist/HTTP Origin 后通过，未关闭原生验证。Team 首轮后端未订阅内部群聊
+会话的 lifecycle，改用官方精确会话订阅；后续新增 ensure 未知反例误期待统一错误，
+改为精确保留原错误并继续断言零变更。Swarm 前四轮外部测试 wrapper 不具备 bundled
+钩子/特权 RPC 信任，未证明生产故障；最终改为直接加载正式 bundled 原入口，用公开
+会话订阅和 cleanup 字段取证。其后两轮分别修复测试把模型输入日期前缀当成原文改变、
+以及复验期间使用旧 revision 的问题；原文强断言放在真实 dispatch 与认证历史，操作
+紧前读取当前 revision，保留 stale revision 负控且不自动重试未知操作。失败未计作通过。
+
+复验入口：
+
+```powershell
+node scripts/test/run-collaboration-send-contracts.cjs --runtime-dir build/runtimes/openclaw/win-x64-collaboration-send-2 --source-root E:/workspace/openclaw
+```
+
+该入口先验精确目标源码、current recipe/frozen core 和当前扩展；本节当时按源码控制、
+真实 controller、Team 和 Swarm 四阶段执行，后续 Main 接缝补查扩为五阶段，
+最后复核相同产物与源码。已接入模块验收的
+第十三门；本轮按分项执行，不宣称完整十三门矩阵已经重新运行。超时或子进程失败
+整体失败，只有探针实际关闭并 join 全部自有资源的结果才记录 `cleanClose:true`。
+
+真实服务、DOM/React/完整桌面 UI、用户资料和企业模型未由这些合成探针代替；
+原生测试全部使用隔离资料及 loopback 合成模型，不操作用户数据库或真实凭据。
+
+## 2026-10-24：迟到会话通知与 Main 准入补查
+
+用户随后在 dev 的真实已有会话仍无法发起 Team；失败均为准备前状态未知。
+本轮只读核对最新 Main/Gateway 日志及产品会话元数据，不读取原生 transcript 文件，
+不修改用户数据库。普通运行已完成，来源没有 native key/history binding/旧 launch 回执；
+四次 create ACK、迟到 changed 与成功 describe 的时间交错相同。
+接口与接缝说明见[报告 2.8](module-api-audit.md#28-准备响应后的会话通知与-main-准入接缝)。
+
+新增直接回归先在旧实现返回 unknown，按原断言失败，证据
+`build/upgrade-audit/dev-startup-team-recovery/targeted-event-reobserve-before.log`。
+修复仅对被通知淘汰的合法定点结果再读一次，固定 SID、revision 三态、产品身份及
+连接代次；未知 custody、真实 busy、缺行、错误、换代和重复失效不能借重读放行。
+独立复审补充 await 期间转为 external owner 的围栏及真实 SQL 映射反例。
+
+| 自动化复验 | 实际范围与结果 |
+| --- | --- |
+| 直接状态与目标原生源码 | 2 文件 74/74，required source、零跳过；完整 `materializeSessionRow` 与原生活动函数经过 JSON 序列化，证明 revision 合法省略，缺省/null/字符串不互换 |
+| 真实 Main 组合与关联 IPC/Team | 4 文件 183/183，零跳过，含新增 19 例；真实 CoworkStore SQL、Adapter/propertyContext、生产事件处理、Router、Team launch 和 IPC，网络与 Electron/Git 端口受控；Node 内存 SQLite 不切换 better-sqlite3 ABI |
+| 最终发送 gate 源码分项 | 9 文件 209/209，零跳过；含直接状态、原生源码、Main 组合、启动 checkpoint、Team launch、讨论结算与扩展身份，精确上游 `fe06181dc5ecc01cf8904abbfc26925925efefbc` 与既有 `-2` 运行包 |
+| 完整静态与生产构建 | 全量 `npm run lint`、`npm run build`、`npm run compile:electron` 均 exit0；没有 ABI 切换或 Gateway 核心构建 |
+
+以上批次重叠，不相加；最终 9 文件日志为
+`build/upgrade-audit/dev-startup-team-recovery/main-send-admission-source-final.log`。
+构建日志为同目录 `main-send-lint-final.log`、`main-send-build-final.log` 与
+`main-send-electron-final.log`。
+没有执行全量 npm test 的 ABI 切换，没有重新构建或替换运行中的用户 Gateway。
+
+新增原生入口 `tests/openclaw/runtime/main-send-admission.native-probe.mjs` 使用实际
+Main Store/Adapter/Router/Team launch 与已验 `win-x64-collaboration-send-2`，
+只延迟真正接收到的 create 事件帧，不修改 payload；将固定旧 HEAD 的状态函数放入
+同一生产 context，核对旧实现一次读取未知、新实现两次精确读取。原生测试隔离于 OS
+临时资料，模型仅使用 loopback 合成服务。无 Goal fixture 在每条生产事件处理后取消
+独立后台 Goal 恢复 owner，因此零全局列表仅证明本次发送链路，不宣称整个应用没有
+后台目录读取。完整桌面 DOM/React 和真实企业模型仍不由此替代。
+
+永久发送门禁现为五阶段：源码/组合、实际 Main 通知准入、Renderer controller、Team、
+Swarm。本轮只重跑受影响源码/组合分项及新增 Main 原生探针，不冒称完整五阶段或
+全部十三门矩阵重新通过。其他三份历史原生证据继续保留其当时的源闭包和范围。
+
+保留原生探针失败：首轮未加载真实准备依赖 automation-permission，在
+`automationPermission.info` 被拒，零模型/零目标读取；补正式扩展后，第二轮已证明
+旧/新准入差异及实际 Team whole-run，但测试错误地在 `chat.history` 传入无
+`messageId` 的 `sessionId`，被原生正确拒绝，按正式 `{ sessionKey }` 修正。
+第三轮保持释放强断言，whole/history 之后尚未满足空闲前置条件即返回 false，未计通过。
+这三轮均保留 `verified:false/cleanClose:true` 和原始隔离证据，不放宽身份或释放条件，
+不把测试配置/参数错误当作应用协议适配。
+
+最终原生复验 `main-send-admission/probe-kkgkPy/result.json` 为
+`verified:true/cleanClose:true`，Gateway `code=0/signal=null`、实际 join 且自有 PID 已退出。
+其结果 SHA256 为 `be27ed90b90bd8450639259a1a827f9c9775ca64a0fd64fbe128f1c3ab19a405`；
+最后核对 123 项实际编入的宿主/依赖源闭包 SHA 漂移为零。运行包及原生扩展仍为前节
+753 / `a055e184…` 的同一 `-2`，未重新装配或重建。
+
+| 最终实际 Main + Gateway 场景 | 原生结果 |
+| --- | --- |
+| 固定旧函数的同事件窗口 | 一次精确 describe 被真实迟到 create 通知淘汰，稳定返回 unknown |
+| 已有普通历史后切 Team | 先实际普通发送并核对 exact whole/history；同一来源再次 prepare 保持物理 SID；真实迟到帧触发两次精确读取，实际 Team register/mark/send/whole/history 均通过 |
+| 原生执行与清理分离 | whole 不代替 idle；只读确认同 SID/revision 无活动后仅调用一次实际 launch release，收到释放回执 |
+| 自定义助手来源 | 两次精确读取后正常发送，同 key/SID/run 的 whole 和认证历史通过 |
+| 连接/代次/错 SID | 均返回未知，零发送；不以重新观察接纳新身份 |
+
+共 5 次合成模型请求（普通 1、Team 原生纠正轮 3、自定义助手 1）、3 次实际
+`chat.send`、1 次 launch release、零 `sessions.list`。全部 26 次实际 describe 的
+revision 均为原生字符串自有字段，未补 null；合法省略的正反控由上游完整函数/JSON
+契约测试另证。最终原生日志为 `main-send-admission-native-final.log`。
+此测试不证明模型自主创建团队、真实企业模型质量或完整 Electron UI。
+
+三方独立设计/交叉复审覆盖生产函数、Main 组合、真实事件帧与门禁，无阻塞遗留。
+本轮没有追加 OpenClaw patch、修改扩展源码或重建核心；用户原会话与数据库均保留。

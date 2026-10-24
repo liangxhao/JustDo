@@ -5,11 +5,11 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { registerDiscussionSummary } from '../../../../plugins/extensions/agent-team/discussion/discussion-summary';
 import {
   DiscussionLedger,
   type DiscussionReceipt,
 } from '../../../../plugins/extensions/runtime-services/agent-team/discussion/discussion-ledger';
-import { registerDiscussionSummary } from '../../../../plugins/extensions/agent-team/discussion/discussion-summary';
 import {
   TeamDiscussionGateway,
   type TeamDiscussionRoom,
@@ -399,6 +399,27 @@ describe('native discussion summary admission and delivery', () => {
     expect(call).not.toHaveProperty('dispatchReplyFromConfig');
     expect(sdk.channelDispatch).not.toHaveBeenCalled();
     expect(test.stored().outputEntryIds).toEqual(['summary-entry']);
+  });
+
+  it('does not settle a summary from missing or foreign native session identity', async () => {
+    const test = harness();
+    test.seedGroup();
+    sdk.dispatch.mockImplementation(async (params: Dispatch) => {
+      params.replyOptions.onAgentRunStart('summary-run');
+      await params.dispatcherOptions.deliver({ text: 'Summary result' }, { kind: 'final' });
+      params.replyOptions.onAgentRunTerminalOutcome('completed');
+    });
+    await test.request('start');
+    expect(await test.request('status')).toMatchObject({ result: { state: 'unknown' } });
+    for (const sessionId of [undefined, 'foreign-session']) {
+      settled({ sessionId });
+      expect(await test.request('status')).toMatchObject({ result: { state: 'unknown' } });
+      expect(test.stored().executions[0].outcome).toBe('running');
+    }
+    settled();
+    expect(await test.request('status')).toMatchObject({ result: { state: 'delivered' } });
+    expect(test.stored().executions[0].outcome).toBe('completed');
+    expect(sdk.dispatch).toHaveBeenCalledOnce();
   });
 
   it('rejects a reset source before consuming native summary admission', async () => {

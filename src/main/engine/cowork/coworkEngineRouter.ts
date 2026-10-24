@@ -6,6 +6,7 @@ import type {
   CoworkPrepareSessionOptions,
   CoworkRuntime,
   CoworkRuntimeEvents,
+  CoworkRuntimeStatusOptions,
   CoworkStartOptions,
   CoworkStopOptions,
 } from '../types';
@@ -132,7 +133,7 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
 
   async getSessionRuntimeStatus(
     sessionId: string,
-    options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
+    options?: CoworkRuntimeStatusOptions,
   ): Promise<{
     known: boolean;
     mainRunning: boolean;

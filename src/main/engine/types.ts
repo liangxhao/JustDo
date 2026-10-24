@@ -9,6 +9,16 @@ export type GatewayRequestOptions = {
   assertBeforeSend?: () => void;
 };
 
+export type CoworkRuntimeStatusOptions = {
+  includeSubagents?: boolean;
+  forceRefresh?: boolean;
+  fullScan?: boolean;
+  /** Read native activity for this exact conversation without a global roster scan. */
+  targeted?: boolean;
+  expectedSessionId?: string;
+  expectedLifecycleRevision?: string | null;
+};
+
 // ============================================================
 // Gateway Skill Types
 // ============================================================
@@ -247,7 +257,7 @@ export interface CoworkRuntime {
   >;
   getSessionRuntimeStatus?(
     sessionId: string,
-    options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
+    options?: CoworkRuntimeStatusOptions,
   ): Promise<{
     known: boolean;
     mainRunning: boolean;

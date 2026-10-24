@@ -228,32 +228,72 @@ export class CollaborationCoordinator {
     const health = await this.deps.requestGateway<{ version: number }>(CollaborationGateway.Health);
     if (health.version !== 2) throw new Error('collaborationRuntimeUnavailable');
     const runtime = this.deps.getRuntime();
-    const assertEligible = async (sessionId: string, sessionKey: string) => {
-      const described = await this.deps.requestGateway<{
-        session?: {
-          key?: string;
-          sessionId?: string;
-          goal?: unknown;
-          pluginExtensions?: {
-            pluginId?: string;
-            namespace?: string;
-            value?: { enabled?: boolean; awaitingReview?: unknown };
-          }[];
-        } | null;
-      }>('sessions.describe', { key: sessionKey });
-      if (!runtime || !described.session || described.session.goal != null)
-        throw new Error('collaborationContinuationUnavailable');
-      if (
-        sessionId === target.sessionId &&
-        (described.session.key !== target.sessionKey ||
-          described.session.sessionId !== input.nativeSessionId)
-      )
+    const router = this.deps.getRouter();
+    const context = runtime?.captureGatewayResponseContext();
+    if (!runtime || !context) throw new Error('teamFeatureStatusUnknown');
+    const memberPolicy = () => {
+      const live = this.metadata.getRoomForSession(sourceSessionId);
+      return JSON.stringify([live?.id, live?.deleting,
+        live?.members.map(member => [member.agentId, member.sessionId, member.sessionKey]),
+        room.members.map(member => {
+          const session = store.getSession(member.sessionId);
+          return [member.agentId, member.sessionId, member.sessionKey, session?.agentId,
+            session?.cwd, session?.permissionMode, session?.external, session?.nativeSessionKey,
+            session?.historyBinding];
+        })]);
+    };
+    const capturedMemberPolicy = memberPolicy();
+    const assertReadCurrent = () => {
+      assertGeneration();
+      this.assertSourceAdmission(sourceSessionId);
+      if (this.deps.getRuntime() !== runtime || this.deps.getRouter() !== router ||
+        !context.isCurrent() || memberPolicy() !== capturedMemberPolicy)
+        throw new Error('teamFeatureStatusUnknown');
+    };
+    const identities = new Map<string, { sessionId: string; lifecycleRevision: string | null }>();
+    const readIdentity = async (sessionId: string, sessionKey: string) => {
+      assertReadCurrent();
+      const product = store.getSession(sessionId);
+      const member = room.members.find(item => item.sessionId === sessionId);
+      if (!product || product.external || !member || product.agentId !== member.agentId ||
+        member.sessionKey !== sessionKey ||
+        (product.nativeSessionKey !== undefined && product.nativeSessionKey !== sessionKey) ||
+        (product.historyBinding && product.historyBinding.sessionKey !== sessionKey))
         throw new Error('collaborationInvalidRecipient');
-      const planState = described.session.pluginExtensions?.find(
+      const described = await this.deps.requestGateway<{ session?: Record<string, unknown> | null }>(
+        'sessions.describe', { key: sessionKey, agentId: member.agentId })
+        .catch(() => { throw new Error('teamFeatureStatusUnknown'); });
+      assertReadCurrent();
+      const native = described.session;
+      if (!native || native.key !== sessionKey || typeof native.sessionId !== 'string' ||
+        !native.sessionId || (native.agentId !== undefined && native.agentId !== member.agentId) ||
+        !(native.lifecycleRevision === null ||
+          (typeof native.lifecycleRevision === 'string' && native.lifecycleRevision.length > 0)))
+        throw new Error('teamFeatureStatusUnknown');
+      if ((sessionId === target.sessionId && native.sessionId !== input.nativeSessionId) ||
+        (product.historyBinding && native.sessionId !== product.historyBinding.nativeSessionId))
+        throw new Error('collaborationInvalidRecipient');
+      const prior = identities.get(sessionId);
+      if (prior && (native.sessionId !== prior.sessionId || native.lifecycleRevision !== prior.lifecycleRevision))
+        throw new Error('teamFeatureStatusUnknown');
+      identities.set(sessionId, { sessionId: native.sessionId, lifecycleRevision: native.lifecycleRevision as string | null });
+      return native;
+    };
+    const assertEligible = async (sessionId: string, sessionKey: string) => {
+      const native = await readIdentity(sessionId, sessionKey);
+      if (native.goal != null)
+        throw new Error('collaborationContinuationUnavailable');
+      if (native.pluginExtensions !== undefined && !Array.isArray(native.pluginExtensions))
+        throw new Error('teamFeatureStatusUnknown');
+      const extensions = native.pluginExtensions as {
+        pluginId?: string; namespace?: string; value?: { enabled?: boolean; awaitingReview?: unknown };
+      }[] | undefined;
+      const planState = extensions?.find(
         extension =>
           extension.pluginId === OpenClawExtensionId.PLAN_MODE && extension.namespace === 'state',
       )?.value;
       const plan = await runtime.getPlanMode(sessionId);
+      assertReadCurrent();
       const goalExecution = runtime.getGoalExecution(sessionId);
       if (
         plan.enabled ||
@@ -266,12 +306,19 @@ export class CollaborationCoordinator {
     await assertEligible(source.id, buildManagedSessionKey(source.id, source.agentId));
     await assertEligible(target.sessionId, target.sessionKey);
     for (const member of room.members) {
-      const status = await this.deps.getRouter().getSessionRuntimeStatus(member.sessionId, {
+      if (!identities.has(member.sessionId)) await readIdentity(member.sessionId, member.sessionKey);
+      const identity = identities.get(member.sessionId)!;
+      assertReadCurrent();
+      const status = await router.getSessionRuntimeStatus(member.sessionId, {
         includeSubagents: true,
         forceRefresh: true,
-        fullScan: true,
+        targeted: true,
+        expectedSessionId: identity.sessionId,
+        expectedLifecycleRevision: identity.lifecycleRevision,
       });
-      if (!status.known || status.running) throw new Error('agentBusy');
+      assertReadCurrent();
+      if (!status.known) throw new Error('teamFeatureStatusUnknown');
+      if (status.running || status.mainRunning || status.subagentRunning) throw new Error('agentBusy');
     }
     await assertEligible(source.id, buildManagedSessionKey(source.id, source.agentId));
     await assertEligible(target.sessionId, target.sessionKey);
@@ -427,32 +474,68 @@ export class CollaborationCoordinator {
     this.notifySessionsChanged();
     await this.stop(room.anchorSessionId);
     await this.membershipWrites.get(room.anchorSessionId)?.catch((): void => undefined);
+    const runtime = this.deps.getRuntime();
+    const router = this.deps.getRouter();
+    const context = runtime?.captureGatewayResponseContext();
+    const store = this.deps.getStore();
+    const policy = () => JSON.stringify([
+      this.metadata.getRoomForSession(room.anchorSessionId)?.members,
+      room.members.map(member => store.getSession(member.sessionId)),
+    ]);
+    const capturedPolicy = policy();
+    const assertCurrent = () => {
+      if (!context || !context.isCurrent() || this.deps.getRuntime() !== runtime ||
+        this.deps.getRouter() !== router || policy() !== capturedPolicy)
+        throw new Error('collaborationDeletePending');
+    };
+    const identities = new Map<string, { sessionId: string; lifecycleRevision: string }>();
     for (const member of room.members) {
       if (this.metadata.isMemberDeleted(room.id, member.sessionId)) continue;
-      const status = await this.deps.getRouter().getSessionRuntimeStatus(member.sessionId, {
+      assertCurrent();
+      const product = store.getSession(member.sessionId);
+      if (!product || product.external || product.agentId !== member.agentId ||
+        (product.nativeSessionKey !== undefined && product.nativeSessionKey !== member.sessionKey) ||
+        (product.historyBinding && product.historyBinding.sessionKey !== member.sessionKey))
+        throw new Error('collaborationDeletePending');
+      const described = await this.deps.requestGateway<{ session?: Record<string, unknown> | null }>(
+        'sessions.describe', { key: member.sessionKey, agentId: member.agentId },
+      );
+      assertCurrent();
+      if (described.session === null) {
+        this.metadata.markMemberDeleted(room.id, member.sessionId);
+        continue;
+      }
+      const native = described.session;
+      // Native delete accepts a string revision, not a nullable comparison.
+      if (!native || native.key !== member.sessionKey || typeof native.sessionId !== 'string' ||
+        !native.sessionId || typeof native.lifecycleRevision !== 'string' || !native.lifecycleRevision ||
+        (native.agentId !== undefined && native.agentId !== member.agentId) ||
+        (product.historyBinding && native.sessionId !== product.historyBinding.nativeSessionId))
+        throw new Error('collaborationDeletePending');
+      const identity = { sessionId: native.sessionId, lifecycleRevision: native.lifecycleRevision };
+      identities.set(member.sessionId, identity);
+      const status = await router.getSessionRuntimeStatus(member.sessionId, {
         forceRefresh: true,
         includeSubagents: true,
-        fullScan: true,
+        targeted: true,
+        expectedSessionId: identity.sessionId,
+        expectedLifecycleRevision: identity.lifecycleRevision,
       });
-      if (!status.known) {
-        const described = await this.deps.requestGateway<{ session: unknown }>(
-          'sessions.describe',
-          { key: member.sessionKey },
-        );
-        if (described.session === null) {
-          this.metadata.markMemberDeleted(room.id, member.sessionId);
-          continue;
-        }
-      }
-      if (!status.known || status.running) throw new Error('collaborationDeletePending');
+      assertCurrent();
+      if (!status.known || status.running || status.mainRunning || status.subagentRunning)
+        throw new Error('collaborationDeletePending');
     }
     // All members are frozen and confirmed idle before native deletion invalidates runtime caches.
     for (const member of room.members) {
       if (this.metadata.isMemberDeleted(room.id, member.sessionId)) continue;
-      await this.deps.requestGateway('sessions.delete', { key: member.sessionKey });
+      assertCurrent();
+      const identity = identities.get(member.sessionId)!;
+      await this.deps.requestGateway('sessions.delete', { key: member.sessionKey,
+        agentId: member.agentId, expectedSessionId: identity.sessionId,
+        expectedLifecycleRevision: identity.lifecycleRevision });
+      assertCurrent();
       this.metadata.markMemberDeleted(room.id, member.sessionId);
     }
-    const store = this.deps.getStore();
     // Capture artifact locations before cascading deletion removes plan metadata.
     const workspaceRoots = new Map(
       room.members.map(member => {
@@ -504,12 +587,33 @@ export class CollaborationCoordinator {
       !agentIds.includes(source.agentId)
     )
       throw new Error('collaborationInvalidMembers');
+    const router = this.deps.getRouter();
+    const sourcePolicy = (row: ReturnType<CoworkStore['getSession']>) => row &&
+      JSON.stringify([row.agentId, row.cwd, row.permissionMode, row.executionMode,
+        row.nativeSessionKey, row.historyBinding, row.external]);
+    const capturedSourcePolicy = sourcePolicy(source);
     const health = await this.deps.requestGateway<{ version: number }>(CollaborationGateway.Health);
+    const runtime = this.deps.getRuntime();
+    const context = runtime?.captureGatewayResponseContext();
+    const transportCurrent = () => !!runtime && !!context && this.deps.getRuntime() === runtime &&
+      this.deps.getRouter() === router && context.isCurrent();
+    const assertRouterCurrent = () => {
+      if (!transportCurrent()) throw new Error('teamFeatureStatusUnknown');
+    };
+    const assertSourceCurrent = () => {
+      assertRouterCurrent();
+      if (this.isSourceDeleting(sessionId) ||
+        sourcePolicy(this.deps.getStore().getSession(sessionId)) !== capturedSourcePolicy)
+        throw new Error('collaborationStateConflict');
+    };
+    assertSourceCurrent();
     if (health.version !== 2) throw new Error('collaborationRuntimeUnavailable');
-    const status = await this.deps
-      .getRouter()
-      .getSessionRuntimeStatus(sessionId, { forceRefresh: true });
-    if (!status.known || status.running) throw new Error('agentBusy');
+    const status = await router.getSessionRuntimeStatus(sessionId, {
+      forceRefresh: true, includeSubagents: true, targeted: true,
+    });
+    assertSourceCurrent();
+    if (!status.known) throw new Error('teamFeatureStatusUnknown');
+    if (status.running || status.mainRunning || status.subagentRunning) throw new Error('agentBusy');
     const store = this.deps.getStore();
     for (const id of agentIds) {
       const agent = store.getAgent(id);
@@ -542,22 +646,12 @@ export class CollaborationCoordinator {
       this.metadata.createRoom({ id: randomUUID(), anchorSessionId: source.id, members });
     })();
     const configured = this.read(sessionId);
-    try {
-      for (const member of configured.room!.members)
-        await this.deps.getRouter().prepareSession(member.sessionId);
-    } catch (error) {
-      this.deps
-        .getDatabase()
-        .prepare('DELETE FROM collaboration_rooms WHERE id = ?')
-        .run(configured.room!.id);
-      for (const member of configured.room!.members)
-        if (member.sessionId !== sessionId) {
-          store.deleteSession(member.sessionId);
-          await this.deps
-            .requestGateway('sessions.delete', { key: member.sessionKey })
-            .catch((): void => undefined);
-        }
-      throw error;
+    // A failed/unknown prepare does not prove native creation never committed.
+    // Preserve all room/product intent; explicit deletion uses current native CAS.
+    for (const member of configured.room!.members) {
+      assertRouterCurrent();
+      await router.prepareSession(member.sessionId);
+      assertRouterCurrent();
     }
     this.notifySessionsChanged();
     return this.read(sessionId);
@@ -628,7 +722,7 @@ export class CollaborationCoordinator {
       this.assertSourceAdmission(sessionId);
       const store = this.deps.getStore();
       const source = store.getSession(sessionId);
-      const room = this.metadata.getRoomForSession(sessionId);
+      let room = this.metadata.getRoomForSession(sessionId);
       if (
         !source ||
         source.external ||
@@ -636,6 +730,36 @@ export class CollaborationCoordinator {
         (room && room.anchorSessionId !== sessionId)
       )
         throw new Error('collaborationInvalidMembers');
+      const router = this.deps.getRouter();
+      const runtime = this.deps.getRuntime();
+      const context = runtime?.captureGatewayResponseContext();
+      const sourcePolicy = (row: ReturnType<CoworkStore['getSession']>) => row && JSON.stringify([
+        row.agentId, row.cwd, row.permissionMode, row.executionMode, row.external,
+        row.nativeSessionKey, row.historyBinding,
+      ]);
+      const memberScope = (row: ReturnType<CoworkStore['getSession']>) => row && JSON.stringify([
+        row.agentId, row.cwd, row.permissionMode, row.executionMode, row.external,
+      ]);
+      const capturedSource = sourcePolicy(source);
+      let roomPolicy = JSON.stringify(room);
+      let activeRoundId: string | undefined;
+      let recipient = room?.members.find(member => member.agentId === agentId);
+      let recipientPolicy = recipient ? memberScope(store.getSession(recipient.sessionId)) : undefined;
+      const assertCurrent = () => {
+        this.assertRequestActive(expiresAt);
+        this.assertSourceAdmission(sessionId);
+        if (!runtime || !context?.isCurrent() || this.deps.getRuntime() !== runtime ||
+          this.deps.getRouter() !== router) throw new Error('teamFeatureStatusUnknown');
+        if (sourcePolicy(store.getSession(sessionId)) !== capturedSource ||
+          JSON.stringify(this.metadata.getRoomForSession(sessionId)) !== roomPolicy ||
+          !store.getAgent(source.agentId)?.enabled || !store.getAgent(agentId)?.enabled ||
+          this.stoppedDuringSetup.has(runId) ||
+          (room && activeRoundId && this.metadata.isRoundStopped(activeRoundId)) ||
+          (recipient && (!store.getSession(recipient.sessionId) ||
+            memberScope(store.getSession(recipient.sessionId)) !== recipientPolicy)))
+          throw new Error('collaborationInvalidMembers');
+      };
+      assertCurrent();
       let previous = room
         ? this.metadata
             .listDeliveries(room.id)
@@ -665,6 +789,7 @@ export class CollaborationCoordinator {
         // A fast nested main turn can recruit its next peer before the sender's
         // native acknowledgement has identified this recipient run.
         await this.waitForNativeAdmission(room.id, source.agentId, expiresAt);
+        assertCurrent();
         this.assertRequestActive(expiresAt);
         this.assertSourceAdmission(sessionId);
         if (this.metadata.isDeleting(room.id)) throw new Error('collaborationDeletePending');
@@ -691,11 +816,39 @@ export class CollaborationCoordinator {
         (room && this.metadata.isRoundStopped(roundId))
       )
         throw new Error('collaborationInvalidRound');
+      activeRoundId = roundId;
       // A nested main-agent turn admitted from an existing delivery remains part of
       // that user round and may prepare the next configured peer in the workflow.
       if (previous?.state === 'dispatching')
         this.metadata.transition(previous.id, 'dispatching', 'accepted', previous.runId);
-      if (room?.members.some(member => member.agentId === agentId)) return;
+      const readReadyMember = async (member: CollaborationRoom['members'][number], expectedSid?: string) => {
+        assertCurrent();
+        const product = store.getSession(member.sessionId);
+        if (!product || product.external || product.agentId !== member.agentId ||
+          (product.nativeSessionKey !== undefined && product.nativeSessionKey !== member.sessionKey) ||
+          (product.historyBinding && product.historyBinding.sessionKey !== member.sessionKey))
+          throw new Error('collaborationInvalidMembers');
+        const identity = sourcePolicy(product);
+        const described = await this.deps.requestGateway<{ session?: Record<string, unknown> | null }>(
+          'sessions.describe', { key: member.sessionKey, agentId: member.agentId },
+        );
+        assertCurrent();
+        const native = described.session;
+        if (sourcePolicy(store.getSession(member.sessionId)) !== identity ||
+          !native || native.key !== member.sessionKey || typeof native.sessionId !== 'string' || !native.sessionId ||
+          (native.agentId !== undefined && native.agentId !== member.agentId) ||
+          !(native.lifecycleRevision === null ||
+            (typeof native.lifecycleRevision === 'string' && native.lifecycleRevision.length > 0)) ||
+          (expectedSid !== undefined && native.sessionId !== expectedSid) ||
+          (product.historyBinding && native.sessionId !== product.historyBinding.nativeSessionId))
+          throw new Error('teamFeatureStatusUnknown');
+      };
+      if (recipient) {
+        // Existing intent is not a readiness receipt. Reconcile read-only; do not
+        // repeat an uncertain creation or allocate another product/native key.
+        await readReadyMember(recipient);
+        return;
+      }
       const target = store.getAgent(agentId);
       if (
         !target?.enabled ||
@@ -706,59 +859,37 @@ export class CollaborationCoordinator {
               .maxMembers)
       )
         throw new Error('collaborationInvalidMembers');
-      const session = store.createSession(
-        source.title,
-        source.cwd,
-        source.executionMode,
-        [],
-        agentId,
-        source.permissionMode,
-        target.model || undefined,
-      );
-      const member = {
-        agentId,
-        sessionId: session.id,
-        sessionKey: buildManagedSessionKey(session.id, agentId),
-      };
-      try {
-        await this.deps.getRouter().prepareSession(session.id);
-        this.assertRequestActive(expiresAt);
-        this.assertSourceAdmission(sessionId);
-        // Preparing a native session yields: Stop, deletion and profile edits may happen meanwhile.
-        if (
-          !store.getSession(sessionId) ||
-          !store.getAgent(agentId)?.enabled ||
-          !store.getAgent(source.agentId)?.enabled ||
-          this.stoppedDuringSetup.has(runId) ||
-          (room && this.metadata.isRoundStopped(roundId)) ||
-          (room && this.metadata.isDeleting(room.id)) ||
-          (room && !this.metadata.getRoom(room.id))
-        )
-          throw new Error('collaborationInvalidMembers');
-        if (room) this.metadata.addMember(room.id, member);
-        else
-          this.metadata.createRoom(
-            {
-              id: randomUUID(),
-              anchorSessionId: sessionId,
-              members: [
-                {
-                  agentId: source.agentId,
-                  sessionId,
-                  sessionKey: buildManagedSessionKey(sessionId, source.agentId),
-                },
-                member,
-              ],
-            },
-            true,
-          );
-      } catch (error) {
-        store.deleteSession(session.id);
-        await this.deps
-          .requestGateway('sessions.delete', { key: member.sessionKey })
-          .catch((): void => undefined);
-        throw error;
-      }
+      const member = this.deps.getDatabase().transaction(() => {
+        assertCurrent();
+        const session = store.createSession(source.title, source.cwd, source.executionMode, [],
+          agentId, source.permissionMode, target.model || undefined);
+        assertCurrent();
+        const intended = { agentId, sessionId: session.id, sessionKey: buildManagedSessionKey(session.id, agentId) };
+        const expected: CollaborationRoom = room
+          ? { ...room, members: [...room.members, intended].sort((a, b) => a.agentId < b.agentId ? -1 : a.agentId > b.agentId ? 1 : 0) }
+          : { id: randomUUID(), anchorSessionId: sessionId, members: [
+            { agentId: source.agentId, sessionId, sessionKey: buildManagedSessionKey(sessionId, source.agentId) }, intended,
+          ].sort((a, b) => a.agentId < b.agentId ? -1 : a.agentId > b.agentId ? 1 : 0) };
+        if (room) this.metadata.addMember(room.id, intended);
+        else this.metadata.createRoom(expected, true);
+        if (JSON.stringify(this.metadata.getRoomForSession(sessionId)) !== JSON.stringify(expected))
+          throw new Error('collaborationStateConflict');
+        // Only our exact synchronous transaction changes this captured baseline.
+        room = expected;
+        roomPolicy = JSON.stringify(expected);
+        recipient = intended;
+        recipientPolicy = memberScope(session);
+        this.metadata.beginRound(expected.id, roundId);
+        return intended;
+      })();
+      this.notifySessionsChanged();
+      assertCurrent();
+      const prepared = await router.prepareSession(member.sessionId);
+      assertCurrent();
+      if (!prepared || prepared.sessionKey !== member.sessionKey ||
+        typeof prepared.gatewaySessionId !== 'string' || !prepared.gatewaySessionId)
+        throw new Error('teamFeatureStatusUnknown');
+      await readReadyMember(member, prepared.gatewaySessionId);
       this.notifySessionsChanged();
     };
     const previous = this.membershipWrites.get(sessionId) ?? Promise.resolve();

@@ -249,6 +249,9 @@ test('reuses the exact native Goal start identity after an ambiguous transport f
         replayed: true,
       });
     }
+    if (method === 'sessions.describe') return Promise.resolve({ session: {
+      key: 'agent:main:justdo:session-1', sessionId: 'gateway-session-1', activeRunIds: [],
+    } });
     if (method === 'chat.startup') return Promise.resolve({ messages: [] });
     return Promise.resolve({});
   });
@@ -307,12 +310,10 @@ test('keeps a replayed native Goal start bound while its exact run and goal rema
             tokensUsed: 0,
             continuationTurns: 0,
           },
+          key: 'agent:main:justdo:session-1',
+          sessionId: 'gateway-session-1',
+          activeRunIds: [runId],
         },
-      };
-    }
-    if (method === 'sessions.list') {
-      return {
-        sessions: [{ key: 'agent:main:justdo:session-1', activeRunIds: [runId] }],
       };
     }
     throw new Error(`unexpected method ${method}`);
@@ -322,13 +323,48 @@ test('keeps a replayed native Goal start bound while its exact run and goal rema
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.currentSessionId = 'gateway-session-1';
 
   await controller.sendMessage('/goal start Ship the release', [], undefined, { onRunBound });
 
   expect(controller.state.chatSending).toBe(true);
   expect(controller.state.chatRunId).toBe(runId);
   expect(onRunBound).toHaveBeenCalledWith(runId);
+  expect(request.mock.calls.some(([method]) => method === 'sessions.list')).toBe(false);
 });
+
+test.each(['missing-run-ids', 'malformed-run-ids', 'wrong-key', 'wrong-sid', 'read-failure', 'connection-change'])(
+  'keeps acknowledged Goal replay unknown for %s without another send or local completion', async failure => {
+    const controller = new ChatController();
+    let runId = '';
+    const client = { generation: 1, request: vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'sessions.create') return { sessionId: 'native-1' };
+      if (method === 'chat.send') {
+        runId = String(params?.idempotencyKey);
+        return { operationId: runId, action: 'start', sessionId: 'native-1', goalId: 'goal-1',
+          runId, status: 'started', replayed: true };
+      }
+      expect(method).toBe('sessions.describe');
+      if (failure === 'read-failure') throw new Error('Observation unavailable after ACK');
+      if (failure === 'connection-change') client.generation += 1;
+      return { session: { key: failure === 'wrong-key' ? 'other-key' : 'agent:main:justdo:session-1',
+        sessionId: failure === 'wrong-sid' ? 'other-sid' : 'native-1', hasActiveRun: true,
+        ...(failure === 'missing-run-ids' ? {} : { activeRunIds: failure === 'malformed-run-ids' ? [true] : [runId] }),
+        goal: { schemaVersion: 1, id: 'goal-1', objective: 'Ship', status: 'active',
+          createdAt: 1, updatedAt: 2, tokenStart: 0, tokensUsed: 0, continuationTurns: 0 } } };
+    }) };
+    controller.state.client = client as never;
+    controller.state.connected = true;
+    controller.state.sessionKey = 'agent:main:justdo:session-1';
+    const unknown = vi.fn();
+    await controller.sendMessage('/goal start Ship', [], undefined, { onRequestUnknown: unknown });
+    expect(unknown).toHaveBeenCalledExactlyOnceWith(runId);
+    expect(controller.state.chatSending).toBe(true);
+    expect(controller.state.chatRunId).toBe(runId);
+    expect(client.request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(1);
+    expect(client.request.mock.calls.some(([method]) => method === 'sessions.list')).toBe(false);
+  },
+);
 
 test('retains ambiguous Goal start identities independently across session switches', async () => {
   const operationIds = new Map<string, string[]>();
@@ -382,10 +418,12 @@ test('retains ambiguous Goal start identities independently across session switc
             tokensUsed: 1,
             continuationTurns: 0,
           },
+          key: 'agent:main:justdo:session-a',
+          sessionId: 'gateway-a',
+          activeRunIds: [],
         },
       };
     }
-    if (method === 'sessions.list') return { sessions: [] };
     if (method === 'chat.startup') return { messages: [] };
     throw new Error(`unexpected method ${method}`);
   });

@@ -55,6 +55,40 @@ describe('native database startup owner', () => {
     expect(f.spawnChild).not.toHaveBeenCalled();
     expect(f.stoppedGateway).not.toHaveBeenCalled();
   });
+  it('joins offline canonical preparation and binds it to the inspected fleet before Gateway admission', async () => {
+    const f = fixture();
+    const inspection = f.runtime.inspect(); await flush();
+    receipt(f.children[0]); f.children[0].close(); await inspection;
+    let settled = false;
+    const preparing = f.runtime.prepareCanonical().then(() => { settled = true; });
+    await flush();
+    const args = f.spawnChild.mock.calls[1] as unknown as [string, string[]];
+    expect(JSON.parse(args[1].at(-1)!)).toMatchObject({ operation: 'prepare', expectedInventory: inventory, identity });
+    const child = f.children[1];
+    receipt(child, { operation: 'prepare' }); await flush();
+    expect(settled).toBe(false);
+    await expect(f.runtime.inspect()).rejects.toThrow(/Another native/);
+    child.close(); await preparing;
+    expect(settled).toBe(true);
+  });
+  it.each([
+    { needsUpgrade: true, verified: false },
+    { needsUpgrade: false, verified: false },
+  ])('rejects an unverified canonical preparation receipt: %j', async result => {
+    const f = fixture();
+    const preparing = f.runtime.prepareCanonical();
+    const rejected = expect(preparing).rejects.toThrow(/canonical validation was not verified/);
+    await flush(); receipt(f.children[0], { operation: 'prepare', ...result });
+    f.children[0].close(); await rejected;
+  });
+  it('cannot admit canonical preparation after Gateway ownership changes while the child closes', async () => {
+    const f = fixture();
+    const preparing = f.runtime.prepareCanonical();
+    const rejected = expect(preparing).rejects.toThrow(/Gateway ownership changed/);
+    await flush(); receipt(f.children[0], { operation: 'prepare' });
+    f.stoppedGateway.mockReturnValue(false);
+    f.children[0].close(); await rejected;
+  });
   it('joins child retirement before accepting its native receipt and carries the exact inspected inventory into upgrade', async () => {
     const f = fixture(); let settled = false;
     const pending = f.runtime.inspect().then(value => { settled = true; return value; });

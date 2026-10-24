@@ -166,7 +166,7 @@ export async function executeGroupDiscussion(options: DiscussionExecutionOptions
       event.data.executionSettled !== true ||
       !['end', 'error'].includes(String(event.data.phase)) ||
       event.sessionKey !== execution.sessionKey ||
-      (event.sessionId && event.sessionId !== execution.sessionId)
+      event.sessionId !== execution.sessionId
     )
       return;
     settledRuns.add(event.runId);

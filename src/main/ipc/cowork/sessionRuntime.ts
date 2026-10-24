@@ -13,7 +13,6 @@ import {
 } from '../../../shared/cowork/sessionGoal';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter, OpenClawRuntimeAdapter } from '../../engine';
-import { OPENCLAW_COMPACT_SESSION_ROW_MODE } from '../../engine/openclaw/wire/v2026_10_6';
 import {
   buildGatewaySessionDetailStats,
   type GatewaySessionHistoryLoader,
@@ -154,39 +153,6 @@ type SessionDetailsDependencies = Dependencies & {
   lookupGatewaySession?: (sessionId: string) => Promise<GatewaySessionResult>;
 };
 
-const resolveGatewaySessionWithActiveRunState = async (
-  client: NonNullable<ReturnType<OpenClawRuntimeAdapter['getGatewayClient']>>,
-  session: GatewaySession,
-  agentId: string,
-): Promise<GatewaySession> => {
-  try {
-    // sessions.describe is the authoritative exact row lookup, but OpenClaw
-    // currently projects its active-run registry only on sessions.list.
-    const result = await client.request<{ sessions?: GatewaySession[] }>('sessions.list', {
-      rowMode: OPENCLAW_COMPACT_SESSION_ROW_MODE,
-      search: session.key,
-      limit: 20,
-      agentId,
-    });
-    const activeRow = result.sessions?.find(row => row.key === session.key);
-    if (activeRow?.hasActiveRun === true) return { ...session, hasActiveRun: true };
-    if (activeRow?.hasActiveRun !== false) return session;
-    // Once the registry reports idle, re-read the exact row. Combining the
-    // later false flag with the earlier describe row could manufacture an
-    // impossible old-usage/idle snapshot when a run ends between the RPCs.
-    const refreshed = await client.request<{ session?: GatewaySession | null }>(
-      'sessions.describe',
-      { key: session.key },
-    );
-    if (!refreshed.session) return session;
-    return refreshed.session.hasActiveRun === true
-      ? refreshed.session
-      : { ...refreshed.session, hasActiveRun: false };
-  } catch {
-    return session;
-  }
-};
-
 export const queryGatewaySession = async (
   dependencies: Pick<Dependencies, 'getCoworkStore' | 'getRuntime'>,
   sessionId: string,
@@ -195,8 +161,14 @@ export const queryGatewaySession = async (
   if (!runtime) return { error: 'OpenClaw runtime adapter not available' };
   const client = runtime.getGatewayClient();
   if (!client) return { error: 'Gateway client not connected' };
-  const agentId =
-    dependencies.getCoworkStore().getSession(sessionId)?.agentId || DEFAULT_MANAGED_AGENT_ID;
+  const generation = runtime.getGatewayClientGeneration();
+  const sourceIdentity = () => {
+    const session = dependencies.getCoworkStore().getSession(sessionId);
+    return session && JSON.stringify([session.agentId, session.nativeSessionKey, session.historyBinding]);
+  };
+  const capturedIdentity = sourceIdentity();
+  const source = dependencies.getCoworkStore().getSession(sessionId);
+  const agentId = source?.agentId || DEFAULT_MANAGED_AGENT_ID;
   const keys = [
     ...runtime.getSessionKeysForSession(sessionId),
     buildManagedSessionKey(sessionId, agentId),
@@ -205,11 +177,16 @@ export const queryGatewaySession = async (
   for (const key of new Set(keys)) {
     const result = await client.request<{ session?: GatewaySession | null }>('sessions.describe', {
       key,
+      agentId,
     });
+    if (dependencies.getRuntime() !== runtime || runtime.getGatewayClient() !== client ||
+      runtime.getGatewayClientGeneration() !== generation || sourceIdentity() !== capturedIdentity)
+      return { error: 'Gateway session changed while reading statistics' };
     if (result.session) {
-      return {
-        session: await resolveGatewaySessionWithActiveRunState(client, result.session, agentId),
-      };
+      if (result.session.key !== key || !nonEmptyString(result.session.sessionId) ||
+        (source?.historyBinding?.nativeSessionId && result.session.sessionId !== source.historyBinding.nativeSessionId))
+        return { error: 'Gateway returned a different session identity' };
+      return { session: result.session };
     }
   }
   return { error: 'Session not found in gateway' };

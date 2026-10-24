@@ -2494,21 +2494,28 @@ export class ChatController {
         debugLog('[ChatCtrl] failed to persist root run binding', error);
       }
       if (goalStartOperation && 'replayed' in ack && ack.replayed) {
-        const [described, listed] = await Promise.all([
-          client.request<{ session?: { goal?: unknown } | null }>('sessions.describe', {
-            key: sessionKey,
-          }),
-          client.request<{ sessions?: unknown[] }>('sessions.list', {
-            search: sessionKey,
-            limit: 20,
-          }),
-        ]);
-        const runtimeRow = (listed.sessions ?? []).map(asRecord).find(row => {
-          const key = typeof row?.key === 'string' ? row.key : '';
-          return normalizeTranscriptSessionKey(key) === normalizeTranscriptSessionKey(sessionKey);
-        });
-        const activeRunIds = readStringList(runtimeRow?.activeRunIds);
+        const retainReplayUnknown = async () => {
+          try { await options.onRequestUnknown?.(runId); }
+          catch (error) { debugLog('[ChatCtrl] failed to retain Goal replay observation', error); }
+        };
+        let described: {
+          session?: { key?: unknown; sessionId?: unknown; activeRunIds?: unknown; goal?: unknown } | null;
+        };
+        try { described = await client.request('sessions.describe', { key: sessionKey }); }
+        catch { await retainReplayUnknown(); return; }
+        if (
+          this.state.client !== client || !this.state.connected || client.generation !== generation ||
+          this.state.sessionKey !== sessionKey || this.state.currentSessionId !== nativeSessionId ||
+          described.session?.key !== sessionKey || described.session.sessionId !== goalStartSessionId
+        ) { await retainReplayUnknown(); return; }
+        const activeRunIds = readStringList(described.session.activeRunIds);
         const currentGoal = normalizeSessionGoal(described.session?.goal);
+        if (currentGoal?.id === ack.goalId && currentGoal.status === SessionGoalStatus.Active &&
+          (!Array.isArray(described.session.activeRunIds) ||
+            !described.session.activeRunIds.every(id => typeof id === 'string' && id.trim()))) {
+          await retainReplayUnknown();
+          return;
+        }
         const replayStillCurrent =
           activeRunIds.includes(runId) &&
           currentGoal?.id === ack.goalId &&

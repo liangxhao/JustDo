@@ -1,9 +1,10 @@
 import { GoalExecutionPhase } from '../../../shared/cowork/sessionGoal';
 import type { CoworkStore } from '../../data/coworkStore';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
-import { isTeamDiscussionHoldingSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
+import { buildManagedSessionKey, isTeamDiscussionHoldingSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 import { invalidateSessionListRequests } from '../gateway/sessionListClient';
 import type { GatewayClientLike } from '../gateway/types';
+import type { CoworkRuntimeStatusOptions } from '../types';
 import {
   RUNTIME_SESSION_SNAPSHOT_TTL_MS,
   RUNTIME_STATUS_WARNING_INTERVAL_MS,
@@ -26,6 +27,9 @@ export interface RuntimeSessionStatusContext {
   readonly refreshSubagentStatuses: (sessionId: string) => Promise<GatewaySubagent[]>;
   readonly ensureGatewayClientReady: () => Promise<void>;
   readonly gatewayClient: GatewayClientLike | null;
+  readonly gatewayClientGeneration: number;
+  readonly targetedSessionStatusChecks: Map<string, Set<symbol>>;
+  readonly unknownSessionRuns: ReadonlyMap<string, unknown>;
   readonly subagentStatusGenerations: Map<string, number>;
   readonly subagentDetailCache: Map<string, { expiresAt: number; subagents: GatewaySubagent[] }>;
   readonly getSessionKeysForSession: (sessionId: string) => string[];
@@ -157,7 +161,7 @@ export function invalidateSubagentStatus(
 export async function getSessionRuntimeStatus(
   this: RuntimeSessionStatusContext,
   sessionId: string,
-  options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
+  options?: CoworkRuntimeStatusOptions,
 ): Promise<{
   known: boolean;
   mainRunning: boolean;
@@ -168,6 +172,7 @@ export async function getSessionRuntimeStatus(
   if (!sessionId) {
     return { known: true, mainRunning: false, subagentRunning: false, running: false };
   }
+  if (options?.targeted) return getTargetedSessionRuntimeStatus.call(this, sessionId, options);
   const statuses = await this.getSessionRuntimeStatuses([sessionId], options);
   return (
     statuses[sessionId] ?? {
@@ -177,6 +182,155 @@ export async function getSessionRuntimeStatus(
       running: false,
     }
   );
+}
+
+const TargetedStatusReason = {
+  SourceUnavailable: 'source-unavailable',
+  SourceChanged: 'source-changed',
+  ConnectionUnavailable: 'connection-unavailable',
+  ConnectionChanged: 'connection-changed',
+  UnknownCustody: 'unconfirmed-custody',
+  NativeReadFailed: 'native-read-failed',
+  NativeRowMissing: 'native-row-missing',
+  NativeRowInvalid: 'native-row-invalid',
+  NativeSessionMismatch: 'native-session-mismatch',
+  NativeRevisionMismatch: 'native-revision-mismatch',
+  NativeAgentMismatch: 'native-agent-mismatch',
+  EventRetired: 'event-retired',
+  EventReobserve: 'event-reobserve',
+  RetryIdentityMissing: 'retry-identity-missing',
+} as const;
+
+/** A native current-row observation is independent of unrelated roster invalidations. */
+async function getTargetedSessionRuntimeStatus(
+  this: RuntimeSessionStatusContext,
+  sessionId: string,
+  options: CoworkRuntimeStatusOptions,
+): Promise<SessionRuntimeStatus> {
+  const source = this.store.getSession(sessionId);
+  const key = source && !source.external
+    ? source.nativeSessionKey || buildManagedSessionKey(sessionId, source.agentId) : undefined;
+  const expectedSessionId = options.expectedSessionId ?? source?.historyBinding?.nativeSessionId;
+  const expectedLifecycleRevision = options.expectedLifecycleRevision;
+  let attempt = 0;
+  let observedIdentity: { sessionId: string; lifecycleRevision: string | null | undefined } | undefined;
+  const diagnose = (reason: typeof TargetedStatusReason[keyof typeof TargetedStatusReason]) => {
+    console.warn('[OpenClawRuntime] Targeted session status observation', {
+      reason, sessionId, key, expectedSessionId: observedIdentity?.sessionId ?? expectedSessionId ?? null, attempt,
+    });
+  };
+  const unknown = (reason: typeof TargetedStatusReason[keyof typeof TargetedStatusReason]): SessionRuntimeStatus => {
+    diagnose(reason);
+    return { known: false, mainRunning: false, subagentRunning: false, running: false };
+  };
+  if (!source || source.external || !key) return unknown(TargetedStatusReason.SourceUnavailable);
+  const identityOf = (row: typeof source) => JSON.stringify([row.agentId, row.cwd, row.permissionMode,
+    row.nativeSessionKey, row.historyBinding, row.status, row.nativeParentSessionId,
+    row.forkSource, row.handoffSource, row.branchCreationPending]);
+  const identity = identityOf(source);
+  const blocked = () => this.disconnectedSessionIds.has(sessionId) ||
+    this.disconnectedRecoveryPromises.has(sessionId) || this.unknownSessionRuns.has(sessionId);
+  const local = () => {
+    const phase = this.goalContinuationCoordinator.getSnapshot(sessionId)?.phase;
+    return this.isSessionActive(sessionId) || this.compactionInFlightSessionIds.has(sessionId) ||
+      phase === GoalExecutionPhase.Continuing || phase === GoalExecutionPhase.Retrying;
+  };
+  if (blocked()) return unknown(TargetedStatusReason.UnknownCustody);
+  if (local()) return { known: true, mainRunning: true, subagentRunning: false, running: true };
+  try { await this.ensureGatewayClientReady(); } catch { return unknown(TargetedStatusReason.ConnectionUnavailable); }
+  const client = this.gatewayClient;
+  if (!client) return unknown(TargetedStatusReason.ConnectionUnavailable);
+  const generation = this.gatewayClientGeneration;
+  const sourceCurrent = () => {
+    const row = this.store.getSession(sessionId);
+    return !!row && !row.external && identityOf(row) === identity;
+  };
+  const connectionCurrent = () => this.gatewayClient === client && this.gatewayClientGeneration === generation;
+  for (attempt = 1; attempt <= 2; attempt += 1) {
+    const checks = this.targetedSessionStatusChecks.get(key) ?? new Set<symbol>();
+    const token = Symbol();
+    checks.add(token);
+    this.targetedSessionStatusChecks.set(key, checks);
+    const eventCurrent = () => this.targetedSessionStatusChecks.get(key) === checks && checks.has(token);
+    try {
+      if (!sourceCurrent()) return unknown(TargetedStatusReason.SourceChanged);
+      if (!connectionCurrent()) return unknown(TargetedStatusReason.ConnectionChanged);
+      if (blocked()) return unknown(TargetedStatusReason.UnknownCustody);
+      if (local()) return { known: true, mainRunning: true, subagentRunning: false, running: true };
+      const described = await client.request<{ session?: Record<string, unknown> | null }>(
+        'sessions.describe', { key, agentId: source.agentId },
+      );
+      if (!sourceCurrent()) return unknown(TargetedStatusReason.SourceChanged);
+      if (!connectionCurrent()) return unknown(TargetedStatusReason.ConnectionChanged);
+      if (blocked()) return unknown(TargetedStatusReason.UnknownCustody);
+      if (local()) return { known: true, mainRunning: true, subagentRunning: false, running: true };
+      const row = described?.session;
+      if (row === null) {
+        if (!eventCurrent()) return unknown(TargetedStatusReason.RetryIdentityMissing);
+        const fresh = !expectedSessionId && !observedIdentity && !source.nativeSessionKey && !source.historyBinding &&
+          source.status === 'idle' && !source.forkSource && !source.handoffSource &&
+          !source.nativeParentSessionId && !source.branchCreationPending &&
+          this.store.getSessionRuns(sessionId).length === 0 &&
+          /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(sessionId);
+        return fresh ? { known: true, mainRunning: false, subagentRunning: false, running: false }
+          : unknown(TargetedStatusReason.NativeRowMissing);
+      }
+      if (!row || row.key !== key || typeof row.sessionId !== 'string' || !row.sessionId ||
+        typeof row.hasActiveRun !== 'boolean' ||
+        (row.hasActiveSubagentRun !== undefined && typeof row.hasActiveSubagentRun !== 'boolean'))
+        return unknown(TargetedStatusReason.NativeRowInvalid);
+      if ((expectedSessionId !== undefined && row.sessionId !== expectedSessionId) ||
+        (observedIdentity && row.sessionId !== observedIdentity.sessionId))
+        return unknown(TargetedStatusReason.NativeSessionMismatch);
+      if ((expectedLifecycleRevision !== undefined && row.lifecycleRevision !== expectedLifecycleRevision) ||
+        (observedIdentity && row.lifecycleRevision !== observedIdentity.lifecycleRevision))
+        return unknown(TargetedStatusReason.NativeRevisionMismatch);
+      if (row.agentId !== undefined && row.agentId !== source.agentId)
+        return unknown(TargetedStatusReason.NativeAgentMismatch);
+      if (!eventCurrent()) {
+        if (attempt === 2) return unknown(TargetedStatusReason.EventRetired);
+        if (!(row.lifecycleRevision === undefined || row.lifecycleRevision === null ||
+          (typeof row.lifecycleRevision === 'string' && row.lifecycleRevision.length > 0)))
+          return unknown(TargetedStatusReason.RetryIdentityMissing);
+        // sessions.create responds before its asynchronous change publication.
+        // Discard the retired response and observe once more, within the same
+        // product, transport and native incarnation. No write is replayed.
+        observedIdentity = { sessionId: row.sessionId, lifecycleRevision: row.lifecycleRevision as string | null | undefined };
+        diagnose(TargetedStatusReason.EventReobserve);
+        continue;
+      }
+      // Native omits hasActiveSubagentRun when its complete descendant projection is inactive.
+      const mainRunning = row.hasActiveRun;
+      const subagentRunning = options.includeSubagents === true && row.hasActiveSubagentRun === true;
+      return { known: true, mainRunning, subagentRunning, running: mainRunning || subagentRunning };
+    } catch {
+      return unknown(TargetedStatusReason.NativeReadFailed);
+    } finally {
+      checks.delete(token);
+      if (!checks.size && this.targetedSessionStatusChecks.get(key) === checks)
+        this.targetedSessionStatusChecks.delete(key);
+    }
+  }
+  return unknown(TargetedStatusReason.EventRetired);
+}
+
+/** Native child notifications need not name every ancestor; ambiguous lineage retires all readers. */
+export function invalidateTargetedSessionStatusChecks(checks: Map<string, Set<symbol>>, payload: Record<string, unknown>): void {
+  const session = payload.session;
+  const row = session && typeof session === 'object' && !Array.isArray(session)
+    ? session as Record<string, unknown> : payload;
+  const key = [row.key, payload.key, payload.sessionKey].find((value): value is string => typeof value === 'string' && value.length > 0);
+  const owners = [row.spawnedBy, row.parentSessionKey, row.controlOwnerSessionKey,
+    payload.spawnedBy, payload.parentSessionKey, payload.controlOwnerSessionKey,
+    ...(Array.isArray(row.childOwnerSessionKeys) ? row.childOwnerSessionKeys : []),
+    ...(Array.isArray(payload.childOwnerSessionKeys) ? payload.childOwnerSessionKeys : [])];
+  const controlOwner = Object.hasOwn(row, 'controlOwnerSessionKey') ? row.controlOwnerSessionKey : payload.controlOwnerSessionKey;
+  // A full native root publication explicitly says it has no control owner.
+  // G -> C does not prove C has no parent S, even when neither event field names S.
+  if (!key || controlOwner !== null || owners.some(value => typeof value === 'string' && value.length > 0)) {
+    checks.clear(); return;
+  }
+  checks.delete(key);
 }
 
 export async function getSessionRuntimeStatuses(

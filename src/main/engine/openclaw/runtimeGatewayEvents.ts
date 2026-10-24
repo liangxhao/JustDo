@@ -29,12 +29,14 @@ import { notifyNativeQuestionChanged } from '../../plugins/mcp/nativeQuestionEve
 import { isRecord } from '../gateway/helpers';
 import type { GatewayClientLike, GatewayEventFrame, SessionTurn } from '../gateway/types';
 import { ERROR_TERMINAL_SESSION_STATUSES } from './runtimeAdapterSupport';
+import { invalidateTargetedSessionStatusChecks } from './runtimeSessionStatus';
 import { type GatewaySubagent } from './subagentGateway';
 export interface RuntimeGatewayEventsContext {
   readonly emit: (eventName: string | symbol, ...args: unknown[]) => boolean;
   readonly gatewayClient: GatewayClientLike | null;
   readonly gatewayClientGeneration: number;
   readonly sessionActivityChecks: Map<string, Set<symbol>>;
+  readonly targetedSessionStatusChecks: Map<string, Set<symbol>>;
   lastTickTimestamp: number;
   readonly handleChatEvent: (payload: unknown, frameSeq?: number) => void;
   lastAgentActivityTimestamp: number;
@@ -593,6 +595,7 @@ export function handleSessionsChangedEvent(
   payload: unknown,
 ): void {
   if (!isRecord(payload)) return;
+  invalidateTargetedSessionStatusChecks(this.targetedSessionStatusChecks, payload);
   this.invalidateRuntimeSessionSnapshot();
   // Native registry changes can affect a parent absent from this event. Treat
   // the event only as an invalidation; recovery verifies each managed identity.

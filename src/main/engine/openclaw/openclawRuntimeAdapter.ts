@@ -139,6 +139,7 @@ import type {
   CoworkPrepareSessionOptions,
   CoworkRuntime,
   CoworkRuntimeEvents,
+  CoworkRuntimeStatusOptions,
   CoworkStartOptions,
   CoworkStopOptions,
   GatewayRequestOptions,
@@ -193,6 +194,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private gatewayClientInitLock: Promise<void> | null = null;
   private gatewayClientGeneration = 0;
   private readonly sessionActivityChecks = new Map<string, Set<symbol>>();
+  private readonly targetedSessionStatusChecks = new Map<string, Set<symbol>>();
   private automationPermissionVerifiedGeneration = -1;
   private continuationPermissionPreparer: ((sessionId: string) => Promise<void>) | null = null;
   private gatewayStoppingIntentionally = false;
@@ -1150,6 +1152,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.lastAgentActivityTimestamp = Date.now();
 
       const client = this.requireGatewayClient();
+      const replayClientGeneration = this.gatewayClientGeneration;
+      const replaySourceIdentity = () => {
+        const source = this.store.getSession(sessionId);
+        return source && JSON.stringify([source.agentId, source.nativeSessionKey, source.historyBinding, source.external]);
+      };
+      const replayCapturedIdentity = replaySourceIdentity();
       try {
         const attachments = options.attachments?.length
           ? options.attachments.map(toGatewayAttachment)
@@ -1228,27 +1236,32 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           }
         }
         options.onAccepted?.();
+        let replayUnconfirmed = false;
         if ('replayed' in result && result.replayed) {
-          const described = await client.request<{
-            session?: { goal?: unknown } | null;
-          }>('sessions.describe', { key: sessionKey });
           const replayRunId = result.runId?.trim();
-          const currentGoal = normalizeSessionGoal(described.session?.goal);
-          const listed = await client.request<{
-            sessions?: Array<{ key?: unknown; activeRunIds?: unknown }>;
-          }>('sessions.list', {
-            search: sessionKey,
-            limit: 20,
-            agentId,
-          });
-          const runtimeRow = listed.sessions?.find(row => row.key === sessionKey);
+          let runtimeRow: { key?: unknown; sessionId?: unknown; goal?: unknown; activeRunIds?: unknown } | null | undefined;
+          try {
+            runtimeRow = (await client.request<{ session?: typeof runtimeRow }>('sessions.describe',
+              { key: sessionKey, agentId })).session;
+          } catch { replayUnconfirmed = true; }
+          if (this.gatewayClient !== client || this.gatewayClientGeneration !== replayClientGeneration ||
+            replaySourceIdentity() !== replayCapturedIdentity ||
+            this.activeTurns.get(sessionId) !== turn || runtimeRow?.key !== sessionKey ||
+            runtimeRow.sessionId !== preparedSession.gatewaySessionId) replayUnconfirmed = true;
+          const currentGoal = normalizeSessionGoal(runtimeRow?.goal);
           const activeRunIds = readActiveRunIds(runtimeRow?.activeRunIds);
+          if (currentGoal?.id === result.goalId && currentGoal.status === SessionGoalStatus.Active &&
+            (!Array.isArray(runtimeRow?.activeRunIds) ||
+              !runtimeRow.activeRunIds.every(id => typeof id === 'string' && id.trim()))) replayUnconfirmed = true;
           const replayStillCurrent =
             !!replayRunId &&
             activeRunIds.includes(replayRunId) &&
             currentGoal?.id === result.goalId &&
             currentGoal.status === SessionGoalStatus.Active;
-          if (replayStillCurrent) {
+          if (replayUnconfirmed) {
+            this.registerUnknownSessionRun(sessionId, replayRunId || runId, { cancelled: isStartCancelled() });
+            if (isStartCancelled()) pendingStart.cancellationAbortError = new Error('The Goal replay is still unconfirmed.');
+          } else if (replayStillCurrent) {
             this.rootRunIdBySession.set(sessionId, replayRunId);
             this.sessionIdByRunId.set(replayRunId, sessionId);
             turn.knownRunIds.add(replayRunId);
@@ -1267,28 +1280,30 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             return;
           }
         }
-        const rootRunId = result.runId?.trim() || turn.runId || runId;
-        this.rootRunIdBySession.set(sessionId, rootRunId);
-        this.sessionIdByRunId.set(rootRunId, sessionId);
-        turn.knownRunIds.add(rootRunId);
-        turn.runId = rootRunId;
-        if (isStartCancelled()) {
-          try {
-            await this.abortSessionAndSubagents(
-              sessionId,
-              { ...turn, runId: rootRunId },
-              this.stopSessionPromises.has(sessionId),
-            );
-          } catch (error) {
-            pendingStart.cancellationAbortError = error;
-          }
-          if (!pendingStart.cancellationAbortError) return;
-        } else {
-          const timing = options.clientTurnId
-            ? this.store.getSessionRunByClientTurnId(options.clientTurnId)
-            : undefined;
-          if (timing?.state === 'running') {
-            this.store.bindSessionRunRootRun(timing.id, rootRunId);
+        if (!replayUnconfirmed) {
+          const rootRunId = result.runId?.trim() || turn.runId || runId;
+          this.rootRunIdBySession.set(sessionId, rootRunId);
+          this.sessionIdByRunId.set(rootRunId, sessionId);
+          turn.knownRunIds.add(rootRunId);
+          turn.runId = rootRunId;
+          if (isStartCancelled()) {
+            try {
+              await this.abortSessionAndSubagents(
+                sessionId,
+                { ...turn, runId: rootRunId },
+                this.stopSessionPromises.has(sessionId),
+              );
+            } catch (error) {
+              pendingStart.cancellationAbortError = error;
+            }
+            if (!pendingStart.cancellationAbortError) return;
+          } else {
+            const timing = options.clientTurnId
+              ? this.store.getSessionRunByClientTurnId(options.clientTurnId)
+              : undefined;
+            if (timing?.state === 'running') {
+              this.store.bindSessionRunRootRun(timing.id, rootRunId);
+            }
           }
         }
       } catch (error) {
@@ -2657,7 +2672,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   getSessionRuntimeStatus(
     sessionId: string,
-    options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
+    options?: CoworkRuntimeStatusOptions,
   ): Promise<{
     known: boolean;
     mainRunning: boolean;
@@ -2882,26 +2897,51 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     const sessionKey = this.findSessionKeyBySessionId(localSessionId);
-    if (!sessionKey) return undefined;
+    const source = this.store.getSession(localSessionId);
+    const client = this.gatewayClient;
+    if (!sessionKey || !source || !client) return undefined;
+    if (source.historyBinding && source.historyBinding.sessionKey !== sessionKey) return undefined;
+    const generation = this.gatewayClientGeneration;
+    const identity = (row: typeof source) => JSON.stringify([
+      row.agentId, row.nativeSessionKey, row.historyBinding, row.external,
+    ]);
+    const capturedIdentity = identity(source);
+    const expectedSessionId = source.historyBinding?.nativeSessionId;
+    const agentId = source.agentId || DEFAULT_MANAGED_AGENT_ID;
+    const current = () => {
+      const row = this.store.getSession(localSessionId);
+      return this.gatewayClient === client && this.gatewayClientGeneration === generation &&
+        !!row && identity(row) === capturedIdentity &&
+        this.findSessionKeyBySessionId(localSessionId) === sessionKey;
+    };
 
     const deadline = Date.now() + TITLE_SESSION_ID_RESOLUTION_TIMEOUT_MS;
     let nextSnapshotAt = 0;
     while (Date.now() <= deadline) {
+      if (!current()) return undefined;
       const activeSessionId = this.runtimeRowString(
         this.activeTurns.get(localSessionId)?.gatewaySessionId,
       );
-      if (activeSessionId) return activeSessionId;
+      if (activeSessionId)
+        return !expectedSessionId || activeSessionId === expectedSessionId ? activeSessionId : undefined;
 
       const now = Date.now();
       if (now >= nextSnapshotAt) {
-        const snapshot = await this.getRuntimeSessionSnapshot(true);
-        const session = snapshot.sessions.find(
-          row => this.runtimeRowString(row.key) === sessionKey,
-        );
+        type NativeTitleSession = { key?: unknown; sessionId?: unknown; agentId?: unknown };
+        let session: NativeTitleSession | null | undefined;
+        try {
+          session = (await client.request<{ session?: NativeTitleSession | null }>('sessions.describe',
+            { key: sessionKey, agentId }, { timeoutMs: Math.max(1, deadline - Date.now()) })).session;
+        } catch {
+          // Only the existing key may be observed again within the original budget.
+        }
+        if (!current()) return undefined;
         if (session) {
-          const snapshotSessionId =
-            this.runtimeRowString(session.sessionId) || this.runtimeRowString(session.id);
-          if (snapshotSessionId) return snapshotSessionId;
+          if (session.key !== sessionKey || (session.agentId !== undefined && session.agentId !== agentId))
+            return undefined;
+          const nativeSessionId = this.runtimeRowString(session.sessionId);
+          if (nativeSessionId)
+            return !expectedSessionId || nativeSessionId === expectedSessionId ? nativeSessionId : undefined;
         }
         nextSnapshotAt = Date.now() + TITLE_SESSION_ID_SNAPSHOT_INTERVAL_MS;
       }
@@ -3210,6 +3250,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       refreshSubagentStatuses: { get: () => this.refreshSubagentStatuses.bind(this) },
       ensureGatewayClientReady: { get: () => this.ensureGatewayClientReady.bind(this) },
       gatewayClient: { get: () => this.gatewayClient },
+      gatewayClientGeneration: { get: () => this.gatewayClientGeneration },
+      targetedSessionStatusChecks: { get: () => this.targetedSessionStatusChecks },
+      unknownSessionRuns: { get: () => this.unknownSessionRuns },
       subagentStatusGenerations: { get: () => this.subagentStatusGenerations },
       subagentDetailCache: { get: () => this.subagentDetailCache },
       getSessionKeysForSession: { get: () => this.getSessionKeysForSession.bind(this) },
@@ -3268,6 +3311,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       gatewayClient: { get: () => this.gatewayClient },
       gatewayClientGeneration: { get: () => this.gatewayClientGeneration },
       sessionActivityChecks: { get: () => this.sessionActivityChecks },
+      targetedSessionStatusChecks: { get: () => this.targetedSessionStatusChecks },
       lastTickTimestamp: {
         get: () => this.lastTickTimestamp,
         set: value => {

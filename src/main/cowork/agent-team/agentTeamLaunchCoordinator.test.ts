@@ -11,6 +11,7 @@ import { AgentTeamLaunchCoordinator } from './agentTeamLaunchCoordinator';
 const databases: DatabaseSync[] = [];
 afterEach(() => {
   databases.splice(0).forEach(db => db.close());
+  vi.restoreAllMocks();
 });
 const sessionId = 'source';
 const sessionKey = 'agent:organizer:justdo:source';
@@ -61,6 +62,7 @@ function fixture() {
     planProjection: undefined as unknown,
     legacyPlanProjection: undefined as unknown,
     nativeGoal: undefined as unknown,
+    lifecycleRevision: 'native-revision' as unknown,
     permission: 'guarded',
     history: {
       sessionInfo: { sessionId: nativeSessionId, hasActiveRun: false },
@@ -99,6 +101,7 @@ function fixture() {
       result = {
         session: {
           sessionId: nativeSessionId,
+          lifecycleRevision: state.lifecycleRevision,
           permissionMode: state.permission,
           goal: state.nativeGoal,
           planMode: state.planProjection,
@@ -205,6 +208,40 @@ function fixture() {
 }
 
 describe('explicit Team launch operation ownership', () => {
+  it.each(['before-preparation', 'before-registration'] as const)(
+    'reports unknown separately and keeps preparation unwritten at %s', async stage => {
+      const f = fixture();
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      if (stage === 'before-preparation') f.state.known = false;
+      else f.router.getSessionRuntimeStatus.mockResolvedValueOnce({ known: true, running: false, mainRunning: false, subagentRunning: false })
+        .mockResolvedValueOnce({ known: false, running: false, mainRunning: false, subagentRunning: false });
+      await expect(f.coordinator.register(input)).rejects.toThrow('teamFeatureStatusUnknown');
+      expect(f.count('agentTeam.launch.register')).toBe(0);
+      expect(f.metadata()).toBeUndefined();
+      expect(f.router.prepareSession).toHaveBeenCalledTimes(stage === 'before-preparation' ? 0 : 1);
+      expect(warning).toHaveBeenCalledWith('[AgentTeamLaunch] Source admission was not idle:', {
+        stage, known: false, running: false, mainRunning: false, subagentRunning: false,
+      });
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(prompt);
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(nativeSessionId);
+      if (stage === 'before-registration') expect(f.router.getSessionRuntimeStatus).toHaveBeenLastCalledWith(sessionId,
+        { includeSubagents: true, forceRefresh: true, targeted: true, expectedSessionId: nativeSessionId, expectedLifecycleRevision: 'native-revision' });
+    },
+  );
+  it('passes an explicit null revision to the second admission read', async () => {
+    const f = fixture(); f.state.lifecycleRevision = null;
+    await f.coordinator.register(input);
+    expect(f.router.getSessionRuntimeStatus).toHaveBeenLastCalledWith(sessionId, {
+      includeSubagents: true, forceRefresh: true, targeted: true,
+      expectedSessionId: nativeSessionId, expectedLifecycleRevision: null,
+    });
+  });
+  it.each([undefined, 3, {}])('refuses an unavailable native revision without registering: %j', async revision => {
+    const f = fixture(); f.state.lifecycleRevision = revision;
+    await expect(f.coordinator.register(input)).rejects.toThrow('teamFeatureStatusUnknown');
+    expect(f.count('agentTeam.launch.register')).toBe(0);
+    expect(f.metadata()).toBeUndefined();
+  });
   it.each([false, true])(
     'uses canonical Plan state over conflicting slot projections: %s',
     async enabled => {
@@ -264,7 +301,7 @@ describe('explicit Team launch operation ownership', () => {
       expect(f.router.getSessionRuntimeStatus).toHaveBeenCalledWith(sessionId, {
         includeSubagents: true,
         forceRefresh: true,
-        fullScan: true,
+        targeted: true,
       });
       expect(f.request).toHaveBeenCalledWith(
         'agentTeam.launch.register',
@@ -358,7 +395,7 @@ describe('explicit Team launch operation ownership', () => {
       if (condition === 'unknown') f.state.known = false;
       if (condition === 'main') f.state.running = true;
       if (condition === 'subagents') f.state.subagents = true;
-      await expect(f.coordinator.register(input)).rejects.toThrow('teamFeatureBusy');
+      await expect(f.coordinator.register(input)).rejects.toThrow(condition === 'unknown' ? 'teamFeatureStatusUnknown' : 'teamFeatureBusy');
       expect(f.router.prepareSession).not.toHaveBeenCalled();
     },
   );
@@ -585,6 +622,29 @@ describe('whole-run and native cleanup reconciliation', () => {
     expect(f.state.guard).toMatchObject({ generation: 1, state: 'released', clientTurnId });
     expect(f.count('agentTeam.launch.register')).toBe(1);
   });
+  it('point-checks cleanup with the current explicit native revision and never lists sessions', async () => {
+    const f = fixture();
+    await f.coordinator.register(input);
+    expect(await f.coordinator.releaseIfSettled(sessionId)).toBe(true);
+    expect(f.router.getSessionRuntimeStatus).toHaveBeenLastCalledWith(sessionId, {
+      includeSubagents: true, forceRefresh: true, targeted: true,
+      expectedSessionId: nativeSessionId, expectedLifecycleRevision: 'native-revision',
+    });
+    expect(f.router.getSessionRuntimeStatus.mock.calls.every(([, options]) =>
+      options?.targeted === true && !('fullScan' in options))).toBe(true);
+    expect(f.count('sessions.list')).toBe(0);
+  });
+  it.each([undefined, 0, '', 'replacement-revision'])(
+    'keeps cleanup unconfirmed for missing or changed revision %s', async revision => {
+      const f = fixture();
+      await f.coordinator.register(input);
+      f.state.lifecycleRevision = revision;
+      expect(await f.coordinator.releaseIfSettled(sessionId)).toBe(false);
+      expect(f.count('agentTeam.launch.abandon')).toBe(0);
+      expect(f.count('agentTeam.launch.release')).toBe(0);
+      expect(f.count('sessions.list')).toBe(0);
+    },
+  );
   it('recovers a lost local mark acknowledgement only after the owning sender attests it never called native send', async () => {
     const f = fixture();
     await f.coordinator.register(input);

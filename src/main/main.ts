@@ -2518,9 +2518,8 @@ if (agentBridgeArgv) {
       if (!result.success)
         throw new Error(`Historical assistant identities could not be prepared: ${result.error}`);
     }
-    await startupCoordinator.verifyNativeReady();
+    startupHistoryAdmissionReady = await startupCoordinator.verifyNativeReady(activity => initialization.reportActivity(activity));
     if (appShutdown.isQuitting()) return;
-    startupHistoryAdmissionReady = true;
     initialization.reportActivity(AppInitializationActivity.Integrations);
     await startBrowserExtensionIngress();
     if (appShutdown.isQuitting()) return;
@@ -2551,7 +2550,7 @@ if (agentBridgeArgv) {
     }
 
     initialization.advance(AppInitializationStep.Engine, 3);
-    if (startupSync?.success) {
+    if (startupSync?.success && startupHistoryAdmissionReady) {
       const startEngine = initialization.runOptionalTask('start assistant engine', async () => {
         const status = await ensureOpenClawRunningForCowork();
         if (status.phase !== 'running') {

@@ -193,6 +193,31 @@ function writeNativeDatabaseFixture(repoRoot: string, runtimeRoot: string, versi
   writeNativeOwnerArchive(runtimeRoot, contract.modules);
 }
 
+/** Inert closed payload for the real archive verifier; no downloaded library bytes are needed. */
+function writeWidgetLibraryArchiveFixture(runtimeRoot: string): void {
+  const { libraries } = JSON.parse(fs.readFileSync(path.resolve('plugins/extensions/widget-kit/libraries/upstreams.json'), 'utf8'));
+  const assets = path.join(runtimeRoot, 'dist/extensions/widget-kit/assets');
+  const files: Record<string, string> = {};
+  const resources: Record<string, { file: string; sha256: string; bytes: number }> = {};
+  const write = (name: string, content: string) => {
+    const file = path.join(assets, name);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+    files[name] = crypto.createHash('sha256').update(content).digest('hex');
+  };
+  for (const library of libraries) {
+    const file = `libraries/${library.id}-${library.version}.js`;
+    const content = `globalThis.${library.global} = {};\n`;
+    write(file, content);
+    resources[library.resourcePath] = { file, sha256: files[file], bytes: Buffer.byteLength(content) };
+    write(`licenses/${library.id}-${library.version}/LICENSE`, 'Synthetic archive fixture license.\n');
+  }
+  write('THIRD_PARTY_NOTICES.json', '[]\n');
+  fs.writeFileSync(path.join(assets, 'integrity.json'), JSON.stringify({
+    schemaVersion: 1, sourceHash: '0'.repeat(64), upstreams: libraries, resources, files,
+  }));
+}
+
 function createFixture(version = 'v2026.6.11') {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-patch-manifest-test-'));
   temporaryRoots.push(repoRoot);
@@ -951,6 +976,62 @@ module.exports = { applyPatch, verifyPatch };
     expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(/selected-owner proof/);
   });
 
+  test('locks both canonical preparation owners into the eighteen-owner producer proof', () => {
+    const target = JSON.parse(fs.readFileSync(path.resolve('src/main/startup/upgrade/nativeDatabaseContract.json'), 'utf8'));
+    expect(Object.keys(target.modules)).toHaveLength(18);
+    expect(target.modules.canonicalValidation).toEqual({
+      path: 'dist/session-canonical-validation-readiness-C_kdXYHx.mjs',
+      sha256: '75e3258db0b6487a83b43bd6bfb5ec691ffc49447c19338d812699c75a29299e',
+      exports: { certifySessionCanonicalValidationPending: 'certifySessionCanonicalValidationPending' },
+    });
+    expect(target.modules.canonicalWorker).toEqual({
+      path: 'dist/session-accessor.sqlite-reclamation-worker-Ds8kYWwv.mjs',
+      sha256: '2c21c16da227cb99f7fcf43861d9cd4dbc69a38cba77229b4277f7df9f4070b3',
+      exports: { withSqliteCanonicalValidationWorker: 't' },
+    });
+    const { repoRoot, runtimeRoot } = createFixture('v2026.10.6');
+    const { manifestPath } = writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    expect(manifest.nativeDatabaseOwners.modules).toHaveLength(18);
+    for (const role of ['canonicalValidation', 'canonicalWorker']) {
+      expect(manifest.nativeDatabaseOwners.modules.find((owner: { role: string }) => owner.role === role))
+        .toMatchObject({ role, path: target.modules[role].path, exports: target.modules[role].exports });
+    }
+    expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).not.toThrow();
+  });
+
+  test.each(
+    ['canonicalValidation', 'canonicalWorker'].flatMap(role =>
+      ['source-bytes', 'archive-bytes', 'export-alias', 'imported-facade'].map(damage => ({ role, damage }))),
+  )('rejects damaged canonical owner $role: $damage', ({ role, damage }) => {
+    const { repoRoot, runtimeRoot } = createFixture('v2026.10.6');
+    const contractPath = path.join(repoRoot, 'src/main/startup/upgrade/nativeDatabaseContract.json');
+    const contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
+    const owner = contract.modules[role];
+    const file = path.join(runtimeRoot, owner.path);
+    const { verifyNativeDatabaseContract } = require('../../../scripts/openclaw/native-database-contract.cjs');
+    const options = { repoRoot, version: 'v2026.10.6' };
+    expect(() => verifyNativeDatabaseContract(runtimeRoot, options)).not.toThrow();
+    if (damage === 'source-bytes') fs.appendFileSync(file, '// damaged canonical source\n');
+    if (damage === 'archive-bytes') {
+      const original = fs.readFileSync(file);
+      fs.appendFileSync(file, '// damaged canonical archive member\n');
+      writeNativeOwnerArchive(runtimeRoot, contract.modules);
+      fs.writeFileSync(file, original);
+    }
+    if (damage === 'export-alias' || damage === 'imported-facade') {
+      const [symbol, alias] = Object.entries(owner.exports)[0];
+      const source = damage === 'export-alias'
+        ? `function ${symbol}() {}\nexport { ${symbol} as wrong };\n`
+        : `import { ${symbol} } from './not-the-native-owner.mjs';\nexport { ${symbol} as ${alias} };\n`;
+      fs.writeFileSync(file, source);
+      owner.sha256 = crypto.createHash('sha256').update(source).digest('hex');
+      writeNativeOwnerArchive(runtimeRoot, contract.modules);
+    }
+    fs.writeFileSync(contractPath, JSON.stringify(contract));
+    expect(() => verifyNativeDatabaseContract(runtimeRoot, options)).toThrow(/Native database/);
+  });
+
   test.each(['owner-bytes', 'archive-bytes', 'export-alias', 'imported-facade', 'escaped-path', 'schema-generation'])(
     'rejects a damaged selected native database contract: %s', damage => {
       const { repoRoot, runtimeRoot } = createFixture('v2026.10.6');
@@ -1276,6 +1357,7 @@ module.exports = { applyPatch, verifyPatch };
       JSON.stringify({ name: '@microsoft/mxc-sdk', version: '0.9.0', dependencies: { 'node-pty': '^1.2.0-beta.12' } }));
     fs.writeFileSync(path.join(runtimeRoot, 'dist/extensions/mxc/node_modules/node-pty/package.json'),
       JSON.stringify({ name: 'node-pty', version: '1.2.0-beta.15' }));
+    writeWidgetLibraryArchiveFixture(runtimeRoot);
     // Match the local Worker inventory used by the real packaging verifier.
     // These are inert archive fixtures; no installed runtime code is executed.
     const sourceRuntime = path.join(repositoryRoot, 'vendor/openclaw-runtime/current');

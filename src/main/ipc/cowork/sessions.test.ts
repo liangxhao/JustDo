@@ -2350,7 +2350,7 @@ test('rejects a new run when startup reconciliation finds the checkpoint still a
   expect(getSessionRuntimeStatus).toHaveBeenCalledWith('session-1', {
     includeSubagents: true,
     forceRefresh: true,
-    fullScan: true,
+    targeted: true,
   });
   expect(reopenSessionRun).toHaveBeenCalledWith('timing-checkpoint');
   expect(beginSessionRun).not.toHaveBeenCalled();
@@ -2398,7 +2398,7 @@ test('fails closed when a restart checkpoint cannot be confirmed idle', async ()
   expect(getSessionRuntimeStatus).toHaveBeenCalledWith('session-1', {
     includeSubagents: true,
     forceRefresh: true,
-    fullScan: true,
+    targeted: true,
   });
   expect(beginSessionRun).not.toHaveBeenCalled();
 });
@@ -2453,7 +2453,7 @@ test('allows a new run after a restart checkpoint is confirmed idle', async () =
   expect(getSessionRuntimeStatus).toHaveBeenCalledWith('session-1', {
     includeSubagents: true,
     forceRefresh: true,
-    fullScan: true,
+    targeted: true,
   });
   expect(beginSessionRun).toHaveBeenCalledWith(input);
 });

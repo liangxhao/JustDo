@@ -123,6 +123,14 @@ it('preserves accepted native ownership when the start callback rejects a change
   listener({
     runId: 'native-alice',
     sessionKey: 'agent:alice:justdo-team:group:room',
+    stream: 'lifecycle',
+    data: { phase: 'end', executionSettled: true },
+  } as never);
+  expect(onOutcome).not.toHaveBeenCalled();
+  expect(unsubscribe).not.toHaveBeenCalled();
+  listener({
+    runId: 'native-alice',
+    sessionKey: 'agent:alice:justdo-team:group:room',
     sessionId: 'replacement',
     stream: 'lifecycle',
     data: { phase: 'end', executionSettled: true },
