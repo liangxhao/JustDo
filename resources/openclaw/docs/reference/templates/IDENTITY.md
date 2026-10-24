@@ -1,13 +1,6 @@
----
-summary: 'IDENTITY 模板'
-title: 'IDENTITY 模板'
-read_when:
-  - 配置助手角色文件时
----
+# 身份记录
 
-# IDENTITY.md - 助手身份
-
-保留以下英文字段名以供运行时识别，值可用中文；仅填写已确认的信息。
+仅填用户确认的身份，未知留空；保留以下字段名，不虚构经历或能力。
 
 - Name:
 - Creature:
@@ -15,4 +8,4 @@ read_when:
 - Emoji:
 - Avatar:
 
-Name 为称呼，Creature 为角色，Vibe 为风格。头像可使用角色目录相对路径（如 avatars/avatar.png）、HTTP(S) URL 或 data URI；没有则留空。
+Name 是称呼，Creature 是角色定位，Vibe 是交流风格。Avatar 可填已选定的角色目录相对路径、HTTP(S) URL 或 data URI，也可留空；不自行生成或下载头像。身份描述不授予能力或权限。

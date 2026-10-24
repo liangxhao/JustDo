@@ -3,7 +3,9 @@ import path from 'path';
 
 import { resolveManagedAgentWorkspace } from './agentWorkspace';
 
-const TEMPLATE_FILES = ['AGENTS.md', 'SOUL.md', 'IDENTITY.md', 'USER.md', 'BOOTSTRAP.md'] as const;
+// A separate role home cannot finish native onboarding from a project session.
+// BOOTSTRAP.md remains opt-in; its presence would gate ordinary turns as limited.
+const TEMPLATE_FILES = ['AGENTS.md', 'SOUL.md', 'IDENTITY.md', 'USER.md'] as const;
 
 /** Seed main from the same packaged templates OpenClaw uses for new workspaces. */
 export function seedMainRoleFiles(stateDir: string, runtimeRoot: string | null): void {
@@ -24,10 +26,9 @@ export function seedMainRoleFiles(stateDir: string, runtimeRoot: string | null):
 
   fs.mkdirSync(target, { recursive: true });
   for (const name of sourceFiles) {
-    const content = fs.readFileSync(path.join(templateDir, name), 'utf8').replace(
-      /^---\r?\n[\s\S]*?\r?\n---\r?\n\s*/,
-      '',
-    );
+    const content = fs
+      .readFileSync(path.join(templateDir, name), 'utf8')
+      .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n\s*/, '');
     try {
       fs.writeFileSync(path.join(target, name), content, { flag: 'wx' });
     } catch (error) {

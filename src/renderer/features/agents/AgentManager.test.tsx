@@ -5,10 +5,21 @@ import { Provider } from 'react-redux';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { coworkService } from '@/features/cowork/coworkService';
+import { assistantTranslations } from '@/services/i18n/assistantTranslations';
 
 import AgentManager from './AgentManager';
 import agentReducer, { setAgents } from './agentSlice';
-vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
+const translationState = vi.hoisted(() => ({ language: null as 'zh' | 'en' | null }));
+vi.mock('@/services/i18n', () => ({
+  i18nService: {
+    t: (key: string) => {
+      const dictionary: Record<string, string> | null = translationState.language
+        ? assistantTranslations[translationState.language]
+        : null;
+      return dictionary?.[key] ?? key;
+    },
+  },
+}));
 vi.mock('@/features/cowork/coworkService', () => ({
   coworkService: { updateConfig: vi.fn().mockResolvedValue(true) },
 }));
@@ -52,6 +63,7 @@ function mount(profiles = [profile]) {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  translationState.language = null;
   Object.defineProperty(window, 'electron', {
     configurable: true,
     value: { agents: { readFile, writeFile, save, delete: deleteAgent }, shell: { openPath } },
@@ -421,26 +433,85 @@ describe('independent Agent manager', () => {
   });
 });
 
-it('creates an editable peer role template through native role files', async () => {
+const presetRoles = ['Build', 'Review', 'Research', 'Product', 'Data', 'Write'] as const;
+const presetCases = (['zh', 'en'] as const).flatMap(language =>
+  presetRoles.map(role => ({ language, role })),
+);
+
+it.each(presetCases)(
+  'prepares one complete baseline with the $role role in the $language UI without saving',
+  ({ language, role }) => {
+    translationState.language = language;
+    const dictionary = assistantTranslations[language];
+    mount([]);
+    fireEvent.click(
+      screen.getByRole('button', { name: new RegExp(`${dictionary[`agentTemplate${role}`]}$`) }),
+    );
+    const draft = (screen.getByRole('textbox', { name: 'AGENTS.md' }) as HTMLTextAreaElement).value;
+    const baseline = dictionary.agentTemplateBaseRules;
+    expect(baseline).not.toBe('');
+    expect(draft.startsWith(baseline)).toBe(true);
+    expect(draft.split(baseline)).toHaveLength(2);
+    expect(draft).toContain(dictionary[`agentTemplate${role}Rules`]);
+    expect(draft).toContain(dictionary.agentTemplatePeerRules);
+    for (const otherRole of presetRoles.filter(candidate => candidate !== role)) {
+      expect(draft).not.toContain(dictionary[`agentTemplate${otherRole}Rules`]);
+    }
+    expect(draft).not.toMatch(/^---(?:\r?\n|$)/);
+    expect(draft).not.toMatch(/^read_when:/m);
+    expect(screen.getByRole('textbox', { name: dictionary.agentName })).toHaveProperty(
+      'value',
+      dictionary[`agentTemplate${role}`],
+    );
+    expect(save).not.toHaveBeenCalled();
+    expect(writeFile).not.toHaveBeenCalled();
+  },
+);
+
+it('preserves edited preset rules when the interface language changes', () => {
+  translationState.language = 'zh';
+  mount([]);
+  fireEvent.click(
+    screen.getByRole('button', {
+      name: new RegExp(`${assistantTranslations.zh.agentTemplateResearch}$`),
+    }),
+  );
+  const editor = screen.getByRole('textbox', { name: 'AGENTS.md' }) as HTMLTextAreaElement;
+  const edited = `${editor.value}\n\n用户保留的补充要求。`;
+  fireEvent.change(editor, { target: { value: edited } });
+  translationState.language = 'en';
+  fireEvent.change(screen.getByRole('textbox', { name: assistantTranslations.zh.agentName }), {
+    target: { value: 'Research profile' },
+  });
+  expect(screen.getByRole('textbox', { name: 'AGENTS.md' })).toHaveProperty('value', edited);
+  expect(screen.getByRole('textbox', { name: assistantTranslations.en.agentName })).toHaveProperty(
+    'value',
+    'Research profile',
+  );
+  expect(writeFile).not.toHaveBeenCalled();
+});
+
+it('saves the complete preset with user edits through native role files', async () => {
+  translationState.language = 'zh';
+  const dictionary = assistantTranslations.zh;
   save.mockResolvedValue({ success: true, value: profile });
   writeFile.mockImplementation(async (_id, _file, content) => ({
     success: true,
     value: { workspace: '/roles/review', content, missing: false },
   }));
   mount([]);
-  fireEvent.click(screen.getByRole('button', { name: /agentTemplateResearch$/ }));
-  const rules = screen.getByRole('textbox', { name: 'AGENTS.md' });
-  expect(rules).toHaveProperty(
-    'value',
-    'agentTemplateResearchRules\n\nagentTemplateScopeRules\n\nagentTemplatePeerRules',
+  fireEvent.click(
+    screen.getByRole('button', { name: new RegExp(`${dictionary.agentTemplateResearch}$`) }),
   );
-  fireEvent.change(rules, { target: { value: 'Edited peer rules' } });
+  const rules = screen.getByRole('textbox', { name: 'AGENTS.md' }) as HTMLTextAreaElement;
+  const edited = `${rules.value}\n\n用户补充的工作约束。`;
+  fireEvent.change(rules, { target: { value: edited } });
   fireEvent.click(screen.getByRole('button', { name: 'save' }));
   await waitFor(() =>
     expect(writeFile).toHaveBeenCalledWith(
       'review',
       'AGENTS.md',
-      'Edited peer rules',
+      edited,
       expect.objectContaining({ content: 'Read only' }),
     ),
   );
@@ -448,22 +519,40 @@ it('creates an editable peer role template through native role files', async () 
 });
 
 it('keeps a created profile and role draft when the initial native role write fails', async () => {
+  translationState.language = 'en';
+  const dictionary = assistantTranslations.en;
   save.mockResolvedValue({ success: true, value: profile });
-  writeFile.mockResolvedValue({ success: false, error: 'agentSaveFailed' });
+  writeFile.mockImplementation(async (_id, _file, content) => ({
+    success: true,
+    value: { workspace: '/roles/review', content, missing: false },
+  }));
+  writeFile.mockResolvedValueOnce({ success: false, error: 'agentSaveFailed' });
   mount([]);
-  fireEvent.click(screen.getByRole('button', { name: /agentTemplateReview$/ }));
+  fireEvent.click(
+    screen.getByRole('button', { name: new RegExp(`${dictionary.agentTemplateReview}$`) }),
+  );
+  const editor = screen.getByRole('textbox', { name: 'AGENTS.md' }) as HTMLTextAreaElement;
+  const edited = `${editor.value}\n\nAdditional review constraints.`;
+  fireEvent.change(editor, { target: { value: edited } });
   fireEvent.click(screen.getByRole('button', { name: 'save' }));
   await waitFor(() =>
-    expect(screen.getByRole('alert').textContent).toBe('agentTemplateSaveFailed'),
+    expect(screen.getByRole('alert').textContent).toBe(dictionary.agentTemplateSaveFailed),
   );
   await waitFor(() =>
-    expect(screen.getByRole('textbox', { name: 'AGENTS.md' })).toHaveProperty(
-      'value',
-      'agentTemplateReviewRules\n\nagentTemplateScopeRules\n\nagentTemplatePeerRules',
-    ),
+    expect(screen.getByRole('textbox', { name: 'AGENTS.md' })).toHaveProperty('value', edited),
   );
-  expect(screen.getByRole('button', { name: 'agentSaveFile' })).toHaveProperty('disabled', false);
-  fireEvent.click(screen.getByRole('button', { name: 'agentSaveFile' }));
+  expect(screen.getByRole('button', { name: dictionary.agentSaveFile })).toHaveProperty(
+    'disabled',
+    false,
+  );
+  fireEvent.click(screen.getByRole('button', { name: dictionary.agentSaveFile }));
   await waitFor(() => expect(writeFile).toHaveBeenCalledTimes(2));
+  expect(writeFile).toHaveBeenNthCalledWith(
+    2,
+    'review',
+    'AGENTS.md',
+    edited,
+    expect.objectContaining({ content: 'Read only' }),
+  );
   expect(save).toHaveBeenCalledTimes(1);
 });

@@ -479,7 +479,7 @@ export default function AgentManager({
                           name: t(`agentTemplate${preset.key}`),
                           description: t(`agentTemplate${preset.key}Description`),
                         },
-                        `${t(`agentTemplate${preset.key}Rules`)}\n\n${t('agentTemplateScopeRules')}\n\n${t('agentTemplatePeerRules')}`,
+                        `${t('agentTemplateBaseRules')}\n\n${t(`agentTemplate${preset.key}Rules`)}\n\n${t('agentTemplatePeerRules')}`,
                       )
                     }
                     className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground transition hover:border-primary/40"
@@ -862,9 +862,11 @@ export default function AgentManager({
 }
 
 const PRESETS = [
-  { key: 'Research', icon: '🔎' },
   { key: 'Build', icon: '🛠️' },
   { key: 'Review', icon: '🧪' },
+  { key: 'Research', icon: '🔎' },
+  { key: 'Product', icon: '🧭' },
+  { key: 'Data', icon: '📊' },
   { key: 'Write', icon: '✍️' },
 ];
 const FILE_HINTS: Record<AgentFileName, string> = {

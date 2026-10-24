@@ -305,11 +305,14 @@ private CA or proxy capability implicitly; their existing environment policy
 remains authoritative. The native startup warning can remain; release
 checks require trusted loopback TLS to succeed and unrelated CAs to fail.
 
-The main assistant seeds only `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md` and
-`BOOTSTRAP.md` from the bundled role templates into
+The main assistant seeds only `AGENTS.md`, `SOUL.md`, `IDENTITY.md` and `USER.md`
+from the bundled role templates into
 `openclaw/state/agent-workspaces/main`. These are editable, per-user role files;
-seeding preserves existing files and completes once. The installation templates
-remain the defaults for other profiles.
+seeding preserves existing files and completes once. `BOOTSTRAP.md` is optional
+and is not created automatically: native onboarding cannot complete from a
+project session with a separate role home. Existing onboarding files remain
+user-managed. Other profiles obtain role files through the settings editor or
+the creation tool; selecting a preset prepares an editable `AGENTS.md` draft.
 
 Databases, native conversation state, configuration, credentials, browser state
 and logs are writable user data. The small Node/npm/npx launch scripts and browser
