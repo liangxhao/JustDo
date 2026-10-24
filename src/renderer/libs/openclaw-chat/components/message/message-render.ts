@@ -41,6 +41,7 @@ import { readTranscriptIdentity } from '../../model/history/transcript-identity'
 import { renderBrowserAnnotation } from './browser-annotation-message';
 import { renderBrowserRecording } from './browser-recording-message';
 import { renderMessageFileIcon } from './message-file-icon';
+import { renderThinkingContent } from './thinking-content';
 
 type AssistantCanvasItem = Extract<MessageContentItem, { type: 'canvas' }>;
 
@@ -1207,7 +1208,7 @@ export function shouldRenderGroupAvatarByPrevItem(
  */
 export function renderStreamingThinkingGroup(
   text: string,
-  opts?: { showAvatar?: boolean; assistantAvatar?: TemplateResult },
+  opts?: { showAvatar?: boolean; assistantAvatar?: TemplateResult; thinkingContent?: unknown },
 ): TemplateResult {
   const isContinuation = opts?.showAvatar === false;
   return html`
@@ -1219,7 +1220,7 @@ export function renderStreamingThinkingGroup(
       <div class="chat-group__avatar">
         ${(opts?.showAvatar ?? true) ? (opts?.assistantAvatar ?? renderChatAvatar('assistant')) : nothing}
       </div>
-      <div class="chat-group__content">${renderStreamingThinkingBlock(text)}</div>
+      <div class="chat-group__content">${renderStreamingThinkingBlock(text, opts?.thinkingContent)}</div>
     </div>
   `;
 }
@@ -1271,14 +1272,14 @@ function renderReadingIndicator(): TemplateResult {
   `;
 }
 
-function renderStreamingThinkingBlock(text: string): TemplateResult {
+function renderStreamingThinkingBlock(text: string, content?: unknown): TemplateResult {
   return html`
     <div class="chat-thinking chat-thinking--streaming">
       <div class="chat-thinking__header">
         <span class="chat-thinking__indicator"></span>
         <span class="chat-thinking__label">${i18nService.t('coworkThinkingLabel')}</span>
       </div>
-      <div class="chat-thinking__content">${unsafeHTML(toStreamingMarkdownHtml(text))}</div>
+      <div class="chat-thinking__content">${content ?? renderThinkingContent(text, true)}</div>
     </div>
   `;
 }

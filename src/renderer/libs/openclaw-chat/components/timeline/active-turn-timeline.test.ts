@@ -750,7 +750,7 @@ describe('active turn timeline', () => {
       rendered.indexOf('<strong>Thinking</strong>'),
     );
     expect(rendered).toContain('class="process-summary__thinking markdown-content"');
-    expect(rendered).toContain('<p>private reasoning</p>');
+    expect(rendered).toContain('private reasoning');
     expect(rendered).toContain('secret-value');
     expect(rendered).toContain('result');
     expect(rendered).not.toContain('process-summary__item-index');

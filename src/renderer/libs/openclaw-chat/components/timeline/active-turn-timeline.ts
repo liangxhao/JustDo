@@ -9,7 +9,6 @@ import {
 import { REVIEW_OPEN_EVENT } from '@shared/cowork/sessionReview';
 import { html, nothing, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import { i18nService } from '@/services/i18n';
 
@@ -43,7 +42,6 @@ import {
 } from '../../model/tools/tool-presentation';
 import type { WaitingStatusKind, WaitingStatusProjection } from '../../model/turn/run-activity';
 import { stripOpenClawLogHintText } from '../../pipeline/system-message-display';
-import { toSanitizedMarkdownHtml } from '../markdown/markdown';
 import { renderChatAvatar } from '../message/chat-avatar';
 import {
   renderAssistantAttachments,
@@ -53,6 +51,7 @@ import {
   renderReadingIndicatorGroup,
   renderStreamingThinkingGroup,
 } from '../message/message-render';
+import { renderThinkingContent, type ThinkingContentRenderer } from '../message/thinking-content';
 import { getCodeModeSource, getCodeModeTitle } from '../tools/code-mode-presentation';
 import { type EditDiffMonacoData, resolveEditDiffLanguage } from '../tools/edit-diff-monaco';
 import { resolveToolDisplay } from '../tools/tool-display';
@@ -692,6 +691,7 @@ function renderProcessItem(
   depths: ReadonlyMap<ToolItem, number>,
   editDiffModes: ReadonlyMap<string, EditDiffMode>,
   onEditDiffModeChange?: EditDiffModeChangeHandler,
+  renderThinking?: ThinkingContentRenderer,
 ): TemplateResult {
   return html`
     <li
@@ -721,7 +721,7 @@ function renderProcessItem(
         process.type === 'thinking'
           ? html`
               <div class="process-summary__thinking markdown-content">
-                ${unsafeHTML(toSanitizedMarkdownHtml(process.text))}
+                ${renderThinking?.(process) ?? renderThinkingContent(process.text, false)}
               </div>
             `
           : html`
@@ -768,6 +768,7 @@ export function renderTimelineItem(
   onEditDiffModeChange?: EditDiffModeChangeHandler,
   speech?: TimelineSpeechOptions,
   assistantAvatar?: TemplateResult,
+  renderThinking?: ThinkingContentRenderer,
 ): TemplateResult {
   if (item.kind === 'mcp-app') {
     return renderAssistantTimelineRow(
@@ -834,7 +835,11 @@ export function renderTimelineItem(
   }
   if (item.kind === 'live-process') {
     if (item.item.type === 'thinking') {
-      return renderStreamingThinkingGroup(item.item.text, { showAvatar, assistantAvatar });
+      return renderStreamingThinkingGroup(item.item.text, {
+        showAvatar,
+        assistantAvatar,
+        thinkingContent: renderThinking?.(item.item),
+      });
     }
     const tool = item.item;
     const isEditDiff = parseEditToolDiff(tool.name, tool.input) !== null;
@@ -883,7 +888,7 @@ export function renderTimelineItem(
         ${repeat(
           item.items,
           process => process.id,
-          process => renderProcessItem(process, depths, editDiffModes, onEditDiffModeChange),
+          process => renderProcessItem(process, depths, editDiffModes, onEditDiffModeChange, renderThinking),
         )}
       </ol>`;
     return renderAssistantTimelineRow(

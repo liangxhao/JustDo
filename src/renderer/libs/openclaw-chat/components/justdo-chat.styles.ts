@@ -2395,6 +2395,13 @@ export const chatStyles = [
       box-sizing: border-box;
     }
 
+    .chat-thinking:has(
+      [data-thinking-content]
+        :is(.code-block-wrapper, .markdown-table-scroll, .markdown-box-drawing-diagram)
+    ) {
+      width: 100%;
+    }
+
     .chat-thinking__content,
     .process-summary__thinking {
       background: var(--justdo-chat-thinking-bg, rgba(0, 0, 0, 0.05));
@@ -2408,7 +2415,128 @@ export const chatStyles = [
       color: var(--justdo-chat-text-secondary, #6b7280);
       margin-top: 2px;
       border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.04));
+    }
+
+    .thinking-content.markdown-content {
+      min-width: 0;
+      max-width: 100%;
+      font: inherit;
+      overflow-wrap: anywhere;
+    }
+
+    .thinking-content__tail,
+    .thinking-content__sections {
+      min-width: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .thinking-content__section {
+      display: inline;
+    }
+
+    .thinking-content__toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 8px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.08));
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .thinking-content__toolbar--footer {
+      margin-top: 12px;
+      margin-bottom: 0;
+      padding-top: 8px;
+      padding-bottom: 0;
+      border-top: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.08));
+      border-bottom: 0;
+    }
+
+    .thinking-content__toolbar button {
+      min-height: 28px;
+      border: 1px solid var(--justdo-chat-border, rgba(0, 0, 0, 0.12));
+      border-radius: 6px;
+      padding: 3px 8px;
+      color: inherit;
+      background: transparent;
+      font: inherit;
+      cursor: pointer;
+      transition:
+        background 120ms ease,
+        color 120ms ease;
+    }
+
+    .thinking-content__toolbar button:hover:not(:disabled) {
+      color: var(--justdo-chat-text, #111827);
+      background: color-mix(in srgb, var(--justdo-chat-accent, #6366f1) 8%, transparent);
+    }
+
+    .thinking-content__toolbar button:focus-visible {
+      outline: 2px solid var(--justdo-chat-accent, #6366f1);
+      outline-offset: 2px;
+    }
+
+    .thinking-content__toolbar button:disabled {
+      cursor: default;
+      opacity: 0.45;
+    }
+
+    .thinking-content__notice,
+    .thinking-content__new-content {
+      color: var(--justdo-chat-text-secondary, #6b7280);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .thinking-content .thinking-content__notice {
+      margin: 0 0 8px;
+    }
+
+    .thinking-content__new-content {
+      display: inline-block;
+      margin-top: 8px;
+    }
+
+    .thinking-content.markdown-content .code-block-wrapper:not(.mermaid-block) > pre {
+      max-height: none;
+    }
+
+    .thinking-content.markdown-content
+      .code-block-wrapper:not(.mermaid-block)
+      > pre:not(.markdown-box-drawing-code),
+    .thinking-content.markdown-content
+      .code-block-wrapper:not(.mermaid-block)
+      > pre:not(.markdown-box-drawing-code)
+      > code {
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+      overflow: visible;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: normal;
+    }
+
+    .thinking-content.markdown-content
+      .code-block-wrapper:not(.mermaid-block)
+      > pre.markdown-box-drawing-code {
+      width: 100%;
       overflow-x: auto;
+      overflow-y: hidden;
+    }
+
+    .thinking-content.markdown-content
+      .code-block-wrapper:not(.mermaid-block)
+      > pre.markdown-box-drawing-code
+      > code {
+      width: max-content;
+      min-width: 100%;
+      white-space: pre;
+      overflow-wrap: normal;
     }
 
     .chat-thinking__content p,

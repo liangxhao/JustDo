@@ -48,7 +48,7 @@ describe('shared Markdown rendering in chat bubbles', () => {
       '.chat-bubble--assistant .markdown-content',
       (text: string) => messageBubble('assistant', text),
     ],
-    ['thinking', '.chat-thinking__content', (text: string) => renderStreamingThinkingGroup(text)],
+    ['thinking', '.chat-thinking__content [data-thinking-body]', (text: string) => renderStreamingThinkingGroup(text)],
     [
       'streaming content',
       '.chat-bubble--assistant .markdown-content',

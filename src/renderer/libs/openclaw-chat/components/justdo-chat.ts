@@ -126,6 +126,7 @@ import {
   handleMessageImageContextMenu,
   handleMessageLinkClick,
 } from './message/message-content-interactions';
+import { ThinkingContentPresentation } from './message/thinking-content';
 import { NativeWidgetAnchor } from './native-widget/anchor';
 import {
   NATIVE_WIDGET_CONTEXT_REQUEST,
@@ -296,6 +297,9 @@ export class JustDoChatElement extends LitElement {
   declare private editDiffModes: ReadonlyMap<string, EditDiffMode>;
 
   @state()
+  declare private thinkingViewRevision: number;
+
+  @state()
   declare private localTtsAvailable: boolean;
 
   @state()
@@ -319,6 +323,22 @@ export class JustDoChatElement extends LitElement {
       if (this.scrollbarRenderDeferred) this.requestUpdate();
     },
   );
+  private readonly thinkingContentPresentation = new ThinkingContentPresentation({
+    requestUpdate: () => {
+      this.thinkingViewRevision += 1;
+    },
+    preserve: element => {
+      this.chatScrollController.preserveAnchorForInteraction(element);
+      this.pendingThinkingNavigation = element;
+    },
+    following: () => this.chatScrollController.state.mode === 'follow',
+    latest: (element, streaming) => {
+      this.pendingThinkingNavigation = null;
+      if (streaming) this.chatScrollController.jumpToLatest();
+      else this.chatScrollController.preserveAnchorForInteraction(element);
+    },
+  });
+  private pendingThinkingNavigation: HTMLElement | null = null;
   private scrollbarRenderDeferred = false;
   private scrollbarDeferredProperties = new Map<string | number | symbol, unknown>();
   private scrollbarRenderWaiters: Array<() => void> = [];
@@ -395,6 +415,7 @@ export class JustDoChatElement extends LitElement {
     this.currentMinimapKey = null;
     this.hoveredMinimapKey = null;
     this.editDiffModes = new Map();
+    this.thinkingViewRevision = 0;
     this.localTtsAvailable = false;
     this.speechLoadingGroupKey = null;
     this.speechPlayingGroupKey = null;
@@ -416,6 +437,8 @@ export class JustDoChatElement extends LitElement {
     this.unsubscribeController();
     this.historyRenderScheduler.clear();
     this.historyDisclosureState.reset(null);
+    this.thinkingContentPresentation.reset(null);
+    this.pendingThinkingNavigation = null;
     this._controller = ctrl;
     this.editDiffModes = new Map();
     if (ctrl) this.subscribeController(ctrl);
@@ -956,6 +979,8 @@ export class JustDoChatElement extends LitElement {
     this.persistedTimelineRenderCache.clear();
     this.historyRenderScheduler.clear();
     this.historyDisclosureState.reset(null);
+    this.thinkingContentPresentation.reset(null);
+    this.pendingThinkingNavigation = null;
     this.processSummaryTakeoverTracker.clear();
     this.collapsedProcessSummaryTakeoverTracker.clear();
     this.stopSpeech();
@@ -1087,6 +1112,7 @@ export class JustDoChatElement extends LitElement {
     this.richMessageControls.onQuote = this.onMessageQuote;
     this.richMessageControls.sync();
     this.chatScrollController.afterRender(transcriptRevision);
+    this.revealSelectedThinkingSection();
     this.syncScrollIndicator();
     this.scheduleEditDiffMonacoSync();
     if (changedProperties?.has('searchQuery') || changedProperties?.has('searchCaseSensitive')) {
@@ -1140,6 +1166,15 @@ export class JustDoChatElement extends LitElement {
       this.chatScrollController.state.mode !== 'paused' || !this.chatScrollController.canScrollDown;
   }
 
+  private revealSelectedThinkingSection(): void {
+    const reader = this.pendingThinkingNavigation;
+    this.pendingThinkingNavigation = null;
+    if (!reader?.isConnected || reader.getRootNode() !== this.renderRoot) return;
+    const top = this.scrollTop + reader.getBoundingClientRect().top -
+      this.getBoundingClientRect().top - this.clientTop - 8;
+    this.chatScrollController.navigateTo(Math.max(0, top), 'instant');
+  }
+
   private syncActiveTurnClock(): void {
     const isRunning =
       this._controller?.state.runActivity != null ||
@@ -1167,6 +1202,8 @@ export class JustDoChatElement extends LitElement {
   ): void {
     if (this.processSummarySessionIdentity !== sessionIdentity) {
       this.historyDisclosureState.reset(sessionIdentity);
+      this.thinkingContentPresentation.reset(sessionIdentity);
+      this.pendingThinkingNavigation = null;
       this.processSummaryTakeoverTracker.clear();
       this.collapsedProcessSummaryTakeoverTracker.clear();
       this.processSummarySessionIdentity = sessionIdentity;
@@ -2157,6 +2194,7 @@ export class JustDoChatElement extends LitElement {
           }
         : undefined,
       this.assistantAvatar,
+      process => this.thinkingContentPresentation.render(process),
     );
   }
 

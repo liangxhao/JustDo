@@ -428,7 +428,12 @@ export class RichMessageControls {
         if (details.open !== open) details.open = open;
       });
     this.root.querySelectorAll<HTMLElement>('.markdown-plain-text-fallback').forEach(block => {
-      if (block.dataset.readerReady || (block.textContent?.length ?? 0) <= 40_000) return;
+      if (
+        block.closest('[data-thinking-content]') ||
+        block.dataset.readerReady ||
+        (block.textContent?.length ?? 0) <= 40_000
+      )
+        return;
       const reader = document.createElement('justdo-tool-output') as ToolOutput;
       reader.text = block.textContent ?? '';
       block.replaceChildren(reader);
@@ -438,7 +443,7 @@ export class RichMessageControls {
       '.code-block-wrapper, .markdown-table-scroll',
     );
     blocks.forEach((block, index) => {
-      if (block.dataset.readerReady) return;
+      if (block.closest('[data-thinking-content]') || block.dataset.readerReady) return;
       block.dataset.readerReady = 'true';
       const group = block.closest<HTMLElement>('[data-group-key], [data-inline-process-id]');
       const siblings = group

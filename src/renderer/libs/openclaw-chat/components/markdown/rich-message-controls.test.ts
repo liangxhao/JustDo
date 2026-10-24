@@ -87,6 +87,60 @@ describe('source-preserving message readers', () => {
     expect(writeText).toHaveBeenCalledWith('  short output\n');
     output.remove();
   });
+  test.each(['chat-thinking__content', 'process-summary__thinking'])(
+    'keeps the owned %s fallback while enhancing ordinary long text',
+    className => {
+      const root = document.createElement('div');
+      root.innerHTML =
+        `<div class="${className}"><div data-thinking-content class="thinking-content markdown-content"><div class="markdown-plain-text-fallback"></div></div></div>` +
+        '<div class="chat-bubble__text"><div class="markdown-plain-text-fallback"></div></div>';
+      const source = 'thinking source\n'.repeat(3_000);
+      root.querySelectorAll('.markdown-plain-text-fallback').forEach(block => {
+        block.textContent = source;
+      });
+      const owned = root.querySelector('[data-thinking-content]')!;
+      const fallback = owned.querySelector('.markdown-plain-text-fallback')!;
+      const controls = new RichMessageControls(root, vi.fn());
+
+      controls.sync();
+
+      expect(source.length).toBeGreaterThan(40_000);
+      expect(owned.querySelector('justdo-tool-output')).toBeNull();
+      expect(fallback.textContent).toBe(source);
+      expect(fallback.hasAttribute('data-reader-ready')).toBe(false);
+      const ordinary = root.querySelector<ToolOutput>('.chat-bubble__text justdo-tool-output');
+      expect(ordinary).not.toBeNull();
+      expect(ordinary!.text).toBe(source);
+      controls.dispose();
+    },
+  );
+  test('leaves owned Thinking code and tables intact while enhancing ordinary Markdown', () => {
+    const root = document.createElement('div');
+    const markdown = toSanitizedMarkdownHtml(
+      '```ts\nconst value = 1;\n```\n\n| value |\n| --- |\n| 1 |',
+    );
+    root.innerHTML =
+      `<div data-thinking-content class="thinking-content markdown-content">${markdown}</div>` +
+      `<div data-group-key="ordinary" class="markdown-content">${markdown}</div>`;
+    const owned = root.querySelector('[data-thinking-content]')!;
+    const ownedMarkup = owned.innerHTML;
+    const copy = owned.querySelector('.code-block-copy');
+    const controls = new RichMessageControls(root, vi.fn());
+
+    controls.sync();
+    controls.sync();
+
+    expect(copy).not.toBeNull();
+    expect(owned.innerHTML).toBe(ownedMarkup);
+    expect(owned.querySelector('.code-block-copy')).toBe(copy);
+    expect(owned.querySelector('[data-reader-ready]')).toBeNull();
+    expect(owned.querySelector('.message-reader-actions')).toBeNull();
+    const ordinary = root.querySelector('[data-group-key="ordinary"]')!;
+    expect(ordinary.querySelectorAll('.message-reader-actions')).toHaveLength(2);
+    expect(ordinary.querySelector('.code-block-copy')).toBeNull();
+    expect(ordinary.querySelector('.message-table-wrapper')).not.toBeNull();
+    controls.dispose();
+  });
   test('keeps duplicate keys, large integers and escapes as exact source slices', () => {
     const source = '{"id":9007199254740993,"id":1e+30,"text":"a\\n"}';
     const tree = parseJsonSource(source)!;
