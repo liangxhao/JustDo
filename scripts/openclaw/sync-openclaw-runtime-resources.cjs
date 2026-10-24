@@ -394,6 +394,11 @@ function bundleProductExtension(sourceDir, targetDir) {
 }
 
 function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
+  if (fs.existsSync(path.join(repoRoot, 'plugins/extensions/widget-kit'))) {
+    require('../../plugins/extensions/widget-kit/scripts/prepare.cjs').verifyWidgetLibraryAssets(
+      path.join(repoRoot, 'plugins/extensions/widget-kit/assets'),
+    );
+  }
   if (fs.existsSync(path.join(repoRoot, 'plugins/extensions/drawio'))) {
     require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(path.join(repoRoot, 'plugins/extensions/drawio/assets'));
   }

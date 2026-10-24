@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -12,6 +12,9 @@ const runtimePackage = JSON.parse(await readFile(path.join(runtime, 'package.jso
 assert.equal(runtimePackage.version, '2026.10.4');
 const output = await mkdtemp(path.join(os.tmpdir(), 'widget-kit-contract-'));
 try {
+  await cp(path.join(root, 'plugins/extensions/widget-kit/assets'), path.join(output, 'assets'), {
+    recursive: true,
+  });
   await build({
     entryPoints: [path.join(root, 'plugins/extensions/widget-kit/index.ts')],
     outfile: path.join(output, 'plugin.mjs'),
@@ -34,7 +37,10 @@ try {
   plugin.register({
     registerBoardWidgetContentKind: definition => register({ id: plugin.id }, definition),
   });
-  assert.deepEqual([...registry.boardWidgetContentKinds.keys()].sort(), ['interactive-answer']);
+  assert.deepEqual([...registry.boardWidgetContentKinds.keys()].sort(), [
+    'interactive-answer',
+    'offline-html',
+  ]);
   const definition = registry.boardWidgetContentKinds.get('interactive-answer').definition;
   assert.equal(
     registry.boardWidgetContentKinds.get('interactive-answer').pluginKind,
@@ -82,7 +88,7 @@ try {
     /public resource paths must be unique/,
   );
   assert.deepEqual(definition.resources.paths, ['/__widget_kit__/ui.js']);
-  for (const kind of [definition]) {
+  for (const { definition: kind } of registry.boardWidgetContentKinds.values()) {
     for (const resourcePath of kind.resources.paths) {
       const resource = await kind.resources.readPublicResource(resourcePath);
       assert.ok(resource?.body.byteLength);
@@ -180,7 +186,7 @@ try {
   console.log(
     JSON.stringify({
       runtime: runtimePackage.version,
-      kinds: [definition.kind],
+      kinds: [...registry.boardWidgetContentKinds.keys()].sort(),
       registered: true,
       samePluginAndKindNameAccepted: true,
       duplicateKindRejected: true,

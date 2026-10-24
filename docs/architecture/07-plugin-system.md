@@ -48,7 +48,7 @@ Runtime Services 还通过公开 prompt/agent-end hooks 记录有限的轮次准
 避免未重新组装运行时的开发环境同时保留新旧类型注册。
 
 该扩展是随通用本地扩展流程捆绑的可选组件插件：用原生
-`registerBoardWidgetContentKind` 只注册可组合的 `interactive-answer`，严格校验 JSON，输出固定组件 body
+`registerBoardWidgetContentKind` 注册固定组件 `interactive-answer` 与按需库 `offline-html`，严格校验 JSON，输出组件 body
 及只读 JS resource，由 native `show_widget` 负责包装及文档所有权。默认开启，可在扩展页显式启用/禁用，配置同步保留用户选择；按需 skill 与插件一起提供，不改变 8 个内置技能或每轮注入指导。不新增 tool/MCP/RPC/数据库或 runtime patch。固定 renderer 的继续按钮只在当前原生私有 prompt port 可用时启用，建议由宿主确认后加入草稿；未获得 dashboard/tools/resources 执行权限。用户流程与限制见 [交互式回答](../features/chat/interactive-answers.md)。
 
 插件只发布通用 `visualize` 技能，指导原生 `show_widget` 的真实发现与调用，
@@ -59,7 +59,14 @@ Runtime Services 还通过公开 prompt/agent-end hooks 记录有限的轮次准
 
 `interactive-answer` 提供 table/compare/chart/form/steps，不接受表达式、脚本或外部提交；
 表单多选以一组原生复选框呈现，支持空初值与组级必选，草稿按选项分别记录布尔值。
-组件只发布 `/__widget_kit__/ui.js` 资源。搜索、排序、选择、
+固定组件发布 `/__widget_kit__/ui.js` 资源；`offline-html` 通过
+`/__widget_kit__/libraries/<id>-<version>.js` 发布六个独立的 classic 脚本，
+仅为当前文档的库声明组合同步加载标签。库来自锁定 SHA-512 的离线归档；插件自己的
+准备脚本输出脚本、字体、完整性清单与许可证，资源同步及打包分别校验原文件和组装副本。
+公共 reader 只读精确白名单路径并验证内容哈希，不提供任意磁盘读取或凭据。
+KaTeX 以 FontFace 字节源注册字体并注入固定 CSS，兼容外层 HTTP 与内层 meta CSP
+的交集；不修改 native policy 或向普通 HTML 注入运行库。模型用法只在按需 visualize
+参考中发布。搜索、排序、选择、
 表单值只在当前 iframe 内存中，切换保留输入、重载恢复默认值；有界草稿标明省略，
 完整选择可在本地复制。模型质量与发布检查见 [现行说明与验证边界](../features/chat/interactive-answers.md)。
 

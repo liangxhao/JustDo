@@ -57,14 +57,43 @@
 
 `npm run electron:dev:openclaw` 和 `npm run dist:win` 已自动准备，优先复用资源和本地归档，归档缺失才下载。断网电脑提前放好归档即可。
 
-## 6. Agent CLI 协议依赖
+## 6. Widget Kit 离线可视化库
+
+六个 npm 归档是构建输入，不整体装入安装包。版本及 SHA-512 锁定在
+`plugins/extensions/widget-kit/libraries/upstreams.json`，准备程序逐包校验后提取浏览器
+脚本和许可证，仅 Three.js 需要本地 esbuild 合并 OrbitControls。归档路径如下：
+
+| 下载地址 | 放置位置 |
+| --- | --- |
+| [Three.js 0.186.1](https://registry.npmjs.org/three/-/three-0.186.1.tgz) | `cache/widget-kit/three-0.186.1.tgz` |
+| [ECharts 6.1.0](https://registry.npmjs.org/echarts/-/echarts-6.1.0.tgz) | `cache/widget-kit/echarts-6.1.0.tgz` |
+| [KaTeX 0.17.0](https://registry.npmjs.org/katex/-/katex-0.17.0.tgz) | `cache/widget-kit/katex-0.17.0.tgz` |
+| [Mermaid 10.9.8](https://registry.npmjs.org/mermaid/-/mermaid-10.9.8.tgz) | `cache/widget-kit/mermaid-10.9.8.tgz` |
+| [D3 7.9.0](https://registry.npmjs.org/d3/-/d3-7.9.0.tgz) | `cache/widget-kit/d3-7.9.0.tgz` |
+| [Matter.js 0.20.0](https://registry.npmjs.org/matter-js/-/matter-js-0.20.0.tgz) | `cache/widget-kit/matter-js-0.20.0.tgz` |
+
+联网准备机可手动下载表中归档，然后将整个 `cache/widget-kit/` 复制到离线构建机。
+准备：`npm run widget-kit:prepare`；复用已验证产物：
+`npm run widget-kit:prepare -- --ensure`；校验：`npm run widget-kit:verify`。
+这些命令均不联网，缺失或哈希不匹配明确失败；不运行包生命周期脚本，也不安装插件 npm 依赖。
+
+中间解包目录位于 `build/widget-kit/`；生成资源位于忽略提交的
+`plugins/extensions/widget-kit/assets/`，包含六个独立脚本、KaTeX 字体字节、完整性清单及
+各库许可证/NOTICE。资源同步将其复制到 `dist/extensions/widget-kit/assets/`，
+安装包构建验证源产物和运行时副本，产品首次使用不访问缓存或下载地址。
+`openclaw:resources`、`electron:dev:openclaw` 和 Windows 分发准备已串联离线准备步骤。
+Mermaid 原 npm 归档缺少独立 LICENSE，补充的锁版本 MIT 许可证保存在插件
+`libraries/licenses/mermaid-10.9.8-LICENSE.txt` 下并纳入构建来源哈希，来源为
+[对应提交的官方 LICENSE](https://raw.githubusercontent.com/mermaid-js/mermaid/49c1a1c7d1faa995b07cc7224543bd0d9a7a9e70/LICENSE)，仓库已包含，无需另外下载。
+
+## 7. Agent CLI 协议依赖
 
 ACP SDK 和 MCP client 的精确版本由根 `package.json` 管理，构建机通过已配置的内部 npm
 源或预先准备的 npm 缓存安装。ACP 随应用打包；MCP client 及其内嵌 Ajv 在资源同步和
 TypeScript 预编译时随 Runtime Services 打包。安装后无需另装 Node、npm 依赖或首启下载。
 客户端提供的 MCP 服务器应提前安装在本机，不由应用自动下载。
 
-## 7. OpenClaw 目录发布修复的 pristine 复验资源
+## 8. OpenClaw 目录发布修复的 pristine 复验资源
 
 重建只使用锁定原包与完整的同版本依赖树，不能修改已经用于运行的冻结目录。
 以下归档用于离线复验；OpenClaw 的 integrity 与 SHA-256 必须匹配当前补丁目录的

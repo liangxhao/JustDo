@@ -80,6 +80,13 @@ Renderer 在 resize 和原生窗口状态变化时更新临时布局系数，不
 对应测试与实现同目录。消息 descriptor 投影留在 pipeline，首条发送留在 gateway，
 React composer 仍负责消费用户确认的草稿；归组不改变这些层的所有权。
 
+Widget Kit 的 `offline-html` 是原生注册内容类型：JSON 源明确声明需要的本地库，
+组合器先放版本化 classic 脚本，再保留作者 HTML 片段。原生负责已注册资源的脚本
+来源准入，Renderer 不替换 CDN 地址、拦截网络或注入全量运行库。各脚本通过现有独立
+sandbox listener 的 public reader 读取，只含固定静态字节；连接、图片、草稿和身份
+权限不变。KaTeX 字体用 FontFace 二进制源而非 URL，以适配双层 CSP。具体库、
+源限制与使用方式见[交互式回答](../features/chat/interactive-answers.md#离线可视化库)。
+
 主聊天的 `show_widget` 消息以 `native-widget-anchor` 提供布局锚点，独立的 widget
 presentation manager 持有稳定 viewer。桌面在首次 iframe、webview 或桥连接创建前，
 通过共享 `NativePresentationSurface` 为已准入卡片准备无应用 preload 的独立原生载体；

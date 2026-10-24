@@ -31,6 +31,15 @@ with optional `<style>` and `<script>` tags. The host supplies the document shel
 and title; do not pass a file path, Markdown fence, full HTML document, invented
 embed directive or another host's artifact API.
 
+When a visualization needs a library, use the advertised `offline-html` kind
+and read [offline libraries](references/offline-libraries.md). It provides
+Three.js with OrbitControls, ECharts, KaTeX, Mermaid, D3 and Matter.js from the
+installation. Declare only the libraries the document actually uses; the host
+loads them before the HTML fragment. Do not add CDN URLs, package imports or
+library source to `widget_code`. Ordinary `html` has no preloaded libraries.
+The tool schema must offer `offline-html` this turn; this skill alone does not
+make it available.
+
 A minimal static visualization, when `html` is advertised:
 
 ```json
@@ -62,7 +71,8 @@ and numeric limits do not constrain native HTML.
 - Gather necessary external data with the agent's authorized tools, then embed
   the relevant observations. Keep the widget self-contained: this application
   runs without public Internet access. Use local drawing, system fonts and
-  inline resources; do not depend on CDNs, package downloads or remote APIs.
+  inline resources or the declared offline libraries; do not depend on CDNs,
+  package downloads or remote APIs.
 - Respect the user's visual brief and the host theme. Scope styles and selectors
   to a unique root. Fit narrow chat and the enlarged view with fluid dimensions,
   readable labels, clear units and keyboard-accessible controls. Do not repeat

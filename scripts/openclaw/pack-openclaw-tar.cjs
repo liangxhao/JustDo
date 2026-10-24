@@ -169,7 +169,7 @@ function shouldExclude(entryPath, isDirectory = false) {
   const basename = path.basename(entryPath);
   const normalized = entryPath.replace(/\\/g, '/');
   // The prepared editor is a closed, hashed resource set, including legal files.
-  if (/(?:^|\/)dist\/extensions\/drawio\/assets(?:\/|$)/.test(normalized)) return false;
+  if (/(?:^|\/)dist\/extensions\/(?:drawio|widget-kit)\/assets(?:\/|$)/.test(normalized)) return false;
   // Knowledge exceptions never admit credentials or local dependency caches.
   if (EXCLUDED_ENVFILE.test(basename) || /(?:^|\/)(?:\.venv|\.bin)(?:\/|$)/.test(normalized))
     return true;

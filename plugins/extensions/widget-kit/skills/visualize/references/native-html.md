@@ -5,7 +5,10 @@ Use only the current turn's advertised `show_widget` HTML kind. Supply a short
 Start with useful content, not another heading or card frame. Use `--font-body`,
 `--text`, `--muted`, `--card`, `--border`, `--accent-fill` and `--accent-fg`.
 Use HTML, SVG, canvas and local JavaScript as the task requires. No charting or
-component library is preloaded. Static presentations need no controls or scripts.
+component library is preloaded in ordinary `html`. For the advertised
+`offline-html` kind, read [offline libraries](offline-libraries.md) to select
+bundled Three.js, ECharts, KaTeX, Mermaid, D3 or Matter.js. Static presentations
+need no controls or scripts.
 When controls help, keep them responsive, label inputs, and make local computations
 deterministic.
 Give the content consistent padding and use the available width; do not leave a
@@ -43,7 +46,9 @@ The native script/style/font allowlist is:
 - `https://fonts.bunny.net`
 
 Imports, stylesheet dependencies, font files and redirects must also stay within
-the allowed origins. No library is preloaded. An allowed resource URL does not
+the allowed origins. Ordinary `html` has no preloaded library. The separate
+`offline-html` kind loads only its declared, installation-owned scripts through
+the native registered-resource interface. An allowed resource URL does not
 establish network reachability or successful loading, and a script grant does
 not change the image or connection policy. Local `file:` resource URLs are not
 an alternative; put workspace file links in ordinary chat instead.
@@ -65,7 +70,8 @@ any `<` characters that could terminate a script element.
 Use a root ID unique to this document and scope selectors and styles to it.
 Resize canvas backing stores with the container and pixel ratio; use an SVG
 `viewBox` with readable labels. Stop animations or expensive simulations when
-hidden, honor reduced motion, and redraw theme-dependent graphics when the host
+hidden, keep requested animations active even when system reduced motion is
+enabled, and redraw theme-dependent graphics when the host
 theme changes. Do not invent an SDK for local calculations or save document
 state in browser storage.
 

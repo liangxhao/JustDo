@@ -6,6 +6,7 @@ import { Script } from 'node:vm';
 
 import { expect, test, vi } from 'vitest';
 
+import { OFFLINE_LIBRARY_RESOURCES } from '../../../plugins/extensions/widget-kit/libraries/resources';
 import { uiContentKind } from '../../../plugins/extensions/widget-kit/ui/content-kind';
 
 const { syncLocalExtensions } =
@@ -78,9 +79,27 @@ test.each([
         registerBoardWidgetContentKind: (definition: typeof uiContentKind) =>
           definitions.push(definition),
       });
-      expect(definitions.map(definition => definition.kind).sort()).toEqual(['interactive-answer']);
+      expect(definitions.map(definition => definition.kind).sort()).toEqual([
+        'interactive-answer',
+        'offline-html',
+      ]);
       const resources = definitions.flatMap(definition => definition.resources.paths);
-      expect(resources).toEqual(['/__widget_kit__/ui.js']);
+      expect(resources).toEqual([
+        '/__widget_kit__/ui.js',
+        ...OFFLINE_LIBRARY_RESOURCES.map(resource => resource.path),
+      ]);
+      expect(
+        fs.statSync(path.join(target, 'skills/visualize/references/offline-libraries.md')).isFile(),
+      ).toBe(true);
+      const prepared = JSON.parse(
+        fs.readFileSync(path.join(source, 'assets/integrity.json'), 'utf8'),
+      );
+      for (const file of ['integrity.json', ...Object.keys(prepared.files)]) {
+        expect(fs.readFileSync(path.join(target, 'assets', file))).toEqual(
+          fs.readFileSync(path.join(source, 'assets', file)),
+        );
+      }
+      expect(fs.statSync(path.join(target, 'index.js')).size).toBeLessThan(200_000);
       for (const definition of definitions) {
         for (const resourcePath of definition.resources.paths) {
           const resource = await definition.resources.readPublicResource(resourcePath);
@@ -97,4 +116,5 @@ test.each([
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   },
+  60_000,
 );

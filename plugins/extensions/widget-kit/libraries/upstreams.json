@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "libraries": [
+    {
+      "id": "three",
+      "packageName": "three",
+      "version": "0.186.1",
+      "archive": "three-0.186.1.tgz",
+      "integrity": "sha512-blFeqb49wRCSGUGj7gtpfnSGHy2lwDk94RhUmS1c/hTby70kvChbWpkJ4Pm1390LqzzvTmzgXKHPEafJwCb8jA==",
+      "entry": "build/three.module.js",
+      "global": "THREE",
+      "license": "MIT",
+      "resourcePath": "/__widget_kit__/libraries/three-0.186.1.js"
+    },
+    {
+      "id": "echarts",
+      "packageName": "echarts",
+      "version": "6.1.0",
+      "archive": "echarts-6.1.0.tgz",
+      "integrity": "sha512-q0yaFPggC9FUdsWH4blavRWFmxdrIodbkoKNAjJudAI6CA9gNPxHtV2RcZNEepZVlk4yvBYkOkbk6HIVpIyHZA==",
+      "entry": "dist/echarts.min.js",
+      "global": "echarts",
+      "license": "Apache-2.0",
+      "resourcePath": "/__widget_kit__/libraries/echarts-6.1.0.js"
+    },
+    {
+      "id": "katex",
+      "packageName": "katex",
+      "version": "0.17.0",
+      "archive": "katex-0.17.0.tgz",
+      "integrity": "sha512-Vdw0ATsQ9V+LuegM/BTwQqV/6cTl5lbGcIrU+BCgLxyf6bo38ybOr372tuSIxir3CN720flu1meYR6XzNMwQnw==",
+      "entry": "dist/katex.min.js",
+      "global": "katex",
+      "license": "MIT",
+      "resourcePath": "/__widget_kit__/libraries/katex-0.17.0.js"
+    },
+    {
+      "id": "mermaid",
+      "packageName": "mermaid",
+      "version": "10.9.8",
+      "archive": "mermaid-10.9.8.tgz",
+      "integrity": "sha512-gmIhmkmD/3DL5lErDV71E/cFUkEbBW4VTFpsJH1HSYjeBICRKOoc4AZem+RNz/FhhCXKBMZiD75bIfBlb2A4yA==",
+      "entry": "dist/mermaid.min.js",
+      "global": "mermaid",
+      "license": "MIT",
+      "supplementalLicense": "licenses/mermaid-10.9.8-LICENSE.txt",
+      "resourcePath": "/__widget_kit__/libraries/mermaid-10.9.8.js"
+    },
+    {
+      "id": "d3",
+      "packageName": "d3",
+      "version": "7.9.0",
+      "archive": "d3-7.9.0.tgz",
+      "integrity": "sha512-e1U46jVP+w7Iut8Jt8ri1YsPOvFpg46k+K8TpCb0P+zjCkjkPnV7WzfDJzMHy1LnA+wj5pLT1wjO901gLXeEhA==",
+      "entry": "dist/d3.min.js",
+      "global": "d3",
+      "license": "ISC",
+      "resourcePath": "/__widget_kit__/libraries/d3-7.9.0.js"
+    },
+    {
+      "id": "matter",
+      "packageName": "matter-js",
+      "version": "0.20.0",
+      "archive": "matter-js-0.20.0.tgz",
+      "integrity": "sha512-iC9fYR7zVT3HppNnsFsp9XOoQdQN2tUyfaKg4CHLH8bN+j6GT4Gw7IH2rP0tflAebrHFw730RR3DkVSZRX8hwA==",
+      "entry": "build/matter.min.js",
+      "global": "Matter",
+      "license": "MIT",
+      "resourcePath": "/__widget_kit__/libraries/matter-0.20.0.js"
+    }
+  ]
+}

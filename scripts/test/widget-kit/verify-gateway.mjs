@@ -22,6 +22,12 @@ const verifyRetention = args.includes('--retention');
 const verifyToolDispatch = args.includes('--tool-dispatch');
 const verifyInteraction = args.includes('--interaction-contract');
 const verifyPresentation = args.includes('--presentation');
+const verifyOfflineLibraries = args.includes('--offline-libraries');
+assert.ok(
+  !verifyOfflineLibraries ||
+    (!verifyInteraction && !verifyRetention && !verifyToolDispatch && !serve),
+  'Use --offline-libraries separately from other scenarios',
+);
 assert.ok(
   !verifyPresentation || verifyInteraction,
   'Use --presentation with --interaction-contract',
@@ -41,6 +47,7 @@ const supportedFlags = new Set([
   '--interaction-contract',
   '--presentation',
   '--viewer-origin',
+  '--offline-libraries',
 ]);
 for (const arg of args) {
   if (arg.startsWith('--'))
@@ -147,8 +154,18 @@ const ui = {
     },
   ],
 };
-const registeredWidgetKind = 'interactive-answer';
-const rendererPath = '/__widget_kit__/ui.js';
+const offlineManifest = JSON.parse(
+  await readFile(path.join(root, 'plugins/extensions/widget-kit/libraries/upstreams.json'), 'utf8'),
+);
+const offlineSource = {
+  version: 1,
+  libraries: offlineManifest.libraries.map(library => library.id),
+  html: '<main id="offline-library-fixture">Synthetic offline libraries</main>',
+};
+const registeredWidgetKind = verifyOfflineLibraries ? 'offline-html' : 'interactive-answer';
+const rendererPath = verifyOfflineLibraries
+  ? offlineManifest.libraries[0].resourcePath
+  : '/__widget_kit__/ui.js';
 const widgetArgs = verifyToolDispatch
   ? {
       title: 'Synthetic native HTML',
@@ -159,7 +176,7 @@ const widgetArgs = verifyToolDispatch
   : {
       title: 'Synthetic interactive components',
       kind: registeredWidgetKind,
-      widget_code: JSON.stringify(ui),
+      widget_code: JSON.stringify(verifyOfflineLibraries ? offlineSource : ui),
     };
 const modelRequests = [];
 const nativeToolResults = new Map();
@@ -182,7 +199,7 @@ const provider = http.createServer(async (request, response) => {
     const widget = tools.find(tool => tool.function?.name === 'show_widget');
     const dispatcher = tools.find(tool => tool.function?.name === 'tool_call');
     const widgetSchema = widget ? JSON.stringify(widget.function.parameters) : '';
-    const registeredKind = widgetSchema.includes('interactive-answer');
+    const registeredKind = widgetSchema.includes(registeredWidgetKind);
     assert.ok(
       !widgetSchema.includes('scenario-explorer'),
       'Retired scenario kind is not advertised',
@@ -694,20 +711,30 @@ try {
     const rendererSource = await resource.text();
     assert.ok(rendererSource.length > 0, 'Public renderer has executable source');
     new Script(rendererSource);
-    assert.ok(rendererSource.includes('scenario-draft-policy'));
+    if (!verifyOfflineLibraries) assert.ok(rendererSource.includes('scenario-draft-policy'));
+    if (verifyOfflineLibraries) {
+      assert.ok(view.html.includes('offline-library-fixture'));
+      for (const library of offlineManifest.libraries) {
+        assert.ok(view.html.includes(library.resourcePath));
+        const asset = await fetch(`http://127.0.0.1:${view.sandboxPort}${library.resourcePath}`);
+        assert.equal(asset.status, 200);
+        assert.match(asset.headers.get('content-type'), /^text\/javascript/);
+        assert.ok((await asset.text()).length > 100);
+      }
+    }
     assert.equal(
       (await fetch(`http://127.0.0.1:${view.sandboxPort}/__widget_kit__/scenario.js`)).status,
       404,
       'Retired scenario renderer is not a public resource',
     );
     assert.equal(
-      (await fetch(`http://127.0.0.1:${view.sandboxPort}/__widget_kit__/unregistered.js`))
-        .status,
+      (await fetch(`http://127.0.0.1:${view.sandboxPort}/__widget_kit__/unregistered.js`)).status,
       404,
       'Unregistered paths are not public resources',
     );
-    for (const block of ui.blocks)
-      assert.ok(view.html.includes(block.title), `Composed document includes ${block.type}`);
+    if (!verifyOfflineLibraries)
+      for (const block of ui.blocks)
+        assert.ok(view.html.includes(block.title), `Composed document includes ${block.type}`);
   }
   await assert.rejects(
     inline.rpc('canvas.document.view', { docId: 'cv_missing_fixture' }),
@@ -1028,13 +1055,14 @@ try {
       ...(!verifyToolDispatch
         ? { disabledDocumentRetained: true, disabledResourceRejected: true }
         : {}),
-      ...(!verifyToolDispatch
+      ...(!verifyToolDispatch && !verifyOfflineLibraries
         ? {
             controlledUi: true,
             componentKinds: ui.blocks.map(block => block.type),
-            singleKindRegistration: true,
+            registeredSourceKind: registeredWidgetKind,
           }
         : {}),
+      ...(verifyOfflineLibraries ? { offlineLibraries: offlineSource.libraries } : {}),
       ...(retention ? { retention } : {}),
       localModelRequests: modelRequests.length,
       ...(interactionContract ? { interactionContract } : {}),

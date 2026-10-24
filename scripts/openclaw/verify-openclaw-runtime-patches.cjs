@@ -382,6 +382,15 @@ function buildOpenClawPatchSetFingerprint(repoRoot, version) {
 }
 
 function listBuildRecipeFiles(repoRoot) {
+  const widgetRoot = path.join(repoRoot, 'plugins/extensions/widget-kit');
+  const widgetFiles = fs.existsSync(widgetRoot)
+    ? fs.readdirSync(widgetRoot, { recursive: true, withFileTypes: true })
+        .filter(entry => entry.isFile() &&
+          !path.relative(widgetRoot, entry.parentPath).split(path.sep)
+            .some(part => ['assets', 'node_modules', 'tests'].includes(part)) &&
+          !entry.name.endsWith('.md'))
+        .map(entry => path.join(entry.parentPath, entry.name)).sort()
+    : [];
   const replacementRoot = path.join(repoRoot, 'plugins/extensions', 'openai');
   const replacementFiles = fs.existsSync(replacementRoot)
     ? fs
@@ -402,6 +411,7 @@ function listBuildRecipeFiles(repoRoot) {
   return [
     ...BUILD_RECIPE_FILES.map(relativePath => path.join(repoRoot, relativePath)),
     ...replacementFiles,
+    ...widgetFiles,
   ];
 }
 

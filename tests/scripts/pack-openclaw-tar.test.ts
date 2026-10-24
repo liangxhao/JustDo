@@ -76,6 +76,48 @@ test('omits the standalone deployment bundle while retaining every local Worker 
   }
 });
 
+test('retains the complete prepared widget library resource set and legal notices', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'widget-library-archive-'));
+  const runtime = path.join(root, 'runtime');
+  const prefix = 'dist/extensions/widget-kit/assets';
+  const files = [
+    'integrity.json',
+    'THIRD_PARTY_NOTICES.json',
+    'libraries/three-0.186.1.js',
+    'libraries/echarts-6.1.0.js',
+    'libraries/katex-0.17.0.js',
+    'libraries/mermaid-10.9.8.js',
+    'libraries/d3-7.9.0.js',
+    'libraries/matter-0.20.0.js',
+    'licenses/mermaid-10.9.8/LICENSE',
+    'licenses/echarts-6.1.0/NOTICE.bundle.txt',
+  ];
+  try {
+    for (const file of files) {
+      const target = path.join(runtime, prefix, file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, file);
+    }
+    const archive = path.join(root, 'runtime.tar');
+    packMultipleSources(
+      [{ dir: runtime, prefix: 'cfmind', exclude: PACKAGED_RUNTIME_EXCLUDES }],
+      archive,
+    );
+    const entries = new Set<string>();
+    listTar({
+      file: archive,
+      sync: true,
+      onReadEntry: entry => entries.add(entry.path.replaceAll('\\', '/')),
+    });
+    for (const file of files) expect(entries.has(`cfmind/${prefix}/${file}`), file).toBe(true);
+    expect(verifyLegalMetadataEntries(entries, 'cfmind/', runtime)).toBeGreaterThanOrEqual(2);
+  } finally {
+    expect(path.dirname(root)).toBe(path.resolve(os.tmpdir()));
+    expect(path.basename(root)).toMatch(/^widget-library-archive-/);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('retains legal metadata across all packages, including filtered development directories', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'legal-archive-'));
   const legalFiles = [

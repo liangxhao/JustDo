@@ -19,6 +19,7 @@ Intelligent UI 的呈现方式，使用本地 OpenClaw 合约，不接入 ChatGP
 | 插件 `widget-kit`     | 注册组件类型、只读资源与按需技能                    |
 | 技能 `visualize`          | 指导原生 show_widget 静态可视化及按需交互           |
 | 卡片 `interactive-answer` | 一个文档组合 table / compare / chart / form / steps |
+| 卡片 `offline-html` | 按声明加载随包库，再执行自定义 HTML/SVG 片段 |
 
 插件 ID 与卡片类型是独立注册项，原生记录为 `pluginId:kind`，允许两者同名；
 重复的卡片类型或公共资源路径会被拒绝。组件公共资源为 `/__widget_kit__/ui.js`。
@@ -37,10 +38,33 @@ HTML 按需参考提供主题字体、间距、控件、焦点与响应式布局
 只在相关失败时显示并保留已填值。这些是模型生成指导，不是宿主向认证 HTML 注入
 全局样式或过滤助手文字，不能据此保证每次生成都满足视觉规范。
 原生 `kind: "html"` 的 `widget_code` 是 HTML/SVG 片段，可含内联样式和脚本；注册的
-固定组件类型才使用经过校验的 JSON 字符串。技能要求生成内容使用内联资源、系统字体
+固定组件类型及 `offline-html` 使用经过校验的 JSON 字符串。技能要求生成内容使用随包库、内联资源、系统字体
 和本地绘制，在无公网环境中工作，不依赖 CDN 或远程 API；这不是对原生全部 HTML 的
 网络策略改写。完整 schema 和实际工具 payload 在
 [插件说明](../../../plugins/extensions/widget-kit/README.md)及技能参考中维护。
+
+### 离线可视化库
+
+`offline-html` 的 `widget_code` 为 `{ version: 1, libraries: [...], html: "..." }`
+的 JSON 字符串。`libraries` 只允许非空、不重复的 `three`、`echarts`、`katex`、
+`mermaid`、`d3`、`matter`，最多六项；整个源字符串上限为 262144 字符，`html`
+为非空片段，不接受完整文档或未知字段。模型只在当前工具 schema 公告该类型时使用，
+普通 `html` 不预载库，也不能通过猜本地路径获得脚本加载权限。
+
+Three.js 含 OrbitControls，ECharts 与 D3 提供图表及自定义数据布局，Mermaid 提供图解，
+Matter.js 提供二维物理模拟。KaTeX 包含 CSS、自动公式识别和 20 份 WOFF2 字体；
+字体从随包字节通过 FontFace 注册，不使用被外层 CSP 拦截的字体 URL。
+需要精确布局时等待 `katexFontsReady`。用法见
+[离线库参考](../../../plugins/extensions/widget-kit/skills/visualize/references/offline-libraries.md)。
+
+六个库分别是版本化只读资源，只对当前卡片声明的项目按顺序加载，然后执行作者片段。
+JavaScript 不写进模型源或 transcript，不在每个卡片全量加载。构建准备只读取已校验的
+离线归档，缺失或篡改明确失败；库、字体和许可证随安装包进入运行时，首次使用不下载。
+准备与缓存位置统一见[离线下载清单](../../offline-downloads.md)。
+库资源缺失、空响应或运行失败沿用现有错误反馈，不自动回退 CDN。注册类型的结构校验
+不替代脚本运行验证；模型须检查脚本并处理异步错误。该能力不改变 `connect-src 'none'`、
+图片限制、身份准入、原生历史或草稿确认；远程纹理、模型、地图、Worker 解码器和任意
+第三方 addon 不包含在内。旧文档保留原资源引用，不改写历史；跨版本升级可能需要重新生成。
 
 ## 当前交互
 
@@ -213,6 +237,13 @@ client/session/generation/docId、可见 webview 与文本限制，保留“加�
 这三篇维护架构契约，本页维护用户行为与限制；旧原型和阶段审查不作为独立现行入口。
 
 ## 当前验证边界
+
+离线库已通过锁定原生注册器及隔离 Gateway 验证，覆盖工具 schema、认证文档、六份公共
+脚本、重启历史与禁用撤回。Electron 隐藏窗口探针使用真实原生双层 CSP、opaque iframe、
+新建内存 session 和公网阻断：覆盖六库逐个声明、组合渲染、WebGL/OrbitControls、
+KaTeX 20 字体、图表/图解/布局/物理运算、resize 与缺失/空脚本错误。资源准备与
+组装、完整性及归档过滤有自动化覆盖；这不代表真实模型会稳定选择正确 API，也不替代
+最终签名安装包在目标机器上的冷启动验收。
 
 真实模型的自然请求仍出现生成较慢、自由 HTML 布局不佳或重复介绍，通用 visualize 指引改写后的效果尚未完成验证。历史生成耗时不代表首次可见延迟；局部沙箱探针不代表完整应用的窄屏、主题、侧聊、拆出或最终安装包已通过。组件重载仍恢复默认值，不支持跨重启保留未确认输入；加载占位不等于渐进生成组件。
 

@@ -5,7 +5,8 @@ Optional bundled plugin for native OpenClaw `show_widget`. Its general
 interactive tools. Controls and conversation follow-up are optional.
 The optional `interactive-answer` content kind provides reusable tables,
 comparisons, charts, forms and expandable steps when those controls fit.
-Custom layouts and calculations use the native HTML kind directly.
+Custom layouts and calculations use the native HTML kind directly. The
+`offline-html` kind adds explicitly selected bundled libraries to an HTML fragment.
 No tools, RPC handlers, database or runtime patches are added.
 
 ## Ownership and packaging
@@ -13,6 +14,8 @@ No tools, RPC handlers, database or runtime patches are added.
 - `ui/` owns the fixed component schema, document composition, renderer,
   translated labels and styles.
 - `document/` owns safe HTML/JSON serialization and resource initialization.
+- `libraries/` owns offline source validation, composition and public resource reads.
+- `scripts/prepare.cjs` prepares and verifies locked browser assets and legal notices.
 - `skills/visualize/` owns the general skill and its on-demand references.
 - `tests/` owns component and resource-loading unit tests. Host integration and
   packaging tests remain in the application's test tree.
@@ -54,6 +57,30 @@ no input, button or message bridge is required. The
 covers resource restrictions, responsive layout, local state and the optional
 draft bridge. Generated widgets must work without public Internet access.
 
+For `kind: "offline-html"`, `widget_code` is a JSON string with exactly
+`{ version: 1, libraries: [...], html: "..." }`. The nonempty unique list selects
+`three`, `echarts`, `katex`, `mermaid`, `d3` and/or `matter`, at most six; the
+whole source is limited to 262144 characters. The fragment follows native HTML
+layout and interaction guidance. The native tool's schema must advertise this
+kind; do not assume enabling a skill alone admits it. See
+[offline library usage](skills/visualize/references/offline-libraries.md).
+
+Each library is a separate fixed-version classic browser script served through
+the native public-resource reader; only selected scripts precede the fragment.
+Three.js includes OrbitControls. KaTeX includes auto-render, CSS and binary
+FontFace fonts, with `katexFontsReady` for precise layout. Ordinary HTML remains
+unchanged. Network requests, image policy and native prompt admission do not
+change; external models, textures, workers and third-party addons are separate.
+
+Prepare with `npm run widget-kit:prepare`, verify with `npm run widget-kit:verify`.
+Preparation reads integrity-checked cached npm archives and never downloads.
+Archive URLs, cache locations and commands are maintained only in
+[offline downloads](../../../docs/offline-downloads.md). Generated assets are
+ignored by Git, copied with the plugin and verified before assembly/packaging.
+The installed application needs neither the archives nor a package installation.
+Versioned resource URLs preserve the authored reference; unavailable older
+resources require a newly generated document, never rewriting native history.
+
 For the optional fixed `kind: "interactive-answer"`, `widget_code` is a JSON
 string with `version`, `language`, `summary` and `blocks`. The complete schema,
 limits and working calls are maintained in the
@@ -61,13 +88,13 @@ limits and working calls are maintained in the
 The source is capped at 64 KiB and eight blocks; unknown fields and executable
 content are rejected. The native resource is `/__widget_kit__/ui.js`.
 
-| Component | Local behavior |
-| --- | --- |
-| table | Search all supplied rows, stable sorting, five-row pages and full-row details. |
-| compare | Select among options with common metrics. |
-| chart | Line/bar series toggles, negative values, zero line and the source data table. |
-| form | Multiline text, numbers, single selection, checkboxes and multiple selection. |
-| steps | Keyboard-accessible expandable explanations. |
+| Component | Local behavior                                                                 |
+| --------- | ------------------------------------------------------------------------------ |
+| table     | Search all supplied rows, stable sorting, five-row pages and full-row details. |
+| compare   | Select among options with common metrics.                                      |
+| chart     | Line/bar series toggles, negative values, zero line and the source data table. |
+| form      | Multiline text, numbers, single selection, checkboxes and multiple selection.  |
+| steps     | Keyboard-accessible expandable explanations.                                   |
 
 A `multiselect` field presents labeled checkboxes with up to 12 unique options.
 Its initial `value` is an array of selected option strings; `required: true`
@@ -111,6 +138,8 @@ skills, framework dependencies or runtime services are installed by this skill.
 node node_modules/vitest/vitest.mjs run plugins/extensions/widget-kit/tests tests/scripts/widget-kit
 node scripts/test/widget-kit/verify-runtime.mjs
 node scripts/test/widget-kit/verify-gateway.mjs
+node scripts/test/widget-kit/verify-gateway.mjs --offline-libraries
+node plugins/extensions/widget-kit/scripts/verify-browser.cjs
 ```
 
 The registrar check uses the locked runtime's native SDK. The Gateway check uses
@@ -118,6 +147,14 @@ an isolated state directory and synthetic loopback provider, covering actual
 plugin loading, tool availability, public resources, authenticated views,
 history/restart and disable. It does not use the application's active Gateway,
 configuration, credentials or model endpoint.
+
+`--offline-libraries` verifies native tool admission, all six public assets,
+authenticated history/restart and withdrawal after disable. Run it separately
+from other Gateway scenarios. The browser verifier accepts `--runtime` pointing
+to the locked runtime's `dist` directory and uses the actual native sandbox/CSP
+with a fresh hidden Electron session, blocked public networking and synthetic
+documents. It checks selective requests, actual rendering, fonts, resize and
+resource failures; reports and screenshots stay under `build/widget-kit/`.
 
 - `--tool-dispatch` tests native HTML through Tool Search with this plugin disabled.
   Run it separately from component, retention and interaction checks.

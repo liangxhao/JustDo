@@ -430,6 +430,9 @@ function verifyRuntimeCompanionFilesFromBundle(runtimeRoot, gatewayBundlePath, b
 }
 
 function verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint) {
+  require('../../plugins/extensions/widget-kit/scripts/prepare.cjs').verifyWidgetLibraryAssets(
+    path.join(runtimeRoot, 'dist/extensions/widget-kit/assets'),
+  );
   require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(
     path.join(runtimeRoot, 'dist/extensions/drawio/assets'),
   );
@@ -855,6 +858,7 @@ function installSkillDependencies() {
 }
 
 async function beforePack(context) {
+  require('../../plugins/extensions/widget-kit/scripts/prepare.cjs').verifyWidgetLibraryAssets();
   require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets();
   verifyPackagedBuiltinModelAuthConfig(context.appDir || path.join(__dirname, '../..'));
   prepareBrowserExtension();
@@ -1005,7 +1009,15 @@ async function beforePack(context) {
       path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current', 'gateway-bundle.mjs'),
     ).map(entry => `cfmind/${entry}`);
     const { runtimeSkillPaths } = readBundledSkillConfig(path.join(__dirname, '../..'));
+    const widgetAssets =
+      require('../../plugins/extensions/widget-kit/scripts/prepare.cjs').verifyWidgetLibraryAssets(
+        path.join(sources[0].dir, 'dist/extensions/widget-kit/assets'),
+        false,
+      );
     const requiredTarEntries = [
+      ...['integrity.json', ...Object.keys(widgetAssets.files)].map(
+        file => `cfmind/dist/extensions/widget-kit/assets/${file}`,
+      ),
       'cfmind/package.json',
       'cfmind/runtime-build-info.json',
       `cfmind/${PATCH_MANIFEST_FILENAME}`,
@@ -1782,7 +1794,10 @@ async function verifyPackagedOpenClawRuntime(context) {
           filter: entryPath => {
             const normalized = entryPath.replace(/^\.\//, '').replace(/\\/g, '/');
             archiveEntryPaths.add(normalized);
-            return requiredEntries.has(normalized);
+            return (
+              requiredEntries.has(normalized) ||
+              normalized.startsWith('cfmind/dist/extensions/widget-kit/assets/')
+            );
           },
         }),
       );
@@ -1816,9 +1831,7 @@ async function verifyPackagedOpenClawRuntime(context) {
       );
       // The archived build proof owns this target. A mutable local "current"
       // runtime can point to another architecture or be absent during verification.
-      const packagedInstallTarget = resolveRuntimeInstallTarget(
-        path.join(temporaryRoot, 'cfmind'),
-      );
+      const packagedInstallTarget = resolveRuntimeInstallTarget(path.join(temporaryRoot, 'cfmind'));
       verifyAcpxArtifactEntryPaths(
         archiveEntryPaths,
         'cfmind/',
@@ -1836,6 +1849,10 @@ async function verifyPackagedOpenClawRuntime(context) {
         'cfmind/',
         path.join(__dirname, '../..', 'vendor', 'openclaw-runtime', 'current'),
       );
+      require('../../plugins/extensions/widget-kit/scripts/prepare.cjs').verifyWidgetLibraryAssets(
+        path.join(temporaryRoot, 'cfmind/dist/extensions/widget-kit/assets'),
+        false,
+      );
     } finally {
       rmSync(temporaryRoot, { recursive: true, force: true });
     }
@@ -1851,6 +1868,10 @@ async function verifyPackagedOpenClawRuntime(context) {
       'Packaged OpenClaw CLI runtime',
     );
     verifyBundledLocalExtensions(path.join(resourcesRoot, 'cfmind'), 'packaged application');
+    require('../../plugins/extensions/widget-kit/scripts/prepare.cjs').verifyWidgetLibraryAssets(
+      path.join(packagedRuntimeRoot, 'dist/extensions/widget-kit/assets'),
+      false,
+    );
   }
 
   console.log('[electron-builder-hooks] Verified patches in packaged OpenClaw runtime.');

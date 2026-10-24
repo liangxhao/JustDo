@@ -110,3 +110,25 @@ test('binds every local OpenAI production source, contract and worker to the run
     false,
   );
 });
+
+test('binds offline widget library sources and locks while excluding generated assets', () => {
+  const files = listBuildRecipeFiles(path.resolve('.')).map((file: string) =>
+    path.relative('.', file).replaceAll('\\', '/'),
+  );
+  for (const name of [
+    'index.ts',
+    'scripts/prepare.cjs',
+    'libraries/upstreams.json',
+    'libraries/schema.ts',
+    'libraries/content-kind.ts',
+    'libraries/resources.ts',
+    'libraries/licenses/mermaid-10.9.8-LICENSE.txt',
+  ])
+    expect(files).toContain(`plugins/extensions/widget-kit/${name}`);
+  expect(
+    files.some((file: string) => file.startsWith('plugins/extensions/widget-kit/assets/')),
+  ).toBe(false);
+  expect(
+    files.some((file: string) => file.startsWith('plugins/extensions/widget-kit/tests/')),
+  ).toBe(false);
+});
